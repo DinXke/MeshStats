@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Instellingen {{ rep.name }} — {{ site_name }}{% endblock %}
+{% block nav %}<a href="/admin">&#9881; Beheer</a> <a href="/admin/logout">Uitloggen ({{ user }})</a>{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div class="pagehead-top">
+    <h1>Instellingen — {{ rep.name }}</h1>
+  </div>
+  <div class="muted mono-line">
+    <span class="chip">{{ rep.pubkey_prefix }}</span>
+    <a href="/r/{{ rep.slug }}">&larr; naar statistieken</a>
+  </div>
+</div>
+
+{% if requested %}
+<div class="card notice">
+  &#9203; Opvraging gestart — Home Assistant logt in op de repeater en vraagt de
+  instellingen één voor één op over LoRa. Dit duurt <strong>1 à 2 minuten</strong>;
+  herlaad deze pagina daarna.
+</div>
+{% endif %}
+
+<section>
+  <h2>CLI-instellingen (readonly)</h2>
+  <div class="card tablecard">
+  <table>
+    <thead><tr><th>Parameter</th><th>Waarde</th><th>Opgehaald</th></tr></thead>
+    <tbody>
+    {% for row in settings_rows %}
+      <tr>
+        <td class="mono">{{ row.param }}</td>
+        <td class="mono prewrap">{% if row.value is not none %}{{ row.value }}{% else %}<span class="muted">(geen antwoord)</span>{% endif %}</td>
+        <td>{% if row.updated %}<time class="reltime" datetime="{{ row.updated }}">{{ row.updated }}</time>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">Nog niets opgehaald — klik hieronder op "Instellingen opvragen".
+        Vereist dat het repeater-wachtwoord ingevuld is in de MC Repeater Stats-integratie in Home Assistant (Opties).</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/settings/refresh" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit">&#128225; Instellingen opvragen via LoRa</button>
+  </form>
+  </div>
+</section>
+
+<section>
+  <h2>Op te vragen parameters</h2>
+  <div class="card">
+  <form method="post" action="/admin/cli_params" class="rowform" style="flex-direction: column; align-items: stretch;">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="rid" value="{{ rep.id }}">
+    <input name="cli_params" value="{{ cli_params }}" class="mono">
+    <div><button type="submit">Parameterlijst opslaan</button></div>
+  </form>
+  <p class="muted small">Kommagescheiden lijst van <code>get</code>-parameters van de repeater-CLI.
+     Onbekende parameters leveren gewoon een foutantwoord op en kunnen geen kwaad.</p>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/app.js?v={{ asset_v }}"></script>{% endblock %}

@@ -1,0 +1,40 @@
+services:
+  meshstats:
+    build: ./server
+    image: meshstats:latest
+    container_name: meshstats
+    restart: unless-stopped
+    ports:
+      - "${MESHSTATS_PORT:-8080}:8080"
+    environment:
+      # Weergave en bewaartermijn (ook aanpasbaar via /admin)
+      MCS_SITE_NAME: "${MCS_SITE_NAME:-MeshCore Repeater Stats}"
+      MCS_RETENTION_DAYS: "${MCS_RETENTION_DAYS:-180}"
+      MCS_HEARTBEAT_MIN: "${MCS_HEARTBEAT_MIN:-5}"
+      # MQTT: nodes publiceren hun statistieken naar de broker hieronder
+      MCS_MQTT_HOST: "${MCS_MQTT_HOST:-mosquitto}"
+      MCS_MQTT_PORT: "${MCS_MQTT_PORT:-1883}"
+      MCS_MQTT_USER: "${MCS_MQTT_USER:-meshstats}"
+      MCS_MQTT_PASS: "${MCS_MQTT_PASS:-}"
+      MCS_MQTT_TOPIC: "${MCS_MQTT_TOPIC:-meshcore/+/stats}"
+    volumes:
+      - meshstats-data:/data
+    depends_on:
+      - mosquitto
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: meshstats-mqtt
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+
+volumes:
+  meshstats-data:
+  mosquitto-data:
+  mosquitto-log:

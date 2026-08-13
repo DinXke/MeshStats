@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to the stats site",
+        "data": {
+          "base_url": "Website URL",
+          "token": "API token"
+        },
+        "data_description": {
+          "base_url": "For example https://stats.example.com",
+          "token": "Create a token on the site's admin page (/admin)"
+        }
+      },
+      "repeaters": {
+        "title": "Select repeaters",
+        "data": {
+          "repeaters": "Repeaters to synchronise",
+          "auto_add": "Automatically sync newly discovered repeaters"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the site",
+      "invalid_auth": "Token rejected by the site"
+    },
+    "abort": {
+      "already_configured": "This site is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Select repeaters",
+        "data": {
+          "repeaters": "Repeaters to synchronise",
+          "auto_add": "Automatically sync newly discovered repeaters"
+        }
+      },
+      "passwords": {
+        "title": "Repeater passwords",
+        "description": "Optional: admin password per repeater ({repeaters}). Needed to fetch CLI settings; leave empty to keep the existing password."
+      }
+    }
+  }
+}

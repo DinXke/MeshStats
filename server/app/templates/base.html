@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>(function () { var t = localStorage.getItem("mcs-theme"); if (t === "light") document.documentElement.setAttribute("data-theme", "light"); })();</script>
+<title>{% block title %}{{ site_name }}{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>&#128225;</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">&#128225; {{ site_name }}</a>
+  <nav>{% block nav %}<a href="/admin">&#9881; Beheer</a>{% endblock %}
+    <button type="button" id="theme-toggle" title="Wissel licht/donker thema">&#9788;</button>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>
+  <span>MeshCore-statistieken &middot; gevoed door Home Assistant &middot; <a href="/admin">beheer</a></span>
+</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>

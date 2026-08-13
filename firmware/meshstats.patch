@@ -1,0 +1,885 @@
+diff --git a/examples/companion_radio/DualSerialInterface.h b/examples/companion_radio/DualSerialInterface.h
+new file mode 100644
+index 0000000..9598404
+--- /dev/null
++++ b/examples/companion_radio/DualSerialInterface.h
+@@ -0,0 +1,52 @@
++#pragma once
++
++#include <helpers/esp32/SerialWifiInterface.h>
++#include <helpers/esp32/SerialBLEInterface.h>
++
++/**
++ * Runs the BLE and WiFi(TCP) companion interfaces side by side.
++ * Frames received on either side are handed to the mesh; replies and pushes
++ * go to the side that most recently delivered a frame, falling back to
++ * whichever side has a live connection.
++ */
++class DualSerialInterface : public BaseSerialInterface {
++  SerialWifiInterface _wifi;
++  SerialBLEInterface _ble;
++  BaseSerialInterface* _last_active;
++
++  BaseSerialInterface* target() const {
++    if (_last_active->isConnected()) return _last_active;
++    if (_wifi.isConnected()) return (BaseSerialInterface *) &_wifi;
++    if (_ble.isConnected()) return (BaseSerialInterface *) &_ble;
++    return _last_active;
++  }
++
++public:
++  DualSerialInterface() { _last_active = &_ble; }
++
++  void begin(int tcp_port, const char* ble_prefix, char* ble_name, uint32_t ble_pin) {
++    _wifi.begin(tcp_port);
++    _ble.begin(ble_prefix, ble_name, ble_pin);
++  }
++
++  // BaseSerialInterface methods
++  void enable() override { _wifi.enable(); _ble.enable(); }
++  void disable() override { _wifi.disable(); _ble.disable(); }
++  bool isEnabled() const override { return _wifi.isEnabled() || _ble.isEnabled(); }
++
++  bool isConnected() const override { return _wifi.isConnected() || _ble.isConnected(); }
++
++  bool isWriteBusy() const override { return target()->isWriteBusy(); }
++
++  size_t writeFrame(const uint8_t src[], size_t len) override {
++    return target()->writeFrame(src, len);
++  }
++
++  size_t checkRecvFrame(uint8_t dest[]) override {
++    size_t len = _wifi.checkRecvFrame(dest);
++    if (len > 0) { _last_active = &_wifi; return len; }
++    len = _ble.checkRecvFrame(dest);
++    if (len > 0) { _last_active = &_ble; return len; }
++    return 0;
++  }
++};
+diff --git a/examples/companion_radio/MyMesh.cpp b/examples/companion_radio/MyMesh.cpp
+index b03334c..823cb38 100644
+--- a/examples/companion_radio/MyMesh.cpp
++++ b/examples/companion_radio/MyMesh.cpp
+@@ -988,6 +988,63 @@ uint32_t MyMesh::getBLEPin() {
+   return _active_ble_pin;
+ }
+ 
++// Bouwt de JSON-payload voor de statistiekensite, in het formaat dat de
++// ingest-API verwacht: {"repeater":{...},"metrics":{...}}
++size_t MyMesh::fillStatsJson(char *out, size_t max_len) {
++  if (out == NULL || max_len < 256) return 0;
++
++  char pub_hex[13];
++  mesh::Utils::toHex(pub_hex, self_id.pub_key, 6);   // 6 bytes -> 12 hex tekens
++
++  uint32_t uptime_secs = _ms->getMillis() / 1000;
++  uint32_t tx_air = getTotalAirTime() / 1000;
++  uint32_t rx_air = getReceiveAirTime() / 1000;
++
++  int n = snprintf(out, max_len,
++    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\"},"
++    "\"metrics\":{"
++      "\"online\":true,"
++      "\"bat\":%.3f,"
++      "\"uptime\":%.5f,"
++      "\"noise_floor\":%d,"
++      "\"last_rssi\":%d,"
++      "\"last_snr\":%.2f,"
++      "\"airtime\":%.1f,"
++      "\"rx_airtime\":%.1f,"
++      "\"nb_recv\":%u,"
++      "\"nb_sent\":%u,"
++      "\"sent_flood\":%u,"
++      "\"sent_direct\":%u,"
++      "\"recv_flood\":%u,"
++      "\"recv_direct\":%u,"
++      "\"recv_errors\":%u,"
++      "\"tx_queue_len\":%u,"
++      "\"freq\":%.4f,"
++      "\"sf\":%u,"
++      "\"cr\":%u,"
++      "\"tx\":%d"
++    "}}",
++    pub_hex, _prefs.node_name,
++    board.getBattMilliVolts() / 1000.0f,
++    uptime_secs / 86400.0,
++    (int)_radio->getNoiseFloor(),
++    (int)radio_driver.getLastRSSI(),
++    radio_driver.getLastSNR(),
++    tx_air / 60.0f,
++    rx_air / 60.0f,
++    (unsigned)radio_driver.getPacketsRecv(),
++    (unsigned)radio_driver.getPacketsSent(),
++    (unsigned)getNumSentFlood(),
++    (unsigned)getNumSentDirect(),
++    (unsigned)getNumRecvFlood(),
++    (unsigned)getNumRecvDirect(),
++    (unsigned)radio_driver.getPacketsRecvErrors(),
++    (unsigned)_mgr->getOutboundTotal(),
++    _prefs.freq, (unsigned)_prefs.sf, (unsigned)_prefs.cr, (int)_prefs.tx_power_dbm);
++
++  return (n > 0 && (size_t)n < max_len) ? (size_t)n : 0;
++}
++
+ struct FreqRange {
+   uint32_t lower_freq, upper_freq;
+ };
+diff --git a/examples/companion_radio/MyMesh.h b/examples/companion_radio/MyMesh.h
+index f73fe0e..649a9ce 100644
+--- a/examples/companion_radio/MyMesh.h
++++ b/examples/companion_radio/MyMesh.h
+@@ -95,6 +95,10 @@ public:
+   NodePrefs *getNodePrefs();
+   uint32_t getBLEPin();
+ 
++  // Bouwt een JSON-payload met de eigen statistieken van deze node, in het
++  // formaat dat de statistiekensite verwacht (zie StatsPublisher).
++  size_t fillStatsJson(char *out, size_t max_len);
++
+   void loop();
+   void handleCmdFrame(size_t len);
+   bool advert();
+diff --git a/examples/companion_radio/StatsPublisher.cpp b/examples/companion_radio/StatsPublisher.cpp
+new file mode 100644
+index 0000000..87097fb
+--- /dev/null
++++ b/examples/companion_radio/StatsPublisher.cpp
+@@ -0,0 +1,232 @@
++#include "StatsPublisher.h"
++#include "MyMesh.h"
++#include <WiFi.h>
++#include <HTTPClient.h>
++#include <WiFiClientSecure.h>
++
++// ---------------------------------------------------------------- config i/o
++
++void StatsPublisher::loadConfig() {
++  if (!_fs) return;
++  File f = _fs->open(STATS_CFG_FILE, "r");
++  if (!f) return;
++
++  // Heel eenvoudige parser: we bewaren zelf, dus het formaat ligt vast.
++  // {"url":"...","token":"...","interval":300,"enabled":1}
++  String s = f.readString();
++  f.close();
++
++  auto grab = [&](const char* key, char* out, size_t max) {
++    String pat = String("\"") + key + "\":\"";
++    int i = s.indexOf(pat);
++    if (i < 0) { out[0] = 0; return; }
++    i += pat.length();
++    int j = s.indexOf('"', i);
++    if (j < 0) { out[0] = 0; return; }
++    String v = s.substring(i, j);
++    strncpy(out, v.c_str(), max - 1);
++    out[max - 1] = 0;
++  };
++  grab("url", _cfg.url, STATS_URL_MAX);
++  grab("token", _cfg.token, STATS_TOKEN_MAX);
++
++  int i = s.indexOf("\"interval\":");
++  if (i >= 0) _cfg.interval_secs = (uint32_t)s.substring(i + 11).toInt();
++  if (_cfg.interval_secs < 30) _cfg.interval_secs = 30;
++
++  i = s.indexOf("\"enabled\":");
++  _cfg.enabled = (i >= 0) && (s.substring(i + 10).toInt() != 0);
++}
++
++void StatsPublisher::saveConfig() {
++  if (!_fs) return;
++  File f = _fs->open(STATS_CFG_FILE, "w");
++  if (!f) return;
++  f.printf("{\"url\":\"%s\",\"token\":\"%s\",\"interval\":%u,\"enabled\":%d}",
++           _cfg.url, _cfg.token, (unsigned)_cfg.interval_secs, _cfg.enabled ? 1 : 0);
++  f.close();
++}
++
++// ------------------------------------------------------------------- pushing
++
++bool StatsPublisher::pushNow() {
++  if (!_mesh || _cfg.url[0] == 0 || WiFi.status() != WL_CONNECTED) return false;
++  // Een HTTP-verzoek kost enkele kB; bij weinig vrij geheugen slaan we deze
++  // ronde over in plaats van de node te laten crashen.
++  if (ESP.getFreeHeap() < 40000) {
++    _fail_count++;
++    snprintf(_last_error, sizeof(_last_error), "te weinig geheugen (%u)", (unsigned)ESP.getFreeHeap());
++    return false;
++  }
++
++  static char body[1024];
++  size_t n = _mesh->fillStatsJson(body, sizeof(body));
++  if (n == 0) return false;
++
++  String endpoint = String(_cfg.url);
++  if (endpoint.endsWith("/")) endpoint.remove(endpoint.length() - 1);
++  endpoint += "/api/v1/ingest";
++
++  HTTPClient http;
++  bool ok = false;
++  if (endpoint.startsWith("https://")) {
++    // Publieke statistiekensites draaien vaak achter een tunnel met een
++    // certificaat dat we hier niet kunnen valideren; de payload bevat geen
++    // geheimen en het token beschermt de API.
++    WiFiClientSecure secure;
++    secure.setInsecure();
++    http.begin(secure, endpoint);
++    http.addHeader("Content-Type", "application/json");
++    http.addHeader("Authorization", String("Bearer ") + _cfg.token);
++    _last_result = http.POST((uint8_t *)body, n);
++    ok = (_last_result >= 200 && _last_result < 300);
++    http.end();
++  } else {
++    WiFiClient plain;
++    http.begin(plain, endpoint);
++    http.addHeader("Content-Type", "application/json");
++    http.addHeader("Authorization", String("Bearer ") + _cfg.token);
++    _last_result = http.POST((uint8_t *)body, n);
++    ok = (_last_result >= 200 && _last_result < 300);
++    http.end();
++  }
++
++  if (ok) {
++    _push_count++;
++    _last_error[0] = 0;
++  } else {
++    _fail_count++;
++    snprintf(_last_error, sizeof(_last_error), "HTTP %d", _last_result);
++  }
++  return ok;
++}
++
++// ---------------------------------------------------------------- web server
++
++static const char PAGE_HEAD[] PROGMEM =
++  "<!doctype html><html lang=nl><head><meta charset=utf-8>"
++  "<meta name=viewport content='width=device-width,initial-scale=1'>"
++  "<title>MeshCore node</title><style>"
++  "body{margin:0;background:#0b0f14;color:#d7e2ea;font:15px/1.5 system-ui,sans-serif}"
++  "main{max-width:640px;margin:0 auto;padding:1rem 1.2rem 3rem}"
++  "h1{font-size:1.4rem;margin:1rem 0 .3rem}"
++  "h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.18em;color:#35e08c;margin:1.8rem 0 .6rem}"
++  ".card{background:#121a23;border:1px solid #1e2b3a;border-radius:10px;padding:1rem}"
++  "label{display:block;margin-bottom:.8rem}"
++  "input{width:100%;margin-top:.25rem;padding:.45rem .7rem;border-radius:7px;"
++  "border:1px solid #1e2b3a;background:#10161e;color:#d7e2ea;box-sizing:border-box}"
++  "button{padding:.45rem .9rem;border:none;border-radius:7px;background:#1d7a4f;color:#eafff4;cursor:pointer}"
++  "button:hover{background:#35e08c;color:#06130c}"
++  "table{width:100%;border-collapse:collapse}"
++  "td{padding:.35rem .5rem;border-bottom:1px solid #1e2b3a;font-family:ui-monospace,monospace;font-size:.9rem}"
++  "td:first-child{color:#7d8fa0}"
++  ".muted{color:#7d8fa0;font-size:.85rem}"
++  "</style></head><body><main>";
++
++void StatsPublisher::handleRoot() {
++  // In stukjes versturen: één grote String opbouwen kost te veel heap op een
++  // node die ook mesh, WiFi en BLE draait (dat leidde tot een crash).
++  char buf[320];
++
++  _server.setContentLength(CONTENT_LENGTH_UNKNOWN);
++  _server.send(200, "text/html; charset=utf-8", "");
++  _server.sendContent_P(PAGE_HEAD);
++
++  snprintf(buf, sizeof(buf),
++    "<h1>&#128225; %s</h1><p class=muted>Beheer van deze node &middot; IP %s</p>",
++    _mesh ? _mesh->getNodeName() : "MeshCore node",
++    WiFi.localIP().toString().c_str());
++  _server.sendContent(buf);
++
++  _server.sendContent(F("<h2>Statistieken doorsturen</h2><div class=card>"
++                        "<form method=post action=/save>"));
++  snprintf(buf, sizeof(buf),
++    "<label>URL van de statistiekensite<input name=url value='%s' "
++    "placeholder='http://10.0.0.5:8080'></label>", _cfg.url);
++  _server.sendContent(buf);
++  snprintf(buf, sizeof(buf),
++    "<label>API-token<input name=token type=password value='%s'></label>", _cfg.token);
++  _server.sendContent(buf);
++  snprintf(buf, sizeof(buf),
++    "<label>Interval (seconden)<input name=interval type=number min=30 max=86400 value=%u></label>"
++    "<label><input type=checkbox name=enabled value=1 style='width:auto'%s> Doorsturen ingeschakeld</label>"
++    "<button type=submit>Opslaan</button></form>"
++    "<form method=post action=/test style='margin-top:.6rem'><button type=submit>Nu versturen</button></form>",
++    (unsigned)_cfg.interval_secs, _cfg.enabled ? " checked" : "");
++  _server.sendContent(buf);
++
++  snprintf(buf, sizeof(buf),
++    "<table style='margin-top:.8rem'><tr><td>Laatste resultaat</td><td>%s%d</td></tr>"
++    "<tr><td>Gelukt / mislukt</td><td>%u / %u</td></tr>"
++    "<tr><td>Vrij geheugen</td><td>%u bytes</td></tr></table></div>",
++    _last_result == 0 ? "nog niet verstuurd " : "HTTP ", _last_result == 0 ? 0 : _last_result,
++    (unsigned)_push_count, (unsigned)_fail_count, (unsigned)ESP.getFreeHeap());
++  _server.sendContent(buf);
++
++  _server.sendContent(F("<h2>Live statistieken</h2><div class=card>"
++    "<div id=stats class=muted>laden...</div></div>"
++    "<script>fetch('/stats.json').then(r=>r.json()).then(d=>{"
++    "var m=d.metrics||{},h='<table>';"
++    "for(var k in m){h+='<tr><td>'+k+'</td><td>'+m[k]+'</td></tr>';}"
++    "h+='</table>';document.getElementById('stats').innerHTML=h;});</script>"
++    "</main></body></html>"));
++  _server.sendContent("");
++}
++
++void StatsPublisher::handleSave() {
++  if (_server.hasArg("url")) {
++    strncpy(_cfg.url, _server.arg("url").c_str(), STATS_URL_MAX - 1);
++    _cfg.url[STATS_URL_MAX - 1] = 0;
++  }
++  if (_server.hasArg("token") && _server.arg("token").length() > 0) {
++    strncpy(_cfg.token, _server.arg("token").c_str(), STATS_TOKEN_MAX - 1);
++    _cfg.token[STATS_TOKEN_MAX - 1] = 0;
++  }
++  if (_server.hasArg("interval")) {
++    uint32_t v = (uint32_t)_server.arg("interval").toInt();
++    _cfg.interval_secs = v < 30 ? 30 : v;
++  }
++  _cfg.enabled = _server.hasArg("enabled");
++  saveConfig();
++  _server.sendHeader("Location", "/");
++  _server.send(303, "text/plain", "opgeslagen");
++}
++
++void StatsPublisher::handleTest() {
++  pushNow();
++  _server.sendHeader("Location", "/");
++  _server.send(303, "text/plain", "verstuurd");
++}
++
++void StatsPublisher::handleStatsJson() {
++  static char body[1024];
++  size_t n = _mesh ? _mesh->fillStatsJson(body, sizeof(body)) : 0;
++  if (n == 0) { _server.send(503, "application/json", "{}"); return; }
++  _server.send(200, "application/json", body);
++}
++
++// -------------------------------------------------------------------- public
++
++void StatsPublisher::begin(FS& fs, MyMesh* mesh) {
++  _fs = &fs;
++  _mesh = mesh;
++  loadConfig();
++
++  _server.on("/", HTTP_GET, [this]() { handleRoot(); });
++  _server.on("/save", HTTP_POST, [this]() { handleSave(); });
++  _server.on("/test", HTTP_POST, [this]() { handleTest(); });
++  _server.on("/stats.json", HTTP_GET, [this]() { handleStatsJson(); });
++  _server.begin();
++  _started = true;
++  _last_push = millis();
++}
++
++void StatsPublisher::loop() {
++  if (!_started) return;
++  _server.handleClient();
++
++  if (!_cfg.enabled || _cfg.url[0] == 0) return;
++  if (millis() - _last_push < (unsigned long)_cfg.interval_secs * 1000UL) return;
++  _last_push = millis();
++  pushNow();
++}
+diff --git a/examples/companion_radio/StatsPublisher.h b/examples/companion_radio/StatsPublisher.h
+new file mode 100644
+index 0000000..2b14b8b
+--- /dev/null
++++ b/examples/companion_radio/StatsPublisher.h
+@@ -0,0 +1,66 @@
++#pragma once
++
++/* StatsPublisher — publiceert de statistieken van deze node naar een externe
++ * statistiekensite, en biedt een kleine beheerpagina om dat in te stellen.
++ *
++ * - Beheerpagina: http://<node-ip>/  (instellingen + live statistieken)
++ * - Push: POST <url>/api/v1/ingest met Bearer-token, JSON-payload
++ *
++ * Alles is optioneel: zonder ingestelde URL doet de module niets behalve de
++ * beheerpagina serveren.
++ */
++
++#include <Arduino.h>
++#include <FS.h>
++#include <WebServer.h>
++
++#define STATS_CFG_FILE      "/stats_cfg.json"
++#define STATS_URL_MAX       128
++#define STATS_TOKEN_MAX     96
++
++class MyMesh;   // vooruitverwijzing; vermijdt include-cyclus
++
++class StatsPublisher {
++public:
++  struct Config {
++    char url[STATS_URL_MAX];      // bv. https://stats.example.com
++    char token[STATS_TOKEN_MAX];  // Bearer-token van de site
++    uint32_t interval_secs;       // hoe vaak pushen
++    bool enabled;
++  };
++
++  StatsPublisher() : _server(80), _fs(nullptr), _mesh(nullptr),
++                     _last_push(0), _last_result(0), _push_count(0),
++                     _fail_count(0), _started(false) {
++    memset(&_cfg, 0, sizeof(_cfg));
++    _cfg.interval_secs = 300;
++    _cfg.enabled = false;
++    _last_error[0] = 0;
++  }
++
++  void begin(FS& fs, MyMesh* mesh);
++  void loop();
++
++  const Config& getConfig() const { return _cfg; }
++
++private:
++  WebServer _server;
++  FS* _fs;
++  MyMesh* _mesh;
++  Config _cfg;
++  unsigned long _last_push;
++  int _last_result;          // laatste HTTP-statuscode (0 = nog niet geprobeerd)
++  uint32_t _push_count;
++  uint32_t _fail_count;
++  bool _started;
++  char _last_error[64];
++
++  void loadConfig();
++  void saveConfig();
++  bool pushNow();
++
++  void handleRoot();
++  void handleSave();
++  void handleTest();
++  void handleStatsJson();
++};
+diff --git a/examples/companion_radio/main.cpp b/examples/companion_radio/main.cpp
+index 89f0e6c..9202ebf 100644
+--- a/examples/companion_radio/main.cpp
++++ b/examples/companion_radio/main.cpp
+@@ -40,6 +40,9 @@ MultiSerialInterface interface_manager;
+     // include esp32 wifi interface
+     #include <helpers/esp32/SerialWifiInterface.h>
+     SerialWifiInterface wifi_interface;
++    // statistieken doorsturen + beheerpagina op deze node
++    #include "StatsPublisher.h"
++    StatsPublisher stats_publisher;
+   #else
+     #error "SerialWifiInterface is not defined for this platform"
+   #endif
+@@ -208,6 +211,7 @@ void setup() {
+   WiFi.begin(WIFI_SSID, WIFI_PWD);
+   wifi_interface.begin(TCP_PORT);
+   interface_manager.addInterface(InterfaceType::WiFi, &wifi_interface);
++  stats_publisher.begin(SPIFFS, &the_mesh);
+ #endif
+ 
+ // add usb interface
+@@ -263,6 +267,8 @@ void loop() {
+   }
+ 
+ #if defined(ESP32) && defined(WIFI_SSID)
++  stats_publisher.loop();
++
+   // Safely attempt to reconnect every 10 seconds if flagged
+   if (wifi_needs_reconnect && (millis() - last_wifi_reconnect_attempt > 10000)) {
+     WIFI_DEBUG_PRINTLN("Attempting manual WiFi reconnect...");
+diff --git a/src/helpers/BaseChatMesh.cpp b/src/helpers/BaseChatMesh.cpp
+index 972a97e..c5d56b7 100644
+--- a/src/helpers/BaseChatMesh.cpp
++++ b/src/helpers/BaseChatMesh.cpp
+@@ -878,15 +878,25 @@ bool BaseChatMesh::removeContact(ContactInfo& contact) {
+ #include <base64.hpp>
+ 
+ ChannelDetails* BaseChatMesh::addChannel(const char* name, const char* psk_base64) {
+-  if (num_channels < MAX_GROUP_CHANNELS) {
+-    auto dest = &channels[num_channels];
++  // Hergebruik eerst een lege plaats binnen de al gebruikte reeks. setChannel()
++  // schrijft op willekeurige posities zonder num_channels bij te werken, dus de
++  // teller kan hoger staan dan het werkelijke aantal kanalen. Zonder dit
++  // hergebruik faalt toevoegen dan onterecht met "channel limit reached".
++  int slot = -1;
++  for (int i = 0; i < num_channels && i < MAX_GROUP_CHANNELS; i++) {
++    if (channels[i].name[0] == 0) { slot = i; break; }
++  }
++  if (slot < 0 && num_channels < MAX_GROUP_CHANNELS) slot = num_channels;
++
++  if (slot >= 0) {
++    auto dest = &channels[slot];
+ 
+     memset(dest->channel.secret, 0, sizeof(dest->channel.secret));
+     int len = decode_base64((unsigned char *) psk_base64, strlen(psk_base64), dest->channel.secret);
+     if (len == 32 || len == 16) {
+       mesh::Utils::sha256(dest->channel.hash, sizeof(dest->channel.hash), dest->channel.secret, len);
+       StrHelper::strncpy(dest->name, name, sizeof(dest->name));
+-      num_channels++;
++      if (slot == num_channels) num_channels++;
+       return dest;
+     }
+   }
+diff --git a/src/helpers/esp32/SerialWifiInterface.cpp b/src/helpers/esp32/SerialWifiInterface.cpp
+index 462e3ec..160bd60 100644
+--- a/src/helpers/esp32/SerialWifiInterface.cpp
++++ b/src/helpers/esp32/SerialWifiInterface.cpp
+@@ -7,7 +7,7 @@ void SerialWifiInterface::begin(int port) {
+ }
+ 
+ // ---------- public methods
+-void SerialWifiInterface::enable() { 
++void SerialWifiInterface::enable() {
+   if (_isEnabled) return;
+ 
+   _isEnabled = true;
+@@ -31,6 +31,9 @@ size_t SerialWifiInterface::writeFrame(const uint8_t src[], size_t len) {
+     }
+ 
+     send_queue[send_queue_len].len = len;  // add to send queue
++    // Alles wat de mesh wegschrijft direct na een doorgegeven commando is het
++    // antwoord daarop; dat gaat alleen naar de client die het vroeg.
++    send_queue[send_queue_len].dest_slot = reply_slot;
+     memcpy(send_queue[send_queue_len].buf, src, len);
+     send_queue_len++;
+ 
+@@ -43,33 +46,109 @@ bool SerialWifiInterface::isWriteBusy() const {
+   return false;
+ }
+ 
+-bool SerialWifiInterface::hasReceivedFrameHeader() {
+-  return received_frame_header.type != 0 && received_frame_header.length != 0;
++int SerialWifiInterface::connectedCount() {
++  int n = 0;
++  for (int i = 0; i < WIFI_MAX_CLIENTS; i++) {
++    if (slots[i].client.connected()) n++;
++  }
++  return n;
+ }
+ 
+-void SerialWifiInterface::resetReceivedFrameHeader() {
+-  received_frame_header.type = 0;
+-  received_frame_header.length = 0;
++// Nieuwe verbindingen aannemen in een vrij slot. Alleen als alle slots bezet
++// zijn wordt de oudste vervangen; zo kunnen meerdere companions (Home
++// Assistant, de app, meshcore-cli) tegelijk verbonden blijven.
++void SerialWifiInterface::acceptNewClients() {
++  while (true) {
++    WiFiClient newClient = server.available();
++    if (!newClient) break;
++
++    int slot = -1;
++    for (int i = 0; i < WIFI_MAX_CLIENTS; i++) {
++      if (!slots[i].client.connected()) { slot = i; break; }
++    }
++    if (slot < 0) {
++      slot = next_poll % WIFI_MAX_CLIENTS;   // alles bezet: oudste opgeven
++      WIFI_DEBUG_PRINTLN("All %d slots busy, replacing slot %d", WIFI_MAX_CLIENTS, slot);
++      slots[slot].client.stop();
++    }
++
++    slots[slot].client = newClient;
++    slots[slot].header.type = 0;      // frame-status hoort bij de verbinding
++    slots[slot].header.length = 0;
++    WIFI_DEBUG_PRINTLN("Got connection in slot %d (%d connected)", slot, connectedCount());
++  }
+ }
+ 
+-size_t SerialWifiInterface::checkRecvFrame(uint8_t dest[]) {
+-  // check if new client connected
+-  auto newClient = server.available();
+-  if (newClient) {
++// Leest hoogstens één compleet frame uit dit slot; 0 = (nog) niets compleet.
++size_t SerialWifiInterface::readFromSlot(ClientSlot& slot, uint8_t dest[]) {
++  WiFiClient& client = slot.client;
++  FrameHeader& header = slot.header;
++
++  // check if we are waiting for a frame header
++  if (header.type == 0 || header.length == 0) {
+ 
+-    // disconnect existing client
+-    deviceConnected = false;
+-    client.stop();
++    // make sure we have received enough bytes for a frame header
++    // 3 bytes frame header = (1 byte frame type) + (2 bytes frame length as unsigned 16-bit little endian)
++    const int frame_header_length = 3;
++    if (client.available() < frame_header_length) return 0;
+ 
+-    // switch active connection to new client
+-    client = newClient;
++    // read frame header
++    client.readBytes(&header.type, 1);
++    client.readBytes((uint8_t*)&header.length, 2);
++  }
+ 
+-    // forget received frame header
+-    resetReceivedFrameHeader();
+-    
++  if (header.type == 0 || header.length == 0) return 0;
++
++  // make sure we have received enough bytes for the required frame length
++  int available = client.available();
++  int frame_type = header.type;
++  int frame_length = header.length;
++  if (frame_length > available) {
++    WIFI_DEBUG_PRINTLN("Waiting for %d more bytes", frame_length - available);
++    return 0;
+   }
+ 
+-  if (client.connected()) {
++  // skip frames that are larger than MAX_FRAME_SIZE
++  if (frame_length > MAX_FRAME_SIZE) {
++    WIFI_DEBUG_PRINTLN("Skipping frame: length=%d is larger than MAX_FRAME_SIZE=%d", frame_length, MAX_FRAME_SIZE);
++    while (frame_length > 0) {
++      uint8_t skip[1];
++      int skipped = client.read(skip, 1);
++      frame_length -= skipped;
++    }
++    header.type = 0; header.length = 0;
++    return 0;
++  }
++
++  // skip frames that are not expected type
++  // '<' is 0x3c which indicates a frame sent from app to radio
++  if (frame_type != '<') {
++    WIFI_DEBUG_PRINTLN("Skipping frame: type=0x%x is unexpected", frame_type);
++    while (frame_length > 0) {
++      uint8_t skip[1];
++      int skipped = client.read(skip, 1);
++      frame_length -= skipped;
++    }
++    header.type = 0; header.length = 0;
++    return 0;
++  }
++
++  // read frame data to provided buffer
++  client.readBytes(dest, frame_length);
++
++  // ready for next frame
++  header.type = 0; header.length = 0;
++  return frame_length;
++}
++
++size_t SerialWifiInterface::checkRecvFrame(uint8_t dest[]) {
++  // Vanaf hier is alles wat de mesh wegschrijft ongevraagd, tot we hieronder
++  // een commando van een specifieke client doorgeven.
++  reply_slot = -1;
++  acceptNewClients();
++
++  int connected = connectedCount();
++  if (connected > 0) {
+     if (!deviceConnected) {
+       WIFI_DEBUG_PRINTLN("Got connection");
+       deviceConnected = true;
+@@ -79,88 +158,45 @@ size_t SerialWifiInterface::checkRecvFrame(uint8_t dest[]) {
+       deviceConnected = false;
+       WIFI_DEBUG_PRINTLN("Disconnected");
+     }
++    return 0;
+   }
+ 
+-  if (deviceConnected) {
+-    if (send_queue_len > 0) {   // first, check send queue
+-      
+-      _last_write = millis();
+-      int len = send_queue[0].len;
+-
+-      uint8_t pkt[3+len]; // use same header as serial interface so client can delimit frames
+-      pkt[0] = '>';
+-      pkt[1] = (len & 0xFF);  // LSB
+-      pkt[2] = (len >> 8);    // MSB
+-      memcpy(&pkt[3], send_queue[0].buf, send_queue[0].len);
+-      client.write(pkt, 3 + len);
+-      send_queue_len--;
+-      for (int i = 0; i < send_queue_len; i++) {   // delete top item from queue
+-        send_queue[i] = send_queue[i + 1];
+-      }
++  // uitgaande frames versturen: antwoorden naar de vrager, de rest naar allen
++  if (send_queue_len > 0) {
++    _last_write = millis();
++    int len = send_queue[0].len;
++
++    uint8_t pkt[3+len]; // use same header as serial interface so client can delimit frames
++    pkt[0] = '>';
++    pkt[1] = (len & 0xFF);  // LSB
++    pkt[2] = (len >> 8);    // MSB
++    memcpy(&pkt[3], send_queue[0].buf, send_queue[0].len);
++    int8_t to_slot = send_queue[0].dest_slot;
++    if (to_slot >= 0 && to_slot < WIFI_MAX_CLIENTS) {
++      if (slots[to_slot].client.connected()) slots[to_slot].client.write(pkt, 3 + len);
+     } else {
+-
+-      // check if we are waiting for a frame header
+-      if(!hasReceivedFrameHeader()){
+-
+-        // make sure we have received enough bytes for a frame header
+-        // 3 bytes frame header = (1 byte frame type) + (2 bytes frame length as unsigned 16-bit little endian)
+-        int frame_header_length = 3;
+-        if(client.available() >= frame_header_length){
+-
+-          // read frame header
+-          client.readBytes(&received_frame_header.type, 1);
+-          client.readBytes((uint8_t*)&received_frame_header.length, 2);
+-
+-        }
+-
++      // ongevraagd bericht (advert, inkomend bericht, ack): naar alle clients
++      for (int i = 0; i < WIFI_MAX_CLIENTS; i++) {
++        if (slots[i].client.connected()) slots[i].client.write(pkt, 3 + len);
+       }
++    }
++    send_queue_len--;
++    for (int i = 0; i < send_queue_len; i++) {   // delete top item from queue
++      send_queue[i] = send_queue[i + 1];
++    }
++    return 0;
++  }
+ 
+-      // check if we have received a frame header
+-      if(hasReceivedFrameHeader()){
+-
+-        // make sure we have received enough bytes for the required frame length
+-        int available = client.available();
+-        int frame_type = received_frame_header.type;
+-        int frame_length = received_frame_header.length;
+-        if(frame_length > available){
+-          WIFI_DEBUG_PRINTLN("Waiting for %d more bytes", frame_length - available);
+-          return 0;
+-        }
+-
+-        // skip frames that are larger than MAX_FRAME_SIZE
+-        if(frame_length > MAX_FRAME_SIZE){
+-          WIFI_DEBUG_PRINTLN("Skipping frame: length=%d is larger than MAX_FRAME_SIZE=%d", frame_length, MAX_FRAME_SIZE);
+-          while(frame_length > 0){
+-            uint8_t skip[1];
+-            int skipped = client.read(skip, 1);
+-            frame_length -= skipped;
+-          }
+-          resetReceivedFrameHeader();
+-          return 0;
+-        }
+-
+-        // skip frames that are not expected type
+-        // '<' is 0x3c which indicates a frame sent from app to radio
+-        if(frame_type != '<'){
+-          WIFI_DEBUG_PRINTLN("Skipping frame: type=0x%x is unexpected", frame_type);
+-          while(frame_length > 0){
+-            uint8_t skip[1];
+-            int skipped = client.read(skip, 1);
+-            frame_length -= skipped;
+-          }
+-          resetReceivedFrameHeader();
+-          return 0;
+-        }
+-
+-        // read frame data to provided buffer
+-        client.readBytes(dest, frame_length);
+-
+-        // ready for next frame
+-        resetReceivedFrameHeader();
+-        return frame_length;
+-
+-      }
+-      
++  // inkomende frames: round-robin, zodat één drukke client de andere niet
++  // wegdrukt
++  for (int n = 0; n < WIFI_MAX_CLIENTS; n++) {
++    int i = (next_poll + n) % WIFI_MAX_CLIENTS;
++    if (!slots[i].client.connected()) continue;
++    size_t len = readFromSlot(slots[i], dest);
++    if (len > 0) {
++      next_poll = (i + 1) % WIFI_MAX_CLIENTS;
++      reply_slot = (int8_t)i;   // antwoord hoort bij deze client
++      return len;
+     }
+   }
+ 
+@@ -168,5 +204,5 @@ size_t SerialWifiInterface::checkRecvFrame(uint8_t dest[]) {
+ }
+ 
+ bool SerialWifiInterface::isConnected() const {
+-  return deviceConnected;  //pServer != NULL && pServer->getConnectedCount() > 0;
+-}
+\ No newline at end of file
++  return deviceConnected;
++}
+diff --git a/src/helpers/esp32/SerialWifiInterface.h b/src/helpers/esp32/SerialWifiInterface.h
+index 1929149..e0c3186 100644
+--- a/src/helpers/esp32/SerialWifiInterface.h
++++ b/src/helpers/esp32/SerialWifiInterface.h
+@@ -3,6 +3,12 @@
+ #include "../BaseSerialInterface.h"
+ #include <WiFi.h>
+ 
++// Aantal companions dat tegelijk verbonden mag zijn (Home Assistant, de
++// MeshCore-app, meshcore-cli, ...). Elke slot kost ~2-3 kB RAM.
++#ifndef WIFI_MAX_CLIENTS
++  #define WIFI_MAX_CLIENTS 4
++#endif
++
+ class SerialWifiInterface : public BaseSerialInterface {
+   bool deviceConnected;
+   bool _isEnabled;
+@@ -10,7 +16,6 @@ class SerialWifiInterface : public BaseSerialInterface {
+   unsigned long adv_restart_time;
+ 
+   WiFiServer server;
+-  WiFiClient client;
+ 
+   struct FrameHeader {
+     uint8_t type;
+@@ -19,10 +24,22 @@ class SerialWifiInterface : public BaseSerialInterface {
+ 
+   struct Frame {
+     uint8_t len;
++    int8_t dest_slot;   // -1 = naar alle clients (push), anders alleen dat slot
+     uint8_t buf[MAX_FRAME_SIZE];
+   };
+ 
+-  FrameHeader received_frame_header;
++  // Per client een eigen socket en frame-headerstatus: verbindingen mogen
++  // elkaars half ontvangen frames niet in de war sturen.
++  struct ClientSlot {
++    WiFiClient client;
++    FrameHeader header;
++  };
++  ClientSlot slots[WIFI_MAX_CLIENTS];
++  int next_poll;    // round-robin, zodat elke client evenveel aan bod komt
++  // Slot waarvan we zojuist een commando doorgaven: alles wat de mesh daarna
++  // wegschrijft is het antwoord daarop en gaat alléén naar die client.
++  // -1 = ongevraagd bericht (advert, inkomend bericht) -> naar iedereen.
++  int8_t reply_slot;
+ 
+   #define FRAME_QUEUE_SIZE  4
+   int recv_queue_len;
+@@ -32,16 +49,24 @@ class SerialWifiInterface : public BaseSerialInterface {
+ 
+   void clearBuffers() { recv_queue_len = 0; send_queue_len = 0; }
+ 
++  void acceptNewClients();
++  size_t readFromSlot(ClientSlot& slot, uint8_t dest[]);
++  int connectedCount();
++
+ protected:
+ 
+ public:
+-  SerialWifiInterface() : server(WiFiServer()), client(WiFiClient()) {
++  SerialWifiInterface() : server(WiFiServer()) {
+     deviceConnected = false;
+     _isEnabled = false;
+     _last_write = 0;
++    next_poll = 0;
++    reply_slot = -1;
+     send_queue_len = recv_queue_len = 0;
+-    received_frame_header.type = 0;
+-    received_frame_header.length = 0;
++    for (int i = 0; i < WIFI_MAX_CLIENTS; i++) {
++      slots[i].header.type = 0;
++      slots[i].header.length = 0;
++    }
+   }
+ 
+   void begin(int port);
+@@ -56,9 +81,6 @@ public:
+ 
+   size_t writeFrame(const uint8_t src[], size_t len) override;
+   size_t checkRecvFrame(uint8_t dest[]) override;
+-
+-  bool hasReceivedFrameHeader();
+-  void resetReceivedFrameHeader();
+ };
+ 
+ #if WIFI_DEBUG_LOGGING && ARDUINO

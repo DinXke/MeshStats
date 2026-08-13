@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Beheer — {{ site_name }}{% endblock %}
+{% block nav %}<a href="/admin/logout">Uitloggen ({{ user }})</a>{% endblock %}
+{% block content %}
+<h1>Beheer</h1>
+
+{% if new_token %}
+<div class="card notice">
+  <strong>Nieuw API-token aangemaakt.</strong> Kopieer het nu — het wordt niet opnieuw getoond:
+  <code class="tokenbox">{{ new_token }}</code>
+</div>
+{% endif %}
+
+<section>
+  <h2>Repeaters</h2>
+  <div class="card">
+  <table>
+    <thead><tr><th>Naam</th><th>Prefix</th><th>Slug</th><th>Publiek</th><th>Laatst gezien</th><th></th></tr></thead>
+    <tbody>
+    {% for rep in repeaters %}
+      <tr>
+        <td>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/rename" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input name="name" value="{{ rep.name }}">
+            <button type="submit" title="Naam opslaan">&#128190;</button>
+          </form>
+        </td>
+        <td class="mono">{{ rep.pubkey_prefix }}</td>
+        <td class="mono"><a href="/r/{{ rep.slug }}">{{ rep.slug }}</a> &middot; <a href="/admin/repeaters/{{ rep.id }}/settings">&#9881;</a></td>
+        <td>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}">
+              {{ 'publiek' if rep.is_public else 'verborgen' }}</button>
+          </form>
+        </td>
+        <td>{% if rep.last_seen %}<time class="reltime" datetime="{{ rep.last_seen }}">{{ rep.last_seen }}</time>{% else %}—{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/delete" class="inline"
+                onsubmit="return confirm('Repeater {{ rep.name }} en alle historiek verwijderen?')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger" title="Verwijderen">&#128465;&#65039;</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">Nog geen repeaters — die verschijnen automatisch zodra Home Assistant data stuurt.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>API-tokens</h2>
+  <div class="card">
+  <table>
+    <thead><tr><th>Naam</th><th>Aangemaakt</th><th>Laatst gebruikt</th><th></th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+      <tr>
+        <td>{{ t.name }}</td>
+        <td><time class="reltime" datetime="{{ t.created_at }}">{{ t.created_at }}</time></td>
+        <td>{% if t.last_used %}<time class="reltime" datetime="{{ t.last_used }}">{{ t.last_used }}</time>{% else %}nooit{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/tokens/{{ t.id }}/revoke" class="inline"
+                onsubmit="return confirm('Token {{ t.name }} intrekken?')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger">Intrekken</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Nog geen tokens.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/tokens" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="name" placeholder="Naam (bv. home-assistant)" required>
+    <button type="submit">Token aanmaken</button>
+  </form>
+  </div>
+</section>
+
+<section>
+  <h2>Gegevensinvoer</h2>
+  <div class="card">
+  <table>
+    <tr><td>MQTT-broker</td><td class="mono">{{ mqtt.broker or 'niet ingesteld' }}</td></tr>
+    <tr><td>Onderwerp</td><td class="mono">{{ mqtt.topic }}</td></tr>
+    <tr><td>Verbonden</td><td>{% if mqtt.connected %}<span class="pill on" style="padding:.15rem .6rem;border-radius:99px;background:rgba(53,224,140,.12);color:var(--accent)">ja</span>{% else %}<span class="muted">nee</span>{% endif %}</td></tr>
+    <tr><td>Berichten ontvangen</td><td class="mono">{{ mqtt.messages }}</td></tr>
+    <tr><td>Fouten</td><td class="mono">{{ mqtt.errors }}{% if mqtt.last_error %} &middot; <span class="muted">{{ mqtt.last_error }}</span>{% endif %}</td></tr>
+  </table>
+  <p class="muted small">Nodes publiceren hun statistieken naar de MQTT-broker; dat is voor een ESP32
+     veel lichter dan HTTP. Instellen doe je op de node zelf (beheerpagina) en via de omgevingsvariabelen
+     <code>MCS_MQTT_*</code>. De HTTP-ingest blijft daarnaast gewoon werken.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Weergave &amp; data</h2>
+  <div class="card">
+  <form method="post" action="/admin/settings" class="settingsgrid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Punt-interval grafieken (minuten)
+      <input type="number" name="heartbeat_min" value="{{ settings.heartbeat_min }}" min="1" max="1440" required>
+    </label>
+    <label>Bewaartermijn historiek (dagen)
+      <input type="number" name="retention_days" value="{{ settings.retention_days }}" min="1" max="3650" required>
+    </label>
+    <label>Historiekperiodes (uren, kommagescheiden)
+      <input name="history_ranges" value="{{ settings.history_ranges }}" placeholder="4,24,48,168,744,2160" required>
+    </label>
+    <div class="settingsactions"><button type="submit">Opslaan</button></div>
+  </form>
+  <p class="muted small">Punt-interval: hoe vaak er minstens een grafiekpunt wordt opgeslagen, ook als de waarde niet wijzigt.
+     Oudere data dan de bewaartermijn wordt bij het opslaan meteen opgeruimd. Periodes: 24 = 24 u, 168 = 7 d, 744 = 31 d.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Indeling publieke pagina</h2>
+  <div class="card">
+  <p class="muted small">Sleep de blokken in de gewenste volgorde; vink af wat verborgen moet blijven.</p>
+  <ul id="layout-list">
+    {% for item in layout %}
+    <li draggable="true" data-key="{{ item.key }}">
+      <span class="draghandle" title="Versleep om te herordenen">&#8942;&#8942;</span>
+      <span class="layout-name">{{ block_names[item.key] }}</span>
+      <label class="layout-visible"><input type="checkbox" {% if item.visible %}checked{% endif %}> zichtbaar</label>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/admin/layout" id="layout-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="layout" id="layout-json">
+    <button type="submit">Indeling opslaan</button>
+  </form>
+  </div>
+</section>
+
+<section>
+  <h2>Wachtwoord wijzigen</h2>
+  <div class="card">
+  <form method="post" action="/admin/password" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="password" name="current" placeholder="Huidig wachtwoord" autocomplete="current-password" required>
+    <input type="password" name="new" placeholder="Nieuw wachtwoord (min. 8)" autocomplete="new-password" required minlength="8">
+    <button type="submit">Wijzigen</button>
+  </form>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/app.js?v={{ asset_v }}"></script>{% endblock %}

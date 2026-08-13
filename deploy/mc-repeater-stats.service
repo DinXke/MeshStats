@@ -1,0 +1,23 @@
+[Unit]
+Description=MC Repeater Stats (MeshCore repeater-statistieken)
+After=network.target
+
+[Service]
+Type=simple
+User=mcstats
+Group=mcstats
+WorkingDirectory=/opt/mc-repeater-stats/server
+Environment=MCS_DATA_DIR=/var/lib/mc-repeater-stats
+ExecStart=/opt/mc-repeater-stats/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips "*"
+Restart=always
+RestartSec=5
+
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mc-repeater-stats
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

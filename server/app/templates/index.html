@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead">
+  <div class="pagehead-top"><h1>Repeaters</h1></div>
+  <p class="hint">Live MeshCore-repeaterstatistieken &middot; klik op een repeater voor details</p>
+</div>
+{% if not cards %}
+<p class="muted">Nog geen repeaters. Zodra Home Assistant data doorstuurt verschijnen ze hier.</p>
+{% endif %}
+<div class="cardgrid">
+{% for c in cards %}
+  <a class="card repeater-card" href="/r/{{ c.slug }}">
+    <div class="card-head">
+      <span class="statusdot {{ 'on' if c.online else 'off' }}"></span>
+      <strong>{{ c.name }}</strong>
+    </div>
+    <div class="card-stats">
+      {% if c.battery is not none %}<span title="Batterij">&#128267; {{ '%.0f'|format(c.battery) }}%</span>{% endif %}
+      {% if c.uptime is not none %}<span title="Uptime">&#9201;&#65039; {{ '%.1f'|format(c.uptime) }} d</span>{% endif %}
+      {% if c.neighbors is not none %}<span title="Buren">&#128246; {{ c.neighbors|int }}</span>{% endif %}
+      {% if c.temperature is not none %}<span title="Temperatuur">&#127777;&#65039; {{ '%.0f'|format(c.temperature) }}&deg;</span>{% endif %}
+    </div>
+    <div class="muted small">{{ c.prefix }}{% if c.last_seen %} &middot; laatst gezien <time class="reltime" datetime="{{ c.last_seen }}">{{ c.last_seen }}</time>{% endif %}</div>
+  </a>
+{% endfor %}
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/app.js?v={{ asset_v }}"></script>{% endblock %}

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+mosquitto/passwd
+server/data/
+.venv/
+venv/

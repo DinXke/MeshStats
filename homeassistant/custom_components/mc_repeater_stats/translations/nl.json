@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Verbinden met de statistiekensite",
+        "data": {
+          "base_url": "Website-URL",
+          "token": "API-token"
+        },
+        "data_description": {
+          "base_url": "Bijvoorbeeld https://stats.example.com",
+          "token": "Maak een token aan in de beheerpagina van de site (/admin)"
+        }
+      },
+      "repeaters": {
+        "title": "Repeaters kiezen",
+        "data": {
+          "repeaters": "Repeaters om te synchroniseren",
+          "auto_add": "Nieuw ontdekte repeaters automatisch synchroniseren"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken met de site",
+      "invalid_auth": "Token geweigerd door de site"
+    },
+    "abort": {
+      "already_configured": "Deze site is al gekoppeld"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Repeaters kiezen",
+        "data": {
+          "repeaters": "Repeaters om te synchroniseren",
+          "auto_add": "Nieuw ontdekte repeaters automatisch synchroniseren"
+        }
+      },
+      "passwords": {
+        "title": "Repeater-wachtwoorden",
+        "description": "Optioneel: admin-wachtwoord per repeater ({repeaters}). Nodig om CLI-instellingen op te vragen; leeg laten behoudt het bestaande wachtwoord."
+      }
+    }
+  }
+}

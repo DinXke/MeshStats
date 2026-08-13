@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}{{ r.name }} — {{ site_name }}{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div class="pagehead-top">
+    <h1>{{ r.name }}</h1>
+    <span class="badge {{ 'on' if is_online else 'off' }}">{{ 'ONLINE' if is_online else 'OFFLINE' }}</span>
+    {% if is_admin %}
+    <form method="post" action="/admin/repeaters/{{ r.id }}/refresh" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="pill refreshbtn" title="Vraag via Home Assistant een verse status en telemetrie op over LoRa">&#8635; Status opvragen</button>
+    </form>
+    <a class="pill settingslink" href="/admin/repeaters/{{ r.id }}/settings" title="CLI-instellingen van deze repeater">&#9881; Instellingen</a>
+    {% endif %}
+  </div>
+  {% if refresh_requested %}
+  <p class="hint refreshnotice">&#9203; Statusupdate aangevraagd — Home Assistant vraagt de repeater nu uit; binnen &plusmn;1 minuut verschijnt een vers datapunt.</p>
+  {% endif %}
+  <div class="muted mono-line">
+    <span class="chip">{{ r.pubkey_prefix }}</span>
+    {% if r.last_seen %}<span>laatste update <time class="reltime" datetime="{{ r.last_seen }}">{{ r.last_seen }}</time></span>{% endif %}
+  </div>
+  <p class="hint">&#128161; Klik op een tegel of buur voor de historiek</p>
+</div>
+
+{% for b in blocks %}
+{% if b.type == "section" %}
+<section class="collapsible" data-ckey="{{ b.section.key }}">
+  <h2 class="sec-toggle">{{ b.section.title }} <span class="sec-chev">&#9662;</span></h2>
+  <div class="sec-body">
+  <div class="tilegrid">
+  {% for t in b.section.tiles %}
+    {% if t.metric in gauges and t.value is not none %}
+    <div class="tile gaugetile clickable" data-gauge="{{ t.metric }}" data-value="{{ t.value }}"
+         data-min="{{ gauges[t.metric][0] }}" data-max="{{ gauges[t.metric][1] }}"
+         data-segments='{{ gauges[t.metric][2]|tojson }}'
+         data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}">
+      <canvas width="180" height="96"></canvas>
+      <div class="tile-label">{{ t.label }}</div>
+      <div class="tile-value">{{ t.display }}</div>
+    </div>
+    {% elif t.metric in thermos and t.value is not none %}
+    <div class="tile gaugetile clickable" data-thermo="{{ t.metric }}" data-value="{{ t.value }}"
+         data-min="{{ thermos[t.metric][0] }}" data-max="{{ thermos[t.metric][1] }}"
+         data-segments='{{ thermos[t.metric][2]|tojson }}'
+         data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}">
+      <canvas width="180" height="96"></canvas>
+      <div class="tile-label">{{ t.label }}</div>
+      <div class="tile-value">{{ t.display }}</div>
+    </div>
+    {% else %}
+    <div class="tile {% if t.metric == 'online' %}{{ 'online' if t.value == 1.0 else 'offline' }}{% endif %} {% if t.value is not none %}clickable{% endif %}"
+         {% if t.value is not none %}data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}"{% endif %}>
+      <div class="tile-value">{{ t.display }}</div>
+      <div class="tile-label">{{ t.label }}</div>
+    </div>
+    {% endif %}
+  {% endfor %}
+  </div>
+  </div>
+</section>
+
+{% elif b.type == "charts" %}
+<section class="collapsible" data-ckey="charts">
+  <h2 class="sec-toggle">Grafieken <span class="sec-chev">&#9662;</span></h2>
+  <div class="sec-body">
+  <div class="chartgrid">
+  {% for c in b.charts %}
+    <div class="card chartcard">
+      <h3>{{ c.title }}</h3>
+      <div class="chartwrap"><canvas data-chart='{{ {"slug": r.slug, "metrics": c.metrics, "labels": c.labels, "hours": c.hours, "unit": c.unit}|tojson }}'></canvas></div>
+    </div>
+  {% endfor %}
+  </div>
+  </div>
+</section>
+
+{% elif b.type == "map" %}
+<section class="collapsible" data-ckey="map">
+  <h2 class="sec-toggle">Linkkaart <span class="sec-chev">&#9662;</span></h2>
+  <div class="sec-body">
+    <div class="card mapcard">
+      <div class="mapbar">
+        <label class="maptoggle"><input type="checkbox" id="map-labels"> SNR-labels tonen</label>
+        <span class="muted small" id="map-note"></span>
+      </div>
+      <div id="linkmap"></div>
+    </div>
+  </div>
+</section>
+
+{% elif b.type == "neighbors" %}
+<section class="collapsible" data-ckey="neighbors">
+  <h2 class="sec-toggle">Buren ({{ neighbors|length }}) <span class="sec-chev">&#9662;</span></h2>
+  <div class="sec-body">
+  <div class="card tablecard">
+  <table class="neighbors">
+    <thead><tr>
+      <th></th>
+      <th class="sortable" data-sort="name">Node</th>
+      <th class="sortable" data-sort="prefix">Prefix</th>
+      <th class="num sortable" data-sort="snr">SNR (dB)</th>
+      <th class="snrbar-col">Link</th>
+      <th class="sortable" data-sort="seen">Laatst gehoord</th>
+    </tr></thead>
+    <tbody>
+    {% for n in neighbors %}
+      <tr class="nbrow" data-metric="neighbor_{{ n.prefix }}" data-label="Link {{ n.name or n.prefix|upper }} — SNR" data-unit="dB"
+          data-prefix="{{ n.prefix }}" data-name="{{ (n.name or n.prefix)|lower }}"
+          data-snr="{{ n.snr if n.snr is not none else -999 }}" data-seen="{{ n.last_seen }}">
+        <td class="chev">&#9656;</td>
+        <td class="nbname">{{ n.name or n.prefix|upper }}</td>
+        <td class="mono">{{ n.prefix|upper }}</td>
+        <td class="num {% if n.snr is not none %}{{ 'snr-good' if n.snr >= 0 else ('snr-ok' if n.snr >= -10 else 'snr-bad') }}{% endif %}">
+          {{ '%.2f'|format(n.snr) if n.snr is not none else '—' }}</td>
+        <td class="snrbar-col">{% if n.snr is not none %}<div class="snrbar"><i style="width: {{ [4, [100, (n.snr + 20) / 35 * 100]|min]|max }}%"></i></div>{% endif %}</td>
+        <td><time class="reltime" datetime="{{ n.last_seen }}">{{ n.last_seen }}</time></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  </div>
+</section>
+{% endif %}
+{% endfor %}
+
+<!-- historiek-modal -->
+<div id="metric-modal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel card">
+    <div class="modal-head">
+      <h3 id="modal-title"></h3>
+      <button type="button" class="modal-close" aria-label="Sluiten">&#10005;</button>
+    </div>
+    <div class="rangebtns" role="group">
+      {% for rng in ranges %}
+      <button type="button" data-hours="{{ rng.hours }}" {% if rng.hours == default_hours %}class="active"{% endif %}>{{ rng.label }}</button>
+      {% endfor %}
+    </div>
+    <div id="modal-map" hidden></div>
+    <div class="chartwrap modal-chartwrap"><canvas id="modal-canvas"></canvas></div>
+    <div id="modal-empty" class="muted" hidden>Nog geen historiek voor deze periode.</div>
+  </div>
+</div>
+<script>window.MCS = {slug: {{ r.slug|tojson }}, defaultHours: {{ default_hours }}, zones: {{ zones|tojson }}};</script>
+{% endblock %}
+{% block scripts %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="/static/app.js?v={{ asset_v }}"></script>
+{% endblock %}

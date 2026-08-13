@@ -1,0 +1,3 @@
+push_now:
+  name: Nu pushen
+  description: Stuur meteen een volledige snapshot van alle gekoppelde repeaters naar de statistiekensite.
