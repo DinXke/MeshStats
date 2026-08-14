@@ -956,11 +956,9 @@ Before relying on any specific code, check it against
 `examples/companion_radio/MyMesh.cpp` in the firmware version you are actually
 running. `CMD_APP_START` carries a protocol version byte for exactly this reason.
 
-## Planned
+## Raw packet forwarding
 
-The following is in development and **not** part of the shipped protocol:
-
-- **Raw packet forwarding over MQTT.** The node hex-encodes each received
-  over-the-air frame and publishes it, so a server can apply part 1 of this
-  document without the firmware needing to parse anything. See
-  [`mqtt.md`](mqtt.md).
+**Raw packet forwarding over MQTT** is shipped: the node hex-encodes each
+received over-the-air frame and publishes it, so a server can apply part 1 of
+this document without the firmware needing to parse anything. The archive page
+and the path heatmap are built on it. See [`mqtt.md`](mqtt.md).
