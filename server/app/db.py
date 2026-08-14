@@ -418,13 +418,24 @@ def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
 
 
 def recent_packets(since_id: int = 0, limit: int = 200) -> list[sqlite3.Row]:
-    """Packets newer than ``since_id``, oldest first, with the sender's name and
-    position joined in so the caller can plot them without a second query."""
+    """Packets for the live feed, ascending by id, with the sender's name and
+    position joined in so the caller can plot them without a second query.
+
+    Two regimes behind one ascending contract. With a positive ``since_id``
+    this is the incremental tail: everything newer than that id, oldest first,
+    so the poller appends in arrival order. The opening call (since_id=0)
+    instead returns the NEWEST ``limit`` packets -- also handed back oldest
+    first, so the caller never sees a second ordering. It used to return the
+    oldest stored packets there ("everything after id 0"), which made a
+    refreshed page open on traffic from hours ago and crawl towards now one
+    page per poll; a first look at a live feed should show what is happening,
+    not what happened first.
+    """
     # GROUP BY p.id keeps one row per packet: contacts is keyed on the full
     # pubkey prefix, and two sources (adverts, Home Assistant) can register the
     # same node under prefixes of different length, which would otherwise
     # multiply every packet by the number of matching contact rows.
-    return q(
+    select = (
         "SELECT p.*, c.name AS sender_name, c.lat AS sender_lat, c.lon AS sender_lon, "
         "c.country AS sender_country, "
         "o.name AS observer_name, o.lat AS observer_lat, o.lon AS observer_lon, "
@@ -432,9 +443,17 @@ def recent_packets(since_id: int = 0, limit: int = 200) -> list[sqlite3.Row]:
         "FROM packets p "
         "LEFT JOIN contacts c ON c.prefix6 = p.sender "
         "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
-        "WHERE p.id > ? GROUP BY p.id ORDER BY p.id LIMIT ?",
-        (since_id, limit),
     )
+    if since_id > 0:
+        return q(select + "WHERE p.id > ? GROUP BY p.id ORDER BY p.id LIMIT ?",
+                 (since_id, limit))
+    # Fetched descending so LIMIT keeps the fresh end, then flipped in Python
+    # rather than through a nested SELECT ordered twice: SQL would express the
+    # same thing in more machinery, and reversing at most ``limit`` rows that
+    # are already in memory costs nothing.
+    rows = q(select + "GROUP BY p.id ORDER BY p.id DESC LIMIT ?", (limit,))
+    rows.reverse()
+    return rows
 
 
 def packets_with_paths(since: str, limit: int = 20000) -> list[sqlite3.Row]:

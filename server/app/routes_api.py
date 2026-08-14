@@ -318,8 +318,14 @@ def packet_feed(
     plain polling survives proxies, sleeping laptops and restarts that SSE or
     websockets would each need their own reconnect handling for.
 
-    The first call (since_id=0) also returns every node position we know, so the
-    map can draw its base layer from the same request.
+    The first call (since_id=0) returns the newest ``limit`` packets rather
+    than the oldest stored ones, so a freshly loaded page opens on the present
+    instead of replaying hours of history page by page. Either way the packets
+    arrive ascending by id and ``last_id`` is the highest id in the response,
+    so the next poll picks up exactly where this one ended.
+
+    That first call also returns every node position we know, so the map can
+    draw its base layer from the same request.
 
     Each packet carries its resolved path as well: the client animates packets
     along it, and looking that up per packet would mean one extra request per

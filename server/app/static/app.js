@@ -609,6 +609,16 @@
   // A quiet mesh sends a handful of packets per poll; a storm could send
   // hundreds. Animating them all would only produce an unreadable blur.
   var FLASH_MAX_PER_POLL = 40;
+  // A packet older than this is backlog, not live traffic. The server already
+  // withholds the animation flag from the very first poll, but a tab that sat
+  // hidden for an hour catches up through an ordinary poll, and flashing that
+  // pile on return would present stale receptions as happening right now. The
+  // cut-off is judged per packet on its own timestamp rather than per batch,
+  // because a catch-up batch legitimately ends in genuinely fresh packets that
+  // deserve their flash. Two minutes sits far above one poll interval plus any
+  // reasonable server/browser clock skew, and far below any absence long
+  // enough to pile up a misleading backlog.
+  var FLASH_STALE_MS = 120000;
   // Packets kept in memory behind the visible feed, so switching the filter can
   // re-render from traffic that already arrived instead of only from what comes
   // next. Bounded because this page is left open for hours.
@@ -1212,9 +1222,16 @@
     function render(list, animate) {
       var flashes = 0;
       list.forEach(function (p) {
+        // Reception time comes from the packet, so a backlog is dated when it
+        // was heard; only a packet without a usable timestamp falls back to now.
+        var at = Date.parse(p.ts);
+        var heard = isNaN(at) ? Date.now() : at;
         // The filter governs the map as well as the list: a visitor watching one
-        // node should not have the rest of the mesh moving over their map.
-        var show = animate && matches(p) && flashes < FLASH_MAX_PER_POLL;
+        // node should not have the rest of the mesh moving over their map. And
+        // only fresh packets animate: a catch-up batch after a hidden tab still
+        // fills the list, but its stale part must not be acted out as live.
+        var show = animate && heard >= Date.now() - FLASH_STALE_MS &&
+          matches(p) && flashes < FLASH_MAX_PER_POLL;
         if (show) {
           var color = PKT_COLORS[p.type] || "#7d8fa0";
           // A packet with a route travels it; one we cannot place a route for
@@ -1223,10 +1240,7 @@
           if (!moved && p.lat != null && p.lon != null) flash(p.lat, p.lon, color);
           flashes++;
         }
-        // Reception time comes from the packet, so a backlog is dated when it
-        // was heard; only a packet without a usable timestamp falls back to now.
-        var at = Date.parse(p.ts);
-        seen.push({ t: isNaN(at) ? Date.now() : at, p: p });
+        seen.push({ t: heard, p: p });
         recent.unshift(p);
         if (feedEl && matches(p)) feedEl.insertBefore(feedRow(p), feedEl.firstChild);
       });
@@ -1289,8 +1303,9 @@
             fitToMatches();
           }
           lastId = d.last_id || lastId;
-          // The first response is backlog, not live traffic: list it, but do not
-          // set off a firework of flashes for packets heard hours ago.
+          // The first response is history (the newest stored packets), not
+          // traffic heard while this page was open: list it, but do not set off
+          // a firework of flashes for receptions that predate the visit.
           render(d.packets || [], !first);
         })
         .catch(function () { /* next tick tries again */ })
