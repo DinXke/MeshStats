@@ -1,0 +1,95 @@
+diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
+index c93ba1a..37b2688 100644
+--- a/examples/simple_repeater/MyMesh.cpp
++++ b/examples/simple_repeater/MyMesh.cpp
+@@ -1,6 +1,10 @@
+ #include "MyMesh.h"
+ #include <algorithm>
+ 
++#ifdef MESHSTATS_NET
++#include "MeshStatsNet.h"
++#endif
++
+ /* ------------------------------ Config -------------------------------- */
+ 
+ #ifndef LORA_FREQ
+@@ -1215,6 +1219,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
+     command += 3;
+   }
+ 
++#ifdef MESHSTATS_NET
++  // De wifi-commando's horen ook via de mesh te werken. Anders zou één
++  // verkeerde netwerkinstelling deze repeater onbereikbaar maken, en die hangt
++  // op een dak.
++  if (msnet_handle_command(command, reply)) return;
++#endif
++
+   // handle ACL related commands
+   if (memcmp(command, "setperm ", 8) == 0) {   // format:  setperm {pubkey-hex} {permissions-int8}
+     char* hex = &command[8];
+diff --git a/examples/simple_repeater/main.cpp b/examples/simple_repeater/main.cpp
+index a714db6..ed44f54 100644
+--- a/examples/simple_repeater/main.cpp
++++ b/examples/simple_repeater/main.cpp
+@@ -13,6 +13,10 @@
+   #include <helpers/nrf52/EthernetCLI.h>
+ #endif
+ 
++#ifdef MESHSTATS_NET
++  #include "MeshStatsNet.h"
++#endif
++
+ StdRNG fast_rng;
+ SimpleMeshTables tables;
+ 
+@@ -60,9 +64,14 @@ void setup() {
+   }
+ #endif
+ 
+-  if (!radio_init()) {
++  bool radio_ok = radio_init();
++  if (!radio_ok) {
+     MESH_DEBUG_PRINTLN("Radio init failed!");
++#ifndef MESHSTATS_NET
+     halt();
++#endif
++    // Met MESHSTATS_NET blijven we niet eeuwig hangen: verderop starten we het
++    // netwerkdeel alsnog, zodat de node bereikbaar blijft om te herflashen.
+   }
+ 
+   fast_rng.begin(radio_driver.getRngSeed());
+@@ -102,10 +111,23 @@ void setup() {
+   ethernet_command[0] = 0;
+ #endif
+ 
++#ifdef MESHSTATS_NET
++  if (!radio_ok) {
++    // Zonder radio heeft de mesh geen zin, maar bereikbaar blijven wel: hier
++    // draaien we enkel WiFi, beheerpagina en console, zodat je kan herflashen.
++    msnet_begin(*fs, &the_mesh);
++    while (1) { msnet_loop(); delay(5); }
++  }
++#endif
++
+   sensors.begin();
+ 
+   the_mesh.begin(fs);
+ 
++#ifdef MESHSTATS_NET
++  msnet_begin(*fs, &the_mesh);
++#endif
++
+ #ifdef DISPLAY_CLASS
+   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
+ #endif
+@@ -170,6 +192,10 @@ void loop() {
+   }
+ #endif
+ 
++#ifdef MESHSTATS_NET
++  msnet_loop();   // wifi, beheerpagina en console; blokkeert nooit
++#endif
++
+ #if defined(PIN_USER_BTN) && defined(_SEEED_SENSECAP_SOLAR_H_) && !defined(DISPLAY_CLASS)
+   // Hold the user button to power off the SenseCAP Solar repeater.
+   int btnState = digitalRead(PIN_USER_BTN);

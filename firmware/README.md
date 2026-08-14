@@ -69,6 +69,39 @@ python -m platformio run -e <jouw_env> -t upload --upload-port COM4
 | `examples/companion_radio/StatsPublisher.{h,cpp}` | Beheerpagina + doorsturen van statistieken |
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`: eigen statistieken als JSON |
 | `examples/companion_radio/main.cpp` | Module inhaken |
+| `examples/simple_repeater/MeshStatsNet.{h,cpp}` | Repeater: WiFi, beheerpagina, OTA, console, back-up |
+| `repeater-hooks.patch` | De drie kleine ingrepen in `simple_repeater` |
+
+## Repeater met netwerkbeheer
+
+`MeshStatsNet` geeft een repeater een IP-leven naast zijn mesh-leven. Gebouwd
+voor een node die op een dak hangt en dus nooit onbereikbaar mag worden:
+
+- **WiFi-client**; lukt verbinden niet binnen 30 s, dan zendt hij zijn eigen
+  netwerk uit (`MeshCore-<id>`) met dezelfde beheerpagina, en blijft hij het
+  jouwe elke 5 minuten opnieuw proberen
+- **Beheerpagina** op poort 80 achter een login, met toestand, wifi-instellingen
+  en **firmware-upload op `/update`** — upgraden gaat dus over je gewone
+  netwerk, niet enkel via de OTA-softAP
+- **Back-up en restore** van het volledige bestandssysteem: sleutelpaar,
+  repeater-prefs, ACL en netwerkinstellingen, in een regelgebaseerd formaat
+- **Console** op poort 23, achter dezelfde login, rechtstreeks op
+  `MyMesh::handleCommand` — de volledige MeshCore-CLI over WiFi. Een stille
+  sessie wordt na 5 minuten gesloten en na 1 minuut overneembaar, zodat één
+  afgebroken verbinding je debugkanaal niet dichtzet
+- **`wifi`-commando's** werken ook via de mesh-CLI, zodat een verkeerde
+  netwerkinstelling de repeater niet onbereikbaar maakt
+
+Drie vangnetten tegen een fout in deze code zelf:
+
+| Situatie | Wat er gebeurt |
+|---|---|
+| 3 herstarts zonder 5 min stabiel te draaien | veilige modus: enkel eigen netwerk + beheerpagina |
+| 6 herstarts | module start niet meer op; een gewone MeshCore-repeater blijft over, met `start ota` |
+| radio-init faalt | geen eeuwige `halt()`; het netwerkdeel start toch, zodat je kan herflashen |
+
+> De back-up bevat je private key. Zet meteen een eigen wachtwoord (standaard
+> `admin` / `meshcore`), want achter die login zit ook het flashen van firmware.
 
 ## Beheerpagina
 

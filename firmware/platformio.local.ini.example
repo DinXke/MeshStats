@@ -1,3 +1,31 @@
+; Repeater met MeshStatsNet: WiFi, beheerpagina, OTA over het gewone netwerk en
+; een console. De credentials staan hier ingebouwd zodat de eerste OTA-flash
+; meteen op het netwerk komt; nadien zijn ze via de beheerpagina te wijzigen.
+; DIT BESTAND NOOIT COMMITTEN.
+[env:heltec_v4_repeater_meshstats]
+extends = heltec_v4_oled
+build_flags =
+  ${heltec_v4_oled.build_flags}
+  -D DISPLAY_CLASS=SSD1306Display
+  -D ADVERT_NAME='"Heltec Repeater"'
+  -D ADVERT_LAT=0.0
+  -D ADVERT_LON=0.0
+  -D ADMIN_PASSWORD='"password"'
+  -D MAX_NEIGHBOURS=50
+  -D MESHSTATS_NET=1
+  ; DISABLE_WIFI_OTA bewust NIET gezet: zolang onze module draait vangt zij
+  ; 'start ota' af (er staat al een webserver op poort 80), maar schakelt zij
+  ; zichzelf uit na herhaalde herstarts, dan werkt de standaard-OTA weer.
+  -D WIFI_SSID='"JOUW_WIFI"'
+  -D WIFI_PWD='"JOUW_WACHTWOORD"'
+build_src_filter = ${heltec_v4_oled.build_src_filter}
+  +<helpers/ui/SSD1306Display.cpp>
+  +<../examples/simple_repeater>
+lib_deps =
+  ${heltec_v4_oled.lib_deps}
+  ${esp32_ota.lib_deps}
+  bakercp/CRC32 @ ^2.0.0
+
 [env:Heltec_v3_wifi_home]
 extends = Heltec_lora32_v3
 build_flags =
@@ -25,5 +53,4 @@ lib_deps =
   ${Heltec_lora32_v3.lib_deps}
   densaugeo/base64 @ ~1.4.0
   WebServer
-  HTTPClient
-  NetworkClientSecure
+  knolleary/PubSubClient @ ^2.8
