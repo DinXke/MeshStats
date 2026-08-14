@@ -202,10 +202,22 @@ void setup() {
    * WiFi-radio staat los daarvan en valt standaard terug op WIFI_PS_MIN_MODEM.
    * Die slaapt tussen de bakens door, en dat kost hier twee dingen: antwoorden
    * van een paar honderd bytes die seconden onderweg zijn, en baken-timeouts die
-   * de verbinding laten vallen. Een node die aan de netvoeding hangt en een
-   * mesh, een webserver en Home Assistant moet bedienen, heeft daar niets aan.
-   * (simple_repeater kwam op dezelfde conclusie uit.) */
+   * de verbinding laten vallen.
+   *
+   * Maar dit uitzetten mag NIET wanneer Bluetooth ook aan staat. WiFi en BLE
+   * delen op de ESP32 dezelfde radio, en de IDF eist modem-sleep om ze om de
+   * beurt aan bod te laten komen. Doe je het toch, dan is het geen slechtere
+   * doorvoer maar een harde stop:
+   *
+   *   E wifi: Should enable WiFi modem sleep when both WiFi and Bluetooth
+   *           are enabled!!!!!!
+   *   abort() was called at PC 0x420fd65f on core 0
+   *
+   * Die node liep daardoor in een herstartlus. Vandaar de voorwaarde: alleen op
+   * een build zonder BLE. simple_repeater heeft geen BLE en mag het wel. */
+#if !defined(BLE_PIN_CODE)
   WiFi.setSleep(false);
+#endif
 
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
       if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
@@ -216,8 +228,11 @@ void setup() {
           wifi_needs_reconnect = true;
       } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
           WIFI_DEBUG_PRINTLN("WiFi connected successfully! (rssi %d)", (int)WiFi.RSSI());
-          // Een herverbinding zet de energiestand terug op de standaard.
+          // Een herverbinding zet de energiestand terug op de standaard; enkel
+          // opnieuw uitzetten waar dat mag (zie de toelichting hierboven).
+#if !defined(BLE_PIN_CODE)
           WiFi.setSleep(false);
+#endif
           wifi_needs_reconnect = false;
       }
   });

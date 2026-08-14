@@ -1458,10 +1458,10 @@ index 2b14b8b..4e21dba 100644
 +void meshstats_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
 +void meshstats_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
 diff --git a/examples/companion_radio/main.cpp b/examples/companion_radio/main.cpp
-index 9202ebf..abfa67f 100644
+index 9202ebf..07497e8 100644
 --- a/examples/companion_radio/main.cpp
 +++ b/examples/companion_radio/main.cpp
-@@ -198,12 +198,26 @@ void setup() {
+@@ -198,12 +198,41 @@ void setup() {
    board.setInhibitSleep(true);   // prevent sleep when WiFi is active
    WiFi.setAutoReconnect(true);
  
@@ -1469,10 +1469,22 @@ index 9202ebf..abfa67f 100644
 +   * WiFi-radio staat los daarvan en valt standaard terug op WIFI_PS_MIN_MODEM.
 +   * Die slaapt tussen de bakens door, en dat kost hier twee dingen: antwoorden
 +   * van een paar honderd bytes die seconden onderweg zijn, en baken-timeouts die
-+   * de verbinding laten vallen. Een node die aan de netvoeding hangt en een
-+   * mesh, een webserver en Home Assistant moet bedienen, heeft daar niets aan.
-+   * (simple_repeater kwam op dezelfde conclusie uit.) */
++   * de verbinding laten vallen.
++   *
++   * Maar dit uitzetten mag NIET wanneer Bluetooth ook aan staat. WiFi en BLE
++   * delen op de ESP32 dezelfde radio, en de IDF eist modem-sleep om ze om de
++   * beurt aan bod te laten komen. Doe je het toch, dan is het geen slechtere
++   * doorvoer maar een harde stop:
++   *
++   *   E wifi: Should enable WiFi modem sleep when both WiFi and Bluetooth
++   *           are enabled!!!!!!
++   *   abort() was called at PC 0x420fd65f on core 0
++   *
++   * Die node liep daardoor in een herstartlus. Vandaar de voorwaarde: alleen op
++   * een build zonder BLE. simple_repeater heeft geen BLE en mag het wel. */
++#if !defined(BLE_PIN_CODE)
 +  WiFi.setSleep(false);
++#endif
 +
    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
        if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
@@ -1485,12 +1497,15 @@ index 9202ebf..abfa67f 100644
        } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
 -          WIFI_DEBUG_PRINTLN("WiFi connected successfully!");
 +          WIFI_DEBUG_PRINTLN("WiFi connected successfully! (rssi %d)", (int)WiFi.RSSI());
-+          // Een herverbinding zet de energiestand terug op de standaard.
++          // Een herverbinding zet de energiestand terug op de standaard; enkel
++          // opnieuw uitzetten waar dat mag (zie de toelichting hierboven).
++#if !defined(BLE_PIN_CODE)
 +          WiFi.setSleep(false);
++#endif
            wifi_needs_reconnect = false;
        }
    });
-@@ -211,7 +225,7 @@ void setup() {
+@@ -211,7 +240,7 @@ void setup() {
    WiFi.begin(WIFI_SSID, WIFI_PWD);
    wifi_interface.begin(TCP_PORT);
    interface_manager.addInterface(InterfaceType::WiFi, &wifi_interface);
@@ -1499,7 +1514,7 @@ index 9202ebf..abfa67f 100644
  #endif
  
  // add usb interface
-@@ -245,6 +259,15 @@ void setup() {
+@@ -245,6 +274,15 @@ void setup() {
    ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
  #endif
  
