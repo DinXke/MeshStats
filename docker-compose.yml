@@ -20,10 +20,33 @@ services:
       MCS_MQTT_USER: "${MCS_MQTT_USER:-meshstats}"
       MCS_MQTT_PASS: "${MCS_MQTT_PASS:-}"
       MCS_MQTT_TOPIC: "${MCS_MQTT_TOPIC:-meshcore/+/stats}"
+      MCS_MQTT_RX_TOPIC: "${MCS_MQTT_RX_TOPIC:-meshcore/+/rx}"
+      # Tijdreeksen: leeg laten om alles in SQLite te houden
+      MCS_TSDB_URL: "${MCS_TSDB_URL:-http://victoria:8428}"
     volumes:
       - meshstats-data:/data
     depends_on:
       - mosquitto
+      - victoria
+
+  # Tijdreeksdatabank voor de metingen. SQLite blijft de rest doen (repeaters,
+  # actuele waarden, contacten, pakketten, beheer); alleen de historiek gaat
+  # hierheen. De compressie van VictoriaMetrics zit rond een byte per meetpunt,
+  # waardoor volledige resolutie bewaren goedkoper is dan uitdunnen in SQLite.
+  victoria:
+    image: victoriametrics/victoria-metrics:v1.102.1
+    container_name: meshstats-tsdb
+    restart: unless-stopped
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-retentionPeriod=${MCS_TSDB_RETENTION:-180d}"
+      # Deze machine heeft 512 MB in totaal; zonder deze rem eist VictoriaMetrics
+      # een groot deel daarvan op en verdringt hij de site.
+      - "-memory.allowedPercent=25"
+      - "-search.maxQueryDuration=30s"
+      - "-httpListenAddr=:8428"
+    volumes:
+      - victoria-data:/victoria-metrics-data
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -42,3 +65,4 @@ volumes:
   meshstats-data:
   mosquitto-data:
   mosquitto-log:
+  victoria-data:
