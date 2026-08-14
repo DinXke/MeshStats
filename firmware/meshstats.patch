@@ -1531,7 +1531,7 @@ index 9202ebf..07497e8 100644
  }
  
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index c93ba1a..993687c 100644
+index c93ba1a..f6ee753 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,6 +1,10 @@
@@ -1592,7 +1592,7 @@ index c93ba1a..993687c 100644
 +    *snr_out = nb->snr;
 +    return true;
 +  }
- #endif
++#endif
 +  return false;
 +}
 +
@@ -1609,7 +1609,7 @@ index c93ba1a..993687c 100644
 +    StrHelper::strncpy(name_out, nb->name, name_max);
 +    return true;
 +  }
-+#endif
+ #endif
 +  return false;
 +}
 +
@@ -1791,16 +1791,32 @@ index c93ba1a..993687c 100644
  static bool isShare(const mesh::Packet *packet) {
    if (packet->hasTransportCodes()) {
      return packet->transport_codes[0] == 0 && packet->transport_codes[1] == 0;  // codes { 0, 0 } means 'send to nowhere'
-@@ -636,7 +841,7 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+@@ -632,11 +837,22 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+                           const uint8_t *app_data, size_t app_data_len) {
+   mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
+ 
++  AdvertDataParser parser(app_data, app_data_len);
++
++#ifdef MESHSTATS_NET
++  /* Every advert, whatever the type or hop count: this feeds the cache that
++   * makes names survive a restart. Copies only, no file access here. */
++  if (parser.isValid()) {
++    meshstats_on_advert(id.pub_key, parser.hasName() ? parser.getName() : NULL,
++                        parser.getType(), parser.hasLatLon(),
++                        parser.getIntLat(), parser.getIntLon());
++  }
++#endif
++
+   // if this a zero hop advert (and not via 'Share'), add it to neighbours
    if (packet->getPathHashCount() == 0 && !isShare(packet)) {
-     AdvertDataParser parser(app_data, app_data_len);
+-    AdvertDataParser parser(app_data, app_data_len);
      if (parser.isValid() && parser.getType() == ADV_TYPE_REPEATER) { // just keep neigbouring Repeaters
 -      putNeighbour(id, timestamp, packet->getSNR());
 +      putNeighbour(id, timestamp, packet->getSNR(), parser.hasName() ? parser.getName() : NULL);
      }
    }
  }
-@@ -644,6 +849,10 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+@@ -644,6 +860,10 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
  void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, const uint8_t *secret,
                              uint8_t *data, size_t len) {
    int i = matching_peer_indexes[sender_idx];
@@ -1811,7 +1827,7 @@ index c93ba1a..993687c 100644
    if (i < 0 || i >= acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
      MESH_DEBUG_PRINTLN("onPeerDataRecv: invalid peer idx: %d", i);
      return;
-@@ -749,6 +958,20 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t
+@@ -749,6 +969,20 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t
    // TODO: prevent replay attacks
    int i = matching_peer_indexes[sender_idx];
  
@@ -1832,7 +1848,7 @@ index c93ba1a..993687c 100644
    if (i >= 0 && i < acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
      MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t)path_len);
      auto client = acl.getClientByIdx(i);
-@@ -819,7 +1042,8 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
+@@ -819,7 +1053,8 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
      if (id.matches(self_id)) {
        return;
      }
@@ -1842,7 +1858,7 @@ index c93ba1a..993687c 100644
    }
  }
  
-@@ -866,6 +1090,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
+@@ -866,6 +1101,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
  #if MAX_NEIGHBOURS
    memset(neighbours, 0, sizeof(neighbours));
  #endif
@@ -1851,7 +1867,7 @@ index c93ba1a..993687c 100644
  
    // defaults
    _prefs.airtime_factor = 1.0;
-@@ -912,7 +1138,13 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
+@@ -912,7 +1149,13 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
    _prefs.rx_boosted_gain = 1; // enabled by default;
  #endif
  #endif
@@ -1866,7 +1882,7 @@ index c93ba1a..993687c 100644
  
    pending_discover_tag = 0;
    pending_discover_until = 0;
-@@ -1140,6 +1372,174 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
+@@ -1140,6 +1383,202 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
    }
  }
  
@@ -1906,23 +1922,58 @@ index c93ba1a..993687c 100644
 +   *
 +   * Only emitted when the chip really returns a figure -- an ESP32-C3 hands
 +   * back NAN, and an invented temperature is worse on a graph than a gap. */
-+  char temp_field[40];
-+  temp_field[0] = 0;
++  /* Optional fields, collected here so an unavailable reading is left out of
++   * the message entirely rather than sent as a zero. A gap in a graph is
++   * honest; a line diving to zero is a measurement that never happened, and
++   * costs someone an afternoon working out which. The tests below are about
++   * physics, not tidiness:
++   *   - a noise floor or an RSSI in dBm is always negative; 0 means the radio
++   *     driver never filled it in
++   *   - SNR of 0.0 dB is a perfectly real reading, so that one is only
++   *     suppressed when the node has received nothing at all to have an SNR of
++   *   - a board that reports no cell voltage has no percentage either
++   * Counters are deliberately NOT filtered: zero packets sent is a fact. */
++  char opt[240];
++  int o = 0;
++
++  int noise = (int)_radio->getNoiseFloor();
++  if (noise < 0) o += snprintf(opt + o, sizeof(opt) - o, ",\"noise_floor\":%d", noise);
++
++  int rssi = (int)radio_driver.getLastRSSI();
++  if (rssi < 0) o += snprintf(opt + o, sizeof(opt) - o, ",\"last_rssi\":%d", rssi);
++
++  if (radio_driver.getPacketsRecv() > 0) {
++    o += snprintf(opt + o, sizeof(opt) - o, ",\"last_snr\":%.2f", radio_driver.getLastSNR());
++  }
++  if (batt_pct >= 0) {
++    o += snprintf(opt + o, sizeof(opt) - o,
++                  ",\"bat\":%.3f,\"ch1_voltage\":%.3f,\"battery_percentage\":%d",
++                  batt_mv / 1000.0f, batt_mv / 1000.0f, batt_pct);
++  }
++
++  /* Chip temperature, published as mcu_temperature and deliberately NOT as
++   * ch1_temperature. They are not the same measurement and must never be
++   * merged again: this is the die of the ESP32 itself, which with WiFi running
++   * sits 20-30 degrees above its surroundings -- this node reported 51 C while
++   * it was about 25 C outside. Under a 'channel 1' name a reader takes that for
++   * an ambient reading and concludes the roof is on fire. ch1_temperature stays
++   * reserved for an actual sensor, if one is ever attached ('sensor get
++   * temperature' returns null on this node today).
++   *
++   * Only emitted when the chip really returns a figure -- an ESP32-C3 hands
++   * back NAN, and an invented temperature is worse on a graph than a gap. */
 +  float mcu_temp = board.getMCUTemperature();
 +  if (!isnan(mcu_temp)) {
-+    snprintf(temp_field, sizeof(temp_field), ",\"mcu_temperature\":%.2f", mcu_temp);
++    o += snprintf(opt + o, sizeof(opt) - o, ",\"mcu_temperature\":%.2f", mcu_temp);
 +  }
++  if (o < 0 || o >= (int)sizeof(opt)) return 0;
 +
 +  int n = snprintf(out, max_len,
 +    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\","
 +    "\"fw\":\"" FIRMWARE_VERSION "\",\"fw_meshstats\":\"%s\"},"
 +    "\"metrics\":{"
 +      "\"online\":true,"
-+      "\"bat\":%.3f,"
 +      "\"uptime\":%.5f,"
-+      "\"noise_floor\":%d,"
-+      "\"last_rssi\":%d,"
-+      "\"last_snr\":%.2f,"
 +      "\"airtime\":%.1f,"
 +      "\"rx_airtime\":%.1f,"
 +      "\"nb_recv\":%u,"
@@ -1936,8 +1987,6 @@ index c93ba1a..993687c 100644
 +      "\"flood_dups\":%u,"
 +      "\"tx_queue_len\":%u,"
 +      "\"err_events\":%u,"
-+      "\"ch1_voltage\":%.3f,"
-+      "\"battery_percentage\":%d,"
 +      "\"neighbor_count\":%d,"
 +      "\"freq\":%.4f,"
 +      "\"sf\":%u,"
@@ -1946,11 +1995,7 @@ index c93ba1a..993687c 100644
 +      "%s"
 +    "}",
 +    pub_hex, _prefs.node_name, ms_ver,
-+    board.getBattMilliVolts() / 1000.0f,
 +    uptime_secs / 86400.0,
-+    (int)_radio->getNoiseFloor(),
-+    (int)radio_driver.getLastRSSI(),
-+    radio_driver.getLastSNR(),
 +    tx_air / 60.0f,
 +    rx_air / 60.0f,
 +    (unsigned)radio_driver.getPacketsRecv(),
@@ -1963,10 +2008,9 @@ index c93ba1a..993687c 100644
 +    (unsigned)((SimpleMeshTables *)getTables())->getNumDirectDups(),
 +    (unsigned)((SimpleMeshTables *)getTables())->getNumFloodDups(),
 +    (unsigned)_mgr->getOutboundTotal(),
-+    (unsigned)_err_flags,
-+    batt_mv / 1000.0f, batt_pct, getNumNeighbours(),
++    (unsigned)_err_flags, getNumNeighbours(),
 +    _prefs.freq, (unsigned)_prefs.sf, (unsigned)_prefs.cr, (int)_prefs.tx_power_dbm,
-+    temp_field);
++    opt);
 +
 +  if (n <= 0 || (size_t)n >= max_len) return 0;
 +
@@ -2041,7 +2085,7 @@ index c93ba1a..993687c 100644
  void MyMesh::formatStatsReply(char *reply) {
    StatsFormatHelper::formatCoreStats(reply, board, *_ms, _err_flags, _mgr);
  }
-@@ -1215,6 +1615,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
+@@ -1215,6 +1654,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
      command += 3;
    }
  

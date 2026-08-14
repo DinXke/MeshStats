@@ -82,7 +82,7 @@
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
 #define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.4.0"
+#define MESHSTATS_VERSION  "1.5.0"
 
 class MyMesh;
 
@@ -102,6 +102,21 @@ void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len
  * status request. Same rule as above: copy only, interpret later. mon_idx is an
  * index into MyMesh's monitor table. */
 void meshstats_on_monitor_response(int mon_idx, const uint8_t *data, int len);
+
+/* Called for every advert this node hears. Keeps a small cache of who is out
+ * there -- key, name, type, when last heard, and coordinates when the advert
+ * carries them -- persisted to the file system so names survive a restart.
+ * Without it a reboot leaves the monitor list and the heard list showing bare
+ * hex keys until the next advert, and those can be hours apart.
+ *
+ * Copies into RAM only. The file is written lazily from msnet_loop(), never
+ * from here: adverts arrive in bursts on a busy mesh, and SPIFFS wears out. */
+void meshstats_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
+                         bool has_latlon, int32_t lat, int32_t lon);
+
+/* Name last heard for this public key, or NULL when we have never heard it.
+ * prefix_len is in bytes, so a partial key works. */
+const char *meshstats_advert_name(const uint8_t *pub_key, int prefix_len);
 
 /* Battery percentage from cell millivolts. Lives here so the admin page, the
  * power management and the published statistics all quote the same number;

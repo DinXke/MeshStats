@@ -1,5 +1,12 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.5.0  Adverts are cached on the file system (key, name, type, last heard,
+ *        coordinates), so node names survive a restart instead of showing bare
+ *        hex until the next advert hours later. Written lazily, like the ACL.
+ *        Also: a metric that is not actually available is now left out of the
+ *        payload rather than published as 0 -- JessaZH was reporting
+ *        noise_floor 0, which drew a line diving to zero on a graph where a
+ *        gap belonged.
  * 1.4.0  A monitored repeater is now read with three requests instead of one:
  *        status, telemetry (CayenneLPP -> ch<N>_temperature / ch<N>_voltage)
  *        and neighbours, published as one message with a "neighbors" array.
@@ -885,6 +892,140 @@ void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len
   _rx_head = next;
 }
 
+// -------------------------------------------------------------- advert cache
+
+/* Who is out there, kept across restarts. neighbours[] in MyMesh lives in RAM
+ * and starts empty after every flash, so without this the monitor list and the
+ * heard list show bare hex keys until each node happens to advertise again --
+ * which at an advert interval of hours is most of a day.
+ *
+ * Written lazily, following the same reasoning as the repeater's own ACL
+ * (dirty_contacts_expiry in MyMesh): a busy mesh delivers adverts in bursts,
+ * and writing each one would grind through SPIFFS erase cycles for data that
+ * changes by a name every few hours. So changes accumulate in RAM and go to
+ * disk at most once every ADV_WRITE_DELAY, and only when something actually
+ * differs from what is already stored. */
+#define MSADV_FILE        "/adverts.dat"
+#define MSADV_MAGIC       0x41565331UL    // "AVS1"
+#define ADV_CACHE_MAX     48
+#define ADV_NAME_MAX      24
+#define ADV_WRITE_DELAY   120000UL        // 2 minutes of quiet before writing
+
+struct AdvEntry {
+  uint8_t  key[PUB_KEY_SIZE];
+  char     name[ADV_NAME_MAX];
+  uint8_t  type;
+  uint32_t heard;                 // epoch seconds, 0 when the clock was unset
+  int32_t  lat, lon;              // 1e-6 degrees; 0,0 means 'not advertised'
+};
+
+static AdvEntry _adv[ADV_CACHE_MAX];
+static int _adv_count = 0;
+static unsigned long _adv_dirty_at = 0;   // 0 = nothing to write
+
+static int advFind(const uint8_t *key, int prefix_len) {
+  if (prefix_len <= 0 || prefix_len > PUB_KEY_SIZE) return -1;
+  for (int i = 0; i < _adv_count; i++) {
+    if (memcmp(_adv[i].key, key, prefix_len) == 0) return i;
+  }
+  return -1;
+}
+
+const char *meshstats_advert_name(const uint8_t *pub_key, int prefix_len) {
+  int i = advFind(pub_key, prefix_len);
+  return (i >= 0 && _adv[i].name[0]) ? _adv[i].name : NULL;
+}
+
+static void advLoad() {
+  _adv_count = 0;
+  if (!_fs) return;
+  File f = _fs->open(MSADV_FILE, "r");
+  if (!f) return;
+
+  uint32_t magic = 0;
+  uint16_t entry_size = 0, count = 0;
+  /* The entry size is part of the header because these are raw structs: add a
+   * field one day and an old file would read back as garbage names and
+   * nonsense timestamps. A mismatch just starts the cache empty. */
+  if (f.read((uint8_t *)&magic, 4) == 4 && magic == MSADV_MAGIC &&
+      f.read((uint8_t *)&entry_size, 2) == 2 && entry_size == (uint16_t)sizeof(AdvEntry) &&
+      f.read((uint8_t *)&count, 2) == 2) {
+    if (count > ADV_CACHE_MAX) count = ADV_CACHE_MAX;
+    for (uint16_t i = 0; i < count; i++) {
+      if (f.read((uint8_t *)&_adv[_adv_count], sizeof(AdvEntry)) != (int)sizeof(AdvEntry)) break;
+      _adv[_adv_count].name[ADV_NAME_MAX - 1] = 0;   // never trust a stored string
+      _adv_count++;
+    }
+  }
+  f.close();
+  Serial.printf("MeshStatsNet: %d adverts geladen\n", _adv_count);
+}
+
+static void advSave() {
+  if (!_fs) return;
+  File f = _fs->open(MSADV_FILE, "w");
+  if (!f) return;
+  uint32_t magic = MSADV_MAGIC;
+  uint16_t entry_size = (uint16_t)sizeof(AdvEntry);
+  uint16_t count = (uint16_t)_adv_count;
+  f.write((const uint8_t *)&magic, 4);
+  f.write((const uint8_t *)&entry_size, 2);
+  f.write((const uint8_t *)&count, 2);
+  for (int i = 0; i < _adv_count; i++) {
+    f.write((const uint8_t *)&_adv[i], sizeof(AdvEntry));
+  }
+  f.close();
+  _adv_dirty_at = 0;
+}
+
+void meshstats_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
+                         bool has_latlon, int32_t lat, int32_t lon) {
+  if (!_started || _disabled) return;
+
+  uint32_t now = 0;
+  if (_mesh) {
+    uint8_t h;
+    // Only trust the clock if it looks set; a bogus 'heard' would evict wrongly.
+    if (_mesh->getClockHour(&h)) now = _mesh->getRTCClock()->getCurrentTime();
+  }
+
+  int i = advFind(pub_key, PUB_KEY_SIZE);
+  if (i < 0) {
+    if (_adv_count < ADV_CACHE_MAX) {
+      i = _adv_count++;
+    } else {
+      /* Full: drop whoever we heard longest ago. This runs on a node with a
+       * few hundred kB of flash, not a server. */
+      i = 0;
+      for (int j = 1; j < _adv_count; j++) {
+        if (_adv[j].heard < _adv[i].heard) i = j;
+      }
+    }
+    memset(&_adv[i], 0, sizeof(AdvEntry));
+    memcpy(_adv[i].key, pub_key, PUB_KEY_SIZE);
+    _adv_dirty_at = millis() + ADV_WRITE_DELAY;
+  }
+
+  AdvEntry &e = _adv[i];
+  e.heard = now;
+  if (e.type != type) { e.type = type; _adv_dirty_at = millis() + ADV_WRITE_DELAY; }
+
+  // A name straight off the air always wins over a stored one.
+  if (name && *name && strncmp(e.name, name, ADV_NAME_MAX - 1) != 0) {
+    strncpy(e.name, name, ADV_NAME_MAX - 1);
+    e.name[ADV_NAME_MAX - 1] = 0;
+    _adv_dirty_at = millis() + ADV_WRITE_DELAY;
+  }
+  if (has_latlon && (e.lat != lat || e.lon != lon)) {
+    e.lat = lat;
+    e.lon = lon;
+    _adv_dirty_at = millis() + ADV_WRITE_DELAY;
+  }
+  /* Deliberately no write here, and 'heard' alone never schedules one: the
+   * timestamp changes on every advert, and chasing it would defeat the whole
+   * point of writing lazily. It rides along with the next real change. */
+}
+
 // ------------------------------------------------------ monitored repeaters
 
 /* Polling other repeaters over the mesh. Per peer the sequence is the one a
@@ -964,6 +1105,7 @@ static uint8_t _mon_retry = 0;      // one flood retry per step, then give up
  * whatever we have. */
 static RepeaterStats _mon_st;
 static bool _mon_have_st = false;
+static int  _mon_st_len = 0;        // bytes of RepeaterStats that actually arrived
 static uint8_t _mon_nbr[176];       // raw neighbours reply, decoded when publishing
 static int  _mon_nbr_len = 0;
 static bool _mon_have_nbr = false;
@@ -1152,11 +1294,23 @@ static bool resolveMonitors() {
 
     uint8_t full[PUB_KEY_SIZE];
     char nm[MON_NAME_MAX];
-    if (!_mesh->findNeighbourByPrefix(prefix, plen, full, nm, sizeof(nm))) continue;
+    nm[0] = 0;
 
-    if (hex_len < 64) {
-      mesh::Utils::toHex(_mon[i].key, full, PUB_KEY_SIZE);
-      changed = true;
+    if (_mesh->findNeighbourByPrefix(prefix, plen, full, nm, sizeof(nm))) {
+      if (hex_len < 64) {
+        mesh::Utils::toHex(_mon[i].key, full, PUB_KEY_SIZE);
+        hex_len = 64;
+        changed = true;
+      }
+    }
+    /* Fall back to the stored adverts, which is what makes a name reappear
+     * after a restart instead of waiting hours for the next advert. */
+    if (nm[0] == 0) {
+      const char *cached = meshstats_advert_name(prefix, plen);
+      if (cached) {
+        strncpy(nm, cached, sizeof(nm) - 1);
+        nm[sizeof(nm) - 1] = 0;
+      }
     }
     if (nm[0] && strcmp(_mon[i].name, nm) != 0) {
       strncpy(_mon[i].name, nm, sizeof(_mon[i].name) - 1);
@@ -1194,6 +1348,7 @@ void meshstats_on_monitor_response(int mon_idx, const uint8_t *data, int len) {
 static void monResetResults() {
   memset(&_mon_st, 0, sizeof(_mon_st));
   _mon_have_st = false;
+  _mon_st_len = 0;
   _mon_have_nbr = false;
   _mon_nbr_len = 0;
   _mon_tl_n = 0;
@@ -1254,24 +1409,59 @@ static bool publishMonitorRound(MonEntry &m) {
 
   if (_mon_have_st) {
     const RepeaterStats &st = _mon_st;
-    /* battery_percentage is derived here rather than asked for: it is the same
-     * cell voltage through the same shared curve the rest of this firmware
-     * uses, so it costs no extra packet. */
-    int pct = meshstats_batt_percent(st.batt_milli_volts);
+
+    /* Two separate reasons a field may be missing, and both must leave it out
+     * rather than send a zero:
+     *   ST_HAS  -- an older firmware sent a shorter struct, so those bytes
+     *              never arrived and our zeroed copy reads 0
+     *   physics -- the bytes arrived but the far side never filled them in. A
+     *              noise floor or an RSSI in dBm cannot be >= 0; JessaZH
+     *              reports noise_floor 0, which means 'my driver does not
+     *              measure this', not 'the band is silent'.
+     * Counters stay unfiltered: zero packets sent is a fact, not a gap. */
+    #define ST_HAS(f) ((int)(offsetof(RepeaterStats, f) + sizeof(st.f)) <= _mon_st_len)
+
     p += snprintf(body + p, sizeof(body) - p,
-      ",\"bat\":%.3f,\"uptime\":%.5f,\"noise_floor\":%d,\"last_rssi\":%d,\"last_snr\":%.2f,"
-      "\"airtime\":%.1f,\"rx_airtime\":%.1f,\"nb_recv\":%u,\"nb_sent\":%u,"
-      "\"sent_flood\":%u,\"sent_direct\":%u,\"recv_flood\":%u,\"recv_direct\":%u,"
-      "\"recv_errors\":%u,\"direct_dups\":%u,\"flood_dups\":%u,\"tx_queue_len\":%u,"
-      "\"err_events\":%u,\"battery_percentage\":%d",
-      st.batt_milli_volts / 1000.0f, st.total_up_time_secs / 86400.0,
-      (int)st.noise_floor, (int)st.last_rssi, st.last_snr / 4.0f,
+      ",\"uptime\":%.5f,\"airtime\":%.1f,\"rx_airtime\":%.1f,"
+      "\"nb_recv\":%u,\"nb_sent\":%u,\"sent_flood\":%u,\"sent_direct\":%u,"
+      "\"recv_flood\":%u,\"recv_direct\":%u,\"tx_queue_len\":%u",
+      st.total_up_time_secs / 86400.0,
       st.total_air_time_secs / 60.0f, st.total_rx_air_time_secs / 60.0f,
       (unsigned)st.n_packets_recv, (unsigned)st.n_packets_sent,
       (unsigned)st.n_sent_flood, (unsigned)st.n_sent_direct,
       (unsigned)st.n_recv_flood, (unsigned)st.n_recv_direct,
-      (unsigned)st.n_recv_errors, (unsigned)st.n_direct_dups, (unsigned)st.n_flood_dups,
-      (unsigned)st.curr_tx_queue_len, (unsigned)st.err_events, pct);
+      (unsigned)st.curr_tx_queue_len);
+
+    if (ST_HAS(noise_floor) && st.noise_floor < 0) {
+      p += snprintf(body + p, sizeof(body) - p, ",\"noise_floor\":%d", (int)st.noise_floor);
+    }
+    if (ST_HAS(last_rssi) && st.last_rssi < 0) {
+      p += snprintf(body + p, sizeof(body) - p, ",\"last_rssi\":%d", (int)st.last_rssi);
+    }
+    // SNR of 0.0 dB is a real reading; only a node that heard nothing has none.
+    if (ST_HAS(last_snr) && st.n_packets_recv > 0) {
+      p += snprintf(body + p, sizeof(body) - p, ",\"last_snr\":%.2f", st.last_snr / 4.0f);
+    }
+    if (ST_HAS(err_events)) {
+      p += snprintf(body + p, sizeof(body) - p, ",\"err_events\":%u", (unsigned)st.err_events);
+    }
+    if (ST_HAS(n_flood_dups)) {
+      p += snprintf(body + p, sizeof(body) - p, ",\"direct_dups\":%u,\"flood_dups\":%u",
+                    (unsigned)st.n_direct_dups, (unsigned)st.n_flood_dups);
+    }
+    if (ST_HAS(n_recv_errors)) {
+      p += snprintf(body + p, sizeof(body) - p, ",\"recv_errors\":%u",
+                    (unsigned)st.n_recv_errors);
+    }
+    /* battery_percentage is derived rather than asked for: the same cell
+     * voltage through the same shared curve, so it costs no extra packet. A
+     * board reporting no usable voltage gets neither field. */
+    int pct = meshstats_batt_percent(st.batt_milli_volts);
+    if (pct >= 0) {
+      p += snprintf(body + p, sizeof(body) - p, ",\"bat\":%.3f,\"battery_percentage\":%d",
+                    st.batt_milli_volts / 1000.0f, pct);
+    }
+    #undef ST_HAS
   }
 
   /* Under the channel the source itself used. On a MeshCore repeater channel 1
@@ -1550,6 +1740,7 @@ static void monitorLoop() {
         if (n >= 20) {
           if (n > (int)sizeof(_mon_st)) n = sizeof(_mon_st);
           memcpy(&_mon_st, &_mon_reply[4], n);   // older firmware sends fewer fields
+          _mon_st_len = n;                       // ... which is why we remember how many
           _mon_have_st = true;
         }
         monTrace("status len=%d ok", _mon_reply_len);
@@ -1859,7 +2050,7 @@ static const char PAGE[] PROGMEM =
   "setperm <jouw-sleutel> 1 (1=alleen lezen, 2=lezen/schrijven, 3=beheerder). Netter dan "
   "wachtwoorden rondsturen. Een geweigerde login is niet te onderscheiden van een "
   "onbereikbare node: beide zwijgen.',"
-  "m_none:'nog niets',m_heardnone:'nog geen repeaters gehoord',"
+  "m_none:'nog niets',m_heardnone:'nog geen repeaters gehoord',h_stored:'uit bewaarde adverts',"
   "st_unres:'wacht op advert',st_never:'nog niet geprobeerd',st_ok:'login gelukt',"
   "st_noans:'geen antwoord (geweigerd of onbereikbaar)',"
   "ph_pw:'leeg = via access list',u_ago:'geleden',u_never:'nooit',"
@@ -1921,7 +2112,7 @@ static const char PAGE[] PROGMEM =
   "operator adds your key once with setperm <your-key> 1 (1=read-only, 2=read/write, "
   "3=admin). Tidier than passing passwords around. A refused login cannot be told from an "
   "unreachable node: both stay silent.',"
-  "m_none:'nothing yet',m_heardnone:'no repeaters heard yet',"
+  "m_none:'nothing yet',m_heardnone:'no repeaters heard yet',h_stored:'from stored adverts',"
   "st_unres:'waiting for advert',st_never:'not tried yet',st_ok:'login succeeded',"
   "st_noans:'no answer (refused or unreachable)',"
   "ph_pw:'empty = via access list',u_ago:'ago',u_never:'never',"
@@ -1986,7 +2177,8 @@ static const char PAGE[] PROGMEM =
   "var q=$('#fl').value,h='',i;"
   "for(i=0;i<d.heard.length;i++){var x=d.heard[i];if(!hit(x,q))continue;"
   "h+='<tr><td>'+esc(x.n||'-')+'<br><small>'+x.k.substr(0,12)+'</small></td>'"
-  "+'<td>'+x.snr.toFixed(1)+' dB<br><small>'+ago(x.age,t)+'</small></td>'"
+  "+'<td>'+(x.snr==null?'<span class=muted>'+t.h_stored+'</span>':x.snr.toFixed(1)+' dB')"
+  "+'<br><small>'+ago(x.age,t)+'</small></td>'"
   "+'<td class=act><button class=\"mini ha\" data-k=\"'+x.k+'\" data-n=\"'+esc(x.n||'')+'\">+</button></td></tr>'}"
   "$('#hl').innerHTML=h||'<tr><td>'+t.m_heardnone+'</td></tr>';"
   "h='';"
@@ -2189,10 +2381,51 @@ static void handleMonJson(AsyncWebServerRequest *req) {
     int8_t snr4;
     if (!_mesh->getNeighbourAt(i, hex, name, sizeof(name), &secs_ago, &snr4)) continue;
 
+    // Names in neighbours[] are lost on restart; the advert cache is not.
+    if (name[0] == 0) {
+      uint8_t key[PUB_KEY_SIZE];
+      if (mesh::Utils::fromHex(key, PUB_KEY_SIZE, hex)) {
+        const char *cached = meshstats_advert_name(key, PUB_KEY_SIZE);
+        if (cached) {
+          strncpy(name, cached, sizeof(name) - 1);
+          name[sizeof(name) - 1] = 0;
+        }
+      }
+    }
     jsonEsc(esc, sizeof(esc), name);
     p += snprintf(body + p, sizeof(body) - p,
                   "%s{\"k\":\"%s\",\"n\":\"%s\",\"snr\":%.2f,\"age\":%u}",
                   written ? "," : "", hex, esc, snr4 / 4.0f, (unsigned)secs_ago);
+    written++;
+  }
+
+  /* Then the repeaters we only know from stored adverts. After a restart
+   * neighbours[] is empty, so without these the list a user picks from would
+   * be blank until every node happens to advertise again. They carry no SNR --
+   * we have not heard them this run, and inventing one would be a lie about
+   * whether they are reachable right now. */
+  uint32_t now = 0;
+  {
+    uint8_t h;
+    if (_mesh && _mesh->getClockHour(&h)) now = _mesh->getRTCClock()->getCurrentTime();
+  }
+  for (int i = 0; i < _adv_count && p < (int)sizeof(body) - 200; i++) {
+    if (_adv[i].type != ADV_TYPE_REPEATER) continue;
+
+    uint8_t full[PUB_KEY_SIZE];
+    char nm[MON_NAME_MAX];
+    if (_mesh && _mesh->findNeighbourByPrefix(_adv[i].key, PUB_KEY_SIZE, full, nm, sizeof(nm))) {
+      continue;                      // already listed above, with a live SNR
+    }
+    char hex[PUB_KEY_SIZE * 2 + 1];
+    mesh::Utils::toHex(hex, _adv[i].key, PUB_KEY_SIZE);
+    jsonEsc(esc, sizeof(esc), _adv[i].name);
+
+    long age = (now && _adv[i].heard && now > _adv[i].heard)
+               ? (long)(now - _adv[i].heard) : -1;
+    p += snprintf(body + p, sizeof(body) - p,
+                  "%s{\"k\":\"%s\",\"n\":\"%s\",\"age\":%ld,\"cached\":1}",
+                  written ? "," : "", hex, esc, age);
     written++;
   }
 
@@ -2904,6 +3137,7 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   }
 
   loadConfig();
+  advLoad();          // before the monitors: they borrow names from it
   loadMonitors();
   syncMonitorsToMesh();
 
@@ -2993,6 +3227,9 @@ void msnet_loop() {
 
   // After a restore, wait a moment so the response still reaches the browser.
   if (_reboot_pending && millis() > _reboot_at) ESP.restart();
+
+  // Advert cache: one write once the burst has settled, not one per advert.
+  if (_adv_dirty_at != 0 && passed(_adv_dirty_at)) advSave();
 
   if (_apply_wifi) {
     _apply_wifi = false;
