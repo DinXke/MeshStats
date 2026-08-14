@@ -85,12 +85,13 @@ index 649a9ce..dd44ce5 100644
    void handleCmdFrame(size_t len);
    bool advert();
 diff --git a/examples/companion_radio/StatsPublisher.cpp b/examples/companion_radio/StatsPublisher.cpp
-index 87097fb..ec882bb 100644
+index 87097fb..f5815bf 100644
 --- a/examples/companion_radio/StatsPublisher.cpp
 +++ b/examples/companion_radio/StatsPublisher.cpp
-@@ -1,8 +1,90 @@
+@@ -1,8 +1,114 @@
  #include "StatsPublisher.h"
  #include "MyMesh.h"
++#include "StatsPage.h"    // gegenereerd uit page.html door gen_page.py
  #include <WiFi.h>
 -#include <HTTPClient.h>
 -#include <WiFiClientSecure.h>
@@ -121,6 +122,29 @@ index 87097fb..ec882bb 100644
 + * MQTT-payload met statistieken en de hex-gecodeerde ruwe pakketten delen hem.
 + * Zie STATS_IO_BUF in de header voor waarom dat veilig is en wat het scheelt. */
 +static char io_buf[STATS_IO_BUF];
++
++/* TIJDELIJK - diagnostiek voor het vastlopen van grotere antwoorden.
++ *
++ * WiFiClient::write() stuurt met MSG_DONTWAIT en geeft het na tien pogingen op;
++ * de webserver kijkt niet naar hoeveel er echt geschreven is. Lukt het niet in
++ * een keer, dan staat er wel een Content-Length in de kop maar volgt de rest
++ * nooit - en dan blijft de client precies zo hangen als we zien. Elke poging
++ * wacht bovendien tot een seconde in select(), dus zo'n gedeeltelijke schrijving
++ * houdt meteen ook de hoofdlus (en dus de mesh) tien seconden op.
++ *
++ * Deze regels tonen per verzoek de vrije heap en de lengte, en hoe lang de
++ * schrijfactie duurde. Zet STATS_TRACE op 0 zodra de oorzaak vastligt. */
++#define STATS_TRACE 1
++#if STATS_TRACE
++  #define TRACE(...)  Serial.printf(__VA_ARGS__)
++  // Eerste regel van elke handler. Ontbreekt hij, dan is het verzoek nooit bij
++  // ons aangekomen (verbinding weg) in plaats van dat de handler bleef hangen.
++  #define TRACE_ENTER() TRACE("[stats] %s binnen heap=%u\n", \
++                              _server.uri().c_str(), (unsigned)ESP.getFreeHeap())
++#else
++  #define TRACE(...)
++  #define TRACE_ENTER()
++#endif
 +
 +// ------------------------------------------------------------------ hulpjes
 +
@@ -181,7 +205,7 @@ index 87097fb..ec882bb 100644
  
  // ---------------------------------------------------------------- config i/o
  
-@@ -11,99 +93,289 @@ void StatsPublisher::loadConfig() {
+@@ -11,211 +117,765 @@ void StatsPublisher::loadConfig() {
    File f = _fs->open(STATS_CFG_FILE, "r");
    if (!f) return;
  
@@ -213,9 +237,7 @@ index 87097fb..ec882bb 100644
 +    if (i < 0) return fallback;
 +    return s.substring(i + pat.length()).toInt();
 +  };
- 
--  int i = s.indexOf("\"interval\":");
--  if (i >= 0) _cfg.interval_secs = (uint32_t)s.substring(i + 11).toInt();
++
 +  grab("host", _cfg.host, STATS_HOST_MAX);
 +  grab("user", _cfg.user, STATS_USER_MAX);
 +  grab("pass", _cfg.pass, STATS_PASS_MAX);
@@ -224,7 +246,9 @@ index 87097fb..ec882bb 100644
 +
 +  _cfg.port = (uint16_t)num("port", 1883);
 +  if (_cfg.port == 0) _cfg.port = 1883;
-+
+ 
+-  int i = s.indexOf("\"interval\":");
+-  if (i >= 0) _cfg.interval_secs = (uint32_t)s.substring(i + 11).toInt();
 +  _cfg.interval_secs = (uint32_t)num("interval", 300);
    if (_cfg.interval_secs < 30) _cfg.interval_secs = 30;
  
@@ -411,13 +435,13 @@ index 87097fb..ec882bb 100644
    }
 +  return ok;
 +}
- 
++
 +bool StatsPublisher::publishStats() {
 +  if (!_mesh || !ensureConnected()) return false;
 +
 +  size_t n = _mesh->fillStatsJson(io_buf, sizeof(io_buf));
 +  if (n == 0) return false;
-+
+ 
 +  char topic[96];
 +  topicFor("stats", topic, sizeof(topic));
 +
@@ -434,6 +458,26 @@ index 87097fb..ec882bb 100644
  }
  
 -// ---------------------------------------------------------------- web server
+-
+-static const char PAGE_HEAD[] PROGMEM =
+-  "<!doctype html><html lang=nl><head><meta charset=utf-8>"
+-  "<meta name=viewport content='width=device-width,initial-scale=1'>"
+-  "<title>MeshCore node</title><style>"
+-  "body{margin:0;background:#0b0f14;color:#d7e2ea;font:15px/1.5 system-ui,sans-serif}"
+-  "main{max-width:640px;margin:0 auto;padding:1rem 1.2rem 3rem}"
+-  "h1{font-size:1.4rem;margin:1rem 0 .3rem}"
+-  "h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.18em;color:#35e08c;margin:1.8rem 0 .6rem}"
+-  ".card{background:#121a23;border:1px solid #1e2b3a;border-radius:10px;padding:1rem}"
+-  "label{display:block;margin-bottom:.8rem}"
+-  "input{width:100%;margin-top:.25rem;padding:.45rem .7rem;border-radius:7px;"
+-  "border:1px solid #1e2b3a;background:#10161e;color:#d7e2ea;box-sizing:border-box}"
+-  "button{padding:.45rem .9rem;border:none;border-radius:7px;background:#1d7a4f;color:#eafff4;cursor:pointer}"
+-  "button:hover{background:#35e08c;color:#06130c}"
+-  "table{width:100%;border-collapse:collapse}"
+-  "td{padding:.35rem .5rem;border-bottom:1px solid #1e2b3a;font-family:ui-monospace,monospace;font-size:.9rem}"
+-  "td:first-child{color:#7d8fa0}"
+-  ".muted{color:#7d8fa0;font-size:.85rem}"
+-  "</style></head><body><main>";
 +void StatsPublisher::queueRawPacket(float snr, float rssi, const uint8_t raw[], int len) {
 +  if (!_started || !_cfg.enabled || !_cfg.forward_rx) return;
 +  if (len <= 0 || len > STATS_RX_MAX_LEN) return;
@@ -443,8 +487,7 @@ index 87097fb..ec882bb 100644
 +    _drop_count++;
 +    return;
 +  }
- 
--static const char PAGE_HEAD[] PROGMEM =
++
 +  RxItem& it = _rx_queue[_rx_head];
 +  it.ms = millis();
 +  it.snr4 = (int16_t)(snr * 4);
@@ -509,186 +552,47 @@ index 87097fb..ec882bb 100644
 +
 +// ---------------------------------------------------------------- webserver
 +
-+/* De pagina wordt in een keer verstuurd en haalt zijn gegevens daarna via JSON
-+ * op.
++/* De pagina zit niet meer als string in dit bestand: ze staat in page.html en
++ * wordt door gen_page.py gzip-gecomprimeerd tot StatsPage.h. Dat blijft precies
++ * hetzelfde principe als voorheen - een onveranderlijk blok dat in een enkele
++ * schrijfactie de deur uit gaat, met alle gegevens via JSON-endpoints - maar dan
++ * klein genoeg om ook echt in een keer te passen. Wie de pagina wil aanpassen
++ * bewerkt page.html en draait het script; nooit StatsPage.h met de hand.
 + *
-+ * Een eerdere versie bouwde de HTML in stukjes op met de actuele waarden er al
-+ * in. Elk stukje is een aparte blokkerende schrijfactie, en met de
-+ * latentiepieken van ESP32-wifi bleef de hoofdlus daarin hangen - waarmee ook
-+ * de mesh stilviel, tot een harde reset. Een enkele send_P van een
-+ * onveranderlijke PROGMEM-string kan dat niet. Breid bij nieuwe UI deze string
-+ * uit en zet er een endpoint bij; herintroduceer sendContent() niet. */
-+static const char PAGE[] PROGMEM =
-   "<!doctype html><html lang=nl><head><meta charset=utf-8>"
-   "<meta name=viewport content='width=device-width,initial-scale=1'>"
-   "<title>MeshCore node</title><style>"
-@@ -113,7 +385,7 @@ static const char PAGE_HEAD[] PROGMEM =
-   "h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.18em;color:#35e08c;margin:1.8rem 0 .6rem}"
-   ".card{background:#121a23;border:1px solid #1e2b3a;border-radius:10px;padding:1rem}"
-   "label{display:block;margin-bottom:.8rem}"
--  "input{width:100%;margin-top:.25rem;padding:.45rem .7rem;border-radius:7px;"
-+  "input,select{width:100%;margin-top:.25rem;padding:.45rem .7rem;border-radius:7px;"
-   "border:1px solid #1e2b3a;background:#10161e;color:#d7e2ea;box-sizing:border-box}"
-   "button{padding:.45rem .9rem;border:none;border-radius:7px;background:#1d7a4f;color:#eafff4;cursor:pointer}"
-   "button:hover{background:#35e08c;color:#06130c}"
-@@ -121,101 +393,585 @@ static const char PAGE_HEAD[] PROGMEM =
-   "td{padding:.35rem .5rem;border-bottom:1px solid #1e2b3a;font-family:ui-monospace,monospace;font-size:.9rem}"
-   "td:first-child{color:#7d8fa0}"
-   ".muted{color:#7d8fa0;font-size:.85rem}"
--  "</style></head><body><main>";
-+  ".row{display:flex;gap:.6rem}.row label{flex:1}"
-+  ".ck{width:auto;margin-right:.4rem}"
-+  "nav{display:flex;gap:.4rem;margin:1.2rem 0 0;flex-wrap:wrap}"
-+  "nav button{background:#121a23;color:#7d8fa0;border:1px solid #1e2b3a}"
-+  "nav button.on{background:#1d7a4f;color:#eafff4;border-color:#1d7a4f}"
-+  "#note{min-height:1.2rem}"
-+  ".msgs{max-height:17rem;overflow-y:auto;margin-bottom:.9rem}"
-+  ".m{padding:.35rem .55rem;border-radius:7px;margin-bottom:.35rem;background:#10161e;"
-+  "white-space:pre-wrap;word-break:break-word;font-size:.92rem}"
-+  ".mh{display:block;font-size:.72rem;color:#7d8fa0}"
-+  ".k0{border-left:3px solid #35e08c}.k1{border-left:3px solid #4fa8ff}"
-+  ".k2{border-left:3px solid #7d8fa0;opacity:.7}"
-+  ".ct{padding:.55rem 0;border-bottom:1px solid #1e2b3a}"
-+  ".ct .row{margin-top:.4rem;flex-wrap:wrap;align-items:center}"
-+  ".ct input[type=password]{width:9rem;margin-top:0}"
-+  ".inl{display:flex;align-items:center;margin:0;font-size:.85rem;white-space:nowrap}"
-+  ".inl input{width:auto;margin:0 .35rem 0 0}"
-+  "</style></head><body><main>"
-+  "<h1 id=nm>&#128225; MeshCore node</h1><p class=muted id=sub>laden...</p>"
-+  "<nav id=nav><button data-t=1 class=on>Berichten</button><button data-t=2>Kanalen</button>"
-+  "<button data-t=3>Contacten</button><button data-t=4>Instellingen</button></nav>"
-+  "<p class=muted id=note></p>"
++ * Nooit gegevens in de HTML bakken, nooit meer dan een schrijfactie. */
 +
-+  "<section id=s1><h2>Berichten</h2><div class=card>"
-+  "<div id=ml class=msgs data-empty=1>laden...</div>"
-+  "<form id=sf><label>Bestemming<select id=to></select></label>"
-+  "<div class=row><input id=stx placeholder='Typ een bericht' maxlength=150 autocomplete=off>"
-+  "<button type=submit>Verstuur</button></div></form></div></section>"
++/* Sluit af na een antwoord dat er niet helemaal uit is gekomen.
++ *
++ * De kop belooft een Content-Length; haalt de schrijfactie die niet, dan blijft
++ * de client wachten op een rest die nooit komt. Eeuwig wachten is de slechtste
++ * afloop, dus dan verbreken we de verbinding: de browser krijgt meteen een
++ * duidelijke fout in plaats van een tijdslimiet van een minuut. De seriële regel
++ * maakt zichtbaar wat het framework stil laat passeren.
++ *
++ * Let op wat dit wel en niet bewijst. De teller telt de bytes die
++ * WiFiClient::write() heeft aangenomen, en dat is de verzendbuffer van lwip -
++ * niet de client. Valt de WiFi weg nadat lwip de bytes heeft overgenomen, dan
++ * gooit de stack ze alsnog weg en krijgt de client niets, terwijl het hier
++ * "volledig verstuurd" heet. Geen ONVOLLEDIG betekent dus: het is de stack in
++ * gegaan, niet: het is aangekomen. */
++void StatsPublisher::finishResponse(unsigned long t0, size_t len) {
++  if (_server.shortWrite()) {
++    TRACE(" ONVOLLEDIG %u/%u na %lums heap=%u\n", (unsigned)_server.written(),
++          (unsigned)len, millis() - t0, (unsigned)ESP.getFreeHeap());
++    _server.client().stop();
++  } else {
++    TRACE(" -> %lums heap=%u\n", millis() - t0, (unsigned)ESP.getFreeHeap());
++  }
++}
 +
-+  "<section id=s2 hidden><h2>Kanalen</h2><div class=card>"
-+  "<table id=cl></table>"
-+  "<form id=cf style='margin-top:1rem'>"
-+  "<div class=row><label>Naam<input id=cn maxlength=31 required></label>"
-+  "<label>PSK (base64)<input id=cp placeholder='leeg = nieuw kanaal'></label></div>"
-+  "<button type=submit>Kanaal toevoegen</button></form>"
-+  "<p class=muted>Laat de PSK leeg om een nieuw kanaal met een willekeurige sleutel aan te maken. "
-+  "Vul een bestaande PSK in om aan een kanaal deel te nemen.</p></div></section>"
-+
-+  "<section id=s3 hidden><h2>Contacten</h2><div class=card>"
-+  "<div id=kl>laden...</div>"
-+  "<button type=button id=more style='margin-top:.8rem' hidden>Meer laden</button></div></section>"
-+
-+  "<section id=s4 hidden>"
-+  "<h2>Doorsturen via MQTT</h2><div class=card><form id=f>"
-+  "<div class=row><label>Broker<input name=host placeholder='10.0.0.5'></label>"
-+  "<label style='max-width:7rem'>Poort<input name=port type=number min=1 max=65535></label></div>"
-+  "<div class=row><label>Gebruiker<input name=user></label>"
-+  "<label>Wachtwoord<input name=pass type=password placeholder='ongewijzigd'></label></div>"
-+  "<div class=row><label>Topicprefix<input name=prefix></label>"
-+  "<label style='max-width:9rem'>Interval (s)<input name=interval type=number min=30 max=86400></label></div>"
-+  "<label><input class=ck type=checkbox name=enabled>Doorsturen ingeschakeld</label>"
-+  "<label><input class=ck type=checkbox name=forward_rx>Ook elk ontvangen pakket doorsturen</label>"
-+  "<button type=submit>Opslaan</button> <button type=button id=tst>Nu versturen</button>"
-+  "</form><table id=st></table></div>"
-+  "<h2>Live statistieken</h2><div class=card><table id=mt><tr><td>laden...</td></tr></table></div>"
-+  "</section>"
-+
-+  "<script>"
-+  "var $=function(s){return document.querySelector(s)};"
-+  "var TY={0:'onbekend',1:'chat',2:'repeater',3:'room',4:'sensor'};"
-+  "var tabn=1,seq=0,off=0,pick=null;"
-+  "function j(r){return r.json()}"
-+  "function esc(s){return String(s).replace(/[&<>\"]/g,function(c){"
-+  "return{'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]})}"
-+  "function post(u,d){return fetch(u,{method:'POST',body:new URLSearchParams(d)}).then(j)}"
-+  "function note(t){$('#note').textContent=t||''}"
-+  "function rows(o){var h='';for(var k in o){h+='<tr><td>'+k+'</td><td>'+esc(o[k])+'</td></tr>'}return h}"
-+  "function tm(t){if(!t)return'--:--';var d=new Date(t*1000);"
-+  "return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}"
-+  "function ago(a){if(a<0)return'nooit gehoord';if(a<60)return a+'s geleden';"
-+  "if(a<3600)return Math.floor(a/60)+'m geleden';if(a<86400)return Math.floor(a/3600)+'u geleden';"
-+  "return Math.floor(a/86400)+'d geleden'}"
-+  "function tab(n){tabn=n;for(var i=1;i<5;i++)$('#s'+i).hidden=(i!=n);"
-+  "var b=$('#nav').children;for(var i=0;i<b.length;i++)b[i].className=(+b[i].dataset.t==n)?'on':'';"
-+  "note('');if(n==2)chans();if(n==3)ctcs(1);if(n==4)cfg()}"
-+  "$('#nav').onclick=function(e){if(e.target.dataset.t)tab(+e.target.dataset.t)};"
-+
-+  // De node antwoordt met hoogstens een buffer vol; "more" betekent: meteen terug.
-+  "function msgs(){return fetch('/messages.json?since='+seq).then(j).then(function(d){"
-+  "var h='';(d.m||[]).forEach(function(m){if(m.q>seq)seq=m.q;"
-+  "h+='<div class=\"m k'+m.k+'\"><span class=mh>'+esc(m.s)+' \\u00b7 '+tm(m.t)+'</span>'+esc(m.x)+'</div>'});"
-+  "if(h){var e=$('#ml');if(e.dataset.empty){e.innerHTML='';delete e.dataset.empty}"
-+  "e.insertAdjacentHTML('beforeend',h);"
-+  "while(e.children.length>40)e.removeChild(e.firstChild);"
-+  "e.scrollTop=e.scrollHeight}"
-+  "if(d.more)return msgs()})}"
-+
-+  // Kanalen komen per pagina binnen; volg "next" tot de node -1 zegt.
-+  "function chans(off,acc){off=off||0;acc=acc||[];"
-+  "return fetch('/channels.json?off='+off).then(j).then(function(d){"
-+  "acc=acc.concat(d.ch||[]);"
-+  "if(d.next>=0)return chans(d.next,acc);"
-+  "var h='',o='';acc.forEach(function(c){"
-+  "h+='<tr><td>'+c.i+'</td><td>'+esc(c.n)+'</td><td style=text-align:right>"
-+  "<button data-i='+c.i+'>Verwijder</button></td></tr>';"
-+  "o+='<option value=c'+c.i+'>#'+esc(c.n)+'</option>'});"
-+  "$('#cl').innerHTML=h||'<tr><td class=muted>nog geen kanalen</td></tr>';"
-+  "if(pick)o+='<option value=k'+pick.k+'>@'+esc(pick.n)+'</option>';"
-+  "var t=$('#to'),cur=t.value;t.innerHTML=o;if(cur)t.value=cur})}"
-+
-+  "function ctcs(reset){if(reset){off=0;$('#kl').innerHTML=''}"
-+  "return fetch('/contacts.json?off='+off).then(j).then(function(d){var h='';"
-+  "d.c.forEach(function(c){"
-+  "h+='<div class=ct data-k='+c.k+' data-n=\"'+esc(c.n)+'\"><div><b>'+esc(c.n)+'</b> "
-+  "<span class=muted>'+TY[c.t]+' \\u00b7 '+c.k+' \\u00b7 '+ago(c.a)+'</span></div><div class=row>'"
-+  "+'<button class=msg>Bericht</button>';"
-+  "if(c.t==2||c.t==3){h+='<label class=inl><input type=checkbox class=pb'+(c.p?' checked':'')+'>"
-+  "doorsturen naar site</label><input type=password class=pw placeholder=\"'"
-+  "+(c.w?'ongewijzigd':'wachtwoord')+'\"><button class=sv>Bewaren</button>"
-+  "<button class=li>Inloggen</button>'}"
-+  "h+='</div></div>'});"
-+  "$('#kl').insertAdjacentHTML('beforeend',h);"
-+  "if(!$('#kl').children.length)$('#kl').innerHTML='<p class=muted>nog geen contacten</p>';"
-+  "off=d.next;$('#more').hidden=(d.next<0)})}"
-+
-+  "$('#more').onclick=function(){ctcs(0)};"
-+  "$('#cl').onclick=function(e){var b=e.target.closest('button');if(!b)return;"
-+  "post('/channel/del',{idx:b.dataset.i}).then(function(r){note(r.ok?'Kanaal verwijderd.':'Verwijderen mislukt.');chans()})};"
-+  "$('#cf').onsubmit=function(e){e.preventDefault();"
-+  "post('/channel/add',{name:$('#cn').value,psk:$('#cp').value}).then(function(r){"
-+  "note(r.ok?'Kanaal toegevoegd.':(r.err||'Toevoegen mislukt.'));"
-+  "if(r.ok){$('#cn').value='';$('#cp').value=''}chans()})};"
-+
-+  "$('#kl').onclick=function(e){var b=e.target.closest('button');if(!b)return;"
-+  "var d=b.closest('.ct'),k=d.dataset.k;"
-+  "if(b.className=='msg'){pick={k:k,n:d.dataset.n};chans().then(function(){$('#to').value='k'+k;tab(1)});return}"
-+  "if(b.className=='sv'){post('/contact/save',{key:k,publish:d.querySelector('.pb').checked?1:0,"
-+  "pass:d.querySelector('.pw').value}).then(function(r){"
-+  "note(r.ok?'Bewaard.':(r.err||'Bewaren mislukt.'));if(r.ok)ctcs(1)});return}"
-+  "if(b.className=='li'){post('/contact/login',{key:k}).then(function(r){"
-+  "note(r.ok?'Inlogverzoek verstuurd.':(r.err||'Inloggen mislukt.'))})}};"
-+
-+  "$('#sf').onsubmit=function(e){e.preventDefault();var t=$('#stx').value;if(!t)return;"
-+  "post('/send',{to:$('#to').value,text:t}).then(function(r){"
-+  "if(r.ok){$('#stx').value='';note('');msgs()}else note(r.err||'Versturen mislukt.')})};"
-+
-+  "function cfg(){fetch('/config.json').then(j).then(function(c){"
-+  "$('#nm').innerHTML='&#128225; '+esc(c.name);"
-+  "$('#sub').textContent='Beheer van deze node \\u00b7 IP '+c.ip+' \\u00b7 id '+c.node;"
-+  "var f=$('#f');for(var k in c.cfg){var e=f[k];if(!e)continue;"
-+  "if(e.type=='checkbox')e.checked=!!c.cfg[k];else e.value=c.cfg[k]}"
-+  "$('#st').innerHTML=rows(c.status)});"
-+  "fetch('/stats.json').then(j).then(function(d){$('#mt').innerHTML=rows(d.metrics||{})})}"
-+  "$('#f').onsubmit=function(e){e.preventDefault();"
-+  "fetch('/save',{method:'POST',body:new URLSearchParams(new FormData($('#f')))})"
-+  ".then(function(){$('#f').pass.value='';note('Instellingen opgeslagen.');cfg()})};"
-+  "$('#tst').onclick=function(){post('/test',{}).then(function(r){"
-+  "note(r.ok?'Statistieken verstuurd.':'Versturen mislukt.');cfg()})};"
-+
-+  "cfg();chans();msgs();"
-+  "setInterval(function(){if(tabn==1)msgs()},3000);"
-+  "setInterval(function(){if(tabn==4)cfg()},10000);"
-+  "</script></main></body></html>";
++void StatsPublisher::sendJson(const char* body, size_t len) {
++  TRACE("[stats] %s len=%u heap=%u", _server.uri().c_str(), (unsigned)len,
++        (unsigned)ESP.getFreeHeap());
++  unsigned long t0 = millis();
++  _server.beginWriteTracking();
++  _server.send_P(200, "application/json", body, len);
++  finishResponse(t0, len);
++}
  
  void StatsPublisher::handleRoot() {
 -  // In stukjes versturen: één grote String opbouwen kost te veel heap op een
@@ -738,10 +642,20 @@ index 87097fb..ec882bb 100644
 -    "h+='</table>';document.getElementById('stats').innerHTML=h;});</script>"
 -    "</main></body></html>"));
 -  _server.sendContent("");
-+  _server.send_P(200, "text/html; charset=utf-8", PAGE);
++  TRACE_ENTER();
++  /* Gzip: zie StatsPage.h. Content-Length wordt hier de gecomprimeerde lengte,
++   * want dat is wat er daadwerkelijk over de lijn gaat. */
++  TRACE("[stats] / gz=%u heap=%u", (unsigned)PAGE_GZ_LEN,
++        (unsigned)ESP.getFreeHeap());
++  unsigned long t0 = millis();
++  _server.beginWriteTracking();
++  _server.sendHeader("Content-Encoding", "gzip");
++  _server.send_P(200, "text/html; charset=utf-8", (PGM_P)PAGE_GZ, PAGE_GZ_LEN);
++  finishResponse(t0, PAGE_GZ_LEN);
 +}
 +
 +void StatsPublisher::handleConfigJson() {
++  TRACE_ENTER();
 +  char name[65];
 +  jsonStr(name, sizeof(name), _mesh ? _mesh->getNodeName() : "MeshCore node");
 +
@@ -751,13 +665,18 @@ index 87097fb..ec882bb 100644
 +    "\"interval\":%u,\"enabled\":%d,\"forward_rx\":%d},"
 +    "\"status\":{\"Broker\":\"%s\",\"Statistieken verstuurd\":%u,"
 +    "\"Pakketten doorgestuurd\":\"%u (%u niet gehaald)\","
-+    "\"Fouten\":\"%u %s\",\"Vrij geheugen\":\"%u bytes\"}}",
++    // Het grootste vrije blok zegt meer dan het totaal: lwip heeft aaneengesloten
++    // ruimte nodig voor zijn pbufs, en bij fragmentatie faalt dat terwijl het
++    // totaal nog ruim lijkt.
++    "\"Fouten\":\"%u %s\",\"Vrij geheugen\":\"%u bytes\","
++    "\"Grootste vrije blok\":\"%u bytes\"}}",
 +    name, WiFi.localIP().toString().c_str(), _node_hex,
 +    _cfg.host, (unsigned)_cfg.port, _cfg.user, _cfg.prefix,
 +    (unsigned)_cfg.interval_secs, _cfg.enabled ? 1 : 0, _cfg.forward_rx ? 1 : 0,
 +    _mqtt.connected() ? "verbonden" : (_cfg.host[0] ? "niet verbonden" : "niet ingesteld"),
 +    (unsigned)_push_count, (unsigned)_rx_count, (unsigned)_drop_count,
-+    (unsigned)_fail_count, _last_error, (unsigned)ESP.getFreeHeap());
++    (unsigned)_fail_count, _last_error, (unsigned)ESP.getFreeHeap(),
++    (unsigned)ESP.getMaxAllocHeap());
 +
 +  // Dit is het enige antwoord waarvan de lengte van ingetypte tekst afhangt
 +  // (broker, gebruiker, prefix) en niet van onze eigen paginering. Zijn die lang
@@ -767,7 +686,7 @@ index 87097fb..ec882bb 100644
 +    _server.send(200, "application/json", "{\"cfg\":{},\"status\":{}}");
 +    return;
 +  }
-+  _server.send(200, "application/json", io_buf);
++  sendJson(io_buf, (size_t)n);
  }
  
  void StatsPublisher::handleSave() {
@@ -823,10 +742,11 @@ index 87097fb..ec882bb 100644
  void StatsPublisher::handleStatsJson() {
 -  static char body[1024];
 -  size_t n = _mesh ? _mesh->fillStatsJson(body, sizeof(body)) : 0;
++  TRACE_ENTER();
 +  size_t n = _mesh ? _mesh->fillStatsJson(io_buf, sizeof(io_buf)) : 0;
    if (n == 0) { _server.send(503, "application/json", "{}"); return; }
 -  _server.send(200, "application/json", body);
-+  _server.send(200, "application/json", io_buf);
++  sendJson(io_buf, n);
 +}
 +
 +// -------------------------------------------------------------- chat-endpoints
@@ -839,6 +759,7 @@ index 87097fb..ec882bb 100644
 + * pagina toch snel, zonder dat een enkel antwoord - en dus een enkele
 + * blokkerende TCP-schrijfactie - groot wordt. */
 +void StatsPublisher::handleMessagesJson() {
++  TRACE_ENTER();
 +  uint32_t since = (uint32_t)strtoul(_server.arg("since").c_str(), nullptr, 10);
 +
 +  // Langste item: vaste tekst + 2 32-bitgetallen + beide strings volledig ontsnapt.
@@ -862,7 +783,7 @@ index 87097fb..ec882bb 100644
 +    first = false;
 +  }
 +  snprintf(io_buf + n, sizeof(io_buf) - n, "],\"more\":%d}", more ? 1 : 0);
-+  _server.send(200, "application/json", io_buf);
++  sendJson(io_buf, strlen(io_buf));
 +}
 +
 +/* POST /send  (to, text)
@@ -923,7 +844,7 @@ index 87097fb..ec882bb 100644
 +    _server.send(200, "application/json", "{\"ok\":1}");
 +  } else {
 +    snprintf(io_buf, sizeof(io_buf), "{\"ok\":0,\"err\":\"%s\"}", err);
-+    _server.send(200, "application/json", io_buf);
++    sendJson(io_buf, strlen(io_buf));
 +  }
 +}
 +
@@ -933,6 +854,7 @@ index 87097fb..ec882bb 100644
 + * vrij. Per pagina zoals de contacten, want MAX_GROUP_CHANNELS staat hier op 40
 + * en de browser heeft de hele lijst nodig voor zijn keuzelijst. */
 +void StatsPublisher::handleChannelsJson() {
++  TRACE_ENTER();
 +  int off = atoi(_server.arg("off").c_str());
 +  if (off < 0) off = 0;
 +
@@ -959,10 +881,9 @@ index 87097fb..ec882bb 100644
 +  }
 +
 +  snprintf(io_buf + n, sizeof(io_buf) - n, "],\"next\":%d}", slot);
-+  _server.send(200, "application/json", io_buf);
- }
- 
--// -------------------------------------------------------------------- public
++  sendJson(io_buf, strlen(io_buf));
++}
++
 +/* POST /channel/add  (name, psk)
 + * Een lege psk betekent "maak een nieuw kanaal": we maken hier een 128-bits
 + * sleutel aan, zodat niemand er zelf een moet verzinnen; die is daarna via de
@@ -1025,6 +946,7 @@ index 87097fb..ec882bb 100644
 + * inclusief de gereserveerde anonieme vooraan; die hebben type 0 en worden
 + * overgeslagen. */
 +void StatsPublisher::handleContactsJson() {
++  TRACE_ENTER();
 +  int off = atoi(_server.arg("off").c_str());
 +  if (off < 0) off = 0;
 +
@@ -1062,7 +984,7 @@ index 87097fb..ec882bb 100644
 +  }
 +
 +  snprintf(io_buf + n, sizeof(io_buf) - n, "],\"next\":%d}", slot);
-+  _server.send(200, "application/json", io_buf);
++  sendJson(io_buf, strlen(io_buf));
 +}
 +
 +bool StatsPublisher::parseKeyArg(const char* name, uint8_t out[6]) {
@@ -1114,8 +1036,9 @@ index 87097fb..ec882bb 100644
 +
 +  saveRepeaters();
 +  _server.send(200, "application/json", "{\"ok\":1}");
-+}
-+
+ }
+ 
+-// -------------------------------------------------------------------- public
 +/* POST /contact/login  (key)
 + * Logt in op een repeater met het bewaarde wachtwoord; die login is wat het
 + * uitlezen van zijn gegevens vrijgeeft. Het antwoord komt later door de lucht
@@ -1180,7 +1103,7 @@ index 87097fb..ec882bb 100644
    _server.begin();
    _started = true;
    _last_push = millis();
-@@ -225,8 +981,20 @@ void StatsPublisher::loop() {
+@@ -225,8 +885,20 @@ void StatsPublisher::loop() {
    if (!_started) return;
    _server.handleClient();
  
@@ -1204,10 +1127,10 @@ index 87097fb..ec882bb 100644
 +  publishStats();
  }
 diff --git a/examples/companion_radio/StatsPublisher.h b/examples/companion_radio/StatsPublisher.h
-index 2b14b8b..da081ad 100644
+index 2b14b8b..4e21dba 100644
 --- a/examples/companion_radio/StatsPublisher.h
 +++ b/examples/companion_radio/StatsPublisher.h
-@@ -1,66 +1,256 @@
+@@ -1,66 +1,309 @@
  #pragma once
  
 -/* StatsPublisher — publiceert de statistieken van deze node naar een externe
@@ -1239,23 +1162,31 @@ index 2b14b8b..da081ad 100644
 + *
 + * Zonder ingestelde broker doet de MQTT-helft niets; de webclient blijft werken.
 + *
-+ * === Waarom de pagina een statische PROGMEM-string is ===
++ * === Waarom elk antwoord in een enkele schrijfactie moet passen ===
 + *
-+ * Een eerdere versie bouwde de HTML in stukjes op met sendContent(), met de
-+ * actuele waarden er al in. Elk zo'n stukje is een aparte blokkerende
-+ * TCP-schrijfactie, en met de latentiepieken van ESP32-wifi (modem-sleep) bleef
-+ * de hoofdlus daarin hangen - waarmee ook de mesh stilviel, tot een harde
-+ * reset. Dat heeft ons een vastgelopen node gekost.
++ * Twee keer heeft dit ons een node gekost, en beide keren om dezelfde reden.
 + *
-+ * Dus: de pagina is een enkele onveranderlijke string die in een send_P() gaat,
-+ * en alle gegevens bereiken de browser via kleine JSON-endpoints. Nieuwe UI =
-+ * uitbreiding van die ene string plus een endpoint. Nooit gegevens in de HTML
-+ * bakken, nooit meer dan een sendContent().
++ * Eerst bouwde de pagina zichzelf op in stukjes met sendContent(), met de
++ * actuele waarden er al in. Elk stukje is een aparte blokkerende
++ * TCP-schrijfactie, en met de latentiepieken van ESP32-wifi bleef de hoofdlus
++ * daarin hangen - waarmee ook de mesh stilviel, tot een harde reset.
 + *
-+ * Om dezelfde reden zijn ook de JSON-antwoorden begrensd. Lijsten gaan per
-+ * pagina (STATS_CONTACT_PAGE / STATS_CHANNEL_PAGE), zodat geen enkel antwoord
-+ * boven de gedeelde buffer uitkomt, en elke handler schrijft in een vaste
-+ * buffer in plaats van een String op te bouwen.
++ * Daarna bleek de tweede helft: WiFiClient::write() stuurt met MSG_DONTWAIT,
++ * probeert tien keer met telkens een select() van een seconde, en geeft dan een
++ * gedeeltelijk aantal bytes terug. WebServer kijkt daar niet naar. Past een
++ * antwoord dus niet in de socket-verzendbuffer van lwip (5760 bytes), dan
++ * belooft de kop een Content-Length die nooit gehaald wordt en blijft de client
++ * wachten - terwijl de hoofdlus tot tien seconden vastzit.
++ *
++ * Daarom:
++ *  - de pagina is een onveranderlijk blok dat in een keer de deur uit gaat, en
++ *    wordt gzip-verstuurd zodat ze ook echt onder die 5760 bytes blijft
++ *    (page.html -> gen_page.py -> StatsPage.h);
++ *  - alle gegevens komen via kleine JSON-endpoints, nooit in de HTML gebakken;
++ *  - lijsten gaan per pagina (STATS_CONTACT_PAGE / STATS_CHANNEL_PAGE) zodat
++ *    geen antwoord boven de gedeelde buffer uitkomt;
++ *  - elke handler schrijft in een vaste buffer in plaats van een String;
++ *  - en CountingWebServer hieronder controleert of het er echt allemaal uit is.
 + *
 + * === Taken en volgorde ===
 + *
@@ -1265,7 +1196,7 @@ index 2b14b8b..da081ad 100644
 + * versturen zet enkel een pakket in de wachtrij.
 + *
 + * Endpoints (alles JSON, tenzij anders vermeld):
-+ *   GET  /                de pagina zelf (HTML, een send_P)
++ *   GET  /                de pagina zelf (HTML, gzip, een send_P)
 + *   GET  /config.json     identiteit van de node, MQTT-instellingen, status
 + *   GET  /stats.json      de eigen radiostatistieken
 + *   POST /save            MQTT-instellingen bewaren
@@ -1345,6 +1276,39 @@ index 2b14b8b..da081ad 100644
  
  class MyMesh;   // vooruitverwijzing; vermijdt include-cyclus
  
++/* WebServer met een teller erop, want de gewone kijkt niet naar zijn eigen
++ * schrijfacties.
++ *
++ * WiFiClient::write() stuurt met MSG_DONTWAIT, probeert tien keer en geeft dan
++ * terug hoeveel bytes het wel geworden zijn. WebServer negeert die waarde: de
++ * kop belooft dan een Content-Length die nooit gehaald wordt en de client wacht
++ * tot zijn tijdslimiet - precies waarmee deze node ons twee keer voor raadsels
++ * zette. _currentClientWrite is protected en virtual, dus we kunnen meekijken
++ * zonder de webserver zelf aan te passen. */
++class CountingWebServer : public WebServer {
++public:
++  CountingWebServer(int port) : WebServer(port), _asked(0), _done(0) {}
++
++  void beginWriteTracking() { _asked = _done = 0; }
++  bool shortWrite() const { return _done < _asked; }
++  size_t written() const { return _done; }
++
++protected:
++  size_t _currentClientWrite(const char* b, size_t l) override {
++    size_t w = WebServer::_currentClientWrite(b, l);
++    _asked += l; _done += w;
++    return w;
++  }
++  size_t _currentClientWrite_P(PGM_P b, size_t l) override {
++    size_t w = WebServer::_currentClientWrite_P(b, l);
++    _asked += l; _done += w;
++    return w;
++  }
++
++private:
++  size_t _asked, _done;
++};
++
  class StatsPublisher {
  public:
    struct Config {
@@ -1396,6 +1360,7 @@ index 2b14b8b..da081ad 100644
    const Config& getConfig() const { return _cfg; }
  
  private:
+-  WebServer _server;
 +  struct RxItem {
 +    uint32_t ms;
 +    int16_t snr4;     // SNR maal 4, zoals de radio hem geeft
@@ -1420,7 +1385,7 @@ index 2b14b8b..da081ad 100644
 +    char pass[STATS_REPEATER_PASS];   // admin- of read/write-wachtwoord
 +  };
 +
-   WebServer _server;
++  CountingWebServer _server;
 +  WiFiClient _net;
 +  PubSubClient _mqtt;
    FS* _fs;
@@ -1459,6 +1424,18 @@ index 2b14b8b..da081ad 100644
 +
 +  // Leest de "k<hex>"-notatie die de pagina voor een contact gebruikt.
 +  bool parseKeyArg(const char* name, uint8_t out[6]);
++
++  /* De enige uitgang voor JSON-antwoorden. Gebruikt send_P met een expliciete
++   * lengte, want de gewone send() giet de body eerst in een String - een
++   * heap-kopie van het hele antwoord, bovenop de buffer die we al hebben. Op een
++   * node waar de heap het knelpunt is, is dat net wat we niet willen; de
++   * framework-code waarschuwt er zelf voor ("Use send_P for long arrays").
++   * send_P werkt op ESP32 ook gewoon op RAM. */
++  void sendJson(const char* body, size_t len);
++  void sendJson(const char* body) { sendJson(body, strlen(body)); }
++
++  // Sluit de verbinding als het antwoord er niet volledig uit is gekomen.
++  void finishResponse(unsigned long t0, size_t len);
  
    void handleRoot();
 +  void handleConfigJson();
@@ -1481,10 +1458,39 @@ index 2b14b8b..da081ad 100644
 +void meshstats_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
 +void meshstats_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
 diff --git a/examples/companion_radio/main.cpp b/examples/companion_radio/main.cpp
-index 9202ebf..312c03c 100644
+index 9202ebf..abfa67f 100644
 --- a/examples/companion_radio/main.cpp
 +++ b/examples/companion_radio/main.cpp
-@@ -211,7 +211,7 @@ void setup() {
+@@ -198,12 +198,26 @@ void setup() {
+   board.setInhibitSleep(true);   // prevent sleep when WiFi is active
+   WiFi.setAutoReconnect(true);
+ 
++  /* setInhibitSleep() hierboven gaat alleen over de slaapstand van de CPU; de
++   * WiFi-radio staat los daarvan en valt standaard terug op WIFI_PS_MIN_MODEM.
++   * Die slaapt tussen de bakens door, en dat kost hier twee dingen: antwoorden
++   * van een paar honderd bytes die seconden onderweg zijn, en baken-timeouts die
++   * de verbinding laten vallen. Een node die aan de netvoeding hangt en een
++   * mesh, een webserver en Home Assistant moet bedienen, heeft daar niets aan.
++   * (simple_repeater kwam op dezelfde conclusie uit.) */
++  WiFi.setSleep(false);
++
+   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
+       if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+-          WIFI_DEBUG_PRINTLN("WiFi disconnected. Flagging for reconnect...");
++          // De reden en de veldsterkte erbij: zonder die twee is niet uit te
++          // maken of een wegval aan de radio ligt of aan het toegangspunt.
++          WIFI_DEBUG_PRINTLN("WiFi disconnected (reason %d, rssi %d). Flagging for reconnect...",
++                             (int)info.wifi_sta_disconnected.reason, (int)WiFi.RSSI());
+           wifi_needs_reconnect = true;
+       } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+-          WIFI_DEBUG_PRINTLN("WiFi connected successfully!");
++          WIFI_DEBUG_PRINTLN("WiFi connected successfully! (rssi %d)", (int)WiFi.RSSI());
++          // Een herverbinding zet de energiestand terug op de standaard.
++          WiFi.setSleep(false);
+           wifi_needs_reconnect = false;
+       }
+   });
+@@ -211,7 +225,7 @@ void setup() {
    WiFi.begin(WIFI_SSID, WIFI_PWD);
    wifi_interface.begin(TCP_PORT);
    interface_manager.addInterface(InterfaceType::WiFi, &wifi_interface);
@@ -1493,7 +1499,7 @@ index 9202ebf..312c03c 100644
  #endif
  
  // add usb interface
-@@ -245,6 +245,15 @@ void setup() {
+@@ -245,6 +259,15 @@ void setup() {
    ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
  #endif
  
@@ -1510,7 +1516,7 @@ index 9202ebf..312c03c 100644
  }
  
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index c93ba1a..db34ca4 100644
+index c93ba1a..993687c 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,6 +1,10 @@
@@ -1524,7 +1530,198 @@ index c93ba1a..db34ca4 100644
  /* ------------------------------ Config -------------------------------- */
  
  #ifndef LORA_FREQ
-@@ -467,6 +471,12 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+@@ -60,7 +64,7 @@
+ 
+ #define LAZY_CONTACTS_WRITE_DELAY    5000
+ 
+-void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
++void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr, const char *name) {
+ #if MAX_NEIGHBOURS // check if neighbours enabled
+   // find existing neighbour, else use least recently updated
+   uint32_t oldest_timestamp = 0xFFFFFFFF;
+@@ -84,7 +88,181 @@ void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float sn
+   neighbour->advert_timestamp = timestamp;
+   neighbour->heard_timestamp = getRTCClock()->getCurrentTime();
+   neighbour->snr = (int8_t)(snr * 4);
++  if (name && *name) {
++    StrHelper::strncpy(neighbour->name, name, sizeof(neighbour->name));
++  }
++#endif
++}
++
++int MyMesh::getNumNeighbours() const {
++#if MAX_NEIGHBOURS
++  int n = 0;
++  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++    if (neighbours[i].heard_timestamp > 0) n++;
++  }
++  return n;
++#else
++  return 0;
++#endif
++}
++
++bool MyMesh::getNeighbourAt(int idx, char *pub_hex, char *name_out, size_t name_max,
++                            uint32_t *secs_ago, int8_t *snr_out) const {
++#if MAX_NEIGHBOURS
++  int n = 0;
++  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++    const NeighbourInfo *nb = &neighbours[i];
++    if (nb->heard_timestamp == 0) continue;
++    if (n++ != idx) continue;
++
++    mesh::Utils::toHex(pub_hex, nb->id.pub_key, PUB_KEY_SIZE);
++    StrHelper::strncpy(name_out, nb->name, name_max);
++    uint32_t now = getRTCClock()->getCurrentTime();
++    *secs_ago = (now > nb->heard_timestamp) ? (now - nb->heard_timestamp) : 0;
++    *snr_out = nb->snr;
++    return true;
++  }
+ #endif
++  return false;
++}
++
++bool MyMesh::findNeighbourByPrefix(const uint8_t *prefix, int prefix_len, uint8_t *full_key_out,
++                                   char *name_out, size_t name_max) const {
++#if MAX_NEIGHBOURS
++  if (prefix_len <= 0 || prefix_len > PUB_KEY_SIZE) return false;
++  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++    const NeighbourInfo *nb = &neighbours[i];
++    if (nb->heard_timestamp == 0) continue;
++    if (memcmp(nb->id.pub_key, prefix, prefix_len) != 0) continue;
++
++    memcpy(full_key_out, nb->id.pub_key, PUB_KEY_SIZE);
++    StrHelper::strncpy(name_out, nb->name, name_max);
++    return true;
++  }
++#endif
++  return false;
++}
++
++// ------------------------------- monitored repeaters -----------------------
++
++void MyMesh::clearMonitors() {
++  memset(monitors, 0, sizeof(monitors));
++  num_monitors = 0;
++}
++
++int MyMesh::addMonitor(const uint8_t *pub_key) {
++  if (num_monitors >= MAX_MONITORS) return -1;
++
++  MonitorInfo &m = monitors[num_monitors];
++  m.id = mesh::Identity(pub_key);
++  /* Once, here. ECDH costs tens of milliseconds, which is fine at config time
++   * and unacceptable in the receive path where the secret is needed. */
++  self_id.calcSharedSecret(m.shared_secret, m.id);
++  m.out_path_len = OUT_PATH_UNKNOWN;
++  return num_monitors++;
++}
++
++void MyMesh::resetMonitorPath(int idx) {
++  if (idx >= 0 && idx < num_monitors) monitors[idx].out_path_len = OUT_PATH_UNKNOWN;
++}
++
++int MyMesh::getMonitorPathLen(int idx) const {
++  if (idx < 0 || idx >= num_monitors) return -1;
++  return (monitors[idx].out_path_len == OUT_PATH_UNKNOWN) ? -1 : monitors[idx].out_path_len;
++}
++
++// Flood only while we have no path back; after that every poll goes direct.
++void MyMesh::sendToMonitor(MonitorInfo &m, mesh::Packet *pkt) {
++  if (m.out_path_len == OUT_PATH_UNKNOWN) {
++    sendFloodScoped(default_scope, pkt, 0, _prefs.path_hash_mode + 1);
++  } else {
++    sendDirect(pkt, m.out_path, m.out_path_len);
++  }
++}
++
++bool MyMesh::sendMonitorLogin(int idx, const char *password) {
++  if (idx < 0 || idx >= num_monitors) return false;
++  MonitorInfo &m = monitors[idx];
++
++  uint8_t temp[24];
++  uint32_t now = getRTCClock()->getCurrentTimeUnique();
++  memcpy(temp, &now, 4);      // also an extra blob, to keep the packet hash unique
++  int len = strlen(password);
++  if (len > 15) len = 15;     // protocol limit, same as the chat client uses
++  memcpy(&temp[4], password, len);
++
++  mesh::Packet *pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, m.id,
++                                         m.shared_secret, temp, 4 + len);
++  if (!pkt) return false;
++  sendToMonitor(m, pkt);
++  return true;
++}
++
++bool MyMesh::sendMonitorStatusReq(int idx) {
++  if (idx < 0 || idx >= num_monitors) return false;
++  MonitorInfo &m = monitors[idx];
++
++  uint8_t temp[8];
++  uint32_t now = getRTCClock()->getCurrentTimeUnique();
++  memcpy(temp, &now, 4);
++  temp[4] = REQ_TYPE_GET_STATUS;
++  getRNG()->random(&temp[5], 3);   // padding that also keeps the packet hash unique
++
++  mesh::Packet *pkt = createDatagram(PAYLOAD_TYPE_REQ, m.id, m.shared_secret, temp, 8);
++  if (!pkt) return false;
++  sendToMonitor(m, pkt);
++  return true;
++}
++
++/* Telemetry is a separate request type because RepeaterStats has no room for
++ * sensors: temperature and voltages come back as CayenneLPP instead. The layout
++ * below mirrors how this same firmware answers the request (handleRequest
++ * above), which is the only specification that exists.
++ *
++ * payload[1] is an INVERSE permission mask -- the far side computes
++ * ~payload[1] -- so zero asks for everything it is willing to give, and it
++ * clamps that to base telemetry itself if we only hold guest rights. */
++bool MyMesh::sendMonitorTelemetryReq(int idx) {
++  if (idx < 0 || idx >= num_monitors) return false;
++  MonitorInfo &m = monitors[idx];
++
++  uint8_t temp[9];
++  uint32_t now = getRTCClock()->getCurrentTimeUnique();
++  memcpy(temp, &now, 4);
++  temp[4] = REQ_TYPE_GET_TELEMETRY_DATA;
++  memset(&temp[5], 0, 4);          // 4 reserved bytes; the first is that mask
++
++  mesh::Packet *pkt = createDatagram(PAYLOAD_TYPE_REQ, m.id, m.shared_secret, temp, sizeof(temp));
++  if (!pkt) return false;
++  sendToMonitor(m, pkt);
++  return true;
++}
++
++/* Neighbours of the monitored repeater. Parameters again taken from how this
++ * firmware answers the request: version, how many, from which offset, sort
++ * order (0 = newest heard first) and how many bytes of each neighbour's public
++ * key to return. Three bytes is the same six hex characters the rest of this
++ * pipeline uses to name a node, and keeps one entry at 8 bytes so a useful
++ * number of them fit in a single packet. */
++bool MyMesh::sendMonitorNeighboursReq(int idx) {
++  if (idx < 0 || idx >= num_monitors) return false;
++  MonitorInfo &m = monitors[idx];
++
++  uint8_t temp[15];
++  uint32_t now = getRTCClock()->getCurrentTimeUnique();
++  memcpy(temp, &now, 4);
++  temp[4] = REQ_TYPE_GET_NEIGHBOURS;
++  temp[5] = 0;                     // request version
++  temp[6] = MONITOR_NBR_MAX;       // how many to fetch
++  temp[7] = 0; temp[8] = 0;        // offset into their list
++  temp[9] = 0;                     // order: newest heard first
++  temp[10] = MONITOR_NBR_PREFIX;   // bytes of pub_key per entry
++  getRNG()->random(&temp[11], 4);  // blob, keeps the packet hash unique
++
++  mesh::Packet *pkt = createDatagram(PAYLOAD_TYPE_REQ, m.id, m.shared_secret, temp, sizeof(temp));
++  if (!pkt) return false;
++  sendToMonitor(m, pkt);
++  return true;
+ }
+ 
+ uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood) {
+@@ -467,6 +645,12 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
    mesh::Utils::printHex(Serial, raw, len);
    Serial.println();
  #endif
@@ -1537,7 +1734,124 @@ index c93ba1a..db34ca4 100644
  }
  
  void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
-@@ -1140,6 +1150,83 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
+@@ -608,12 +792,23 @@ int MyMesh::searchPeersByHash(const uint8_t *hash) {
+       matching_peer_indexes[n++] = i; // store the INDEXES of matching contacts (for subsequent 'peer' methods)
+     }
+   }
++  /* Also the repeaters we monitor, so their replies can be decrypted. They are
++   * offset by MONITOR_IDX_BASE, which is what every 'peer' method below keys
++   * off to know which table an index belongs to. */
++  for (int i = 0; i < num_monitors; i++) {
++    if (monitors[i].id.isHashMatch(hash)) {
++      matching_peer_indexes[n++] = MONITOR_IDX_BASE + i;
++    }
++  }
+   return n;
+ }
+ 
+ void MyMesh::getPeerSharedSecret(uint8_t *dest_secret, int peer_idx) {
+   int i = matching_peer_indexes[peer_idx];
+-  if (i >= 0 && i < acl.getNumClients()) {
++  if (i >= MONITOR_IDX_BASE) {
++    int m = i - MONITOR_IDX_BASE;
++    if (m < num_monitors) memcpy(dest_secret, monitors[m].shared_secret, PUB_KEY_SIZE);
++  } else if (i >= 0 && i < acl.getNumClients()) {
+     // lookup pre-calculated shared_secret
+     memcpy(dest_secret, acl.getClientByIdx(i)->shared_secret, PUB_KEY_SIZE);
+   } else {
+@@ -621,6 +816,16 @@ void MyMesh::getPeerSharedSecret(uint8_t *dest_secret, int peer_idx) {
+   }
+ }
+ 
++/* Replies from a monitored repeater. Nothing is parsed here beyond handing the
++ * bytes on: this runs in the receive path, so it may only copy. MeshStatsNet
++ * knows what it asked for and interprets accordingly. */
++void MyMesh::handleMonitorData(int mon_idx, uint8_t type, const uint8_t *data, size_t len) {
++  if (type != PAYLOAD_TYPE_RESPONSE || mon_idx >= num_monitors) return;
++#ifdef MESHSTATS_NET
++  meshstats_on_monitor_response(mon_idx, data, (int)len);
++#endif
++}
++
+ static bool isShare(const mesh::Packet *packet) {
+   if (packet->hasTransportCodes()) {
+     return packet->transport_codes[0] == 0 && packet->transport_codes[1] == 0;  // codes { 0, 0 } means 'send to nowhere'
+@@ -636,7 +841,7 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+   if (packet->getPathHashCount() == 0 && !isShare(packet)) {
+     AdvertDataParser parser(app_data, app_data_len);
+     if (parser.isValid() && parser.getType() == ADV_TYPE_REPEATER) { // just keep neigbouring Repeaters
+-      putNeighbour(id, timestamp, packet->getSNR());
++      putNeighbour(id, timestamp, packet->getSNR(), parser.hasName() ? parser.getName() : NULL);
+     }
+   }
+ }
+@@ -644,6 +849,10 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, const uint8_t *secret,
+                             uint8_t *data, size_t len) {
+   int i = matching_peer_indexes[sender_idx];
++  if (i >= MONITOR_IDX_BASE) {   // a reply to something WE asked, not a request to us
++    handleMonitorData(i - MONITOR_IDX_BASE, type, data, len);
++    return;
++  }
+   if (i < 0 || i >= acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
+     MESH_DEBUG_PRINTLN("onPeerDataRecv: invalid peer idx: %d", i);
+     return;
+@@ -749,6 +958,20 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t
+   // TODO: prevent replay attacks
+   int i = matching_peer_indexes[sender_idx];
+ 
++  if (i >= MONITOR_IDX_BASE) {
++    /* A monitored repeater answered our flood and told us the way back. Keep
++     * it: every following poll then goes direct, which is the difference
++     * between one packet and a mesh-wide flood per round. */
++    int m = i - MONITOR_IDX_BASE;
++    if (m < num_monitors) {
++      monitors[m].out_path_len = mesh::Packet::copyPath(monitors[m].out_path, path, path_len);
++      if (extra_type == PAYLOAD_TYPE_RESPONSE && extra_len > 0) {
++        handleMonitorData(m, PAYLOAD_TYPE_RESPONSE, extra, extra_len);
++      }
++    }
++    return false;   // no reciprocal path send
++  }
++
+   if (i >= 0 && i < acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
+     MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t)path_len);
+     auto client = acl.getClientByIdx(i);
+@@ -819,7 +1042,8 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
+     if (id.matches(self_id)) {
+       return;
+     }
+-    putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR());
++    // Discovery replies carry no advert data, so no name to learn here.
++    putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR(), NULL);
+   }
+ }
+ 
+@@ -866,6 +1090,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
+ #if MAX_NEIGHBOURS
+   memset(neighbours, 0, sizeof(neighbours));
+ #endif
++  memset(monitors, 0, sizeof(monitors));
++  num_monitors = 0;
+ 
+   // defaults
+   _prefs.airtime_factor = 1.0;
+@@ -912,7 +1138,13 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
+   _prefs.rx_boosted_gain = 1; // enabled by default;
+ #endif
+ #endif
+-  _prefs.radio_fem_rxgain = 1;
++  // The FEM low-noise amplifier helps a weak signal but overloads on a strong
++  // one, and a node with good line of sight hears more without it. Overridable
++  // per board via a build flag; on this project's Heltec V4 it is off.
++#ifndef RADIO_FEM_RXGAIN_DEFAULT
++  #define RADIO_FEM_RXGAIN_DEFAULT 1
++#endif
++  _prefs.radio_fem_rxgain = RADIO_FEM_RXGAIN_DEFAULT;
+ 
+   pending_discover_tag = 0;
+   pending_discover_until = 0;
+@@ -1140,6 +1372,174 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
    }
  }
  
@@ -1558,6 +1872,31 @@ index c93ba1a..db34ca4 100644
 +  uint32_t uptime_secs = (uint32_t)(uptime_millis / 1000);
 +  uint32_t tx_air = getTotalAirTime() / 1000;
 +  uint32_t rx_air = getReceiveAirTime() / 1000;
++
++  uint16_t batt_mv = board.getBattMilliVolts();
++#ifdef MESHSTATS_NET
++  int batt_pct = meshstats_batt_percent(batt_mv);
++#else
++  int batt_pct = -1;
++#endif
++
++  /* Chip temperature, published as mcu_temperature and deliberately NOT as
++   * ch1_temperature. They are not the same measurement and must never be
++   * merged again: this is the die of the ESP32 itself, which with WiFi running
++   * sits 20-30 degrees above its surroundings -- this node reported 51 C while
++   * it was about 25 C outside. Under a 'channel 1' name a reader takes that for
++   * an ambient reading and concludes the roof is on fire. ch1_temperature stays
++   * reserved for an actual sensor, if one is ever attached ('sensor get
++   * temperature' returns null on this node today).
++   *
++   * Only emitted when the chip really returns a figure -- an ESP32-C3 hands
++   * back NAN, and an invented temperature is worse on a graph than a gap. */
++  char temp_field[40];
++  temp_field[0] = 0;
++  float mcu_temp = board.getMCUTemperature();
++  if (!isnan(mcu_temp)) {
++    snprintf(temp_field, sizeof(temp_field), ",\"mcu_temperature\":%.2f", mcu_temp);
++  }
 +
 +  int n = snprintf(out, max_len,
 +    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\","
@@ -1582,11 +1921,15 @@ index c93ba1a..db34ca4 100644
 +      "\"flood_dups\":%u,"
 +      "\"tx_queue_len\":%u,"
 +      "\"err_events\":%u,"
++      "\"ch1_voltage\":%.3f,"
++      "\"battery_percentage\":%d,"
++      "\"neighbor_count\":%d,"
 +      "\"freq\":%.4f,"
 +      "\"sf\":%u,"
 +      "\"cr\":%u,"
 +      "\"tx\":%d"
-+    "}}",
++      "%s"
++    "}",
 +    pub_hex, _prefs.node_name, ms_ver,
 +    board.getBattMilliVolts() / 1000.0f,
 +    uptime_secs / 86400.0,
@@ -1606,9 +1949,71 @@ index c93ba1a..db34ca4 100644
 +    (unsigned)((SimpleMeshTables *)getTables())->getNumFloodDups(),
 +    (unsigned)_mgr->getOutboundTotal(),
 +    (unsigned)_err_flags,
-+    _prefs.freq, (unsigned)_prefs.sf, (unsigned)_prefs.cr, (int)_prefs.tx_power_dbm);
++    batt_mv / 1000.0f, batt_pct, getNumNeighbours(),
++    _prefs.freq, (unsigned)_prefs.sf, (unsigned)_prefs.cr, (int)_prefs.tx_power_dbm,
++    temp_field);
 +
-+  return (n > 0 && (size_t)n < max_len) ? (size_t)n : 0;
++  if (n <= 0 || (size_t)n >= max_len) return 0;
++
++  n += appendNeighborsJson(out + n, max_len - n);
++
++  int w = snprintf(out + n, max_len - n, "}");
++  if (w <= 0 || (size_t)(n + w) >= max_len) return 0;
++  return (size_t)(n + w);
++}
++
++/* Node names come off the air, so they can contain anything. An unescaped
++ * quote here would not produce an odd-looking name but an unparseable message,
++ * and the receiving side would drop the whole reading. */
++static void jsonEscape(char *dest, size_t max, const char *src) {
++  size_t o = 0;
++  for (const char *p = src; *p && o + 2 < max; p++) {
++    unsigned char c = (unsigned char)*p;
++    if (c == '"' || c == '\\') { dest[o++] = '\\'; dest[o++] = (char)c; }
++    else if (c >= 0x20) { dest[o++] = (char)c; }
++  }
++  dest[o] = 0;
++}
++
++/* The neighbour list travels inside the stats payload as a "neighbors" array,
++ * because that is what the receiving side reads: it derives its own per-link
++ * neighbor_<prefix> history from these entries. An earlier version published
++ * them as separate metrics on their own topic, which nothing subscribed to --
++ * the data reached the broker and was thrown away there.
++ *
++ * Truncates instead of failing when the buffer runs out: a partial neighbour
++ * list is useful, a dropped stats message is not. */
++size_t MyMesh::appendNeighborsJson(char *out, size_t max_len) {
++  if (max_len < 32) return 0;
++  int n = snprintf(out, max_len, ",\"neighbors\":[");
++  if (n <= 0 || (size_t)n >= max_len) return 0;
++
++  int written = 0;
++#if MAX_NEIGHBOURS
++  uint32_t now = getRTCClock()->getCurrentTime();
++  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++    const NeighbourInfo *nb = &neighbours[i];
++    if (nb->heard_timestamp == 0) continue;
++
++    char hex[7];
++    mesh::Utils::toHex(hex, nb->id.pub_key, 3);      // 6 lowercase hex chars
++    char name[MAX_ADVERT_DATA_SIZE * 2];
++    jsonEscape(name, sizeof(name), nb->name);
++
++    uint32_t secs_ago = (now > nb->heard_timestamp) ? (now - nb->heard_timestamp) : 0;
++    int w = snprintf(out + n, max_len - n,
++                     "%s{\"prefix\":\"%s\",\"name\":\"%s\",\"snr\":%.2f,\"seen_min\":%u}",
++                     written ? "," : "", hex, name, nb->snr / 4.0f,
++                     (unsigned)(secs_ago / 60));
++    if (w <= 0 || (size_t)(n + w) >= max_len - 2) break;   // leave room to close
++    n += w;
++    written++;
++  }
++#endif
++
++  int w = snprintf(out + n, max_len - n, "]");
++  if (w <= 0 || (size_t)(n + w) >= max_len) return 0;
++  return (size_t)(n + w);
 +}
 +
 +bool MyMesh::getClockHour(uint8_t *hour_out) {
@@ -1621,7 +2026,7 @@ index c93ba1a..db34ca4 100644
  void MyMesh::formatStatsReply(char *reply) {
    StatsFormatHelper::formatCoreStats(reply, board, *_ms, _err_flags, _mgr);
  }
-@@ -1215,6 +1302,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
+@@ -1215,6 +1615,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
      command += 3;
    }
  
@@ -1636,10 +2041,72 @@ index c93ba1a..db34ca4 100644
    if (memcmp(command, "setperm ", 8) == 0) {   // format:  setperm {pubkey-hex} {permissions-int8}
      char* hex = &command[8];
 diff --git a/examples/simple_repeater/MyMesh.h b/examples/simple_repeater/MyMesh.h
-index 2f923c8..36a7279 100644
+index 2f923c8..d1137a9 100644
 --- a/examples/simple_repeater/MyMesh.h
 +++ b/examples/simple_repeater/MyMesh.h
-@@ -229,6 +229,16 @@ public:
+@@ -67,8 +67,39 @@ struct NeighbourInfo {
+   uint32_t advert_timestamp;
+   uint32_t heard_timestamp;
+   int8_t snr; // multiplied by 4, user should divide to get float value
++  /* Kept from the advert so the admin page can offer a list of heard repeaters
++   * you can actually recognise; a bare pub_key prefix is not something a human
++   * picks from. */
++  char name[MAX_ADVERT_DATA_SIZE];
+ };
+ 
++#ifndef MAX_MONITORS
++  #define MAX_MONITORS 8
++#endif
++
++/* Peers this node logs in to and polls, as opposed to the ACL, which is peers
++ * that log in to us. Deliberately a separate table: an ACL entry would also
++ * grant that node rights on this one, and monitoring somebody must not mean
++ * trusting them. */
++struct MonitorInfo {
++  mesh::Identity id;
++  uint8_t shared_secret[PUB_KEY_SIZE];
++  uint8_t out_path[MAX_PATH_SIZE];
++  uint8_t out_path_len;
++};
++
++/* Peer indexes passed to getPeerSharedSecret()/onPeerDataRecv() are ACL
++ * indexes. Monitor entries ride the same dispatch with their index offset by
++ * this base, so replies from them arrive without a second mechanism. */
++#define MONITOR_IDX_BASE  1000
++
++/* How many of a monitored repeater's neighbours to ask for, and how many bytes
++ * of each one's public key. 3 bytes gives the six hex characters this pipeline
++ * names nodes by, and holds an entry to 8 bytes (3 key + 4 age + 1 SNR) so 16
++ * of them still fit in one packet alongside the header. */
++#define MONITOR_NBR_MAX     16
++#define MONITOR_NBR_PREFIX   3
++
+ #ifndef FIRMWARE_BUILD_DATE
+   #define FIRMWARE_BUILD_DATE   "9 Aug 2026"
+ #endif
+@@ -112,14 +143,19 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
+   float pending_bw;
+   uint8_t pending_sf;
+   uint8_t pending_cr;
+-  int  matching_peer_indexes[MAX_CLIENTS];
++  int  matching_peer_indexes[MAX_CLIENTS + MAX_MONITORS];
++  MonitorInfo monitors[MAX_MONITORS];
++  int num_monitors;
+ #if defined(WITH_RS232_BRIDGE)
+   RS232Bridge bridge;
+ #elif defined(WITH_ESPNOW_BRIDGE)
+   ESPNowBridge bridge;
+ #endif
+ 
+-  void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr);
++  void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr, const char* name);
++  size_t appendNeighborsJson(char* out, size_t max_len);
++  void sendToMonitor(MonitorInfo& m, mesh::Packet* pkt);
++  void handleMonitorData(int mon_idx, uint8_t type, const uint8_t* data, size_t len);
+   uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
+   uint8_t handleAnonRegionsReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data);
+   uint8_t handleAnonOwnerReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data);
+@@ -229,6 +265,58 @@ public:
    void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
    void loop();
  
@@ -1648,10 +2115,52 @@ index 2f923c8..36a7279 100644
 +   * buffer was too small. */
 +  size_t fillStatsJson(char* out, size_t max_len);
 +
++  /* Clears the stored return path so the next attempt floods again. A stored
++   * path that has gone stale otherwise sends every retry into a hole. */
++  void resetMonitorPath(int idx);
++
++  /* Hops in the stored return path, or -1 when we have none and the next send
++   * will flood. Exists so the trace can record which of the two happened:
++   * 'sent' and 'sent the way that reaches them' are not the same claim. */
++  int getMonitorPathLen(int idx) const;
++
 +  /* Hour of day (UTC) from the RTC, or false when the clock was never set or
 +   * reads implausibly. Callers must treat time as a bonus: nothing in this
 +   * firmware may stop working because the clock is wrong. */
 +  bool getClockHour(uint8_t* hour_out);
++
++  // ---- heard repeaters, for the 'pick one to monitor' list ----------------
++
++  int  getNumNeighbours() const;
++  /* Fills one entry of the heard list. pub_hex needs 65 bytes (full key: the
++   * monitor list has to survive reboots and a 6-byte prefix is not enough to
++   * derive a shared secret from). Returns false for an empty slot. */
++  bool getNeighbourAt(int idx, char* pub_hex, char* name_out, size_t name_max,
++                      uint32_t* secs_ago, int8_t* snr_out) const;
++
++  /* Looks up a heard repeater whose public key starts with the given prefix.
++   * This is what turns a hand-typed key prefix into something usable: a shared
++   * secret needs all 32 bytes, so a pasted prefix stays inert until we hear
++   * that node advertise itself. */
++  bool findNeighbourByPrefix(const uint8_t* prefix, int prefix_len, uint8_t* full_key_out,
++                             char* name_out, size_t name_max) const;
++
++  // ---- monitored repeaters ------------------------------------------------
++
++  void clearMonitors();
++  /* Adds by full public key. Computes the shared secret once, here, because
++   * ECDH is expensive and must never happen in a receive callback. */
++  int  addMonitor(const uint8_t* pub_key);
++  int  getNumMonitors() const { return num_monitors; }
++
++  /* All return false when the packet pool is empty, which is normal under load
++   * and simply means 'try again next round'. Status, telemetry and neighbours
++   * are three separate requests because that is how the protocol splits them:
++   * RepeaterStats carries no sensor readings and no neighbour list. */
++  bool sendMonitorLogin(int idx, const char* password);
++  bool sendMonitorStatusReq(int idx);
++  bool sendMonitorTelemetryReq(int idx);
++  bool sendMonitorNeighboursReq(int idx);
 +
  #if defined(WITH_BRIDGE)
    void setBridgeState(bool enable) override {

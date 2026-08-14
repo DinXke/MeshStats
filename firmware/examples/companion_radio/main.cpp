@@ -198,12 +198,26 @@ void setup() {
   board.setInhibitSleep(true);   // prevent sleep when WiFi is active
   WiFi.setAutoReconnect(true);
 
+  /* setInhibitSleep() hierboven gaat alleen over de slaapstand van de CPU; de
+   * WiFi-radio staat los daarvan en valt standaard terug op WIFI_PS_MIN_MODEM.
+   * Die slaapt tussen de bakens door, en dat kost hier twee dingen: antwoorden
+   * van een paar honderd bytes die seconden onderweg zijn, en baken-timeouts die
+   * de verbinding laten vallen. Een node die aan de netvoeding hangt en een
+   * mesh, een webserver en Home Assistant moet bedienen, heeft daar niets aan.
+   * (simple_repeater kwam op dezelfde conclusie uit.) */
+  WiFi.setSleep(false);
+
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
       if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-          WIFI_DEBUG_PRINTLN("WiFi disconnected. Flagging for reconnect...");
+          // De reden en de veldsterkte erbij: zonder die twee is niet uit te
+          // maken of een wegval aan de radio ligt of aan het toegangspunt.
+          WIFI_DEBUG_PRINTLN("WiFi disconnected (reason %d, rssi %d). Flagging for reconnect...",
+                             (int)info.wifi_sta_disconnected.reason, (int)WiFi.RSSI());
           wifi_needs_reconnect = true;
       } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
-          WIFI_DEBUG_PRINTLN("WiFi connected successfully!");
+          WIFI_DEBUG_PRINTLN("WiFi connected successfully! (rssi %d)", (int)WiFi.RSSI());
+          // Een herverbinding zet de energiestand terug op de standaard.
+          WiFi.setSleep(false);
           wifi_needs_reconnect = false;
       }
   });

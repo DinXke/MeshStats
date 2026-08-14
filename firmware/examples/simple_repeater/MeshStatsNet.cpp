@@ -1,5 +1,24 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.4.0  A monitored repeater is now read with three requests instead of one:
+ *        status, telemetry (CayenneLPP -> ch<N>_temperature / ch<N>_voltage)
+ *        and neighbours, published as one message with a "neighbors" array.
+ *        Any of the three may fail without losing the others. Per-type
+ *        counters and trace lines say which part came back.
+ * 1.3.1  A poll that stalled after a successful login looked exactly like one
+ *        whose request was never sent -- both leave polls=1, oks=0, lr=1. Added
+ *        a trace of the poll sequence (admin page, 'wifi mon trace', serial),
+ *        and one flood retry per step: the status request is the first packet
+ *        that depends on the path learned from the login, and nothing had ever
+ *        tested that path.
+ * 1.3.0  Fixed monitored repeaters never arriving anywhere: their statistics
+ *        went to a '<prefix>/<node>/mon' topic that nothing subscribes to, so
+ *        publish() succeeded and the data was dropped at the broker. Now on the
+ *        ordinary stats topic, with the subject in the payload. Same mistake
+ *        fixed for the neighbour list, which belongs inside the stats payload
+ *        as a "neighbors" array. Separate polls/reads/published counters so a
+ *        gap like that is visible without a sniffer. Chip temperature renamed
+ *        mcu_temperature; ch1_temperature stays reserved for a real sensor.
  * 1.2.0  Monitor other repeaters: pick them from the heard list or paste a
  *        public key, log in with a password or via their access list, poll
  *        GET_STATUS over the mesh and publish the result to <prefix>/<node>/mon.
@@ -23,6 +42,7 @@
 #include <Update.h>
 #include <esp_task_wdt.h>
 #include <esp_idf_version.h>
+#include <helpers/sensors/LPPDataHelpers.h>   // decodes the telemetry replies
 
 #define MSNET_CFG_FILE    "/msnet.json"
 #define MSNET_BOOT_FILE   "/msboot"
@@ -42,11 +62,12 @@
 #define MQTT_RX_MAX_LEN  255      // MAX_TRANS_UNIT
 #define MQTT_RETRY_MS  15000UL    // do not hammer a broker that will not answer
 #define MQTT_DRAIN_MAX     4      // packets per loop pass, so the mesh keeps its turn
-/* Largest message we will ever hand to PubSubClient. Sized for the neighbour
- * payload, which is the big one: MAX_NEIGHBOURS entries of ~26 characters each
- * plus the envelope. Anything longer is truncated at the source rather than
- * being refused here. */
-#define MQTT_PUB_MAX    2048
+/* Largest message we will ever hand to PubSubClient. The stats payload is the
+ * big one because it carries the neighbour array: MAX_NEIGHBOURS entries of
+ * ~70 characters each plus the envelope. Anything longer is truncated at the
+ * source (fewer neighbours) rather than being refused here, because publish()
+ * silently drops whatever exceeds its buffer. */
+#define MQTT_PUB_MAX    5120
 
 #define STA_TIMEOUT_MS      30000UL    // try this long before broadcasting our own SSID
 #define STA_RETRY_MS       300000UL    // while in AP mode, retry the network every 5 min
@@ -779,18 +800,6 @@ static bool mqttPublishStats() {
   _stats_count++;
   _published_this_wake = true;
   _mqtt_err = "";
-
-  /* Neighbours ride along on their own topic, same envelope. Keeping them out
-   * of the message above is what stops a node with fifty neighbours from
-   * silently exceeding the MQTT buffer and publishing nothing at all. */
-  n = _mesh->fillNeighborsJson(body, sizeof(body));
-  if (n > 0) {
-    mqttTopic("neighbors", topic, sizeof(topic));
-    if (!_mqtt.publish(topic, (const uint8_t *)body, n, false)) {
-      _fail_count++;
-      _mqtt_err = "stats";
-    }
-  }
   return true;
 }
 
@@ -903,7 +912,9 @@ void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len
  * nodes are on the air, and monitoring the wrong repeater is worse than being
  * asked for two more characters. */
 #define MON_MIN_HEX      12
-#define MON_STEP_MS      20000UL // how long to wait for one login/status answer
+/* A first login is flooded and its answer comes back over an unknown number of
+ * hops; 20 s turned out to be tight for that. */
+#define MON_STEP_MS      30000UL // how long to wait for one login/status answer
 #define MON_GAP_MS        3000UL // breathing space between peers
 #define MON_HEARD_MAX      40    // heard rows handed to the page
 
@@ -918,19 +929,77 @@ struct MonEntry {
   int8_t   mesh_idx;           // index in MyMesh's table, -1 = not resolvable yet
   uint8_t  login_res;
   bool     logged_in;
-  uint32_t polls, oks;
+  /* Three counters, not two. 'oks' used to be incremented only on a successful
+   * publish, which meant a reading that was fetched but never delivered looked
+   * exactly like one that was never fetched -- and finding out took a sniffer
+   * on the broker. Now: polls = attempts, oks = answers received and parsed,
+   * pubs = actually published. Any gap between them is visible on the page. */
+  uint32_t polls, oks, pubs;
+  // Per request type, so a round that half worked says which half.
+  uint32_t ok_st, ok_tl, ok_nb;
+  uint8_t  fails;              // consecutive rounds that produced nothing
   unsigned long last_ok;
 };
+
+/* Three requests each waiting out a 30 s timeout is 90 s spent on a peer that
+ * is simply not there. With a handful of dead entries a round would run
+ * practically without pause, and this node's day job is relaying other
+ * people's traffic. So after this many barren rounds an entry is only retried
+ * every fourth one. Any answer at all clears it. */
+#define MON_BACKOFF_AFTER   3
+#define MON_BACKOFF_EVERY   4
 
 static MonEntry _mon[MAX_MONITORS];
 static int _mon_count = 0;
 static uint16_t _mon_interval = 900;
 
-enum MonState { MST_IDLE, MST_LOGIN_WAIT, MST_REQ_WAIT, MST_GAP };
+enum MonState { MST_IDLE, MST_LOGIN_WAIT, MST_REQ_WAIT, MST_TELEM_WAIT, MST_NBR_WAIT, MST_GAP };
 static MonState _mon_state = MST_IDLE;
 static int _mon_cur = -1;
+static uint8_t _mon_retry = 0;      // one flood retry per step, then give up
+
+/* Results of the round in progress, gathered before anything is published.
+ * Each of the three requests can fail on its own, and a partial reading beats
+ * none -- so we collect what comes back and publish once, at the end, with
+ * whatever we have. */
+static RepeaterStats _mon_st;
+static bool _mon_have_st = false;
+static uint8_t _mon_nbr[176];       // raw neighbours reply, decoded when publishing
+static int  _mon_nbr_len = 0;
+static bool _mon_have_nbr = false;
+
+/* Telemetry arrives as CayenneLPP, so which channels a node reports on is not
+ * known in advance. Values are kept under the channel the source used rather
+ * than renamed to something we assume they mean. */
+#define MON_TELEM_MAX 6
+struct MonTelem { uint8_t channel; char kind; float value; };   // kind: 't' or 'v'
+static MonTelem _mon_tl[MON_TELEM_MAX];
+static int _mon_tl_n = 0;
 static unsigned long _mon_deadline = 0;
 static unsigned long _mon_next_round = 0;
+static uint32_t _mon_round = 0;
+
+/* A short trace of the poll sequence, because the counters alone cannot tell
+ * two very different failures apart: a status request that was never sent
+ * (packet pool empty) and one that was sent but never answered both leave
+ * polls=1, oks=0, lr=1. Readable from the admin page and over the mesh CLI, so
+ * diagnosing a node on a roof does not need a serial cable. */
+#define MON_TRACE_LINES  12
+#define MON_TRACE_LEN    64
+static char _mon_trace[MON_TRACE_LINES][MON_TRACE_LEN];
+static uint32_t _mon_trace_n = 0;
+
+static void monTrace(const char *fmt, ...) {
+  char *dest = _mon_trace[_mon_trace_n % MON_TRACE_LINES];
+  int p = snprintf(dest, MON_TRACE_LEN, "%lus ", (unsigned long)(millis() / 1000));
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(dest + p, MON_TRACE_LEN - p, fmt, ap);
+  va_end(ap);
+  _mon_trace_n++;
+  Serial.print("MON: ");
+  Serial.println(dest);
+}
 
 // One staging slot is enough: only ever one poll is outstanding.
 static volatile bool _mon_got_reply = false;
@@ -1109,71 +1178,171 @@ void meshstats_on_monitor_response(int mon_idx, const uint8_t *data, int len) {
   _mon_got_reply = true;
 }
 
-/* Publishes one polled repeater under our own topic, in the same shape as our
- * own stats so the receiving side can reuse its parser. 'via' names who did
- * the asking: these numbers are second-hand and a reader should be able to
- * tell. */
-static void publishMonitorStats(MonEntry &m, const uint8_t *data, int len) {
-  if (!mqttEnsure()) return;
+/* Publishes one polled repeater on OUR OWN stats topic, with the subject's
+ * prefix in the payload.
+ *
+ * This used to go to a '<prefix>/<node>/mon' topic of my own invention, and
+ * that was the bug: the receiving side subscribes to exactly two patterns,
+ * '<prefix>/+/stats' and '<prefix>/+/rx'. Everything else reaches the broker
+ * and is discarded there unread, which is why two successful readings produced
+ * a publish that returned success and a site that never heard of them.
+ *
+ * The relay case is deliberately supported at the far end: the topic names who
+ * published, repeater.pubkey_prefix names who it is about, and the difference
+ * is recorded as source_prefix. So the right topic is the ordinary one. */
+// Clears the collected results; called when a peer's turn begins.
+static void monResetResults() {
+  memset(&_mon_st, 0, sizeof(_mon_st));
+  _mon_have_st = false;
+  _mon_have_nbr = false;
+  _mon_nbr_len = 0;
+  _mon_tl_n = 0;
+}
 
-  RepeaterStats st;
-  memset(&st, 0, sizeof(st));
-  int n = len - 4;                        // first 4 bytes echo our request tag
-  if (n < 20) return;                     // too short to be a status reply
-  if (n > (int)sizeof(st)) n = sizeof(st);
-  memcpy(&st, &data[4], n);               // older firmware sends fewer fields; rest stays 0
+/* Decodes a CayenneLPP telemetry reply. Only temperature and voltage are kept:
+ * those are the two the site has fields for, and skipData() lets us step over
+ * everything else without having to understand it. */
+static void monDecodeTelemetry(const uint8_t *data, int len) {
+  _mon_tl_n = 0;
+  if (len <= 4) return;
+
+  LPPReader reader(&data[4], (uint8_t)(len - 4));
+  uint8_t channel, type;
+  while (_mon_tl_n < MON_TELEM_MAX && reader.readHeader(channel, type)) {
+    float v;
+    if (type == LPP_TEMPERATURE && reader.readTemperature(v)) {
+      _mon_tl[_mon_tl_n].channel = channel;
+      _mon_tl[_mon_tl_n].kind = 't';
+      _mon_tl[_mon_tl_n].value = v;
+      _mon_tl_n++;
+    } else if (type == LPP_VOLTAGE && reader.readVoltage(v)) {
+      _mon_tl[_mon_tl_n].channel = channel;
+      _mon_tl[_mon_tl_n].kind = 'v';
+      _mon_tl[_mon_tl_n].value = v;
+      _mon_tl_n++;
+    } else {
+      reader.skipData(type);
+    }
+  }
+}
+
+/* Publishes one polled repeater on OUR OWN stats topic, with the subject's
+ * prefix in the payload.
+ *
+ * This used to go to a '<prefix>/<node>/mon' topic of my own invention, and
+ * that was the bug: the receiving side subscribes to exactly two patterns,
+ * '<prefix>/+/stats' and '<prefix>/+/rx'. Everything else reaches the broker
+ * and is discarded there unread, which is why two successful readings produced
+ * a publish that returned success and a site that never heard of them.
+ *
+ * The relay case is deliberately supported at the far end: the topic names who
+ * published, repeater.pubkey_prefix names who it is about, and the difference
+ * is recorded as source_prefix. So the right topic is the ordinary one. */
+static bool publishMonitorRound(MonEntry &m) {
+  if (!_mon_have_st && _mon_tl_n == 0 && !_mon_have_nbr) return false;
+  if (!mqttEnsure()) return false;
 
   char prefix_hex[13];
   memcpy(prefix_hex, m.key, 12);
   prefix_hex[12] = 0;
 
-  static char body[900];
+  static char body[MQTT_PUB_MAX];
   int p = snprintf(body, sizeof(body),
-    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\"},"
-    "\"metrics\":{"
-      "\"online\":true,"
-      "\"bat\":%.3f,"
-      "\"uptime\":%.5f,"
-      "\"noise_floor\":%d,"
-      "\"last_rssi\":%d,"
-      "\"last_snr\":%.2f,"
-      "\"airtime\":%.1f,"
-      "\"rx_airtime\":%.1f,"
-      "\"nb_recv\":%u,"
-      "\"nb_sent\":%u,"
-      "\"sent_flood\":%u,"
-      "\"sent_direct\":%u,"
-      "\"recv_flood\":%u,"
-      "\"recv_direct\":%u,"
-      "\"recv_errors\":%u,"
-      "\"direct_dups\":%u,"
-      "\"flood_dups\":%u,"
-      "\"tx_queue_len\":%u,"
-      "\"err_events\":%u"
-    "},\"via\":\"%s\"}",
-    prefix_hex, m.name,
-    st.batt_milli_volts / 1000.0f,
-    st.total_up_time_secs / 86400.0,
-    (int)st.noise_floor, (int)st.last_rssi, st.last_snr / 4.0f,
-    st.total_air_time_secs / 60.0f, st.total_rx_air_time_secs / 60.0f,
-    (unsigned)st.n_packets_recv, (unsigned)st.n_packets_sent,
-    (unsigned)st.n_sent_flood, (unsigned)st.n_sent_direct,
-    (unsigned)st.n_recv_flood, (unsigned)st.n_recv_direct,
-    (unsigned)st.n_recv_errors, (unsigned)st.n_direct_dups, (unsigned)st.n_flood_dups,
-    (unsigned)st.curr_tx_queue_len, (unsigned)st.err_events,
-    _node_hex);
+    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\"},\"metrics\":{\"online\":true",
+    prefix_hex, m.name);
+  if (p <= 0 || p >= (int)sizeof(body)) return false;
 
-  if (p <= 0 || p >= (int)sizeof(body)) return;
+  if (_mon_have_st) {
+    const RepeaterStats &st = _mon_st;
+    /* battery_percentage is derived here rather than asked for: it is the same
+     * cell voltage through the same shared curve the rest of this firmware
+     * uses, so it costs no extra packet. */
+    int pct = meshstats_batt_percent(st.batt_milli_volts);
+    p += snprintf(body + p, sizeof(body) - p,
+      ",\"bat\":%.3f,\"uptime\":%.5f,\"noise_floor\":%d,\"last_rssi\":%d,\"last_snr\":%.2f,"
+      "\"airtime\":%.1f,\"rx_airtime\":%.1f,\"nb_recv\":%u,\"nb_sent\":%u,"
+      "\"sent_flood\":%u,\"sent_direct\":%u,\"recv_flood\":%u,\"recv_direct\":%u,"
+      "\"recv_errors\":%u,\"direct_dups\":%u,\"flood_dups\":%u,\"tx_queue_len\":%u,"
+      "\"err_events\":%u,\"battery_percentage\":%d",
+      st.batt_milli_volts / 1000.0f, st.total_up_time_secs / 86400.0,
+      (int)st.noise_floor, (int)st.last_rssi, st.last_snr / 4.0f,
+      st.total_air_time_secs / 60.0f, st.total_rx_air_time_secs / 60.0f,
+      (unsigned)st.n_packets_recv, (unsigned)st.n_packets_sent,
+      (unsigned)st.n_sent_flood, (unsigned)st.n_sent_direct,
+      (unsigned)st.n_recv_flood, (unsigned)st.n_recv_direct,
+      (unsigned)st.n_recv_errors, (unsigned)st.n_direct_dups, (unsigned)st.n_flood_dups,
+      (unsigned)st.curr_tx_queue_len, (unsigned)st.err_events, pct);
+  }
+
+  /* Under the channel the source itself used. On a MeshCore repeater channel 1
+   * is its own board, so ch1_temperature there is the MCU die rather than the
+   * outside air -- but that is the far side's naming to make, not ours to
+   * reinterpret. */
+  for (int i = 0; i < _mon_tl_n && p < (int)sizeof(body) - 64; i++) {
+    p += snprintf(body + p, sizeof(body) - p, ",\"ch%u_%s\":%.2f",
+                  (unsigned)_mon_tl[i].channel,
+                  _mon_tl[i].kind == 't' ? "temperature" : "voltage",
+                  _mon_tl[i].value);
+  }
+
+  int nbr_written = 0;
+  char nbr_json[MONITOR_NBR_MAX * 56 + 32];
+  nbr_json[0] = 0;
+
+  if (_mon_have_nbr && _mon_nbr_len >= 8) {
+    int16_t total, returned;
+    memcpy(&total, &_mon_nbr[4], 2);
+    memcpy(&returned, &_mon_nbr[6], 2);
+    if (total >= 0) {
+      p += snprintf(body + p, sizeof(body) - p, ",\"neighbor_count\":%d", (int)total);
+    }
+
+    int q = snprintf(nbr_json, sizeof(nbr_json), ",\"neighbors\":[");
+    const int entry = MONITOR_NBR_PREFIX + 5;      // key + 4 age + 1 snr
+    for (int i = 0; i < returned; i++) {
+      int off = 8 + i * entry;
+      if (off + entry > _mon_nbr_len) break;
+
+      char hex[MONITOR_NBR_PREFIX * 2 + 1];
+      mesh::Utils::toHex(hex, &_mon_nbr[off], MONITOR_NBR_PREFIX);
+      uint32_t secs_ago;
+      memcpy(&secs_ago, &_mon_nbr[off + MONITOR_NBR_PREFIX], 4);
+      int8_t snr4 = (int8_t)_mon_nbr[off + MONITOR_NBR_PREFIX + 4];
+
+      /* No name field: their reply carries only key, age and SNR, and the far
+       * end keeps any name it already had when we leave it out. */
+      int w = snprintf(nbr_json + q, sizeof(nbr_json) - q,
+                       "%s{\"prefix\":\"%s\",\"snr\":%.2f,\"seen_min\":%u}",
+                       nbr_written ? "," : "", hex, snr4 / 4.0f,
+                       (unsigned)(secs_ago / 60));
+      if (w <= 0 || (size_t)(q + w) >= sizeof(nbr_json) - 2) break;
+      q += w;
+      nbr_written++;
+    }
+    snprintf(nbr_json + q, sizeof(nbr_json) - q, "]");
+  }
+
+  p += snprintf(body + p, sizeof(body) - p, "}%s,\"via\":\"%s\"}",
+                nbr_written ? nbr_json : "", _node_hex);
+  if (p <= 0 || p >= (int)sizeof(body)) return false;
 
   char topic[96];
-  mqttTopic("mon", topic, sizeof(topic));
-  if (_mqtt.publish(topic, (const uint8_t *)body, p, false)) {
-    m.oks++;
-    m.last_ok = millis();
-  } else {
+  mqttTopic("stats", topic, sizeof(topic));
+  if (!_mqtt.publish(topic, (const uint8_t *)body, p, false)) {
     _fail_count++;
     _mqtt_err = "stats";
+    return false;
   }
+  m.pubs++;
+  m.fails = 0;                 // something came back: no reason to rest
+  m.last_ok = millis();
+  monTrace("pub st=%d tl=%d nb=%d %db", _mon_have_st ? 1 : 0, _mon_tl_n, nbr_written, p);
+  return true;
+}
+
+// A round that yielded nothing at all counts towards the backoff.
+static void monRoundFailed(MonEntry &m) {
+  if (m.fails < 255) m.fails++;
 }
 
 /* Node names come off the air and end up inside JSON. Anything with a quote in
@@ -1282,29 +1451,69 @@ static void applyMonAction() {
   if (touched_list) syncMonitorsToMesh();
 }
 
+/* Fires the request belonging to a step and waits for it. A send that fails
+ * (packet pool empty) skips that step rather than stalling the sequence -- the
+ * round still ends in a publish. */
+static void monStep(MonState next) {
+  if (_mon_cur < 0) return;
+  MonEntry &m = _mon[_mon_cur];
+  _mon_retry = 0;
+
+  while (true) {
+    bool sent = false;
+    if (next == MST_REQ_WAIT)        sent = _mesh->sendMonitorStatusReq(m.mesh_idx);
+    else if (next == MST_TELEM_WAIT) sent = _mesh->sendMonitorTelemetryReq(m.mesh_idx);
+    else if (next == MST_NBR_WAIT)   sent = _mesh->sendMonitorNeighboursReq(m.mesh_idx);
+
+    if (sent) {
+      _mon_state = next;
+      _mon_deadline = millis() + MON_STEP_MS;
+      return;
+    }
+    monTrace("step %d NOT SENT (pool full)", (int)next);
+
+    if (next == MST_REQ_WAIT)        next = MST_TELEM_WAIT;
+    else if (next == MST_TELEM_WAIT) next = MST_NBR_WAIT;
+    else break;
+  }
+
+  if (!publishMonitorRound(m)) monRoundFailed(m);
+  _mon_state = MST_GAP;
+  _mon_deadline = millis() + MON_GAP_MS;
+}
+
 // Moves to the next entry worth polling, or ends the round.
 static void monitorAdvance() {
   for (int i = _mon_cur + 1; i < _mon_count; i++) {
     if (!_mon[i].enabled || _mon[i].mesh_idx < 0) continue;
+    if (_mon[i].fails >= MON_BACKOFF_AFTER && (_mon_round % MON_BACKOFF_EVERY) != 0) {
+      continue;                        // resting; see MON_BACKOFF_AFTER
+    }
 
     _mon_cur = i;
+    _mon_retry = 0;
     _mon[i].polls++;
+    monResetResults();
+    int hops = _mesh->getMonitorPathLen(_mon[i].mesh_idx);
+
     if (_mon[i].logged_in) {
-      if (_mesh->sendMonitorStatusReq(_mon[i].mesh_idx)) {
-        _mon_state = MST_REQ_WAIT;
-        _mon_deadline = millis() + MON_STEP_MS;
-        return;
-      }
+      monTrace("req %s hops=%d %.6s", hops < 0 ? "FLOOD" : "direct", hops, _mon[i].key);
+      monStep(MST_REQ_WAIT);
+      if (_mon_state != MST_GAP) return;
     } else if (_mesh->sendMonitorLogin(_mon[i].mesh_idx, _mon[i].pass)) {
+      monTrace("login sent %s hops=%d %.6s", hops < 0 ? "FLOOD" : "direct", hops, _mon[i].key);
       _mon_state = MST_LOGIN_WAIT;
       _mon_deadline = millis() + MON_STEP_MS;
       return;
+    } else {
+      monTrace("login NOT SENT (pool full) %.6s", _mon[i].key);
     }
     // packet pool empty: leave this one for the next round rather than spin
   }
 
   _mon_cur = -1;
   _mon_state = MST_IDLE;
+  _mon_round++;
   _mon_next_round = millis() + (unsigned long)_mon_interval * 1000UL;
 }
 
@@ -1325,21 +1534,51 @@ static void monitorLoop() {
       if (_mon_state == MST_LOGIN_WAIT) {
         m.login_res = LOGIN_OK;
         m.logged_in = true;
-        if (_mesh->sendMonitorStatusReq(m.mesh_idx)) {
-          _mon_state = MST_REQ_WAIT;
-          _mon_deadline = millis() + MON_STEP_MS;
-        } else {
-          _mon_state = MST_GAP;
-          _mon_deadline = millis() + MON_GAP_MS;
-        }
+        int hops = _mesh->getMonitorPathLen(m.mesh_idx);
+        monTrace("login OK len=%d, req %s hops=%d", _mon_reply_len,
+                 hops < 0 ? "FLOOD" : "direct", hops);
+        monStep(MST_REQ_WAIT);
         return;
       }
+      /* Each answer moves to the next request type. A failure at any step only
+       * costs that step: the round still ends in a publish with whatever came
+       * back, because half a reading is worth more than none. */
       if (_mon_state == MST_REQ_WAIT) {
-        publishMonitorStats(m, _mon_reply, _mon_reply_len);
+        m.oks++;                      // status read succeeded
+        m.ok_st++;
+        int n = _mon_reply_len - 4;
+        if (n >= 20) {
+          if (n > (int)sizeof(_mon_st)) n = sizeof(_mon_st);
+          memcpy(&_mon_st, &_mon_reply[4], n);   // older firmware sends fewer fields
+          _mon_have_st = true;
+        }
+        monTrace("status len=%d ok", _mon_reply_len);
+        monStep(MST_TELEM_WAIT);
+        return;
+      }
+      if (_mon_state == MST_TELEM_WAIT) {
+        monDecodeTelemetry(_mon_reply, _mon_reply_len);
+        if (_mon_tl_n > 0) m.ok_tl++;
+        monTrace("telem len=%d, %d values", _mon_reply_len, _mon_tl_n);
+        monStep(MST_NBR_WAIT);
+        return;
+      }
+      if (_mon_state == MST_NBR_WAIT) {
+        _mon_nbr_len = (_mon_reply_len > (int)sizeof(_mon_nbr))
+                       ? (int)sizeof(_mon_nbr) : _mon_reply_len;
+        memcpy(_mon_nbr, _mon_reply, _mon_nbr_len);
+        _mon_have_nbr = (_mon_nbr_len >= 8);
+        if (_mon_have_nbr) m.ok_nb++;
+        monTrace("nbrs len=%d", _mon_reply_len);
+        publishMonitorRound(m);
         _mon_state = MST_GAP;
         _mon_deadline = millis() + MON_GAP_MS;
         return;
       }
+      monTrace("reply len=%d but state=%d, dropped", _mon_reply_len, (int)_mon_state);
+    } else {
+      monTrace("reply for idx=%d, current=%d, dropped", idx,
+               _mon_cur >= 0 ? _mon[_mon_cur].mesh_idx : -1);
     }
   }
 
@@ -1351,22 +1590,79 @@ static void monitorLoop() {
         syncMonitorsToMesh();
       }
       _mon_cur = -1;
+      monTrace("round start, %d entries", _mon_count);
       monitorAdvance();
       break;
 
     case MST_LOGIN_WAIT:
       if (!passed(_mon_deadline)) return;
-      /* Silence. Either they refused us or they are out of reach; the protocol
-       * offers no way to tell those apart. */
-      if (_mon_cur >= 0) _mon[_mon_cur].login_res = LOGIN_NOANSWER;
+      if (_mon_cur < 0) { _mon_state = MST_GAP; _mon_deadline = millis() + MON_GAP_MS; break; }
+
+      /* Silence. Either they refused us or they are out of reach, and the
+       * protocol gives no way to tell those apart. If the attempt went direct,
+       * one stale hop would explain it, so retry once by flood before drawing
+       * any conclusion -- the trace then says which of the two worked. */
+      if (_mon_retry == 0 && _mesh->getMonitorPathLen(_mon[_mon_cur].mesh_idx) >= 0) {
+        _mesh->resetMonitorPath(_mon[_mon_cur].mesh_idx);
+        if (_mesh->sendMonitorLogin(_mon[_mon_cur].mesh_idx, _mon[_mon_cur].pass)) {
+          monTrace("login timeout, retry FLOOD");
+          _mon_retry = 1;
+          _mon_deadline = millis() + MON_STEP_MS;
+          return;
+        }
+      }
+      monTrace("login timeout, giving up (retry=%u)", _mon_retry);
+      _mon[_mon_cur].login_res = LOGIN_NOANSWER;
+      monRoundFailed(_mon[_mon_cur]);
       _mon_state = MST_GAP;
       _mon_deadline = millis() + MON_GAP_MS;
       break;
 
     case MST_REQ_WAIT:
       if (!passed(_mon_deadline)) return;
-      // Their side probably dropped our session; log in again next round.
-      if (_mon_cur >= 0) _mon[_mon_cur].logged_in = false;
+      if (_mon_cur < 0) { _mon_state = MST_GAP; _mon_deadline = millis() + MON_GAP_MS; break; }
+
+      /* The login just worked, so they are reachable and they know us. A status
+       * request that then goes unanswered points at the route rather than the
+       * session: the login was flooded and answered over a path we learned from
+       * it, and that path is the one thing the status request relies on and the
+       * login did not. So drop it and ask once more by flood, in this same
+       * round, before writing the round off. */
+      if (_mon_retry == 0) {
+        _mesh->resetMonitorPath(_mon[_mon_cur].mesh_idx);
+        if (_mesh->sendMonitorStatusReq(_mon[_mon_cur].mesh_idx)) {
+          monTrace("req timeout, retry FLOOD");
+          _mon_retry = 1;
+          _mon_deadline = millis() + MON_STEP_MS;
+          return;
+        }
+        monTrace("req timeout, retry NOT SENT (pool full)");
+      } else {
+        monTrace("req timeout after flood retry, giving up");
+      }
+      // Log in again next round; the session may be what went stale.
+      _mon[_mon_cur].logged_in = false;
+      monRoundFailed(_mon[_mon_cur]);
+      _mon_state = MST_GAP;
+      _mon_deadline = millis() + MON_GAP_MS;
+      break;
+
+    /* Telemetry and neighbours get no flood retry. They are extras on top of a
+     * status reading we may already hold, and spending another round trip (and
+     * everyone else's airtime) on a nice-to-have is the wrong trade for a node
+     * whose day job is relaying other people's traffic. */
+    case MST_TELEM_WAIT:
+      if (!passed(_mon_deadline)) return;
+      if (_mon_cur < 0) { _mon_state = MST_GAP; _mon_deadline = millis() + MON_GAP_MS; break; }
+      monTrace("telem timeout, skipping");
+      monStep(MST_NBR_WAIT);
+      break;
+
+    case MST_NBR_WAIT:
+      if (!passed(_mon_deadline)) return;
+      if (_mon_cur < 0) { _mon_state = MST_GAP; _mon_deadline = millis() + MON_GAP_MS; break; }
+      monTrace("nbrs timeout, publishing what we have");
+      if (!publishMonitorRound(_mon[_mon_cur])) monRoundFailed(_mon[_mon_cur]);
       _mon_state = MST_GAP;
       _mon_deadline = millis() + MON_GAP_MS;
       break;
@@ -1428,6 +1724,8 @@ static const char PAGE[] PROGMEM =
   ".ok{color:var(--accent)}.bad{color:var(--amber)}"
   ".mini{padding:.15rem .5rem;font-size:.75rem;border-radius:99px}"
   "td.act{text-align:right;white-space:nowrap}"
+  ".trace{font-family:var(--mono);font-size:.75rem;color:var(--muted);margin:0;"
+  "white-space:pre-wrap;word-break:break-word;max-height:12rem;overflow-y:auto}"
   ".muted{color:var(--muted);font-size:.85rem}"
   ".card{background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 55%),var(--card);"
   "border:1px solid var(--edge);border-radius:10px;padding:1rem}"
@@ -1490,6 +1788,7 @@ static const char PAGE[] PROGMEM =
   "<label style='max-width:9rem'><span data-i18n=l_name></span><input id=mn></label></div>"
   "<button id=mab data-i18n=b_add></button>"
   "<h3 data-i18n=t_monlist></h3><table id=ml></table>"
+  "<h3 data-i18n=t_trace></h3><pre id=tr class=trace></pre>"
   "<p class=muted data-i18n=h_acl></p>"
   "<div class=row style='margin-top:.6rem'>"
   "<label style='max-width:10rem'><span data-i18n=l_moniv></span>"
@@ -1532,6 +1831,8 @@ static const char PAGE[] PROGMEM =
   "Herstart hem opnieuw zodra je de oorzaak weg hebt.',"
   "s_wifi:'WiFi',s_ip:'IP',s_net:'Netwerk',s_signal:'Signaal',s_uptime:'Uptime',"
   "s_heap:'Vrij geheugen',s_batt:'Batterij',s_power:'Energie',s_wdt:'Watchdog',"
+  "s_mcu:'Chiptemperatuur',h_mcu:'van de chip zelf, niet de buitenlucht',"
+  "m_reads:'gelezen',m_pubs:'verstuurd',m_kinds:'status/telemetrie/buren',"
   "u_min:'min',d_on:'actief (% s)',d_off:'uit (upload bezig)',s_live:'Live doorsturen',"
   "lv_on:'aan \\u2014 pakketten gaan meteen door',"
   "lv_batt:'uit \\u2014 accu onder %%',"
@@ -1548,7 +1849,7 @@ static const char PAGE[] PROGMEM =
   "e_conn:'verbinding faalde (rc %)',e_stats:'stats versturen faalde',"
   "e_pkt:'pakket versturen faalde',"
   "t_mon:'Monitoren',t_heard:'Gehoorde repeaters',t_manual:'Handmatig toevoegen',"
-  "t_monlist:'Wordt gemonitord',l_filter:'Filteren',l_key:'Publieke sleutel (hex)',"
+  "t_monlist:'Wordt gemonitord',t_trace:'Verloop laatste ronde',l_filter:'Filteren',l_key:'Publieke sleutel (hex)',"
   "l_name:'Naam',b_add:'Toevoegen',l_moniv:'Interval (s)',b_pollnow:'Nu ophalen',"
   "h_mon:'Deze repeater kan op andere repeaters inloggen, hun status ophalen en die "
   "doorsturen naar de site. Kies er een uit de gehoorde lijst, of plak een publieke "
@@ -1593,6 +1894,8 @@ static const char PAGE[] PROGMEM =
   "you have removed the cause.',"
   "s_wifi:'WiFi',s_ip:'IP',s_net:'Network',s_signal:'Signal',s_uptime:'Uptime',"
   "s_heap:'Free memory',s_batt:'Battery',s_power:'Power',s_wdt:'Watchdog',"
+  "s_mcu:'Chip temperature',h_mcu:'of the chip itself, not the outside air',"
+  "m_reads:'read',m_pubs:'published',m_kinds:'status/telemetry/neighbours',"
   "u_min:'min',d_on:'armed (% s)',d_off:'off (upload in progress)',s_live:'Live forwarding',"
   "lv_on:'on \\u2014 packets go out immediately',"
   "lv_batt:'off \\u2014 battery below %%',"
@@ -1609,7 +1912,7 @@ static const char PAGE[] PROGMEM =
   "e_conn:'connection failed (rc %)',e_stats:'publishing stats failed',"
   "e_pkt:'publishing packet failed',"
   "t_mon:'Monitoring',t_heard:'Repeaters heard',t_manual:'Add by hand',"
-  "t_monlist:'Being monitored',l_filter:'Filter',l_key:'Public key (hex)',"
+  "t_monlist:'Being monitored',t_trace:'Last round in detail',l_filter:'Filter',l_key:'Public key (hex)',"
   "l_name:'Name',b_add:'Add',l_moniv:'Interval (s)',b_pollnow:'Poll now',"
   "h_mon:'This repeater can log in to other repeaters, fetch their status and forward it "
   "to the site. Pick one from the heard list, or paste the public key of a node you have "
@@ -1655,6 +1958,7 @@ static const char PAGE[] PROGMEM =
   "s[t.s_batt]=d.bat.known?((d.bat.mv/1000).toFixed(2)+' V \\u00b7 '+d.bat.pct+'% \\u00b7 '"
   "+t['lv'+d.bat.lv]):t.b_unknown;"
   "s[t.s_power]=pwrtext(d);"
+  "if(d.mcu_t>-100)s[t.s_mcu]=d.mcu_t.toFixed(1)+' \\u00b0C <small>'+t.h_mcu+'</small>';"
   "s[t.s_live]=(t['lv_'+d.live]||d.live).replace('%',d.livepct);"
   "s[t.s_wdt]=d.wdt?t.d_on.replace('%',d.wdt_s):t.d_off;$('#st').innerHTML=rows(s);"
   "var q=d.mqtt,m={};m[t.m_broker]=t['mq_'+q.st];"
@@ -1688,12 +1992,15 @@ static const char PAGE[] PROGMEM =
   "h='';"
   "for(i=0;i<d.mon.length;i++){var m=d.mon[i];if(!hit(m,q))continue;"
   "h+='<tr><td>'+esc(m.n||'-')+'<br><small>'+m.k.substr(0,12)+'</small></td>'"
-  "+'<td>'+monst(m,t)+'<br><small>'+m.oks+'/'+m.polls+' \\u00b7 '+ago(m.age,t)+'</small></td>'"
+  "+'<td>'+monst(m,t)+'<br><small>'+m.oks+' '+t.m_reads+', '+m.pubs+' '+t.m_pubs"
+  "+' / '+m.polls+' \\u00b7 '+ago(m.age,t)+'<br>'+t.m_kinds+': '+m.st+'/'+m.tl+'/'+m.nb"
+  "+'</small></td>'"
   "+'<td><input type=password class=mp data-k=\"'+m.k+'\" placeholder=\"'"
   "+(m.pw?t.ph_unch:t.ph_pw)+'\"></td>'"
   "+'<td class=act><input type=checkbox class=\"ck me\" data-k=\"'+m.k+'\"'"
   "+(m.e?' checked':'')+'> <button class=\"mini md\" data-k=\"'+m.k+'\">\\u2715</button></td></tr>'}"
   "$('#ml').innerHTML=h||'<tr><td>'+t.m_none+'</td></tr>';"
+  "$('#tr').textContent=(d.trace&&d.trace.length)?d.trace.join('\\n'):t.m_none;"
   "$('#miv').value=d.iv}"
   "function loadMon(){fetch('/api/mon').then(function(r){return r.json()})"
   ".then(function(d){mon=d;renderMon()})}"
@@ -1746,12 +2053,17 @@ static void handleStatus(AsyncWebServerRequest *req) {
   static char body[1600];
   IPAddress ip = (_state == WIFI_FALLBACK_AP) ? WiFi.softAPIP() : WiFi.localIP();
 
+  // "%.1f" of a NAN prints 'nan', which is not JSON and would blank the page.
+  float mcu_t = board.getMCUTemperature();
+  if (isnan(mcu_t)) mcu_t = -999.0f;
+
   int n = snprintf(body, sizeof(body),
     "{\"name\":\"%s\",\"node\":\"%s\",\"board\":\"%s\",\"fw\":\"%s\","
     "\"ms\":\"%s v%s\",\"ssid\":\"%s\",\"safe\":%d,"
     "\"wifi\":{\"st\":\"%s\",\"ip\":\"%s\",\"net\":\"%s\",\"rssi\":%d,"
     "\"up\":%lu,\"heap\":%u},"
     "\"bat\":{\"known\":%d,\"mv\":%u,\"pct\":%u,\"lv\":%u},\"wdt\":%d,\"wdt_s\":%d,"
+    "\"mcu_t\":%.1f,"
     "\"pwr\":{\"st\":\"%s\",\"secs\":%u,\"iv\":%u,\"night\":%d,"
     "\"mode\":%u,\"window\":%u,\"sleep\":%u},\"live\":\"%s\",\"livepct\":%u,",
     _mesh ? _mesh->getNodeName() : "repeater", _node_hex,
@@ -1762,7 +2074,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
     _state == WIFI_FALLBACK_AP ? _ap_ssid : _cfg.ssid,
     (int)WiFi.RSSI(), (unsigned long)(millis() / 60000UL), (unsigned)ESP.getFreeHeap(),
     _batt_known ? 1 : 0, (unsigned)_batt_mv, (unsigned)_batt_pct, (unsigned)_level,
-    _wdt_watching ? 1 : 0, WDT_TIMEOUT_S,
+    _wdt_watching ? 1 : 0, WDT_TIMEOUT_S, mcu_t,
     powerStateCode(), (unsigned)powerSecsLeft(), (unsigned)currentIntervalSecs(),
     isNight() ? 1 : 0, _cfg.pwr_mode, _cfg.pwr_window, _cfg.wifi_sleep,
     liveCode(), _cfg.bat_live);
@@ -1846,7 +2158,7 @@ static void handleMqttPost(AsyncWebServerRequest *req) {
 static void handleMonJson(AsyncWebServerRequest *req) {
   if (!requireAuth(req)) return;
   static char body[6500];
-  char esc[MON_NAME_MAX * 2 + 4];
+  char esc[MON_TRACE_LEN * 2 + 4];   // also used for trace lines, the longest
   int p = 0;
 
   p += snprintf(body + p, sizeof(body) - p,
@@ -1858,10 +2170,12 @@ static void handleMonJson(AsyncWebServerRequest *req) {
     long age = _mon[i].last_ok ? (long)((millis() - _mon[i].last_ok) / 1000UL) : -1;
     p += snprintf(body + p, sizeof(body) - p,
       "%s{\"k\":\"%s\",\"n\":\"%s\",\"pw\":%d,\"e\":%d,\"res\":%d,\"lr\":%u,"
-      "\"polls\":%u,\"oks\":%u,\"age\":%ld}",
+      "\"polls\":%u,\"oks\":%u,\"pubs\":%u,\"st\":%u,\"tl\":%u,\"nb\":%u,\"age\":%ld}",
       i ? "," : "", _mon[i].key, esc, _mon[i].pass[0] ? 1 : 0,
       _mon[i].enabled ? 1 : 0, _mon[i].mesh_idx >= 0 ? 1 : 0,
-      (unsigned)_mon[i].login_res, (unsigned)_mon[i].polls, (unsigned)_mon[i].oks, age);
+      (unsigned)_mon[i].login_res, (unsigned)_mon[i].polls, (unsigned)_mon[i].oks,
+      (unsigned)_mon[i].pubs, (unsigned)_mon[i].ok_st, (unsigned)_mon[i].ok_tl,
+      (unsigned)_mon[i].ok_nb, age);
   }
 
   p += snprintf(body + p, sizeof(body) - p, "],\"heard\":[");
@@ -1879,6 +2193,16 @@ static void handleMonJson(AsyncWebServerRequest *req) {
     p += snprintf(body + p, sizeof(body) - p,
                   "%s{\"k\":\"%s\",\"n\":\"%s\",\"snr\":%.2f,\"age\":%u}",
                   written ? "," : "", hex, esc, snr4 / 4.0f, (unsigned)secs_ago);
+    written++;
+  }
+
+  // Oldest first, so the page reads top-to-bottom like a log.
+  p += snprintf(body + p, sizeof(body) - p, "],\"trace\":[");
+  uint32_t first = (_mon_trace_n > MON_TRACE_LINES) ? _mon_trace_n - MON_TRACE_LINES : 0;
+  written = 0;
+  for (uint32_t i = first; i < _mon_trace_n && p < (int)sizeof(body) - 120; i++) {
+    jsonEsc(esc, sizeof(esc), _mon_trace[i % MON_TRACE_LINES]);
+    p += snprintf(body + p, sizeof(body) - p, "%s\"%s\"", written ? "," : "", esc);
     written++;
   }
   snprintf(body + p, sizeof(body) - p, "]}");
@@ -2298,12 +2622,13 @@ static void handleMonCommand(const char *arg, char *reply) {
     int n = (*v) ? atoi(v) : 0;           // optional index; default the first
     if (n < 0 || n >= _mon_count) { strcpy(reply, "Err - geen regel met dat nummer"); return; }
     MonEntry &m = _mon[n];
-    snprintf(reply, 155, "%d: %.12s %.16s %s, %s, login %s, %u/%u",
+    snprintf(reply, 155, "%d: %.12s %.14s %s, %s, login %s, %up/%ug/%uv, st%u tl%u nb%u",
              n, m.key, m.name[0] ? m.name : "-",
              m.enabled ? "aan" : "uit",
              m.mesh_idx >= 0 ? "bruikbaar" : "wacht op advert",
              LOGIN_NL[m.login_res < 3 ? m.login_res : 0],
-             (unsigned)m.oks, (unsigned)m.polls);
+             (unsigned)m.polls, (unsigned)m.oks, (unsigned)m.pubs,
+             (unsigned)m.ok_st, (unsigned)m.ok_tl, (unsigned)m.ok_nb);
     return;
   }
   if ((v = subArg(arg, "add")) != NULL) {
@@ -2362,8 +2687,19 @@ static void handleMonCommand(const char *arg, char *reply) {
     strcpy(reply, "OK - ronde gestart");
     return;
   }
+  if ((v = subArg(arg, "trace")) != NULL) {
+    /* One line per call: a CLI reply is 160 bytes, and this has to be readable
+     * over the mesh from wherever you happen to be. 0 = newest. */
+    if (_mon_trace_n == 0) { strcpy(reply, "geen trace"); return; }
+    uint32_t back = (*v) ? (uint32_t)atol(v) : 0;
+    uint32_t avail = (_mon_trace_n < MON_TRACE_LINES) ? _mon_trace_n : MON_TRACE_LINES;
+    if (back >= avail) { snprintf(reply, 155, "Err - 0..%u", (unsigned)(avail - 1)); return; }
+    snprintf(reply, 155, "[%u] %s", (unsigned)back,
+             _mon_trace[(_mon_trace_n - 1 - back) % MON_TRACE_LINES]);
+    return;
+  }
   strcpy(reply, "Err - wifi mon [list <n>|add <hex> [naam]|del <hex>|pass <hex> [woord]|"
-                "on <hex>|off <hex>|iv <s>|poll]");
+                "on <hex>|off <hex>|iv <s>|poll|trace <n>]");
 }
 
 static void handleMqttCommand(const char *arg, char *reply) {

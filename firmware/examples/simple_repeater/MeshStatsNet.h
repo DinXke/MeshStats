@@ -3,11 +3,19 @@
 /* MeshStatsNet -- gives a repeater an IP life next to its mesh life: WiFi, an
  * admin page, firmware upgrades, a console and MQTT publishing.
  *
- * Three kinds of MQTT messages:
- *   <prefix>/<node>/stats   this node's own statistics, periodically (JSON)
+ * Two MQTT topics, and only two, because those are the ones the receiving side
+ * subscribes to (<prefix>/+/stats and <prefix>/+/rx). Inventing a third leaf
+ * buys you a publish() that reports success and a broker that drops the
+ * message unread -- which is exactly what happened to monitored repeaters
+ * before 1.3.0.
+ *
+ *   <prefix>/<node>/stats   statistics, neighbour list included. Usually about
+ *                           this node itself, but the same topic also relays
+ *                           readings from OTHER repeaters this node polls: the
+ *                           topic still names us, while repeater.pubkey_prefix
+ *                           in the payload names the subject, and the far end
+ *                           records that difference as source_prefix.
  *   <prefix>/<node>/rx      every received packet, raw and complete (hex)
- *   <prefix>/<node>/mon     statistics of OTHER repeaters, which this node logs
- *                           in to and polls over the mesh on your behalf
  *
  * About monitoring other repeaters. You can log in with that repeater's admin
  * or read/write password, but there is a tidier way that needs no password at
@@ -74,7 +82,7 @@
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
 #define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.2.0"
+#define MESHSTATS_VERSION  "1.4.0"
 
 class MyMesh;
 

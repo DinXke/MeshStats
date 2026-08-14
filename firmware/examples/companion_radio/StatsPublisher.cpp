@@ -1,5 +1,6 @@
 #include "StatsPublisher.h"
 #include "MyMesh.h"
+#include "StatsPage.h"    // gegenereerd uit page.html door gen_page.py
 #include <WiFi.h>
 
 /* base64.hpp staat volledig in de header maar is niet inline, dus die hier ook
@@ -28,6 +29,29 @@ static const char HEXCHARS[] = "0123456789abcdef";
  * MQTT-payload met statistieken en de hex-gecodeerde ruwe pakketten delen hem.
  * Zie STATS_IO_BUF in de header voor waarom dat veilig is en wat het scheelt. */
 static char io_buf[STATS_IO_BUF];
+
+/* TIJDELIJK - diagnostiek voor het vastlopen van grotere antwoorden.
+ *
+ * WiFiClient::write() stuurt met MSG_DONTWAIT en geeft het na tien pogingen op;
+ * de webserver kijkt niet naar hoeveel er echt geschreven is. Lukt het niet in
+ * een keer, dan staat er wel een Content-Length in de kop maar volgt de rest
+ * nooit - en dan blijft de client precies zo hangen als we zien. Elke poging
+ * wacht bovendien tot een seconde in select(), dus zo'n gedeeltelijke schrijving
+ * houdt meteen ook de hoofdlus (en dus de mesh) tien seconden op.
+ *
+ * Deze regels tonen per verzoek de vrije heap en de lengte, en hoe lang de
+ * schrijfactie duurde. Zet STATS_TRACE op 0 zodra de oorzaak vastligt. */
+#define STATS_TRACE 1
+#if STATS_TRACE
+  #define TRACE(...)  Serial.printf(__VA_ARGS__)
+  // Eerste regel van elke handler. Ontbreekt hij, dan is het verzoek nooit bij
+  // ons aangekomen (verbinding weg) in plaats van dat de handler bleef hangen.
+  #define TRACE_ENTER() TRACE("[stats] %s binnen heap=%u\n", \
+                              _server.uri().c_str(), (unsigned)ESP.getFreeHeap())
+#else
+  #define TRACE(...)
+  #define TRACE_ENTER()
+#endif
 
 // ------------------------------------------------------------------ hulpjes
 
@@ -366,192 +390,63 @@ void StatsPublisher::drainRxQueue() {
 
 // ---------------------------------------------------------------- webserver
 
-/* De pagina wordt in een keer verstuurd en haalt zijn gegevens daarna via JSON
- * op.
+/* De pagina zit niet meer als string in dit bestand: ze staat in page.html en
+ * wordt door gen_page.py gzip-gecomprimeerd tot StatsPage.h. Dat blijft precies
+ * hetzelfde principe als voorheen - een onveranderlijk blok dat in een enkele
+ * schrijfactie de deur uit gaat, met alle gegevens via JSON-endpoints - maar dan
+ * klein genoeg om ook echt in een keer te passen. Wie de pagina wil aanpassen
+ * bewerkt page.html en draait het script; nooit StatsPage.h met de hand.
  *
- * Een eerdere versie bouwde de HTML in stukjes op met de actuele waarden er al
- * in. Elk stukje is een aparte blokkerende schrijfactie, en met de
- * latentiepieken van ESP32-wifi bleef de hoofdlus daarin hangen - waarmee ook
- * de mesh stilviel, tot een harde reset. Een enkele send_P van een
- * onveranderlijke PROGMEM-string kan dat niet. Breid bij nieuwe UI deze string
- * uit en zet er een endpoint bij; herintroduceer sendContent() niet. */
-static const char PAGE[] PROGMEM =
-  "<!doctype html><html lang=nl><head><meta charset=utf-8>"
-  "<meta name=viewport content='width=device-width,initial-scale=1'>"
-  "<title>MeshCore node</title><style>"
-  "body{margin:0;background:#0b0f14;color:#d7e2ea;font:15px/1.5 system-ui,sans-serif}"
-  "main{max-width:640px;margin:0 auto;padding:1rem 1.2rem 3rem}"
-  "h1{font-size:1.4rem;margin:1rem 0 .3rem}"
-  "h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.18em;color:#35e08c;margin:1.8rem 0 .6rem}"
-  ".card{background:#121a23;border:1px solid #1e2b3a;border-radius:10px;padding:1rem}"
-  "label{display:block;margin-bottom:.8rem}"
-  "input,select{width:100%;margin-top:.25rem;padding:.45rem .7rem;border-radius:7px;"
-  "border:1px solid #1e2b3a;background:#10161e;color:#d7e2ea;box-sizing:border-box}"
-  "button{padding:.45rem .9rem;border:none;border-radius:7px;background:#1d7a4f;color:#eafff4;cursor:pointer}"
-  "button:hover{background:#35e08c;color:#06130c}"
-  "table{width:100%;border-collapse:collapse}"
-  "td{padding:.35rem .5rem;border-bottom:1px solid #1e2b3a;font-family:ui-monospace,monospace;font-size:.9rem}"
-  "td:first-child{color:#7d8fa0}"
-  ".muted{color:#7d8fa0;font-size:.85rem}"
-  ".row{display:flex;gap:.6rem}.row label{flex:1}"
-  ".ck{width:auto;margin-right:.4rem}"
-  "nav{display:flex;gap:.4rem;margin:1.2rem 0 0;flex-wrap:wrap}"
-  "nav button{background:#121a23;color:#7d8fa0;border:1px solid #1e2b3a}"
-  "nav button.on{background:#1d7a4f;color:#eafff4;border-color:#1d7a4f}"
-  "#note{min-height:1.2rem}"
-  ".msgs{max-height:17rem;overflow-y:auto;margin-bottom:.9rem}"
-  ".m{padding:.35rem .55rem;border-radius:7px;margin-bottom:.35rem;background:#10161e;"
-  "white-space:pre-wrap;word-break:break-word;font-size:.92rem}"
-  ".mh{display:block;font-size:.72rem;color:#7d8fa0}"
-  ".k0{border-left:3px solid #35e08c}.k1{border-left:3px solid #4fa8ff}"
-  ".k2{border-left:3px solid #7d8fa0;opacity:.7}"
-  ".ct{padding:.55rem 0;border-bottom:1px solid #1e2b3a}"
-  ".ct .row{margin-top:.4rem;flex-wrap:wrap;align-items:center}"
-  ".ct input[type=password]{width:9rem;margin-top:0}"
-  ".inl{display:flex;align-items:center;margin:0;font-size:.85rem;white-space:nowrap}"
-  ".inl input{width:auto;margin:0 .35rem 0 0}"
-  "</style></head><body><main>"
-  "<h1 id=nm>&#128225; MeshCore node</h1><p class=muted id=sub>laden...</p>"
-  "<nav id=nav><button data-t=1 class=on>Berichten</button><button data-t=2>Kanalen</button>"
-  "<button data-t=3>Contacten</button><button data-t=4>Instellingen</button></nav>"
-  "<p class=muted id=note></p>"
+ * Nooit gegevens in de HTML bakken, nooit meer dan een schrijfactie. */
 
-  "<section id=s1><h2>Berichten</h2><div class=card>"
-  "<div id=ml class=msgs data-empty=1>laden...</div>"
-  "<form id=sf><label>Bestemming<select id=to></select></label>"
-  "<div class=row><input id=stx placeholder='Typ een bericht' maxlength=150 autocomplete=off>"
-  "<button type=submit>Verstuur</button></div></form></div></section>"
+/* Sluit af na een antwoord dat er niet helemaal uit is gekomen.
+ *
+ * De kop belooft een Content-Length; haalt de schrijfactie die niet, dan blijft
+ * de client wachten op een rest die nooit komt. Eeuwig wachten is de slechtste
+ * afloop, dus dan verbreken we de verbinding: de browser krijgt meteen een
+ * duidelijke fout in plaats van een tijdslimiet van een minuut. De seriële regel
+ * maakt zichtbaar wat het framework stil laat passeren.
+ *
+ * Let op wat dit wel en niet bewijst. De teller telt de bytes die
+ * WiFiClient::write() heeft aangenomen, en dat is de verzendbuffer van lwip -
+ * niet de client. Valt de WiFi weg nadat lwip de bytes heeft overgenomen, dan
+ * gooit de stack ze alsnog weg en krijgt de client niets, terwijl het hier
+ * "volledig verstuurd" heet. Geen ONVOLLEDIG betekent dus: het is de stack in
+ * gegaan, niet: het is aangekomen. */
+void StatsPublisher::finishResponse(unsigned long t0, size_t len) {
+  if (_server.shortWrite()) {
+    TRACE(" ONVOLLEDIG %u/%u na %lums heap=%u\n", (unsigned)_server.written(),
+          (unsigned)len, millis() - t0, (unsigned)ESP.getFreeHeap());
+    _server.client().stop();
+  } else {
+    TRACE(" -> %lums heap=%u\n", millis() - t0, (unsigned)ESP.getFreeHeap());
+  }
+}
 
-  "<section id=s2 hidden><h2>Kanalen</h2><div class=card>"
-  "<table id=cl></table>"
-  "<form id=cf style='margin-top:1rem'>"
-  "<div class=row><label>Naam<input id=cn maxlength=31 required></label>"
-  "<label>PSK (base64)<input id=cp placeholder='leeg = nieuw kanaal'></label></div>"
-  "<button type=submit>Kanaal toevoegen</button></form>"
-  "<p class=muted>Laat de PSK leeg om een nieuw kanaal met een willekeurige sleutel aan te maken. "
-  "Vul een bestaande PSK in om aan een kanaal deel te nemen.</p></div></section>"
-
-  "<section id=s3 hidden><h2>Contacten</h2><div class=card>"
-  "<div id=kl>laden...</div>"
-  "<button type=button id=more style='margin-top:.8rem' hidden>Meer laden</button></div></section>"
-
-  "<section id=s4 hidden>"
-  "<h2>Doorsturen via MQTT</h2><div class=card><form id=f>"
-  "<div class=row><label>Broker<input name=host placeholder='10.0.0.5'></label>"
-  "<label style='max-width:7rem'>Poort<input name=port type=number min=1 max=65535></label></div>"
-  "<div class=row><label>Gebruiker<input name=user></label>"
-  "<label>Wachtwoord<input name=pass type=password placeholder='ongewijzigd'></label></div>"
-  "<div class=row><label>Topicprefix<input name=prefix></label>"
-  "<label style='max-width:9rem'>Interval (s)<input name=interval type=number min=30 max=86400></label></div>"
-  "<label><input class=ck type=checkbox name=enabled>Doorsturen ingeschakeld</label>"
-  "<label><input class=ck type=checkbox name=forward_rx>Ook elk ontvangen pakket doorsturen</label>"
-  "<button type=submit>Opslaan</button> <button type=button id=tst>Nu versturen</button>"
-  "</form><table id=st></table></div>"
-  "<h2>Live statistieken</h2><div class=card><table id=mt><tr><td>laden...</td></tr></table></div>"
-  "</section>"
-
-  "<script>"
-  "var $=function(s){return document.querySelector(s)};"
-  "var TY={0:'onbekend',1:'chat',2:'repeater',3:'room',4:'sensor'};"
-  "var tabn=1,seq=0,off=0,pick=null;"
-  "function j(r){return r.json()}"
-  "function esc(s){return String(s).replace(/[&<>\"]/g,function(c){"
-  "return{'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]})}"
-  "function post(u,d){return fetch(u,{method:'POST',body:new URLSearchParams(d)}).then(j)}"
-  "function note(t){$('#note').textContent=t||''}"
-  "function rows(o){var h='';for(var k in o){h+='<tr><td>'+k+'</td><td>'+esc(o[k])+'</td></tr>'}return h}"
-  "function tm(t){if(!t)return'--:--';var d=new Date(t*1000);"
-  "return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}"
-  "function ago(a){if(a<0)return'nooit gehoord';if(a<60)return a+'s geleden';"
-  "if(a<3600)return Math.floor(a/60)+'m geleden';if(a<86400)return Math.floor(a/3600)+'u geleden';"
-  "return Math.floor(a/86400)+'d geleden'}"
-  "function tab(n){tabn=n;for(var i=1;i<5;i++)$('#s'+i).hidden=(i!=n);"
-  "var b=$('#nav').children;for(var i=0;i<b.length;i++)b[i].className=(+b[i].dataset.t==n)?'on':'';"
-  "note('');if(n==2)chans();if(n==3)ctcs(1);if(n==4)cfg()}"
-  "$('#nav').onclick=function(e){if(e.target.dataset.t)tab(+e.target.dataset.t)};"
-
-  // De node antwoordt met hoogstens een buffer vol; "more" betekent: meteen terug.
-  "function msgs(){return fetch('/messages.json?since='+seq).then(j).then(function(d){"
-  "var h='';(d.m||[]).forEach(function(m){if(m.q>seq)seq=m.q;"
-  "h+='<div class=\"m k'+m.k+'\"><span class=mh>'+esc(m.s)+' \\u00b7 '+tm(m.t)+'</span>'+esc(m.x)+'</div>'});"
-  "if(h){var e=$('#ml');if(e.dataset.empty){e.innerHTML='';delete e.dataset.empty}"
-  "e.insertAdjacentHTML('beforeend',h);"
-  "while(e.children.length>40)e.removeChild(e.firstChild);"
-  "e.scrollTop=e.scrollHeight}"
-  "if(d.more)return msgs()})}"
-
-  // Kanalen komen per pagina binnen; volg "next" tot de node -1 zegt.
-  "function chans(off,acc){off=off||0;acc=acc||[];"
-  "return fetch('/channels.json?off='+off).then(j).then(function(d){"
-  "acc=acc.concat(d.ch||[]);"
-  "if(d.next>=0)return chans(d.next,acc);"
-  "var h='',o='';acc.forEach(function(c){"
-  "h+='<tr><td>'+c.i+'</td><td>'+esc(c.n)+'</td><td style=text-align:right>"
-  "<button data-i='+c.i+'>Verwijder</button></td></tr>';"
-  "o+='<option value=c'+c.i+'>#'+esc(c.n)+'</option>'});"
-  "$('#cl').innerHTML=h||'<tr><td class=muted>nog geen kanalen</td></tr>';"
-  "if(pick)o+='<option value=k'+pick.k+'>@'+esc(pick.n)+'</option>';"
-  "var t=$('#to'),cur=t.value;t.innerHTML=o;if(cur)t.value=cur})}"
-
-  "function ctcs(reset){if(reset){off=0;$('#kl').innerHTML=''}"
-  "return fetch('/contacts.json?off='+off).then(j).then(function(d){var h='';"
-  "d.c.forEach(function(c){"
-  "h+='<div class=ct data-k='+c.k+' data-n=\"'+esc(c.n)+'\"><div><b>'+esc(c.n)+'</b> "
-  "<span class=muted>'+TY[c.t]+' \\u00b7 '+c.k+' \\u00b7 '+ago(c.a)+'</span></div><div class=row>'"
-  "+'<button class=msg>Bericht</button>';"
-  "if(c.t==2||c.t==3){h+='<label class=inl><input type=checkbox class=pb'+(c.p?' checked':'')+'>"
-  "doorsturen naar site</label><input type=password class=pw placeholder=\"'"
-  "+(c.w?'ongewijzigd':'wachtwoord')+'\"><button class=sv>Bewaren</button>"
-  "<button class=li>Inloggen</button>'}"
-  "h+='</div></div>'});"
-  "$('#kl').insertAdjacentHTML('beforeend',h);"
-  "if(!$('#kl').children.length)$('#kl').innerHTML='<p class=muted>nog geen contacten</p>';"
-  "off=d.next;$('#more').hidden=(d.next<0)})}"
-
-  "$('#more').onclick=function(){ctcs(0)};"
-  "$('#cl').onclick=function(e){var b=e.target.closest('button');if(!b)return;"
-  "post('/channel/del',{idx:b.dataset.i}).then(function(r){note(r.ok?'Kanaal verwijderd.':'Verwijderen mislukt.');chans()})};"
-  "$('#cf').onsubmit=function(e){e.preventDefault();"
-  "post('/channel/add',{name:$('#cn').value,psk:$('#cp').value}).then(function(r){"
-  "note(r.ok?'Kanaal toegevoegd.':(r.err||'Toevoegen mislukt.'));"
-  "if(r.ok){$('#cn').value='';$('#cp').value=''}chans()})};"
-
-  "$('#kl').onclick=function(e){var b=e.target.closest('button');if(!b)return;"
-  "var d=b.closest('.ct'),k=d.dataset.k;"
-  "if(b.className=='msg'){pick={k:k,n:d.dataset.n};chans().then(function(){$('#to').value='k'+k;tab(1)});return}"
-  "if(b.className=='sv'){post('/contact/save',{key:k,publish:d.querySelector('.pb').checked?1:0,"
-  "pass:d.querySelector('.pw').value}).then(function(r){"
-  "note(r.ok?'Bewaard.':(r.err||'Bewaren mislukt.'));if(r.ok)ctcs(1)});return}"
-  "if(b.className=='li'){post('/contact/login',{key:k}).then(function(r){"
-  "note(r.ok?'Inlogverzoek verstuurd.':(r.err||'Inloggen mislukt.'))})}};"
-
-  "$('#sf').onsubmit=function(e){e.preventDefault();var t=$('#stx').value;if(!t)return;"
-  "post('/send',{to:$('#to').value,text:t}).then(function(r){"
-  "if(r.ok){$('#stx').value='';note('');msgs()}else note(r.err||'Versturen mislukt.')})};"
-
-  "function cfg(){fetch('/config.json').then(j).then(function(c){"
-  "$('#nm').innerHTML='&#128225; '+esc(c.name);"
-  "$('#sub').textContent='Beheer van deze node \\u00b7 IP '+c.ip+' \\u00b7 id '+c.node;"
-  "var f=$('#f');for(var k in c.cfg){var e=f[k];if(!e)continue;"
-  "if(e.type=='checkbox')e.checked=!!c.cfg[k];else e.value=c.cfg[k]}"
-  "$('#st').innerHTML=rows(c.status)});"
-  "fetch('/stats.json').then(j).then(function(d){$('#mt').innerHTML=rows(d.metrics||{})})}"
-  "$('#f').onsubmit=function(e){e.preventDefault();"
-  "fetch('/save',{method:'POST',body:new URLSearchParams(new FormData($('#f')))})"
-  ".then(function(){$('#f').pass.value='';note('Instellingen opgeslagen.');cfg()})};"
-  "$('#tst').onclick=function(){post('/test',{}).then(function(r){"
-  "note(r.ok?'Statistieken verstuurd.':'Versturen mislukt.');cfg()})};"
-
-  "cfg();chans();msgs();"
-  "setInterval(function(){if(tabn==1)msgs()},3000);"
-  "setInterval(function(){if(tabn==4)cfg()},10000);"
-  "</script></main></body></html>";
+void StatsPublisher::sendJson(const char* body, size_t len) {
+  TRACE("[stats] %s len=%u heap=%u", _server.uri().c_str(), (unsigned)len,
+        (unsigned)ESP.getFreeHeap());
+  unsigned long t0 = millis();
+  _server.beginWriteTracking();
+  _server.send_P(200, "application/json", body, len);
+  finishResponse(t0, len);
+}
 
 void StatsPublisher::handleRoot() {
-  _server.send_P(200, "text/html; charset=utf-8", PAGE);
+  TRACE_ENTER();
+  /* Gzip: zie StatsPage.h. Content-Length wordt hier de gecomprimeerde lengte,
+   * want dat is wat er daadwerkelijk over de lijn gaat. */
+  TRACE("[stats] / gz=%u heap=%u", (unsigned)PAGE_GZ_LEN,
+        (unsigned)ESP.getFreeHeap());
+  unsigned long t0 = millis();
+  _server.beginWriteTracking();
+  _server.sendHeader("Content-Encoding", "gzip");
+  _server.send_P(200, "text/html; charset=utf-8", (PGM_P)PAGE_GZ, PAGE_GZ_LEN);
+  finishResponse(t0, PAGE_GZ_LEN);
 }
 
 void StatsPublisher::handleConfigJson() {
+  TRACE_ENTER();
   char name[65];
   jsonStr(name, sizeof(name), _mesh ? _mesh->getNodeName() : "MeshCore node");
 
@@ -561,13 +456,18 @@ void StatsPublisher::handleConfigJson() {
     "\"interval\":%u,\"enabled\":%d,\"forward_rx\":%d},"
     "\"status\":{\"Broker\":\"%s\",\"Statistieken verstuurd\":%u,"
     "\"Pakketten doorgestuurd\":\"%u (%u niet gehaald)\","
-    "\"Fouten\":\"%u %s\",\"Vrij geheugen\":\"%u bytes\"}}",
+    // Het grootste vrije blok zegt meer dan het totaal: lwip heeft aaneengesloten
+    // ruimte nodig voor zijn pbufs, en bij fragmentatie faalt dat terwijl het
+    // totaal nog ruim lijkt.
+    "\"Fouten\":\"%u %s\",\"Vrij geheugen\":\"%u bytes\","
+    "\"Grootste vrije blok\":\"%u bytes\"}}",
     name, WiFi.localIP().toString().c_str(), _node_hex,
     _cfg.host, (unsigned)_cfg.port, _cfg.user, _cfg.prefix,
     (unsigned)_cfg.interval_secs, _cfg.enabled ? 1 : 0, _cfg.forward_rx ? 1 : 0,
     _mqtt.connected() ? "verbonden" : (_cfg.host[0] ? "niet verbonden" : "niet ingesteld"),
     (unsigned)_push_count, (unsigned)_rx_count, (unsigned)_drop_count,
-    (unsigned)_fail_count, _last_error, (unsigned)ESP.getFreeHeap());
+    (unsigned)_fail_count, _last_error, (unsigned)ESP.getFreeHeap(),
+    (unsigned)ESP.getMaxAllocHeap());
 
   // Dit is het enige antwoord waarvan de lengte van ingetypte tekst afhangt
   // (broker, gebruiker, prefix) en niet van onze eigen paginering. Zijn die lang
@@ -577,7 +477,7 @@ void StatsPublisher::handleConfigJson() {
     _server.send(200, "application/json", "{\"cfg\":{},\"status\":{}}");
     return;
   }
-  _server.send(200, "application/json", io_buf);
+  sendJson(io_buf, (size_t)n);
 }
 
 void StatsPublisher::handleSave() {
@@ -620,9 +520,10 @@ void StatsPublisher::handleTest() {
 }
 
 void StatsPublisher::handleStatsJson() {
+  TRACE_ENTER();
   size_t n = _mesh ? _mesh->fillStatsJson(io_buf, sizeof(io_buf)) : 0;
   if (n == 0) { _server.send(503, "application/json", "{}"); return; }
-  _server.send(200, "application/json", io_buf);
+  sendJson(io_buf, n);
 }
 
 // -------------------------------------------------------------- chat-endpoints
@@ -635,6 +536,7 @@ void StatsPublisher::handleStatsJson() {
  * pagina toch snel, zonder dat een enkel antwoord - en dus een enkele
  * blokkerende TCP-schrijfactie - groot wordt. */
 void StatsPublisher::handleMessagesJson() {
+  TRACE_ENTER();
   uint32_t since = (uint32_t)strtoul(_server.arg("since").c_str(), nullptr, 10);
 
   // Langste item: vaste tekst + 2 32-bitgetallen + beide strings volledig ontsnapt.
@@ -658,7 +560,7 @@ void StatsPublisher::handleMessagesJson() {
     first = false;
   }
   snprintf(io_buf + n, sizeof(io_buf) - n, "],\"more\":%d}", more ? 1 : 0);
-  _server.send(200, "application/json", io_buf);
+  sendJson(io_buf, strlen(io_buf));
 }
 
 /* POST /send  (to, text)
@@ -719,7 +621,7 @@ void StatsPublisher::handleSend() {
     _server.send(200, "application/json", "{\"ok\":1}");
   } else {
     snprintf(io_buf, sizeof(io_buf), "{\"ok\":0,\"err\":\"%s\"}", err);
-    _server.send(200, "application/json", io_buf);
+    sendJson(io_buf, strlen(io_buf));
   }
 }
 
@@ -729,6 +631,7 @@ void StatsPublisher::handleSend() {
  * vrij. Per pagina zoals de contacten, want MAX_GROUP_CHANNELS staat hier op 40
  * en de browser heeft de hele lijst nodig voor zijn keuzelijst. */
 void StatsPublisher::handleChannelsJson() {
+  TRACE_ENTER();
   int off = atoi(_server.arg("off").c_str());
   if (off < 0) off = 0;
 
@@ -755,7 +658,7 @@ void StatsPublisher::handleChannelsJson() {
   }
 
   snprintf(io_buf + n, sizeof(io_buf) - n, "],\"next\":%d}", slot);
-  _server.send(200, "application/json", io_buf);
+  sendJson(io_buf, strlen(io_buf));
 }
 
 /* POST /channel/add  (name, psk)
@@ -820,6 +723,7 @@ void StatsPublisher::handleChannelDel() {
  * inclusief de gereserveerde anonieme vooraan; die hebben type 0 en worden
  * overgeslagen. */
 void StatsPublisher::handleContactsJson() {
+  TRACE_ENTER();
   int off = atoi(_server.arg("off").c_str());
   if (off < 0) off = 0;
 
@@ -857,7 +761,7 @@ void StatsPublisher::handleContactsJson() {
   }
 
   snprintf(io_buf + n, sizeof(io_buf) - n, "],\"next\":%d}", slot);
-  _server.send(200, "application/json", io_buf);
+  sendJson(io_buf, strlen(io_buf));
 }
 
 bool StatsPublisher::parseKeyArg(const char* name, uint8_t out[6]) {

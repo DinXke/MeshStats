@@ -23,23 +23,31 @@
  *
  * Zonder ingestelde broker doet de MQTT-helft niets; de webclient blijft werken.
  *
- * === Waarom de pagina een statische PROGMEM-string is ===
+ * === Waarom elk antwoord in een enkele schrijfactie moet passen ===
  *
- * Een eerdere versie bouwde de HTML in stukjes op met sendContent(), met de
- * actuele waarden er al in. Elk zo'n stukje is een aparte blokkerende
- * TCP-schrijfactie, en met de latentiepieken van ESP32-wifi (modem-sleep) bleef
- * de hoofdlus daarin hangen - waarmee ook de mesh stilviel, tot een harde
- * reset. Dat heeft ons een vastgelopen node gekost.
+ * Twee keer heeft dit ons een node gekost, en beide keren om dezelfde reden.
  *
- * Dus: de pagina is een enkele onveranderlijke string die in een send_P() gaat,
- * en alle gegevens bereiken de browser via kleine JSON-endpoints. Nieuwe UI =
- * uitbreiding van die ene string plus een endpoint. Nooit gegevens in de HTML
- * bakken, nooit meer dan een sendContent().
+ * Eerst bouwde de pagina zichzelf op in stukjes met sendContent(), met de
+ * actuele waarden er al in. Elk stukje is een aparte blokkerende
+ * TCP-schrijfactie, en met de latentiepieken van ESP32-wifi bleef de hoofdlus
+ * daarin hangen - waarmee ook de mesh stilviel, tot een harde reset.
  *
- * Om dezelfde reden zijn ook de JSON-antwoorden begrensd. Lijsten gaan per
- * pagina (STATS_CONTACT_PAGE / STATS_CHANNEL_PAGE), zodat geen enkel antwoord
- * boven de gedeelde buffer uitkomt, en elke handler schrijft in een vaste
- * buffer in plaats van een String op te bouwen.
+ * Daarna bleek de tweede helft: WiFiClient::write() stuurt met MSG_DONTWAIT,
+ * probeert tien keer met telkens een select() van een seconde, en geeft dan een
+ * gedeeltelijk aantal bytes terug. WebServer kijkt daar niet naar. Past een
+ * antwoord dus niet in de socket-verzendbuffer van lwip (5760 bytes), dan
+ * belooft de kop een Content-Length die nooit gehaald wordt en blijft de client
+ * wachten - terwijl de hoofdlus tot tien seconden vastzit.
+ *
+ * Daarom:
+ *  - de pagina is een onveranderlijk blok dat in een keer de deur uit gaat, en
+ *    wordt gzip-verstuurd zodat ze ook echt onder die 5760 bytes blijft
+ *    (page.html -> gen_page.py -> StatsPage.h);
+ *  - alle gegevens komen via kleine JSON-endpoints, nooit in de HTML gebakken;
+ *  - lijsten gaan per pagina (STATS_CONTACT_PAGE / STATS_CHANNEL_PAGE) zodat
+ *    geen antwoord boven de gedeelde buffer uitkomt;
+ *  - elke handler schrijft in een vaste buffer in plaats van een String;
+ *  - en CountingWebServer hieronder controleert of het er echt allemaal uit is.
  *
  * === Taken en volgorde ===
  *
@@ -49,7 +57,7 @@
  * versturen zet enkel een pakket in de wachtrij.
  *
  * Endpoints (alles JSON, tenzij anders vermeld):
- *   GET  /                de pagina zelf (HTML, een send_P)
+ *   GET  /                de pagina zelf (HTML, gzip, een send_P)
  *   GET  /config.json     identiteit van de node, MQTT-instellingen, status
  *   GET  /stats.json      de eigen radiostatistieken
  *   POST /save            MQTT-instellingen bewaren
@@ -127,6 +135,39 @@
 
 class MyMesh;   // vooruitverwijzing; vermijdt include-cyclus
 
+/* WebServer met een teller erop, want de gewone kijkt niet naar zijn eigen
+ * schrijfacties.
+ *
+ * WiFiClient::write() stuurt met MSG_DONTWAIT, probeert tien keer en geeft dan
+ * terug hoeveel bytes het wel geworden zijn. WebServer negeert die waarde: de
+ * kop belooft dan een Content-Length die nooit gehaald wordt en de client wacht
+ * tot zijn tijdslimiet - precies waarmee deze node ons twee keer voor raadsels
+ * zette. _currentClientWrite is protected en virtual, dus we kunnen meekijken
+ * zonder de webserver zelf aan te passen. */
+class CountingWebServer : public WebServer {
+public:
+  CountingWebServer(int port) : WebServer(port), _asked(0), _done(0) {}
+
+  void beginWriteTracking() { _asked = _done = 0; }
+  bool shortWrite() const { return _done < _asked; }
+  size_t written() const { return _done; }
+
+protected:
+  size_t _currentClientWrite(const char* b, size_t l) override {
+    size_t w = WebServer::_currentClientWrite(b, l);
+    _asked += l; _done += w;
+    return w;
+  }
+  size_t _currentClientWrite_P(PGM_P b, size_t l) override {
+    size_t w = WebServer::_currentClientWrite_P(b, l);
+    _asked += l; _done += w;
+    return w;
+  }
+
+private:
+  size_t _asked, _done;
+};
+
 class StatsPublisher {
 public:
   struct Config {
@@ -196,7 +237,7 @@ private:
     char pass[STATS_REPEATER_PASS];   // admin- of read/write-wachtwoord
   };
 
-  WebServer _server;
+  CountingWebServer _server;
   WiFiClient _net;
   PubSubClient _mqtt;
   FS* _fs;
@@ -233,6 +274,18 @@ private:
 
   // Leest de "k<hex>"-notatie die de pagina voor een contact gebruikt.
   bool parseKeyArg(const char* name, uint8_t out[6]);
+
+  /* De enige uitgang voor JSON-antwoorden. Gebruikt send_P met een expliciete
+   * lengte, want de gewone send() giet de body eerst in een String - een
+   * heap-kopie van het hele antwoord, bovenop de buffer die we al hebben. Op een
+   * node waar de heap het knelpunt is, is dat net wat we niet willen; de
+   * framework-code waarschuwt er zelf voor ("Use send_P for long arrays").
+   * send_P werkt op ESP32 ook gewoon op RAM. */
+  void sendJson(const char* body, size_t len);
+  void sendJson(const char* body) { sendJson(body, strlen(body)); }
+
+  // Sluit de verbinding als het antwoord er niet volledig uit is gekomen.
+  void finishResponse(unsigned long t0, size_t len);
 
   void handleRoot();
   void handleConfigJson();
