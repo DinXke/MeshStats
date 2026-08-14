@@ -74,13 +74,14 @@ TILE_METRICS = {
                 "airtime", "rx_airtime"],
 }
 
-# Grafieken per repeaterpagina: (titel, [metrics], uren)
+# Charts on a repeater page: (key, title, [metrics], hours). The key is the
+# translation key for the title; the Dutch title is the no-JavaScript fallback.
 CHARTS = [
-    ("Spanning (24 u)", ["bat", "ch1_voltage"], 24),
-    ("Batterijspanning (7 d)", ["bat"], 168),
-    ("Temperatuur (48 u)", ["ch1_temperature"], 48),
-    ("Berichtenrates (24 u)", ["nb_recv_rate", "nb_sent_rate"], 24),
-    ("Aantal buren (7 d)", ["neighbor_count"], 168),
+    ("voltage", "Spanning (24 u)", ["bat", "ch1_voltage"], 24),
+    ("battery_week", "Batterijspanning (7 d)", ["bat"], 168),
+    ("temperature", "Temperatuur (48 u)", ["ch1_temperature"], 48),
+    ("msg_rates", "Berichtenrates (24 u)", ["nb_recv_rate", "nb_sent_rate"], 24),
+    ("neighbor_count", "Aantal buren (7 d)", ["neighbor_count"], 168),
 ]
 
 # Meters (gauges): metric -> (min, max, [(vanaf, kleur), ...])

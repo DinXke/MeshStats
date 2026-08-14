@@ -1,4 +1,4 @@
-"""JSON-API: ingest vanuit Home Assistant + publieke data-endpoints."""
+"""JSON API: ingest from Home Assistant plus the public data endpoints."""
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from . import auth, db, metrics
@@ -25,14 +25,14 @@ def limit_body(request: Request, max_bytes: int = 2_000_000):
 
 @router.get("/ping")
 def ping(authorization: str | None = Header(default=None)):
-    """Verbindingstest voor de Home Assistant-integratie."""
+    """Connection test for the Home Assistant integration."""
     require_token(authorization)
     return {"ok": True, "app": "mc-repeater-stats", "version": 1}
 
 
 @router.post("/contacts")
 async def contacts(request: Request, authorization: str | None = Header(default=None)):
-    """Contactlocaties uit de meshcore-adverts: {"contacts": [{prefix,name,lat,lon,type}]}"""
+    """Contact positions from meshcore adverts: {"contacts": [{prefix,name,lat,lon,type}]}"""
     require_token(authorization)
     limit_body(request)
     body = await request.json()
@@ -44,15 +44,15 @@ async def contacts(request: Request, authorization: str | None = Header(default=
 
 @router.get("/commands")
 def commands(authorization: str | None = Header(default=None)):
-    """Openstaande opdrachten voor de HA-integratie (clear-on-read):
-    refresh = handmatige statusverzoeken; settings = CLI-settings-opvragingen."""
+    """Pending commands for the Home Assistant integration (clear on read):
+    refresh = manual status requests, settings = CLI settings look-ups."""
     require_token(authorization)
     return {"refresh": db.pop_refresh_requests(), "settings": db.pop_settings_requests()}
 
 
 @router.post("/repeater_settings")
 async def repeater_settings(request: Request, authorization: str | None = Header(default=None)):
-    """CLI-instellingen van een repeater: {"repeater": {"pubkey_prefix"}, "settings": {param: waarde}}"""
+    """CLI settings of one repeater: {"repeater": {"pubkey_prefix"}, "settings": {param: value}}"""
     require_token(authorization)
     limit_body(request)
     body = await request.json()
@@ -69,12 +69,12 @@ async def repeater_settings(request: Request, authorization: str | None = Header
 
 @router.post("/ingest")
 async def ingest(request: Request, authorization: str | None = Header(default=None)):
-    """Snapshot van één repeater. Payload:
+    """Snapshot of one repeater. Payload:
     {
       "repeater": {"pubkey_prefix": "e3d3f4d7ed", "name": "BE-HSS-JessaZH.VIR"},
-      "ts": "2026-08-07T12:00:00Z",            # optioneel, anders servertijd
+      "ts": "2026-08-07T12:00:00Z",            # optional, server time otherwise
       "metrics": {"bat": 4.15, "online": true, ...},
-      "neighbors": [{"prefix": "2ae7af", "name": "...", "snr": -4.25}, ...]  # optioneel
+      "neighbors": [{"prefix": "2ae7af", "name": "...", "snr": -4.25}, ...]  # optional
     }
     """
     require_token(authorization)
@@ -155,7 +155,7 @@ def repeater_detail(slug: str):
 
 @router.get("/repeaters/{slug}/map")
 def repeater_map(slug: str):
-    """Kaartdata: locatie van de repeater + alle buren met bekende locatie."""
+    """Map data: the repeater's position plus every neighbour we can place."""
     r = _public_repeater(slug)
     home = db.contact_location(r["pubkey_prefix"][:6])
     links = []
@@ -184,6 +184,51 @@ def repeater_map(slug: str):
         "unlocated": len(unlocated),
         "unlocated_names": sorted(unlocated, key=str.lower),
     }
+
+
+@router.get("/packets")
+def packet_feed(
+    since_id: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
+):
+    """Overheard LoRa packets newer than ``since_id``, for the live map.
+
+    Polled rather than pushed: a few seconds of latency costs nothing here, and
+    plain polling survives proxies, sleeping laptops and restarts that SSE or
+    websockets would each need their own reconnect handling for.
+
+    The first call (since_id=0) also returns every node position we know, so the
+    map can draw its base layer from the same request.
+    """
+    rows = db.recent_packets(since_id, limit)
+    items = []
+    for p in rows:
+        # Only adverts identify their sender; for everything else the observer's
+        # own position is the most honest place to show the reception.
+        lat, lon, origin = p["sender_lat"], p["sender_lon"], "sender"
+        if lat is None or lon is None:
+            lat, lon, origin = p["observer_lat"], p["observer_lon"], "observer"
+        items.append({
+            "id": p["id"], "ts": p["ts"],
+            "observer": p["observer"], "observer_name": p["observer_name"],
+            "snr": p["snr"], "rssi": p["rssi"], "len": p["len"],
+            "route": p["route"], "type": p["payload_name"],
+            "path_len": p["path_len"],
+            "sender": p["sender"], "sender_name": p["sender_name"],
+            "lat": lat, "lon": lon,
+            "origin": None if lat is None else origin,
+        })
+    out = {
+        "last_id": items[-1]["id"] if items else (since_id or db.last_packet_id()),
+        "packets": items,
+    }
+    if since_id <= 0:
+        out["nodes"] = [
+            {"prefix": n["prefix6"], "name": n["name"], "lat": n["lat"],
+             "lon": n["lon"], "node_type": n["node_type"]}
+            for n in db.located_nodes()
+        ]
+    return out
 
 
 @router.get("/repeaters/{slug}/history")

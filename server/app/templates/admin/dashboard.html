@@ -89,14 +89,17 @@
   <div class="card">
   <table>
     <tr><td>MQTT-broker</td><td class="mono">{{ mqtt.broker or 'niet ingesteld' }}</td></tr>
-    <tr><td>Onderwerp</td><td class="mono">{{ mqtt.topic }}</td></tr>
+    <tr><td>Onderwerp statistieken</td><td class="mono">{{ mqtt.topic }}</td></tr>
+    <tr><td>Onderwerp pakketten</td><td class="mono">{{ mqtt.rx_topic }}</td></tr>
     <tr><td>Verbonden</td><td>{% if mqtt.connected %}<span class="pill on" style="padding:.15rem .6rem;border-radius:99px;background:rgba(53,224,140,.12);color:var(--accent)">ja</span>{% else %}<span class="muted">nee</span>{% endif %}</td></tr>
     <tr><td>Berichten ontvangen</td><td class="mono">{{ mqtt.messages }}</td></tr>
+    <tr><td>Pakketten ontvangen</td><td class="mono">{{ mqtt.packets }}{% if mqtt.last_packet %} &middot; <span class="muted">laatste <time class="reltime" datetime="{{ mqtt.last_packet }}">{{ mqtt.last_packet }}</time></span>{% endif %}</td></tr>
     <tr><td>Fouten</td><td class="mono">{{ mqtt.errors }}{% if mqtt.last_error %} &middot; <span class="muted">{{ mqtt.last_error }}</span>{% endif %}</td></tr>
   </table>
   <p class="muted small">Nodes publiceren hun statistieken naar de MQTT-broker; dat is voor een ESP32
-     veel lichter dan HTTP. Instellen doe je op de node zelf (beheerpagina) en via de omgevingsvariabelen
-     <code>MCS_MQTT_*</code>. De HTTP-ingest blijft daarnaast gewoon werken.</p>
+     veel lichter dan HTTP. Op het pakketonderwerp sturen ze bovendien elk ontvangen LoRa-pakket ruw door,
+     wat de live kaart op de startpagina voedt. Instellen doe je op de node zelf (beheerpagina) en via de
+     omgevingsvariabelen <code>MCS_MQTT_*</code>. De HTTP-ingest blijft daarnaast gewoon werken.</p>
   </div>
 </section>
 

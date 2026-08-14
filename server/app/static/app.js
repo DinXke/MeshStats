@@ -1,9 +1,13 @@
-/* MC Repeater Stats — relatieve tijden, gauges, grafieken en historiek-modal. */
+/* MeshStats front-end: relative times, gauges, charts, maps and the history
+ * modal. Loaded after i18n.js, so every string this file builds goes through
+ * MCSI18N.t -- text baked in here would survive a language switch and leave the
+ * page half translated. */
 (function () {
   "use strict";
 
   var PALETTE = ["#2bb673", "#e8913a", "#3aa7d0", "#e06c9f"];
-  // Themakleuren uit de CSS-variabelen (licht/donker)
+  var t = (window.MCSI18N && window.MCSI18N.t) || function (k) { return k; };
+  // Theme colours come from the CSS variables (light/dark)
   function cssVar(name, fallback) {
     var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
@@ -22,7 +26,7 @@
     Chart.defaults.font.size = 11;
   }
 
-  // thema-schakelaar (voorkeur lokaal; herladen zodat grafieken/kaart meekleuren)
+  // Theme switch: reload so charts and map tiles pick up the new palette too
   var themeBtn = document.getElementById("theme-toggle");
   if (themeBtn) {
     themeBtn.textContent = THEME === "light" ? "☾" : "☀";
@@ -32,16 +36,16 @@
     });
   }
 
-  // --- relatieve tijdstippen -------------------------------------------------
+  // --- relative timestamps ---------------------------------------------------
   function relTime(iso) {
     var d = new Date(iso);
     if (isNaN(d)) return iso;
     var s = Math.round((Date.now() - d.getTime()) / 1000);
     if (s < 0) s = 0;
-    if (s < 60) return "zonet";
-    if (s < 3600) return Math.round(s / 60) + " min geleden";
-    if (s < 86400) return Math.round(s / 3600) + " u geleden";
-    return Math.round(s / 86400) + " d geleden";
+    if (s < 60) return t("time.now");
+    if (s < 3600) return t("time.min", { n: Math.round(s / 60) });
+    if (s < 86400) return t("time.hour", { n: Math.round(s / 3600) });
+    return t("time.day", { n: Math.round(s / 86400) });
   }
   function updateTimes() {
     document.querySelectorAll("time.reltime").forEach(function (el) {
@@ -53,7 +57,7 @@
   updateTimes();
   setInterval(updateTimes, 30000);
 
-  // --- gauges (halve cirkel met naald) --------------------------------------
+  // --- gauges (half circle with a needle) ------------------------------------
   document.querySelectorAll("[data-gauge]").forEach(function (tile) {
     var canvas = tile.querySelector("canvas");
     var ctx = canvas.getContext("2d");
@@ -73,7 +77,7 @@
       ctx.strokeStyle = segments[i][1] + "55";
       ctx.stroke();
     }
-    // ingekleurde boog tot de huidige waarde
+    // coloured arc up to the current value
     var segColor = segments[0][1];
     for (var j = 0; j < segments.length; j++) {
       if (value >= segments[j][0]) segColor = segments[j][1];
@@ -100,14 +104,14 @@
     ctx.fill();
   });
 
-  // --- thermometers (horizontale buis met bol) --------------------------------
+  // --- thermometers (horizontal tube with a bulb) -----------------------------
   document.querySelectorAll("[data-thermo]").forEach(function (tile) {
     var canvas = tile.querySelector("canvas");
     var ctx = canvas.getContext("2d");
     var min = parseFloat(tile.dataset.min), max = parseFloat(tile.dataset.max);
     var raw = parseFloat(tile.dataset.value);
     var value = Math.min(max, Math.max(min, raw));
-    var segments = JSON.parse(tile.dataset.segments); // [[vanaf, kleur], ...]
+    var segments = JSON.parse(tile.dataset.segments); // [[from, colour], ...]
     var w = canvas.width, h = canvas.height;
     var bulbR = 12, y = 40, tubeH = 12;
     var x0 = 20 + bulbR, x1 = w - 16;
@@ -127,12 +131,12 @@
       ctx.closePath();
     }
 
-    // donkere buis + bol als achtergrond
+    // dark tube and bulb as the background
     ctx.fillStyle = cssVar("--thermo-track", "#1e2b3a");
     tube(x1, tubeH / 2 + 2); ctx.fill();
     ctx.beginPath(); ctx.arc(20, y, bulbR + 2, 0, 2 * Math.PI); ctx.fill();
 
-    // gekleurde vulling tot de huidige waarde
+    // coloured fill up to the current value
     var color = segColor(value);
     ctx.fillStyle = color;
     ctx.shadowColor = color; ctx.shadowBlur = 8;
@@ -141,38 +145,38 @@
     tube(fx, tubeH / 2 - 2); ctx.fill();
     ctx.shadowBlur = 0;
 
-    // schaalstrepen met labels
+    // scale ticks with labels
     ctx.strokeStyle = TEXT_MUTED;
     ctx.fillStyle = TEXT_MUTED;
     ctx.font = "9px 'JetBrains Mono', monospace";
     ctx.textAlign = "center";
-    [-20, 0, 20, 40, 60, 80].forEach(function (t) {
-      if (t < min || t > max) return;
-      var tx = xAt(t);
+    [-20, 0, 20, 40, 60, 80].forEach(function (tick) {
+      if (tick < min || tick > max) return;
+      var tx = xAt(tick);
       ctx.beginPath();
       ctx.moveTo(tx, y + tubeH / 2 + 4);
       ctx.lineTo(tx, y + tubeH / 2 + 9);
       ctx.stroke();
-      ctx.fillText(String(t), tx, y + tubeH / 2 + 20);
+      ctx.fillText(String(tick), tx, y + tubeH / 2 + 20);
     });
   });
 
-  // --- inklapbare secties (voorkeur per bezoeker in localStorage) ------------
+  // --- collapsible sections (per-visitor preference in localStorage) ----------
   document.querySelectorAll("section.collapsible").forEach(function (sec) {
     var key = "mcs-collapse:" + sec.dataset.ckey;
     try {
       if (localStorage.getItem(key) === "1") sec.classList.add("collapsed");
-    } catch (e) { /* localStorage kan geblokkeerd zijn */ }
+    } catch (e) { /* localStorage can be blocked */ }
     sec.querySelector("h2.sec-toggle").addEventListener("click", function () {
       sec.classList.toggle("collapsed");
       try {
         if (sec.classList.contains("collapsed")) localStorage.setItem(key, "1");
         else localStorage.removeItem(key);
-      } catch (e) { /* niets */ }
+      } catch (e) { /* nothing to do */ }
     });
   });
 
-  // --- admin: versleepbare indeling ------------------------------------------
+  // --- admin: draggable layout -------------------------------------------------
   var layoutList = document.getElementById("layout-list");
   if (layoutList) {
     var dragging = null;
@@ -200,9 +204,10 @@
     });
   }
 
-  // --- gedeelde grafiekbouwer ------------------------------------------------
+  // --- shared chart builder ---------------------------------------------------
   function lineChart(canvas, datasets, unit, showLegend, hours) {
-    // Vast tijdvenster: voorkomt milliseconden-assen bij weinig datapunten
+    // Fixed time window: stops the axis collapsing to milliseconds when only a
+    // couple of points exist
     var now = Date.now();
     return new Chart(canvas, {
       type: "line",
@@ -232,7 +237,7 @@
     });
   }
 
-  // Kleurzones per metric (zoals de meters); vloeiend verloop over de y-as
+  // Colour zones per metric (same as the gauges), as a gradient over the y-axis
   function zoneFor(metric) {
     if (window.MCS && window.MCS.zones && window.MCS.zones[metric]) return window.MCS.zones[metric];
     if (/^neighbor_[0-9a-f]{6}$/.test(metric || "")) {
@@ -245,8 +250,8 @@
            "," + parseInt(hex.slice(5, 7), 16) + "," + alpha + ")";
   }
   function zoneGradient(zone, alpha) {
-    // Scriptable Chart.js-kleur: verticale gradiënt met zachte overgangen
-    // tussen de zonekleuren (stops op het midden van elke zone).
+    // Scriptable Chart.js colour: a vertical gradient with soft transitions
+    // between the zone colours (stops at the middle of each zone).
     return function (context) {
       var chart = context.chart;
       var area = chart.chartArea;
@@ -280,13 +285,13 @@
       borderColor: stroke,
       backgroundColor: bg,
       borderWidth: 2,
-      /* markers tonen zolang de data schaars is, anders een strakke lijn */
+      /* show markers while data is sparse, a clean line once it is not */
       pointRadius: points.length < 60 ? 3 : 0,
       pointBackgroundColor: stroke,
       pointBorderColor: stroke,
       pointHitRadius: 12, tension: 0.25,
       fill: !!fill,
-      borderDash: !zone && i === 1 ? [6, 3] : undefined,  /* tweede reeks gestreept (CVD) */
+      borderDash: !zone && i === 1 ? [6, 3] : undefined,  /* dash the 2nd series (colour-blind safe) */
     };
   }
 
@@ -296,7 +301,13 @@
       .then(function (r) { return r.json(); });
   }
 
-  // --- vaste grafieken -------------------------------------------------------
+  // Metric labels arrive from the server in Dutch; the catalogue ones have a
+  // translation, anything a node invented keeps the label it came with.
+  function metricLabel(metric, fallback) {
+    return t("metric." + metric) === "metric." + metric ? fallback : t("metric." + metric);
+  }
+
+  // --- fixed charts -----------------------------------------------------------
   document.querySelectorAll("[data-chart]").forEach(function (canvas) {
     if (typeof Chart === "undefined") return;
     var cfg = JSON.parse(canvas.dataset.chart);
@@ -304,14 +315,14 @@
       .then(function (results) {
         var single = cfg.metrics.length === 1;
         var datasets = results.map(function (res, i) {
-          return dataset(cfg.labels[i], res.points, i, single,
+          return dataset(metricLabel(cfg.metrics[i], cfg.labels[i]), res.points, i, single,
                          single ? zoneFor(cfg.metrics[i]) : null);
         });
         lineChart(canvas, datasets, cfg.unit, cfg.metrics.length > 1, cfg.hours);
       });
   });
 
-  // --- historiek-modal -------------------------------------------------------
+  // --- history modal ----------------------------------------------------------
   var modal = document.getElementById("metric-modal");
   if (modal) {
     var modalTitle = document.getElementById("modal-title");
@@ -361,22 +372,27 @@
       if (e.key === "Escape" && !modal.hidden) closeModal();
     });
 
-    // klikbare tegels
+    // clickable tiles
     document.querySelectorAll(".tile.clickable").forEach(function (tile) {
       tile.addEventListener("click", function () {
-        openModal(tile.dataset.metric, tile.dataset.label, tile.dataset.unit || "");
+        openModal(tile.dataset.metric,
+                  metricLabel(tile.dataset.metric, tile.dataset.label),
+                  tile.dataset.unit || "");
       });
     });
-    // klikbare buren
+    // clickable neighbours
     document.querySelectorAll("tr.nbrow").forEach(function (row) {
       row.addEventListener("click", function () {
-        openModal(row.dataset.metric, row.dataset.label, row.dataset.unit || "dB");
+        var cell = row.querySelector(".nbname");
+        openModal(row.dataset.metric,
+                  t("nb.link_snr", { name: cell ? cell.textContent : row.dataset.prefix }),
+                  row.dataset.unit || "dB");
       });
     });
     window.mcsOpenModal = openModal;
   }
 
-  // --- burentabel: sorteren (voorkeur lokaal) + auto-verversen ----------------
+  // --- neighbour table: sorting (stored locally) and auto-refresh -------------
   var nbTable = document.querySelector("table.neighbors");
   if (nbTable && window.MCS) {
     var nbBody = nbTable.querySelector("tbody");
@@ -384,7 +400,7 @@
     try {
       var saved = JSON.parse(localStorage.getItem("mcs-nbsort"));
       if (saved && ["name", "prefix", "snr", "seen"].indexOf(saved.key) !== -1) sortState = saved;
-    } catch (e) { /* niets */ }
+    } catch (e) { /* nothing to do */ }
 
     function applySort() {
       var rows = Array.prototype.slice.call(nbBody.querySelectorAll("tr.nbrow"));
@@ -413,26 +429,26 @@
         if (sortState.key === key) {
           sortState.dir = -sortState.dir;
         } else {
-          // logische standaard: naam/prefix oplopend, SNR en laatst-gehoord aflopend
+          // sensible default: name/prefix ascending, SNR and last-heard descending
           sortState = { key: key, dir: (key === "name" || key === "prefix") ? 1 : -1 };
         }
-        try { localStorage.setItem("mcs-nbsort", JSON.stringify(sortState)); } catch (e) { /* niets */ }
+        try { localStorage.setItem("mcs-nbsort", JSON.stringify(sortState)); } catch (e) { /* nothing to do */ }
         applySort();
       });
     });
     applySort();
 
-    // elke minuut verse burendata ophalen en cellen ter plekke bijwerken
+    // refresh neighbour data every minute and update the cells in place
     function refreshNeighbors() {
       fetch("/api/v1/repeaters/" + encodeURIComponent(window.MCS.slug))
         .then(function (r) { return r.json(); })
         .then(function (d) {
           (d.neighbors || []).forEach(function (n) {
             var row = nbBody.querySelector('tr.nbrow[data-prefix="' + n.prefix + '"]');
-            if (!row) return; // nieuwe buur verschijnt bij volgende paginalading
+            if (!row) return; // a new neighbour shows up on the next page load
             row.dataset.snr = n.snr != null ? n.snr : -999;
             row.dataset.seen = n.last_seen || "";
-            var cells = row.children; // chev, naam, prefix, snr, balk, tijd
+            var cells = row.children; // chevron, name, prefix, snr, bar, time
             if (n.snr != null) {
               cells[3].textContent = n.snr.toFixed(2);
               cells[3].className = "num " +
@@ -446,12 +462,12 @@
           updateTimes();
           applySort();
         })
-        .catch(function () { /* volgende poging over een minuut */ });
+        .catch(function () { /* try again in a minute */ });
     }
     setInterval(refreshNeighbors, 60000);
   }
 
-  // --- linkkaart --------------------------------------------------------------
+  // --- link map ---------------------------------------------------------------
   function snrColor(snr) {
     if (snr == null) return "#7d8fa0";
     if (snr >= 0) return "#35e08c";
@@ -471,7 +487,8 @@
   if (linkmapEl && typeof L !== "undefined" && window.MCS) {
     getMapData().then(function (d) {
       if (!d.repeater) {
-        linkmapEl.innerHTML = '<p class="muted" style="padding:1rem">Nog geen locatie bekend voor deze repeater.</p>';
+        linkmapEl.innerHTML = '<p class="muted" style="padding:1rem"></p>';
+        linkmapEl.firstChild.textContent = t("map.nolocation");
         return;
       }
       var map = L.map(linkmapEl, { scrollWheelZoom: false });
@@ -496,7 +513,7 @@
         function open() {
           if (window.mcsOpenModal) {
             window.mcsOpenModal("neighbor_" + l.prefix,
-                                "Link " + (l.name || l.prefix.toUpperCase()) + " — SNR", "dB");
+                                t("nb.link_snr", { name: l.name || l.prefix.toUpperCase() }), "dB");
           }
         }
         line.on("click", open);
@@ -506,14 +523,17 @@
       });
       map.fitBounds(bounds, { padding: [30, 30] });
 
-      // legende
+      // legend
       var legend = L.control({ position: "bottomright" });
       legend.onAdd = function () {
         var div = L.DomUtil.create("div", "maplegend");
-        div.innerHTML = "<strong>SNR link</strong>" +
-          '<span><i style="background:#35e08c"></i> goed (&ge;0 dB)</span>' +
-          '<span><i style="background:#ffb454"></i> matig (-10..0 dB)</span>' +
-          '<span><i style="background:#ff5c5c"></i> zwak (&lt;-10 dB)</span>';
+        div.innerHTML = "<strong></strong>" +
+          '<span><i style="background:#35e08c"></i> <em></em></span>' +
+          '<span><i style="background:#ffb454"></i> <em></em></span>' +
+          '<span><i style="background:#ff5c5c"></i> <em></em></span>';
+        div.querySelector("strong").textContent = t("map.legend");
+        var tips = [t("map.legend_good"), t("map.legend_ok"), t("map.legend_bad")];
+        div.querySelectorAll("em").forEach(function (em, i) { em.textContent = tips[i]; });
         return div;
       };
       legend.addTo(map);
@@ -522,12 +542,12 @@
       if (note && d.unlocated > 0) {
         var link = document.createElement("a");
         link.href = "#";
-        link.textContent = d.unlocated + " buur/buren zonder bekende locatie niet op de kaart ▸";
+        link.textContent = t("map.unlocated", { n: d.unlocated }) + " ▸";
         note.appendChild(link);
         var list = document.createElement("div");
         list.className = "map-missing";
         list.hidden = true;
-        list.textContent = "Nog geen advert met locatie ontvangen van: " +
+        list.textContent = t("map.unlocated_intro") +
                            (d.unlocated_names || []).join(" · ");
         note.parentElement.parentElement.insertBefore(list, note.parentElement.nextSibling);
         link.addEventListener("click", function (e) {
@@ -536,7 +556,7 @@
           link.textContent = link.textContent.slice(0, -1) + (list.hidden ? "▸" : "▾");
         });
       }
-      // togglebare SNR-labels op de knopen
+      // toggleable SNR labels on the nodes
       var toggle = document.getElementById("map-labels");
       if (toggle) {
         toggle.addEventListener("change", function () {
@@ -555,7 +575,130 @@
     });
   }
 
-  // mini-kaart in het historiekvenster van een buurlink
+  // --- live packet map (public home page) -------------------------------------
+  // Colour per payload type, so a burst of adverts is distinguishable from
+  // message traffic at a glance without reading the feed.
+  var PKT_COLORS = {
+    ADVERT: "#35e08c", TXT_MSG: "#4cc9f0", GRP_TXT: "#e06c9f", GRP_DATA: "#e06c9f",
+    ACK: "#7d8fa0", PATH: "#ffb454", TRACE: "#c77dff", REQ: "#e8913a",
+    RESPONSE: "#e8913a", ANON_REQ: "#e8913a",
+  };
+  var FLASH_MS = 1600;
+  var POLL_MS = 4000;
+  var FEED_MAX = 25;
+  // A quiet mesh sends a handful of packets per poll; a storm could send
+  // hundreds. Animating them all would only produce an unreadable blur.
+  var FLASH_MAX_PER_POLL = 40;
+
+  var livemapEl = document.getElementById("livemap");
+  if (livemapEl && typeof L !== "undefined") {
+    var lmap = L.map(livemapEl, { scrollWheelZoom: false });
+    L.tileLayer(TILE_URL, { attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19 })
+      .addTo(lmap);
+    var feedEl = document.getElementById("livefeed");
+    var countEl = document.getElementById("live-count");
+    var lastId = 0;
+    var seenTimes = [];   // reception timestamps, for the "per minute" counter
+    var polling = false;
+
+    function flash(lat, lon, color) {
+      var ring = L.circleMarker([lat, lon], {
+        radius: 4, color: color, weight: 2, fillColor: color, fillOpacity: 0.45,
+      }).addTo(lmap);
+      var start = null;
+      function step(now) {
+        if (start === null) start = now;
+        var k = (now - start) / FLASH_MS;
+        if (k >= 1) { lmap.removeLayer(ring); return; }
+        ring.setRadius(4 + k * 26);
+        ring.setStyle({ opacity: 1 - k, fillOpacity: 0.35 * (1 - k) });
+        requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    function feedRow(p) {
+      var li = document.createElement("li");
+      var who = p.sender_name || p.observer_name ||
+                (p.sender || p.observer || "").toUpperCase();
+      var bits = [p.type || "?"];
+      if (p.snr != null) bits.push(p.snr.toFixed(1) + " dB");
+      if (p.path_len) {
+        bits.push(t(p.path_len > 1 ? "live.hops_plural" : "live.hops", { n: p.path_len }));
+      }
+      li.innerHTML = '<i style="background:' + (PKT_COLORS[p.type] || "#7d8fa0") + '"></i>' +
+        '<span class="pkt-who"></span><span class="pkt-meta"></span>' +
+        '<time class="reltime" datetime="' + p.ts + '"></time>';
+      li.querySelector(".pkt-who").textContent = who;
+      li.querySelector(".pkt-meta").textContent = bits.join(" · ");
+      return li;
+    }
+
+    function render(list, animate) {
+      var flashes = 0;
+      list.forEach(function (p) {
+        if (p.lat != null && p.lon != null && animate && flashes < FLASH_MAX_PER_POLL) {
+          flash(p.lat, p.lon, PKT_COLORS[p.type] || "#7d8fa0");
+          flashes++;
+        }
+        seenTimes.push(Date.now());
+        if (feedEl) {
+          feedEl.insertBefore(feedRow(p), feedEl.firstChild);
+          while (feedEl.children.length > FEED_MAX) feedEl.removeChild(feedEl.lastChild);
+        }
+      });
+      updateTimes();
+      updateCount();
+    }
+
+    function updateCount() {
+      if (!countEl) return;
+      var cutoff = Date.now() - 300000;
+      seenTimes = seenTimes.filter(function (t) { return t >= cutoff; });
+      countEl.textContent = seenTimes.length
+        ? t("live.count", { n: seenTimes.length })
+        : t("live.waiting");
+    }
+
+    function poll(first) {
+      if (polling) return;
+      polling = true;
+      fetch("/api/v1/packets?since_id=" + lastId)
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (first && d.nodes) {
+            var bounds = [];
+            d.nodes.forEach(function (n) {
+              L.circleMarker([n.lat, n.lon], {
+                radius: 4, color: "#7d8fa0", weight: 1, fillColor: "#7d8fa0",
+                fillOpacity: 0.5,
+              }).addTo(lmap).bindTooltip(n.name || n.prefix.toUpperCase(), { direction: "top" });
+              bounds.push([n.lat, n.lon]);
+            });
+            if (bounds.length) lmap.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+          }
+          lastId = d.last_id || lastId;
+          // The first response is backlog, not live traffic: list it, but do not
+          // set off a firework of flashes for packets heard hours ago.
+          render(d.packets || [], !first);
+        })
+        .catch(function () { /* next tick tries again */ })
+        .then(function () { polling = false; });
+    }
+
+    poll(true);
+    setInterval(function () {
+      // No point polling a tab nobody is looking at; the backlog is still there
+      // when it comes back, since the server hands out everything after lastId.
+      if (!document.hidden) poll(false);
+    }, POLL_MS);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) poll(false);   // catch up at once instead of after a tick
+    });
+    setInterval(updateCount, 30000);
+  }
+
+  // mini-map inside the history modal of a neighbour link
   var modalMapEl = document.getElementById("modal-map");
   var modalMap = null;
   window.mcsModalMap = function (metric) {

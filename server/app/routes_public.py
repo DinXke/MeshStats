@@ -1,4 +1,4 @@
-"""Publieke HTML-pagina's."""
+"""Public HTML pages."""
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
@@ -28,6 +28,9 @@ def index(request: Request):
         })
     return templates.TemplateResponse(request, "index.html", {
         "site_name": config.SITE_NAME, "cards": cards,
+        # Without a single placeable node the live map would be an empty grey
+        # box, so the whole block (and Leaflet with it) stays out of the page.
+        "has_livemap": bool(db.located_nodes()),
     })
 
 
@@ -38,14 +41,15 @@ def repeater_page(request: Request, slug: str):
         raise HTTPException(404, "Onbekende repeater")
     latest = db.latest_for(r["id"])
 
-    # Benutting zelf berekenen uit de airtime-totalen; de HA-waarde valt na
-    # elke HA-herstart terug op 0 tot het meetvenster daar weer opgebouwd is.
+    # Compute utilisation from the airtime totals ourselves: the value Home
+    # Assistant reports drops back to 0 after every HA restart, until its own
+    # measurement window has been rebuilt.
     computed = {
         "airtime_utilization": db.computed_utilization(r["id"], "airtime"),
         "rx_airtime_utilization": db.computed_utilization(r["id"], "rx_airtime"),
     }
 
-    # tegels per sectie
+    # tiles per section
     sections: dict[str, dict] = {}
     used = set()
     for key, title in metrics.SECTIONS:
@@ -54,7 +58,7 @@ def repeater_page(request: Request, slug: str):
             row = latest.get(m)
             if row is None:
                 continue
-            # Ch1-spanning meet dezelfde batterij als 'bat' — dubbele tegel weglaten
+            # Ch1 voltage measures the same battery as 'bat' -- drop the duplicate tile
             if m == "ch1_voltage" and "bat" in latest:
                 used.add(m)
                 continue
@@ -78,7 +82,7 @@ def repeater_page(request: Request, slug: str):
         if tiles:
             sections[key] = {"key": key, "title": title, "tiles": tiles}
 
-    # naam uit de neighbor-sensor, met de contactendatabase (adverts) als fallback
+    # name from the neighbour sensor, falling back to the contacts table (adverts)
     neighbors = db.q(
         "SELECT n.prefix, n.snr, n.last_seen, "
         "CASE WHEN n.name IS NULL OR lower(n.name) = n.prefix "
@@ -88,14 +92,14 @@ def repeater_page(request: Request, slug: str):
         (r["id"],),
     )
     charts = [
-        {"title": title, "metrics": mets, "hours": hours,
+        {"key": key, "title": title, "metrics": mets, "hours": hours,
          "labels": [metrics.metric_info(m)[1] for m in mets],
          "unit": metrics.metric_info(mets[0])[2]}
-        for title, mets, hours in metrics.CHARTS
+        for key, title, mets, hours in metrics.CHARTS
         if any(m in latest for m in mets)
     ]
 
-    # instelbare indeling en historiekperiodes
+    # configurable block order and history ranges
     layout = metrics.parse_layout(db.get_setting("layout"))
     ranges = metrics.parse_ranges(db.get_setting("history_ranges"))
     blocks = []
@@ -134,26 +138,31 @@ def repeater_page(request: Request, slug: str):
 def _tile(metric: str, label: str, unit: str | None, row) -> dict:
     value = row["value"]
     display = row["value_str"] or "—"
+    # Most tile values are numbers and read the same in every language; uptime is
+    # the exception, so it carries a translation key alongside its Dutch text.
+    i18n_key = i18n_vars = None
     if value is not None:
         if metric == "online":
             display = "Online" if value == 1.0 else "Offline"
         elif metric == "uptime":
-            display = _fmt_uptime(value)
+            display, i18n_key, i18n_vars = _fmt_uptime(value)
         elif value == int(value) and abs(value) < 1e9:
             display = f"{int(value):,}".replace(",", " ")
         else:
             display = f"{value:g}"
         if unit and metric not in ("online", "uptime"):
             display += f" {unit}"
-    return {"metric": metric, "label": label, "value": value, "display": display, "ts": row["ts"]}
+    return {"metric": metric, "label": label, "value": value, "display": display,
+            "ts": row["ts"], "i18n": i18n_key, "i18n_vars": i18n_vars}
 
 
-def _fmt_uptime(days: float) -> str:
+def _fmt_uptime(days: float) -> tuple[str, str, dict]:
+    """Dutch rendering plus the translation key and values behind it."""
     total_min = int(days * 24 * 60)
     d, rest = divmod(total_min, 24 * 60)
     h, m = divmod(rest, 60)
     if d:
-        return f"{d} d {h} u"
+        return f"{d} d {h} u", "fmt.uptime_dh", {"d": d, "h": h}
     if h:
-        return f"{h} u {m} min"
-    return f"{m} min"
+        return f"{h} u {m} min", "fmt.uptime_hm", {"h": h, "m": m}
+    return f"{m} min", "fmt.uptime_m", {"m": m}

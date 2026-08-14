@@ -1,4 +1,11 @@
-"""SQLite-laag: schema, helpers en ingest-logica."""
+"""SQLite layer: schema, helpers and ingest logic.
+
+Deliberately plain sqlite3 with a module-level connection and a mutex instead of
+an ORM: the workload is a handful of small writes per minute plus page reads, so
+an ORM would only add a dependency and a migration story we do not need. The
+schema is applied with CREATE TABLE IF NOT EXISTS on every connect, which
+doubles as the migration mechanism for additive changes.
+"""
 import re
 import sqlite3
 import threading
@@ -77,7 +84,29 @@ CREATE TABLE IF NOT EXISTS repeater_cli(
   updated TEXT NOT NULL,
   PRIMARY KEY(repeater_id, param)
 );
+CREATE TABLE IF NOT EXISTS packets(
+  id INTEGER PRIMARY KEY,
+  ts TEXT NOT NULL,
+  observer TEXT NOT NULL,
+  snr REAL,
+  rssi REAL,
+  len INTEGER,
+  route TEXT,
+  payload_type INTEGER,
+  payload_name TEXT,
+  path_len INTEGER,
+  sender TEXT,
+  phash TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_packets_ts ON packets(ts);
+-- Duplicate lookup and retention sweeps both scan on (observer, hash, time).
+CREATE INDEX IF NOT EXISTS idx_packets_dup ON packets(observer, phash, ts);
 """
+
+# A flooded packet is repeated by every node in range, so the same observer
+# hears the same payload several times within seconds. Collapsing those keeps
+# the table and the live map readable without losing distinct traffic.
+PACKET_DUP_WINDOW_S = 60
 
 
 def utcnow() -> str:
@@ -135,7 +164,7 @@ def set_setting(key: str, value: str) -> None:
 
 
 def upsert_contacts(contacts: list[dict]) -> int:
-    """Contactlocaties (advert-data) bijwerken; geeft het aantal verwerkte terug."""
+    """Refresh contact positions (advert data); returns how many were stored."""
     now = utcnow()
     n = 0
     with _lock:
@@ -158,17 +187,120 @@ def upsert_contacts(contacts: list[dict]) -> int:
 
 
 def contact_location(prefix6: str):
-    return qone("SELECT * FROM contacts WHERE prefix6=?", (prefix6.lower(),))
+    """Position of a contact, or None. Adverts may register a node by name
+    before it ever reports coordinates, so rows without a position exist and
+    must not be handed to callers that are about to plot them."""
+    return qone(
+        "SELECT * FROM contacts WHERE prefix6=? AND lat IS NOT NULL AND lon IS NOT NULL",
+        (prefix6.lower(),),
+    )
 
 
-# 'cmd:'-prefix = letterlijk CLI-commando (zonder 'get ' ervoor)
+def upsert_advert(pubkey: str, name: str | None = None, lat: float | None = None,
+                  lon: float | None = None, node_type: str | None = None) -> None:
+    """Record the identity carried by an advert in the shared contacts table.
+
+    Adverts arrive far more often than they change, and a node may advertise its
+    name without a position (or the other way round), so every field is only
+    overwritten when the advert actually carries it -- otherwise a nameless
+    advert would erase a known name.
+    """
+    pk = (pubkey or "").lower().strip()
+    if len(pk) < 6:
+        return
+    prefix6 = pk[:6]
+    # Contacts pushed by Home Assistant use a shorter pubkey prefix than the
+    # 32-byte key in an advert. Reuse the existing row's key so both sources
+    # keep converging on one row per node instead of two that shadow each other.
+    row = qone("SELECT prefix FROM contacts WHERE prefix6=?", (prefix6,))
+    prefix = row["prefix"] if row else pk[:12]
+    if lat is None or lon is None:
+        lat = lon = None
+    execute(
+        "INSERT INTO contacts(prefix, prefix6, name, lat, lon, node_type, updated) "
+        "VALUES(?,?,?,?,?,?,?) ON CONFLICT(prefix) DO UPDATE SET "
+        "name=COALESCE(excluded.name, name), "
+        "lat=COALESCE(excluded.lat, lat), lon=COALESCE(excluded.lon, lon), "
+        "node_type=COALESCE(excluded.node_type, node_type), updated=excluded.updated",
+        (prefix, prefix6, name, lat, lon, node_type, utcnow()),
+    )
+
+
+def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
+                  length: int | None = None, ts: str | None = None) -> int | None:
+    """Store one packet reception. Returns the row id, or None if skipped.
+
+    ``pkt`` is the dict from packets.decode(). An advert also refreshes the
+    contacts table, which is what later lets the live map place a packet.
+    """
+    observer = str(observer or "").lower().strip()[:16]
+    if not observer:
+        return None
+    ts = ts or utcnow()
+    phash = pkt.get("hash")
+
+    if phash:
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(seconds=PACKET_DUP_WINDOW_S)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if qone("SELECT 1 FROM packets WHERE observer=? AND phash=? AND ts>=? LIMIT 1",
+                (observer, phash, cutoff)):
+            return None
+
+    if pkt.get("pubkey"):
+        upsert_advert(pkt["pubkey"], pkt.get("name"), pkt.get("lat"), pkt.get("lon"),
+                      pkt.get("node_type"))
+
+    return execute(
+        "INSERT INTO packets(ts, observer, snr, rssi, len, route, payload_type, "
+        "payload_name, path_len, sender, phash) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (ts, observer,
+         float(snr) if isinstance(snr, (int, float)) else None,
+         float(rssi) if isinstance(rssi, (int, float)) else None,
+         int(length) if isinstance(length, int) else pkt.get("len"),
+         pkt.get("route_name"), pkt.get("payload_type"), pkt.get("payload_name"),
+         pkt.get("path_len"), pkt.get("sender"), phash),
+    )
+
+
+def recent_packets(since_id: int = 0, limit: int = 200) -> list[sqlite3.Row]:
+    """Packets newer than ``since_id``, oldest first, with the sender's name and
+    position joined in so the caller can plot them without a second query."""
+    # GROUP BY p.id keeps one row per packet: contacts is keyed on the full
+    # pubkey prefix, and two sources (adverts, Home Assistant) can register the
+    # same node under prefixes of different length, which would otherwise
+    # multiply every packet by the number of matching contact rows.
+    return q(
+        "SELECT p.*, c.name AS sender_name, c.lat AS sender_lat, c.lon AS sender_lon, "
+        "o.name AS observer_name, o.lat AS observer_lat, o.lon AS observer_lon "
+        "FROM packets p "
+        "LEFT JOIN contacts c ON c.prefix6 = p.sender "
+        "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
+        "WHERE p.id > ? GROUP BY p.id ORDER BY p.id LIMIT ?",
+        (since_id, limit),
+    )
+
+
+def last_packet_id() -> int:
+    row = qone("SELECT MAX(id) AS id FROM packets")
+    return (row["id"] or 0) if row else 0
+
+
+def located_nodes() -> list[sqlite3.Row]:
+    """Every node we know a position for; the base layer of the live map."""
+    return q(
+        "SELECT prefix6, name, lat, lon, node_type FROM contacts "
+        "WHERE lat IS NOT NULL AND lon IS NOT NULL GROUP BY prefix6"
+    )
+
+
+# 'cmd:' prefix = literal CLI command (not prefixed with 'get ')
 DEFAULT_CLI_PARAMS = ("name,role,radio,freq,tx,af,repeat,advert.interval,"
                       "flood.advert.interval,flood.max,allow.read.only,"
                       "rxdelay,txdelay,lat,lon,cmd:region")
 
 
 def request_settings(prefix: str, params: list[str]) -> None:
-    """Zet een CLI-settings-opvraging klaar voor de HA-integratie."""
+    """Queue a CLI settings request for the Home Assistant integration."""
     import json
     try:
         d = json.loads(get_setting("settings_requests", "{}"))
@@ -191,8 +323,8 @@ def pop_settings_requests() -> list[dict]:
 
 def upsert_cli_settings(repeater_id: int, values: dict) -> None:
     now = utcnow()
-    # Opruimen op basis van de geconfigureerde parameterlijst (niet de push
-    # zelf): een gedeeltelijke heropvraging mag bestaande rijen niet wissen.
+    # Prune against the configured parameter list rather than this push: a
+    # partial re-read must not wipe rows it simply did not ask about.
     configured = {p.strip() for p in
                   (get_setting("cli_params", DEFAULT_CLI_PARAMS) or "").replace(";", ",").split(",")
                   if p.strip()}
@@ -220,7 +352,7 @@ def cli_settings_for(repeater_id: int) -> list:
 
 
 def request_refresh(prefix: str) -> None:
-    """Zet een handmatig statusverzoek klaar voor de HA-integratie."""
+    """Queue a manual status request for the Home Assistant integration."""
     import json
     d = {}
     try:
@@ -232,7 +364,7 @@ def request_refresh(prefix: str) -> None:
 
 
 def pop_refresh_requests() -> list[str]:
-    """Haalt openstaande verzoeken op en wist ze (afgeleverd aan HA)."""
+    """Fetch pending requests and clear them (delivered to Home Assistant)."""
     import json
     try:
         d = json.loads(get_setting("refresh_requests", "{}"))
@@ -251,7 +383,7 @@ def slugify(name: str) -> str:
 def get_or_create_repeater(pubkey_prefix: str, name: str | None) -> sqlite3.Row:
     row = qone("SELECT * FROM repeaters WHERE pubkey_prefix=?", (pubkey_prefix,))
     if row:
-        # Naam bijwerken als HA een (nieuwe) naam meestuurt
+        # Adopt the name whenever Home Assistant sends a new one
         if name and name != row["name"]:
             execute("UPDATE repeaters SET name=? WHERE id=?", (name, row["id"]))
             row = qone("SELECT * FROM repeaters WHERE id=?", (row["id"],))
@@ -271,11 +403,14 @@ def get_or_create_repeater(pubkey_prefix: str, name: str | None) -> sqlite3.Row:
 
 def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
            force: bool = False):
-    """Sla een snapshot op. Numerieke waarden gaan alleen de historiek in als
-    ze wijzigden t.o.v. de laatste waarde, of als de laatste ouder is dan de
-    heartbeat-interval (zodat grafieken blijven doorlopen). Met force=True
-    (handmatige statusupdate) wordt altijd een punt weggeschreven."""
-    # Instelling vóór de lock uitlezen (get_setting neemt zelf de lock)
+    """Store a snapshot.
+
+    Numeric values only enter the history when they changed, or when the last
+    stored point is older than the heartbeat interval -- otherwise a stable
+    metric would fill the table with identical rows, while its chart would still
+    need points to keep running. force=True (manual status update) always writes.
+    """
+    # Read the setting before taking the lock; get_setting takes it itself
     heartbeat = timedelta(minutes=setting_int("heartbeat_min", config.HEARTBEAT_MIN))
     with _lock:
         conn = get_conn()
@@ -304,8 +439,8 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
                 continue
             store = True
             if not force and prev is not None and prev["value"] == value:
-                # Waarde ongewijzigd: alleen een heartbeat-punt als het laatst
-                # OPGESLAGEN sample (niet de laatste ingest) oud genoeg is.
+                # Unchanged: only a heartbeat point, and judged on the last
+                # STORED sample rather than the last ingest.
                 last_sample = conn.execute(
                     "SELECT MAX(ts) AS ts FROM samples WHERE repeater_id=? AND metric=?",
                     (repeater_id, name),
@@ -326,7 +461,7 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
                 prefix = str(nb.get("prefix", "")).lower()
                 if not prefix:
                     continue
-                # 'seen_min' = minuten sinds laatst gehoord -> echte laatst-gehoord-tijd
+                # 'seen_min' = minutes since last heard -> absolute timestamp
                 last = ts
                 seen_min = nb.get("seen_min")
                 if isinstance(seen_min, (int, float)):
@@ -347,8 +482,7 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
                     "last_seen=excluded.last_seen",
                     (repeater_id, prefix, nb.get("name"), snr, last),
                 )
-                # Linkhistoriek: SNR-verloop per individuele buurlink
-                # (bij wijziging, of als heartbeat verstreken is)
+                # Per-link history: SNR trend of one individual neighbour link
                 if isinstance(snr, (int, float)):
                     store_link = force or prev_nb is None or prev_nb["snr"] != snr
                     if not store_link:
@@ -379,7 +513,7 @@ def history(repeater_id: int, metric: str, hours: int) -> list[tuple[str, float]
             (repeater_id, metric, since),
         )
         return [(r["ts"], r["value"]) for r in rows]
-    # Langere periodes: per uur gemiddeld om de payload klein te houden
+    # Longer windows: average per hour to keep the response small
     rows = q(
         "SELECT substr(ts,1,13)||':00:00Z' AS bucket, AVG(value) AS value "
         "FROM samples WHERE repeater_id=? AND metric=? AND ts>=? GROUP BY bucket ORDER BY bucket",
@@ -389,8 +523,11 @@ def history(repeater_id: int, metric: str, hours: int) -> list[tuple[str, float]
 
 
 def computed_utilization(repeater_id: int, total_metric: str, window_min: int = 90) -> float | None:
-    """Benutting (%) berekend uit de airtime-totalen: Δairtime / Δtijd.
-    Robuust tegen HA-herstarts (die de meshcore-berekening telkens resetten)."""
+    """Utilisation (%) derived from the airtime totals: delta airtime / delta time.
+
+    Computed here instead of read from the node because the meshcore-side figure
+    resets on every Home Assistant restart.
+    """
     since = (datetime.now(timezone.utc) - timedelta(minutes=window_min)).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = q(
         "SELECT ts, value FROM samples WHERE repeater_id=? AND metric=? AND ts>=? ORDER BY ts",
@@ -404,8 +541,8 @@ def computed_utilization(repeater_id: int, total_metric: str, window_min: int = 
     except ValueError:
         return None
     dt_min = (t1 - t0).total_seconds() / 60
-    dv_min = rows[-1]["value"] - rows[0]["value"]  # airtime is in minuten
-    if dt_min < 10 or dv_min < 0:  # te weinig venster, of teller-reset
+    dv_min = rows[-1]["value"] - rows[0]["value"]  # airtime is in minutes
+    if dt_min < 10 or dv_min < 0:  # window too short, or counter reset
         return None
     return round(dv_min / dt_min * 100, 2)
 
@@ -418,6 +555,11 @@ def prune():
     retention = setting_int("retention_days", config.RETENTION_DAYS)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention)).strftime("%Y-%m-%dT%H:%M:%SZ")
     execute("DELETE FROM samples WHERE ts<?", (cutoff,))
-    # Buren die 7 dagen niet meer gezien zijn verdwijnen uit de lijst
+    # Neighbours unheard for 7 days drop off the list
     nb_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     execute("DELETE FROM neighbors WHERE last_seen<?", (nb_cutoff,))
+    # Packets arrive orders of magnitude faster than metric samples and are only
+    # interesting while recent, hence their own much shorter retention.
+    pkt_days = setting_int("packet_retention_days", config.PACKET_RETENTION_DAYS)
+    pkt_cutoff = (datetime.now(timezone.utc) - timedelta(days=pkt_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    execute("DELETE FROM packets WHERE ts<?", (pkt_cutoff,))

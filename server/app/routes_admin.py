@@ -113,7 +113,7 @@ def save_layout(request: Request, layout: str = Form(...), csrf: str = Form(...)
 
 @router.post("/repeaters/{rid}/refresh")
 def refresh_repeater(request: Request, rid: int, csrf: str = Form(...)):
-    """Handmatige statusupdate: verzoek in de wachtrij voor de HA-integratie."""
+    """Manual status update: queue a request for the Home Assistant integration."""
     require_login(request)
     check_csrf(request, csrf)
     row = db.qone("SELECT slug, pubkey_prefix FROM repeaters WHERE id=?", (rid,))

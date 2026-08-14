@@ -70,11 +70,12 @@ a { color: var(--cyan); text-decoration: none; }
   position: sticky; top: 0; z-index: 10;
 }
 .topbar nav { display: flex; gap: .9rem; align-items: center; }
-#theme-toggle {
+#theme-toggle, #lang-toggle {
   background: transparent; border: 1px solid var(--card-edge); color: var(--muted);
   border-radius: 99px; padding: .2rem .55rem; font-size: .9rem; line-height: 1;
 }
-#theme-toggle:hover { color: var(--text); border-color: var(--muted); background: transparent; box-shadow: none; }
+#lang-toggle { font-family: var(--mono); font-size: .72rem; letter-spacing: .06em; padding: .3rem .5rem; }
+#theme-toggle:hover, #lang-toggle:hover { color: var(--text); border-color: var(--muted); background: transparent; box-shadow: none; }
 .brand {
   font-family: var(--mono); font-weight: 700; color: var(--accent);
   font-size: 1rem; letter-spacing: .03em;
@@ -281,6 +282,26 @@ label input { width: 100%; margin-top: .25rem; }
   padding: .3rem .4rem .6rem; color: var(--muted); font-size: .82rem; line-height: 1.7;
 }
 #linkmap { height: 440px; border-radius: 8px; background: var(--bg-grid); }
+
+/* --- live packet map --------------------------------------------------------- */
+#livemap { height: 420px; border-radius: 8px; background: var(--bg-grid); }
+.livecount { font-family: var(--mono); }
+.livefeed {
+  list-style: none; margin: .6rem 0 0; padding: 0;
+  max-height: 190px; overflow-y: auto;
+  font-size: .8rem; font-family: var(--mono);
+}
+.livefeed li {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .25rem .4rem; border-bottom: 1px solid var(--card-edge);
+  animation: pktin .35s ease-out;
+}
+.livefeed li:last-child { border-bottom: 0; }
+.livefeed i { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.livefeed .pkt-who { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livefeed .pkt-meta { color: var(--muted); }
+.livefeed time { color: var(--muted); flex: 0 0 auto; min-width: 6.5rem; text-align: right; }
+@keyframes pktin { from { opacity: 0; transform: translateY(-6px); } }
 #modal-map { height: 200px; border-radius: 8px; margin-bottom: .8rem; background: var(--bg-grid); }
 #modal-map[hidden] { display: none; }
 .leaflet-container { font: inherit; }
@@ -297,6 +318,7 @@ label input { width: 100%; margin-top: .25rem; }
 .maplegend strong { display: block; font-family: var(--mono); font-size: .7rem;
   text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: .2rem; }
 .maplegend span { display: flex; align-items: center; gap: .45rem; }
+.maplegend em { font-style: normal; }
 .maplegend i { width: 16px; height: 3px; border-radius: 2px; display: inline-block; }
 .leaflet-control-attribution { background: var(--topbar-bg) !important; color: var(--muted) !important; }
 .leaflet-control-attribution a { color: var(--muted) !important; }

@@ -14,16 +14,19 @@
 <body>
 <header class="topbar">
   <a class="brand" href="/">&#128225; {{ site_name }}</a>
-  <nav>{% block nav %}<a href="/admin">&#9881; Beheer</a>{% endblock %}
-    <button type="button" id="theme-toggle" title="Wissel licht/donker thema">&#9788;</button>
+  <nav>{% block nav %}<a href="/admin" data-i18n="nav.admin">&#9881; Beheer</a>{% endblock %}
+    <button type="button" id="lang-toggle" data-i18n-title="nav.lang_title" title="Taal wisselen / switch language">NL</button>
+    <button type="button" id="theme-toggle" data-i18n-title="nav.theme_title" title="Wissel licht/donker thema">&#9788;</button>
   </nav>
 </header>
 <main>
 {% block content %}{% endblock %}
 </main>
 <footer>
-  <span>MeshCore-statistieken &middot; gevoed door Home Assistant &middot; <a href="/admin">beheer</a></span>
+  <span><span data-i18n="footer.text">MeshCore-statistieken &middot; gevoed door Home Assistant &middot; </span><a href="/admin" data-i18n="footer.admin">beheer</a></span>
 </footer>
+<!-- Loads before any page script so generated text can use MCSI18N.t as well. -->
+<script src="/static/i18n.js?v={{ asset_v }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

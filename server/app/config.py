@@ -1,4 +1,4 @@
-"""Configuratie en eerste-start-bootstrap."""
+"""Configuration and first-start bootstrap."""
 import os
 import secrets
 from pathlib import Path
@@ -10,9 +10,12 @@ DB_PATH = DATA_DIR / "mcs.sqlite3"
 SECRET_FILE = DATA_DIR / "secret.key"
 
 RETENTION_DAYS = int(os.environ.get("MCS_RETENTION_DAYS", "180"))
+# Raw packet receptions arrive far faster than metric samples and lose their
+# value within days, so they get their own, much shorter retention.
+PACKET_RETENTION_DAYS = int(os.environ.get("MCS_PACKET_RETENTION_DAYS", "7"))
 SITE_NAME = os.environ.get("MCS_SITE_NAME", "MeshCore Repeater Stats")
-# Heartbeat: sla een sample ook op als de waarde niet wijzigde maar de vorige
-# ouder is dan dit aantal minuten (houdt grafieken doorlopend).
+# Heartbeat: also store a sample when the value did not change but the previous
+# one is older than this many minutes, so charts keep running.
 HEARTBEAT_MIN = int(os.environ.get("MCS_HEARTBEAT_MIN", "5"))
 
 

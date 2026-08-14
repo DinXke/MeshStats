@@ -4,29 +4,29 @@
 <div class="pagehead">
   <div class="pagehead-top">
     <h1>{{ r.name }}</h1>
-    <span class="badge {{ 'on' if is_online else 'off' }}">{{ 'ONLINE' if is_online else 'OFFLINE' }}</span>
+    <span class="badge {{ 'on' if is_online else 'off' }}" data-i18n="{{ 'status.online' if is_online else 'status.offline' }}">{{ 'ONLINE' if is_online else 'OFFLINE' }}</span>
     {% if is_admin %}
     <form method="post" action="/admin/repeaters/{{ r.id }}/refresh" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" class="pill refreshbtn" title="Vraag via Home Assistant een verse status en telemetrie op over LoRa">&#8635; Status opvragen</button>
+      <button type="submit" class="pill refreshbtn" data-i18n="rep.refresh" data-i18n-title="rep.refresh_title" title="Vraag via Home Assistant een verse status en telemetrie op over LoRa">&#8635; Status opvragen</button>
     </form>
-    <a class="pill settingslink" href="/admin/repeaters/{{ r.id }}/settings" title="CLI-instellingen van deze repeater">&#9881; Instellingen</a>
+    <a class="pill settingslink" href="/admin/repeaters/{{ r.id }}/settings" data-i18n="rep.settings" data-i18n-title="rep.settings_title" title="CLI-instellingen van deze repeater">&#9881; Instellingen</a>
     {% endif %}
   </div>
   {% if refresh_requested %}
-  <p class="hint refreshnotice">&#9203; Statusupdate aangevraagd — Home Assistant vraagt de repeater nu uit; binnen &plusmn;1 minuut verschijnt een vers datapunt.</p>
+  <p class="hint refreshnotice" data-i18n="rep.refresh_notice">&#9203; Statusupdate aangevraagd — Home Assistant vraagt de repeater nu uit; binnen &plusmn;1 minuut verschijnt een vers datapunt.</p>
   {% endif %}
   <div class="muted mono-line">
     <span class="chip">{{ r.pubkey_prefix }}</span>
-    {% if r.last_seen %}<span>laatste update <time class="reltime" datetime="{{ r.last_seen }}">{{ r.last_seen }}</time></span>{% endif %}
+    {% if r.last_seen %}<span><span data-i18n="rep.lastupdate">laatste update</span> <time class="reltime" datetime="{{ r.last_seen }}">{{ r.last_seen }}</time></span>{% endif %}
   </div>
-  <p class="hint">&#128161; Klik op een tegel of buur voor de historiek</p>
+  <p class="hint" data-i18n="rep.hint">&#128161; Klik op een tegel of buur voor de historiek</p>
 </div>
 
 {% for b in blocks %}
 {% if b.type == "section" %}
 <section class="collapsible" data-ckey="{{ b.section.key }}">
-  <h2 class="sec-toggle">{{ b.section.title }} <span class="sec-chev">&#9662;</span></h2>
+  <h2 class="sec-toggle"><span data-i18n="block.{{ b.section.key }}">{{ b.section.title }}</span> <span class="sec-chev">&#9662;</span></h2>
   <div class="sec-body">
   <div class="tilegrid">
   {% for t in b.section.tiles %}
@@ -36,8 +36,8 @@
          data-segments='{{ gauges[t.metric][2]|tojson }}'
          data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}">
       <canvas width="180" height="96"></canvas>
-      <div class="tile-label">{{ t.label }}</div>
-      <div class="tile-value">{{ t.display }}</div>
+      <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
+      <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
     </div>
     {% elif t.metric in thermos and t.value is not none %}
     <div class="tile gaugetile clickable" data-thermo="{{ t.metric }}" data-value="{{ t.value }}"
@@ -45,14 +45,14 @@
          data-segments='{{ thermos[t.metric][2]|tojson }}'
          data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}">
       <canvas width="180" height="96"></canvas>
-      <div class="tile-label">{{ t.label }}</div>
-      <div class="tile-value">{{ t.display }}</div>
+      <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
+      <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
     </div>
     {% else %}
     <div class="tile {% if t.metric == 'online' %}{{ 'online' if t.value == 1.0 else 'offline' }}{% endif %} {% if t.value is not none %}clickable{% endif %}"
          {% if t.value is not none %}data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}"{% endif %}>
-      <div class="tile-value">{{ t.display }}</div>
-      <div class="tile-label">{{ t.label }}</div>
+      <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
+      <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
     </div>
     {% endif %}
   {% endfor %}
@@ -62,12 +62,12 @@
 
 {% elif b.type == "charts" %}
 <section class="collapsible" data-ckey="charts">
-  <h2 class="sec-toggle">Grafieken <span class="sec-chev">&#9662;</span></h2>
+  <h2 class="sec-toggle"><span data-i18n="block.charts">Grafieken</span> <span class="sec-chev">&#9662;</span></h2>
   <div class="sec-body">
   <div class="chartgrid">
   {% for c in b.charts %}
     <div class="card chartcard">
-      <h3>{{ c.title }}</h3>
+      <h3 data-i18n="chart.{{ c.key }}">{{ c.title }}</h3>
       <div class="chartwrap"><canvas data-chart='{{ {"slug": r.slug, "metrics": c.metrics, "labels": c.labels, "hours": c.hours, "unit": c.unit}|tojson }}'></canvas></div>
     </div>
   {% endfor %}
@@ -77,11 +77,11 @@
 
 {% elif b.type == "map" %}
 <section class="collapsible" data-ckey="map">
-  <h2 class="sec-toggle">Linkkaart <span class="sec-chev">&#9662;</span></h2>
+  <h2 class="sec-toggle"><span data-i18n="block.map">Linkkaart</span> <span class="sec-chev">&#9662;</span></h2>
   <div class="sec-body">
     <div class="card mapcard">
       <div class="mapbar">
-        <label class="maptoggle"><input type="checkbox" id="map-labels"> SNR-labels tonen</label>
+        <label class="maptoggle"><input type="checkbox" id="map-labels"> <span data-i18n="map.labels">SNR-labels tonen</span></label>
         <span class="muted small" id="map-note"></span>
       </div>
       <div id="linkmap"></div>
@@ -91,17 +91,17 @@
 
 {% elif b.type == "neighbors" %}
 <section class="collapsible" data-ckey="neighbors">
-  <h2 class="sec-toggle">Buren ({{ neighbors|length }}) <span class="sec-chev">&#9662;</span></h2>
+  <h2 class="sec-toggle"><span data-i18n="block.neighbors" data-i18n-vars='{"n": {{ neighbors|length }}}'>Buren ({{ neighbors|length }})</span> <span class="sec-chev">&#9662;</span></h2>
   <div class="sec-body">
   <div class="card tablecard">
   <table class="neighbors">
     <thead><tr>
       <th></th>
-      <th class="sortable" data-sort="name">Node</th>
-      <th class="sortable" data-sort="prefix">Prefix</th>
-      <th class="num sortable" data-sort="snr">SNR (dB)</th>
-      <th class="snrbar-col">Link</th>
-      <th class="sortable" data-sort="seen">Laatst gehoord</th>
+      <th class="sortable" data-sort="name" data-i18n="nb.node">Node</th>
+      <th class="sortable" data-sort="prefix" data-i18n="nb.prefix">Prefix</th>
+      <th class="num sortable" data-sort="snr" data-i18n="nb.snr">SNR (dB)</th>
+      <th class="snrbar-col" data-i18n="nb.link">Link</th>
+      <th class="sortable" data-sort="seen" data-i18n="nb.lastheard">Laatst gehoord</th>
     </tr></thead>
     <tbody>
     {% for n in neighbors %}
@@ -131,16 +131,18 @@
   <div class="modal-panel card">
     <div class="modal-head">
       <h3 id="modal-title"></h3>
-      <button type="button" class="modal-close" aria-label="Sluiten">&#10005;</button>
+      <button type="button" class="modal-close" data-i18n-aria="modal.close" aria-label="Sluiten">&#10005;</button>
     </div>
     <div class="rangebtns" role="group">
       {% for rng in ranges %}
-      <button type="button" data-hours="{{ rng.hours }}" {% if rng.hours == default_hours %}class="active"{% endif %}>{{ rng.label }}</button>
+      <button type="button" data-hours="{{ rng.hours }}" {% if rng.hours == default_hours %}class="active"{% endif %}
+              data-i18n="{{ 'range.days' if rng.hours % 24 == 0 and rng.hours >= 24 else 'range.hours' }}"
+              data-i18n-vars='{"n": {{ rng.hours // 24 if rng.hours % 24 == 0 and rng.hours >= 24 else rng.hours }}}'>{{ rng.label }}</button>
       {% endfor %}
     </div>
     <div id="modal-map" hidden></div>
     <div class="chartwrap modal-chartwrap"><canvas id="modal-canvas"></canvas></div>
-    <div id="modal-empty" class="muted" hidden>Nog geen historiek voor deze periode.</div>
+    <div id="modal-empty" class="muted" data-i18n="modal.empty" hidden>Nog geen historiek voor deze periode.</div>
   </div>
 </div>
 <script>window.MCS = {slug: {{ r.slug|tojson }}, defaultHours: {{ default_hours }}, zones: {{ zones|tojson }}};</script>

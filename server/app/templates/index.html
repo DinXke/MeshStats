@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="pagehead">
-  <div class="pagehead-top"><h1>Repeaters</h1></div>
-  <p class="hint">Live MeshCore-repeaterstatistieken &middot; klik op een repeater voor details</p>
+  <div class="pagehead-top"><h1 data-i18n="home.title">Repeaters</h1></div>
+  <p class="hint" data-i18n="home.hint">Live MeshCore-repeaterstatistieken &middot; klik op een repeater voor details</p>
 </div>
 {% if not cards %}
-<p class="muted">Nog geen repeaters. Zodra Home Assistant data doorstuurt verschijnen ze hier.</p>
+<p class="muted" data-i18n="home.empty">Nog geen repeaters. Zodra Home Assistant data doorstuurt verschijnen ze hier.</p>
 {% endif %}
 <div class="cardgrid">
 {% for c in cards %}
@@ -15,14 +15,36 @@
       <strong>{{ c.name }}</strong>
     </div>
     <div class="card-stats">
-      {% if c.battery is not none %}<span title="Batterij">&#128267; {{ '%.0f'|format(c.battery) }}%</span>{% endif %}
-      {% if c.uptime is not none %}<span title="Uptime">&#9201;&#65039; {{ '%.1f'|format(c.uptime) }} d</span>{% endif %}
-      {% if c.neighbors is not none %}<span title="Buren">&#128246; {{ c.neighbors|int }}</span>{% endif %}
-      {% if c.temperature is not none %}<span title="Temperatuur">&#127777;&#65039; {{ '%.0f'|format(c.temperature) }}&deg;</span>{% endif %}
+      {% if c.battery is not none %}<span data-i18n-title="card.battery" title="Batterij">&#128267; {{ '%.0f'|format(c.battery) }}%</span>{% endif %}
+      {% if c.uptime is not none %}<span data-i18n-title="card.uptime" title="Uptime">&#9201;&#65039; {{ '%.1f'|format(c.uptime) }} d</span>{% endif %}
+      {% if c.neighbors is not none %}<span data-i18n-title="card.neighbors" title="Buren">&#128246; {{ c.neighbors|int }}</span>{% endif %}
+      {% if c.temperature is not none %}<span data-i18n-title="card.temperature" title="Temperatuur">&#127777;&#65039; {{ '%.0f'|format(c.temperature) }}&deg;</span>{% endif %}
     </div>
-    <div class="muted small">{{ c.prefix }}{% if c.last_seen %} &middot; laatst gezien <time class="reltime" datetime="{{ c.last_seen }}">{{ c.last_seen }}</time>{% endif %}</div>
+    <div class="muted small">{{ c.prefix }}{% if c.last_seen %} &middot; <span data-i18n="home.lastseen">laatst gezien</span> <time class="reltime" datetime="{{ c.last_seen }}">{{ c.last_seen }}</time>{% endif %}</div>
   </a>
 {% endfor %}
 </div>
+
+{% if has_livemap %}
+<section class="collapsible" data-ckey="livemap">
+  <h2 class="sec-toggle"><span data-i18n="live.title">Live pakketten</span> <span class="sec-chev">&#9662;</span></h2>
+  <div class="sec-body">
+    <div class="card mapcard">
+      <div class="mapbar">
+        <span class="muted small" data-i18n="live.hint">Elk pakket dat een node opvangt, flitst op de plek van de afzender</span>
+        <span class="livecount muted small" id="live-count" data-i18n="live.waiting">wachten op verkeer&hellip;</span>
+      </div>
+      <div id="livemap"></div>
+      <ul class="livefeed" id="livefeed"></ul>
+    </div>
+  </div>
+</section>
+{% endif %}
 {% endblock %}
-{% block scripts %}<script src="/static/app.js?v={{ asset_v }}"></script>{% endblock %}
+{% block scripts %}
+{% if has_livemap %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% endif %}
+<script src="/static/app.js?v={{ asset_v }}"></script>
+{% endblock %}
