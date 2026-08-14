@@ -150,7 +150,7 @@ Each neighbour also becomes its own time series under the metric key
 
 ### `settings` — the node's own CLI configuration
 
-Swept by the node every six hours and carried along with an ordinary statistics
+Swept by the node once a day and carried along with an ordinary statistics
 message:
 
 ```json
@@ -158,11 +158,17 @@ message:
   "name": "BE-HSS-JessaZH.VIR", "role": "repeater",
   "radio": "868.0,250,10,8", "freq": "869.525", "tx": "22", "af": "1",
   "repeat": "on", "advert.interval": "240",
-  "flood.advert.interval": "1440", "flood.max": "3",
+  "flood.advert.interval": "1440", "flood.max": "3", "flood.max.unscoped": "5",
   "allow.read.only": "off", "rxdelay": "0", "txdelay": "0",
-  "lat": "50.92", "lon": "5.352", "region": "EU868"
+  "lat": "50.92", "lon": "5.352", "region.home": "be", "region.default": "be"
 }
 ```
+
+The keys are whatever the sweep table in the firmware names them — the server
+stores and shows every key it receives, known or not. The parameter list on the
+admin settings page steers the Home Assistant look-up only; a parameter added
+there does **not** reach nodes publishing over MQTT until the firmware's own
+table (`SET_PARAMS` in `MeshStatsNet.cpp`) asks for it too.
 
 It fills the same admin page as `POST /api/v1/repeater_settings`, so a node can
 populate it with no Home Assistant in the picture.

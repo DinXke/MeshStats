@@ -1,5 +1,8 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.7.2  The sweep asks for flood.max.unscoped as well. The parameter list on
+ *        the site only steers the Home Assistant path; this sweep has its own
+ *        table, so a parameter added there never showed up for MQTT nodes.
  * 1.7.1  The automatic monitor round never started. passed() reads 0 as 'not
  *        scheduled' and _mon_next_round begins at 0, so MST_IDLE waited on a
  *        deadline that never arrived; only 'wifi mon poll' set one, after which
@@ -959,6 +962,9 @@ static const SetParam SET_PARAMS[] = {
   { "advert.interval",       "get advert.interval",       NULL },
   { "flood.advert.interval", "get flood.advert.interval", NULL },
   { "flood.max",             "get flood.max",             NULL },
+  /* Newer firmwares split the flood budget in two; on one that has not, the
+   * "??" reply is refused below and the parameter is simply a miss. */
+  { "flood.max.unscoped",    "get flood.max.unscoped",    NULL },
   { "allow.read.only",       "get allow.read.only",       NULL },
   { "rxdelay",               "get rxdelay",               NULL },
   { "txdelay",               "get txdelay",               NULL },

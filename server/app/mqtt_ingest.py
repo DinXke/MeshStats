@@ -11,7 +11,7 @@ of message arrive, on two topic patterns:
          "metrics": {...}, "neighbors": [...], "settings": {...}}
 
     ``settings`` is the node's own CLI configuration (name, role, radio, freq,
-    tx, advert intervals, lat/lon, region...), swept every six hours. It rides
+    tx, advert intervals, lat/lon, region...), swept once a day. It rides
     along here rather than on a topic of its own on purpose: this subscriber
     listens to exactly two patterns, so a third topic would have been accepted
     by the broker and then dropped on the floor unread -- which is precisely how

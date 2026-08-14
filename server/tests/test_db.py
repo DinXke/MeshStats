@@ -110,6 +110,35 @@ def test_backfill_is_zelfbegrenzend_via_lege_string(db):
     assert resterend == 0
 
 
+def test_cli_settings_slaan_elke_sleutel_op(db):
+    # Er is bewust geen whitelist: punten en dubbele punten in sleutelnamen
+    # (flood.max.unscoped, cmd:region) komen letterlijk in de tabel, zodat de
+    # instellingenpagina toont wat er werkelijk binnenkwam in plaats van
+    # onbekende sleutels stil te laten vallen.
+    rep = db.get_or_create_repeater("aabbcc112233", "Testnode")
+    db.upsert_cli_settings(rep["id"], {"flood.max.unscoped": "5",
+                                       "cmd:region": "be",
+                                       "gloednieuw.iets": "x"}, prune=False)
+    rows = {r["param"]: r["value"] for r in db.cli_settings_for(rep["id"])}
+    assert rows["flood.max.unscoped"] == "5"
+    assert rows["cmd:region"] == "be"
+    assert rows["gloednieuw.iets"] == "x"
+
+
+def test_prune_bewaart_geconfigureerde_parameters(db):
+    # Een MQTT-sweep leverde flood.max.unscoped aan; daarna komt een volledige
+    # HA-uitlezing (prune=True) die de parameter niet meekreeg. Omdat hij in de
+    # standaardlijst staat mag de opruiming hem niet wegvegen -- anders wist de
+    # ene aanvoerweg uit wat de andere net geleerd had.
+    assert "flood.max.unscoped" in db.DEFAULT_CLI_PARAMS.split(",")
+    rep = db.get_or_create_repeater("aabbcc112233", "Testnode")
+    db.upsert_cli_settings(rep["id"], {"flood.max.unscoped": "5"}, prune=False)
+    db.upsert_cli_settings(rep["id"], {"name": "Testnode"}, prune=True)
+    rows = {r["param"]: r["value"] for r in db.cli_settings_for(rep["id"])}
+    assert rows["flood.max.unscoped"] == "5"
+    assert rows["name"] == "Testnode"
+
+
 # De packets-tabel zoals hij eruitzag voordat de latere kolommen bestonden;
 # het startpunt van de migratietest.
 _OUDE_PACKETS = """

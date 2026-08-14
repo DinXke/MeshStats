@@ -655,9 +655,12 @@ def classify_countries(force: bool = False) -> int:
 
 
 # 'cmd:' prefix = literal CLI command (not prefixed with 'get ')
+# This list steers the Home Assistant path only; a node's own MQTT sweep has
+# its own table (SET_PARAMS in the firmware). Keep the two in step, or a
+# parameter will exist for one kind of node and be missing for the other.
 DEFAULT_CLI_PARAMS = ("name,role,radio,freq,tx,af,repeat,advert.interval,"
-                      "flood.advert.interval,flood.max,allow.read.only,"
-                      "rxdelay,txdelay,lat,lon,cmd:region")
+                      "flood.advert.interval,flood.max,flood.max.unscoped,"
+                      "allow.read.only,rxdelay,txdelay,lat,lon,cmd:region")
 
 
 def request_settings(prefix: str, params: list[str]) -> None:
@@ -690,7 +693,7 @@ def upsert_cli_settings(repeater_id: int, values: dict, prune: bool = True) -> N
     parameter that no longer exists should disappear.
 
     Pass prune=False when the source omits what it could not read, as the node's
-    own six-hourly sweep does. There, an absent parameter means "no answer this
+    own daily sweep does. There, an absent parameter means "no answer this
     time", not "gone" -- and the two are indistinguishable from here. The
     difference is not academic: the configured list names the region parameter
     ``cmd:region`` (it is fetched as a literal CLI command) while it is stored
