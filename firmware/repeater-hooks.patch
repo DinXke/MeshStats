@@ -1,5 +1,5 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index c93ba1a..db34ca4 100644
+index c93ba1a..a0657dd 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,6 +1,10 @@
@@ -13,7 +13,138 @@ index c93ba1a..db34ca4 100644
  /* ------------------------------ Config -------------------------------- */
  
  #ifndef LORA_FREQ
-@@ -467,6 +471,12 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+@@ -60,7 +64,7 @@
+ 
+ #define LAZY_CONTACTS_WRITE_DELAY    5000
+ 
+-void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
++void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr, const char *name) {
+ #if MAX_NEIGHBOURS // check if neighbours enabled
+   // find existing neighbour, else use least recently updated
+   uint32_t oldest_timestamp = 0xFFFFFFFF;
+@@ -84,7 +88,121 @@ void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float sn
+   neighbour->advert_timestamp = timestamp;
+   neighbour->heard_timestamp = getRTCClock()->getCurrentTime();
+   neighbour->snr = (int8_t)(snr * 4);
++  if (name && *name) {
++    StrHelper::strncpy(neighbour->name, name, sizeof(neighbour->name));
++  }
++#endif
++}
++
++int MyMesh::getNumNeighbours() const {
++#if MAX_NEIGHBOURS
++  int n = 0;
++  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++    if (neighbours[i].heard_timestamp > 0) n++;
++  }
++  return n;
++#else
++  return 0;
++#endif
++}
++
++bool MyMesh::getNeighbourAt(int idx, char *pub_hex, char *name_out, size_t name_max,
++                            uint32_t *secs_ago, int8_t *snr_out) const {
++#if MAX_NEIGHBOURS
++  int n = 0;
++  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++    const NeighbourInfo *nb = &neighbours[i];
++    if (nb->heard_timestamp == 0) continue;
++    if (n++ != idx) continue;
++
++    mesh::Utils::toHex(pub_hex, nb->id.pub_key, PUB_KEY_SIZE);
++    StrHelper::strncpy(name_out, nb->name, name_max);
++    uint32_t now = getRTCClock()->getCurrentTime();
++    *secs_ago = (now > nb->heard_timestamp) ? (now - nb->heard_timestamp) : 0;
++    *snr_out = nb->snr;
++    return true;
++  }
+ #endif
++  return false;
++}
++
++bool MyMesh::findNeighbourByPrefix(const uint8_t *prefix, int prefix_len, uint8_t *full_key_out,
++                                   char *name_out, size_t name_max) const {
++#if MAX_NEIGHBOURS
++  if (prefix_len <= 0 || prefix_len > PUB_KEY_SIZE) return false;
++  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++    const NeighbourInfo *nb = &neighbours[i];
++    if (nb->heard_timestamp == 0) continue;
++    if (memcmp(nb->id.pub_key, prefix, prefix_len) != 0) continue;
++
++    memcpy(full_key_out, nb->id.pub_key, PUB_KEY_SIZE);
++    StrHelper::strncpy(name_out, nb->name, name_max);
++    return true;
++  }
++#endif
++  return false;
++}
++
++// ------------------------------- monitored repeaters -----------------------
++
++void MyMesh::clearMonitors() {
++  memset(monitors, 0, sizeof(monitors));
++  num_monitors = 0;
++}
++
++int MyMesh::addMonitor(const uint8_t *pub_key) {
++  if (num_monitors >= MAX_MONITORS) return -1;
++
++  MonitorInfo &m = monitors[num_monitors];
++  m.id = mesh::Identity(pub_key);
++  /* Once, here. ECDH costs tens of milliseconds, which is fine at config time
++   * and unacceptable in the receive path where the secret is needed. */
++  self_id.calcSharedSecret(m.shared_secret, m.id);
++  m.out_path_len = OUT_PATH_UNKNOWN;
++  return num_monitors++;
++}
++
++// Flood only while we have no path back; after that every poll goes direct.
++void MyMesh::sendToMonitor(MonitorInfo &m, mesh::Packet *pkt) {
++  if (m.out_path_len == OUT_PATH_UNKNOWN) {
++    sendFloodScoped(default_scope, pkt, 0, _prefs.path_hash_mode + 1);
++  } else {
++    sendDirect(pkt, m.out_path, m.out_path_len);
++  }
++}
++
++bool MyMesh::sendMonitorLogin(int idx, const char *password) {
++  if (idx < 0 || idx >= num_monitors) return false;
++  MonitorInfo &m = monitors[idx];
++
++  uint8_t temp[24];
++  uint32_t now = getRTCClock()->getCurrentTimeUnique();
++  memcpy(temp, &now, 4);      // also an extra blob, to keep the packet hash unique
++  int len = strlen(password);
++  if (len > 15) len = 15;     // protocol limit, same as the chat client uses
++  memcpy(&temp[4], password, len);
++
++  mesh::Packet *pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, m.id,
++                                         m.shared_secret, temp, 4 + len);
++  if (!pkt) return false;
++  sendToMonitor(m, pkt);
++  return true;
++}
++
++bool MyMesh::sendMonitorStatusReq(int idx) {
++  if (idx < 0 || idx >= num_monitors) return false;
++  MonitorInfo &m = monitors[idx];
++
++  uint8_t temp[8];
++  uint32_t now = getRTCClock()->getCurrentTimeUnique();
++  memcpy(temp, &now, 4);
++  temp[4] = REQ_TYPE_GET_STATUS;
++  getRNG()->random(&temp[5], 3);   // padding that also keeps the packet hash unique
++
++  mesh::Packet *pkt = createDatagram(PAYLOAD_TYPE_REQ, m.id, m.shared_secret, temp, 8);
++  if (!pkt) return false;
++  sendToMonitor(m, pkt);
++  return true;
+ }
+ 
+ uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood) {
+@@ -467,6 +585,12 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
    mesh::Utils::printHex(Serial, raw, len);
    Serial.println();
  #endif
@@ -26,7 +157,124 @@ index c93ba1a..db34ca4 100644
  }
  
  void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
-@@ -1140,6 +1150,83 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
+@@ -608,12 +732,23 @@ int MyMesh::searchPeersByHash(const uint8_t *hash) {
+       matching_peer_indexes[n++] = i; // store the INDEXES of matching contacts (for subsequent 'peer' methods)
+     }
+   }
++  /* Also the repeaters we monitor, so their replies can be decrypted. They are
++   * offset by MONITOR_IDX_BASE, which is what every 'peer' method below keys
++   * off to know which table an index belongs to. */
++  for (int i = 0; i < num_monitors; i++) {
++    if (monitors[i].id.isHashMatch(hash)) {
++      matching_peer_indexes[n++] = MONITOR_IDX_BASE + i;
++    }
++  }
+   return n;
+ }
+ 
+ void MyMesh::getPeerSharedSecret(uint8_t *dest_secret, int peer_idx) {
+   int i = matching_peer_indexes[peer_idx];
+-  if (i >= 0 && i < acl.getNumClients()) {
++  if (i >= MONITOR_IDX_BASE) {
++    int m = i - MONITOR_IDX_BASE;
++    if (m < num_monitors) memcpy(dest_secret, monitors[m].shared_secret, PUB_KEY_SIZE);
++  } else if (i >= 0 && i < acl.getNumClients()) {
+     // lookup pre-calculated shared_secret
+     memcpy(dest_secret, acl.getClientByIdx(i)->shared_secret, PUB_KEY_SIZE);
+   } else {
+@@ -621,6 +756,16 @@ void MyMesh::getPeerSharedSecret(uint8_t *dest_secret, int peer_idx) {
+   }
+ }
+ 
++/* Replies from a monitored repeater. Nothing is parsed here beyond handing the
++ * bytes on: this runs in the receive path, so it may only copy. MeshStatsNet
++ * knows what it asked for and interprets accordingly. */
++void MyMesh::handleMonitorData(int mon_idx, uint8_t type, const uint8_t *data, size_t len) {
++  if (type != PAYLOAD_TYPE_RESPONSE || mon_idx >= num_monitors) return;
++#ifdef MESHSTATS_NET
++  meshstats_on_monitor_response(mon_idx, data, (int)len);
++#endif
++}
++
+ static bool isShare(const mesh::Packet *packet) {
+   if (packet->hasTransportCodes()) {
+     return packet->transport_codes[0] == 0 && packet->transport_codes[1] == 0;  // codes { 0, 0 } means 'send to nowhere'
+@@ -636,7 +781,7 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+   if (packet->getPathHashCount() == 0 && !isShare(packet)) {
+     AdvertDataParser parser(app_data, app_data_len);
+     if (parser.isValid() && parser.getType() == ADV_TYPE_REPEATER) { // just keep neigbouring Repeaters
+-      putNeighbour(id, timestamp, packet->getSNR());
++      putNeighbour(id, timestamp, packet->getSNR(), parser.hasName() ? parser.getName() : NULL);
+     }
+   }
+ }
+@@ -644,6 +789,10 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, const uint8_t *secret,
+                             uint8_t *data, size_t len) {
+   int i = matching_peer_indexes[sender_idx];
++  if (i >= MONITOR_IDX_BASE) {   // a reply to something WE asked, not a request to us
++    handleMonitorData(i - MONITOR_IDX_BASE, type, data, len);
++    return;
++  }
+   if (i < 0 || i >= acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
+     MESH_DEBUG_PRINTLN("onPeerDataRecv: invalid peer idx: %d", i);
+     return;
+@@ -749,6 +898,20 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t
+   // TODO: prevent replay attacks
+   int i = matching_peer_indexes[sender_idx];
+ 
++  if (i >= MONITOR_IDX_BASE) {
++    /* A monitored repeater answered our flood and told us the way back. Keep
++     * it: every following poll then goes direct, which is the difference
++     * between one packet and a mesh-wide flood per round. */
++    int m = i - MONITOR_IDX_BASE;
++    if (m < num_monitors) {
++      monitors[m].out_path_len = mesh::Packet::copyPath(monitors[m].out_path, path, path_len);
++      if (extra_type == PAYLOAD_TYPE_RESPONSE && extra_len > 0) {
++        handleMonitorData(m, PAYLOAD_TYPE_RESPONSE, extra, extra_len);
++      }
++    }
++    return false;   // no reciprocal path send
++  }
++
+   if (i >= 0 && i < acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
+     MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t)path_len);
+     auto client = acl.getClientByIdx(i);
+@@ -819,7 +982,8 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
+     if (id.matches(self_id)) {
+       return;
+     }
+-    putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR());
++    // Discovery replies carry no advert data, so no name to learn here.
++    putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR(), NULL);
+   }
+ }
+ 
+@@ -866,6 +1030,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
+ #if MAX_NEIGHBOURS
+   memset(neighbours, 0, sizeof(neighbours));
+ #endif
++  memset(monitors, 0, sizeof(monitors));
++  num_monitors = 0;
+ 
+   // defaults
+   _prefs.airtime_factor = 1.0;
+@@ -912,7 +1078,13 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
+   _prefs.rx_boosted_gain = 1; // enabled by default;
+ #endif
+ #endif
+-  _prefs.radio_fem_rxgain = 1;
++  // The FEM low-noise amplifier helps a weak signal but overloads on a strong
++  // one, and a node with good line of sight hears more without it. Overridable
++  // per board via a build flag; on this project's Heltec V4 it is off.
++#ifndef RADIO_FEM_RXGAIN_DEFAULT
++  #define RADIO_FEM_RXGAIN_DEFAULT 1
++#endif
++  _prefs.radio_fem_rxgain = RADIO_FEM_RXGAIN_DEFAULT;
+ 
+   pending_discover_tag = 0;
+   pending_discover_until = 0;
+@@ -1140,6 +1312,143 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
    }
  }
  
@@ -47,6 +295,23 @@ index c93ba1a..db34ca4 100644
 +  uint32_t uptime_secs = (uint32_t)(uptime_millis / 1000);
 +  uint32_t tx_air = getTotalAirTime() / 1000;
 +  uint32_t rx_air = getReceiveAirTime() / 1000;
++
++  uint16_t batt_mv = board.getBattMilliVolts();
++#ifdef MESHSTATS_NET
++  int batt_pct = meshstats_batt_percent(batt_mv);
++#else
++  int batt_pct = -1;
++#endif
++
++  /* MCU temperature. Only emitted when the chip actually returns one -- an
++   * ESP32-C3 hands back NAN, and a fabricated temperature is worse on a graph
++   * than a gap. */
++  char temp_field[40];
++  temp_field[0] = 0;
++  float mcu_temp = board.getMCUTemperature();
++  if (!isnan(mcu_temp)) {
++    snprintf(temp_field, sizeof(temp_field), ",\"ch1_temperature\":%.2f", mcu_temp);
++  }
 +
 +  int n = snprintf(out, max_len,
 +    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\","
@@ -71,10 +336,14 @@ index c93ba1a..db34ca4 100644
 +      "\"flood_dups\":%u,"
 +      "\"tx_queue_len\":%u,"
 +      "\"err_events\":%u,"
++      "\"ch1_voltage\":%.3f,"
++      "\"battery_percentage\":%d,"
++      "\"neighbor_count\":%d,"
 +      "\"freq\":%.4f,"
 +      "\"sf\":%u,"
 +      "\"cr\":%u,"
 +      "\"tx\":%d"
++      "%s"
 +    "}}",
 +    pub_hex, _prefs.node_name, ms_ver,
 +    board.getBattMilliVolts() / 1000.0f,
@@ -95,9 +364,48 @@ index c93ba1a..db34ca4 100644
 +    (unsigned)((SimpleMeshTables *)getTables())->getNumFloodDups(),
 +    (unsigned)_mgr->getOutboundTotal(),
 +    (unsigned)_err_flags,
-+    _prefs.freq, (unsigned)_prefs.sf, (unsigned)_prefs.cr, (int)_prefs.tx_power_dbm);
++    batt_mv / 1000.0f, batt_pct, getNumNeighbours(),
++    _prefs.freq, (unsigned)_prefs.sf, (unsigned)_prefs.cr, (int)_prefs.tx_power_dbm,
++    temp_field);
 +
 +  return (n > 0 && (size_t)n < max_len) ? (size_t)n : 0;
++}
++
++/* Per-neighbour SNR, on its own because it does not fit anywhere else: with a
++ * few dozen neighbours this outgrows both the stats payload and a sensible
++ * MQTT buffer. Same envelope as fillStatsJson so the receiving side can run it
++ * through the identical parser and merge on pubkey_prefix.
++ *
++ * Truncates rather than fails when the buffer runs out: a partial neighbour
++ * list is useful, a dropped message is not. */
++size_t MyMesh::fillNeighborsJson(char *out, size_t max_len) {
++  if (out == NULL || max_len < 128) return 0;
++
++  char pub_hex[13];
++  mesh::Utils::toHex(pub_hex, self_id.pub_key, 6);
++
++  int n = snprintf(out, max_len,
++                   "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\"},"
++                   "\"metrics\":{\"neighbor_count\":%d",
++                   pub_hex, _prefs.node_name, getNumNeighbours());
++  if (n <= 0 || (size_t)n >= max_len) return 0;
++
++#if MAX_NEIGHBOURS
++  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++    const NeighbourInfo *nb = &neighbours[i];
++    if (nb->heard_timestamp == 0) continue;
++
++    char hex[7];
++    mesh::Utils::toHex(hex, nb->id.pub_key, 3);   // 6 lowercase hex chars
++    int w = snprintf(out + n, max_len - n, ",\"neighbor_%s\":%.2f", hex, nb->snr / 4.0f);
++    if (w <= 0 || (size_t)(n + w) >= max_len - 4) break;   // leave room to close
++    n += w;
++  }
++#endif
++
++  int w = snprintf(out + n, max_len - n, "}}");
++  if (w <= 0 || (size_t)(n + w) >= max_len) return 0;
++  return (size_t)(n + w);
 +}
 +
 +bool MyMesh::getClockHour(uint8_t *hour_out) {
@@ -110,7 +418,7 @@ index c93ba1a..db34ca4 100644
  void MyMesh::formatStatsReply(char *reply) {
    StatsFormatHelper::formatCoreStats(reply, board, *_ms, _err_flags, _mgr);
  }
-@@ -1215,6 +1302,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
+@@ -1215,6 +1524,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
      command += 3;
    }
  
@@ -125,10 +433,64 @@ index c93ba1a..db34ca4 100644
    if (memcmp(command, "setperm ", 8) == 0) {   // format:  setperm {pubkey-hex} {permissions-int8}
      char* hex = &command[8];
 diff --git a/examples/simple_repeater/MyMesh.h b/examples/simple_repeater/MyMesh.h
-index 2f923c8..36a7279 100644
+index 2f923c8..b8f89c0 100644
 --- a/examples/simple_repeater/MyMesh.h
 +++ b/examples/simple_repeater/MyMesh.h
-@@ -229,6 +229,16 @@ public:
+@@ -67,8 +67,32 @@ struct NeighbourInfo {
+   uint32_t advert_timestamp;
+   uint32_t heard_timestamp;
+   int8_t snr; // multiplied by 4, user should divide to get float value
++  /* Kept from the advert so the admin page can offer a list of heard repeaters
++   * you can actually recognise; a bare pub_key prefix is not something a human
++   * picks from. */
++  char name[MAX_ADVERT_DATA_SIZE];
+ };
+ 
++#ifndef MAX_MONITORS
++  #define MAX_MONITORS 8
++#endif
++
++/* Peers this node logs in to and polls, as opposed to the ACL, which is peers
++ * that log in to us. Deliberately a separate table: an ACL entry would also
++ * grant that node rights on this one, and monitoring somebody must not mean
++ * trusting them. */
++struct MonitorInfo {
++  mesh::Identity id;
++  uint8_t shared_secret[PUB_KEY_SIZE];
++  uint8_t out_path[MAX_PATH_SIZE];
++  uint8_t out_path_len;
++};
++
++/* Peer indexes passed to getPeerSharedSecret()/onPeerDataRecv() are ACL
++ * indexes. Monitor entries ride the same dispatch with their index offset by
++ * this base, so replies from them arrive without a second mechanism. */
++#define MONITOR_IDX_BASE  1000
++
+ #ifndef FIRMWARE_BUILD_DATE
+   #define FIRMWARE_BUILD_DATE   "9 Aug 2026"
+ #endif
+@@ -112,14 +136,18 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
+   float pending_bw;
+   uint8_t pending_sf;
+   uint8_t pending_cr;
+-  int  matching_peer_indexes[MAX_CLIENTS];
++  int  matching_peer_indexes[MAX_CLIENTS + MAX_MONITORS];
++  MonitorInfo monitors[MAX_MONITORS];
++  int num_monitors;
+ #if defined(WITH_RS232_BRIDGE)
+   RS232Bridge bridge;
+ #elif defined(WITH_ESPNOW_BRIDGE)
+   ESPNowBridge bridge;
+ #endif
+ 
+-  void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr);
++  void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr, const char* name);
++  void sendToMonitor(MonitorInfo& m, mesh::Packet* pkt);
++  void handleMonitorData(int mon_idx, uint8_t type, const uint8_t* data, size_t len);
+   uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
+   uint8_t handleAnonRegionsReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data);
+   uint8_t handleAnonOwnerReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data);
+@@ -229,6 +257,49 @@ public:
    void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
    void loop();
  
@@ -137,10 +499,43 @@ index 2f923c8..36a7279 100644
 +   * buffer was too small. */
 +  size_t fillStatsJson(char* out, size_t max_len);
 +
++  /* Per-neighbour SNR as its own payload; see the comment on the definition
++   * for why it is not part of fillStatsJson(). */
++  size_t fillNeighborsJson(char* out, size_t max_len);
++
 +  /* Hour of day (UTC) from the RTC, or false when the clock was never set or
 +   * reads implausibly. Callers must treat time as a bonus: nothing in this
 +   * firmware may stop working because the clock is wrong. */
 +  bool getClockHour(uint8_t* hour_out);
++
++  // ---- heard repeaters, for the 'pick one to monitor' list ----------------
++
++  int  getNumNeighbours() const;
++  /* Fills one entry of the heard list. pub_hex needs 65 bytes (full key: the
++   * monitor list has to survive reboots and a 6-byte prefix is not enough to
++   * derive a shared secret from). Returns false for an empty slot. */
++  bool getNeighbourAt(int idx, char* pub_hex, char* name_out, size_t name_max,
++                      uint32_t* secs_ago, int8_t* snr_out) const;
++
++  /* Looks up a heard repeater whose public key starts with the given prefix.
++   * This is what turns a hand-typed key prefix into something usable: a shared
++   * secret needs all 32 bytes, so a pasted prefix stays inert until we hear
++   * that node advertise itself. */
++  bool findNeighbourByPrefix(const uint8_t* prefix, int prefix_len, uint8_t* full_key_out,
++                             char* name_out, size_t name_max) const;
++
++  // ---- monitored repeaters ------------------------------------------------
++
++  void clearMonitors();
++  /* Adds by full public key. Computes the shared secret once, here, because
++   * ECDH is expensive and must never happen in a receive callback. */
++  int  addMonitor(const uint8_t* pub_key);
++  int  getNumMonitors() const { return num_monitors; }
++
++  /* Both return false when the packet pool is empty, which is normal under
++   * load and simply means 'try again next round'. */
++  bool sendMonitorLogin(int idx, const char* password);
++  bool sendMonitorStatusReq(int idx);
 +
  #if defined(WITH_BRIDGE)
    void setBridgeState(bool enable) override {

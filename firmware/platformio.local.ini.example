@@ -12,6 +12,9 @@ build_flags =
   -D ADVERT_LON=0.0
   -D ADMIN_PASSWORD='"password"'
   -D MAX_NEIGHBOURS=50
+  ; De FEM-versterker overstuurt bij een sterk signaal; deze node staat hoog en
+  ; met vrij zicht, en hoort meer zonder.
+  -D RADIO_FEM_RXGAIN_DEFAULT=0
   -D MESHSTATS_NET=1
   ; DISABLE_WIFI_OTA bewust NIET gezet: zolang onze module draait vangt zij
   ; 'start ota' af (er staat al een webserver op poort 80), maar schakelt zij
@@ -25,6 +28,7 @@ lib_deps =
   ${heltec_v4_oled.lib_deps}
   ${esp32_ota.lib_deps}
   bakercp/CRC32 @ ^2.0.0
+  knolleary/PubSubClient @ ^2.8
 
 [env:Heltec_v3_wifi_home]
 extends = Heltec_lora32_v3
