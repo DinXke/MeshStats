@@ -56,6 +56,12 @@ def bootstrap():
         print(f"[mc-repeater-stats] Gebruikersnaam: admin  Wachtwoord: {password}", flush=True)
         print(f"[mc-repeater-stats] Wijzig dit meteen via /admin.", flush=True)
     db.prune()
+    # Contacts stored before this column existed, or while borders.json was
+    # missing, are classified here rather than never: ingest only classifies a
+    # position when it changes, and most nodes never move.
+    filled = db.classify_countries()
+    if filled:
+        print(f"[mc-repeater-stats] Land bepaald voor {filled} contact(en).", flush=True)
     mqtt_ingest.start()   # nodes publiceren hun statistieken via MQTT
 
 

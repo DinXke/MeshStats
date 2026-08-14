@@ -128,7 +128,7 @@ def _handle_rx(topic: str, raw: bytes) -> None:
 
     pkt = packets.decode(frame)
     db.insert_packet(observer, pkt, snr=body.get("snr"), rssi=body.get("rssi"),
-                     length=body.get("len") or len(frame))
+                     length=body.get("len") or len(frame), raw=hex_frame)
     _state["packets"] += 1
     _state["last_packet"] = db.utcnow()
     if _state["packets"] % PRUNE_EVERY_PACKETS == 0:

@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
-from . import config
+from . import config, countries
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS contacts(
   lat REAL,
   lon REAL,
   node_type TEXT,
-  updated TEXT NOT NULL
+  updated TEXT NOT NULL,
+  country TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_contacts_p6 ON contacts(prefix6);
 CREATE TABLE IF NOT EXISTS repeater_cli(
@@ -96,7 +97,9 @@ CREATE TABLE IF NOT EXISTS packets(
   payload_name TEXT,
   path_len INTEGER,
   sender TEXT,
-  phash TEXT
+  phash TEXT,
+  path TEXT,
+  raw TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_packets_ts ON packets(ts);
 -- Duplicate lookup and retention sweeps both scan on (observer, hash, time).
@@ -112,6 +115,21 @@ COLUMN_MIGRATIONS = [
     # identities differ on purpose -- see mqtt_ingest for the reasoning.
     ("repeaters", "source_prefix", "TEXT"),
     ("repeaters", "source_seen", "TEXT"),
+    # The hop hashes of the packet's path, comma-separated. Denormalised out of
+    # ``raw`` on purpose: the packet detail view resolves every hop against the
+    # contacts table, and re-decoding frames for that is work the ingest path has
+    # already done once.
+    ("packets", "path", "TEXT"),
+    # The frame exactly as it came off the radio, hex. It is the only complete
+    # record of a packet -- everything else in this table is a lossy summary --
+    # and it is what lets a later reader re-parse a packet the decoder of the day
+    # got wrong. It roughly doubles the size of a packet row, which is affordable
+    # only because packets have their own short retention (PACKET_RETENTION_DAYS,
+    # 7 by default) rather than the 180 days that metric samples get.
+    ("packets", "raw", "TEXT"),
+    # ISO 3166-1 alpha-2 for the contact's position, NULL when we cannot tell.
+    # Written once, when a position becomes known -- see set_country.
+    ("contacts", "country", "TEXT"),
 ]
 
 
@@ -183,10 +201,36 @@ def set_setting(key: str, value: str) -> None:
     )
 
 
+def set_country(prefix6: str, lat, lon) -> None:
+    """Work out which country a node sits in and store it on every row it owns.
+
+    Keyed on prefix6, and applied with a single UPDATE across all rows sharing
+    it, because one node can hold more than one contact row: Home Assistant sends
+    five key bytes where a node's own firmware sends six, so the same node
+    arrives under keys of different length. That is the trap _find_by_prefix
+    exists for on the repeaters table. Matching on the literal key here would
+    give one node two countries, or none.
+
+    Called only when a position is written that differs from the stored one, so
+    an ordinary advert -- which repeats a position we already have -- costs
+    nothing. A node that never moves is classified exactly once.
+    """
+    if lat is None or lon is None or not countries.available():
+        return
+    execute("UPDATE contacts SET country=? WHERE prefix6=?",
+            (countries.lookup(lat, lon), prefix6.lower()))
+
+
+def _position_changed(prev, lat, lon) -> bool:
+    """True when this position is new information about where a node is."""
+    return prev is None or prev["lat"] != lat or prev["lon"] != lon
+
+
 def upsert_contacts(contacts: list[dict]) -> int:
     """Refresh contact positions (advert data); returns how many were stored."""
     now = utcnow()
     n = 0
+    moved = []
     with _lock:
         conn = get_conn()
         for c in contacts:
@@ -194,15 +238,25 @@ def upsert_contacts(contacts: list[dict]) -> int:
             lat, lon = c.get("lat"), c.get("lon")
             if len(prefix) < 6 or not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
                 continue
+            lat, lon = float(lat), float(lon)
+            prev = conn.execute(
+                "SELECT lat, lon FROM contacts WHERE prefix6=? LIMIT 1", (prefix[:6],)
+            ).fetchone()
             conn.execute(
                 "INSERT INTO contacts(prefix, prefix6, name, lat, lon, node_type, updated) "
                 "VALUES(?,?,?,?,?,?,?) ON CONFLICT(prefix) DO UPDATE SET "
                 "name=COALESCE(excluded.name, name), lat=excluded.lat, lon=excluded.lon, "
                 "node_type=COALESCE(excluded.node_type, node_type), updated=excluded.updated",
-                (prefix, prefix[:6], c.get("name"), float(lat), float(lon), c.get("type"), now),
+                (prefix, prefix[:6], c.get("name"), lat, lon, c.get("type"), now),
             )
             n += 1
+            if _position_changed(prev, lat, lon):
+                moved.append((prefix[:6], lat, lon))
         conn.commit()
+    # Outside the lock: set_country takes it itself, and threading.Lock is not
+    # reentrant.
+    for prefix6, lat, lon in moved:
+        set_country(prefix6, lat, lon)
     return n
 
 
@@ -232,7 +286,7 @@ def upsert_advert(pubkey: str, name: str | None = None, lat: float | None = None
     # Contacts pushed by Home Assistant use a shorter pubkey prefix than the
     # 32-byte key in an advert. Reuse the existing row's key so both sources
     # keep converging on one row per node instead of two that shadow each other.
-    row = qone("SELECT prefix FROM contacts WHERE prefix6=?", (prefix6,))
+    row = qone("SELECT prefix, lat, lon FROM contacts WHERE prefix6=?", (prefix6,))
     prefix = row["prefix"] if row else pk[:12]
     if lat is None or lon is None:
         lat = lon = None
@@ -244,14 +298,29 @@ def upsert_advert(pubkey: str, name: str | None = None, lat: float | None = None
         "node_type=COALESCE(excluded.node_type, node_type), updated=excluded.updated",
         (prefix, prefix6, name, lat, lon, node_type, utcnow()),
     )
+    # A positionless advert keeps whatever position we already had (COALESCE
+    # above), so the effective position -- not the advert's own -- decides
+    # whether anything needs classifying.
+    now_lat = lat if lat is not None else (row["lat"] if row else None)
+    now_lon = lon if lon is not None else (row["lon"] if row else None)
+    if _position_changed(row, now_lat, now_lon):
+        set_country(prefix6, now_lat, now_lon)
+
+
+# A MeshCore frame is at most 255 bytes, so 510 hex characters plus slack is
+# already generous; the cap only exists so a nonsense payload cannot store a
+# megabyte per row.
+MAX_RAW_HEX_STORED = 600
 
 
 def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
-                  length: int | None = None, ts: str | None = None) -> int | None:
+                  length: int | None = None, ts: str | None = None,
+                  raw: str | None = None) -> int | None:
     """Store one packet reception. Returns the row id, or None if skipped.
 
-    ``pkt`` is the dict from packets.decode(). An advert also refreshes the
-    contacts table, which is what later lets the live map place a packet.
+    ``pkt`` is the dict from packets.decode(); ``raw`` the hex frame it was
+    decoded from. An advert also refreshes the contacts table, which is what
+    later lets the live map place a packet.
     """
     observer = str(observer or "").lower().strip()[:16]
     if not observer:
@@ -270,15 +339,18 @@ def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
         upsert_advert(pkt["pubkey"], pkt.get("name"), pkt.get("lat"), pkt.get("lon"),
                       pkt.get("node_type"))
 
+    raw_hex = str(raw or "").strip().lower()[:MAX_RAW_HEX_STORED] or None
     return execute(
         "INSERT INTO packets(ts, observer, snr, rssi, len, route, payload_type, "
-        "payload_name, path_len, sender, phash) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        "payload_name, path_len, sender, phash, path, raw) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (ts, observer,
          float(snr) if isinstance(snr, (int, float)) else None,
          float(rssi) if isinstance(rssi, (int, float)) else None,
          int(length) if isinstance(length, int) else pkt.get("len"),
          pkt.get("route_name"), pkt.get("payload_type"), pkt.get("payload_name"),
-         pkt.get("path_len"), pkt.get("sender"), phash),
+         pkt.get("path_len"), pkt.get("sender"), phash,
+         ",".join(pkt.get("path") or []) or None, raw_hex),
     )
 
 
@@ -291,12 +363,51 @@ def recent_packets(since_id: int = 0, limit: int = 200) -> list[sqlite3.Row]:
     # multiply every packet by the number of matching contact rows.
     return q(
         "SELECT p.*, c.name AS sender_name, c.lat AS sender_lat, c.lon AS sender_lon, "
-        "o.name AS observer_name, o.lat AS observer_lat, o.lon AS observer_lon "
+        "c.country AS sender_country, "
+        "o.name AS observer_name, o.lat AS observer_lat, o.lon AS observer_lon, "
+        "o.country AS observer_country "
         "FROM packets p "
         "LEFT JOIN contacts c ON c.prefix6 = p.sender "
         "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
         "WHERE p.id > ? GROUP BY p.id ORDER BY p.id LIMIT ?",
         (since_id, limit),
+    )
+
+
+def packet_by_id(packet_id: int) -> sqlite3.Row | None:
+    """One packet with its sender and observer contact rows joined in.
+
+    Same GROUP BY as recent_packets, and for the same reason: two sources can
+    register one node under prefixes of different length, and without it a single
+    packet comes back once per matching contact row.
+    """
+    return qone(
+        "SELECT p.*, c.name AS sender_name, c.lat AS sender_lat, c.lon AS sender_lon, "
+        "c.country AS sender_country, "
+        "o.name AS observer_name, o.lat AS observer_lat, o.lon AS observer_lon, "
+        "o.country AS observer_country "
+        "FROM packets p "
+        "LEFT JOIN contacts c ON c.prefix6 = p.sender "
+        "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
+        "WHERE p.id = ? GROUP BY p.id",
+        (packet_id,),
+    )
+
+
+def contacts_by_key_prefix(key_prefix: str) -> list[sqlite3.Row]:
+    """Every known node whose public key starts with these hex characters.
+
+    Returns a list, never a single row, because a path hop identifies a node by
+    only its first one or two key bytes -- so several nodes can legitimately
+    answer to the same hop. Callers must present that as the ambiguity it is.
+    """
+    h = (key_prefix or "").lower().strip()
+    if not h or len(h) > 6 or not re.fullmatch(r"[0-9a-f]+", h):
+        return []
+    return q(
+        "SELECT prefix6, name, lat, lon, node_type FROM contacts "
+        "WHERE substr(prefix6, 1, ?) = ? GROUP BY prefix6 ORDER BY prefix6",
+        (len(h), h),
     )
 
 
@@ -308,9 +419,40 @@ def last_packet_id() -> int:
 def located_nodes() -> list[sqlite3.Row]:
     """Every node we know a position for; the base layer of the live map."""
     return q(
-        "SELECT prefix6, name, lat, lon, node_type FROM contacts "
+        "SELECT prefix6, name, lat, lon, node_type, country FROM contacts "
         "WHERE lat IS NOT NULL AND lon IS NOT NULL GROUP BY prefix6"
     )
+
+
+def known_countries() -> list[str]:
+    """Countries actually represented on the map, for the filter's choices.
+
+    Only countries we have placed a node in: offering a visitor a filter that can
+    only ever return nothing is worse than not offering it.
+    """
+    return [r["country"] for r in q(
+        "SELECT country FROM contacts WHERE country IS NOT NULL "
+        "AND lat IS NOT NULL AND lon IS NOT NULL "
+        "GROUP BY country ORDER BY country"
+    )]
+
+
+def classify_countries(force: bool = False) -> int:
+    """Give every located contact a country. Returns how many rows changed.
+
+    Existing databases were filled long before this column existed, and a node
+    that never moves would otherwise never be classified. Run at startup, so the
+    first request after a deploy already has countries; ``force`` recomputes
+    everything, which is what to use after rebuilding borders.json.
+    """
+    if not countries.available():
+        return 0
+    rows = q("SELECT prefix6, lat, lon FROM contacts "
+             "WHERE lat IS NOT NULL AND lon IS NOT NULL"
+             + ("" if force else " AND country IS NULL") + " GROUP BY prefix6")
+    for r in rows:
+        set_country(r["prefix6"], r["lat"], r["lon"])
+    return len(rows)
 
 
 # 'cmd:' prefix = literal CLI command (not prefixed with 'get ')

@@ -184,6 +184,41 @@ the next hop. A node forwards only if `path[0]` matches its own key prefix, then
 removes that entry by shifting the whole path down by one entry and decrementing
 the count. The path shrinks as the packet travels.
 
+### What a path can and cannot tell you
+
+This matters for anything that tries to *display* a route, and MeshStats does
+exactly that on its live map, so the limit is worth stating plainly.
+
+A hop entry is a key prefix, not an identifier. With `PATH_HASH_SIZE` = 1 there
+are **256** possible values. A mesh of a few hundred nodes therefore has hop
+values that several nodes answer to — by the birthday bound, a collision among
+256 buckets becomes likely at around 20 nodes, and MeshStats already tracks over
+200. Ambiguity is the normal case, not a data error.
+
+Consequences for a reader of the path:
+
+| Candidates matching a hop | What you may conclude |
+|---|---|
+| exactly one | that node forwarded the packet — as certain as this protocol gets |
+| several | one of them forwarded it; **which one is not recoverable** |
+| none | a node you have never heard an advert from forwarded it |
+
+The firmware itself works this way: `Mesh::searchPeersByHash()` returns up to 4
+candidates and simply tries each. Any renderer that picks a single "best"
+candidate is inventing certainty the wire format does not carry. MeshStats
+resolves every candidate (`_resolve_hop()` in `server/app/routes_api.py`) and
+draws unresolved and ambiguous hops as dashed gaps rather than as lines to a
+guess.
+
+Two further limits on reading a stored path:
+
+- **Direction depends on route type.** For flood, the path grew behind the
+  packet, so it is the route it travelled. For direct, `path` is the route
+  *still to be walked* — the hops already passed have been removed.
+- **A path does not name the sender.** Only ADVERT carries an identity, so for
+  every other payload type the origin of a received packet is unknown, however
+  complete the path is.
+
 **Trace is the exception.** For `PAYLOAD_TYPE_TRACE`, `path` does not carry
 hashes at all — each hop appends its measured SNR as a signed byte:
 

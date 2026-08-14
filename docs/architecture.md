@@ -9,6 +9,7 @@ and why the transport is MQTT rather than HTTP.
 | Directory | What it is |
 |---|---|
 | `server/` | FastAPI + SQLite. Public pages, admin, ingest API, MQTT subscriber. |
+| `server/tools/` | Build scripts for generated data files, kept next to what they generate. |
 | `firmware/` | Modifications to the MeshCore firmware: multi-client WiFi, `MeshStatsNet`, the stats publisher. |
 | `homeassistant/` | Optional HA integration that pushes repeater data over HTTP. |
 | `proxy/` | Optional TCP fan-out proxy for people who cannot flash modified firmware. |
@@ -183,6 +184,75 @@ has points.
 History reads switch strategy at 48 hours: raw rows below that, hourly averages
 above (`GROUP BY substr(ts,1,13)`). Retention defaults to 180 days for samples;
 neighbour rows are pruned at a hardcoded 7 days.
+
+### Packets
+
+`packets` is the third shape and behaves differently from the other two. One row
+per reception, written by the MQTT `rx` path, holding the decoded summary plus
+two fields the live map needs:
+
+- `path` — the hop hashes, comma-separated, denormalised out of the frame so the
+  detail view and the feed can resolve a route without re-decoding.
+- `raw` — the frame as it came off the radio, hex. The only complete record of a
+  packet; everything else in the row is a lossy summary. The packet detail view
+  re-decodes it on request rather than reading stored advert columns, so a fix to
+  the decoder immediately improves packets already stored.
+
+Storing the frame roughly doubles a packet row, which is affordable only because
+packets carry their own retention: `MCS_PACKET_RETENTION_DAYS`, 7 by default,
+against 180 for samples. Both columns were added through `COLUMN_MIGRATIONS`, so
+an existing database keeps its rows and simply has them empty — which the UI
+reports as "not stored" instead of as "no hops".
+
+Hop resolution is a lookup of contacts by key prefix, and its answers are
+memoised for a minute: the live feed resolves the path of every packet it hands
+out, and those answers only change when a new node advertises itself. What the
+lookup can honestly conclude is bounded by the protocol, not by the code — see
+[`protocol.md`](protocol.md#what-a-path-can-and-cannot-tell-you).
+
+### Country of a node
+
+`contacts.country` holds an ISO 3166-1 alpha-2 code, or NULL for "we cannot
+tell". It is what the live map's country filter runs on.
+
+**Where the borders come from.** `server/app/data/borders.json`, built by
+`server/tools/build_borders.py` from **Natural Earth 1:50m Admin 0 – Countries**
+(<https://www.naturalearthdata.com/>, via the project's GeoJSON distribution at
+[nvkelso/natural-earth-vector](https://github.com/nvkelso/natural-earth-vector)).
+Natural Earth is released into the **public domain**; no attribution is required,
+and it is given here because a data file with no stated origin is a liability.
+The build script is the reproduction recipe — read its module docstring before
+changing anything about the file. The shipped artefact is 66 kB: western and
+central Europe, clipped to the region, simplified to 0.004° and stored as
+delta-encoded integers.
+
+**Why not 1:110m.** A quarter of the size, and wrong exactly where this mesh
+lives: it places Maastricht in Belgium, Maaseik in the Netherlands and Aachen in
+Belgium. The build script carries reference points through the Meuse corridor and
+`--verify` fails on any miss, so that mistake cannot return unnoticed.
+
+**Computed once per node**, when a position is first stored or when it changes —
+never per packet. Adverts repeat a position we already hold, and those cost
+nothing. Contacts predating the column are filled in at startup by
+`db.classify_countries()`, since a node that never moves would otherwise never be
+classified.
+
+**Keyed on `prefix6`, applied to every row sharing it.** Home Assistant sends
+five key bytes where a node's own firmware sends six, so one node can hold two
+contact rows under keys of different length — the same trap `_find_by_prefix()`
+exists for on the repeaters table. Matching on the literal key would give one node
+two countries, or none.
+
+**Nothing at runtime touches the network**, and the feature is optional: if
+`borders.json` is missing or unreadable, `countries.available()` is False, the API
+omits its country list, and the filter does not appear. Nothing else on the page
+notices.
+
+NULL is a real answer rather than a failure — at sea, outside the covered region,
+or within a few hundred metres of a coastline the source draws coarsely — and the
+UI offers it as its own filter choice instead of guessing at the nearest country.
+Countries are shown as a flag plus the ISO code, so there is no second dictionary
+of country names to keep translated.
 
 Unknown metrics are never rejected. A key the server has no catalog entry for
 gets section `other`, label = key with underscores replaced by spaces, and shows

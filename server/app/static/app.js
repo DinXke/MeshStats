@@ -589,6 +589,11 @@
   // A quiet mesh sends a handful of packets per poll; a storm could send
   // hundreds. Animating them all would only produce an unreadable blur.
   var FLASH_MAX_PER_POLL = 40;
+  // Packets kept in memory behind the visible feed, so switching the filter can
+  // re-render from traffic that already arrived instead of only from what comes
+  // next. Bounded because this page is left open for hours.
+  var FEED_BUFFER = 300;
+  var PATH_COLOR = "#c77dff";
 
   var livemapEl = document.getElementById("livemap");
   if (livemapEl && typeof L !== "undefined") {
@@ -596,10 +601,13 @@
     L.tileLayer(TILE_URL, { attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19 })
       .addTo(lmap);
     var feedEl = document.getElementById("livefeed");
+    var feedEmptyEl = document.getElementById("livefeed-empty");
     var countEl = document.getElementById("live-count");
     var lastId = 0;
     var seenTimes = [];   // reception timestamps, for the "per minute" counter
     var polling = false;
+    var recent = [];      // newest first; the data behind the rendered feed
+    var openId = null;    // id of the packet whose detail panel is open, if any
 
     function flash(lat, lon, color) {
       var ring = L.circleMarker([lat, lon], {
@@ -617,7 +625,124 @@
       requestAnimationFrame(step);
     }
 
-    function feedRow(p) {
+    // --- packets travelling along their path ----------------------------------
+    // One dot per packet, walking sender -> hops -> observer. Everything here is
+    // written for a mesh that is about to get much noisier: a single rAF loop
+    // drives every dot (not a timer each), the number in flight is capped, the
+    // oldest is dropped rather than queued, and a hidden tab runs nothing at all.
+    var MOTION_KEY = "mcs-pktmotion";
+    var TRAVEL_MS = 2800;        // sender to observer, whole route
+    var MAX_TRAVELERS = 18;
+    var motionEl = document.getElementById("pkt-motion");
+    var reduceMotion = window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var motionWanted = true;
+    try {
+      var savedMotion = localStorage.getItem(MOTION_KEY);
+      if (savedMotion !== null) motionWanted = savedMotion === "1";
+    } catch (e) { /* blocked */ }
+    if (motionEl) {
+      motionEl.checked = motionWanted && !reduceMotion;
+      // A visitor who asked their system for less movement gets the flash, and
+      // is told why the switch does nothing rather than left to wonder.
+      motionEl.disabled = reduceMotion;
+      if (reduceMotion) {
+        var lbl = motionEl.closest("label");
+        if (lbl) lbl.title = t("live.motion_reduced");
+      }
+      motionEl.addEventListener("change", function () {
+        motionWanted = motionEl.checked;
+        try { localStorage.setItem(MOTION_KEY, motionWanted ? "1" : "0"); } catch (e) { /* blocked */ }
+        if (!motionWanted) clearTravelers();
+      });
+    }
+    function animating() { return motionWanted && !reduceMotion; }
+
+    var travelers = [];
+    var travelRaf = null;
+
+    // Route for the dot: the stops we can actually place, in order. ``certain``
+    // is false as soon as one stop is missing -- an unplaceable hop, or a sender
+    // no advert ever named -- and the route line is then drawn dashed and faint.
+    // The dot still crosses that stretch, because the packet demonstrably did;
+    // what we do not claim is which way round it went.
+    function travelRoute(p) {
+      var pts = [], certain = true;
+      if (p.sender_lat != null && p.sender_lon != null) pts.push([p.sender_lat, p.sender_lon]);
+      else certain = false;
+      (p.path || []).forEach(function (h) {
+        if (h.lat != null && h.lon != null) pts.push([h.lat, h.lon]);
+        else certain = false;
+      });
+      if (p.observer_lat != null && p.observer_lon != null) pts.push([p.observer_lat, p.observer_lon]);
+      else certain = false;
+      return pts.length > 1 ? { pts: pts, certain: certain } : null;
+    }
+
+    function dropTraveler(tr) {
+      lmap.removeLayer(tr.dot);
+      lmap.removeLayer(tr.line);
+    }
+
+    function clearTravelers() {
+      travelers.forEach(dropTraveler);
+      travelers = [];
+      if (travelRaf !== null) { cancelAnimationFrame(travelRaf); travelRaf = null; }
+    }
+
+    function travelStep(now) {
+      travelRaf = null;
+      for (var i = travelers.length - 1; i >= 0; i--) {
+        var tr = travelers[i];
+        var k = (now - tr.start) / TRAVEL_MS;
+        if (k >= 1) {
+          dropTraveler(tr);
+          travelers.splice(i, 1);
+          continue;
+        }
+        // Walk the cumulative segment lengths so the dot keeps a steady speed
+        // over the whole route instead of racing through the short legs.
+        var want = k * tr.total, acc = 0, j = 0;
+        while (j < tr.legs.length - 1 && acc + tr.legs[j] < want) { acc += tr.legs[j]; j++; }
+        var f = tr.legs[j] ? (want - acc) / tr.legs[j] : 0;
+        var a = tr.pts[j], b = tr.pts[j + 1];
+        tr.dot.setLatLng([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+        tr.line.setStyle({ opacity: (tr.certain ? 0.5 : 0.35) * (1 - k) });
+      }
+      if (travelers.length) travelRaf = requestAnimationFrame(travelStep);
+    }
+
+    function travel(p, color) {
+      var route = travelRoute(p);
+      if (!route) return false;
+      var pts = route.pts, legs = [], total = 0;
+      for (var i = 0; i + 1 < pts.length; i++) {
+        // Plain planar distance in degrees: at mesh scale it is only used to
+        // share the duration between legs, so a projection would buy nothing.
+        var dy = pts[i + 1][0] - pts[i][0], dx = pts[i + 1][1] - pts[i][1];
+        var d = Math.sqrt(dy * dy + dx * dx) || 1e-9;
+        legs.push(d);
+        total += d;
+      }
+      // Oldest out first: a burst must not be able to grow the layer count.
+      while (travelers.length >= MAX_TRAVELERS) dropTraveler(travelers.shift());
+      travelers.push({
+        pts: pts, legs: legs, total: total, certain: route.certain,
+        start: performance.now(),
+        line: L.polyline(pts, {
+          color: color, weight: route.certain ? 2 : 1.5,
+          opacity: route.certain ? 0.5 : 0.35,
+          dashArray: route.certain ? null : "5 7",
+        }).addTo(lmap),
+        dot: L.circleMarker(pts[0], {
+          radius: 5, color: color, weight: 2, fillColor: color, fillOpacity: 0.95,
+        }).addTo(lmap),
+      });
+      if (travelRaf === null) travelRaf = requestAnimationFrame(travelStep);
+      return true;
+    }
+
+    function feedRow(p, quiet) {
       var li = document.createElement("li");
       var who = p.sender_name || p.observer_name ||
                 (p.sender || p.observer || "").toUpperCase();
@@ -631,22 +756,164 @@
         '<time class="reltime" datetime="' + p.ts + '"></time>';
       li.querySelector(".pkt-who").textContent = who;
       li.querySelector(".pkt-meta").textContent = bits.join(" · ");
+      li.dataset.id = p.id;
+      li.tabIndex = 0;
+      li.setAttribute("role", "button");
+      if (openId === p.id) li.classList.add("selected");
+      // A whole-list re-render (filter change) must not replay the arrival
+      // animation on rows that did not just arrive.
+      if (quiet) li.style.animation = "none";
       return li;
+    }
+
+    // --- filtering the feed ---------------------------------------------------
+    // Remembered in localStorage next to the theme and the language, so a
+    // visitor who only cares about one node keeps that view across visits.
+    var FILTER_KEY = "mcs-pktfilter";
+    var COUNTRY_KEY = "mcs-pktcountry";
+    var filterEl = document.getElementById("pkt-filter");
+    var countryEl = document.getElementById("pkt-country");
+    var filterCountEl = document.getElementById("pkt-filter-count");
+    var filterText = "";
+    var filterCountry = "";
+    try {
+      filterText = localStorage.getItem(FILTER_KEY) || "";
+      filterCountry = localStorage.getItem(COUNTRY_KEY) || "";
+    } catch (e) { /* blocked */ }
+    if (filterEl) filterEl.value = filterText;
+
+    // Country names are the one label deliberately left untranslated: a flag and
+    // an ISO code read the same in every language, where a list of country names
+    // would be a second dictionary to keep in step with the first.
+    function flagOf(code) {
+      if (!/^[A-Za-z]{2}$/.test(code || "")) return "";
+      return String.fromCodePoint.apply(String, code.toUpperCase().split("")
+        .map(function (c) { return 0x1F1E6 + c.charCodeAt(0) - 65; }));
+    }
+    function countryLabel(code) {
+      return code ? flagOf(code) + " " + code.toUpperCase() : t("pkt.country_unknown");
+    }
+
+    // One haystack for name, prefix, payload type and country: typing "adv",
+    // "2ae7", "be" or part of a node name all mean the same thing to a visitor
+    // -- "show me the packets that mention this".
+    function matches(p) {
+      if (filterCountry) {
+        // "??" is a visitor asking for the packets we could not place. That is a
+        // real answer about the mesh, not the absence of a filter.
+        var want = filterCountry === "??" ? null : filterCountry;
+        if ((p.country || null) !== want) return false;
+      }
+      var q = filterText.trim().toLowerCase();
+      if (!q) return true;
+      return [p.sender_name, p.observer_name, p.sender, p.observer, p.type, p.country]
+        .filter(Boolean).join(" ").toLowerCase().indexOf(q) !== -1;
+    }
+
+    // Built from the feed. The server omits the country list entirely when it
+    // has no borders to classify against, and then the control stays hidden --
+    // but a choice remembered from a deployment that did have borders must be
+    // dropped with it, or the visitor is left filtering everything away with no
+    // control on screen to undo it.
+    function buildCountryFilter(codes) {
+      if (!countryEl) return;
+      if (!codes || !codes.length) {
+        countryEl.hidden = true;
+        forgetCountry();
+        return;
+      }
+      var opts = [["", t("live.country_all")]];
+      codes.forEach(function (c) { opts.push([c, countryLabel(c)]); });
+      opts.push(["??", t("live.country_none")]);
+      countryEl.textContent = "";
+      opts.forEach(function (pair) {
+        var o = document.createElement("option");
+        o.value = pair[0];
+        o.textContent = pair[1];
+        countryEl.appendChild(o);
+      });
+      // Same trap, milder: a country that has gone quiet since the last visit is
+      // no longer on the list, and selecting nothing is better than selecting
+      // something unreachable.
+      if (filterCountry && !opts.some(function (o) { return o[0] === filterCountry; })) {
+        forgetCountry();
+      }
+      countryEl.value = filterCountry;
+      countryEl.hidden = false;
+    }
+
+    function forgetCountry() {
+      if (!filterCountry) return;
+      filterCountry = "";
+      try { localStorage.removeItem(COUNTRY_KEY); } catch (e) { /* blocked */ }
+      renderFeed();
+    }
+
+    if (countryEl) {
+      countryEl.addEventListener("change", function () {
+        filterCountry = countryEl.value;
+        try {
+          if (filterCountry) localStorage.setItem(COUNTRY_KEY, filterCountry);
+          else localStorage.removeItem(COUNTRY_KEY);
+        } catch (e) { /* blocked */ }
+        renderFeed();
+      });
+    }
+
+    function updateFeedState() {
+      var active = filterText.trim() !== "" || filterCountry !== "";
+      var hits = active ? recent.filter(matches).length : recent.length;
+      if (feedEmptyEl) feedEmptyEl.hidden = !(active && hits === 0);
+      if (filterCountEl) {
+        filterCountEl.textContent = active
+          ? t("live.filtered", { n: hits, total: recent.length }) : "";
+      }
+    }
+
+    function renderFeed() {
+      if (feedEl) {
+        feedEl.textContent = "";
+        for (var i = 0, shown = 0; i < recent.length && shown < FEED_MAX; i++) {
+          if (!matches(recent[i])) continue;
+          feedEl.appendChild(feedRow(recent[i], true));
+          shown++;
+        }
+      }
+      updateFeedState();
+      updateTimes();
+    }
+
+    if (filterEl) {
+      filterEl.addEventListener("input", function () {
+        filterText = filterEl.value;
+        try { localStorage.setItem(FILTER_KEY, filterText); } catch (e) { /* blocked */ }
+        renderFeed();
+      });
     }
 
     function render(list, animate) {
       var flashes = 0;
       list.forEach(function (p) {
-        if (p.lat != null && p.lon != null && animate && flashes < FLASH_MAX_PER_POLL) {
-          flash(p.lat, p.lon, PKT_COLORS[p.type] || "#7d8fa0");
+        // The filter governs the map as well as the list: a visitor watching one
+        // node should not have the rest of the mesh moving over their map.
+        var show = animate && matches(p) && flashes < FLASH_MAX_PER_POLL;
+        if (show) {
+          var color = PKT_COLORS[p.type] || "#7d8fa0";
+          // A packet with a route travels it; one we cannot place a route for
+          // falls back to the flash, which needs only the single position.
+          var moved = animating() && travel(p, color);
+          if (!moved && p.lat != null && p.lon != null) flash(p.lat, p.lon, color);
           flashes++;
         }
         seenTimes.push(Date.now());
-        if (feedEl) {
-          feedEl.insertBefore(feedRow(p), feedEl.firstChild);
-          while (feedEl.children.length > FEED_MAX) feedEl.removeChild(feedEl.lastChild);
-        }
+        recent.unshift(p);
+        if (feedEl && matches(p)) feedEl.insertBefore(feedRow(p), feedEl.firstChild);
       });
+      if (recent.length > FEED_BUFFER) recent.length = FEED_BUFFER;
+      if (feedEl) {
+        while (feedEl.children.length > FEED_MAX) feedEl.removeChild(feedEl.lastChild);
+      }
+      updateFeedState();
       updateTimes();
       updateCount();
     }
@@ -666,6 +933,7 @@
       fetch("/api/v1/packets?since_id=" + lastId)
         .then(function (r) { return r.json(); })
         .then(function (d) {
+          if (first) buildCountryFilter(d.countries);
           if (first && d.nodes) {
             var bounds = [];
             d.nodes.forEach(function (n) {
@@ -686,6 +954,255 @@
         .then(function () { polling = false; });
     }
 
+    // --- packet detail panel ---------------------------------------------------
+    // Deliberately a docked panel and not a modal with a backdrop: the path of
+    // the packet is drawn on the live map underneath, and a modal would cover
+    // the very thing it is explaining.
+    var panel = document.getElementById("packet-panel");
+    var pathLayer = null;
+
+    function txt(id, value) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = value;
+    }
+
+    function nodeLabel(prefix, name) {
+      var p = (prefix || "").toUpperCase();
+      if (!p && !name) return "";
+      return name ? name + (p ? " (" + p + ")" : "") : p;
+    }
+
+    function hopLabel(hop) {
+      if (hop.state === "known") {
+        var m = hop.matches[0];
+        // Saying which node it was but not being able to place it is exactly why
+        // the map shows a dashed gap here; spell that out rather than leaving
+        // the reader to wonder why a named hop has no dot.
+        return (m.name || m.prefix.toUpperCase()) +
+          (m.lat == null || m.lon == null ? " — " + t("pkt.hop_nolocation") : "");
+      }
+      if (hop.state === "ambiguous") {
+        return t("pkt.hop_ambiguous", { n: hop.matches.length }) + ": " +
+          hop.matches.map(function (m) { return m.name || m.prefix.toUpperCase(); }).join(", ");
+      }
+      return t("pkt.hop_unknown");
+    }
+
+    function clearPath() {
+      if (pathLayer) { lmap.removeLayer(pathLayer); pathLayer = null; }
+    }
+
+    function markSelected(id) {
+      if (!feedEl) return;
+      Array.prototype.forEach.call(feedEl.children, function (li) {
+        li.classList.toggle("selected", parseInt(li.dataset.id, 10) === id);
+      });
+    }
+
+    function closePanel() {
+      if (!panel) return;
+      panel.hidden = true;
+      openId = null;
+      clearPath();
+      markSelected(-1);
+    }
+
+    // A hop that resolves to several candidates gets a hollow ring on each of
+    // them rather than a line: showing all the possibilities is honest, picking
+    // one of them would not be.
+    function markCandidates(group, hop, bounds) {
+      if (!hop || hop.state !== "ambiguous") return;
+      hop.matches.forEach(function (m) {
+        if (m.lat == null || m.lon == null) return;
+        L.circleMarker([m.lat, m.lon], {
+          radius: 8, color: PATH_COLOR, weight: 1.5, opacity: 0.8,
+          dashArray: "3 3", fillOpacity: 0,
+        }).addTo(group).bindTooltip(
+          t("pkt.hop_maybe", { name: m.name || m.prefix.toUpperCase() }), { direction: "top" });
+        // Candidates count towards the view: a ring nobody can see marks
+        // nothing, even if the packet itself travelled a much shorter way.
+        bounds.push([m.lat, m.lon]);
+      });
+    }
+
+    // Draw sender -> every hop -> observer.
+    //
+    // Only hops that resolve to exactly one known node have a position we are
+    // entitled to draw through: a path entry is one or two bytes of a public
+    // key, so with hundreds of nodes on the map several of them can answer to
+    // the same hop (see _resolve_hop in routes_api.py). Ambiguous and unknown
+    // hops are therefore left out of the line and the segment that spans them is
+    // dashed -- a solid line through a guess would claim knowledge the protocol
+    // cannot give. This is not a bug in the drawing code; it is the protocol.
+    function drawPath(d) {
+      clearPath();
+      var stops = [{
+        lat: d.sender_lat, lon: d.sender_lon,
+        label: nodeLabel(d.sender, d.sender_name), role: "origin",
+      }];
+      (d.path || []).forEach(function (h) {
+        var m = h.state === "known" ? h.matches[0] : null;
+        stops.push({
+          lat: m ? m.lat : null, lon: m ? m.lon : null,
+          label: m ? (m.name || m.prefix.toUpperCase()) : null, role: "hop", hop: h,
+        });
+      });
+      stops.push({
+        lat: d.observer_lat, lon: d.observer_lon,
+        label: nodeLabel(d.observer, d.observer_name), role: "dest",
+      });
+
+      var group = L.layerGroup();
+      var prev = null, gap = false, view = [];
+      stops.forEach(function (s) {
+        if (s.lat == null || s.lon == null) {
+          gap = true;                 // we cannot place this stop: bridge over it
+          markCandidates(group, s.hop, view);
+          return;
+        }
+        var here = [s.lat, s.lon];
+        if (prev) {
+          L.polyline([prev, here], {
+            color: PATH_COLOR, weight: gap ? 2 : 3, opacity: gap ? 0.6 : 0.95,
+            dashArray: gap ? "7 8" : null,
+          }).addTo(group);
+        }
+        var end = s.role !== "hop";
+        L.circleMarker(here, {
+          radius: end ? 7 : 5, color: PATH_COLOR, weight: 2,
+          fillColor: PATH_COLOR, fillOpacity: end ? 1 : 0.55,
+        }).addTo(group).bindTooltip(
+          s.label + (end ? " · " + t(s.role === "origin" ? "pkt.origin" : "pkt.destination") : ""),
+          { direction: "top" });
+        view.push(here);
+        prev = here;
+        gap = false;
+      });
+
+      pathLayer = group.addTo(lmap);
+      if (view.length > 1) {
+        // Keep the line clear of the detail panel, which docks to the right on a
+        // wide screen and along the bottom on a narrow one.
+        var wide = window.innerWidth > 820;
+        lmap.fitBounds(view, {
+          paddingTopLeft: [30, 30],
+          paddingBottomRight: wide ? [Math.min(430, window.innerWidth * 0.4), 30] : [30, 120],
+          maxZoom: 13,
+        });
+      }
+      var box = livemapEl.getBoundingClientRect();
+      if (box.top < 60 || box.bottom > window.innerHeight) {
+        livemapEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+
+    function fillPanel(d) {
+      txt("pkt-time", new Date(d.ts).toLocaleString() + " · " + relTime(d.ts));
+      txt("pkt-sender", nodeLabel(d.sender, d.sender_name) || t("pkt.sender_unknown"));
+      txt("pkt-observer", nodeLabel(d.observer, d.observer_name) || "—");
+      // Whose country to show follows whose position the map used for this
+      // packet: the sender's when we know it, the observer's otherwise.
+      var countryRow = document.getElementById("pkt-country-row");
+      var placed = d.sender_lat != null && d.sender_lon != null;
+      var cc = placed ? d.sender_country : d.observer_country;
+      countryRow.hidden = !countryEl || countryEl.hidden;
+      txt("pkt-country-val", countryLabel(cc) +
+          " · " + t(placed ? "pkt.country_of_sender" : "pkt.country_of_observer"));
+      txt("pkt-type", d.type || "—");
+      txt("pkt-route", d.route || "—");
+      txt("pkt-snr", d.snr != null ? d.snr.toFixed(2) + " dB" : "—");
+      txt("pkt-rssi", d.rssi != null ? d.rssi + " dBm" : "—");
+      txt("pkt-len", d.len != null ? d.len + " B" : "—");
+      txt("pkt-pathlen", d.path_len != null ? String(d.path_len) : "—");
+      // Hex in byte pairs so it stays readable, and it wraps rather than
+      // widening the page on a phone (see .pktraw).
+      txt("pkt-raw", d.raw ? d.raw.toUpperCase().replace(/../g, "$& ").trim() : t("pkt.noraw"));
+
+      var list = document.getElementById("pkt-path");
+      list.textContent = "";
+      (d.path || []).forEach(function (h) {
+        var li = document.createElement("li");
+        li.className = "hop hop-" + h.state;
+        var hex = document.createElement("code");
+        hex.textContent = h.hash.toUpperCase();
+        var label = document.createElement("span");
+        label.textContent = hopLabel(h);
+        li.appendChild(hex);
+        li.appendChild(label);
+        list.appendChild(li);
+      });
+
+      var notes = [];
+      if (!d.path_stored) notes.push(t("pkt.path_unstored"));
+      else if (!(d.path || []).length) notes.push(t("pkt.nopath"));
+      if ((d.path || []).length) {
+        notes.push(t("pkt.path_note"));
+        if (/DIRECT/.test(d.route || "")) notes.push(t("pkt.path_note_direct"));
+      }
+      txt("pkt-path-note", notes.join(" "));
+
+      var adv = document.getElementById("pkt-advert");
+      adv.hidden = !d.advert;
+      if (d.advert) {
+        txt("pkt-adv-name", d.advert.name || "—");
+        txt("pkt-adv-coords", d.advert.lat != null && d.advert.lon != null
+          ? d.advert.lat.toFixed(6) + ", " + d.advert.lon.toFixed(6) : "—");
+        txt("pkt-adv-type", d.advert.node_type || "—");
+        txt("pkt-adv-ts", d.advert.ts
+          ? new Date(d.advert.ts * 1000).toLocaleString() : "—");
+      }
+    }
+
+    function blankPanel() {
+      ["pkt-time", "pkt-sender", "pkt-observer", "pkt-type", "pkt-route", "pkt-snr",
+       "pkt-rssi", "pkt-len", "pkt-pathlen", "pkt-raw", "pkt-path-note"].forEach(function (id) {
+        txt(id, "");
+      });
+      document.getElementById("pkt-path").textContent = "";
+      document.getElementById("pkt-advert").hidden = true;
+    }
+
+    function openPacket(id) {
+      if (!panel || !id) return;
+      openId = id;
+      blankPanel();
+      panel.hidden = false;
+      markSelected(id);
+      clearPath();
+      fetch("/api/v1/packets/" + encodeURIComponent(id))
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function (d) {
+          if (openId !== id) return;   // a second click already took over
+          fillPanel(d);
+          drawPath(d);
+        })
+        .catch(function () {
+          if (openId === id) txt("pkt-path-note", t("pkt.loaderror"));
+        });
+    }
+
+    if (panel && feedEl) {
+      feedEl.addEventListener("click", function (e) {
+        var li = e.target.closest("li[data-id]");
+        if (li) openPacket(parseInt(li.dataset.id, 10));
+      });
+      feedEl.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        var li = e.target.closest("li[data-id]");
+        if (!li) return;
+        e.preventDefault();
+        openPacket(parseInt(li.dataset.id, 10));
+      });
+      document.getElementById("pkt-close").addEventListener("click", closePanel);
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !panel.hidden) closePanel();
+      });
+    }
+
+    renderFeed();   // restores the "no matches" state before any traffic arrives
     poll(true);
     setInterval(function () {
       // No point polling a tab nobody is looking at; the backlog is still there
@@ -693,7 +1210,13 @@
       if (!document.hidden) poll(false);
     }, POLL_MS);
     document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) poll(false);   // catch up at once instead of after a tick
+      if (document.hidden) {
+        // A hidden tab throttles rAF to a crawl, so dots would either freeze
+        // mid-route or jump on return. Drop them and start clean instead.
+        clearTravelers();
+        return;
+      }
+      poll(false);   // catch up at once instead of after a tick
     });
     setInterval(updateCount, 30000);
   }

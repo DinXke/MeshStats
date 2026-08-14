@@ -4,5 +4,8 @@ __pycache__/
 mosquitto/passwd
 mosquitto/acl
 server/data/
+# Download cache of tools/build_borders.py: several MB of upstream Natural Earth,
+# of which the generated app/data/borders.json already carries the useful part.
+server/tools/_ne_*.geojson
 .venv/
 venv/
