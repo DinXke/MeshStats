@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
-from . import config, countries, tsdb
+from . import config, countries, packets, tsdb
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
@@ -130,6 +130,16 @@ COLUMN_MIGRATIONS = [
     # ISO 3166-1 alpha-2 for the contact's position, NULL when we cannot tell.
     # Written once, when a position becomes known -- see set_country.
     ("contacts", "country", "TEXT"),
+    # Whether the sender restricted this packet to a region: 'unscoped', 'scoped'
+    # or 'share'. See the Scoping section in packets.py for what each means and
+    # why the region itself is not one of them. Stored rather than derived on
+    # read because the packet list shows it per row, and re-decoding the frame
+    # for a column is work the ingest path has already done once -- the same
+    # reasoning as ``path`` above.
+    ("packets", "scope", "TEXT"),
+    # The two transport codes, comma-separated, exactly as they were on the wire.
+    # NULL on an unscoped packet, where the wire has no room for them at all.
+    ("packets", "scope_codes", "TEXT"),
 ]
 
 
@@ -138,6 +148,43 @@ def _migrate(conn: sqlite3.Connection) -> None:
         names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in names:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def _backfill_scope(conn: sqlite3.Connection) -> None:
+    """Fill ``scope`` on packets stored before the column existed.
+
+    The frame is kept in ``raw``, so this is a re-read of what was already there
+    rather than an invention: the same bytes through the same decoder that new
+    packets go through. Without it the column would stay empty until the whole
+    table had rolled over, and the list would show a week of dashes on rows whose
+    answer is sitting right next to them.
+
+    Self-limiting. Every row it touches comes out non-NULL, so the second start
+    finds nothing to do and the query degenerates to an index-free scan of an
+    empty result -- cheap enough at the once-per-process this runs. Rows older
+    than the ``raw`` column keep a NULL scope forever, which is the honest answer
+    for a packet whose bytes nobody kept.
+    """
+    rows = conn.execute(
+        "SELECT id, raw FROM packets WHERE scope IS NULL AND raw IS NOT NULL"
+    ).fetchall()
+    for row in rows:
+        try:
+            pkt = packets.decode(bytes.fromhex(row["raw"]))
+        except ValueError:
+            continue        # stored hex that is not hex: nothing to re-read
+        if not pkt.get("scope"):
+            continue
+        conn.execute(
+            "UPDATE packets SET scope=?, scope_codes=? WHERE id=?",
+            (pkt["scope"], _scope_codes(pkt), row["id"]),
+        )
+
+
+def _scope_codes(pkt: dict) -> str | None:
+    """The transport codes as they go into the ``scope_codes`` column."""
+    codes = pkt.get("transport_codes")
+    return ",".join(str(int(c)) for c in codes) if codes else None
 
 
 # A flooded packet is repeated by every node in range, so the same observer
@@ -159,6 +206,7 @@ def get_conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.executescript(SCHEMA)
         _migrate(_conn)
+        _backfill_scope(_conn)
         _conn.commit()
     return _conn
 
@@ -342,15 +390,16 @@ def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
     raw_hex = str(raw or "").strip().lower()[:MAX_RAW_HEX_STORED] or None
     return execute(
         "INSERT INTO packets(ts, observer, snr, rssi, len, route, payload_type, "
-        "payload_name, path_len, sender, phash, path, raw) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "payload_name, path_len, sender, phash, path, raw, scope, scope_codes) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (ts, observer,
          float(snr) if isinstance(snr, (int, float)) else None,
          float(rssi) if isinstance(rssi, (int, float)) else None,
          int(length) if isinstance(length, int) else pkt.get("len"),
          pkt.get("route_name"), pkt.get("payload_type"), pkt.get("payload_name"),
          pkt.get("path_len"), pkt.get("sender"), phash,
-         ",".join(pkt.get("path") or []) or None, raw_hex),
+         ",".join(pkt.get("path") or []) or None, raw_hex,
+         pkt.get("scope"), _scope_codes(pkt)),
     )
 
 

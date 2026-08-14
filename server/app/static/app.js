@@ -790,6 +790,7 @@
       obs.appendChild(cell("obs-prefix", (p.observer || "").slice(0, 6).toUpperCase() || "—"));
       li.appendChild(obs);
       li.appendChild(cell("pkt-type", p.type || "?"));
+      li.appendChild(scopeCell(p));
       li.appendChild(cell("pkt-snr", p.snr != null ? p.snr.toFixed(1) + " dB" : "—"));
       li.appendChild(cell("pkt-rssi", p.rssi != null ? p.rssi + " dBm" : "—"));
       li.appendChild(cell("pkt-hops", p.path_len
@@ -852,9 +853,43 @@
       return code ? flagOf(code) + " " + code.toUpperCase() : t("pkt.country_unknown");
     }
 
-    // One haystack for name, prefix, payload type and country: typing "adv",
-    // "2ae7", "be" or part of a node name all mean the same thing to a visitor
-    // -- "show me the packets that mention this".
+    // Whether the sender kept the packet inside a region. Two spellings: the
+    // column has room for a word, the panel for the sentence that word stands
+    // for -- and for scoped traffic that sentence has to say whether a region
+    // was actually named, because almost always it was not.
+    // Built rather than templated, because the region has to be its own element:
+    // it is the part a phone drops. Four extra characters are enough to push the
+    // second line of a row onto a third, and the panel names the region anyway.
+    function scopeCell(p) {
+      var el = document.createElement("span");
+      el.className = "pkt-scope";
+      if (!p.scope) {
+        el.textContent = "—";
+        return el;
+      }
+      el.textContent = t("scope." + p.scope);
+      if (p.scope_region) {
+        var region = document.createElement("span");
+        region.className = "pkt-region";
+        region.textContent = " · " + p.scope_region;
+        el.appendChild(region);
+      }
+      return el;
+    }
+
+    function scopeDetail(d) {
+      if (!d.scope) return "—";
+      if (d.scope === "scoped") {
+        return t("scope.scoped") + " — " + (d.scope_region
+          ? t("scope.region", { n: d.scope_region })
+          : t("scope.region_unnamed"));
+      }
+      return t("scope." + d.scope) + " — " + t("scope." + d.scope + "_note");
+    }
+
+    // One haystack for name, prefix, payload type, country and scope: typing
+    // "adv", "2ae7", "be", "scoped" or part of a node name all mean the same
+    // thing to a visitor -- "show me the packets that mention this".
     function matches(p) {
       if (filterCountry) {
         // "??" is a visitor asking for the packets we could not place. That is a
@@ -864,7 +899,11 @@
       }
       var q = filterText.trim().toLowerCase();
       if (!q) return true;
-      return [p.sender_name, p.observer_name, p.sender, p.observer, p.type, p.country]
+      // The scope goes in twice: as stored, so "scoped" keeps working whatever
+      // the page language, and as shown, so a Dutch visitor typing what is on
+      // screen finds the same rows.
+      return [p.sender_name, p.observer_name, p.sender, p.observer, p.type,
+              p.country, p.scope, p.scope && t("scope." + p.scope)]
         .filter(Boolean).join(" ").toLowerCase().indexOf(q) !== -1;
     }
 
@@ -1465,6 +1504,14 @@
           " · " + t(placed ? "pkt.country_of_sender" : "pkt.country_of_observer"));
       txt("pkt-type", d.type || "—");
       txt("pkt-route", d.route || "—");
+      txt("pkt-scope", scopeDetail(d));
+      // Only a scoped packet carries codes, and only the second of them could
+      // ever name a region -- so the row exists to show what the frame actually
+      // holds, not to be filled in with a guess when it holds nothing.
+      var codesRow = document.getElementById("pkt-scope-codes-row");
+      var codes = d.scope_codes;
+      codesRow.hidden = !codes || codes.length < 2;
+      if (!codesRow.hidden) txt("pkt-scope-codes", codes[0] + " / " + codes[1]);
       txt("pkt-snr", d.snr != null ? d.snr.toFixed(2) + " dB" : "—");
       txt("pkt-rssi", d.rssi != null ? d.rssi + " dBm" : "—");
       txt("pkt-len", d.len != null ? d.len + " B" : "—");
@@ -1509,12 +1556,14 @@
     }
 
     function blankPanel() {
-      ["pkt-time", "pkt-sender", "pkt-observer", "pkt-type", "pkt-route", "pkt-snr",
-       "pkt-rssi", "pkt-len", "pkt-pathlen", "pkt-raw", "pkt-path-note"].forEach(function (id) {
+      ["pkt-time", "pkt-sender", "pkt-observer", "pkt-type", "pkt-route", "pkt-scope",
+       "pkt-scope-codes", "pkt-snr", "pkt-rssi", "pkt-len", "pkt-pathlen", "pkt-raw",
+       "pkt-path-note"].forEach(function (id) {
         txt(id, "");
       });
       document.getElementById("pkt-path").textContent = "";
       document.getElementById("pkt-advert").hidden = true;
+      document.getElementById("pkt-scope-codes-row").hidden = true;
     }
 
     function openPacket(id) {

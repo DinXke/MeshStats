@@ -65,6 +65,7 @@
         <b class="pkt-break"></b>
         <span class="pkt-obs" data-i18n="col.observer">Gehoord door</span>
         <span class="pkt-type" data-i18n="col.type">Type</span>
+        <span class="pkt-scope" data-i18n="col.scope">Bereik</span>
         <span class="pkt-snr" data-i18n="col.snr">SNR</span>
         <span class="pkt-rssi" data-i18n="col.rssi">RSSI</span>
         <span class="pkt-hops" data-i18n="col.hops">Hops</span>
@@ -108,6 +109,10 @@
 
     <dl class="pktfields">
       <div><dt data-i18n="pkt.route">Routetype</dt><dd id="pkt-route"></dd></div>
+      <div><dt data-i18n="pkt.scope">Bereik</dt><dd id="pkt-scope"></dd></div>
+      <!-- The codes themselves only exist on a scoped packet, and showing an
+           empty row for the majority that are not would be noise. -->
+      <div id="pkt-scope-codes-row" hidden><dt data-i18n="pkt.scope_codes">Transportcodes</dt><dd id="pkt-scope-codes"></dd></div>
       <div><dt data-i18n="pkt.snr">SNR</dt><dd id="pkt-snr"></dd></div>
       <div><dt data-i18n="pkt.rssi">RSSI</dt><dd id="pkt-rssi"></dd></div>
       <div><dt data-i18n="pkt.len">Lengte</dt><dd id="pkt-len"></dd></div>

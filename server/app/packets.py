@@ -40,6 +40,45 @@ ADVERT payload::
       flags & 0x40  feat2 (uint16 LE)
       flags & 0x80  name: all remaining bytes, UTF-8
 
+Scoping
+-------
+The two transport codes are how MeshCore keeps flood traffic inside a region, so
+their mere presence already answers "was this packet scoped?". That is what
+``scope`` reports, and it is decided by the route type alone -- an unscoped
+packet has no room on the wire for the codes at all:
+
+``unscoped``
+    Route type FLOOD or DIRECT. No transport codes; the packet floods wherever
+    it reaches.
+``scoped``
+    Route type TRANSPORT_FLOOD or TRANSPORT_DIRECT, with at least one non-zero
+    code. The sender restricted it to a region.
+``share``
+    Both codes zero. Not a region but a marker: ``isShare()`` in the repeater
+    firmware reads codes {0, 0} as "send to nowhere", the shape an advert has
+    when it was imported through the app's Share function instead of being heard
+    off the air. The repeater keeps such an advert out of its neighbour table for
+    that reason, and lumping it in with real scoped traffic here would hide the
+    one case where a zero-hop advert does *not* mean "this node is in range".
+
+Which region a scoped packet belongs to is **not** in the frame, and this module
+does not guess at it:
+
+- ``transport_codes[0]`` is ``TransportKey::calcTransportCode(pkt)`` -- a MAC
+  over the packet computed with the 16-byte scope key, so it differs for every
+  packet sent under the very same key. It identifies no region by itself; it can
+  only be recognised by a node that holds the key and recomputes it.
+- ``transport_codes[1]`` is reserved for the sender's home region and is the only
+  field that could name one. The companion firmware writes a literal zero there
+  (``codes[1] = 0;  // REVISIT: set to 'home' Region``), so in practice it is
+  almost always absent. It is reported as ``scope_region`` when it is not zero,
+  as the bare number it is -- the number-to-name table lives in the mesh's region
+  map, not on the wire.
+
+Naming the region of a scoped packet therefore has to be done by a node that has
+the scope keys, and published alongside the frame. See ``docs/protocol.md``
+§1.3.
+
 Design rules
 ------------
 Pure functions, no I/O. ``decode`` never raises: radio noise and firmware
@@ -102,13 +141,22 @@ def _decode_into(raw: bytes, out: dict) -> None:
     pos = 1
     if route in (0, 3):
         if len(raw) < pos + 4:
+            # The route type promises transport codes, so scoping is in play --
+            # but not which kind, and "scoped" and "share" are different answers.
+            # Leave scope absent rather than pick one; the error says why.
             out["error"] = "truncated transport codes"
             return
-        out["transport_codes"] = [
+        codes = [
             int.from_bytes(raw[pos:pos + 2], "little"),
             int.from_bytes(raw[pos + 2:pos + 4], "little"),
         ]
+        out["transport_codes"] = codes
+        out["scope"] = "share" if codes == [0, 0] else "scoped"
+        if codes[1]:
+            out["scope_region"] = codes[1]
         pos += 4
+    else:
+        out["scope"] = "unscoped"
 
     if len(raw) <= pos:
         out["error"] = "missing path descriptor"

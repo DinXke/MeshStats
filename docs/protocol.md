@@ -135,6 +135,46 @@ region scoping.
 > you need those values, read the application layer that sets them, not
 > `src/`.
 
+### What the application layer does with them
+
+Reading that application layer settles what a receiver can and cannot learn from
+the two codes. `MyMesh::sendFloodScoped()` in `examples/companion_radio` fills
+them in:
+
+```c
+uint16_t codes[2];
+codes[0] = scope.calcTransportCode(pkt);
+codes[1] = 0;  // REVISIT: set to 'home' Region, for sender/return region?
+```
+
+| Code | What it is | Can it name a region? |
+|---|---|---|
+| `codes[0]` | `TransportKey::calcTransportCode(pkt)` — computed from the 16-byte scope key **and the packet** | **No.** It differs for every packet sent under one and the same key. Only a node holding the key can recognise it, by recomputing it. |
+| `codes[1]` | Reserved for the sender's home region | In principle yes, in practice no: the firmware writes a literal zero. `filterRecvFloodPacket()` carries a matching `REVISIT` about reading it back. |
+
+So the presence of the codes tells you a packet was scoped; the codes themselves
+do not tell you to which region. Naming the region has to be done by a node that
+holds the scope keys, and published alongside the frame — it cannot be recovered
+from the bytes on the air.
+
+One value is special and is **not** a region at all. `isShare()` in the repeater
+reads codes `{0, 0}` as "send to nowhere":
+
+```c
+static bool isShare(const mesh::Packet *packet) {
+  if (packet->hasTransportCodes()) {
+    return packet->transport_codes[0] == 0 && packet->transport_codes[1] == 0;
+  }
+  ...
+```
+
+That is the shape of an advert imported through the app's Share function rather
+than heard off the air, and the repeater deliberately keeps such an advert out of
+its neighbour table: a zero-hop advert normally means "this node is in range",
+and a shared one does not. Anything classifying scoped traffic has to treat it as
+its own case for the same reason — see `server/app/packets.py`, which reports
+`unscoped` / `scoped` / `share` on exactly this basis.
+
 ## 1.4 The path field
 
 `path_len` is one byte, but it is *not* a byte count. It packs two numbers

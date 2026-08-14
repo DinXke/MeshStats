@@ -262,6 +262,27 @@ def _hop_waypoint(hop_hash: str) -> dict:
     }
 
 
+def _scope_codes(stored: str | None) -> list[int] | None:
+    """The ``scope_codes`` column back as two numbers, or None."""
+    parts = [p for p in (stored or "").split(",") if p]
+    try:
+        return [int(p) for p in parts] or None
+    except ValueError:
+        return None
+
+
+def _scope_region(codes: list[int] | None) -> int | None:
+    """The region a scoped packet names, if it names one at all.
+
+    Only the second transport code can: the first is a MAC over the packet, so
+    it differs per packet under one and the same scope key. The firmware that
+    would fill the second one in still writes a literal zero there, so this is
+    absent far more often than not -- which is a fact about the mesh worth
+    reporting rather than papering over. See packets.py for the full story.
+    """
+    return codes[1] if codes and len(codes) > 1 and codes[1] else None
+
+
 @router.get("/packets")
 def packet_feed(
     since_id: int = Query(0, ge=0),
@@ -293,6 +314,15 @@ def packet_feed(
             "observer": p["observer"], "observer_name": p["observer_name"],
             "snr": p["snr"], "rssi": p["rssi"], "len": p["len"],
             "route": p["route"], "type": p["payload_name"],
+            # Whether the sender kept this packet inside a region. NULL on rows
+            # stored before the column existed and whose frame was not kept, so
+            # the client shows a dash rather than claiming "unscoped".
+            "scope": p["scope"],
+            # Rare enough that the list can afford to spell it out beside the
+            # scope, and interesting enough that it should: the firmware that
+            # would fill this in still writes a zero, so a packet that does name
+            # its region is worth spotting without opening it.
+            "scope_region": _scope_region(_scope_codes(p["scope_codes"])),
             "path_len": p["path_len"],
             "sender": p["sender"], "sender_name": p["sender_name"],
             "lat": lat, "lon": lon,
@@ -354,6 +384,11 @@ def packet_detail(packet_id: int):
     # Packets stored before the path column existed keep a path_len but no path;
     # the client says so rather than pretending the packet took no hops.
     hops = [h for h in (p["path"] or "").split(",") if h]
+
+    # Same rule as the advert block: the frame decides where it can, the stored
+    # column answers for the rows whose frame was never kept.
+    scope = decoded.get("scope") or p["scope"]
+    codes = decoded.get("transport_codes") or _scope_codes(p["scope_codes"])
     return {
         "id": p["id"], "ts": p["ts"],
         "observer": p["observer"], "observer_name": p["observer_name"],
@@ -361,6 +396,7 @@ def packet_detail(packet_id: int):
         "observer_country": p["observer_country"],
         "snr": p["snr"], "rssi": p["rssi"], "len": p["len"],
         "route": p["route"], "payload_type": p["payload_type"], "type": p["payload_name"],
+        "scope": scope, "scope_codes": codes, "scope_region": _scope_region(codes),
         "path_len": p["path_len"],
         "sender": p["sender"], "sender_name": p["sender_name"],
         "sender_lat": p["sender_lat"], "sender_lon": p["sender_lon"],
