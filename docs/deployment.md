@@ -29,10 +29,15 @@ to push over HTTP.
 |---|---|---|---|
 | `meshstats` | built from `./server` | `${MESHSTATS_PORT:-8080}` → 8080 | `meshstats-data:/data` |
 | `mosquitto` | `eclipse-mosquitto:2` | `${MQTT_PORT:-1883}` → 1883 | config (ro), `mosquitto-data`, `mosquitto-log` |
+| `victoria` | `victoriametrics/victoria-metrics` | none (internal only) | `victoria-data:/victoria-metrics-data` |
 
-`meshstats` declares `depends_on: [mosquitto]`. That controls start order only,
-not readiness — the ingest thread retries on its own, so a broker that is not up
-yet is not a problem.
+`meshstats` declares `depends_on: [mosquitto, victoria]`. That controls start
+order only, not readiness — both clients retry on their own, so a dependency that
+is not up yet is not a problem.
+
+`victoria` publishes **no host port**, deliberately: only the application talks
+to it, over the compose network. It has no authentication of its own, so
+publishing it would hand anyone on the network the write endpoint.
 
 The application container has a healthcheck that fetches `/` every 30 s. There is
 **no dedicated `/health` endpoint**; the check uses the public index page.
@@ -53,6 +58,9 @@ Everything the server needs lives in `/data`:
 Back up both. **Losing `secret.key` invalidates every session cookie and every
 CSRF token** — everyone is logged out. It does not invalidate API tokens, which
 are hashed with plain SHA-256.
+
+The measurements are **not** in there. They live in the `victoria-data` volume,
+which needs backing up separately; see [Time-series database](#time-series-database).
 
 ## Without Docker
 
@@ -126,6 +134,21 @@ The code defaults and the compose defaults differ. If you run the container
 outside compose, set `MCS_MQTT_HOST` explicitly or ingest stays off.
 
 Details in [`mqtt.md`](mqtt.md).
+
+### Time-series database
+
+| Variable | Default (code) | Default (compose) | Meaning |
+|---|---|---|---|
+| `MCS_TSDB_URL` | *(empty — everything stays in SQLite)* | `http://victoria:8428` | Base URL of VictoriaMetrics |
+| `MCS_TSDB_RETENTION` | — | `180d` | Compose only; passed to the container as `-retentionPeriod` |
+
+Same trap as MQTT: **empty is a supported configuration**, not a broken one. Run
+the container outside compose without setting `MCS_TSDB_URL` and the site keeps
+every measurement in SQLite exactly as it did before — thinned by the heartbeat
+rule, but working.
+
+See [Time-series database](#time-series-database-1) under Operations for what to
+check when it misbehaves.
 
 ### Compose only
 
@@ -248,10 +271,68 @@ Reads the new password from stdin; minimum 8 characters.
 > stateless and stay valid until they expire (12 hours). To force everyone out,
 > delete `/data/secret.key` and restart — that also invalidates CSRF tokens.
 
+### Time-series database
+
+The measurements live in VictoriaMetrics; SQLite keeps everything else,
+including `latest`. Background and the reasoning are in
+[`architecture.md`](architecture.md#where-the-measurements-live).
+
+**Check the state** in `/admin` → *Metingen (tijdreeksen)*: reachable yes/no,
+points written, queue depth, how many had to fall back to SQLite, and the last
+error. Same information in the log under `meshstats.tsdb`.
+
+**By hand**, from the application container (the database has no host port):
+
+```bash
+# is it up?
+docker compose exec meshstats python -c \
+  "import urllib.request;print(urllib.request.urlopen('http://victoria:8428/health').read())"
+
+# which series exist -- note the explicit start/end: without them the label API
+# only looks at the last few hours and you will think data is missing
+docker compose exec meshstats python -c \
+  "import json,urllib.request,time;e=int(time.time());print(len(json.load(urllib.request.urlopen(
+   f'http://victoria:8428/api/v1/label/__name__/values?start={e-400*86400}&end={e}'))['data']))"
+```
+
+**When it is unreachable**, nothing breaks and nothing is lost: measurements are
+written to the SQLite `samples` table instead and the charts read from there
+again. You lose resolution for the duration, not data. The admin page counts
+those points under *Uitgeweken naar SQLite*.
+
+**Freshly written points are not queryable instantly.** VictoriaMetrics indexes
+them over the next few seconds — measured at up to about 8 s for a burst on a
+cold instance. This is invisible on a chart covering hours, but it will confuse
+you when testing by hand.
+
+**Backups** are a separate job from the SQLite one:
+
+```bash
+docker compose stop victoria
+docker run --rm -v meshstats_victoria-data:/from -v "$PWD":/to alpine \
+  tar czf /to/victoria-backup.tgz -C /from .
+docker compose start victoria
+```
+
+For a live backup without stopping, use VictoriaMetrics' own
+`/snapshot/create` endpoint and copy the snapshot directory.
+
+**Rolling back to SQLite-only** takes one variable: set `MCS_TSDB_URL=` (empty)
+and restart. The site returns to reading and writing `samples`. History written
+to VictoriaMetrics in the meantime is not merged back, so charts will show a gap
+for that period until it is switched on again.
+
 ### Disk usage
 
-Samples dominate. Retention defaults to 180 days and pruning runs at startup,
-when settings are saved, and on roughly every 500th HTTP ingest.
+In SQLite, samples dominate — but only when there is no time-series database. With
+one, `samples` receives nothing except during an outage, and `packets` becomes the
+largest table. Retention defaults to 180 days and pruning runs at startup, when
+settings are saved, and on roughly every 500th HTTP ingest.
+
+VictoriaMetrics keeps its own retention (`MCS_TSDB_RETENTION`, 180 d) and
+compresses to roughly a byte per point. A node publishing every 10 s with 100
+metrics is about 315 M points a year, on the order of a few hundred MB — which is
+why full resolution is affordable there and was not in SQLite.
 
 > `db.prune()` is **not** called on the MQTT path. On an MQTT-only deployment
 > nothing triggers pruning except restarts and admin settings saves. If you run
@@ -269,8 +350,9 @@ docker compose logs -f mosquitto
 journalctl -u mc-repeater-stats -f     # systemd
 ```
 
-MQTT ingest logs under the logger name `meshstats.mqtt`. Connection state,
-message count and last error are also shown in `/admin`.
+MQTT ingest logs under the logger name `meshstats.mqtt`, the time-series writer
+under `meshstats.tsdb`. Connection state, counters and last error for both are
+also shown in `/admin`.
 
 ## Home Assistant components
 

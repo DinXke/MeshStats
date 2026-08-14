@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import auth, config, db, metrics, mqtt_ingest, ratelimit
+from . import auth, config, db, metrics, mqtt_ingest, ratelimit, tsdb
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -122,6 +122,7 @@ def dashboard(request: Request):
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "new_token": new_token,
         "mqtt": mqtt_ingest.status(),
+        "tsdb": tsdb.status(),
         "settings": {
             "heartbeat_min": db.setting_int("heartbeat_min", config.HEARTBEAT_MIN),
             "retention_days": db.setting_int("retention_days", config.RETENTION_DAYS),

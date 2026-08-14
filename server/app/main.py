@@ -6,7 +6,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, db, limits, mqtt_ingest, routes_admin, routes_api, routes_public
+from . import (auth, db, limits, mqtt_ingest, routes_admin, routes_api,
+               routes_public, tsdb)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -62,6 +63,10 @@ def bootstrap():
     filled = db.classify_countries()
     if filled:
         print(f"[mc-repeater-stats] Land bepaald voor {filled} contact(en).", flush=True)
+    # Started before the ingest paths open: the writer thread has to exist by the
+    # time the first measurement arrives, or those points take the spill route
+    # for no reason.
+    tsdb.start()
     mqtt_ingest.start()   # nodes publiceren hun statistieken via MQTT
 
 

@@ -114,6 +114,31 @@
 </section>
 
 <section>
+  <h2>Metingen (tijdreeksen)</h2>
+  <div class="card">
+  <table>
+    <tr><td>Tijdreeksdatabank</td><td class="mono">{{ tsdb.url or 'niet ingesteld &mdash; alles in SQLite' }}</td></tr>
+    <tr><td>Bereikbaar</td><td>
+      {%- if not tsdb.enabled %}<span class="muted">niet in gebruik</span>
+      {%- elif tsdb.connected %}<span class="pill on" style="padding:.15rem .6rem;border-radius:99px;background:rgba(53,224,140,.12);color:var(--accent)">ja</span>
+      {%- elif tsdb.connected is none %}<span class="muted">nog niet geprobeerd</span>
+      {%- else %}<span class="pill" style="padding:.15rem .6rem;border-radius:99px;background:rgba(255,92,92,.12);color:var(--red)">nee</span>{% endif %}
+    </td></tr>
+    <tr><td>Punten weggeschreven</td><td class="mono">{{ tsdb.written }}{% if tsdb.batches %} &middot; <span class="muted">{{ tsdb.batches }} batches</span>{% endif %}{% if tsdb.last_write %} &middot; <span class="muted">laatste <time class="reltime" datetime="{{ tsdb.last_write }}">{{ tsdb.last_write }}</time></span>{% endif %}</td></tr>
+    <tr><td>In wachtrij</td><td class="mono">{{ tsdb.queued }}</td></tr>
+    <tr><td>Uitgeweken naar SQLite</td><td class="mono">{{ tsdb.spilled }}</td></tr>
+    <tr><td>Fouten</td><td class="mono">{{ tsdb.failures }}{% if tsdb.last_error %} &middot; <span class="muted">{{ tsdb.last_error }}</span>{% endif %}</td></tr>
+  </table>
+  <p class="muted small">Alleen de metingen staan hier; repeaters, actuele waarden, contacten, buren en
+     pakketten blijven in SQLite. Nodes gaan tot elke tien seconden publiceren, en VictoriaMetrics bewaart
+     dat op volle resolutie voor ongeveer een byte per meetpunt. Schrijven gebeurt gebufferd in een aparte
+     thread, zodat de ingest nooit op het netwerk staat te wachten. Valt de databank weg, dan gaan de punten
+     naar de tabel <code>samples</code> in SQLite en lezen de grafieken daar weer uit: je verliest resolutie,
+     geen metingen. Instellen met <code>MCS_TSDB_URL</code> (leeg = alles in SQLite).</p>
+  </div>
+</section>
+
+<section>
   <h2>Weergave &amp; data</h2>
   <div class="card">
   <form method="post" action="/admin/settings" class="settingsgrid">

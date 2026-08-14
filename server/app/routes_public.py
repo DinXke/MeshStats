@@ -45,8 +45,8 @@ def repeater_page(request: Request, slug: str):
     # Assistant reports drops back to 0 after every HA restart, until its own
     # measurement window has been rebuilt.
     computed = {
-        "airtime_utilization": db.computed_utilization(r["id"], "airtime"),
-        "rx_airtime_utilization": db.computed_utilization(r["id"], "rx_airtime"),
+        "airtime_utilization": db.computed_utilization(r, "airtime"),
+        "rx_airtime_utilization": db.computed_utilization(r, "rx_airtime"),
     }
 
     # tiles per section

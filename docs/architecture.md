@@ -165,6 +165,99 @@ overflow rather than blocking.
 and must have a bounded, pre-allocated memory cost. Data loss is an acceptable
 failure; stalling the mesh is not.
 
+## Where the measurements live
+
+Measurements are in **VictoriaMetrics**. Everything else is in SQLite.
+
+| | |
+|---|---|
+| VictoriaMetrics | the measurements only: history, and the charts drawn from it |
+| SQLite | repeaters, `latest`, contacts, neighbours, packets, tokens, admin |
+
+`latest` stays in SQLite deliberately. It feeds the cards on the home page, which
+have to render fast and without touching the network, and "the one current value"
+is not a shape a time-series database is good at.
+
+**Why move.** Nodes are going from a reading every five minutes to one every ten
+seconds. In SQLite that means throwing raw points away to keep the file
+manageable. VictoriaMetrics compresses to roughly a byte per point, so keeping
+full resolution there is cheaper than thinning it out here.
+
+### The naming is fixed
+
+The existing history was migrated under these names, and any deviation silently
+splits a series in two:
+
+```
+write (influx line protocol, POST /write):
+    meshstats,repeater=<slug> <metric>=<value> <nanoseconds>
+read (PromQL):
+    meshstats_<metric>{repeater="<slug>"}
+```
+
+Metric names come from nodes, so only `[A-Za-z0-9_]` survives into a field name —
+`tsdb.safe_metric()` drops the rest rather than substituting, matching what the
+migration did. The per-neighbour SNR series (`neighbor_<prefix>`, dozens of them)
+go the same way as everything else.
+
+### Writing never blocks ingest
+
+`db.ingest()` hands its numeric values to a bounded queue and returns; a
+background thread does the HTTP. Measured at 1.5 ms per snapshot of ~100 metrics,
+against a network round trip that could be anything.
+
+Batching sits on top of that: a node publishing every ten seconds would otherwise
+mean a request per node per ten seconds, each with its own connection setup. The
+writer collects up to two seconds or 2000 points, whichever comes first. The cost
+is that a point can be up to two seconds late to become queryable, which no chart
+can see.
+
+### Nothing is lost when it is away
+
+Three things can go wrong, and they all end in the same place:
+
+| | |
+|---|---|
+| `MCS_TSDB_URL` empty | points go straight to SQLite `samples` |
+| write fails (twice) | the batch is spilled to `samples` |
+| queue full (20 000 points) | the point is spilled to `samples` |
+
+Reads mirror it. `tsdb.history()` returns `None` for everything the caller cannot
+act on — not configured, unreachable, bad answer — and `db.metric_history()` then
+reads `samples`. A metric that merely has no data returns an empty list instead,
+so "no history yet" and "database unavailable" stay distinguishable.
+
+This is why **`samples` is not dead weight and must not be dropped.** It is the
+safety net, and it is what makes the move reversible: set `MCS_TSDB_URL` empty and
+the site is back to its old behaviour without losing a day.
+
+The airtime utilisation tiles follow the same path. They are computed from the
+first and last reading of the `airtime` counter over a window, and that window has
+to come from wherever the measurements are — otherwise moving the history would
+have quietly emptied two tiles.
+
+### Choosing a step
+
+PromQL wants a step, and a 90-day chart at full resolution is millions of points
+nobody can see. `tsdb.step_for()` picks from a fixed ladder aiming at ~600 points:
+
+| Range | Step | Points |
+|---|---|---|
+| 4 h | 30 s | 480 |
+| 24 h | 5 min | 288 |
+| 7 d | 30 min | 336 |
+| 90 d | 6 h | 360 |
+
+24 h landing on 288 points is a coincidence worth keeping: that is exactly the
+density the charts had when nodes published every five minutes, so the move does
+not change how a chart looks. The query is `avg_over_time(...[step])` rather than a
+bare selector, so each bucket summarises the points inside it instead of sampling
+whichever one sits nearest the boundary — over 90 days that is what keeps a spike
+from vanishing between buckets.
+
+Fixed rungs rather than dividing the range exactly, so two charts of the same
+range agree on where their buckets start.
+
 ## Storage model
 
 SQLite, one file, WAL mode, one process-wide connection behind a lock.
@@ -175,6 +268,10 @@ Two shapes of the same data:
   render from.
 - `samples` — the time series, `WITHOUT ROWID`, primary key
   `(repeater_id, metric, ts)`.
+
+With a time-series database configured, `samples` receives nothing except during
+an outage — the rule below is what governs the fallback path, and what the site
+does when it runs SQLite-only.
 
 A sample is written only when the value changed, or when the last stored point is
 older than `heartbeat_min` (default 5 minutes). That keeps flat metrics like

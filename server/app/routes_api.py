@@ -380,4 +380,5 @@ def repeater_history(
     hours: int = Query(24, ge=1, le=2160),
 ):
     r = _public_repeater(slug)
-    return {"metric": metric, "hours": hours, "points": db.history(r["id"], metric, hours)}
+    return {"metric": metric, "hours": hours,
+            "points": db.metric_history(r, metric, hours)}

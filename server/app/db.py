@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
-from . import config, countries
+from . import config, countries, tsdb
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
@@ -615,19 +615,54 @@ def record_source(repeater_id: int, source: str) -> None:
             (str(source or "")[:32] or None, utcnow(), repeater_id))
 
 
+def spill_samples(items) -> None:
+    """Write measurements into ``samples`` that VictoriaMetrics could not take.
+
+    Registered with the tsdb module, which calls it from its writer thread when
+    a batch fails, when the queue is full, or when no time-series database is
+    configured at all. Full resolution goes in here: this is a safety net, and
+    thinning the very points that only exist because the primary store was
+    unavailable would defeat it.
+    """
+    with _lock:
+        conn = get_conn()
+        for repeater_id, _slug, metric, value, _ts_ns, ts in items:
+            conn.execute(
+                "INSERT OR REPLACE INTO samples(repeater_id, metric, ts, value) "
+                "VALUES(?,?,?,?)",
+                (repeater_id, metric, ts, float(value)),
+            )
+        conn.commit()
+
+
+tsdb.register_spill(spill_samples)
+
+
 def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
            force: bool = False):
     """Store a snapshot.
 
-    Numeric values only enter the history when they changed, or when the last
-    stored point is older than the heartbeat interval -- otherwise a stable
-    metric would fill the table with identical rows, while its chart would still
-    need points to keep running. force=True (manual status update) always writes.
+    ``latest`` always gets the new value: it feeds the home page and has to be
+    readable without touching the network.
+
+    Where the *history* goes depends on whether a time-series database is
+    configured. With one, every numeric value is handed to it at full
+    resolution, which is the whole point of the move -- nodes are going to
+    publish every ten seconds. Without one, the old rule applies: a value only
+    enters ``samples`` when it changed, or when the last stored point is older
+    than the heartbeat interval, because otherwise a stable metric would fill
+    the table with identical rows while its chart still needs points to keep
+    running. force=True (manual status update) always writes.
     """
     # Read the setting before taking the lock; get_setting takes it itself
     heartbeat = timedelta(minutes=setting_int("heartbeat_min", config.HEARTBEAT_MIN))
+    to_tsdb: dict = {}
+    slug = None
     with _lock:
         conn = get_conn()
+        row = conn.execute("SELECT slug FROM repeaters WHERE id=?",
+                           (repeater_id,)).fetchone()
+        slug = row["slug"] if row else None
         for name, raw in metrics.items():
             value = value_str = None
             if isinstance(raw, bool):
@@ -651,6 +686,9 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
             )
             if value is None:
                 continue
+            to_tsdb[name] = value
+            if tsdb.enabled():
+                continue    # VictoriaMetrics keeps this one, at full resolution
             store = True
             if not force and prev is not None and prev["value"] == value:
                 # Unchanged: only a heartbeat point, and judged on the last
@@ -696,8 +734,13 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
                     "last_seen=excluded.last_seen",
                     (repeater_id, prefix, nb.get("name"), snr, last),
                 )
-                # Per-link history: SNR trend of one individual neighbour link
+                # Per-link history: SNR trend of one individual neighbour link.
+                # There are a lot of these -- one per heard node -- and they go
+                # to the same place as everything else.
                 if isinstance(snr, (int, float)):
+                    to_tsdb[f"neighbor_{prefix}"] = float(snr)
+                    if tsdb.enabled():
+                        continue
                     store_link = force or prev_nb is None or prev_nb["snr"] != snr
                     if not store_link:
                         last_sample = conn.execute(
@@ -718,8 +761,16 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
         conn.execute("UPDATE repeaters SET last_seen=? WHERE id=?", (ts, repeater_id))
         conn.commit()
 
+    # Outside the lock, and non-blocking: record() only queues. Nothing in the
+    # ingest path waits on a socket, and if the queue cannot take the points
+    # they come straight back to spill_samples above.
+    if slug and to_tsdb:
+        tsdb.record(repeater_id, slug, ts, to_tsdb)
+
 
 def history(repeater_id: int, metric: str, hours: int) -> list[tuple[str, float]]:
+    """History straight from SQLite. The fallback path -- callers should go
+    through metric_history(), which prefers VictoriaMetrics."""
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
     if hours <= 48:
         rows = q(
@@ -736,27 +787,50 @@ def history(repeater_id: int, metric: str, hours: int) -> list[tuple[str, float]
     return [(r["bucket"], round(r["value"], 3)) for r in rows]
 
 
-def computed_utilization(repeater_id: int, total_metric: str, window_min: int = 90) -> float | None:
+def metric_history(repeater, metric: str, hours: int) -> list[tuple[str, float]]:
+    """History for a chart, from wherever it actually lives.
+
+    VictoriaMetrics when it answers, SQLite when it does not. The fallback is
+    silent on purpose: a visitor looking at a chart cannot act on which database
+    served it, and the admin page reports the health.
+    """
+    points = tsdb.history(repeater["slug"], metric, hours)
+    if points is None:
+        return history(repeater["id"], metric, hours)
+    return points
+
+
+def computed_utilization(repeater, total_metric: str, window_min: int = 90) -> float | None:
     """Utilisation (%) derived from the airtime totals: delta airtime / delta time.
 
     Computed here instead of read from the node because the meshcore-side figure
     resets on every Home Assistant restart.
     """
-    since = (datetime.now(timezone.utc) - timedelta(minutes=window_min)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = q(
-        "SELECT ts, value FROM samples WHERE repeater_id=? AND metric=? AND ts>=? ORDER BY ts",
-        (repeater_id, total_metric, since),
-    )
-    if len(rows) < 2:
+    # This reads the same measurements the charts do, so it has to follow them
+    # to VictoriaMetrics -- otherwise moving the history would quietly empty
+    # these two tiles, since `samples` stops being written once the move is on.
+    series = tsdb.window_values(repeater["slug"], total_metric, window_min)
+    if series is None:
+        since = (datetime.now(timezone.utc)
+                 - timedelta(minutes=window_min)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = q(
+            "SELECT ts, value FROM samples WHERE repeater_id=? AND metric=? AND ts>=? "
+            "ORDER BY ts",
+            (repeater["id"], total_metric, since),
+        )
+        series = []
+        for r in rows:
+            try:
+                dt = datetime.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                continue
+            series.append((dt.timestamp(), r["value"]))
+    if len(series) < 2:
         return None
-    try:
-        t0 = datetime.strptime(rows[0]["ts"], "%Y-%m-%dT%H:%M:%SZ")
-        t1 = datetime.strptime(rows[-1]["ts"], "%Y-%m-%dT%H:%M:%SZ")
-    except ValueError:
-        return None
-    dt_min = (t1 - t0).total_seconds() / 60
-    dv_min = rows[-1]["value"] - rows[0]["value"]  # airtime is in minutes
-    if dt_min < 10 or dv_min < 0:  # window too short, or counter reset
+    dt_min = (series[-1][0] - series[0][0]) / 60
+    dv_min = series[-1][1] - series[0][1]   # airtime is in minutes
+    if dt_min < 10 or dv_min < 0:           # window too short, or counter reset
         return None
     return round(dv_min / dt_min * 100, 2)
 
