@@ -4,7 +4,8 @@ MeshStats ships a set of changes to the [MeshCore](https://github.com/meshcore-d
 firmware. They fall into two groups:
 
 - **Companion node** (`examples/companion_radio`) — multiple simultaneous WiFi
-  clients, a channel-counter fix, and the stats publisher.
+  clients, a channel-counter fix, and the stats publisher with its web chat
+  client.
 - **Repeater** (`examples/simple_repeater`) — `MeshStatsNet`: WiFi with AP
   fallback, a management page, OTA over your normal network, a telnet console on
   the MeshCore CLI, and filesystem backup/restore.
@@ -178,28 +179,74 @@ which the publisher defines and points at itself in `begin()`. If the publisher
 never started, the call is a no-op. That keeps the include graph acyclic and
 makes the module genuinely optional.
 
-The publisher serves a management page on port 80:
+The publisher serves a web client on port 80. Everything is JSON unless noted:
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/` | GET | Static page (single `send_P`) |
-| `/config.json` | GET | Current config + counters, for the page to render |
+| `/` | GET | The page itself (HTML, gzipped, single `send_P`) |
+| `/config.json` | GET | Node identity, MQTT settings, status — for the page to render |
+| `/stats.json` | GET | The same JSON that goes to MQTT |
 | `/save` | POST | Save broker settings; reconnects |
 | `/test` | POST | Publish a stats message now |
-| `/stats.json` | GET | The same JSON that goes to MQTT |
+| `/messages.json` | GET | Recent messages; `?since=<seq>` polls incrementally |
+| `/send` | POST | Send a message; `to=c<idx>` (channel) or `k<hex>` (contact) |
+| `/channels.json` | GET | Configured group channels, paged with `?off=<n>` |
+| `/channel/add` | POST | Join or create a channel (`name`, `psk`; empty psk = new) |
+| `/channel/del` | POST | Forget a channel (`idx`) |
+| `/contacts.json` | GET | One page of contacts, `?off=<n>` |
+| `/contact/save` | POST | Per repeater: publish flag and password (`key`, `publish`, `pass`) |
+| `/contact/login` | POST | Log in to a repeater with the stored password (`key`) |
 
 The page is served as one static blob and fetches its data afterwards. It used to
 be assembled in pieces with `sendContent()`; each piece is a separate blocking
 write, and under ESP32 modem-sleep latency the main loop stalled inside them,
-taking the mesh with it.
+taking the mesh with it. The blob is stored gzipped
+(`page.html` → `gen_page.py` → `StatsPage.h`) so the whole response fits inside
+lwip's socket send buffer, and every list endpoint is paged for the same reason:
+no response may outgrow a single write. The full war story is at the top of
+`StatsPublisher.h`.
 
 Configuration lives in `/stats_cfg.json` on SPIFFS and is documented in
 [`mqtt.md`](mqtt.md#node-side-configuration).
 
-> The management page has **no authentication**. It exposes the broker password
-> field (write-only — the page never renders the stored value) and lets anyone on
-> your LAN change where stats go. Treat it as trusted-network only. The
-> *repeater* module does have a login; see below.
+> The page has **no authentication**. It exposes the broker password field
+> (write-only — the page never renders the stored value) and lets anyone on your
+> LAN change where stats go, read the recent messages, **send messages under the
+> node's identity**, and store repeater passwords. Treat it as trusted-network
+> only. The *repeater* module does have a login; see below.
+
+### The web client
+
+The page is a chat client in the classic three-pane layout: conversations on the
+left (channels and contacts together, with unread counters and a filter), the
+conversation itself in the middle, its details on the right — members of a
+channel, or the key, type and last-heard of a contact, with the forward-to-site
+checkbox and login button for repeaters. On a phone both side panes become
+drawers. The MQTT settings and the status tables live behind a button on the
+same page.
+
+Conversations exist only in the browser. The node keeps a flat ring of the last
+`STATS_MSG_RING` (8) messages and does not know what a conversation is; the page
+polls `/messages.json?since=<seq>` and files each message into a conversation by
+the name in its `s` field — the channel name for a channel message, the sender
+for a direct message, the destination for one you sent yourself. That mapping
+has two sharp edges, documented at the source in `StatsPublisher.h`:
+
+- **Names in the ring are truncated** to 15 characters (`copyTrim()`,
+  `STATS_MSG_SRC_MAX`), while `/contacts.json` returns full names. The page
+  therefore matches conversations on the first 15 characters only. Widen
+  `STATS_MSG_SRC_MAX` and that comparison must move with it.
+- **A sent message (`STATS_MSG_SENT`) does not say whether it went to a channel
+  or to a contact.** The page tries channels first, so a channel and a contact
+  with the same name file your own messages under the channel. A discriminator
+  field in the response would fix it and was judged not worth the bytes.
+
+Who spoke in a channel is not in `s` either: `sendGroupMessage()` prefixes the
+text with `<sender>: `, and the page strips that prefix again to show the name
+in its own column.
+
+The truncation — of names and of the message texts in the ring — is display-only.
+The companion app over BLE or TCP still receives every message in full.
 
 ---
 
@@ -601,4 +648,4 @@ Built and tested on a Heltec V3 (ESP32-S3) companion and a Heltec V4 repeater.
 | `MeshStatsNet` on the repeater | working |
 | Forwarding over **HTTP** | abandoned — crashed the node; see [`architecture.md`](architecture.md#why-mqtt) |
 | Raw-packet forwarding over MQTT | **in development** |
-| Full web client on the companion node | **planned** |
+| Full web client on the companion node | working |
