@@ -26,6 +26,15 @@ async def security_headers(request, call_next):
     h.setdefault("X-Frame-Options", "DENY")
     h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     h.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    # Without Cache-Control, browsers apply heuristic caching to /static and
+    # may keep serving yesterday's app.js long after a deploy — readers then
+    # see a mix of new API responses and old frontend code. "no-cache" does
+    # not forbid storing; it forces revalidation, and StaticFiles already
+    # answers those with a cheap 304 via ETag/Last-Modified. Hash-versioned
+    # filenames were rejected: they need a build step, and this site
+    # deliberately has none.
+    if request.url.path.startswith("/static"):
+        h.setdefault("Cache-Control", "no-cache")
     h.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
