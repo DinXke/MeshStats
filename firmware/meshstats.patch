@@ -1531,7 +1531,7 @@ index 9202ebf..07497e8 100644
  }
  
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index c93ba1a..f6ee753 100644
+index c93ba1a..961d004 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,6 +1,10 @@
@@ -1554,7 +1554,7 @@ index c93ba1a..f6ee753 100644
  #if MAX_NEIGHBOURS // check if neighbours enabled
    // find existing neighbour, else use least recently updated
    uint32_t oldest_timestamp = 0xFFFFFFFF;
-@@ -84,7 +88,181 @@ void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float sn
+@@ -84,7 +88,205 @@ void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float sn
    neighbour->advert_timestamp = timestamp;
    neighbour->heard_timestamp = getRTCClock()->getCurrentTime();
    neighbour->snr = (int8_t)(snr * 4);
@@ -1708,6 +1708,30 @@ index c93ba1a..f6ee753 100644
 +  return true;
 +}
 +
++/* Sends one CLI command to a monitored repeater, as a text message, which is
++ * how the far side's own admin console is driven. Note the gate on the other
++ * end: onPeerDataRecv() only runs a command when client->isAdmin(), so this
++ * silently achieves nothing without admin rights on that node -- the caller
++ * must establish that first rather than fire and hope. */
++bool MyMesh::sendMonitorCliCmd(int idx, const char *cmd) {
++  if (idx < 0 || idx >= num_monitors || cmd == NULL) return false;
++  MonitorInfo &m = monitors[idx];
++
++  uint8_t temp[5 + MONITOR_CLI_MAX];
++  uint32_t now = getRTCClock()->getCurrentTimeUnique();
++  memcpy(temp, &now, 4);
++  temp[4] = (TXT_TYPE_CLI_DATA << 2);
++  size_t len = strlen(cmd);
++  if (len > MONITOR_CLI_MAX) len = MONITOR_CLI_MAX;
++  memcpy(&temp[5], cmd, len);
++
++  mesh::Packet *pkt = createDatagram(PAYLOAD_TYPE_TXT_MSG, m.id, m.shared_secret,
++                                     temp, 5 + len);
++  if (!pkt) return false;
++  sendToMonitor(m, pkt);
++  return true;
++}
++
 +/* Neighbours of the monitored repeater. Parameters again taken from how this
 + * firmware answers the request: version, how many, from which offset, sort
 + * order (0 = newest heard first) and how many bytes of each neighbour's public
@@ -1736,7 +1760,7 @@ index c93ba1a..f6ee753 100644
  }
  
  uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood) {
-@@ -467,6 +645,12 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+@@ -467,6 +669,12 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
    mesh::Utils::printHex(Serial, raw, len);
    Serial.println();
  #endif
@@ -1749,7 +1773,7 @@ index c93ba1a..f6ee753 100644
  }
  
  void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
-@@ -608,12 +792,23 @@ int MyMesh::searchPeersByHash(const uint8_t *hash) {
+@@ -608,12 +816,23 @@ int MyMesh::searchPeersByHash(const uint8_t *hash) {
        matching_peer_indexes[n++] = i; // store the INDEXES of matching contacts (for subsequent 'peer' methods)
      }
    }
@@ -1774,7 +1798,7 @@ index c93ba1a..f6ee753 100644
      // lookup pre-calculated shared_secret
      memcpy(dest_secret, acl.getClientByIdx(i)->shared_secret, PUB_KEY_SIZE);
    } else {
-@@ -621,6 +816,16 @@ void MyMesh::getPeerSharedSecret(uint8_t *dest_secret, int peer_idx) {
+@@ -621,6 +840,20 @@ void MyMesh::getPeerSharedSecret(uint8_t *dest_secret, int peer_idx) {
    }
  }
  
@@ -1782,16 +1806,20 @@ index c93ba1a..f6ee753 100644
 + * bytes on: this runs in the receive path, so it may only copy. MeshStatsNet
 + * knows what it asked for and interprets accordingly. */
 +void MyMesh::handleMonitorData(int mon_idx, uint8_t type, const uint8_t *data, size_t len) {
-+  if (type != PAYLOAD_TYPE_RESPONSE || mon_idx >= num_monitors) return;
++  if (mon_idx >= num_monitors) return;
++  /* RESPONSE carries the status/telemetry/neighbour replies; TXT_MSG carries
++   * the answer to a CLI command we sent. Both are forwarded, with the type, so
++   * the other side knows which of the two it is looking at. */
++  if (type != PAYLOAD_TYPE_RESPONSE && type != PAYLOAD_TYPE_TXT_MSG) return;
 +#ifdef MESHSTATS_NET
-+  meshstats_on_monitor_response(mon_idx, data, (int)len);
++  meshstats_on_monitor_response(mon_idx, type, data, (int)len);
 +#endif
 +}
 +
  static bool isShare(const mesh::Packet *packet) {
    if (packet->hasTransportCodes()) {
      return packet->transport_codes[0] == 0 && packet->transport_codes[1] == 0;  // codes { 0, 0 } means 'send to nowhere'
-@@ -632,11 +837,22 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+@@ -632,11 +865,22 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
                            const uint8_t *app_data, size_t app_data_len) {
    mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
  
@@ -1816,7 +1844,7 @@ index c93ba1a..f6ee753 100644
      }
    }
  }
-@@ -644,6 +860,10 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
+@@ -644,6 +888,10 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
  void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, const uint8_t *secret,
                              uint8_t *data, size_t len) {
    int i = matching_peer_indexes[sender_idx];
@@ -1827,7 +1855,7 @@ index c93ba1a..f6ee753 100644
    if (i < 0 || i >= acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
      MESH_DEBUG_PRINTLN("onPeerDataRecv: invalid peer idx: %d", i);
      return;
-@@ -749,6 +969,20 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t
+@@ -749,6 +997,20 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t
    // TODO: prevent replay attacks
    int i = matching_peer_indexes[sender_idx];
  
@@ -1848,7 +1876,7 @@ index c93ba1a..f6ee753 100644
    if (i >= 0 && i < acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
      MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t)path_len);
      auto client = acl.getClientByIdx(i);
-@@ -819,7 +1053,8 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
+@@ -819,7 +1081,8 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
      if (id.matches(self_id)) {
        return;
      }
@@ -1858,7 +1886,7 @@ index c93ba1a..f6ee753 100644
    }
  }
  
-@@ -866,6 +1101,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
+@@ -866,6 +1129,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
  #if MAX_NEIGHBOURS
    memset(neighbours, 0, sizeof(neighbours));
  #endif
@@ -1867,7 +1895,7 @@ index c93ba1a..f6ee753 100644
  
    // defaults
    _prefs.airtime_factor = 1.0;
-@@ -912,7 +1149,13 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
+@@ -912,7 +1177,13 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
    _prefs.rx_boosted_gain = 1; // enabled by default;
  #endif
  #endif
@@ -1882,7 +1910,7 @@ index c93ba1a..f6ee753 100644
  
    pending_discover_tag = 0;
    pending_discover_until = 0;
-@@ -1140,6 +1383,202 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
+@@ -1140,6 +1411,202 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
    }
  }
  
@@ -2085,7 +2113,7 @@ index c93ba1a..f6ee753 100644
  void MyMesh::formatStatsReply(char *reply) {
    StatsFormatHelper::formatCoreStats(reply, board, *_ms, _err_flags, _mgr);
  }
-@@ -1215,6 +1654,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
+@@ -1215,6 +1682,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
      command += 3;
    }
  
@@ -2100,10 +2128,10 @@ index c93ba1a..f6ee753 100644
    if (memcmp(command, "setperm ", 8) == 0) {   // format:  setperm {pubkey-hex} {permissions-int8}
      char* hex = &command[8];
 diff --git a/examples/simple_repeater/MyMesh.h b/examples/simple_repeater/MyMesh.h
-index 2f923c8..d1137a9 100644
+index 2f923c8..0c7470c 100644
 --- a/examples/simple_repeater/MyMesh.h
 +++ b/examples/simple_repeater/MyMesh.h
-@@ -67,8 +67,39 @@ struct NeighbourInfo {
+@@ -67,8 +67,41 @@ struct NeighbourInfo {
    uint32_t advert_timestamp;
    uint32_t heard_timestamp;
    int8_t snr; // multiplied by 4, user should divide to get float value
@@ -2139,11 +2167,13 @@ index 2f923c8..d1137a9 100644
 + * of them still fit in one packet alongside the header. */
 +#define MONITOR_NBR_MAX     16
 +#define MONITOR_NBR_PREFIX   3
++// Longest CLI command we will send to a monitored repeater.
++#define MONITOR_CLI_MAX     64
 +
  #ifndef FIRMWARE_BUILD_DATE
    #define FIRMWARE_BUILD_DATE   "9 Aug 2026"
  #endif
-@@ -112,14 +143,19 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
+@@ -112,14 +145,19 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
    float pending_bw;
    uint8_t pending_sf;
    uint8_t pending_cr;
@@ -2165,7 +2195,7 @@ index 2f923c8..d1137a9 100644
    uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
    uint8_t handleAnonRegionsReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data);
    uint8_t handleAnonOwnerReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data);
-@@ -229,6 +265,58 @@ public:
+@@ -229,6 +267,61 @@ public:
    void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
    void loop();
  
@@ -2220,6 +2250,9 @@ index 2f923c8..d1137a9 100644
 +  bool sendMonitorStatusReq(int idx);
 +  bool sendMonitorTelemetryReq(int idx);
 +  bool sendMonitorNeighboursReq(int idx);
++  /* Drives the far side's CLI. Only does anything where we hold admin rights
++   * there; see the note on the definition. */
++  bool sendMonitorCliCmd(int idx, const char* cmd);
 +
  #if defined(WITH_BRIDGE)
    void setBridgeState(bool enable) override {

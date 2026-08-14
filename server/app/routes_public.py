@@ -152,8 +152,10 @@ def _tile(metric: str, label: str, unit: str | None, row) -> dict:
             display = f"{value:g}"
         if unit and metric not in ("online", "uptime"):
             display += f" {unit}"
+    hint_key, hint_text = metrics.HINTS.get(metric, (None, None))
     return {"metric": metric, "label": label, "value": value, "display": display,
-            "ts": row["ts"], "i18n": i18n_key, "i18n_vars": i18n_vars}
+            "ts": row["ts"], "i18n": i18n_key, "i18n_vars": i18n_vars,
+            "hint": hint_text, "hint_key": hint_key}
 
 
 def _fmt_uptime(days: float) -> tuple[str, str, dict]:

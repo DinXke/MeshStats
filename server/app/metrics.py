@@ -15,6 +15,12 @@ CATALOG = {
     "last_rssi":              ("status", "Laatste RSSI", "dBm", 5),
     "last_snr":               ("status", "Laatste SNR", "dB", 6),
     "out_path_len":           ("status", "Padlengte", "hops", 7),
+    # Die temperature of the MCU, not the air around the node. It lives under
+    # status rather than with the battery channels because it says something
+    # about the node itself; ch1_temperature stays where it is, for an actual
+    # sensor channel. A node can report both, and then they are two different
+    # measurements in two different sections -- see the hint below.
+    "mcu_temperature":        ("status", "Chiptemperatuur", "°C", 8),
     # Batterij & solar
     "battery_percentage":     ("battery", "Batterij", "%", 0),
     "bat":                    ("battery", "Batterijspanning", "V", 1),
@@ -66,7 +72,8 @@ SECTIONS = [
 # Tegels die prominent bovenaan staan (zoals de tiles in het HA-dashboard)
 TILE_METRICS = {
     "status": ["online", "uptime", "neighbor_count", "tx_queue_len",
-               "noise_floor", "last_rssi", "last_snr", "out_path_len"],
+               "noise_floor", "last_rssi", "last_snr", "out_path_len",
+               "mcu_temperature"],
     "battery": ["battery_percentage", "bat", "ch1_voltage", "ch1_temperature"],
     "messages": ["nb_recv", "nb_sent", "recv_flood", "recv_direct",
                  "sent_flood", "sent_direct", "flood_dups", "recv_errors"],
@@ -80,6 +87,12 @@ CHARTS = [
     ("voltage", "Spanning (24 u)", ["bat", "ch1_voltage"], 24),
     ("battery_week", "Batterijspanning (7 d)", ["bat"], 168),
     ("temperature", "Temperatuur (48 u)", ["ch1_temperature"], 48),
+    # Its own chart rather than a second line on the one above. On the node that
+    # was renamed, the old ch1_temperature series *is* chip temperature under a
+    # name that promised something else; drawing the two in one frame, one
+    # stopping where the other starts, would read as a single measurement with a
+    # gap in it. Two panels say plainly that these are two series.
+    ("mcu_temperature", "Chiptemperatuur (48 u)", ["mcu_temperature"], 48),
     ("msg_rates", "Berichtenrates (24 u)", ["nb_recv_rate", "nb_sent_rate"], 24),
     ("neighbor_count", "Aantal buren (7 d)", ["neighbor_count"], 168),
 ]
@@ -91,12 +104,29 @@ GAUGES = {
     "bat": (3.0, 4.2, [(3.0, "#ff5c5c"), (3.4, "#ffb454"), (3.7, "#35e08c")]),
     "airtime_utilization": (0, 10, [(0, "#35e08c"), (2, "#ffb454"), (5, "#ff5c5c")]),
     "rx_airtime_utilization": (0, 100, [(0, "#35e08c"), (30, "#ffb454"), (60, "#ff5c5c")]),
+    # A dial, deliberately not the thermometer below. Silicon and outside air are
+    # not the same quantity, and a thermometer pointing at 60 next to an ambient
+    # reading of 25 invites exactly the wrong conclusion. The scale is the chip's:
+    # an ESP32-S3 with WiFi on sits happily around 50-70 °C, gets worth watching
+    # past 75, and is genuinely hot past 90.
+    "mcu_temperature": (0, 110, [(0, "#35e08c"), (75, "#ffb454"), (90, "#ff5c5c")]),
 }
 
 # Thermometers: metric -> (min, max, [(vanaf, kleur), ...])
+# Only for temperatures of the world around the node -- a real sensor channel.
+# The MCU die temperature is a gauge above; see the comment there.
 THERMOMETERS = {
     "ch1_temperature": (-20, 80, [(-20, "#4cc9f0"), (0, "#35e08c"), (45, "#ffb454"), (60, "#ff5c5c")]),
     "ch2_temperature": (-20, 80, [(-20, "#4cc9f0"), (0, "#35e08c"), (45, "#ffb454"), (60, "#ff5c5c")]),
+}
+
+# Extra explanation on a tile, as a tooltip. The key is a translation key; the
+# Dutch text is the no-JavaScript fallback. Only for metrics whose name alone
+# invites a wrong reading.
+HINTS = {
+    "mcu_temperature": ("metric_hint.mcu_temperature",
+                        "Temperatuur van de chip zelf, niet van de buitenlucht. "
+                        "Een ESP32-S3 met WiFi aan draait 20 à 30 °C boven de omgeving."),
 }
 
 

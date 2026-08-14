@@ -1,5 +1,23 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.7.1  The automatic monitor round never started. passed() reads 0 as 'not
+ *        scheduled' and _mon_next_round begins at 0, so MST_IDLE waited on a
+ *        deadline that never arrived; only 'wifi mon poll' set one, after which
+ *        it looked healthy until the next reboot. Present since 1.2.0, hidden
+ *        because every test began with a manual poll. The scheduler now arms
+ *        itself, and /api/mon and 'wifi mon' report when the next round is due
+ *        so a stalled one is visible without waiting for it.
+ *        Also: 'region' no longer publishes the whole region tree as one
+ *        multi-line value; region.home and region.default are asked for
+ *        separately, and any multi-line answer is refused as a list rather
+ *        than a setting.
+ * 1.7.0  The CLI settings sweep runs once a day instead of every six hours,
+ *        and is now observable: how many parameters answered and how many did
+ *        not, when the last sweep ran and when the next is due, the collected
+ *        values themselves, and a way to force one -- on the page, in
+ *        /api/status and over the CLI. Before this the values only appeared in
+ *        the single message following a sweep, one in 1440, which made it
+ *        impossible to tell a failed sweep from one that never ran.
  * 1.6.0  Battery-to-interval is now a table the user edits (add/remove rules,
  *        hysteresis that works for any number of them) instead of five fixed
  *        levels, with a floor per mode: 10 s in 'always reachable', 60 s in
@@ -173,7 +191,9 @@ struct Config {
   uint16_t bat_hyst;                // % past a boundary before the level moves
   uint16_t bat_live;                // % above which raw packets go out at once
   uint16_t bat_mon;                 // % below which polling other repeaters stops
-  uint16_t set_interval;            // seconds between CLI settings sweeps
+  /* Minutes, not seconds: a day is 86400, which does not fit in a uint16_t and
+   * would silently wrap to under six hours. */
+  uint16_t set_iv_min;              // minutes between CLI settings sweeps
   uint16_t full_hold;               // minutes above bat_full before 'full' counts
   uint16_t iv_full, iv_high, iv_norm, iv_low, iv_crit;   // publish interval, secs
   uint16_t night_from, night_to;    // night window, hours UTC
@@ -381,7 +401,8 @@ static void loadConfig() {
   _cfg.bat_hyst = 3;
   _cfg.bat_live = 85;
   _cfg.bat_mon = 40;
-  _cfg.set_interval = 21600;        // 6 h: these change once in a blue moon
+  _cfg.set_iv_min = 1440;           // a day: sixteen CLI calls for values
+                                    // that change once in a blue moon
   _cfg.full_hold = 30;
   _cfg.iv_full = 60;
   _cfg.iv_high = 120;
@@ -453,8 +474,8 @@ static void loadConfig() {
   num("bat_hyst", _cfg.bat_hyst);
   num("bat_live", _cfg.bat_live);
   num("bat_mon", _cfg.bat_mon);
-  num("set_interval", _cfg.set_interval);
-  if (_cfg.set_interval < 300) _cfg.set_interval = 300;
+  num("set_iv_min", _cfg.set_iv_min);
+  if (_cfg.set_iv_min < 5) _cfg.set_iv_min = 5;
   num("full_hold", _cfg.full_hold);
   num("iv_full", _cfg.iv_full);
   num("iv_high", _cfg.iv_high);
@@ -483,12 +504,12 @@ static void saveConfig() {
            _cfg.mqtt_prefix, _cfg.mqtt_enabled, _cfg.mqtt_rx);
   f.printf("\"pwr_mode\":%u,\"pwr_window\":%u,\"wifi_sleep\":%u,\"tx_power\":%u,"
            "\"bat_full\":%u,\"bat_high\":%u,\"bat_norm\":%u,\"bat_crit\":%u,"
-           "\"bat_hyst\":%u,\"bat_live\":%u,\"bat_mon\":%u,\"set_interval\":%u,\"full_hold\":%u,"
+           "\"bat_hyst\":%u,\"bat_live\":%u,\"bat_mon\":%u,\"set_iv_min\":%u,\"full_hold\":%u,"
            "\"iv_full\":%u,\"iv_high\":%u,\"iv_norm\":%u,\"iv_low\":%u,\"iv_crit\":%u,"
            "\"night_from\":%u,\"night_to\":%u,\"night_factor\":%u}",
            _cfg.pwr_mode, _cfg.pwr_window, _cfg.wifi_sleep, _cfg.tx_power,
            _cfg.bat_full, _cfg.bat_high, _cfg.bat_norm, _cfg.bat_crit,
-           _cfg.bat_hyst, _cfg.bat_live, _cfg.bat_mon, _cfg.set_interval, _cfg.full_hold,
+           _cfg.bat_hyst, _cfg.bat_live, _cfg.bat_mon, _cfg.set_iv_min, _cfg.full_hold,
            _cfg.iv_full, _cfg.iv_high, _cfg.iv_norm, _cfg.iv_low, _cfg.iv_crit,
            _cfg.night_from, _cfg.night_to, _cfg.night_factor);
   f.close();
@@ -898,71 +919,163 @@ static void powerSummaryNl(char *out, size_t max) {
 #define SET_VALUE_MAX     32
 #define SET_BUF          600
 
-static const char *SET_PARAMS[] = {
-  "name", "role", "radio", "freq", "tx", "af", "repeat", "advert.interval",
-  "flood.advert.interval", "flood.max", "allow.read.only", "rxdelay", "txdelay",
-  "lat", "lon",
-  /* Last, and deliberately without 'get': 'get region' answers '??:' because
-   * region is a verb of its own. */
-  "region"
+/* Each parameter carries the command that answers it, because they are not all
+ * 'get <name>'.
+ *
+ * 'region' on its own was the odd one, and it was wrong: it reports no setting
+ * at all but dumps the entire region tree via RegionMap::exportTo(), one line
+ * per region, indented by depth. What got stored as the value of "region" was
+ * that whole table:
+ *
+ *     *
+ *      eu F
+ *       bx F
+ *        be^ F
+ *         be-
+ *
+ * Reading printChildRegions() settles what the markers mean: '*' is simply the
+ * name of the wildcard root region, NOT a marker for the active one; '^' marks
+ * the home region (here 'be'); ' F' means flooding is allowed and its absence
+ * means DENY_FLOOD; indentation is parent/child nesting.
+ *
+ * The two things that genuinely are settings each have their own one-line
+ * command, so we ask those instead. 'after' is the separator whose tail we
+ * keep: " home is be" -> "be". Explicit per parameter rather than a blanket
+ * rule, because a node name could itself contain " is ". */
+struct SetParam {
+  const char *name;      // key in the published object
+  const char *cmd;       // CLI command that answers it
+  const char *after;     // keep what follows the last occurrence, or NULL
+};
+
+static const SetParam SET_PARAMS[] = {
+  { "name",                  "get name",                  NULL },
+  { "role",                  "get role",                  NULL },
+  { "radio",                 "get radio",                 NULL },
+  { "freq",                  "get freq",                  NULL },
+  { "tx",                    "get tx",                    NULL },
+  { "af",                    "get af",                    NULL },
+  { "repeat",                "get repeat",                NULL },
+  { "advert.interval",       "get advert.interval",       NULL },
+  { "flood.advert.interval", "get flood.advert.interval", NULL },
+  { "flood.max",             "get flood.max",             NULL },
+  { "allow.read.only",       "get allow.read.only",       NULL },
+  { "rxdelay",               "get rxdelay",               NULL },
+  { "txdelay",               "get txdelay",               NULL },
+  { "lat",                   "get lat",                   NULL },
+  { "lon",                   "get lon",                   NULL },
+  { "region.home",           "region home",               " is " },
+  { "region.default",        "region default",            " is " },
 };
 #define SET_PARAM_COUNT ((int)(sizeof(SET_PARAMS) / sizeof(SET_PARAMS[0])))
 
-static char _set_json[SET_BUF];    // finished "settings" object body
-static int  _set_len = 0;
-static char _set_build_buf[SET_BUF];
-static int  _set_build = 0;
-static int  _set_next = -1;        // parameter being collected, -1 = idle
-static bool _set_ready = false;    // a complete set is waiting to be sent
+/* Kept as name/value pairs rather than a pre-built JSON string. The values have
+ * to be answerable on demand -- from the page, from the CLI, at any moment --
+ * and not only in the one message that follows a sweep. With a sweep a day that
+ * message is one in 1440, which is no way to find out whether the thing ever
+ * ran. */
+struct SetVal {
+  const char *name;               // points into SET_PARAMS, never freed
+  char value[SET_VALUE_MAX];
+};
+static SetVal _set_vals[SET_PARAM_COUNT];
+static int _set_n = 0;            // parameters answered in the last full sweep
+static int _set_miss = 0;         // parameters that gave nothing usable
+static int _set_build_n = 0, _set_build_miss = 0;
+static int _set_next = -1;        // parameter being collected, -1 = idle
+static bool _set_ready = false;   // a complete set is waiting to be published
+static bool _set_force = false;   // 'wifi settings now' / the page button
 static unsigned long _set_due = 0;
+static unsigned long _set_done_at = 0;   // millis of the last completed sweep
 
 // Collects one parameter. Runs once per loop pass while a sweep is going.
 static void settingsStep() {
   if (_set_next < 0 || _set_next >= SET_PARAM_COUNT || !_mesh) return;
 
-  const char *param = SET_PARAMS[_set_next];
+  const SetParam &sp = SET_PARAMS[_set_next];
   char cmd[48], reply[160];
-  if (strcmp(param, "region") == 0) snprintf(cmd, sizeof(cmd), "region");
-  else snprintf(cmd, sizeof(cmd), "get %s", param);
+  snprintf(cmd, sizeof(cmd), "%s", sp.cmd);
   reply[0] = 0;
   _mesh->handleCommand(0, cmd, reply);
 
-  /* Replies come back as "> value". Anything else -- an error, an empty answer,
-   * the "??:" the CLI gives for a command it does not know -- is simply not
-   * recorded. Publishing a parameter this firmware could not actually read
-   * would be the same mistake as publishing noise_floor 0. */
+  /* Replies come back as "> value", sometimes just " value". Anything else --
+   * an error, an empty answer, the "??" the CLI gives for a command it does not
+   * know -- is simply not recorded. Publishing a parameter this firmware could
+   * not actually read would be the same mistake as publishing noise_floor 0,
+   * and it is how rows like 'cmd:temp = Unknown command' get into a database. */
   char *val = reply;
-  if (val[0] == '>') { val++; while (*val == ' ') val++; }
+  if (*val == '>') val++;
+  while (*val == ' ' || *val == '\t') val++;
+
   size_t vlen = strlen(val);
-  while (vlen && (val[vlen - 1] == '\n' || val[vlen - 1] == '\r' || val[vlen - 1] == ' ')) {
+  while (vlen && (val[vlen - 1] == '\n' || val[vlen - 1] == '\r' ||
+                  val[vlen - 1] == ' ' || val[vlen - 1] == '\t')) {
     val[--vlen] = 0;
   }
 
-  if (vlen > 0 && strncmp(val, "Error", 5) != 0 && strncmp(val, "??", 2) != 0) {
-    if (vlen >= SET_VALUE_MAX) val[SET_VALUE_MAX - 1] = 0;
-    char esc[SET_VALUE_MAX * 2 + 4];
-    jsonEsc(esc, sizeof(esc), val);
-    int w = snprintf(_set_build_buf + _set_build, SET_BUF - _set_build, "%s\"%s\":\"%s\"",
-                     _set_build ? "," : "", param, esc);
-    if (w > 0 && _set_build + w < SET_BUF) _set_build += w;
+  // Keep only the tail after a known separator, for the region commands.
+  if (sp.after) {
+    const char *last = NULL, *p = val;
+    while ((p = strstr(p, sp.after)) != NULL) { last = p; p += strlen(sp.after); }
+    if (last) {
+      val = (char *)(last + strlen(sp.after));
+      vlen = strlen(val);
+    }
+  }
+
+  /* A value containing a line break is a list, not a setting -- the region tree
+   * was exactly that. Truncating at the first newline would quietly publish a
+   * fragment of a table as though it were a value, so such an answer is
+   * dropped and counted as a miss instead. */
+  bool multiline = (strchr(val, '\n') != NULL || strchr(val, '\r') != NULL);
+
+  if (vlen > 0 && !multiline &&
+      strncmp(val, "Error", 5) != 0 && strncmp(val, "??", 2) != 0) {
+    if (_set_build_n < SET_PARAM_COUNT) {
+      _set_vals[_set_build_n].name = sp.name;
+      strncpy(_set_vals[_set_build_n].value, val, SET_VALUE_MAX - 1);
+      _set_vals[_set_build_n].value[SET_VALUE_MAX - 1] = 0;
+      _set_build_n++;
+    }
+  } else {
+    if (multiline) Serial.printf("MeshStatsNet: %s gaf meerdere regels, overgeslagen\n", sp.name);
+    _set_build_miss++;
   }
 
   if (++_set_next >= SET_PARAM_COUNT) {
     _set_next = -1;
-    memcpy(_set_json, _set_build_buf, _set_build);
-    _set_len = _set_build;
-    _set_ready = (_set_len > 0);
-    _set_due = millis() + (unsigned long)_cfg.set_interval * 1000UL;
-    Serial.printf("MeshStatsNet: instellingen gelezen, %d bytes\n", _set_len);
+    _set_n = _set_build_n;
+    _set_miss = _set_build_miss;
+    _set_ready = (_set_n > 0);
+    _set_done_at = millis();
+    _set_due = millis() + (unsigned long)_cfg.set_iv_min * 60000UL;
+    Serial.printf("MeshStatsNet: instellingen gelezen, %d gelukt, %d geen antwoord\n",
+                  _set_n, _set_miss);
   }
 }
 
 static void settingsLoop() {
   if (_safe_mode || !_mesh) return;
   if (_set_next >= 0) { settingsStep(); return; }
-  // First sweep a minute after boot, so startup is not competing with it.
+
+  // First sweep a minute after boot, so it is not competing with startup.
   if (_set_due == 0) _set_due = millis() + 60000UL;
-  if (!_set_ready && passed(_set_due)) { _set_build = 0; _set_next = 0; }
+
+  /* Deliberately not gated on the previous set having been published: with the
+   * broker down, a daily sweep should still refresh what the page and the CLI
+   * show, rather than freezing on the last set that got out. */
+  if (_set_force || passed(_set_due)) {
+    _set_force = false;
+    _set_build_n = 0;
+    _set_build_miss = 0;
+    _set_next = 0;
+  }
+}
+
+// Seconds until the next sweep, or 0 when one is due or running.
+static uint32_t settingsNextIn() {
+  if (_set_next >= 0) return 0;
+  return secsLeft(_set_due);
 }
 
 // ---------------------------------------------------------------------- mqtt
@@ -1009,17 +1122,30 @@ static bool mqttPublishStats() {
 
   /* A finished settings sweep rides along with this message. Appended here
    * rather than built into fillStatsJson because it is this module's data, not
-   * the mesh's, and because it goes out perhaps four times a day against the
-   * metrics' every couple of minutes. */
-  if (_set_ready && _set_len > 0 && n + (size_t)_set_len + 16 < sizeof(body)) {
-    n--;                                    // step back over the closing brace
-    int w = snprintf(body + n, sizeof(body) - n, ",\"settings\":{%s}}", _set_json);
-    if (w > 0 && n + (size_t)w < sizeof(body)) {
-      n += w;
-      _set_ready = false;
-    } else {
-      n++;                                  // did not fit: leave the payload be
+   * the mesh's, and because it goes out once a day against the metrics' every
+   * couple of minutes. */
+  if (_set_ready && _set_n > 0) {
+    size_t start = n - 1;                   // step back over the closing brace
+    int w = snprintf(body + start, sizeof(body) - start, ",\"settings\":{");
+    bool fits = (w > 0);
+    size_t q = start + (fits ? w : 0);
+
+    for (int i = 0; i < _set_n && fits; i++) {
+      char esc[SET_VALUE_MAX * 2 + 4];
+      jsonEsc(esc, sizeof(esc), _set_vals[i].value);
+      int e = snprintf(body + q, sizeof(body) - q, "%s\"%s\":\"%s\"",
+                       i ? "," : "", _set_vals[i].name, esc);
+      if (e <= 0 || q + (size_t)e + 4 >= sizeof(body)) { fits = false; break; }
+      q += e;
     }
+    if (fits) {
+      int e = snprintf(body + q, sizeof(body) - q, "}}");
+      if (e > 0 && q + (size_t)e < sizeof(body)) {
+        n = q + e;
+        _set_ready = false;
+      }
+    }
+    if (_set_ready) body[n - 1] = '}';       // did not fit: restore the payload
   }
 
   char topic[96];
@@ -1283,6 +1409,8 @@ void meshstats_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
  * hops; 20 s turned out to be tight for that. */
 #define MON_STEP_MS      30000UL // how long to wait for one login/status answer
 #define MON_GAP_MS        3000UL // breathing space between peers
+// First automatic round after boot, late enough not to fight with startup.
+#define MON_FIRST_MS     60000UL
 #define MON_HEARD_MAX      40    // heard rows handed to the page
 
 enum MonLogin { LOGIN_NONE = 0, LOGIN_OK = 1, LOGIN_NOANSWER = 2 };
@@ -1374,6 +1502,7 @@ static volatile bool _mon_got_reply = false;
 static uint8_t _mon_reply[MAX_PACKET_PAYLOAD];
 static int _mon_reply_len = 0;
 static int _mon_reply_idx = -1;
+static uint8_t _mon_reply_type = 0;   // RESPONSE, or TXT_MSG for a CLI answer
 
 /* Lowercases and drops the separators people paste along, but rejects anything
  * that is not hex. Strict on purpose: a silently mangled key becomes a monitor
@@ -1547,7 +1676,7 @@ static bool resolveMonitors() {
   return changed;
 }
 
-void meshstats_on_monitor_response(int mon_idx, const uint8_t *data, int len) {
+void meshstats_on_monitor_response(int mon_idx, uint8_t type, const uint8_t *data, int len) {
   if (!_started || _disabled || _safe_mode) return;
   if (len <= 0 || len > (int)sizeof(_mon_reply)) return;
   if (_mon_got_reply) return;            // previous one not consumed yet
@@ -1555,6 +1684,7 @@ void meshstats_on_monitor_response(int mon_idx, const uint8_t *data, int len) {
   memcpy(_mon_reply, data, len);
   _mon_reply_len = len;
   _mon_reply_idx = mon_idx;
+  _mon_reply_type = type;
   _mon_got_reply = true;
 }
 
@@ -1927,9 +2057,13 @@ static void monitorLoop() {
 
   if (_mon_got_reply) {
     int idx = _mon_reply_idx;
+    uint8_t rtype = _mon_reply_type;
     _mon_got_reply = false;
 
-    if (_mon_cur >= 0 && _mon[_mon_cur].mesh_idx == idx) {
+    // Every state below expects a RESPONSE; a stray CLI answer is not one.
+    if (rtype != PAYLOAD_TYPE_RESPONSE) {
+      monTrace("reply type %u genegeerd", (unsigned)rtype);
+    } else if (_mon_cur >= 0 && _mon[_mon_cur].mesh_idx == idx) {
       MonEntry &m = _mon[_mon_cur];
       if (_mon_state == MST_LOGIN_WAIT) {
         m.login_res = LOGIN_OK;
@@ -1985,6 +2119,16 @@ static void monitorLoop() {
 
   switch (_mon_state) {
     case MST_IDLE:
+      /* passed() reads 0 as 'not scheduled', and this starts at 0 -- so until
+       * something set it, the first automatic round never came. Only 'wifi mon
+       * poll' did, and because the end of a round then sets a real deadline,
+       * everything looked healthy from that moment on. Which is exactly why it
+       * survived: every test began with a manual poll, and a reboot silently
+       * disarmed it again. Same arming pattern as the settings sweep. */
+      if (_mon_next_round == 0) {
+        _mon_next_round = millis() + MON_FIRST_MS;
+        monTrace("eerste ronde over %us", (unsigned)(MON_FIRST_MS / 1000));
+      }
       if (!passed(_mon_next_round)) return;
       if (resolveMonitors()) {           // a prefix may have become a full key
         saveMonitors();
@@ -2199,6 +2343,14 @@ static const char PAGE[] PROGMEM =
   "<input id=miv type=number min=60 max=65535></label></div>"
   "<button id=mivb data-i18n=b_save></button> "
   "<button id=mpb class=pill data-i18n=b_pollnow></button></div>"
+  "<h2 data-i18n=t_settings></h2><div class=card>"
+  "<p class=muted data-i18n=h_settings></p>"
+  "<table id=sv></table>"
+  "<div class=row style='margin-top:.6rem'>"
+  "<label style='max-width:12rem'><span data-i18n=l_setiv></span>"
+  "<input id=siv type=number min=5 max=65535></label></div>"
+  "<button id=sivb data-i18n=b_save></button> "
+  "<button id=snow class=pill data-i18n=b_sweep></button></div>"
   "<h2 data-i18n=t_fw></h2><div class=card>"
   "<p class=muted data-i18n=h_fw></p><p><a href=/update data-i18n=a_fw></a></p></div>"
   "<h2 data-i18n=t_backup></h2><div class=card>"
@@ -2218,6 +2370,12 @@ static const char PAGE[] PROGMEM =
   "l_mode:'Modus',o_always:'Altijd bereikbaar',o_save:'Zuinig (WiFi meestal uit)',"
   "l_window:'Venster (s)',l_sleep:'Modem-sleep terwijl WiFi aan staat',"
   "t_rules:'Accu naar interval',b_addrule:'+ regel',"
+  "t_settings:'Instellingen van deze node',b_sweep:'Nu ophalen',l_setiv:'Interval (minuten)',"
+  "s_sweep:'Laatste ronde',s_swnext:'Volgende ronde',sw_busy:'bezig...',"
+  "sw_never:'nog niet gelopen',sw_done:'%1 gelezen, %2 geen antwoord, %3',"
+  "h_settings:'Deze node leest zijn eigen CLI uit en stuurt de waarden mee met een "
+  "statistiekenbericht. Ze veranderen zelden, dus dat gebeurt hooguit een keer per dag \u2014 "
+  "gebruik Nu ophalen om het meteen te doen.',"
   "e_now:'Nu: elke %1 s, ongeveer %2 berichten per dag.',"
   "e_fast:'Snelste regel: elke %1 s, ongeveer %2 per dag.',"
   "e_floor:'(opgetrokken tot de ondergrens van % s van deze modus)',"
@@ -2286,6 +2444,12 @@ static const char PAGE[] PROGMEM =
   "l_mode:'Mode',o_always:'Always reachable',o_save:'Power save (WiFi mostly off)',"
   "l_window:'Window (s)',l_sleep:'Modem sleep while WiFi is up',"
   "t_rules:'Battery to interval',b_addrule:'+ rule',"
+  "t_settings:'This node\u2019s settings',b_sweep:'Sweep now',l_setiv:'Interval (minutes)',"
+  "s_sweep:'Last sweep',s_swnext:'Next sweep',sw_busy:'running...',"
+  "sw_never:'not run yet',sw_done:'%1 read, %2 no answer, %3',"
+  "h_settings:'This node reads back its own CLI and ships the values with a statistics "
+  "message. They rarely change, so that happens at most once a day \u2014 use Sweep now to "
+  "do it immediately.',"
   "e_now:'Now: every %1 s, roughly %2 messages per day.',"
   "e_fast:'Fastest rule: every %1 s, roughly %2 per day.',"
   "e_floor:'(raised to this mode\u2019s floor of %s)',"
@@ -2377,6 +2541,14 @@ static const char PAGE[] PROGMEM =
   "if(nmon&&mon.iv)s+=' '+t.e_mon.replace('%1',nmon).replace('%2',nmon*6)"
   ".replace('%3',nfmt(nmon*6*3600/mon.iv));"
   "$('#est').textContent=s}"
+  // The sweep, answerable at any moment rather than only in the message that
+  // happens to follow one.
+  "function sett(d){var t=T[L],e=d.set,o={},k;"
+  "o[t.s_sweep]=e.busy?t.sw_busy:(e.age<0?t.sw_never"
+  ":t.sw_done.replace('%1',e.ok).replace('%2',e.miss).replace('%3',ago(e.age,t)));"
+  "o[t.s_swnext]=e.busy?t.sw_busy:(e.next<60?e.next+' s':Math.round(e.next/60)+' min');"
+  "for(k in e.v)o[k]=e.v[k];"
+  "$('#sv').innerHTML=rows(o);$('#siv').value=e.iv}"
   "function pwrtext(d){var t=T[L],p=d.pwr,s=t['p_'+p.st]||p.st;"
   "s=s.replace('%',p.st=='forced'?Math.ceil(p.secs/60):p.secs);"
   "return s+' \\u00b7 '+t.p_every.replace('%',p.iv)+(p.night?' ('+t.p_night+')':'')}"
@@ -2393,7 +2565,7 @@ static const char PAGE[] PROGMEM =
   "if(d.mcu_t>-100)s[t.s_mcu]=d.mcu_t.toFixed(1)+' \\u00b0C <small>'+t.h_mcu+'</small>';"
   "s[t.s_live]=(t['lv_'+d.live]||d.live).replace('%',d.livepct);"
   "s[t.s_wdt]=d.wdt?t.d_on.replace('%',d.wdt_s):t.d_off;$('#st').innerHTML=rows(s);"
-  "rules(d);"
+  "rules(d);sett(d);"
   "var q=d.mqtt,m={};m[t.m_broker]=t['mq_'+q.st];"
   "m[t.m_stats]=q.stats+' '+t.m_sent;"
   "m[t.m_pkts]=q.pkt+' '+t.m_fwd+', '+q.drop+' '+t.m_drop;"
@@ -2453,6 +2625,10 @@ static const char PAGE[] PROGMEM =
   "function(){$('#mk').value='';$('#mn').value=''})};"
   "$('#mivb').onclick=function(){monPost({act:'iv',secs:$('#miv').value})};"
   "$('#mpb').onclick=function(){monPost({act:'poll'})};"
+  "function setPost(b){fetch('/api/settings',{method:'POST',body:new URLSearchParams(b)})"
+  ".then(function(){setTimeout(load,500)})}"
+  "$('#sivb').onclick=function(){setPost({iv:$('#siv').value})};"
+  "$('#snow').onclick=function(){setPost({now:1})};"
   "function post(u,f,cb){fetch(u,{method:'POST',body:new URLSearchParams(new FormData(f))})"
   ".then(cb)}"
   "$('#th').onclick=function(){TH=TH=='light'?'dark':'light';"
@@ -2494,7 +2670,7 @@ static bool requireAuth(AsyncWebServerRequest *req) {
  * percentage and level rather than as a formatted string. */
 static void handleStatus(AsyncWebServerRequest *req) {
   if (!requireAuth(req)) return;
-  static char body[1600];
+  static char body[2600];   // grew when the rules table and the settings joined
   IPAddress ip = (_state == WIFI_FALLBACK_AP) ? WiFi.softAPIP() : WiFi.localIP();
 
   // "%.1f" of a NAN prints 'nan', which is not JSON and would blank the page.
@@ -2547,7 +2723,26 @@ static void handleStatus(AsyncWebServerRequest *req) {
     q += snprintf(body + q, sizeof(body) - q, "%s{\"p\":%u,\"s\":%u}",
                   i ? "," : "", _pwr[i].pct, _pwr[i].secs);
   }
-  snprintf(body + q, sizeof(body) - q, "]}");
+
+  /* The CLI sweep, readable at any moment. 'age' is seconds since the last one
+   * finished (-1 = never run), 'next' seconds until the following one, and the
+   * values themselves so nobody has to catch the one message in 1440 that
+   * carries them. */
+  q += snprintf(body + q, sizeof(body) - q,
+                "],\"set\":{\"ok\":%d,\"miss\":%d,\"age\":%ld,\"next\":%u,"
+                "\"iv\":%u,\"busy\":%d,\"v\":{",
+                _set_n, _set_miss,
+                _set_done_at ? (long)((millis() - _set_done_at) / 1000UL) : -1L,
+                (unsigned)settingsNextIn(), (unsigned)_cfg.set_iv_min,
+                _set_next >= 0 ? 1 : 0);
+
+  for (int i = 0; i < _set_n && q < (int)sizeof(body) - 90; i++) {
+    char esc[SET_VALUE_MAX * 2 + 4];
+    jsonEsc(esc, sizeof(esc), _set_vals[i].value);
+    q += snprintf(body + q, sizeof(body) - q, "%s\"%s\":\"%s\"",
+                  i ? "," : "", _set_vals[i].name, esc);
+  }
+  snprintf(body + q, sizeof(body) - q, "}}}");
 
   req->send(200, "application/json", body);
 }
@@ -2620,6 +2815,24 @@ static void handlePowerPost(AsyncWebServerRequest *req) {
   req->send(200, "application/json", "{\"ok\":1}");
 }
 
+/* Forces a sweep, and sets the interval. Both deferred to loop() like every
+ * other change: the sweep calls into the mesh CLI, which is not the web
+ * server's task to be doing. */
+static void handleSettingsPost(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+  if (req->hasParam("iv", true)) {
+    long v = req->getParam("iv", true)->value().toInt();   // minutes
+    if (v < 5 || v > 65535) {
+      req->send(200, "application/json", "{\"ok\":0,\"err\":\"range\"}");
+      return;
+    }
+    _cfg.set_iv_min = (uint16_t)v;
+    _apply_power = true;                    // reuses the deferred saveConfig()
+  }
+  if (req->hasParam("now", true)) _set_force = true;
+  req->send(200, "application/json", "{\"ok\":1}");
+}
+
 static void handleMqttPost(AsyncWebServerRequest *req) {
   if (!requireAuth(req)) return;
   copyParam(req, "host", _cfg.mqtt_host, MQTT_HOST_MAX);
@@ -2646,9 +2859,15 @@ static void handleMonJson(AsyncWebServerRequest *req) {
   char esc[MON_TRACE_LEN * 2 + 4];   // also used for trace lines, the longest
   int p = 0;
 
+  /* 'next' and 'state' exist because the scheduler stalling was invisible from
+   * outside: every counter read zero, which looks identical to 'never
+   * configured'. Now a round that is not coming can be seen without waiting
+   * for one. */
   p += snprintf(body + p, sizeof(body) - p,
-                "{\"iv\":%u,\"max\":%d,\"minhex\":%d,\"mon\":[",
-                _mon_interval, MAX_MONITORS, MON_MIN_HEX);
+                "{\"iv\":%u,\"max\":%d,\"minhex\":%d,\"next\":%ld,\"state\":%d,\"mon\":[",
+                _mon_interval, MAX_MONITORS, MON_MIN_HEX,
+                _mon_state == MST_IDLE ? (long)secsLeft(_mon_next_round) : -1L,
+                (int)_mon_state);
 
   for (int i = 0; i < _mon_count && p < (int)sizeof(body) - 400; i++) {
     jsonEsc(esc, sizeof(esc), _mon[i].name);
@@ -3168,8 +3387,16 @@ static void handleMonCommand(const char *arg, char *reply) {
       if (_mon[i].mesh_idx >= 0) resolved++;
       if (_mon[i].login_res == LOGIN_OK) ok++;
     }
-    snprintf(reply, 155, "%d gemonitord (%d bruikbaar, %d ingelogd), elke %us, max %d",
-             _mon_count, resolved, ok, (unsigned)_mon_interval, MAX_MONITORS);
+    if (_mon_state == MST_IDLE) {
+      snprintf(reply, 155, "%d gemonitord (%d bruikbaar, %d ingelogd), elke %us, "
+               "volgende ronde over %us",
+               _mon_count, resolved, ok, (unsigned)_mon_interval,
+               (unsigned)secsLeft(_mon_next_round));
+    } else {
+      snprintf(reply, 155, "%d gemonitord (%d bruikbaar, %d ingelogd), elke %us, "
+               "ronde bezig (stap %d)",
+               _mon_count, resolved, ok, (unsigned)_mon_interval, (int)_mon_state);
+    }
     return;
   }
   if (_mon_action != MA_NONE) { strcpy(reply, "Err - vorige wijziging nog bezig"); return; }
@@ -3256,6 +3483,48 @@ static void handleMonCommand(const char *arg, char *reply) {
   }
   strcpy(reply, "Err - wifi mon [list <n>|add <hex> [naam]|del <hex>|pass <hex> [woord]|"
                 "on <hex>|off <hex>|iv <s>|poll|trace <n>]");
+}
+
+static void handleSettingsCommand(const char *arg, char *reply) {
+  const char *v;
+
+  if (*arg == 0) {
+    if (_set_next >= 0) {
+      snprintf(reply, 155, "bezig: %d van %d", _set_next, SET_PARAM_COUNT);
+    } else if (_set_done_at == 0) {
+      snprintf(reply, 155, "nog niet gelopen, eerste over %us, elke %u min",
+               (unsigned)settingsNextIn(), (unsigned)_cfg.set_iv_min);
+    } else {
+      snprintf(reply, 155, "%d gelezen, %d geen antwoord, %lu min geleden, "
+               "volgende over %lu min, elke %u min",
+               _set_n, _set_miss, (unsigned long)((millis() - _set_done_at) / 60000UL),
+               (unsigned long)(settingsNextIn() / 60), (unsigned)_cfg.set_iv_min);
+    }
+    return;
+  }
+  if (strcmp(arg, "now") == 0) {
+    _set_force = true;
+    snprintf(reply, 155, "OK - sweep gestart, %d parameters", SET_PARAM_COUNT);
+    return;
+  }
+  if ((v = subArg(arg, "list")) != NULL) {
+    // One per call: a CLI reply is 160 bytes and this must work over the mesh.
+    if (_set_n == 0) { strcpy(reply, "nog niets gelezen"); return; }
+    int n = (*v) ? atoi(v) : 0;
+    if (n < 0 || n >= _set_n) { snprintf(reply, 155, "Err - 0..%d", _set_n - 1); return; }
+    snprintf(reply, 155, "[%d/%d] %s = %s", n, _set_n - 1,
+             _set_vals[n].name, _set_vals[n].value);
+    return;
+  }
+  if ((v = subArg(arg, "iv")) != NULL) {
+    long mins = atol(v);
+    if (mins < 5 || mins > 65535) { strcpy(reply, "Err - interval 5..65535 minuten"); return; }
+    _cfg.set_iv_min = (uint16_t)mins;
+    saveConfig();
+    snprintf(reply, 155, "OK - elke %ld min (%ld u)", mins, mins / 60);
+    return;
+  }
+  strcpy(reply, "Err - wifi settings [now|list <n>|iv <minuten>]");
 }
 
 static void handleMqttCommand(const char *arg, char *reply) {
@@ -3412,6 +3681,8 @@ bool msnet_handle_command(const char *command, char *reply) {
     handleMqttCommand(v, reply);
   } else if ((v = subArg(arg, "mon")) != NULL) {
     handleMonCommand(v, reply);
+  } else if ((v = subArg(arg, "settings")) != NULL) {
+    handleSettingsCommand(v, reply);
   } else if ((v = subArg(arg, "power")) != NULL) {
     handlePowerCommand(v, reply);
   } else if ((v = subArg(arg, "console")) != NULL) {
@@ -3435,7 +3706,7 @@ bool msnet_handle_command(const char *command, char *reply) {
     while (!passed(einde)) { }      // bewust niets aankloppen
     strcpy(reply, "Watchdog sloeg NIET toe - het vangnet werkt niet");
   } else {
-    strcpy(reply, "Err - wifi [ssid|pass|connect|ap|on <min>|off|console|mqtt|power|mon|wdt]");
+    strcpy(reply, "Err - wifi [ssid|pass|connect|ap|on|off|console|mqtt|power|mon|settings|wdt]");
   }
   return true;
 }
@@ -3499,6 +3770,7 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   _server.on("/api/wifi", HTTP_POST, handleWifiPost);
   _server.on("/api/power", HTTP_POST, handlePowerPost);
   _server.on("/api/mqtt", HTTP_POST, handleMqttPost);
+  _server.on("/api/settings", HTTP_POST, handleSettingsPost);
   _server.on("/api/mon", HTTP_GET, handleMonJson);
   _server.on("/api/mon", HTTP_POST, handleMonPost);
   _server.on("/api/backup", HTTP_GET, handleBackup);

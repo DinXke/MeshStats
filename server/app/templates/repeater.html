@@ -34,7 +34,8 @@
     <div class="tile gaugetile clickable" data-gauge="{{ t.metric }}" data-value="{{ t.value }}"
          data-min="{{ gauges[t.metric][0] }}" data-max="{{ gauges[t.metric][1] }}"
          data-segments='{{ gauges[t.metric][2]|tojson }}'
-         data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}">
+         data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}"
+         {%- if t.hint %} title="{{ t.hint }}" data-i18n-title="{{ t.hint_key }}"{% endif %}>
       <canvas width="180" height="96"></canvas>
       <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
       <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
@@ -50,7 +51,8 @@
     </div>
     {% else %}
     <div class="tile {% if t.metric == 'online' %}{{ 'online' if t.value == 1.0 else 'offline' }}{% endif %} {% if t.value is not none %}clickable{% endif %}"
-         {% if t.value is not none %}data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}"{% endif %}>
+         {%- if t.value is not none %} data-metric="{{ t.metric }}" data-label="{{ t.label }}" data-unit="{{ t.unit or '' }}"{% endif %}
+         {%- if t.hint %} title="{{ t.hint }}" data-i18n-title="{{ t.hint_key }}"{% endif %}>
       <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
       <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
     </div>

@@ -168,6 +168,7 @@
       "chart.voltage": "Spanning (24 u)",
       "chart.battery_week": "Batterijspanning (7 d)",
       "chart.temperature": "Temperatuur (48 u)",
+      "chart.mcu_temperature": "Chiptemperatuur (48 u)",
       "chart.msg_rates": "Berichtenrates (24 u)",
       "chart.neighbor_count": "Aantal buren (7 d)",
 
@@ -180,6 +181,8 @@
       "metric.last_rssi": "Laatste RSSI",
       "metric.last_snr": "Laatste SNR",
       "metric.out_path_len": "Padlengte",
+      "metric.mcu_temperature": "Chiptemperatuur",
+      "metric_hint.mcu_temperature": "Temperatuur van de chip zelf, niet van de buitenlucht. Een ESP32-S3 met WiFi aan draait 20 à 30 °C boven de omgeving.",
       "metric.battery_percentage": "Batterij",
       "metric.bat": "Batterijspanning",
       "metric.ch1_voltage": "Ch1 spanning",
@@ -354,6 +357,7 @@
       "chart.voltage": "Voltage (24 h)",
       "chart.battery_week": "Battery voltage (7 d)",
       "chart.temperature": "Temperature (48 h)",
+      "chart.mcu_temperature": "Chip temperature (48 h)",
       "chart.msg_rates": "Message rates (24 h)",
       "chart.neighbor_count": "Neighbour count (7 d)",
 
@@ -365,6 +369,8 @@
       "metric.last_rssi": "Last RSSI",
       "metric.last_snr": "Last SNR",
       "metric.out_path_len": "Path length",
+      "metric.mcu_temperature": "Chip temperature",
+      "metric_hint.mcu_temperature": "Temperature of the chip itself, not of the outside air. An ESP32-S3 with WiFi on runs 20 to 30 °C above ambient.",
       "metric.battery_percentage": "Battery",
       "metric.bat": "Battery voltage",
       "metric.ch1_voltage": "Ch1 voltage",

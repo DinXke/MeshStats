@@ -82,7 +82,7 @@
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
 #define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.6.0"
+#define MESHSTATS_VERSION  "1.7.1"
 
 class MyMesh;
 
@@ -99,9 +99,11 @@ void msnet_loop();
 void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
 
 /* Called from the receive path when a repeater we monitor answers a login or a
- * status request. Same rule as above: copy only, interpret later. mon_idx is an
- * index into MyMesh's monitor table. */
-void meshstats_on_monitor_response(int mon_idx, const uint8_t *data, int len);
+ * status request, or to a CLI command we sent it. Same rule as above: copy
+ * only, interpret later. mon_idx indexes MyMesh's monitor table, and type
+ * distinguishes a RESPONSE (status/telemetry/neighbours) from a TXT_MSG (a CLI
+ * answer). */
+void meshstats_on_monitor_response(int mon_idx, uint8_t type, const uint8_t *data, int len);
 
 /* Called for every advert this node hears. Keeps a small cache of who is out
  * there -- key, name, type, when last heard, and coordinates when the advert
