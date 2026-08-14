@@ -647,5 +647,5 @@ Built and tested on a Heltec V3 (ESP32-S3) companion and a Heltec V4 repeater.
 | MQTT stats publishing | working |
 | `MeshStatsNet` on the repeater | working |
 | Forwarding over **HTTP** | abandoned — crashed the node; see [`architecture.md`](architecture.md#why-mqtt) |
-| Raw-packet forwarding over MQTT | **in development** |
+| Raw-packet forwarding over MQTT | working |
 | Full web client on the companion node | working |
