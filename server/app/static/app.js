@@ -775,14 +775,15 @@
     }
 
     // --- heat map of travelled paths --------------------------------------------
-    // The server aggregates 24 hours of resolved paths into weighted segments
-    // (see /api/v1/packets/heatmap): the feed's own buffer holds ~300 packets,
+    // The server aggregates the full packet retention window (7 days by
+    // default) of resolved paths into weighted segments (see
+    // /api/v1/packets/heatmap): the feed's own buffer holds ~300 packets,
     // nowhere near enough traversals to show which links carry the mesh.
     // Deliberately ignores the name/country filter: the overlay answers "where
     // does the traffic flow", and a backbone with the busiest half filtered
     // away would be redrawn as something it is not.
     var HEAT_KEY = "mcs-pktheat";
-    var HEAT_REFRESH_MS = 300000;  // a summary of a day can be five minutes old
+    var HEAT_REFRESH_MS = 300000;  // a summary of a week can be five minutes old
     // Amber: legible over both tile themes, and not a colour the packet dots or
     // the opened route already speak in.
     var HEAT_COLOR = cssVar("--amber", "#ffb454");
@@ -801,23 +802,64 @@
       clearHeat();
       if (!heatOn || !d.segments || !d.segments.length) return;
       var group = L.layerGroup();
-      var logMax = Math.log(1 + (d.max || 1));
-      d.segments.forEach(function (s) {
-        // Log-scaled: a handful of links carry most of the traffic, and on a
-        // raw scale everything else would flatten into hairlines next to them.
-        var k = Math.log(1 + s.n) / logMax;
+      var segs = d.segments;
+      var days = Math.max(1, Math.round((d.window_h || 24) / 24));
+      // Rank-scaled (empirical CDF), not log(1+n)/log(1+max) as before. The
+      // measured distribution is brutally heavy-tailed: with a max of 304
+      // traversals, half the segments sit at exactly 1 and ninety percent
+      // under 5, so any magnitude-preserving scale -- log included -- crammed
+      // ninety percent of the links into the bottom tenth of the visual range
+      // and hundreds of near-identical lines melted into one amber wash. The
+      // rank scale spends the range on where a link *stands among the others*
+      // instead, which is the question a reader asks of a heat map; the exact
+      // magnitude lives in the tooltip. It also has no degenerate case: when
+      // every link was travelled equally often, everything lands in one tie
+      // group at the floor and the map honestly shows nothing standing out
+      // (the old max-normalisation drew that same situation at full blast).
+      // Min/max normalisation with a max==min guard was rejected as it keeps
+      // the crammed-bottom problem; server-sent quantiles were rejected as
+      // redundant -- the server already sorts ascending, so the rank is free.
+      //
+      // k for a segment = fraction of segments strictly lighter than it, so
+      // ties share one k (equal counts must look equal) and the once-heard
+      // half starts at the very floor: hairline-thin and faint, present but
+      // no longer a wash. Hiding them outright was rejected -- honesty about
+      // what was heard beats tidiness, and a threshold toggle is a control
+      // nobody asked for solving a problem the faint rendering already
+      // solves. One forward walk finds the tie groups.
+      var ks = new Array(segs.length);
+      var start = 0;
+      for (var i = 1; i <= segs.length; i++) {
+        if (i === segs.length || segs[i].n !== segs[start].n) {
+          for (var m = start; m < i; m++) ks[m] = start / segs.length;
+          start = i;
+        }
+      }
+      segs.forEach(function (s, si) {
+        var k = ks[si];
         // Interactive, unlike most overlays here: the traversal count is the
         // one number this layer exists to show, and it needs a hover target.
         // The node markers are lifted above the lines below, so where the two
         // overlap the node still wins the pointer.
         L.polyline([[s.a.lat, s.a.lon], [s.b.lat, s.b.lon]], {
-          color: HEAT_COLOR, weight: 1.5 + 4.5 * k, opacity: 0.3 + 0.5 * k,
+          color: HEAT_COLOR, weight: 1 + 5 * k, opacity: 0.12 + 0.68 * k,
         }).addTo(group).bindTooltip(t("live.heat_tip", {
           a: s.a.name || s.a.prefix.toUpperCase(),
           b: s.b.name || s.b.prefix.toUpperCase(),
           n: s.n,
+          days: days,
         }), { direction: "top", sticky: true });
       });
+      // The toggle's tooltip promises the whole retained period; when the
+      // server had to cap the aggregation, that promise needs a footnote --
+      // silently presenting a truncated week as complete is the one lie this
+      // layer must never tell. Rewritten on every draw so a language switch
+      // (which restores the static title) is corrected at the next refresh.
+      var lbl = heatEl && heatEl.closest ? heatEl.closest("label") : null;
+      if (lbl) {
+        lbl.title = t("live.heat_title") +
+          (d.capped ? " " + t("live.heat_capped") : "");
+      }
       heatLayer = group.addTo(lmap);
       // Whichever came second -- this layer or the node dots -- the dots end up
       // on top, hoverable and the same size they always were.
@@ -839,7 +881,7 @@
         if (heatOn) loadHeat(); else clearHeat();
       });
       if (heatOn) loadHeat();
-      // A day-long summary drifts slowly, but this page is left open for hours;
+      // A week-long summary drifts slowly, but this page is left open for hours;
       // refresh it on a clock far slower than the packet poll.
       setInterval(function () {
         if (heatOn && !document.hidden) loadHeat();

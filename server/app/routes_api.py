@@ -453,18 +453,30 @@ def packet_search(
     }
 
 
-# One day of paths is one answer for every visitor, and resolving a day of hops
-# is the expensive half of computing it -- so the finished response is memoised
-# whole, on the same clock as the hop cache. A minute of staleness is invisible
-# on an overlay that summarises 24 hours.
-_HEATMAP_TTL_S = 60
-_HEATMAP_WINDOW_H = 24
-# The window is 24 hours rather than the full retention (7 days by default):
-# the overlay answers "where does traffic flow *now*", a week-old backbone that
-# has since gone dark should not outshine today's, and a day keeps the pass over
-# the rows cheap enough to run on demand. The row cap is a guard against a mesh
-# that mirrors every frame it hears, not a number a healthy day gets near.
-_HEATMAP_MAX_PACKETS = 20000
+# A retention-window of paths is one answer for every visitor, and resolving
+# that many hops is the expensive half of computing it -- so the finished
+# response is memoised whole. The TTL is five minutes rather than the old
+# minute: the window grew from a day to the full retention, so each pass is
+# roughly seven times heavier, and the client refreshes on a five-minute clock
+# anyway -- a shorter server TTL would redo the pass for readers who can never
+# see the difference. Incremental aggregation was considered and rejected:
+# counts would also have to *shrink* as packets age past retention, which means
+# keeping a timestamp per traversal per segment -- at that point the bookkeeping
+# costs more than simply redoing a pass that finishes in seconds.
+_HEATMAP_TTL_S = 300
+# The window is the full packet retention (7 days by default): the overlay
+# answers "which links carry this mesh", and a link that is exercised every
+# other day is part of the answer even when the last 24 hours happened to miss
+# it. The earlier day-long window systematically hid exactly those slower
+# links. Anything older than the retention is gone from the table regardless,
+# so this is the widest honest window there is.
+_HEATMAP_WINDOW_H = config.PACKET_RETENTION_DAYS * 24
+# The row cap is a guard against a mesh that mirrors every frame it hears, not
+# a number a healthy week gets near: the old day-window used 20 000, so a week
+# gets ten times that, with headroom. When the cap does bite the response says
+# so (``capped``) instead of quietly showing a truncated week as if it were
+# complete -- the same no-silent-lies rule the aggregation itself follows.
+_HEATMAP_MAX_PACKETS = 200000
 _heatmap_cache: dict = {"at": 0.0, "data": None}
 
 
@@ -477,7 +489,8 @@ def _heat_stop(prefix, name, lat, lon) -> dict | None:
 
 @router.get("/packets/heatmap")
 def packet_heatmap():
-    """Link usage over the last 24 hours, aggregated for the heat-map overlay.
+    """Link usage over the full packet retention window, aggregated for the
+    heat-map overlay.
 
     One segment per pair of *consecutively placeable* stops along each packet's
     path (sender -> hops -> observer), counted once per traversal. The same
@@ -490,7 +503,9 @@ def packet_heatmap():
 
     Segments are undirected -- a link's load is the traffic over it, whichever
     way it went -- and sorted lightest first, so a client drawing them in order
-    puts the heavy ones on top.
+    puts the heavy ones on top. The ascending order is load-bearing beyond
+    draw order: the client's rank scale reads a segment's position in this
+    list as its rank, which is what makes that scale free to compute.
     """
     now = time.monotonic()
     if _heatmap_cache["data"] is not None and now - _heatmap_cache["at"] < _HEATMAP_TTL_S:
@@ -501,7 +516,8 @@ def packet_heatmap():
     counts: dict[tuple[str, str], int] = {}
     nodes: dict[str, dict] = {}
     counted = 0
-    for p in db.packets_with_paths(since, _HEATMAP_MAX_PACKETS):
+    rows = db.packets_with_paths(since, _HEATMAP_MAX_PACKETS)
+    for p in rows:
         stops = [_heat_stop(p["sender"], p["sender_name"],
                             p["sender_lat"], p["sender_lon"])]
         for h in (p["path"] or "").split(","):
@@ -536,6 +552,13 @@ def packet_heatmap():
     data = {
         "window_h": _HEATMAP_WINDOW_H,
         "packets": counted,
+        # An exactly-full result means the query stopped at the cap, so older
+        # packets in the window went uncounted. The client is told, so it can
+        # say so next to the toggle instead of presenting a truncated week as
+        # the whole one. (A result of exactly the cap without truncation is
+        # possible but indistinguishable, and warning one time too often is
+        # the honest side to err on.)
+        "capped": len(rows) >= _HEATMAP_MAX_PACKETS,
         "max": segments[-1]["n"] if segments else 0,
         "segments": segments,
     }

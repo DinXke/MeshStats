@@ -60,8 +60,9 @@
       "live.motion_title": "Toon elk pakket als een stipje dat van de afzender via elke hop naar de waarnemende node reist. Een stuk pad dat we niet kennen, staat gestippeld.",
       "live.motion_reduced": "Uitgeschakeld: je systeem vraagt om minder beweging. Pakketten flitsen in plaats daarvan op.",
       "live.heat": "Drukte op paden tonen",
-      "live.heat_title": "Tekent elke verbinding waarover de afgelopen 24 uur pakketten reisden; hoe vaker bereisd, hoe dikker de lijn. Alleen stukken tussen twee eenduidig geplaatste nodes tellen mee.",
-      "live.heat_tip": "{a} ↔ {b} · {n}× bereisd in 24 u",
+      "live.heat_title": "Tekent elke verbinding waarover in de hele bewaarde periode pakketten reisden; hoe drukker bereisd ten opzichte van de rest, hoe dikker de lijn. Alleen stukken tussen twee eenduidig geplaatste nodes tellen mee.",
+      "live.heat_tip": "{a} ↔ {b} · {n}× bereisd in {days} d",
+      "live.heat_capped": "Let op: er waren meer pakketten dan de kaart in één keer aankan; de oudste tellen nu niet mee.",
 
       // --- kolomkoppen van de pakkettenlijst ---
       "col.sender": "Afzender",
@@ -316,8 +317,9 @@
       "live.motion_title": "Show every packet as a dot travelling from the sender via each hop to the observing node. A stretch of path we do not know is dashed.",
       "live.motion_reduced": "Off: your system asks for reduced motion. Packets flash instead.",
       "live.heat": "Show path usage",
-      "live.heat_title": "Draws every link packets travelled over the past 24 hours; the more often travelled, the thicker the line. Only stretches between two unambiguously placed nodes count.",
-      "live.heat_tip": "{a} ↔ {b} · travelled {n}× in 24 h",
+      "live.heat_title": "Draws every link packets travelled over the whole retained period; the busier a link compared to the rest, the thicker the line. Only stretches between two unambiguously placed nodes count.",
+      "live.heat_tip": "{a} ↔ {b} · travelled {n}× in {days} d",
+      "live.heat_capped": "Note: there were more packets than the map can take in at once; the oldest are left out for now.",
 
       "col.sender": "Sender",
       "col.time": "Time",
