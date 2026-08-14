@@ -1,5 +1,5 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index c93ba1a..37b2688 100644
+index c93ba1a..db34ca4 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,6 +1,10 @@
@@ -13,20 +13,138 @@ index c93ba1a..37b2688 100644
  /* ------------------------------ Config -------------------------------- */
  
  #ifndef LORA_FREQ
-@@ -1215,6 +1219,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
+@@ -467,6 +471,12 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+   mesh::Utils::printHex(Serial, raw, len);
+   Serial.println();
+ #endif
++
++#ifdef MESHSTATS_NET
++  // Hand the bytes over exactly as they came off the air; MeshStatsNet only
++  // copies them into a queue here, so the receive path is never held up.
++  meshstats_on_raw_packet(snr, rssi, raw, len);
++#endif
+ }
+ 
+ void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
+@@ -1140,6 +1150,83 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
+   }
+ }
+ 
++size_t MyMesh::fillStatsJson(char *out, size_t max_len) {
++  if (out == NULL || max_len < 256) return 0;
++
++  char pub_hex[13];
++  mesh::Utils::toHex(pub_hex, self_id.pub_key, 6);   // 6 bytes -> 12 hex chars
++
++  /* The receiving site wants to know which custom build produced this payload,
++   * independently of the MeshCore version underneath it. */
++#ifdef MESHSTATS_NET
++  const char *ms_ver = MESHSTATS_VERSION;
++#else
++  const char *ms_ver = "";
++#endif
++
++  uint32_t uptime_secs = (uint32_t)(uptime_millis / 1000);
++  uint32_t tx_air = getTotalAirTime() / 1000;
++  uint32_t rx_air = getReceiveAirTime() / 1000;
++
++  int n = snprintf(out, max_len,
++    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\","
++    "\"fw\":\"" FIRMWARE_VERSION "\",\"fw_meshstats\":\"%s\"},"
++    "\"metrics\":{"
++      "\"online\":true,"
++      "\"bat\":%.3f,"
++      "\"uptime\":%.5f,"
++      "\"noise_floor\":%d,"
++      "\"last_rssi\":%d,"
++      "\"last_snr\":%.2f,"
++      "\"airtime\":%.1f,"
++      "\"rx_airtime\":%.1f,"
++      "\"nb_recv\":%u,"
++      "\"nb_sent\":%u,"
++      "\"sent_flood\":%u,"
++      "\"sent_direct\":%u,"
++      "\"recv_flood\":%u,"
++      "\"recv_direct\":%u,"
++      "\"recv_errors\":%u,"
++      "\"direct_dups\":%u,"
++      "\"flood_dups\":%u,"
++      "\"tx_queue_len\":%u,"
++      "\"err_events\":%u,"
++      "\"freq\":%.4f,"
++      "\"sf\":%u,"
++      "\"cr\":%u,"
++      "\"tx\":%d"
++    "}}",
++    pub_hex, _prefs.node_name, ms_ver,
++    board.getBattMilliVolts() / 1000.0f,
++    uptime_secs / 86400.0,
++    (int)_radio->getNoiseFloor(),
++    (int)radio_driver.getLastRSSI(),
++    radio_driver.getLastSNR(),
++    tx_air / 60.0f,
++    rx_air / 60.0f,
++    (unsigned)radio_driver.getPacketsRecv(),
++    (unsigned)radio_driver.getPacketsSent(),
++    (unsigned)getNumSentFlood(),
++    (unsigned)getNumSentDirect(),
++    (unsigned)getNumRecvFlood(),
++    (unsigned)getNumRecvDirect(),
++    (unsigned)radio_driver.getPacketsRecvErrors(),
++    (unsigned)((SimpleMeshTables *)getTables())->getNumDirectDups(),
++    (unsigned)((SimpleMeshTables *)getTables())->getNumFloodDups(),
++    (unsigned)_mgr->getOutboundTotal(),
++    (unsigned)_err_flags,
++    _prefs.freq, (unsigned)_prefs.sf, (unsigned)_prefs.cr, (int)_prefs.tx_power_dbm);
++
++  return (n > 0 && (size_t)n < max_len) ? (size_t)n : 0;
++}
++
++bool MyMesh::getClockHour(uint8_t *hour_out) {
++  uint32_t now = getRTCClock()->getCurrentTime();
++  if (now < 1700000000UL) return false;   // never set, or counting from zero
++  *hour_out = DateTime(now).hour();
++  return true;
++}
++
+ void MyMesh::formatStatsReply(char *reply) {
+   StatsFormatHelper::formatCoreStats(reply, board, *_ms, _err_flags, _mgr);
+ }
+@@ -1215,6 +1302,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
      command += 3;
    }
  
 +#ifdef MESHSTATS_NET
-+  // De wifi-commando's horen ook via de mesh te werken. Anders zou één
-+  // verkeerde netwerkinstelling deze repeater onbereikbaar maken, en die hangt
-+  // op een dak.
++  // The wifi commands have to work over the mesh as well. Otherwise a single
++  // wrong network setting would make this repeater unreachable, and it lives
++  // on a roof.
 +  if (msnet_handle_command(command, reply)) return;
 +#endif
 +
    // handle ACL related commands
    if (memcmp(command, "setperm ", 8) == 0) {   // format:  setperm {pubkey-hex} {permissions-int8}
      char* hex = &command[8];
+diff --git a/examples/simple_repeater/MyMesh.h b/examples/simple_repeater/MyMesh.h
+index 2f923c8..36a7279 100644
+--- a/examples/simple_repeater/MyMesh.h
++++ b/examples/simple_repeater/MyMesh.h
+@@ -229,6 +229,16 @@ public:
+   void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
+   void loop();
+ 
++  /* Own statistics as JSON, in the same shape the companion node ships to the
++   * MeshStats site, so both node types land in one schema. Returns 0 when the
++   * buffer was too small. */
++  size_t fillStatsJson(char* out, size_t max_len);
++
++  /* Hour of day (UTC) from the RTC, or false when the clock was never set or
++   * reads implausibly. Callers must treat time as a bonus: nothing in this
++   * firmware may stop working because the clock is wrong. */
++  bool getClockHour(uint8_t* hour_out);
++
+ #if defined(WITH_BRIDGE)
+   void setBridgeState(bool enable) override {
+     if (enable == bridge.isRunning()) return;
 diff --git a/examples/simple_repeater/main.cpp b/examples/simple_repeater/main.cpp
 index a714db6..ed44f54 100644
 --- a/examples/simple_repeater/main.cpp

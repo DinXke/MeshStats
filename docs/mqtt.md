@@ -35,15 +35,39 @@ the mesh identity was available.
 
 Both are subscribed at **QoS 0**.
 
-**The `+` wildcard segment is not parsed for the stats topic.** Repeater identity
-comes exclusively from `repeater.pubkey_prefix` inside the JSON body. You can
-therefore publish stats on any topic that matches the filter and it will still be
-attributed correctly — and, less comfortably, a node can claim to be a different
-repeater by putting a different prefix in the payload. See
-[`security.md`](security.md#mqtt-has-no-application-level-authentication).
+### Who is speaking, and who they are speaking about
 
-The `rx` topic *is* parsed for the node prefix, because a raw frame carries no
-identity of the receiver.
+Both topics are parsed for the `+` segment. It answers a different question from
+the payload, and the two are kept apart on purpose:
+
+| | Answers | Comes from |
+|---|---|---|
+| **Publisher** | which node sent this message | the topic, `meshcore/<node>/…` |
+| **Subject** | which repeater the numbers describe | `repeater.pubkey_prefix` in the payload |
+
+Usually the same node reporting on itself. They are **allowed to differ**,
+because a node also forwards statistics for repeaters it monitors — the topic
+stays its own, while the payload names the repeater it is relaying. Blocking a
+mismatch would break that.
+
+So, for `stats`:
+
+- No `repeater.pubkey_prefix` in the payload → the node is talking about itself
+  and the topic supplies the subject.
+- Both present → the payload picks the subject, and the topic prefix is stored on
+  the repeater row as `source_prefix` / `source_seen`, shown in the **Bron**
+  column on `/admin` (*zichzelf*, *via `<prefix>`*, or *HTTP-API*). A relay is
+  also logged at INFO.
+- A topic with no node segment at all is refused.
+
+For `rx` the topic is the only identity there is: a raw frame carries nothing
+about who received it.
+
+What this does *not* fix: with one shared broker account, any client holding the
+credentials can publish under any node's topic. Recording the route makes
+impersonation visible, not impossible — see
+[per-node accounts](#per-node-accounts-and-acls) below and
+[`security.md`](security.md#mqtt-has-no-application-level-authentication).
 
 ## Payload: `stats`
 
@@ -86,7 +110,7 @@ paths share one server-side handler.
 
 | Key | Type | Unit | Source |
 |---|---|---|---|
-| `repeater.pubkey_prefix` | string | — | first 6 bytes of the public key, hex |
+| `repeater.pubkey_prefix` | string | — | first 6 bytes of the public key, hex. Optional: left out, the server reads it from the topic |
 | `repeater.name` | string | — | `_prefs.node_name` |
 | `online` | bool | — | always `true`; it is a liveness marker |
 | `bat` | float | V | `board.getBattMilliVolts() / 1000` |
@@ -127,7 +151,10 @@ Each neighbour also becomes its own time series under the metric key
 
 `db.ingest()`:
 
-1. Look up or create the repeater by `pubkey_prefix`. **Unknown repeaters are
+0. Determine the subject: `repeater.pubkey_prefix` if present, otherwise the node
+   segment of the topic. The node segment is recorded separately as the
+   publisher.
+1. Look up or create the repeater by that prefix. **Unknown repeaters are
    created automatically and are public by default** — hide them in `/admin`.
 2. Coerce each metric value: `bool` → `1.0`/`0.0`, numeric → `float`, anything
    else → stored as a string in `latest.value_str` (truncated to 255 chars) with
@@ -136,6 +163,9 @@ Each neighbour also becomes its own time series under the metric key
 4. Write a `samples` row **only if** the value changed, or the newest stored
    sample is older than `heartbeat_min` minutes (default 5), or `force` is set.
 5. Upsert neighbour rows and their per-link SNR series.
+6. Record which node delivered it (`db.record_source`). The HTTP ingest path
+   writes `api` there, so a repeater that moved to HTTP does not keep showing a
+   stale node prefix.
 
 Metric keys are stored verbatim — no normalisation, no allowlist. A key the
 server does not recognise renders under the "Overig" / other section with the
@@ -260,6 +290,7 @@ protocol mqtt
 
 allow_anonymous false
 password_file /mosquitto/config/passwd
+acl_file /mosquitto/config/acl
 
 persistence true
 persistence_location /mosquitto/data/
@@ -271,13 +302,15 @@ message_size_limit 8192
 max_keepalive 300
 ```
 
-Two settings deserve attention:
+Three settings deserve attention:
 
 - **`message_size_limit 8192`.** A stats payload is well under 1 kB, but a raw
   `rx` frame can approach 600 bytes and future additions could grow. 8 kB leaves
   room. If you raise the node's `STATS_RX_MAX_LEN` or add metrics, check this.
-- **`allow_anonymous false`.** This is the only authentication anywhere on the
-  MQTT path. Do not turn it off.
+- **`allow_anonymous false`.** Without it there is no authentication at all on
+  the MQTT path. Do not turn it off.
+- **`acl_file`.** Decides who may publish where. **The broker will not start if
+  the file is missing**, so run `init-passwd.sh` before `docker compose up`.
 
 ### Creating the broker user
 
@@ -288,36 +321,93 @@ cp .env.example .env
 ```
 
 The script runs `mosquitto_passwd -c -b` inside the `eclipse-mosquitto:2` image
-against `mosquitto/passwd`.
+against `mosquitto/passwd`, and writes `mosquitto/acl` with the server account.
+Both files end up owned by uid 1883 with mode `0400`, because the broker runs as
+that user and refuses to start if it cannot read them.
 
-Two caveats:
+Three caveats:
 
-- `-c` **truncates** the file. Running it again wipes any other users you added.
-  To add a second user, drop the `-c` and run `mosquitto_passwd -b` yourself.
+- `-c` **truncates** `passwd`, and the ACL is rewritten outright. Running the
+  script again wipes every node account added with `add-node-user.sh`.
 - `-b` puts the password on the command line, so it lands in your shell history
   and in the process list while it runs. On a shared machine, use interactive
   `mosquitto_passwd` instead.
+- `mosquitto/acl` is gitignored (it lists account names). `acl.example` is the
+  documented format.
 
 Use the same username and password on the node's management page.
 
-### Per-topic ACLs (recommended, not shipped)
+### Per-node accounts and ACLs
 
-The shipped config gives every authenticated client full access to every topic.
-Any node can publish stats claiming to be any repeater. If that matters, add an
-ACL file:
+The shared account is the reason the topic cannot be trusted: every node signs in
+as the same user, so the broker has no way to tell them apart and any of them can
+publish under any prefix. Recording the publisher (above) makes that visible;
+only a per-node account makes it impossible.
+
+```bash
+./mosquitto/add-node-user.sh e3d3f4d7ed01
+```
+
+The script:
+
+1. Refuses anything that is not 6–32 lowercase hex characters — the same shape as
+   the topic segment.
+2. Adds `node-e3d3f4d7ed01` to `mosquitto/passwd` (without `-c`, so existing
+   accounts survive), generating a random password unless you pass one.
+3. Appends an ACL block restricting that account to its own two topics.
+4. Restores ownership and permissions on both files.
+5. Prints the password **once** — it is not stored anywhere else.
 
 ```
-# /mosquitto/config/acl
+user node-e3d3f4d7ed01
+topic write meshcore/e3d3f4d7ed01/stats
+topic write meshcore/e3d3f4d7ed01/rx
+```
+
+`stats` and `rx` are listed separately rather than `meshcore/<prefix>/#`, so a
+node cannot create topics the server may later use for something else.
+
+Put the printed credentials on the node's management page and restart the broker:
+
+```bash
+docker compose restart mosquitto
+```
+
+#### Finishing the migration
+
+`init-passwd.sh` leaves the shared account with `topic write meshcore/#` so
+nothing breaks while nodes are still on it. That line is also what keeps
+impersonation possible. Once every node has its own account:
+
+```
 user meshstats
 topic read meshcore/#
-
-user node-e3d3f4d7ed01
-topic write meshcore/e3d3f4d7ed01/#
+# topic write meshcore/#   <- delete this line
 ```
 
-and reference it with `acl_file /mosquitto/config/acl`. Give each node its own
-broker account. This is untested in this repository — verify it against your
-Mosquitto version before relying on it.
+Restart the broker. From then on the broker enforces that a node can only publish
+under its own prefix, and the **Bron** column in `/admin` reflects reality rather
+than a claim.
+
+Two things to know about Mosquitto ACL files:
+
+- **Topic lines before the first `user` line apply to every client**, anonymous
+  ones included. A single stray global line makes the rest of the file
+  meaningless. The generated file starts with a `user` block for that reason.
+- A user with no matching block gets **no** access. Adding an account to `passwd`
+  without an ACL block leaves it unable to publish anything.
+
+Verify with the account you just created:
+
+```bash
+# allowed
+mosquitto_pub -h <broker> -u node-e3d3f4d7ed01 -P <pass> \
+  -t meshcore/e3d3f4d7ed01/stats -m '{"metrics":{"online":true}}'
+
+# refused by the broker
+mosquitto_pub -h <broker> -u node-e3d3f4d7ed01 -P <pass> \
+  -t meshcore/aabbccddeeff/stats -m '{"metrics":{"online":true}}'
+```
 
 ## Troubleshooting
 
@@ -328,6 +418,9 @@ Mosquitto version before relying on it.
 | Node page says "not connected" | Broker credentials; the node retries every 15 s |
 | Messages counted, no repeater appears | Errors counter and `last_error` in `/admin`; usually a missing `pubkey_prefix` |
 | Repeater appears with a wrong name | Name comes from the payload, not the topic — check `repeater.name` on the node |
+| A repeater shows "via `<prefix>`" in /admin | Another node published its stats. Expected for relayed repeaters; unexpected otherwise |
+| Node connects but nothing is published | ACL: the account has no `topic write` block, or the topic prefix does not match it. Check the broker log |
+| Broker refuses to start | `mosquitto/acl` is missing or unreadable — run `init-passwd.sh` |
 | Graph has gaps | Expected with QoS 0. Check WiFi stability, and `heartbeat_min` |
 | Two servers keep disconnecting | Both use client id `meshstats-ingest`. Run one. |
 

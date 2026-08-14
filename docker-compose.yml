@@ -11,6 +11,9 @@ services:
       MCS_SITE_NAME: "${MCS_SITE_NAME:-MeshCore Repeater Stats}"
       MCS_RETENTION_DAYS: "${MCS_RETENTION_DAYS:-180}"
       MCS_HEARTBEAT_MIN: "${MCS_HEARTBEAT_MIN:-5}"
+      # Beveiliging: bodylimiet en het aantal proxies vóór de app (zie .env.example)
+      MCS_MAX_BODY_BYTES: "${MCS_MAX_BODY_BYTES:-2000000}"
+      MCS_TRUSTED_PROXY_HOPS: "${MCS_TRUSTED_PROXY_HOPS:-1}"
       # MQTT: nodes publiceren hun statistieken naar de broker hieronder
       MCS_MQTT_HOST: "${MCS_MQTT_HOST:-mosquitto}"
       MCS_MQTT_PORT: "${MCS_MQTT_PORT:-1883}"
@@ -31,6 +34,7 @@ services:
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
 

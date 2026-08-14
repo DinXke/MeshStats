@@ -38,9 +38,11 @@ The node holds one MQTT connection open and publishes a JSON snapshot of itself
 every `interval` seconds (default 300). No Home Assistant, no HTTP client, no
 TLS stack on the node.
 
-The server subscribes with a wildcard (`meshcore/+/stats`) and takes the
-repeater's identity from the JSON body, not from the topic. See
-[`mqtt.md`](mqtt.md).
+The server subscribes with a wildcard (`meshcore/+/stats`). The topic segment
+names the node that **published** the message; the JSON body names the repeater
+the message is **about**. Usually the same node reporting on itself, but a node
+may also relay statistics for repeaters it monitors, so the publisher is stored
+alongside the subject rather than assumed equal to it. See [`mqtt.md`](mqtt.md).
 
 ### Path B — Home Assistant to HTTP to site
 

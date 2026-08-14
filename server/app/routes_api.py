@@ -1,7 +1,7 @@
 """JSON API: ingest from Home Assistant plus the public data endpoints."""
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
-from . import auth, db, metrics
+from . import auth, config, db, metrics
 
 router = APIRouter(prefix="/api/v1")
 
@@ -15,12 +15,22 @@ def require_token(authorization: str | None):
         raise HTTPException(403, "Ongeldig of ingetrokken token")
 
 
-def limit_body(request: Request, max_bytes: int = 2_000_000):
-    try:
-        if int(request.headers.get("content-length") or 0) > max_bytes:
-            raise HTTPException(413, "Payload te groot")
-    except ValueError:
-        raise HTTPException(411, "Content-Length vereist")
+def limit_body(request: Request, max_bytes: int = config.MAX_BODY_BYTES):
+    """Reject an oversized body on the strength of its declared length.
+
+    Only a courtesy fast path: a chunked request declares no length at all, so
+    the limit that actually holds is BodySizeLimitMiddleware, which counts the
+    bytes as they arrive. Do not reintroduce a Content-Length requirement here --
+    the header is optional, and demanding it broke nothing an attacker cares
+    about while rejecting legitimate streaming clients.
+    """
+    declared = request.headers.get("content-length")
+    if declared:
+        try:
+            if int(declared) > max_bytes:
+                raise HTTPException(413, "Payload te groot")
+        except ValueError:
+            raise HTTPException(400, "Ongeldige Content-Length")
 
 
 @router.get("/ping")
@@ -90,6 +100,9 @@ async def ingest(request: Request, authorization: str | None = Header(default=No
     row = db.get_or_create_repeater(prefix, rep.get("name"))
     ts = body.get("ts") or db.utcnow()
     db.ingest(row["id"], ts, mets, body.get("neighbors"), force=bool(body.get("force")))
+    # Same bookkeeping as the MQTT path, so the admin page never shows a stale
+    # node prefix for a repeater that has since switched to HTTP ingest.
+    db.record_source(row["id"], "api")
 
     global _ingest_count
     _ingest_count += 1

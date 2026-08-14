@@ -103,6 +103,25 @@ CREATE INDEX IF NOT EXISTS idx_packets_ts ON packets(ts);
 CREATE INDEX IF NOT EXISTS idx_packets_dup ON packets(observer, phash, ts);
 """
 
+# Additive column migrations. CREATE TABLE IF NOT EXISTS covers new tables, but
+# SQLite has no ADD COLUMN IF NOT EXISTS, so existing tables need the explicit
+# check below. Dropping a live database is not an option here.
+COLUMN_MIGRATIONS = [
+    # Which node published this repeater's last statistics, and when. A node
+    # relaying figures about a repeater it monitors is legitimate, so the two
+    # identities differ on purpose -- see mqtt_ingest for the reasoning.
+    ("repeaters", "source_prefix", "TEXT"),
+    ("repeaters", "source_seen", "TEXT"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, decl in COLUMN_MIGRATIONS:
+        names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in names:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 # A flooded packet is repeated by every node in range, so the same observer
 # hears the same payload several times within seconds. Collapsing those keeps
 # the table and the live map readable without losing distinct traffic.
@@ -121,6 +140,7 @@ def get_conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.executescript(SCHEMA)
+        _migrate(_conn)
         _conn.commit()
     return _conn
 
@@ -399,6 +419,18 @@ def get_or_create_repeater(pubkey_prefix: str, name: str | None) -> sqlite3.Row:
         (slug, pubkey_prefix, name or pubkey_prefix, utcnow()),
     )
     return qone("SELECT * FROM repeaters WHERE pubkey_prefix=?", (pubkey_prefix,))
+
+
+def record_source(repeater_id: int, source: str) -> None:
+    """Note who delivered this repeater's statistics.
+
+    Kept because the deliverer and the subject need not be the same node: a node
+    may report on repeaters it monitors. Recording the route makes that visible
+    instead of invisible, so a repeater suddenly arriving via an unexpected node
+    is something the admin page can show rather than something nobody notices.
+    """
+    execute("UPDATE repeaters SET source_prefix=?, source_seen=? WHERE id=?",
+            (str(source or "")[:32] or None, utcnow(), repeater_id))
 
 
 def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,

@@ -6,9 +6,15 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, db, mqtt_ingest, routes_admin, routes_api, routes_public
+from . import auth, db, limits, mqtt_ingest, routes_admin, routes_api, routes_public
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
+
+# Registered before security_headers, which (add_middleware inserts at the
+# front) leaves this one just inside it: oversized bodies are refused before any
+# route, form parser or JSON decoder sees them, and the refusal still picks up
+# the security headers on its way out.
+app.add_middleware(limits.BodySizeLimitMiddleware)
 
 
 @app.middleware("http")

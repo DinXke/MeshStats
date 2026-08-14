@@ -107,6 +107,9 @@ you added under `/opt/mc-repeater-stats/server` is removed.
 | `MCS_SITE_NAME` | `MeshCore Repeater Stats` | Title in the header |
 | `MCS_RETENTION_DAYS` | `180` | Sample retention. Overridden by the DB setting if changed in `/admin`. |
 | `MCS_HEARTBEAT_MIN` | `5` | Minutes; force a graph point even when the value has not changed. Also overridable in `/admin`. |
+| `MCS_PACKET_RETENTION_DAYS` | `7` | Raw packet retention; they arrive far faster than samples. |
+| `MCS_MAX_BODY_BYTES` | `2000000` | Largest request body accepted, on every route and method. Enforced while reading, so a chunked request cannot skip it. |
+| `MCS_TRUSTED_PROXY_HOPS` | `1` | How many proxies sit in front of the app. The login throttle counts this many `X-Forwarded-For` entries in from the right to find the client address. Raise it only when you really add a hop — see [`security.md`](security.md#which-address-gets-counted). |
 
 ### MQTT
 
@@ -192,11 +195,17 @@ The server sets `Content-Security-Policy`, `X-Frame-Options: DENY`,
 itself. It does **not** set `Strict-Transport-Security`; add it at the proxy if
 you terminate TLS there.
 
-If the site is public, put a second lock on `/admin*` — Cloudflare Access, an
-IP allowlist, or a rate limit. There is **no rate limiting in the application**;
-the only brute-force defence on `/admin/login` is a one-second sleep on failure.
-The rest of the site and `/api/v1/*` can stay open. See
-[`security.md`](security.md).
+`POST /admin/login` is throttled in the application, per client address and per
+username, with an escalating lockout — see
+[`security.md`](security.md#rate-limiting). That state lives in the uvicorn
+process and is forgotten on restart, so if the site is public a second lock on
+`/admin*` is still worth having: Cloudflare Access, an IP allowlist, or a rate
+limit at the proxy. The rest of the site and `/api/v1/*` can stay open.
+
+The throttle needs to know which address is the client's. Set
+`MCS_TRUSTED_PROXY_HOPS` to the number of proxies you actually put in front of
+the app (default `1`); the reasoning is in
+[`security.md`](security.md#which-address-gets-counted).
 
 The MQTT port does not need to be exposed to the internet at all. If every node
 is on your own network, drop the `ports:` mapping from the `mosquitto` service

@@ -15,7 +15,7 @@
   <h2>Repeaters</h2>
   <div class="card">
   <table>
-    <thead><tr><th>Naam</th><th>Prefix</th><th>Slug</th><th>Publiek</th><th>Laatst gezien</th><th></th></tr></thead>
+    <thead><tr><th>Naam</th><th>Prefix</th><th>Slug</th><th>Bron</th><th>Publiek</th><th>Laatst gezien</th><th></th></tr></thead>
     <tbody>
     {% for rep in repeaters %}
       <tr>
@@ -28,6 +28,16 @@
         </td>
         <td class="mono">{{ rep.pubkey_prefix }}</td>
         <td class="mono"><a href="/r/{{ rep.slug }}">{{ rep.slug }}</a> &middot; <a href="/admin/repeaters/{{ rep.id }}/settings">&#9881;</a></td>
+        {# Via welke node de laatste statistieken binnenkwamen. Wijkt af van de
+           prefix zodra een node over een andere repeater rapporteert -- dat mag,
+           maar een onbekende bron hoort zichtbaar te zijn. #}
+        <td class="mono">
+          {%- if not rep.source_prefix %}<span class="muted">—</span>
+          {%- elif rep.source_prefix == 'api' %}<span class="muted">HTTP-API</span>
+          {%- elif rep.source_prefix == rep.pubkey_prefix %}<span class="muted">zichzelf</span>
+          {%- else %}<span title="Doorgestuurd door een andere node">via {{ rep.source_prefix }}</span>
+          {%- endif %}
+        </td>
         <td>
           <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="inline">
             <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -45,7 +55,7 @@
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="6" class="muted">Nog geen repeaters — die verschijnen automatisch zodra Home Assistant data stuurt.</td></tr>
+      <tr><td colspan="7" class="muted">Nog geen repeaters — die verschijnen automatisch zodra Home Assistant data stuurt.</td></tr>
     {% endfor %}
     </tbody>
   </table>

@@ -1,0 +1,25 @@
+# Voorbeeld van mosquitto/acl — het echte bestand wordt gegenereerd door
+# init-passwd.sh en aangevuld door add-node-user.sh, en staat in .gitignore
+# omdat er accountnamen in staan.
+#
+# Waarom dit bestaat: zonder ACL mag elke client die de brokergegevens kent naar
+# elk topic schrijven. Het topic zegt dan wel welke node publiceert, maar niets
+# houdt een andere client tegen om onder dat topic te publiceren. Pas met één
+# account per node én een ACL die dat account tot zijn eigen prefix beperkt,
+# wordt het topic iets dat de broker afdwingt in plaats van iets dat we aannemen.
+#
+# LET OP: topic-regels vóór de eerste 'user'-regel gelden voor ALLE clients,
+# inclusief anonieme. Zet hier dus nooit een globale regel neer — begin meteen
+# met een 'user'-blok.
+
+# --- de site zelf: leest alles, schrijft niets -------------------------------
+user meshstats
+topic read meshcore/#
+
+# --- één blok per node -------------------------------------------------------
+# Alleen schrijven onder de eigen pubkey-prefix. 'stats' en 'rx' apart in plaats
+# van meshcore/<prefix>/# , zodat een node geen topics kan aanmaken die de server
+# later voor iets anders gebruikt.
+user node-e3d3f4d7ed01
+topic write meshcore/e3d3f4d7ed01/stats
+topic write meshcore/e3d3f4d7ed01/rx

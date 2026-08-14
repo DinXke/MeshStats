@@ -22,8 +22,30 @@ of message arrive, on two topic patterns:
 it uppercase; everything downstream keys on lowercase hex, so it is normalised
 here.
 
-Runs as a background task of the web application; without a broker configured it
-does nothing at all.
+Identity: topic versus payload
+------------------------------
+The topic names the node that **published** the message. The payload names the
+repeater the message is **about**. Those are usually the same node reporting on
+itself, but they are allowed to differ, because a node also forwards statistics
+for other repeaters it monitors -- rejecting a mismatch would break that the day
+it ships.
+
+So the rule here is: never take the publisher's identity from the payload, and
+never silently fold the two together.
+
+- No ``repeater.pubkey_prefix`` in the payload means the node is talking about
+  itself, and the topic supplies the subject.
+- When both are present the payload picks the subject, and the topic prefix is
+  stored on the repeater row as ``source_prefix``. A repeater that starts
+  arriving through an unfamiliar node is then a visible fact on the admin page
+  rather than an invisible one.
+
+This bounds the damage but does not end it: with one shared broker account, any
+client holding those credentials can still publish under any node's topic, so
+the topic is only as trustworthy as the account behind it. The fix belongs on
+the broker -- one MQTT user per node, each restricted by ACL to its own topic
+prefix, which turns the topic into something the broker enforces. See
+``mosquitto/acl`` and ``docs/mqtt.md``.
 """
 import json
 import logging
@@ -63,28 +85,39 @@ def status() -> dict:
     }
 
 
-def _handle_payload(raw: bytes) -> None:
+def _topic_node(topic: str) -> str:
+    """Publishing node from ``meshcore/<node_hex>/<kind>``."""
+    parts = topic.split("/")
+    node = parts[1].lower().strip() if len(parts) >= 3 else ""
+    if not node:
+        raise ValueError(f"no node prefix in topic {topic!r}")
+    return node
+
+
+def _handle_payload(topic: str, raw: bytes) -> None:
+    publisher = _topic_node(topic)
     body = json.loads(raw.decode("utf-8"))
     rep = body.get("repeater") or {}
-    prefix = str(rep.get("pubkey_prefix", "")).lower().strip()
+    # Subject defaults to the publisher: a node reporting on itself does not
+    # have to repeat its own prefix in the payload.
+    subject = str(rep.get("pubkey_prefix", "")).lower().strip() or publisher
     metrics = body.get("metrics")
-    if not prefix or not isinstance(metrics, dict):
-        raise ValueError("repeater.pubkey_prefix or metrics missing")
+    if not isinstance(metrics, dict):
+        raise ValueError("metrics missing")
 
-    row = db.get_or_create_repeater(prefix, rep.get("name"))
+    row = db.get_or_create_repeater(subject, rep.get("name"))
     ts = body.get("ts") or db.utcnow()
     db.ingest(row["id"], ts, metrics, body.get("neighbors"), force=bool(body.get("force")))
+    db.record_source(row["id"], publisher)
+    if subject != publisher:
+        log.info("stats for %s relayed by node %s", subject, publisher)
     _state["messages"] += 1
     _state["last_msg"] = ts
 
 
 def _handle_rx(topic: str, raw: bytes) -> None:
     """Decode one overheard LoRa frame and store the reception."""
-    parts = topic.split("/")
-    observer = parts[1].lower().strip() if len(parts) >= 3 else ""
-    if not observer:
-        raise ValueError(f"no node prefix in topic {topic!r}")
-
+    observer = _topic_node(topic)
     body = json.loads(raw.decode("utf-8"))
     hex_frame = str(body.get("raw", "")).strip()
     if not hex_frame:
@@ -127,7 +160,7 @@ def _run() -> None:
             if msg.topic.rsplit("/", 1)[-1] == "rx":
                 _handle_rx(msg.topic, msg.payload)
             else:
-                _handle_payload(msg.payload)
+                _handle_payload(msg.topic, msg.payload)
         except Exception as err:  # noqa: BLE001 - one bad message must break nothing
             _state["errors"] += 1
             _state["last_error"] = f"{type(err).__name__}: {err}"

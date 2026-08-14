@@ -1,10 +1,8 @@
 """Beheerders-backend: login, repeaterbeheer, API-tokens, wachtwoord."""
-import time
-
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import auth, config, db, metrics, mqtt_ingest
+from . import auth, config, db, metrics, mqtt_ingest, ratelimit
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -23,7 +21,7 @@ def require_login(request: Request) -> str:
 
 def check_csrf(request: Request, csrf: str):
     cookie = request.cookies.get(auth.SESSION_COOKIE, "")
-    if not cookie or csrf != auth.csrf_token(cookie):
+    if not cookie or not auth.eq(csrf, auth.csrf_token(cookie)):
         raise HTTPException(403, "CSRF-controle mislukt")
 
 
@@ -31,26 +29,75 @@ def _secure(request: Request) -> bool:
     return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
 
 
+def _login_page(request: Request, nonce: str, error: str | None,
+                error_key: str | None = None, error_vars: dict | None = None,
+                status: int = 200, retry_after: int = 0):
+    """Render the login form and (re)issue the nonce its CSRF token hangs off.
+
+    The Dutch wording is rendered server-side so the page reads correctly without
+    JavaScript; the key and its variables let static/i18n.js swap in English.
+    """
+    resp = templates.TemplateResponse(request, "admin/login.html", {
+        "site_name": config.SITE_NAME, "error": error,
+        "error_key": error_key, "error_vars": error_vars or {},
+        "csrf": auth.csrf_token(nonce),
+    }, status_code=status)
+    resp.set_cookie(auth.LOGIN_COOKIE, nonce, max_age=auth.LOGIN_TTL, httponly=True,
+                    samesite="lax", secure=_secure(request))
+    if retry_after:
+        resp.headers["Retry-After"] = str(retry_after)
+    return resp
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse(request, "admin/login.html", {
-        "site_name": config.SITE_NAME, "error": None,
-    })
+    # A fresh nonce per view: the token is worthless to an attacker who cannot
+    # also read the cookie it is derived from.
+    return _login_page(request, auth.new_login_nonce(), None)
 
 
 @router.post("/login")
-def login(request: Request, username: str = Form(...), password: str = Form(...)):
+def login(request: Request, username: str = Form(...), password: str = Form(...),
+          csrf: str = Form(default="")):
+    nonce = request.cookies.get(auth.LOGIN_COOKIE, "")
+    if not nonce or not auth.eq(csrf, auth.csrf_token(nonce)):
+        # Also the natural landing spot for a form left open past LOGIN_TTL,
+        # hence a message that tells the visitor to simply try again.
+        return _login_page(request, auth.new_login_nonce(),
+                           "Sessie verlopen — probeer opnieuw.", "login.expired",
+                           status=403)
+
+    ip = ratelimit.client_ip(request)
+    wait = ratelimit.retry_after(ip, username)
+    if wait:
+        return _login_page(request, nonce,
+                           f"Te veel mislukte pogingen. Probeer over {wait} s opnieuw.",
+                           "login.throttled", {"n": wait},
+                           status=429, retry_after=wait)
+
     row = db.qone("SELECT * FROM admins WHERE username=?", (username.strip(),))
-    if not row or not auth.verify_password(password, row["pw_hash"]):
-        time.sleep(1)  # vertraag brute force
-        return templates.TemplateResponse(request, "admin/login.html", {
-            "site_name": config.SITE_NAME, "error": "Ongeldige inloggegevens",
-        }, status_code=401)
+    if row:
+        ok = auth.verify_password(password, row["pw_hash"])
+    else:
+        auth.verify_dummy(password)  # equal cost, so timing reveals no usernames
+        ok = False
+    if not ok:
+        wait = ratelimit.record_failure(ip, username)
+        if wait:
+            return _login_page(
+                request, nonce,
+                f"Ongeldige inloggegevens — te veel pogingen, wacht {wait} s.",
+                "login.invalid_throttled", {"n": wait}, status=429, retry_after=wait)
+        return _login_page(request, nonce, "Ongeldige inloggegevens",
+                           "login.invalid", status=401)
+
+    ratelimit.record_success(ip, username)
     resp = RedirectResponse("/admin", status_code=303)
     resp.set_cookie(
         auth.SESSION_COOKIE, auth.make_session(row["username"]),
         max_age=auth.SESSION_TTL, httponly=True, samesite="lax", secure=_secure(request),
     )
+    resp.delete_cookie(auth.LOGIN_COOKIE)
     return resp
 
 
@@ -222,4 +269,12 @@ def change_password(request: Request, current: str = Form(...),
     if len(new) < 8:
         raise HTTPException(422, "Nieuw wachtwoord moet minstens 8 tekens zijn")
     db.execute("UPDATE admins SET pw_hash=? WHERE id=?", (auth.hash_password(new), row["id"]))
-    return RedirectResponse("/admin", status_code=303)
+    # Every session signed under the old password is now invalid, this one
+    # included -- so hand this browser a new cookie instead of logging the
+    # person who just changed the password out of their own admin page.
+    resp = RedirectResponse("/admin", status_code=303)
+    resp.set_cookie(
+        auth.SESSION_COOKIE, auth.make_session(user),
+        max_age=auth.SESSION_TTL, httponly=True, samesite="lax", secure=_secure(request),
+    )
+    return resp

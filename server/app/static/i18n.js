@@ -25,6 +25,12 @@
       "footer.text": "MeshCore-statistieken · gevoed door Home Assistant · ",
       "footer.admin": "beheer",
 
+      // --- inloggen (de rest van /admin is enkel Nederlands) ---
+      "login.invalid": "Ongeldige inloggegevens",
+      "login.invalid_throttled": "Ongeldige inloggegevens — te veel pogingen, wacht {n} s.",
+      "login.throttled": "Te veel mislukte pogingen. Probeer over {n} s opnieuw.",
+      "login.expired": "Sessie verlopen — probeer opnieuw.",
+
       // --- startpagina ---
       "home.title": "Repeaters",
       "home.hint": "Live MeshCore-repeaterstatistieken · klik op een repeater voor details",
@@ -155,6 +161,11 @@
       "nav.lang_title": "Taal wisselen / switch language",
       "footer.text": "MeshCore statistics · fed by Home Assistant · ",
       "footer.admin": "admin",
+
+      "login.invalid": "Invalid credentials",
+      "login.invalid_throttled": "Invalid credentials — too many attempts, wait {n} s.",
+      "login.throttled": "Too many failed attempts. Try again in {n} s.",
+      "login.expired": "Session expired — please try again.",
 
       "home.title": "Repeaters",
       "home.hint": "Live MeshCore repeater statistics · click a repeater for details",

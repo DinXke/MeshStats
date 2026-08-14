@@ -3,8 +3,9 @@
 {% block content %}
 <div class="loginbox card">
   <h1>Beheer</h1>
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if error %}<p class="error"{% if error_key %} data-i18n="{{ error_key }}" data-i18n-vars='{{ error_vars|tojson }}'{% endif %}>{{ error }}</p>{% endif %}
   <form method="post" action="/admin/login">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Gebruikersnaam <input name="username" autocomplete="username" required></label>
     <label>Wachtwoord <input type="password" name="password" autocomplete="current-password" required></label>
     <button type="submit">Inloggen</button>

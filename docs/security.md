@@ -111,12 +111,33 @@ mode `0600`.
 
 Verification uses `hmac.compare_digest()` and then checks `exp`.
 
-Consequences of statelessness, worth knowing before you rely on it:
+#### Revocation without a session table
 
-- **Sessions cannot be revoked.** Changing the admin password does not log anyone
-  out. A stolen cookie is valid for up to 12 hours.
-- The only global logout is deleting `/data/secret.key` and restarting. That also
-  invalidates every CSRF token.
+The payload carries a third field, `v`: an HMAC over the account's current
+password hash, truncated to 16 hex chars.
+
+```python
+hmac.new(SECRET, b"pwstamp|" + pw_hash, hashlib.sha256).hexdigest()[:16]
+```
+
+`read_session()` recomputes it from the `admins` row and rejects the cookie when
+it no longer matches. Changing a password rewrites `pw_hash`, so **every session
+minted under the old password stops working immediately** — the account row is
+the revocation list, and no session store is needed. The hash itself never
+leaves the server; only its HMAC is published.
+
+`POST /admin/password` issues a fresh cookie in the same response, so the admin
+who changed the password is not logged out of their own page.
+
+| Situation | Effect |
+|---|---|
+| Password changed in `/admin` | All other sessions invalid, this browser reissued |
+| Password changed via `python -m app.main set-password` | All sessions invalid |
+| Account deleted | Its sessions invalid (`password_stamp` returns `None`) |
+| `secret.key` deleted and restarted | All sessions and CSRF tokens invalid |
+
+The cost is one indexed `SELECT` on `admins` per admin request. Sessions created
+before this change carry no `v` and are rejected — a one-off logout.
 
 `SameSite=lax` blocks cross-site POSTs, which is the main CSRF vector, while
 still allowing normal top-level navigation to `/admin`.
@@ -124,21 +145,32 @@ still allowing normal top-level navigation to `/admin`.
 ### CSRF
 
 ```python
-hmac.new(SECRET, b"csrf|" + session_cookie, hashlib.sha256).hexdigest()[:32]
+hmac.new(SECRET, b"csrf|" + anchor, hashlib.sha256).hexdigest()[:32]
 ```
 
-Derived from the session cookie, so it is per-session and cannot be forged
+The anchor is a cookie value, so the token is per-browser and cannot be forged
 without the secret. Rendered as a hidden `csrf` field in every admin form and on
 the public repeater page when an admin is logged in. Every state-changing admin
 POST validates it.
 
-Two gaps:
+| Form | Anchor cookie | Lifetime |
+|---|---|---|
+| Every logged-in admin form | `mcs_session` | with the session (12 h) |
+| `POST /admin/login` | `mcs_login` | 30 min (`LOGIN_TTL`) |
 
-- **`POST /admin/login` has no CSRF token.** Login CSRF (forcing a victim into
-  *your* session) is possible. Low impact here, but it is a gap.
-- Validation uses `!=` rather than `hmac.compare_digest()`. Not constant time.
-  The token is truncated to 32 hex chars (128 bits), which is still far too much
-  to guess.
+**The login form has its own anchor** because the visitor has no session yet:
+`GET /admin/login` mints a random nonce, sets it as a `HttpOnly` cookie, and
+renders the token derived from it. A cross-site login POST cannot read that
+cookie, so it cannot produce a matching token. A form left open past `LOGIN_TTL`
+lands on the same check and gets *"Sessie verlopen — probeer opnieuw"* with a
+fresh nonce.
+
+Validation goes through `auth.eq()`, which is `hmac.compare_digest`. Every
+comparison of a token, signature or digest in the application uses it —
+`check_csrf`, the login token, the session signature, the session stamp and the
+password check. The one remaining equality on a secret is the SQL lookup on the
+API token digest, described under [API tokens](#api-tokens); it is a hash-table
+lookup on 256 bits, not a byte-by-byte walk.
 
 ### Security headers
 
@@ -206,25 +238,76 @@ openapi_url=None`).
 
 ### Request limits
 
-`limit_body` rejects bodies over 2 MB on `/ingest`, `/contacts` and
-`/repeater_settings`.
+`BodySizeLimitMiddleware` (`app/limits.py`) caps every request body at
+`MCS_MAX_BODY_BYTES`, default 2 MB, on every route and method.
 
-Two holes worth knowing:
+It works in two steps:
 
-- It reads `Content-Length`. A request without one (chunked transfer) evaluates
-  to `0` and passes.
-- It is not applied to admin form POSTs.
+1. A declared `Content-Length` over the limit is refused before a byte is read.
+2. Otherwise bytes are **counted as they arrive** through a wrapped ASGI
+   `receive`. This is what catches a chunked request, which sends no
+   `Content-Length` at all — the old check read that as `0` and let anything
+   through.
+
+When the limit trips, the reply is `413` regardless of what the endpoint was
+going to say. That last part matters: FastAPI catches everything its form and
+JSON parsers raise and rewrites it as its own `400`, so the middleware also
+overrides the outgoing response rather than relying on the exception reaching it.
+
+`limit_body()` in `routes_api.py` survives as a courtesy fast path on the JSON
+endpoints. It no longer demands a `Content-Length` — the header is optional, and
+requiring it rejected legitimate streaming clients without stopping anything.
 
 Cap request size at your reverse proxy as well (`client_max_body_size` in nginx).
 
 ### Rate limiting
 
-**There is none.** The only brute-force mitigation is `time.sleep(1)` on a failed
-`/admin/login`, and because the endpoint is a synchronous `def`, each attempt
-occupies a threadpool worker — so it is also a small self-inflicted DoS surface.
+`POST /admin/login` is throttled in memory by `app/ratelimit.py`. Two independent
+buckets, each closing a hole the other leaves:
 
-If the site is public, put rate limiting or an access gate in front of `/admin*`.
-See [`deployment.md`](deployment.md#what-to-protect).
+| Bucket | Stops | Max lockout |
+|---|---|---|
+| `ip:<address>` | one host trying many usernames | 15 min |
+| `user:<name>` | a botnet spreading attempts over many addresses | 5 min |
+
+Five failures inside a 15-minute window are free, so a mistyped password costs
+nothing. Each further failure doubles a lockout from 2 s upward, capped per
+bucket. A correct password clears both buckets. Blocked attempts answer `429`
+with `Retry-After` and never reach the password check.
+
+The username bucket is the one that actually holds the line, because the client
+address is only as honest as the proxy chain while the username comes straight
+out of the form. Its price is that anyone can lock the admin account out on
+purpose — hence a ceiling of minutes rather than hours, and a restart clears it.
+
+#### Which address gets counted
+
+`request.client.host` is **not** used. Uvicorn runs with
+`--forwarded-allow-ips "*"`, and in that mode it takes the *first*
+`X-Forwarded-For` entry — the one a client writes itself. Keying on that would
+let an attacker mint a fresh bucket per request.
+
+Proxies *append* the address they saw, so the header is trustworthy from the
+right. `ratelimit.client_ip()` counts `MCS_TRUSTED_PROXY_HOPS` entries in from
+the right (default `1`, matching cloudflared straight to the app), validates the
+result parses as an IP address, and falls back to the transport address
+otherwise.
+
+Set `MCS_TRUSTED_PROXY_HOPS` to the number of proxies you actually run. Too high
+and you start reading client-supplied entries again; too low and every visitor
+shares one proxy address in a single bucket.
+
+State lives in the process, deliberately: the deployment is one uvicorn process,
+and a SQLite table would turn every login attempt from the internet into a write.
+A restart forgets the counters.
+
+The old `time.sleep(1)` is gone — it did not slow a parallel attacker and it tied
+up a threadpool worker per attempt. Instead, a login for an unknown username runs
+`auth.verify_dummy()`, so a wrong username and a wrong password cost the same
+200 000 PBKDF2 rounds and the response time reveals nothing.
+
+An access gate in front of `/admin*` at the proxy is still worth having; see
+[`deployment.md`](deployment.md#what-to-protect).
 
 ### Input handling
 
@@ -265,16 +348,52 @@ broker; do not expose port 1883 to the internet.
 
 ### MQTT has no application-level authentication
 
-Broker auth (`allow_anonymous false`) is the **only** gate on the MQTT path.
-There is no token check on ingested messages.
+Broker auth (`allow_anonymous false`) and the ACL file are the **only** gates on
+the MQTT path. There is no token check on ingested messages.
 
-More importantly, **repeater identity comes from the JSON body, not the topic**.
-The `+` in `meshcore/+/stats` is never parsed. So any client allowed to publish
-can claim to be any repeater, on any topic that matches the filter.
+#### Publisher versus subject
 
-Fix it at the broker with per-topic ACLs and one account per node — see
-[`mqtt.md`](mqtt.md#per-topic-acls-recommended-not-shipped). Do not turn off
-`allow_anonymous false`.
+`_handle_payload()` used to read the repeater prefix out of the JSON body and
+never look at the topic, so any client allowed to publish could claim to be any
+repeater. It now parses both, and keeps them apart:
+
+- **The topic names the publisher.** `meshcore/<node_hex>/stats` — the node that
+  sent the message.
+- **The payload names the subject.** `repeater.pubkey_prefix` — the repeater the
+  numbers are about. Absent means "myself", and the topic supplies it.
+
+They are deliberately allowed to differ, because a node also forwards statistics
+for other repeaters it monitors. Rejecting a mismatch would break that feature
+the day it ships. Instead the publisher is stored on the repeater row as
+`repeaters.source_prefix` (with `source_seen`) and shown in the **Bron** column
+on `/admin`: *zichzelf*, *via `<prefix>`*, or *HTTP-API*. A repeater that starts
+arriving through an unfamiliar node is then something you can see.
+
+**This bounds the damage; it does not end it.** With one shared broker account,
+anyone holding those credentials can publish under any node's topic, so the topic
+is exactly as trustworthy as the account behind it. Recording the route makes
+impersonation visible, not impossible.
+
+#### The actual fix: one broker account per node
+
+Give every node its own MQTT user and restrict it by ACL to its own topic prefix.
+Then the broker enforces the topic, and `source_prefix` becomes a fact rather
+than a claim.
+
+```bash
+./mosquitto/init-passwd.sh                 # server account + ACL skeleton
+./mosquitto/add-node-user.sh e3d3f4d7ed01  # one account per node
+docker compose restart mosquitto
+```
+
+`mosquitto.conf` references `acl_file /mosquitto/config/acl`; the file is
+generated by `init-passwd.sh` and appended to by `add-node-user.sh`. The shared
+account keeps `topic write meshcore/#` so nothing breaks mid-migration — remove
+that line once every node has its own account, and only then is the topic
+actually enforced. Details and caveats in
+[`mqtt.md`](mqtt.md#per-node-accounts-and-acls).
+
+Do not turn off `allow_anonymous false`.
 
 Also note the MQTT path bypasses the 2 MB HTTP body limit entirely. Mosquitto's
 `message_size_limit 8192` is the only cap there.
@@ -352,13 +471,15 @@ Never commit:
 - `platformio.local.ini` — WiFi credentials and `ADMIN_PASSWORD`. Gitignored.
 - `.env` — MQTT credentials. Gitignored.
 - `mosquitto/passwd` — broker password hashes.
+- `mosquitto/acl` — broker account names. Gitignored; `acl.example` documents the
+  format.
 - `/data/secret.key` and the database.
 
-`mosquitto/init-passwd.sh` runs `mosquitto_passwd -b`, which puts the password on
-the command line — visible in shell history and in the process list. On a shared
-machine, run `mosquitto_passwd` interactively instead. The script also uses
-`-c`, which **truncates** the file: adding a second user means dropping that
-flag.
+`mosquitto/init-passwd.sh` and `add-node-user.sh` run `mosquitto_passwd -b`,
+which puts the password on the command line — visible in shell history and in the
+process list. On a shared machine, run `mosquitto_passwd` interactively instead.
+`init-passwd.sh` also uses `-c`, which **truncates** `passwd`, and rewrites `acl`
+outright: re-running it wipes every node account `add-node-user.sh` created.
 
 All examples in this documentation use placeholders. If a credential has ever
 been committed, rotate it — rewriting history does not un-publish it.
@@ -368,12 +489,18 @@ been committed, rotate it — rewriting history does not un-publish it.
 ## Checklist for a public deployment
 
 - [ ] Change the admin password immediately after first start
-- [ ] Put an access gate or rate limit on `/admin*`
+- [ ] Set `MCS_TRUSTED_PROXY_HOPS` to the number of proxies actually in front of
+      the app (default `1`) — the login throttle keys on it
+- [ ] Put an access gate in front of `/admin*` as well; the built-in throttle is
+      per-process and forgets on restart
 - [ ] Bind the container to loopback and let the reverse proxy reach it
 - [ ] Add `Strict-Transport-Security` at the proxy
-- [ ] Cap request body size at the proxy
+- [ ] Cap request body size at the proxy too
 - [ ] Do not expose the MQTT port to the internet
-- [ ] One broker account per node, with per-topic ACLs
+- [ ] One broker account per node (`mosquitto/add-node-user.sh`), then drop
+      `topic write meshcore/#` from the shared account in `mosquitto/acl`
+- [ ] Check the **Bron** column in `/admin` — statistics arriving via an
+      unexpected node are worth a look
 - [ ] Change the node's default `admin` / `meshcore` login before it joins a network
 - [ ] Keep node management pages off any untrusted network
 - [ ] Back up `/data/secret.key` and the database; store node backups as secrets

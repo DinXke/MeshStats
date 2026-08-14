@@ -120,6 +120,8 @@ Both paths share the same handler. Unknown repeaters appear automatically
 | `MCS_SITE_NAME` | MeshCore Repeater Stats | Name in the header |
 | `MCS_RETENTION_DAYS` | 180 | History retention |
 | `MCS_HEARTBEAT_MIN` | 5 | Force a graph point at least every X minutes |
+| `MCS_MAX_BODY_BYTES` | 2000000 | Largest request body accepted |
+| `MCS_TRUSTED_PROXY_HOPS` | 1 | Proxies in front of the app; the login throttle uses it to find the client address |
 | `MCS_MQTT_HOST` | *(empty)* | Broker; empty disables MQTT |
 | `MCS_MQTT_PORT` / `_USER` / `_PASS` | 1883 | Broker connection |
 | `MCS_MQTT_TOPIC` | `meshcore/+/stats` | What the site listens to |
@@ -130,12 +132,15 @@ Full list: [`docs/deployment.md`](docs/deployment.md#environment-variables).
 ## Security in one paragraph
 
 Passwords are PBKDF2-SHA256 (200k iterations); API tokens are stored only as
-SHA-256 hashes; sessions are HMAC-signed, `HttpOnly` and `Secure` behind a proxy;
-every admin action is CSRF-checked; CSP and the usual headers are set. **The site
-knows no address and no password of your mesh** — data only ever flows towards
-it, so even a fully compromised site cannot drive your nodes. Two things deserve
-your attention before going public: there is no rate limiting, and a node
-filesystem backup contains that node's **private key**. Read
+SHA-256 hashes; sessions are HMAC-signed, `HttpOnly` and `Secure` behind a proxy,
+and a password change invalidates every one of them; the login is CSRF-checked
+and throttled per address and per username; request bodies are capped while being
+read; CSP and the usual headers are set. **The site knows no address and no
+password of your mesh** — data only ever flows towards it, so even a fully
+compromised site cannot drive your nodes. Two things still deserve your attention
+before going public: the login throttle lives in one process and forgets on
+restart, so an access gate at the proxy is worth having, and a node filesystem
+backup contains that node's **private key**. Read
 [`docs/security.md`](docs/security.md).
 
 ## Status
