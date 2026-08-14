@@ -98,6 +98,41 @@
  * Wie er in een kanaal sprak staat niet in "s" maar voor de tekst zelf:
  * sendGroupMessage() zet "<afzender>: " voor het bericht. De pagina haalt die
  * er weer af om de naam apart te kunnen tonen.
+ *
+ * De pagina bewaart daarnaast de laatste 300 berichten zelf, in localStorage
+ * (sleutel "mh"), zodat een volgend bezoek ook toont wat de kleine ring hier
+ * al kwijt is - na een herstart van de node is die zelfs helemaal leeg, en
+ * SPIFFS-persistentie is hierboven bewust afgewezen. Drie keuzes daarbij:
+ *
+ *  - samenvoegen van cache en ring kan niet op "q": die teller begint na een
+ *    herstart opnieuw, dus hetzelfde bericht kan onder twee nummers
+ *    langskomen. De pagina dedupliceert daarom op
+ *    tijdstip+soort+bron+spreker+tekst ('\n' als scheider; jsonStr() laat
+ *    stuurtekens vallen, dus die kan nooit in een veld zitten). Echte
+ *    dubbelposts overleven dat: afzenders stempelen met
+ *    getCurrentTimeUnique(), dus twee keer "ja" draagt twee tijdstippen. Wat
+ *    overblijft: twee gelijknamige sprekers die in dezelfde seconde hetzelfde
+ *    zeggen in hetzelfde kanaal versmelten tot een bericht - met de velden
+ *    die de ring biedt niet te onderscheiden, en dat aanvaarden we. Omdat "q"
+ *    geen identiteit meer is, hernummert de pagina lokaal (anders zouden
+ *    gecachete nummers van voor een herstart de ongelezen-telling boven de
+ *    verse, lage nummers uit tillen); gecachete berichten tellen daarbij
+ *    nooit als ongelezen, want die stonden al eens op een scherm;
+ *  - 300 is gekozen op teken- en parsewerk, niet op opslag: dat is zo'n 30 kB
+ *    JSON waar localStorage 5 MB per origin toelaat, maar de pagina hertekent
+ *    de hele lijst per update, dus veel meer bewaren maakt vooral het tekenen
+ *    op een telefoon traag;
+ *  - geschreven wordt gebundeld: bij het verbergen of verlaten van de pagina
+ *    en verder elke halve minuut, nooit per bericht - op een druk kanaal zou
+ *    elke regel anders een volledige serialisatie kosten. Alleen het nieuwe
+ *    bericht bijschrijven kan niet: localStorage is alles-of-niets per
+ *    sleutel. Een crash van de browser kost dus hoogstens een halve minuut
+ *    cache, en die berichten staan meestal toch nog in de ring.
+ *
+ * Restje eerlijkheid: berichten die geen enkele open browser zag en ook uit
+ * de ring gevallen zijn, zijn echt weg; en op de naad tussen cache en ring
+ * kan de volgorde iets afwijken, want de lijst staat op volgorde van aankomst
+ * en sorteren op afzenderklokken zou het erger maken.
  */
 
 #include <Arduino.h>

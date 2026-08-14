@@ -222,16 +222,19 @@ var $=function(s){return document.querySelector(s)};
 var TY={0:'onbekend',1:'chat',2:'repeater',3:'room',4:'sensor'};
 var NK=['#35e08c','#4fa8ff','#e0b657','#e08aa8','#9d8cff'];
 var P='<p class="muted pd">',KG='Kies een gesprek',UC='onbekend contact';
-var CH=[],CT=[],MS=[],SEEN={},CNT={},cur='',me='ik',seq=0,view=1,flt='',ctry=0;
+var CH=[],CT=[],MS=[],SEEN={},CNT={},IDS={},cur='',me='ik',seq=0,lq=0,sq=0,dv=0,view=1,flt='',ctry=0;
 function j(r){return r.json()}function esc(s){return String(s).replace(/[&<>"]/g,function(c){return'&#'+c.charCodeAt(0)+';'})}function post(u,d){return fetch(u,{method:'POST',body:new URLSearchParams(d)}).then(j)}function note(t){$('#note').textContent=t||''}function rows(o){var h='';for(var k in o){h+='<tr><td>'+k+'</td><td>'+esc(o[k])+'</td></tr>'}return h}function tm(t){if(!t)return'--:--';var d=new Date(t*1000);return('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}function ago(a){if(a<0)return'nooit gehoord';if(a<60)return a+'s geleden';if(a<3600)return Math.floor(a/60)+'m geleden';if(a<86400)return Math.floor(a/3600)+'u geleden';return Math.floor(a/86400)+'d geleden'}function nk(n){for(var h=0,i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))&255;return NK[h%NK.length]}
 // De ring van de node kapt namen af op 15 tekens, /contacts.json niet.
 function eq(a,b){return a.slice(0,15)==b.slice(0,15)}
+// Cache + dedup: rationale bij "De webclient" in StatsPublisher.h.
+function mid(m){return m.t+'\n'+m.k+'\n'+m.s+'\n'+(m.w||'')+'\n'+m.x}
+function hsv(){if(dv){dv=0;try{localStorage.mh=JSON.stringify(MS)}catch(e){}}}
 function ck(m){var i;if(m.k!=1)for(i=0;i<CH.length;i++)if(eq(CH[i].n,m.s))return'c'+CH[i].i;if(m.k!=0)for(i=0;i<CT.length;i++)if(eq(CT[i].n,m.s))return'k'+CT[i].k;return''}
 function ctc(k){for(var i=0;i<CT.length;i++)if('k'+CT[i].k==k)return CT[i];return null}
 // Kanaalnamen bevatten zelf al wel of geen '#' (Public vs #belimburg): onveranderd tonen, nooit een '#' voorplakken.
 function nam(k){var i;if(k[0]=='c'){for(i=0;i<CH.length;i++)if('c'+CH[i].i==k)return CH[i].n}var c=ctc(k);return c?'@'+c.n:k}
 function it(k,l){var u=CNT[k];return'<div class="cv'+(k==cur?' on':'')+'" data-k='+k+'><span class=cn>'+esc(l)+'</span>'+(u?'<b class=ub>'+u+'</b>':'')+'</div>'}
-function lst(){CNT={};MS.forEach(function(m){var k=m.c||(m.c=ck(m));if(k&&k!=cur&&m.q>(SEEN[k]||0))CNT[k]=(CNT[k]||0)+1});
+function lst(){CNT={};MS.forEach(function(m){var k=m.c||(m.c=ck(m));if(k&&k!=cur&&m.q>(SEEN[k]||sq))CNT[k]=(CNT[k]||0)+1});
 var f=flt.toLowerCase(),h='<h3>Kanalen</h3>',n=0;
 CH.forEach(function(c){if(f&&c.n.toLowerCase().indexOf(f)<0)return;h+=it('c'+c.i,c.n);n++});if(!n)h+=P+'geen kanalen</p>';
 h+='<h3>Contacten</h3>';n=0;
@@ -266,10 +269,11 @@ function msgs(){return fetch('/messages.json?since='+seq).then(j).then(function(
 // In een kanaal is "s" de kanaalnaam; wie sprak staat alleen voor de tekst.
 if(m.k==0){var p=m.x.indexOf(': ');if(p>0&&p<33){m.w=m.x.slice(0,p);m.x=m.x.slice(p+2)}else m.w=m.s}
 else if(m.k==2)m.o=1;else m.w=m.s;
+var id=mid(m);if(IDS[id])return;IDS[id]=1;m.q=++lq;dv=1;
 MS.push(m);n++;
 // Onbekende naam: contact van na het laden. Hoogstens elke halve minuut.
 if(CT.length&&!ck(m)&&Date.now()-ctry>30000){ctry=Date.now();ctcs()}});
-while(MS.length>120)MS.shift();
+while(MS.length>300)MS.shift();
 if(d.more)return msgs();
 if(n){lst();if(view==1)draw()}})}
 // Aaneengeschakeld ophalen: nooit twee verzoeken tegelijk naar de node.
@@ -296,6 +300,8 @@ $('#bset').onclick=function(){view=4;vw();document.body.className=''};
 $('#bl').onclick=function(){document.body.classList.toggle('lo')};
 $('#br').onclick=function(){document.body.classList.toggle('ro')};
 $('#sc').onclick=function(){document.body.className=''};
+try{MS=JSON.parse(localStorage.mh);MS.forEach(function(m){m.c=0;m.q=++lq;IDS[mid(m)]=1})}catch(e){MS=[]}
+sq=lq;onpagehide=hsv;document.onvisibilitychange=hsv;
 cfg();chans().then(ctcs);msgs();sel('');
-setInterval(function(){if(view==1)msgs()},3000);setInterval(function(){if(view==4)cfg()},10000);
+setInterval(function(){if(view==1)msgs()},3000);setInterval(function(){if(view==4)cfg()},10000);setInterval(hsv,30000);
 </script></body></html>
