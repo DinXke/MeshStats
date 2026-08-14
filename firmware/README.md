@@ -1,131 +1,153 @@
-# MeshStats-firmware
+# MeshStats firmware
 
-Aanpassingen op de [MeshCore](https://github.com/meshcore-dev/MeshCore)-firmware
-(companion, v1.17.0) waarmee je node:
+Changes to the [MeshCore](https://github.com/meshcore-dev/MeshCore) firmware
+(companion v1.17.0 line) that give your node:
 
-1. **meerdere companions tegelijk** aankan — Home Assistant, de MeshCore-app en
-   een statistiekenserver kunnen samen verbonden zijn
-2. een **eigen beheerpagina** krijgt op poort 80, met live statistieken
-3. zijn statistieken **zelf doorstuurt** naar een MeshStats-site
+1. **multiple companions at once** — Home Assistant, the MeshCore app and a
+   stats server can all be connected simultaneously
+2. a **management page** on port 80, with live statistics
+3. **stats publishing over MQTT** to a MeshStats site
+4. on repeaters, `MeshStatsNet`: WiFi with AP fallback, OTA over your normal
+   network, a telnet console on the MeshCore CLI, and filesystem backup/restore
 
-## Waarom deze aanpassingen
+**Full documentation: [`../docs/firmware.md`](../docs/firmware.md).** This file is
+a short index; the detail — including *why* an OTA does not lose your keys — lives
+there.
 
-De originele WiFi-interface hield precies één client vast:
+## Files
+
+| File | What |
+|---|---|
+| `src/helpers/esp32/SerialWifiInterface.{h,cpp}` | Multiple simultaneous WiFi companions |
+| `src/helpers/BaseChatMesh.cpp` | Reuse of empty channel slots |
+| `examples/companion_radio/StatsPublisher.{h,cpp}` | MQTT publishing + management page |
+| `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet hook |
+| `examples/companion_radio/main.cpp` | Wires the module in |
+| `examples/simple_repeater/MeshStatsNet.{h,cpp}` | Repeater: WiFi, management page, OTA, console, backup |
+| `repeater-hooks.patch` | The three small edits in `simple_repeater` |
+| `meshstats.patch` | Everything, as one patch |
+
+## Why these changes
+
+**One client at a time.** The stock WiFi interface held exactly one companion:
 
 ```cpp
 auto newClient = server.available();
 if (newClient) {
-    client.stop();      // de bestaande companion wordt eruit gegooid
+    client.stop();      // the existing companion is kicked off
     client = newClient;
 }
 ```
 
-Daardoor kon je niet tegelijk met Home Assistant én je telefoon verbonden zijn.
-Nu zijn er vier slots, elk met een eigen frame-status. Antwoorden gaan alleen
-naar de client die het commando stuurde; ongevraagde berichten (adverts,
-inkomende berichten) gaan naar iedereen. Zonder dat onderscheid raken clients in
-de war van elkaars antwoorden.
+So you could not have Home Assistant and your phone connected at once. There are
+now four slots, each with its own frame state. Replies go only to the client that
+sent the command; unsolicited messages (adverts, incoming messages) go to
+everyone. Without that distinction, clients desynchronise on each other's
+replies.
 
-Daarnaast zat er een fout in het kanalenbeheer: `setChannel()` (wat apps
-gebruiken) werkt de teller `num_channels` niet bij, terwijl `addChannel()` daar
-wél op vertrouwt. De teller kon zo oplopen tot het maximum terwijl er lege
-plaatsen waren — de app meldde dan onterecht "channel limit reached". Lege
-plaatsen worden nu hergebruikt.
+**The channel counter.** `setChannel()` — which apps use — writes a channel
+without updating `num_channels`, while `addChannel()` relied on that counter. It
+could reach the maximum while empty slots sat below it, and the app then reported
+"channel limit reached" on a mostly empty node. Empty slots are now reused.
 
-## Toepassen
+**HTTP crashed the node.** `HTTPClient` plus the TLS stack needs too much heap
+next to mesh, WiFi and BLE. Replaced by MQTT, which keeps one lightweight
+connection open instead of building a session per measurement. See
+[`../docs/architecture.md`](../docs/architecture.md#why-mqtt).
+
+## Applying
 
 ```bash
 git clone https://github.com/meshcore-dev/MeshCore.git
 cd MeshCore
 git checkout companion-v1.17.0
 
-# bestanden uit deze map eroverheen kopiëren
-cp -r /pad/naar/MeshStats/firmware/src/* src/
-cp -r /pad/naar/MeshStats/firmware/examples/* examples/
+# copy the files from this directory over the tree
+cp -r /path/to/MeshStats/firmware/src/*      src/
+cp -r /path/to/MeshStats/firmware/examples/* examples/
 
-# of, als patch:
-git apply /pad/naar/MeshStats/firmware/meshstats.patch
+# or apply as a patch
+git apply /path/to/MeshStats/firmware/meshstats.patch
 ```
 
-Maak een `platformio.local.ini` met je eigen instellingen (zie
-`platformio.local.ini.example`) en bouw:
+Create a `platformio.local.ini` with your own settings (see
+`platformio.local.ini.example`) and build:
 
 ```bash
 pip install platformio
-python -m platformio run -e <jouw_env> -t upload --upload-port COM4
+python -m platformio run -e <your_env> -t upload --upload-port COM4
 ```
 
-> Flashen via `-t upload` schrijft alleen de app-partitie. Je private key,
-> contacten en instellingen blijven staan. Maak toch een back-up voor de
-> zekerheid:
-> `python -m esptool --port COM4 read_flash 0 0x800000 backup.bin`
+> `platformio.local.ini` holds your WiFi credentials and admin password. It is
+> gitignored. Never commit it.
 
-## Bestanden
+> Flashing with `-t upload` writes only the app partition. Your private key,
+> contacts and settings are in a separate SPIFFS partition and survive — see
+> [`../docs/firmware.md`](../docs/firmware.md#why-an-ota-does-not-lose-your-keys)
+> for the partition table. Take a backup anyway:
+> `python -m esptool --port COM4 read_flash 0 0x1000000 backup.bin`
 
-| Bestand | Wat |
+## Repeater with network management
+
+`MeshStatsNet` gives a repeater an IP life alongside its mesh life. Built for a
+node on a roof, which must never become unreachable:
+
+- **WiFi client**; if it cannot connect within 30 s it broadcasts its own network
+  (`MeshCore-<id>`) with the same management page, and keeps retrying yours every
+  5 minutes
+- **Management page** on port 80 behind a login, with status, WiFi settings and
+  **firmware upload at `/update`** — upgrades go over your normal network, not
+  only via the OTA soft-AP
+- **Backup and restore** of the whole filesystem: keypair, repeater prefs, ACL
+  and network settings, in a line-based format
+- **Console** on port 23 behind the same login, wired straight into
+  `MyMesh::handleCommand` — the full MeshCore CLI over WiFi. A silent session is
+  closed after 5 minutes and can be taken over after 1, so one dropped connection
+  does not close your debug channel
+- **`wifi` commands** also work over the mesh CLI, so a wrong network setting
+  cannot strand the repeater
+
+Three safety nets against a bug in this code itself:
+
+| Situation | What happens |
 |---|---|
-| `src/helpers/esp32/SerialWifiInterface.{h,cpp}` | Meerdere gelijktijdige WiFi-companions |
-| `src/helpers/BaseChatMesh.cpp` | Hergebruik van lege kanaalplaatsen |
-| `examples/companion_radio/StatsPublisher.{h,cpp}` | Beheerpagina + doorsturen van statistieken |
-| `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`: eigen statistieken als JSON |
-| `examples/companion_radio/main.cpp` | Module inhaken |
-| `examples/simple_repeater/MeshStatsNet.{h,cpp}` | Repeater: WiFi, beheerpagina, OTA, console, back-up |
-| `repeater-hooks.patch` | De drie kleine ingrepen in `simple_repeater` |
+| 3 restarts without 5 minutes stable | Safe mode: own network + management page only |
+| 6 restarts | The module does not start; a plain MeshCore repeater remains, with `start ota` |
+| Radio init fails | No infinite `halt()`; the network side starts anyway so you can reflash |
 
-## Repeater met netwerkbeheer
+> **A backup contains your private key.** Set your own password immediately
+> (default `admin` / `meshcore`) — the same login also guards firmware upload.
 
-`MeshStatsNet` geeft een repeater een IP-leven naast zijn mesh-leven. Gebouwd
-voor een node die op een dak hangt en dus nooit onbereikbaar mag worden:
+## Management page
 
-- **WiFi-client**; lukt verbinden niet binnen 30 s, dan zendt hij zijn eigen
-  netwerk uit (`MeshCore-<id>`) met dezelfde beheerpagina, en blijft hij het
-  jouwe elke 5 minuten opnieuw proberen
-- **Beheerpagina** op poort 80 achter een login, met toestand, wifi-instellingen
-  en **firmware-upload op `/update`** — upgraden gaat dus over je gewone
-  netwerk, niet enkel via de OTA-softAP
-- **Back-up en restore** van het volledige bestandssysteem: sleutelpaar,
-  repeater-prefs, ACL en netwerkinstellingen, in een regelgebaseerd formaat
-- **Console** op poort 23, achter dezelfde login, rechtstreeks op
-  `MyMesh::handleCommand` — de volledige MeshCore-CLI over WiFi. Een stille
-  sessie wordt na 5 minuten gesloten en na 1 minuut overneembaar, zodat één
-  afgebroken verbinding je debugkanaal niet dichtzet
-- **`wifi`-commando's** werken ook via de mesh-CLI, zodat een verkeerde
-  netwerkinstelling de repeater niet onbereikbaar maakt
+After flashing: **http://\<node-ip\>/**
 
-Drie vangnetten tegen een fout in deze code zelf:
+- publishing settings (broker, credentials, topic prefix, interval)
+- live node statistics
+- `/stats.json` returns the same data as JSON
 
-| Situatie | Wat er gebeurt |
-|---|---|
-| 3 herstarts zonder 5 min stabiel te draaien | veilige modus: enkel eigen netwerk + beheerpagina |
-| 6 herstarts | module start niet meer op; een gewone MeshCore-repeater blijft over, met `start ota` |
-| radio-init faalt | geen eeuwige `halt()`; het netwerkdeel start toch, zodat je kan herflashen |
+> The **companion** node's page has no authentication. Trusted networks only. The
+> **repeater** page does have a login.
 
-> De back-up bevat je private key. Zet meteen een eigen wachtwoord (standaard
-> `admin` / `meshcore`), want achter die login zit ook het flashen van firmware.
+## Build-time flags
 
-## Beheerpagina
-
-Na het flashen: **http://\<ip-van-je-node\>/**
-
-- instellingen voor het doorsturen (broker/URL, token, interval)
-- live statistieken van de node
-- `/stats.json` geeft dezelfde gegevens als JSON
-
-## Instelbaar tijdens het bouwen
-
-| Vlag | Standaard | Betekenis |
+| Flag | Default | Meaning |
 |---|---|---|
-| `WIFI_MAX_CLIENTS` | 4 | Aantal gelijktijdige companions |
-| `TCP_PORT` | 5000 | Poort voor companions |
-| `MAX_GROUP_CHANNELS` | — | Aantal kanaalplaatsen |
+| `WIFI_MAX_CLIENTS` | 4 | Simultaneous companions (~2–3 kB RAM each) |
+| `TCP_PORT` | 5000 | Companion port |
+| `MESHSTATS_NET` | unset | Enable the repeater network module |
+| `MAX_GROUP_CHANNELS` | — | Number of channel slots |
+| `WIFI_SSID` / `WIFI_PWD` | — | Built-in network defaults |
 
 ## Status
 
-Werkt en getest op een Heltec V3 (ESP32-S3):
+Working and tested on a Heltec V3 (ESP32-S3) companion and a Heltec V4 repeater.
 
-- ✅ meerdere companions tegelijk, met gerichte antwoorden
-- ✅ kanaalteller-fix
-- ✅ beheerpagina en `/stats.json`
-- ⚠️ doorsturen via **HTTP** laat de node crashen (`HTTPClient` en de TLS-stack
-  vragen te veel geheugen naast mesh, WiFi en BLE) — daarom vervangen door MQTT,
-  dat één lichte verbinding openhoudt
+- Multiple companions at once, with targeted replies
+- Channel-counter fix
+- Management page and `/stats.json`
+- MQTT stats publishing
+- `MeshStatsNet` on the repeater
+- Forwarding over **HTTP**: abandoned, it crashed the node
+- Raw-packet forwarding over MQTT: **in development**
+- A full web client on the companion node: **planned**
