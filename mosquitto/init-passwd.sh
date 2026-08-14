@@ -10,5 +10,12 @@ source .env
 
 docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 \
   mosquitto_passwd -c -b /m/passwd "$MCS_MQTT_USER" "$MCS_MQTT_PASS"
+
+# mosquitto_passwd draait als root en laat een bestand achter dat alleen root
+# mag lezen. De broker zelf draait als gebruiker 'mosquitto' (uid 1883) en
+# weigert te starten als hij er niet bij kan.
+docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 \
+  sh -c 'chown 1883:1883 /m/passwd && chmod 0400 /m/passwd'
+
 echo "mosquitto/passwd aangemaakt voor gebruiker '$MCS_MQTT_USER'."
 echo "Gebruik dezelfde gegevens op je node (beheerpagina van de node)."
