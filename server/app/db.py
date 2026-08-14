@@ -483,7 +483,20 @@ def pop_settings_requests() -> list[dict]:
     return [{"prefix": p, "params": v.get("params", [])} for p, v in d.items()]
 
 
-def upsert_cli_settings(repeater_id: int, values: dict) -> None:
+def upsert_cli_settings(repeater_id: int, values: dict, prune: bool = True) -> None:
+    """Store a node's CLI parameters.
+
+    ``prune`` drops rows this push did not mention and the configured list does
+    not name, which is what a full re-read through Home Assistant wants: a
+    parameter that no longer exists should disappear.
+
+    Pass prune=False when the source omits what it could not read, as the node's
+    own six-hourly sweep does. There, an absent parameter means "no answer this
+    time", not "gone" -- and the two are indistinguishable from here. The
+    difference is not academic: the configured list names the region parameter
+    ``cmd:region`` (it is fetched as a literal CLI command) while it is stored
+    under ``region``, so pruning erases it on the first sweep that misses it.
+    """
     now = utcnow()
     # Prune against the configured parameter list rather than this push: a
     # partial re-read must not wipe rows it simply did not ask about.
@@ -493,11 +506,12 @@ def upsert_cli_settings(repeater_id: int, values: dict) -> None:
     keep = [str(p)[:64] for p in ({str(k)[:64] for k in values} | configured)]
     with _lock:
         conn = get_conn()
-        placeholders = ",".join("?" for _ in keep) or "''"
-        conn.execute(
-            f"DELETE FROM repeater_cli WHERE repeater_id=? AND param NOT IN ({placeholders})",
-            [repeater_id, *keep],
-        )
+        if prune:
+            placeholders = ",".join("?" for _ in keep) or "''"
+            conn.execute(
+                f"DELETE FROM repeater_cli WHERE repeater_id=? AND param NOT IN ({placeholders})",
+                [repeater_id, *keep],
+            )
         for param, value in values.items():
             conn.execute(
                 "INSERT INTO repeater_cli(repeater_id, param, value, updated) VALUES(?,?,?,?) "
@@ -580,6 +594,18 @@ def _find_by_prefix(pubkey_prefix: str) -> sqlite3.Row | None:
         " ORDER BY length(pubkey_prefix) DESC LIMIT 1",
         (pubkey_prefix,),
     )
+
+
+def find_repeater(pubkey_prefix: str) -> sqlite3.Row | None:
+    """Look up a repeater by public key, without creating one.
+
+    Public door to the prefix-tolerant match, for callers that need to ask "are
+    these two keys the same node?" rather than "give me a row". Comparing the
+    strings instead would answer no whenever the two sources disagree on key
+    length -- Home Assistant sends five bytes where a node's own firmware sends
+    six -- which is the trap _find_by_prefix exists for.
+    """
+    return _find_by_prefix(str(pubkey_prefix or "").lower().strip())
 
 
 def get_or_create_repeater(pubkey_prefix: str, name: str | None) -> sqlite3.Row:

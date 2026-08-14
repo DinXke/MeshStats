@@ -8,7 +8,15 @@ of message arrive, on two topic patterns:
     Periodic statistics, same JSON as POST /api/v1/ingest::
 
         {"repeater": {"pubkey_prefix": "...", "name": "..."},
-         "metrics": {...}, "neighbors": [...]}
+         "metrics": {...}, "neighbors": [...], "settings": {...}}
+
+    ``settings`` is the node's own CLI configuration (name, role, radio, freq,
+    tx, advert intervals, lat/lon, region...), swept every six hours. It rides
+    along here rather than on a topic of its own on purpose: this subscriber
+    listens to exactly two patterns, so a third topic would have been accepted
+    by the broker and then dropped on the floor unread -- which is precisely how
+    the monitored repeaters went missing once before. See ``_handle_settings``
+    for why only a node's own settings are taken.
 
 ``meshcore/<node_hex>/rx``
     One message per LoRa packet the node overheard::
@@ -111,8 +119,68 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     db.record_source(row["id"], publisher)
     if subject != publisher:
         log.info("stats for %s relayed by node %s", subject, publisher)
+    settings = body.get("settings")
+    if isinstance(settings, dict):
+        _handle_settings(row, publisher, settings)
     _state["messages"] += 1
     _state["last_msg"] = ts
+
+
+# A node has around fifteen CLI parameters. The cap is not about them; it is so
+# that a publisher cannot turn one message into thousands of rows.
+MAX_SETTINGS = 64
+
+
+def _clean_settings(values: dict) -> dict:
+    """Drop the parameters the node could not read.
+
+    Firmware omits a parameter it failed to fetch rather than sending it empty,
+    so an empty value that does arrive carries no information -- and writing it
+    would replace a value we already know with nothing. Omission is safe by
+    itself (upsert_cli_settings only touches the keys it is given), so this only
+    has to catch the empty ones.
+    """
+    out = {}
+    for key, value in values.items():
+        name = str(key).strip()
+        if not name or value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        out[name] = value
+        if len(out) >= MAX_SETTINGS:
+            break
+    return out
+
+
+def _handle_settings(row, publisher: str, values: dict) -> None:
+    """Store CLI settings that rode along with a statistics message.
+
+    Only from a node reporting on **itself**, which is the one place this
+    departs from how statistics are treated. Statistics may legitimately be
+    relayed -- a node forwards figures about repeaters it monitors -- but
+    settings describe the publisher's own configuration, and the topic is the
+    only part of a message the broker can be made to enforce. Taking relayed
+    settings would let any client holding the shared broker credentials rewrite
+    another repeater's settings page, and the firmware only ever sends its own,
+    so refusing the rest costs nothing real.
+
+    Identity is compared through the repeater row rather than by string: the
+    topic and the payload may spell the same key at different lengths.
+    """
+    owner = db.find_repeater(publisher)
+    if owner is None or owner["id"] != row["id"]:
+        log.info("settings for %s published by %s ignored: not its own",
+                 row["slug"], publisher)
+        return
+    clean = _clean_settings(values)
+    if not clean:
+        return
+    # prune=False: this sweep leaves out what it could not read, and dropping a
+    # parameter because one sweep missed it is the same as overwriting it with
+    # nothing.
+    db.upsert_cli_settings(row["id"], clean, prune=False)
+    log.info("CLI settings updated for %s (%d parameters)", row["slug"], len(clean))
 
 
 def _handle_rx(topic: str, raw: bytes) -> None:

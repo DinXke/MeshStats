@@ -143,9 +143,51 @@ over MQTT too, since both go through the same handler:
 | `ts` | ISO timestamp `YYYY-MM-DDTHH:MM:SSZ`; defaults to server receive time |
 | `force` | bool; bypass the heartbeat dedup and always write a sample |
 | `neighbors` | array of `{prefix, name, snr, seen_min}` |
+| `settings` | object of CLI parameters; see below |
 
 Each neighbour also becomes its own time series under the metric key
 `neighbor_<prefix>`.
+
+### `settings` — the node's own CLI configuration
+
+Swept by the node every six hours and carried along with an ordinary statistics
+message:
+
+```json
+"settings": {
+  "name": "BE-HSS-JessaZH.VIR", "role": "repeater",
+  "radio": "868.0,250,10,8", "freq": "869.525", "tx": "22", "af": "1",
+  "repeat": "on", "advert.interval": "240",
+  "flood.advert.interval": "1440", "flood.max": "3",
+  "allow.read.only": "off", "rxdelay": "0", "txdelay": "0",
+  "lat": "50.92", "lon": "5.352", "region": "EU868"
+}
+```
+
+It fills the same admin page as `POST /api/v1/repeater_settings`, so a node can
+populate it with no Home Assistant in the picture.
+
+**Why it is not on a topic of its own.** It was going to be
+`meshcore/<node>/settings`, until a check of `mqtt_ingest.py` showed this
+subscriber listens to exactly two patterns. A third topic would have been
+accepted by the broker and then dropped unread — the same failure that lost the
+monitored repeaters once before. Adding a topic means adding it to `MCS_MQTT_*`
+**and** to the subscribe calls in `on_connect`; until both happen, the messages
+go nowhere.
+
+Two rules on the server side, both in `_handle_settings`:
+
+- **Only a node's own settings are stored.** Statistics may legitimately be
+  relayed — a node forwards figures about repeaters it monitors — but settings
+  describe the publisher's own configuration, and the topic is the only part of a
+  message a broker can be made to enforce. Settings arriving for a *different*
+  repeater are logged and dropped, which costs nothing because the firmware only
+  ever sends its own. Identity is compared through the repeater row, not the
+  string, since topic and payload may spell the same key at different lengths.
+- **An omitted parameter is not a deleted one.** The firmware leaves out what it
+  could not read, so this path calls `upsert_cli_settings(..., prune=False)` and
+  discards empty values before the call. A sweep that manages only half the
+  parameters leaves the other half standing.
 
 ### What the server does with it
 
