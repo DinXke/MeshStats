@@ -1,5 +1,13 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.6.0  Battery-to-interval is now a table the user edits (add/remove rules,
+ *        hysteresis that works for any number of them) instead of five fixed
+ *        levels, with a floor per mode: 10 s in 'always reachable', 60 s in
+ *        power-save where the interval also decides how often the radio wakes.
+ *        The page shows what a setting costs -- messages per day and LoRa
+ *        packets per hour -- rather than two numbers to combine by hand.
+ *        Also: the node reads its own CLI parameters and ships them as a
+ *        "settings" object inside a stats message, one parameter per loop pass.
  * 1.5.0  Adverts are cached on the file system (key, name, type, last heard,
  *        coordinates), so node names survive a restart instead of showing bare
  *        hex until the next advert hours later. Written lazily, like the ACL.
@@ -164,6 +172,8 @@ struct Config {
   uint16_t bat_full, bat_high, bat_norm, bat_crit;   // level boundaries in %
   uint16_t bat_hyst;                // % past a boundary before the level moves
   uint16_t bat_live;                // % above which raw packets go out at once
+  uint16_t bat_mon;                 // % below which polling other repeaters stops
+  uint16_t set_interval;            // seconds between CLI settings sweeps
   uint16_t full_hold;               // minutes above bat_full before 'full' counts
   uint16_t iv_full, iv_high, iv_norm, iv_low, iv_crit;   // publish interval, secs
   uint16_t night_from, night_to;    // night window, hours UTC
@@ -172,10 +182,8 @@ struct Config {
 
 enum WifiState { WIFI_TRYING, WIFI_OK, WIFI_FALLBACK_AP };
 enum PwrMode { PWR_ALWAYS = 0, PWR_SAVE = 1 };
-enum BattLevel { LV_FULL = 0, LV_HIGH, LV_NORMAL, LV_LOW, LV_CRITICAL };
 
-// Only used for CLI replies; the admin page translates level codes itself.
-static const char *LEVEL_NL[] = { "vol", "hoog", "normaal", "laag", "kritiek" };
+
 static const char HEXCHARS[] = "0123456789abcdef";
 
 static FS *_fs = nullptr;
@@ -200,7 +208,7 @@ static bool _asleep = false;
 static unsigned long _wake_at = 0;      // when to bring WiFi back up
 static unsigned long _awake_until = 0;  // end of the reachability window
 static unsigned long _force_until = 0;  // 'wifi on <min>' overrides everything
-static uint8_t _level = LV_NORMAL;
+static uint8_t _level = 0;      // index into the power rules table
 static uint8_t _batt_pct = 0;
 static uint16_t _batt_mv = 0;
 static bool _batt_known = false;
@@ -242,6 +250,7 @@ static volatile uint8_t _rx_head = 0, _rx_tail = 0;
 static volatile bool _apply_wifi = false;
 static volatile bool _apply_mqtt = false;
 static volatile bool _apply_power = false;
+static volatile bool _apply_rules = false;
 
 // Console state
 enum ConsoleState { CON_USER, CON_PASS, CON_READY };
@@ -330,6 +339,22 @@ static void wdtFeed() {
   esp_task_wdt_reset();
 }
 
+/* Node names come off the air and end up inside JSON. Anything with a quote in
+ * it would otherwise produce a broken page rather than an odd-looking name. */
+static void jsonEsc(char *dest, size_t max, const char *src) {
+  size_t o = 0;
+  for (const char *p = src; *p && o + 2 < max; p++) {
+    unsigned char c = (unsigned char)*p;
+    if (c == '"' || c == '\\') {
+      dest[o++] = '\\';
+      dest[o++] = (char)c;
+    } else if (c >= 0x20) {
+      dest[o++] = (char)c;
+    }
+  }
+  dest[o] = 0;
+}
+
 // ------------------------------------------------------------------ settings
 
 static void loadConfig() {
@@ -355,6 +380,8 @@ static void loadConfig() {
   _cfg.bat_crit = 40;
   _cfg.bat_hyst = 3;
   _cfg.bat_live = 85;
+  _cfg.bat_mon = 40;
+  _cfg.set_interval = 21600;        // 6 h: these change once in a blue moon
   _cfg.full_hold = 30;
   _cfg.iv_full = 60;
   _cfg.iv_high = 120;
@@ -425,6 +452,9 @@ static void loadConfig() {
   num("bat_crit", _cfg.bat_crit);
   num("bat_hyst", _cfg.bat_hyst);
   num("bat_live", _cfg.bat_live);
+  num("bat_mon", _cfg.bat_mon);
+  num("set_interval", _cfg.set_interval);
+  if (_cfg.set_interval < 300) _cfg.set_interval = 300;
   num("full_hold", _cfg.full_hold);
   num("iv_full", _cfg.iv_full);
   num("iv_high", _cfg.iv_high);
@@ -453,12 +483,12 @@ static void saveConfig() {
            _cfg.mqtt_prefix, _cfg.mqtt_enabled, _cfg.mqtt_rx);
   f.printf("\"pwr_mode\":%u,\"pwr_window\":%u,\"wifi_sleep\":%u,\"tx_power\":%u,"
            "\"bat_full\":%u,\"bat_high\":%u,\"bat_norm\":%u,\"bat_crit\":%u,"
-           "\"bat_hyst\":%u,\"bat_live\":%u,\"full_hold\":%u,"
+           "\"bat_hyst\":%u,\"bat_live\":%u,\"bat_mon\":%u,\"set_interval\":%u,\"full_hold\":%u,"
            "\"iv_full\":%u,\"iv_high\":%u,\"iv_norm\":%u,\"iv_low\":%u,\"iv_crit\":%u,"
            "\"night_from\":%u,\"night_to\":%u,\"night_factor\":%u}",
            _cfg.pwr_mode, _cfg.pwr_window, _cfg.wifi_sleep, _cfg.tx_power,
            _cfg.bat_full, _cfg.bat_high, _cfg.bat_norm, _cfg.bat_crit,
-           _cfg.bat_hyst, _cfg.bat_live, _cfg.full_hold,
+           _cfg.bat_hyst, _cfg.bat_live, _cfg.bat_mon, _cfg.set_interval, _cfg.full_hold,
            _cfg.iv_full, _cfg.iv_high, _cfg.iv_norm, _cfg.iv_low, _cfg.iv_crit,
            _cfg.night_from, _cfg.night_to, _cfg.night_factor);
   f.close();
@@ -560,32 +590,132 @@ static uint8_t battPercent(bool *known) {
   return (pct < 0) ? 0 : (uint8_t)pct;
 }
 
-// Lowest percentage that still belongs to this level.
-static uint16_t levelEntry(uint8_t lv) {
-  switch (lv) {
-    case LV_FULL:   return _cfg.bat_full;
-    case LV_HIGH:   return _cfg.bat_high;
-    case LV_NORMAL: return _cfg.bat_norm;
-    case LV_LOW:    return _cfg.bat_crit;
-    default:        return 0;
+/* Battery percentage -> publish interval, as a table the user owns instead of
+ * five levels compiled in. Rules are kept sorted by percentage, highest first,
+ * and the last one always sits at 0 so every reading matches something.
+ *
+ * The floor under an interval depends on the mode, and that is not a detail.
+ * In 'always reachable' the interval only decides how often we talk to the
+ * broker, so 10 s is a fair floor. In power-save it also decides how often the
+ * radio wakes, and a 10 s wake cycle would flatten the very battery this table
+ * exists to protect. Both are applied where the interval is used, not where it
+ * is stored, so switching modes never silently rewrites what somebody typed. */
+#define PWR_RULES_MAX     8
+#define PWR_MIN_ALWAYS   10
+#define PWR_MIN_SAVE     60
+#define MSPWR_FILE       "/mspwr.json"
+
+struct PwrRule {
+  uint8_t  pct;      // applies from this battery percentage upwards
+  uint16_t secs;     // publish interval
+};
+static PwrRule _pwr[PWR_RULES_MAX];
+static int _pwr_n = 0;
+
+static uint16_t pwrMinInterval() {
+  return (_cfg.pwr_mode == PWR_SAVE) ? PWR_MIN_SAVE : PWR_MIN_ALWAYS;
+}
+
+// First rule at or below this percentage; the table guarantees a match.
+static uint8_t rawRule(uint8_t pct) {
+  for (int i = 0; i < _pwr_n; i++) {
+    if (pct >= _pwr[i].pct) return (uint8_t)i;
+  }
+  return (uint8_t)(_pwr_n > 0 ? _pwr_n - 1 : 0);
+}
+
+// Highest first, and always a catch-all at 0 so rawRule() cannot fall through.
+static void pwrNormalise() {
+  for (int i = 1; i < _pwr_n; i++) {          // insertion sort; at most 8 rules
+    PwrRule key = _pwr[i];
+    int j = i - 1;
+    while (j >= 0 && _pwr[j].pct < key.pct) { _pwr[j + 1] = _pwr[j]; j--; }
+    _pwr[j + 1] = key;
+  }
+  if (_pwr_n == 0) {
+    _pwr[0].pct = 0; _pwr[0].secs = 3600; _pwr_n = 1;
+  } else if (_pwr[_pwr_n - 1].pct != 0) {
+    if (_pwr_n < PWR_RULES_MAX) {
+      _pwr[_pwr_n].pct = 0;
+      _pwr[_pwr_n].secs = _pwr[_pwr_n - 1].secs;
+      _pwr_n++;
+    } else {
+      _pwr[_pwr_n - 1].pct = 0;               // table full: repurpose the last
+    }
+  }
+  if (_level >= _pwr_n) _level = (uint8_t)(_pwr_n - 1);
+}
+
+/* Seeds the table from the fixed fields this module used before 1.6.0, so a
+ * node that already had those tuned keeps behaving the same across the upgrade
+ * instead of quietly reverting to defaults. */
+static void pwrDefaults() {
+  const uint16_t pcts[] = { _cfg.bat_full, _cfg.bat_high, _cfg.bat_norm, _cfg.bat_crit, 0 };
+  const uint16_t ivs[]  = { _cfg.iv_full, _cfg.iv_high, _cfg.iv_norm, _cfg.iv_low, _cfg.iv_crit };
+  _pwr_n = 0;
+  for (int i = 0; i < 5; i++) {
+    _pwr[_pwr_n].pct = (uint8_t)(pcts[i] > 100 ? 100 : pcts[i]);
+    _pwr[_pwr_n].secs = ivs[i] < 1 ? 1 : ivs[i];
+    _pwr_n++;
+  }
+  pwrNormalise();
+}
+
+static void pwrSave() {
+  if (!_fs) return;
+  File f = _fs->open(MSPWR_FILE, "w");
+  if (!f) return;
+  f.print("{\"rules\":[");
+  for (int i = 0; i < _pwr_n; i++) {
+    f.printf("%s{\"p\":%u,\"s\":%u}", i ? "," : "", _pwr[i].pct, _pwr[i].secs);
+  }
+  f.print("]}");
+  f.close();
+}
+
+static void pwrLoad() {
+  pwrDefaults();
+  if (!_fs) return;
+  File f = _fs->open(MSPWR_FILE, "r");
+  if (!f) return;                 // no file yet: keep the migrated defaults
+  String s = f.readString();
+  f.close();
+
+  int n = 0, pos = 0;
+  PwrRule tmp[PWR_RULES_MAX];
+  while (n < PWR_RULES_MAX) {
+    int b = s.indexOf("{\"p\":", pos);
+    if (b < 0) break;
+    int e = s.indexOf('}', b);
+    if (e < 0) break;
+    String item = s.substring(b, e + 1);
+    pos = e + 1;
+
+    int pi = item.indexOf("\"p\":"), si = item.indexOf("\"s\":");
+    if (pi < 0 || si < 0) continue;
+    long p = item.substring(pi + 4).toInt();
+    long sec = item.substring(si + 4).toInt();
+    if (p < 0 || p > 100 || sec < 1 || sec > 65535) continue;
+    tmp[n].pct = (uint8_t)p;
+    tmp[n].secs = (uint16_t)sec;
+    n++;
+  }
+  if (n > 0) {
+    memcpy(_pwr, tmp, sizeof(PwrRule) * n);
+    _pwr_n = n;
+    pwrNormalise();
   }
 }
 
-static uint8_t rawLevel(uint8_t pct) {
-  if (pct >= _cfg.bat_full) return LV_FULL;
-  if (pct >= _cfg.bat_high) return LV_HIGH;
-  if (pct >= _cfg.bat_norm) return LV_NORMAL;
-  if (pct >= _cfg.bat_crit) return LV_LOW;
-  return LV_CRITICAL;
-}
-
-/* Levels move with hysteresis: a level is only left once the percentage is
+/* Rules change with hysteresis: one is only left once the percentage is
  * bat_hyst past the boundary. A cell hovering exactly on a threshold is
  * precisely the situation where the panel is marginal and stable behaviour
  * matters most -- flapping between two intervals there would cost energy for
- * nothing.
+ * nothing. The logic is index-based, so it keeps working whatever the user
+ * makes the table: rules are sorted, so a lower index is always the better
+ * battery.
  *
- * The top level has an extra condition: the cell must have read full for
+ * The top rule has an extra condition: the cell must have read that high for
  * full_hold minutes. 'Full' should mean surplus, not the first sunbeam of the
  * morning. */
 static void updatePowerLevel() {
@@ -597,20 +727,20 @@ static void updatePowerLevel() {
   _batt_pct = pct;
   _batt_known = known;
 
-  if (!known) { _level = LV_FULL; return; }
+  if (!known) { _level = 0; return; }   // no cell reading: treat as mains
 
-  uint8_t want = rawLevel(pct);
-  if (want == LV_FULL) {
+  uint8_t want = rawRule(pct);
+  if (want == 0 && _pwr_n > 1) {
     if (_full_since == 0) _full_since = millis();
-    if (millis() - _full_since < (unsigned long)_cfg.full_hold * 60000UL) want = LV_HIGH;
+    if (millis() - _full_since < (unsigned long)_cfg.full_hold * 60000UL) want = 1;
   } else {
     _full_since = 0;
   }
 
-  if (want < _level) {              // better than the current level
-    if (pct < levelEntry(want) + _cfg.bat_hyst) want = _level;
+  if (want < _level) {              // a better battery than the current rule
+    if (pct < _pwr[want].pct + _cfg.bat_hyst) want = _level;
   } else if (want > _level) {       // worse
-    if (pct + _cfg.bat_hyst >= levelEntry(_level)) want = _level;
+    if (pct + _cfg.bat_hyst >= _pwr[_level].pct) want = _level;
   }
   _level = want;
 }
@@ -627,16 +757,10 @@ static bool isNight() {
 }
 
 static uint32_t currentIntervalSecs() {
-  uint32_t iv;
-  switch (_level) {
-    case LV_FULL:   iv = _cfg.iv_full; break;
-    case LV_HIGH:   iv = _cfg.iv_high; break;
-    case LV_NORMAL: iv = _cfg.iv_norm; break;
-    case LV_LOW:    iv = _cfg.iv_low;  break;
-    default:        iv = _cfg.iv_crit; break;
-  }
+  uint32_t iv = (_pwr_n > 0) ? _pwr[_level].secs : 300;
   if (isNight()) iv *= _cfg.night_factor;
-  if (iv < 30) iv = 30;
+  uint16_t lo = pwrMinInterval();
+  if (iv < lo) iv = lo;
   return iv;
 }
 
@@ -754,6 +878,93 @@ static void powerSummaryNl(char *out, size_t max) {
   }
 }
 
+// ------------------------------------------------------------- CLI settings
+
+/* The node's own configuration, read back from its own CLI and shipped with
+ * the statistics. These change once in a blue moon, so they go out far less
+ * often than the metrics.
+ *
+ * NOT on a topic of their own. The receiving side subscribes to exactly two
+ * patterns, '<prefix>/+/stats' and '<prefix>/+/rx' -- verified in its
+ * mqtt_ingest.py -- so a third leaf would be accepted by the broker and
+ * dropped there unread. That is exactly the bug that cost us the monitored
+ * repeaters in 1.3.0. These therefore ride along inside an ordinary stats
+ * message as a "settings" object: unknown top-level keys are already ignored
+ * at the far end, so it is inert until the site learns to read it.
+ *
+ * One parameter per pass of msnet_loop(): handleCommand() is cheap but not
+ * free, and there is no reason to do sixteen in one go on a node whose first
+ * duty is relaying other people's packets. */
+#define SET_VALUE_MAX     32
+#define SET_BUF          600
+
+static const char *SET_PARAMS[] = {
+  "name", "role", "radio", "freq", "tx", "af", "repeat", "advert.interval",
+  "flood.advert.interval", "flood.max", "allow.read.only", "rxdelay", "txdelay",
+  "lat", "lon",
+  /* Last, and deliberately without 'get': 'get region' answers '??:' because
+   * region is a verb of its own. */
+  "region"
+};
+#define SET_PARAM_COUNT ((int)(sizeof(SET_PARAMS) / sizeof(SET_PARAMS[0])))
+
+static char _set_json[SET_BUF];    // finished "settings" object body
+static int  _set_len = 0;
+static char _set_build_buf[SET_BUF];
+static int  _set_build = 0;
+static int  _set_next = -1;        // parameter being collected, -1 = idle
+static bool _set_ready = false;    // a complete set is waiting to be sent
+static unsigned long _set_due = 0;
+
+// Collects one parameter. Runs once per loop pass while a sweep is going.
+static void settingsStep() {
+  if (_set_next < 0 || _set_next >= SET_PARAM_COUNT || !_mesh) return;
+
+  const char *param = SET_PARAMS[_set_next];
+  char cmd[48], reply[160];
+  if (strcmp(param, "region") == 0) snprintf(cmd, sizeof(cmd), "region");
+  else snprintf(cmd, sizeof(cmd), "get %s", param);
+  reply[0] = 0;
+  _mesh->handleCommand(0, cmd, reply);
+
+  /* Replies come back as "> value". Anything else -- an error, an empty answer,
+   * the "??:" the CLI gives for a command it does not know -- is simply not
+   * recorded. Publishing a parameter this firmware could not actually read
+   * would be the same mistake as publishing noise_floor 0. */
+  char *val = reply;
+  if (val[0] == '>') { val++; while (*val == ' ') val++; }
+  size_t vlen = strlen(val);
+  while (vlen && (val[vlen - 1] == '\n' || val[vlen - 1] == '\r' || val[vlen - 1] == ' ')) {
+    val[--vlen] = 0;
+  }
+
+  if (vlen > 0 && strncmp(val, "Error", 5) != 0 && strncmp(val, "??", 2) != 0) {
+    if (vlen >= SET_VALUE_MAX) val[SET_VALUE_MAX - 1] = 0;
+    char esc[SET_VALUE_MAX * 2 + 4];
+    jsonEsc(esc, sizeof(esc), val);
+    int w = snprintf(_set_build_buf + _set_build, SET_BUF - _set_build, "%s\"%s\":\"%s\"",
+                     _set_build ? "," : "", param, esc);
+    if (w > 0 && _set_build + w < SET_BUF) _set_build += w;
+  }
+
+  if (++_set_next >= SET_PARAM_COUNT) {
+    _set_next = -1;
+    memcpy(_set_json, _set_build_buf, _set_build);
+    _set_len = _set_build;
+    _set_ready = (_set_len > 0);
+    _set_due = millis() + (unsigned long)_cfg.set_interval * 1000UL;
+    Serial.printf("MeshStatsNet: instellingen gelezen, %d bytes\n", _set_len);
+  }
+}
+
+static void settingsLoop() {
+  if (_safe_mode || !_mesh) return;
+  if (_set_next >= 0) { settingsStep(); return; }
+  // First sweep a minute after boot, so startup is not competing with it.
+  if (_set_due == 0) _set_due = millis() + 60000UL;
+  if (!_set_ready && passed(_set_due)) { _set_build = 0; _set_next = 0; }
+}
+
 // ---------------------------------------------------------------------- mqtt
 
 static void mqttTopic(const char *leaf, char *out, size_t max) {
@@ -795,6 +1006,21 @@ static bool mqttPublishStats() {
   static char body[MQTT_PUB_MAX];
   size_t n = _mesh->fillStatsJson(body, sizeof(body));
   if (n == 0) return false;
+
+  /* A finished settings sweep rides along with this message. Appended here
+   * rather than built into fillStatsJson because it is this module's data, not
+   * the mesh's, and because it goes out perhaps four times a day against the
+   * metrics' every couple of minutes. */
+  if (_set_ready && _set_len > 0 && n + (size_t)_set_len + 16 < sizeof(body)) {
+    n--;                                    // step back over the closing brace
+    int w = snprintf(body + n, sizeof(body) - n, ",\"settings\":{%s}}", _set_json);
+    if (w > 0 && n + (size_t)w < sizeof(body)) {
+      n += w;
+      _set_ready = false;
+    } else {
+      n++;                                  // did not fit: leave the payload be
+    }
+  }
 
   char topic[96];
   mqttTopic("stats", topic, sizeof(topic));
@@ -1535,22 +1761,6 @@ static void monRoundFailed(MonEntry &m) {
   if (m.fails < 255) m.fails++;
 }
 
-/* Node names come off the air and end up inside JSON. Anything with a quote in
- * it would otherwise produce a broken page rather than an odd-looking name. */
-static void jsonEsc(char *dest, size_t max, const char *src) {
-  size_t o = 0;
-  for (const char *p = src; *p && o + 2 < max; p++) {
-    unsigned char c = (unsigned char)*p;
-    if (c == '"' || c == '\\') {
-      dest[o++] = '\\';
-      dest[o++] = (char)c;
-    } else if (c >= 0x20) {
-      dest[o++] = (char)c;
-    }
-  }
-  dest[o] = 0;
-}
-
 /* Config changes arrive on the web server's task; the list is only ever
  * mutated in loop(). Same hand-over the wifi/mqtt/power forms already use. */
 enum MonAction { MA_NONE = 0, MA_ADD, MA_DEL, MA_PASS, MA_ENABLE, MA_INTERVAL, MA_POLL };
@@ -1713,7 +1923,7 @@ static void monitorLoop() {
    * mesh airtime. Same for a tired battery: monitoring is a luxury, staying
    * reachable is not. */
   if (!_cfg.mqtt_enabled || _cfg.mqtt_host[0] == 0) return;
-  if (_level >= LV_LOW) return;
+  if (_batt_known && _batt_pct < _cfg.bat_mon) return;
 
   if (_mon_got_reply) {
     int idx = _mon_reply_idx;
@@ -1957,7 +2167,10 @@ static const char PAGE[] PROGMEM =
   "<label style='max-width:9rem'><span data-i18n=l_window></span>"
   "<input name=window type=number min=30 max=3600></label></div>"
   "<label><input class=ck type=checkbox name=sleep><span data-i18n=l_sleep></span></label>"
-  "<button type=submit data-i18n=b_save></button></form>"
+  "<h3 data-i18n=t_rules></h3><table id=rt></table>"
+  "<p><button type=button class=pill id=radd data-i18n=b_addrule></button> "
+  "<button type=submit data-i18n=b_save></button></p></form>"
+  "<p class=muted id=est></p>"
   "<p class=muted data-i18n=h_power></p></div>"
   "<h2 data-i18n=t_mqtt></h2><div class=card><form id=m>"
   "<div class=row><label><span data-i18n=l_broker></span><input name=host placeholder='10.0.0.5'></label>"
@@ -2004,6 +2217,11 @@ static const char PAGE[] PROGMEM =
   "jouwe proberen. Via de mesh-CLI werkt wifi altijd.',"
   "l_mode:'Modus',o_always:'Altijd bereikbaar',o_save:'Zuinig (WiFi meestal uit)',"
   "l_window:'Venster (s)',l_sleep:'Modem-sleep terwijl WiFi aan staat',"
+  "t_rules:'Accu naar interval',b_addrule:'+ regel',"
+  "e_now:'Nu: elke %1 s, ongeveer %2 berichten per dag.',"
+  "e_fast:'Snelste regel: elke %1 s, ongeveer %2 per dag.',"
+  "e_floor:'(opgetrokken tot de ondergrens van % s van deze modus)',"
+  "e_mon:'Monitoren: %1 repeater(s), %2 LoRa-pakketten per ronde, ongeveer %3 per uur.',"
   "h_power:'Hoe voller de accu, hoe vaker de repeater publiceert; \\u2019s nachts trager. In de "
   "zuinige modus staat WiFi normaal uit en komt hij elke ronde even boven water; ontvangen "
   "pakketten wachten intussen in een buffer. Kwijt geraakt? wifi on 30 via de mesh-CLI zet WiFi "
@@ -2029,7 +2247,7 @@ static const char PAGE[] PROGMEM =
   "lv_batt:'uit \\u2014 accu onder %%',"
   "lv_save:'niet mogelijk in zuinige modus (WiFi gaat tussendoor uit)',"
   "w_ok:'verbonden',w_try:'verbinden\\u2026',w_ap:'eigen netwerk (WiFi onbereikbaar)',"
-  "w_off:'uit (zuinig)',lv0:'vol',lv1:'hoog',lv2:'normaal',lv3:'laag',lv4:'kritiek',"
+  "w_off:'uit (zuinig)',"
   "b_unknown:'onbekend (aangenomen: netstroom)',"
   "p_always:'altijd bereikbaar',p_forced:'opgevorderd, nog % min',"
   "p_awake:'zuinig, nog % s bereikbaar',p_asleep:'zuinig, wifi terug over % s',"
@@ -2067,6 +2285,11 @@ static const char PAGE[] PROGMEM =
   "yours. Over the mesh CLI, wifi always works.',"
   "l_mode:'Mode',o_always:'Always reachable',o_save:'Power save (WiFi mostly off)',"
   "l_window:'Window (s)',l_sleep:'Modem sleep while WiFi is up',"
+  "t_rules:'Battery to interval',b_addrule:'+ rule',"
+  "e_now:'Now: every %1 s, roughly %2 messages per day.',"
+  "e_fast:'Fastest rule: every %1 s, roughly %2 per day.',"
+  "e_floor:'(raised to this mode\u2019s floor of %s)',"
+  "e_mon:'Monitoring: %1 repeater(s), %2 LoRa packets per round, roughly %3 per hour.',"
   "h_power:'The fuller the battery, the more often the repeater publishes; slower at night. In "
   "power-save mode WiFi is normally off and only surfaces once per round; received packets wait "
   "in a buffer meanwhile. Locked out? wifi on 30 over the mesh CLI brings WiFi up for 30 minutes "
@@ -2092,7 +2315,7 @@ static const char PAGE[] PROGMEM =
   "lv_batt:'off \\u2014 battery below %%',"
   "lv_save:'not possible in power-save mode (WiFi goes off between rounds)',"
   "w_ok:'connected',w_try:'connecting\\u2026',w_ap:'own network (WiFi unreachable)',"
-  "w_off:'off (power save)',lv0:'full',lv1:'high',lv2:'normal',lv3:'low',lv4:'critical',"
+  "w_off:'off (power save)',"
   "b_unknown:'unknown (assuming mains)',"
   "p_always:'always reachable',p_forced:'forced up, % min left',"
   "p_awake:'power save, reachable for % s',p_asleep:'power save, wifi back in % s',"
@@ -2136,6 +2359,24 @@ static const char PAGE[] PROGMEM =
   "function rows(o){var h='';for(var k in o){h+='<tr><td>'+k+'</td><td>'+o[k]+'</td></tr>'}return h}"
   "function fill(f,c){for(var k in c){var e=f[k];if(!e)continue;"
   "if(e.type=='checkbox')e.checked=!!c[k];else e.value=c[k]}}"
+  "function nfmt(n){return n>=1000?(Math.round(n/100)/10)+'k':Math.round(n)}"
+  // The rules table, plus what the whole configuration costs on the air. Two
+  // separate numbers the user cannot combine in his head is not an interface.
+  "function rules(d){var t=T[L],h='',i,fast=99999;"
+  "for(i=0;i<d.rules.length;i++){var r=d.rules[i];if(r.s<fast)fast=r.s;"
+  "h+='<tr'+(i==d.pwr.rule?' class=ok':'')+'>'"
+  "+'<td>&ge; <input type=number min=0 max=100 class=rp value='+r.p+' style=\"width:4.5rem\"> %</td>'"
+  "+'<td><input type=number min=1 max=65535 class=rs value='+r.s+' style=\"width:6rem\"> s</td>'"
+  "+'<td class=act><button type=button class=\"mini rd\" data-i='+i+'>\\u2715</button></td></tr>'}"
+  "$('#rt').innerHTML=h;"
+  "var lo=d.pwr.min,eff=Math.max(fast,lo),now=d.pwr.iv;"
+  "var nmon=0;if(mon&&mon.mon)for(i=0;i<mon.mon.length;i++)if(mon.mon[i].e&&mon.mon[i].res)nmon++;"
+  "var s=t.e_now.replace('%1',now).replace('%2',nfmt(86400/now));"
+  "s+=' '+t.e_fast.replace('%1',eff).replace('%2',nfmt(86400/eff));"
+  "if(eff>fast)s+=' '+t.e_floor.replace('%',lo);"
+  "if(nmon&&mon.iv)s+=' '+t.e_mon.replace('%1',nmon).replace('%2',nmon*6)"
+  ".replace('%3',nfmt(nmon*6*3600/mon.iv));"
+  "$('#est').textContent=s}"
   "function pwrtext(d){var t=T[L],p=d.pwr,s=t['p_'+p.st]||p.st;"
   "s=s.replace('%',p.st=='forced'?Math.ceil(p.secs/60):p.secs);"
   "return s+' \\u00b7 '+t.p_every.replace('%',p.iv)+(p.night?' ('+t.p_night+')':'')}"
@@ -2146,12 +2387,13 @@ static const char PAGE[] PROGMEM =
   "var s={};s[t.s_wifi]=t['w_'+d.wifi.st];s[t.s_ip]=d.wifi.ip;s[t.s_net]=d.wifi.net;"
   "s[t.s_signal]=d.wifi.rssi+' dBm';s[t.s_uptime]=d.wifi.up+' '+t.u_min;"
   "s[t.s_heap]=d.wifi.heap+' bytes';"
-  "s[t.s_batt]=d.bat.known?((d.bat.mv/1000).toFixed(2)+' V \\u00b7 '+d.bat.pct+'% \\u00b7 '"
-  "+t['lv'+d.bat.lv]):t.b_unknown;"
+  "s[t.s_batt]=d.bat.known?((d.bat.mv/1000).toFixed(2)+' V \\u00b7 '+d.bat.pct+'%'"
+  "+(d.rules&&d.rules[d.pwr.rule]?' \\u00b7 \\u2265'+d.rules[d.pwr.rule].p+'%':'')):t.b_unknown;"
   "s[t.s_power]=pwrtext(d);"
   "if(d.mcu_t>-100)s[t.s_mcu]=d.mcu_t.toFixed(1)+' \\u00b0C <small>'+t.h_mcu+'</small>';"
   "s[t.s_live]=(t['lv_'+d.live]||d.live).replace('%',d.livepct);"
   "s[t.s_wdt]=d.wdt?t.d_on.replace('%',d.wdt_s):t.d_off;$('#st').innerHTML=rows(s);"
+  "rules(d);"
   "var q=d.mqtt,m={};m[t.m_broker]=t['mq_'+q.st];"
   "m[t.m_stats]=q.stats+' '+t.m_sent;"
   "m[t.m_pkts]=q.pkt+' '+t.m_fwd+', '+q.drop+' '+t.m_drop;"
@@ -2218,7 +2460,17 @@ static const char PAGE[] PROGMEM =
   "$('#lg').onclick=function(){L=L=='nl'?'en':'nl';localStorage.setItem('mslang',L);lang()};"
   "$('#f').onsubmit=function(e){e.preventDefault();post('/api/wifi',$('#f'),function(){"
   "$('#f').pass.value='';$('#f').ap_pass.value='';alert(T[L].a_saved)})};"
-  "$('#p').onsubmit=function(e){e.preventDefault();post('/api/power',$('#p'),load)};"
+  "function rulespec(){var p=document.querySelectorAll('#rt .rp'),"
+  "s=document.querySelectorAll('#rt .rs'),a=[],i;"
+  "for(i=0;i<p.length;i++)a.push(p[i].value+':'+s[i].value);return a.join(',')}"
+  "$('#p').onsubmit=function(e){e.preventDefault();"
+  "var b=new URLSearchParams(new FormData($('#p')));b.set('rules',rulespec());"
+  "fetch('/api/power',{method:'POST',body:b}).then(load)};"
+  "$('#radd').onclick=function(){if(!last)return;"
+  "last.rules.push({p:50,s:600});rules(last)};"
+  "document.addEventListener('click',function(e){"
+  "if(!e.target.classList.contains('rd')||!last)return;"
+  "last.rules.splice(+e.target.dataset.i,1);rules(last)});"
   "$('#m').onsubmit=function(e){e.preventDefault();post('/api/mqtt',$('#m'),function(){"
   "$('#m').pass.value='';load()})};"
   "$('#r').onsubmit=function(e){e.preventDefault();var f=$('#r').f.files[0];"
@@ -2257,7 +2509,8 @@ static void handleStatus(AsyncWebServerRequest *req) {
     "\"bat\":{\"known\":%d,\"mv\":%u,\"pct\":%u,\"lv\":%u},\"wdt\":%d,\"wdt_s\":%d,"
     "\"mcu_t\":%.1f,"
     "\"pwr\":{\"st\":\"%s\",\"secs\":%u,\"iv\":%u,\"night\":%d,"
-    "\"mode\":%u,\"window\":%u,\"sleep\":%u},\"live\":\"%s\",\"livepct\":%u,",
+    "\"mode\":%u,\"window\":%u,\"sleep\":%u,\"min\":%u,\"rule\":%u},"
+    "\"live\":\"%s\",\"livepct\":%u,",
     _mesh ? _mesh->getNodeName() : "repeater", _node_hex,
     board.getManufacturerName(), FIRMWARE_VERSION,
     MESHSTATS_NAME, MESHSTATS_VERSION,
@@ -2269,6 +2522,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
     _wdt_watching ? 1 : 0, WDT_TIMEOUT_S, mcu_t,
     powerStateCode(), (unsigned)powerSecsLeft(), (unsigned)currentIntervalSecs(),
     isNight() ? 1 : 0, _cfg.pwr_mode, _cfg.pwr_window, _cfg.wifi_sleep,
+    (unsigned)pwrMinInterval(), (unsigned)_level,
     liveCode(), _cfg.bat_live);
 
   // Truncation here would ship broken JSON, so clamp before appending.
@@ -2285,6 +2539,15 @@ static void handleStatus(AsyncWebServerRequest *req) {
     (unsigned)_stats_count, (unsigned)_rx_count, (unsigned)_drop_count,
     (unsigned)((_rx_head - _rx_tail + MQTT_RX_QUEUE) % MQTT_RX_QUEUE),
     (unsigned)_fail_count, _mqtt_err, _mqtt_err_rc);
+
+  int q = (int)strlen(body);
+  q -= 1;                                   // step back over the closing brace
+  q += snprintf(body + q, sizeof(body) - q, ",\"rules\":[");
+  for (int i = 0; i < _pwr_n && q < (int)sizeof(body) - 40; i++) {
+    q += snprintf(body + q, sizeof(body) - q, "%s{\"p\":%u,\"s\":%u}",
+                  i ? "," : "", _pwr[i].pct, _pwr[i].secs);
+  }
+  snprintf(body + q, sizeof(body) - q, "]}");
 
   req->send(200, "application/json", body);
 }
@@ -2323,6 +2586,36 @@ static void handlePowerPost(AsyncWebServerRequest *req) {
   _cfg.pwr_mode = paramNum(req, "mode", _cfg.pwr_mode, 0, 1);
   _cfg.pwr_window = paramNum(req, "window", _cfg.pwr_window, 30, 3600);
   _cfg.wifi_sleep = req->hasParam("sleep", true) ? 1 : 0;
+
+  /* The whole table arrives as one "pct:secs,..." string. Replacing it in one
+   * go keeps the page and the CLI on the same footing, and avoids a half
+   * applied table if the browser gives up between two row updates. */
+  if (req->hasParam("rules", true)) {
+    String spec = req->getParam("rules", true)->value();
+    PwrRule tmp[PWR_RULES_MAX];
+    int n = 0, i = 0;
+    while (i < (int)spec.length() && n < PWR_RULES_MAX) {
+      while (i < (int)spec.length() && (spec[i] == ',' || spec[i] == ' ')) i++;
+      int colon = spec.indexOf(':', i);
+      if (colon < 0) break;
+      long pct = spec.substring(i, colon).toInt();
+      long secs = spec.substring(colon + 1).toInt();
+      if (pct >= 0 && pct <= 100 && secs >= 1 && secs <= 65535) {
+        tmp[n].pct = (uint8_t)pct;
+        tmp[n].secs = (uint16_t)secs;
+        n++;
+      }
+      int comma = spec.indexOf(',', i);
+      if (comma < 0) break;
+      i = comma + 1;
+    }
+    if (n > 0) {
+      memcpy(_pwr, tmp, sizeof(PwrRule) * n);
+      _pwr_n = n;
+      pwrNormalise();
+      _apply_rules = true;
+    }
+  }
   _apply_power = true;
   req->send(200, "application/json", "{\"ok\":1}");
 }
@@ -2764,18 +3057,10 @@ static const Tunable TUNABLES[] = {
   { "window",       &_cfg.pwr_window,  30, 3600 },
   { "sleep",        &_cfg.wifi_sleep,   0, 1 },
   { "txpower",      &_cfg.tx_power,     0, 20 },
-  { "full",         &_cfg.bat_full,     0, 100 },
-  { "high",         &_cfg.bat_high,     0, 100 },
-  { "norm",         &_cfg.bat_norm,     0, 100 },
-  { "crit",         &_cfg.bat_crit,     0, 100 },
   { "hyst",         &_cfg.bat_hyst,     0, 20 },
   { "live",         &_cfg.bat_live,     0, 100 },
+  { "mon",          &_cfg.bat_mon,      0, 100 },
   { "hold",         &_cfg.full_hold,    0, 1440 },
-  { "iv_full",      &_cfg.iv_full,     30, 65535 },
-  { "iv_high",      &_cfg.iv_high,     30, 65535 },
-  { "iv_norm",      &_cfg.iv_norm,     30, 65535 },
-  { "iv_low",       &_cfg.iv_low,      30, 65535 },
-  { "iv_crit",      &_cfg.iv_crit,     30, 65535 },
   { "night_from",   &_cfg.night_from,   0, 24 },
   { "night_to",     &_cfg.night_to,     0, 24 },
   { "night_factor", &_cfg.night_factor, 1, 64 },
@@ -2788,8 +3073,8 @@ static void handlePowerCommand(const char *arg, char *reply) {
     char pwr[96];
     powerSummaryNl(pwr, sizeof(pwr));
     if (_batt_known) {
-      snprintf(reply, 155, "%s; accu %u%% (%s), venster %us", pwr,
-               (unsigned)_batt_pct, LEVEL_NL[_level], (unsigned)_cfg.pwr_window);
+      snprintf(reply, 155, "%s; accu %u%% (regel >=%u%%), venster %us", pwr,
+               (unsigned)_batt_pct, (unsigned)_pwr[_level].pct, (unsigned)_cfg.pwr_window);
     } else {
       snprintf(reply, 155, "%s; accu onbekend, venster %us", pwr, (unsigned)_cfg.pwr_window);
     }
@@ -2807,6 +3092,44 @@ static void handlePowerCommand(const char *arg, char *reply) {
     _awake_until = millis() + (unsigned long)_cfg.pwr_window * 1000UL;
     saveConfig();
     snprintf(reply, 155, "OK - zuinig, nog %us bereikbaar", (unsigned)_cfg.pwr_window);
+    return;
+  }
+  /* The whole table in one string: "95:60,90:120,70:300,0:3600". One command,
+   * one atomic replacement, and it fits in a reply -- which matters when the
+   * only way in is 160 bytes over the mesh. */
+  if ((v = subArg(arg, "rules")) != NULL) {
+    if (*v == 0) {
+      int q = snprintf(reply, 155, "min %us,", (unsigned)pwrMinInterval());
+      for (int i = 0; i < _pwr_n && q < 140; i++) {
+        q += snprintf(reply + q, 155 - q, " %u:%u", _pwr[i].pct, _pwr[i].secs);
+      }
+      return;
+    }
+    PwrRule tmp[PWR_RULES_MAX];
+    int n = 0;
+    const char *c = v;
+    while (*c && n < PWR_RULES_MAX) {
+      while (*c == ' ' || *c == ',') c++;
+      if (!*c) break;
+      const char *colon = strchr(c, ':');
+      if (!colon) { strcpy(reply, "Err - gebruik pct:secs, bv. 95:60,90:120,0:3600"); return; }
+      long pct = atol(c), secs = atol(colon + 1);
+      if (pct < 0 || pct > 100 || secs < 1 || secs > 65535) {
+        strcpy(reply, "Err - pct 0..100, interval 1..65535 s");
+        return;
+      }
+      tmp[n].pct = (uint8_t)pct;
+      tmp[n].secs = (uint16_t)secs;
+      n++;
+      while (*c && *c != ',') c++;
+    }
+    if (n == 0) { strcpy(reply, "Err - geen regels herkend"); return; }
+    memcpy(_pwr, tmp, sizeof(PwrRule) * n);
+    _pwr_n = n;
+    pwrNormalise();
+    pwrSave();
+    snprintf(reply, 155, "OK - %d regels, nu elke %us (ondergrens %us)", _pwr_n,
+             (unsigned)currentIntervalSecs(), (unsigned)pwrMinInterval());
     return;
   }
   if ((v = subArg(arg, "set")) != NULL) {
@@ -2827,11 +3150,11 @@ static void handlePowerCommand(const char *arg, char *reply) {
         return;
       }
     }
-    strcpy(reply, "Err - namen: mode window sleep txpower full high norm crit hyst live hold "
-                  "iv_full iv_high iv_norm iv_low iv_crit night_from night_to night_factor");
+    strcpy(reply, "Err - namen: mode window sleep txpower hyst live mon hold "
+                  "night_from night_to night_factor. Intervallen: wifi power rules");
     return;
   }
-  strcpy(reply, "Err - wifi power [altijd|zuinig|set <naam> <waarde>]");
+  strcpy(reply, "Err - wifi power [altijd|zuinig|rules [spec]|set <naam> <waarde>]");
 }
 
 static const char *LOGIN_NL[] = { "nooit geprobeerd", "gelukt", "geen antwoord" };
@@ -3044,7 +3367,7 @@ bool msnet_handle_command(const char *command, char *reply) {
   if (*arg == 0) {
     IPAddress ip = (_state == WIFI_FALLBACK_AP) ? WiFi.softAPIP() : WiFi.localIP();
     char batt[24];
-    if (_batt_known) snprintf(batt, sizeof(batt), "%u%% (%s)", (unsigned)_batt_pct, LEVEL_NL[_level]);
+    if (_batt_known) snprintf(batt, sizeof(batt), "%u%%", (unsigned)_batt_pct);
     else strcpy(batt, "onbekend");
     snprintf(reply, 155, "%s, ssid=%.20s, ip=%s, rssi=%d, accu=%s, elke %us",
              stateNameNl(), _state == WIFI_FALLBACK_AP ? _ap_ssid : _cfg.ssid,
@@ -3137,6 +3460,7 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   }
 
   loadConfig();
+  pwrLoad();          // after loadConfig: it migrates from those fields
   advLoad();          // before the monitors: they borrow names from it
   loadMonitors();
   syncMonitorsToMesh();
@@ -3244,6 +3568,10 @@ void msnet_loop() {
     _mqtt_last_try = 0;
     _mqtt.setServer(_cfg.mqtt_host, _cfg.mqtt_port);
   }
+  if (_apply_rules) {
+    _apply_rules = false;
+    pwrSave();
+  }
   if (_apply_power) {
     _apply_power = false;
     saveConfig();
@@ -3312,5 +3640,6 @@ void msnet_loop() {
      * publish would spend other people's airtime for nothing. */
     applyMonAction();
     monitorLoop();
+    settingsLoop();
   }
 }
