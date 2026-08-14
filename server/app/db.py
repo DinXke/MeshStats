@@ -460,6 +460,100 @@ def contacts_by_key_prefix(key_prefix: str) -> list[sqlite3.Row]:
     )
 
 
+# The archive page asks three questions about one query -- the rows, the total,
+# and the shape over time -- and a fourth per field it breaks down. They share
+# this FROM clause, so the joins the search fields assume live in one place.
+# search.FIELDS refers to these aliases by name; keep the two in step.
+_SEARCH_FROM = (
+    "FROM packets p "
+    "LEFT JOIN contacts c ON c.prefix6 = p.sender "
+    "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
+)
+
+
+def _search_where(query, since: str, until: str) -> tuple[str, list]:
+    """The WHERE for a parsed query inside a time window."""
+    sql = "WHERE p.ts >= ? AND p.ts <= ?"
+    params: list = [since, until]
+    if query.sql:
+        sql += f" AND ({query.sql})"
+        params.extend(query.params)
+    return sql, params
+
+
+def search_packets(query, since: str, until: str, limit: int = 100,
+                   offset: int = 0) -> list[sqlite3.Row]:
+    """One page of matching packets, newest first.
+
+    Newest first, unlike the live feed: the archive is read by someone looking
+    for something that already happened, and the most recent match is the one
+    they most often mean.
+    """
+    where, params = _search_where(query, since, until)
+    return q(
+        "SELECT p.*, c.name AS sender_name, c.lat AS sender_lat, c.lon AS sender_lon, "
+        "c.country AS sender_country, o.name AS observer_name, "
+        "o.country AS observer_country "
+        f"{_SEARCH_FROM}{where} GROUP BY p.id ORDER BY p.ts DESC, p.id DESC "
+        "LIMIT ? OFFSET ?",
+        (*params, limit, offset),
+    )
+
+
+def count_packets(query, since: str, until: str) -> int:
+    """How many packets match, in total.
+
+    Counted rather than inferred from the page: "1-100 of many" is the kind of
+    half-answer that makes a search box untrustworthy, and over one week of
+    packets on one SQLite file this is a cheap query.
+    """
+    where, params = _search_where(query, since, until)
+    row = qone(f"SELECT COUNT(DISTINCT p.id) AS n {_SEARCH_FROM}{where}", tuple(params))
+    return (row["n"] or 0) if row else 0
+
+
+def packet_histogram(query, since: str, until: str, bucket_s: int) -> list[dict]:
+    """Match counts per time bucket, for the bar chart above the results.
+
+    Bucketed in SQL on the epoch second: pulling every matching timestamp into
+    Python to group it there would mean transferring the whole result set to draw
+    sixty bars.
+    """
+    where, params = _search_where(query, since, until)
+    rows = q(
+        f"SELECT CAST(strftime('%s', p.ts) AS INTEGER) / {int(bucket_s)} AS b, "
+        f"COUNT(DISTINCT p.id) AS n {_SEARCH_FROM}{where} GROUP BY b ORDER BY b",
+        tuple(params),
+    )
+    return [{"t": r["b"] * int(bucket_s), "n": r["n"]} for r in rows]
+
+
+def packet_facets(query, since: str, until: str, column: str,
+                  limit: int = 8) -> list[dict]:
+    """The most common values of one field among the matches.
+
+    ``column`` is a SQL expression from search.FIELDS, never anything a visitor
+    typed -- the field name is looked up in that table first, so an unknown one
+    never reaches here.
+    """
+    where, params = _search_where(query, since, until)
+    rows = q(
+        f"SELECT {column} AS v, COUNT(DISTINCT p.id) AS n {_SEARCH_FROM}{where} "
+        f"AND {column} IS NOT NULL AND {column} != '' "
+        "GROUP BY v ORDER BY n DESC, v LIMIT ?",
+        (*params, limit),
+    )
+    return [{"value": str(r["v"]), "count": r["n"]} for r in rows]
+
+
+def packet_span() -> dict:
+    """Oldest and newest packet held, so the page can bound its time picker."""
+    row = qone("SELECT MIN(ts) AS lo, MAX(ts) AS hi, COUNT(*) AS n FROM packets")
+    if not row or not row["hi"]:
+        return {"oldest": None, "newest": None, "total": 0}
+    return {"oldest": row["lo"], "newest": row["hi"], "total": row["n"] or 0}
+
+
 def last_packet_id() -> int:
     row = qone("SELECT MAX(id) AS id FROM packets")
     return (row["id"] or 0) if row else 0

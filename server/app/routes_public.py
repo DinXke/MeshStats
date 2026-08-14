@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from . import auth, config, db, metrics
+from . import auth, config, db, metrics, search
 from .templating import templates
 
 router = APIRouter()
@@ -31,6 +31,18 @@ def index(request: Request):
         # Without a single placeable node the live map would be an empty grey
         # box, so the whole block (and Leaflet with it) stays out of the page.
         "has_livemap": bool(db.located_nodes()),
+    })
+
+
+@router.get("/pakketten", response_class=HTMLResponse)
+def packets_page(request: Request):
+    """The packet archive: query-bar search over everything still retained."""
+    return templates.TemplateResponse(request, "packets.html", {
+        "site_name": config.SITE_NAME,
+        "span": db.packet_span(),
+        "fields": search.describe_fields(),
+        "retention_days": db.setting_int("packet_retention_days",
+                                         config.PACKET_RETENTION_DAYS),
     })
 
 

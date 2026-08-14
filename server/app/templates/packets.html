@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Pakketarchief · {{ site_name }}{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <div class="pagehead-top"><h1 data-i18n="arch.title">Pakketarchief</h1></div>
+  <p class="hint" data-i18n="arch.hint" data-i18n-vars='{"days": {{ retention_days }}}'>Doorzoek alle bewaarde pakketten &middot; pakketten blijven {{ retention_days }} dagen bewaard</p>
+</div>
+
+<!-- The whole page hangs off this id: app.js only wires the archive when it is
+     present, the same guard pattern as the live map on the home page. -->
+<div id="archive"
+     data-oldest="{{ span.oldest or '' }}" data-newest="{{ span.newest or '' }}"
+     data-total="{{ span.total }}">
+
+  <div class="card archbar">
+    <form id="arch-form" class="archform">
+      <input type="search" id="arch-q" class="archquery" autocomplete="off"
+             spellcheck="false"
+             data-i18n-ph="arch.query_ph" placeholder="bv. type:ADVERT scope:scoped snr:&gt;5 &middot; leeg = alles"
+             data-i18n-aria="arch.query_aria" aria-label="Zoekopdracht">
+      <select id="arch-window" data-i18n-aria="arch.window_aria" aria-label="Tijdvenster">
+        <option value="1" data-i18n="arch.w1">laatste uur</option>
+        <option value="6" data-i18n="arch.w6">laatste 6 uur</option>
+        <option value="24" selected data-i18n="arch.w24">laatste 24 uur</option>
+        <option value="72" data-i18n="arch.w72">laatste 3 dagen</option>
+        <option value="168" data-i18n="arch.w168">laatste 7 dagen</option>
+        <option value="0" data-i18n="arch.wall">alles</option>
+      </select>
+      <button type="submit" data-i18n="arch.search">Zoeken</button>
+    </form>
+    <p class="archerror" id="arch-error" hidden></p>
+    <!-- The language reference lives on the page rather than in a manual: a
+         query language nobody can discover is a text box that looks broken. -->
+    <details class="archhelp">
+      <summary class="muted small" data-i18n="arch.help">Zoektaal en velden</summary>
+      <div class="archhelp-body">
+        <p class="muted small" data-i18n="arch.help_syntax">
+          Clausules met een spatie ertussen moeten allemaal gelden. <code>veld:waarde</code> zoekt exact,
+          <code>2ae7*</code> op prefix, <code>-type:ACK</code> sluit uit, <code>type:(ADVERT OR ACK)</code> is een van beide,
+          <code>snr:&gt;5</code> en <code>len:20..40</code> voor getallen, aanhalingstekens voor een waarde met spaties.
+          Een los woord zoekt in namen, sleutels, type, bereik en land.</p>
+        <table class="archfields">
+          {% for f in fields %}
+          <tr><td><code>{{ f.name }}:</code></td>
+              <td data-i18n="arch.f_{{ f.name }}">{{ f.label }}</td>
+              <td class="muted">{% if f.hint %}<code>{{ f.name }}:{{ f.hint }}</code>{% endif %}</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <div class="card archhisto">
+    <div class="archcount muted small" id="arch-count"></div>
+    <canvas id="arch-canvas" height="90"></canvas>
+  </div>
+
+  <div class="archsplit">
+    <!-- Facets on the left, Kibana's own arrangement: the point of a breakdown
+         is refining, so every value is a click that adds itself to the query. -->
+    <aside class="card archfacets" id="arch-facets"></aside>
+
+    <div class="card archresults">
+      <div class="feedhead" aria-hidden="true">
+        <i></i>
+        <span class="pkt-time-abs" data-i18n="col.time">Tijd</span>
+        <span class="pkt-who" data-i18n="col.sender">Afzender</span>
+        <span class="pkt-obs" data-i18n="col.observer">Gehoord door</span>
+        <span class="pkt-type" data-i18n="col.type">Type</span>
+        <span class="pkt-scope" data-i18n="col.scope">Bereik</span>
+        <span class="pkt-snr" data-i18n="col.snr">SNR</span>
+        <span class="pkt-rssi" data-i18n="col.rssi">RSSI</span>
+        <span class="pkt-hops" data-i18n="col.hops">Hops</span>
+        <span class="pkt-len" data-i18n="col.len">Lengte</span>
+        <span class="pkt-cc" data-i18n="col.country">Land</span>
+      </div>
+      <ul class="livefeed archlist" id="arch-list"></ul>
+      <p class="muted small" id="arch-empty" hidden data-i18n="arch.empty">Geen pakketten die aan de zoekopdracht voldoen.</p>
+      <div class="archpager">
+        <button type="button" id="arch-prev" data-i18n="arch.prev">&larr; nieuwer</button>
+        <span class="muted small" id="arch-page"></span>
+        <button type="button" id="arch-next" data-i18n="arch.next">ouder &rarr;</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_v }}"></script>
+{% endblock %}

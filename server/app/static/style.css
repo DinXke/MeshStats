@@ -579,3 +579,63 @@ label input { width: 100%; margin-top: .25rem; }
   .snrbar-col { display: none; }
   .modal-chartwrap { height: 240px; }
 }
+
+/* --- packet archive (/pakketten) --------------------------------------------- */
+.archbar { padding: .8rem 1rem; }
+.archform { display: flex; gap: .6rem; flex-wrap: wrap; }
+/* The query box gets the row: it is the page. */
+.archquery { flex: 1 1 20rem; font-family: var(--mono); }
+.archerror { color: var(--red); font-size: .82rem; margin: .5rem 0 0; }
+.archhelp { margin-top: .5rem; }
+.archhelp summary { cursor: pointer; }
+.archhelp-body { padding: .5rem 0 0; }
+.archhelp-body code { font-size: .78rem; }
+.archfields { margin-top: .5rem; font-size: .78rem; border-collapse: collapse; }
+.archfields td { padding: .12rem .8rem .12rem 0; vertical-align: top; }
+
+.archhisto { margin-top: .8rem; padding: .6rem .8rem .4rem; }
+.archcount { margin-bottom: .3rem; }
+.archhisto canvas { display: block; width: 100%; }
+
+/* Facets beside the results on a wide screen, above them on a narrow one --
+   the sidebar is a refinement tool, not the content. */
+.archsplit { display: flex; gap: .8rem; margin-top: .8rem; align-items: flex-start; }
+.archfacets { flex: 0 0 14rem; padding: .7rem .9rem; position: sticky; top: .8rem; }
+.archfacets h4 {
+  margin: .7rem 0 .25rem; font-size: .68rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .1em;
+}
+.archfacets h4:first-child { margin-top: 0; }
+.archfacets ul { list-style: none; margin: 0; padding: 0; }
+.archfacets li {
+  display: flex; justify-content: space-between; gap: .6rem;
+  font-size: .78rem; padding: .1rem 0;
+}
+.archfacets a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archresults { flex: 1 1 0; min-width: 0; padding: .5rem .8rem .7rem; }
+
+/* The archive reuses the live feed's row layout but not its cap on height:
+   an archive that scrolls inside a box inside a page that also scrolls is two
+   scrollbars fighting over one wheel. */
+.archlist { max-height: none; }
+.archlist li { flex-wrap: nowrap; }
+/* Absolute timestamps: first column, fixed width, no right-alignment order
+   trick -- the archive reads as a table, oldest answer last. */
+.pkt-time-abs { flex: 0 0 7.6rem; color: var(--muted); white-space: nowrap; }
+.archresults .feedhead .pkt-time-abs { color: inherit; }
+
+.archpager { display: flex; align-items: center; gap: .8rem; margin-top: .6rem; }
+.archpager button { font-size: .78rem; }
+.archpager button:disabled { opacity: .4; cursor: default; box-shadow: none; }
+
+@media (max-width: 900px) {
+  .archsplit { flex-direction: column; }
+  .archfacets { position: static; flex-basis: auto; width: 100%; }
+}
+@media (max-width: 700px) {
+  /* Same two-line fold as the live feed, driven by the same classes; only the
+     timestamp behaves differently because it is absolute here. */
+  .archlist li { flex-wrap: wrap; }
+  .pkt-time-abs { flex: 0 0 auto; order: 0; margin-left: auto; font-size: .74rem; }
+  .archresults .feedhead { display: none; }
+}

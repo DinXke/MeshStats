@@ -1658,4 +1658,268 @@
       setTimeout(function () { modalMap && modalMap.invalidateSize(); }, 100);
     });
   };
+
+  // --- packet archive (/pakketten) ---------------------------------------------
+  // Same guard pattern as the live map: the block wires itself only when its
+  // root element is on the page.
+  var archEl = document.getElementById("archive");
+  if (archEl) {
+    var PAGE_SIZE = 100;
+    // Which fields get a top-values panel. A fixed list rather than "everything
+    // facetable": each facet is one GROUP BY over the matches, and eight panels
+    // would make every keystroke of refinement eight times as heavy for a
+    // sidebar nobody reads past the fourth block of.
+    var FACETS = ["type", "scope", "sender", "observer", "country"];
+    var qEl = document.getElementById("arch-q");
+    var windowEl = document.getElementById("arch-window");
+    var errEl = document.getElementById("arch-error");
+    var listEl = document.getElementById("arch-list");
+    var emptyEl = document.getElementById("arch-empty");
+    var countEl2 = document.getElementById("arch-count");
+    var facetsEl = document.getElementById("arch-facets");
+    var canvasEl = document.getElementById("arch-canvas");
+    var pageEl = document.getElementById("arch-page");
+    var prevEl = document.getElementById("arch-prev");
+    var nextEl = document.getElementById("arch-next");
+    var archOffset = 0;
+    var archTotal = 0;
+    var archSeq = 0;      // stale responses from a slower earlier search are dropped
+
+    // The query and window live in the URL, so a search can be sent to someone
+    // as a link and the back button returns to the previous one -- for a search
+    // page that is not a nicety, it is what makes results citable.
+    (function initFromUrl() {
+      var sp = new URLSearchParams(location.search);
+      if (sp.get("q")) qEl.value = sp.get("q");
+      if (sp.get("w") !== null) windowEl.value = sp.get("w");
+      if (!windowEl.value) windowEl.value = "24";
+    })();
+
+    function pushUrl() {
+      var sp = new URLSearchParams();
+      if (qEl.value.trim()) sp.set("q", qEl.value.trim());
+      if (windowEl.value !== "24") sp.set("w", windowEl.value);
+      var qs = sp.toString();
+      history.replaceState(null, "", location.pathname + (qs ? "?" + qs : ""));
+    }
+
+    function sinceParam() {
+      var hours = parseInt(windowEl.value, 10);
+      if (!hours) {
+        // "alles": bound by the oldest packet actually held rather than by an
+        // arbitrary epoch, so the histogram's bucket size stays proportionate.
+        return archEl.dataset.oldest || "1970-01-01T00:00:00Z";
+      }
+      return new Date(Date.now() - hours * 3600e3).toISOString().slice(0, 19) + "Z";
+    }
+
+    function runSearch(keepOffset) {
+      if (!keepOffset) archOffset = 0;
+      var seq = ++archSeq;
+      pushUrl();
+      var url = "/api/v1/packets/search?q=" + encodeURIComponent(qEl.value.trim()) +
+        "&since=" + encodeURIComponent(sinceParam()) +
+        "&limit=" + PAGE_SIZE + "&offset=" + archOffset +
+        "&facets=" + FACETS.join(",");
+      fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+        if (seq !== archSeq) return;
+        if (d.error) {
+          errEl.textContent = d.error;
+          errEl.hidden = false;
+          return;
+        }
+        errEl.hidden = true;
+        archTotal = d.total;
+        renderCount(d);
+        renderHistogram(d);
+        renderFacets(d.facets || {});
+        renderRows(d.packets || []);
+        renderPager();
+      }).catch(function () {
+        if (seq !== archSeq) return;
+        errEl.textContent = t("arch.loaderror");
+        errEl.hidden = false;
+      });
+    }
+
+    function renderCount(d) {
+      countEl2.textContent = t(archTotal === 1 ? "arch.count_one" : "arch.count",
+        { n: archTotal.toLocaleString() });
+    }
+
+    // The histogram is drawn by hand on a canvas, like the gauges on the
+    // repeater page: sixty bars do not justify a chart library on a page that
+    // otherwise needs none.
+    function renderHistogram(d) {
+      var ctx = canvasEl.getContext("2d");
+      var w = canvasEl.width = canvasEl.parentNode.clientWidth - 24;
+      var h = canvasEl.height;
+      ctx.clearRect(0, 0, w, h);
+      var bars = d.histogram || [];
+      if (!bars.length) return;
+      var max = 0;
+      bars.forEach(function (b) { if (b.n > max) max = b.n; });
+      // The axis is the searched window, not the data's own extent: a burst of
+      // traffic in one bucket must show as one bar in an otherwise empty hour,
+      // not as a wall of green filling the whole strip.
+      var lo = Math.floor(new Date(sinceParam()).getTime() / 1000);
+      var hi = Math.ceil(Date.now() / 1000);
+      var span = Math.max(d.bucket_s, hi - lo);
+      var bw = Math.max(2, Math.floor(w * d.bucket_s / span) - 1);
+      var accent = cssVar("--accent", "#35e08c");
+      ctx.fillStyle = accent;
+      bars.forEach(function (b) {
+        var x = Math.floor((b.t - lo) / span * w);
+        var bh = Math.max(1, Math.round((h - 16) * b.n / max));
+        ctx.fillRect(x, h - 14 - bh, bw, bh);
+      });
+      // First and last moment as labels; a full axis would repeat the window
+      // picker's answer in smaller type.
+      ctx.fillStyle = TEXT_MUTED;
+      ctx.font = "10px 'JetBrains Mono', monospace";
+      ctx.textBaseline = "bottom";
+      ctx.textAlign = "left";
+      ctx.fillText(fmtBucket(lo, d.bucket_s), 0, h);
+      ctx.textAlign = "right";
+      ctx.fillText(fmtBucket(hi, d.bucket_s), w, h);
+    }
+
+    function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+    // "14-08 22:18:30", local time. Day-month leads because a 7-day archive
+    // spans dates; the year is never in doubt inside one week.
+    function fmtTs(iso) {
+      var d = new Date(iso);
+      return pad2(d.getDate()) + "-" + pad2(d.getMonth() + 1) + " " +
+        pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+    }
+
+    function fmtBucket(epoch, bucketS) {
+      var d = new Date(epoch * 1000);
+      var dm = pad2(d.getDate()) + "-" + pad2(d.getMonth() + 1);
+      var hm = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+      return bucketS >= 43200 ? dm : dm + " " + hm;
+    }
+
+    function renderFacets(facets) {
+      facetsEl.textContent = "";
+      FACETS.forEach(function (name) {
+        var values = facets[name];
+        if (!values || !values.length) return;
+        var h4 = document.createElement("h4");
+        h4.textContent = t("arch.f_" + name);
+        facetsEl.appendChild(h4);
+        var ul = document.createElement("ul");
+        values.forEach(function (v) {
+          var li = document.createElement("li");
+          var a = document.createElement("a");
+          a.href = "#";
+          a.textContent = v.value;
+          a.title = t("arch.facet_add", { q: name + ":" + v.value });
+          a.addEventListener("click", function (e) {
+            e.preventDefault();
+            addClause(name, v.value);
+          });
+          var n = document.createElement("span");
+          n.className = "muted";
+          n.textContent = v.count.toLocaleString();
+          li.appendChild(a);
+          li.appendChild(n);
+          ul.appendChild(li);
+        });
+        facetsEl.appendChild(ul);
+      });
+      facetsEl.hidden = !facetsEl.children.length;
+    }
+
+    // Clicking a facet value refines rather than replaces, which is the whole
+    // point of showing the breakdown. A value already in the query is not added
+    // twice -- clicking the same bar repeatedly should be idempotent.
+    function addClause(field, value) {
+      var clause = field + ":" +
+        (/[\s"]/.test(value) ? '"' + value.replace(/"/g, "") + '"' : value);
+      var current = qEl.value.trim();
+      if (current.indexOf(clause) !== -1) return;
+      qEl.value = current ? current + " " + clause : clause;
+      runSearch(false);
+    }
+
+    function archRow(p) {
+      var li = document.createElement("li");
+      li.dataset.id = p.id;
+      li.tabIndex = 0;
+      var dot = document.createElement("i");
+      dot.style.background = PKT_COLORS[p.type] || "#7d8fa0";
+      li.appendChild(dot);
+      // Absolute time, not relative: the archive exists to pin down when
+      // something happened, and "3 uur geleden" defeats that. Compact 24-hour
+      // form rather than toLocaleString: the locale's full rendering runs to
+      // 22 characters and squeezes the sender out of its own column.
+      var when = document.createElement("time");
+      when.className = "pkt-time-abs";
+      when.dateTime = p.ts;
+      when.textContent = fmtTs(p.ts);
+      li.appendChild(when);
+      li.appendChild(cell2("pkt-who", p.sender_name || (p.sender || "").toUpperCase() ||
+        t("pkt.sender_short")));
+      li.appendChild(cell2("pkt-obs", p.observer_name ||
+        (p.observer || "").slice(0, 6).toUpperCase() || "—"));
+      li.appendChild(cell2("pkt-type", p.type || "?"));
+      var scope = document.createElement("span");
+      scope.className = "pkt-scope";
+      scope.textContent = p.scope ? t("scope." + p.scope) : "—";
+      if (p.scope_region) scope.textContent += " · " + p.scope_region;
+      li.appendChild(scope);
+      li.appendChild(cell2("pkt-snr", p.snr != null ? p.snr.toFixed(1) + " dB" : "—"));
+      li.appendChild(cell2("pkt-rssi", p.rssi != null ? p.rssi + " dBm" : "—"));
+      li.appendChild(cell2("pkt-hops", p.path_len != null ? String(p.path_len) : "—"));
+      li.appendChild(cell2("pkt-len", p.len != null ? p.len + " B" : "—"));
+      li.appendChild(cell2("pkt-cc", p.country || "—"));
+      // The detail view already exists as the packet API plus the home page's
+      // panel; the archive links to the JSON straight up rather than growing a
+      // second panel of its own. REVISIT if that turns out too austere.
+      li.addEventListener("click", function () {
+        window.open("/api/v1/packets/" + p.id, "_blank");
+      });
+      return li;
+    }
+
+    function cell2(cls, text) {
+      var el = document.createElement("span");
+      el.className = cls;
+      el.textContent = text;
+      return el;
+    }
+
+    function renderRows(rows) {
+      listEl.textContent = "";
+      rows.forEach(function (p) { listEl.appendChild(archRow(p)); });
+      emptyEl.hidden = rows.length > 0;
+    }
+
+    function renderPager() {
+      var from = archTotal ? archOffset + 1 : 0;
+      var to = Math.min(archOffset + PAGE_SIZE, archTotal);
+      pageEl.textContent = t("arch.page", { from: from, to: to,
+        total: archTotal.toLocaleString() });
+      prevEl.disabled = archOffset <= 0;
+      nextEl.disabled = to >= archTotal;
+    }
+
+    prevEl.addEventListener("click", function () {
+      archOffset = Math.max(0, archOffset - PAGE_SIZE);
+      runSearch(true);
+    });
+    nextEl.addEventListener("click", function () {
+      archOffset += PAGE_SIZE;
+      runSearch(true);
+    });
+    document.getElementById("arch-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      runSearch(false);
+    });
+    windowEl.addEventListener("change", function () { runSearch(false); });
+
+    runSearch(false);
+  }
 })();

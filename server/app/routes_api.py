@@ -1,9 +1,11 @@
 """JSON API: ingest from Home Assistant plus the public data endpoints."""
+import re
 import time
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
-from . import auth, config, countries, db, metrics, packets
+from . import auth, config, countries, db, metrics, packets, search
 
 router = APIRouter(prefix="/api/v1")
 
@@ -350,6 +352,92 @@ def packet_feed(
         if countries.available():
             out["countries"] = db.known_countries()
     return out
+
+
+@router.get("/packets/search")
+def packet_search(
+    q: str = Query("", max_length=500),
+    since: str = Query("", max_length=32),
+    until: str = Query("", max_length=32),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=100_000),
+    facets: str = Query("", max_length=200),
+):
+    """Search the packet archive: rows, total, histogram and facets in one call.
+
+    One call rather than four, because they all answer the same query and a
+    page that fires four requests per keystroke of refinement would show them
+    resolving at different moments -- a count that briefly disagrees with the
+    bars above it reads as a broken search.
+
+    A query the parser refuses comes back as a 200 with ``error`` set: for this
+    endpoint a typo in the query is a normal outcome to render next to the box,
+    not an exceptional one worth a 4xx that shows up as noise in proxy logs.
+    """
+    try:
+        parsed = search.parse(q)
+    except search.QueryError as err:
+        return {"error": str(err), "fields": search.describe_fields()}
+
+    since_ts = _clean_ts(since) or (
+        datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    until_ts = _clean_ts(until) or "9999-12-31T23:59:59Z"
+
+    rows = db.search_packets(parsed, since_ts, until_ts, limit, offset)
+    total = db.count_packets(parsed, since_ts, until_ts)
+
+    # Bucket size follows the window so the chart always has on the order of
+    # sixty bars: per-minute over an hour, per-hour over days.
+    window_s = max(60, _window_seconds(since_ts, until_ts, rows))
+    bucket_s = max(60, window_s // 60)
+    histogram = db.packet_histogram(parsed, since_ts, until_ts, bucket_s)
+
+    facet_out = {}
+    for name in [f for f in facets.split(",") if f][:6]:
+        field = search.FIELDS.get(name)
+        if field is None or not field.facet:
+            continue   # not an error: an old bookmark may name a field that was renamed
+        column = search.REGION_SQL if name == "region" else field.sql
+        facet_out[name] = db.packet_facets(parsed, since_ts, until_ts, column)
+
+    return {
+        "total": total,
+        "offset": offset,
+        "bucket_s": bucket_s,
+        "histogram": histogram,
+        "facets": facet_out,
+        "packets": [{
+            "id": p["id"], "ts": p["ts"],
+            "observer": p["observer"], "observer_name": p["observer_name"],
+            "snr": p["snr"], "rssi": p["rssi"], "len": p["len"],
+            "route": p["route"], "type": p["payload_name"],
+            "scope": p["scope"],
+            "scope_region": _scope_region(_scope_codes(p["scope_codes"])),
+            "path_len": p["path_len"],
+            "sender": p["sender"], "sender_name": p["sender_name"],
+            "country": p["sender_country"] or p["observer_country"],
+        } for p in rows],
+    }
+
+
+def _clean_ts(value: str) -> str | None:
+    """An ISO timestamp in the storage format, or None for anything else."""
+    v = (value or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z?", v):
+        return v if v.endswith("Z") else v + ("Z" if len(v) == 20 else ":00Z")
+    return None
+
+
+def _window_seconds(since_ts: str, until_ts: str, rows) -> int:
+    """The searched window in seconds; an open end is capped at now."""
+    try:
+        lo = datetime.strptime(since_ts, "%Y-%m-%dT%H:%M:%SZ")
+        hi = (datetime.now(timezone.utc).replace(tzinfo=None)
+              if until_ts.startswith("9999")
+              else datetime.strptime(until_ts, "%Y-%m-%dT%H:%M:%SZ"))
+        return int((hi - lo).total_seconds())
+    except ValueError:
+        return 24 * 3600
 
 
 @router.get("/packets/{packet_id}")
