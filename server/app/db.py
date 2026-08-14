@@ -140,6 +140,16 @@ COLUMN_MIGRATIONS = [
     # The two transport codes, comma-separated, exactly as they were on the wire.
     # NULL on an unscoped packet, where the wire has no room for them at all.
     ("packets", "scope_codes", "TEXT"),
+    # The 1-byte source and destination hashes of REQ/RESPONSE/TXT_MSG/PATH
+    # payloads (dest only for ANON_REQ), two hex characters each. One byte names
+    # nobody by itself, but resolved against the contacts table it usually
+    # answers "who sent this" on a mesh of realistic size -- the same resolution,
+    # with the same honesty about ambiguity, that path hops already get.
+    # Empty string means "decoded, and this packet type has none": without that
+    # sentinel the backfill would re-decode every ACK and advert on every start,
+    # looking for a hash that was never there.
+    ("packets", "src_hash", "TEXT"),
+    ("packets", "dest_hash", "TEXT"),
 ]
 
 
@@ -150,34 +160,36 @@ def _migrate(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
-def _backfill_scope(conn: sqlite3.Connection) -> None:
-    """Fill ``scope`` on packets stored before the column existed.
+def _backfill_from_raw(conn: sqlite3.Connection) -> None:
+    """Fill decoder-derived columns on packets stored before those columns existed.
 
     The frame is kept in ``raw``, so this is a re-read of what was already there
     rather than an invention: the same bytes through the same decoder that new
-    packets go through. Without it the column would stay empty until the whole
+    packets go through. Without it a new column would stay empty until the whole
     table had rolled over, and the list would show a week of dashes on rows whose
     answer is sitting right next to them.
 
-    Self-limiting. Every row it touches comes out non-NULL, so the second start
-    finds nothing to do and the query degenerates to an index-free scan of an
-    empty result -- cheap enough at the once-per-process this runs. Rows older
-    than the ``raw`` column keep a NULL scope forever, which is the honest answer
-    for a packet whose bytes nobody kept.
+    Self-limiting. Every row it touches gets a non-NULL src_hash (the empty
+    string when the packet type carries none), so the second start finds nothing
+    to do -- cheap enough at the once-per-process this runs. Rows older than the
+    ``raw`` column keep NULLs forever, which is the honest answer for a packet
+    whose bytes nobody kept.
     """
     rows = conn.execute(
-        "SELECT id, raw FROM packets WHERE scope IS NULL AND raw IS NOT NULL"
+        "SELECT id, raw FROM packets "
+        "WHERE (scope IS NULL OR src_hash IS NULL) AND raw IS NOT NULL"
     ).fetchall()
     for row in rows:
         try:
             pkt = packets.decode(bytes.fromhex(row["raw"]))
         except ValueError:
             continue        # stored hex that is not hex: nothing to re-read
-        if not pkt.get("scope"):
-            continue
         conn.execute(
-            "UPDATE packets SET scope=?, scope_codes=? WHERE id=?",
-            (pkt["scope"], _scope_codes(pkt), row["id"]),
+            "UPDATE packets SET scope=COALESCE(?, scope), "
+            "scope_codes=COALESCE(?, scope_codes), src_hash=?, dest_hash=? "
+            "WHERE id=?",
+            (pkt.get("scope"), _scope_codes(pkt),
+             pkt.get("src_hash", ""), pkt.get("dest_hash", ""), row["id"]),
         )
 
 
@@ -206,7 +218,7 @@ def get_conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.executescript(SCHEMA)
         _migrate(_conn)
-        _backfill_scope(_conn)
+        _backfill_from_raw(_conn)
         _conn.commit()
     return _conn
 
@@ -390,8 +402,9 @@ def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
     raw_hex = str(raw or "").strip().lower()[:MAX_RAW_HEX_STORED] or None
     return execute(
         "INSERT INTO packets(ts, observer, snr, rssi, len, route, payload_type, "
-        "payload_name, path_len, sender, phash, path, raw, scope, scope_codes) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "payload_name, path_len, sender, phash, path, raw, scope, scope_codes, "
+        "src_hash, dest_hash) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (ts, observer,
          float(snr) if isinstance(snr, (int, float)) else None,
          float(rssi) if isinstance(rssi, (int, float)) else None,
@@ -399,7 +412,8 @@ def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
          pkt.get("route_name"), pkt.get("payload_type"), pkt.get("payload_name"),
          pkt.get("path_len"), pkt.get("sender"), phash,
          ",".join(pkt.get("path") or []) or None, raw_hex,
-         pkt.get("scope"), _scope_codes(pkt)),
+         pkt.get("scope"), _scope_codes(pkt),
+         pkt.get("src_hash", ""), pkt.get("dest_hash", "")),
     )
 
 
@@ -420,6 +434,29 @@ def recent_packets(since_id: int = 0, limit: int = 200) -> list[sqlite3.Row]:
         "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
         "WHERE p.id > ? GROUP BY p.id ORDER BY p.id LIMIT ?",
         (since_id, limit),
+    )
+
+
+def packets_with_paths(since: str, limit: int = 20000) -> list[sqlite3.Row]:
+    """Packets since ``since``, reduced to what the heat map aggregation needs.
+
+    A lean cousin of recent_packets: no raw frame, no radio figures, no
+    countries -- the aggregation only places stops along each path. Newest
+    first, so when the cap bites it is the oldest packets that fall off the
+    heat map rather than the freshest. Same GROUP BY p.id as recent_packets,
+    for the same reason: two sources can register one node under prefixes of
+    different length.
+    """
+    return q(
+        "SELECT p.sender, p.path, c.name AS sender_name, "
+        "c.lat AS sender_lat, c.lon AS sender_lon, "
+        "substr(p.observer, 1, 6) AS observer6, o.name AS observer_name, "
+        "o.lat AS observer_lat, o.lon AS observer_lon "
+        "FROM packets p "
+        "LEFT JOIN contacts c ON c.prefix6 = p.sender "
+        "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
+        "WHERE p.ts >= ? GROUP BY p.id ORDER BY p.id DESC LIMIT ?",
+        (since, limit),
     )
 
 

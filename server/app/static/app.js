@@ -12,6 +12,26 @@
     var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
   }
+  // Sender of a packet that is not an advert, worked out from the 1-byte source
+  // hash the server resolved against the contacts table (the `src` object on a
+  // packet). One byte is honest ambiguity: one match reads as a name, several
+  // read as "N mogelijk" with every candidate in the mouseover -- the same rule
+  // the path hops follow. Shared between the live feed and the archive, which
+  // render the same packets in two places.
+  function srcLabel(src, t) {
+    if (!src || !src.matches || !src.matches.length) return null;
+    var names = src.matches.map(function (m) {
+      return m.name || (m.prefix || "").toUpperCase();
+    });
+    if (src.state === "known") {
+      return { text: names[0],
+               title: t("pkt.src_from_hash", { h: (src.hash || "").toUpperCase() }) };
+    }
+    return { text: t("pkt.src_multi", { n: src.matches.length }),
+             title: t("pkt.src_candidates", { list: names.join(", "),
+                                              h: (src.hash || "").toUpperCase() }) };
+  }
+
   var THEME = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
   var TEXT = cssVar("--text", "#d7e2ea");
   var TEXT_MUTED = cssVar("--muted", "#7d8fa0");
@@ -744,14 +764,99 @@
       return true;
     }
 
-    // The sender leads: it is what a reader is looking for, and only adverts
-    // carry one, so the short form here says just "unknown" -- the full reason
-    // ("only adverts name their sender") belongs in the detail panel, not in a
-    // column.
+    // --- heat map of travelled paths --------------------------------------------
+    // The server aggregates 24 hours of resolved paths into weighted segments
+    // (see /api/v1/packets/heatmap): the feed's own buffer holds ~300 packets,
+    // nowhere near enough traversals to show which links carry the mesh.
+    // Deliberately ignores the name/country filter: the overlay answers "where
+    // does the traffic flow", and a backbone with the busiest half filtered
+    // away would be redrawn as something it is not.
+    var HEAT_KEY = "mcs-pktheat";
+    var HEAT_REFRESH_MS = 300000;  // a summary of a day can be five minutes old
+    // Amber: legible over both tile themes, and not a colour the packet dots or
+    // the opened route already speak in.
+    var HEAT_COLOR = cssVar("--amber", "#ffb454");
+    var heatEl = document.getElementById("pkt-heat");
+    var heatLayer = null;
+    var heatOn = false;
+    try {
+      heatOn = localStorage.getItem(HEAT_KEY) === "1";
+    } catch (e) { /* blocked */ }
+
+    function clearHeat() {
+      if (heatLayer) { lmap.removeLayer(heatLayer); heatLayer = null; }
+    }
+
+    function drawHeat(d) {
+      clearHeat();
+      if (!heatOn || !d.segments || !d.segments.length) return;
+      var group = L.layerGroup();
+      var logMax = Math.log(1 + (d.max || 1));
+      d.segments.forEach(function (s) {
+        // Log-scaled: a handful of links carry most of the traffic, and on a
+        // raw scale everything else would flatten into hairlines next to them.
+        var k = Math.log(1 + s.n) / logMax;
+        // Interactive, unlike most overlays here: the traversal count is the
+        // one number this layer exists to show, and it needs a hover target.
+        // The node markers are lifted above the lines below, so where the two
+        // overlap the node still wins the pointer.
+        L.polyline([[s.a.lat, s.a.lon], [s.b.lat, s.b.lon]], {
+          color: HEAT_COLOR, weight: 1.5 + 4.5 * k, opacity: 0.3 + 0.5 * k,
+        }).addTo(group).bindTooltip(t("live.heat_tip", {
+          a: s.a.name || s.a.prefix.toUpperCase(),
+          b: s.b.name || s.b.prefix.toUpperCase(),
+          n: s.n,
+        }), { direction: "top", sticky: true });
+      });
+      heatLayer = group.addTo(lmap);
+      // Whichever came second -- this layer or the node dots -- the dots end up
+      // on top, hoverable and the same size they always were.
+      nodeMarkers.forEach(function (e) { e.m.bringToFront(); });
+    }
+
+    function loadHeat() {
+      fetch("/api/v1/packets/heatmap")
+        .then(function (r) { return r.json(); })
+        .then(function (d) { if (heatOn) drawHeat(d); })
+        .catch(function () { /* the next toggle or refresh tries again */ });
+    }
+
+    if (heatEl) {
+      heatEl.checked = heatOn;
+      heatEl.addEventListener("change", function () {
+        heatOn = heatEl.checked;
+        try { localStorage.setItem(HEAT_KEY, heatOn ? "1" : "0"); } catch (e) { /* blocked */ }
+        if (heatOn) loadHeat(); else clearHeat();
+      });
+      if (heatOn) loadHeat();
+      // A day-long summary drifts slowly, but this page is left open for hours;
+      // refresh it on a clock far slower than the packet poll.
+      setInterval(function () {
+        if (heatOn && !document.hidden) loadHeat();
+      }, HEAT_REFRESH_MS);
+    }
+
+    // The sender leads: it is what a reader is looking for. An advert names its
+    // own; everything else falls back to the resolved 1-byte source hash, shown
+    // in the muted style of a derivation rather than a stated fact. Only when
+    // even that gives nothing does the column say "unknown" -- the full reason
+    // belongs in the detail panel, not here.
     function senderCell(p) {
-      if (p.sender_name) return p.sender_name;
-      if (p.sender) return p.sender.toUpperCase();
-      return t("pkt.sender_short");
+      var el = document.createElement("span");
+      el.className = "pkt-who";
+      if (p.sender_name || p.sender) {
+        el.textContent = p.sender_name || p.sender.toUpperCase();
+        return el;
+      }
+      var lbl = srcLabel(p.src, t);
+      if (lbl) {
+        el.textContent = lbl.text;
+        el.title = lbl.title;
+        el.classList.add("src-derived");
+        return el;
+      }
+      el.textContent = t("pkt.sender_short");
+      return el;
     }
 
     function cell(cls, text) {
@@ -769,7 +874,7 @@
       var dot = document.createElement("i");
       dot.style.background = PKT_COLORS[p.type] || "#7d8fa0";
       li.appendChild(dot);
-      li.appendChild(cell("pkt-who", senderCell(p)));
+      li.appendChild(senderCell(p));
 
       var when = document.createElement("time");
       when.className = "reltime pkt-time";
@@ -901,9 +1006,13 @@
       if (!q) return true;
       // The scope goes in twice: as stored, so "scoped" keeps working whatever
       // the page language, and as shown, so a Dutch visitor typing what is on
-      // screen finds the same rows.
+      // screen finds the same rows. Source candidates count too: a name in the
+      // sender column must be findable however it got there.
+      var srcNames = (p.src && p.src.matches || []).map(function (m) {
+        return m.name || m.prefix;
+      }).join(" ");
       return [p.sender_name, p.observer_name, p.sender, p.observer, p.type,
-              p.country, p.scope, p.scope && t("scope." + p.scope)]
+              p.country, p.scope, p.scope && t("scope." + p.scope), srcNames]
         .filter(Boolean).join(" ").toLowerCase().indexOf(q) !== -1;
     }
 
@@ -1490,10 +1599,33 @@
       lmap.fitBounds(pathView, pad);
     }
 
+    // The panel spells out what the column only hints at: every candidate by
+    // name, and which hash they were derived from.
+    function srcDetail(res) {
+      if (!res || !res.matches || !res.matches.length) return null;
+      var names = res.matches.map(function (m) {
+        return m.name || (m.prefix || "").toUpperCase();
+      });
+      if (res.state === "known") {
+        return names[0] + " · " + t("pkt.src_from_hash", { h: res.hash.toUpperCase() });
+      }
+      return t("pkt.src_multi", { n: res.matches.length }) + ": " + names.join(", ") +
+        " · " + t("pkt.src_from_hash", { h: res.hash.toUpperCase() });
+    }
+
     function fillPanel(d) {
       txt("pkt-time", new Date(d.ts).toLocaleString() + " · " + relTime(d.ts));
-      txt("pkt-sender", nodeLabel(d.sender, d.sender_name) || t("pkt.sender_unknown"));
+      txt("pkt-sender", nodeLabel(d.sender, d.sender_name) || srcDetail(d.src) ||
+          t("pkt.sender_unknown"));
       txt("pkt-observer", nodeLabel(d.observer, d.observer_name) || "—");
+      // The destination row only exists for packet types that name one; an empty
+      // row on every ACK and advert would be noise.
+      var destRow = document.getElementById("pkt-dest-row");
+      var destText = srcDetail(d.dest) ||
+        (d.dest && d.dest.hash ? "0x" + d.dest.hash.toUpperCase() + " · " +
+          t("pkt.hop_unknown") : null);
+      destRow.hidden = !destText;
+      if (destText) txt("pkt-dest", destText);
       // Whose country to show follows whose position the map used for this
       // packet: the sender's when we know it, the observer's otherwise.
       var countryRow = document.getElementById("pkt-country-row");
@@ -1564,6 +1696,7 @@
       document.getElementById("pkt-path").textContent = "";
       document.getElementById("pkt-advert").hidden = true;
       document.getElementById("pkt-scope-codes-row").hidden = true;
+      document.getElementById("pkt-dest-row").hidden = true;
     }
 
     function openPacket(id) {
@@ -1860,8 +1993,13 @@
       when.dateTime = p.ts;
       when.textContent = fmtTs(p.ts);
       li.appendChild(when);
-      li.appendChild(cell2("pkt-who", p.sender_name || (p.sender || "").toUpperCase() ||
-        t("pkt.sender_short")));
+      var who = cell2("pkt-who", p.sender_name || (p.sender || "").toUpperCase() || "");
+      if (!who.textContent) {
+        var lbl = srcLabel(p.src, t);
+        who.textContent = lbl ? lbl.text : t("pkt.sender_short");
+        if (lbl) { who.title = lbl.title; who.classList.add("src-derived"); }
+      }
+      li.appendChild(who);
       li.appendChild(cell2("pkt-obs", p.observer_name ||
         (p.observer || "").slice(0, 6).toUpperCase() || "—"));
       li.appendChild(cell2("pkt-type", p.type || "?"));

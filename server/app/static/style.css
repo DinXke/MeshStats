@@ -639,3 +639,8 @@ label input { width: 100%; margin-top: .25rem; }
   .pkt-time-abs { flex: 0 0 auto; order: 0; margin-left: auto; font-size: .74rem; }
   .archresults .feedhead { display: none; }
 }
+
+/* A sender worked out from the 1-byte source hash rather than stated by an
+   advert: dotted underline, candidates in the title. The distinction between
+   knowing and deriving must survive into the pixels. */
+.src-derived { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }

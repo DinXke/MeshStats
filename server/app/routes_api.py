@@ -273,6 +273,28 @@ def _scope_codes(stored: str | None) -> list[int] | None:
         return None
 
 
+def _resolve_src(row) -> dict | None:
+    """Who a packet's 1-byte source hash could be, or None when there is nothing
+    to resolve -- an advert already names its sender in full, and an ACK carries
+    no identity at all.
+
+    Reuses the hop resolver: a src_hash is exactly a hop-sized key prefix, and
+    the honesty rules are identical. The matches are trimmed to name and prefix;
+    a candidate list needs no coordinates.
+    """
+    if row["sender"]:
+        return None
+    src = row["src_hash"]
+    if not src:
+        return None
+    hop = _resolve_hop(src)
+    return {
+        "hash": src, "state": hop["state"],
+        "matches": [{"prefix": m["prefix"], "name": m["name"]}
+                    for m in hop["matches"][:6]],
+    }
+
+
 def _scope_region(codes: list[int] | None) -> int | None:
     """The region a scoped packet names, if it names one at all.
 
@@ -327,6 +349,10 @@ def packet_feed(
             "scope_region": _scope_region(_scope_codes(p["scope_codes"])),
             "path_len": p["path_len"],
             "sender": p["sender"], "sender_name": p["sender_name"],
+            # For everything that is not an advert, the closest thing to a
+            # sender the frame has: the 1-byte source hash resolved against the
+            # contacts we know. Absent when the packet type carries none.
+            "src": _resolve_src(p),
             "lat": lat, "lon": lon,
             "origin": None if lat is None else origin,
             "sender_lat": p["sender_lat"], "sender_lon": p["sender_lon"],
@@ -415,9 +441,101 @@ def packet_search(
             "scope_region": _scope_region(_scope_codes(p["scope_codes"])),
             "path_len": p["path_len"],
             "sender": p["sender"], "sender_name": p["sender_name"],
+            "src": _resolve_src(p),
             "country": p["sender_country"] or p["observer_country"],
         } for p in rows],
     }
+
+
+# One day of paths is one answer for every visitor, and resolving a day of hops
+# is the expensive half of computing it -- so the finished response is memoised
+# whole, on the same clock as the hop cache. A minute of staleness is invisible
+# on an overlay that summarises 24 hours.
+_HEATMAP_TTL_S = 60
+_HEATMAP_WINDOW_H = 24
+# The window is 24 hours rather than the full retention (7 days by default):
+# the overlay answers "where does traffic flow *now*", a week-old backbone that
+# has since gone dark should not outshine today's, and a day keeps the pass over
+# the rows cheap enough to run on demand. The row cap is a guard against a mesh
+# that mirrors every frame it hears, not a number a healthy day gets near.
+_HEATMAP_MAX_PACKETS = 20000
+_heatmap_cache: dict = {"at": 0.0, "data": None}
+
+
+def _heat_stop(prefix, name, lat, lon) -> dict | None:
+    """A placeable stop along a packet's path, or None where honesty forbids one."""
+    if not prefix or lat is None or lon is None:
+        return None
+    return {"prefix": prefix, "name": name, "lat": lat, "lon": lon}
+
+
+@router.get("/packets/heatmap")
+def packet_heatmap():
+    """Link usage over the last 24 hours, aggregated for the heat-map overlay.
+
+    One segment per pair of *consecutively placeable* stops along each packet's
+    path (sender -> hops -> observer), counted once per traversal. The same
+    honesty rule as the drawn route applies: an ambiguous or unknown hop has no
+    position we are entitled to use, so it breaks the chain rather than being
+    bridged. A single packet's route can afford a dashed guess across such a
+    gap; here the guess would be counted and recounted into a solid,
+    authoritative-looking line, which is exactly the lie a heat map must not
+    tell.
+
+    Segments are undirected -- a link's load is the traffic over it, whichever
+    way it went -- and sorted lightest first, so a client drawing them in order
+    puts the heavy ones on top.
+    """
+    now = time.monotonic()
+    if _heatmap_cache["data"] is not None and now - _heatmap_cache["at"] < _HEATMAP_TTL_S:
+        return _heatmap_cache["data"]
+
+    since = (datetime.now(timezone.utc)
+             - timedelta(hours=_HEATMAP_WINDOW_H)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    counts: dict[tuple[str, str], int] = {}
+    nodes: dict[str, dict] = {}
+    counted = 0
+    for p in db.packets_with_paths(since, _HEATMAP_MAX_PACKETS):
+        stops = [_heat_stop(p["sender"], p["sender_name"],
+                            p["sender_lat"], p["sender_lon"])]
+        for h in (p["path"] or "").split(","):
+            if not h:
+                continue
+            hop = _resolve_hop(h)
+            one = hop["matches"][0] if hop["state"] == "known" else None
+            stops.append(_heat_stop(one["prefix"], one["name"],
+                                    one["lat"], one["lon"]) if one else None)
+        stops.append(_heat_stop(p["observer6"], p["observer_name"],
+                                p["observer_lat"], p["observer_lon"]))
+
+        contributed = False
+        for a, b in zip(stops, stops[1:]):
+            # A stop equal to its neighbour (the observer is often the last hop)
+            # would count a zero-length link; skipping the pair collapses the
+            # repeat without breaking the chain around it.
+            if a is None or b is None or a["prefix"] == b["prefix"]:
+                continue
+            nodes.setdefault(a["prefix"], a)
+            nodes.setdefault(b["prefix"], b)
+            key = ((a["prefix"], b["prefix"]) if a["prefix"] < b["prefix"]
+                   else (b["prefix"], a["prefix"]))
+            counts[key] = counts.get(key, 0) + 1
+            contributed = True
+        if contributed:
+            counted += 1
+
+    segments = [{"a": nodes[k[0]], "b": nodes[k[1]], "n": n}
+                for k, n in counts.items()]
+    segments.sort(key=lambda s: s["n"])
+    data = {
+        "window_h": _HEATMAP_WINDOW_H,
+        "packets": counted,
+        "max": segments[-1]["n"] if segments else 0,
+        "segments": segments,
+    }
+    _heatmap_cache["at"] = now
+    _heatmap_cache["data"] = data
+    return data
 
 
 def _clean_ts(value: str) -> str | None:
@@ -477,6 +595,12 @@ def packet_detail(packet_id: int):
     # column answers for the rows whose frame was never kept.
     scope = decoded.get("scope") or p["scope"]
     codes = decoded.get("transport_codes") or _scope_codes(p["scope_codes"])
+
+    # Source and destination candidates from the 1-byte payload hashes. The
+    # destination gets the same treatment as the source: "who was this for" is
+    # the second question anyone with a packet open asks.
+    src_hash = decoded.get("src_hash") or p["src_hash"] or None
+    dest_hash = decoded.get("dest_hash") or p["dest_hash"] or None
     return {
         "id": p["id"], "ts": p["ts"],
         "observer": p["observer"], "observer_name": p["observer_name"],
@@ -489,6 +613,8 @@ def packet_detail(packet_id: int):
         "sender": p["sender"], "sender_name": p["sender_name"],
         "sender_lat": p["sender_lat"], "sender_lon": p["sender_lon"],
         "sender_country": p["sender_country"],
+        "src": _resolve_hop(src_hash) if src_hash and not p["sender"] else None,
+        "dest": _resolve_hop(dest_hash) if dest_hash else None,
         "raw": raw,
         "path": [_resolve_hop(h) for h in hops],
         "path_stored": bool(p["path"]) or p["path_len"] == 0,

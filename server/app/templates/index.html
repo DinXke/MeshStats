@@ -36,6 +36,9 @@
           <label class="maptoggle" data-i18n-title="live.motion_title" title="Toon elk pakket als een stipje dat van de afzender via elke hop naar de waarnemende node reist">
             <input type="checkbox" id="pkt-motion"> <span data-i18n="live.motion">Pakketten laten bewegen</span>
           </label>
+          <label class="maptoggle" data-i18n-title="live.heat_title" title="Tekent elke verbinding waarover de afgelopen 24 uur pakketten reisden; hoe vaker bereisd, hoe dikker de lijn. Alleen stukken tussen twee eenduidig geplaatste nodes tellen mee.">
+            <input type="checkbox" id="pkt-heat"> <span data-i18n="live.heat">Drukte op paden tonen</span>
+          </label>
           <a class="archlink small" href="/pakketten" data-i18n="arch.link">Zoeken in het archief</a>
           <span class="livecount muted small" id="live-count" data-i18n="live.waiting">wachten op verkeer&hellip;</span>
         </span>
@@ -97,6 +100,8 @@
     <dl class="pktfields">
       <div><dt data-i18n="pkt.time">Tijdstip</dt><dd id="pkt-time"></dd></div>
       <div><dt data-i18n="pkt.sender">Afzender</dt><dd id="pkt-sender"></dd></div>
+      <!-- Only for payload types that name a destination; hidden elsewhere. -->
+      <div id="pkt-dest-row" hidden><dt data-i18n="pkt.dest">Bestemming</dt><dd id="pkt-dest"></dd></div>
       <div><dt data-i18n="pkt.observer">Gehoord door</dt><dd id="pkt-observer"></dd></div>
       <div id="pkt-country-row" hidden><dt data-i18n="pkt.country">Land</dt><dd id="pkt-country-val"></dd></div>
       <div><dt data-i18n="pkt.type">Payloadtype</dt><dd id="pkt-type"></dd></div>

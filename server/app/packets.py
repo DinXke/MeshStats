@@ -97,6 +97,12 @@ PAYLOAD_NAMES = {
 }
 
 PAYLOAD_ADVERT = 4
+PAYLOAD_ANON_REQ = 7
+
+# Payload types that begin with dest_hash(1) + src_hash(1) + MAC(2); see
+# docs/protocol.md 1.6. GRP_* start with a channel hash and ACK with a CRC, so
+# neither carries anything resembling a sender identity.
+_HASHED_PEER_TYPES = (0, 1, 2, 8)   # REQ, RESPONSE, TXT_MSG, PATH
 
 ADVERT_NODE_TYPES = {1: "chat", 2: "repeater", 3: "room", 4: "sensor"}
 
@@ -186,6 +192,18 @@ def _decode_into(raw: bytes, out: dict) -> None:
 
     if payload_type == PAYLOAD_ADVERT:
         _decode_advert(payload, out)
+    elif payload_type in _HASHED_PEER_TYPES and len(payload) >= 2:
+        # REQ, RESPONSE, TXT_MSG and PATH open with a destination and a source
+        # hash: one byte each under PAYLOAD_VER_1, whatever hash size the path
+        # uses. One byte identifies nobody on its own -- 256 buckets against a
+        # whole mesh -- but matched against a known contact list it is usually
+        # enough, and that matching is the reader's job, not this decoder's.
+        out["dest_hash"] = payload[:1].hex()
+        out["src_hash"] = payload[1:2].hex()
+    elif payload_type == PAYLOAD_ANON_REQ and len(payload) >= 1:
+        # ANON_REQ names only its destination; the source is an ephemeral key
+        # that intentionally matches no contact.
+        out["dest_hash"] = payload[:1].hex()
 
 
 def _decode_advert(payload: bytes, out: dict) -> None:
