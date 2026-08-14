@@ -8,6 +8,12 @@ cd "$(dirname "$0")/.."
 source .env
 : "${MCS_MQTT_USER:?ontbreekt in .env}" "${MCS_MQTT_PASS:?ontbreekt in .env}"
 
+# Een vorige run laat de bestanden als alleen-lezen achter, en 'mosquitto_passwd -c'
+# weigert dan te schrijven. Eerst opruimen dus, in een container: op de host zijn
+# ze eigendom van uid 1883 en zonder root niet te verwijderen.
+docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 \
+  sh -c 'rm -f /m/passwd /m/acl'
+
 docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 \
   mosquitto_passwd -c -b /m/passwd "$MCS_MQTT_USER" "$MCS_MQTT_PASS"
 
