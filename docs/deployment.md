@@ -245,6 +245,53 @@ docker compose up -d
 The schema is applied with `CREATE TABLE IF NOT EXISTS` on startup; there is no
 migration framework. Back up `/data` before upgrading across a schema change.
 
+### Automatic upgrades
+
+For a compose deployment that should track `main` on its own:
+
+```bash
+sudo bash deploy/install-autoupdate.sh
+```
+
+This installs `meshstats-autoupdate.timer`, which runs `deploy/autoupdate.sh`
+every five minutes from the clone you ran the installer in. The script fetches
+`main`, exits silently when there is nothing new, and otherwise performs
+exactly the manual sequence above: `git pull --ff-only`,
+`docker compose build`, `docker compose up -d`.
+
+It **polls** rather than listening for a webhook, deliberately: the server can
+sit behind LAN or VPN with no inbound port at all, and a delay of at most five
+minutes is not worth keeping a tunnel open for.
+
+Failure behaviour:
+
+- A failed build never touches the running site. `up -d` is only reached after
+  `build` succeeds, so the containers keep running the previous image and the
+  error lands in the journal.
+- The last *successfully deployed* commit is recorded in
+  `.git/autoupdate-deployed`, so a run that failed after the pull is retried on
+  the next tick instead of being mistaken for done.
+- The pull is `--ff-only`. A deploy clone should never have local commits; if
+  it somehow does, failing loudly beats fabricating a merge on the server.
+- Overlap cannot happen: the service is `Type=oneshot`, and systemd does not
+  start a timer's unit again while the previous activation is still running.
+  There is no lock file because none is needed.
+
+The timer is quiet by design — only runs that found work, or hit an error,
+write anything:
+
+```bash
+journalctl -u meshstats-autoupdate -f
+systemctl list-timers meshstats-autoupdate.timer
+```
+
+The unit runs as root (docker needs it); clone the repository as root too, or
+git will refuse to touch it ("dubious ownership").
+
+This is for the compose deployment only. The systemd/venv deployment from
+`install.sh` copies the code out of the repository and has no compose stack to
+rebuild, so the timer does not apply there.
+
 ## Operations
 
 ### Backup

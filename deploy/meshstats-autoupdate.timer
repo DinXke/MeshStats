@@ -1,0 +1,15 @@
+[Unit]
+Description=Elke vijf minuten kijken of MeshStats nieuwe commits heeft
+
+[Timer]
+# OnUnitActiveSec telt vanaf de vorige activering: een ronde die zelf lang
+# duurt (een build) schuift de volgende dus vanzelf op. Kort na boot ook een
+# keer draaien, zodat een server die uit stond meteen bijgewerkt wordt.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Wat spreiding, zodat de fetch niet klokvast samenvalt met alles wat verder
+# op ronde tijden draait.
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

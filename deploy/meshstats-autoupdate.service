@@ -1,0 +1,19 @@
+[Unit]
+Description=MeshStats bijwerken vanaf git (poll, dan docker compose rebuild)
+# Wants en geen Requires: herstart docker toevallig net, dan moet deze ronde
+# gewoon falen en de volgende het opnieuw proberen -- niet mee omvallen.
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+# Type=oneshot is hier ook de vergrendeling: zolang een activering loopt,
+# start systemd de unit niet opnieuw vanaf de timer. Een lange build kan dus
+# nooit een tweede build naast zich krijgen, zonder eigen lockbestand.
+Type=oneshot
+# __REPO_DIR__ wordt door deploy/install-autoupdate.sh vervangen door het pad
+# van de kloon; de docs schrijven niet voor waar je kloont, dus de unit kan
+# geen vast pad aannemen.
+WorkingDirectory=__REPO_DIR__
+ExecStart=/bin/bash __REPO_DIR__/deploy/autoupdate.sh
+
+# Geen [Install]: deze unit wordt alleen door de timer gestart.
