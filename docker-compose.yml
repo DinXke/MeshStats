@@ -40,8 +40,11 @@ services:
     command:
       - "-storageDataPath=/victoria-metrics-data"
       - "-retentionPeriod=${MCS_TSDB_RETENTION:-180d}"
-      # Deze machine heeft 512 MB in totaal; zonder deze rem eist VictoriaMetrics
-      # een groot deel daarvan op en verdringt hij de site.
+      # Zonder rem eist VictoriaMetrics een groot deel van het werkgeheugen op en
+      # verdringt hij de site. Een percentage in plaats van een vast getal, zodat
+      # dit meeschaalt als de machine groter wordt: 128 MB bij 512 MB, 512 MB bij
+      # 2 GB. Meer cache maakt lange bereikvragen sneller, maar de dataset is
+      # klein en de site heeft voorrang.
       - "-memory.allowedPercent=25"
       - "-search.maxQueryDuration=30s"
       - "-httpListenAddr=:8428"
