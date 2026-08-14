@@ -275,18 +275,44 @@ uploader on the same server, behind the same login. Firmware upgrades go over
 your ordinary WiFi — no need to trigger `start ota`, join a soft-AP and upload
 from there.
 
-`start ota` is intercepted so it does not open a second server on port 80:
-
-```cpp
-if (memcmp(command, "start ota", 9) == 0) {
-    sprintf(reply, "Always active: http://%s/update", ip.toString().c_str());
-    return true;
-}
-```
+`start ota` is intercepted, because both uploaders want port 80. It does **not**
+merely print the `/update` URL: it shuts our own server down and hands over to
+the stock soft-AP updater. An earlier version did print the URL, on the
+assumption that an upload over the normal network always works — and in doing so
+removed the only fallback that did. A recovery path must never depend on the
+thing you are recovering from.
 
 If the module has disabled itself after repeated crashes (see below),
 `msnet_handle_command()` returns false immediately and stock `start ota` works
-again. `DISABLE_WIFI_OTA` is deliberately left unset for exactly this reason.
+regardless. `DISABLE_WIFI_OTA` is deliberately left unset for that reason.
+
+#### Uploading with curl: disable `Expect: 100-continue`
+
+This cost hours, so it is written down. curl adds an `Expect: 100-continue`
+header to any sizeable `-F` upload. AsyncWebServer does not answer it the way
+curl waits for, and the upload then fails in a way that looks like success:
+
+- curl reports HTTP status **100** as its final result, never 200 or 400
+- the node **reboots anyway**, because `AsyncElegantOTA` calls `restart()` in the
+  response handler whether or not `Update.end()` succeeded
+- so the node comes back on the *old* firmware, and the reboot proves nothing
+
+Suppress the header and it works:
+
+```bash
+curl -H "Expect:" -u admin:PASSWORD \
+     -F "MD5=$(md5sum firmware.bin | cut -d' ' -f1)" \
+     -F "file=@firmware.bin;filename=firmware.bin" \
+     http://<node-ip>/update
+```
+
+The `MD5` field is **mandatory** — without it the handler answers
+`400 MD5 parameter missing` before the upload starts. The browser page bundled
+with AsyncElegantOTA computes it client-side, which is why uploading from a
+browser works when a naive curl command does not.
+
+**Verify the version afterwards, never the reboot.** `ver` over the console, or
+`ms` in `GET /api/status`, tells you what is actually running.
 
 ### Why an OTA does not lose your keys
 
