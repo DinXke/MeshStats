@@ -400,8 +400,48 @@ def slugify(name: str) -> str:
     return s or "repeater"
 
 
-def get_or_create_repeater(pubkey_prefix: str, name: str | None) -> sqlite3.Row:
+# Below this many hex characters two different keys could collide by chance, so
+# we refuse to treat one as a shortening of the other.
+MIN_PREFIX_MATCH = 8
+
+
+def _find_by_prefix(pubkey_prefix: str) -> sqlite3.Row | None:
+    """Find a repeater by public key, tolerating differing prefix lengths.
+
+    Sources disagree on how much of the key they send: Home Assistant reports
+    5 bytes, a node's own firmware 6. Matching on the string alone registered
+    one node twice and split its history down the middle. For this to be the
+    same node, the shorter key must be a prefix of the longer one.
+    """
     row = qone("SELECT * FROM repeaters WHERE pubkey_prefix=?", (pubkey_prefix,))
+    if row or len(pubkey_prefix) < MIN_PREFIX_MATCH:
+        return row
+
+    # Stored key is shorter: 'aabbccddee' matches an incoming 'aabbccddeeff'.
+    row = qone(
+        "SELECT * FROM repeaters WHERE ?1 LIKE pubkey_prefix || '%'"
+        " AND length(pubkey_prefix) >= ?2"
+        " ORDER BY length(pubkey_prefix) DESC LIMIT 1",
+        (pubkey_prefix, MIN_PREFIX_MATCH),
+    )
+    if row:
+        # Keep the longest key seen; it is the least ambiguous.
+        if len(pubkey_prefix) > len(row["pubkey_prefix"]):
+            execute("UPDATE repeaters SET pubkey_prefix=? WHERE id=?",
+                    (pubkey_prefix, row["id"]))
+            row = qone("SELECT * FROM repeaters WHERE id=?", (row["id"],))
+        return row
+
+    # Stored key is longer: an incoming 'aabbccddee' matches 'aabbccddeeff'.
+    return qone(
+        "SELECT * FROM repeaters WHERE pubkey_prefix LIKE ?1 || '%'"
+        " ORDER BY length(pubkey_prefix) DESC LIMIT 1",
+        (pubkey_prefix,),
+    )
+
+
+def get_or_create_repeater(pubkey_prefix: str, name: str | None) -> sqlite3.Row:
+    row = _find_by_prefix(pubkey_prefix)
     if row:
         # Adopt the name whenever Home Assistant sends a new one
         if name and name != row["name"]:
