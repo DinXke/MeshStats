@@ -228,11 +228,12 @@ function j(r){return r.json()}function esc(s){return String(s).replace(/[&<>"]/g
 function eq(a,b){return a.slice(0,15)==b.slice(0,15)}
 function ck(m){var i;if(m.k!=1)for(i=0;i<CH.length;i++)if(eq(CH[i].n,m.s))return'c'+CH[i].i;if(m.k!=0)for(i=0;i<CT.length;i++)if(eq(CT[i].n,m.s))return'k'+CT[i].k;return''}
 function ctc(k){for(var i=0;i<CT.length;i++)if('k'+CT[i].k==k)return CT[i];return null}
-function nam(k){var i;if(k[0]=='c'){for(i=0;i<CH.length;i++)if('c'+CH[i].i==k)return'#'+CH[i].n}var c=ctc(k);return c?'@'+c.n:k}
+// Kanaalnamen bevatten zelf al wel of geen '#' (Public vs #belimburg): onveranderd tonen, nooit een '#' voorplakken.
+function nam(k){var i;if(k[0]=='c'){for(i=0;i<CH.length;i++)if('c'+CH[i].i==k)return CH[i].n}var c=ctc(k);return c?'@'+c.n:k}
 function it(k,l){var u=CNT[k];return'<div class="cv'+(k==cur?' on':'')+'" data-k='+k+'><span class=cn>'+esc(l)+'</span>'+(u?'<b class=ub>'+u+'</b>':'')+'</div>'}
 function lst(){CNT={};MS.forEach(function(m){var k=m.c||(m.c=ck(m));if(k&&k!=cur&&m.q>(SEEN[k]||0))CNT[k]=(CNT[k]||0)+1});
 var f=flt.toLowerCase(),h='<h3>Kanalen</h3>',n=0;
-CH.forEach(function(c){if(f&&c.n.toLowerCase().indexOf(f)<0)return;h+=it('c'+c.i,'#'+c.n);n++});if(!n)h+=P+'geen kanalen</p>';
+CH.forEach(function(c){if(f&&c.n.toLowerCase().indexOf(f)<0)return;h+=it('c'+c.i,c.n);n++});if(!n)h+=P+'geen kanalen</p>';
 h+='<h3>Contacten</h3>';n=0;
 CT.forEach(function(c){if(f&&c.n.toLowerCase().indexOf(f)<0)return;h+=it('k'+c.k,'@'+c.n);n++});if(!n)h+=P+'geen contacten</p>';
 $('#cvl').innerHTML=h}
