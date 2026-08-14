@@ -211,7 +211,7 @@ void setup() {
   WiFi.begin(WIFI_SSID, WIFI_PWD);
   wifi_interface.begin(TCP_PORT);
   interface_manager.addInterface(InterfaceType::WiFi, &wifi_interface);
-  stats_publisher.begin(SPIFFS, &the_mesh);
+  // stats_publisher.begin() staat bewust helemaal achteraan in setup(); zie daar.
 #endif
 
 // add usb interface
@@ -243,6 +243,15 @@ void setup() {
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
+#endif
+
+  /* Helemaal op het einde, en met opzet. De statistiekenmodule leest twee
+   * bestanden en zet een webserver op; als daar ooit iets in blijft hangen of
+   * mislukt, draait alles waar de node echt voor dient al: de mesh en de
+   * companion-interface op TCP_PORT waar Home Assistant op zit. Dit is het
+   * enige stuk van setup() dat de node niet mag meesleuren als het faalt. */
+#if defined(ESP32) && defined(WIFI_SSID)
+  stats_publisher.begin(SPIFFS, &the_mesh);
 #endif
 
   board.onBootComplete();

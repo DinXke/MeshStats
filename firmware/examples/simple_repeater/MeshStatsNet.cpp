@@ -1585,14 +1585,28 @@ bool msnet_handle_command(const char *command, char *reply) {
                MESHSTATS_NAME, MESHSTATS_VERSION, FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
       return true;
     }
-    // 'start ota' would open a second web server on port 80; our own upload
-    // page is already there, so we point at it.
+    /* 'start ota' hands over to the stock soft-AP updater instead of merely
+     * printing the URL of our own /update page.
+     *
+     * It used to do the latter, on the assumption that an upload over the normal
+     * network always works. It does not: uploads to /update have failed
+     * repeatedly on real hardware. And because that reply replaced the stock
+     * behaviour, the one fallback that did work had been taken away with it. A
+     * recovery path must never depend on the thing you are recovering from.
+     *
+     * Both servers want port 80, so ours has to go first. After this the node
+     * only serves the update page until it reboots -- which is precisely what
+     * you want from a command whose whole purpose is reflashing. */
     if (memcmp(command, "start ota", 9) == 0) {
-      IPAddress ip = (_state == WIFI_FALLBACK_AP) ? WiFi.softAPIP() : WiFi.localIP();
       if (_asleep) {
         strcpy(reply, "WiFi staat uit (zuinig). Eerst 'wifi on 30'.");
-      } else {
-        sprintf(reply, "Altijd actief: http://%s/update", ip.toString().c_str());
+        return true;
+      }
+      _server.end();
+      _console.end();
+      _started = false;          // stop serving from our own loop
+      if (!board.startOTAUpdate(_mesh ? _mesh->getNodeName() : "repeater", reply)) {
+        strcpy(reply, "Err - OTA niet beschikbaar in deze build");
       }
       return true;
     }

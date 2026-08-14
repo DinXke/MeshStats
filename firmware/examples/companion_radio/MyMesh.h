@@ -99,6 +99,15 @@ public:
   // formaat dat de statistiekensite verwacht (zie StatsPublisher).
   size_t fillStatsJson(char *out, size_t max_len);
 
+  // De eerste 6 bytes van de eigen publieke sleutel als hex; identificeert deze
+  // node in de MQTT-topics.
+  size_t fillNodeIdHex(char *out, size_t max_len);
+
+  // Schrijft de kanalentabel weg. De ingebouwde webclient past kanalen aan via
+  // addChannel()/setChannel(), en die raken alleen het RAM; bewaren moet dus
+  // apart gevraagd worden.
+  void persistChannels() { saveChannels(); }
+
   void loop();
   void handleCmdFrame(size_t len);
   bool advert();
