@@ -70,6 +70,34 @@
  *   GET  /contacts.json   een pagina contacten, ?off=<n>
  *   POST /contact/save    per repeater: doorsturen-vinkje en wachtwoord (key, publish, pass)
  *   POST /contact/login   inloggen op een repeater met het bewaarde wachtwoord (key)
+ *
+ * === De webclient ===
+ *
+ * page.html is opgezet als een gewone chatclient: links een lijst gesprekken
+ * (kanalen en contacten door elkaar), in het midden het gesprek zelf, rechts de
+ * details ervan. Die gesprekken bestaan alleen in de browser. Wij houden hier
+ * een platte ring van de laatste berichten bij (STATS_MSG_RING) en weten niet
+ * eens dat er zoiets als een gesprek is - dat scheelt RAM, en het is de browser
+ * die toch al de kanalen- en contactenlijst in handen heeft.
+ *
+ * De koppeling loopt daarom over de naam in "s": de kanaalnaam bij een
+ * kanaalbericht, de naam van de afzender bij een prive-bericht, en bij een
+ * eigen bericht de naam van de bestemming. Twee dingen om te weten als je aan
+ * een van beide kanten sleutelt:
+ *
+ *  - copyTrim() kapt "s" af op STATS_MSG_SRC_MAX-1 tekens terwijl
+ *    /contacts.json de volledige naam geeft, dus de pagina vergelijkt alleen
+ *    het begin van de naam. Wordt STATS_MSG_SRC_MAX ooit ruimer, dan mag die
+ *    vergelijking mee;
+ *  - een eigen bericht (STATS_MSG_SENT) zegt niet of het naar een kanaal of
+ *    naar een contact ging. De pagina zoekt de naam eerst bij de kanalen en
+ *    daarna pas bij de contacten. Een kanaal en een contact met dezelfde naam
+ *    laten hun eigen berichten dus bij het kanaal belanden; een veld erbij in
+ *    het antwoord was dat niet waard.
+ *
+ * Wie er in een kanaal sprak staat niet in "s" maar voor de tekst zelf:
+ * sendGroupMessage() zet "<afzender>: " voor het bericht. De pagina haalt die
+ * er weer af om de naam apart te kunnen tonen.
  */
 
 #include <Arduino.h>
