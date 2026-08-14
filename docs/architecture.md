@@ -296,7 +296,56 @@ wearing, so a keystroke touches only those that actually changed. Rebuilding the
 layer per keystroke is the one thing on this page that would genuinely feel slow
 at mesh scale.
 
-## Where to go next
+## The packet list and the detail panel
+
+The sender leads the list, because that is what a reader is looking for. Then, on
+a wide screen: heard by, type, SNR, RSSI, hops, length, country, and the time at
+the far right. Under 700 px the row folds into two compact lines — sender and
+time on the first, type, SNR, hops and country on the second — and RSSI and
+length drop out rather than being squeezed. They are one tap away in the detail
+panel, and a list that scrolls sideways on a phone is worse than one showing
+less. Below 360 px the observer prefix goes too.
+
+Four things about it read as bugs if you do not know why:
+
+**"Heard by" comes and goes.** While a single node forwards everything, the
+column is the same name on every row, so it hides itself. It returns the moment
+the packets on screen come from more than one observer — which is exactly when it
+becomes one of the most interesting columns, because then it says who heard what.
+No setting to find, no migration; it resolves itself as the mesh grows.
+
+**The observer is a name on a wide screen and a key prefix on a phone.** Both
+are in the DOM and CSS picks one; one long node name would otherwise push every
+row onto a third line.
+
+**The sender cell is `flex: 1 1 0`, not `auto`.** A wrapping flex container
+assigns items to lines using their *untruncated* widths and only shrinks them
+afterwards, so with `auto` a long node name pushes the timestamp onto a line of
+its own before any ellipsis applies. From a zero basis it can never cause a wrap.
+
+**No sorting, deliberately.** The neighbour table on a repeater page sorts, and
+should: it is a fixed set you compare. This is a feed — rows arrive every few
+seconds and age off the bottom. Sorting by SNR would put the newest packet
+anywhere, or nowhere visible, and the order would churn under the reader on every
+poll. Newest first is the only stable order a live feed has; narrowing is what
+the filter is for.
+
+### The detail panel is a drawer on a desktop and a sheet on a phone
+
+Wide: a full-height drawer beside the map, so the picture stays intact. Narrow:
+a bottom sheet that **opens at a peek height** showing time, sender, observer and
+payload type, with a grip to drag it up for the path list and the raw bytes. It
+always reopens at peek and never remembers being raised — you open one of these
+to see something on the map, and a sheet that remembered "fully up" would hide
+the map every time.
+
+That peek height is not cosmetic. A sheet opening at full height covered the very
+route it was explaining: the path was drawn correctly and two thirds of it sat
+behind the panel. The other half of that fix is `mapPadding()`, which frames the
+route into the part of the map that is actually visible — Leaflet knows nothing
+about a panel lying over its container, and without the padding it centres the
+path in a rectangle half of which cannot be seen. The same computation covers a
+landscape phone, where the map runs off the top of a short viewport.
 
 | Question | Document |
 |---|---|

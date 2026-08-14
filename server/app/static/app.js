@@ -602,6 +602,8 @@
       .addTo(lmap);
     var feedEl = document.getElementById("livefeed");
     var feedEmptyEl = document.getElementById("livefeed-empty");
+    var liveCardEl = document.getElementById("livecard");
+    var feedHeadEl = document.querySelector(".feedhead");
     var countEl = document.getElementById("live-count");
     var lastId = 0;
     var seen = [];        // {t, p} per reception, for the "last 5 minutes" counter
@@ -742,20 +744,60 @@
       return true;
     }
 
+    // The sender leads: it is what a reader is looking for, and only adverts
+    // carry one, so the short form here says just "unknown" -- the full reason
+    // ("only adverts name their sender") belongs in the detail panel, not in a
+    // column.
+    function senderCell(p) {
+      if (p.sender_name) return p.sender_name;
+      if (p.sender) return p.sender.toUpperCase();
+      return t("pkt.sender_short");
+    }
+
+    function cell(cls, text) {
+      var el = document.createElement("span");
+      el.className = cls;
+      el.textContent = text;
+      return el;
+    }
+
+    // Cell order in the DOM is not the order on screen: the timestamp sits right
+    // after the sender so that a narrow screen can put the two on one line, and
+    // CSS pushes it to the far right on a wide one. See .pkt-time { order }.
     function feedRow(p, quiet) {
       var li = document.createElement("li");
-      var who = p.sender_name || p.observer_name ||
-                (p.sender || p.observer || "").toUpperCase();
-      var bits = [p.type || "?"];
-      if (p.snr != null) bits.push(p.snr.toFixed(1) + " dB");
-      if (p.path_len) {
-        bits.push(t(p.path_len > 1 ? "live.hops_plural" : "live.hops", { n: p.path_len }));
-      }
-      li.innerHTML = '<i style="background:' + (PKT_COLORS[p.type] || "#7d8fa0") + '"></i>' +
-        '<span class="pkt-who"></span><span class="pkt-meta"></span>' +
-        '<time class="reltime" datetime="' + p.ts + '"></time>';
-      li.querySelector(".pkt-who").textContent = who;
-      li.querySelector(".pkt-meta").textContent = bits.join(" · ");
+      var dot = document.createElement("i");
+      dot.style.background = PKT_COLORS[p.type] || "#7d8fa0";
+      li.appendChild(dot);
+      li.appendChild(cell("pkt-who", senderCell(p)));
+
+      var when = document.createElement("time");
+      when.className = "reltime pkt-time";
+      when.setAttribute("datetime", p.ts);
+      li.appendChild(when);
+
+      var brk = document.createElement("b");
+      brk.className = "pkt-break";
+      li.appendChild(brk);
+
+      // Two spellings of the observer, and CSS picks one: the name where there
+      // is room for it, the key prefix on a phone. Without that, one long node
+      // name pushes every row onto a third line.
+      var obs = document.createElement("span");
+      obs.className = "pkt-obs";
+      obs.appendChild(cell("obs-name", p.observer_name ||
+                                       (p.observer || "").toUpperCase() || "—"));
+      obs.appendChild(cell("obs-prefix", (p.observer || "").slice(0, 6).toUpperCase() || "—"));
+      li.appendChild(obs);
+      li.appendChild(cell("pkt-type", p.type || "?"));
+      li.appendChild(cell("pkt-snr", p.snr != null ? p.snr.toFixed(1) + " dB" : "—"));
+      li.appendChild(cell("pkt-rssi", p.rssi != null ? p.rssi + " dBm" : "—"));
+      li.appendChild(cell("pkt-hops", p.path_len
+        ? t(p.path_len > 1 ? "live.hops_plural" : "live.hops", { n: p.path_len })
+        : "—"));
+      li.appendChild(cell("pkt-len", p.len != null ? p.len + " B" : "—"));
+      li.appendChild(cell("pkt-cc", p.country ? flagOf(p.country) + " " + p.country : "—"));
+
       li.dataset.id = p.id;
       li.tabIndex = 0;
       li.setAttribute("role", "button");
@@ -764,6 +806,22 @@
       // animation on rows that did not just arrive.
       if (quiet) li.style.animation = "none";
       return li;
+    }
+
+    // "Heard by" is dead weight while a single node forwards everything -- the
+    // same name on every row. It is not dropped, because the moment a second
+    // node starts forwarding it becomes one of the most interesting columns:
+    // who heard what. So it appears by itself, as soon as the packets on show
+    // actually come from more than one observer.
+    function updateObserverColumn(shown) {
+      if (!liveCardEl) return;
+      var first = null, several = false;
+      for (var i = 0; i < shown.length && !several; i++) {
+        var o = shown[i].observer || "";
+        if (first === null) first = o;
+        else if (o !== first) several = true;
+      }
+      liveCardEl.classList.toggle("show-observer", several);
     }
 
     // --- filtering the feed ---------------------------------------------------
@@ -925,8 +983,15 @@
     // Great Britain while parked over Belgium otherwise shows an empty map, but
     // yanking the view around after every keystroke would fight a visitor who
     // just zoomed somewhere deliberately. So: if a match is already on screen,
-    // stay put. The open detail panel is left alone entirely -- its path was
-    // framed on purpose when the packet was opened.
+    // stay put.
+    //
+    // With the detail panel open the view is never moved by the *filter*. Do not
+    // confuse that with the framing a packet gets when it is opened, which does
+    // move the map and must -- see mapPadding(). The distinction is the layout:
+    // on a wide screen the panel sits beside the map and leaves the picture
+    // intact, so nothing needs to move; the sheet on a phone lies over the map,
+    // so the route has to be framed into the strip that is left. Filtering while
+    // a packet is open would only fight the framing that packet just asked for.
     function fitToMatches() {
       if (panelOpen()) return;
       var view = lmap.getBounds();
@@ -953,14 +1018,33 @@
       }
     }
 
+    // The packets the feed is showing: the filtered head of the buffer, capped
+    // the same way the rendered list is.
+    function visiblePackets() {
+      var out = [];
+      for (var i = 0; i < recent.length && out.length < FEED_MAX; i++) {
+        if (matches(recent[i])) out.push(recent[i]);
+      }
+      return out;
+    }
+
+    // The list scrolls and the header does not, so once the list grows a
+    // scrollbar its columns shift left by the scrollbar's width and stop lining
+    // up with the headings. Measured rather than assumed: it is zero on the
+    // platforms that use overlay scrollbars.
+    function syncHeadGutter() {
+      if (!feedHeadEl || !feedEl) return;
+      var gutter = feedEl.offsetWidth - feedEl.clientWidth;
+      feedHeadEl.style.paddingRight = gutter ? "calc(.4rem + " + gutter + "px)" : "";
+    }
+
     function renderFeed(refit) {
       if (feedEl) {
         feedEl.textContent = "";
-        for (var i = 0, shown = 0; i < recent.length && shown < FEED_MAX; i++) {
-          if (!matches(recent[i])) continue;
-          feedEl.appendChild(feedRow(recent[i], true));
-          shown++;
-        }
+        var shown = visiblePackets();
+        shown.forEach(function (p) { feedEl.appendChild(feedRow(p, true)); });
+        updateObserverColumn(shown);
+        syncHeadGutter();
       }
       applyNodeFilter();
       if (refit) fitToMatches();
@@ -1001,6 +1085,8 @@
       if (recent.length > FEED_BUFFER) recent.length = FEED_BUFFER;
       if (feedEl) {
         while (feedEl.children.length > FEED_MAX) feedEl.removeChild(feedEl.lastChild);
+        updateObserverColumn(visiblePackets());
+        syncHeadGutter();
       }
       updateFeedState();
       updateTimes();
@@ -1069,6 +1155,107 @@
     // the very thing it is explaining.
     var panel = document.getElementById("packet-panel");
     var pathLayer = null;
+    var pathView = null;         // the points the open route was framed on
+
+    // --- the panel as a bottom sheet on a narrow screen -----------------------
+    // Must match the media query in style.css; the two are a pair.
+    var SHEET_MAX_WIDTH = 820;
+    var gripEl = document.getElementById("pkt-grip");
+
+    function sheetMode() { return window.innerWidth <= SHEET_MAX_WIDTH; }
+
+    // Enough for the head and the first few fields -- time, sender, observer,
+    // payload type -- while leaving the map worth looking at. Capped against the
+    // viewport so landscape, where height is scarce, does not get a sheet that
+    // covers everything.
+    function peekHeight() {
+      return Math.round(Math.min(280, Math.max(132, window.innerHeight * 0.38)));
+    }
+    function fullHeight() { return Math.round(window.innerHeight * 0.85); }
+
+    function setSheetHeight(px) {
+      if (!panel) return;
+      var h = Math.max(96, Math.min(px, fullHeight()));
+      panel.style.setProperty("--sheet-h", Math.round(h) + "px");
+      return h;
+    }
+
+    // Always reopened at the peek height, never at whatever the last packet was
+    // left at: the reason to open one of these is to see something on the map,
+    // and a sheet remembering "fully raised" would hide it every time.
+    function resetSheet() {
+      if (!panel) return;
+      panel.classList.remove("sheet-dragging");
+      if (sheetMode()) setSheetHeight(peekHeight());
+      else panel.style.removeProperty("--sheet-h");
+    }
+
+    function toggleSheet() {
+      if (!sheetMode()) return;
+      var mid = (peekHeight() + fullHeight()) / 2;
+      var now = panel.getBoundingClientRect().height;
+      setSheetHeight(now < mid ? fullHeight() : peekHeight());
+      // The visible slice of map just changed, so the route has to be reframed
+      // for it; that is the whole point of doing this on a phone.
+      setTimeout(fitPathView, 200);   // after the height transition
+    }
+
+    if (gripEl && panel) {
+      var drag = null;
+      gripEl.addEventListener("pointerdown", function (e) {
+        if (!sheetMode()) return;
+        drag = { y: e.clientY, h: panel.getBoundingClientRect().height, moved: false };
+        panel.classList.add("sheet-dragging");
+        try { gripEl.setPointerCapture(e.pointerId); } catch (err) { /* not captured */ }
+        e.preventDefault();
+      });
+      gripEl.addEventListener("pointermove", function (e) {
+        if (!drag) return;
+        var dy = drag.y - e.clientY;          // up is a taller sheet
+        if (Math.abs(dy) > 4) drag.moved = true;
+        setSheetHeight(drag.h + dy);
+      });
+      function endDrag() {
+        if (!drag) return;
+        var moved = drag.moved;
+        drag = null;
+        panel.classList.remove("sheet-dragging");
+        if (!moved) { toggleSheet(); return; }   // a tap, not a drag
+        // Snap to whichever stop the sheet ended up nearer.
+        var mid = (peekHeight() + fullHeight()) / 2;
+        setSheetHeight(panel.getBoundingClientRect().height < mid
+          ? peekHeight() : fullHeight());
+        setTimeout(fitPathView, 200);
+      }
+      gripEl.addEventListener("pointerup", endDrag);
+      gripEl.addEventListener("pointercancel", endDrag);
+      gripEl.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        toggleSheet();
+      });
+    }
+
+    // Rotating a phone changes both the stops and the visible slice of map.
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        // A width change can add or remove the feed's scrollbar, and the header
+        // has to be re-gutted for it or the columns stop lining up.
+        syncHeadGutter();
+        if (!panel || panel.hidden) return;
+        if (!sheetMode()) {
+          panel.style.removeProperty("--sheet-h");
+        } else {
+          // Re-clamp, do not reset. A phone fires resize whenever the address
+          // bar slides away, and snapping the sheet back to peek in the middle
+          // of reading it would be its own bug.
+          setSheetHeight(panel.getBoundingClientRect().height);
+        }
+        fitPathView();
+      }, 150);
+    });
 
     function txt(id, value) {
       var el = document.getElementById(id);
@@ -1101,6 +1288,7 @@
 
     function clearPath() {
       if (pathLayer) { lmap.removeLayer(pathLayer); pathLayer = null; }
+      pathView = null;
       if (pathPrefixes) { pathPrefixes = null; applyNodeFilter(); }
     }
 
@@ -1203,20 +1391,64 @@
       });
 
       pathLayer = group.addTo(lmap);
-      if (view.length > 1) {
-        // Keep the line clear of the detail panel, which docks to the right on a
-        // wide screen and along the bottom on a narrow one.
-        var wide = window.innerWidth > 820;
-        lmap.fitBounds(view, {
-          paddingTopLeft: [30, 30],
-          paddingBottomRight: wide ? [Math.min(430, window.innerWidth * 0.4), 30] : [30, 120],
-          maxZoom: 13,
-        });
-      }
+      pathView = view;
+      // Scroll before framing, and instantly: the padding below is measured off
+      // the map's real rectangle, and a smooth scroll would still be moving
+      // while we measured it.
       var box = livemapEl.getBoundingClientRect();
       if (box.top < 60 || box.bottom > window.innerHeight) {
-        livemapEl.scrollIntoView({ behavior: "smooth", block: "start" });
+        livemapEl.scrollIntoView({ block: "start" });
       }
+      fitPathView();
+    }
+
+    // Frame the route inside the part of the map that is actually visible.
+    //
+    // The wide layout docks the panel beside the map, so only its width has to
+    // be kept clear. The sheet layout puts it *over* the map, and Leaflet knows
+    // nothing about that: without this it centres the path in the full map
+    // element, half of which is behind the sheet -- the path is drawn correctly
+    // and two thirds of it sit under the panel.
+    function mapPadding() {
+      var box = livemapEl.getBoundingClientRect();
+      var open = panel && !panel.hidden;
+      var sheet = sheetMode();
+
+      // Vertical, and computed the same way in both layouts. The map element is
+      // routinely taller than the part of it on screen -- a phone held sideways
+      // has barely 390 px of viewport for a 420 px map -- and on top of that the
+      // sheet covers its lower part. Clipping against the viewport and the sheet
+      // together covers both without a special case for either.
+      var floor = sheet && open ? panel.getBoundingClientRect().top : window.innerHeight;
+      var visTop = Math.max(box.top, 0);
+      var visBottom = Math.min(box.bottom, window.innerHeight, floor);
+      var padTop = Math.max(0, visTop - box.top) + 16;
+      var padBottom = Math.max(0, box.bottom - visBottom) + 16;
+
+      // Leave Leaflet a usable band. With the sheet dragged fully up there may be
+      // only a sliver of map left, and fitting a route across three countries
+      // into twenty pixels produces a dot, not a route -- so the band has a
+      // floor, and past it the route is allowed to run behind the sheet. Whoever
+      // dragged the sheet up is reading the panel; lowering it reframes.
+      var MIN_BAND = 60;
+      if (box.height - padTop - padBottom < MIN_BAND) {
+        padBottom = Math.max(0, box.height - padTop - MIN_BAND);
+      }
+
+      // Horizontal is the only part that differs: the side drawer takes width
+      // out of the map, the sheet spans it and takes none.
+      var padRight = open && !sheet ? Math.min(430, window.innerWidth * 0.4) : 16;
+      return {
+        paddingTopLeft: [16, Math.round(padTop)],
+        paddingBottomRight: [Math.round(padRight), Math.round(padBottom)],
+      };
+    }
+
+    function fitPathView() {
+      if (!pathView || pathView.length < 2) return;
+      var pad = mapPadding();
+      pad.maxZoom = 13;
+      lmap.fitBounds(pathView, pad);
     }
 
     function fillPanel(d) {
@@ -1290,6 +1522,9 @@
       openId = id;
       blankPanel();
       panel.hidden = false;
+      resetSheet();          // every packet starts at the peek height
+      var body = document.getElementById("pkt-body");
+      if (body) body.scrollTop = 0;
       markSelected(id);
       clearPath();
       fetch("/api/v1/packets/" + encodeURIComponent(id))
