@@ -1,5 +1,8 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.2.0  Monitor other repeaters: pick them from the heard list or paste a
+ *        public key, log in with a password or via their access list, poll
+ *        GET_STATUS over the mesh and publish the result to <prefix>/<node>/mon.
  * 1.1.0  Task watchdog: a hung loop() now becomes a reboot, so the existing
  *        boot-counter safety nets can actually fire. See WDT_TIMEOUT_S below.
  * 1.0.0  MQTT publishing (own stats + every raw packet), battery- and
@@ -39,6 +42,11 @@
 #define MQTT_RX_MAX_LEN  255      // MAX_TRANS_UNIT
 #define MQTT_RETRY_MS  15000UL    // do not hammer a broker that will not answer
 #define MQTT_DRAIN_MAX     4      // packets per loop pass, so the mesh keeps its turn
+/* Largest message we will ever hand to PubSubClient. Sized for the neighbour
+ * payload, which is the big one: MAX_NEIGHBOURS entries of ~26 characters each
+ * plus the envelope. Anything longer is truncated at the source rather than
+ * being refused here. */
+#define MQTT_PUB_MAX    2048
 
 #define STA_TIMEOUT_MS      30000UL    // try this long before broadcasting our own SSID
 #define STA_RETRY_MS       300000UL    // while in AP mode, retry the network every 5 min
@@ -127,6 +135,7 @@ struct Config {
   uint16_t tx_power;                // dBm, 0 = leave the driver default alone
   uint16_t bat_full, bat_high, bat_norm, bat_crit;   // level boundaries in %
   uint16_t bat_hyst;                // % past a boundary before the level moves
+  uint16_t bat_live;                // % above which raw packets go out at once
   uint16_t full_hold;               // minutes above bat_full before 'full' counts
   uint16_t iv_full, iv_high, iv_norm, iv_low, iv_crit;   // publish interval, secs
   uint16_t night_from, night_to;    // night window, hours UTC
@@ -317,6 +326,7 @@ static void loadConfig() {
   _cfg.bat_norm = 70;
   _cfg.bat_crit = 40;
   _cfg.bat_hyst = 3;
+  _cfg.bat_live = 85;
   _cfg.full_hold = 30;
   _cfg.iv_full = 60;
   _cfg.iv_high = 120;
@@ -386,6 +396,7 @@ static void loadConfig() {
   num("bat_norm", _cfg.bat_norm);
   num("bat_crit", _cfg.bat_crit);
   num("bat_hyst", _cfg.bat_hyst);
+  num("bat_live", _cfg.bat_live);
   num("full_hold", _cfg.full_hold);
   num("iv_full", _cfg.iv_full);
   num("iv_high", _cfg.iv_high);
@@ -414,12 +425,12 @@ static void saveConfig() {
            _cfg.mqtt_prefix, _cfg.mqtt_enabled, _cfg.mqtt_rx);
   f.printf("\"pwr_mode\":%u,\"pwr_window\":%u,\"wifi_sleep\":%u,\"tx_power\":%u,"
            "\"bat_full\":%u,\"bat_high\":%u,\"bat_norm\":%u,\"bat_crit\":%u,"
-           "\"bat_hyst\":%u,\"full_hold\":%u,"
+           "\"bat_hyst\":%u,\"bat_live\":%u,\"full_hold\":%u,"
            "\"iv_full\":%u,\"iv_high\":%u,\"iv_norm\":%u,\"iv_low\":%u,\"iv_crit\":%u,"
            "\"night_from\":%u,\"night_to\":%u,\"night_factor\":%u}",
            _cfg.pwr_mode, _cfg.pwr_window, _cfg.wifi_sleep, _cfg.tx_power,
            _cfg.bat_full, _cfg.bat_high, _cfg.bat_norm, _cfg.bat_crit,
-           _cfg.bat_hyst, _cfg.full_hold,
+           _cfg.bat_hyst, _cfg.bat_live, _cfg.full_hold,
            _cfg.iv_full, _cfg.iv_high, _cfg.iv_norm, _cfg.iv_low, _cfg.iv_crit,
            _cfg.night_from, _cfg.night_to, _cfg.night_factor);
   f.close();
@@ -507,13 +518,18 @@ static const char *stateNameNl() {
  * voltage at all is treated as 'unknown', and unknown is treated as mains
  * power further on: a node that cannot measure its cell should not be
  * throttled by a guess. */
+int meshstats_batt_percent(uint16_t mv) {
+  if (mv < 2000) return -1;                      // no usable reading
+  if (mv <= BATT_EMPTY_MV) return 0;
+  if (mv >= BATT_FULL_MV) return 100;
+  return (int)(((uint32_t)(mv - BATT_EMPTY_MV) * 100) / (BATT_FULL_MV - BATT_EMPTY_MV));
+}
+
 static uint8_t battPercent(bool *known) {
   _batt_mv = board.getBattMilliVolts();
-  if (_batt_mv < 2000) { *known = false; return 0; }
-  *known = true;
-  if (_batt_mv <= BATT_EMPTY_MV) return 0;
-  if (_batt_mv >= BATT_FULL_MV) return 100;
-  return (uint8_t)(((uint32_t)(_batt_mv - BATT_EMPTY_MV) * 100) / (BATT_FULL_MV - BATT_EMPTY_MV));
+  int pct = meshstats_batt_percent(_batt_mv);
+  *known = (pct >= 0);
+  return (pct < 0) ? 0 : (uint8_t)pct;
 }
 
 // Lowest percentage that still belongs to this level.
@@ -657,6 +673,28 @@ static void powerLoop() {
   wifiSleep();
 }
 
+/* Whether received packets go out the moment they arrive, rather than a few
+ * per pass. Above bat_live there is charge to spare and the point of this node
+ * is watching packets move across the map live, so nothing should sit in a
+ * queue waiting its turn.
+ *
+ * Returns a code rather than a bool because the honest answer has three parts,
+ * and the page must not promise a live view it cannot deliver:
+ *   "on"   forwarding immediately
+ *   "batt" battery below the threshold, saving comes first
+ *   "save" power-save mode -- WiFi is off between rounds, so 'immediate' is
+ *          impossible by construction, whatever the battery says
+ */
+static const char *liveCode() {
+  if (_cfg.pwr_mode != PWR_ALWAYS) return "save";
+  if (_batt_known && _batt_pct < _cfg.bat_live) return "batt";
+  return "on";
+}
+
+static bool liveForwarding() {
+  return strcmp(liveCode(), "on") == 0;
+}
+
 static const char *powerStateCode() {
   if (isForced()) return "forced";
   if (_cfg.pwr_mode == PWR_ALWAYS || _safe_mode) return "always";
@@ -726,22 +764,34 @@ static bool mqttEnsure() {
 static bool mqttPublishStats() {
   if (!_mesh || !mqttEnsure()) return false;
 
-  static char body[1024];
+  static char body[MQTT_PUB_MAX];
   size_t n = _mesh->fillStatsJson(body, sizeof(body));
   if (n == 0) return false;
 
   char topic[96];
   mqttTopic("stats", topic, sizeof(topic));
 
-  if (_mqtt.publish(topic, (const uint8_t *)body, n, false)) {
-    _stats_count++;
-    _published_this_wake = true;
-    _mqtt_err = "";
-    return true;
+  if (!_mqtt.publish(topic, (const uint8_t *)body, n, false)) {
+    _fail_count++;
+    _mqtt_err = "stats";
+    return false;
   }
-  _fail_count++;
-  _mqtt_err = "stats";
-  return false;
+  _stats_count++;
+  _published_this_wake = true;
+  _mqtt_err = "";
+
+  /* Neighbours ride along on their own topic, same envelope. Keeping them out
+   * of the message above is what stops a node with fifty neighbours from
+   * silently exceeding the MQTT buffer and publishing nothing at all. */
+  n = _mesh->fillNeighborsJson(body, sizeof(body));
+  if (n > 0) {
+    mqttTopic("neighbors", topic, sizeof(topic));
+    if (!_mqtt.publish(topic, (const uint8_t *)body, n, false)) {
+      _fail_count++;
+      _mqtt_err = "stats";
+    }
+  }
+  return true;
 }
 
 static void mqttDrainRx() {
@@ -763,7 +813,13 @@ static void mqttDrainRx() {
   char topic[96];
   mqttTopic("rx", topic, sizeof(topic));
 
-  for (int guard = 0; guard < MQTT_DRAIN_MAX && _rx_tail != _rx_head; guard++) {
+  /* With charge to spare, empty the whole buffer in one pass so nothing waits
+   * a round. The cap is a bound on one pass, not a brake: at these radio
+   * settings a full-size packet occupies the air for roughly half a second, so
+   * even the lower figure drains far faster than LoRa can deliver. */
+  int cap = liveForwarding() ? MQTT_RX_QUEUE : MQTT_DRAIN_MAX;
+
+  for (int guard = 0; guard < cap && _rx_tail != _rx_head; guard++) {
     RxItem &it = _rx_queue[_rx_tail];
 
     static char body[MQTT_RX_MAX_LEN * 2 + 96];
@@ -820,6 +876,508 @@ void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len
   _rx_head = next;
 }
 
+// ------------------------------------------------------ monitored repeaters
+
+/* Polling other repeaters over the mesh. Per peer the sequence is the one a
+ * chat client performs: an ANON_REQ carrying the password (or an empty one,
+ * which makes the far side skip the password check and consult its access list
+ * instead), then a REQ of type GET_STATUS once that is accepted, then a
+ * RESPONSE carrying RepeaterStats.
+ *
+ * It is a state machine driven from msnet_loop(), one peer at a time. Not
+ * because that is simpler, but because this node is a repeater: a burst of
+ * logins from the very node meant to relay other people's traffic is
+ * antisocial, and every flooded login costs the whole mesh airtime.
+ *
+ * A refused login cannot be told from an unreachable one -- the far side
+ * answers a rejected login with silence. Hence LOGIN_NOANSWER rather than a
+ * pretence of knowing which of the two happened. */
+
+#define MSMON_CFG_FILE   "/msmon.json"
+#define MON_KEY_HEX_MAX  65      // 64 hex chars + NUL
+#define MON_NAME_MAX     24
+#define MON_PASS_MAX     16      // the protocol truncates at 15 characters
+/* Minimum pasted key: 6 bytes. That is what this firmware itself uses to name
+ * a node (MQTT topics, the id on the page), and short enough to copy off a
+ * screenshot. Below it, collisions stop being theoretical once a few dozen
+ * nodes are on the air, and monitoring the wrong repeater is worse than being
+ * asked for two more characters. */
+#define MON_MIN_HEX      12
+#define MON_STEP_MS      20000UL // how long to wait for one login/status answer
+#define MON_GAP_MS        3000UL // breathing space between peers
+#define MON_HEARD_MAX      40    // heard rows handed to the page
+
+enum MonLogin { LOGIN_NONE = 0, LOGIN_OK = 1, LOGIN_NOANSWER = 2 };
+
+struct MonEntry {
+  char key[MON_KEY_HEX_MAX];   // longest key seen for this node, lowercase hex
+  char name[MON_NAME_MAX];
+  char pass[MON_PASS_MAX];     // empty is a valid choice: try their access list
+  bool enabled;
+  // runtime only, never persisted
+  int8_t   mesh_idx;           // index in MyMesh's table, -1 = not resolvable yet
+  uint8_t  login_res;
+  bool     logged_in;
+  uint32_t polls, oks;
+  unsigned long last_ok;
+};
+
+static MonEntry _mon[MAX_MONITORS];
+static int _mon_count = 0;
+static uint16_t _mon_interval = 900;
+
+enum MonState { MST_IDLE, MST_LOGIN_WAIT, MST_REQ_WAIT, MST_GAP };
+static MonState _mon_state = MST_IDLE;
+static int _mon_cur = -1;
+static unsigned long _mon_deadline = 0;
+static unsigned long _mon_next_round = 0;
+
+// One staging slot is enough: only ever one poll is outstanding.
+static volatile bool _mon_got_reply = false;
+static uint8_t _mon_reply[MAX_PACKET_PAYLOAD];
+static int _mon_reply_len = 0;
+static int _mon_reply_idx = -1;
+
+/* Lowercases and drops the separators people paste along, but rejects anything
+ * that is not hex. Strict on purpose: a silently mangled key becomes a monitor
+ * entry that can never work, with nothing on screen to say why. */
+static bool normaliseKey(char *key) {
+  char out[MON_KEY_HEX_MAX];
+  int n = 0;
+  for (const char *p = key; *p; p++) {
+    char c = *p;
+    if (c == ' ' || c == ':' || c == '-' || c == '\t') continue;
+    if (c >= 'A' && c <= 'F') c = (char)(c - 'A' + 'a');
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    if (n >= MON_KEY_HEX_MAX - 1) return false;
+    out[n++] = c;
+  }
+  out[n] = 0;
+  if (n < MON_MIN_HEX || n > 64 || (n & 1)) return false;
+  strcpy(key, out);
+  return true;
+}
+
+/* Two keys mean the same node when the shorter is a prefix of the longer.
+ * Different sources hand out different lengths for one repeater -- Home
+ * Assistant 5 bytes, this firmware 6 -- and treating those as two nodes is
+ * exactly how one repeater ends up listed twice with its history split. */
+static bool sameNode(const char *a, const char *b) {
+  size_t la = strlen(a), lb = strlen(b);
+  size_t n = (la < lb) ? la : lb;
+  return n > 0 && memcmp(a, b, n) == 0;
+}
+
+static int findMonitor(const char *key) {
+  for (int i = 0; i < _mon_count; i++) {
+    if (sameNode(_mon[i].key, key)) return i;
+  }
+  return -1;
+}
+
+static void saveMonitors() {
+  if (!_fs) return;
+  File f = _fs->open(MSMON_CFG_FILE, "w");
+  if (!f) return;
+  f.printf("{\"iv\":%u,\"m\":[", _mon_interval);
+  for (int i = 0; i < _mon_count; i++) {
+    f.printf("%s{\"k\":\"%s\",\"n\":\"%s\",\"p\":\"%s\",\"e\":%d}",
+             i ? "," : "", _mon[i].key, _mon[i].name, _mon[i].pass,
+             _mon[i].enabled ? 1 : 0);
+  }
+  f.print("]}");
+  f.close();
+}
+
+static void loadMonitors() {
+  memset(_mon, 0, sizeof(_mon));
+  _mon_count = 0;
+  _mon_interval = 900;
+  if (!_fs) return;
+
+  File f = _fs->open(MSMON_CFG_FILE, "r");
+  if (!f) return;
+  String s = f.readString();
+  f.close();
+
+  auto strOf = [](const String &src, const char *key, char *out, size_t max) {
+    String pat = String("\"") + key + "\":\"";
+    int i = src.indexOf(pat);
+    if (i < 0) { out[0] = 0; return; }
+    i += pat.length();
+    int j = src.indexOf('"', i);
+    if (j < 0) { out[0] = 0; return; }
+    String v = src.substring(i, j);
+    strncpy(out, v.c_str(), max - 1);
+    out[max - 1] = 0;
+  };
+  auto intOf = [](const String &src, const char *key, long fallback) -> long {
+    String pat = String("\"") + key + "\":";
+    int i = src.indexOf(pat);
+    if (i < 0) return fallback;
+    i += pat.length();
+    long v = 0;
+    bool any = false;
+    while (i < (int)src.length() && src[i] >= '0' && src[i] <= '9') {
+      v = v * 10 + (src[i++] - '0');
+      any = true;
+    }
+    return any ? v : fallback;
+  };
+
+  long iv = intOf(s, "iv", 900);
+  _mon_interval = (iv < 60) ? 60 : (iv > 65535 ? 65535 : (uint16_t)iv);
+
+  int pos = 0;
+  while (_mon_count < MAX_MONITORS) {
+    int b = s.indexOf("{\"k\":\"", pos);
+    if (b < 0) break;
+    int e = s.indexOf('}', b);
+    if (e < 0) break;
+    String item = s.substring(b, e + 1);
+    pos = e + 1;
+
+    MonEntry &m = _mon[_mon_count];
+    memset(&m, 0, sizeof(m));
+    m.mesh_idx = -1;
+    strOf(item, "k", m.key, sizeof(m.key));
+    strOf(item, "n", m.name, sizeof(m.name));
+    strOf(item, "p", m.pass, sizeof(m.pass));
+    m.enabled = intOf(item, "e", 1) != 0;
+    if (normaliseKey(m.key) && findMonitor(m.key) < 0) _mon_count++;
+  }
+}
+
+/* Rebuilds MyMesh's radio-level table. Only entries whose full 32-byte key we
+ * know can go in: the shared secret is ECDH over the whole key, so a pasted
+ * prefix stays inert until we hear that repeater advertise itself. */
+static void syncMonitorsToMesh() {
+  if (!_mesh) return;
+  _mesh->clearMonitors();
+  for (int i = 0; i < _mon_count; i++) {
+    _mon[i].mesh_idx = -1;
+    _mon[i].logged_in = false;
+    if (strlen(_mon[i].key) < 64) continue;
+
+    uint8_t key[PUB_KEY_SIZE];
+    if (!mesh::Utils::fromHex(key, PUB_KEY_SIZE, _mon[i].key)) continue;
+    int idx = _mesh->addMonitor(key);
+    if (idx >= 0) _mon[i].mesh_idx = (int8_t)idx;
+  }
+}
+
+/* Matches entries against the heard list: upgrades a prefix to the full key,
+ * and lets the advert name win over anything typed by hand. Cheap enough (a
+ * handful of memcmp) to run once per round. */
+static bool resolveMonitors() {
+  if (!_mesh) return false;
+  bool changed = false;
+
+  for (int i = 0; i < _mon_count; i++) {
+    size_t hex_len = strlen(_mon[i].key);
+    int plen = (int)(hex_len / 2);
+    if (plen > PUB_KEY_SIZE) plen = PUB_KEY_SIZE;
+
+    uint8_t prefix[PUB_KEY_SIZE];
+    if (!mesh::Utils::fromHex(prefix, plen, _mon[i].key)) continue;
+
+    uint8_t full[PUB_KEY_SIZE];
+    char nm[MON_NAME_MAX];
+    if (!_mesh->findNeighbourByPrefix(prefix, plen, full, nm, sizeof(nm))) continue;
+
+    if (hex_len < 64) {
+      mesh::Utils::toHex(_mon[i].key, full, PUB_KEY_SIZE);
+      changed = true;
+    }
+    if (nm[0] && strcmp(_mon[i].name, nm) != 0) {
+      strncpy(_mon[i].name, nm, sizeof(_mon[i].name) - 1);
+      _mon[i].name[sizeof(_mon[i].name) - 1] = 0;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+void meshstats_on_monitor_response(int mon_idx, const uint8_t *data, int len) {
+  if (!_started || _disabled || _safe_mode) return;
+  if (len <= 0 || len > (int)sizeof(_mon_reply)) return;
+  if (_mon_got_reply) return;            // previous one not consumed yet
+
+  memcpy(_mon_reply, data, len);
+  _mon_reply_len = len;
+  _mon_reply_idx = mon_idx;
+  _mon_got_reply = true;
+}
+
+/* Publishes one polled repeater under our own topic, in the same shape as our
+ * own stats so the receiving side can reuse its parser. 'via' names who did
+ * the asking: these numbers are second-hand and a reader should be able to
+ * tell. */
+static void publishMonitorStats(MonEntry &m, const uint8_t *data, int len) {
+  if (!mqttEnsure()) return;
+
+  RepeaterStats st;
+  memset(&st, 0, sizeof(st));
+  int n = len - 4;                        // first 4 bytes echo our request tag
+  if (n < 20) return;                     // too short to be a status reply
+  if (n > (int)sizeof(st)) n = sizeof(st);
+  memcpy(&st, &data[4], n);               // older firmware sends fewer fields; rest stays 0
+
+  char prefix_hex[13];
+  memcpy(prefix_hex, m.key, 12);
+  prefix_hex[12] = 0;
+
+  static char body[900];
+  int p = snprintf(body, sizeof(body),
+    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\"},"
+    "\"metrics\":{"
+      "\"online\":true,"
+      "\"bat\":%.3f,"
+      "\"uptime\":%.5f,"
+      "\"noise_floor\":%d,"
+      "\"last_rssi\":%d,"
+      "\"last_snr\":%.2f,"
+      "\"airtime\":%.1f,"
+      "\"rx_airtime\":%.1f,"
+      "\"nb_recv\":%u,"
+      "\"nb_sent\":%u,"
+      "\"sent_flood\":%u,"
+      "\"sent_direct\":%u,"
+      "\"recv_flood\":%u,"
+      "\"recv_direct\":%u,"
+      "\"recv_errors\":%u,"
+      "\"direct_dups\":%u,"
+      "\"flood_dups\":%u,"
+      "\"tx_queue_len\":%u,"
+      "\"err_events\":%u"
+    "},\"via\":\"%s\"}",
+    prefix_hex, m.name,
+    st.batt_milli_volts / 1000.0f,
+    st.total_up_time_secs / 86400.0,
+    (int)st.noise_floor, (int)st.last_rssi, st.last_snr / 4.0f,
+    st.total_air_time_secs / 60.0f, st.total_rx_air_time_secs / 60.0f,
+    (unsigned)st.n_packets_recv, (unsigned)st.n_packets_sent,
+    (unsigned)st.n_sent_flood, (unsigned)st.n_sent_direct,
+    (unsigned)st.n_recv_flood, (unsigned)st.n_recv_direct,
+    (unsigned)st.n_recv_errors, (unsigned)st.n_direct_dups, (unsigned)st.n_flood_dups,
+    (unsigned)st.curr_tx_queue_len, (unsigned)st.err_events,
+    _node_hex);
+
+  if (p <= 0 || p >= (int)sizeof(body)) return;
+
+  char topic[96];
+  mqttTopic("mon", topic, sizeof(topic));
+  if (_mqtt.publish(topic, (const uint8_t *)body, p, false)) {
+    m.oks++;
+    m.last_ok = millis();
+  } else {
+    _fail_count++;
+    _mqtt_err = "stats";
+  }
+}
+
+/* Node names come off the air and end up inside JSON. Anything with a quote in
+ * it would otherwise produce a broken page rather than an odd-looking name. */
+static void jsonEsc(char *dest, size_t max, const char *src) {
+  size_t o = 0;
+  for (const char *p = src; *p && o + 2 < max; p++) {
+    unsigned char c = (unsigned char)*p;
+    if (c == '"' || c == '\\') {
+      dest[o++] = '\\';
+      dest[o++] = (char)c;
+    } else if (c >= 0x20) {
+      dest[o++] = (char)c;
+    }
+  }
+  dest[o] = 0;
+}
+
+/* Config changes arrive on the web server's task; the list is only ever
+ * mutated in loop(). Same hand-over the wifi/mqtt/power forms already use. */
+enum MonAction { MA_NONE = 0, MA_ADD, MA_DEL, MA_PASS, MA_ENABLE, MA_INTERVAL, MA_POLL };
+static volatile uint8_t _mon_action = MA_NONE;
+static char _ma_key[MON_KEY_HEX_MAX];
+static char _ma_name[MON_NAME_MAX];
+static char _ma_pass[MON_PASS_MAX];
+static uint16_t _ma_num = 0;
+
+static bool monAdd(const char *key_in, const char *name) {
+  char key[MON_KEY_HEX_MAX];
+  strncpy(key, key_in, sizeof(key) - 1);
+  key[sizeof(key) - 1] = 0;
+  if (!normaliseKey(key)) return false;
+
+  int i = findMonitor(key);
+  if (i >= 0) {
+    // Already known under a shorter or longer form: merge, never duplicate.
+    if (strlen(key) > strlen(_mon[i].key)) strcpy(_mon[i].key, key);
+    if (name && *name && _mon[i].name[0] == 0) {
+      strncpy(_mon[i].name, name, sizeof(_mon[i].name) - 1);
+      _mon[i].name[sizeof(_mon[i].name) - 1] = 0;
+    }
+    return true;
+  }
+  if (_mon_count >= MAX_MONITORS) return false;
+
+  MonEntry &m = _mon[_mon_count];
+  memset(&m, 0, sizeof(m));
+  m.mesh_idx = -1;
+  m.enabled = true;
+  strcpy(m.key, key);
+  if (name) {
+    strncpy(m.name, name, sizeof(m.name) - 1);
+    m.name[sizeof(m.name) - 1] = 0;
+  }
+  _mon_count++;
+  return true;
+}
+
+static bool monDelete(const char *key) {
+  int i = findMonitor(key);
+  if (i < 0) return false;
+  for (int j = i; j < _mon_count - 1; j++) _mon[j] = _mon[j + 1];
+  _mon_count--;
+  memset(&_mon[_mon_count], 0, sizeof(MonEntry));
+  return true;
+}
+
+// Runs in loop(): applies whatever the page or CLI staged, then persists.
+static void applyMonAction() {
+  uint8_t act = _mon_action;
+  _mon_action = MA_NONE;
+  if (act == MA_NONE) return;
+
+  bool touched_list = false;
+  switch (act) {
+    case MA_ADD:
+      touched_list = monAdd(_ma_key, _ma_name);
+      break;
+    case MA_DEL:
+      touched_list = monDelete(_ma_key);
+      break;
+    case MA_PASS: {
+      int i = findMonitor(_ma_key);
+      if (i >= 0) {
+        strncpy(_mon[i].pass, _ma_pass, sizeof(_mon[i].pass) - 1);
+        _mon[i].pass[sizeof(_mon[i].pass) - 1] = 0;
+        _mon[i].logged_in = false;        // credentials changed: log in again
+        _mon[i].login_res = LOGIN_NONE;
+      }
+      break;
+    }
+    case MA_ENABLE: {
+      int i = findMonitor(_ma_key);
+      if (i >= 0) _mon[i].enabled = (_ma_num != 0);
+      break;
+    }
+    case MA_INTERVAL:
+      _mon_interval = _ma_num;
+      break;
+    case MA_POLL:
+      _mon_next_round = millis();         // start a round on the next pass
+      return;                             // nothing to persist
+  }
+
+  saveMonitors();
+  if (touched_list) syncMonitorsToMesh();
+}
+
+// Moves to the next entry worth polling, or ends the round.
+static void monitorAdvance() {
+  for (int i = _mon_cur + 1; i < _mon_count; i++) {
+    if (!_mon[i].enabled || _mon[i].mesh_idx < 0) continue;
+
+    _mon_cur = i;
+    _mon[i].polls++;
+    if (_mon[i].logged_in) {
+      if (_mesh->sendMonitorStatusReq(_mon[i].mesh_idx)) {
+        _mon_state = MST_REQ_WAIT;
+        _mon_deadline = millis() + MON_STEP_MS;
+        return;
+      }
+    } else if (_mesh->sendMonitorLogin(_mon[i].mesh_idx, _mon[i].pass)) {
+      _mon_state = MST_LOGIN_WAIT;
+      _mon_deadline = millis() + MON_STEP_MS;
+      return;
+    }
+    // packet pool empty: leave this one for the next round rather than spin
+  }
+
+  _mon_cur = -1;
+  _mon_state = MST_IDLE;
+  _mon_next_round = millis() + (unsigned long)_mon_interval * 1000UL;
+}
+
+static void monitorLoop() {
+  if (_safe_mode || _mon_count == 0 || !_mesh) return;
+  /* No broker means nowhere to put the answers, and every poll costs the whole
+   * mesh airtime. Same for a tired battery: monitoring is a luxury, staying
+   * reachable is not. */
+  if (!_cfg.mqtt_enabled || _cfg.mqtt_host[0] == 0) return;
+  if (_level >= LV_LOW) return;
+
+  if (_mon_got_reply) {
+    int idx = _mon_reply_idx;
+    _mon_got_reply = false;
+
+    if (_mon_cur >= 0 && _mon[_mon_cur].mesh_idx == idx) {
+      MonEntry &m = _mon[_mon_cur];
+      if (_mon_state == MST_LOGIN_WAIT) {
+        m.login_res = LOGIN_OK;
+        m.logged_in = true;
+        if (_mesh->sendMonitorStatusReq(m.mesh_idx)) {
+          _mon_state = MST_REQ_WAIT;
+          _mon_deadline = millis() + MON_STEP_MS;
+        } else {
+          _mon_state = MST_GAP;
+          _mon_deadline = millis() + MON_GAP_MS;
+        }
+        return;
+      }
+      if (_mon_state == MST_REQ_WAIT) {
+        publishMonitorStats(m, _mon_reply, _mon_reply_len);
+        _mon_state = MST_GAP;
+        _mon_deadline = millis() + MON_GAP_MS;
+        return;
+      }
+    }
+  }
+
+  switch (_mon_state) {
+    case MST_IDLE:
+      if (!passed(_mon_next_round)) return;
+      if (resolveMonitors()) {           // a prefix may have become a full key
+        saveMonitors();
+        syncMonitorsToMesh();
+      }
+      _mon_cur = -1;
+      monitorAdvance();
+      break;
+
+    case MST_LOGIN_WAIT:
+      if (!passed(_mon_deadline)) return;
+      /* Silence. Either they refused us or they are out of reach; the protocol
+       * offers no way to tell those apart. */
+      if (_mon_cur >= 0) _mon[_mon_cur].login_res = LOGIN_NOANSWER;
+      _mon_state = MST_GAP;
+      _mon_deadline = millis() + MON_GAP_MS;
+      break;
+
+    case MST_REQ_WAIT:
+      if (!passed(_mon_deadline)) return;
+      // Their side probably dropped our session; log in again next round.
+      if (_mon_cur >= 0) _mon[_mon_cur].logged_in = false;
+      _mon_state = MST_GAP;
+      _mon_deadline = millis() + MON_GAP_MS;
+      break;
+
+    case MST_GAP:
+      if (!passed(_mon_deadline)) return;
+      monitorAdvance();
+      break;
+  }
+}
+
 // ---------------------------------------------------------------- admin page
 
 /* One static PROGMEM string, sent in a single write. The earlier version built
@@ -863,7 +1421,13 @@ static const char PAGE[] PROGMEM =
   "h1{font-size:1.5rem;margin:1.2rem 0 .2rem;letter-spacing:-.01em}"
   "h2{font-family:var(--mono);font-size:.82rem;margin:2rem 0 .7rem;text-transform:uppercase;"
   "letter-spacing:.2em;color:var(--accent)}h2::before{content:'\\25B8  ';color:var(--dim)}"
+  "h3{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;"
+  "color:var(--muted);margin:1.3rem 0 .4rem}"
   "a{color:var(--cyan);text-decoration:none}"
+  "small{color:var(--muted);font-size:.78em}"
+  ".ok{color:var(--accent)}.bad{color:var(--amber)}"
+  ".mini{padding:.15rem .5rem;font-size:.75rem;border-radius:99px}"
+  "td.act{text-align:right;white-space:nowrap}"
   ".muted{color:var(--muted);font-size:.85rem}"
   ".card{background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 55%),var(--card);"
   "border:1px solid var(--edge);border-radius:10px;padding:1rem}"
@@ -917,6 +1481,21 @@ static const char PAGE[] PROGMEM =
   "<label><input class=ck type=checkbox name=rx><span data-i18n=l_rx></span></label>"
   "<button type=submit data-i18n=b_save></button></form><table id=mt></table>"
   "<p class=muted><span data-i18n=h_topics></span> <code id=tp></code></p></div>"
+  "<h2 data-i18n=t_mon></h2><div class=card>"
+  "<p class=muted data-i18n=h_mon></p>"
+  "<label><span data-i18n=l_filter></span><input id=fl></label>"
+  "<h3 data-i18n=t_heard></h3><table id=hl></table>"
+  "<h3 data-i18n=t_manual></h3>"
+  "<div class=row><label><span data-i18n=l_key></span><input id=mk></label>"
+  "<label style='max-width:9rem'><span data-i18n=l_name></span><input id=mn></label></div>"
+  "<button id=mab data-i18n=b_add></button>"
+  "<h3 data-i18n=t_monlist></h3><table id=ml></table>"
+  "<p class=muted data-i18n=h_acl></p>"
+  "<div class=row style='margin-top:.6rem'>"
+  "<label style='max-width:10rem'><span data-i18n=l_moniv></span>"
+  "<input id=miv type=number min=60 max=65535></label></div>"
+  "<button id=mivb data-i18n=b_save></button> "
+  "<button id=mpb class=pill data-i18n=b_pollnow></button></div>"
   "<h2 data-i18n=t_fw></h2><div class=card>"
   "<p class=muted data-i18n=h_fw></p><p><a href=/update data-i18n=a_fw></a></p></div>"
   "<h2 data-i18n=t_backup></h2><div class=card>"
@@ -953,7 +1532,10 @@ static const char PAGE[] PROGMEM =
   "Herstart hem opnieuw zodra je de oorzaak weg hebt.',"
   "s_wifi:'WiFi',s_ip:'IP',s_net:'Netwerk',s_signal:'Signaal',s_uptime:'Uptime',"
   "s_heap:'Vrij geheugen',s_batt:'Batterij',s_power:'Energie',s_wdt:'Watchdog',"
-  "u_min:'min',d_on:'actief (% s)',d_off:'uit (upload bezig)',"
+  "u_min:'min',d_on:'actief (% s)',d_off:'uit (upload bezig)',s_live:'Live doorsturen',"
+  "lv_on:'aan \\u2014 pakketten gaan meteen door',"
+  "lv_batt:'uit \\u2014 accu onder %%',"
+  "lv_save:'niet mogelijk in zuinige modus (WiFi gaat tussendoor uit)',"
   "w_ok:'verbonden',w_try:'verbinden\\u2026',w_ap:'eigen netwerk (WiFi onbereikbaar)',"
   "w_off:'uit (zuinig)',lv0:'vol',lv1:'hoog',lv2:'normaal',lv3:'laag',lv4:'kritiek',"
   "b_unknown:'onbekend (aangenomen: netstroom)',"
@@ -965,6 +1547,22 @@ static const char PAGE[] PROGMEM =
   "mq_off:'uit',mq_conn:'verbonden',mq_disc:'niet verbonden',mq_unset:'niet ingesteld',"
   "e_conn:'verbinding faalde (rc %)',e_stats:'stats versturen faalde',"
   "e_pkt:'pakket versturen faalde',"
+  "t_mon:'Monitoren',t_heard:'Gehoorde repeaters',t_manual:'Handmatig toevoegen',"
+  "t_monlist:'Wordt gemonitord',l_filter:'Filteren',l_key:'Publieke sleutel (hex)',"
+  "l_name:'Naam',b_add:'Toevoegen',l_moniv:'Interval (s)',b_pollnow:'Nu ophalen',"
+  "h_mon:'Deze repeater kan op andere repeaters inloggen, hun status ophalen en die "
+  "doorsturen naar de site. Kies er een uit de gehoorde lijst, of plak een publieke "
+  "sleutel van een node die je nog niet gehoord hebt.',"
+  "h_acl:'Laat het wachtwoord leeg om via de access list van de andere node binnen te "
+  "raken: die operator voegt jouw sleutel dan \\u00e9\\u00e9nmalig toe met "
+  "setperm <jouw-sleutel> 1 (1=alleen lezen, 2=lezen/schrijven, 3=beheerder). Netter dan "
+  "wachtwoorden rondsturen. Een geweigerde login is niet te onderscheiden van een "
+  "onbereikbare node: beide zwijgen.',"
+  "m_none:'nog niets',m_heardnone:'nog geen repeaters gehoord',"
+  "st_unres:'wacht op advert',st_never:'nog niet geprobeerd',st_ok:'login gelukt',"
+  "st_noans:'geen antwoord (geweigerd of onbereikbaar)',"
+  "ph_pw:'leeg = via access list',u_ago:'geleden',u_never:'nooit',"
+  "a_badkey:'Dat is geen geldige sleutel. Alleen hex, minstens % tekens.',"
   "a_saved:'Opgeslagen. De repeater verbindt opnieuw; ververs deze pagina zo dadelijk.',"
   "a_pick:'Kies eerst een back-upbestand.',"
   "a_conf:'Alle instellingen en sleutels worden overschreven. Doorgaan?'},"
@@ -995,7 +1593,10 @@ static const char PAGE[] PROGMEM =
   "you have removed the cause.',"
   "s_wifi:'WiFi',s_ip:'IP',s_net:'Network',s_signal:'Signal',s_uptime:'Uptime',"
   "s_heap:'Free memory',s_batt:'Battery',s_power:'Power',s_wdt:'Watchdog',"
-  "u_min:'min',d_on:'armed (% s)',d_off:'off (upload in progress)',"
+  "u_min:'min',d_on:'armed (% s)',d_off:'off (upload in progress)',s_live:'Live forwarding',"
+  "lv_on:'on \\u2014 packets go out immediately',"
+  "lv_batt:'off \\u2014 battery below %%',"
+  "lv_save:'not possible in power-save mode (WiFi goes off between rounds)',"
   "w_ok:'connected',w_try:'connecting\\u2026',w_ap:'own network (WiFi unreachable)',"
   "w_off:'off (power save)',lv0:'full',lv1:'high',lv2:'normal',lv3:'low',lv4:'critical',"
   "b_unknown:'unknown (assuming mains)',"
@@ -1007,6 +1608,21 @@ static const char PAGE[] PROGMEM =
   "mq_off:'off',mq_conn:'connected',mq_disc:'not connected',mq_unset:'not configured',"
   "e_conn:'connection failed (rc %)',e_stats:'publishing stats failed',"
   "e_pkt:'publishing packet failed',"
+  "t_mon:'Monitoring',t_heard:'Repeaters heard',t_manual:'Add by hand',"
+  "t_monlist:'Being monitored',l_filter:'Filter',l_key:'Public key (hex)',"
+  "l_name:'Name',b_add:'Add',l_moniv:'Interval (s)',b_pollnow:'Poll now',"
+  "h_mon:'This repeater can log in to other repeaters, fetch their status and forward it "
+  "to the site. Pick one from the heard list, or paste the public key of a node you have "
+  "not heard yet.',"
+  "h_acl:'Leave the password empty to get in via the other node\\u2019s access list: its "
+  "operator adds your key once with setperm <your-key> 1 (1=read-only, 2=read/write, "
+  "3=admin). Tidier than passing passwords around. A refused login cannot be told from an "
+  "unreachable node: both stay silent.',"
+  "m_none:'nothing yet',m_heardnone:'no repeaters heard yet',"
+  "st_unres:'waiting for advert',st_never:'not tried yet',st_ok:'login succeeded',"
+  "st_noans:'no answer (refused or unreachable)',"
+  "ph_pw:'empty = via access list',u_ago:'ago',u_never:'never',"
+  "a_badkey:'That is not a valid key. Hex only, at least % characters.',"
   "a_saved:'Saved. The repeater is reconnecting; refresh this page in a moment.',"
   "a_pick:'Pick a backup file first.',"
   "a_conf:'All settings and keys will be overwritten. Continue?'}};"
@@ -1016,7 +1632,7 @@ static const char PAGE[] PROGMEM =
   "(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');"
   "function theme(){document.documentElement.setAttribute('data-theme',TH);"
   "$('#th').textContent=TH=='light'?'\\u263e':'\\u2600'}"
-  "function lang(){var d=T[L];document.documentElement.lang=L;"
+  "function lang(){var d=T[L];document.documentElement.lang=L;renderMon();"
   "$('#lg').textContent=L=='nl'?'EN':'NL';"
   "document.querySelectorAll('[data-i18n]').forEach(function(e){"
   "var v=d[e.getAttribute('data-i18n')];if(v)e.textContent=v});"
@@ -1039,6 +1655,7 @@ static const char PAGE[] PROGMEM =
   "s[t.s_batt]=d.bat.known?((d.bat.mv/1000).toFixed(2)+' V \\u00b7 '+d.bat.pct+'% \\u00b7 '"
   "+t['lv'+d.bat.lv]):t.b_unknown;"
   "s[t.s_power]=pwrtext(d);"
+  "s[t.s_live]=(t['lv_'+d.live]||d.live).replace('%',d.livepct);"
   "s[t.s_wdt]=d.wdt?t.d_on.replace('%',d.wdt_s):t.d_off;$('#st').innerHTML=rows(s);"
   "var q=d.mqtt,m={};m[t.m_broker]=t['mq_'+q.st];"
   "m[t.m_stats]=q.stats+' '+t.m_sent;"
@@ -1051,6 +1668,50 @@ static const char PAGE[] PROGMEM =
   "$('#safe').innerHTML=d.safe?'<div class=\"card warn\">'+t.safe+'</div>':''}"
   "function load(){fetch('/api/status').then(function(r){return r.json()})"
   ".then(function(d){last=d;render()})}"
+  // ---- monitoring -------------------------------------------------------
+  "var mon=null;"
+  "function esc(s){return String(s).replace(/[&<>\"]/g,function(c){"
+  "return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]})}"
+  "function hit(o,q){if(!q)return true;q=q.toLowerCase();"
+  "return (o.n||'').toLowerCase().indexOf(q)>=0||(o.k||'').toLowerCase().indexOf(q)>=0}"
+  "function ago(s,t){return s<0?t.u_never:(s<120?s+' s':Math.round(s/60)+' min')+' '+t.u_ago}"
+  "function monst(m,t){if(!m.res)return'<span class=bad>'+t.st_unres+'</span>';"
+  "if(m.lr==1)return'<span class=ok>'+t.st_ok+'</span>';"
+  "if(m.lr==2)return'<span class=bad>'+t.st_noans+'</span>';return t.st_never}"
+  "function renderMon(){var d=mon,t=T[L];if(!d)return;"
+  "var q=$('#fl').value,h='',i;"
+  "for(i=0;i<d.heard.length;i++){var x=d.heard[i];if(!hit(x,q))continue;"
+  "h+='<tr><td>'+esc(x.n||'-')+'<br><small>'+x.k.substr(0,12)+'</small></td>'"
+  "+'<td>'+x.snr.toFixed(1)+' dB<br><small>'+ago(x.age,t)+'</small></td>'"
+  "+'<td class=act><button class=\"mini ha\" data-k=\"'+x.k+'\" data-n=\"'+esc(x.n||'')+'\">+</button></td></tr>'}"
+  "$('#hl').innerHTML=h||'<tr><td>'+t.m_heardnone+'</td></tr>';"
+  "h='';"
+  "for(i=0;i<d.mon.length;i++){var m=d.mon[i];if(!hit(m,q))continue;"
+  "h+='<tr><td>'+esc(m.n||'-')+'<br><small>'+m.k.substr(0,12)+'</small></td>'"
+  "+'<td>'+monst(m,t)+'<br><small>'+m.oks+'/'+m.polls+' \\u00b7 '+ago(m.age,t)+'</small></td>'"
+  "+'<td><input type=password class=mp data-k=\"'+m.k+'\" placeholder=\"'"
+  "+(m.pw?t.ph_unch:t.ph_pw)+'\"></td>'"
+  "+'<td class=act><input type=checkbox class=\"ck me\" data-k=\"'+m.k+'\"'"
+  "+(m.e?' checked':'')+'> <button class=\"mini md\" data-k=\"'+m.k+'\">\\u2715</button></td></tr>'}"
+  "$('#ml').innerHTML=h||'<tr><td>'+t.m_none+'</td></tr>';"
+  "$('#miv').value=d.iv}"
+  "function loadMon(){fetch('/api/mon').then(function(r){return r.json()})"
+  ".then(function(d){mon=d;renderMon()})}"
+  "function monPost(b,cb){fetch('/api/mon',{method:'POST',body:new URLSearchParams(b)})"
+  ".then(function(r){return r.json()}).then(function(j){"
+  "if(j.err=='key')alert(T[L].a_badkey.replace('%',mon?mon.minhex:12));"
+  "if(cb)cb();loadMon()})}"
+  "$('#fl').oninput=renderMon;"
+  "document.addEventListener('click',function(e){var b=e.target;"
+  "if(b.classList.contains('ha'))monPost({act:'add',key:b.dataset.k,name:b.dataset.n});"
+  "else if(b.classList.contains('md'))monPost({act:'del',key:b.dataset.k})});"
+  "document.addEventListener('change',function(e){var b=e.target;"
+  "if(b.classList.contains('me'))monPost({act:'en',key:b.dataset.k,on:b.checked?1:''});"
+  "else if(b.classList.contains('mp'))monPost({act:'pass',key:b.dataset.k,pass:b.value})});"
+  "$('#mab').onclick=function(){monPost({act:'add',key:$('#mk').value,name:$('#mn').value},"
+  "function(){$('#mk').value='';$('#mn').value=''})};"
+  "$('#mivb').onclick=function(){monPost({act:'iv',secs:$('#miv').value})};"
+  "$('#mpb').onclick=function(){monPost({act:'poll'})};"
   "function post(u,f,cb){fetch(u,{method:'POST',body:new URLSearchParams(new FormData(f))})"
   ".then(cb)}"
   "$('#th').onclick=function(){TH=TH=='light'?'dark':'light';"
@@ -1066,7 +1727,7 @@ static const char PAGE[] PROGMEM =
   "var b=new FormData();b.append('f',f);"
   "fetch('/api/restore',{method:'POST',body:b}).then(function(r){return r.json()})"
   ".then(function(j){alert(j.msg)})};"
-  "theme();lang();load();setInterval(load,5000);"
+  "theme();lang();load();loadMon();setInterval(load,5000);setInterval(loadMon,20000);"
   "</script></body></html>";
 
 /* The admin page hands out your keys (backup) and can flash firmware. That may
@@ -1092,7 +1753,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
     "\"up\":%lu,\"heap\":%u},"
     "\"bat\":{\"known\":%d,\"mv\":%u,\"pct\":%u,\"lv\":%u},\"wdt\":%d,\"wdt_s\":%d,"
     "\"pwr\":{\"st\":\"%s\",\"secs\":%u,\"iv\":%u,\"night\":%d,"
-    "\"mode\":%u,\"window\":%u,\"sleep\":%u},",
+    "\"mode\":%u,\"window\":%u,\"sleep\":%u},\"live\":\"%s\",\"livepct\":%u,",
     _mesh ? _mesh->getNodeName() : "repeater", _node_hex,
     board.getManufacturerName(), FIRMWARE_VERSION,
     MESHSTATS_NAME, MESHSTATS_VERSION,
@@ -1103,7 +1764,8 @@ static void handleStatus(AsyncWebServerRequest *req) {
     _batt_known ? 1 : 0, (unsigned)_batt_mv, (unsigned)_batt_pct, (unsigned)_level,
     _wdt_watching ? 1 : 0, WDT_TIMEOUT_S,
     powerStateCode(), (unsigned)powerSecsLeft(), (unsigned)currentIntervalSecs(),
-    isNight() ? 1 : 0, _cfg.pwr_mode, _cfg.pwr_window, _cfg.wifi_sleep);
+    isNight() ? 1 : 0, _cfg.pwr_mode, _cfg.pwr_window, _cfg.wifi_sleep,
+    liveCode(), _cfg.bat_live);
 
   // Truncation here would ship broken JSON, so clamp before appending.
   if (n < 0 || (size_t)n >= sizeof(body)) n = sizeof(body) - 1;
@@ -1174,6 +1836,109 @@ static void handleMqttPost(AsyncWebServerRequest *req) {
   _cfg.mqtt_enabled = req->hasParam("enabled", true) ? 1 : 0;
   _cfg.mqtt_rx = req->hasParam("rx", true) ? 1 : 0;
   _apply_mqtt = true;
+  req->send(200, "application/json", "{\"ok\":1}");
+}
+
+/* Monitor list plus the heard repeaters to pick from, in one fetch. Passwords
+ * never leave the node: only whether one is set, because "no password" is a
+ * meaningful setting here and the page has to be able to show which of the two
+ * you chose. */
+static void handleMonJson(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+  static char body[6500];
+  char esc[MON_NAME_MAX * 2 + 4];
+  int p = 0;
+
+  p += snprintf(body + p, sizeof(body) - p,
+                "{\"iv\":%u,\"max\":%d,\"minhex\":%d,\"mon\":[",
+                _mon_interval, MAX_MONITORS, MON_MIN_HEX);
+
+  for (int i = 0; i < _mon_count && p < (int)sizeof(body) - 400; i++) {
+    jsonEsc(esc, sizeof(esc), _mon[i].name);
+    long age = _mon[i].last_ok ? (long)((millis() - _mon[i].last_ok) / 1000UL) : -1;
+    p += snprintf(body + p, sizeof(body) - p,
+      "%s{\"k\":\"%s\",\"n\":\"%s\",\"pw\":%d,\"e\":%d,\"res\":%d,\"lr\":%u,"
+      "\"polls\":%u,\"oks\":%u,\"age\":%ld}",
+      i ? "," : "", _mon[i].key, esc, _mon[i].pass[0] ? 1 : 0,
+      _mon[i].enabled ? 1 : 0, _mon[i].mesh_idx >= 0 ? 1 : 0,
+      (unsigned)_mon[i].login_res, (unsigned)_mon[i].polls, (unsigned)_mon[i].oks, age);
+  }
+
+  p += snprintf(body + p, sizeof(body) - p, "],\"heard\":[");
+
+  int n_heard = _mesh ? _mesh->getNumNeighbours() : 0;
+  if (n_heard > MON_HEARD_MAX) n_heard = MON_HEARD_MAX;
+  int written = 0;
+  for (int i = 0; i < n_heard && p < (int)sizeof(body) - 200; i++) {
+    char hex[PUB_KEY_SIZE * 2 + 1], name[MON_NAME_MAX];
+    uint32_t secs_ago;
+    int8_t snr4;
+    if (!_mesh->getNeighbourAt(i, hex, name, sizeof(name), &secs_ago, &snr4)) continue;
+
+    jsonEsc(esc, sizeof(esc), name);
+    p += snprintf(body + p, sizeof(body) - p,
+                  "%s{\"k\":\"%s\",\"n\":\"%s\",\"snr\":%.2f,\"age\":%u}",
+                  written ? "," : "", hex, esc, snr4 / 4.0f, (unsigned)secs_ago);
+    written++;
+  }
+  snprintf(body + p, sizeof(body) - p, "]}");
+
+  req->send(200, "application/json", body);
+}
+
+static void handleMonPost(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+  if (_mon_action != MA_NONE) {          // previous change not applied yet
+    req->send(200, "application/json", "{\"ok\":0,\"err\":\"busy\"}");
+    return;
+  }
+
+  String act = req->hasParam("act", true) ? req->getParam("act", true)->value() : "";
+  _ma_key[0] = _ma_name[0] = _ma_pass[0] = 0;
+  _ma_num = 0;
+
+  if (act == "iv") {
+    long v = req->hasParam("secs", true) ? req->getParam("secs", true)->value().toInt() : 0;
+    if (v < 60 || v > 65535) {
+      req->send(200, "application/json", "{\"ok\":0,\"err\":\"range\"}");
+      return;
+    }
+    _ma_num = (uint16_t)v;
+    _mon_action = MA_INTERVAL;
+    req->send(200, "application/json", "{\"ok\":1}");
+    return;
+  }
+  if (act == "poll") {
+    _mon_action = MA_POLL;
+    req->send(200, "application/json", "{\"ok\":1}");
+    return;
+  }
+
+  copyParam(req, "key", _ma_key, sizeof(_ma_key));
+  /* Validated here rather than in loop(), because a mistyped key is the one
+   * error worth telling the user about immediately. */
+  if (!normaliseKey(_ma_key)) {
+    req->send(200, "application/json", "{\"ok\":0,\"err\":\"key\"}");
+    return;
+  }
+
+  if (act == "add") {
+    copyParam(req, "name", _ma_name, sizeof(_ma_name));
+    _mon_action = MA_ADD;
+  } else if (act == "del") {
+    _mon_action = MA_DEL;
+  } else if (act == "pass") {
+    // An empty password is a choice, not a missing field: it means 'try their
+    // access list'. So no length check here.
+    copyParam(req, "pass", _ma_pass, sizeof(_ma_pass));
+    _mon_action = MA_PASS;
+  } else if (act == "en") {
+    _ma_num = req->hasParam("on", true) ? 1 : 0;
+    _mon_action = MA_ENABLE;
+  } else {
+    req->send(200, "application/json", "{\"ok\":0,\"err\":\"act\"}");
+    return;
+  }
   req->send(200, "application/json", "{\"ok\":1}");
 }
 
@@ -1447,6 +2212,7 @@ static const Tunable TUNABLES[] = {
   { "norm",         &_cfg.bat_norm,     0, 100 },
   { "crit",         &_cfg.bat_crit,     0, 100 },
   { "hyst",         &_cfg.bat_hyst,     0, 20 },
+  { "live",         &_cfg.bat_live,     0, 100 },
   { "hold",         &_cfg.full_hold,    0, 1440 },
   { "iv_full",      &_cfg.iv_full,     30, 65535 },
   { "iv_high",      &_cfg.iv_high,     30, 65535 },
@@ -1504,11 +2270,100 @@ static void handlePowerCommand(const char *arg, char *reply) {
         return;
       }
     }
-    strcpy(reply, "Err - namen: mode window sleep txpower full high norm crit hyst hold "
+    strcpy(reply, "Err - namen: mode window sleep txpower full high norm crit hyst live hold "
                   "iv_full iv_high iv_norm iv_low iv_crit night_from night_to night_factor");
     return;
   }
   strcpy(reply, "Err - wifi power [altijd|zuinig|set <naam> <waarde>]");
+}
+
+static const char *LOGIN_NL[] = { "nooit geprobeerd", "gelukt", "geen antwoord" };
+
+static void handleMonCommand(const char *arg, char *reply) {
+  const char *v;
+
+  if (*arg == 0) {
+    int resolved = 0, ok = 0;
+    for (int i = 0; i < _mon_count; i++) {
+      if (_mon[i].mesh_idx >= 0) resolved++;
+      if (_mon[i].login_res == LOGIN_OK) ok++;
+    }
+    snprintf(reply, 155, "%d gemonitord (%d bruikbaar, %d ingelogd), elke %us, max %d",
+             _mon_count, resolved, ok, (unsigned)_mon_interval, MAX_MONITORS);
+    return;
+  }
+  if (_mon_action != MA_NONE) { strcpy(reply, "Err - vorige wijziging nog bezig"); return; }
+
+  if ((v = subArg(arg, "list")) != NULL) {
+    int n = (*v) ? atoi(v) : 0;           // optional index; default the first
+    if (n < 0 || n >= _mon_count) { strcpy(reply, "Err - geen regel met dat nummer"); return; }
+    MonEntry &m = _mon[n];
+    snprintf(reply, 155, "%d: %.12s %.16s %s, %s, login %s, %u/%u",
+             n, m.key, m.name[0] ? m.name : "-",
+             m.enabled ? "aan" : "uit",
+             m.mesh_idx >= 0 ? "bruikbaar" : "wacht op advert",
+             LOGIN_NL[m.login_res < 3 ? m.login_res : 0],
+             (unsigned)m.oks, (unsigned)m.polls);
+    return;
+  }
+  if ((v = subArg(arg, "add")) != NULL) {
+    char key[MON_KEY_HEX_MAX], name[MON_NAME_MAX];
+    name[0] = 0;
+    if (sscanf(v, "%64s %23s", key, name) < 1) { strcpy(reply, "Err - gebruik: wifi mon add <hex> [naam]"); return; }
+    strncpy(_ma_key, key, sizeof(_ma_key) - 1); _ma_key[sizeof(_ma_key) - 1] = 0;
+    if (!normaliseKey(_ma_key)) {
+      snprintf(reply, 155, "Err - sleutel moet hex zijn, minstens %d tekens", MON_MIN_HEX);
+      return;
+    }
+    strncpy(_ma_name, name, sizeof(_ma_name) - 1); _ma_name[sizeof(_ma_name) - 1] = 0;
+    _mon_action = MA_ADD;
+    snprintf(reply, 155, "OK - %.16s toegevoegd", _ma_key);
+    return;
+  }
+  if ((v = subArg(arg, "del")) != NULL) {
+    strncpy(_ma_key, v, sizeof(_ma_key) - 1); _ma_key[sizeof(_ma_key) - 1] = 0;
+    if (!normaliseKey(_ma_key)) { strcpy(reply, "Err - ongeldige sleutel"); return; }
+    _mon_action = MA_DEL;
+    strcpy(reply, "OK - verwijderd");
+    return;
+  }
+  if ((v = subArg(arg, "pass")) != NULL) {
+    char key[MON_KEY_HEX_MAX], pw[MON_PASS_MAX];
+    pw[0] = 0;
+    int got = sscanf(v, "%64s %15s", key, pw);
+    if (got < 1) { strcpy(reply, "Err - gebruik: wifi mon pass <hex> [woord]"); return; }
+    strncpy(_ma_key, key, sizeof(_ma_key) - 1); _ma_key[sizeof(_ma_key) - 1] = 0;
+    if (!normaliseKey(_ma_key)) { strcpy(reply, "Err - ongeldige sleutel"); return; }
+    strncpy(_ma_pass, pw, sizeof(_ma_pass) - 1); _ma_pass[sizeof(_ma_pass) - 1] = 0;
+    _mon_action = MA_PASS;
+    // No password is a real choice: the far side then checks its access list.
+    strcpy(reply, pw[0] ? "OK - wachtwoord ingesteld" : "OK - leeg, via hun access list");
+    return;
+  }
+  if ((v = subArg(arg, "on")) != NULL || (v = subArg(arg, "off")) != NULL) {
+    bool on = (arg[1] == 'n');
+    strncpy(_ma_key, v, sizeof(_ma_key) - 1); _ma_key[sizeof(_ma_key) - 1] = 0;
+    if (!normaliseKey(_ma_key)) { strcpy(reply, "Err - ongeldige sleutel"); return; }
+    _ma_num = on ? 1 : 0;
+    _mon_action = MA_ENABLE;
+    strcpy(reply, on ? "OK - monitoren aan" : "OK - monitoren uit");
+    return;
+  }
+  if ((v = subArg(arg, "iv")) != NULL) {
+    long secs = atol(v);
+    if (secs < 60 || secs > 65535) { strcpy(reply, "Err - interval 60..65535 s"); return; }
+    _ma_num = (uint16_t)secs;
+    _mon_action = MA_INTERVAL;
+    snprintf(reply, 155, "OK - elke %ld s", secs);
+    return;
+  }
+  if (strcmp(arg, "poll") == 0) {
+    _mon_action = MA_POLL;
+    strcpy(reply, "OK - ronde gestart");
+    return;
+  }
+  strcpy(reply, "Err - wifi mon [list <n>|add <hex> [naam]|del <hex>|pass <hex> [woord]|"
+                "on <hex>|off <hex>|iv <s>|poll]");
 }
 
 static void handleMqttCommand(const char *arg, char *reply) {
@@ -1663,6 +2518,8 @@ bool msnet_handle_command(const char *command, char *reply) {
     }
   } else if ((v = subArg(arg, "mqtt")) != NULL) {
     handleMqttCommand(v, reply);
+  } else if ((v = subArg(arg, "mon")) != NULL) {
+    handleMonCommand(v, reply);
   } else if ((v = subArg(arg, "power")) != NULL) {
     handlePowerCommand(v, reply);
   } else if ((v = subArg(arg, "console")) != NULL) {
@@ -1686,7 +2543,7 @@ bool msnet_handle_command(const char *command, char *reply) {
     while (!passed(einde)) { }      // bewust niets aankloppen
     strcpy(reply, "Watchdog sloeg NIET toe - het vangnet werkt niet");
   } else {
-    strcpy(reply, "Err - wifi [ssid|pass|connect|ap|on <min>|off|console|mqtt|power|wdt]");
+    strcpy(reply, "Err - wifi [ssid|pass|connect|ap|on <min>|off|console|mqtt|power|mon|wdt]");
   }
   return true;
 }
@@ -1711,13 +2568,16 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   }
 
   loadConfig();
+  loadMonitors();
+  syncMonitorsToMesh();
 
   if (_mesh) mesh::Utils::toHex(_node_hex, _mesh->self_id.pub_key, 6);
   snprintf(_ap_ssid, sizeof(_ap_ssid), "MeshCore-%s", _node_hex);
 
-  /* A raw packet becomes over 500 characters in hex; the default 256-byte
-   * buffer is too small and publish() would silently refuse. */
-  _mqtt.setBufferSize(MQTT_RX_MAX_LEN * 2 + 128);
+  /* A raw packet becomes over 500 characters in hex, and the neighbour payload
+   * grows with the number of neighbours; the default 256-byte buffer is far too
+   * small and publish() would silently refuse. */
+  _mqtt.setBufferSize(MQTT_PUB_MAX);
   _mqtt.setSocketTimeout(4);
   _mqtt.setKeepAlive(60);
   _mqtt.setServer(_cfg.mqtt_host, _cfg.mqtt_port);
@@ -1745,6 +2605,8 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   _server.on("/api/wifi", HTTP_POST, handleWifiPost);
   _server.on("/api/power", HTTP_POST, handlePowerPost);
   _server.on("/api/mqtt", HTTP_POST, handleMqttPost);
+  _server.on("/api/mon", HTTP_GET, handleMonJson);
+  _server.on("/api/mon", HTTP_POST, handleMonPost);
   _server.on("/api/backup", HTTP_GET, handleBackup);
 
   _server.on("/api/restore", HTTP_POST,
@@ -1872,5 +2734,10 @@ void msnet_loop() {
   if (!_safe_mode) {
     consoleLoop();
     mqttLoop();
+    /* Deliberately below the _asleep return above: polling happens over the
+     * mesh, but the answers go out over MQTT. Collecting stats we cannot
+     * publish would spend other people's airtime for nothing. */
+    applyMonAction();
+    monitorLoop();
   }
 }

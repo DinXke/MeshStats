@@ -35,7 +35,12 @@ extends = Heltec_lora32_v3
 build_flags =
   ${Heltec_lora32_v3.build_flags}
   -I examples/companion_radio/ui-new
-  -D MAX_CONTACTS=350
+  ; Een contactplaats kost ~316 bytes statisch RAM, en op 350 bleef er nog maar
+  ; 22 kB heap over -- te weinig voor lwip om zijn buffers rond te krijgen,
+  ; waardoor de webserver halve antwoorden schreef en clients bleven hangen.
+  ; 260 geeft ~50 kB heap en houdt ruim 40 plaatsen boven het huidige aantal
+  ; nodes in de lucht.
+  -D MAX_CONTACTS=260
   -D MAX_GROUP_CHANNELS=40
   -D DISPLAY_CLASS=SSD1306Display
   -D WIFI_DEBUG_LOGGING=1

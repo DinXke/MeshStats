@@ -3,9 +3,28 @@
 /* MeshStatsNet -- gives a repeater an IP life next to its mesh life: WiFi, an
  * admin page, firmware upgrades, a console and MQTT publishing.
  *
- * Two kinds of MQTT messages:
+ * Three kinds of MQTT messages:
  *   <prefix>/<node>/stats   this node's own statistics, periodically (JSON)
  *   <prefix>/<node>/rx      every received packet, raw and complete (hex)
+ *   <prefix>/<node>/mon     statistics of OTHER repeaters, which this node logs
+ *                           in to and polls over the mesh on your behalf
+ *
+ * About monitoring other repeaters. You can log in with that repeater's admin
+ * or read/write password, but there is a tidier way that needs no password at
+ * all: a blank password makes the far side skip the password check and look
+ * your public key up in its access list instead (see handleLoginReq() in
+ * MyMesh.cpp). Its operator adds you once with
+ *
+ *     setperm <your-pubkey-hex> 1
+ *
+ * where 1 is read-only, 2 read/write and 3 admin -- read-only is enough for
+ * status polling. Nobody has to hand out a password, and access can be revoked
+ * on their side alone.
+ *
+ * One thing that cannot be seen from here: a refused login produces no reply at
+ * all, exactly like a repeater that is out of range. So 'no answer' means
+ * either your key is not in their list yet, or you simply cannot reach them --
+ * the heard list on the admin page is what tells the two apart.
  *
  * The node deliberately does not parse those packets: it forwards the bytes
  * exactly as they came off the air. That saves memory here, and the receiving
@@ -55,7 +74,7 @@
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
 #define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.1.0"
+#define MESHSTATS_VERSION  "1.2.0"
 
 class MyMesh;
 
@@ -70,6 +89,17 @@ void msnet_loop();
  * queue drops the packet and counts it; waiting here would hold up reception.
  * Safe to call before msnet_begin() or when the module is disabled. */
 void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
+
+/* Called from the receive path when a repeater we monitor answers a login or a
+ * status request. Same rule as above: copy only, interpret later. mon_idx is an
+ * index into MyMesh's monitor table. */
+void meshstats_on_monitor_response(int mon_idx, const uint8_t *data, int len);
+
+/* Battery percentage from cell millivolts. Lives here so the admin page, the
+ * power management and the published statistics all quote the same number;
+ * two curves that disagree by a few percent is a bug report waiting to happen.
+ * Returns -1 when the board reports no usable voltage. */
+int meshstats_batt_percent(uint16_t milli_volts);
 
 /* Intercepts the wifi commands. Returns true if the command was ours.
  * Called from the serial CLI, the mesh CLI and the telnet console alike, so a
@@ -90,6 +120,9 @@ void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len
  *   wifi console <user> <pass>   console credentials
  *   wifi mqtt ...        broker settings (see the mqtt sub-help)
  *   wifi power ...       power management (see the power sub-help)
+ *   wifi mon ...         repeaters to monitor (see the mon sub-help). An empty
+ *                        password there is a choice, not an omission: it means
+ *                        'get in via their access list'.
  */
 bool msnet_handle_command(const char *command, char *reply);
 
