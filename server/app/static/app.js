@@ -604,7 +604,7 @@
     var feedEmptyEl = document.getElementById("livefeed-empty");
     var countEl = document.getElementById("live-count");
     var lastId = 0;
-    var seenTimes = [];   // reception timestamps, for the "per minute" counter
+    var seen = [];        // {t, p} per reception, for the "last 5 minutes" counter
     var polling = false;
     var recent = [];      // newest first; the data behind the rendered feed
     var openId = null;    // id of the packet whose detail panel is open, if any
@@ -856,8 +856,91 @@
           if (filterCountry) localStorage.setItem(COUNTRY_KEY, filterCountry);
           else localStorage.removeItem(COUNTRY_KEY);
         } catch (e) { /* blocked */ }
-        renderFeed();
+        renderFeed(true);
       });
+    }
+
+    // --- the node layer follows the filter ------------------------------------
+    // Kept as objects rather than thrown away and rebuilt: with a few hundred
+    // nodes, recreating every marker on each keystroke is the one thing here
+    // that would actually feel slow. Each entry remembers the style it is
+    // wearing so a pass only touches the markers whose state really changed.
+    var nodeMarkers = [];        // [{n: node, m: marker, style: "on"|"dim"}]
+    var mapEmptyEl = document.getElementById("map-empty");
+    var pathPrefixes = null;     // prefixes of the open packet's path, or null
+
+    var NODE_ON = { radius: 4, color: "#7d8fa0", weight: 1, fillColor: "#7d8fa0",
+                    fillOpacity: 0.5, opacity: 1 };
+    // Dimmed rather than removed. Hiding is tidier, but the mesh is the point of
+    // this map: a Dutch node means little without the Belgian ones around it,
+    // and a path that crosses the filter would otherwise end at markers that are
+    // not there. Faint keeps the geography and still lets the matches carry the
+    // eye. Tooltips stay attached, so a ghost can still be identified on hover.
+    var NODE_DIM = { radius: 3, color: "#7d8fa0", weight: 1, fillColor: "#7d8fa0",
+                     fillOpacity: 0.08, opacity: 0.18 };
+
+    // Which nodes the filter is *about*. The country choice always applies. The
+    // text only applies when it matches at least one node: otherwise a visitor
+    // typing a payload type ("advert") would dim all 218 nodes and be told
+    // nothing matches, when what they filtered was traffic, not geography.
+    function textMatchesAnyNode() {
+      var q = filterText.trim().toLowerCase();
+      if (!q) return false;
+      return nodeMarkers.some(function (e) { return nodeText(e.n).indexOf(q) !== -1; });
+    }
+
+    function nodeText(n) {
+      return [n.name, n.prefix, n.country].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function nodeMatches(n, useText) {
+      // The open packet's path is exempt, so a route stays whole even where it
+      // leaves the filter. A gap in a drawn path has to mean "we do not know",
+      // never "you filtered this out" -- see drawPath.
+      if (pathPrefixes && pathPrefixes[n.prefix]) return true;
+      if (filterCountry) {
+        var want = filterCountry === "??" ? null : filterCountry;
+        if ((n.country || null) !== want) return false;
+      }
+      if (!useText) return true;
+      return nodeText(n).indexOf(filterText.trim().toLowerCase()) !== -1;
+    }
+
+    function applyNodeFilter() {
+      if (!nodeMarkers.length) return;
+      var useText = textMatchesAnyNode();
+      var shown = 0;
+      nodeMarkers.forEach(function (e) {
+        var want = nodeMatches(e.n, useText) ? "on" : "dim";
+        if (want === "on") shown++;
+        if (e.style === want) return;      // nothing to repaint
+        e.style = want;
+        e.m.setStyle(want === "on" ? NODE_ON : NODE_DIM);
+      });
+      if (mapEmptyEl) mapEmptyEl.hidden = shown > 0;
+      return shown;
+    }
+
+    // Move the view only when the filter leaves nothing to look at. Filtering to
+    // Great Britain while parked over Belgium otherwise shows an empty map, but
+    // yanking the view around after every keystroke would fight a visitor who
+    // just zoomed somewhere deliberately. So: if a match is already on screen,
+    // stay put. The open detail panel is left alone entirely -- its path was
+    // framed on purpose when the packet was opened.
+    function fitToMatches() {
+      if (panelOpen()) return;
+      var view = lmap.getBounds();
+      var pts = [];
+      var visible = false;
+      var useText = textMatchesAnyNode();
+      nodeMarkers.forEach(function (e) {
+        if (!nodeMatches(e.n, useText)) return;
+        var ll = e.m.getLatLng();
+        pts.push(ll);
+        if (view.contains(ll)) visible = true;
+      });
+      if (!pts.length || visible) return;
+      lmap.fitBounds(pts, { padding: [40, 40], maxZoom: 12 });
     }
 
     function updateFeedState() {
@@ -870,7 +953,7 @@
       }
     }
 
-    function renderFeed() {
+    function renderFeed(refit) {
       if (feedEl) {
         feedEl.textContent = "";
         for (var i = 0, shown = 0; i < recent.length && shown < FEED_MAX; i++) {
@@ -879,7 +962,10 @@
           shown++;
         }
       }
+      applyNodeFilter();
+      if (refit) fitToMatches();
       updateFeedState();
+      updateCount();
       updateTimes();
     }
 
@@ -887,7 +973,7 @@
       filterEl.addEventListener("input", function () {
         filterText = filterEl.value;
         try { localStorage.setItem(FILTER_KEY, filterText); } catch (e) { /* blocked */ }
-        renderFeed();
+        renderFeed(true);
       });
     }
 
@@ -905,7 +991,10 @@
           if (!moved && p.lat != null && p.lon != null) flash(p.lat, p.lon, color);
           flashes++;
         }
-        seenTimes.push(Date.now());
+        // Reception time comes from the packet, so a backlog is dated when it
+        // was heard; only a packet without a usable timestamp falls back to now.
+        var at = Date.parse(p.ts);
+        seen.push({ t: isNaN(at) ? Date.now() : at, p: p });
         recent.unshift(p);
         if (feedEl && matches(p)) feedEl.insertBefore(feedRow(p), feedEl.firstChild);
       });
@@ -918,13 +1007,27 @@
       updateCount();
     }
 
+    // Counted from the packets themselves rather than from a list of arrival
+    // times, for two reasons. The filter has to reach the counter as well -- "42
+    // packets" over a list showing two is the same lie the map was telling with
+    // its unfiltered markers. And the window is measured on each packet's own
+    // timestamp, so the backlog that arrives on the first poll no longer reports
+    // hours-old traffic as if it had just been heard.
     function updateCount() {
       if (!countEl) return;
       var cutoff = Date.now() - 300000;
-      seenTimes = seenTimes.filter(function (t) { return t >= cutoff; });
-      countEl.textContent = seenTimes.length
-        ? t("live.count", { n: seenTimes.length })
-        : t("live.waiting");
+      var n = 0;
+      for (var i = 0; i < seen.length; i++) {
+        if (seen[i].t >= cutoff && matches(seen[i].p)) n++;
+      }
+      // Pruning here keeps the window bounded without a timer of its own.
+      // Tested on the OLDEST entry: receptions are appended, so seen[0] is the
+      // eldest. Checking the last one instead would only ever fire when the
+      // whole mesh had gone quiet, and the array would grow all day.
+      if (seen.length && seen[0].t < cutoff) {
+        seen = seen.filter(function (s) { return s.t >= cutoff; });
+      }
+      countEl.textContent = n ? t("live.count", { n: n }) : t("live.waiting");
     }
 
     function poll(first) {
@@ -937,13 +1040,19 @@
           if (first && d.nodes) {
             var bounds = [];
             d.nodes.forEach(function (n) {
-              L.circleMarker([n.lat, n.lon], {
-                radius: 4, color: "#7d8fa0", weight: 1, fillColor: "#7d8fa0",
-                fillOpacity: 0.5,
-              }).addTo(lmap).bindTooltip(n.name || n.prefix.toUpperCase(), { direction: "top" });
+              var marker = L.circleMarker([n.lat, n.lon], NODE_ON)
+                .addTo(lmap)
+                .bindTooltip(n.name || n.prefix.toUpperCase(), { direction: "top" });
+              // Held on to so the filter can restyle them; see applyNodeFilter.
+              nodeMarkers.push({ n: n, m: marker, style: "on" });
               bounds.push([n.lat, n.lon]);
             });
             if (bounds.length) lmap.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+            // A filter restored from localStorage has to reach the layer that
+            // was only just built, and the view should start where the matches
+            // are rather than on the whole mesh.
+            applyNodeFilter();
+            fitToMatches();
           }
           lastId = d.last_id || lastId;
           // The first response is backlog, not live traffic: list it, but do not
@@ -988,8 +1097,11 @@
       return t("pkt.hop_unknown");
     }
 
+    function panelOpen() { return !!panel && !panel.hidden; }
+
     function clearPath() {
       if (pathLayer) { lmap.removeLayer(pathLayer); pathLayer = null; }
+      if (pathPrefixes) { pathPrefixes = null; applyNodeFilter(); }
     }
 
     function markSelected(id) {
@@ -1036,12 +1148,22 @@
     // cannot give. This is not a bug in the drawing code; it is the protocol.
     function drawPath(d) {
       clearPath();
+      // Every node this route touches is exempt from the filter for as long as
+      // the panel is open. A route drawn with holes in it would read as
+      // uncertainty, and uncertainty here has a precise meaning that the filter
+      // must not be allowed to imitate.
+      pathPrefixes = {};
       var stops = [{
         lat: d.sender_lat, lon: d.sender_lon,
         label: nodeLabel(d.sender, d.sender_name), role: "origin",
       }];
+      if (d.sender) pathPrefixes[d.sender] = true;
+      if (d.observer) pathPrefixes[d.observer.slice(0, 6)] = true;
       (d.path || []).forEach(function (h) {
         var m = h.state === "known" ? h.matches[0] : null;
+        // Ambiguous hops exempt every candidate: their rings are part of the
+        // same answer as the line is.
+        (h.matches || []).forEach(function (c) { pathPrefixes[c.prefix] = true; });
         stops.push({
           lat: m ? m.lat : null, lon: m ? m.lon : null,
           label: m ? (m.name || m.prefix.toUpperCase()) : null, role: "hop", hop: h,
@@ -1051,6 +1173,7 @@
         lat: d.observer_lat, lon: d.observer_lon,
         label: nodeLabel(d.observer, d.observer_name), role: "dest",
       });
+      applyNodeFilter();
 
       var group = L.layerGroup();
       var prev = null, gap = false, view = [];

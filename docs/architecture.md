@@ -259,6 +259,43 @@ gets section `other`, label = key with underscores replaced by spaces, and shows
 up on the page. That is deliberate: firmware can add a metric without a server
 change.
 
+## The live map filter
+
+One filter — free text plus a country choice — governs everything the home page
+shows: the packet list, the flashes, the travelling dots, the node markers and
+the "last 5 minutes" counter. A filter reaching only some of those is actively
+misleading, which is exactly what an unfiltered marker layer under a filtered
+list turned out to be.
+
+Four decisions worth keeping:
+
+**Non-matching nodes are dimmed, not hidden.** Hiding reads more cleanly, but the
+mesh is the point of this map: a Dutch node means little without the Belgian ones
+around it, and a route crossing the filter would end at markers that are not
+there. Faint keeps the geography while letting the matches carry the eye, and
+tooltips stay attached so a ghost can still be identified on hover.
+
+**The open packet's path is exempt.** Every node on a displayed route is shown at
+full strength while the detail panel is open, including hops the filter excludes.
+A gap in a drawn path already means something precise — "we cannot tell which
+node this was" — and the filter must not be able to imitate that.
+
+**The text filter only touches the markers when it names a node.** Payload types
+are not node properties, so a visitor typing `advert` is filtering traffic, not
+geography; treating it as geography would dim every node and announce that
+nothing matches. The test is simply whether the text matches any node at all.
+
+**The view follows only when it has to.** If a matching node is already on
+screen, the map stays where the visitor put it; if none is, it refits, because
+filtering to Great Britain while parked over Belgium otherwise shows an empty
+map. With the detail panel open the view is never moved — its path was framed
+deliberately when the packet was opened.
+
+Markers are restyled in place, never rebuilt: each remembers the style it is
+wearing, so a keystroke touches only those that actually changed. Rebuilding the
+layer per keystroke is the one thing on this page that would genuinely feel slow
+at mesh scale.
+
 ## Where to go next
 
 | Question | Document |

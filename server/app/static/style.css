@@ -285,6 +285,19 @@ label input { width: 100%; margin-top: .25rem; }
 
 /* --- live packet map --------------------------------------------------------- */
 #livemap { height: 420px; border-radius: 8px; background: var(--bg-grid); }
+.mapwrap { position: relative; }
+/* Above Leaflet's marker pane (600), below its controls (800), and
+   click-through so it never blocks panning the map underneath. */
+.mapempty {
+  position: absolute; z-index: 700; top: 50%; left: 50%;
+  transform: translate(-50%, -50%); margin: 0; pointer-events: none;
+  max-width: min(24rem, 80%); text-align: center;
+  padding: .6rem .9rem; border-radius: 8px;
+  background: var(--topbar-bg); border: 1px solid var(--card-edge);
+  color: var(--muted); font-family: var(--mono); font-size: .8rem;
+  backdrop-filter: blur(4px);
+}
+.mapempty[hidden] { display: none; }
 .livecount { font-family: var(--mono); }
 .livefeed {
   list-style: none; margin: .6rem 0 0; padding: 0;

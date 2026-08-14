@@ -39,7 +39,12 @@
           <span class="livecount muted small" id="live-count" data-i18n="live.waiting">wachten op verkeer&hellip;</span>
         </span>
       </div>
-      <div id="livemap"></div>
+      <!-- Wrapper so the "nothing matches" notice can sit over the map without
+           being a Leaflet layer that panning would carry away. -->
+      <div class="mapwrap">
+        <div id="livemap"></div>
+        <p class="mapempty" id="map-empty" hidden data-i18n="live.map_nomatch">Geen nodes op de kaart die aan het filter voldoen.</p>
+      </div>
       <div class="feedbar">
         <input type="search" id="pkt-filter" class="pktfilter" autocomplete="off"
                data-i18n-ph="live.filter_ph" placeholder="Filter op naam, prefix, type of land&hellip;"
