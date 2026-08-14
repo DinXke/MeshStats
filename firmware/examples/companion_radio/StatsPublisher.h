@@ -133,11 +133,24 @@
  * ze hierin passen. */
 #define STATS_IO_BUF        896
 
-/* Recente chatberichten, voor de webclient. Bewust klein en met vaste breedte:
- * deze node draait mesh, WiFi en BLE naast elkaar, dus RAM is het schaarse
- * goed. Het afkappen is enkel voor de weergave - de companion-app over BLE
- * krijgt elk bericht nog altijd volledig. Elke plaats kost 76 bytes. */
-#define STATS_MSG_RING      8
+/* Recente chatberichten, voor de webclient. Vaste breedte: het afkappen is
+ * enkel voor de weergave - de companion-app over BLE krijgt elk bericht nog
+ * altijd volledig. Elke plaats kost 76 bytes.
+ *
+ * De ring is meteen ook de achterstand voor een browser die pas later opent:
+ * de pagina haalt bij het laden alles op met since=0. Acht plaatsen bleek
+ * daarvoor te krap - op een druk kanaal was een avond aan berichten al
+ * overschreven voordat iemand keek. 32 plaatsen kost 2432 bytes statisch RAM
+ * (was 608); met de vorige build op 55% RAM is dat ruimschoots te dragen.
+ * /messages.json blijft er klein bij: het antwoord pagineert zichzelf al met
+ * "more" zodra de gedeelde buffer vol raakt, de pagina haalt de rest meteen op.
+ *
+ * Bekende beperking: de ring leeft alleen in RAM, dus na een herstart van de
+ * node is hij leeg. Hem op SPIFFS bewaren zou dat oplossen, maar dan is elk
+ * binnenkomend bericht een flash-schrijfactie - op een node die dag en nacht
+ * meshverkeer ziet slijt dat de flash sneller dan de backlog waard is. Bewust
+ * niet gebouwd. */
+#define STATS_MSG_RING      32
 #define STATS_MSG_SRC_MAX   16
 #define STATS_MSG_TEXT_MAX  48
 
