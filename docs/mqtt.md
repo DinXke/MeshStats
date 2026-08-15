@@ -216,6 +216,7 @@ So the server publishes one word on `meshcore/<node>/cmd`:
 | Word | The node does |
 |---|---|
 | `settings` | reads its CLI parameters now, and publishes them with the statistics message it sends as soon as the sweep finishes |
+| `settings <key>` | logs in to a repeater it *monitors*, reads **that** repeater's CLI parameters over LoRa, and publishes them under that repeater's name (MeshStats 1.9.0) |
 | `status` | publishes a statistics message immediately |
 
 The answer comes back on the ordinary `stats` topic. Nothing else in the ingest
@@ -231,6 +232,48 @@ the node say what it would have said by itself, so the worst an attacker on the
 broker achieves is a statistics message, at most one every 30 seconds
 (`MQTT_CMD_MIN_GAP_MS`).
 
+The one argument that exists does not widen that. It never becomes text that
+reaches a CLI: it selects a single entry from the node's monitor list, and the
+commands then sent are the compiled-in parameter table. That list is writable
+only from the admin page and the mesh CLI, both password-protected, so the most
+a broker account can do with it is read out a repeater the operator already
+chose to monitor — at most once every ten minutes.
+
+### Reaching a repeater that does not publish
+
+The third form exists for the case this project was built around: a repeater on
+a roof that talks only over LoRa. Its statistics reach the site because another
+node polls it and forwards them, but there was no command path *to* it at all —
+the site could show its numbers and nothing about its configuration. The button
+on its settings page said "relayed, only the node itself can read its own CLI",
+which was true and useless in equal measure.
+
+A monitor already logs in to that repeater and polls it every round, so it can
+just as well walk its CLI. Since 1.9.0 it does, on request: the same eighteen
+`get` commands over the air, one at a time, and one message at the end carrying
+what came back.
+
+That message is the expensive thing in this design, and the firmware bounds it
+accordingly — on request only and never on a schedule, at most one sweep every
+ten minutes, two seconds between commands, twelve per answer, and a stop after
+three consecutive silences. The reasoning behind each of those numbers,
+including which of the Home Assistant integration's values were copied and which
+were deliberately not, sits above `MON_SET_FIRST_MS` in `MeshStatsNet.cpp`.
+
+Two things about the result are worth knowing before reading the page:
+
+- **A parameter that was asked and stayed silent is published as `null`** and
+  shows up as "(geen antwoord)", overwriting whatever stood there. On purpose:
+  the common failure is invisible otherwise. A repeater only runs a CLI command
+  for a client with **admin** rights, so a monitor that logs in read-only —
+  which is enough for everything else here, and is what the firmware header
+  recommends — gets a login that succeeds and then eighteen silences. Grant
+  `setperm <monitor-pubkey> 3` on the monitored repeater, or give the monitor
+  its admin password, if those settings are meant to be readable here.
+- **A sweep whose login never answered publishes nothing at all**, because it
+  asked nothing and learned nothing. Throwing away values an earlier sweep did
+  get would be the wrong kind of honest.
+
 **Nothing is retained, and QoS stays 0.** A retained command is redelivered on
 every reconnect, so the node would sweep its CLI on every boot and after every
 WiFi drop for as long as the message sat on the broker — and nobody would connect
@@ -239,13 +282,21 @@ nothing: the node connects with a clean session, so the broker queues nothing
 while it is offline. A node asleep on its power budget simply misses the message.
 
 **Which is why the page checks before it promises.** `commanding.py` decides
-whether a command can go out at all, from four facts: the repeater publishes for
-itself (not relayed by another node), its firmware is MeshStats ≥ 1.8.0, the
-server is connected to the broker, and — for the fallback route — a poller has
-fetched `/api/v1/commands` in the last 15 minutes. With neither route open the
-button is disabled and the page says which of the four is missing. An older
-firmware does not subscribe to `cmd`, so publishing to it succeeds and vanishes;
-that is the one failure this check exists to prevent.
+whether a command can go out at all, and which one. It picks the node that will
+receive it — the repeater itself, or the node that relays its statistics —
+checks *that* node's firmware against the version the chosen route needs
+(1.8.0 for a node reading its own CLI, 1.9.0 for a monitor reading somebody
+else's), checks that the server is connected to the broker, and — for the
+fallback route — that a poller fetched `/api/v1/commands` in the last 15
+minutes. With no route open the button is disabled and the page says which of
+those is missing. An older firmware does not subscribe to `cmd`, or subscribes
+and refuses the argument, and in both cases publishing succeeds and vanishes;
+that is the failure this check exists to prevent.
+
+The route also carries *which* commands it can take. A monitor can be asked to
+read another repeater's settings but not to publish a status message on its
+behalf — it already forwards those figures every round — so the status button on
+a relayed repeater stays on the poller route or stays grey.
 
 ### ACL
 
@@ -269,17 +320,25 @@ counter for precisely that reason.
 
 Two rules on the server side, both in `_handle_settings`:
 
-- **Only a node's own settings are stored.** Statistics may legitimately be
-  relayed — a node forwards figures about repeaters it monitors — but settings
-  describe the publisher's own configuration, and the topic is the only part of a
-  message a broker can be made to enforce. Settings arriving for a *different*
-  repeater are logged and dropped, which costs nothing because the firmware only
-  ever sends its own. Identity is compared through the repeater row, not the
-  string, since topic and payload may spell the same key at different lengths.
-- **An omitted parameter is not a deleted one.** The firmware leaves out what it
-  could not read, so this path calls `upsert_cli_settings(..., prune=False)` and
-  discards empty values before the call. A sweep that manages only half the
-  parameters leaves the other half standing.
+- **Settings come from the repeater itself, or from the node that already
+  relays its statistics.** Until 1.9.0 this was "its own settings, full stop",
+  on the grounds that the firmware never sent anything else — and that stopped
+  being true the moment a monitor could sweep somebody else's CLI. What it costs
+  is worth stating plainly: a client holding the shared broker credentials could
+  already publish *statistics* for any repeater (see the note on identity at the
+  top of `mqtt_ingest.py`, and the per-node ACL that closes it). Settings now
+  cost that client one extra step — it must first become the node this
+  repeater's statistics arrive through, and that shows up on the admin page as a
+  changed `source_prefix`. Identity is compared through the repeater row, not
+  the string, since topic and payload may spell the same key at different
+  lengths, and the *previous* relay is read before `record_source` overwrites
+  it — comparing afterwards would compare a publisher against itself.
+- **An omitted parameter is not a deleted one, but an explicit `null` is a
+  fact.** The firmware leaves out what it could not read, so this path calls
+  `upsert_cli_settings(..., prune=False)`, and empty strings are discarded
+  before the call. `null` is kept and stored as NULL: it means "asked, no
+  answer", which is what the monitored sweep sends and what the page renders as
+  "(geen antwoord)".
 
 ### What the server does with it
 

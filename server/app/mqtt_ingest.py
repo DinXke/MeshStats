@@ -42,10 +42,18 @@ chain left a button that did nothing while the page kept showing values from the
 node's last daily sweep. The node answers on the ordinary ``stats`` topic, so
 nothing else in this file changes.
 
+Since MeshStats 1.9.0 ``settings`` may carry one argument: the public key of a
+repeater that node *monitors*. It then fetches that repeater's CLI settings
+over LoRa and publishes them under that repeater's name -- the only path there
+is to a repeater which does not publish to MQTT itself, which is exactly the
+one on the roof this whole project was built to watch.
+
 That the firmware accepts only those two words is not a detail: this topic is
 reachable by anyone holding broker credentials, and the repeaters this serves
-hang on roofs. See ``publish_command`` for why nothing is retained here, and
-``MeshStatsNet.cpp`` for why nothing else is accepted there.
+hang on roofs. The argument does not widen that, because it is never text that
+reaches a CLI -- it selects one entry from a monitor list only the node's
+operator can write. See ``publish_command`` for why nothing is retained here,
+and ``MeshStatsNet.cpp`` for why nothing else is accepted there.
 
 Identity: topic versus payload
 ------------------------------
@@ -98,6 +106,17 @@ MQTT_CMD_TOPIC = os.environ.get("MCS_MQTT_CMD_TOPIC", "meshcore/{node}/cmd")
 # readable next to the code that sends it -- MeshStatsNet.cpp, mqttRunCommand().
 COMMANDS = ("settings", "status")
 
+# Alleen deze mag een onderwerp meekrijgen, want alleen deze betekent iets voor
+# een ander dan de node zelf. 'status' met een sleutel erbij zou vragen om
+# cijfers die de monitor toch al uit zichzelf doorstuurt.
+COMMANDS_WITH_SUBJECT = ("settings",)
+
+# Kortste sleutel die we als onderwerp durven meesturen. Zelfde grens als
+# MIN_PREFIX_MATCH hier en als monKeyArg() in de firmware: korter dan dit kan
+# toevallig op twee nodes passen, en de firmware weigert dan alsnog -- alleen
+# een halve minuut later en zonder dat iemand het ziet.
+MIN_SUBJECT_HEX = 8
+
 # A MeshCore frame tops out around 255 bytes; anything far beyond that is not a
 # packet and should not be turned into a multi-megabyte bytes object.
 MAX_RAW_HEX = 1024
@@ -131,8 +150,15 @@ def can_publish() -> bool:
     return bool(MQTT_HOST) and _client is not None and bool(_state["connected"])
 
 
-def publish_command(node: str, command: str) -> bool:
+def publish_command(node: str, command: str, subject: str | None = None) -> bool:
     """Ask one node to do something now. False when nothing was sent.
+
+    ``subject`` is the public key of a repeater that ``node`` monitors, and
+    turns ``settings`` into ``settings <key>``: fetch *their* CLI settings over
+    LoRa instead of your own. Passed separately rather than baked into
+    ``command`` so the word itself keeps being checked against COMMANDS as an
+    exact string -- the same discipline the firmware applies at the far end, and
+    for the same reason.
 
     Returns whether the message left, never whether it arrived. Deliberately
     QoS 0 and ``retain=False``:
@@ -153,20 +179,34 @@ def publish_command(node: str, command: str) -> bool:
     node = re.sub(r"[^0-9a-f]", "", str(node or "").lower())
     if not node:
         return False
+
+    payload = command
+    if subject is not None:
+        if command not in COMMANDS_WITH_SUBJECT:
+            raise ValueError(f"command {command!r} takes no subject")
+        subject = re.sub(r"[^0-9a-f]", "", str(subject or "").lower())
+        if len(subject) < MIN_SUBJECT_HEX:
+            # Niet publiceren maar teruggeven dat er niets vertrok: de pagina
+            # meldt dan "niets verstuurd" in plaats van een opdracht die aan de
+            # overkant geweigerd wordt zonder dat hier iets van te zien is.
+            log.warning("Onderwerp %r te kort voor een opdracht aan %s", subject, node)
+            return False
+        payload = f"{command} {subject}"
+
     if not can_publish():
         return False
     topic = MQTT_CMD_TOPIC.format(node=node)
     try:
-        info = _client.publish(topic, command.encode(), qos=0, retain=False)
+        info = _client.publish(topic, payload.encode(), qos=0, retain=False)
     except Exception as err:  # noqa: BLE001 - a dead socket must not 500 the page
-        log.warning("Opdracht %s naar %s niet verstuurd: %s", command, node, err)
+        log.warning("Opdracht %s naar %s niet verstuurd: %s", payload, node, err)
         return False
     if info.rc != 0:
         log.warning("Opdracht %s naar %s geweigerd door de client (rc %s)",
-                    command, node, info.rc)
+                    payload, node, info.rc)
         return False
     _state["commands"] += 1
-    log.info("Opdracht '%s' gepubliceerd voor node %s", command, node)
+    log.info("Opdracht '%s' gepubliceerd voor node %s", payload, node)
     return True
 
 
@@ -191,6 +231,11 @@ def _handle_payload(topic: str, raw: bytes) -> None:
         raise ValueError("metrics missing")
 
     row = db.get_or_create_repeater(subject, rep.get("name"))
+    # Wie er vóór dit bericht voor deze repeater publiceerde. Nu vastgehouden,
+    # want record_source hieronder overschrijft het met de huidige publisher --
+    # en _handle_settings moet juist weten of die twee al aan elkaar gekoppeld
+    # waren voordat dit bericht binnenkwam.
+    prior_source = _field(row, "source_prefix")
     ts = body.get("ts") or db.utcnow()
     db.ingest(row["id"], ts, metrics, body.get("neighbors"), force=bool(body.get("force")))
     db.record_source(row["id"], publisher)
@@ -199,9 +244,17 @@ def _handle_payload(topic: str, raw: bytes) -> None:
         log.info("stats for %s relayed by node %s", subject, publisher)
     settings = body.get("settings")
     if isinstance(settings, dict):
-        _handle_settings(row, publisher, settings)
+        _handle_settings(row, publisher, settings, prior_source)
     _state["messages"] += 1
     _state["last_msg"] = ts
+
+
+def _field(row, name):
+    """row is een sqlite3.Row of een dict; allebei komen hier binnen."""
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return None
 
 
 # A node has around fifteen CLI parameters. The cap is not about them; it is so
@@ -210,18 +263,35 @@ MAX_SETTINGS = 64
 
 
 def _clean_settings(values: dict) -> dict:
-    """Drop the parameters the node could not read.
+    """Drop the parameters that carry nothing, keep the ones that say "no answer".
 
-    Firmware omits a parameter it failed to fetch rather than sending it empty,
-    so an empty value that does arrive carries no information -- and writing it
-    would replace a value we already know with nothing. Omission is safe by
-    itself (upsert_cli_settings only touches the keys it is given), so this only
-    has to catch the empty ones.
+    An empty string is dropped: a node omits a parameter it could not read
+    rather than sending it blank, so a blank one that does arrive carries no
+    information, and writing it would replace a value we know with nothing.
+    Omission is safe by itself -- upsert_cli_settings only touches the keys it
+    is given -- so this only has to catch the empty ones.
+
+    ``None`` is deliberately kept, and that is not the same thing. Since
+    MeshStats 1.9.0 a node also sweeps the CLI of a repeater it *monitors*, over
+    LoRa, and there a parameter can be asked and stay silent. It sends null for
+    those, the column stores NULL, and the page renders "(geen antwoord)" -- the
+    same phrase, from the same column, that a Home Assistant sweep has always
+    produced for the same fact (see ``_fetch_settings`` in the integration,
+    which posts None for exactly this).
+
+    Yes, that overwrites a value an earlier sweep did get. Rejected alternative:
+    only write null where nothing is stored yet, so a good value is never lost.
+    It hides precisely what has to be visible. A repeater whose monitor logs in
+    read-only answers no CLI command at all, and the whole sweep then comes back
+    silent; with values from March still on screen and only a timestamp moved,
+    nobody would ever find that. The firmware makes the matching promise from
+    its side: it publishes nothing at all when the login itself failed, because
+    then it asked nothing and learned nothing.
     """
     out = {}
     for key, value in values.items():
         name = str(key).strip()
-        if not name or value is None:
+        if not name:
             continue
         if isinstance(value, str) and not value.strip():
             continue
@@ -231,26 +301,49 @@ def _clean_settings(values: dict) -> dict:
     return out
 
 
-def _handle_settings(row, publisher: str, values: dict) -> None:
+def _handle_settings(row, publisher: str, values: dict, prior_source=None) -> None:
     """Store CLI settings that rode along with a statistics message.
 
-    Only from a node reporting on **itself**, which is the one place this
-    departs from how statistics are treated. Statistics may legitimately be
-    relayed -- a node forwards figures about repeaters it monitors -- but
-    settings describe the publisher's own configuration, and the topic is the
-    only part of a message the broker can be made to enforce. Taking relayed
-    settings would let any client holding the shared broker credentials rewrite
-    another repeater's settings page, and the firmware only ever sends its own,
-    so refusing the rest costs nothing real.
+    Two publishers may write these, and no others:
+
+    - the repeater **itself**, which is the ordinary case;
+    - the node that **already relays this repeater's statistics**, which is new
+      in MeshStats 1.9.0. Such a monitor logs in over LoRa, walks the far side's
+      CLI and publishes the answers under that repeater's name, because a node
+      that does not publish to MQTT itself has no other path at all.
+
+    Until 1.9.0 the rule was "only its own", on the stated grounds that the
+    firmware never sent anything else. That has stopped being true, so the rule
+    had to move -- and it is worth being exact about what moved with it. Any
+    client holding the shared broker credentials could already publish
+    *statistics* for any repeater; that is the hole this file's header already
+    admits to and points at the per-node broker ACL to close. What was extra
+    here is that settings were harder to forge than metrics. They now cost one
+    extra step: you must first become the node this repeater's statistics
+    arrive through, and that is a visible change on the admin page
+    (``source_prefix``) rather than an invisible one.
+
+    ``prior_source`` is who that was *before* this message, because
+    ``record_source`` has already overwritten the row by the time we get here.
+    Reading it afterwards would compare the publisher against itself and let
+    anybody through on the first try.
 
     Identity is compared through the repeater row rather than by string: the
     topic and the payload may spell the same key at different lengths.
     """
     owner = db.find_repeater(publisher)
-    if owner is None or owner["id"] != row["id"]:
-        log.info("settings for %s published by %s ignored: not its own",
+    if owner is None:
+        log.info("settings for %s published by unknown node %s ignored",
                  row["slug"], publisher)
         return
+    if owner["id"] != row["id"]:
+        relay = db.find_repeater(prior_source) if prior_source else None
+        if relay is None or relay["id"] != owner["id"]:
+            log.info("settings for %s published by %s ignored: not its own and "
+                     "not the node that relays it", row["slug"], publisher)
+            return
+        log.info("settings for %s accepted from its monitor %s", row["slug"], publisher)
+
     clean = _clean_settings(values)
     if not clean:
         return
@@ -258,7 +351,9 @@ def _handle_settings(row, publisher: str, values: dict) -> None:
     # parameter because one sweep missed it is the same as overwriting it with
     # nothing.
     db.upsert_cli_settings(row["id"], clean, prune=False)
-    log.info("CLI settings updated for %s (%d parameters)", row["slug"], len(clean))
+    answered = sum(1 for v in clean.values() if v is not None)
+    log.info("CLI settings updated for %s (%d parameters, %d answered)",
+             row["slug"], len(clean), answered)
 
 
 def _handle_rx(topic: str, raw: bytes) -> None:

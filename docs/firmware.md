@@ -494,6 +494,7 @@ the first WiFi hiccup.
 | Word | Effect |
 |---|---|
 | `settings` | Force a CLI settings sweep, then publish it as soon as it finishes |
+| `settings <key>` | Sweep the CLI of a repeater this node *monitors*, over LoRa, and publish it under that repeater's name (1.9.0) |
 | `status` | Publish a statistics message immediately |
 
 That is the entire vocabulary. **The payload is never handed to
@@ -505,6 +506,14 @@ node say what it would have said by itself, so the worst case is one extra
 statistics message — and at most one every `MQTT_CMD_MIN_GAP_MS` (30 s), which is
 a power budget rather than a security measure.
 
+The argument added in 1.9.0 keeps that property. It is not text that reaches a
+CLI on either side: it has to select exactly one entry from this node's monitor
+list, and what then goes out is the compiled-in `SET_PARAMS` table. A key
+matching no entry, or more than one, is refused and counted like an unknown
+word. The monitor list is writable only from the admin page and the mesh CLI,
+so a broker account can aim this at a repeater the operator already chose to
+monitor and at nothing else.
+
 The callback copies the word and returns; `mqttRunCommand()` acts on it from the
 ordinary loop, same discipline as the raw-packet queue. Accepted and refused
 commands are both counted, and `wifi mqtt` prints them as
@@ -515,6 +524,54 @@ This needs a broker ACL entry: the node's account must be allowed to *read*
 `meshcore/<its own prefix>/cmd`. Without it the subscribe is refused, and the
 button on the site looks exactly as dead as it did before any of this existed.
 See [`mqtt.md`](mqtt.md#asking-a-node-for-something).
+
+### Settings of a monitored repeater (1.9.0)
+
+The sweep above reads *this* node's CLI, which costs nothing — `handleCommand()`
+is a function call. The variant with a key reads somebody else's, over the
+radio, and that is a different animal: eighteen requests and up to eighteen
+replies on a shared band, half of them paid for by whichever node is being
+asked.
+
+It exists because a repeater that does not publish to MQTT itself had no command
+path at all. Its statistics arrive relayed by the node that monitors it; its
+configuration arrived nowhere. The monitor already logs in and polls it, and has
+accepted `TXT_MSG` answers from it since 1.4.0 — nothing ever *asked*.
+
+The sequence, driven from the same state machine as the ordinary poll (one radio,
+one reply slot, one session per peer):
+
+1. reuse the login from an earlier poll, or send one and wait `MON_STEP_MS`;
+2. send `get <param>`, wait `MON_SET_FIRST_MS` (20 s) for the first answer and
+   `MON_SET_STEP_MS` (12 s) for the rest;
+3. wait `MON_SET_GAP_MS` (2 s), then the next parameter;
+4. publish once, at the end, on the ordinary `stats` topic with the monitored
+   repeater in `repeater.pubkey_prefix` and an empty `metrics` object.
+
+| Limit | Value | Why |
+|---|---|---|
+| `MON_SET_MIN_GAP_MS` | 10 min | A reloaded page or a refresh loop must not be able to keep the band busy |
+| `MON_SET_GAP_MS` | 2 s | Spreads eighteen round trips over minutes; a burst from the relay itself is the least excusable congestion there is |
+| `MON_SET_STEP_MS` | 12 s | Measured by the Home Assistant integration over the same hops |
+| `MON_SET_FIRST_MS` | 20 s | First packet after the login is the one that depends on the learned path (see 1.3.1) |
+| `MON_SET_SILENT_MAX` | 3 | Whoever ignores the third parameter will ignore the eighteenth |
+| `MON_SET_TOTAL_MS` | 5 min | Poll rounds wait while a sweep runs; this bounds the wait |
+
+No per-parameter retry, deliberately. Home Assistant runs a second round for the
+parameters that stayed silent; it sits on mains power and drives a USB-attached
+node, while here that doubles the cost of the sweep to chase the least likely
+answers. A silence is published as a silence instead.
+
+**A read-only monitor cannot do this.** A repeater runs a CLI command only for a
+client it considers an admin, and says nothing at all to one it does not — so a
+read-only login succeeds and every command is ignored, which on the air is
+indistinguishable from a node that moved out of range. Use `setperm <monitor
+pubkey> 3` on the monitored side, or its admin password. The sweep publishes its
+silences as `null` precisely so this is diagnosable from the site.
+
+Startable from any CLI as well as from MQTT: `wifi mon settings <hex>` starts
+one and reports on the last, and `wifi mon trace` shows the sequence. That
+matters more here than elsewhere, because this failure mode is silent by nature.
 
 ### The three safety nets
 
@@ -679,6 +736,7 @@ Built and tested on a Heltec V3 (ESP32-S3) companion and a Heltec V4 repeater.
 | MQTT stats publishing | working |
 | `MeshStatsNet` on the repeater | working |
 | Commands from the site over MQTT (`cmd` topic, 1.8.0) | written and reviewed, **not flashed on any node yet** |
+| Settings sweep of a monitored repeater over LoRa (1.9.0) | written and reviewed, **not flashed on any node yet** — needs 1.9.0 on the monitoring node and admin rights on the monitored one |
 | Forwarding over **HTTP** | abandoned — crashed the node; see [`architecture.md`](architecture.md#why-mqtt) |
 | Raw-packet forwarding over MQTT | working |
 | Full web client on the companion node | working |

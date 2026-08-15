@@ -23,6 +23,16 @@
   zijn CLI uit te lezen, en de opvraging staat ook in de wachtrij voor de poller.
   Reken op <strong>1 à 2 minuten</strong>; herlaad deze pagina daarna.
 </div>
+{% elif requested == "mqtt" and route.via_monitor %}
+<div class="card notice">
+  &#9203; Node <span class="mono">{{ route.node }}</span> is gevraagd deze repeater
+  over LoRa uit te vragen. Hij logt in en stelt de parameters één voor één, met
+  ademruimte ertussen omdat elk commando en elk antwoord zendtijd kost op een
+  gedeelde band. Reken op <strong>2 à 5 minuten</strong>; herlaad deze pagina daarna.
+  Blijft alles op “(geen antwoord)” staan, dan is de meest voorkomende oorzaak dat
+  de monitor daar alleen leesrechten heeft — een repeater voert CLI-commando's
+  alleen uit voor een admin.
+</div>
 {% elif requested == "mqtt" %}
 <div class="card notice">
   &#9203; De node is gevraagd zijn instellingen nu uit te lezen (over MQTT, naar
@@ -98,6 +108,13 @@
     {%- if route.mqtt and route.ha %}
     Beschikbaar: rechtstreeks aan node <span class="mono">{{ route.node }}</span> over MQTT,
     én via de poller over LoRa.
+    {%- elif route.mqtt and route.via_monitor %}
+    Deze repeater publiceert zelf niet, maar node <span class="mono">{{ route.node }}</span>
+    monitort hem en kan hem over LoRa uitvragen (MeshStats {{ route.fw_meshstats }}).
+    De site vraagt het aan die node; die logt in bij deze repeater, stelt de parameters
+    één voor één en publiceert de antwoorden onder deze repeater. Wat onbeantwoord
+    blijft komt hieronder als “(geen antwoord)” te staan in plaats van als een oude
+    waarde die vers lijkt.
     {%- elif route.mqtt %}
     De site vraagt het rechtstreeks aan node <span class="mono">{{ route.node }}</span> over
     MQTT (MeshStats {{ route.fw_meshstats }}). Die leest zijn eigen CLI uit en stuurt de
@@ -118,16 +135,25 @@
     {%- elif route.blocker == "http_source" %}
     deze repeater komt binnen via de HTTP-API en niet via MQTT; langs die weg valt een
     node niets te vragen.
-    {%- elif route.blocker == "relayed" %}
-    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>.
-    Alleen de node zelf kan zijn eigen CLI uitlezen, dus een opdracht daarheen levert de
-    instellingen van de verkeerde node op — of niets.
+    {%- elif route.blocker == "relay_unknown" %}
+    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
+    en die node is hier zelf geen bekende repeater. Van zijn firmware weten we dus niets,
+    en een opdracht sturen zou neerkomen op hopen dat hij hem kent.
+    {%- elif route.blocker == "no_fw" and route.via_monitor %}
+    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
+    en die meldt geen MeshStats-versie. Alleen een monitor die de sweep kent kan deze
+    repeater over LoRa uitvragen, en of dat zo is valt niet vast te stellen.
     {%- elif route.blocker == "no_fw" %}
     de node meldt geen MeshStats-versie, dus valt niet vast te stellen of hij opdrachten
     aanneemt. Publiceren zou hier neerkomen op hopen.
+    {%- elif route.blocker == "old_fw" and route.via_monitor %}
+    deze repeater publiceert zelf niet; node <span class="mono">{{ route.node }}</span>
+    stuurt zijn cijfers door en draait MeshStats {{ route.fw_meshstats }}. Een gemonitorde
+    repeater over LoRa uitvragen kan pas vanaf {{ route.min_fw }} — oudere firmware weigert
+    het argument en telt de opdracht als geweigerd.
     {%- elif route.blocker == "old_fw" %}
     de node draait MeshStats {{ route.fw_meshstats }}. Opdrachten over MQTT bestaan pas
-    vanaf {{ min_fw }}; oudere firmware schrijft zich niet in op het cmd-topic, dus de
+    vanaf {{ route.min_fw }}; oudere firmware schrijft zich niet in op het cmd-topic, dus de
     broker gooit het bericht weg zonder dat iemand het merkt.
     {%- elif route.blocker == "broker_down" %}
     de site heeft op dit ogenblik geen verbinding met de MQTT-broker.
@@ -171,9 +197,10 @@
   </form>
   <p class="muted small">Kommagescheiden lijst van <code>get</code>-parameters van de repeater-CLI.
      Onbekende parameters leveren gewoon een foutantwoord op en kunnen geen kwaad.
-     <strong>Deze lijst stuurt alleen de poller-weg.</strong> Een node die zichzelf uitleest
-     heeft zijn eigen lijst in de firmware (<code>SET_PARAMS</code>), dus een parameter die je
-     hier toevoegt bereikt zo'n node pas na een firmware-aanpassing.</p>
+     <strong>Deze lijst stuurt alleen de poller-weg.</strong> Beide MQTT-wegen gebruiken de
+     lijst in de firmware (<code>SET_PARAMS</code>) — zowel een node die zichzelf uitleest als
+     een monitor die een gemonitorde repeater over LoRa uitvraagt — dus een parameter die je
+     hier toevoegt bereikt die pas na een firmware-aanpassing.</p>
   </div>
 </section>
 {% endblock %}

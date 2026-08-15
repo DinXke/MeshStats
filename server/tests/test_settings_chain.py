@@ -161,8 +161,15 @@ def knop(db, monkeypatch):
     staat = {"broker": True, "poller": None}
 
     monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: staat["broker"])
-    monkeypatch.setattr(mqtt_ingest, "publish_command",
-                        lambda node, cmd: (verstuurd.append((node, cmd)), True)[1])
+
+    def _publish(node, cmd, subject=None):
+        # Opgeslagen zoals de node het op het cmd-topic ziet, argument en al:
+        # dat is de tekst waar de firmware een exacte match op doet, en dus de
+        # enige vorm waarvan het zin heeft ze hier vast te leggen.
+        verstuurd.append((node, cmd if subject is None else f"{cmd} {subject}"))
+        return True
+
+    monkeypatch.setattr(mqtt_ingest, "publish_command", _publish)
     monkeypatch.setattr(db, "poller_last_seen", lambda: staat["poller"])
     # Zodat 'poller aanwezig' niet van de klok afhangt.
     monkeypatch.setattr(commanding, "_fresh",
@@ -226,3 +233,140 @@ def test_statusknop_stuurt_status_en_niet_settings(db, knop):
 
     assert knop(rep, "status") == "mqtt"
     assert knop.verstuurd == [("e3d3f4d7edd0", "status")]
+
+
+# --- de weg langs een monitor ----------------------------------------------
+
+def _doorgestuurd(db, monitor_fw="1.9.0"):
+    """Een repeater die zelf niet publiceert, met een monitor die dat wel doet.
+
+    Dit is de dakrepeater: hij hangt op een gebouw, praat alleen over LoRa, en
+    zijn cijfers komen binnen omdat een andere node hem uitleest en doorstuurt.
+    """
+    monitor = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+    db.record_source(monitor["id"], "55d9a320a4e3")
+    db.record_firmware(monitor["id"], "v1.16.0", monitor_fw)
+
+    dak = db.get_or_create_repeater("e3d3f4d7edd0", "BE-HSS-JessaZH.VIR")
+    db.record_source(dak["id"], "55d9a320a4e3")
+    return db.qone("SELECT * FROM repeaters WHERE id=?", (dak["id"],))
+
+
+def test_doorgestuurde_repeater_wordt_via_zijn_monitor_gevraagd(db, knop):
+    # Waar 1.9.0 voor bestaat. De opdracht gaat naar de monitor en draagt de
+    # sleutel van het onderwerp mee; zonder dat argument zou die node zijn eigen
+    # instellingen uitlezen en die onder de verkeerde naam publiceren.
+    rep = _doorgestuurd(db)
+
+    assert knop(rep) == "mqtt"
+    assert knop.verstuurd == [("55d9a320a4e3", "settings e3d3f4d7edd0")]
+
+
+def test_monitor_met_oudere_firmware_krijgt_niets(db, knop):
+    # 1.8.0 kent het cmd-topic maar weigert het argument en telt de opdracht
+    # als geweigerd. Publiceren zou hier een stilte opleveren die op de pagina
+    # niet van een onbereikbare node te onderscheiden is.
+    rep = _doorgestuurd(db, monitor_fw="1.8.0")
+
+    assert knop(rep) == "none"
+    assert knop.verstuurd == []
+
+
+def test_status_gaat_niet_langs_een_monitor(db, knop):
+    # Een monitor kan gevraagd worden de CLI van een ander uit te lezen, maar
+    # geen statusbericht namens hem te sturen -- die cijfers stuurt hij uit
+    # zichzelf al door, elke ronde. De knop hoort dat niet te beloven.
+    rep = _doorgestuurd(db)
+
+    assert knop(rep, "status") == "none"
+    assert knop.verstuurd == []
+
+
+# --- wat er terugkomt: instellingen die een monitor doorstuurt --------------
+#
+# Tot 1.9.0 gooide de ingest élk instellingenbericht weg dat niet over de
+# publicerende node zelf ging. Dat was terecht zolang de firmware nooit iets
+# anders stuurde; nu ze dat wel doet, verhuist de regel naar "van de node die
+# de cijfers van deze repeater al doorstuurt". Deze tests leggen vast waar die
+# grens nu ligt, want ze is de enige die er nog is.
+
+def _bericht(prefix, settings, naam=None):
+    import json
+    body = {"repeater": {"pubkey_prefix": prefix}, "metrics": {}, "settings": settings}
+    if naam:
+        body["repeater"]["name"] = naam
+    return json.dumps(body).encode()
+
+
+def test_monitor_mag_instellingen_van_zijn_gemonitorde_repeater_publiceren(db):
+    from app import mqtt_ingest
+    dak = _doorgestuurd(db)
+
+    mqtt_ingest._handle_payload(
+        "meshcore/55d9a320a4e3/stats",
+        _bericht("e3d3f4d7edd0", {"role": "repeater", "tx": "22"}))
+
+    waarden = {r["param"]: r["value"] for r in db.cli_settings_for(dak["id"])}
+    assert waarden == {"role": "repeater", "tx": "22"}
+
+
+def test_onbeantwoorde_parameter_uit_een_sweep_komt_binnen_als_leeg(db):
+    # De firmware stuurt null voor wat ze wél vroeg en niet kreeg. Zou de
+    # ingest dat wegfilteren, dan bleef de pagina een waarde uit maart tonen
+    # met alleen een nieuwe tijdstempel eronder -- en de meest voorkomende
+    # oorzaak (de monitor heeft daar geen adminrechten) zou onzichtbaar zijn.
+    from app import mqtt_ingest
+    dak = _doorgestuurd(db)
+    db.upsert_cli_settings(dak["id"], {"role": "repeater"})
+
+    mqtt_ingest._handle_payload(
+        "meshcore/55d9a320a4e3/stats",
+        _bericht("e3d3f4d7edd0", {"role": None, "tx": "22"}))
+
+    rijen = {r["param"]: r for r in db.cli_settings_for(dak["id"])}
+    assert rijen["role"]["value"] is None
+    assert rijen["role"]["updated"]
+    assert rijen["tx"]["value"] == "22"
+
+
+def test_lege_string_blijft_wel_geweigerd(db):
+    # Een leeg antwoord is iets anders dan geen antwoord: de firmware laat een
+    # parameter die ze niet kon lezen weg, dus een lege string die tóch
+    # binnenkomt draagt niets en zou een gekende waarde uitvegen.
+    from app import mqtt_ingest
+    dak = _doorgestuurd(db)
+    db.upsert_cli_settings(dak["id"], {"role": "repeater"})
+
+    mqtt_ingest._handle_payload(
+        "meshcore/55d9a320a4e3/stats", _bericht("e3d3f4d7edd0", {"role": "  "}))
+
+    waarden = {r["param"]: r["value"] for r in db.cli_settings_for(dak["id"])}
+    assert waarden["role"] == "repeater"
+
+
+def test_een_vreemde_node_mag_geen_instellingen_voor_een_ander_schrijven(db):
+    # De grens. Wie de brokergegevens heeft kon altijd al cijfers voor eender
+    # welke repeater publiceren -- dat gat staat in de kop van mqtt_ingest.py en
+    # hoort thuis in een ACL per node. Instellingen kosten nu één stap extra:
+    # je moet eerst de node worden waarlangs deze repeater binnenkomt, en dat is
+    # een zichtbare wijziging op de beheerpagina (source_prefix).
+    from app import mqtt_ingest
+    dak = _doorgestuurd(db)
+    vreemde = db.get_or_create_repeater("aabbccddeeff", "iemand anders")
+    db.record_source(vreemde["id"], "aabbccddeeff")
+
+    mqtt_ingest._handle_payload(
+        "meshcore/aabbccddeeff/stats", _bericht("e3d3f4d7edd0", {"role": "client"}))
+
+    assert db.cli_settings_for(dak["id"]) == []
+
+
+def test_eigen_instellingen_blijven_gewoon_werken(db):
+    from app import mqtt_ingest
+    eigen = _node(db)
+
+    mqtt_ingest._handle_payload(
+        "meshcore/e3d3f4d7edd0/stats", _bericht("e3d3f4d7edd0", {"role": "repeater"}))
+
+    waarden = {r["param"]: r["value"] for r in db.cli_settings_for(eigen["id"])}
+    assert waarden == {"role": "repeater"}

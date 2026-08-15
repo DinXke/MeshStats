@@ -33,6 +33,19 @@ def rep(**overrides) -> dict:
     return base
 
 
+def monitor(**overrides) -> dict:
+    """De node die een andere repeater uitleest en zijn cijfers doorstuurt."""
+    base = {
+        "pubkey_prefix": "55d9a320a4e3",
+        "source_prefix": "55d9a320a4e3",
+        "source_seen": stamp(1),
+        "fw_meshstats": "1.9.0",
+        "fw": "v1.16.0",
+    }
+    base.update(overrides)
+    return base
+
+
 def route(**kwargs):
     kwargs.setdefault("broker_connected", True)
     kwargs.setdefault("now", NU)
@@ -69,13 +82,62 @@ def test_zonder_gemelde_versie_wordt_er_niet_gegokt():
     assert r["blocker"] == "no_fw"
 
 
-def test_doorgestuurde_repeater_krijgt_geen_opdracht():
-    # De cijfers komen van een node die deze repeater monitort. Die node kan
-    # zijn eigen CLI uitlezen, niet die van iemand anders, dus een opdracht
-    # daarheen levert de verkeerde instellingen op.
+def test_doorgestuurde_repeater_zonder_bekende_monitor_krijgt_geen_opdracht():
+    # De cijfers komen van een node die deze repeater monitort, maar die node
+    # is hier zelf geen bekende repeater. Van zijn firmware weten we dus niets,
+    # en een opdracht sturen is gokken.
     r = route(rep_row=rep(source_prefix="55d9a320a4e3"))
     assert r["mqtt"] is False
-    assert r["blocker"] == "relayed"
+    assert r["blocker"] == "relay_unknown"
+    assert r["via_monitor"] is True
+
+
+def test_doorgestuurde_repeater_gaat_langs_zijn_monitor():
+    # Waar 1.9.0 voor bestaat: de monitor logt al in bij deze repeater en pollt
+    # hem al, dus kan hij ook gevraagd worden zijn CLI uit te lezen. De opdracht
+    # gaat naar de monitor, met de sleutel van het onderwerp erbij.
+    r = route(rep_row=rep(source_prefix="55d9a320a4e3"), relay=monitor())
+    assert r["mqtt"] is True
+    assert r["blocker"] == ""
+    assert r["via_monitor"] is True
+    assert r["node"] == "55d9a320a4e3"
+    assert r["subject"] == "e3d3f4d7edd0"
+
+
+def test_monitor_moet_de_sweep_kennen():
+    # 1.8.0 kent het cmd-topic wel, maar weigert het argument. Dat is geen
+    # "misschien": zo'n node telt de opdracht als geweigerd en zwijgt verder,
+    # wat op de pagina niet van een onbereikbare node te onderscheiden is.
+    r = route(rep_row=rep(source_prefix="55d9a320a4e3"), relay=monitor(fw_meshstats="1.8.0"))
+    assert r["mqtt"] is False
+    assert r["blocker"] == "old_fw"
+    # De versie die de pagina toont, is die van de node die de opdracht krijgt.
+    assert r["fw_meshstats"] == "1.8.0"
+    assert r["min_fw"] == "1.9.0"
+
+
+def test_monitor_zonder_gemelde_versie_krijgt_niets():
+    r = route(rep_row=rep(source_prefix="55d9a320a4e3"), relay=monitor(fw_meshstats=None))
+    assert r["mqtt"] is False
+    assert r["blocker"] == "no_fw"
+
+
+def test_langs_een_monitor_kan_alleen_settings():
+    # Een statusbericht namens een ander sturen kan een monitor niet, en het
+    # hoeft ook niet: die cijfers stuurt hij uit zichzelf al door.
+    assert route(rep_row=rep(source_prefix="55d9a320a4e3"),
+                 relay=monitor())["commands"] == ("settings",)
+    assert route()["commands"] == ("settings", "status")
+
+
+def test_eigen_node_houdt_zijn_eigen_versiegrens():
+    # De strengere grens geldt alleen voor de weg langs een monitor. Een node
+    # die zichzelf uitleest heeft aan 1.8.0 genoeg, en die mag hier niet
+    # meeschuiven omdat er een tweede weg bij gekomen is.
+    r = route()
+    assert r["mqtt"] is True
+    assert r["via_monitor"] is False
+    assert r["min_fw"] == "1.8.0"
 
 
 def test_kortere_sleutel_van_dezelfde_node_telt_als_zichzelf():

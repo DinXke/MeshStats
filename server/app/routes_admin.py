@@ -173,7 +173,14 @@ def _dispatch(rep, command: str) -> str:
     hangt daaraan en niet aan wat we hoopten dat er zou gebeuren.
     """
     route = commanding.describe(rep)
-    sent = route["mqtt"] and mqtt_ingest.publish_command(route["node"], command)
+    # Gaat het langs een monitor, dan reist de sleutel van het onderwerp mee:
+    # de opdracht komt aan bij een andere node dan waar ze over gaat. En dan kan
+    # niet elke opdracht -- 'status' hoort daar niet, want die cijfers stuurt de
+    # monitor uit zichzelf al door. route["commands"] zegt welke wel.
+    open_for_this = route["mqtt"] and command in route["commands"]
+    sent = open_for_this and mqtt_ingest.publish_command(
+        route["node"], command,
+        subject=route["subject"] if route["via_monitor"] else None)
     queued = route["ha"]
     if command == "settings":
         raw = db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS)
@@ -241,9 +248,11 @@ def repeater_settings_page(request: Request, rid: int):
         # te melden.
         "queued_since": db.pending_settings_request(rep["pubkey_prefix"]),
         # Wat er kán, bepaald vóór de knop getekend wordt: een knop die niets
-        # kan doen hoort uitgeschakeld te zijn en te zeggen waarom.
+        # kan doen hoort uitgeschakeld te zijn en te zeggen waarom. De vereiste
+        # firmwareversie zit in die route en niet apart hier: welke versie nodig
+        # is hangt af van de weg (1.8.0 voor de node zelf, 1.9.0 voor een
+        # monitor), en twee plaatsen die dat allebei uitrekenen is er één te veel.
         "route": commanding.describe(rep),
-        "min_fw": ".".join(str(n) for n in commanding.MIN_CMD_VERSION),
     })
 
 

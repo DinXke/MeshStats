@@ -114,3 +114,34 @@ def test_zonder_broker_is_publiceren_uitgeschakeld(monkeypatch):
     monkeypatch.setattr(mqtt_ingest, "_client", None)
     assert mqtt_ingest.can_publish() is False
     assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is False
+
+
+# --- een opdracht mét onderwerp, voor een gemonitorde repeater --------------
+
+def test_onderwerp_reist_mee_in_de_opdracht(broker):
+    # De opdracht gaat naar de monitor, het onderwerp staat erin. Zonder dat
+    # argument leest die node zijn eigen CLI uit en publiceert hij die onder de
+    # naam van een ander -- precies de verwarring die dit moest oplossen.
+    assert mqtt_ingest.publish_command("55d9a320a4e3", "settings",
+                                       subject="E3D3F4D7EDD0") is True
+    (msg,) = broker.published
+    assert msg["topic"] == "meshcore/55d9a320a4e3/cmd"
+    assert msg["payload"] == b"settings e3d3f4d7edd0"
+
+
+def test_status_neemt_geen_onderwerp_aan(broker):
+    # Een monitor kan geen statusbericht namens een ander sturen. Hier
+    # stranden in plaats van aan de overkant, waar het een teller wordt die
+    # niemand leest.
+    with pytest.raises(ValueError):
+        mqtt_ingest.publish_command("55d9a320a4e3", "status", subject="e3d3f4d7edd0")
+    assert broker.published == []
+
+
+def test_te_kort_onderwerp_vertrekt_niet(broker):
+    # Onder de acht hextekens kunnen twee sleutels toevallig samenvallen. De
+    # firmware weigert zo'n opdracht ook, maar dan is het een ronde over de
+    # radio verder en ziet de pagina alleen stilte.
+    assert mqtt_ingest.publish_command("55d9a320a4e3", "settings",
+                                       subject="e3d3f4") is False
+    assert broker.published == []

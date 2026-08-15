@@ -21,16 +21,27 @@
  * says nothing about the other direction: a topic we subscribe to only has to
  * be a topic the sender publishes on, and the site does exactly that.
  *
- *   <prefix>/<node>/cmd     a single word asking this node to do something
- *                           now: 'settings' (read the CLI parameters and send
- *                           them along with the next statistics message) or
- *                           'status' (publish that message immediately).
+ *   <prefix>/<node>/cmd     one word asking this node to do something now:
+ *                           'settings' (read our own CLI parameters and send
+ *                           them along with the next statistics message),
+ *                           'status' (publish that message immediately), or
+ *                           since 1.9.0 'settings <sleutel>' -- fetch the CLI
+ *                           settings of a repeater we MONITOR, over LoRa, and
+ *                           publish those under that repeater's name. That
+ *                           last one is the only path to a repeater which does
+ *                           not publish to MQTT itself.
  *
- * Deliberately NOT a remote CLI. Anything outside those two words is refused
- * and counted, so a broker account -- shared, leaked or simply mistyped --
- * cannot reach 'reboot', 'set', or the wifi commands. This node hangs on a
- * roof; the only thing an attacker on the broker can make it do is publish
- * what it already publishes by itself, at most once every 30 seconds.
+ * Deliberately NOT a remote CLI. The word is still matched against a list of
+ * exactly two, so a broker account -- shared, leaked or simply mistyped --
+ * cannot reach 'reboot', 'set', or the wifi commands. The one argument that
+ * exists does not change that: it is never text that reaches a CLI, it only
+ * selects one entry from the monitor list, and that list is writable solely
+ * from the admin page and the mesh CLI, both of which ask for a password. The
+ * commands actually sent are the compiled-in parameter table. This node hangs
+ * on a roof; the most an attacker on the broker can make it do is publish what
+ * it already publishes by itself, or read out a repeater its operator already
+ * chose to monitor -- at most once every 30 seconds, and for that last one at
+ * most once every ten minutes.
  *
  * About monitoring other repeaters. You can log in with that repeater's admin
  * or read/write password, but there is a tidier way that needs no password at
@@ -43,6 +54,17 @@
  * where 1 is read-only, 2 read/write and 3 admin -- read-only is enough for
  * status polling. Nobody has to hand out a password, and access can be revoked
  * on their side alone.
+ *
+ * Read-only is NOT enough for the settings sweep of 1.9.0, and this is the one
+ * place where that distinction bites. A repeater only runs a CLI command for a
+ * client it considers an admin (handleCommand is reached from onPeerDataRecv
+ * only under client->isAdmin()), and it says nothing at all to one it does
+ * not. So a read-only monitor logs in perfectly, sends eighteen commands and
+ * hears eighteen silences -- which looks exactly like a node that is out of
+ * range. Hence 'setperm <your-pubkey-hex> 3', or the admin password, if the
+ * settings of that repeater are supposed to be readable here. The sweep
+ * publishes its silences rather than hiding them precisely so this is
+ * diagnosable from the site instead of from a serial cable.
  *
  * One thing that cannot be seen from here: a refused login produces no reply at
  * all, exactly like a repeater that is out of range. So 'no answer' means
@@ -97,7 +119,7 @@
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
 #define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.8.0"
+#define MESHSTATS_VERSION  "1.9.0"
 
 class MyMesh;
 
@@ -166,7 +188,12 @@ int meshstats_batt_percent(uint16_t milli_volts);
  *   wifi power ...       power management (see the power sub-help)
  *   wifi mon ...         repeaters to monitor (see the mon sub-help). An empty
  *                        password there is a choice, not an omission: it means
- *                        'get in via their access list'.
+ *                        'get in via their access list'. 'wifi mon settings
+ *                        <hex>' starts the LoRa settings sweep of one of them
+ *                        and reports on the previous one; together with 'wifi
+ *                        mon trace' that is how a sweep which fails silently
+ *                        (see the admin-rights note above) gets diagnosed
+ *                        without a serial cable.
  */
 bool msnet_handle_command(const char *command, char *reply);
 

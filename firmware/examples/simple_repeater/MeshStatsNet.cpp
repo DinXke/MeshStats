@@ -1,5 +1,39 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.9.0  A monitoring node can now read the CLI settings of a repeater it
+ *        monitors, over LoRa, and publish them the same way it already
+ *        publishes that repeater's statistics: 'settings <sleutel>' on the cmd
+ *        topic, or 'wifi mon settings <sleutel>' from any CLI.
+ *        Why: 1.8.0 gave the site a way to ask a node for its settings, and
+ *        that way only reaches a node that publishes to MQTT itself. The
+ *        repeater on the hospital roof does not -- it is read out by the node
+ *        in my house and forwarded -- so for exactly the repeater this project
+ *        was built around, the button stayed grey and said "doorgestuurd,
+ *        alleen de node zelf kan zijn eigen CLI uitlezen". Which was true, and
+ *        was also the whole problem: a monitor that can log in and poll can
+ *        just as well ask, and it already accepted the answers (TXT_MSG has
+ *        been forwarded to this module since 1.4.0) -- it simply never asked.
+ *        Why the same parameter table and the same "settings" object: the
+ *        server then needs to learn nothing. The one thing it did have to give
+ *        is that settings may now come from the node that relays this
+ *        repeater's statistics and not only from the repeater itself; see
+ *        _handle_settings in mqtt_ingest.py for what that costs.
+ *        Why nothing runs on a schedule: our own daily sweep is free
+ *        (handleCommand() is a function call), this one is not. Eighteen
+ *        requests and eighteen replies on a shared band, half of them paid for
+ *        by a solar repeater on a roof. So: on request only, at most one every
+ *        ten minutes, two seconds between commands, twelve per answer, and a
+ *        sweep that stops after three silences instead of transmitting fifteen
+ *        more times into a hole. The full reasoning, including which of Home
+ *        Assistant's numbers were copied and which were deliberately not, sits
+ *        above MON_SET_FIRST_MS.
+ *        Why a failed sweep still publishes: a parameter that was asked and
+ *        stayed silent goes out as null and shows up as "(geen antwoord)". The
+ *        common cause is worth recognising -- the far side only runs CLI
+ *        commands for a client with admin rights, so a read-only monitor logs
+ *        in perfectly and is then ignored eighteen times. A login that never
+ *        answered publishes nothing at all, because that says nothing about
+ *        any parameter and would only throw away what an earlier sweep knew.
  * 1.8.0  The node listens on '<prefix>/<node>/cmd' and accepts exactly two
  *        words there: 'settings' forces a CLI sweep and publishes the result
  *        the moment it is done, 'status' publishes a statistics message now.
@@ -124,15 +158,17 @@
  * silently drops whatever exceeds its buffer. */
 #define MQTT_PUB_MAX    5120
 
-/* Inbound commands. Longer than the longest word we accept, because a payload
- * that does not fit has to be recognisable as 'too long' rather than silently
- * truncated into something that happens to match.
+/* Inbound commands. Longer than the longest command we accept, because a
+ * payload that does not fit has to be recognisable as 'too long' rather than
+ * silently truncated into something that happens to match. The longest we
+ * accept is 'settings ' plus a full 64-character public key, so 96 leaves room
+ * without ever getting close.
  *
  * The gap is a power budget, not a security measure: every accepted command
  * ends in a publish, and a node on a panel cannot afford one per second because
  * somebody left a script running. Commands arriving inside the gap are dropped,
  * not queued -- 'do it now' loses its meaning if it waits. */
-#define MQTT_CMD_MAX          32
+#define MQTT_CMD_MAX          96
 #define MQTT_CMD_MIN_GAP_MS  30000UL
 
 #define STA_TIMEOUT_MS      30000UL    // try this long before broadcasting our own SSID
@@ -1039,21 +1075,23 @@ static bool _set_force = false;   // 'wifi settings now' / the page button
 static unsigned long _set_due = 0;
 static unsigned long _set_done_at = 0;   // millis of the last completed sweep
 
-// Collects one parameter. Runs once per loop pass while a sweep is going.
-static void settingsStep() {
-  if (_set_next < 0 || _set_next >= SET_PARAM_COUNT || !_mesh) return;
-
-  const SetParam &sp = SET_PARAMS[_set_next];
-  char cmd[48], reply[160];
-  snprintf(cmd, sizeof(cmd), "%s", sp.cmd);
-  reply[0] = 0;
-  _mesh->handleCommand(0, cmd, reply);
-
+/* Turns one raw CLI answer into the value we would publish, or NULL when the
+ * answer says nothing usable. Rewrites the buffer in place and returns a
+ * pointer into it.
+ *
+ * Its own function since 1.9.0, when a second caller appeared: the same
+ * parameter table is now also asked of a MONITORED repeater, over the air,
+ * where the answer arrives as a text message instead of coming back from
+ * handleCommand(). The two paths differ in how the bytes get here and in
+ * nothing else, and they land in the same column of the same table on the
+ * site. A rule that held for one and not the other is exactly how a row like
+ * 'cmd:temp = Unknown command' gets into a database, so there is one rule and
+ * one place where it lives. */
+static char *settingsValue(char *reply, const SetParam &sp) {
   /* Replies come back as "> value", sometimes just " value". Anything else --
    * an error, an empty answer, the "??" the CLI gives for a command it does not
    * know -- is simply not recorded. Publishing a parameter this firmware could
-   * not actually read would be the same mistake as publishing noise_floor 0,
-   * and it is how rows like 'cmd:temp = Unknown command' get into a database. */
+   * not actually read would be the same mistake as publishing noise_floor 0. */
   char *val = reply;
   if (*val == '>') val++;
   while (*val == ' ' || *val == '\t') val++;
@@ -1078,10 +1116,27 @@ static void settingsStep() {
    * was exactly that. Truncating at the first newline would quietly publish a
    * fragment of a table as though it were a value, so such an answer is
    * dropped and counted as a miss instead. */
-  bool multiline = (strchr(val, '\n') != NULL || strchr(val, '\r') != NULL);
+  if (strchr(val, '\n') != NULL || strchr(val, '\r') != NULL) {
+    Serial.printf("MeshStatsNet: %s gaf meerdere regels, overgeslagen\n", sp.name);
+    return NULL;
+  }
+  if (vlen == 0) return NULL;
+  if (strncmp(val, "Error", 5) == 0 || strncmp(val, "??", 2) == 0) return NULL;
+  return val;
+}
 
-  if (vlen > 0 && !multiline &&
-      strncmp(val, "Error", 5) != 0 && strncmp(val, "??", 2) != 0) {
+// Collects one parameter. Runs once per loop pass while a sweep is going.
+static void settingsStep() {
+  if (_set_next < 0 || _set_next >= SET_PARAM_COUNT || !_mesh) return;
+
+  const SetParam &sp = SET_PARAMS[_set_next];
+  char cmd[48], reply[160];
+  snprintf(cmd, sizeof(cmd), "%s", sp.cmd);
+  reply[0] = 0;
+  _mesh->handleCommand(0, cmd, reply);
+
+  char *val = settingsValue(reply, sp);
+  if (val) {
     if (_set_build_n < SET_PARAM_COUNT) {
       _set_vals[_set_build_n].name = sp.name;
       strncpy(_set_vals[_set_build_n].value, val, SET_VALUE_MAX - 1);
@@ -1089,7 +1144,6 @@ static void settingsStep() {
       _set_build_n++;
     }
   } else {
-    if (multiline) Serial.printf("MeshStatsNet: %s gaf meerdere regels, overgeslagen\n", sp.name);
     _set_build_miss++;
   }
 
@@ -1200,12 +1254,34 @@ static void mqttOnMessage(char *topic, uint8_t *payload, unsigned int len) {
   _cmd_have = true;
 }
 
-/* Runs the word the callback left behind, from the ordinary loop.
+/* Stages an on-demand CLI settings sweep of a repeater we MONITOR. Defined
+ * with the monitor code far below, because that is where the table, the login
+ * and the state machine live; declared here because the MQTT command handler is
+ * the way in and sits above it. Returns false when nothing was staged, with
+ * *why pointing at a sentence saying which of the half-dozen reasons it was --
+ * 'geweigerd' on its own is the kind of answer that costs an afternoon. */
+static bool monSettingsRequest(const char *key_hex, const char **why);
+
+/* Runs what the callback left behind, from the ordinary loop.
  *
- * The allowlist is the whole security model, so it is a list of exact strings
- * and not a prefix test: 'settings' and 'status', nothing else, no arguments,
- * no passthrough to handleCommand(). See the 1.8.0 changelog entry for why the
- * console's route is not good enough here. */
+ * The allowlist is the whole security model: two exact words, 'settings' and
+ * 'status', no passthrough to handleCommand(). See the 1.8.0 changelog entry
+ * for why the console's route is not good enough here.
+ *
+ * Since 1.9.0 'settings' may carry one argument: the public key of a repeater
+ * we monitor, which asks for a sweep of THEIR CLI instead of our own. That
+ * argument does not weaken the rule above, and it is worth being precise about
+ * why. It never becomes text that reaches a CLI, here or on the far side: it
+ * only has to select exactly one entry from the monitor list, and the commands
+ * that then go out are the compiled-in SET_PARAMS table and nothing else. The
+ * monitor list is writable from the admin page and the mesh CLI, both of which
+ * ask for a password over a link the operator controls -- so a broker account
+ * can aim this at a node the operator already chose to monitor, and at nothing
+ * else. A key that matches no entry, or more than one, is refused and counted.
+ *
+ * Rejected alternative: a third word, 'monsettings <key>'. It buys nothing over
+ * an argument -- the same parse, the same list -- and it would have meant a
+ * second name to keep in step with the site's COMMANDS tuple. */
 static void mqttRunCommand() {
   if (!_cmd_have) return;
 
@@ -1221,10 +1297,18 @@ static void mqttRunCommand() {
   while (wl && (w[wl - 1] == ' ' || w[wl - 1] == '\r' ||
                 w[wl - 1] == '\n' || w[wl - 1] == '\t')) w[--wl] = 0;
 
+  // Split off the optional argument, so the word itself stays an exact match.
+  char *arg = strpbrk(w, " \t");
+  if (arg) {
+    *arg++ = 0;
+    while (*arg == ' ' || *arg == '\t') arg++;
+  }
+  if (arg && *arg == 0) arg = NULL;
+
   bool known = (strcmp(w, "settings") == 0 || strcmp(w, "status") == 0);
-  if (!known) {
+  if (!known || (arg && strcmp(w, "settings") != 0)) {
     _cmd_refused++;
-    Serial.printf("MeshStatsNet: opdracht '%.16s' geweigerd, alleen settings|status\n", w);
+    Serial.printf("MeshStatsNet: opdracht '%.16s' geweigerd, alleen settings [sleutel]|status\n", w);
     return;
   }
   if (_cmd_last_ms != 0 && millis() - _cmd_last_ms < MQTT_CMD_MIN_GAP_MS) {
@@ -1235,7 +1319,18 @@ static void mqttRunCommand() {
   _cmd_last_ms = millis();
   _cmd_count++;
 
-  if (strcmp(w, "settings") == 0) {
+  if (arg) {
+    /* Nothing is armed for publication here. This sweep talks to another node
+     * over the radio and takes minutes, not one pass of the loop, so it ships
+     * its own message when it is done -- see monSettingsFinish(). */
+    const char *why = "";
+    if (!monSettingsRequest(arg, &why)) {
+      _cmd_refused++;
+      Serial.printf("MeshStatsNet: sweep voor %.16s geweigerd: %s\n", arg, why);
+      return;
+    }
+    Serial.printf("MeshStatsNet: instellingen-sweep gevraagd voor gemonitorde node %.16s\n", arg);
+  } else if (strcmp(w, "settings") == 0) {
     _set_force = true;            // settingsLoop() picks this up this same pass
     _cmd_after_sweep = true;      // publish once it has something to publish
     Serial.println("MeshStatsNet: instellingen-sweep gevraagd via MQTT");
@@ -1591,7 +1686,14 @@ static MonEntry _mon[MAX_MONITORS];
 static int _mon_count = 0;
 static uint16_t _mon_interval = 900;
 
-enum MonState { MST_IDLE, MST_LOGIN_WAIT, MST_REQ_WAIT, MST_TELEM_WAIT, MST_NBR_WAIT, MST_GAP };
+/* One state machine, not two. MST_CLI_WAIT belongs to the settings sweep of a
+ * monitored node and the rest to the ordinary poll, and they deliberately share
+ * this variable: there is exactly one slot for an incoming reply
+ * (_mon_got_reply), one login session per peer, and one radio. Two machines
+ * would have had to agree about all three anyway, and the version where they
+ * disagree is a poll answer parsed as a CLI answer. */
+enum MonState { MST_IDLE, MST_LOGIN_WAIT, MST_REQ_WAIT, MST_TELEM_WAIT, MST_NBR_WAIT,
+                MST_CLI_WAIT, MST_GAP };
 static MonState _mon_state = MST_IDLE;
 static int _mon_cur = -1;
 static uint8_t _mon_retry = 0;      // one flood retry per step, then give up
@@ -2034,6 +2136,424 @@ static void monRoundFailed(MonEntry &m) {
   if (m.fails < 255) m.fails++;
 }
 
+// ------------------------------------- CLI settings of a MONITORED repeater
+
+/* Asking another repeater what its settings are, over the air.
+ *
+ * Why this exists. A repeater that does not publish to MQTT itself -- ours
+ * hangs on a hospital roof and is read out by the node in my house -- had no
+ * command path at all. The site could show its statistics, because those are
+ * relayed, and could show nothing about its configuration, because the only
+ * way to a CLI ran through Home Assistant, and taking Home Assistant out of
+ * the chain was the whole point of 1.8.0. The monitor already ACCEPTED text
+ * answers from a monitored node (handleMonitorData forwards TXT_MSG, and has
+ * since 1.4.0); what was missing was anything that ever ASKED.
+ *
+ * So: the same SET_PARAMS table the node reads from its own CLI once a day,
+ * asked of somebody else's CLI one command at a time, and published on the
+ * same stats topic in the same "settings" object -- with the monitored node in
+ * repeater.pubkey_prefix, which is how a relayed reading already names its
+ * subject. The receiving side needs no new message type and no new topic; see
+ * publishMonitorSettings() for the one rule on the server that did have to
+ * give, and why.
+ *
+ * The table is reusable over the air because of a fix that had nothing to do
+ * with this: 1.7.1 replaced the bare 'region' command, whose answer is a
+ * multi-line tree, with 'region home' and 'region default', whose answers are
+ * one line each. Every entry now answers in a single packet, which is what
+ * makes 'one command, one reply, next' a correct description rather than an
+ * optimistic one -- there is exactly one staging slot for an incoming reply.
+ *
+ * ---- What this costs, and the limits that bound it -----------------------
+ *
+ * This is the expensive thing in this file. The daily sweep of our OWN
+ * settings costs no airtime whatsoever: handleCommand() is a function call.
+ * This one puts eighteen requests and up to eighteen replies on a shared band,
+ * and the node paying half of that is a solar repeater on a roof that may
+ * never become unreachable. Every number below exists to bound that.
+ *
+ *  - ON REQUEST ONLY. There is no daily version of this and there must not be:
+ *    a schedule would spend that airtime forever, for values that change once
+ *    a year. Somebody presses a button, or nothing happens.
+ *  - MON_SET_MIN_GAP_MS between two sweeps, whichever node they are for. A
+ *    page that gets reloaded, or a browser tab left on a refresh, must not be
+ *    able to keep the band busy. Ten minutes is far longer than the couple of
+ *    minutes a sweep needs, so a legitimate second attempt is never blocked by
+ *    it, and it caps this feature at roughly 1% of the hour whatever anyone
+ *    does upstream.
+ *  - MON_SET_GAP_MS between two commands, so eighteen round trips are spread
+ *    over minutes instead of fired as fast as the far side answers. LoRa is a
+ *    shared medium and this node is a repeater: its day job is relaying other
+ *    people's packets, and a burst from the relay itself is the least excusable
+ *    kind of congestion. Two seconds is what the Home Assistant implementation
+ *    settled on for the same sequence, on the same band, and it works.
+ *  - MON_SET_STEP_MS per parameter, and no per-parameter retry. Home Assistant
+ *    waits 12 s for the first answer and then runs one extra round for the
+ *    parameters that stayed silent; the wait is right (it is measured, over
+ *    the same hops) and the extra round is not. Home Assistant runs on mains
+ *    power through a USB-attached node; here a second round doubles the cost
+ *    of the whole sweep to chase the parameters least likely to answer. A
+ *    silent parameter is published as 'no answer' instead, which is worth more
+ *    than a value fetched at twice the price.
+ *  - MON_SET_FIRST_MS for the first command only. It is the first packet that
+ *    depends on the path learned from the login, and the poll sequence found
+ *    out the hard way (1.3.1) that this is where a route goes wrong rather
+ *    than where a session does.
+ *  - MON_SET_SILENT_MAX consecutive silences ends the sweep. Somebody who is
+ *    not answering the third parameter is not going to answer the eighteenth,
+ *    and continuing means transmitting fifteen more times into a hole. This is
+ *    the common failure and it has an ordinary cause: the far side only runs a
+ *    CLI command for a client with ADMIN rights (see onPeerDataRecv in
+ *    MyMesh.cpp), so a monitor that logs in read-only -- which is enough for
+ *    everything else in this file, and is what the header recommends -- gets a
+ *    login that succeeds and eighteen commands that are silently ignored.
+ *  - MON_SET_TOTAL_MS caps the whole thing regardless. While a sweep runs the
+ *    ordinary poll rounds wait, because they share this state machine; the cap
+ *    is what keeps 'wait' from meaning 'until the next reboot'.
+ *
+ * ---- When it fails ------------------------------------------------------
+ *
+ * Two failures that look alike from a distance are kept apart on purpose:
+ *
+ *   the login never answered   nothing was asked, so nothing is published. The
+ *                              site keeps showing the values it had, with
+ *                              their old timestamps, which is what 'we learned
+ *                              nothing' honestly looks like. Publishing
+ *                              eighteen nulls here would throw away values an
+ *                              earlier sweep did get, for a fault that says
+ *                              nothing about any individual parameter.
+ *   we were logged in and
+ *   parameters stayed silent   published, with null for each one that did not
+ *                              answer. The site renders that as "(geen
+ *                              antwoord)", the same phrase the Home Assistant
+ *                              path has always produced for the same fact. It
+ *                              overwrites what we knew, and that is intended:
+ *                              here we did ask, and 'they would not tell us'
+ *                              is a fresher fact than a value from March.
+ */
+
+/* First command after a login: the packet that proves the path, so it gets the
+ * room the poll sequence learned to give the equivalent step. */
+#define MON_SET_FIRST_MS     20000UL
+// Per parameter after that. Home Assistant's measured 12 s, same band, same hops.
+#define MON_SET_STEP_MS      12000UL
+#define MON_SET_GAP_MS        2000UL   // breathing space between two commands
+#define MON_SET_SILENT_MAX        3    // consecutive silences that end a sweep
+#define MON_SET_TOTAL_MS    300000UL   // hard cap on one sweep, whatever happens
+#define MON_SET_MIN_GAP_MS  600000UL   // between two sweeps, for any node
+
+/* The pending request is held as a key rather than as an index into _mon[],
+ * because the list can be edited between the request and the moment the state
+ * machine is free to act on it -- monDelete() shifts everything after the gap
+ * down by one. An index would then quietly address the wrong repeater, which
+ * is the one failure this feature must not have: it logs in and runs commands
+ * somewhere. Empty means nothing is waiting. */
+static char _mset_req_key[MON_KEY_HEX_MAX] = {0};
+static int  _mset_cur = -1;      // entry the running sweep is for, -1 = not running
+static int  _mset_next = 0;      // parameter being collected
+static int  _mset_asked = 0;     // commands that actually went on the air
+static int  _mset_ok = 0;        // parameters with a usable answer
+static int  _mset_miss = 0;      // parameters asked (or not sent) without one
+static uint8_t _mset_silent = 0; // consecutive silences, reset by any answer
+/* Indexed by parameter, not packed like _set_vals, because a missing parameter
+ * has to stay identifiable: this sweep publishes what it did NOT get as well. */
+static char _mset_vals[SET_PARAM_COUNT][SET_VALUE_MAX];
+static bool _mset_got[SET_PARAM_COUNT];
+static unsigned long _mset_send_at = 0;   // next command is due; 0 = none waiting
+static unsigned long _mset_until = 0;     // whole-sweep budget
+/* A request waits for the state machine to reach MST_IDLE, and everything that
+ * can hold it there is temporary -- a poll round, a flat battery, monitoring
+ * switched off. Almost. Without an expiry, one request that never got its turn
+ * would answer every later one with 'er loopt er al een' until the next reboot,
+ * and the reason would be invisible. Same budget as a sweep itself: if it could
+ * not even start inside the time a whole sweep is allowed to take, it is stale
+ * and whoever asked has long since reloaded the page. */
+static unsigned long _mset_req_until = 0;
+static unsigned long _mset_done_at = 0;   // last finished sweep, for the min gap
+static int _mset_last_idx = -1;           // which entry that was, for the CLI
+static int _mset_last_ok = 0, _mset_last_miss = 0;
+
+/* Lowercases a pasted key and drops the separators, like normaliseKey(), but
+ * with a lower floor: eight hex characters instead of twelve.
+ *
+ * The difference is deliberate. normaliseKey() ADDS a node to the monitor list,
+ * where too short a key means monitoring the wrong repeater. This one only
+ * SELECTS from a list that already exists, and has to be refused outright when
+ * it matches more than one entry -- so a collision cannot silently pick wrong.
+ * Eight is also what the site treats as the shortest key it dares call the same
+ * node (MIN_PREFIX_MATCH in commanding.py) and what a Home Assistant five-byte
+ * key still satisfies, so refusing those would have meant refusing the exact
+ * repeaters this feature exists for. Odd lengths are allowed for the same
+ * reason: nothing here is decoded, it is compared as text. */
+static bool monKeyArg(char *key) {
+  char out[MON_KEY_HEX_MAX];
+  int n = 0;
+  for (const char *p = key; *p; p++) {
+    char c = *p;
+    if (c == ' ' || c == ':' || c == '-' || c == '\t') continue;
+    if (c >= 'A' && c <= 'F') c = (char)(c - 'A' + 'a');
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    if (n >= MON_KEY_HEX_MAX - 1) return false;
+    out[n++] = c;
+  }
+  out[n] = 0;
+  if (n < 8 || n > 64) return false;
+  strcpy(key, out);
+  return true;
+}
+
+// -1 = no entry matches this key, -2 = more than one does.
+static int monFindByPrefix(const char *key) {
+  int found = -1;
+  for (int i = 0; i < _mon_count; i++) {
+    if (!sameNode(_mon[i].key, key)) continue;
+    if (found >= 0) return -2;
+    found = i;
+  }
+  return found;
+}
+
+static bool monSettingsRequest(const char *key_hex, const char **why) {
+  char key[MON_KEY_HEX_MAX];
+  strncpy(key, key_hex ? key_hex : "", sizeof(key) - 1);
+  key[sizeof(key) - 1] = 0;
+
+  if (!monKeyArg(key))          { *why = "sleutel is geen hex of korter dan 8 tekens"; return false; }
+  if (_mon_count == 0)          { *why = "deze node monitort niemand"; return false; }
+  /* Refused here rather than started and stranded. Both of these stop
+   * monitorLoop() before it ever reaches the state machine, so a sweep asked
+   * for now would sit in the queue instead of running -- and the queue holds
+   * one, so it would also block the next attempt. The person asking deserves
+   * the reason, and publishing is the entire point of the exercise anyway. */
+  if (!_cfg.mqtt_enabled || _cfg.mqtt_host[0] == 0) {
+    *why = "MQTT staat uit, er is nergens om het te publiceren"; return false;
+  }
+  if (_batt_known && _batt_pct < _cfg.bat_mon) {
+    *why = "batterij te laag om andere repeaters uit te vragen"; return false;
+  }
+  int i = monFindByPrefix(key);
+  if (i == -2)                  { *why = "sleutel past op meer dan een gemonitorde node"; return false; }
+  if (i < 0)                    { *why = "staat niet in de monitorlijst"; return false; }
+  if (!_mon[i].enabled)         { *why = "monitoren staat uit voor die node"; return false; }
+  /* Without the full 32-byte key there is no shared secret, so there is nothing
+   * to encrypt a command with. syncMonitorsToMesh() fills this in as soon as we
+   * hear that repeater advertise itself; until then the honest answer is that
+   * we cannot reach them yet, not a sweep that quietly sends nothing. */
+  if (_mon[i].mesh_idx < 0)     { *why = "volledige sleutel nog niet gehoord"; return false; }
+  if (_mset_req_key[0] && passed(_mset_req_until)) _mset_req_key[0] = 0;   // stale, see above
+  if (_mset_cur >= 0 || _mset_req_key[0]) { *why = "er loopt er al een"; return false; }
+  if (_mset_done_at != 0 && millis() - _mset_done_at < MON_SET_MIN_GAP_MS) {
+    *why = "te kort na de vorige sweep"; return false;
+  }
+  strcpy(_mset_req_key, key);
+  _mset_req_until = millis() + MON_SET_TOTAL_MS;
+  return true;
+}
+
+/* Publishes the result on OUR OWN stats topic, with the monitored node named in
+ * the payload -- the same shape publishMonitorRound() uses, for the same reason
+ * (see the note there: any other topic is accepted by the broker and dropped
+ * unread). metrics is deliberately an empty object: this message carries no
+ * measurement, and inventing one so the envelope looks familiar is how a graph
+ * ends up with a point that never happened. The far end walks an empty metrics
+ * dict without writing anything, which is exactly right.
+ *
+ * One rule on the server did have to give for this, and it is worth naming
+ * here because it is a security decision made elsewhere: mqtt_ingest.py used to
+ * refuse settings from any node reporting about somebody else, on the grounds
+ * that the firmware only ever sent its own. That is no longer true, so the rule
+ * is now 'from the node that already relays this repeater's statistics'. See
+ * _handle_settings there for what that does and does not buy. */
+static bool publishMonitorSettings(MonEntry &m) {
+  if (!mqttEnsure()) return false;
+
+  char prefix_hex[13];
+  memcpy(prefix_hex, m.key, 12);
+  prefix_hex[12] = 0;
+
+  static char body[MQTT_PUB_MAX];
+  int p = snprintf(body, sizeof(body),
+    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\"},"
+    "\"metrics\":{},\"settings\":{", prefix_hex, m.name);
+  if (p <= 0 || p >= (int)sizeof(body)) return false;
+
+  /* Every parameter appears, answered or not. Leaving the silent ones out would
+   * publish a half-read sweep that looks exactly like a complete one, and the
+   * page would keep showing months-old values next to fresh ones with nothing
+   * to tell them apart. null says "asked, no answer" and renders as "(geen
+   * antwoord)" -- the same phrase, from the same column, that the Home
+   * Assistant path has always produced for the same fact. */
+  for (int i = 0; i < SET_PARAM_COUNT && p < (int)sizeof(body) - 128; i++) {
+    if (_mset_got[i]) {
+      char esc[SET_VALUE_MAX * 2 + 4];
+      jsonEsc(esc, sizeof(esc), _mset_vals[i]);
+      p += snprintf(body + p, sizeof(body) - p, "%s\"%s\":\"%s\"",
+                    i ? "," : "", SET_PARAMS[i].name, esc);
+    } else {
+      p += snprintf(body + p, sizeof(body) - p, "%s\"%s\":null",
+                    i ? "," : "", SET_PARAMS[i].name);
+    }
+  }
+
+  p += snprintf(body + p, sizeof(body) - p, "},\"via\":\"%s\"}", _node_hex);
+  if (p <= 0 || p >= (int)sizeof(body)) return false;
+
+  char topic[96];
+  mqttTopic("stats", topic, sizeof(topic));
+  if (!_mqtt.publish(topic, (const uint8_t *)body, p, false)) {
+    _fail_count++;
+    _mqtt_err = "stats";
+    return false;
+  }
+  /* Deliberately not counted in m.pubs. Those three counters exist so a gap
+   * between them means something -- polls attempted, answers parsed, readings
+   * published -- and a settings message is none of the three. Raising pubs here
+   * would make a healthy node look like it published more readings than it
+   * polled for. The trace and 'wifi mon settings' report this instead. */
+  return true;
+}
+
+/* Ends the running sweep and hands the machine back to the poll scheduler.
+ *
+ * Straight to MST_IDLE rather than through MST_GAP, because MST_GAP means
+ * 'continue the round with the next peer' and there is no round: _mon_next_round
+ * was never touched, so the ordinary polling resumes on the schedule it already
+ * had, as though this had not happened. */
+static void monSettingsFinish(const char *why) {
+  if (_mset_cur >= 0) {
+    MonEntry &m = _mon[_mset_cur];
+    monTrace("set klaar %d/%d ok, %s", _mset_ok, SET_PARAM_COUNT, why);
+    Serial.printf("MeshStatsNet: sweep %.12s klaar: %d gelezen, %d geen antwoord (%s)\n",
+                  m.key, _mset_ok, _mset_miss, why);
+    // Nothing asked means nothing learned; see the block comment above.
+    if (_mset_asked > 0 && !publishMonitorSettings(m)) monTrace("set publish mislukt");
+    _mset_last_idx = _mset_cur;
+    _mset_last_ok = _mset_ok;
+    _mset_last_miss = _mset_miss;
+  }
+  _mset_done_at = millis();
+  _mset_cur = -1;
+  _mset_next = 0;
+  _mset_send_at = 0;
+  _mon_cur = -1;
+  _mon_retry = 0;
+  _mon_state = MST_IDLE;
+}
+
+// Schedules the next command, or ends the sweep when there is no next.
+static void monSettingsAdvance() {
+  _mset_next++;
+  if (_mset_next >= SET_PARAM_COUNT) { monSettingsFinish("alle parameters gehad"); return; }
+  if (passed(_mset_until))           { monSettingsFinish("tijdsbudget op"); return; }
+  _mset_send_at = millis() + MON_SET_GAP_MS;
+  _mon_state = MST_CLI_WAIT;
+  _mon_deadline = 0;              // nothing is outstanding; the gap decides
+}
+
+// Puts one 'get <param>' on the air and waits for the text message back.
+static void monSettingsSend() {
+  if (_mset_cur < 0 || _mset_next >= SET_PARAM_COUNT) { monSettingsFinish("niets te vragen"); return; }
+  MonEntry &m = _mon[_mset_cur];
+
+  if (!_mesh->sendMonitorCliCmd(m.mesh_idx, SET_PARAMS[_mset_next].cmd)) {
+    /* Packet pool empty, which is normal under load. Not a silence from the far
+     * side, so it does not count towards MON_SET_SILENT_MAX -- but it is still
+     * a parameter we hold no value for, and the site has to see that. */
+    monTrace("set %s NIET VERSTUURD (pool vol)", SET_PARAMS[_mset_next].name);
+    _mset_miss++;
+    monSettingsAdvance();
+    return;
+  }
+  bool first = (_mset_asked == 0);
+  _mset_asked++;
+  _mon_state = MST_CLI_WAIT;
+  _mon_deadline = millis() + (first ? MON_SET_FIRST_MS : MON_SET_STEP_MS);
+}
+
+/* One text message back from the monitored node. Layout is the one this same
+ * firmware builds when it answers a CLI command (onPeerDataRecv in MyMesh.cpp):
+ * four bytes of timestamp, one of flags, then the text -- zero-padded out to
+ * the cipher block, which is why the text is copied and terminated here rather
+ * than read where it lies. */
+static void monSettingsReply(const uint8_t *data, int len) {
+  if (_mset_cur < 0 || _mset_next < 0 || _mset_next >= SET_PARAM_COUNT) return;
+  const SetParam &sp = SET_PARAMS[_mset_next];
+
+  char text[200];
+  int n = len - 5;
+  if (n > (int)sizeof(text) - 1) n = (int)sizeof(text) - 1;
+  if (n < 0) n = 0;
+  memcpy(text, data + 5, n);
+  text[n] = 0;
+
+  char *val = settingsValue(text, sp);
+  if (val) {
+    strncpy(_mset_vals[_mset_next], val, SET_VALUE_MAX - 1);
+    _mset_vals[_mset_next][SET_VALUE_MAX - 1] = 0;
+    _mset_got[_mset_next] = true;
+    _mset_ok++;
+  } else {
+    _mset_miss++;
+  }
+  /* They answered, whatever the answer said. A refused value is a fact about
+   * that one parameter; silence is a fact about the link, and only the second
+   * one is a reason to stop asking. */
+  _mset_silent = 0;
+  monTrace("set %s = %.16s", sp.name, val ? val : "(geweigerd)");
+  monSettingsAdvance();
+}
+
+/* Starts a staged sweep. Called from MST_IDLE only, so no poll round is in
+ * progress and _mon_cur is free to point at our subject -- the reply matching
+ * further down keys off it and needs no second mechanism. */
+static void monSettingsBegin() {
+  char key[MON_KEY_HEX_MAX];
+  strcpy(key, _mset_req_key);
+  _mset_req_key[0] = 0;                    // consumed, whatever happens next
+
+  int i = monFindByPrefix(key);
+  if (!_mesh || i < 0 || !_mon[i].enabled || _mon[i].mesh_idx < 0) {
+    // The list changed under us between the request and this moment.
+    monTrace("set %.6s vervallen (lijst gewijzigd)", key);
+    return;
+  }
+
+  _mset_cur = i;
+  _mset_next = 0;
+  _mset_asked = 0;
+  _mset_ok = 0;
+  _mset_miss = 0;
+  _mset_silent = 0;
+  _mset_send_at = 0;
+  _mset_until = millis() + MON_SET_TOTAL_MS;
+  memset(_mset_got, 0, sizeof(_mset_got));
+  memset(_mset_vals, 0, sizeof(_mset_vals));
+
+  MonEntry &m = _mon[_mset_cur];
+  _mon_cur = _mset_cur;
+  _mon_retry = 0;
+  int hops = _mesh->getMonitorPathLen(m.mesh_idx);
+
+  /* A session from an earlier poll is reused when we have one: a login is a
+   * flooded packet, and spending one to learn what we already know is the most
+   * expensive way to be tidy. If the far side has since forgotten us the
+   * commands go unanswered, and MON_SET_SILENT_MAX ends the sweep -- at which
+   * point logged_in is cleared and the next attempt starts with a login. */
+  if (m.logged_in) {
+    monTrace("set start %.6s %s hops=%d", m.key, hops < 0 ? "FLOOD" : "direct", hops);
+    monSettingsSend();
+    return;
+  }
+  if (_mesh->sendMonitorLogin(m.mesh_idx, m.pass)) {
+    monTrace("set login %.6s %s hops=%d", m.key, hops < 0 ? "FLOOD" : "direct", hops);
+    _mon_state = MST_LOGIN_WAIT;
+    _mon_deadline = millis() + MON_STEP_MS;
+    return;
+  }
+  monTrace("set login NIET VERSTUURD (pool vol) %.6s", m.key);
+  monSettingsFinish("login niet verstuurd");
+}
+
 /* Config changes arrive on the web server's task; the list is only ever
  * mutated in loop(). Same hand-over the wifi/mqtt/power forms already use. */
 enum MonAction { MA_NONE = 0, MA_ADD, MA_DEL, MA_PASS, MA_ENABLE, MA_INTERVAL, MA_POLL };
@@ -2203,6 +2723,28 @@ static void monitorLoop() {
     uint8_t rtype = _mon_reply_type;
     _mon_got_reply = false;
 
+    /* A text message is an answer to a CLI command, and there is exactly one
+     * moment at which we have asked for one. Checked before everything else so
+     * the poll states below can go on assuming a RESPONSE, which is what they
+     * were written against.
+     *
+     * _mset_send_at == 0 is part of the condition, not a detail: while it is
+     * armed we are waiting out the pause BEFORE the next command, so nothing is
+     * outstanding, and _mset_next already names the parameter we have not asked
+     * about yet. A late duplicate of the previous answer arriving in that window
+     * would otherwise be filed under the next parameter's name -- a wrong value
+     * on a settings page, which is worse than a missing one. Nothing in the
+     * protocol lets us match an answer to the command that caused it, so this
+     * window is what we can close, and it is the one that matters. */
+    if (rtype == PAYLOAD_TYPE_TXT_MSG && _mon_state == MST_CLI_WAIT &&
+        _mset_cur >= 0 && _mon[_mset_cur].mesh_idx == idx) {
+      if (_mset_send_at != 0) {
+        monTrace("set laat antwoord in de pauze, genegeerd");
+        return;
+      }
+      monSettingsReply(_mon_reply, _mon_reply_len);
+      return;
+    }
     // Every state below expects a RESPONSE; a stray CLI answer is not one.
     if (rtype != PAYLOAD_TYPE_RESPONSE) {
       monTrace("reply type %u genegeerd", (unsigned)rtype);
@@ -2214,6 +2756,8 @@ static void monitorLoop() {
         int hops = _mesh->getMonitorPathLen(m.mesh_idx);
         monTrace("login OK len=%d, req %s hops=%d", _mon_reply_len,
                  hops < 0 ? "FLOOD" : "direct", hops);
+        // A login staged by a settings sweep continues into that, not a poll.
+        if (_mset_cur >= 0) { monSettingsSend(); return; }
         monStep(MST_REQ_WAIT);
         return;
       }
@@ -2262,6 +2806,13 @@ static void monitorLoop() {
 
   switch (_mon_state) {
     case MST_IDLE:
+      /* A requested settings sweep goes before the scheduled poll round, and
+       * that is the point of it: somebody is sitting in front of a page that
+       * says "reload this in a minute". A round that has already started is
+       * left to finish -- it is bounded, and interrupting a peer halfway would
+       * cost the airtime already spent on it for nothing. */
+      if (_mset_req_key[0]) { monSettingsBegin(); break; }
+
       /* passed() reads 0 as 'not scheduled', and this starts at 0 -- so until
        * something set it, the first automatic round never came. Only 'wifi mon
        * poll' did, and because the end of a round then sets a real deadline,
@@ -2301,6 +2852,10 @@ static void monitorLoop() {
       }
       monTrace("login timeout, giving up (retry=%u)", _mon_retry);
       _mon[_mon_cur].login_res = LOGIN_NOANSWER;
+      /* A settings sweep that never got in has nothing to say and does not
+       * touch the backoff either: the backoff exists so dead entries stop
+       * costing every poll round, and this was not a poll round. */
+      if (_mset_cur >= 0) { monSettingsFinish("login onbeantwoord"); break; }
       monRoundFailed(_mon[_mon_cur]);
       _mon_state = MST_GAP;
       _mon_deadline = millis() + MON_GAP_MS;
@@ -2353,6 +2908,44 @@ static void monitorLoop() {
       if (!publishMonitorRound(_mon[_mon_cur])) monRoundFailed(_mon[_mon_cur]);
       _mon_state = MST_GAP;
       _mon_deadline = millis() + MON_GAP_MS;
+      break;
+
+    /* Two waits in one state, because they are the same wait seen from both
+     * ends: _mset_send_at is the pause before the next command goes out, and
+     * _mon_deadline is how long we listen after it did. Exactly one of the two
+     * is armed at any moment. A third state would have added a transition and
+     * nothing else. */
+    case MST_CLI_WAIT:
+      if (_mset_cur < 0) { _mon_state = MST_IDLE; break; }   // cannot happen; costs nothing
+
+      /* The backstop. Every path below arms exactly one of the two deadlines, so
+       * reaching MON_SET_TOTAL_MS this way should be impossible -- which is
+       * exactly why the check is here rather than only in monSettingsAdvance().
+       * This state machine holds up the poll rounds while it runs, on a node
+       * nobody can walk over to and reboot, and 'cannot happen' is not a
+       * guarantee worth a roof. */
+      if (passed(_mset_until)) { monSettingsFinish("tijdsbudget op"); break; }
+
+      if (_mset_send_at != 0) {
+        if (!passed(_mset_send_at)) return;
+        _mset_send_at = 0;
+        monSettingsSend();
+        return;
+      }
+      if (!passed(_mon_deadline)) return;
+
+      _mset_miss++;
+      _mset_silent++;
+      monTrace("set %s stil (%u op rij)", SET_PARAMS[_mset_next].name, (unsigned)_mset_silent);
+      if (_mset_silent >= MON_SET_SILENT_MAX) {
+        /* Give up on the session as well as on the sweep. Either they forgot us
+         * or they never let us run commands in the first place; both are worth
+         * one fresh login next time rather than eighteen more silences now. */
+        _mon[_mset_cur].logged_in = false;
+        monSettingsFinish("te veel stilte op rij");
+        break;
+      }
+      monSettingsAdvance();
       break;
 
     case MST_GAP:
@@ -3613,6 +4206,32 @@ static void handleMonCommand(const char *arg, char *reply) {
     strcpy(reply, "OK - ronde gestart");
     return;
   }
+  /* The same sweep the site asks for over MQTT, reachable from a serial cable,
+   * the telnet console and the mesh CLI. Not a convenience: when this fails it
+   * fails silently by nature -- a login that works and commands nobody runs --
+   * and being able to start one and read 'wifi mon trace' from wherever you are
+   * is the difference between diagnosing that and guessing at it. */
+  if ((v = subArg(arg, "settings")) != NULL) {
+    if (*v == 0) {
+      if (_mset_cur >= 0) {
+        snprintf(reply, 155, "bezig voor %.12s: parameter %d van %d, %d gelezen",
+                 _mon[_mset_cur].key, _mset_next + 1, SET_PARAM_COUNT, _mset_ok);
+      } else if (_mset_last_idx < 0 || _mset_last_idx >= _mon_count) {
+        // Also when the entry has since been deleted: the index would then name
+        // somebody else, and a wrong name is worse than none.
+        snprintf(reply, 155, "nog geen sweep gedaan; gebruik: wifi mon settings <hex>");
+      } else {
+        snprintf(reply, 155, "laatste: %.12s, %d gelezen, %d geen antwoord, %lu min geleden",
+                 _mon[_mset_last_idx].key, _mset_last_ok, _mset_last_miss,
+                 (unsigned long)((millis() - _mset_done_at) / 60000UL));
+      }
+      return;
+    }
+    const char *why = "";
+    if (!monSettingsRequest(v, &why)) { snprintf(reply, 155, "Err - %s", why); return; }
+    snprintf(reply, 155, "OK - sweep gevraagd, %d parameters over LoRa", SET_PARAM_COUNT);
+    return;
+  }
   if ((v = subArg(arg, "trace")) != NULL) {
     /* One line per call: a CLI reply is 160 bytes, and this has to be readable
      * over the mesh from wherever you happen to be. 0 = newest. */
@@ -3625,7 +4244,7 @@ static void handleMonCommand(const char *arg, char *reply) {
     return;
   }
   strcpy(reply, "Err - wifi mon [list <n>|add <hex> [naam]|del <hex>|pass <hex> [woord]|"
-                "on <hex>|off <hex>|iv <s>|poll|trace <n>]");
+                "on <hex>|off <hex>|iv <s>|poll|settings [hex]|trace <n>]");
 }
 
 static void handleSettingsCommand(const char *arg, char *reply) {
