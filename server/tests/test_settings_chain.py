@@ -110,6 +110,33 @@ def test_firmwareversie_wordt_onthouden_en_niet_gewist(db):
     assert rij["fw_meshstats"] == "1.8.0"
 
 
+def test_uitreiking_laat_een_spoor_na(db):
+    # Het gemeenste geval: de poller neemt het verzoek mee en er komt niets
+    # terug. De wachtrij is dan leeg, precies zoals na een geslaagde opvraging,
+    # en de tabel op de pagina toont ongewijzigd wat er al stond. Zonder dit
+    # spoor is dat van een geslaagde ronde niet te onderscheiden.
+    assert db.settings_delivered_at("e3d3f4d7edd0") is None
+    db.request_settings("e3d3f4d7edd0", ["name"])
+    assert db.settings_delivered_at("e3d3f4d7edd0") is None
+
+    db.pop_settings_requests()
+
+    assert db.settings_delivered_at("e3d3f4d7edd0")
+    assert db.settings_delivered_at("55d9a320a4e3") is None
+
+
+def test_lege_uitreiking_overschrijft_het_spoor_niet(db):
+    # De poller pollt om de 30 seconden en haalt meestal niets op. Zou elke
+    # lege poll het spoor bijwerken, dan leek elke opvraging net uitgereikt.
+    db.request_settings("e3d3f4d7edd0", ["name"])
+    db.pop_settings_requests()
+    eerst = db.settings_delivered_at("e3d3f4d7edd0")
+
+    db.pop_settings_requests()
+
+    assert db.settings_delivered_at("e3d3f4d7edd0") == eerst
+
+
 def test_pollerbezoek_wordt_bijgehouden(db):
     # Wat "er is niemand die dit ophaalt" onderscheidbaar maakt van "net
     # opgehaald". Zonder dit ziet een lege wachtrij er in beide gevallen

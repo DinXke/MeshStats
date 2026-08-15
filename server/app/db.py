@@ -690,6 +690,16 @@ def request_settings(prefix: str, params: list[str]) -> None:
 
 
 def pop_settings_requests() -> list[dict]:
+    """Hand every queued look-up to the caller and clear the queue.
+
+    Writes down per key that it was handed out, because that is the moment the
+    only record of the request disappears. A poller that takes a request and
+    then achieves nothing -- because it lost its own upstream, or never had a
+    repeater password -- leaves the page in exactly the state it was in before
+    the click, with no way to tell that from "nobody ever collected it". The
+    handover timestamp plus the age of the stored values is what separates the
+    two.
+    """
     import json
     try:
         d = json.loads(get_setting("settings_requests", "{}"))
@@ -697,7 +707,29 @@ def pop_settings_requests() -> list[dict]:
         d = {}
     if d:
         set_setting("settings_requests", "{}")
+        try:
+            handed = json.loads(get_setting("settings_delivered", "{}"))
+        except ValueError:
+            handed = {}
+        now = utcnow()
+        for prefix in d:
+            handed[prefix] = now
+        # Bounded, because this one is not clear-on-read: keep the newest keys.
+        if len(handed) > 200:
+            handed = dict(sorted(handed.items(), key=lambda kv: kv[1])[-200:])
+        set_setting("settings_delivered", json.dumps(handed))
     return [{"prefix": p, "params": v.get("params", [])} for p, v in d.items()]
+
+
+def settings_delivered_at(prefix: str) -> str | None:
+    """When a look-up for this key was last handed to a poller."""
+    import json
+    try:
+        d = json.loads(get_setting("settings_delivered", "{}"))
+    except ValueError:
+        return None
+    value = d.get(prefix)
+    return value if isinstance(value, str) else None
 
 
 def pending_settings_request(prefix: str) -> str | None:

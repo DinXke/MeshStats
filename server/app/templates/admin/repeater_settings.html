@@ -49,6 +49,20 @@
   <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
   {% else %}Er heeft nog nooit een poller aangeklopt.{% endif %}
 </div>
+{% elif delivery_unanswered %}
+{#- Het derde geval, en het gemeenste: de poller hééft het verzoek meegenomen
+    en er is daarna niets teruggekomen. Een lege wachtrij ziet er dan uit als
+    een geslaagde opvraging, en de tabel hieronder toont ongewijzigd wat er al
+    stond. Alleen het uitreikingsmoment naast de ouderdom van de waarden maakt
+    dat zichtbaar. -#}
+<div class="card notice">
+  &#9888; Een poller heeft de laatste opvraging
+  <time class="reltime" datetime="{{ delivered_since }}">{{ delivered_since }}</time>
+  meegenomen, en sindsdien is er geen enkel antwoord binnengekomen. De wachtrij is
+  dus wél leeggehaald; wat erna moest gebeuren — inloggen op de repeater en de
+  parameters over LoRa opvragen — is niet gelukt of niet geprobeerd. De waarden
+  hieronder zijn ouder dan dat.
+</div>
 {% endif %}
 
 <section>

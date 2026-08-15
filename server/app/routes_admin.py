@@ -216,9 +216,19 @@ def repeater_settings_page(request: Request, rid: int):
     if not rep:
         raise HTTPException(404, "Onbekende repeater")
     requested = request.query_params.get("requested", "")
+    rows = db.cli_settings_for(rid)
+    # Nieuwste antwoord dat we hebben, ongeacht via welke weg het binnenkwam.
+    # Samen met het tijdstip waarop de wachtrij is uitgereikt, zegt dit of een
+    # poller die het verzoek meenam er ook iets mee gedaan heeft.
+    last_answer = max((r["updated"] for r in rows if r["updated"]), default=None)
+    delivered = db.settings_delivered_at(rep["pubkey_prefix"])
     return templates.TemplateResponse(request, "admin/repeater_settings.html", {
         "site_name": config.SITE_NAME, "user": user, "rep": rep,
-        "settings_rows": db.cli_settings_for(rid),
+        "settings_rows": rows,
+        "delivered_since": delivered,
+        # ISO-tijdstempels in dit formaat sorteren alfabetisch juist.
+        "delivery_unanswered": bool(delivered
+                                    and (last_answer is None or last_answer < delivered)),
         "cli_params": db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         # '1' is de oude vorm, van vóór er meer dan één weg was; een pagina die
