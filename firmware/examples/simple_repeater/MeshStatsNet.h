@@ -119,7 +119,7 @@
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
 #define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.9.0"
+#define MESHSTATS_VERSION  "1.9.1"
 
 class MyMesh;
 

@@ -378,15 +378,31 @@ index c93ba1a..961d004 100644
  
    pending_discover_tag = 0;
    pending_discover_until = 0;
-@@ -1140,6 +1411,202 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
+@@ -1140,6 +1411,218 @@ void MyMesh::onDefaultRegionChanged(const RegionEntry* r) {
    }
  }
  
++/* Defined below, next to the neighbour list that also needs it. Announced here
++ * because the repeater's own name has to pass through it as well, and moving
++ * the definition up would only shuffle diff lines that have nothing to do with
++ * this fix. */
++static void jsonEscape(char *dest, size_t max, const char *src);
++
 +size_t MyMesh::fillStatsJson(char *out, size_t max_len) {
 +  if (out == NULL || max_len < 256) return 0;
 +
 +  char pub_hex[13];
 +  mesh::Utils::toHex(pub_hex, self_id.pub_key, 6);   // 6 bytes -> 12 hex chars
++
++  /* The name is this node's own, and "own" is not the same as "safe": it is
++   * typed by whoever set the repeater up and it goes out in every single stats
++   * message. One quote in it makes every one of those messages unparseable,
++   * mqtt_ingest.py drops them whole, and the repeater quietly stops existing on
++   * the site while publish() here keeps reporting success -- because it is a
++   * success, the broker took the bytes. Same reasoning as jsonEsc() in
++   * MeshStatsNet.cpp; see the 1.9.1 changelog entry there. */
++  char name_esc[sizeof(_prefs.node_name) * 2];
++  jsonEscape(name_esc, sizeof(name_esc), _prefs.node_name);
 +
 +  /* The receiving site wants to know which custom build produced this payload,
 +   * independently of the MeshCore version underneath it. */
@@ -490,7 +506,7 @@ index c93ba1a..961d004 100644
 +      "\"tx\":%d"
 +      "%s"
 +    "}",
-+    pub_hex, _prefs.node_name, ms_ver,
++    pub_hex, name_esc, ms_ver,
 +    uptime_secs / 86400.0,
 +    tx_air / 60.0f,
 +    rx_air / 60.0f,

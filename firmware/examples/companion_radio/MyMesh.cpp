@@ -1015,6 +1015,31 @@ size_t MyMesh::fillNodeIdHex(char *out, size_t max_len) {
   return 12;
 }
 
+/* Kopieert src als inhoud van een JSON-string: aanhalingsteken en backslash
+ * krijgen een ontsnapping, stuurtekens vallen weg.
+ *
+ * Waarom hier een tweede exemplaar naast dat in StatsPublisher.cpp: die is
+ * static en dus onzichtbaar in deze vertaaleenheid. Overwogen en verworpen om
+ * er een gedeelde header voor te maken -- deze boom is een patch bovenop
+ * MeshCore, en een nieuw bestand toevoegen kost bij elke upstream-versie meer
+ * dan deze acht regels waard zijn. Ze horen wel identiek te blijven.
+ *
+ * Waarom het uberhaupt moet: de nodenaam wordt door de gebruiker gekozen en
+ * gaat ongewijzigd in elk statistiekenbericht. Zit er een aanhalingsteken in,
+ * dan is het bericht geen geldige JSON meer, gooit de server het in zijn geheel
+ * weg, en meldt publish() hier nog steeds succes -- want dat was het ook, de
+ * broker heeft de bytes aangenomen. De node verdwijnt dan uit de statistieken
+ * zonder dat er ergens een fout te zien is. */
+static void jsonStr(char* dest, size_t max, const char* src) {
+  size_t o = 0;
+  for (const char* p = src; *p && o + 2 < max; p++) {
+    uint8_t c = (uint8_t)*p;
+    if (c == '"' || c == '\\') { dest[o++] = '\\'; dest[o++] = (char)c; }
+    else if (c >= 0x20) dest[o++] = (char)c;
+  }
+  dest[o] = 0;
+}
+
 // Bouwt de JSON-payload voor de statistiekensite, in het formaat dat de
 // ingest-API verwacht: {"repeater":{...},"metrics":{...}}
 size_t MyMesh::fillStatsJson(char *out, size_t max_len) {
@@ -1022,6 +1047,11 @@ size_t MyMesh::fillStatsJson(char *out, size_t max_len) {
 
   char pub_hex[13];
   mesh::Utils::toHex(pub_hex, self_id.pub_key, 6);   // 6 bytes -> 12 hex tekens
+
+  // Twee keer de bron is het ergste geval: een naam die enkel uit
+  // aanhalingstekens bestaat.
+  char name_esc[sizeof(_prefs.node_name) * 2];
+  jsonStr(name_esc, sizeof(name_esc), _prefs.node_name);
 
   uint32_t uptime_secs = _ms->getMillis() / 1000;
   uint32_t tx_air = getTotalAirTime() / 1000;
@@ -1051,7 +1081,7 @@ size_t MyMesh::fillStatsJson(char *out, size_t max_len) {
       "\"cr\":%u,"
       "\"tx\":%d"
     "}}",
-    pub_hex, _prefs.node_name,
+    pub_hex, name_esc,
     board.getBattMilliVolts() / 1000.0f,
     uptime_secs / 86400.0,
     (int)_radio->getNoiseFloor(),

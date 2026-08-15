@@ -1,5 +1,39 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.9.1  The name of a monitored repeater is escaped before it goes into a
+ *        published message, and so are the six pieces of typed text in
+ *        /api/status. Both places printed them between two quotes as they came.
+ *        Why this is not cosmetic: a name holding a quote, a backslash or a
+ *        control character does not arrive looking odd, it does not arrive at
+ *        all. The message stops being JSON, mqtt_ingest.py drops it whole, and
+ *        publish() on this side still reports success -- because it was a
+ *        success, the broker took the bytes. The repeater then fades out of the
+ *        statistics with no error anywhere to connect it to a name somebody
+ *        changed weeks earlier. Exactly the shape of the 1.3.0 wrong-topic bug,
+ *        and the reason the fix is one helper used everywhere rather than a
+ *        quote-stripper at each site.
+ *        Why a patch release: no command, field or message shape changed. A
+ *        name without special characters produces byte-identical output, so the
+ *        server needs to learn nothing and an older server reads a 1.9.1 node
+ *        exactly as it read a 1.9.0 one. Only messages that were invalid before
+ *        become valid.
+ *        jsonEsc() gained two rules while it was being spread around, both for
+ *        failures with the same signature. Control characters are dropped
+ *        rather than written as \u00XX, because the six-byte form would break
+ *        the "twice the source is always enough" sizing every caller relies on.
+ *        And a UTF-8 sequence is now copied whole or not at all: names are cut
+ *        to a fixed length with strncpy() long before they get here, and half a
+ *        character makes a payload that is not valid UTF-8 -- which json.loads()
+ *        refuses just as firmly as a stray quote, for a reason nobody would
+ *        think to look for. Truncation now always lands on a character
+ *        boundary.
+ *        Not touched, and worth knowing about: msnet.json and monitors.json are
+ *        written with the same printf-style JSON and read back by a parser that
+ *        searches for '":"'. A quote in an SSID, a password or a monitor name
+ *        corrupts that file rather than a message. Fixing it means escaping on
+ *        write AND unescaping on read, and a half-applied change there loses a
+ *        stored configuration on a node hanging on a roof -- so it wants its own
+ *        release, not a line in this one.
  * 1.9.0  A monitoring node can now read the CLI settings of a repeater it
  *        monitors, over LoRa, and publish them the same way it already
  *        publishes that repeater's statistics: 'settings <sleutel>' on the cmd
@@ -139,6 +173,14 @@
 #define SSID_MAX      33
 #define PASS_MAX      65
 #define USER_MAX      17
+
+/* Mirrors node_name[] in MeshCore's NodePrefs, and is used only to size the
+ * escaped copy that goes into /api/status. Deliberately not shared with that
+ * struct: this module compiles against several MeshCore versions, and a
+ * mismatch here is harmless anyway -- jsonEsc() truncates on a character
+ * boundary, so too small a figure costs a few letters on the page and never a
+ * broken answer. */
+#define NODE_NAME_MAX 32
 
 #define MQTT_HOST_MAX     64
 #define MQTT_USER_MAX     32
@@ -443,17 +485,79 @@ static void wdtFeed() {
   esp_task_wdt_reset();
 }
 
-/* Node names come off the air and end up inside JSON. Anything with a quote in
- * it would otherwise produce a broken page rather than an odd-looking name. */
+/* Copies src into dest as the contents of a JSON string. Everything that came
+ * from somebody else -- node names off the air, names typed on the admin page,
+ * CLI answers from another repeater, an SSID -- goes through here before it is
+ * printed between two quotes.
+ *
+ * Why this matters more than it looks. A name containing a quote does not
+ * produce an odd-looking label at the far end: it produces a message that does
+ * not parse, and mqtt_ingest.py drops one of those in full. The node then stops
+ * appearing in the statistics while every counter on this side keeps saying
+ * that publishing succeeded, because it did -- the broker took the bytes. That
+ * is the same class of failure as the 1.3.0 wrong-topic bug: no error anywhere,
+ * a node that simply disappears. So the rule is that this function must be
+ * impossible to get half-right, which is why it also handles the two cases
+ * below that the first version did not.
+ *
+ * Control characters (< 0x20) are dropped rather than escaped as \u00XX.
+ * Rejected the \u form because it turns one input byte into six output bytes,
+ * so every caller's "twice the source is always enough" buffer sizing would
+ * silently become wrong; and a control character in a node name carries nothing
+ * a reader would miss.
+ *
+ * A multi-byte UTF-8 character is copied whole or not at all, and anything that
+ * is not a valid sequence ends the copy. This is the part that makes truncation
+ * safe. Names live in fixed buffers and are copied in with strncpy(), so a name
+ * whose last byte lands in the middle of a two-byte character is already half a
+ * character before it reaches us -- see meshstats_on_advert(), which cuts at
+ * ADV_NAME_MAX. Passing that half byte-for-byte yields a JSON string that is
+ * not valid UTF-8, and json.loads() refuses it exactly as firmly as it refuses
+ * a stray quote: the same disappearance, from a cause nobody would think to
+ * look for. Stopping on a character boundary costs at most one visible glyph.
+ *
+ * No allocation and no String, deliberately: this sits in the publish path of a
+ * node on a solar panel, next to static buffers, and a helper that can fail on
+ * a fragmented heap is not one you want between a reading and the broker. dest
+ * is never overrun -- each branch checks that the whole character plus the
+ * terminator still fits, and stops rather than writing part of it. */
 static void jsonEsc(char *dest, size_t max, const char *src) {
+  if (max == 0) return;
   size_t o = 0;
-  for (const char *p = src; *p && o + 2 < max; p++) {
-    unsigned char c = (unsigned char)*p;
+
+  for (const unsigned char *p = (const unsigned char *)src; *p; ) {
+    unsigned char c = *p;
+
     if (c == '"' || c == '\\') {
+      if (o + 2 >= max) break;
       dest[o++] = '\\';
       dest[o++] = (char)c;
-    } else if (c >= 0x20) {
+      p++;
+    } else if (c < 0x20) {
+      p++;                                   // dropped; see above
+    } else if (c < 0x80) {
+      if (o + 1 >= max) break;
       dest[o++] = (char)c;
+      p++;
+    } else {
+      /* The lead byte says how many bytes belong to this character. The gaps in
+       * the ranges are not tidiness: 0xC0/0xC1 and 0xF5..0xFF cannot start a
+       * legal sequence at all, and a byte in 0x80..0xBF is a continuation that
+       * arrived without its lead. All three mean the text is already damaged,
+       * and there is nothing to repair it with -- so we stop here and publish
+       * the part that is still a valid string. */
+      size_t len = 0;
+      if (c >= 0xC2 && c <= 0xDF)      len = 2;
+      else if (c >= 0xE0 && c <= 0xEF) len = 3;
+      else if (c >= 0xF0 && c <= 0xF4) len = 4;
+      if (len == 0) break;
+
+      size_t i = 1;
+      while (i < len && (p[i] & 0xC0) == 0x80) i++;
+      if (i < len) break;                    // cut short: stop on the boundary
+      if (o + len >= max) break;
+      for (i = 0; i < len; i++) dest[o++] = (char)p[i];
+      p += len;
     }
   }
   dest[o] = 0;
@@ -2002,10 +2106,18 @@ static bool publishMonitorRound(MonEntry &m) {
   memcpy(prefix_hex, m.key, 12);
   prefix_hex[12] = 0;
 
+  /* The key needs no escaping -- normaliseKey() refuses anything that is not
+   * hex before an entry ever reaches the list -- but the name does: it is
+   * either typed on the admin page or taken straight from that repeater's
+   * advert, and neither is under our control. Twice MON_NAME_MAX is the worst
+   * case, a name made entirely of quotes. */
+  char name_esc[MON_NAME_MAX * 2];
+  jsonEsc(name_esc, sizeof(name_esc), m.name);
+
   static char body[MQTT_PUB_MAX];
   int p = snprintf(body, sizeof(body),
     "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\"},\"metrics\":{\"online\":true",
-    prefix_hex, m.name);
+    prefix_hex, name_esc);
   if (p <= 0 || p >= (int)sizeof(body)) return false;
 
   if (_mon_have_st) {
@@ -2371,10 +2483,14 @@ static bool publishMonitorSettings(MonEntry &m) {
   memcpy(prefix_hex, m.key, 12);
   prefix_hex[12] = 0;
 
+  // Same reason as in publishMonitorRound(): the name is theirs, not ours.
+  char name_esc[MON_NAME_MAX * 2];
+  jsonEsc(name_esc, sizeof(name_esc), m.name);
+
   static char body[MQTT_PUB_MAX];
   int p = snprintf(body, sizeof(body),
     "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\"},"
-    "\"metrics\":{},\"settings\":{", prefix_hex, m.name);
+    "\"metrics\":{},\"settings\":{", prefix_hex, name_esc);
   if (p <= 0 || p >= (int)sizeof(body)) return false;
 
   /* Every parameter appears, answered or not. Leaving the silent ones out would
@@ -3406,12 +3522,40 @@ static bool requireAuth(AsyncWebServerRequest *req) {
  * percentage and level rather than as a formatted string. */
 static void handleStatus(AsyncWebServerRequest *req) {
   if (!requireAuth(req)) return;
-  static char body[2600];   // grew when the rules table and the settings joined
+  /* Grew when the rules table and the settings joined, and again for escaping:
+   * six fields below can now double in length, and the clamp further down turns
+   * an overflow into a truncated answer rather than a wrong one -- which is
+   * still a page that shows nothing. 300 bytes of static RAM is the cheaper
+   * side of that trade. */
+  static char body[2900];
   IPAddress ip = (_state == WIFI_FALLBACK_AP) ? WiFi.softAPIP() : WiFi.localIP();
 
   // "%.1f" of a NAN prints 'nan', which is not JSON and would blank the page.
   float mcu_t = board.getMCUTemperature();
   if (isnan(mcu_t)) mcu_t = -999.0f;
+
+  /* Six fields here are text somebody chose: the node name, the network name
+   * we are on or offering, and four broker settings. All six are typed by a
+   * person -- and an SSID may legally contain a quote or a backslash, which is
+   * the case that turns this page blank rather than ugly: the JSON never
+   * parses, the fetch fails, and the page you would use to correct the setting
+   * is the page the setting broke. Passwords are absent from this answer on
+   * purpose and therefore need nothing.
+   *
+   * Static rather than on the stack, for the same reason body[] above is:
+   * AsyncWebServer runs this on its own task, one request at a time, and that
+   * task's stack is among the tightest on the node. Twice the source length is
+   * the worst case for jsonEsc(), a value made entirely of quotes. */
+  static char e_name[NODE_NAME_MAX * 2], e_ssid[SSID_MAX * 2], e_net[SSID_MAX * 2],
+              e_host[MQTT_HOST_MAX * 2], e_user[MQTT_USER_MAX * 2],
+              e_prefix[MQTT_PREFIX_MAX * 2];
+
+  jsonEsc(e_name, sizeof(e_name), _mesh ? _mesh->getNodeName() : "repeater");
+  jsonEsc(e_ssid, sizeof(e_ssid), _cfg.ssid);
+  jsonEsc(e_net, sizeof(e_net), _state == WIFI_FALLBACK_AP ? _ap_ssid : _cfg.ssid);
+  jsonEsc(e_host, sizeof(e_host), _cfg.mqtt_host);
+  jsonEsc(e_user, sizeof(e_user), _cfg.mqtt_user);
+  jsonEsc(e_prefix, sizeof(e_prefix), _cfg.mqtt_prefix);
 
   int n = snprintf(body, sizeof(body),
     "{\"name\":\"%s\",\"node\":\"%s\",\"board\":\"%s\",\"fw\":\"%s\","
@@ -3423,12 +3567,12 @@ static void handleStatus(AsyncWebServerRequest *req) {
     "\"pwr\":{\"st\":\"%s\",\"secs\":%u,\"iv\":%u,\"night\":%d,"
     "\"mode\":%u,\"window\":%u,\"sleep\":%u,\"min\":%u,\"rule\":%u},"
     "\"live\":\"%s\",\"livepct\":%u,",
-    _mesh ? _mesh->getNodeName() : "repeater", _node_hex,
+    e_name, _node_hex,
     board.getManufacturerName(), FIRMWARE_VERSION,
     MESHSTATS_NAME, MESHSTATS_VERSION,
-    _cfg.ssid, _safe_mode ? 1 : 0,
+    e_ssid, _safe_mode ? 1 : 0,
     wifiStateCode(), ip.toString().c_str(),
-    _state == WIFI_FALLBACK_AP ? _ap_ssid : _cfg.ssid,
+    e_net,
     (int)WiFi.RSSI(), (unsigned long)(millis() / 60000UL), (unsigned)ESP.getFreeHeap(),
     _batt_known ? 1 : 0, (unsigned)_batt_mv, (unsigned)_batt_pct, (unsigned)_level,
     _wdt_watching ? 1 : 0, WDT_TIMEOUT_S, mcu_t,
@@ -3444,7 +3588,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
     "\"mqtt\":{\"host\":\"%s\",\"port\":%u,\"user\":\"%s\",\"prefix\":\"%s\","
     "\"enabled\":%u,\"rx\":%u,\"st\":\"%s\",\"stats\":%u,\"pkt\":%u,\"drop\":%u,"
     "\"queue\":%u,\"fail\":%u,\"err\":\"%s\",\"rc\":%d}}",
-    _cfg.mqtt_host, _cfg.mqtt_port, _cfg.mqtt_user, _cfg.mqtt_prefix,
+    e_host, _cfg.mqtt_port, e_user, e_prefix,
     _cfg.mqtt_enabled, _cfg.mqtt_rx,
     !_cfg.mqtt_enabled ? "off" : (_mqtt.connected() ? "conn"
       : (_cfg.mqtt_host[0] ? "disc" : "unset")),
