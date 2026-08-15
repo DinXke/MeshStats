@@ -89,54 +89,11 @@
        layout where the panel is a full-height side drawer. -->
   <div class="sheet-grip" id="pkt-grip" role="button" tabindex="0"
        data-i18n-aria="pkt.sheet_grip" aria-label="Paneel hoger of lager slepen"><span></span></div>
-  <div class="pktbody" id="pkt-body">
-    <div class="modal-head">
-      <h3 id="pkt-title" data-i18n="pkt.title">Pakketdetail</h3>
-      <button type="button" class="modal-close" id="pkt-close" data-i18n-aria="modal.close" aria-label="Sluiten">&#10005;</button>
-    </div>
-
-    <!-- Who and what, first: these are the fields that have to be readable at
-         the sheet's peek height, before anyone drags it open. -->
-    <dl class="pktfields">
-      <div><dt data-i18n="pkt.time">Tijdstip</dt><dd id="pkt-time"></dd></div>
-      <div><dt data-i18n="pkt.sender">Afzender</dt><dd id="pkt-sender"></dd></div>
-      <!-- Only for payload types that name a destination; hidden elsewhere. -->
-      <div id="pkt-dest-row" hidden><dt data-i18n="pkt.dest">Bestemming</dt><dd id="pkt-dest"></dd></div>
-      <div><dt data-i18n="pkt.observer">Gehoord door</dt><dd id="pkt-observer"></dd></div>
-      <div id="pkt-country-row" hidden><dt data-i18n="pkt.country">Land</dt><dd id="pkt-country-val"></dd></div>
-      <div><dt data-i18n="pkt.type">Payloadtype</dt><dd id="pkt-type"></dd></div>
-    </dl>
-
-    <!-- The path sits above the radio figures on purpose: it is what you read
-         next to the map, so it should surface with the least dragging. -->
-    <h4 data-i18n="pkt.path">Pad</h4>
-    <ol class="pktpath" id="pkt-path"></ol>
-    <p class="muted small pktnote" id="pkt-path-note"></p>
-
-    <dl class="pktfields">
-      <div><dt data-i18n="pkt.route">Routetype</dt><dd id="pkt-route"></dd></div>
-      <div><dt data-i18n="pkt.scope">Bereik</dt><dd id="pkt-scope"></dd></div>
-      <!-- The codes themselves only exist on a scoped packet, and showing an
-           empty row for the majority that are not would be noise. -->
-      <div id="pkt-scope-codes-row" hidden><dt data-i18n="pkt.scope_codes">Transportcodes</dt><dd id="pkt-scope-codes"></dd></div>
-      <div><dt data-i18n="pkt.snr">SNR</dt><dd id="pkt-snr"></dd></div>
-      <div><dt data-i18n="pkt.rssi">RSSI</dt><dd id="pkt-rssi"></dd></div>
-      <div><dt data-i18n="pkt.len">Lengte</dt><dd id="pkt-len"></dd></div>
-      <div><dt data-i18n="pkt.pathlen">Padlengte</dt><dd id="pkt-pathlen"></dd></div>
-    </dl>
-
-    <div id="pkt-advert" hidden>
-      <h4 data-i18n="pkt.advert">Inhoud van de advert</h4>
-      <dl class="pktfields">
-        <div><dt data-i18n="pkt.adv_name">Naam</dt><dd id="pkt-adv-name"></dd></div>
-        <div><dt data-i18n="pkt.adv_coords">Co&ouml;rdinaten</dt><dd id="pkt-adv-coords"></dd></div>
-        <div><dt data-i18n="pkt.adv_type">Nodetype</dt><dd id="pkt-adv-type"></dd></div>
-        <div><dt data-i18n="pkt.adv_ts">Tijdstempel</dt><dd id="pkt-adv-ts"></dd></div>
-      </dl>
-    </div>
-
-    <h4 data-i18n="pkt.raw">Ruwe bytes (hex)</h4>
-    <code class="pktraw" id="pkt-raw"></code>
+  <!-- The fragment itself is shared with the archive's modal, so both pages
+       show the same fields and tell the same truth about what is known and what
+       is only derived. See templates/_packet_detail.html. -->
+  <div class="pktbody pktdetail" id="pkt-body">
+    {% include "_packet_detail.html" %}
   </div>
 </aside>
 {% endif %}

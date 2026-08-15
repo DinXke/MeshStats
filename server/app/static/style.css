@@ -448,15 +448,31 @@ label input { width: 100%; margin-top: .25rem; }
 .pktbody { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 1rem; }
 .sheet-grip { display: none; }
 @keyframes pktpanelin { from { transform: translateX(20px); opacity: 0; } }
-.pktpanel h4 {
+/* .pktdetail is the shared fragment's own class: the live page's docked panel
+   and the archive's modal both carry it, so everything below styles the fields
+   once for both. */
+.pktdetail h4 {
   font-family: var(--mono); font-size: .7rem; text-transform: uppercase;
   letter-spacing: .14em; color: var(--accent); margin: 1.1rem 0 .4rem;
 }
+.rawhead { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; }
+.rawhead h4 { flex: 1 1 auto; }
+.copybtn {
+  background: transparent; border: 1px solid var(--card-edge); color: var(--muted);
+  border-radius: 6px; padding: .12rem .5rem; font-size: .68rem; line-height: 1.5;
+}
+.copybtn:hover { color: var(--accent); border-color: var(--accent-dim);
+  background: transparent; box-shadow: none; }
+.copybtn[hidden] { display: none; }
 .pktfields { margin: 0; display: grid; grid-template-columns: 1fr; gap: .1rem; }
 .pktfields > div {
   display: flex; gap: .6rem; align-items: baseline;
   padding: .28rem 0; border-bottom: 1px solid var(--border);
 }
+/* An author's display beats the browser's own [hidden] rule whatever the
+   specificity, so the rows the panel hides (destination, country, transport
+   codes) were showing up empty. They have to be taken out here by name. */
+.pktfields > div[hidden] { display: none; }
 .pktfields dt {
   flex: 0 0 8.5rem; color: var(--muted); font-size: .72rem;
   text-transform: uppercase; letter-spacing: .06em;
@@ -483,6 +499,47 @@ label input { width: 100%; margin-top: .25rem; }
 .pktpath li.hop-ambiguous span, .pktpath li.hop-unknown span { color: var(--muted); font-style: italic; }
 .pktpath li.hop-ambiguous, .pktpath li.hop-unknown { border-bottom-style: dashed; }
 .pktnote { margin: .5rem 0 0; line-height: 1.5; }
+
+/* --- plus/minus filter buttons ------------------------------------------------ */
+/* A pair beside a value: + narrows the archive query to it, - excludes it. They
+   sit inside the value's own element so they follow it when a row folds onto a
+   second line on a phone, and they never take a column of their own. */
+.fbtns { display: inline-flex; gap: .12rem; margin-left: .35rem; vertical-align: baseline; }
+.fbtn {
+  background: transparent; border: 1px solid var(--card-edge); color: var(--muted);
+  border-radius: 4px; padding: 0 .26rem; font-size: .68rem; line-height: 1.35;
+  font-family: var(--mono); min-width: 1.05rem;
+}
+.fbtn:hover, .fbtn:focus-visible {
+  color: var(--accent); border-color: var(--accent-dim);
+  background: rgba(53, 224, 140, .1); box-shadow: none;
+}
+/* In the result rows the pair is lifted out of the flow and parked over the tail
+   of the value it belongs to, appearing only while that value is under the
+   pointer or holds the keyboard focus.
+   In the flow it cost the list two thirds of its height: the columns are fixed
+   at a few rem, so a pair behind "ADVERT" wrapped onto a second line inside its
+   own cell and every row grew from 28 to 47 pixels. Absolute inside the cell
+   also keeps it clear of the three columns that truncate with an ellipsis --
+   anchored anywhere outside them their own overflow:hidden would clip the
+   buttons away. It does cover the last characters of a value while you point at
+   it, which is the value you were already reading. */
+.archlist li > span { position: relative; }
+.archlist .fbtns {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  margin-left: 0; opacity: 0; pointer-events: none; transition: opacity .12s;
+  background: var(--card); border-radius: 5px; padding: .1rem;
+  box-shadow: 0 0 0 3px var(--card);
+}
+.archlist li > span:hover > .fbtns,
+.archlist li > span:focus-within > .fbtns { opacity: 1; pointer-events: auto; }
+@media (hover: none) {
+  /* Nothing to hover with, and a pair parked permanently over the end of every
+     value would make the list unreadable. On a touch screen the row is tapped
+     open instead and the same buttons sit in the detail, where they are in the
+     flow and always visible. */
+  .archlist .fbtns { display: none; }
+}
 .pktraw {
   display: block; padding: .5rem .6rem; margin-top: .2rem;
   background: var(--bg-grid); border: 1px solid var(--card-edge); border-radius: 6px;
@@ -574,6 +631,27 @@ label input { width: 100%; margin-top: .25rem; }
   background: rgba(53, 224, 140, .08); box-shadow: 0 0 10px rgba(53, 224, 140, .15);
 }
 .modal-chartwrap { height: 320px; }
+
+/* The archive's packet detail. Narrower than the history modal because it is a
+   list of short field/value pairs, not a chart: a 860 px panel would stretch
+   "ADVERT" across half a desktop screen. The panel itself scrolls (the raw hex
+   of a long frame is taller than any viewport), and the padding keeps it off the
+   edges down to a 320 px phone. */
+.pktmodal { padding: .75rem; }
+.pktmodal .modal-panel {
+  width: min(560px, 100%); max-height: calc(100vh - 1.5rem);
+  overflow-y: auto; overflow-x: hidden;
+  /* Flat rather than the card's top-lit gradient: the sticky head below paints
+     itself in one colour, and against a gradient that would show as a seam. */
+  background: var(--card);
+}
+/* The head stays put while the fields scroll under it, so the close button is
+   always where the reader left it -- on a phone the raw hex alone is several
+   screens tall. */
+.pktmodal .modal-head {
+  position: sticky; top: 0; z-index: 1; background: var(--card);
+  margin: -1rem -1rem .6rem; padding: 1rem 1rem .5rem;
+}
 
 @media (max-width: 640px) {
   .snrbar-col { display: none; }

@@ -8,9 +8,14 @@
 
 <!-- The whole page hangs off this id: app.js only wires the archive when it is
      present, the same guard pattern as the live map on the home page. -->
+<!-- data-fields is the field table of search.py, rendered out verbatim. The
+     plus/minus buttons check every field name against it before they appear, so
+     a field renamed or dropped in the query language takes its buttons with it
+     instead of leaving a button that writes a query the parser rejects. -->
 <div id="archive"
      data-oldest="{{ span.oldest or '' }}" data-newest="{{ span.newest or '' }}"
-     data-total="{{ span.total }}">
+     data-total="{{ span.total }}"
+     data-fields="{{ fields|map(attribute='name')|join(',') }}">
 
   <div class="card archbar">
     <form id="arch-form" class="archform">
@@ -81,6 +86,21 @@
         <span class="muted small" id="arch-page"></span>
         <button type="button" id="arch-next" data-i18n="arch.next">ouder &rarr;</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Packet detail. A modal with a backdrop here, where the live page docks the
+       same fragment beside the map: the archive has no map underneath that must
+       stay visible, and a result list is a place you return to -- covering it
+       while one row is read and uncovering it on close is the right shape. The
+       fragment is shared (see templates/_packet_detail.html) so both pages show
+       the same fields and the same distinction between what is known and what is
+       merely derived from a 1-byte hash. -->
+  <div class="modal pktmodal" id="pkt-modal" hidden role="dialog" aria-modal="true"
+       aria-labelledby="pkt-title">
+    <div class="modal-backdrop"></div>
+    <div class="modal-panel card pktdetail">
+      {% include "_packet_detail.html" %}
     </div>
   </div>
 </div>

@@ -32,6 +32,280 @@
                                               h: (src.hash || "").toUpperCase() }) };
   }
 
+  // --- packet detail, shared by the live page and the archive -------------------
+  // Both pages render the same fragment (templates/_packet_detail.html): the live
+  // page inside a docked panel beside the map, the archive inside a modal. The
+  // filling is therefore written once, here at the top level, rather than twice.
+  // Two panels drifting apart would be worse than a little indirection, because
+  // what they render is the honesty rule about derived senders and ambiguous
+  // hops -- and a rule stated differently in two places is a rule that will
+  // eventually be stated wrongly in one of them.
+  //
+  // Only one of the two containers ever exists on a page, so the element ids
+  // below stay unique and lookup by id is enough; scoping every query to a root
+  // element was considered and dropped as ceremony without a payer.
+  function txt(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = value;
+  }
+
+  function nodeLabel(prefix, name) {
+    var p = (prefix || "").toUpperCase();
+    if (!p && !name) return "";
+    return name ? name + (p ? " (" + p + ")" : "") : p;
+  }
+
+  // Country names are the one label deliberately left untranslated: a flag and
+  // an ISO code read the same in every language, where a list of country names
+  // would be a second dictionary to keep in step with the first.
+  function flagOf(code) {
+    if (!/^[A-Za-z]{2}$/.test(code || "")) return "";
+    return String.fromCodePoint.apply(String, code.toUpperCase().split("")
+      .map(function (c) { return 0x1F1E6 + c.charCodeAt(0) - 65; }));
+  }
+  function countryLabel(code) {
+    return code ? flagOf(code) + " " + code.toUpperCase() : t("pkt.country_unknown");
+  }
+
+  // Whether the sender kept the packet inside a region. Two spellings: the
+  // column has room for a word, the panel for the sentence that word stands
+  // for -- and for scoped traffic that sentence has to say whether a region
+  // was actually named, because almost always it was not.
+  function scopeDetail(d) {
+    if (!d.scope) return "—";
+    if (d.scope === "scoped") {
+      return t("scope.scoped") + " — " + (d.scope_region
+        ? t("scope.region", { n: d.scope_region })
+        : t("scope.region_unnamed"));
+    }
+    return t("scope." + d.scope) + " — " + t("scope." + d.scope + "_note");
+  }
+
+  function hopLabel(hop) {
+    if (hop.state === "known") {
+      var m = hop.matches[0];
+      // Saying which node it was but not being able to place it is exactly why
+      // the map shows a dashed gap here; spell that out rather than leaving
+      // the reader to wonder why a named hop has no dot.
+      return (m.name || m.prefix.toUpperCase()) +
+        (m.lat == null || m.lon == null ? " — " + t("pkt.hop_nolocation") : "");
+    }
+    if (hop.state === "ambiguous") {
+      return t("pkt.hop_ambiguous", { n: hop.matches.length }) + ": " +
+        hop.matches.map(function (m) { return m.name || m.prefix.toUpperCase(); }).join(", ");
+    }
+    return t("pkt.hop_unknown");
+  }
+
+  // The panel spells out what the column only hints at: every candidate by
+  // name, and which hash they were derived from.
+  function srcDetail(res) {
+    if (!res || !res.matches || !res.matches.length) return null;
+    var names = res.matches.map(function (m) {
+      return m.name || (m.prefix || "").toUpperCase();
+    });
+    if (res.state === "known") {
+      return names[0] + " · " + t("pkt.src_from_hash", { h: res.hash.toUpperCase() });
+    }
+    return t("pkt.src_multi", { n: res.matches.length }) + ": " + names.join(", ") +
+      " · " + t("pkt.src_from_hash", { h: res.hash.toUpperCase() });
+  }
+
+  // One value written the way search.py's parser reads it back. Quotes are the
+  // parser's only grouping device and it has no escape for a quote inside one
+  // (see _read_value), so an inner quote is dropped rather than smuggled in as
+  // a clause boundary the visitor never typed.
+  function queryValue(value) {
+    var v = String(value).replace(/"/g, "");
+    return /[\s()]/.test(v) ? '"' + v + '"' : v;
+  }
+
+  function queryClause(field, value, negate) {
+    return (negate ? "-" : "") + field + ":" + queryValue(value);
+  }
+
+  // A Kibana-style pair beside a value: + narrows the archive query to this
+  // field:value, - excludes it. Rendered only when the caller supplies a
+  // handler, which is why the live page (no query bar, no query language) gets
+  // none, and only for fields search.FIELDS actually knows -- a button that
+  // produced "Onbekend veld" would be a trap dressed as a feature.
+  // The field names the query language actually knows, handed over by the
+  // archive page from search.describe_fields(). Kept as a module-level list
+  // rather than threaded through every call: the buttons are rendered from four
+  // different places and an extra argument at each of them would only make it
+  // easier to forget the check somewhere.
+  var SEARCH_FIELDS = null;
+
+  function filterBtns(el, field, value, onFilter) {
+    if (!el || !onFilter || value === null || value === undefined || value === "") return;
+    if (SEARCH_FIELDS && SEARCH_FIELDS.indexOf(field) < 0) return;
+    var wrap = document.createElement("span");
+    wrap.className = "fbtns";
+    [[false, "+", "arch.filter_add"], [true, "−", "arch.filter_not"]]
+      .forEach(function (spec) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "fbtn";
+        b.textContent = spec[1];
+        b.title = t(spec[2], { q: queryClause(field, value, spec[0]) });
+        b.setAttribute("aria-label", b.title);
+        b.addEventListener("click", function (e) {
+          // Rows are clickable too (they open the detail); a filter click is
+          // about the value, not about the packet it happens to sit in.
+          e.preventDefault();
+          e.stopPropagation();
+          onFilter(field, value, spec[0]);
+        });
+        wrap.appendChild(b);
+      });
+    el.appendChild(wrap);
+  }
+
+  /* Fill the shared fragment from one /api/v1/packets/{id} response.
+   *
+   * opts.showCountry -- whether this page can say anything about countries at
+   *   all. The live page hides the row when the deployment has no borders to
+   *   classify positions against; the archive always shows it, because it has a
+   *   Land column and a country: field either way.
+   * opts.onFilter -- see filterBtns; omitted on the live page.
+   */
+  function fillPacketDetail(d, opts) {
+    opts = opts || {};
+    var onFilter = opts.onFilter || null;
+    txt("pkt-time", new Date(d.ts).toLocaleString() + " · " + relTime(d.ts));
+    txt("pkt-sender", nodeLabel(d.sender, d.sender_name) || srcDetail(d.src) ||
+        t("pkt.sender_unknown"));
+    // Only a sender stated by an advert has a key to filter on. A sender merely
+    // derived from the 1-byte source hash gets no buttons: sender: searches the
+    // stored key column, and offering it here would silently filter on
+    // something other than the guess printed next to it.
+    filterBtns(document.getElementById("pkt-sender"), "sender", d.sender, onFilter);
+    txt("pkt-observer", nodeLabel(d.observer, d.observer_name) || "—");
+    filterBtns(document.getElementById("pkt-observer"), "observer", d.observer, onFilter);
+    // The destination row only exists for packet types that name one; an empty
+    // row on every ACK and advert would be noise.
+    var destRow = document.getElementById("pkt-dest-row");
+    var destText = srcDetail(d.dest) ||
+      (d.dest && d.dest.hash ? "0x" + d.dest.hash.toUpperCase() + " · " +
+        t("pkt.hop_unknown") : null);
+    destRow.hidden = !destText;
+    if (destText) txt("pkt-dest", destText);
+    // Whose country to show follows whose position the map used for this
+    // packet: the sender's when we know it, the observer's otherwise.
+    var countryRow = document.getElementById("pkt-country-row");
+    var placed = d.sender_lat != null && d.sender_lon != null;
+    var cc = placed ? d.sender_country : d.observer_country;
+    countryRow.hidden = !opts.showCountry;
+    txt("pkt-country-val", countryLabel(cc) +
+        " · " + t(placed ? "pkt.country_of_sender" : "pkt.country_of_observer"));
+    filterBtns(document.getElementById("pkt-country-val"), "country", cc, onFilter);
+    txt("pkt-type", d.type || "—");
+    filterBtns(document.getElementById("pkt-type"), "type", d.type, onFilter);
+    txt("pkt-route", d.route || "—");
+    filterBtns(document.getElementById("pkt-route"), "route", d.route, onFilter);
+    txt("pkt-scope", scopeDetail(d));
+    // scope: only, never region:. The region is part of the same sentence here
+    // ("gescoped — regio 7"), and a second pair of buttons filtering on half of
+    // one sentence is the kind of thing a reader clicks once and never trusts
+    // again. The region facet in the sidebar covers that need.
+    filterBtns(document.getElementById("pkt-scope"), "scope", d.scope, onFilter);
+    // Only a scoped packet carries codes, and only the second of them could
+    // ever name a region -- so the row exists to show what the frame actually
+    // holds, not to be filled in with a guess when it holds nothing.
+    var codesRow = document.getElementById("pkt-scope-codes-row");
+    var codes = d.scope_codes;
+    codesRow.hidden = !codes || codes.length < 2;
+    if (!codesRow.hidden) txt("pkt-scope-codes", codes[0] + " / " + codes[1]);
+    txt("pkt-snr", d.snr != null ? d.snr.toFixed(2) + " dB" : "—");
+    filterBtns(document.getElementById("pkt-snr"), "snr", d.snr, onFilter);
+    txt("pkt-rssi", d.rssi != null ? d.rssi + " dBm" : "—");
+    filterBtns(document.getElementById("pkt-rssi"), "rssi", d.rssi, onFilter);
+    txt("pkt-len", d.len != null ? d.len + " B" : "—");
+    filterBtns(document.getElementById("pkt-len"), "len", d.len, onFilter);
+    txt("pkt-pathlen", d.path_len != null ? String(d.path_len) : "—");
+    filterBtns(document.getElementById("pkt-pathlen"), "hops", d.path_len, onFilter);
+    // Hex in byte pairs so it stays readable, and it wraps rather than
+    // widening the page on a phone (see .pktraw).
+    txt("pkt-raw", d.raw ? d.raw.toUpperCase().replace(/../g, "$& ").trim() : t("pkt.noraw"));
+    var copyBtn = document.getElementById("pkt-raw-copy");
+    if (copyBtn) {
+      copyBtn.hidden = !d.raw;
+      copyBtn.dataset.raw = d.raw || "";
+      copyBtn.textContent = t("pkt.copy");
+    }
+
+    var list = document.getElementById("pkt-path");
+    list.textContent = "";
+    (d.path || []).forEach(function (h) {
+      var li = document.createElement("li");
+      li.className = "hop hop-" + h.state;
+      var hex = document.createElement("code");
+      hex.textContent = h.hash.toUpperCase();
+      var label = document.createElement("span");
+      label.textContent = hopLabel(h);
+      li.appendChild(hex);
+      li.appendChild(label);
+      // path: matches on containment in the stored hop list, so the hash is the
+      // right value here even when we cannot say which node it was -- "every
+      // packet that went through this hop" is a question worth asking about
+      // exactly the hops we could not name.
+      filterBtns(li, "path", h.hash, onFilter);
+      list.appendChild(li);
+    });
+
+    var notes = [];
+    if (!d.path_stored) notes.push(t("pkt.path_unstored"));
+    else if (!(d.path || []).length) notes.push(t("pkt.nopath"));
+    if ((d.path || []).length) {
+      notes.push(t("pkt.path_note"));
+      if (/DIRECT/.test(d.route || "")) notes.push(t("pkt.path_note_direct"));
+    }
+    txt("pkt-path-note", notes.join(" "));
+
+    var adv = document.getElementById("pkt-advert");
+    adv.hidden = !d.advert;
+    if (d.advert) {
+      txt("pkt-adv-name", d.advert.name || "—");
+      txt("pkt-adv-coords", d.advert.lat != null && d.advert.lon != null
+        ? d.advert.lat.toFixed(6) + ", " + d.advert.lon.toFixed(6) : "—");
+      txt("pkt-adv-type", d.advert.node_type || "—");
+      txt("pkt-adv-ts", d.advert.ts
+        ? new Date(d.advert.ts * 1000).toLocaleString() : "—");
+    }
+  }
+
+  // Emptying is its own function rather than "fill with a blank packet": the
+  // panel is shown before the fetch resolves, and last packet's numbers left
+  // standing under a new title would be read as this packet's.
+  function blankPacketDetail() {
+    ["pkt-time", "pkt-sender", "pkt-observer", "pkt-dest", "pkt-country-val",
+     "pkt-type", "pkt-route", "pkt-scope", "pkt-scope-codes", "pkt-snr",
+     "pkt-rssi", "pkt-len", "pkt-pathlen", "pkt-raw", "pkt-path-note"]
+      .forEach(function (id) { txt(id, ""); });
+    document.getElementById("pkt-path").textContent = "";
+    document.getElementById("pkt-advert").hidden = true;
+    document.getElementById("pkt-scope-codes-row").hidden = true;
+    document.getElementById("pkt-dest-row").hidden = true;
+    var copyBtn = document.getElementById("pkt-raw-copy");
+    if (copyBtn) copyBtn.hidden = true;
+  }
+
+  // The raw bytes are shown spaced for reading but copied unspaced, because
+  // whatever they get pasted into (a decoder, a script) wants them the way the
+  // API stores them.
+  (function wireRawCopy() {
+    var btn = document.getElementById("pkt-raw-copy");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var hex = btn.dataset.raw || "";
+      if (!hex || !navigator.clipboard) return;
+      navigator.clipboard.writeText(hex.toUpperCase()).then(function () {
+        btn.textContent = t("pkt.copied");
+        setTimeout(function () { btn.textContent = t("pkt.copy"); }, 1500);
+      }).catch(function () { /* a browser that refuses leaves the bytes on screen */ });
+    });
+  })();
+
   var THEME = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
   var TEXT = cssVar("--text", "#d7e2ea");
   var TEXT_MUTED = cssVar("--muted", "#7d8fa0");
@@ -998,22 +1272,6 @@
     } catch (e) { /* blocked */ }
     if (filterEl) filterEl.value = filterText;
 
-    // Country names are the one label deliberately left untranslated: a flag and
-    // an ISO code read the same in every language, where a list of country names
-    // would be a second dictionary to keep in step with the first.
-    function flagOf(code) {
-      if (!/^[A-Za-z]{2}$/.test(code || "")) return "";
-      return String.fromCodePoint.apply(String, code.toUpperCase().split("")
-        .map(function (c) { return 0x1F1E6 + c.charCodeAt(0) - 65; }));
-    }
-    function countryLabel(code) {
-      return code ? flagOf(code) + " " + code.toUpperCase() : t("pkt.country_unknown");
-    }
-
-    // Whether the sender kept the packet inside a region. Two spellings: the
-    // column has room for a word, the panel for the sentence that word stands
-    // for -- and for scoped traffic that sentence has to say whether a region
-    // was actually named, because almost always it was not.
     // Built rather than templated, because the region has to be its own element:
     // it is the part a phone drops. Four extra characters are enough to push the
     // second line of a row onto a third, and the panel names the region anyway.
@@ -1032,16 +1290,6 @@
         el.appendChild(region);
       }
       return el;
-    }
-
-    function scopeDetail(d) {
-      if (!d.scope) return "—";
-      if (d.scope === "scoped") {
-        return t("scope.scoped") + " — " + (d.scope_region
-          ? t("scope.region", { n: d.scope_region })
-          : t("scope.region_unnamed"));
-      }
-      return t("scope." + d.scope) + " — " + t("scope." + d.scope + "_note");
     }
 
     // One haystack for name, prefix, payload type, country and scope: typing
@@ -1462,33 +1710,6 @@
       }, 150);
     });
 
-    function txt(id, value) {
-      var el = document.getElementById(id);
-      if (el) el.textContent = value;
-    }
-
-    function nodeLabel(prefix, name) {
-      var p = (prefix || "").toUpperCase();
-      if (!p && !name) return "";
-      return name ? name + (p ? " (" + p + ")" : "") : p;
-    }
-
-    function hopLabel(hop) {
-      if (hop.state === "known") {
-        var m = hop.matches[0];
-        // Saying which node it was but not being able to place it is exactly why
-        // the map shows a dashed gap here; spell that out rather than leaving
-        // the reader to wonder why a named hop has no dot.
-        return (m.name || m.prefix.toUpperCase()) +
-          (m.lat == null || m.lon == null ? " — " + t("pkt.hop_nolocation") : "");
-      }
-      if (hop.state === "ambiguous") {
-        return t("pkt.hop_ambiguous", { n: hop.matches.length }) + ": " +
-          hop.matches.map(function (m) { return m.name || m.prefix.toUpperCase(); }).join(", ");
-      }
-      return t("pkt.hop_unknown");
-    }
-
     function panelOpen() { return !!panel && !panel.hidden; }
 
     function clearPath() {
@@ -1656,110 +1877,19 @@
       lmap.fitBounds(pathView, pad);
     }
 
-    // The panel spells out what the column only hints at: every candidate by
-    // name, and which hash they were derived from.
-    function srcDetail(res) {
-      if (!res || !res.matches || !res.matches.length) return null;
-      var names = res.matches.map(function (m) {
-        return m.name || (m.prefix || "").toUpperCase();
-      });
-      if (res.state === "known") {
-        return names[0] + " · " + t("pkt.src_from_hash", { h: res.hash.toUpperCase() });
-      }
-      return t("pkt.src_multi", { n: res.matches.length }) + ": " + names.join(", ") +
-        " · " + t("pkt.src_from_hash", { h: res.hash.toUpperCase() });
-    }
-
+    // Filling and emptying live at the top level: the archive renders the same
+    // fragment. See fillPacketDetail. The live page passes no filter handler --
+    // it has no query bar for the buttons to write into -- and lets the country
+    // row follow the country filter, which is only present when the deployment
+    // has borders to classify positions against.
     function fillPanel(d) {
-      txt("pkt-time", new Date(d.ts).toLocaleString() + " · " + relTime(d.ts));
-      txt("pkt-sender", nodeLabel(d.sender, d.sender_name) || srcDetail(d.src) ||
-          t("pkt.sender_unknown"));
-      txt("pkt-observer", nodeLabel(d.observer, d.observer_name) || "—");
-      // The destination row only exists for packet types that name one; an empty
-      // row on every ACK and advert would be noise.
-      var destRow = document.getElementById("pkt-dest-row");
-      var destText = srcDetail(d.dest) ||
-        (d.dest && d.dest.hash ? "0x" + d.dest.hash.toUpperCase() + " · " +
-          t("pkt.hop_unknown") : null);
-      destRow.hidden = !destText;
-      if (destText) txt("pkt-dest", destText);
-      // Whose country to show follows whose position the map used for this
-      // packet: the sender's when we know it, the observer's otherwise.
-      var countryRow = document.getElementById("pkt-country-row");
-      var placed = d.sender_lat != null && d.sender_lon != null;
-      var cc = placed ? d.sender_country : d.observer_country;
-      countryRow.hidden = !countryEl || countryEl.hidden;
-      txt("pkt-country-val", countryLabel(cc) +
-          " · " + t(placed ? "pkt.country_of_sender" : "pkt.country_of_observer"));
-      txt("pkt-type", d.type || "—");
-      txt("pkt-route", d.route || "—");
-      txt("pkt-scope", scopeDetail(d));
-      // Only a scoped packet carries codes, and only the second of them could
-      // ever name a region -- so the row exists to show what the frame actually
-      // holds, not to be filled in with a guess when it holds nothing.
-      var codesRow = document.getElementById("pkt-scope-codes-row");
-      var codes = d.scope_codes;
-      codesRow.hidden = !codes || codes.length < 2;
-      if (!codesRow.hidden) txt("pkt-scope-codes", codes[0] + " / " + codes[1]);
-      txt("pkt-snr", d.snr != null ? d.snr.toFixed(2) + " dB" : "—");
-      txt("pkt-rssi", d.rssi != null ? d.rssi + " dBm" : "—");
-      txt("pkt-len", d.len != null ? d.len + " B" : "—");
-      txt("pkt-pathlen", d.path_len != null ? String(d.path_len) : "—");
-      // Hex in byte pairs so it stays readable, and it wraps rather than
-      // widening the page on a phone (see .pktraw).
-      txt("pkt-raw", d.raw ? d.raw.toUpperCase().replace(/../g, "$& ").trim() : t("pkt.noraw"));
-
-      var list = document.getElementById("pkt-path");
-      list.textContent = "";
-      (d.path || []).forEach(function (h) {
-        var li = document.createElement("li");
-        li.className = "hop hop-" + h.state;
-        var hex = document.createElement("code");
-        hex.textContent = h.hash.toUpperCase();
-        var label = document.createElement("span");
-        label.textContent = hopLabel(h);
-        li.appendChild(hex);
-        li.appendChild(label);
-        list.appendChild(li);
-      });
-
-      var notes = [];
-      if (!d.path_stored) notes.push(t("pkt.path_unstored"));
-      else if (!(d.path || []).length) notes.push(t("pkt.nopath"));
-      if ((d.path || []).length) {
-        notes.push(t("pkt.path_note"));
-        if (/DIRECT/.test(d.route || "")) notes.push(t("pkt.path_note_direct"));
-      }
-      txt("pkt-path-note", notes.join(" "));
-
-      var adv = document.getElementById("pkt-advert");
-      adv.hidden = !d.advert;
-      if (d.advert) {
-        txt("pkt-adv-name", d.advert.name || "—");
-        txt("pkt-adv-coords", d.advert.lat != null && d.advert.lon != null
-          ? d.advert.lat.toFixed(6) + ", " + d.advert.lon.toFixed(6) : "—");
-        txt("pkt-adv-type", d.advert.node_type || "—");
-        txt("pkt-adv-ts", d.advert.ts
-          ? new Date(d.advert.ts * 1000).toLocaleString() : "—");
-      }
-    }
-
-    function blankPanel() {
-      ["pkt-time", "pkt-sender", "pkt-observer", "pkt-type", "pkt-route", "pkt-scope",
-       "pkt-scope-codes", "pkt-snr", "pkt-rssi", "pkt-len", "pkt-pathlen", "pkt-raw",
-       "pkt-path-note"].forEach(function (id) {
-        txt(id, "");
-      });
-      document.getElementById("pkt-path").textContent = "";
-      document.getElementById("pkt-advert").hidden = true;
-      document.getElementById("pkt-scope-codes-row").hidden = true;
-      document.getElementById("pkt-dest-row").hidden = true;
+      fillPacketDetail(d, { showCountry: !!countryEl && !countryEl.hidden });
     }
 
     function openPacket(id) {
       if (!panel || !id) return;
       openId = id;
-      blankPanel();
+      blankPacketDetail();
       panel.hidden = false;
       resetSheet();          // every packet starts at the peek height
       var body = document.getElementById("pkt-body");
@@ -1871,24 +2001,37 @@
     var pageEl = document.getElementById("arch-page");
     var prevEl = document.getElementById("arch-prev");
     var nextEl = document.getElementById("arch-next");
+    var pktModalEl = document.getElementById("pkt-modal");
     var archOffset = 0;
     var archTotal = 0;
     var archSeq = 0;      // stale responses from a slower earlier search are dropped
+    var openPktId = null; // id of the packet whose modal is open, if any
 
-    // The query and window live in the URL, so a search can be sent to someone
-    // as a link and the back button returns to the previous one -- for a search
-    // page that is not a nicety, it is what makes results citable.
+    // The field table of the query language, straight from search.py. Without
+    // it the buttons would be gated on a hand-copied list that goes stale the
+    // first time a field is renamed on the server.
+    SEARCH_FIELDS = (archEl.dataset.fields || "").split(",").filter(Boolean);
+
+    // The query, the window and the open packet live in the URL, so a search or
+    // a single packet can be sent to someone as a link -- for a search page that
+    // is not a nicety, it is what makes results citable.
+    var initialPkt = 0;
     (function initFromUrl() {
       var sp = new URLSearchParams(location.search);
       if (sp.get("q")) qEl.value = sp.get("q");
       if (sp.get("w") !== null) windowEl.value = sp.get("w");
       if (!windowEl.value) windowEl.value = "24";
+      if (/^\d+$/.test(sp.get("p") || "")) initialPkt = parseInt(sp.get("p"), 10);
     })();
 
     function pushUrl() {
       var sp = new URLSearchParams();
       if (qEl.value.trim()) sp.set("q", qEl.value.trim());
       if (windowEl.value !== "24") sp.set("w", windowEl.value);
+      // replaceState, not pushState: opening and closing a detail is reading,
+      // not navigating, and a back button that walked back through every packet
+      // somebody glanced at would never reach the previous search.
+      if (openPktId) sp.set("p", String(openPktId));
       var qs = sp.toString();
       history.replaceState(null, "", location.pathname + (qs ? "?" + qs : ""));
     }
@@ -2005,10 +2148,10 @@
           var a = document.createElement("a");
           a.href = "#";
           a.textContent = v.value;
-          a.title = t("arch.facet_add", { q: name + ":" + v.value });
+          a.title = t("arch.facet_add", { q: queryClause(name, v.value, false) });
           a.addEventListener("click", function (e) {
             e.preventDefault();
-            addClause(name, v.value);
+            setFilter(name, v.value, false);
           });
           var n = document.createElement("span");
           n.className = "muted";
@@ -2022,14 +2165,103 @@
       facetsEl.hidden = !facetsEl.children.length;
     }
 
-    // Clicking a facet value refines rather than replaces, which is the whole
-    // point of showing the breakdown. A value already in the query is not added
-    // twice -- clicking the same bar repeatedly should be idempotent.
-    function addClause(field, value) {
-      var clause = field + ":" +
-        (/[\s"]/.test(value) ? '"' + value.replace(/"/g, "") + '"' : value);
+    /* Read a query back into its clauses, the way search.py's _tokenize does.
+     *
+     * This exists so a plus on a value that is already excluded can flip that
+     * one clause instead of appending a contradiction ("-type:ACK type:ACK"
+     * matches nothing and looks like a bug in the page). Reading the query
+     * requires the same rules the server parses it with, so this mirrors
+     * _tokenize deliberately -- the alternative, keeping the active filters in a
+     * JavaScript array beside the text box, would be a second filter mechanism
+     * next to the query language, and the moment somebody edited the text by
+     * hand the two would disagree about what is being searched.
+     *
+     * Returns null for anything it cannot read back (an unclosed quote, a
+     * dangling minus). The caller then leaves the text alone and only appends:
+     * the visitor already has a broken query and the server will say so.
+     */
+    function tokenizeQuery(text) {
+      var out = [], i = 0, n = text.length;
+      while (i < n) {
+        if (/\s/.test(text.charAt(i))) { i += 1; continue; }
+        var neg = false;
+        if (text.charAt(i) === "-") {
+          neg = true; i += 1;
+        } else if (text.substr(i, 4).toUpperCase() === "NOT ") {
+          neg = true; i += 4;
+          while (i < n && /\s/.test(text.charAt(i))) i += 1;
+        }
+        if (i >= n) return null;
+        var field = null;
+        var m = /^([A-Za-z_]+):/.exec(text.slice(i));
+        if (m) { field = m[1].toLowerCase(); i += m[0].length; }
+        var value;
+        if (text.charAt(i) === '"') {
+          var q = text.indexOf('"', i + 1);
+          if (q < 0) return null;
+          value = text.slice(i + 1, q);
+          i = q + 1;
+        } else if (text.charAt(i) === "(") {
+          var close = text.indexOf(")", i + 1);
+          if (close < 0) return null;
+          // Parentheses are kept in the value so an OR list survives a rewrite
+          // untouched; nothing here is entitled to reinterpret it.
+          value = text.slice(i, close + 1);
+          i = close + 1;
+        } else {
+          var start = i;
+          while (i < n && !/\s/.test(text.charAt(i))) i += 1;
+          value = text.slice(start, i);
+        }
+        if (!value) return null;
+        out.push({ neg: neg, field: field, value: value });
+      }
+      return out;
+    }
+
+    // Write the clauses back out. Only used when a clause actually changed, so
+    // a query nobody touched keeps the spacing its author gave it. "NOT x" does
+    // come back as "-x" -- the parser treats them as one and the same, and
+    // remembering which spelling was typed would be bookkeeping for nothing.
+    function renderQuery(tokens) {
+      return tokens.map(function (tok) {
+        var v = tok.value;
+        var grouped = v.charAt(0) === "(" && v.charAt(v.length - 1) === ")";
+        return (tok.neg ? "-" : "") + (tok.field ? tok.field + ":" : "") +
+          (grouped ? v : queryValue(v));
+      }).join(" ");
+    }
+
+    /* Add (or flip) one field:value clause and search again.
+     *
+     * Refining rather than replacing is the whole point of the facets and of the
+     * plus/minus buttons. Three cases, all of them things a visitor does:
+     *   - the very same clause is already there: nothing happens, so clicking
+     *     the same value twice is not two identical clauses;
+     *   - the opposite clause is there: it is flipped in place, because a plus
+     *     on something you excluded means "actually, only this", not "both";
+     *   - anything else: appended, which is an AND, which is what a space means.
+     * Comparison is case-insensitive because the text fields are matched with
+     * COLLATE NOCASE, so "ADVERT" and "advert" really are the same clause.
+     */
+    function setFilter(field, value, negate) {
+      var v = String(value).replace(/"/g, "");
+      if (!v) return;
       var current = qEl.value.trim();
-      if (current.indexOf(clause) !== -1) return;
+      var clause = queryClause(field, v, negate);
+      var tokens = tokenizeQuery(current);
+      if (tokens) {
+        for (var i = 0; i < tokens.length; i++) {
+          var tok = tokens[i];
+          if (tok.field !== field) continue;
+          if (tok.value.toLowerCase() !== v.toLowerCase()) continue;
+          if (tok.neg === negate) return;    // already exactly what was asked
+          tok.neg = negate;
+          qEl.value = renderQuery(tokens);
+          runSearch(false);
+          return;
+        }
+      }
       qEl.value = current ? current + " " + clause : clause;
       runSearch(false);
     }
@@ -2056,33 +2288,45 @@
         who.textContent = lbl ? lbl.text : t("pkt.sender_short");
         if (lbl) { who.title = lbl.title; who.classList.add("src-derived"); }
       }
+      // Only a sender an advert stated has a key in the sender column; a sender
+      // merely derived from the 1-byte hash gets no buttons, for the same reason
+      // the detail panel withholds them there.
+      filterBtns(who, "sender", p.sender, setFilter);
       li.appendChild(who);
       li.appendChild(cell2("pkt-obs", p.observer_name ||
-        (p.observer || "").slice(0, 6).toUpperCase() || "—"));
-      li.appendChild(cell2("pkt-type", p.type || "?"));
+        (p.observer || "").slice(0, 6).toUpperCase() || "—", "observer", p.observer));
+      li.appendChild(cell2("pkt-type", p.type || "?", "type", p.type));
       var scope = document.createElement("span");
       scope.className = "pkt-scope";
       scope.textContent = p.scope ? t("scope." + p.scope) : "—";
       if (p.scope_region) scope.textContent += " · " + p.scope_region;
+      filterBtns(scope, "scope", p.scope, setFilter);
       li.appendChild(scope);
-      li.appendChild(cell2("pkt-snr", p.snr != null ? p.snr.toFixed(1) + " dB" : "—"));
-      li.appendChild(cell2("pkt-rssi", p.rssi != null ? p.rssi + " dBm" : "—"));
-      li.appendChild(cell2("pkt-hops", p.path_len != null ? String(p.path_len) : "—"));
-      li.appendChild(cell2("pkt-len", p.len != null ? p.len + " B" : "—"));
-      li.appendChild(cell2("pkt-cc", p.country || "—"));
-      // The detail view already exists as the packet API plus the home page's
-      // panel; the archive links to the JSON straight up rather than growing a
-      // second panel of its own. REVISIT if that turns out too austere.
-      li.addEventListener("click", function () {
-        window.open("/api/v1/packets/" + p.id, "_blank");
+      li.appendChild(cell2("pkt-snr", p.snr != null ? p.snr.toFixed(1) + " dB" : "—",
+        "snr", p.snr));
+      li.appendChild(cell2("pkt-rssi", p.rssi != null ? p.rssi + " dBm" : "—",
+        "rssi", p.rssi));
+      li.appendChild(cell2("pkt-hops", p.path_len != null ? String(p.path_len) : "—",
+        "hops", p.path_len));
+      li.appendChild(cell2("pkt-len", p.len != null ? p.len + " B" : "—", "len", p.len));
+      li.appendChild(cell2("pkt-cc", p.country || "—", "country", p.country));
+      li.addEventListener("click", function () { openPacketModal(p.id); });
+      li.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        openPacketModal(p.id);
       });
       return li;
     }
 
-    function cell2(cls, text) {
+    // The column value carries the buttons rather than a separate control
+    // column: what you want to filter on is the value you are looking at, and a
+    // row of nine button pairs would be a toolbar, not a result.
+    function cell2(cls, text, field, value) {
       var el = document.createElement("span");
       el.className = cls;
       el.textContent = text;
+      filterBtns(el, field, value, setFilter);
       return el;
     }
 
@@ -2090,6 +2334,9 @@
       listEl.textContent = "";
       rows.forEach(function (p) { listEl.appendChild(archRow(p)); });
       emptyEl.hidden = rows.length > 0;
+      // Filtering from inside the open detail re-runs the search underneath it,
+      // so the row it belongs to has to be marked again on the new list.
+      if (openPktId) markOpenRow(openPktId);
     }
 
     function renderPager() {
@@ -2099,6 +2346,63 @@
         total: archTotal.toLocaleString() });
       prevEl.disabled = archOffset <= 0;
       nextEl.disabled = to >= archTotal;
+    }
+
+    // --- one packet, in full -------------------------------------------------
+    // Until now a click on a row opened the raw JSON of the API in a new tab,
+    // which answered the question but asked the reader to parse a packet by eye.
+    // The live page already had a panel that reads properly, so this shows that
+    // same fragment; nothing new is fetched that the API did not already serve.
+    function openPacketModal(id) {
+      if (!pktModalEl || !id) return;
+      openPktId = id;
+      blankPacketDetail();
+      pktModalEl.hidden = false;
+      document.body.style.overflow = "hidden";   // same as the history modal
+      var panelEl = pktModalEl.querySelector(".modal-panel");
+      if (panelEl) panelEl.scrollTop = 0;
+      var closeBtn = document.getElementById("pkt-close");
+      if (closeBtn) closeBtn.focus();
+      markOpenRow(id);
+      pushUrl();
+      fetch("/api/v1/packets/" + encodeURIComponent(id))
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function (d) {
+          if (openPktId !== id) return;   // a second click already took over
+          // The archive always has something to say about countries: it has a
+          // Land column and a country: field whatever the deployment looks like.
+          fillPacketDetail(d, { showCountry: true, onFilter: setFilter });
+        })
+        .catch(function () {
+          if (openPktId === id) txt("pkt-path-note", t("pkt.loaderror"));
+        });
+    }
+
+    function closePacketModal() {
+      if (!pktModalEl || pktModalEl.hidden) return;
+      pktModalEl.hidden = true;
+      document.body.style.overflow = "";
+      openPktId = null;
+      markOpenRow(-1);
+      pushUrl();
+    }
+
+    function markOpenRow(id) {
+      Array.prototype.forEach.call(listEl.children, function (li) {
+        li.classList.toggle("selected", parseInt(li.dataset.id, 10) === id);
+      });
+    }
+
+    if (pktModalEl) {
+      document.getElementById("pkt-close").addEventListener("click", closePacketModal);
+      pktModalEl.querySelector(".modal-backdrop")
+        .addEventListener("click", closePacketModal);
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !pktModalEl.hidden) closePacketModal();
+      });
     }
 
     prevEl.addEventListener("click", function () {
@@ -2116,5 +2420,9 @@
     windowEl.addEventListener("change", function () { runSearch(false); });
 
     runSearch(false);
+    // A link that names a packet opens it straight away, without waiting for the
+    // list around it: the detail comes from its own endpoint, and somebody who
+    // was sent that link came for the packet, not for the search behind it.
+    if (initialPkt) openPacketModal(initialPkt);
   }
 })();
