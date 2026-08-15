@@ -484,6 +484,38 @@ can still fix it over the mesh.
 > `wifi pass` and `wifi console` send secrets in cleartext over LoRa if used from
 > the mesh CLI. Prefer the console or the web page for those two.
 
+### Commands over MQTT (1.8.0)
+
+The node subscribes to `<prefix>/<node>/cmd` on every successful broker connect —
+inside `mqttEnsure()`, because a subscription lives in one session and this client
+uses a clean one, so subscribing once at startup would quietly stop working after
+the first WiFi hiccup.
+
+| Word | Effect |
+|---|---|
+| `settings` | Force a CLI settings sweep, then publish it as soon as it finishes |
+| `status` | Publish a statistics message immediately |
+
+That is the entire vocabulary. **The payload is never handed to
+`handleCommand()`**, unlike the console above, and the difference is deliberate:
+the console asks for a password over a link the operator controls, while this
+topic is reachable by anyone holding broker credentials. On a solar repeater on a
+roof, one `reboot` in a loop is a lost node. Both accepted words only make the
+node say what it would have said by itself, so the worst case is one extra
+statistics message — and at most one every `MQTT_CMD_MIN_GAP_MS` (30 s), which is
+a power budget rather than a security measure.
+
+The callback copies the word and returns; `mqttRunCommand()` acts on it from the
+ordinary loop, same discipline as the raw-packet queue. Accepted and refused
+commands are both counted, and `wifi mqtt` prints them as
+`cmd=<accepted>/<refused>` — which is how you tell "the site never asked" from
+"the broker refused my subscribe" from "it ran and nothing changed".
+
+This needs a broker ACL entry: the node's account must be allowed to *read*
+`meshcore/<its own prefix>/cmd`. Without it the subscribe is refused, and the
+button on the site looks exactly as dead as it did before any of this existed.
+See [`mqtt.md`](mqtt.md#asking-a-node-for-something).
+
 ### The three safety nets
 
 `MeshStatsNet` is custom code running on a node that must not die. It therefore
@@ -646,6 +678,7 @@ Built and tested on a Heltec V3 (ESP32-S3) companion and a Heltec V4 repeater.
 | Management page and `/stats.json` | working |
 | MQTT stats publishing | working |
 | `MeshStatsNet` on the repeater | working |
+| Commands from the site over MQTT (`cmd` topic, 1.8.0) | written and reviewed, **not flashed on any node yet** |
 | Forwarding over **HTTP** | abandoned — crashed the node; see [`architecture.md`](architecture.md#why-mqtt) |
 | Raw-packet forwarding over MQTT | working |
 | Full web client on the companion node | working |

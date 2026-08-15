@@ -1,5 +1,24 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.8.0  The node listens on '<prefix>/<node>/cmd' and accepts exactly two
+ *        words there: 'settings' forces a CLI sweep and publishes the result
+ *        the moment it is done, 'status' publishes a statistics message now.
+ *        Everything else is refused and counted.
+ *        Why at all: the site's "fetch settings" button dropped a request in a
+ *        queue that only the Home Assistant integration ever emptied. Take
+ *        Home Assistant out of the chain -- which is the whole point of a node
+ *        publishing straight to MQTT -- and the button did nothing at all,
+ *        while the values on the page kept ageing until the daily sweep came
+ *        round. The site can now ask the node itself, over the connection that
+ *        was already open.
+ *        Why not a remote CLI: the temptation was to hand the payload to
+ *        handleCommand() and be done, since the telnet console already does
+ *        exactly that. But the console asks for a password over a link the
+ *        operator controls, while the cmd topic is reachable by anyone holding
+ *        broker credentials -- and one 'reboot' in a loop is enough to lose a
+ *        repeater on a roof. Two words that only make the node say what it
+ *        would have said by itself cannot do that, and they cover the entire
+ *        reason this exists.
  * 1.7.2  The sweep asks for flood.max.unscoped as well. The parameter list on
  *        the site only steers the Home Assistant path; this sweep has its own
  *        table, so a parameter added there never showed up for MQTT nodes.
@@ -104,6 +123,17 @@
  * source (fewer neighbours) rather than being refused here, because publish()
  * silently drops whatever exceeds its buffer. */
 #define MQTT_PUB_MAX    5120
+
+/* Inbound commands. Longer than the longest word we accept, because a payload
+ * that does not fit has to be recognisable as 'too long' rather than silently
+ * truncated into something that happens to match.
+ *
+ * The gap is a power budget, not a security measure: every accepted command
+ * ends in a publish, and a node on a panel cannot afford one per second because
+ * somebody left a script running. Commands arriving inside the gap are dropped,
+ * not queued -- 'do it now' loses its meaning if it waits. */
+#define MQTT_CMD_MAX          32
+#define MQTT_CMD_MIN_GAP_MS  30000UL
 
 #define STA_TIMEOUT_MS      30000UL    // try this long before broadcasting our own SSID
 #define STA_RETRY_MS       300000UL    // while in AP mode, retry the network every 5 min
@@ -257,6 +287,21 @@ static uint32_t _fail_count = 0;
  * translates it itself. "" | "conn" | "stats" | "pkt" */
 static const char *_mqtt_err = "";
 static int _mqtt_err_rc = 0;
+
+/* Inbound commands. The callback runs inside _mqtt.loop() -- so on this task,
+ * not on another one -- but it is still the wrong place to start a sweep or a
+ * publish: PubSubClient is in the middle of reading its socket there, and
+ * publishing from inside its own read is how you get a reply interleaved with
+ * an incoming message. So the callback copies the word and nothing else, and
+ * mqttLoop() acts on it a few instructions later. Same discipline as the raw
+ * packet queue and the web server flags. */
+static volatile bool _cmd_have = false;      // a word is waiting in _cmd_word
+static char _cmd_word[MQTT_CMD_MAX];
+static unsigned long _cmd_last_ms = 0;       // when we last accepted one
+static uint32_t _cmd_count = 0;              // accepted since boot
+static uint32_t _cmd_refused = 0;            // unknown word, too long, too soon
+static bool _cmd_push = false;               // publish statistics at the first chance
+static bool _cmd_after_sweep = false;        // ...but wait for the running sweep first
 
 struct RxItem {
   uint32_t ms;
@@ -1057,6 +1102,15 @@ static void settingsStep() {
     _set_due = millis() + (unsigned long)_cfg.set_iv_min * 60000UL;
     Serial.printf("MeshStatsNet: instellingen gelezen, %d gelukt, %d geen antwoord\n",
                   _set_n, _set_miss);
+    /* Somebody asked for this sweep over MQTT and is watching a page. Waiting
+     * for the ordinary publish interval would mean up to five minutes of a
+     * button that looks like it did nothing -- and far longer in power-save
+     * mode. Arm the publish here rather than in the command handler, because
+     * only here do we know the sweep actually finished. */
+    if (_cmd_after_sweep) {
+      _cmd_after_sweep = false;
+      _cmd_push = true;
+    }
   }
 }
 
@@ -1111,12 +1165,84 @@ static bool mqttEnsure() {
 
   if (ok) {
     _mqtt_err = "";
+    /* Subscribing belongs here and nowhere else: a subscription lives inside
+     * one session, and this client connects with a clean session, so every
+     * reconnect starts with none. Doing it once at startup would work until
+     * the first WiFi hiccup and then silently stop working -- which is the
+     * kind of fault that only shows up as 'the button used to do something'. */
+    char topic[96];
+    mqttTopic("cmd", topic, sizeof(topic));
+    if (!_mqtt.subscribe(topic, 0)) {
+      Serial.printf("MeshStatsNet: kon niet inschrijven op %s\n", topic);
+    }
   } else {
     _fail_count++;
     _mqtt_err = "conn";
     _mqtt_err_rc = _mqtt.state();
   }
   return ok;
+}
+
+/* Arrives from inside _mqtt.loop(). Copies one word and returns; see the note
+ * at _cmd_have for why nothing else happens here.
+ *
+ * A retained message would be redelivered on every reconnect, so the node would
+ * sweep on every boot and after every WiFi drop, forever. The publisher is the
+ * one that has to get that right (retain=false), but a length cap and the
+ * interval below are what keep the damage bounded when it does not. */
+static void mqttOnMessage(char *topic, uint8_t *payload, unsigned int len) {
+  (void)topic;                    // we subscribe to exactly one, no need to sort
+  if (_cmd_have) return;          // one is already waiting; drop this
+  if (len == 0 || len >= MQTT_CMD_MAX) { _cmd_refused++; return; }
+
+  for (unsigned int i = 0; i < len; i++) _cmd_word[i] = (char)payload[i];
+  _cmd_word[len] = 0;
+  _cmd_have = true;
+}
+
+/* Runs the word the callback left behind, from the ordinary loop.
+ *
+ * The allowlist is the whole security model, so it is a list of exact strings
+ * and not a prefix test: 'settings' and 'status', nothing else, no arguments,
+ * no passthrough to handleCommand(). See the 1.8.0 changelog entry for why the
+ * console's route is not good enough here. */
+static void mqttRunCommand() {
+  if (!_cmd_have) return;
+
+  char word[MQTT_CMD_MAX];
+  strncpy(word, _cmd_word, sizeof(word) - 1);
+  word[sizeof(word) - 1] = 0;
+  _cmd_have = false;              // free the slot before doing any work
+
+  // Trim, so a publisher that adds a newline is not punished for it.
+  char *w = word;
+  while (*w == ' ' || *w == '\r' || *w == '\n' || *w == '\t') w++;
+  size_t wl = strlen(w);
+  while (wl && (w[wl - 1] == ' ' || w[wl - 1] == '\r' ||
+                w[wl - 1] == '\n' || w[wl - 1] == '\t')) w[--wl] = 0;
+
+  bool known = (strcmp(w, "settings") == 0 || strcmp(w, "status") == 0);
+  if (!known) {
+    _cmd_refused++;
+    Serial.printf("MeshStatsNet: opdracht '%.16s' geweigerd, alleen settings|status\n", w);
+    return;
+  }
+  if (_cmd_last_ms != 0 && millis() - _cmd_last_ms < MQTT_CMD_MIN_GAP_MS) {
+    _cmd_refused++;
+    Serial.printf("MeshStatsNet: opdracht '%s' te snel na de vorige, genegeerd\n", w);
+    return;
+  }
+  _cmd_last_ms = millis();
+  _cmd_count++;
+
+  if (strcmp(w, "settings") == 0) {
+    _set_force = true;            // settingsLoop() picks this up this same pass
+    _cmd_after_sweep = true;      // publish once it has something to publish
+    Serial.println("MeshStatsNet: instellingen-sweep gevraagd via MQTT");
+  } else {
+    _cmd_push = true;
+    Serial.println("MeshStatsNet: statusbericht gevraagd via MQTT");
+  }
 }
 
 static bool mqttPublishStats() {
@@ -1223,7 +1349,18 @@ static void mqttLoop() {
   if (_asleep) return;
 
   if (_mqtt.connected()) _mqtt.loop();
+  mqttRunCommand();
   mqttDrainRx();
+
+  /* An asked-for publish jumps the interval, and resets it: whoever gets this
+   * message has just been given everything the next scheduled one would have
+   * carried, so sending that one seconds later is pure airtime. */
+  if (_cmd_push) {
+    _cmd_push = false;
+    _mqtt_last_push = millis();
+    mqttPublishStats();
+    return;
+  }
 
   if (millis() - _mqtt_last_push < currentIntervalSecs() * 1000UL) return;
   _mqtt_last_push = millis();
@@ -3537,11 +3674,13 @@ static void handleMqttCommand(const char *arg, char *reply) {
   const char *v;
 
   if (*arg == 0) {
-    snprintf(reply, 155, "%s, broker=%.40s:%u, prefix=%.16s, rx=%s, stats=%u pkt=%u drop=%u",
+    snprintf(reply, 155, "%s, broker=%.32s:%u, prefix=%.16s, rx=%s, "
+             "stats=%u pkt=%u drop=%u cmd=%u/%u",
              _cfg.mqtt_enabled ? (_mqtt.connected() ? "verbonden" : "niet verbonden") : "uit",
              _cfg.mqtt_host[0] ? _cfg.mqtt_host : "-", (unsigned)_cfg.mqtt_port,
              _cfg.mqtt_prefix, _cfg.mqtt_rx ? "aan" : "uit",
-             (unsigned)_stats_count, (unsigned)_rx_count, (unsigned)_drop_count);
+             (unsigned)_stats_count, (unsigned)_rx_count, (unsigned)_drop_count,
+             (unsigned)_cmd_count, (unsigned)_cmd_refused);
     return;
   }
   if ((v = subArg(arg, "host")) != NULL) {
@@ -3751,6 +3890,7 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   _mqtt.setBufferSize(MQTT_PUB_MAX);
   _mqtt.setSocketTimeout(4);
   _mqtt.setKeepAlive(60);
+  _mqtt.setCallback(mqttOnMessage);
   _mqtt.setServer(_cfg.mqtt_host, _cfg.mqtt_port);
 
   updatePowerLevel();
