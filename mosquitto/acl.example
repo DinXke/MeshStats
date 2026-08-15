@@ -12,14 +12,26 @@
 # inclusief anonieme. Zet hier dus nooit een globale regel neer — begin meteen
 # met een 'user'-blok.
 
-# --- de site zelf: leest alles, schrijft niets -------------------------------
+# --- de site zelf: leest alles, schrijft alleen opdrachten -------------------
+# Het cmd-topic is het enige waarop de site publiceert: één woord ('settings' of
+# 'status') dat een node vraagt nu iets te doen. Bewust geen 'topic write
+# meshcore/#', want dan zou de site ook onder de stats- en rx-topics van nodes
+# kunnen publiceren, en verliest het topic net datgene wat het waard is: dat de
+# broker afdwingt wie er spreekt.
 user meshstats
 topic read meshcore/#
+topic write meshcore/+/cmd
 
 # --- één blok per node -------------------------------------------------------
 # Alleen schrijven onder de eigen pubkey-prefix. 'stats' en 'rx' apart in plaats
 # van meshcore/<prefix>/# , zodat een node geen topics kan aanmaken die de server
 # later voor iets anders gebruikt.
+#
+# De leesregel hoort erbij vanaf MeshStats-firmware 1.8.0: daarmee ontvangt de
+# node opdrachten van de site. Zonder die regel verbindt hij, schrijft hij zich
+# in, weigert de broker dat, en merkt niemand er iets van — de opvraagknop op de
+# site lijkt dan even dood als vóór dit alles bestond.
 user node-e3d3f4d7ed01
 topic write meshcore/e3d3f4d7ed01/stats
 topic write meshcore/e3d3f4d7ed01/rx
+topic read  meshcore/e3d3f4d7ed01/cmd

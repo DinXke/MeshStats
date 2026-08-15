@@ -45,7 +45,15 @@ the message is **about**. Usually the same node reporting on itself, but a node
 may also relay statistics for repeaters it monitors, so the publisher is stored
 alongside the subject rather than assumed equal to it. See [`mqtt.md`](mqtt.md).
 
-### Path B — Home Assistant to HTTP to site
+The same connection carries one message the other way. The admin page can ask a
+node to read its CLI settings now, or to publish immediately, by putting a single
+word on `meshcore/<node>/cmd`. The answer comes back on the ordinary `stats`
+topic, so this is a trigger and not a second data path. The firmware accepts
+those two words and nothing else — see
+[`mqtt.md`](mqtt.md#asking-a-node-for-something) for why that restriction is the
+point rather than an omission.
+
+### Path B — a poller to HTTP to site (optional)
 
 ```
   Repeater  --LoRa-->  Companion node  --TCP-->  HA `meshcore`
@@ -64,11 +72,19 @@ integration already holds sensor entities for every repeater it hears. The
 `mc_repeater_stats` custom component scrapes those entities out of the state
 machine, builds the same JSON body, and POSTs it.
 
-It can do more than the node can, because it can talk *to* repeaters: it issues
-`send_statusreq`, `send_telemetry_req`, `send_login` and `send_cmd` through
-`meshcore.execute_command` and parses the replies. That is how the read-only CLI
-settings view in `/admin` gets filled. A node publishing over MQTT reports only
-on itself.
+It can do something no node can: talk *to* repeaters that are not its own. It
+issues `send_statusreq`, `send_telemetry_req`, `send_login` and `send_cmd`
+through `meshcore.execute_command` and parses the replies, which is how the CLI
+settings of a repeater running stock firmware reach `/admin`. A node publishing
+over MQTT only ever reports on itself.
+
+This path is optional, and no longer the only way to fill that view. A node
+running the MeshStats firmware reads its own CLI once a day and can be asked to
+do it now over the `cmd` topic above; a repeater that only a poller can reach
+still needs this path. `commanding.py` works out per repeater which of the two is
+available, and the admin page disables the button and says why when neither is —
+because for a while it did the opposite, queueing look-ups for a poller that had
+been switched off, and reporting each one as started.
 
 Both paths converge on the same `db.ingest()` call and produce identical rows.
 You can run both at once; whichever arrives most recently wins.

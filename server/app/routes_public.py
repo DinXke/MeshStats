@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from . import auth, config, db, metrics, search
+from . import auth, commanding, config, db, metrics, search
 from .templating import templates
 
 router = APIRouter()
@@ -139,7 +139,14 @@ def repeater_page(request: Request, slug: str):
         "is_online": online_row is not None and online_row["value"] == 1.0,
         "is_admin": is_admin,
         "csrf": auth.csrf_token(session_cookie) if is_admin else "",
-        "refresh_requested": request.query_params.get("refresh") == "1",
+        # 'mqtt' | 'queued' | 'both' | 'none', en '1' uit oudere links. Wat er
+        # werkelijk gebeurd is, want de knop kan tegenwoordig ook nergens heen,
+        # en dan hoort de pagina dat te zeggen in plaats van een update te
+        # beloven die niemand gaat halen.
+        "refresh_state": ("both" if request.query_params.get("refresh") == "1"
+                          else request.query_params.get("refresh", "")),
+        # Alleen voor beheerders berekend: de knop staat er voor niemand anders.
+        "route": commanding.describe(r) if is_admin else None,
         "zones": {
             m: {"min": cfg[0], "max": cfg[1], "segments": cfg[2]}
             for m, cfg in {**metrics.GAUGES, **metrics.THERMOMETERS}.items()

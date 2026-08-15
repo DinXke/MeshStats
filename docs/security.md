@@ -20,19 +20,36 @@ protecting are not the readings.
 
 The structural property worth stating first:
 
-**The server holds no credentials for your mesh.** Data flows one way, from node
-to site. There is no stored node password, no return channel, no command path
-from the site to a node. Full compromise of the website does not give an attacker
-control of a single radio.
+**The server holds no credentials for your mesh.** There is no stored node
+password and no way for the site to configure a radio. Full compromise of the
+website does not give an attacker control of a single node.
 
-The one qualification: the HA integration polls `GET /api/v1/commands` and acts
-on what it finds — a list of repeater prefixes to refresh and CLI parameters to
-fetch. A compromised server could therefore ask Home Assistant to run
+Data used to flow strictly one way, and that is no longer literally true. Two
+narrow return paths exist, and both are worth understanding before trusting the
+sentence above.
+
+**1. The MQTT command topic.** The server publishes on `meshcore/<node>/cmd`, and
+the firmware accepts exactly two words there: `settings` (read my own CLI
+parameters now) and `status` (publish a statistics message now). It is an exact
+match against a list of two — not a prefix test, and explicitly *not* a
+fallthrough to the node's CLI, even though the node's telnet console does exactly
+that. That console sits behind a password on a link you control; this topic is
+reachable by anyone holding broker credentials, and these repeaters hang on roofs
+where one `reboot` in a loop is a lost node. Both words only make the node say
+what it would have said by itself, so the ceiling on this path is: someone who
+owns the broker can make a node publish a statistics message, at most one every
+30 seconds. Bound it further with an ACL that gives each node read permission on
+its own `cmd` topic only, and the server write permission on `meshcore/+/cmd`
+only — see `mosquitto/acl.example`.
+
+**2. The polling queue.** The HA integration polls `GET /api/v1/commands` and
+acts on what it finds — a list of repeater prefixes to refresh and CLI parameters
+to fetch. A compromised server could therefore ask Home Assistant to run
 `send_cmd` against repeaters *whose passwords Home Assistant already holds*.
 Requests are clamped (params truncated to 64 chars, at most 40 per request), but
-a param may be `cmd:<literal>`, which is sent verbatim. This is a real, if
-narrow, path — and it exists only if you use the HA integration with repeater
-passwords configured.
+a param may be `cmd:<literal>`, which is sent verbatim. This is the wider of the
+two paths by some distance — and it exists only if you run the HA integration
+with repeater passwords configured.
 
 ---
 

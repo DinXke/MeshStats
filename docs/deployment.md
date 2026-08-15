@@ -129,6 +129,13 @@ you added under `/opt/mc-repeater-stats/server` is removed.
 | `MCS_MQTT_PASS` | *(empty)* | from `.env` |
 | `MCS_MQTT_TOPIC` | `meshcore/+/stats` | same |
 | `MCS_MQTT_RX_TOPIC` | `meshcore/+/rx` | same |
+| `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | same |
+
+`MCS_MQTT_CMD_TOPIC` is the only topic the site publishes on: one word asking a
+node to read its CLI settings or to publish a status message now. It needs a
+broker ACL that lets each node read its own `cmd` topic — without that the node's
+subscribe is refused and nothing anywhere reports it. See
+[`mqtt.md`](mqtt.md#asking-a-node-for-something).
 
 The code defaults and the compose defaults differ. If you run the container
 outside compose, set `MCS_MQTT_HOST` explicitly or ingest stays off.

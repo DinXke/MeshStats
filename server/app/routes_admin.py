@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import auth, config, db, metrics, mqtt_ingest, ratelimit, tsdb
+from . import auth, commanding, config, db, metrics, mqtt_ingest, ratelimit, tsdb
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -159,16 +159,53 @@ def save_layout(request: Request, layout: str = Form(...), csrf: str = Form(...)
     return RedirectResponse("/admin", status_code=303)
 
 
+def _dispatch(rep, command: str) -> str:
+    """Stuur één opdracht langs elke weg die openstaat. Geeft terug welke.
+
+    Beide wegen worden bewandeld en niet de eerste de beste: ze zijn niet
+    uitwisselbaar. De MQTT-weg bereikt de node zelf en alleen als die op dit
+    ogenblik aan de broker hangt; de wachtrij bereikt een poller die de repeater
+    over LoRa uitvraagt en ook werkt als de node zijn WiFi uit heeft staan. Wie
+    er allebei zijn, heeft er allebei iets aan; wie er geen heeft, hoort dat te
+    zien en niet "gestart" te lezen.
+
+    Terug komt 'mqtt', 'queued', 'both' of 'none' -- wat de pagina daarna zegt
+    hangt daaraan en niet aan wat we hoopten dat er zou gebeuren.
+    """
+    route = commanding.describe(rep)
+    sent = route["mqtt"] and mqtt_ingest.publish_command(route["node"], command)
+    queued = route["ha"]
+    if command == "settings":
+        raw = db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS)
+        params = [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()][:40]
+        # Ook zonder poller in zicht in de wachtrij zetten zou een verzoek
+        # achterlaten dat maanden later door een net geïnstalleerde Home
+        # Assistant wordt opgepikt. Alleen zetten als er iemand is om het op te
+        # halen, zodat pending_settings_request() blijft betekenen wat het zegt.
+        if queued:
+            db.request_settings(rep["pubkey_prefix"], params)
+    elif queued:
+        db.request_refresh(rep["pubkey_prefix"])
+
+    if sent and queued:
+        return "both"
+    if sent:
+        return "mqtt"
+    if queued:
+        return "queued"
+    return "none"
+
+
 @router.post("/repeaters/{rid}/refresh")
 def refresh_repeater(request: Request, rid: int, csrf: str = Form(...)):
-    """Manual status update: queue a request for the Home Assistant integration."""
+    """Vraag nu een verse status: rechtstreeks aan de node en/of via een poller."""
     require_login(request)
     check_csrf(request, csrf)
-    row = db.qone("SELECT slug, pubkey_prefix FROM repeaters WHERE id=?", (rid,))
+    row = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not row:
         raise HTTPException(404, "Onbekende repeater")
-    db.request_refresh(row["pubkey_prefix"])
-    return RedirectResponse(f"/r/{row['slug']}?refresh=1", status_code=303)
+    outcome = _dispatch(row, "status")
+    return RedirectResponse(f"/r/{row['slug']}?refresh={outcome}", status_code=303)
 
 
 @router.get("/repeaters/{rid}/settings", response_class=HTMLResponse)
@@ -178,32 +215,39 @@ def repeater_settings_page(request: Request, rid: int):
     rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not rep:
         raise HTTPException(404, "Onbekende repeater")
+    requested = request.query_params.get("requested", "")
     return templates.TemplateResponse(request, "admin/repeater_settings.html", {
         "site_name": config.SITE_NAME, "user": user, "rep": rep,
         "settings_rows": db.cli_settings_for(rid),
         "cli_params": db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
-        "requested": request.query_params.get("requested") == "1",
-        # Staat het verzoek er na een herlading nog, dan heeft Home Assistant
-        # sinds de klik niet gepold -- een heel ander euvel dan een opvraging
-        # die wel vertrok en waarvan het antwoord uitblijft. De pagina hoort dat
-        # verschil te tonen in plaats van in beide gevallen "gestart" te melden.
+        # '1' is de oude vorm, van vóór er meer dan één weg was; een pagina die
+        # nog in een tabblad openstaat mag daar niet op stukvallen.
+        "requested": "both" if requested == "1" else requested,
+        # Staat het verzoek er na een herlading nog, dan heeft geen enkele
+        # poller sinds de klik iets opgehaald -- een heel ander euvel dan een
+        # opvraging die wel vertrok en waarvan het antwoord uitblijft. De pagina
+        # hoort dat verschil te tonen in plaats van in beide gevallen "gestart"
+        # te melden.
         "queued_since": db.pending_settings_request(rep["pubkey_prefix"]),
+        # Wat er kán, bepaald vóór de knop getekend wordt: een knop die niets
+        # kan doen hoort uitgeschakeld te zijn en te zeggen waarom.
+        "route": commanding.describe(rep),
+        "min_fw": ".".join(str(n) for n in commanding.MIN_CMD_VERSION),
     })
 
 
 @router.post("/repeaters/{rid}/settings/refresh")
 def repeater_settings_refresh(request: Request, rid: int, csrf: str = Form(...)):
-    """Vraag de CLI-instellingen op via de HA-integratie (LoRa, duurt 1-2 min)."""
+    """Vraag de CLI-instellingen op: rechtstreeks aan de node en/of via een poller."""
     require_login(request)
     check_csrf(request, csrf)
-    rep = db.qone("SELECT pubkey_prefix FROM repeaters WHERE id=?", (rid,))
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not rep:
         raise HTTPException(404, "Onbekende repeater")
-    raw = db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS)
-    params = [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()][:40]
-    db.request_settings(rep["pubkey_prefix"], params)
-    return RedirectResponse(f"/admin/repeaters/{rid}/settings?requested=1", status_code=303)
+    outcome = _dispatch(rep, "settings")
+    return RedirectResponse(f"/admin/repeaters/{rid}/settings?requested={outcome}",
+                            status_code=303)
 
 
 @router.post("/cli_params")

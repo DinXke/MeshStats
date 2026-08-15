@@ -1,0 +1,116 @@
+"""Tests voor de weg die de knop vandaag aflegt: site -> broker -> node.
+
+De keten heeft één eigenschap die alles bepaalt: publiceren zegt niets over
+aankomen. De broker bewaart niets voor een node die offline is en de node
+bevestigt niets terug. Wat hier vastligt is dus vooral wat er NIET gebeurt --
+niet retained publiceren, niet publiceren zonder verbinding, en niets anders
+versturen dan de twee woorden die de firmware aanneemt.
+"""
+import pytest
+
+from app import mqtt_ingest
+
+
+class FakeInfo:
+    def __init__(self, rc=0):
+        self.rc = rc
+
+
+class FakeClient:
+    """Genoeg van paho om vast te leggen wat er de deur uit gaat."""
+
+    def __init__(self, rc=0, boom=False):
+        self.published = []
+        self.rc = rc
+        self.boom = boom
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        if self.boom:
+            raise OSError("socket dicht")
+        self.published.append({"topic": topic, "payload": payload,
+                               "qos": qos, "retain": retain})
+        return FakeInfo(self.rc)
+
+
+@pytest.fixture
+def broker(monkeypatch):
+    """Een verbonden client, zoals na een geslaagde connect."""
+    client = FakeClient()
+    monkeypatch.setattr(mqtt_ingest, "_client", client)
+    monkeypatch.setattr(mqtt_ingest, "MQTT_HOST", "broker.invalid")
+    mqtt_ingest._state["connected"] = True
+    yield client
+    mqtt_ingest._state["connected"] = False
+
+
+def test_opdracht_gaat_naar_het_cmd_topic_van_de_node(broker):
+    assert mqtt_ingest.publish_command("E3D3F4D7EDD0", "settings") is True
+    (msg,) = broker.published
+    assert msg["topic"] == "meshcore/e3d3f4d7edd0/cmd"
+    assert msg["payload"] == b"settings"
+
+
+def test_niets_wordt_retained(broker):
+    # Een retained opdracht wordt bij elke herverbinding opnieuw bezorgd: de
+    # node zou dan bij elke boot en elke WiFi-hik zijn CLI uitlezen, wekenlang,
+    # zonder dat iemand dat nog aan één klik koppelt.
+    mqtt_ingest.publish_command("e3d3f4d7edd0", "status")
+    assert broker.published[0]["retain"] is False
+
+
+def test_zonder_verbinding_wordt_er_niet_gepubliceerd(broker):
+    # Belangrijker dan het lijkt: de knop mag geen "verstuurd" melden omdat
+    # paho de boodschap in een wachtrij stopte die bij een clean session toch
+    # nooit vertrekt.
+    mqtt_ingest._state["connected"] = False
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "settings") is False
+    assert broker.published == []
+
+
+def test_onbekende_opdracht_wordt_hier_al_geweigerd(broker):
+    # De firmware weigert ze ook, maar dan is het een ronde over de radio en
+    # een teller op de node. Een typefout hoort hier te stranden.
+    with pytest.raises(ValueError):
+        mqtt_ingest.publish_command("e3d3f4d7edd0", "reboot")
+    assert broker.published == []
+
+
+def test_sleutel_wordt_tot_hex_teruggebracht(broker):
+    # Het topic komt uit de database en de database uit berichten van buiten.
+    # Een '+' of een '#' erin zou een topic maken dat iets heel anders raakt.
+    assert mqtt_ingest.publish_command("e3d3f4/#+d7", "status") is True
+    assert broker.published[0]["topic"] == "meshcore/e3d3f4d7/cmd"
+
+
+def test_lege_sleutel_levert_geen_publicatie_op(broker):
+    assert mqtt_ingest.publish_command("", "status") is False
+    assert mqtt_ingest.publish_command(None, "status") is False
+    assert broker.published == []
+
+
+def test_een_stukke_socket_geeft_false_in_plaats_van_een_500(monkeypatch):
+    client = FakeClient(boom=True)
+    monkeypatch.setattr(mqtt_ingest, "_client", client)
+    monkeypatch.setattr(mqtt_ingest, "MQTT_HOST", "broker.invalid")
+    mqtt_ingest._state["connected"] = True
+    try:
+        assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is False
+    finally:
+        mqtt_ingest._state["connected"] = False
+
+
+def test_weigering_door_de_client_telt_als_niet_verstuurd(monkeypatch):
+    client = FakeClient(rc=4)
+    monkeypatch.setattr(mqtt_ingest, "_client", client)
+    monkeypatch.setattr(mqtt_ingest, "MQTT_HOST", "broker.invalid")
+    mqtt_ingest._state["connected"] = True
+    try:
+        assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is False
+    finally:
+        mqtt_ingest._state["connected"] = False
+
+
+def test_zonder_broker_is_publiceren_uitgeschakeld(monkeypatch):
+    monkeypatch.setattr(mqtt_ingest, "_client", None)
+    assert mqtt_ingest.can_publish() is False
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is False

@@ -31,7 +31,12 @@ cat > mosquitto/acl <<EOF
 
 user $MCS_MQTT_USER
 topic read meshcore/#
-# Verwijder de volgende regel zodra elke node zijn eigen account heeft.
+# De site publiceert zelf op één topic: het cmd-topic waarmee ze een node vraagt
+# nu zijn instellingen te lezen of een statusbericht te sturen. Deze regel blijft
+# dus staan, ook als het gedeelde account verder geen schrijfrechten meer heeft.
+topic write meshcore/+/cmd
+# Verwijder de volgende regel zodra elke node via add-node-user.sh een eigen
+# account heeft; de regel hierboven mag NIET mee weg.
 topic write meshcore/#
 EOF
 

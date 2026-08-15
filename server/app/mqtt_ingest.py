@@ -30,6 +30,23 @@ of message arrive, on two topic patterns:
 it uppercase; everything downstream keys on lowercase hex, so it is normalised
 here.
 
+One topic goes the other way::
+
+    meshcore/<node_hex>/cmd
+
+A single word -- ``settings`` or ``status`` -- asking that node to read its CLI
+parameters now, or to publish a statistics message now. It exists because the
+admin page's "fetch settings" button used to write into a queue that only the
+Home Assistant integration ever emptied, so pulling Home Assistant out of the
+chain left a button that did nothing while the page kept showing values from the
+node's last daily sweep. The node answers on the ordinary ``stats`` topic, so
+nothing else in this file changes.
+
+That the firmware accepts only those two words is not a detail: this topic is
+reachable by anyone holding broker credentials, and the repeaters this serves
+hang on roofs. See ``publish_command`` for why nothing is retained here, and
+``MeshStatsNet.cpp`` for why nothing else is accepted there.
+
 Identity: topic versus payload
 ------------------------------
 The topic names the node that **published** the message. The payload names the
@@ -58,6 +75,7 @@ prefix, which turns the topic into something the broker enforces. See
 import json
 import logging
 import os
+import re
 import threading
 
 from . import db, packets
@@ -70,6 +88,15 @@ MQTT_USER = os.environ.get("MCS_MQTT_USER", "")
 MQTT_PASS = os.environ.get("MCS_MQTT_PASS", "")
 MQTT_TOPIC = os.environ.get("MCS_MQTT_TOPIC", "meshcore/+/stats")
 MQTT_RX_TOPIC = os.environ.get("MCS_MQTT_RX_TOPIC", "meshcore/+/rx")
+# The one topic this side publishes on. ``{node}`` is the publishing node's own
+# pubkey prefix, exactly as it appears in the two topics above, so a broker ACL
+# can bind a node's read permission to the same prefix as its write permission.
+MQTT_CMD_TOPIC = os.environ.get("MCS_MQTT_CMD_TOPIC", "meshcore/{node}/cmd")
+
+# Everything the firmware accepts, and nothing more. Kept here as well so a
+# typo on this side is refused before it costs a round trip, and so the list is
+# readable next to the code that sends it -- MeshStatsNet.cpp, mqttRunCommand().
+COMMANDS = ("settings", "status")
 
 # A MeshCore frame tops out around 255 bytes; anything far beyond that is not a
 # packet and should not be turned into a multi-megabyte bytes object.
@@ -79,7 +106,12 @@ MAX_RAW_HEX = 1024
 PRUNE_EVERY_PACKETS = 2000
 
 _state = {"connected": False, "messages": 0, "packets": 0, "errors": 0,
-          "last_error": "", "last_msg": None, "last_packet": None}
+          "last_error": "", "last_msg": None, "last_packet": None,
+          "commands": 0}
+
+# The live client, so the request handlers can publish over the connection the
+# subscriber already holds. None until the background thread has built one.
+_client = None
 
 
 def status() -> dict:
@@ -89,8 +121,53 @@ def status() -> dict:
         "broker": f"{MQTT_HOST}:{MQTT_PORT}" if MQTT_HOST else None,
         "topic": MQTT_TOPIC,
         "rx_topic": MQTT_RX_TOPIC,
+        "cmd_topic": MQTT_CMD_TOPIC,
         **_state,
     }
+
+
+def can_publish() -> bool:
+    """Whether a command sent right now would actually leave this machine."""
+    return bool(MQTT_HOST) and _client is not None and bool(_state["connected"])
+
+
+def publish_command(node: str, command: str) -> bool:
+    """Ask one node to do something now. False when nothing was sent.
+
+    Returns whether the message left, never whether it arrived. Deliberately
+    QoS 0 and ``retain=False``:
+
+    - QoS 0 because there is nothing to gain from the alternative. The client
+      connects with a clean session, so the broker queues nothing for a node
+      that is offline; a higher QoS would only confirm delivery to the broker,
+      which is not the question anyone is asking. A node asleep on its solar
+      budget simply misses the message, and the page has to say so rather than
+      pretend the command is on its way.
+    - retain=False because a retained command is redelivered on every reconnect.
+      The node would sweep its CLI on every boot and after every WiFi drop, for
+      as long as the message sat on the broker, and nobody would connect that to
+      a button pressed once, weeks earlier.
+    """
+    if command not in COMMANDS:
+        raise ValueError(f"unknown command {command!r}")
+    node = re.sub(r"[^0-9a-f]", "", str(node or "").lower())
+    if not node:
+        return False
+    if not can_publish():
+        return False
+    topic = MQTT_CMD_TOPIC.format(node=node)
+    try:
+        info = _client.publish(topic, command.encode(), qos=0, retain=False)
+    except Exception as err:  # noqa: BLE001 - a dead socket must not 500 the page
+        log.warning("Opdracht %s naar %s niet verstuurd: %s", command, node, err)
+        return False
+    if info.rc != 0:
+        log.warning("Opdracht %s naar %s geweigerd door de client (rc %s)",
+                    command, node, info.rc)
+        return False
+    _state["commands"] += 1
+    log.info("Opdracht '%s' gepubliceerd voor node %s", command, node)
+    return True
 
 
 def _topic_node(topic: str) -> str:
@@ -117,6 +194,7 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     ts = body.get("ts") or db.utcnow()
     db.ingest(row["id"], ts, metrics, body.get("neighbors"), force=bool(body.get("force")))
     db.record_source(row["id"], publisher)
+    db.record_firmware(row["id"], rep.get("fw"), rep.get("fw_meshstats"))
     if subject != publisher:
         log.info("stats for %s relayed by node %s", subject, publisher)
     settings = body.get("settings")
@@ -241,6 +319,12 @@ def _run() -> None:
     client.on_disconnect = on_disconnect
     client.on_message = on_message
     client.reconnect_delay_set(min_delay=2, max_delay=60)
+    # One connection for both directions. A second client for publishing would
+    # need its own credentials, its own reconnect loop and its own client id --
+    # and paho's publish() is thread-safe, so the request handlers can use this
+    # one from their own threads.
+    global _client
+    _client = client
 
     while True:
         try:

@@ -18,7 +18,7 @@ snprintf(out, max, "%s/%s/%s", _cfg.prefix,
 |---|---|
 | `<prefix>` | Configured on the node, default `meshcore` |
 | `<node>` | 12 hex chars: the first **6 bytes** of the node's Ed25519 public key, lowercase |
-| `<leaf>` | `stats` or `rx` |
+| `<leaf>` | `stats` or `rx` from the node, `cmd` towards it |
 
 Example: `meshcore/e3d3f4d7ed01/stats`.
 
@@ -34,6 +34,16 @@ the mesh identity was available.
 | `MCS_MQTT_RX_TOPIC` | `meshcore/+/rx` | Raw received packets (**in development**) |
 
 Both are subscribed at **QoS 0**.
+
+### The one topic the server publishes on
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | One command for one node |
+
+`{node}` is filled in with that node's own pubkey prefix, so a broker ACL can
+bind a node's *read* permission to the same prefix as its *write* permission.
+See [Asking a node for something](#asking-a-node-for-something).
 
 ### Who is speaking, and who they are speaking about
 
@@ -189,7 +199,73 @@ subscriber listens to exactly two patterns. A third topic would have been
 accepted by the broker and then dropped unread — the same failure that lost the
 monitored repeaters once before. Adding a topic means adding it to `MCS_MQTT_*`
 **and** to the subscribe calls in `on_connect`; until both happen, the messages
-go nowhere.
+go nowhere. That rule is about *publishing*, and says nothing about the
+direction the `cmd` topic below runs in.
+
+## Asking a node for something
+
+The daily sweep answers "what is this node configured as" once a day. The admin
+page needs to answer it *now*, and used to do that by writing into a queue that
+only the Home Assistant integration ever emptied. Take Home Assistant out of the
+chain — which is exactly what a node publishing straight to MQTT is for — and
+the button wrote into a queue nobody read, while the page promised a look-up
+that had already started.
+
+So the server publishes one word on `meshcore/<node>/cmd`:
+
+| Word | The node does |
+|---|---|
+| `settings` | reads its CLI parameters now, and publishes them with the statistics message it sends as soon as the sweep finishes |
+| `status` | publishes a statistics message immediately |
+
+The answer comes back on the ordinary `stats` topic. Nothing else in the ingest
+path changes, and a receiver that knows nothing about `cmd` still works.
+
+**The firmware accepts those two words and nothing else.** Not a prefix test, not
+a fallthrough to `handleCommand()` — an exact match against a list of two. The
+telnet console on the node does hand its input to the CLI, but that console asks
+for a password over a link the operator controls, while this topic is reachable
+by anyone holding broker credentials. These repeaters hang on roofs and run off
+solar panels; one `reboot` in a loop is enough to lose one. Both words only make
+the node say what it would have said by itself, so the worst an attacker on the
+broker achieves is a statistics message, at most one every 30 seconds
+(`MQTT_CMD_MIN_GAP_MS`).
+
+**Nothing is retained, and QoS stays 0.** A retained command is redelivered on
+every reconnect, so the node would sweep its CLI on every boot and after every
+WiFi drop for as long as the message sat on the broker — and nobody would connect
+that to a button pressed once, weeks earlier. QoS 0 because the alternative buys
+nothing: the node connects with a clean session, so the broker queues nothing
+while it is offline. A node asleep on its power budget simply misses the message.
+
+**Which is why the page checks before it promises.** `commanding.py` decides
+whether a command can go out at all, from four facts: the repeater publishes for
+itself (not relayed by another node), its firmware is MeshStats ≥ 1.8.0, the
+server is connected to the broker, and — for the fallback route — a poller has
+fetched `/api/v1/commands` in the last 15 minutes. With neither route open the
+button is disabled and the page says which of the four is missing. An older
+firmware does not subscribe to `cmd`, so publishing to it succeeds and vanishes;
+that is the one failure this check exists to prevent.
+
+### ACL
+
+Add the read side to the node's account and the write side to the server's:
+
+```
+user meshstats
+topic read meshcore/#
+topic write meshcore/+/cmd
+
+user node-e3d3f4d7ed01
+topic write meshcore/e3d3f4d7ed01/stats
+topic write meshcore/e3d3f4d7ed01/rx
+topic read  meshcore/e3d3f4d7ed01/cmd
+```
+
+Without the read rule the node connects, subscribes, is refused by the broker,
+and reports nothing about it — the button then looks exactly as dead as it did
+before any of this existed. `wifi mqtt` on the node prints a `cmd=<accepted>/<refused>`
+counter for precisely that reason.
 
 Two rules on the server side, both in `_handle_settings`:
 

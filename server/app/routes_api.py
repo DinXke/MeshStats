@@ -61,15 +61,21 @@ async def contacts(request: Request, authorization: str | None = Header(default=
 
 @router.get("/commands")
 def commands(authorization: str | None = Header(default=None)):
-    """Pending commands for the Home Assistant integration (clear on read):
+    """Pending commands for a polling client -- Home Assistant today (clear on read):
     refresh = manual status requests, settings = CLI settings look-ups.
 
     Handing work out is logged, because this is a clear-on-read queue: once the
     poller has taken a request there is no trace of it left anywhere, and the
     only remaining question when nothing happens afterwards -- did the poller
     ever receive it? -- has to be answerable from the journal.
+
+    Every poll is written down as well, the empty ones included. That is what
+    tells the admin page whether there is anyone out there to hand a request to
+    at all: an unpolled queue looks exactly like one that was emptied a second
+    ago, and while nothing was polling, the page kept promising the second.
     """
     require_token(authorization)
+    db.note_poller_seen()
     refresh = db.pop_refresh_requests()
     settings = db.pop_settings_requests()
     if refresh or settings:
@@ -136,6 +142,7 @@ async def ingest(request: Request, authorization: str | None = Header(default=No
     # Same bookkeeping as the MQTT path, so the admin page never shows a stale
     # node prefix for a repeater that has since switched to HTTP ingest.
     db.record_source(row["id"], "api")
+    db.record_firmware(row["id"], rep.get("fw"), rep.get("fw_meshstats"))
 
     global _ingest_count
     _ingest_count += 1

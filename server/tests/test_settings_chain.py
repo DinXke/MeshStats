@@ -5,6 +5,11 @@ wachtrij op de site is clear-on-read, dus zodra de poller een verzoek heeft
 opgehaald bestaat het nergens meer. Gaat er daarna iets mis met het herkennen
 van de sleutel, dan is het verzoek weg en blijft de beheerpagina hangen op de
 laatste geslaagde uitlezing. Deze tests leggen precies dat vast.
+
+Sinds de nodes rechtstreeks over MQTT publiceren is er een tweede vraag bij
+gekomen: is er überhaupt iemand om iets aan te vragen? Onderaan staat wat de
+knop doet in elk van de gevallen, want zwijgend schrijven in een wachtrij die
+niemand leegt is net het gedrag dat weg moest.
 """
 import pytest
 
@@ -89,3 +94,108 @@ def test_onbeantwoorde_parameter_wordt_bewaard_als_leeg(db):
     assert rijen["name"]["value"] is None
     assert rijen["name"]["updated"]
     assert "radio" not in rijen
+
+
+def test_firmwareversie_wordt_onthouden_en_niet_gewist(db):
+    # De MeshStats-versie beslist of de knop een opdracht mag publiceren. Een
+    # bron die er niets over zegt -- de HTTP-API kent alleen de MeshCore-versie
+    # -- mag wat een andere bron wel wist niet uitvegen.
+    rep = db.get_or_create_repeater("e3d3f4d7edd0", "BE-HSS-JessaZH.VIR")
+
+    db.record_firmware(rep["id"], "v1.16.0", "1.8.0")
+    db.record_firmware(rep["id"], "v1.16.1", None)
+
+    rij = db.qone("SELECT fw, fw_meshstats FROM repeaters WHERE id=?", (rep["id"],))
+    assert rij["fw"] == "v1.16.1"
+    assert rij["fw_meshstats"] == "1.8.0"
+
+
+def test_pollerbezoek_wordt_bijgehouden(db):
+    # Wat "er is niemand die dit ophaalt" onderscheidbaar maakt van "net
+    # opgehaald". Zonder dit ziet een lege wachtrij er in beide gevallen
+    # identiek uit.
+    assert db.poller_last_seen() is None
+    db.note_poller_seen()
+    assert db.poller_last_seen()
+
+
+# --- wat de knop doet, per geval -------------------------------------------
+
+@pytest.fixture
+def knop(db, monkeypatch):
+    """routes_admin._dispatch met de buitenwereld onder controle.
+
+    Geeft een functie terug die (repeater, opdracht) uitvoert en teruggeeft wat
+    er gebeurd is, plus de lijst van wat er naar de broker ging.
+    """
+    from app import commanding, mqtt_ingest, routes_admin
+
+    verstuurd = []
+    staat = {"broker": True, "poller": None}
+
+    monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: staat["broker"])
+    monkeypatch.setattr(mqtt_ingest, "publish_command",
+                        lambda node, cmd: (verstuurd.append((node, cmd)), True)[1])
+    monkeypatch.setattr(db, "poller_last_seen", lambda: staat["poller"])
+    # Zodat 'poller aanwezig' niet van de klok afhangt.
+    monkeypatch.setattr(commanding, "_fresh",
+                        lambda ts, seconds, now: ts == "vers")
+
+    def run(rep, opdracht="settings"):
+        return routes_admin._dispatch(rep, opdracht)
+
+    run.verstuurd = verstuurd
+    run.staat = staat
+    return run
+
+
+def _node(db, fw="1.8.0"):
+    rep = db.get_or_create_repeater("e3d3f4d7edd0", "BE-HSS-JessaZH.VIR")
+    db.record_source(rep["id"], "e3d3f4d7edd0")
+    db.record_firmware(rep["id"], "v1.16.0", fw)
+    return db.qone("SELECT * FROM repeaters WHERE id=?", (rep["id"],))
+
+
+def test_knop_vraagt_het_de_node_zelf(db, knop):
+    rep = _node(db)
+
+    assert knop(rep) == "mqtt"
+    assert knop.verstuurd == [("e3d3f4d7edd0", "settings")]
+    # Geen poller in zicht, dus ook niets in de wachtrij achtergelaten.
+    assert db.pending_settings_request("e3d3f4d7edd0") is None
+
+
+def test_knop_gebruikt_beide_wegen_als_beide_er_zijn(db, knop):
+    rep = _node(db)
+    knop.staat["poller"] = "vers"
+
+    assert knop(rep) == "both"
+    assert knop.verstuurd
+    assert db.pending_settings_request("e3d3f4d7edd0")
+
+
+def test_knop_valt_terug_op_de_wachtrij(db, knop):
+    # Te oude firmware: de node zou de opdracht niet horen, de poller wel.
+    rep = _node(db, fw="1.7.2")
+    knop.staat["poller"] = "vers"
+
+    assert knop(rep) == "queued"
+    assert knop.verstuurd == []
+    assert db.pending_settings_request("e3d3f4d7edd0")
+
+
+def test_knop_belooft_niets_als_er_niemand_is(db, knop):
+    # Het geval waar dit allemaal om begonnen is: Home Assistant weg, firmware
+    # zonder cmd-topic. Er hoort niets te vertrekken en niets te blijven liggen.
+    rep = _node(db, fw="1.7.2")
+
+    assert knop(rep) == "none"
+    assert knop.verstuurd == []
+    assert db.pending_settings_request("e3d3f4d7edd0") is None
+
+
+def test_statusknop_stuurt_status_en_niet_settings(db, knop):
+    rep = _node(db)
+
+    assert knop(rep, "status") == "mqtt"
+    assert knop.verstuurd == [("e3d3f4d7edd0", "status")]

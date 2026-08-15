@@ -82,7 +82,10 @@ repeater's CLI settings.
 **MQTT (recommended for nodes).** The node keeps one connection open and
 publishes to `meshcore/<prefix>/stats`. Much lighter than HTTP: no TLS stack and
 no new session per measurement — which is what an ESP32 running mesh, WiFi and
-BLE can actually sustain. See [`docs/mqtt.md`](docs/mqtt.md).
+BLE can actually sustain. Over that same connection the site can ask a node to
+read its CLI settings or publish a status message right now — two words on
+`meshcore/<prefix>/cmd`, and nothing else is accepted there. See
+[`docs/mqtt.md`](docs/mqtt.md).
 
 **HTTP.** `POST /api/v1/ingest` with `Authorization: Bearer <token>`:
 
@@ -125,6 +128,7 @@ Both paths share the same handler. Unknown repeaters appear automatically
 | `MCS_MQTT_HOST` | *(empty)* | Broker; empty disables MQTT |
 | `MCS_MQTT_PORT` / `_USER` / `_PASS` | 1883 | Broker connection |
 | `MCS_MQTT_TOPIC` | `meshcore/+/stats` | What the site listens to |
+| `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | The only topic the site publishes on |
 
 Most of these are also editable in `/admin`, where the database value wins.
 Full list: [`docs/deployment.md`](docs/deployment.md#environment-variables).
@@ -135,9 +139,10 @@ Passwords are PBKDF2-SHA256 (200k iterations); API tokens are stored only as
 SHA-256 hashes; sessions are HMAC-signed, `HttpOnly` and `Secure` behind a proxy,
 and a password change invalidates every one of them; the login is CSRF-checked
 and throttled per address and per username; request bodies are capped while being
-read; CSP and the usual headers are set. **The site knows no address and no
-password of your mesh** — data only ever flows towards it, so even a fully
-compromised site cannot drive your nodes. Two things still deserve your attention
+read; CSP and the usual headers are set. **The site knows no password of your
+mesh** — the only thing it can send a node is one of two words, `settings` or
+`status`, both of which merely make the node publish what it publishes anyway,
+so even a fully compromised site cannot configure a radio. Two things still deserve your attention
 before going public: the login throttle lives in one process and forgets on
 restart, so an access gate at the proxy is worth having, and a node filesystem
 backup contains that node's **private key**. Read

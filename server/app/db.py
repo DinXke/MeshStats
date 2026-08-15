@@ -115,6 +115,14 @@ COLUMN_MIGRATIONS = [
     # identities differ on purpose -- see mqtt_ingest for the reasoning.
     ("repeaters", "source_prefix", "TEXT"),
     ("repeaters", "source_seen", "TEXT"),
+    # Which firmware the last message came from: the MeshCore version, and the
+    # MeshStats module's own version when the node runs it. Stored rather than
+    # merely shown, because it decides whether the site may ask this node
+    # anything at all -- accepting commands on the MQTT cmd topic starts at
+    # MeshStats 1.8.0, and a button that publishes into the void on anything
+    # older is precisely the dishonesty these columns exist to prevent.
+    ("repeaters", "fw", "TEXT"),
+    ("repeaters", "fw_meshstats", "TEXT"),
     # The hop hashes of the packet's path, comma-separated. Denormalised out of
     # ``raw`` on purpose: the packet detail view resolves every hop against the
     # contacts table, and re-decoding frames for that is work the ingest path has
@@ -655,16 +663,23 @@ def classify_countries(force: bool = False) -> int:
 
 
 # 'cmd:' prefix = literal CLI command (not prefixed with 'get ')
-# This list steers the Home Assistant path only; a node's own MQTT sweep has
-# its own table (SET_PARAMS in the firmware). Keep the two in step, or a
-# parameter will exist for one kind of node and be missing for the other.
+# This list steers the polling path (Home Assistant) only; a node reading its
+# own CLI works from its own table (SET_PARAMS in the firmware) and never sees
+# this one. Keep the two in step, or a parameter will exist for one kind of node
+# and be missing for the other.
 DEFAULT_CLI_PARAMS = ("name,role,radio,freq,tx,af,repeat,advert.interval,"
                       "flood.advert.interval,flood.max,flood.max.unscoped,"
                       "allow.read.only,rxdelay,txdelay,lat,lon,cmd:region")
 
 
 def request_settings(prefix: str, params: list[str]) -> None:
-    """Queue a CLI settings request for the Home Assistant integration."""
+    """Queue a CLI settings request for a polling client (Home Assistant today).
+
+    The second route, not the first. A node that publishes over MQTT is asked
+    directly (see mqtt_ingest.publish_command); this queue is for repeaters that
+    only something else can reach. Callers should only fill it when a poller has
+    actually been seen, or it collects requests nobody will ever collect.
+    """
     import json
     try:
         d = json.loads(get_setting("settings_requests", "{}"))
@@ -693,6 +708,9 @@ def pending_settings_request(prefix: str) -> str | None:
     polled since the button was pressed, and one that is gone means the poller
     took it and the silence that follows is its own. Without the distinction
     both look identical -- a page that says "look-up started" and never changes.
+
+    Paired with poller_last_seen(), which tells the third case apart: nothing
+    was ever going to come and collect it.
     """
     import json
     try:
@@ -748,7 +766,7 @@ def cli_settings_for(repeater_id: int) -> list:
 
 
 def request_refresh(prefix: str) -> None:
-    """Queue a manual status request for the Home Assistant integration."""
+    """Queue a manual status request for a polling client (Home Assistant today)."""
     import json
     d = {}
     try:
@@ -859,6 +877,41 @@ def record_source(repeater_id: int, source: str) -> None:
     """
     execute("UPDATE repeaters SET source_prefix=?, source_seen=? WHERE id=?",
             (str(source or "")[:32] or None, utcnow(), repeater_id))
+
+
+def record_firmware(repeater_id: int, fw=None, fw_meshstats=None) -> None:
+    """Note the firmware the last message came from.
+
+    Only overwrites what the message actually named. A source that knows one of
+    the two -- Home Assistant reads a repeater's MeshCore version off the mesh
+    and has no idea whether the MeshStats module is on it -- must not be able to
+    erase the other by staying silent about it.
+    """
+    sets, args = [], []
+    for column, value in (("fw", fw), ("fw_meshstats", fw_meshstats)):
+        text = str(value).strip()[:32] if value not in (None, "") else ""
+        if text:
+            sets.append(f"{column}=?")
+            args.append(text)
+    if not sets:
+        return
+    execute(f"UPDATE repeaters SET {', '.join(sets)} WHERE id=?", (*args, repeater_id))
+
+
+# When the Home Assistant poller last emptied the command queue. The queue is
+# clear-on-read and holds no history, so without this the site cannot tell "the
+# poller took the request and the repeater stayed silent" from "nothing has ever
+# come to collect it" -- and the admin page has to promise something in both
+# cases. See commanding.py, which turns this into what the page says.
+POLLER_SEEN_KEY = "poller_seen"
+
+
+def note_poller_seen() -> None:
+    set_setting(POLLER_SEEN_KEY, utcnow())
+
+
+def poller_last_seen() -> str | None:
+    return get_setting(POLLER_SEEN_KEY, "") or None
 
 
 def spill_samples(items) -> None:

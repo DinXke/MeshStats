@@ -37,11 +37,15 @@ fi
 docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 \
   mosquitto_passwd -b /m/passwd "$USER" "$PASS"
 
+# De leesregel laat de node opdrachten van de site ontvangen (MeshStats 1.8.0 en
+# hoger). Zonder die regel weigert de broker de inschrijving zonder dat iemand
+# dat merkt, en lijkt de opvraagknop op de site dood.
 cat >> mosquitto/acl <<EOF
 
 user $USER
 topic write meshcore/$NODE/stats
 topic write meshcore/$NODE/rx
+topic read  meshcore/$NODE/cmd
 EOF
 
 # mosquitto_passwd draait als root en zet de rechten terug; de broker draait als
