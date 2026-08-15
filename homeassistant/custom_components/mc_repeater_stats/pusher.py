@@ -17,6 +17,7 @@ from .const import (
     DEBOUNCE_SECONDS,
     FULL_PUSH_INTERVAL,
     KNOWN_METRICS,
+    MIN_PREFIX_MATCH,
     RE_CONTACT,
     RE_ENTITY,
     RE_NAME,
@@ -82,6 +83,37 @@ def discover_repeater_prefixes(hass: HomeAssistant) -> set[str]:
         if RE_NAME.search(friendly):
             out.add(m.group(1))
     return out
+
+
+def match_prefix(wanted: str, known: set[str]) -> str | None:
+    """Welke lokale prefix duidt dezelfde node aan als ``wanted``?
+
+    De site en Home Assistant spellen dezelfde sleutel niet even lang: meshcore
+    levert hier vijf sleutelbytes, de eigen firmware van een node zes, en de
+    site bewaart de langste die ze ooit zag. Een gelijkheidstest zegt dan nee
+    over twee schrijfwijzen van één node -- en omdat de wachtrij op de site
+    clear-on-read is, verdwijnt zo'n verzoek daarmee spoorloos.
+
+    Onder de acht hextekens wordt niet meer vergeleken: twee verschillende
+    sleutels kunnen dan toevallig gelijk beginnen, en een opvraging naar de
+    verkeerde node sturen is erger dan er geen sturen.
+    """
+    wanted = str(wanted or "").lower().strip()
+    if not wanted:
+        return None
+    if wanted in known:
+        return wanted
+    if len(wanted) < MIN_PREFIX_MATCH:
+        return None
+    best: str | None = None
+    for local in known:
+        if len(local) < MIN_PREFIX_MATCH:
+            continue
+        if wanted.startswith(local) or local.startswith(wanted):
+            # De langste kandidaat is de minst dubbelzinnige.
+            if best is None or len(local) > len(best):
+                best = local
+    return best
 
 
 def extract_metric(rest: str) -> str | None:
@@ -252,13 +284,35 @@ class Pusher:
         except Exception:  # noqa: BLE001 - stil falen, volgende poll probeert opnieuw
             return
         for prefix in data.get("refresh", []):
-            if prefix in self.prefixes:
-                await self._request_status(prefix)
+            local = match_prefix(prefix, self.prefixes)
+            if local:
+                await self._request_status(local)
+            else:
+                _LOGGER.warning(
+                    "Statusverzoek voor %s genegeerd: geen gesynchroniseerde repeater "
+                    "met die sleutel (gesynchroniseerd: %s)",
+                    prefix, ", ".join(sorted(self.prefixes)) or "geen",
+                )
         for req in data.get("settings", []):
             prefix = req.get("prefix")
             params = [str(p)[:64] for p in (req.get("params") or [])][:40]
-            if prefix in self.prefixes and params:
-                self.hass.async_create_task(self._fetch_settings(prefix, params))
+            local = match_prefix(prefix, self.prefixes)
+            if not local or not params:
+                # Luid falen: de wachtrij op de site is clear-on-read, dus een
+                # verzoek dat we hier laten vallen bestaat nergens meer. Zonder
+                # deze regel blijft de beheerpagina "opvraging gestart" melden
+                # terwijl er niets meer gebeurt en niets uitlegt waarom.
+                _LOGGER.warning(
+                    "Instellingenopvraging voor %s genegeerd: %s (gesynchroniseerd: %s)",
+                    prefix,
+                    "lege parameterlijst" if local else "geen gesynchroniseerde repeater "
+                                                        "met die sleutel",
+                    ", ".join(sorted(self.prefixes)) or "geen",
+                )
+                continue
+            _LOGGER.info("Instellingenopvraging voor %s ontvangen: %s parameters",
+                         local, len(params))
+            self.hass.async_create_task(self._fetch_settings(local, params))
 
     async def _request_status(self, prefix: str) -> None:
         """Vraag via de meshcore-integratie een verse status + telemetrie op
@@ -288,7 +342,14 @@ class Pusher:
 
     async def _fetch_settings_inner(self, prefix: str, params: list[str]) -> None:
         short = prefix[:6]
-        password = self._passwords.get(prefix) or self._passwords.get(short) or ""
+        # Ook het wachtwoord staat onder een sleutel die net zo lang of kort
+        # kan zijn als die van de opvraging; zonder tolerante match logt de
+        # opvraging in zonder wachtwoord en antwoordt de repeater op niets.
+        key = match_prefix(prefix, set(self._passwords)) or prefix
+        password = self._passwords.get(key) or self._passwords.get(short) or ""
+        if not password:
+            _LOGGER.warning("Geen repeater-wachtwoord bekend voor %s; de meeste "
+                            "get-commando's zullen onbeantwoord blijven", prefix)
         results: dict[str, Any] = {}
         got = asyncio.Event()
         buffer: list[str] = []

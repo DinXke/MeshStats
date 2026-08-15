@@ -14,6 +14,11 @@ SETTINGS_RESPONSE_TIMEOUT = 12  # s wachten op het eerste antwoord per get-comma
 SETTINGS_QUIET_GAP = 5     # s stilte voor we een meerregelig antwoord afsluiten
 SETTINGS_PARAM_CAP = 45    # harde limiet per parameter (bv. lange region-lijsten)
 
+# Onder dit aantal hextekens gelden twee sleutels niet langer als dezelfde node.
+# Spiegelt MIN_PREFIX_MATCH op de server: dezelfde node komt hier als vijf
+# sleutelbytes binnen en via zijn eigen firmware als zes.
+MIN_PREFIX_MATCH = 8
+
 DEBOUNCE_SECONDS = 10
 FULL_PUSH_INTERVAL = 300  # elke 5 min een volledige snapshot
 COMMAND_POLL_INTERVAL = 30  # elke 30 s checken op handmatige statusverzoeken
