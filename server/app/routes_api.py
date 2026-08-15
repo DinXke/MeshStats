@@ -668,6 +668,13 @@ def packet_detail(packet_id: int):
         "route": p["route"], "payload_type": p["payload_type"], "type": p["payload_name"],
         "scope": scope, "scope_codes": codes, "scope_region": _scope_region(codes),
         "path_len": p["path_len"],
+        # How many bytes each hop below is written with. Only the frame knows --
+        # it is the top two bits of the descriptor, chosen by whoever first sent
+        # the packet out of its own hash_mode -- so a row whose raw bytes were
+        # never kept has no answer here, and None is that answer rather than a
+        # plausible-looking 1. The client needs it because one hop of two bytes
+        # and two hops of one byte print as the same four hex characters.
+        "path_hash_size": decoded.get("path_hash_size"),
         "sender": p["sender"], "sender_name": p["sender_name"],
         "sender_lat": p["sender_lat"], "sender_lon": p["sender_lon"],
         "sender_country": p["sender_country"],

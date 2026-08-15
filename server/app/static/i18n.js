@@ -157,9 +157,16 @@
       "pkt.sender_unknown": "onbekend — enkel adverts noemen hun afzender voluit",
       "pkt.sender_short": "onbekend",
       "pkt.dest": "Bestemming",
-      "pkt.src_from_hash": "afgeleid uit 1-byte hash 0x{h}",
+      // "1-byte hash" alleen leidde tot verwarring met de hashgrootte van het
+      // pad: die is 1, 2 of 3 bytes en per pakket verschillend. De adreshash van
+      // afzender en bestemming is iets anders en ligt in het protocol vast op
+      // één byte, wat geen node kan instellen. Dat verschil staat nu in de tekst.
+      "pkt.src_from_hash": "afgeleid uit adreshash 0x{h}, die in dit protocol altijd 1 byte is",
       "pkt.src_multi": "{n} mogelijk",
-      "pkt.src_candidates": "hash 0x{h} past op: {list}",
+      "pkt.src_candidates": "adreshash 0x{h} (protocolvast op 1 byte) past op: {list}",
+      "pkt.hopsize": "Hashgrootte pad",
+      "pkt.hopsize_one": "1 byte per hop · gekozen door de verzendende node, niet door het protocol",
+      "pkt.hopsize_n": "{n} bytes per hop · gekozen door de verzendende node, niet door het protocol",
       "pkt.nopath": "Geen hops: rechtstreeks van de afzender gehoord.",
       "pkt.path_unstored": "Het pad van dit pakket is niet bewaard (ouder dan deze functie).",
       "pkt.noraw": "Niet bewaard voor dit pakket.",
@@ -169,7 +176,7 @@
       "pkt.hop_maybe": "mogelijk: {name}",
       "pkt.origin": "afzender",
       "pkt.destination": "waarnemer",
-      "pkt.path_note": "Een hop is maar 1 of 2 bytes van een publieke sleutel, dus meerdere nodes kunnen dezelfde hop opleveren. Onzekere stukken staan gestippeld op de kaart.",
+      "pkt.path_note": "Een hop is maar 1, 2 of 3 bytes van een publieke sleutel — zie de hashgrootte hieronder — dus meerdere nodes kunnen dezelfde hop opleveren. Onzekere stukken staan gestippeld op de kaart.",
       "pkt.path_note_direct": "Direct gerouteerd: het pad is de nog af te leggen route, niet de reeds afgelegde.",
       "pkt.loaderror": "Kon de details van dit pakket niet laden.",
 
@@ -416,9 +423,12 @@
       "pkt.sender_unknown": "unknown — only adverts name their sender in full",
       "pkt.sender_short": "unknown",
       "pkt.dest": "Destination",
-      "pkt.src_from_hash": "derived from 1-byte hash 0x{h}",
+      "pkt.src_from_hash": "derived from address hash 0x{h}, always 1 byte in this protocol",
       "pkt.src_multi": "{n} possible",
-      "pkt.src_candidates": "hash 0x{h} matches: {list}",
+      "pkt.src_candidates": "address hash 0x{h} (fixed at 1 byte by the protocol) matches: {list}",
+      "pkt.hopsize": "Path hash size",
+      "pkt.hopsize_one": "1 byte per hop · chosen by the sending node, not by the protocol",
+      "pkt.hopsize_n": "{n} bytes per hop · chosen by the sending node, not by the protocol",
       "pkt.nopath": "No hops: heard straight from the sender.",
       "pkt.path_unstored": "The path of this packet was not stored (it predates this feature).",
       "pkt.noraw": "Not stored for this packet.",
@@ -428,7 +438,7 @@
       "pkt.hop_maybe": "possibly: {name}",
       "pkt.origin": "sender",
       "pkt.destination": "observer",
-      "pkt.path_note": "A hop is only 1 or 2 bytes of a public key, so several nodes can answer to the same hop. Uncertain stretches are dashed on the map.",
+      "pkt.path_note": "A hop is only 1, 2 or 3 bytes of a public key — see the hash size below — so several nodes can answer to the same hop. Uncertain stretches are dashed on the map.",
       "pkt.path_note_direct": "Direct routing: the path is the route still to travel, not the one already travelled.",
       "pkt.loaderror": "Could not load the details of this packet.",
 

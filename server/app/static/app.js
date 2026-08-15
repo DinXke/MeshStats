@@ -224,6 +224,20 @@
     filterBtns(document.getElementById("pkt-len"), "len", d.len, onFilter);
     txt("pkt-pathlen", d.path_len != null ? String(d.path_len) : "—");
     filterBtns(document.getElementById("pkt-pathlen"), "hops", d.path_len, onFilter);
+    // The size of one hop hash, which is not a property of the mesh but a choice
+    // the sending node made (its hash_mode) and every forwarder kept -- 1, 2 and
+    // 3 travel side by side on the same air. Shown only when there is a hop for
+    // it to describe: on a packet heard straight from its sender the descriptor
+    // still carries a size, but it sizes nothing, and printing it there would
+    // invite exactly the reading it is meant to prevent.
+    var hopSizeRow = document.getElementById("pkt-hopsize-row");
+    if (hopSizeRow) {
+      var hs = d.path_hash_size;
+      hopSizeRow.hidden = !hs || !d.path_len;
+      if (!hopSizeRow.hidden) {
+        txt("pkt-hopsize", t(hs === 1 ? "pkt.hopsize_one" : "pkt.hopsize_n", { n: hs }));
+      }
+    }
     // Hex in byte pairs so it stays readable, and it wraps rather than
     // widening the page on a phone (see .pktraw).
     txt("pkt-raw", d.raw ? d.raw.toUpperCase().replace(/../g, "$& ").trim() : t("pkt.noraw"));
@@ -280,12 +294,15 @@
   function blankPacketDetail() {
     ["pkt-time", "pkt-sender", "pkt-observer", "pkt-dest", "pkt-country-val",
      "pkt-type", "pkt-route", "pkt-scope", "pkt-scope-codes", "pkt-snr",
-     "pkt-rssi", "pkt-len", "pkt-pathlen", "pkt-raw", "pkt-path-note"]
+     "pkt-rssi", "pkt-len", "pkt-pathlen", "pkt-hopsize", "pkt-raw",
+     "pkt-path-note"]
       .forEach(function (id) { txt(id, ""); });
     document.getElementById("pkt-path").textContent = "";
     document.getElementById("pkt-advert").hidden = true;
     document.getElementById("pkt-scope-codes-row").hidden = true;
     document.getElementById("pkt-dest-row").hidden = true;
+    var hopSizeRow = document.getElementById("pkt-hopsize-row");
+    if (hopSizeRow) hopSizeRow.hidden = true;
     var copyBtn = document.getElementById("pkt-raw-copy");
     if (copyBtn) copyBtn.hidden = true;
   }
@@ -1754,9 +1771,10 @@
     // Draw sender -> every hop -> observer.
     //
     // Only hops that resolve to exactly one known node have a position we are
-    // entitled to draw through: a path entry is one or two bytes of a public
-    // key, so with hundreds of nodes on the map several of them can answer to
-    // the same hop (see _resolve_hop in routes_api.py). Ambiguous and unknown
+    // entitled to draw through: a path entry is one, two or three bytes of a
+    // public key -- the sending node picks which, see path_hash_size -- so with
+    // hundreds of nodes on the map several of them can answer to the same hop
+    // (see _resolve_hop in routes_api.py). Ambiguous and unknown
     // hops are therefore left out of the line and the segment that spans them is
     // dashed -- a solid line through a guess would claim knowledge the protocol
     // cannot give. This is not a bug in the drawing code; it is the protocol.

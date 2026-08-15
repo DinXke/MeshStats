@@ -38,6 +38,12 @@
   <div><dt data-i18n="pkt.rssi">RSSI</dt><dd id="pkt-rssi"></dd></div>
   <div><dt data-i18n="pkt.len">Lengte</dt><dd id="pkt-len"></dd></div>
   <div><dt data-i18n="pkt.pathlen">Padlengte</dt><dd id="pkt-pathlen"></dd></div>
+  <!-- How many bytes one hop above is written with. Next to the path length
+       because the two only mean something together: five hex characters is two
+       hops or one, depending on this number. Hidden when there are no hops to
+       describe, and when the frame these bytes would have been read from was
+       never kept -- see fillPacketDetail. -->
+  <div id="pkt-hopsize-row" hidden><dt data-i18n="pkt.hopsize">Hashgrootte pad</dt><dd id="pkt-hopsize"></dd></div>
 </dl>
 
 <div id="pkt-advert" hidden>
