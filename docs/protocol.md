@@ -50,6 +50,34 @@ fixed part.
 
 Maximum on-air frame is `MAX_TRANS_UNIT` = **255** bytes.
 
+### What a node accepts, and what it still mirrors
+
+A frame off the radio is not a valid frame. `Dispatcher::checkRecv()` calls the
+raw-logging hook **first** (`src/Dispatcher.cpp` line 199) and only then runs
+`tryParsePacket()` (line 205), freeing the packet again if it fails. MeshStats
+receives its packets through exactly that hook (`MyMesh::logRxRaw()` →
+`meshstats_on_raw_packet()`), so **the MQTT raw feed contains frames no MeshCore
+node ever accepted** — noise that survived the PHY CRC, and frames from
+protocol variants this firmware refuses.
+
+Anything that reads those bytes has to apply the same admission rules, or it
+will present a rejected frame as a fact about the mesh. There are five, all from
+`tryParsePacket()` and `Packet::isValidPathLen()`:
+
+| Rule | Source |
+|---|---|
+| payload version must be `PAYLOAD_VER_1` (0) | `Dispatcher.cpp` 153–156 |
+| path hash size 4 (descriptor bits 6–7 = 3) is reserved | `Dispatcher.cpp` 167–170, `Packet.cpp` 16 |
+| `count × size` ≤ `MAX_PATH_SIZE` (64) | `Packet.cpp` 17, `Dispatcher.cpp` 173 |
+| the path must fit inside the received length | `Dispatcher.cpp` 173 |
+| payload ≤ `MAX_PACKET_PAYLOAD` (184) | `Dispatcher.cpp` 181–184 |
+
+The first four all concern bytes that *position* everything after them, which is
+why a permissive parser does not merely get one field wrong: a mis-read
+descriptor shifts the path, the payload boundary and the address hashes at once,
+and every one of them still looks like a plausible value. `server/app/packets.py`
+enforces all five and reports which one failed.
+
 ## 1.2 The header byte
 
 One byte, three bit fields (`src/Packet.h`, lines 8–12):
@@ -130,6 +158,14 @@ They are set by the caller through the `transport_codes` argument of
 comment in `src/helpers/BaseSerialInterface.h` describes their purpose as
 region scoping.
 
+**Only the originator sets them.** Forwarding does not add, rewrite or strip a
+transport code. `Mesh::routeRecvPacket()` (`src/Mesh.cpp` lines 349–352) appends
+the forwarder's own hash to `path` and touches nothing else, and
+`Dispatcher::checkSend()` (lines 313–316) copies `transport_codes` back onto the
+wire byte for byte whenever `hasTransportCodes()` holds. So the codes on a frame
+belong to whoever *emitted* it, however many hops ago — a scope travels with the
+packet and is never re-applied along the way.
+
 > **Unverified:** the assignment of specific code values to specific regions or
 > scopes is not defined anywhere in the core sources read for this document. If
 > you need those values, read the application layer that sets them, not
@@ -175,6 +211,39 @@ and a shared one does not. Anything classifying scoped traffic has to treat it a
 its own case for the same reason — see `server/app/packets.py`, which reports
 `unscoped` / `scoped` / `share` on exactly this basis.
 
+`{0, 0}` is available as a marker because `calcTransportCode()` reserves both
+end values (`src/helpers/TransportKeyStore.cpp` lines 15–19: a computed code of
+`0x0000` is bumped to 1 and `0xFFFF` down to `0xFFFE`). A real scope key can
+therefore never produce `codes[0] == 0`, which is what makes zero unambiguous
+rather than merely unlikely.
+
+### Why so much traffic is unscoped
+
+This is the question the archive raises first, and the answer is in the
+application layer rather than in any decoder. A repeater's configured **default
+region** reaches only two kinds of packet:
+
+| Packet | Scoped? | Source |
+|---|---|---|
+| ones the repeater originates (its own adverts, self-generated floods) | yes, with `default_scope` | `examples/simple_repeater/MyMesh.cpp` 204, 1312, 1777 |
+| replies to a request that was itself scoped | yes, with the *request's* region | `MyMesh::sendFloodReply()`, line 642 |
+| replies to an unscoped request | **no** — `sendFlood()` without codes | same function, lines 648 and 651 |
+| everything it forwards for others | **no change at all** | `Mesh::routeRecvPacket()` |
+
+So one node's region setting says nothing about the traffic passing through it.
+A mesh in which most originators do not scope will read as mostly `unscoped` no
+matter how many of its repeaters have a region configured, and that is a
+measurement rather than a parsing failure.
+
+One further caveat on the word. `unscoped` means "no transport codes on the
+wire", which is the whole truth for a FLOOD but only half of it for a DIRECT
+packet: a direct packet is source-routed along an explicit hop list, not flooded,
+and the firmware never asks which region it belongs to —
+`MyMesh::onRecvPacket()` sets `recv_pkt_region = NULL` for every non-flood route
+(`examples/simple_repeater/MyMesh.cpp` line 794), and `allowPacketForward()`
+consults the region only for floods (line 661). Read `unscoped` on a DIRECT row
+as "not applicable", not as "loose in the wild".
+
 ## 1.4 The path field
 
 `path_len` is one byte, but it is *not* a byte count. It packs two numbers
@@ -195,6 +264,32 @@ its own case for the same reason — see `server/app/packets.py`, which reports
 
 `path_len == 0x00` therefore means "hash size 1, zero hops" — the common case
 for a freshly emitted flood packet.
+
+### Who decides the hash size
+
+Per packet, by whoever sent it first. `Mesh::sendFlood()` takes a
+`path_hash_size` argument and stamps it into the descriptor
+(`setPathHashSizeAndCount(path_hash_size, 0)`, `src/Mesh.cpp` lines 649 and 678);
+the repeater passes `_prefs.path_hash_mode + 1`, its own CLI setting
+`hash_mode` (`src/helpers/CommonCLI.h` line 68, used at
+`examples/simple_repeater/MyMesh.cpp` 204, 1312, 1777). Forwarders keep it:
+`routeRecvPacket()` writes its hash at `getPathHashSize()` bytes, and replies
+mirror the request's size (`sendFloodReply(..., packet->getPathHashSize())`).
+
+Three consequences worth stating, because they are easy to get backwards:
+
+- It is **not** a mesh-wide or protocol-version property. Sizes 1, 2 and 3 travel
+  side by side on the same air; in a 400-packet sample of live traffic
+  MeshStats saw 312 × 1-byte, 76 × 2-byte and 9 × 3-byte.
+- It **is** readable from the frame, so nothing has to be assumed. MeshStats
+  reports it as `path_hash_size`.
+- It says nothing about the **address hashes in the payload**. Those are fixed
+  at one byte by `PATH_HASH_SIZE` (`src/Mesh.cpp` 462, `src/Identity.h` 19–26)
+  and by `PAYLOAD_VER_1`, whose whole definition is "1-byte src/dest hashes,
+  2-byte MAC" (`src/Packet.h` 34). A node configured for `hash_mode 2` puts
+  two-byte hops in the path *and still addresses its peers with one byte*.
+  Only a `PAYLOAD_VER_2` frame would change that, and `tryParsePacket()` rejects
+  those — nothing implements it.
 
 Constraints, enforced in `Packet::isValidPathLen()` and again in
 `tryParsePacket()`:

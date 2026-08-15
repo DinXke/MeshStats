@@ -173,6 +173,96 @@ def test_pad_met_hashgrootte_twee():
     assert out["path"] == ["a701", "3f02"]
 
 
+def test_hashgrootte_wordt_gerapporteerd():
+    # De hashgrootte staat per pakket op de draad en wordt door de afzender
+    # gekozen (hash_mode). Zonder dat getal ziet een lezer alleen 'a701' en kan
+    # hij niet weten of dat één hop van twee bytes is of twee van één.
+    for size in (1, 2, 3):
+        hop = bytes(range(0xA0, 0xA0 + size))
+        raw = frames.frame(frames.ROUTE_FLOOD, frames.TYPE_ACK,
+                           hops=(hop,), hash_size=size,
+                           payload=b"\x01\x02\x03\x04")
+        out = packets.decode(raw)
+        assert out["ok"] is True
+        assert out["path_hash_size"] == size
+        assert out["path"] == [hop.hex()]
+
+
+def test_hashgrootte_vier_is_gereserveerd():
+    # Packet::isValidPathLen() weigert hashgrootte 4 en tryParsePacket()
+    # weigert padmodus 3: geen enkele node aanvaardt zo'n frame. De rauwe
+    # spiegel op de node draait vóór die controle, dus zulke frames komen hier
+    # wél binnen -- en doorlezen zou een pad, een payloadgrens en een
+    # adreshash in één keer verzinnen.
+    raw = frames.frame(frames.ROUTE_FLOOD, frames.TYPE_RESPONSE,
+                       hops=(b"\xa7\x01\x02\x03",), hash_size=4,
+                       payload=frames.peer_payload(0x11, 0x22))
+    out = packets.decode(raw)
+    assert out["ok"] is False
+    assert out["error"] == "reserved path hash size 4"
+    # Wat vóór de descriptor zeker was blijft staan...
+    assert out["route_name"] == "FLOOD"
+    assert out["payload_name"] == "RESPONSE"
+    assert out["scope"] == "unscoped"
+    # ...en alles wat de descriptor zou positioneren niet.
+    assert "path_len" not in out
+    assert "path_hash_size" not in out
+    assert "path" not in out
+    assert "src_hash" not in out
+    assert "dest_hash" not in out
+
+
+def test_pad_langer_dan_max_path_size():
+    # count * size mag MAX_PATH_SIZE (64) niet overschrijden; de firmware
+    # gooit het frame weg. 33 hops van 2 bytes is 66.
+    raw = frames.frame(frames.ROUTE_FLOOD, frames.TYPE_ACK,
+                       hops=tuple(b"\xa7\x01" for _ in range(33)), hash_size=2,
+                       payload=b"\x01\x02\x03\x04")
+    out = packets.decode(raw)
+    assert out["ok"] is False
+    assert out["error"] == "path of 66 bytes exceeds MAX_PATH_SIZE"
+    assert "path" not in out
+
+
+def test_payload_groter_dan_max_packet_payload():
+    # tryParsePacket() weigert een payload boven MAX_PACKET_PAYLOAD (184).
+    raw = frames.frame(frames.ROUTE_FLOOD, frames.TYPE_ACK,
+                       payload=b"\x00" * 185)
+    out = packets.decode(raw)
+    assert out["ok"] is False
+    assert "exceeds MAX_PACKET_PAYLOAD" in out["error"]
+    # De payload van precies 184 is nog geldig.
+    raw = frames.frame(frames.ROUTE_FLOOD, frames.TYPE_ACK,
+                       payload=b"\x00" * 184)
+    assert packets.decode(raw)["ok"] is True
+
+
+def test_hashgrootte_verandert_de_adreshashes_niet():
+    # Twee verschillende dingen heten 'hash'. De pad-hashgrootte is per pakket
+    # instelbaar; dest/src in de payload zijn onder PAYLOAD_VER_1 altijd één
+    # byte (PATH_HASH_SIZE). Een node met hash_mode 2 adresseert zijn peers dus
+    # nog steeds met één byte.
+    raw = frames.frame(frames.ROUTE_FLOOD, frames.TYPE_RESPONSE,
+                       hops=(b"\xe3\xd3",), hash_size=2,
+                       payload=frames.peer_payload(0x55, 0xE3))
+    out = packets.decode(raw)
+    assert out["path_hash_size"] == 2
+    assert out["path"] == ["e3d3"]
+    assert out["dest_hash"] == "55"
+    assert out["src_hash"] == "e3"
+
+
+def test_advert_app_data_stopt_op_max_advert_data_size():
+    # Mesh::onRecvPacket() kapt app_data af op 32 bytes vóór het de
+    # handtekening controleert. Bytes daarna vallen buiten de handtekening en
+    # mogen dus niet in de getoonde naam terechtkomen.
+    naam = "A" * 31                      # vlaggenbyte + 31 tekens = 32
+    payload = frames.advert_payload(node_type=2, name=naam + "ONGETEKEND")
+    out = packets.decode(frames.frame(frames.ROUTE_FLOOD, frames.TYPE_ADVERT,
+                                      payload=payload))
+    assert out["name"] == naam
+
+
 def test_payloadhash_stabiel_over_hops_en_routes():
     # De dedup-hash dekt alleen type + payload: hetzelfde bericht dat via een
     # andere route of met een gegroeid pad binnenkomt moet dezelfde hash
