@@ -18,6 +18,12 @@
   instellingen één voor één op over LoRa. Dit duurt <strong>1 à 2 minuten</strong>;
   herlaad deze pagina daarna.
 </div>
+{% elif queued_since %}
+<div class="card notice">
+  &#9888; Er staat sinds <time class="reltime" datetime="{{ queued_since }}">{{ queued_since }}</time>
+  nog een opvraging in de wachtrij. Home Assistant haalt die normaal binnen 30 seconden op;
+  blijft ze staan, dan pollt de MC Repeater Stats-integratie niet.
+</div>
 {% endif %}
 
 <section>

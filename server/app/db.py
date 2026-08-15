@@ -685,6 +685,24 @@ def pop_settings_requests() -> list[dict]:
     return [{"prefix": p, "params": v.get("params", [])} for p, v in d.items()]
 
 
+def pending_settings_request(prefix: str) -> str | None:
+    """When a queued settings request for this key was placed, if any.
+
+    The queue is clear-on-read, so this answers a question the admin page could
+    otherwise not answer at all: a request that is still here means nothing has
+    polled since the button was pressed, and one that is gone means the poller
+    took it and the silence that follows is its own. Without the distinction
+    both look identical -- a page that says "look-up started" and never changes.
+    """
+    import json
+    try:
+        d = json.loads(get_setting("settings_requests", "{}"))
+    except ValueError:
+        return None
+    entry = d.get(prefix)
+    return entry.get("ts") if isinstance(entry, dict) else None
+
+
 def upsert_cli_settings(repeater_id: int, values: dict, prune: bool = True) -> None:
     """Store a node's CLI parameters.
 

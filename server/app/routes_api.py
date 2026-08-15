@@ -1,4 +1,5 @@
 """JSON API: ingest from Home Assistant plus the public data endpoints."""
+import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,8 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from . import auth, config, countries, db, metrics, packets, search
 
 router = APIRouter(prefix="/api/v1")
+
+log = logging.getLogger(__name__)
 
 _ingest_count = 0
 
@@ -59,14 +62,36 @@ async def contacts(request: Request, authorization: str | None = Header(default=
 @router.get("/commands")
 def commands(authorization: str | None = Header(default=None)):
     """Pending commands for the Home Assistant integration (clear on read):
-    refresh = manual status requests, settings = CLI settings look-ups."""
+    refresh = manual status requests, settings = CLI settings look-ups.
+
+    Handing work out is logged, because this is a clear-on-read queue: once the
+    poller has taken a request there is no trace of it left anywhere, and the
+    only remaining question when nothing happens afterwards -- did the poller
+    ever receive it? -- has to be answerable from the journal.
+    """
     require_token(authorization)
-    return {"refresh": db.pop_refresh_requests(), "settings": db.pop_settings_requests()}
+    refresh = db.pop_refresh_requests()
+    settings = db.pop_settings_requests()
+    if refresh or settings:
+        log.info("Wachtrij uitgereikt aan poller: %s statusverzoek(en), "
+                 "%s instellingenopvraging(en) voor %s",
+                 len(refresh), len(settings),
+                 ", ".join(s["prefix"] for s in settings) or "-")
+    return {"refresh": refresh, "settings": settings}
 
 
 @router.post("/repeater_settings")
 async def repeater_settings(request: Request, authorization: str | None = Header(default=None)):
-    """CLI settings of one repeater: {"repeater": {"pubkey_prefix"}, "settings": {param: value}}"""
+    """CLI settings of one repeater: {"repeater": {"pubkey_prefix"}, "settings": {param: value}}
+
+    The look-up goes through ``find_repeater`` rather than an equality test on
+    the key, for the same reason every other ingest path does: sources disagree
+    on how much of the public key they send -- Home Assistant 5 bytes, a node's
+    own firmware 6 -- and the stored key grows to the longest one seen. A strict
+    match therefore starts answering 404 to Home Assistant the moment the same
+    node also reports over MQTT, throwing away a settings sweep that costs one
+    to two minutes of LoRa airtime to produce.
+    """
     require_token(authorization)
     limit_body(request)
     body = await request.json()
@@ -74,9 +99,13 @@ async def repeater_settings(request: Request, authorization: str | None = Header
     values = body.get("settings")
     if not prefix or not isinstance(values, dict):
         raise HTTPException(422, "repeater.pubkey_prefix en settings vereist")
-    row = db.qone("SELECT id FROM repeaters WHERE pubkey_prefix=?", (prefix,))
+    row = db.find_repeater(prefix)
     if not row:
+        log.warning("Instellingen geweigerd: geen repeater met sleutel %s", prefix)
         raise HTTPException(404, "Onbekende repeater")
+    answered = sum(1 for v in values.values() if v is not None)
+    log.info("Instellingen ontvangen voor %s: %s van %s parameters beantwoord",
+             row["slug"], answered, len(values))
     db.upsert_cli_settings(row["id"], values)
     return {"ok": True, "count": len(values)}
 

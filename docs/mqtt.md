@@ -173,6 +173,16 @@ table (`SET_PARAMS` in `MeshStatsNet.cpp`) asks for it too.
 It fills the same admin page as `POST /api/v1/repeater_settings`, so a node can
 populate it with no Home Assistant in the picture.
 
+**Both paths match the key the same way.** A repeater that reports over MQTT
+*and* is monitored through Home Assistant arrives under two spellings of one
+key — six key bytes from its own firmware, five from Home Assistant — and the
+stored key grows to the longest one seen. Both settings paths therefore resolve
+the repeater through `find_repeater()`. The HTTP endpoint compared strings until
+it was found doing so: a repeater picked up over MQTT would silently start
+answering 404 to Home Assistant, throwing away a look-up that costs one to two
+minutes of LoRa airtime — and the admin page would keep showing the last sweep
+that did land, with nothing to say that anything had failed since.
+
 **Why it is not on a topic of its own.** It was going to be
 `meshcore/<node>/settings`, until a check of `mqtt_ingest.py` showed this
 subscriber listens to exactly two patterns. A third topic would have been

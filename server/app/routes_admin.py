@@ -184,6 +184,11 @@ def repeater_settings_page(request: Request, rid: int):
         "cli_params": db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "requested": request.query_params.get("requested") == "1",
+        # Staat het verzoek er na een herlading nog, dan heeft Home Assistant
+        # sinds de klik niet gepold -- een heel ander euvel dan een opvraging
+        # die wel vertrok en waarvan het antwoord uitblijft. De pagina hoort dat
+        # verschil te tonen in plaats van in beide gevallen "gestart" te melden.
+        "queued_since": db.pending_settings_request(rep["pubkey_prefix"]),
     })
 
 
