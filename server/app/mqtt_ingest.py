@@ -121,6 +121,11 @@ MIN_SUBJECT_HEX = 8
 # packet and should not be turned into a multi-megabyte bytes object.
 MAX_RAW_HEX = 1024
 
+# Hoeveel tekens van een onbruikbaar bericht mee het logboek in gaan. Genoeg om
+# de plek te zien die json aanwijst ("column 87"), te weinig om een logbestand
+# vol te schrijven met een node die in een lus onzin publiceert.
+MAX_LOG_EXCERPT = 240
+
 # Retention has no scheduler of its own, so the packet firehose drives it.
 PRUNE_EVERY_PACKETS = 2000
 
@@ -376,6 +381,70 @@ def _handle_rx(topic: str, raw: bytes) -> None:
         db.prune()
 
 
+def _excerpt(raw: bytes) -> str:
+    """Een begrensd, altijd afdrukbaar stuk van een payload, voor in het logboek.
+
+    ``backslashreplace`` en niet ``replace``: een van de manieren waarop een
+    bericht onbruikbaar wordt, is een nodenaam die halverwege een UTF-8-teken
+    afgekapt is. Met vraagtekens erin ziet zo'n logregel er precies hetzelfde
+    uit als een aanhalingsteken op de verkeerde plek, terwijl ``\\xc3`` meteen
+    zegt welke van de twee het is.
+
+    Mag zelf nooit stukgaan: dit draait in de foutafhandeling, en een
+    uitzondering hier zou de melding wissen die ze moest opleveren.
+    """
+    try:
+        text = bytes(raw or b"").decode("utf-8", "backslashreplace")
+    except Exception:  # noqa: BLE001 - zie hierboven
+        return "<niet weer te geven>"
+    # Op een regel houden, anders leest een logboek met tien van deze meldingen
+    # als een berg losse fragmenten zonder herkenbaar begin.
+    text = text.replace("\r", " ").replace("\n", " ")
+    if len(text) > MAX_LOG_EXCERPT:
+        return f"{text[:MAX_LOG_EXCERPT]}... ({len(raw)} bytes)"
+    return text
+
+
+def handle_message(topic: str, payload: bytes) -> bool:
+    """Verwerkt een binnengekomen bericht. False als het overgeslagen is.
+
+    Staat hier op moduleniveau en niet als sluiting in ``_run()`` omdat het
+    gedrag dat hier vastligt getest hoort te zijn: dat een node uit de
+    statistieken verdwijnt zonder dat er ergens iets van te zien is, is precies
+    het soort storing waar dit project omheen gebouwd is.
+
+    Waarom de payload zelf mee het logboek in gaat, en niet enkel de melding van
+    json: die melding is "Expecting ',' delimiter: line 1 column 87". Daar staat
+    niet in wat er op kolom 87 stond, dus je weet dat een bericht van deze node
+    onleesbaar was en verder niets. De aanleiding is een stuk tekst dat iemand
+    ooit gekozen heeft -- een nodenaam met een aanhalingsteken erin, zie de
+    1.9.1-noot in MeshStatsNet.cpp -- en die staat in de payload. Zonder dat
+    fragment is de enige weg naar de oorzaak een sniffer op de broker, en
+    daarmee blijft zo'n fout jaren liggen.
+
+    Overwogen en verworpen: het bericht wegschrijven naar een tabel of een
+    aparte map, zodat het compleet bewaard blijft. Dat is opslag die groeit
+    zonder plafond aan de kant van wie hem publiceert, en de eerste tweehonderd
+    tekens zijn in de praktijk het hele antwoord.
+
+    Fouten worden hier bewust breed gevangen: één slecht bericht -- van welke
+    node dan ook, en iedereen met brokerreferenties kan er een sturen -- mag de
+    ingest-lus niet stilleggen voor alle andere.
+    """
+    try:
+        if topic.rsplit("/", 1)[-1] == "rx":
+            _handle_rx(topic, payload)
+        else:
+            _handle_payload(topic, payload)
+        return True
+    except Exception as err:  # noqa: BLE001 - zie hierboven
+        _state["errors"] += 1
+        _state["last_error"] = f"{type(err).__name__}: {err}"
+        log.warning("MQTT-bericht op %s overgeslagen: %s: %s | payload: %s",
+                    topic, type(err).__name__, err, _excerpt(payload))
+        return False
+
+
 def _run() -> None:
     import paho.mqtt.client as mqtt
 
@@ -397,15 +466,7 @@ def _run() -> None:
         log.info("MQTT disconnected (%s); paho reconnects on its own", rc)
 
     def on_message(client, userdata, msg):
-        try:
-            if msg.topic.rsplit("/", 1)[-1] == "rx":
-                _handle_rx(msg.topic, msg.payload)
-            else:
-                _handle_payload(msg.topic, msg.payload)
-        except Exception as err:  # noqa: BLE001 - one bad message must break nothing
-            _state["errors"] += 1
-            _state["last_error"] = f"{type(err).__name__}: {err}"
-            log.warning("MQTT message on %s skipped: %s", msg.topic, err)
+        handle_message(msg.topic, msg.payload)
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="meshstats-ingest")
     if MQTT_USER:
