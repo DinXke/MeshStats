@@ -1,4 +1,8 @@
-"""MC Repeater Stats — publieke MeshCore-repeaterstatistieken, gevoed door Home Assistant."""
+"""MC Repeater Stats — publieke MeshCore-repeaterstatistieken, gevoed door de nodes zelf.
+
+De nodes publiceren rechtstreeks over MQTT. De HTTP-API blijft bestaan voor wie
+via Home Assistant of een eigen script binnenkomt, maar is geen vereiste meer.
+"""
 import secrets
 import sys
 from pathlib import Path

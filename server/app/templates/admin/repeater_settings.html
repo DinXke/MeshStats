@@ -12,17 +12,42 @@
   </div>
 </div>
 
-{% if requested %}
+{#- Waarom deze blokken zo uitgebreid zijn: een opvraging loopt over een radio en
+    kan op vier plaatsen doodlopen zonder ergens een fout op te leveren. De
+    pagina meldde vroeger in álle gevallen "Opvraging gestart", ook toen er al
+    dagen niemand meer was om ze te starten. Wat hier staat is wat er werkelijk
+    gebeurd is. -#}
+{% if requested == "both" %}
 <div class="card notice">
-  &#9203; Opvraging gestart — Home Assistant logt in op de repeater en vraagt de
-  instellingen één voor één op over LoRa. Dit duurt <strong>1 à 2 minuten</strong>;
-  herlaad deze pagina daarna.
+  &#9203; Opvraging langs beide wegen verstuurd: de node is rechtstreeks gevraagd
+  zijn CLI uit te lezen, en de opvraging staat ook in de wachtrij voor de poller.
+  Reken op <strong>1 à 2 minuten</strong>; herlaad deze pagina daarna.
+</div>
+{% elif requested == "mqtt" %}
+<div class="card notice">
+  &#9203; De node is gevraagd zijn instellingen nu uit te lezen (over MQTT, naar
+  node <span class="mono">{{ route.node }}</span>). Hij leest ze één voor één van
+  zijn eigen CLI en stuurt ze mee zodra hij klaar is — meestal binnen een
+  <strong>halve minuut</strong>. Herlaad deze pagina daarna.
+</div>
+{% elif requested == "queued" %}
+<div class="card notice">
+  &#9203; Opvraging in de wachtrij gezet. De poller haalt ze op, logt in op de
+  repeater en vraagt de parameters over LoRa op; dat duurt
+  <strong>1 à 2 minuten</strong>. Herlaad deze pagina daarna.
+</div>
+{% elif requested == "none" %}
+<div class="card notice">
+  &#9888; Er is <strong>niets verstuurd</strong> — er was op dit ogenblik geen weg
+  naar deze repeater. De uitleg staat bij de knop hieronder.
 </div>
 {% elif queued_since %}
 <div class="card notice">
   &#9888; Er staat sinds <time class="reltime" datetime="{{ queued_since }}">{{ queued_since }}</time>
-  nog een opvraging in de wachtrij. Home Assistant haalt die normaal binnen 30 seconden op;
-  blijft ze staan, dan pollt de MC Repeater Stats-integratie niet.
+  nog een opvraging in de wachtrij, en niemand heeft ze opgehaald.
+  {% if route.poller_seen %}De laatste poll was
+  <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
+  {% else %}Er heeft nog nooit een poller aangeklopt.{% endif %}
 </div>
 {% endif %}
 
@@ -39,15 +64,85 @@
         <td>{% if row.updated %}<time class="reltime" datetime="{{ row.updated }}">{{ row.updated }}</time>{% endif %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="3" class="muted">Nog niets opgehaald — klik hieronder op "Instellingen opvragen".
-        Vereist dat het repeater-wachtwoord ingevuld is in de MC Repeater Stats-integratie in Home Assistant (Opties).</td></tr>
+      <tr><td colspan="3" class="muted">Nog niets opgehaald. Een node met de MeshStats-firmware
+        leest zijn eigen instellingen één keer per dag uit en stuurt ze mee met zijn
+        statistieken; met de knop hieronder vraag je er nu een.</td></tr>
     {% endfor %}
     </tbody>
   </table>
   <form method="post" action="/admin/repeaters/{{ rep.id }}/settings/refresh" class="rowform">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit">&#128225; Instellingen opvragen via LoRa</button>
+    {% if route.mqtt or route.ha %}
+    <button type="submit">&#128225; Instellingen nu opvragen</button>
+    {% else %}
+    <button type="submit" disabled title="Er is op dit ogenblik geen weg naar deze repeater">
+      &#128225; Opvragen kan nu niet</button>
+    {% endif %}
   </form>
+
+  <p class="muted small">
+    {%- if route.mqtt and route.ha %}
+    Beschikbaar: rechtstreeks aan node <span class="mono">{{ route.node }}</span> over MQTT,
+    én via de poller over LoRa.
+    {%- elif route.mqtt %}
+    De site vraagt het rechtstreeks aan node <span class="mono">{{ route.node }}</span> over
+    MQTT (MeshStats {{ route.fw_meshstats }}). Die leest zijn eigen CLI uit en stuurt de
+    waarden mee met zijn eerstvolgende statistiekbericht.
+    {%- elif route.ha %}
+    De rechtstreekse weg is dicht, dus dit loopt via de wachtrij en de poller.
+    {%- else %}
+    Geen van beide wegen staat open, en daarom doet de knop niets.
+    {%- endif %}
+  </p>
+
+  {% if not route.mqtt %}
+  <p class="muted small">
+    <strong>Rechtstreeks (MQTT):</strong>
+    {%- if route.blocker == "no_source" %}
+    er is nog geen enkel bericht van deze repeater binnengekomen, dus is niet bekend
+    welke node ervoor publiceert.
+    {%- elif route.blocker == "http_source" %}
+    deze repeater komt binnen via de HTTP-API en niet via MQTT; langs die weg valt een
+    node niets te vragen.
+    {%- elif route.blocker == "relayed" %}
+    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>.
+    Alleen de node zelf kan zijn eigen CLI uitlezen, dus een opdracht daarheen levert de
+    instellingen van de verkeerde node op — of niets.
+    {%- elif route.blocker == "no_fw" %}
+    de node meldt geen MeshStats-versie, dus valt niet vast te stellen of hij opdrachten
+    aanneemt. Publiceren zou hier neerkomen op hopen.
+    {%- elif route.blocker == "old_fw" %}
+    de node draait MeshStats {{ route.fw_meshstats }}. Opdrachten over MQTT bestaan pas
+    vanaf {{ min_fw }}; oudere firmware schrijft zich niet in op het cmd-topic, dus de
+    broker gooit het bericht weg zonder dat iemand het merkt.
+    {%- elif route.blocker == "broker_down" %}
+    de site heeft op dit ogenblik geen verbinding met de MQTT-broker.
+    {%- endif %}
+  </p>
+  {% elif route.node_stale %}
+  <p class="muted small">
+    &#9888; De laatste statistieken van deze node kwamen
+    <time class="reltime" datetime="{{ route.node_seen }}">{{ route.node_seen }}</time> binnen.
+    Een opdracht wordt niet bewaard voor een node die offline is: staat zijn WiFi in zuinige
+    modus uit, dan komt ze niet aan en verschijnt hier gewoon niets.
+  </p>
+  {% endif %}
+
+  <p class="muted small">
+    <strong>Poller (Home Assistant):</strong>
+    {%- if route.ha %}
+    aanwezig, laatste poll
+    <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
+    Vereist wel dat het repeater-wachtwoord in de integratie ingevuld staat.
+    {%- elif route.poller_seen %}
+    niets meer opgehaald sinds
+    <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
+    De integratie geldt als afwezig, dus er wordt niets meer in de wachtrij gelegd.
+    {%- else %}
+    er heeft nog nooit iemand <span class="mono">/api/v1/commands</span> opgehaald. Deze weg
+    is optioneel — zonder poller doet de node het zelf.
+    {%- endif %}
+  </p>
   </div>
 </section>
 
@@ -61,7 +156,10 @@
     <div><button type="submit">Parameterlijst opslaan</button></div>
   </form>
   <p class="muted small">Kommagescheiden lijst van <code>get</code>-parameters van de repeater-CLI.
-     Onbekende parameters leveren gewoon een foutantwoord op en kunnen geen kwaad.</p>
+     Onbekende parameters leveren gewoon een foutantwoord op en kunnen geen kwaad.
+     <strong>Deze lijst stuurt alleen de poller-weg.</strong> Een node die zichzelf uitleest
+     heeft zijn eigen lijst in de firmware (<code>SET_PARAMS</code>), dus een parameter die je
+     hier toevoegt bereikt zo'n node pas na een firmware-aanpassing.</p>
   </div>
 </section>
 {% endblock %}

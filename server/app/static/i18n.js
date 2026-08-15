@@ -22,7 +22,7 @@
       "nav.admin": "⚙ Beheer",
       "nav.theme_title": "Wissel licht/donker thema",
       "nav.lang_title": "Taal wisselen / switch language",
-      "footer.text": "MeshCore-statistieken · gevoed door Home Assistant · ",
+      "footer.text": "MeshCore-statistieken · rechtstreeks van de nodes · ",
       "footer.admin": "beheer",
 
       // --- inloggen (de rest van /admin is enkel Nederlands) ---
@@ -34,7 +34,7 @@
       // --- startpagina ---
       "home.title": "Repeaters",
       "home.hint": "Live MeshCore-repeaterstatistieken · klik op een repeater voor details",
-      "home.empty": "Nog geen repeaters. Zodra Home Assistant data doorstuurt verschijnen ze hier.",
+      "home.empty": "Nog geen repeaters. Zodra een node data doorstuurt verschijnen ze hier.",
       "home.lastseen": "laatst gezien",
       "card.battery": "Batterij",
       "card.uptime": "Uptime",
@@ -184,10 +184,17 @@
       "status.online": "ONLINE",
       "status.offline": "OFFLINE",
       "rep.refresh": "↻ Status opvragen",
-      "rep.refresh_title": "Vraag via Home Assistant een verse status en telemetrie op over LoRa",
+      "rep.refresh_title": "Vraag nu een verse status: rechtstreeks aan de node, of via een poller over LoRa",
+      "rep.refresh_off": "✕ Opvragen kan nu niet",
+      "rep.refresh_off_title": "Er is op dit ogenblik geen weg naar deze repeater — zie de instellingenpagina",
       "rep.settings": "⚙ Instellingen",
       "rep.settings_title": "CLI-instellingen van deze repeater",
-      "rep.refresh_notice": "⏳ Statusupdate aangevraagd — Home Assistant vraagt de repeater nu uit; binnen ±1 minuut verschijnt een vers datapunt.",
+      // Vier meldingen in plaats van één belofte: wat er gebeurd is hangt af van
+      // wie er te bereiken viel, en de pagina hoort dat te zeggen.
+      "rep.refresh_mqtt": "⏳ De node is gevraagd nu een statusbericht te sturen; binnen ±1 minuut verschijnt een vers datapunt.",
+      "rep.refresh_queued": "⏳ Statusverzoek in de wachtrij gezet — de poller vraagt de repeater over LoRa uit; binnen ±1 minuut verschijnt een vers datapunt.",
+      "rep.refresh_both": "⏳ Statusverzoek verstuurd naar de node én in de wachtrij gezet; binnen ±1 minuut verschijnt een vers datapunt.",
+      "rep.refresh_none": "⚠ Er is niets verstuurd — geen weg naar deze repeater op dit ogenblik. De instellingenpagina zegt waarom.",
       "rep.lastupdate": "laatste update",
       "rep.hint": "💡 Klik op een tegel of buur voor de historiek",
 
@@ -293,7 +300,7 @@
       "nav.admin": "⚙ Admin",
       "nav.theme_title": "Switch light/dark theme",
       "nav.lang_title": "Taal wisselen / switch language",
-      "footer.text": "MeshCore statistics · fed by Home Assistant · ",
+      "footer.text": "MeshCore statistics · straight from the nodes · ",
       "footer.admin": "admin",
 
       "login.invalid": "Invalid credentials",
@@ -303,7 +310,7 @@
 
       "home.title": "Repeaters",
       "home.hint": "Live MeshCore repeater statistics · click a repeater for details",
-      "home.empty": "No repeaters yet. They appear here as soon as Home Assistant sends data.",
+      "home.empty": "No repeaters yet. They appear here as soon as a node sends data.",
       "home.lastseen": "last seen",
       "card.battery": "Battery",
       "card.uptime": "Uptime",
@@ -445,10 +452,15 @@
       "status.online": "ONLINE",
       "status.offline": "OFFLINE",
       "rep.refresh": "↻ Request status",
-      "rep.refresh_title": "Ask Home Assistant to fetch fresh status and telemetry over LoRa",
+      "rep.refresh_title": "Ask for a fresh status now: straight to the node, or through a poller over LoRa",
+      "rep.refresh_off": "✕ Cannot request now",
+      "rep.refresh_off_title": "No route to this repeater at the moment — the settings page says why",
       "rep.settings": "⚙ Settings",
       "rep.settings_title": "CLI settings of this repeater",
-      "rep.refresh_notice": "⏳ Status update requested — Home Assistant is querying the repeater now; a fresh data point appears within ±1 minute.",
+      "rep.refresh_mqtt": "⏳ The node has been asked to publish a status message now; a fresh data point appears within ±1 minute.",
+      "rep.refresh_queued": "⏳ Status request queued — the poller queries the repeater over LoRa; a fresh data point appears within ±1 minute.",
+      "rep.refresh_both": "⏳ Status request sent to the node and queued for the poller; a fresh data point appears within ±1 minute.",
+      "rep.refresh_none": "⚠ Nothing was sent — no route to this repeater at the moment. The settings page says why.",
       "rep.lastupdate": "last update",
       "rep.hint": "💡 Click a tile or a neighbour for its history",
 

@@ -8,13 +8,26 @@
     {% if is_admin %}
     <form method="post" action="/admin/repeaters/{{ r.id }}/refresh" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" class="pill refreshbtn" data-i18n="rep.refresh" data-i18n-title="rep.refresh_title" title="Vraag via Home Assistant een verse status en telemetrie op over LoRa">&#8635; Status opvragen</button>
+      {#- Een knop die nergens heen kan, gaat op grijs. Zie commanding.py: ofwel
+          publiceert de node zelf en is zijn firmware nieuw genoeg, ofwel is er
+          een poller die de wachtrij leegt. Geen van beide, geen knop. -#}
+      {% if route.mqtt or route.ha %}
+      <button type="submit" class="pill refreshbtn" data-i18n="rep.refresh" data-i18n-title="rep.refresh_title" title="Vraag nu een verse status: rechtstreeks aan de node, of via een poller over LoRa">&#8635; Status opvragen</button>
+      {% else %}
+      <button type="submit" class="pill refreshbtn" disabled data-i18n="rep.refresh_off" data-i18n-title="rep.refresh_off_title" title="Er is op dit ogenblik geen weg naar deze repeater — zie de instellingenpagina">&#10005; Opvragen kan nu niet</button>
+      {% endif %}
     </form>
     <a class="pill settingslink" href="/admin/repeaters/{{ r.id }}/settings" data-i18n="rep.settings" data-i18n-title="rep.settings_title" title="CLI-instellingen van deze repeater">&#9881; Instellingen</a>
     {% endif %}
   </div>
-  {% if refresh_requested %}
-  <p class="hint refreshnotice" data-i18n="rep.refresh_notice">&#9203; Statusupdate aangevraagd — Home Assistant vraagt de repeater nu uit; binnen &plusmn;1 minuut verschijnt een vers datapunt.</p>
+  {% if refresh_state == "mqtt" %}
+  <p class="hint refreshnotice" data-i18n="rep.refresh_mqtt">&#9203; De node is gevraagd nu een statusbericht te sturen; binnen &plusmn;1 minuut verschijnt een vers datapunt.</p>
+  {% elif refresh_state == "queued" %}
+  <p class="hint refreshnotice" data-i18n="rep.refresh_queued">&#9203; Statusverzoek in de wachtrij gezet — de poller vraagt de repeater over LoRa uit; binnen &plusmn;1 minuut verschijnt een vers datapunt.</p>
+  {% elif refresh_state == "both" %}
+  <p class="hint refreshnotice" data-i18n="rep.refresh_both">&#9203; Statusverzoek verstuurd naar de node &eacute;n in de wachtrij gezet; binnen &plusmn;1 minuut verschijnt een vers datapunt.</p>
+  {% elif refresh_state == "none" %}
+  <p class="hint refreshnotice" data-i18n="rep.refresh_none">&#9888; Er is niets verstuurd — geen weg naar deze repeater op dit ogenblik. De instellingenpagina zegt waarom.</p>
   {% endif %}
   <div class="muted mono-line">
     <span class="chip">{{ r.pubkey_prefix }}</span>
