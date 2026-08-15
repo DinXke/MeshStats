@@ -124,11 +124,6 @@
     return (negate ? "-" : "") + field + ":" + queryValue(value);
   }
 
-  // A Kibana-style pair beside a value: + narrows the archive query to this
-  // field:value, - excludes it. Rendered only when the caller supplies a
-  // handler, which is why the live page (no query bar, no query language) gets
-  // none, and only for fields search.FIELDS actually knows -- a button that
-  // produced "Onbekend veld" would be a trap dressed as a feature.
   // The field names the query language actually knows, handed over by the
   // archive page from search.describe_fields(). Kept as a module-level list
   // rather than threaded through every call: the buttons are rendered from four
@@ -136,6 +131,11 @@
   // easier to forget the check somewhere.
   var SEARCH_FIELDS = null;
 
+  // A Kibana-style pair beside a value: + narrows the archive query to this
+  // field:value, - excludes it. Rendered only when the caller supplies a
+  // handler, which is why the live page (no query bar, no query language) gets
+  // none, and only for fields search.FIELDS actually knows -- a button that
+  // produced "Onbekend veld" would be a trap dressed as a feature.
   function filterBtns(el, field, value, onFilter) {
     if (!el || !onFilter || value === null || value === undefined || value === "") return;
     if (SEARCH_FIELDS && SEARCH_FIELDS.indexOf(field) < 0) return;
@@ -176,8 +176,8 @@
     txt("pkt-sender", nodeLabel(d.sender, d.sender_name) || srcDetail(d.src) ||
         t("pkt.sender_unknown"));
     // Only a sender stated by an advert has a key to filter on. A sender merely
-    // derived from the 1-byte source hash gets no buttons: sender: searches the
-    // stored key column, and offering it here would silently filter on
+    // derived from the one-byte address hash gets no buttons: sender: searches
+    // the stored key column, and offering it here would silently filter on
     // something other than the guess printed next to it.
     filterBtns(document.getElementById("pkt-sender"), "sender", d.sender, onFilter);
     txt("pkt-observer", nodeLabel(d.observer, d.observer_name) || "—");
@@ -2307,8 +2307,8 @@
         if (lbl) { who.title = lbl.title; who.classList.add("src-derived"); }
       }
       // Only a sender an advert stated has a key in the sender column; a sender
-      // merely derived from the 1-byte hash gets no buttons, for the same reason
-      // the detail panel withholds them there.
+      // merely derived from the address hash gets no buttons, for the same
+      // reason the detail panel withholds them there.
       filterBtns(who, "sender", p.sender, setFilter);
       li.appendChild(who);
       li.appendChild(cell2("pkt-obs", p.observer_name ||
