@@ -181,7 +181,7 @@
  * Zo is de overgang na het flashen af te lezen in plaats van te moeten
  * geloven. */
 #define MESHMANAGER_NAME     "MeshManager (by DinX)"
-#define MESHMANAGER_VERSION  "2.8.0"
+#define MESHMANAGER_VERSION  "2.8.1"
 
 class MyMesh;
 
@@ -197,17 +197,24 @@ void mmnet_loop();
  * Safe to call before mmnet_begin() or when the module is disabled. */
 void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
 
-/* Het oordeel van het pakketfilter over het pakket dat nu verwerkt wordt.
+/* Het oordeel van het pakketfilter, gekoppeld aan het pakket waar het over gaat.
  * Aangeroepen vanuit MyMesh::allowPacketForward(), meteen na pf_allow().
  *
- * Het pakket staat op dat moment nog in de rx-ring te wachten op de
- * eerstvolgende publicatie, dus het oordeel haalt zijn eigen pakket in en reist
- * mee in hetzelfde bericht: geen tweede bericht, geen pakkethash als sleutel,
- * geen volgordeprobleem, en geen oordeel over een pakket dat de server nooit
- * gezien heeft. Veilig aan te roepen als het doorsturen van pakketten uitstaat
- * of de module niet draait -- dan is er eenvoudigweg niets om te stempelen.
- * 'reason' is een PfReason en telt alleen als 'allowed' onwaar is. */
-void meshmanager_on_forward_verdict(bool allowed, uint8_t reason);
+ * Het pakket wacht op dat moment nog in de rx-ring op publicatie, dus het
+ * oordeel haalt het in en reist mee in hetzelfde rx-bericht: geen tweede
+ * bericht, geen volgordeprobleem, en geen oordeel over een pakket dat de server
+ * nooit gezien heeft.
+ *
+ * De koppeling gaat op INHOUD en niet op positie: 'payload' is de staart van het
+ * frame dat wij bewaard hebben (docs/protocol.md §1.1), dus een memcmp op die
+ * staart wijst het pakket exact aan. Koppelen op positie ging stil mis zodra er
+ * twee pakketten tegelijk onderweg waren -- zie de toelichting bij de functie.
+ *
+ * Veilig aan te roepen als het doorsturen van pakketten uitstaat of de module
+ * niet draait: dan valt er eenvoudigweg niets te stempelen. 'reason' is een
+ * PfReason en telt alleen als 'allowed' onwaar is. */
+void meshmanager_on_forward_verdict(bool allowed, uint8_t reason,
+                                    const uint8_t *payload, int payload_len);
 
 /* Called from the receive path when a repeater we monitor answers a login or a
  * status request, or to a CLI command we sent it. Same rule as above: copy

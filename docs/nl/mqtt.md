@@ -926,14 +926,45 @@ ontbrekende `fwd` als 'doorgestuurd' lezen maakt van 'niemand heeft gekeken' een
 bewering.
 
 Het oordeel reist mee in het bericht van het pakket zelf en komt niet als tweede
-bericht met een pakkethash als sleutel, en dat is het vermelden waard omdat de
-voor de hand liggende opzet die andere is. Ontvangst en de doorstuurbeslissing
-gebeuren binnen dezelfde verwerking van hetzelfde pakket, terwijl dat pakket nog
-in de rx-ring op publicatie staat te wachten — het oordeel haalt zijn eigen
-pakket dus in voordat het vertrekt. Dat scheelt een hash die beide kanten
+bericht met een pakkethash als sleutel. Dat scheelt een hash die beide kanten
 identiek moeten berekenen, een volgordeprobleem in twee richtingen, en oordelen
-over pakketten die de server nooit ontvangen heeft. Zie
-`meshmanager_on_forward_verdict()`.
+over pakketten die de server nooit ontvangen heeft. Het pakket staat nog in de
+rx-ring wanneer de beslissing valt, dus het oordeel haalt het in voordat het
+vertrekt.
+
+**Hoe lang het mag wachten, en een correctie.** 2.7.0 verscheen met de bewering
+dat ontvangst en doorstuurbeslissing "binnen dezelfde verwerking van hetzelfde
+pakket" gebeuren. Dat klopt niet, en het is gemeten in plaats van beredeneerd:
+van 72 pakketten vertrok **68% van het floodverkeer zonder oordeel** —
+payloadtypes 0, 1, 4, 5 en 6, allemaal geparseerd, allemaal wel degelijk langs
+`allowPacketForward()`. Er zaten twee dingen fout.
+
+`mmnet_loop()` staat in `main.cpp` op regel 196 en `the_mesh.loop()` op 214, dus
+publiceren gaat *vóór* ontvangen-en-beslissen. Een pakket dat in ronde N
+binnenkomt vertrekt aan het begin van ronde N+1 en heeft dus alleen de rest van
+ronde N om zijn oordeel op te halen; MeshCore stelt het doorsturen van
+floodverkeer uit, dus het oordeel valt vaak later. Sinds 2.8.1 mag een nog niet
+beoordeeld pakket daarom tot `RX_VERDICT_GRACE_MS` (400 ms) wachten voordat het
+alsnog vertrekt.
+
+Dat is **niet** de afgewezen opzet waarbij publicatie wacht tot ná de
+beslissing. Alles wordt nog steeds gepubliceerd: een frame dat nooit geparseerd
+wordt, zit de wachttijd gewoon uit en gaat zonder oordeel, dus de ruis waarvoor
+deze stroom bestaat (§"Wat een node aanvaardt, en wat hij toch doorgeeft") blijft
+in het archief staan, een fractie van een seconde later. En de ring gaat voor:
+loopt die vol, dan vertrekken pakketten ongestempeld in plaats van verloren te
+gaan.
+
+De tweede fout was erger dan een gemiste aantekening. Het oordeel werd gestempeld
+op "de sleuf die zojuist gevuld is", en dat koppelt stil verkeerd zodra er twee
+pakketten tegelijk onderweg zijn: het oordeel van het eerste pakket belandt op
+het tweede. Er wordt nu op inhoud gekoppeld — `payload` is de staart van het
+bewaarde frame (`protocol.md` §1.1), dus een `memcmp` op die staart wijst het
+pakket exact aan.
+
+`/api/status` meldt onder `mqtt` de tellers `vok`, `vlate`, `vforced`, `vavg` en
+`vmax`, zodat de wachttijd op een meting gezet kan worden in plaats van op een
+gevoel.
 
 De ontwerpbeperkingen zijn op beide firmwares dezelfde, maar **de getallen niet**,
 en ze door elkaar halen is makkelijk:

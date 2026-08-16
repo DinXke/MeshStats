@@ -874,13 +874,39 @@ never parsed never reaches `allowPacketForward()` at all. Reading a missing `fwd
 "forwarded" would turn "nobody looked" into a claim.
 
 The verdict rides inside the packet's own message rather than arriving as a
-second one keyed by a packet hash, and that is worth stating because the obvious
-design is the other one. Reception and the forwarding decision happen inside the
-same processing of the same packet, while the packet is still sitting in the rx
-ring waiting to be published — so the verdict catches up with its own packet
-before it leaves. That removes a hash both sides must compute identically, an
-ordering problem in both directions, and verdicts about packets the server never
-received. See `meshmanager_on_forward_verdict()`.
+second one keyed by a packet hash. That removes a hash both sides must compute
+identically, an ordering problem in both directions, and verdicts about packets
+the server never received. The packet is still sitting in the rx ring when the
+decision is made, so the verdict catches up with it before it leaves.
+
+**How long it may wait, and a correction.** 2.7.0 shipped claiming that reception
+and the forwarding decision "happen inside the same processing of the same
+packet". That is not true, and it was measured rather than argued: of 72 packets,
+**68 % of the FLOOD traffic left unjudged** — payload types 0, 1, 4, 5 and 6, all
+parsed, all genuinely past `allowPacketForward()`. Two things were wrong.
+
+`mmnet_loop()` runs at `main.cpp:196` and `the_mesh.loop()` at `:214`, so
+publishing happens *before* receiving-and-deciding. A packet received in pass N
+leaves at the start of pass N+1 and has only the remainder of pass N to collect
+its verdict; MeshCore defers flood forwarding, so the verdict is often later than
+that. Since 2.8.1 an unjudged packet may therefore wait up to
+`RX_VERDICT_GRACE_MS` (400 ms) before it is published anyway.
+
+That is **not** the rejected design of holding publication until after the
+decision. Everything is still published: a frame that never parses simply waits
+out the grace and goes without a verdict, so the noise this stream exists for
+(§"What a node accepts, and what it still mirrors") stays in the archive, a
+fraction of a second later. And the ring wins over completeness — when it fills
+up, packets go out unjudged rather than being lost.
+
+The second fault was worse than a miss. The verdict used to be stamped on "the
+slot just filled", which silently mis-attributes as soon as two packets are in
+flight: the first packet's verdict lands on the second. Matching is now on
+content — `payload` is the tail of the stored frame (`protocol.md` §1.1), so a
+`memcmp` on that tail identifies the packet exactly.
+
+`/api/status` reports `vok`, `vlate`, `vforced`, `vavg` and `vmax` under `mqtt`
+so the grace can be set from measurement instead of taste.
 
 The design constraints are the same on both firmwares, but **the numbers are
 not**, and conflating them is easy:

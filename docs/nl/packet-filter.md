@@ -226,6 +226,14 @@ Elk gearchiveerd pakket draagt nu een van drie toestanden:
 | `doorgelaten` | het filter van deze waarnemer beoordeelde het en liet het door |
 | *leeg* | het filter heeft het niet beoordeeld |
 
+Leeg kwam tot firmware **2.8.1** veel vaker voor dan hoort: 68% van het
+floodverkeer vertrok voordat zijn oordeel bestond, omdat publiceren in de
+hoofdlus vóór ontvangen-en-beslissen gaat. Een nog niet beoordeeld pakket wacht
+nu tot 400 ms op zijn oordeel, en het oordeel wordt op inhoud aan zijn pakket
+gekoppeld in plaats van op positie — die oude koppeling kon het oordeel van het
+ene pakket op het andere zetten zodra er twee tegelijk onderweg waren. Zie
+`mqtt.md`, *Hoe lang het mag wachten*.
+
 Leeg is een vaststelling en geen afronding van `doorgelaten`. Het filter
 beoordeelt uitsluitend floodpakketten die het moet doorsturen, dus een pakket aan
 de node zelf, een direct gerouteerd pakket of een frame dat nooit geparseerd is,

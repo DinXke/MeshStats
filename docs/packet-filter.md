@@ -218,6 +218,13 @@ Each archived packet now carries one of three states:
 | `doorgelaten` | this observer's filter judged it and let it through |
 | *blank* | the filter never judged it |
 
+The blank was far more common than it should have been until firmware **2.8.1**:
+68 % of flood traffic left before its verdict existed, because publishing runs
+before receiving-and-deciding in the main loop. An unjudged packet now waits up
+to 400 ms for its verdict, and the verdict is matched to its packet by content
+rather than by position — the old positional match could put one packet's verdict
+on another once two were in flight. See `mqtt.md`, *How long it may wait*.
+
 The blank is a finding, not a rounding of `doorgelaten`. The filter only ever
 judges flood packets it is asked to forward, so a packet addressed to the node, a
 direct-routed one, or a frame that never parsed is genuinely unjudged. Rows from

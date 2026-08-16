@@ -5,6 +5,52 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.8.1  Het oordeel van het filter kwam voor tweederde van het floodverkeer te
+ *        laat, en soms op het verkeerde pakket. Beide zijn opgelost.
+ *        DE METING EERST, want die weerlegde een aanname uit 2.7.0. Van 72
+ *        pakketten vertrok 68% van het floodverkeer zonder oordeel --
+ *        payloadtypes 0, 1, 4, 5 en 6, dus keurig geparseerd, niet aan de node
+ *        zelf gericht, niet direct gerouteerd, en wel degelijk langs
+ *        allowPacketForward(). Precies het verkeer dat een oordeel hoort te
+ *        krijgen. 2.7.0 beweerde dat ontvangst en doorstuurbeslissing binnen
+ *        dezelfde verwerking van hetzelfde pakket vallen; dat is niet zo, en het
+ *        stond hier als redenering waar een meting had gemoeten.
+ *        FOUT EEN: te vroeg gepubliceerd. mmnet_loop() staat in main.cpp op
+ *        regel 196 en the_mesh.loop() op 214, dus publiceren gaat vóór
+ *        ontvangen-en-beslissen. Een pakket dat in ronde N binnenkomt vertrekt
+ *        aan het begin van ronde N+1 en heeft dus alleen de rest van ronde N om
+ *        zijn oordeel op te halen. MeshCore stelt het doorsturen van
+ *        floodverkeer uit, dus dat haalt het vaak niet. Een nog niet beoordeeld
+ *        pakket mag nu tot RX_VERDICT_GRACE_MS (400 ms) wachten.
+ *        Dat is NIET de opzet die bij 2.7.0 afgewezen is. Daar zou publicatie
+ *        wachten tot ná de beslissing, en dan verdwijnt een frame dat
+ *        tryParsePacket() niet haalt voorgoed uit het archief -- terwijl juist
+ *        die ruis de reden is dat die stroom bestaat (docs/protocol.md). Hier
+ *        vertrekt alles: wie geen oordeel krijgt, zit de wachttijd uit en gaat
+ *        zonder. De ring gaat bovendien voor op volledigheid -- loopt hij vol,
+ *        dan vertrekken pakketten ongestempeld in plaats van verloren te gaan.
+ *        Een gemist oordeel is een lege kolom, een volle ring een verdwenen
+ *        pakket.
+ *        FOUT TWEE, en die was erger. Het oordeel werd gestempeld op 'de sleuf
+ *        die zojuist gevuld is'. Dat gaat goed zolang er nooit twee pakketten
+ *        tegelijk onderweg zijn, en het gaat STIL mis zodra dat wel gebeurt: het
+ *        oordeel van het eerste pakket belandt dan op het tweede. Een verkeerde
+ *        aantekening is erger dan een ontbrekende, want ze is van buitenaf niet
+ *        van een juiste te onderscheiden -- en ze zou een pakket kunnen tonen als
+ *        geweerd terwijl het gewoon doorgestuurd is.
+ *        Er wordt nu op inhoud gekoppeld en niet op positie, en dat is gratis:
+ *        een MeshCore-frame is header + transportcodes + path_len + path +
+ *        payload, en de payload is 'alles wat overblijft' (docs/protocol.md
+ *        §1.1). De payload is dus letterlijk de staart van het frame dat wij
+ *        bewaarden, en een memcmp op die staart is een exacte koppeling -- geen
+ *        hash die aan beide kanten identiek berekend moet worden, geen tweede
+ *        parser die de header nog eens uit elkaar haalt.
+ *        EN EEN MEETPUNT, zodat de volgende versie hiervan niet weer een
+ *        redenering is. /api/status meldt onder 'mqtt' de tellers vok, vlate,
+ *        vforced, vavg en vmax: hoeveel oordelen hun pakket vonden, hoeveel er
+ *        niets meer vonden, hoeveel pakketten het zonder moesten doen, en hoe
+ *        lang een oordeel er werkelijk over doet. Daar hoort RX_VERDICT_GRACE_MS
+ *        omheen gezet te worden; 400 ms is een startwaarde en geen bevinding.
  * 2.8.0  Het derde vervoermiddel: 'set <param> <waarde>' op het cmd-topic.
  *
  *        Een node die zelf op MQTT publiceert HEEFT een verbinding met deze
@@ -1068,21 +1114,45 @@ struct RxItem {
 static RxItem _rx_queue[MQTT_RX_QUEUE];
 static volatile uint8_t _rx_head = 0, _rx_tail = 0;
 
-/* De sleuf waar het pakket in staat dat nu verwerkt wordt, of -1.
+/* Hoe lang een nog niet beoordeeld pakket mag wachten op zijn oordeel voordat
+ * het zonder vertrekt.
  *
- * Dit is het hele koppelstuk tussen 'ontvangen' en 'doorsturen', en het kan zo
- * kort zijn door hoe MeshCore werkt: ontvangen en de doorstuurbeslissing
- * gebeuren binnen één en dezelfde verwerking van één pakket
- * (Dispatcher::checkRecv -> logRxRaw -> tryParsePacket -> ... ->
- * allowPacketForward). Er kan dus geen ander pakket tussen komen, en 'de sleuf
- * die ik zojuist vulde' IS het pakket waarover zo dadelijk geoordeeld wordt.
+ * WAAROM DIT ER IS, en dat is een gemeten les en geen voorzorg. Tot 2.7.0 werd
+ * het oordeel op 'de sleuf die ik zojuist vulde' gestempeld, in de veronderstel-
+ * ling dat ontvangst en doorstuurbeslissing binnen één verwerking van hetzelfde
+ * pakket vallen. Dat is niet zo. Gemeten over 72 pakketten: 68% van het
+ * FLOOD-verkeer -- payloadtypes 0, 1, 4, 5 en 6, dus keurig geparseerd en wel
+ * degelijk langs allowPacketForward() -- vertrok zonder oordeel.
  *
- * Vandaar geen hash, geen sleutel en geen tweede bericht om achteraf aan elkaar
- * te knopen: het oordeel reist mee in het rx-bericht van het pakket zelf. Wat
- * dat kost is één byte per pakket; wat het bespaart is een join op de server,
- * een volgordeprobleem en een oordeel dat kan aankomen over een pakket dat de
- * server nooit gezien heeft. */
-static volatile int8_t _rx_pending = -1;
+ * Twee dingen zaten fout, en de tweede was erger dan de eerste.
+ *
+ * 1. mmnet_loop() staat in main.cpp op regel 196 en the_mesh.loop() op 214, dus
+ *    publiceren gaat vóór ontvangen-en-beslissen. Een pakket dat in ronde N
+ *    binnenkomt, vertrekt aan het begin van ronde N+1 en heeft dus alleen de
+ *    rest van ronde N om zijn oordeel op te halen. Valt de beslissing later --
+ *    en MeshCore stelt het doorsturen van floodverkeer uit -- dan is het altijd
+ *    te laat. Vandaar deze wachttijd.
+ * 2. Er was één sleuf voor 'het pakket dat nu verwerkt wordt'. Komen er twee
+ *    pakketten binnen voordat het eerste beoordeeld is, dan overschrijft het
+ *    tweede die sleuf, en het oordeel van het EERSTE pakket belandde op het
+ *    tweede. Dat is geen gemiste aantekening maar een verkeerde, en die is van
+ *    buitenaf niet te onderscheiden van een juiste. Vandaar dat er nu op inhoud
+ *    gekoppeld wordt in plaats van op positie.
+ *
+ * De waarde hieronder is een startwaarde die opgemeten hoort te worden: de
+ * tellers _v_delay_max en _v_delay_sum onder /api/status zeggen hoe lang een
+ * oordeel er werkelijk over doet, en daar hoort deze grens omheen te passen. */
+#define RX_VERDICT_GRACE_MS   400
+
+/* Meetpunten voor precies die afweging. Ze staan in het statusantwoord omdat de
+ * vraag 'komt het oordeel op tijd' anders alleen achteraf te beantwoorden is,
+ * uit het aandeel lege kolommen in het archief -- en dat is een omweg van een
+ * dag over een server die er ook nog tussen zit. */
+static uint32_t _v_stamped = 0;    // oordelen die hun pakket gevonden hebben
+static uint32_t _v_late = 0;       // oordelen die niets meer vonden om te stempelen
+static uint32_t _v_forced = 0;     // pakketten die het zonder oordeel moesten doen
+static uint32_t _v_delay_sum = 0;  // opgetelde vertraging van gevonden oordelen, ms
+static uint16_t _v_delay_max = 0;  // en de traagste ervan
 
 /* The web server runs in its own task. We never write settings from there, but
  * in loop(); these flags hand the work over. */
@@ -2738,7 +2808,6 @@ static void mqttDrainRx() {
       _rx_tail = (uint8_t)((_rx_tail + 1) % MQTT_RX_QUEUE);
       _drop_count++;
     }
-    _rx_pending = -1;      // de hele ring is weg; er valt niets meer te stempelen
     return;
   }
 
@@ -2753,6 +2822,37 @@ static void mqttDrainRx() {
 
   for (int guard = 0; guard < cap && _rx_tail != _rx_head; guard++) {
     RxItem &it = _rx_queue[_rx_tail];
+
+    /* Nog geen oordeel? Dan mag dit pakket even wachten -- maar niet ten koste
+     * van de ring.
+     *
+     * Waarom wachten überhaupt nodig is: publiceren gebeurt in main.cpp vóór
+     * ontvangen-en-beslissen (regel 196 tegen 214), dus een pakket dat in ronde
+     * N binnenkomt vertrekt aan het begin van ronde N+1. Valt de
+     * doorstuurbeslissing dan nog niet -- en MeshCore stelt floodverkeer uit --
+     * dan is het oordeel altijd te laat. Gemeten: 68% van het floodverkeer
+     * vertrok ongestempeld.
+     *
+     * Waarom het NIET hetzelfde is als 'wachten tot na de beslissing', de weg
+     * die bij 2.7.0 afgewezen is: daar zou een frame dat tryParsePacket() niet
+     * haalt nooit meer vertrekken, en juist die frames zijn de reden dat deze
+     * stroom bestaat (docs/protocol.md). Hier vertrekt ALLES; wie geen oordeel
+     * krijgt wacht hoogstens RX_VERDICT_GRACE_MS en gaat dan zonder. De ruis
+     * blijft dus in het archief, alleen een fractie van een seconde later.
+     *
+     * De ring gaat voor. Zit hij vol te lopen, dan wint doorstromen van
+     * volledigheid: een gemist oordeel is een lege kolom, een volle ring is een
+     * verdwenen pakket. Publiceren gebeurt op volgorde, dus zodra de oudste
+     * moet wachten, wachten de jongere vanzelf mee. */
+    if (it.verdict == 0) {
+      uint8_t bezet = (uint8_t)((_rx_head - _rx_tail + MQTT_RX_QUEUE) % MQTT_RX_QUEUE);
+      bool ruimte = bezet < MQTT_RX_QUEUE - 2;
+      if (ruimte && millis() - it.ms < RX_VERDICT_GRACE_MS) break;
+      // Vertrekt zonder oordeel: wachttijd op, of de ring die voorgaat.
+      // Eén teller voor allebei, want de vraag is hoeveel er ongestempeld
+      // weggaan -- niet welke van de twee redenen dat deed.
+      _v_forced++;
+    }
 
     /* 'fwd' ontbreekt als het filter dit pakket niet beoordeeld heeft, en dat is
      * een eigen antwoord en geen nul. Het gebeurt bij een pakket dat aan deze
@@ -2787,9 +2887,6 @@ static void mqttDrainRx() {
       return;              // leave it queued; try again next pass
     }
     _rx_count++;
-    // Deze sleuf is de deur uit; een oordeel dat nu nog zou komen hoort nergens
-    // meer bij en mag geen volgend pakket stempelen.
-    if (_rx_pending == (int8_t)_rx_tail) _rx_pending = -1;
     _rx_tail = (uint8_t)((_rx_tail + 1) % MQTT_RX_QUEUE);
   }
 }
@@ -2822,12 +2919,6 @@ void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int l
   if (!_cfg.mqtt_enabled || !_cfg.mqtt_rx) return;
   if (len <= 0 || len > MQTT_RX_MAX_LEN) return;
 
-  /* Elk nieuw pakket verdringt het vorige als 'het pakket dat nu verwerkt
-   * wordt'. Staat het hieronder vol, dan blijft dit op -1 en wordt er dus geen
-   * oordeel op een vreemde sleuf gestempeld -- het pakket waarover geoordeeld
-   * gaat worden staat er immers niet in. */
-  _rx_pending = -1;
-
   uint8_t next = (uint8_t)((_rx_head + 1) % MQTT_RX_QUEUE);
   if (next == _rx_tail) {     // full: rather lose a packet than hold up reception
     _drop_count++;
@@ -2842,36 +2933,72 @@ void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int l
   it.verdict = 0;
   it.why = 0;
   memcpy(it.data, raw, len);
-  _rx_pending = (int8_t)_rx_head;
   _rx_head = next;
 }
 
-/* Het oordeel van het pakketfilter over het pakket dat nu verwerkt wordt.
+/* Het oordeel van het pakketfilter, gekoppeld aan het pakket waar het over gaat.
  *
  * Aangeroepen vanuit MyMesh::allowPacketForward(), meteen na pf_allow(). Het
- * pakket zelf staat op dat moment nog in de ring te wachten op de eerstvolgende
- * mqttDrainRx(), dus het oordeel haalt zijn eigen pakket in en gaat er in
- * hetzelfde bericht mee mee.
+ * pakket wacht op dat moment nog in de ring op publicatie, dus het oordeel haalt
+ * het in en reist mee in hetzelfde rx-bericht. Dat blijft de opzet; wat sinds
+ * 2.8.1 anders is, is HOE die twee aan elkaar geknoopt worden.
  *
- * Waarom dit GEEN tweede bericht is met een pakkethash als sleutel. Dat was de
- * voor de hand liggende opzet, en ze kost drie dingen die deze niet kost: een
- * hash die aan beide kanten identiek berekend moet worden, een volgordeprobleem
- * (het oordeel kan eerder of later aankomen dan het pakket), en een oordeel dat
- * kan gaan over een pakket dat de server nooit gezien heeft -- de ring loopt
- * over, de broker was even weg, of het doorsturen van pakketten staat gewoon
- * uit. Alle drie verdwijnen als het oordeel in het pakket zelf zit.
+ * OP INHOUD, NIET OP POSITIE. Tot nu toe werd 'de sleuf die zojuist gevuld is'
+ * gestempeld. Dat gaat goed zolang er nooit twee pakketten tegelijk onderweg
+ * zijn, en het gaat stil mis zodra dat wel gebeurt: het oordeel van het eerste
+ * pakket belandt dan op het tweede. Een verkeerde aantekening is erger dan een
+ * ontbrekende, want ze is van buitenaf niet van een juiste te onderscheiden.
  *
- * Wat er NIET verandert is de betekenis van de rauwe stroom. Het pakket wordt
- * nog steeds bij ONTVANGST in de ring gezet, vóór tryParsePacket(), dus frames
- * die geen enkele node aanvaardt blijven in het archief staan -- zie
- * docs/protocol.md. Ze krijgen alleen nooit een oordeel, want ze bereiken
- * allowPacketForward() niet. Dat is precies de derde toestand. */
-void meshmanager_on_forward_verdict(bool allowed, uint8_t reason) {
-  if (_rx_pending < 0) return;
-  RxItem &it = _rx_queue[_rx_pending];
-  it.verdict = allowed ? 1 : 2;
-  it.why = reason;
-  _rx_pending = -1;
+ * De sleutel is de payload zelf, en die is gratis: een MeshCore-frame is
+ * header + transportcodes + path_len + path + payload, en de payload is
+ * "alles wat er overblijft" (docs/protocol.md §1.1, tryParsePacket() rekent
+ * payload_len = len - i). De payload is dus letterlijk de STAART van het frame
+ * dat wij bewaard hebben, en een memcmp op die staart is een exacte koppeling --
+ * geen hash die aan beide kanten identiek berekend moet worden, geen parser die
+ * de header nog eens uit elkaar haalt.
+ *
+ * De oudste ongestempelde treffer wint. Twee ontvangsten van hetzelfde
+ * floodpakket hebben dezelfde payload maar een ander pad; ze krijgen in de
+ * praktijk hetzelfde oordeel, en de oudste eerst nemen houdt de volgorde gelijk
+ * aan die van de ring.
+ *
+ * Wat er NIET verandert is de betekenis van de rauwe stroom. Het pakket gaat nog
+ * steeds bij ONTVANGST in de ring, vóór tryParsePacket(), dus frames die geen
+ * enkele node aanvaardt blijven in het archief -- zie docs/protocol.md. Ze
+ * krijgen alleen nooit een oordeel, want ze bereiken allowPacketForward() niet.
+ * Dat is precies de derde toestand, en die hoort te bestaan. */
+void meshmanager_on_forward_verdict(bool allowed, uint8_t reason,
+                                    const uint8_t *payload, int payload_len) {
+  if (!_started || _disabled || _safe_mode) return;
+  // De bovengrens beschermt de cast verderop: MAX_PACKET_PAYLOAD is 184, dus
+  // dit hoort niet te kunnen -- en als het ooit toch gebeurt, is stil afkappen
+  // tot een uint8_t precies de fout die het verkeerde pakket zou stempelen.
+  if (payload == NULL || payload_len <= 0 || payload_len > MQTT_RX_MAX_LEN) return;
+
+  for (uint8_t i = _rx_tail; i != _rx_head; i = (uint8_t)((i + 1) % MQTT_RX_QUEUE)) {
+    RxItem &it = _rx_queue[i];
+    if (it.verdict != 0) continue;                       // al beoordeeld
+    if (it.len < (uint8_t)payload_len) continue;         // kan het niet zijn
+    if (memcmp(it.data + it.len - payload_len, payload, payload_len) != 0) continue;
+
+    it.verdict = allowed ? 1 : 2;
+    it.why = reason;
+    uint32_t vertraging = millis() - it.ms;
+    _v_stamped++;
+    _v_delay_sum += vertraging;
+    // Geen min(): dat is op Arduino een macro die zijn argumenten twee keer
+    // uitrekent, en er staat hier toch al een vergelijking.
+    if (vertraging > _v_delay_max) {
+      _v_delay_max = (vertraging > 65535UL) ? (uint16_t)65535 : (uint16_t)vertraging;
+    }
+    return;
+  }
+  /* Niets gevonden. Het pakket is al vertrokken, het stond nooit in de ring
+   * (doorsturen uit, ring vol), of dit oordeel gaat over iets wat wij niet
+   * gehoord hebben. In alle gevallen is er niets te stempelen -- en dit getal
+   * naast _v_stamped is precies de meting die zegt of de wachttijd hierboven
+   * ruim genoeg staat. */
+  _v_late++;
 }
 
 // -------------------------------------------------------------- advert cache
@@ -6119,14 +6246,20 @@ static void handleStatus(AsyncWebServerRequest *req) {
   snprintf(body + n, sizeof(body) - n,
     "\"mqtt\":{\"host\":\"%s\",\"port\":%u,\"user\":\"%s\",\"prefix\":\"%s\","
     "\"enabled\":%u,\"rx\":%u,\"st\":\"%s\",\"stats\":%u,\"pkt\":%u,\"drop\":%u,"
-    "\"queue\":%u,\"fail\":%u,\"err\":\"%s\",\"rc\":%d}}",
+    "\"queue\":%u,\"fail\":%u,\"err\":\"%s\",\"rc\":%d,"
+    /* Komt het oordeel van het filter op tijd? 'vlate' naast 'vok' is het
+     * antwoord, en 'vmax' zegt of RX_VERDICT_GRACE_MS ruim genoeg staat. */
+    "\"vok\":%u,\"vlate\":%u,\"vforced\":%u,\"vavg\":%u,\"vmax\":%u}}",
     e_host, _cfg.mqtt_port, e_user, e_prefix,
     _cfg.mqtt_enabled, _cfg.mqtt_rx,
     !_cfg.mqtt_enabled ? "off" : (_mqtt.connected() ? "conn"
       : (_cfg.mqtt_host[0] ? "disc" : "unset")),
     (unsigned)_stats_count, (unsigned)_rx_count, (unsigned)_drop_count,
     (unsigned)((_rx_head - _rx_tail + MQTT_RX_QUEUE) % MQTT_RX_QUEUE),
-    (unsigned)_fail_count, _mqtt_err, _mqtt_err_rc);
+    (unsigned)_fail_count, _mqtt_err, _mqtt_err_rc,
+    (unsigned)_v_stamped, (unsigned)_v_late, (unsigned)_v_forced,
+    (unsigned)(_v_stamped ? _v_delay_sum / _v_stamped : 0),
+    (unsigned)_v_delay_max);
 
   int q = (int)strlen(body);
   q -= 1;                                   // step back over the closing brace
