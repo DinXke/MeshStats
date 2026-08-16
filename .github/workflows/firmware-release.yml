@@ -1,0 +1,199 @@
+# Builds the repeater firmware on a tag and publishes the images as release
+# assets, so that the site has something to offer on its firmware page.
+#
+# Why a workflow and not a build on somebody's laptop. The site downloads an
+# image from GitHub Releases, checks its SHA-256, and writes it into a repeater
+# on a roof. Every one of those steps is only worth as much as the provenance of
+# the binary at the start of it: an image built by hand is an image whose source
+# tree nobody can reconstruct, and "which commit is my roof node running" then
+# has no answer. Here the tag is the answer.
+#
+# No secrets, and that is a property of the firmware rather than a compromise --
+# see the long note at the top of firmware/platformio.ci.ini. Short version:
+# WIFI_SSID, WIFI_PWD and ADMIN_PASSWORD are compiled-in DEFAULTS which a node
+# that has been configured once never reads again, because its real settings live
+# on the data partition and an OTA does not touch that partition. So an image
+# built from placeholders upgrades a deployed node perfectly. It is not a first
+# install: flashing it onto a virgin board over USB gives a node with no network.
+#
+# TAGGING. `git tag fw-v1.12.0 && git push origin fw-v1.12.0`, where the version
+# must be the one in MESHSTATS_VERSION. The first job refuses the build if the
+# two disagree, because a release whose assets report a different version than
+# the release does sends the site looking for an upgrade that installs something
+# else.
+
+name: Firmware-release
+
+on:
+  push:
+    tags:
+      - 'fw-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version to build, e.g. fw-v1.12.0 (must match MESHSTATS_VERSION)'
+        required: true
+
+permissions:
+  contents: write        # the release job creates a release and uploads to it
+
+env:
+  # The MeshCore release this firmware is a set of changes to. Pinned rather
+  # than tracking a branch: upstream moves, and a repeater on a roof should be
+  # upgraded to an image built from a tree somebody looked at.
+  MESHCORE_REF: companion-v1.17.0
+
+jobs:
+  # Which environments exist is a question with exactly one answer, and it lives
+  # in firmware/platformio.ci.ini. Reading it here rather than repeating the list
+  # in YAML means adding a board is one edit in one file.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.envs.outputs.list }}
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        name: The tag and the source must agree
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref }}"
+          V=$(python3 firmware/tools/release_notes.py check --tag "$TAG")
+          echo "value=$V" >> "$GITHUB_OUTPUT"
+
+      - id: envs
+        name: Read the build environments
+        run: |
+          LIST=$(grep -oP '^\[env:\K[^\]]+' firmware/platformio.ci.ini \
+                 | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
+          echo "Building: $LIST"
+          if [ "$LIST" = "[]" ]; then
+            echo "firmware/platformio.ci.ini declares no [env:...] sections" >&2
+            exit 1
+          fi
+          echo "list=$LIST" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      # One board failing must not cancel the others: a release with three of
+      # four images is still useful, and which one broke is the thing you want
+      # to be able to read afterwards.
+      fail-fast: false
+      matrix:
+        pioenv: ${{ fromJson(needs.plan.outputs.envs) }}
+    steps:
+      - name: MeshStats
+        uses: actions/checkout@v4
+        with:
+          path: meshstats
+
+      - name: MeshCore
+        uses: actions/checkout@v4
+        with:
+          repository: meshcore-dev/MeshCore
+          ref: ${{ env.MESHCORE_REF }}
+          path: meshcore
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ env.MESHCORE_REF }}-${{ hashFiles('meshstats/firmware/platformio.ci.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # The same two copies the README tells a human to make. Not `git apply` of
+      # meshstats.patch: the patch and the files are two representations of one
+      # change, and if they ever drift the files are the ones that were compiled.
+      - name: Apply the MeshStats changes
+        run: |
+          cp -r meshstats/firmware/src/*      meshcore/src/
+          cp -r meshstats/firmware/examples/* meshcore/examples/
+          cp    meshstats/firmware/platformio.ci.ini meshcore/platformio.local.ini
+
+      - name: Build ${{ matrix.pioenv }}
+        working-directory: meshcore
+        run: pio run -e ${{ matrix.pioenv }}
+
+      # The asset name carries the env, because that is the key the site matches
+      # against MESHSTATS_ENV as reported by the node itself. A name that only
+      # said "repeater" would leave the site guessing which board a binary is
+      # for, and a guess there ends with an ESP32-S3 image on something else.
+      - name: Name it and hash it
+        working-directory: meshcore
+        run: |
+          V="${{ needs.plan.outputs.version }}"
+          BIN="meshstats-${{ matrix.pioenv }}-${V}.bin"
+          mkdir -p ../out
+          cp ".pio/build/${{ matrix.pioenv }}/firmware.bin" "../out/$BIN"
+          cd ../out
+          sha256sum "$BIN" > "$BIN.sha256"
+          ls -l
+          cat "$BIN.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fw-${{ matrix.pioenv }}
+          path: out/*
+
+  release:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect the assets
+        run: |
+          mkdir -p out
+          find artifacts -type f \( -name '*.bin' -o -name '*.sha256' \) -exec cp {} out/ \;
+          ls -l out
+
+      # The release notes are the changelog block for this version, taken from
+      # the source it was written in. Written once, published twice.
+      - name: Release notes
+        run: |
+          V="${{ needs.plan.outputs.version }}"
+          {
+            echo "MeshStatsNet $V, for the MeshCore repeater firmware (built against \`$MESHCORE_REF\`)."
+            echo
+            python3 firmware/tools/release_notes.py notes --version "$V"
+            echo
+            echo '## Which file'
+            echo
+            echo 'One image per PlatformIO build environment. A node reports the'
+            echo 'environment it was built for in `MESHSTATS_ENV` (`GET /api/fw`),'
+            echo 'and the site matches on that exactly; it refuses rather than'
+            echo 'guesses when a node does not report one. Every `.bin` has a'
+            echo '`.sha256` beside it, and both the site and the node check it'
+            echo 'before anything is written.'
+            echo
+            echo '> These are **upgrade** images, built without WiFi credentials'
+            echo '> or an admin password. A node that has been configured keeps'
+            echo '> its own settings across an upgrade, because they live on the'
+            echo '> data partition and an OTA does not touch it. For a first'
+            echo '> install over USB, build from `platformio.local.ini` instead.'
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: MeshStatsNet ${{ needs.plan.outputs.version }}
+          body_path: notes.md
+          files: out/*

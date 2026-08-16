@@ -2,8 +2,8 @@
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import (auth, clocksync, commanding, config, db, metrics, mqtt_ingest,
-               ratelimit, retention, tsdb)
+from . import (auth, clocksync, commanding, config, db, firmware, metrics,
+               mqtt_ingest, ratelimit, retention, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -434,3 +434,143 @@ def change_password(request: Request, current: str = Form(...),
         max_age=auth.SESSION_TTL, httponly=True, samesite="lax", secure=_secure(request),
     )
     return resp
+
+
+# --- firmware ----------------------------------------------------------------
+
+def _fw_context(request: Request, **extra):
+    """Alles wat de firmwarepagina nodig heeft, in één keer.
+
+    Per repeater een ``ota``-blok naast de rij zelf, want elke knop op die pagina
+    moet uit dezelfde redenering komen. Twee plekken die allebei uitrekenen of
+    een node een image mag krijgen zijn twee plekken die het een keer oneens
+    worden, en de eerste keer dat dat gebeurt staat er een knop onder een node
+    die hem niet kan uitvoeren.
+    """
+    repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    rel = firmware.releases()
+    rows = []
+    for rep in repeaters:
+        route = firmware.ota_route(rep)
+        rows.append({
+            "rep": rep,
+            "ota": route,
+            "job": firmware.job(rep["id"]),
+            # Welke releases een image dragen voor de bouwomgeving die deze node
+            # meldde. Leeg als we die omgeving niet kennen -- dan is de eerlijke
+            # uitkomst 'niet vast te stellen' en geen lijst om uit te kiezen.
+            "builds": [r for r in (rel.get("items") or []) if route["env"] in r["images"]]
+                      if route["env"] else [],
+        })
+    ctx = {
+        "site_name": config.SITE_NAME, "user": current_user(request),
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+        "rows": rows,
+        "releases": rel.get("items") or [],
+        "rel_error": rel.get("error") or "",
+        "rel_at": rel.get("at") or 0,
+        "repo": firmware.repo_slug(),
+        "have_credentials": bool(firmware.NODE_USER),
+    }
+    ctx.update(extra)
+    return templates.TemplateResponse(request, "admin/firmware.html", ctx)
+
+
+@router.get("/firmware", response_class=HTMLResponse)
+def firmware_page(request: Request):
+    require_login(request)
+    return _fw_context(request)
+
+
+@router.post("/firmware/refresh")
+def firmware_refresh(request: Request, csrf: str = Form(...)):
+    require_login(request)
+    check_csrf(request, csrf)
+    firmware.releases(force=True)
+    return RedirectResponse("/admin/firmware", status_code=303)
+
+
+@router.post("/repeaters/{rid}/ota")
+def save_ota(request: Request, rid: int, ota_host: str = Form(""),
+             is_critical: str = Form(""), csrf: str = Form(...)):
+    require_login(request)
+    check_csrf(request, csrf)
+    if not db.qone("SELECT id FROM repeaters WHERE id=?", (rid,)):
+        raise HTTPException(404, "Onbekende repeater")
+    host = (ota_host or "").strip()
+    if host:
+        try:
+            firmware._url(host, "/api/fw")      # zelfde controle als bij het schrijven
+        except ValueError as exc:
+            raise HTTPException(422, f"Adres onbruikbaar: {exc}") from exc
+    db.set_ota_host(rid, host)
+    db.set_critical(rid, bool(is_critical))
+    return RedirectResponse("/admin/firmware", status_code=303)
+
+
+@router.post("/repeaters/{rid}/probe")
+def probe_node(request: Request, rid: int, csrf: str = Form(...)):
+    """Eén keer aankloppen bij de node en onthouden wat hij zegt.
+
+    Bestaat omdat de bouwomgeving nergens anders vandaan komt: hij zit niet in
+    het statistiekenbericht en kan er ook niet in, want een node zonder IP-pad
+    zou hem dan melden zonder dat er ooit een image langs kan. Eén knop die het
+    ophaalt op het moment dat de beheerder zegt dat er een pad is, is eerlijker
+    dan een veld dat stilletjes veroudert.
+    """
+    require_login(request)
+    check_csrf(request, csrf)
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+    info = firmware.probe(str(rep["ota_host"] or ""))
+    if info["ok"]:
+        db.record_pio_env(rid, info["env"])
+        if info["ver"]:
+            db.record_firmware(rid, fw_module=info["ver"])
+    return _fw_context(request, probe={"rid": rid, "info": info})
+
+
+@router.post("/repeaters/{rid}/upgrade")
+def start_upgrade(request: Request, rid: int, tag: str = Form(...),
+                  expect_env: str = Form(""), confirm: str = Form(""),
+                  csrf: str = Form(...)):
+    require_login(request)
+    check_csrf(request, csrf)
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+
+    # De bevestiging voor een kritieke node. Niet 'weet u het zeker' maar de
+    # naam overtypen, want de fout die dit moet vangen is niet twijfel maar een
+    # klik op de verkeerde regel -- en daar helpt een ja/nee-vraag niet tegen.
+    if rep["is_critical"] and (confirm or "").strip() != (rep["name"] or ""):
+        return _fw_context(request, started={
+            "rid": rid, "ok": False,
+            "error": f"Deze node staat als kritiek gemarkeerd. Typ de naam "
+                     f"({rep['name']}) precies over om te bevestigen.",
+        })
+
+    result = firmware.start(rep, tag, expect_env)
+    return _fw_context(request, started={"rid": rid, **result})
+
+
+@router.post("/repeaters/{rid}/upgrade/clear")
+def clear_upgrade(request: Request, rid: int, csrf: str = Form(...)):
+    require_login(request)
+    check_csrf(request, csrf)
+    firmware.clear_job(rid)
+    return RedirectResponse("/admin/firmware", status_code=303)
+
+
+@router.get("/firmware/jobs")
+def firmware_jobs(request: Request):
+    """Alleen de toestand van de lopende opdrachten, voor de pagina zelf.
+
+    Het enige stukje /admin dat niet via een formulier en een 303 loopt, en dat
+    is niet uit voorkeur maar uit noodzaak: een upgrade duurt langer dan een
+    verzoek mag duren, en een pagina die pas na twee minuten iets zegt is een
+    pagina waarvan je denkt dat hij hangt.
+    """
+    require_login(request)
+    return firmware.jobs()

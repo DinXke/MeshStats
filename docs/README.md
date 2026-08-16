@@ -64,6 +64,8 @@ The MeshCore wire format is documented nowhere else.
 | Document | What you will find |
 |---|---|
 | [`firmware.md`](firmware.md) | Every change MeshStats makes to MeshCore — multiple simultaneous companions, the stats publisher, the repeater's network module — and how to build and flash it |
+| [`firmware-upgrade.md`](firmware-upgrade.md) | How a node gets a new image: GitHub releases, the checksum that is verified twice, why only success reboots, how to roll back, and what a checksum does **not** prove |
+| [`node-management.md`](node-management.md) | What the site may do to a node and what it deliberately will not: the three management levels, which settings may be written and which must never be written remotely |
 
 ---
 
@@ -109,6 +111,8 @@ cover.
 | What do these bytes mean? | [`protocol.md`](protocol.md) |
 | Why does the site say "unknown" here? | [`candidates.md`](candidates.md), [`decoder.md`](decoder.md) |
 | How do I get my node publishing? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
+| How do I upgrade a node from the site? | [`firmware-upgrade.md`](firmware-upgrade.md) |
+| Why is this button greyed out for this node? | [`node-management.md`](node-management.md), [`commanding.md`](commanding.md) |
 | Is it safe to put this on the internet? | [`security.md`](security.md) |
 | My data comes from Home Assistant | [`homeassistant.md`](homeassistant.md) |
 | I cannot flash firmware | [`proxy.md`](proxy.md) |

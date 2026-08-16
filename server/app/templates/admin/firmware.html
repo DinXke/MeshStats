@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block title %}Firmware — {{ site_name }}{% endblock %}
+{% block nav %}<a href="/admin">Beheer</a> <a href="/admin/logout">Uitloggen ({{ user }})</a>{% endblock %}
+{% block content %}
+<h1>Firmware</h1>
+
+{# Wat de pagina als geheel niet kan, staat bovenaan. Een lijst nodes met overal
+   dezelfde uitleg eronder is een lijst waarin niemand de uitleg nog leest. #}
+{% if not repo %}
+<div class="card notice">
+  <strong>Geen repository bekend.</strong> De site leidt af waar de releases staan uit de
+  git-remote van de werkkopie, en die is hier niet te vinden — in een container zit geen
+  <code>.git</code>. Zet <code>MCS_GITHUB_REPO</code> op <code>eigenaar/repo</code>.
+</div>
+{% elif rel_error == "rate_limited" %}
+<div class="card notice">
+  <strong>GitHub weigert tijdelijk.</strong> De anonieme limiet (60 verzoeken per uur per
+  IP) is bereikt. Hieronder staat de laatst opgehaalde lijst; die blijft bruikbaar.
+</div>
+{% elif rel_error == "offline" %}
+<div class="card notice">
+  <strong>GitHub niet bereikbaar.</strong> Hieronder staat de laatst opgehaalde lijst.
+</div>
+{% elif rel_error %}
+<div class="card notice"><strong>Releaselijst ophalen mislukte</strong> ({{ rel_error }}).</div>
+{% endif %}
+
+{% if not have_credentials %}
+<div class="card notice">
+  <strong>Geen inloggegevens voor de nodes.</strong> Een image gaat over de beheerpagina van
+  de node zelf, achter zijn eigen login. Zet <code>MCS_FW_NODE_USER</code> en
+  <code>MCS_FW_NODE_PASS</code> in de omgeving van de server. Zolang die leeg zijn blijft
+  elke upgradeknop uit.
+</div>
+{% endif %}
+
+<section>
+  <h2>Beschikbare versies</h2>
+  <div class="card">
+    <p class="muted small">
+      Uit de releases van <span class="mono">{{ repo or "—" }}</span>. Elke release draagt
+      één image per bouwomgeving, met de checksum ernaast. De site controleert die
+      checksum vóór het versturen, en de node controleert hem nog een keer vóórdat hij
+      zijn bootpartitie omzet.
+    </p>
+    {% if releases %}
+    <table>
+      <thead><tr><th>Versie</th><th>Gepubliceerd</th><th>Bouwomgevingen</th></tr></thead>
+      <tbody>
+      {% for r in releases %}
+        <tr>
+          <td class="mono">{{ r.version or r.tag }}{% if r.prerelease %} <span class="muted">(pre)</span>{% endif %}</td>
+          <td>{{ r.published or "—" }}</td>
+          <td class="mono small">{{ r.envs | join(", ") }}</td>
+        </tr>
+        <tr>
+          <td colspan="3">
+            <details>
+              <summary class="muted small">Release notes</summary>
+              <pre class="small mono">{{ r.notes or "(geen)" }}</pre>
+            </details>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">
+      Nog geen releases met images. Ze ontstaan uit een tag: <code>git tag fw-v1.12.0</code>
+      en pushen; de workflow bouwt per bouwomgeving een <code>.bin</code> met
+      <code>.sha256</code> en gebruikt het changelogblok als release notes.
+    </p>
+    {% endif %}
+    <form method="post" action="/admin/firmware/refresh" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">Lijst nu verversen</button>
+    </form>
+  </div>
+</section>
+
+<section>
+  <h2>Nodes</h2>
+  {% for row in rows %}
+  {% set rep = row.rep %}{% set ota = row.ota %}{% set job = row.job %}
+  <div class="card">
+    <h3>
+      {{ rep.name }}
+      <span class="mono muted small">{{ rep.pubkey_prefix }}</span>
+      {% if rep.is_critical %}<span class="pill" title="Bevestiging vereist">kritiek</span>{% endif %}
+    </h3>
+
+    <p class="small">
+      Geïnstalleerd:
+      {% if rep.fw_meshmanager %}<span class="mono">nodefirmware {{ rep.fw_meshmanager }}</span>
+      {% else %}<span class="muted">onbekend</span>{% endif %}
+      {%- if rep.fw %} &middot; <span class="mono">MeshCore {{ rep.fw }}</span>{% endif %}
+      {%- if ota.env %} &middot; bouwomgeving <span class="mono">{{ ota.env }}</span>{% endif %}
+    </p>
+
+    {# De uitkomst van een opdracht, en die blijft staan tot iemand hem wegklikt.
+       'Niet teruggekomen' is de reden dat dit blok bestaat: dat is geen fout en
+       geen succes, en het mag niet stilletjes uit beeld verdwijnen. #}
+    {% if job %}
+    <div class="notice small">
+      <strong>
+        {%- if job.state == "gelukt" %}Upgrade naar {{ job.version }} gelukt
+        {%- elif job.state == "mislukt" %}Upgrade naar {{ job.version }} mislukt
+        {%- elif job.state == "niet_teruggekomen" %}Node niet teruggekomen na upgrade naar {{ job.version }}
+        {%- else %}Upgrade naar {{ job.version }} bezig — {{ job.state }}{% endif %}
+      </strong>
+      {% if job.step %}<span class="mono">[{{ job.step }}]</span>{% endif %}
+      {% if job.msg %}<br>{{ job.msg }}{% endif %}
+      {% if job.state == "niet_teruggekomen" %}
+      <br>Het schrijven en de controle zijn gelukt — dit gaat over de herstart. Terugvallen op
+      de vorige firmware kan met <code>wifi fw rollback</code> over de mesh-CLI, ook als de
+      node op het netwerk onzichtbaar is.
+      {% endif %}
+      {% if job.state not in ("voorbereiden", "downloaden", "schrijven", "wachten") %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/upgrade/clear" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Wegklikken</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if started and started.rid == rep.id and not started.ok %}
+    <div class="notice small"><strong>Niet gestart.</strong> {{ started.error }}</div>
+    {% endif %}
+    {% if probe and probe.rid == rep.id %}
+    <div class="notice small">
+      {% if probe.info.ok %}<strong>Node antwoordde.</strong>
+        Draait <span class="mono">{{ probe.info.ver }}</span>, gebouwd als
+        <span class="mono">{{ probe.info.env or "(niet gemeld)" }}</span>, nu vanaf
+        <span class="mono">{{ probe.info.run }}</span>.
+        {% if probe.info.other and probe.info.other.valid %}
+          Terugvallen kan naar <span class="mono">{{ probe.info.other.ver or "een onbekende versie" }}</span>
+          in <span class="mono">{{ probe.info.other.slot }}</span>.
+        {% else %}
+          De andere sleuf is nog leeg, dus terugvallen kan nog niet — dat kan pas na de
+          eerste upgrade langs deze weg.
+        {% endif %}
+      {% else %}<strong>Geen antwoord.</strong> {{ probe.info.error }}{% endif %}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/ota" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Beheeradres van de node
+        <input name="ota_host" value="{{ rep.ota_host or '' }}" placeholder="http://…">
+      </label>
+      <label>
+        <input type="checkbox" name="is_critical" value="1" {% if rep.is_critical %}checked{% endif %}>
+        Kritiek (bevestiging vereist)
+      </label>
+      <button type="submit">Opslaan</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/probe" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" {% if not rep.ota_host %}disabled{% endif %}>Node uitvragen</button>
+    </form>
+
+    {# Nooit een knop die niet kan. Uitgeschakeld met de reden erbij, want een
+       knop die verdwijnt laat de vraag "waarom kan dit hier niet" onbeantwoord. #}
+    {% if not ota.can %}
+    <p class="muted small">
+      <strong>Geen upgrade mogelijk:</strong>
+      {%- if ota.blocker == "no_credentials" %}
+      de server heeft geen inloggegevens voor de beheerpagina's van de nodes (zie boven).
+      {%- elif ota.blocker == "relayed_only" %}
+      deze repeater publiceert niet zelf; zijn cijfers komen via node
+      <span class="mono">{{ rep.source_prefix }}</span> over LoRa binnen. Een image is
+      ongeveer 1,3 MB, en over LoRa op deze instellingen praat je met de duty-cycle-limiet
+      over dágen zendtijd. Dit is een blijvende toestand, geen ontbrekende instelling:
+      zo'n node wordt over USB of ter plaatse geflasht.
+      {%- elif ota.blocker == "no_host" %}
+      er is geen beheeradres ingevuld, dus de server kent geen IP-pad naar deze node.
+      Vul er een in als die er wel is.
+      {%- elif ota.blocker == "no_fw" %}
+      deze node meldt geen MeshStats-versie, dus draait hij onze firmware waarschijnlijk
+      niet. Een image van dit project hoort daar niet heen.
+      {%- else %}{{ ota.blocker }}.
+      {%- endif %}
+    </p>
+    {% elif not ota.env %}
+    <p class="muted small">
+      <strong>Nog niet vast te stellen welk image hierbij hoort.</strong> Druk op “Node
+      uitvragen”: de node meldt zelf voor welke bouwomgeving hij gebouwd is. Meldt hij er
+      geen, dan draait hij een image van vóór 1.12.0 en moet die eerste keer met de hand —
+      een verkeerd image op een node die je niet kunt aanraken is niet meer recht te zetten.
+    </p>
+    {% elif not row.builds %}
+    <p class="muted small">
+      <strong>Geen image voor <span class="mono">{{ ota.env }}</span>.</strong> Er is wel een
+      releaselijst, maar geen enkele release draagt een asset voor deze bouwomgeving. Voeg
+      hem toe aan <code>firmware/platformio.ci.ini</code> en tag opnieuw.
+    </p>
+    {% else %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/upgrade" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="expect_env" value="{{ ota.env }}">
+      <label>Versie
+        <select name="tag">
+          {% for r in row.builds %}
+          <option value="{{ r.tag }}">
+            {{ r.version or r.tag }}{% if r.version == rep.fw_meshmanager %} — nu geïnstalleerd{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      {% if rep.is_critical %}
+      <label>Bevestig met de naam
+        <input name="confirm" placeholder="{{ rep.name }}" autocomplete="off">
+      </label>
+      {% endif %}
+      <button type="submit" class="danger">Upgraden</button>
+    </form>
+    <p class="muted small">
+      Een oudere versie kiezen mag en is soms precies wat je wilt. Instellingen overleven
+      een stap omlaag — die staan op de datapartitie en daar komt een OTA niet — maar een
+      instelling die pas ná de gekozen versie bestond wordt door die versie genegeerd en
+      bij de eerstvolgende opslag uit het bestand geschreven.
+    </p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_v }}"></script>
+<script>
+// Een lopende upgrade duurt langer dan een verzoek mag duren, dus haalt de
+// pagina de toestand zelf op. Alleen zolang er iets loopt: een pagina die
+// eeuwig blijft pollen is een pagina die een server bezighoudt om niets.
+(function () {
+  var bezig = ["voorbereiden", "downloaden", "schrijven", "wachten"];
+  function draait(jobs) {
+    for (var k in jobs) {
+      if (jobs.hasOwnProperty(k) && bezig.indexOf(jobs[k].state) >= 0) return true;
+    }
+    return false;
+  }
+  function kijk() {
+    fetch("/admin/firmware/jobs", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (jobs) {
+        if (!jobs) return;
+        if (draait(jobs)) { setTimeout(kijk, 4000); return; }
+        // Klaar: herladen, zodat de uitkomst uit dezelfde sjabloon komt als bij
+        // een gewone paginabezoek en niet uit een tweede stuk opmaakcode hier.
+        location.reload();
+      })
+      .catch(function () { setTimeout(kijk, 10000); });
+  }
+  var loopt = document.querySelectorAll(".notice strong");
+  for (var i = 0; i < loopt.length; i++) {
+    if (/bezig —/.test(loopt[i].textContent)) { setTimeout(kijk, 4000); break; }
+  }
+})();
+</script>
+{% endblock %}
