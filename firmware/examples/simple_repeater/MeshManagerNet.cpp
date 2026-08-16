@@ -7193,31 +7193,31 @@ struct CfgParam {
  * adc.multiplier worden aan de overkant met een kale atof()/atoi() ingelezen
  * zonder één controle. */
 static const CfgParam CFG_PARAMS[] = {
-  //                       soort       lo      hi  keuzes                         risico       rb geh rem
+  //                       soort       lo      hi  keuzes                         risico       rb geh
   // --- zo weer terug te zetten ---------------------------------------------
-  { "name",                  CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0, 1 },
-  { "lat",                   CFG_FLOAT,  -90,     90, NULL,                          RISK_PLAIN,  0, 0, 1 },
-  { "lon",                   CFG_FLOAT, -180,    180, NULL,                          RISK_PLAIN,  0, 0, 1 },
-  { "owner.info",            CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0, 1 },
-  { "advert.interval",       CFG_INT,     60,    240, NULL,                          RISK_PLAIN,  0, 0, 1 },  // minuten, stappen van 2
-  { "flood.advert.interval", CFG_INT,      3,    168, NULL,                          RISK_PLAIN,  0, 0, 1 },  // uren
-  { "rxdelay",               CFG_FLOAT,    0,     20, NULL,                          RISK_PLAIN,  0, 0, 1 },
-  { "txdelay",               CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0, 1 },
-  { "direct.txdelay",        CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0, 1 },
+  { "name",                  CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0 },
+  { "lat",                   CFG_FLOAT,  -90,     90, NULL,                          RISK_PLAIN,  0, 0 },
+  { "lon",                   CFG_FLOAT, -180,    180, NULL,                          RISK_PLAIN,  0, 0 },
+  { "owner.info",            CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0 },
+  { "advert.interval",       CFG_INT,     60,    240, NULL,                          RISK_PLAIN,  0, 0 },  // minuten, stappen van 2
+  { "flood.advert.interval", CFG_INT,      3,    168, NULL,                          RISK_PLAIN,  0, 0 },  // uren
+  { "rxdelay",               CFG_FLOAT,    0,     20, NULL,                          RISK_PLAIN,  0, 0 },
+  { "txdelay",               CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0 },
+  { "direct.txdelay",        CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0 },
 
   // --- verandert merkbaar hoe de node zich gedraagt -------------------------
-  { "dutycycle",             CFG_FLOAT,    1,    100, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "af",                    CFG_FLOAT,    0,    100, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "flood.max",             CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "flood.max.unscoped",    CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "flood.max.advert",      CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "int.thresh",            CFG_INT,      0,    255, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "agc.reset.interval",    CFG_INT,      0,   1020, NULL,                          RISK_WRITES, 0, 0, 1 },  // bewaard als /4
-  { "multi.acks",            CFG_INT,      0,      3, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "path.hash.mode",        CFG_INT,      0,      2, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "loop.detect",           CFG_ENUM,     0,      0, "off|minimal|moderate|strict", RISK_WRITES, 0, 0, 1 },
-  { "cad",                   CFG_BOOL,     0,      0, NULL,                          RISK_WRITES, 0, 0, 1 },
-  { "adc.multiplier",        CFG_FLOAT,    0,     10, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "dutycycle",             CFG_FLOAT,    1,    100, NULL,                          RISK_WRITES, 0, 0 },
+  { "af",                    CFG_FLOAT,    0,    100, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max",             CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max.unscoped",    CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max.advert",      CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "int.thresh",            CFG_INT,      0,    255, NULL,                          RISK_WRITES, 0, 0 },
+  { "agc.reset.interval",    CFG_INT,      0,   1020, NULL,                          RISK_WRITES, 0, 0 },  // bewaard als /4
+  { "multi.acks",            CFG_INT,      0,      3, NULL,                          RISK_WRITES, 0, 0 },
+  { "path.hash.mode",        CFG_INT,      0,      2, NULL,                          RISK_WRITES, 0, 0 },
+  { "loop.detect",           CFG_ENUM,     0,      0, "off|minimal|moderate|strict", RISK_WRITES, 0, 0 },
+  { "cad",                   CFG_BOOL,     0,      0, NULL,                          RISK_WRITES, 0, 0 },
+  { "adc.multiplier",        CFG_FLOAT,    0,     10, NULL,                          RISK_WRITES, 0, 0 },
 
   // --- kan de bereikbaarheid afsnijden --------------------------------------
   /* Alle vijf hieronder raken de radio of wie er mag inloggen. Op een node met
