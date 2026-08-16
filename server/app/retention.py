@@ -60,7 +60,7 @@ import logging
 import threading
 import time
 
-from . import config, db
+from . import audit, config, db
 
 log = logging.getLogger("meshmanager.retention")
 
@@ -111,6 +111,11 @@ def run_once() -> dict:
     precies de rijen die er een seconde later uit gaan.
     """
     report = db.prune()
+    # Het audittrail heeft een eigen, veel langere termijn en wordt daarom hier
+    # gesnoeid en niet in db.prune(): die functie gaat over meetgegevens, en het
+    # trail is geen meetgegeven maar het geheugen van wie wat deed. Zie
+    # audit.DEFAULT_AUDIT_DAYS voor waarom die termijn in jaren staat.
+    report["audit"] = audit.prune()
     report["vacuum"] = db.maybe_vacuum()
     _state["runs"] += 1
     _state["last_run"] = report["at"]

@@ -382,7 +382,8 @@ def knop(db, monkeypatch):
     """
     from app import routes_admin
 
-    monkeypatch.setattr(routes_admin, "require_login", lambda request: "beheerder")
+    monkeypatch.setattr(routes_admin, "require_perm",
+                        lambda request, action, rep=None: "beheerder")
     monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
     monkeypatch.setattr(routes_admin, "_fw_context", lambda request, **extra: extra)
     gestart = []

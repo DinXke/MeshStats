@@ -64,19 +64,37 @@ def verify_dummy(password: str) -> None:
 
 # ---- API-tokens -------------------------------------------------------------
 
-def create_token(name: str) -> str:
+def create_token(name: str, door: str = "") -> str:
     # Nieuwe tokens dragen het nieuwe voorvoegsel. Bestaande tokens blijven
     # gewoon werken: er wordt op de hash gecontroleerd, niet op het voorvoegsel,
     # dus dit is enkel wat je op een token leest.
+    #
+    # ``door`` is de beheerder die het aanmaakte. Zodra er meer dan één account
+    # is, is een token zonder eigenaar een sleutel waarvan niemand weet waarom
+    # hij bestaat -- en tokens worden zelden ingetrokken omdat niemand durft.
     token = "mm_" + secrets.token_urlsafe(32)
     db.execute(
-        "INSERT INTO tokens(name, token_hash, created_at) VALUES(?,?,?)",
-        (name, hashlib.sha256(token.encode()).hexdigest(), db.utcnow()),
+        "INSERT INTO tokens(name, token_hash, created_at, created_by) VALUES(?,?,?,?)",
+        (name, hashlib.sha256(token.encode()).hexdigest(), db.utcnow(), door),
     )
     return token
 
 
 def check_token(token: str) -> bool:
+    """Of dit Bearer-token geldig is. Meer zegt het niet, en dat is met opzet.
+
+    **Een token is geen gebruiker.** Het rechtenmodel in rbac.py gaat over
+    accounts en over nodes; een token geeft toegang tot de invoerwegen van de
+    HTTP-API (statistieken binnenbrengen, de opdrachtwachtrij ophalen, contacten
+    doorgeven) en tot niets onder /admin. Er is dus geen rol op te zetten en geen
+    node aan te koppelen, want er is geen handeling waar dat over zou gaan.
+
+    Waarom niet alsnog: een token dat rollen kan dragen is een tweede weg naar
+    dezelfde bevoegdheden, met een eigen intrekking en een eigen audittrail. Twee
+    wegen naar "mag deze firmware schrijven" is er één te veel -- dat was het
+    hele punt van rbac.py. Wie een token wil dat minder mag dan alles, splitst de
+    invoerwegen; wie er een wil dat méér mag, wil eigenlijk een account.
+    """
     if not token:
         return False
     h = hashlib.sha256(token.encode()).hexdigest()

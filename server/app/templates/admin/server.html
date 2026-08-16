@@ -18,17 +18,271 @@
 <section id="toegang">
   <h2>Toegang</h2>
   <div class="card">
-  <p class="muted small">Ingelogd als <strong>{{ user }}</strong>. Een wachtwoordwijziging maakt elke
-     andere sessie ongeldig; dit tabblad krijgt meteen een nieuwe koek en blijft dus open.
-     Extra accounts maak je vanaf de opdrachtregel
-     (<code>python -m app.main set-password &lt;naam&gt;</code>) &mdash; bewust niet vanaf een
-     webformulier.</p>
-  <form method="post" action="/admin/password" class="rowform">
+  <p class="muted small">Ingelogd als <strong>{{ user }}</strong>, serverbeheerder. Uw eigen
+     wachtwoord wijzigt u onder <a href="/admin/account">Mijn account</a> &mdash; die pagina is er
+     voor iedereen die kan inloggen, ook voor wie deze pagina niet mag zien.</p>
+  </div>
+</section>
+
+{#- --- gebruikers ------------------------------------------------------------
+
+    Het rechtenmodel op één pagina, in de volgorde waarin je het opbouwt: eerst
+    accounts, dan groepen, dan wat die groepen mogen. Dat is ook de volgorde
+    waarin het te begrijpen is -- toekenningen bovenaan zetten zou vragen om
+    namen die er nog niet zijn.
+
+    Waarom dit hier staat en niet op een eigen pagina: gebruikersbeheer
+    configureert deze installatie en raakt geen apparaat. Dat is precies de
+    scheiding waar deze pagina op gebouwd is. -#}
+<section id="gebruikers">
+  <h2>Gebruikers</h2>
+  <div class="card tablecard">
+  <p class="muted small">Wie kan inloggen, en wat hij van deze installatie mag. Een
+     <strong>serverbeheerder</strong> mag alles op elke node plus alles op deze pagina; een gewone
+     gebruiker mag alleen wat hem hieronder per node of per nodegroep is toegekend. De laatste
+     actieve serverbeheerder kan zichzelf niet degraderen, uitzetten of verwijderen &mdash; anders
+     is er niemand meer die deze pagina kan openen.</p>
+  <table>
+    <thead><tr><th>Naam</th><th>Rol op de server</th><th>Aangemaakt</th><th>Wachtwoord zetten</th><th></th></tr></thead>
+    <tbody>
+    {% for u in gebruikers %}
+      <tr>
+        <td>{{ u.username }}{% if u.disabled %} <span class="muted">(uit)</span>{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/users/{{ u.id }}/flags" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <label><input type="checkbox" name="is_superuser" value="1"
+                   {% if u.is_superuser %}checked{% endif %}> serverbeheerder</label>
+            <label><input type="checkbox" name="disabled" value="1"
+                   {% if u.disabled %}checked{% endif %}> uit</label>
+            <button type="submit">Opslaan</button>
+          </form>
+        </td>
+        <td class="muted small">{% if u.created_at %}<time class="reltime" datetime="{{ u.created_at }}">{{ u.created_at }}</time>{% else %}&mdash;{% endif %}
+          {% if u.created_by %}<br>door {{ u.created_by }}{% endif %}</td>
+        <td>
+          {#- Een beheerder zet hier een wachtwoord voor iemand anders en kan het niet
+              teruglezen: het gaat gehasht de databank in en komt nergens anders terecht.
+              Het huidige wachtwoord wordt niet gevraagd -- dat is het punt van deze knop. -#}
+          <form method="post" action="/admin/users/{{ u.id }}/password" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="password" name="password" placeholder="Nieuw (min. 8)"
+                   autocomplete="new-password" required minlength="8">
+            <button type="submit">Zetten</button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="/admin/users/{{ u.id }}/delete" class="inline"
+                onsubmit="return confirm('Account {{ u.username }} verwijderen? Zijn regels in het audittrail blijven staan.')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger">Verwijderen</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/users" class="rowform">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="password" name="current" placeholder="Huidig wachtwoord" autocomplete="current-password" required>
-    <input type="password" name="new" placeholder="Nieuw wachtwoord (min. 8)" autocomplete="new-password" required minlength="8">
-    <button type="submit">Wachtwoord wijzigen</button>
+    <input name="username" placeholder="Gebruikersnaam" required maxlength="64">
+    <input type="password" name="password" placeholder="Wachtwoord (min. 8)"
+           autocomplete="new-password" required minlength="8">
+    <label><input type="checkbox" name="is_superuser" value="1"> serverbeheerder</label>
+    <button type="submit">Account aanmaken</button>
   </form>
+  </div>
+</section>
+
+<section id="groepen">
+  <h2>Groepen</h2>
+  <div class="card tablecard">
+  <p class="muted small">Rechten ken je toe aan een groep en niet aan elk paar apart. Eerst
+     groepen gebruikers, dan groepen nodes; een toekenning hieronder verbindt de twee.
+    {% if losse_nodes %}<br><strong>{{ losse_nodes|length }} node(s) zitten in geen enkele nodegroep</strong>
+     ({{ losse_nodes|map(attribute='name')|join(', ') }}). Ze zijn niet stuk en niet verboden, maar
+     ze zijn alleen bereikbaar via een rechtstreekse toekenning of via &lsquo;alle nodes&rsquo;. Een node
+     die vanzelf uit het verkeer ontstaat begint zo, dus dit getal hoort te bewegen.{% endif %}</p>
+
+  <h3>Gebruikersgroepen</h3>
+  <table>
+    <thead><tr><th>Naam</th><th>Leden</th><th></th></tr></thead>
+    <tbody>
+    {% for g in gebruikersgroepen %}
+      <tr>
+        <td>{{ g.name }}{% if g.note %}<br><span class="muted small">{{ g.note }}</span>{% endif %}</td>
+        <td>
+          {% for u in gebruikers %}
+          <form method="post" action="/admin/groups/user/{{ g.id }}/members" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="member" value="{{ u.id }}">
+            <input type="hidden" name="lid" value="{{ '' if u.id in groepsleden[g.id] else '1' }}">
+            <button type="submit">{% if u.id in groepsleden[g.id] %}&#10003; {% endif %}{{ u.username }}</button>
+          </form>
+          {% endfor %}
+        </td>
+        <td>
+          <form method="post" action="/admin/groups/user/{{ g.id }}/delete" class="inline"
+                onsubmit="return confirm('Groep {{ g.name }} verwijderen? De toekenningen die erop staan gaan mee.')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger">Verwijderen</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">Nog geen gebruikersgroepen.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/groups" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="soort" value="user">
+    <input name="name" placeholder="Naam van de gebruikersgroep" required>
+    <input name="note" placeholder="Toelichting (optioneel)">
+    <button type="submit">Groep aanmaken</button>
+  </form>
+
+  <h3>Nodegroepen</h3>
+  <table>
+    <thead><tr><th>Naam</th><th>Nodes</th><th></th></tr></thead>
+    <tbody>
+    {% for g in nodegroepen %}
+      <tr>
+        <td>{{ g.name }}{% if g.note %}<br><span class="muted small">{{ g.note }}</span>{% endif %}</td>
+        <td>
+          {% for r in alle_repeaters %}
+          <form method="post" action="/admin/groups/node/{{ g.id }}/members" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="member" value="{{ r.id }}">
+            <input type="hidden" name="lid" value="{{ '' if r.id in nodegroepsleden[g.id] else '1' }}">
+            <button type="submit">{% if r.id in nodegroepsleden[g.id] %}&#10003; {% endif %}{{ r.name }}</button>
+          </form>
+          {% endfor %}
+        </td>
+        <td>
+          <form method="post" action="/admin/groups/node/{{ g.id }}/delete" class="inline"
+                onsubmit="return confirm('Groep {{ g.name }} verwijderen? De toekenningen die erop staan gaan mee.')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger">Verwijderen</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">Nog geen nodegroepen.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/groups" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="soort" value="node">
+    <input name="name" placeholder="Naam van de nodegroep" required>
+    <input name="note" placeholder="Toelichting (optioneel)">
+    <button type="submit">Groep aanmaken</button>
+  </form>
+  </div>
+</section>
+
+<section id="toekenningen">
+  <h2>Toekenningen</h2>
+  <div class="card tablecard">
+  <p class="muted small">Wie mag wat, op welke nodes. Vier rollen, en elke rol is een plafond
+     op het risico van de handeling:</p>
+  <ul class="muted small">
+    {% for rol in rollen %}<li><strong>{{ rol }}</strong> &mdash; {{ rol_uitleg[rol] }}</li>{% endfor %}
+  </ul>
+  <p class="muted small"><strong>Botsende toekenningen.</strong> Een weigering wint altijd, ook
+     van een specifiekere toestemming: wie een uitzondering intrekt, wil dat die intrekking het
+     laatste woord heeft. Onder de toestemmingen wint de ruimste, zodat iemand aan een groep
+     toevoegen zijn rechten nooit kleiner maakt. Zonder toekenning is er geen toegang &mdash; er
+     is geen stilzwijgende rol voor nodes waar niemand iets over gezegd heeft.</p>
+  <table>
+    <thead><tr><th>Wie</th><th>Waarop</th><th>Rol</th><th>Effect</th><th>Sinds</th><th></th></tr></thead>
+    <tbody>
+    {% for g in toekenningen %}
+      <tr>
+        <td>{{ g.subject_name or '?' }} <span class="muted small">({{ 'gebruiker' if g.subject_type == 'user' else 'gebruikersgroep' }})</span></td>
+        <td>{{ g.object_name or '?' }} <span class="muted small">({{ g.object_type }})</span></td>
+        <td>{{ g.role or '—' }}</td>
+        <td>{{ 'weigeren' if g.effect == 'deny' else 'toestaan' }}</td>
+        <td class="muted small"><time class="reltime" datetime="{{ g.created_at }}">{{ g.created_at }}</time>
+            {% if g.created_by %}<br>door {{ g.created_by }}{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/grants/{{ g.id }}/delete" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger">Intrekken</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">Nog geen toekenningen. Zolang die er niet zijn, kan alleen
+        een serverbeheerder iets met een node &mdash; wat precies de toestand is van vóór dit model.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/grants" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <select name="subject_type" aria-label="Soort onderwerp">
+      <option value="user">gebruiker</option>
+      <option value="group">gebruikersgroep</option>
+    </select>
+    <select name="subject_id" aria-label="Wie">
+      <optgroup label="Gebruikers">
+        {% for u in gebruikers %}<option value="{{ u.id }}">{{ u.username }}</option>{% endfor %}
+      </optgroup>
+      <optgroup label="Gebruikersgroepen">
+        {% for g in gebruikersgroepen %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+      </optgroup>
+    </select>
+    <select name="object_type" aria-label="Soort voorwerp">
+      <option value="node">node</option>
+      <option value="nodegroup">nodegroep</option>
+      <option value="all">alle nodes</option>
+    </select>
+    <select name="object_id" aria-label="Waarop">
+      <option value="0">(bij &lsquo;alle nodes&rsquo;)</option>
+      <optgroup label="Nodes">
+        {% for r in alle_repeaters %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+      </optgroup>
+      <optgroup label="Nodegroepen">
+        {% for g in nodegroepen %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+      </optgroup>
+    </select>
+    <select name="role" aria-label="Rol">
+      {% for rol in rollen %}<option value="{{ rol }}">{{ rol }}</option>{% endfor %}
+    </select>
+    <select name="effect" aria-label="Effect">
+      <option value="allow">toestaan</option>
+      <option value="deny">weigeren (rol wordt genegeerd)</option>
+    </select>
+    <button type="submit">Toekennen</button>
+  </form>
+  <p class="muted small">De keuzelijsten &lsquo;Wie&rsquo; en &lsquo;Waarop&rsquo; tonen alles door
+     elkaar; wat er telt is het soort dat u ernaast kiest. Kiest u het verkeerde paar, dan weigert
+     de server de toekenning in plaats van er een te maken die iets anders betekent.</p>
+  </div>
+</section>
+
+<section id="trail">
+  <h2>Audittrail</h2>
+  <div class="card tablecard">
+  <p class="muted small">De laatste handelingen op deze installatie.
+     <a href="/admin/audit">Bekijk het volledige trail</a>.</p>
+  <table>
+    <thead><tr><th>Wanneer</th><th>Wie</th><th>Handeling</th><th>Node</th><th>Uitkomst</th><th>Toelichting</th></tr></thead>
+    <tbody>
+    {% for r in audit %}
+      <tr>
+        <td><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
+        <td>{{ r.actor }}</td>
+        <td><code>{{ r.action }}</code></td>
+        <td>{% if r.object_id %}<a href="/admin/repeaters/{{ r.object_id }}">{{ r.object_name or r.object_id }}</a>{% endif %}</td>
+        <td>{{ r.outcome }}</td>
+        <td class="muted small">{{ r.detail }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">Nog geen regels.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
   </div>
 </section>
 

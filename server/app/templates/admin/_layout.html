@@ -46,7 +46,8 @@
 
 {% block nav %}
   <a href="/admin">&#9881; Beheer</a>
-  <a href="/admin/logout">Uitloggen ({{ user }})</a>
+  <a href="/admin/account">{{ user }}</a>
+  <a href="/admin/logout">Uitloggen</a>
 {% endblock %}
 
 {% block content %}
@@ -55,13 +56,23 @@
     wereld van de apparaten. Het is wél een eigen pagina en geen blok per node,
     omdat "welke release draait waar" een vraag is die je over alle nodes
     tegelijk stelt. -#}
+{#- "Server en site" staat er alleen voor wie er iets mag. Dat is de ene plek
+    waar deze site wél verbergt in plaats van uit te schakelen, en de reden is
+    dat er achter die tab geen enkele handeling zit die een gewone gebruiker mag:
+    een tab die altijd 403 geeft is geen uitleg maar een gesloten deur met een
+    bordje erop. Binnen een pagina waar je wél iets mag, blijft de regel omgekeerd
+    -- daar staan knoppen uitgeschakeld met de reden erbij. -#}
 <nav class="adminnav" aria-label="Beheeronderdelen">
   <a href="/admin"{% if world == 'nodes' and not firmware_tab %} class="on" aria-current="page"{% endif %}>
     &#128225; Nodes en repeaters</a>
   <a href="/admin/firmware"{% if firmware_tab %} class="on" aria-current="page"{% endif %}>
     &#8679; Firmware</a>
+  {% if serverrechten and serverrechten['server.instellingen'].allowed %}
   <a href="/admin/server"{% if world == 'server' %} class="on" aria-current="page"{% endif %}>
     &#9881; Server en site</a>
+  {% endif %}
+  <a href="/admin/account"{% if world == 'account' %} class="on" aria-current="page"{% endif %}>
+    &#128100; Mijn account</a>
 </nav>
 {% block admin %}{% endblock %}
 {% endblock %}

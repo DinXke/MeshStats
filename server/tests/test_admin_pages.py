@@ -164,7 +164,8 @@ def test_oude_url_neemt_de_melding_mee(db, monkeypatch):
 def test_weergaveformulier_laat_de_bewaartermijn_staan(db, monkeypatch):
     """Het ene formulier mag de velden van het andere niet op nul zetten."""
     from app import retention, routes_admin
-    monkeypatch.setattr(routes_admin, "require_login", lambda request: "admin")
+    monkeypatch.setattr(routes_admin, "require_perm",
+                        lambda request, action, rep=None: "admin")
     monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
     monkeypatch.setattr(retention, "run_once", lambda *a, **k: {})
     db.set_setting("retention_days", "42")
@@ -184,7 +185,8 @@ def test_weergaveformulier_laat_de_bewaartermijn_staan(db, monkeypatch):
 
 def test_bewaarformulier_laat_het_puntinterval_staan(db, monkeypatch):
     from app import retention, routes_admin
-    monkeypatch.setattr(routes_admin, "require_login", lambda request: "admin")
+    monkeypatch.setattr(routes_admin, "require_perm",
+                        lambda request, action, rep=None: "admin")
     monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
     gedraaid = []
     monkeypatch.setattr(retention, "run_once", lambda *a, **k: gedraaid.append(True))
@@ -205,7 +207,8 @@ def test_bewaarformulier_laat_het_puntinterval_staan(db, monkeypatch):
 def test_weergave_lokt_geen_opruimronde_uit(db, monkeypatch):
     """VACUUM is duur; het punt-interval wijzigen is geen reden ervoor."""
     from app import retention, routes_admin
-    monkeypatch.setattr(routes_admin, "require_login", lambda request: "admin")
+    monkeypatch.setattr(routes_admin, "require_perm",
+                        lambda request, action, rep=None: "admin")
     monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
     gedraaid = []
     monkeypatch.setattr(retention, "run_once", lambda *a, **k: gedraaid.append(True))
@@ -227,7 +230,8 @@ def test_back_veld_kan_alleen_de_twee_eigen_bestemmingen_aanwijzen(db, monkeypat
     vreemde waarde op de veilige bestemming uitkomt in plaats van erbuiten.
     """
     from app import routes_admin
-    monkeypatch.setattr(routes_admin, "require_login", lambda request: "admin")
+    monkeypatch.setattr(routes_admin, "require_perm",
+                        lambda request, action, rep=None: "admin")
     monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
     db.execute("INSERT INTO repeaters(slug, pubkey_prefix, name, created_at)"
                " VALUES('r','aabbccddeeff','R', '2026-01-01T00:00:00Z')")
