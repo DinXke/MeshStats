@@ -62,6 +62,14 @@
           {%- elif rij.stil[k] %}<span class="muted">(geen antwoord)</span>
           {%- elif rij.waarden[k] == "" %}<span class="muted">(leeg)</span>
           {%- else %}{{ rij.waarden[k] }}{% endif %}
+          {#- Bewerken opent de bewerker onderaan met deze node en deze parameter
+              ingevuld. Geen invoerveld in het vakje zelf: bij twintig nodes en
+              zes kolommen zijn dat honderdtwintig formulieren met elk hun eigen
+              bevestiging, en juist die bevestiging wordt dan onleesbaar. -#}
+          {%- if rij.cfg.can and k not in builtin_keys %}
+          <a class="cmp-edit" title="Deze waarde zetten"
+             href="/admin/compare?edit={{ rij.rep.id }}:{{ k }}">&#9998;</a>
+          {%- endif %}
         </td>
         {% endfor %}
       </tr>
@@ -83,6 +91,88 @@
 </div>
 {% else %}
 <div class="card"><p class="muted">Nog geen repeaters.</p></div>
+{% endif %}
+
+{% if cfg_result %}
+<div class="card notice">
+  {% if cfg_result.ok and cfg_result.exact %}
+  <strong>Gezet.</strong> <span class="mono">{{ cfg_result.key }}</span> staat nu op
+  <span class="mono">{{ cfg_result.applied }}</span>.
+  {% elif cfg_result.ok %}
+  <strong>Gezet, maar niet precies.</strong> Gevraagd
+  <span class="mono">{{ cfg_result.asked }}</span>, in de node staat nu
+  <span class="mono">{{ cfg_result.applied }}</span>.
+  {% else %}
+  <strong>Niet gezet.</strong>
+  {% if cfg_result.step %}<span class="mono">[{{ cfg_result.step }}]</span>{% endif %}
+  {{ cfg_result.msg }}
+  {% endif %}
+  {% if cfg_result.ok and cfg_result.reboot %}
+  <br><strong>Nog niet actief.</strong> De node bewaart dit en past het pas toe bij een
+  herstart; tot dan draait de radio op de oude waarden.
+  {% endif %}
+</div>
+{% endif %}
+
+{% if bewerken %}
+<section>
+  <h2>Zetten: <span class="mono">{{ bewerken.key }}</span> op
+    <a href="/admin/repeaters/{{ bewerken.rij.rep.id }}">{{ bewerken.rij.rep.name }}</a></h2>
+  <div class="card">
+  {% if not bewerken.lijst.ok %}
+    <p class="muted small"><strong>Kan niet:</strong>
+      {{ bewerken.lijst.error or "deze node biedt geen parameterlijst aan" }}.</p>
+  {% elif not bewerken.param %}
+    <p class="muted small"><strong>Kan niet:</strong> deze node biedt
+      <span class="mono">{{ bewerken.key }}</span> niet aan om van afstand te zetten.</p>
+  {% else %}
+    {% set p = bewerken.param %}
+    <p class="muted small">
+      Nu:
+      {% if bewerken.huidig %}<span class="mono">{{ bewerken.huidig }}</span>
+      {% else %}<span class="muted">onbekend</span>{% endif %}.
+      {%- if p.risk == 3 %} <strong>Deze instelling kan de node onbereikbaar maken.</strong>
+      Gaat het mis op een node die je alleen over de radio bereikt, dan is er geen
+      tweede weg om het mee terug te draaien.{% endif %}
+    </p>
+    <form method="post" action="/admin/compare/write" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="rid" value="{{ bewerken.rij.rep.id }}">
+      <input type="hidden" name="key" value="{{ bewerken.key }}">
+      {% if p.kind == "bool" %}
+      <select name="value"><option value="on">on</option><option value="off">off</option></select>
+      {% elif p.kind == "enum" %}
+      <select name="value">
+        {% for c in p.choices.split("|") if c %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+      {% elif p.kind == "radio" %}
+      <input type="number" name="rf" step="0.001" min="150" max="2500" placeholder="freq" required>
+      <input type="number" name="rb" step="0.001" min="7" max="500" placeholder="bw" required>
+      <input type="number" name="rs" step="1" min="5" max="12" placeholder="sf" required>
+      <input type="number" name="rc" step="1" min="5" max="8" placeholder="cr" required>
+      {% elif p.kind == "int" %}
+      <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}" required>
+      {% elif p.kind == "float" %}
+      <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}" required>
+      {% elif p.secret %}
+      <input type="password" name="value" maxlength="39" autocomplete="new-password" required>
+      {% else %}
+      <input name="value" maxlength="39" autocomplete="off" required>
+      {% endif %}
+
+      {% if p.risk == 2 %}
+      <label class="cfgconfirm"><input type="checkbox" name="confirm" value="ja" required>
+        bevestig</label>
+      {% elif p.risk == 3 %}
+      <input name="confirm" placeholder="{{ bewerken.rij.rep.name }}" autocomplete="off" required
+             title="Typ de naam van deze node over om te bevestigen">
+      {% endif %}
+      <button type="submit" {% if p.risk == 3 %}class="danger"{% endif %}>Zet</button>
+      <a href="/admin/compare" class="muted small">annuleren</a>
+    </form>
+  {% endif %}
+  </div>
+</section>
 {% endif %}
 
 <section>

@@ -181,7 +181,12 @@ def nodes_page(request: Request):
 
 @router.get("/compare", response_class=HTMLResponse)
 def compare_page(request: Request):
-    """Alle repeaters naast elkaar, met de afwijkers gemarkeerd.
+    """Alle repeaters naast elkaar, met de afwijkers gemarkeerd."""
+    return _compare_page(request)
+
+
+def _compare_page(request: Request, extra: dict | None = None):
+    """De tabel, eventueel met de uitslag van een schrijfactie erbij.
 
     Een eigen weergave naast /admin en niet een kolom erbij, omdat het een andere
     vraag beantwoordt. /admin vraagt "hoe staat deze node ervoor" en groepeert
@@ -212,8 +217,69 @@ def compare_page(request: Request):
         "compare_tab": True,
         "tabel": tabel,
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+        "bewerken": _compare_editor(request.query_params.get("edit", ""), tabel),
+        # De vaste kolommen komen uit de repeatertabel en niet uit de CLI, dus
+        # daar valt niets aan te zetten -- het sjabloon moet dat verschil kennen
+        # om geen potloodje te tekenen bij een waarde die geen knop verdient.
+        "builtin_keys": compare.BUILTIN_KEYS,
         "cfg_result": None,
+        **(extra or {}),
     })
+
+
+def _compare_editor(spec: str, tabel: dict) -> dict | None:
+    """Het bewerkvenster onder de tabel, of None.
+
+    Eén bewerker die de tabel aanstuurt, en niet een invoerveld in elk vakje.
+    Bij twintig nodes en zes kolommen zijn dat honderdtwintig formulieren op één
+    pagina, elk met hun eigen bevestiging -- en juist de bevestiging is wat er
+    dan onleesbaar wordt. De risicoklassen blijven onverkort gelden; ze staan
+    hier alleen op één plek in beeld in plaats van honderdtwintig keer.
+
+    ``edit`` heeft de vorm ``<rid>:<sleutel>``. Klopt er iets niet aan, dan geen
+    bewerker in plaats van een foutmelding: dit komt uit een URL die iemand
+    geplakt of bewaard kan hebben, en een tabel die niet meer laadt omdat een
+    node verwijderd is, is erger dan een tabel zonder bewerker.
+    """
+    if ":" not in (spec or ""):
+        return None
+    rid_raw, _, key = spec.partition(":")
+    if not rid_raw.isdigit():
+        return None
+    rij = next((r for r in tabel["rijen"] if r["rep"]["id"] == int(rid_raw)), None)
+    if rij is None or not key:
+        return None
+
+    lijst = nodeconfig.params(rij["cfg"]["host"]) if rij["cfg"]["can"] else         {"ok": False, "error": "", "params": []}
+    param = next((p for p in lijst.get("params") or [] if p.get("key") == key), None)
+    return {
+        "rij": rij, "key": key, "param": param, "lijst": lijst,
+        "huidig": rij["waarden"].get(key),
+    }
+
+
+@router.post("/compare/write")
+def compare_write(request: Request, rid: int = Form(...), key: str = Form(...),
+                  value: str = Form(""), confirm: str = Form(""),
+                  rf: str = Form(""), rb: str = Form(""), rs: str = Form(""),
+                  rc: str = Form(""), csrf: str = Form(...)):
+    """Eén instelling zetten vanuit de vergelijkingstabel.
+
+    Dezelfde weg als vanaf de nodepagina -- letterlijk dezelfde functie -- zodat
+    de risicoklassen, de grenzen en het teruglezen hier vanzelf gelden. Een
+    tweede schrijfpad naast nodeconfig.write() zou een tweede plek zijn waar die
+    drempels kunnen ontbreken, en dat is precies de fout die je pas ontdekt als
+    er een node stil is.
+    """
+    require_login(request)
+    check_csrf(request, csrf)
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+    if key.strip() == "radio" and (rf or rb or rs or rc):
+        value = " ".join(v.strip() for v in (rf, rb, rs, rc))
+    result = nodeconfig.write(rep, key.strip(), value.strip(), confirm)
+    return _compare_page(request, {"cfg_result": result, "cfg_rid": rid})
 
 
 @router.post("/compare/columns")

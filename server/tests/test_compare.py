@@ -177,3 +177,113 @@ def test_pagina_zonder_repeaters_valt_niet_om(db):
         "compare_tab": True, "tabel": t, "csrf": "x", "cfg_result": None,
     })
     assert "Nog geen repeaters" in html
+
+
+# --- bewerken vanuit de tabel -------------------------------------------------
+
+def _routes(monkeypatch, params=None):
+    """De buitenwereld rond de vergelijkingsroutes weghalen."""
+    from app import firmware, nodeconfig, routes_admin
+    monkeypatch.setattr(routes_admin, "require_login", lambda request: "beheerder")
+    monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
+    monkeypatch.setattr(firmware, "NODE_USER", "admin")
+    lijst = {"ok": True, "error": "", "at": 0, "params": params if params is not None else [
+        {"key": "flood.max", "kind": "int", "lo": 0, "hi": 64, "choices": "",
+         "risk": 2, "reboot": 0, "secret": 0},
+        {"key": "tx", "kind": "int", "lo": 0, "hi": 30, "choices": "",
+         "risk": 3, "reboot": 0, "secret": 0},
+    ]}
+    monkeypatch.setattr(nodeconfig, "params", lambda host, force=False: lijst)
+    return routes_admin
+
+
+def _klaar(db, hoeveel=3):
+    reps = _nodes(db, hoeveel)
+    for r in reps:
+        db.execute("UPDATE repeaters SET ota_host='http://x' WHERE id=?", (r["id"],))
+        _zet(db, r, **{"flood.max": "64"})
+    return [db.qone("SELECT * FROM repeaters WHERE id=?", (r["id"],)) for r in reps]
+
+
+def test_de_bewerker_verschijnt_alleen_met_een_geldige_verwijzing(db, monkeypatch):
+    """De ?edit= komt uit een URL die iemand geplakt of bewaard kan hebben. Een
+    tabel die niet meer laadt omdat een node verwijderd is, is erger dan een
+    tabel zonder bewerker."""
+    ra = _routes(monkeypatch)
+    reps = _klaar(db)
+    t = compare.build(reps, ["flood.max"])
+    assert ra._compare_editor("", t) is None
+    assert ra._compare_editor("onzin", t) is None
+    assert ra._compare_editor("999:flood.max", t) is None      # node bestaat niet
+    assert ra._compare_editor("%d:" % reps[0]["id"], t) is None
+    goed = ra._compare_editor("%d:flood.max" % reps[0]["id"], t)
+    assert goed is not None and goed["key"] == "flood.max"
+    assert goed["huidig"] == "64"
+
+
+def test_schrijven_vanuit_de_tabel_loopt_door_dezelfde_functie(db, monkeypatch):
+    """Een tweede schrijfpad naast nodeconfig.write() zou een tweede plek zijn
+    waar de risicoklassen kunnen ontbreken."""
+    from app import nodeconfig
+    ra = _routes(monkeypatch)
+    reps = _klaar(db)
+    gezien = {}
+    monkeypatch.setattr(nodeconfig, "write",
+                        lambda rep, key, value, confirm="": gezien.update(
+                            rep=rep["id"], key=key, value=value, confirm=confirm) or
+                        {"ok": True, "step": "", "msg": "", "key": key, "asked": value,
+                         "applied": value, "exact": True, "reboot": False})
+    monkeypatch.setattr(ra, "_compare_page", lambda request, extra=None: extra)
+
+    uit = ra.compare_write(None, rid=reps[0]["id"], key="flood.max", value="32",
+                           confirm="ja", csrf="x")
+    assert gezien == {"rep": reps[0]["id"], "key": "flood.max", "value": "32", "confirm": "ja"}
+    assert uit["cfg_result"]["ok"] is True
+
+
+def test_radiovelden_worden_samengevoegd_zoals_op_de_nodepagina(db, monkeypatch):
+    from app import nodeconfig
+    ra = _routes(monkeypatch)
+    reps = _klaar(db)
+    gezien = {}
+    monkeypatch.setattr(nodeconfig, "write",
+                        lambda rep, key, value, confirm="": gezien.update(value=value) or
+                        {"ok": True, "step": "", "msg": "", "key": key, "asked": value,
+                         "applied": value, "exact": True, "reboot": True})
+    monkeypatch.setattr(ra, "_compare_page", lambda request, extra=None: extra)
+    ra.compare_write(None, rid=reps[0]["id"], key="radio", value="",
+                     confirm=reps[0]["name"], rf="869.525", rb="250", rs="11", rc="5",
+                     csrf="x")
+    assert gezien["value"] == "869.525 250 11 5"
+
+
+def test_potlood_alleen_bij_kolommen_die_te_zetten_zijn(db, monkeypatch):
+    """Bij de vaste kolommen valt niets te zetten -- die komen uit onze eigen
+    tabel en niet uit de CLI van de node."""
+    from app.templating import templates
+    _routes(monkeypatch)
+    reps = _klaar(db)
+    t = compare.build(reps, ["fw_meshmanager", "flood.max"])
+    html = templates.env.get_template("admin/compare.html").render({
+        "site_name": "MeshManager", "user": "u", "world": "nodes", "compare_tab": True,
+        "tabel": t, "csrf": "x", "cfg_result": None, "bewerken": None,
+        "builtin_keys": compare.BUILTIN_KEYS,
+    })
+    assert html.count("cmp-edit") == len(reps)      # alleen de flood.max-kolom
+    assert "edit=%d:flood.max" % reps[0]["id"] in html
+    assert "edit=%d:fw_meshmanager" % reps[0]["id"] not in html
+
+
+def test_de_zwaarste_klasse_vraagt_ook_hier_om_de_naam(db, monkeypatch):
+    from app.templating import templates
+    ra = _routes(monkeypatch)
+    reps = _klaar(db)
+    t = compare.build(reps, ["flood.max"])
+    bewerken = ra._compare_editor("%d:tx" % reps[0]["id"], t)
+    html = templates.env.get_template("admin/compare.html").render({
+        "site_name": "MeshManager", "user": "u", "world": "nodes", "compare_tab": True,
+        "tabel": t, "csrf": "x", "cfg_result": None, "bewerken": bewerken,
+        "builtin_keys": compare.BUILTIN_KEYS,
+    })
+    assert 'placeholder="%s"' % reps[0]["name"] in html
+    assert "kan de node onbereikbaar maken" in html

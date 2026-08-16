@@ -591,7 +591,7 @@ against a node a human named.
 | Confirm-or-revert | **examined and rejected**, with the reasoning above |
 | Automatic rights discovery | **rejected**, point-and-test-once instead |
 | Cross-repeater comparison table | **built** — `/admin/compare`, chosen columns, deviations from the majority marked |
-| Editing from that table | **not built.** The design is one editor driven by the table rather than an input in every cell; see below |
+| Editing from that table | **built** — a pencil per editable cell opens one editor below the table, pre-filled. One editor rather than an input in every cell: twenty nodes by six columns is a hundred and twenty forms each with its own confirmation, and the confirmation is exactly what becomes unreadable. It calls the same `nodeconfig.write()` as the node page, so the risk classes, the bounds and the read-back apply unchanged |
 | Bulk edit across several nodes | **not built, and gated by design**: plain-class parameters only, never the two heavier classes. Ten nodes in one click is also ten nodes lost in one click |
 | Forced mesh transport for a node that has an IP path | **not built.** Needs the LoRa write path first, and that needs a relay that monitors the target |
 | Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |

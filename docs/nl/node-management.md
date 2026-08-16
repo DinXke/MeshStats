@@ -64,6 +64,7 @@ die hij opmerkt.
 | **CLI-instellingen schrijven** | nee | ontworpen, niet gebouwd | **gebouwd** — het hele oppervlak, met risicoklassen |
 | De klok zetten | nee | ja, via de monitor | ja |
 | Firmware-upgrade | nee | **nee** | alleen met een IP-pad |
+| Telemetrie opvragen zonder inloggegevens | meestal **ja** — een eigenschap naast het niveau, geen onderdeel ervan | meestal ja | meestal ja |
 
 **Firmware-upgrade is met opzet geen onderdeel van het niveau.** Een
 `full_managed` node kan een commando van twintig bytes over MQTT aannemen en toch
@@ -427,6 +428,173 @@ intrekken.
 
 ---
 
+## Telemetrie zonder inloggegevens
+
+Kan de site iets bruikbaars uitlezen van een repeater waarvoor hij geen
+wachtwoord heeft? Dat is uitgezocht voordat er ook maar iets gebouwd werd, want
+het antwoord bepaalt of de functie de moeite waard is. **Dat is hij: er komt
+nogal wat meer uit dan verwacht.**
+
+### Wat de broncode zegt
+
+Inloggen is altijd verplicht — `handleLoginReq()` in
+`examples/simple_repeater/MyMesh.cpp` geeft `0` terug (helemaal geen antwoord)
+voor alles wat hij niet accepteert. Maar er zijn drie manieren om geaccepteerd te
+worden, en de derde is de interessante:
+
+1. **Een leeg wachtwoord + de afzender staat in de ACL.** De operator heeft je
+   daar met `setperm <pubkey> 1` in gezet. Dat is de nette afspraak die de
+   monitorlijst al gebruikt.
+2. **Het beheerderswachtwoord.**
+3. **Het gastwachtwoord** — en `guest_password[0] = 0` in `CommonCLI.h:189`, dus
+   het is **standaard leeg**. Een leeg wachtwoord komt daar dus mee overeen.
+
+Dat derde pad is het antwoord. Op een standaardrepeater waarvan de operator nooit
+`set guest.password` gedraaid heeft, wordt een onbekende node die met een leeg
+wachtwoord inlogt geaccepteerd als `PERM_ACL_GUEST`.
+
+### Wat een gast dan mag opvragen
+
+| Verzoek | Krijgt een gast het | Wat erin zit |
+|---|---|---|
+| `REQ_TYPE_GET_STATUS` `0x01` | **ja**, helemaal geen rechtencontrole — de broncode zegt het zelfs met zoveel woorden: *"guests can also access this now"* (gasten kunnen hier nu ook bij) | De volledige `RepeaterStats`: uptime, zendtijd, TX/RX-tellers, verdeling flood/direct, duplicaten, foutvlaggen, batterijspanning in millivolt, ruisvloer, laatste RSSI en SNR, lengte van de wachtrij |
+| `REQ_TYPE_GET_TELEMETRY_DATA` `0x03` | **ja, maar beperkt** — `perm_mask` wordt voor een gast op `0x00` gedwongen | Batterijspanning en MCU-temperatuur. Externe sensoren worden achtergehouden |
+| `REQ_TYPE_GET_NEIGHBOURS` `0x06` | **ja**, geen rechtencontrole | De burenlijst |
+| `REQ_TYPE_GET_ACCESS_LIST` `0x05` | nee — `&& sender->isAdmin()` | — |
+| CLI-commando's (`get`/`set`) | nee — `handleCommand` wordt alleen bereikt onder `client->isAdmin()` | — |
+
+Een uitvraag zonder inloggegevens levert dus ongeveer op wat deze site voor een
+gemonitorde repeater al laat zien, min de CLI-instellingen. Dat is een echte
+functie en geen troostprijs.
+
+### Twee bevindingen die het opschrijven waard zijn
+
+**`allow.read.only` doet niets op een repeater.** Hij wordt opgeslagen, hij is
+via de CLI te lezen en te schrijven, en de enige code die hem raadpleegt is
+`examples/simple_room_server/MyMesh.cpp:351`. Op een repeater is het een inerte
+instelling. Hij is hier toch ingedeeld als gevaarlijke parameter, want dezelfde
+module kan gebouwd worden voor een room server waar hij de toegang *wel* regelt —
+maar niemand moet verwachten dat hem omzetten op een repeater verandert wie hem
+mag bevragen.
+
+**Een weigering is stil.** `handleLoginReq` geeft `0` terug en stuurt niets. Een
+repeater waarvan de operator *wel* een gastwachtwoord gezet heeft, is vanaf hier
+dus niet te onderscheiden van een die buiten bereik of uitgeschakeld is. Die
+dubbelzinnigheid is echt en valt niet op te lossen door het harder te proberen;
+ze valt alleen eerlijk te melden.
+
+### Wat dit betekent voor het ontwerp
+
+Drie toestanden, en de pagina mag ze niet op één hoop gooien:
+
+| Uitkomst | Wat het betekent |
+|---|---|
+| Antwoord gekregen | Telemetrie is zonder inloggegevens beschikbaar |
+| Geen antwoord | **Een van deze**: buiten bereik, gastwachtwoord gezet, firmware te oud. Niet te onderscheiden |
+| Eerder wel geantwoord, nu stil | Er is iets veranderd — dat is het waard om anders te tonen dan nooit-geantwoord |
+
+De gehoorde lijst is het enige wat de middelste regel versmalt: komen de adverts
+van de node nog binnen, dan wordt "buiten bereik" onwaarschijnlijk en "niet
+toegestaan" waarschijnlijk. Dat is een aanwijzing en geen bewijs, en het hoort
+ook zo geformuleerd te worden.
+
+### Terughoudendheid, met opzet
+
+Dit is het bevragen van **andermans apparatuur** op een gedeelde band, dus:
+
+- **Geen automatische ronde langs alles wat gehoord is.** Een ontdekking die
+  aanklopt bij elke node die hij ooit gehoord heeft, is precies het gedrag dat
+  een gedeeld mesh niet nodig heeft. De operator kiest wie er bevraagd wordt.
+- **De kosten aan zendtijd staan er vóór de knop ingedrukt wordt**, niet erna.
+- **Op deze manier monitoren is alleen telemetrie.** Een node die zonder
+  inloggegevens bevraagd wordt, krijgt geen beheerknoppen, want die zijn er niet
+  te geven — de CLI is dicht voor gasten. Dat wordt door de overkant afgedwongen,
+  en dat is de beste soort afdwinging.
+
+### Niveau, of een eigenschap ernaast?
+
+**Een eigenschap naast het niveau, geen vierde niveau.** `unmanaged` /
+`semi_managed` / `full_managed` beantwoordt de vraag "wat mogen we met deze node
+*doen*", en telemetrie opvragen is niets met hem doen — je vraagt het, en de node
+beslist. Een node die we om telemetrie vragen is nog steeds `unmanaged`: we
+kunnen er geen enkele instelling op wijzigen, we kunnen er geen firmware naartoe
+schrijven, en we hebben geen inloggegevens.
+
+Er een vierde niveau van maken zou bovendien de volgorde breken die de niveaus nu
+hebben, en dat is er een van oplopende mogelijkheden. Telemetrie opvragen is niet
+"meer dan unmanaged en minder dan semi-managed" — een `full_managed` node kun je
+op dezelfde manier bevragen. Het is een andere as, dus krijgt het een ander veld.
+
+---
+
+## Werken zonder internet
+
+Dit project bestaat mede voor noodcommunicatie, dus "werkt het nog als het
+internet weg is" is geen nieuwsgierigheid — het is een eis die iemand moet kunnen
+controleren *voordat* hij hem nodig heeft. Het eerlijke antwoord heeft drie
+lagen, en dat is niet drie keer dezelfde vraag.
+
+### Laag 1 — geen internet, lokaal netwerk intact
+
+**Bijna alles werkt.** De server, de broker, de database en het mesh zijn
+allemaal lokaal; geen van alle heeft het internet nodig om zijn werk te doen.
+
+| Werkt | Werkt niet |
+|---|---|
+| Statistieken binnenhalen over MQTT | **Firmware-releases ophalen bij GitHub** |
+| CLI-instellingen lezen, over MQTT en over LoRa | Kaarttegels, als de kaartaanbieder extern is |
+| **CLI-instellingen schrijven**, over allebei de transporten | |
+| De klok zetten | |
+| De hele beheerinterface, de vergelijkingstabel, het pakketarchief | |
+| Een firmware-image doorzetten die de server **al gedownload heeft** | |
+
+Het enige echte slachtoffer is de firmwarepagina. Hij somt releases op door het
+aan `api.github.com` te vragen, en zonder internet mislukt die aanroep. De pagina
+blijft werken — hij toont de laatste lijst die hij nog wist op te halen, met de
+reden ernaast — maar een release die verscheen terwijl je offline was, is niet
+zichtbaar, en een image dat nooit gedownload is, kun je niet installeren.
+
+Dat is een reden om **op te halen vóór je het nodig hebt**, geen reden om de rest
+van de site te wantrouwen. Niets anders op deze lijst raakt een externe host aan.
+
+### Laag 2 — ook geen lokaal netwerk
+
+De site bereikt *geen enkele* node meer, via welk transport dan ook. Dat is het
+waard om ronduit te zeggen, want "geforceerd over het mesh" klinkt alsof het hier
+zou moeten helpen, en dat doet het niet:
+
+> **Het mesh-transport kiezen neemt niet weg dat de site zelf één node nodig
+> heeft die over IP bereikbaar is.** Het neemt weg dat het *doel* bereikbaar moet
+> zijn. De server moet het commando nog steeds aan de een of andere node
+> overhandigen, over MQTT of over HTTP, en die node draagt het daarna over LoRa
+> verder.
+
+Met het LAN plat is de weg terug naar binnen dus helemaal deze site niet — het is
+de mesh-CLI vanuit een companion-app op een telefoon, over bluetooth of over
+LoRa. Dat pad liep nooit via de server en heeft nergens hier last van.
+
+### Laag 3 — waar het mesh-transport eigenlijk voor is
+
+Gezien laag 2, waarom het dan überhaupt aanbieden? Omdat het interessante geval
+niet "het netwerk is weg" is, maar "**het doel hangt niet aan het netwerk**":
+
+- Een repeater op een dak zonder WiFi in de buurt — de blijvende toestand van de
+  dakrepeater in deze installatie.
+- Een node waarvan de WiFi-gegevens gewijzigd zijn, of waarvan het accesspoint
+  het begeven heeft, terwijl de radio kerngezond is.
+- Een node in energiebesparingsstand met zijn WiFi in slaap, die LoRa nog wel
+  hoort.
+
+In alle drie is de site online, draait de broker en is er één node bereikbaar —
+en het doel niet. Dat is het geval waarvoor het mesh-transport bestaat, en het is
+het gewone geval.
+
+Het is ook waarom het mesh forceren voor een node die over IP *wel* bereikbaar is
+de moeite waard is: het is de enige manier om het LoRa-schrijfpad te beproeven
+tegen een node die je nog met een browser kunt herstellen als het misgaat.
+
+---
+
 ## Ontdekken: eerst aanwijzen, dan één keer proberen
 
 De site ziet elke node in het verkeer, dus hij zou ze allemaal kunnen proberen om
@@ -459,6 +627,11 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Schrijven naar de WiFi- en MQTT-instellingen van een node | **wordt hier niet aangeboden.** Dat zijn de onze en niet die van MeshCore, en ze hebben al hun eigen formulieren op de beheerpagina van de node zelf en in de `wifi`-CLI |
 | Bevestigen-of-terugdraaien | **onderzocht en verworpen**, met de redenering hierboven |
 | Automatisch rechten ontdekken | **verworpen**, in plaats daarvan aanwijzen-en-één-keer-proberen |
+| Vergelijkingstabel over repeaters heen | **gebouwd** — `/admin/compare`, gekozen kolommen, afwijkingen van de meerderheid gemarkeerd |
+| Bewerken vanuit die tabel | **niet gebouwd.** Het ontwerp is één bewerkveld dat door de tabel aangestuurd wordt, in plaats van een invoerveld in elke cel; zie hieronder |
+| Meerdere nodes tegelijk bewerken | **niet gebouwd, en in het ontwerp al ingeperkt**: alleen parameters uit de klasse Gewoon, nooit de twee zwaardere klassen. Tien nodes in één klik is ook tien nodes kwijt in één klik |
+| Mesh-transport forceren voor een node die een IP-pad heeft | **niet gebouwd.** Vraagt eerst om het LoRa-schrijfpad, en dat vraagt om een relais dat het doel monitort |
+| Telemetrie opvragen zonder inloggegevens | **onderzocht, niet gebouwd.** Het werkt en levert meer op dan verwacht — zie hierboven |
 
 > Zolang hieraan gewerkt wordt, wordt er **helemaal niet naar JessaZH
 > geschreven** — geen test-`set`, niets. Hij wordt alleen over LoRa bereikt, dus

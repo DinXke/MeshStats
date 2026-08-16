@@ -1276,3 +1276,5 @@ td.cmp-off { border-left: 2px solid var(--red); }
 
 .cmp-cols { display: flex; flex-wrap: wrap; gap: .3rem .9rem; margin-bottom: .7rem; }
 .cmp-col { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; }
+.cmp-edit { margin-left: .3rem; opacity: .45; text-decoration: none; font-size: .85em; }
+.cmp-edit:hover { opacity: 1; }
