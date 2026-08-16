@@ -155,7 +155,7 @@
  * Zo is de overgang na het flashen af te lezen in plaats van te moeten
  * geloven. */
 #define MESHMANAGER_NAME     "MeshManager (by DinX)"
-#define MESHMANAGER_VERSION  "2.6.0"
+#define MESHMANAGER_VERSION  "2.7.0"
 
 class MyMesh;
 
@@ -170,6 +170,18 @@ void mmnet_loop();
  * queue drops the packet and counts it; waiting here would hold up reception.
  * Safe to call before mmnet_begin() or when the module is disabled. */
 void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
+
+/* Het oordeel van het pakketfilter over het pakket dat nu verwerkt wordt.
+ * Aangeroepen vanuit MyMesh::allowPacketForward(), meteen na pf_allow().
+ *
+ * Het pakket staat op dat moment nog in de rx-ring te wachten op de
+ * eerstvolgende publicatie, dus het oordeel haalt zijn eigen pakket in en reist
+ * mee in hetzelfde bericht: geen tweede bericht, geen pakkethash als sleutel,
+ * geen volgordeprobleem, en geen oordeel over een pakket dat de server nooit
+ * gezien heeft. Veilig aan te roepen als het doorsturen van pakketten uitstaat
+ * of de module niet draait -- dan is er eenvoudigweg niets om te stempelen.
+ * 'reason' is een PfReason en telt alleen als 'allowed' onwaar is. */
+void meshmanager_on_forward_verdict(bool allowed, uint8_t reason);
 
 /* Called from the receive path when a repeater we monitor answers a login or a
  * status request, or to a CLI command we sent it. Same rule as above: copy

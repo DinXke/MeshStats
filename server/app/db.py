@@ -288,6 +288,25 @@ COLUMN_MIGRATIONS = [
     # looking for a hash that was never there.
     ("packets", "src_hash", "TEXT"),
     ("packets", "dest_hash", "TEXT"),
+    # Wat het pakketfilter van de waarnemende node met dit pakket deed:
+    # 'geweerd', 'doorgelaten', of NULL voor 'niet beoordeeld'. Die derde is een
+    # eigen antwoord en niet een nette manier om 'doorgelaten' te zeggen: een
+    # pakket dat aan de node zelf gericht was, dat direct gerouteerd werd, of
+    # waarvan het frame de parser niet haalde, komt bij het filter niet eens
+    # langs. NULL is hier dus de eerlijke waarde -- en het is ook wat elke rij van
+    # vóór deze kolom krijgt. Dat valt niet achteraf te herstellen: het oordeel
+    # staat niet in de bytes, dus _backfill_from_raw() kan hier niets, precies
+    # zoals daar al staat over rijen van vóór de raw-kolom.
+    #
+    # Bewust GEEN index. De archiefquery zet twee LEFT JOINs en een GROUP BY
+    # p.id neer en bouwt hoe dan ook een tijdelijke B-tree, dus een index hierop
+    # zou die query niet bedienen en wel elke insert duurder maken.
+    ("packets", "fwd", "TEXT"),
+    # Waarop het geweerd werd: type, hops, rate, hash, kanaal of misvormd --
+    # dezelfde zes sleutels die pktfilter.DROP_LABELS en de filter_drop_*-metrics
+    # al gebruiken. Een zevende spelling van dezelfde zes redenen is precies wat
+    # deze keuze voorkomt.
+    ("packets", "fwd_reason", "TEXT"),
     # Of dit account alles mag, overal. Er staat DEFAULT 0 en niet DEFAULT 1, en
     # dat is een bewuste keuze met een prijs: ALTER TABLE ADD COLUMN vult
     # bestaande rijen met de standaard, dus zonder meer zou deze migratie élke
@@ -836,12 +855,19 @@ MAX_RAW_HEX_STORED = 600
 
 def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
                   length: int | None = None, ts: str | None = None,
-                  raw: str | None = None) -> int | None:
+                  raw: str | None = None, fwd: str | None = None,
+                  fwd_reason: str | None = None) -> int | None:
     """Store one packet reception. Returns the row id, or None if skipped.
 
     ``pkt`` is the dict from packets.decode(); ``raw`` the hex frame it was
     decoded from. An advert also refreshes the contacts table, which is what
     later lets the live map place a packet.
+
+    ``fwd`` is wat het pakketfilter van de waarnemende node met dit pakket deed
+    ('geweerd', 'doorgelaten', of None voor 'niet beoordeeld'). Het komt uit het
+    rx-bericht zelf en niet uit de bytes: de node zet zijn oordeel bij het pakket
+    voordat het de deur uitgaat. Zie meshmanager_on_forward_verdict() in de
+    firmware voor waarom het daar past en niet in een tweede bericht.
     """
     observer = str(observer or "").lower().strip()[:16]
     if not observer:
@@ -864,8 +890,8 @@ def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
     return execute(
         "INSERT INTO packets(ts, observer, snr, rssi, len, route, payload_type, "
         "payload_name, path_len, sender, phash, path, raw, scope, scope_codes, "
-        "src_hash, dest_hash) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "src_hash, dest_hash, fwd, fwd_reason) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (ts, observer,
          float(snr) if isinstance(snr, (int, float)) else None,
          float(rssi) if isinstance(rssi, (int, float)) else None,
@@ -874,7 +900,8 @@ def insert_packet(observer: str, pkt: dict, snr=None, rssi=None,
          pkt.get("path_len"), pkt.get("sender"), phash,
          ",".join(pkt.get("path") or []) or None, raw_hex,
          pkt.get("scope"), _scope_codes(pkt),
-         pkt.get("src_hash", ""), pkt.get("dest_hash", "")),
+         pkt.get("src_hash", ""), pkt.get("dest_hash", ""),
+         fwd or None, fwd_reason or None),
     )
 
 

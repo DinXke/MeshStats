@@ -41,6 +41,11 @@
   <!-- The codes themselves only exist on a scoped packet, and showing an
        empty row for the majority that are not would be noise. -->
   <div id="pkt-scope-codes-row" hidden><dt data-i18n="pkt.scope_codes">Transportcodes</dt><dd id="pkt-scope-codes"></dd></div>
+  <!-- Wat het pakketfilter van de WAARNEMER met dit pakket deed. Verborgen
+       als het filter er niet over geoordeeld heeft -- dat is de meerderheid,
+       en een lege regel bij elk pakket zou ruis zijn. Zelfde idioom als de
+       transportcodes hierboven. -->
+  <div id="pkt-fwd-row" hidden><dt data-i18n="pkt.fwd">Pakketfilter</dt><dd id="pkt-fwd"></dd></div>
   <div><dt data-i18n="pkt.snr">SNR</dt><dd id="pkt-snr"></dd></div>
   <div><dt data-i18n="pkt.rssi">RSSI</dt><dd id="pkt-rssi"></dd></div>
   <div><dt data-i18n="pkt.len">Lengte</dt><dd id="pkt-len"></dd></div>

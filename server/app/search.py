@@ -116,13 +116,25 @@ FIELDS: dict[str, Field] = {
     "hops":     Field("p.path_len", _NUM, "Aantal hops", ">3", facet=True, sort=True),
     "path":     Field("p.path", _TEXT, "Hop in het pad", "2ae7"),
     "hash":     Field("p.phash", _TEXT, "Payloadhash", "", sort=True),
+    # Wat het pakketfilter van de WAARNEMER met dit pakket deed: 'geweerd' of
+    # 'doorgelaten'. Leeg betekent 'niet beoordeeld', en dat is een eigen
+    # toestand -- zie de kolomtoelichting in db.py. Die lege waarde is met
+    # ``filter:`` niet op te vragen, en dat klopt ook: "toon alles waarvan we het
+    # niet weten" is een vraag over de afwezigheid van een meting, niet over een
+    # waarde die in de kolom staat.
+    "filter":   Field("p.fwd", _TEXT, "Doorgelaten of geweerd", "geweerd",
+                      facet=True, sort=True),
+    # Waarop het geweerd werd -- dezelfde zes sleutels als de tellers en de
+    # labels: type, hops, rate, hash, kanaal, misvormd.
+    "reden":    Field("p.fwd_reason", _TEXT, "Reden van weren", "rate",
+                      facet=True, sort=True),
 }
 
 # What a bare word searches. Deliberately the identifying columns only: adding
 # snr would mean typing "5" matched a signal strength, which is never what
 # somebody means by a loose word in a search box.
 FREE_TEXT_FIELDS = ("p.sender", "p.observer", "p.payload_name", "p.scope",
-                    "c.name", "o.name", "c.country", "o.country")
+                    "p.fwd", "c.name", "o.name", "c.country", "o.country")
 
 # scope_region is stored inside scope_codes rather than as a column of its own,
 # so searching on it needs the same derivation the API does. Kept next to the
@@ -169,14 +181,20 @@ DEFAULT_SORT = "time"
 # 'path' is worth a column and useless as an order, 'name' is worth searching
 # and is already visible inside the sender column, so it is neither.
 COLUMNS = ("time", "sender", "src", "dest", "observer", "type", "route", "scope",
-           "region", "snr", "rssi", "hops", "len", "path", "hash", "country")
+           "region", "filter", "reden", "snr", "rssi", "hops", "len", "path",
+           "hash", "country")
 
-# What the archive shows to somebody who has never chosen anything. Exactly the
-# columns it showed before the choice existed, so the page a visitor knows does
-# not rearrange itself under them the day this shipped. The rest are one click
-# away in the column picker.
-DEFAULT_COLUMNS = ("time", "sender", "type", "scope", "snr", "rssi", "hops",
-                   "len", "country")
+# What the archive shows to somebody who has never chosen anything. It was
+# exactly the columns the page showed before the choice existed, so it would not
+# rearrange itself under a visitor -- and 'filter' is the one deliberate
+# exception to that rule. Een geweerd pakket is de enige toestand hier die iets
+# zegt over verkeer dat NIET aangekomen is, en wie dat merkt is juist degene die
+# er niet naar op zoek was. Dezelfde afweging als in docs/packet-filter.md, waar
+# de filterstand overal getoond wordt waar een node verschijnt in plaats van
+# weggestopt op een instellingenpagina. De rest staat één klik ver in de
+# kolomkiezer.
+DEFAULT_COLUMNS = ("time", "sender", "type", "scope", "filter", "snr", "rssi",
+                   "hops", "len", "country")
 
 _COMPARISONS = (("<=", "<="), (">=", ">="), ("<", "<"), (">", ">"))
 _RANGE = re.compile(r"^(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)$")

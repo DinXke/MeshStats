@@ -209,6 +209,50 @@ Kort: tellingen en verdelingen beschrijven deze repeater en zijn openbaar; de
 ingestelde limieten en de kanaallabels zijn beheerdersgereedschap en niet; en er
 is op geen enkel toegangsniveau een verslag per pakket van wie er geweigerd is.
 
+## Het terugzien in het pakketarchief
+
+Een geweerd pakket verdwijnt niet — het stond al in het archief voordat het
+geweerd werd. De rauwe doorgifte hangt aan `logRxRaw()`, dat bij *ontvangst*
+vuurt, terwijl het filter pas bij *doorsturen* beslist. Wat er tot firmware
+**2.7.0** ontbrak was alleen de aantekening dát het niet doorgestuurd is, en
+waarom. Er is geen tweede logboek: de firmware telt nog steeds en houdt geen
+lijst van pakketten bij.
+
+Elk gearchiveerd pakket draagt nu een van drie toestanden:
+
+| Toestand | Betekenis |
+|---|---|
+| `geweerd` | het filter van deze waarnemer stuurde het niet door, met de reden erbij |
+| `doorgelaten` | het filter van deze waarnemer beoordeelde het en liet het door |
+| *leeg* | het filter heeft het niet beoordeeld |
+
+Leeg is een vaststelling en geen afronding van `doorgelaten`. Het filter
+beoordeelt uitsluitend floodpakketten die het moet doorsturen, dus een pakket aan
+de node zelf, een direct gerouteerd pakket of een frame dat nooit geparseerd is,
+is werkelijk niet beoordeeld. Rijen van vóór 2.7.0 blijven voorgoed leeg — het
+oordeel staat niet in de bytes, dus geen herdecodering haalt het terug.
+
+Doorzoekbaar met de gewone zoektaal, zodat de plus/min-knoppen en de kolomkiezer
+er net zo op werken als op elk ander veld:
+
+```
+filter:geweerd              alles wat dit mesh niet doorstuurde
+filter:geweerd reden:rate   ... vanwege een snelheidslimiet
+-filter:geweerd             al de rest
+reden:kanaal observer:e3d3  wat één node op een geblokkeerd kanaal weerde
+```
+
+Geweerde rijen krijgen kleur, en kleur is nooit de enige drager: de cel schrijft
+`geweerd` voluit met de reden ernaast, in beide thema's. Het detailpaneel van een
+pakket noemt de reden voluit **en de node die ingreep** — een pakket wordt
+geweerd door één repeater en niet door het mesh, en zonder die naam leest het als
+dat laatste.
+
+De voorpagina toont de som over het hele mesh: geweerd, doorgelaten en de
+uitsplitsing naar reden, met hoeveel repeaters meetellen van hoeveel er zijn. Zie
+[`privacy.md`](privacy.md#31-de-aantekening-per-pakket-en-een-correctie) voor
+waarom dit openbaar is en wat er met opzet niet vastgelegd wordt.
+
 ## De weg terug
 
 Een filter is precies het soort instelling dat een node nutteloos maakt zonder

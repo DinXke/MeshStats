@@ -25,6 +25,69 @@
 {% endfor %}
 </div>
 
+{% if filter_mesh.iets_te_melden %}
+{#- De filtercijfers van alle nodes samen. Een optelsom over nodes is de minst
+    gevoelige vorm die er is -- geen node aanwijsbaar, geen pakket aanwijsbaar --
+    en hoort daarom publiek. Wat er NIET weggelaten mag worden is hoeveel nodes
+    eraan meedoen: een totaal over de nodes die rapporteren is geen totaal over
+    het mesh. Zie pktfilter.mesh_totals() en docs/privacy.md. -#}
+<section class="collapsible" data-ckey="filtermesh">
+  <h2 class="sec-toggle"><span data-i18n="filtermesh.title">Pakketfilter in dit mesh</span> <span class="sec-chev">&#9662;</span></h2>
+  <div class="sec-body">
+    <div class="card">
+      <div class="card-stats filtermesh-figures">
+        <span><strong class="mono">{{ '{:,}'.format(filter_mesh.weg).replace(',', '.') }}</strong>
+          <span data-i18n="filtermesh.dropped">geweerd</span></span>
+        <span><strong class="mono">{{ '{:,}'.format(filter_mesh.door).replace(',', '.') }}</strong>
+          <span data-i18n="filtermesh.passed">doorgelaten</span></span>
+        {% if filter_mesh.vrij %}
+        <span><strong class="mono">{{ '{:,}'.format(filter_mesh.vrij).replace(',', '.') }}</strong>
+          <span data-i18n="filtermesh.exempt">langs het filter via de access list</span></span>
+        {% endif %}
+      </div>
+
+      {#- Hoeveel nodes tellen mee, in dezelfde drie toestanden als overal elders.
+          'Meldt uitdrukkelijk geen filter' en 'heeft nooit iets gemeld' staan met
+          opzet niet op één hoop: dat laatste is geen bewering. -#}
+      <p class="muted small">
+        <span data-i18n="filtermesh.scopeOn">Filter aan bij</span>
+        <strong>{{ filter_mesh.met_filter }}</strong>
+        <span data-i18n="filtermesh.scopeOf">van de</span>
+        <strong>{{ filter_mesh.totaal }}</strong>
+        <span data-i18n="filtermesh.scopeNodes">repeaters op deze site</span>.
+        {%- if filter_mesh.zonder_filter %}
+        <span data-i18n="filtermesh.scopeOff">Meldt uitdrukkelijk geen filter:</span>
+        {{ filter_mesh.zonder_filter }}.
+        {%- endif %}
+        {%- if filter_mesh.onbekend %}
+        <span data-i18n="filtermesh.scopeUnknown">Nooit iets over een filter gemeld:</span>
+        {{ filter_mesh.onbekend }}<span data-i18n="filtermesh.scopeUnknownTail">&nbsp;&mdash; dat is geen bewering dat daar niets aanstaat.</span>
+        {%- endif %}
+      </p>
+
+      {% if filter_mesh.redenen %}
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="filtermesh.reason">Waarop geweerd</th>
+          <th data-i18n="filtermesh.count">Aantal</th>
+        </tr></thead>
+        <tbody>
+        {% for label, aantal in filter_mesh.redenen %}
+          <tr><td>{{ label }}</td><td class="mono">{{ '{:,}'.format(aantal).replace(',', '.') }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      {#- De periode. De tellers van een node lopen sinds zijn eigen laatste
+          herstart en overleven een reboot niet, dus dit is geen som over een
+          gelijke periode. Dat wordt benoemd in plaats van weggelaten. -#}
+      <p class="muted small" data-i18n="filtermesh.period">Elke node telt sinds zijn eigen laatste herstart, dus dit is een optelsom over ongelijke periodes en geen momentopname van een vast venster.</p>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 {% if has_livemap %}
 <section class="collapsible" data-ckey="livemap">
   <h2 class="sec-toggle"><span data-i18n="live.title">Live pakketten</span> <span class="sec-chev">&#9662;</span></h2>

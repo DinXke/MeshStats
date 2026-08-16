@@ -1772,7 +1772,7 @@ index c93ba1a..961d004 100644
  }
  
  uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood) {
-@@ -448,7 +650,51 @@ bool MyMesh::allowPacketForward(const mesh::Packet *packet) {
+@@ -448,7 +650,54 @@ bool MyMesh::allowPacketForward(const mesh::Packet *packet) {
        return false;
      }
    }
@@ -1814,10 +1814,13 @@ index c93ba1a..961d004 100644
 +        }
 +      }
 +    }
-+    if (!pf_allow(ptype, packet->getPathHashCount(), packet->getPathHashSize(),
-+                  packet->payload, packet->payload_len, exempt)) {
-+      return false;
-+    }
++    bool ok = pf_allow(ptype, packet->getPathHashCount(), packet->getPathHashSize(),
++                       packet->payload, packet->payload_len, exempt);
++    // Het oordeel bij het pakket zelf zetten: dat staat nu nog in de rx-ring te
++    // wachten op publicatie, dus het reist mee in zijn eigen bericht in plaats
++    // van als tweede bericht met een hash als sleutel achterna te komen.
++    meshmanager_on_forward_verdict(ok, pf_last_reason());
++    if (!ok) return false;
 +  }
 +#endif
    return true;

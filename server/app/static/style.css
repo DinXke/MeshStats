@@ -593,6 +593,21 @@ button:focus-visible, .noderow-name:focus-visible {
    a packet that names its region adds. Truncates rather than wraps: the panel
    spells the whole thing out. */
 .pkt-scope { flex: 0 0 7rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Wat het filter van de waarnemer met dit pakket deed. Breed genoeg voor
+   "geweerd · over de snelheidslimiet", want de reden rijdt in deze cel mee
+   zolang ze geen eigen kolom heeft aanstaan. */
+.pkt-fwd { flex: 0 0 11rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkt-reden { flex: 0 0 9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Kleur is hier nadrukkelijk niet de enige drager. De cel schrijft "geweerd" of
+   "doorgelaten" voluit met de reden erachter; de kleur komt daarbovenop. Zelfde
+   regel als bij de heatmap-ankers verderop: wie geen kleurverschil ziet, leest
+   het woord. Beide tinten staan als variabele in de twee :root-blokken, dus
+   licht en donker krijgen elk hun eigen contrast.
+   'Niet beoordeeld' blijft met opzet ongekleurd -- een derde kleur zou het laten
+   doorgaan voor een derde uitslag in plaats van voor de afwezigheid van een
+   oordeel. */
+.fwd--geweerd { color: var(--red); }
+.fwd--doorgelaten { color: var(--muted); }
 .pkt-snr { flex: 0 0 4.2rem; text-align: right; }
 .pkt-rssi { flex: 0 0 4.8rem; text-align: right; }
 .pkt-hops { flex: 0 0 4.2rem; text-align: right; }

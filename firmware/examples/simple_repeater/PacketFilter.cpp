@@ -376,8 +376,26 @@ static bool rateAllows(int type) {
 
 bool pf_enabled() { return _enabled; }
 
+/* De uitslag van de laatste beoordeling. Wordt gelezen door de aanroeper in
+ * MyMesh::allowPacketForward(), meteen na pf_allow(), om het oordeel bij het
+ * pakket zelf te kunnen zetten in het rx-bericht. */
+static uint8_t _last_reason = PF_PASS;
+
+uint8_t pf_last_reason() { return _last_reason; }
+
+const char *pf_reason_name(uint8_t reason) {
+  if (reason >= PF_REASON_COUNT) return "";
+  return REASON_NAMES[reason];
+}
+
 bool pf_allow(uint8_t payload_type, uint8_t hash_count, uint8_t hash_size,
               const uint8_t *payload, int payload_len, bool exempt) {
+  /* Vanaf hier is elke uitgang een oordeel, dus wordt hij ook zo opgeschreven.
+   * De twee hieronder zijn 'niet geweigerd' en niet 'goedgekeurd': met het
+   * filter uit is er niets beoordeeld, en een RAW_CUSTOM-pakket valt buiten de
+   * tabel. Voor het archief is dat hetzelfde antwoord -- deze node heeft dit
+   * pakket niet tegengehouden -- en dat is precies wat de kolom beweert. */
+  _last_reason = PF_PASS;
   if (!_enabled) return true;
   if (payload_type >= PF_TYPE_COUNT) return true;   // 0x0F RAW_CUSTOM and friends
 
@@ -412,6 +430,7 @@ bool pf_allow(uint8_t payload_type, uint8_t hash_count, uint8_t hash_size,
   }
   if (reason == PF_PASS && !rateAllows(t)) reason = PF_R_RATE;
 
+  _last_reason = reason;
   if (reason == PF_PASS) { _passed++; return true; }
   _drop[reason]++;
   _drop_type[t]++;

@@ -5,6 +5,47 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.7.0  Een geweerd pakket is in het archief te herkennen, met de reden erbij.
+ *        Het pakket zelf stond er al in. De rauwe doorgifte hangt aan
+ *        logRxRaw() in Dispatcher::checkRecv(), dus bij ONTVANGST, terwijl het
+ *        filter pas beslist bij allowPacketForward(), dus bij DOORSTUREN. Wat
+ *        ontbrak was de aantekening dát het niet doorgestuurd is en waarom --
+ *        geen tweede logboek. De firmware telt nog steeds; hij logt niet.
+ *        HET ORDENINGSPROBLEEM, en waarom het antwoord zo klein kon blijven. Het
+ *        rx-bericht vertrekt vóórdat het oordeel bestaat, dus de voor de hand
+ *        liggende opzet is een tweede bericht met een pakkethash als sleutel en
+ *        een join op de server. Dat kost drie dingen: een hash die aan beide
+ *        kanten identiek berekend moet worden, een volgorde die alle kanten op
+ *        kan (het oordeel kan eerder of later aankomen dan het pakket), en
+ *        oordelen over pakketten die de server nooit gezien heeft -- de ring
+ *        liep over, de broker was weg, of het doorsturen stond uit.
+ *        Alle drie verdwijnen door één waarneming: ontvangst en de
+ *        doorstuurbeslissing gebeuren binnen dezelfde verwerking van hetzelfde
+ *        pakket, en het pakket staat op dat moment nog in de rx-ring te wachten
+ *        op de eerstvolgende publicatie. Het oordeel haalt zijn eigen pakket dus
+ *        in. meshmanager_on_forward_verdict() stempelt de sleuf die zojuist
+ *        gevuld is, en het oordeel reist mee in het rx-bericht zelf: "fwd":1 of
+ *        "fwd":0 met "why". Eén byte per pakket, geen sleutel, geen join.
+ *        Uitstellen van de rauwe publicatie tot ná de beslissing is overwogen en
+ *        afgewezen, en niet omdat het lastig was. logRxRaw() vuurt vóór
+ *        tryParsePacket(), en dat is de reden dat de rauwe stroom ook frames
+ *        bevat die geen enkele node aanvaardt -- ruis die door de PHY-CRC kwam,
+ *        en varianten die deze firmware weigert. Dat staat zo in
+ *        docs/protocol.md en het is geen toevalligheid maar de waarde van dat
+ *        archief. Zulke frames bereiken allowPacketForward() nooit, dus
+ *        uitstellen zou ze stilzwijgend uit het archief laten verdwijnen.
+ *        DRIE TOESTANDEN, GEEN TWEE. 'fwd' ontbreekt als het filter dit pakket
+ *        niet beoordeeld heeft, en dat is het gewone geval: een pakket aan deze
+ *        node zelf, een direct gerouteerd pakket, een frame dat de parser niet
+ *        haalde, of een oordeel dat pas na het versturen viel. 'Niet beoordeeld'
+ *        als 'doorgestuurd' publiceren zou een bewering zijn die deze node niet
+ *        kan waarmaken -- dezelfde regel als bij 'onbekend' tegenover 'uit' in
+ *        de filterstand zelf.
+ *        pf_allow() schrijft zijn uitslag op in _last_reason, uit te lezen met
+ *        pf_last_reason(). Een accessor en geen extra parameter, omdat de
+ *        aanroep in een hunk staat die in andermans bestand terechtkomt
+ *        (MyMesh::allowPacketForward, repeater-hooks.patch): elke byte daarvan
+ *        moet blijven passen op een upstream-boom die wij niet beheren.
  * 2.6.0  'radio' kan niet meer van afstand gezet worden, en het filter houdt bij
  *        WAT het weggooit in plaats van alleen HOEVEEL.
  *        DE RADIO EERST, want dat is de regel en niet de functie. Van afstand mag
@@ -975,10 +1016,32 @@ struct RxItem {
   int16_t snr4;      // SNR times 4, the way the radio reports it
   int16_t rssi;
   uint8_t len;
+  /* Het oordeel van het pakketfilter over DIT pakket, als het er al is:
+   * 0 = nog niet beoordeeld, 1 = niet tegengehouden, 2 = geweerd (dan zegt
+   * 'why' waarop). Zie meshmanager_on_forward_verdict() voor waarom dit hier
+   * past en niet in een tweede bericht. */
+  uint8_t verdict;
+  uint8_t why;       // een PfReason, alleen zinvol bij verdict == 2
   uint8_t data[MQTT_RX_MAX_LEN];
 };
 static RxItem _rx_queue[MQTT_RX_QUEUE];
 static volatile uint8_t _rx_head = 0, _rx_tail = 0;
+
+/* De sleuf waar het pakket in staat dat nu verwerkt wordt, of -1.
+ *
+ * Dit is het hele koppelstuk tussen 'ontvangen' en 'doorsturen', en het kan zo
+ * kort zijn door hoe MeshCore werkt: ontvangen en de doorstuurbeslissing
+ * gebeuren binnen één en dezelfde verwerking van één pakket
+ * (Dispatcher::checkRecv -> logRxRaw -> tryParsePacket -> ... ->
+ * allowPacketForward). Er kan dus geen ander pakket tussen komen, en 'de sleuf
+ * die ik zojuist vulde' IS het pakket waarover zo dadelijk geoordeeld wordt.
+ *
+ * Vandaar geen hash, geen sleutel en geen tweede bericht om achteraf aan elkaar
+ * te knopen: het oordeel reist mee in het rx-bericht van het pakket zelf. Wat
+ * dat kost is één byte per pakket; wat het bespaart is een join op de server,
+ * een volgordeprobleem en een oordeel dat kan aankomen over een pakket dat de
+ * server nooit gezien heeft. */
+static volatile int8_t _rx_pending = -1;
 
 /* The web server runs in its own task. We never write settings from there, but
  * in loop(); these flags hand the work over. */
@@ -2466,6 +2529,7 @@ static void mqttDrainRx() {
       _rx_tail = (uint8_t)((_rx_tail + 1) % MQTT_RX_QUEUE);
       _drop_count++;
     }
+    _rx_pending = -1;      // de hele ring is weg; er valt niets meer te stempelen
     return;
   }
 
@@ -2481,10 +2545,25 @@ static void mqttDrainRx() {
   for (int guard = 0; guard < cap && _rx_tail != _rx_head; guard++) {
     RxItem &it = _rx_queue[_rx_tail];
 
-    static char body[MQTT_RX_MAX_LEN * 2 + 96];
+    /* 'fwd' ontbreekt als het filter dit pakket niet beoordeeld heeft, en dat is
+     * een eigen antwoord en geen nul. Het gebeurt bij een pakket dat aan deze
+     * node zelf gericht is, bij een direct gerouteerd pakket, bij een frame dat
+     * de parser niet aanvaardde, en bij een oordeel dat pas na het versturen
+     * viel. 'niet beoordeeld' als 'doorgestuurd' publiceren zou een bewering
+     * zijn die deze node niet kan waarmaken. */
+    static char verdict[40];
+    verdict[0] = 0;
+    if (it.verdict == 1) {
+      snprintf(verdict, sizeof(verdict), ",\"fwd\":1");
+    } else if (it.verdict == 2) {
+      snprintf(verdict, sizeof(verdict), ",\"fwd\":0,\"why\":\"%s\"",
+               pf_reason_name(it.why));
+    }
+
+    static char body[MQTT_RX_MAX_LEN * 2 + 136];
     int n = snprintf(body, sizeof(body),
-      "{\"t\":%u,\"snr\":%.2f,\"rssi\":%d,\"len\":%u,\"raw\":\"",
-      (unsigned)it.ms, it.snr4 / 4.0f, (int)it.rssi, (unsigned)it.len);
+      "{\"t\":%u,\"snr\":%.2f,\"rssi\":%d,\"len\":%u%s,\"raw\":\"",
+      (unsigned)it.ms, it.snr4 / 4.0f, (int)it.rssi, (unsigned)it.len, verdict);
 
     for (uint8_t i = 0; i < it.len; i++) {
       body[n++] = HEXCHARS[it.data[i] >> 4];
@@ -2499,6 +2578,9 @@ static void mqttDrainRx() {
       return;              // leave it queued; try again next pass
     }
     _rx_count++;
+    // Deze sleuf is de deur uit; een oordeel dat nu nog zou komen hoort nergens
+    // meer bij en mag geen volgend pakket stempelen.
+    if (_rx_pending == (int8_t)_rx_tail) _rx_pending = -1;
     _rx_tail = (uint8_t)((_rx_tail + 1) % MQTT_RX_QUEUE);
   }
 }
@@ -2531,6 +2613,12 @@ void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int l
   if (!_cfg.mqtt_enabled || !_cfg.mqtt_rx) return;
   if (len <= 0 || len > MQTT_RX_MAX_LEN) return;
 
+  /* Elk nieuw pakket verdringt het vorige als 'het pakket dat nu verwerkt
+   * wordt'. Staat het hieronder vol, dan blijft dit op -1 en wordt er dus geen
+   * oordeel op een vreemde sleuf gestempeld -- het pakket waarover geoordeeld
+   * gaat worden staat er immers niet in. */
+  _rx_pending = -1;
+
   uint8_t next = (uint8_t)((_rx_head + 1) % MQTT_RX_QUEUE);
   if (next == _rx_tail) {     // full: rather lose a packet than hold up reception
     _drop_count++;
@@ -2542,8 +2630,39 @@ void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int l
   it.snr4 = (int16_t)(snr * 4);
   it.rssi = (int16_t)rssi;
   it.len = (uint8_t)len;
+  it.verdict = 0;
+  it.why = 0;
   memcpy(it.data, raw, len);
+  _rx_pending = (int8_t)_rx_head;
   _rx_head = next;
+}
+
+/* Het oordeel van het pakketfilter over het pakket dat nu verwerkt wordt.
+ *
+ * Aangeroepen vanuit MyMesh::allowPacketForward(), meteen na pf_allow(). Het
+ * pakket zelf staat op dat moment nog in de ring te wachten op de eerstvolgende
+ * mqttDrainRx(), dus het oordeel haalt zijn eigen pakket in en gaat er in
+ * hetzelfde bericht mee mee.
+ *
+ * Waarom dit GEEN tweede bericht is met een pakkethash als sleutel. Dat was de
+ * voor de hand liggende opzet, en ze kost drie dingen die deze niet kost: een
+ * hash die aan beide kanten identiek berekend moet worden, een volgordeprobleem
+ * (het oordeel kan eerder of later aankomen dan het pakket), en een oordeel dat
+ * kan gaan over een pakket dat de server nooit gezien heeft -- de ring loopt
+ * over, de broker was even weg, of het doorsturen van pakketten staat gewoon
+ * uit. Alle drie verdwijnen als het oordeel in het pakket zelf zit.
+ *
+ * Wat er NIET verandert is de betekenis van de rauwe stroom. Het pakket wordt
+ * nog steeds bij ONTVANGST in de ring gezet, vóór tryParsePacket(), dus frames
+ * die geen enkele node aanvaardt blijven in het archief staan -- zie
+ * docs/protocol.md. Ze krijgen alleen nooit een oordeel, want ze bereiken
+ * allowPacketForward() niet. Dat is precies de derde toestand. */
+void meshmanager_on_forward_verdict(bool allowed, uint8_t reason) {
+  if (_rx_pending < 0) return;
+  RxItem &it = _rx_queue[_rx_pending];
+  it.verdict = allowed ? 1 : 2;
+  it.why = reason;
+  _rx_pending = -1;
 }
 
 // -------------------------------------------------------------- advert cache

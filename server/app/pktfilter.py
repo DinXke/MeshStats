@@ -541,3 +541,82 @@ def breakdown(state_dict: dict | None, admin: bool = False) -> dict:
 
     return {"bekend": True, "xr": kruis, "rate": tempo, "ex": vrij,
             "chan": kanalen, "trunc": bool(stats.get("trunc"))}
+
+
+def mesh_totals(states: dict, alle_repeater_ids) -> dict:
+    """De filtercijfers van alle nodes samen, voor de voorpagina.
+
+    Een optelsom over nodes is de minst gevoelige vorm die er is: geen node
+    aanwijsbaar, geen pakket aanwijsbaar, alleen 'zoveel verkeer wordt in dit
+    mesh geweerd, en hierom'. Daarom staat dit publiek. Zie ``docs/privacy.md``.
+
+    WAAR DIT MAKKELIJK ONEERLIJK WORDT, en dat is de reden dat deze functie
+    meer teruggeeft dan een paar sommen. Een totaal over *de nodes die
+    rapporteren* is geen totaal over *het mesh*. Vandaag rapporteert er in de
+    praktijk één repeater; een kaal '412 geweerd' is dan het cijfer van één node
+    in de kleren van een groep. Er komt dus altijd bij hoeveel nodes meetellen
+    en hoeveel er zijn, en die tellingen houden dezelfde drie toestanden aan die
+    de rest van dit bestand ook aanhoudt:
+
+    ``met_filter``    meldt een filter dat aanstaat
+    ``zonder_filter`` meldt uitdrukkelijk dat er geen filter aanstaat
+    ``onbekend``      heeft nog nooit iets over een filter gezegd -- meestal
+                      firmware zonder filter, in elk geval geen bewering
+
+    Die laatste twee op één hoop gooien zou 'wij weten het niet' laten doorgaan
+    voor 'daar staat niets aan', en dat is precies het onderscheid waarvoor het
+    hele scherm bestaat.
+
+    EN DE PERIODE. De tellers van een node lopen sinds zijn laatste herstart en
+    overleven een reboot niet. Een som over nodes met verschillende uptimes is
+    dus geen som over een gelijke periode, en er is hier geen venster te kiezen
+    dat dat repareert: de node levert standen, geen reeksen. Het wordt daarom
+    niet weggepoetst maar benoemd -- ``periode`` is de tekst die de pagina
+    erbij zet, en ``sinds`` is de oudste meting waarop deze som steunt.
+    """
+    met_filter = zonder_filter = 0
+    weg = door = vrij = 0
+    redenen: dict = {}
+    sinds = ""
+    gemeten = 0
+
+    for rid in alle_repeater_ids:
+        stand = states.get(rid)
+        if not stand:
+            continue
+        gemeten += 1
+        if stand.get("on"):
+            met_filter += 1
+        else:
+            zonder_filter += 1
+        door += int(stand.get("passed") or 0)
+        vrij += int(stand.get("exempt") or 0)
+        for sleutel, aantal in (stand.get("drop") or {}).items():
+            if not isinstance(aantal, (int, float)) or aantal < 0:
+                continue
+            weg += int(aantal)
+            redenen[sleutel] = redenen.get(sleutel, 0) + int(aantal)
+        # De oudste meting waarop deze som steunt. Niet de nieuwste: die zou
+        # suggereren dat het hele beeld van zopas is, terwijl één node dat
+        # gisteren voor het laatst meldde er even hard in meetelt.
+        gemeld = str(stand.get("_updated") or "")
+        if gemeld and (not sinds or gemeld < sinds):
+            sinds = gemeld
+
+    totaal = len(list(alle_repeater_ids))
+    return {
+        "gemeten": gemeten,
+        "totaal": totaal,
+        "onbekend": totaal - gemeten,
+        "met_filter": met_filter,
+        "zonder_filter": zonder_filter,
+        "weg": weg,
+        "door": door,
+        "vrij": vrij,
+        "redenen": sorted(((DROP_LABELS.get(k, k), v) for k, v in redenen.items() if v),
+                          key=lambda p: -p[1]),
+        "sinds": sinds,
+        # Wordt er iets geweerd? Zo niet, dan hoort de voorpagina geen kader te
+        # tonen dat vooral zegt dat er niets te melden is.
+        "iets_te_melden": gemeten > 0 and (weg > 0 or met_filter > 0),
+    }

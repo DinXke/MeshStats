@@ -755,7 +755,8 @@ as it came off the radio and lets the server decode it using
 [`protocol.md`](protocol.md).
 
 ```json
-{"t": 1284511, "snr": -4.25, "rssi": -94, "len": 129, "raw": "1100ab..."}
+{"t": 1284511, "snr": -4.25, "rssi": -94, "len": 129, "fwd": 0, "why": "hops",
+ "raw": "1100ab..."}
 ```
 
 | Key | Meaning |
@@ -764,7 +765,24 @@ as it came off the radio and lets the server decode it using
 | `snr` | dB, reconstructed from the radio's SNR×4 integer |
 | `rssi` | dBm |
 | `len` | frame length in bytes |
+| `fwd` | what this node's packet filter did: `1` forwarded, `0` refused. **Absent when the filter did not judge this packet** (2.7.0+, repeater only) |
+| `why` | the reason it was refused — `type`, `hops`, `rate`, `hash`, `kanaal`, `misvormd`. Only present with `"fwd": 0` (2.7.0+) |
 | `raw` | lowercase hex, `len * 2` characters |
+
+`fwd` is absent far more often than it is present, and that absence is a value in
+its own right: the filter only ever judges *flood* packets it is asked to
+forward. A packet addressed to this node, a direct-routed one, or a frame that
+never parsed never reaches `allowPacketForward()` at all. Reading a missing `fwd` as
+"forwarded" would turn "nobody looked" into a claim.
+
+The verdict rides inside the packet's own message rather than arriving as a
+second one keyed by a packet hash, and that is worth stating because the obvious
+design is the other one. Reception and the forwarding decision happen inside the
+same processing of the same packet, while the packet is still sitting in the rx
+ring waiting to be published — so the verdict catches up with its own packet
+before it leaves. That removes a hash both sides must compute identically, an
+ordering problem in both directions, and verdicts about packets the server never
+received. See `meshmanager_on_forward_verdict()`.
 
 The design constraints are the same on both firmwares, but **the numbers are
 not**, and conflating them is easy:

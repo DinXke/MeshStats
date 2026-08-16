@@ -607,3 +607,133 @@ def test_een_node_zonder_uitsplitsing_geeft_een_leeg_maar_geldig_antwoord():
     """Firmware ouder dan 2.6.0 meldt geen uitsplitsing, en dat is geen fout."""
     assert pktfilter.breakdown(None)["bekend"] is False
     assert pktfilter.breakdown({"on": True, "drop": {"hops": 3}})["bekend"] is False
+
+
+# --- het oordeel per pakket (firmware 2.7.0+) ---------------------------------
+
+def _rx(**extra):
+    """Een rx-bericht zoals de firmware het publiceert."""
+    body = {"t": 1234, "snr": 6.5, "rssi": -92, "len": 16, "raw": "00" * 16}
+    body.update(extra)
+    return body
+
+
+def test_een_pakket_zonder_oordeel_is_niet_doorgelaten_maar_onbekend():
+    """De derde toestand is een eigen antwoord en geen nette nul.
+
+    Een pakket dat aan de node zelf gericht was, dat direct gerouteerd werd of
+    waarvan het frame de parser niet haalde, bereikt allowPacketForward() niet
+    eens. Firmware ouder dan 2.7.0 stuurt het veld helemaal niet. In beide
+    gevallen zou 'doorgelaten' een bewering zijn die niemand gedaan heeft.
+    """
+    from app import mqtt_ingest
+    assert mqtt_ingest._rx_verdict(_rx()) == (None, None)
+
+
+def test_een_geweerd_pakket_draagt_zijn_reden():
+    from app import mqtt_ingest
+    assert mqtt_ingest._rx_verdict(_rx(fwd=0, why="rate")) == ("geweerd", "rate")
+
+
+def test_een_doorgelaten_pakket_heeft_geen_reden():
+    from app import mqtt_ingest
+    assert mqtt_ingest._rx_verdict(_rx(fwd=1)) == ("doorgelaten", None)
+
+
+@pytest.mark.parametrize("reden", ["onzin", "", None, 5, "RATE"])
+def test_een_onbekende_reden_wordt_weggelaten_maar_het_oordeel_blijft(reden):
+    """Iedereen met brokergegevens kan op dit topic publiceren.
+
+    Het oordeel zelf blijft staan: dat een pakket geweerd is, is gemeld -- alleen
+    het woord waarop is niet te vertrouwen, en dan is geen woord beter dan een
+    verzonnen woord.
+    """
+    from app import mqtt_ingest
+    assert mqtt_ingest._rx_verdict(_rx(fwd=0, why=reden)) == ("geweerd", None)
+
+
+def test_het_oordeel_belandt_in_de_kolommen(db):
+    from app import mqtt_ingest, packets
+    frame = bytes.fromhex("00" * 16)
+    pkt = packets.decode(frame)
+    rid = db.insert_packet("e3d3f4d7edd0", pkt, raw="00" * 16,
+                           fwd="geweerd", fwd_reason="hops")
+    rij = db.qone("SELECT fwd, fwd_reason FROM packets WHERE id=?", (rid,))
+    assert rij["fwd"] == "geweerd"
+    assert rij["fwd_reason"] == "hops"
+
+
+def test_een_pakket_van_voor_deze_kolom_blijft_leeg(db):
+    """NULL en niet 'doorgelaten'. Die rijen zijn nooit gemeten, en dat is niet
+    achteraf te herstellen: het oordeel staat niet in de bytes."""
+    from app import packets
+    pkt = packets.decode(bytes.fromhex("00" * 16))
+    rid = db.insert_packet("e3d3f4d7edd0", pkt, raw="00" * 16)
+    rij = db.qone("SELECT fwd, fwd_reason FROM packets WHERE id=?", (rid,))
+    assert rij["fwd"] is None and rij["fwd_reason"] is None
+
+
+def test_de_zoektaal_kent_het_oordeel_en_de_reden():
+    """Zonder deze regel werken de plus/min-knoppen en de kolomkiezer er niet op:
+    die gaan allemaal uit van search.FIELDS."""
+    from app import search
+    assert "filter" in search.FIELDS
+    assert "reden" in search.FIELDS
+    # Sorteerbaar, dus ook als kolomkop bruikbaar.
+    assert "filter" in search.SORTS and "reden" in search.SORTS
+    # En de kolomlijst deelt de woordenschat van de velden.
+    assert "filter" in search.COLUMNS and "reden" in search.COLUMNS
+
+
+def test_geweerd_is_te_zoeken(db):
+    from app import packets, search
+    pkt = packets.decode(bytes.fromhex("00" * 16))
+    db.insert_packet("e3d3f4d7edd0", pkt, raw="00" * 16, fwd="geweerd",
+                     fwd_reason="rate")
+    db.insert_packet("aabbccddeeff", pkt, raw="00" * 16, fwd="doorgelaten")
+    vraag = search.parse("filter:geweerd")
+    rijen = db.q(f"SELECT p.id FROM packets p WHERE {vraag.sql}", vraag.params)
+    assert len(rijen) == 1
+
+
+# --- de optelsom voor de voorpagina -------------------------------------------
+
+def test_de_voorpagina_telt_alleen_de_nodes_die_iets_gemeld_hebben():
+    """En zegt erbij hoeveel dat er zijn.
+
+    Een totaal over de nodes die rapporteren is geen totaal over het mesh. Zonder
+    die noemer is '412 geweerd' het cijfer van één node in de kleren van een
+    groep.
+    """
+    standen = {
+        1: {"on": True, "passed": 900, "exempt": 4,
+            "drop": {"hops": 5, "rate": 2}, "_updated": "2026-08-16T10:00:00Z"},
+        2: {"on": False, "passed": 100, "exempt": 0,
+            "drop": {}, "_updated": "2026-08-15T10:00:00Z"},
+    }
+    uit = pktfilter.mesh_totals(standen, [1, 2, 3, 4])
+    assert uit["gemeten"] == 2
+    assert uit["totaal"] == 4
+    assert uit["met_filter"] == 1
+    assert uit["zonder_filter"] == 1
+    # 'Nooit iets gemeld' is een eigen toestand en niet hetzelfde als 'geen filter'.
+    assert uit["onbekend"] == 2
+    assert uit["weg"] == 7
+    assert uit["door"] == 1000
+    # De oudste meting waarop de som steunt, niet de nieuwste: die zou
+    # suggereren dat het hele beeld van zopas is.
+    assert uit["sinds"] == "2026-08-15T10:00:00Z"
+
+
+def test_zonder_enige_melding_valt_het_kader_weg():
+    """Een kader dat vooral zegt dat er niets te melden is, hoort er niet."""
+    uit = pktfilter.mesh_totals({}, [1, 2])
+    assert uit["iets_te_melden"] is False
+    assert uit["onbekend"] == 2
+
+
+def test_de_redenen_staan_op_volgorde_van_zwaarte():
+    standen = {1: {"on": True, "drop": {"hops": 3, "rate": 90, "kanaal": 12}}}
+    uit = pktfilter.mesh_totals(standen, [1])
+    assert [naam for naam, _ in uit["redenen"]][0] == "over de snelheidslimiet"
+    assert uit["weg"] == 105

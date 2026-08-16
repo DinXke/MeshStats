@@ -1005,6 +1005,36 @@ def _handle_settings(row, publisher: str, values: dict, prior_source=None) -> No
              row["slug"], len(clean), answered)
 
 
+def _rx_verdict(body: dict) -> tuple[str | None, str | None]:
+    """Wat het pakketfilter van de waarnemer met dit pakket deed.
+
+    Drie uitkomsten, en de derde is een eigen antwoord: ``fwd`` ontbreekt als het
+    filter dit pakket niet beoordeeld heeft. Dat is het gewone geval voor een
+    pakket dat aan de node zelf gericht was, dat direct gerouteerd werd, of
+    waarvan het frame de parser niet haalde -- die bereiken allowPacketForward()
+    niet eens. Ook firmware ouder dan 2.7.0 stuurt het veld niet. In al die
+    gevallen is (None, None) het eerlijke antwoord en nadrukkelijk niet
+    'doorgelaten'.
+
+    De reden wordt getoetst aan dezelfde zes sleutels die de tellers en de
+    labels al gebruiken. Iedereen met brokergegevens kan op dit topic
+    publiceren, dus een onbekende reden wordt weggelaten in plaats van
+    doorgegeven -- anders bepaalt een vreemde afzender welke woorden er in de
+    kolom belanden.
+    """
+    if "fwd" not in body:
+        return None, None
+    doorgelaten = body.get("fwd")
+    if not isinstance(doorgelaten, (int, bool)) or isinstance(doorgelaten, float):
+        return None, None
+    if doorgelaten:
+        return "doorgelaten", None
+    reden = body.get("why")
+    if not isinstance(reden, str) or reden not in FILTER_DROP_METRICS:
+        reden = None
+    return "geweerd", reden
+
+
 def _handle_rx(topic: str, raw: bytes) -> None:
     """Decode one overheard LoRa frame and store the reception."""
     observer = _topic_node(topic)
@@ -1016,9 +1046,11 @@ def _handle_rx(topic: str, raw: bytes) -> None:
         raise ValueError(f"raw too long ({len(hex_frame)} hex chars)")
     frame = bytes.fromhex(hex_frame)
 
+    fwd, reden = _rx_verdict(body)
     pkt = packets.decode(frame)
     db.insert_packet(observer, pkt, snr=body.get("snr"), rssi=body.get("rssi"),
-                     length=body.get("len") or len(frame), raw=hex_frame)
+                     length=body.get("len") or len(frame), raw=hex_frame,
+                     fwd=fwd, fwd_reason=reden)
     _state["packets"] += 1
     _state["last_packet"] = db.utcnow()
     if _state["packets"] % PRUNE_EVERY_PACKETS == 0:

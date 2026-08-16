@@ -146,19 +146,81 @@ record of a particular person's traffic**.
 | The configured limit itself | **admin** | A rule, not an observation. Rule tables have sat behind the login since 2.3.0 |
 | Blocked channel: hash and hit count | **public** | The hash is one byte of `sha256(channel_key)`, and that byte travels unencrypted in every group message on the air. Withholding it protects nobody, while "this channel is refused here, 900 times" is exactly what somebody needs who wonders why their traffic does not arrive |
 | Blocked channel: the label | **admin** | Not an observation but the name *our* operator gave to *someone else's* channel. It carries nothing the hash does not, and publishing it would have the site repeat a judgement about a third party where it should report a behaviour of this node |
-| Which packet was dropped: sender, timestamp, the individual event | **does not exist** | See below |
+| Which packet was refused, marked on the packet itself | **public**, and only where the packet is already archived | See §3.1 |
 
-**No per-packet drop record is kept, at any access level.** The firmware counts;
-it does not log. There is no table of refused packets, no sender attached to a
-drop, no timestamp per event. That is not a gap waiting to be filled: a repeater
-recording who it refused and when would be keeping a log of other people's
-communications, which is a different kind of thing from counting its own
-behaviour. The counters also do not survive a restart, so they say "since this
-node last started" and never "ever".
+The counters do not survive a restart, so they say "since this node last started"
+and never "ever". And the admin view adds the rule values and the channel labels
+— the operator's own configuration — and nothing about individuals.
 
-That bounds what an operator learns from their own node too. The admin view adds
-the rule values and the channel labels — their own configuration — and nothing
-about individuals.
+### 3.1 The per-packet mark, and a correction
+
+Firmware 2.6.0 shipped with this line in this document:
+
+> No per-packet drop record is kept, at any access level. The firmware counts; it
+> does not log.
+
+**The first sentence is no longer true, and this section replaces it.** The
+second one still is, and the difference between the two is the whole argument.
+
+Since 2.7.0 an archived packet carries what the observing repeater's filter did
+with it: refused (with the reason), forwarded, or *not judged*. It is written on
+the packet's own row in the archive, it is searchable (`filter:geweerd`,
+`reden:rate`), and it is public.
+
+What changed is not the firmware's appetite for logging. The firmware still only
+counts — `PacketFilter` keeps no list of packets and never did. What changed is
+that **the packet was already in the archive**, and only the annotation was
+missing. The raw feed hangs off `logRxRaw()`, which fires at *reception*, while
+the filter decides at *forwarding*; a refused packet was therefore already
+sitting there, indistinguishable from one that sailed through. The mark does not
+create a record of anybody. It says which of two things this repeater did with a
+row that already existed.
+
+That is also the boundary, and it is enforced by construction rather than by
+policy: **the verdict travels inside the packet's own `rx` message.** No packet,
+no verdict — there is no second channel on which a judgement about an unarchived
+packet could arrive. A node with raw forwarding switched off publishes neither.
+So the annotation can never widen what is recorded; it can only describe what
+already is.
+
+Why public rather than behind the login. The packet, its sender, its type and its
+time are already on the public archive page — that ship sailed when raw
+forwarding was switched on, which is a separate and documented operator choice.
+Against that backdrop the mark adds a fact about *the repeater*, not about the
+sender. And it is the one fact the affected party cannot get any other way:
+somebody relying on this repeater, watching their traffic not arrive, is exactly
+the person who cannot log in. Hiding it would protect the operator running the
+filter from the people the filter affects, which is the wrong way round.
+
+**Three states, and the third is not a rounding of the second.** `geweerd` and
+`doorgelaten` are both positive findings from the node. A blank means the filter
+never judged this packet: it was addressed to this node, it was direct-routed,
+its frame never parsed, or the verdict fell after the message had gone. Rows
+archived before 2.7.0 are blank forever, and cannot be repaired — the verdict is
+not in the bytes, so no re-decode can recover it. Presenting any of that as
+"forwarded" would be a claim nobody made.
+
+### 3.2 The mesh-wide total on the front page
+
+The front page carries the sum over all nodes: refused, forwarded, and the
+breakdown by reason. An aggregate across nodes is the least sensitive shape this
+data has — no node identifiable, no packet identifiable, only "this much traffic
+is refused in this mesh, and for these reasons".
+
+Two honesty requirements ride with it, and both are enforced in
+`pktfilter.mesh_totals()` rather than left to the template:
+
+- **A total over the nodes that report is not a total over the mesh.** The page
+  therefore always states how many repeaters are counted and how many exist, in
+  the same three states used everywhere else: reports a filter, explicitly
+  reports none, never said anything. The last two are never merged — "we do not
+  know" is not "nothing is running there". Today one repeater reports in
+  practice, so a bare "412 refused" would be one node's number wearing a group's
+  clothes.
+- **The counters run since each node's own last restart.** A sum across nodes
+  with different uptimes is not a sum over one period, and there is no window
+  that repairs it: the node supplies levels, not series. The page says so
+  instead of leaving it out.
 
 ---
 

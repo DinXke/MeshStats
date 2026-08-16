@@ -379,6 +379,26 @@
     var codes = d.scope_codes;
     codesRow.hidden = !codes || codes.length < 2;
     if (!codesRow.hidden) txt("pkt-scope-codes", codes[0] + " / " + codes[1]);
+    // Het oordeel van het filter van de waarnemer, voluit. Alleen als er een
+    // oordeel IS: "niet beoordeeld" is geen mededeling die elk pakket verdient,
+    // en de afwezigheid van de regel zegt hetzelfde zonder ruis.
+    var fwdRow = document.getElementById("pkt-fwd-row");
+    if (fwdRow) {
+      fwdRow.hidden = !d.fwd;
+      if (d.fwd) {
+        var fwdEl = document.getElementById("pkt-fwd");
+        // Welke regel greep in, en op welke node. Die tweede helft is de
+        // belangrijkste: een pakket wordt geweerd door één repeater, niet door
+        // het mesh, en zonder de naam erbij leest dit als het laatste.
+        var wie = d.observer_name || d.observer || "";
+        var zin = t("fwd." + d.fwd);
+        if (d.fwd === "geweerd" && d.fwd_reason) zin += " · " + t("reason." + d.fwd_reason);
+        if (wie) zin += " · " + wie;
+        txt("pkt-fwd", zin);
+        fwdEl.className = "fwd--" + d.fwd;
+        filterBtns(fwdEl, "filter", d.fwd, onFilter);
+      }
+    }
     txt("pkt-snr", d.snr != null ? d.snr.toFixed(2) + " dB" : "—");
     filterBtns(document.getElementById("pkt-snr"), "snr", d.snr, onFilter);
     txt("pkt-rssi", d.rssi != null ? d.rssi + " dBm" : "—");
@@ -465,11 +485,13 @@
     ["pkt-time", "pkt-sender", "pkt-observer", "pkt-dest", "pkt-country-val",
      "pkt-type", "pkt-route", "pkt-scope", "pkt-scope-codes", "pkt-snr",
      "pkt-rssi", "pkt-len", "pkt-pathlen", "pkt-hopsize", "pkt-raw",
-     "pkt-path-note"]
+     "pkt-path-note", "pkt-fwd"]
       .forEach(function (id) { txt(id, ""); });
     document.getElementById("pkt-path").textContent = "";
     document.getElementById("pkt-advert").hidden = true;
     document.getElementById("pkt-scope-codes-row").hidden = true;
+    var fwdRow0 = document.getElementById("pkt-fwd-row");
+    if (fwdRow0) fwdRow0.hidden = true;
     document.getElementById("pkt-dest-row").hidden = true;
     var hopSizeRow = document.getElementById("pkt-hopsize-row");
     if (hopSizeRow) hopSizeRow.hidden = true;
@@ -3192,7 +3214,9 @@
     // facetable": each facet is one GROUP BY over the matches, and eight panels
     // would make every keystroke of refinement eight times as heavy for a
     // sidebar nobody reads past the fourth block of.
-    var FACETS = ["type", "scope", "sender", "observer", "country"];
+    // "filter" erbij: "hoeveel van wat deze node hoorde is geweerd" is precies
+// het soort verdeling waar een facet voor bedoeld is.
+    var FACETS = ["type", "scope", "filter", "sender", "observer", "country"];
     var qEl = document.getElementById("arch-q");
     var windowEl = document.getElementById("arch-window");
     var errEl = document.getElementById("arch-error");
@@ -3666,6 +3690,27 @@
         return cell2("pkt-reg", p.scope_region != null ? String(p.scope_region) : "—",
           "region", p.scope_region);
       },
+      // Wat het filter van de waarnemer met dit pakket deed. Leeg is hier geen
+      // ontbrekende waarde maar een eigen toestand: het filter heeft dit pakket
+      // niet beoordeeld. Het streepje zegt dat, en filterBtns slaat een lege
+      // waarde over, dus er komt ook geen plus/min-knop op iets wat geen waarde
+      // is.
+      filter: function (p) {
+        var el = cell2("pkt-fwd", p.fwd ? t("fwd." + p.fwd) : "—", "filter", p.fwd);
+        if (p.fwd) el.classList.add("fwd--" + p.fwd);
+        // De reden hoort bij het oordeel en niet in een aparte kolom die je
+        // eerst moet aanzetten -- behalve als die kolom er al staat, want dan
+        // zou hetzelfde woord twee keer op één rij staan. Zelfde afweging als
+        // bij scope en region hierboven.
+        if (p.fwd === "geweerd" && p.fwd_reason && archCols.indexOf("reden") < 0) {
+          el.textContent += " · " + t("reason." + p.fwd_reason);
+        }
+        return el;
+      },
+      reden: function (p) {
+        return cell2("pkt-reden",
+          p.fwd_reason ? t("reason." + p.fwd_reason) : "—", "reden", p.fwd_reason);
+      },
       snr: function (p) {
         return cell2("pkt-snr", p.snr != null ? p.snr.toFixed(1) + " dB" : "—",
           "snr", p.snr);
@@ -3832,7 +3877,8 @@
       return {
         time: "pkt-time-abs", sender: "pkt-who", src: "pkt-src", dest: "pkt-dest",
         observer: "pkt-obs", type: "pkt-type", route: "pkt-route",
-        scope: "pkt-scope", region: "pkt-reg", snr: "pkt-snr",
+        scope: "pkt-scope", region: "pkt-reg",
+        filter: "pkt-fwd", reden: "pkt-reden", snr: "pkt-snr",
         rssi: "pkt-rssi", hops: "pkt-hops", len: "pkt-len",
         path: "pkt-path", hash: "pkt-hash", country: "pkt-cc",
       }[key] || "pkt-type";

@@ -239,6 +239,7 @@ def test_sorteersleutels_verwijzen_naar_echte_kolommen():
     con.execute("CREATE TABLE p(id INTEGER, ts TEXT, payload_name TEXT, scope TEXT, "
                 "scope_codes TEXT, sender TEXT, observer TEXT, route TEXT, "
                 "src_hash TEXT, dest_hash TEXT, phash TEXT, "
+                "fwd TEXT, fwd_reason TEXT, "
                 "snr REAL, rssi REAL, len INTEGER, path_len INTEGER)")
     con.execute("CREATE TABLE c(country TEXT)")
     con.execute("CREATE TABLE o(country TEXT)")

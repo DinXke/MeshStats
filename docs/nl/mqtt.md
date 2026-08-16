@@ -800,7 +800,8 @@ het van de radio kwam en laat de server het decoderen met
 [`protocol.md`](protocol.md).
 
 ```json
-{"t": 1284511, "snr": -4.25, "rssi": -94, "len": 129, "raw": "1100ab..."}
+{"t": 1284511, "snr": -4.25, "rssi": -94, "len": 129, "fwd": 0, "why": "hops",
+ "raw": "1100ab..."}
 ```
 
 | Sleutel | Betekenis |
@@ -809,7 +810,26 @@ het van de radio kwam en laat de server het decoderen met
 | `snr` | dB, gereconstrueerd uit het SNR×4-geheel getal van de radio |
 | `rssi` | dBm |
 | `len` | framelengte in bytes |
+| `fwd` | wat het pakketfilter van deze node deed: `1` doorgelaten, `0` geweerd. **Afwezig als het filter dit pakket niet beoordeeld heeft** (2.7.0+, alleen repeater) |
+| `why` | waarop het geweerd werd — `type`, `hops`, `rate`, `hash`, `kanaal`, `misvormd`. Alleen aanwezig bij `"fwd": 0` (2.7.0+) |
 | `raw` | hex in kleine letters, `len * 2` tekens |
+
+`fwd` ontbreekt veel vaker dan het er staat, en die afwezigheid is een eigen
+waarde: het filter beoordeelt uitsluitend *flood*-pakketten die het moet
+doorsturen. Een pakket aan deze node zelf, een direct gerouteerd pakket, of een
+frame dat nooit geparseerd is, bereikt `allowPacketForward()` niet eens. Een
+ontbrekende `fwd` als 'doorgestuurd' lezen maakt van 'niemand heeft gekeken' een
+bewering.
+
+Het oordeel reist mee in het bericht van het pakket zelf en komt niet als tweede
+bericht met een pakkethash als sleutel, en dat is het vermelden waard omdat de
+voor de hand liggende opzet die andere is. Ontvangst en de doorstuurbeslissing
+gebeuren binnen dezelfde verwerking van hetzelfde pakket, terwijl dat pakket nog
+in de rx-ring op publicatie staat te wachten — het oordeel haalt zijn eigen
+pakket dus in voordat het vertrekt. Dat scheelt een hash die beide kanten
+identiek moeten berekenen, een volgordeprobleem in twee richtingen, en oordelen
+over pakketten die de server nooit ontvangen heeft. Zie
+`meshmanager_on_forward_verdict()`.
 
 De ontwerpbeperkingen zijn op beide firmwares dezelfde, maar **de getallen niet**,
 en ze door elkaar halen is makkelijk:

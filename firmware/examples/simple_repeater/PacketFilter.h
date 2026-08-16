@@ -112,6 +112,20 @@ bool pf_allow(uint8_t payload_type, uint8_t hash_count, uint8_t hash_size,
  * matters. */
 bool pf_command(const char *rest, char *reply, size_t reply_max);
 
+/* The reason the LAST pf_allow() call landed on -- PF_PASS when it let the
+ * packet through. Only meaningful immediately after that call.
+ *
+ * An accessor rather than an out-parameter, for a reason that is not taste:
+ * pf_allow() is called from a hunk inside somebody else's file
+ * (MyMesh::allowPacketForward, repeater-hooks.patch), and every byte of that
+ * hunk has to keep applying to an upstream tree we do not control. Changing the
+ * signature would widen that patch; this does not. */
+uint8_t pf_last_reason();
+
+/* The name of a reason ("hops", "rate", ...), as the CLI, the API and the site
+ * already spell it. One spelling of the six reasons, everywhere. */
+const char *pf_reason_name(uint8_t reason);
+
 /* The complete state as JSON -- rules, per-type limits, channels, counters --
  * for GET /api/filter. Returns the bytes written, or 0 when it did not fit. */
 size_t pf_json(char *out, size_t max);

@@ -232,3 +232,36 @@ def test_de_filteruitsplitsing_lekt_geen_kanaal_op_de_publieke_pagina(wereld, db
         verzoek(f"/r/{dak['slug']}", wereld["koek"]["admin"]), dak["slug"]))
     assert "geheimkanaal" in ingelogd
     assert "#a3" in ingelogd
+
+
+def test_voorpagina_zet_de_noemer_bij_de_filtercijfers(wereld, db):
+    """Een optelsom zonder 'over hoeveel nodes' is het cijfer van één node in de
+    kleren van een groep.
+
+    Deze test staat hier omdat het lek in het SJABLOON zit: de sommen kloppen wel
+    in pktfilter.mesh_totals(), maar een kaart die alleen het grote getal toont
+    is precies de oneerlijke vorm. Zie docs/privacy.md.
+    """
+    from app import routes_public
+    dak = wereld["dak"]
+    db.upsert_filter_state(dak["id"], {
+        "on": True, "passed": 900, "exempt": 4, "drop": {"hops": 5, "rate": 2},
+    }, dak["pubkey_prefix"])
+
+    html = tekst(routes_public.index(verzoek("/", "")))
+    assert "Pakketfilter in dit mesh" in html
+    assert "geweerd" in html
+    # De noemer: hoeveel nodes melden een filter, van hoeveel in totaal.
+    assert "Filter aan bij" in html
+    assert "repeaters op deze site" in html
+    # De tweede node meldde niets, en dat is een eigen toestand.
+    assert "Nooit iets over een filter gemeld" in html
+    # En de periode wordt benoemd in plaats van weggelaten.
+    assert "laatste herstart" in html
+
+
+def test_voorpagina_zwijgt_als_geen_node_ooit_een_filter_meldde(wereld):
+    """Een kader dat vooral zegt dat er niets te melden is, hoort er niet."""
+    from app import routes_public
+    html = tekst(routes_public.index(verzoek("/", "")))
+    assert "Pakketfilter in dit mesh" not in html

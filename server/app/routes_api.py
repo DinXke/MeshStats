@@ -664,6 +664,9 @@ def packet_search(
             "src": _resolve_src(p), "src_hash": p["src_hash"],
             "dest_hash": p["dest_hash"], "dest": _resolve_dest(p),
             "phash": p["phash"],
+            # Wat het filter van de waarnemer met dit pakket deed. None betekent
+            # 'niet beoordeeld' en niet 'doorgelaten' -- zie db.py bij de kolom.
+            "fwd": p["fwd"], "fwd_reason": p["fwd_reason"],
             "country": p["sender_country"] or p["observer_country"],
         } for p in rows],
     }
@@ -904,6 +907,10 @@ def packet_detail(packet_id: int):
         "snr": p["snr"], "rssi": p["rssi"], "len": p["len"],
         "route": p["route"], "payload_type": p["payload_type"], "type": p["payload_name"],
         "scope": scope, "scope_codes": codes, "scope_region": _scope_region(codes),
+        # Het oordeel van het filter van de WAARNEMER. Uit de kolom en niet uit
+        # het frame: het staat niet in de bytes, de node zet het erbij. None is
+        # 'niet beoordeeld' en een eigen antwoord -- zie db.py bij de kolom.
+        "fwd": p["fwd"], "fwd_reason": p["fwd_reason"],
         "path_len": p["path_len"],
         # How many bytes each hop below is written with. Only the frame knows --
         # it is the top two bits of the descriptor, chosen by whoever first sent

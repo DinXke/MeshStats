@@ -30,8 +30,15 @@ def index(request: Request):
             "neighbors": val("neighbor_count"),
             "temperature": val("ch1_temperature") or val("ch2_temperature"),
         })
+    # De filtercijfers van alle publieke nodes samen. Eén query voor de hele
+    # tabel, en de optelsom zelf staat in pktfilter zodat de eerlijkheidsregels
+    # -- hoeveel nodes tellen mee, en over welke periode -- op één plek staan en
+    # niet uitgesmeerd raken over een sjabloon.
+    filter_mesh = pktfilter.mesh_totals(db.filter_states_all(),
+                                        [r["id"] for r in rows])
     return templates.TemplateResponse(request, "index.html", {
         "site_name": config.SITE_NAME, "cards": cards,
+        "filter_mesh": filter_mesh,
         # Without a single placeable node the live map would be an empty grey
         # box, so the whole block (and Leaflet with it) stays out of the page.
         "has_livemap": bool(db.located_nodes()),

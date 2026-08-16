@@ -151,20 +151,84 @@ verslag van het verkeer van een bepaald iemand**.
 | De ingestelde limiet zelf | **beheerder** | Dat is een regel en geen waarneming. Regeltabellen staan sinds 2.3.0 achter de login |
 | Geblokkeerd kanaal: hash en aantal treffers | **openbaar** | De hash is één byte van `sha256(kanaalsleutel)`, en die byte reist onversleuteld mee in elk groepsbericht op de lucht. Verzwijgen beschermt niemand, terwijl 'dit kanaal wordt hier geweerd, 900 keer' precies is wat iemand nodig heeft die zich afvraagt waarom zijn verkeer niet aankomt |
 | Geblokkeerd kanaal: het label | **beheerder** | Geen waarneming maar de naam die *onze* beheerder aan het kanaal van *iemand anders* gaf. Het draagt niets wat de hash niet al draagt, en publiceren zou de site een oordeel over een derde laten herhalen waar ze een gedraging van deze node hoort te melden |
-| Welk pakket weggegooid is: afzender, tijdstip, de losse gebeurtenis | **bestaat niet** | Zie hieronder |
+| Welk pakket geweerd is, aangetekend op het pakket zelf | **openbaar**, en alleen waar het pakket al gearchiveerd staat | Zie §3.1 |
 
-**Er wordt nergens een verslag per pakket bijgehouden, op geen enkel
-toegangsniveau.** De firmware telt; hij logt niet. Er is geen tabel met
-geweigerde pakketten, geen afzender bij een weigering, geen tijdstip per
-gebeurtenis. Dat is geen gat dat nog ingevuld moet worden: een repeater die
-opschrijft wie hij weigerde en wanneer, houdt een logboek bij van andermans
-communicatie, en dat is iets anders van soort dan het tellen van zijn eigen
-gedrag. De tellers overleven bovendien geen herstart, dus ze zeggen 'sinds deze
-node voor het laatst startte' en nooit 'ooit'.
+De tellers overleven geen herstart, dus ze zeggen 'sinds deze node voor het
+laatst startte' en nooit 'ooit'. En het beheerdersbeeld voegt de regelwaarden en
+de kanaallabels toe — de eigen configuratie van de beheerder — en verder niets
+over personen.
 
-Dat begrenst ook wat een beheerder van zijn eigen node leert. Het beheerdersbeeld
-voegt de regelwaarden en de kanaallabels toe — zijn eigen configuratie — en
-verder niets over personen.
+### 3.1 De aantekening per pakket, en een correctie
+
+Firmware 2.6.0 leverde dit document met deze zin erin:
+
+> Er wordt nergens een verslag per pakket bijgehouden, op geen enkel
+> toegangsniveau. De firmware telt; hij logt niet.
+
+**De eerste zin klopt niet meer, en deze paragraaf vervangt hem.** De tweede
+klopt nog steeds, en het verschil tussen die twee is het hele argument.
+
+Sinds 2.7.0 draagt een gearchiveerd pakket wat het filter van de waarnemende
+repeater ermee deed: geweerd (met de reden), doorgelaten, of *niet beoordeeld*.
+Het staat op de eigen rij van dat pakket in het archief, het is doorzoekbaar
+(`filter:geweerd`, `reden:rate`), en het is openbaar.
+
+Wat er veranderd is, is niet de neiging van de firmware om te loggen. Die telt
+nog steeds alleen — `PacketFilter` houdt geen lijst van pakketten bij en deed dat
+nooit. Wat er veranderd is, is dat **het pakket er al stond** en alleen de
+aantekening ontbrak. De rauwe doorgifte hangt aan `logRxRaw()`, dat bij
+*ontvangst* vuurt, terwijl het filter pas bij *doorsturen* beslist; een geweerd
+pakket zat er dus al in, niet te onderscheiden van een dat gewoon doorging. De
+aantekening maakt geen verslag van iemand. Ze zegt welke van twee dingen deze
+repeater deed met een rij die er al was.
+
+Dat is meteen de grens, en die is door de bouw afgedwongen en niet door beleid:
+**het oordeel reist mee in het rx-bericht van het pakket zelf.** Geen pakket,
+geen oordeel — er is geen tweede kanaal waarop een oordeel over een
+niet-gearchiveerd pakket zou kunnen aankomen. Een node met het doorsturen van
+pakketten uit publiceert geen van beide. De aantekening kan dus nooit verbreden
+wát er vastgelegd wordt; ze kan alleen beschrijven wat er al is.
+
+Waarom openbaar en niet achter de login. Het pakket, zijn afzender, zijn type en
+zijn tijdstip staan al op de publieke archiefpagina — dat schip is vertrokken
+toen het doorsturen van pakketten aangezet werd, en dat is een aparte,
+gedocumenteerde keuze van de beheerder. Tegen die achtergrond voegt de
+aantekening een feit toe over *de repeater*, niet over de afzender. En het is het
+ene feit dat de getroffene op geen andere manier kan krijgen: wie op deze
+repeater vertrouwt en zijn verkeer niet ziet aankomen, is juist degene die niet
+kan inloggen. Verbergen zou de beheerder die het filter draait beschermen tegen
+de mensen die het filter raakt, en dat is de verkeerde kant op.
+
+**Drie toestanden, en de derde is geen afronding van de tweede.** `geweerd` en
+`doorgelaten` zijn allebei positieve vaststellingen van de node. Leeg betekent
+dat het filter dit pakket niet beoordeeld heeft: het was aan deze node gericht,
+het was direct gerouteerd, het frame haalde de parser niet, of het oordeel viel
+pas nadat het bericht al weg was. Rijen van vóór 2.7.0 blijven voorgoed leeg, en
+dat valt niet te herstellen — het oordeel staat niet in de bytes, dus geen enkele
+herdecodering haalt het terug. Daar 'doorgelaten' van maken zou een bewering zijn
+die niemand gedaan heeft.
+
+### 3.2 De optelsom op de voorpagina
+
+De voorpagina toont de som over alle nodes: geweerd, doorgelaten, en de
+uitsplitsing naar reden. Een optelsom over nodes is de minst gevoelige vorm die
+deze gegevens hebben — geen node aanwijsbaar, geen pakket aanwijsbaar, alleen
+'zoveel verkeer wordt in dit mesh geweerd, en hierom'.
+
+Er horen twee eerlijkheidseisen bij, en allebei staan ze in
+`pktfilter.mesh_totals()` en niet in het sjabloon:
+
+- **Een totaal over de nodes die rapporteren is geen totaal over het mesh.** De
+  pagina zegt daarom altijd hoeveel repeaters meetellen en hoeveel er zijn, in
+  dezelfde drie toestanden als overal elders: meldt een filter, meldt
+  uitdrukkelijk geen filter, heeft nooit iets gemeld. Die laatste twee worden
+  nooit samengevoegd — 'wij weten het niet' is niet 'daar staat niets aan'.
+  Vandaag rapporteert er in de praktijk één repeater, dus een kaal '412 geweerd'
+  zou het cijfer van één node in de kleren van een groep zijn.
+- **De tellers lopen sinds de eigen laatste herstart van elke node.** Een som
+  over nodes met verschillende uptimes is geen som over één periode, en er is
+  geen venster dat dat repareert: de node levert standen, geen reeksen. De
+  pagina zegt dat, in plaats van het weg te laten.
 
 ---
 

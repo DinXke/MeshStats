@@ -202,6 +202,49 @@ In short: counts and distributions describe this repeater and are public; the
 configured limits and the channel labels are operator's tooling and are not; and
 there is no per-packet record of who was refused, at any access level.
 
+## Seeing it in the packet archive
+
+A refused packet does not disappear — it was already in the archive before it was
+refused. The raw feed hangs off `logRxRaw()`, which fires at *reception*, while
+the filter decides at *forwarding*. What was missing until firmware **2.7.0** was
+only the note saying that it was not forwarded, and why. There is no second log:
+the firmware still counts and does not keep a list of packets.
+
+Each archived packet now carries one of three states:
+
+| State | Meaning |
+|---|---|
+| `geweerd` | this observer's filter refused to forward it, with the reason |
+| `doorgelaten` | this observer's filter judged it and let it through |
+| *blank* | the filter never judged it |
+
+The blank is a finding, not a rounding of `doorgelaten`. The filter only ever
+judges flood packets it is asked to forward, so a packet addressed to the node, a
+direct-routed one, or a frame that never parsed is genuinely unjudged. Rows from
+before 2.7.0 are blank permanently — the verdict is not in the bytes, so no
+re-decode can recover it.
+
+Searchable with the ordinary query language, so the plus/minus buttons and the
+column picker work on it like any other field:
+
+```
+filter:geweerd              everything this mesh refused to forward
+filter:geweerd reden:rate   ... because of a rate limit
+-filter:geweerd             everything else
+reden:kanaal observer:e3d3  one node's blocked-channel drops
+```
+
+Refused rows are coloured, and the colour is never the only carrier: the cell
+spells out `geweerd` with the reason next to it, in both themes. The packet's
+detail panel names the reason in full **and the node that applied it** — a packet
+is refused by one repeater, not by the mesh, and without the name it reads as the
+latter.
+
+The front page carries the mesh-wide sum: refused, forwarded, and the breakdown
+by reason, with how many repeaters are counted out of how many exist. See
+[`privacy.md`](privacy.md#31-the-per-packet-mark-and-a-correction) for why this
+is public and what is deliberately not recorded.
+
 ## The way back
 
 A filter is the kind of setting that makes a node useless without making it
