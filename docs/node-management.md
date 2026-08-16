@@ -150,17 +150,52 @@ That is a lot of machinery to make a route safe that we do not need. Hence HTTP.
 Not a whitelist because whitelists are fashionable, but because the failure mode
 is losing a node permanently. Three tiers.
 
-### Tier 1 — safe
+### Tier 1 — safe. **Built, and this is what ships.**
 
 Cannot cut off reachability by any route. Offered on every node the site can
 write to, with no extra confirmation.
 
-`name`, `lat`, `lon`, `advert.interval`, `flood.advert.interval`, `af`
-(airtime factor), `rxdelay`, `txdelay`
+| Key | Type | Our bounds | MeshCore's own validation |
+|---|---|---|---|
+| `name` | text | non-empty, no `[ ] \ : , ? *`, no control characters | rejects the same punctuation (`isValidName`), allows control characters |
+| `lat` | float | −90 … 90 | **none at all** — bare `atof()` |
+| `lon` | float | −180 … 180 | **none at all** — bare `atof()` |
+| `advert.interval` | int | 60 … 240 minutes | 0, or 60 … 240 |
+| `flood.advert.interval` | int | 3 … 168 hours | 0, or 3 … 168 |
+| `rxdelay` | float | 0 … 20 | 0 … 20 |
+| `txdelay` | float | 0 … 2 | 0 … 2 |
 
 The worst outcome in this tier is a node that advertises less often or delays
 differently. Both are visible in the statistics and both are correctable by the
 same route that set them.
+
+Two of our bounds are deliberately stricter than MeshCore's. It accepts `0` for
+both advert intervals, meaning "stop advertising" — that does not make a node
+unreachable, but it does let it sink out of everyone's list, which on a roof
+feels the same. And `af` (airtime factor) was dropped from this tier during
+implementation: it has no validation upstream either, and a high value throttles
+transmission enough to quieten a repeater without ever making it unreachable —
+which is exactly the kind of half-broken this tier is supposed to exclude.
+
+`lat` and `lon` are worth pausing on, because they are the clearest illustration
+of why the bounds exist here at all. MeshCore's handler is
+`_prefs->node_lat = atof(&config[4]);` — no range check, no parse check.
+`atof("noord")` is `0.0`, so a typo puts the node in the Gulf of Guinea and the
+CLI answers `OK`. **A node that accepts a nonsense value is more dangerous than
+one that refuses**, and upstream is the accepting kind.
+
+### Where the list actually lives
+
+**In the firmware**, compiled in (`CFG_PARAMS` in `MeshManagerNet.cpp`). Not in the
+server, because the server is editable by whoever runs the site, and this list is
+what stands between a click and the radio.
+
+The server keeps **no second copy**. It asks the node (`GET /api/cfg`) which keys
+it allows and between which bounds, builds the form from that answer, and
+validates against it before sending. That still satisfies "validate on both
+sides" — the server check gives a fast error next to the input field, the node
+check is the one that counts — but there is only ever one list, so the two cannot
+drift into offering a parameter the node refuses.
 
 ### Tier 2 — risky, behind an explicit confirmation that names the risk
 
@@ -185,21 +220,53 @@ with both an IP route and a mesh route, where breaking one leaves the other — 
 even then behind the same confirmation as tier 2. On a `semi_managed` node they
 are not offered at all.
 
+### The endpoints
+
+Both behind the node's own HTTP login, the same one that guards `/api/fw` and
+`/api/backup`.
+
+**`GET /api/cfg`** — what this image allows, so the page never offers a key the
+firmware does not have:
+
+```json
+{"params":[{"key":"name","kind":"text","lo":0,"hi":0,"tier":1},
+           {"key":"lat","kind":"float","lo":-90,"hi":90,"tier":1}]}
+```
+
+**`POST /api/cfg`** with form fields `key` and `value`:
+
+```json
+{"ok":1,"step":"","key":"advert.interval","asked":"61",
+ "applied":"60","exact":0,"reply":"OK"}
+```
+
+`step` on failure is one of `sleutel` (not on the list), `waarde` (outside the
+bounds) or `node` (the CLI refused), and never merely `error`.
+
+The key is never taken from the request when the command is built — it is looked
+up in the compiled-in table and the table's own spelling is used — so there is no
+string from the caller in the command except the value, which is always the last
+word. The CLI call also passes a **non-zero sender timestamp**: `0` means "this
+came from the serial cable" in MeshCore and unlocks commands that belong only
+there (`erase`, `get prv.key`). This path needs none of them, so if the table
+ever turns out to have a hole, the hole is smaller.
+
 ### Validation happens on both sides, and they are not the same check
 
 - **The server** validates type and range before sending, so a typo produces a
-  refusal on a page instead of a packet.
-- **The node doing the transmitting** validates again before it issues `set`.
-  This is the check that actually protects the mesh, because the server's list is
-  editable by whoever runs the site and the node's is compiled in.
+  refusal next to the input field instead of a packet. It validates against the
+  bounds the *node* reported, not against a list of its own.
+- **The node** validates again before it issues `set`. This is the check that
+  actually protects the mesh, because the server is editable by whoever runs the
+  site and the firmware's table is compiled in.
 
-For a `semi_managed` target the transmitting node is the monitor, running our
-firmware — so the tier table and its validation live in `MeshManagerNet`, applied
-before anything is radiated. The target is stock MeshCore and validates almost
-nothing: `set` parses with `_atoi` and takes what it gets. **A node that accepts
-a nonsense value is more dangerous than one that refuses**, and the stock
-firmware is the accepting kind. That is precisely why the refusal has to happen
-before transmission.
+For a `semi_managed` target — the path that is designed but not built — the
+transmitting node would be the monitor, running our firmware, so the table and
+its validation apply before anything is radiated. The target there is stock
+MeshCore and validates almost nothing: `set` parses with `atof`/`atoi` and takes
+what it gets. **A node that accepts a nonsense value is more dangerous than one
+that refuses**, and stock is the accepting kind. That is precisely why the
+refusal has to happen before transmission rather than at the far end.
 
 ---
 
@@ -232,14 +299,27 @@ only works where it is not needed.
 ## After a write, read it back
 
 A write is never reported as a success on the strength of having been sent. The
-site re-reads the parameter and shows what the node actually made of it.
+node re-reads the parameter with `get <key>` immediately after the `set`, in the
+same request, and the answer carries **`asked` and `applied` separately** plus an
+`exact` flag.
 
-This is the same discipline as the firmware upgrade, and for the same reason:
-`publish()` reporting success means the broker took the bytes, and a `set` that
-was transmitted means it was transmitted. Neither says anything about the value
-now in the node. The existing settings sweep is the mechanism — one parameter, or
-the whole table — so there is no second code path that could disagree with the
-first.
+This is not defensive habit. It is two measured behaviours in MeshCore that both
+answer `OK` while storing something else:
+
+- **`set lat abc`** → `atof()` yields `0.0`. Answer: `OK`. The node now claims a
+  position it was never given.
+- **`set advert.interval 61`** → stored as `minutes / 2` in a single byte, so
+  `30`; `get advert.interval` multiplies by two again and returns `60`. Answer:
+  `OK`. **Odd minute values always come back rounded down to even**, and this is
+  the normal case rather than an error.
+
+So the admin page has three outcomes, not two: *set*, *set but not exactly* (with
+both numbers shown, and a note that this is not a fault), and *not set* with the
+node's own reason. Anything that collapsed the middle one into "success" would be
+telling the same kind of half-truth the old OTA path told.
+
+`get <key>` is the same read the daily settings sweep uses, so there is no second
+code path that could disagree with the first.
 
 ---
 
@@ -299,7 +379,9 @@ against a node a human named.
 | Levels as an explicit concept in code and UI | **being built** — `level` / `level_why` on `commanding.describe()` |
 | Firmware upgrade over HTTP, with checksum and rollback | **built**, see [`firmware-upgrade.md`](firmware-upgrade.md) |
 | `ota_route()` as a separate capability key | **built** |
-| Writing settings | **designed, not built.** The route (HTTP to a reachable node, LoRa onward), the tier table, the both-sides validation and the read-back are settled; the endpoints are not written |
+| Writing settings to a `full_managed` node with an IP path | **built** — firmware 1.13.0 `POST /api/cfg`, tier 1 only, with read-back. Requires the node's management address to be filled in |
+| Writing settings to a `semi_managed` node over LoRa | **designed, not built.** Needs a state machine beside the settings sweep, and the node it exists for is the roof repeater — so it gets built against something touchable first |
+| Tier 2 parameters (`flood.max`, `repeat`, `allow.read.only`, …) | **not built.** The `tier` field exists in the firmware table so adding them is a table row plus a confirmation step, not a rebuild |
 | Confirm-or-revert | **examined and rejected**, with the reasoning above |
 | Automatic rights discovery | **rejected**, point-and-test-once instead |
 

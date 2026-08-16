@@ -161,17 +161,54 @@ Geen toelatingslijst omdat toelatingslijsten in de mode zijn, maar omdat de
 manier waarop het hier misgaat is dat je een node blijvend kwijtraakt. Drie
 categorieën.
 
-### Categorie 1 — veilig
+### Categorie 1 — veilig. **Gebouwd, en dit is wat er uitgeleverd wordt.**
 
 Kan langs geen enkele route de bereikbaarheid afsnijden. Wordt aangeboden op elke
 node waarnaar de site kan schrijven, zonder extra bevestiging.
 
-`name`, `lat`, `lon`, `advert.interval`, `flood.advert.interval`, `af`
-(airtime factor), `rxdelay`, `txdelay`
+| Sleutel | Type | Onze grenzen | MeshCore's eigen validatie |
+|---|---|---|---|
+| `name` | tekst | niet leeg, geen `[ ] \ : , ? *`, geen stuurtekens | weigert dezelfde leestekens (`isValidName`), staat stuurtekens toe |
+| `lat` | float | −90 … 90 | **helemaal geen** — kale `atof()` |
+| `lon` | float | −180 … 180 | **helemaal geen** — kale `atof()` |
+| `advert.interval` | int | 60 … 240 minuten | 0, of 60 … 240 |
+| `flood.advert.interval` | int | 3 … 168 uur | 0, of 3 … 168 |
+| `rxdelay` | float | 0 … 20 | 0 … 20 |
+| `txdelay` | float | 0 … 2 | 0 … 2 |
 
 De slechtste afloop in deze categorie is een node die minder vaak adverteert of
 anders vertraagt. Allebei zichtbaar in de statistieken, en allebei te corrigeren
 via dezelfde route die ze gezet heeft.
+
+Twee van onze grenzen zijn met opzet strenger dan die van MeshCore. Dat
+accepteert `0` voor allebei de advert-intervallen, wat "stop met adverteren"
+betekent — daarmee wordt een node niet onbereikbaar, maar hij zakt er wel mee uit
+ieders lijst weg, en op een dak voelt dat hetzelfde. En `af` (airtime factor) is
+tijdens het bouwen uit deze categorie geschrapt: MeshCore valideert die ook niet,
+en een hoge waarde knijpt het zenden zo ver af dat een repeater stilvalt zonder
+ooit onbereikbaar te worden — precies het soort halfkapot dat deze categorie
+hoort uit te sluiten.
+
+Bij `lat` en `lon` is het de moeite waard even stil te staan, want zij laten het
+duidelijkst zien waarom die grenzen hier überhaupt bestaan. De handler van
+MeshCore is `_prefs->node_lat = atof(&config[4]);` — geen bereikcontrole, geen
+parsecontrole. `atof("noord")` is `0.0`, dus een typfout zet de node in de Golf
+van Guinee en de CLI antwoordt `OK`. **Een node die een onzinnige waarde aanneemt
+is gevaarlijker dan een die weigert**, en MeshCore is van het aannemende soort.
+
+### Waar de lijst werkelijk staat
+
+**In de firmware**, meegecompileerd (`CFG_PARAMS` in `MeshManagerNet.cpp`). Niet in
+de server, want de server is aan te passen door wie de site draait, en deze lijst
+is wat er tussen een klik en de radio staat.
+
+De server houdt er **geen tweede kopie** van bij. Hij vraagt aan de node
+(`GET /api/cfg`) welke sleutels die toestaat en tussen welke grenzen, bouwt het
+formulier op uit dat antwoord, en valideert daartegen voordat er iets vertrekt.
+Dat voldoet nog steeds aan "valideer aan beide kanten" — de controle van de
+server geeft snel een fout naast het invoerveld, de controle van de node is
+degene die telt — maar er is altijd maar één lijst, zodat de twee niet uit elkaar
+kunnen groeien en een parameter gaan aanbieden die de node weigert.
 
 ### Categorie 2 — riskant, achter een expliciete bevestiging die het risico benoemt
 
@@ -196,22 +233,55 @@ firmware met zowel een IP-route als een mesh-route, waar het breken van de ene d
 andere overlaat — en zelfs dan achter dezelfde bevestiging als categorie 2. Op
 een `semi_managed` node worden ze helemaal niet aangeboden.
 
+### De endpoints
+
+Allebei achter de eigen HTTP-login van de node, dezelfde die `/api/fw` en
+`/api/backup` bewaakt.
+
+**`GET /api/cfg`** — wat deze image toestaat, zodat de pagina nooit een sleutel
+aanbiedt die de firmware niet heeft:
+
+```json
+{"params":[{"key":"name","kind":"text","lo":0,"hi":0,"tier":1},
+           {"key":"lat","kind":"float","lo":-90,"hi":90,"tier":1}]}
+```
+
+**`POST /api/cfg`** met formuliervelden `key` en `value`:
+
+```json
+{"ok":1,"step":"","key":"advert.interval","asked":"61",
+ "applied":"60","exact":0,"reply":"OK"}
+```
+
+`step` is bij een mislukking `sleutel` (staat niet op de lijst), `waarde` (buiten
+de grenzen) of `node` (de CLI weigerde), en nooit alleen maar `error`.
+
+De sleutel wordt bij het opbouwen van het commando nooit uit het verzoek
+overgenomen — hij wordt opgezocht in de meegecompileerde tabel en de spelling van
+die tabel wordt gebruikt — zodat er behalve de waarde geen enkele tekst van de
+aanroeper in het commando zit, en die waarde is altijd het laatste woord. De
+CLI-aanroep geeft ook een **sender-timestamp ongelijk aan nul** mee: `0` betekent
+in MeshCore "dit kwam van de seriële kabel" en ontgrendelt commando's die alleen
+daar thuishoren (`erase`, `get prv.key`). Dit pad heeft er geen enkele van nodig,
+dus mocht de tabel ooit een gat blijken te hebben, dan is dat gat kleiner.
+
 ### Validatie gebeurt aan beide kanten, en het is niet dezelfde controle
 
 - **De server** valideert type en bereik voordat er iets vertrekt, zodat een
-  typfout een weigering op een pagina oplevert in plaats van een pakket.
-- **De node die het uitzendt** valideert nog een keer voordat hij `set`
-  uitvoert. Dit is de controle die het mesh werkelijk beschermt, want de lijst
-  van de server is aan te passen door wie de site draait, en die van de node zit
-  meegecompileerd.
+  typfout een weigering naast het invoerveld oplevert in plaats van een pakket.
+  Hij valideert tegen de grenzen die de *node* opgaf, niet tegen een eigen lijst.
+- **De node** valideert nog een keer voordat hij `set` uitvoert. Dit is de
+  controle die het mesh werkelijk beschermt, want de server is aan te passen door
+  wie de site draait, en de tabel van de firmware zit meegecompileerd.
 
-Bij een `semi_managed` doel is de uitzendende node de monitor, met onze firmware
-— dus de categorietabel en de validatie ervan wonen in `MeshManagerNet`, toegepast
-voordat er iets de lucht in gaat. Het doel is standaard MeshCore en valideert
-bijna niets: `set` parseert met `_atoi` en neemt wat het krijgt. **Een node die
-een onzinnige waarde aanneemt is gevaarlijker dan een die weigert**, en de
-standaardfirmware is van het aannemende soort. Precies daarom moet de weigering
-vóór het uitzenden gebeuren.
+Bij een `semi_managed` doel — het pad dat ontworpen is maar niet gebouwd — zou de
+uitzendende node de monitor zijn, met onze firmware, zodat de tabel en de
+validatie ervan gelden voordat er iets de lucht in gaat. Het doel is daar
+standaard MeshCore en valideert bijna niets: `set` parseert met `atof`/`atoi` en
+neemt wat het krijgt. **Een node die een onzinnige waarde aanneemt is gevaarlijker
+dan een die weigert**, en de standaardfirmware is van het aannemende soort.
+Precies daarom moet de weigering vóór het uitzenden gebeuren en niet aan de
+overkant.
 
 ---
 
@@ -247,15 +317,28 @@ dan een rollback die alleen werkt waar hij niet nodig is.
 ## Lees na een schrijfactie terug
 
 Een schrijfactie wordt nooit als geslaagd gemeld op grond van het feit dat hij
-verstuurd is. De site leest de parameter opnieuw en toont wat de node er
-werkelijk van gemaakt heeft.
+verstuurd is. De node leest de parameter meteen na de `set` opnieuw met
+`get <key>`, binnen hetzelfde verzoek, en het antwoord draagt **`asked` en
+`applied` apart** mee, plus een `exact`-vlag.
 
-Dit is dezelfde discipline als bij de firmware-upgrade, en om dezelfde reden:
-`publish()` die succes meldt, betekent dat de broker de bytes aannam, en een
-`set` die uitgezonden is, betekent dat hij uitgezonden is. Geen van beide zegt
-iets over de waarde die nu in de node staat. De bestaande instellingenronde is
-het mechanisme — één parameter, of de hele tabel — zodat er geen tweede codepad
-is dat het met het eerste oneens zou kunnen zijn.
+Dat is geen defensieve gewoonte. Het zijn twee gemeten gedragingen in MeshCore
+die allebei `OK` antwoorden terwijl ze iets anders opslaan:
+
+- **`set lat abc`** → `atof()` levert `0.0` op. Antwoord: `OK`. De node claimt nu
+  een positie die hem nooit gegeven is.
+- **`set advert.interval 61`** → wordt als `minutes / 2` in één byte opgeslagen,
+  dus `30`; `get advert.interval` vermenigvuldigt weer met twee en geeft `60`
+  terug. Antwoord: `OK`. **Oneven minuutwaarden komen altijd naar beneden
+  afgerond op even terug**, en dat is het normale geval en geen fout.
+
+De beheerpagina heeft dus drie uitkomsten en niet twee: *gezet*, *gezet maar niet
+precies* (met allebei de getallen erbij, en een notitie dat dit geen mankement
+is), en *niet gezet* met de reden van de node zelf. Alles wat de middelste tot
+"geslaagd" zou platslaan, zou dezelfde soort halve waarheid vertellen als het
+oude OTA-pad deed.
+
+`get <key>` is dezelfde uitlezing die de dagelijkse instellingenronde gebruikt,
+zodat er geen tweede codepad is dat het met het eerste oneens zou kunnen zijn.
 
 ---
 
@@ -318,7 +401,9 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Niveaus als expliciet begrip in code en UI | **wordt gebouwd** — `level` / `level_why` op `commanding.describe()` |
 | Firmware-upgrade over HTTP, met checksum en rollback | **gebouwd**, zie [`firmware-upgrade.md`](firmware-upgrade.md) |
 | `ota_route()` als aparte sleutel voor wat er kan | **gebouwd** |
-| Instellingen schrijven | **ontworpen, niet gebouwd.** De route (HTTP naar een bereikbare node, LoRa verder), de categorietabel, de validatie aan beide kanten en het teruglezen liggen vast; de endpoints zijn niet geschreven |
+| Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 1.13.0 `POST /api/cfg`, alleen categorie 1, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
+| Instellingen schrijven naar een `semi_managed` node over LoRa | **ontworpen, niet gebouwd.** Vraagt om een toestandsmachine naast de instellingenronde, en de node waarvoor het bestaat is de dakrepeater — dus het wordt eerst gebouwd tegen iets wat iemand kan aanraken |
+| Parameters uit categorie 2 (`flood.max`, `repeat`, `allow.read.only`, …) | **niet gebouwd.** Het `tier`-veld staat in de firmwaretabel, dus ze toevoegen is een tabelregel plus een bevestigingsstap, geen verbouwing |
 | Bevestigen-of-terugdraaien | **onderzocht en verworpen**, met de redenering hierboven |
 | Automatisch rechten ontdekken | **verworpen**, in plaats daarvan aanwijzen-en-één-keer-proberen |
 

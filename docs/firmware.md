@@ -664,7 +664,12 @@ companion node.
 | `/api/mon` | POST | basic | `add`, `del`, `pass`, `en`, `iv`, `poll` |
 | `/api/backup` | GET | basic | Download the whole filesystem |
 | `/api/restore` | POST | basic | Upload a backup, then reboot |
-| `/update` | GET/POST | basic | `AsyncElegantOTA` firmware upload |
+| `/api/cfg` | GET | basic | Which CLI parameters may be set remotely, with their bounds (1.13.0+) |
+| `/api/cfg` | POST | basic | Set one of them and read it straight back — see [`node-management.md`](node-management.md) (1.13.0+) |
+| `/api/fw` | GET | basic | Installed version, build environment, which partition runs, what the other one holds (1.12.0+) |
+| `/api/fw` | POST | basic | Firmware image as the raw body, digest checked before the boot partition is switched — see [`firmware-upgrade.md`](firmware-upgrade.md) (1.12.0+) |
+| `/api/fw/rollback` | POST | basic | Boot the other application partition again (1.12.0+) |
+| `/update` | GET/POST | basic | `AsyncElegantOTA` firmware upload. Kept as the fallback for when the path above is the thing that broke |
 
 Authentication is **HTTP basic**, credentials shared with the console
 (`_cfg.user` / `_cfg.console_pass`, default `admin` / `meshcore`). `/` itself is
@@ -873,7 +878,15 @@ no other way in.
 | `wifi mon …` | Monitored repeaters; see §4.11 |
 | `wifi settings …` | The node's own CLI settings sweep |
 | `wifi clock` | Clock status; **read-only on purpose**, see §4.12 |
+| `wifi fw` | Which version runs from which application partition, which build environment this image was compiled for, what the other partition holds, and how the last upload ended (1.12.0+) |
+| `wifi fw rollback` | Boot the other application partition again — the firmware from before the last upgrade (1.12.0+) |
 | `wifi wdt` | Deliberately block the loop and see whether the watchdog fires |
+
+`wifi fw rollback` is the one on this list that matters most over the **mesh**.
+Every other way into this node runs over IP, so an upgrade whose only fault is
+that it cannot join the WiFi takes all of them away at once — and LoRa comes up
+from the radio driver before any of them. See
+[`firmware-upgrade.md`](firmware-upgrade.md).
 
 `wifi mqtt` sub-commands: `host`, `port`, `user`, `pass`, `prefix`, `rx <on/off>`,
 `on`/`off`. With no argument it prints a status line:
