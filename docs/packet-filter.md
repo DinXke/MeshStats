@@ -218,12 +218,46 @@ Each archived packet now carries one of three states:
 | `doorgelaten` | this observer's filter judged it and let it through |
 | *blank* | the filter never judged it |
 
-The blank was far more common than it should have been until firmware **2.8.1**:
-68 % of flood traffic left before its verdict existed, because publishing runs
-before receiving-and-deciding in the main loop. An unjudged packet now waits up
-to 400 ms for its verdict, and the verdict is matched to its packet by content
-rather than by position — the old positional match could put one packet's verdict
-on another once two were in flight. See `mqtt.md`, *How long it may wait*.
+Blank is split further in the archive, because it was covering two different
+things:
+
+| Shown as | When |
+|---|---|
+| *not judged — direct-routed* | the filter only ever judges flood traffic |
+| *not judged — addressed to this node* | it was handled here, never offered for forwarding |
+| *blank* | genuinely unknown |
+
+Those first two are derived on read from the frame itself — the route type and
+the destination hash are already in the row — rather than stored. A column would
+be the same derivation frozen at write time, and could never improve for packets
+already archived.
+
+> **Rows written between 2.7.0 and 2.8.1 are not trustworthy, and should be
+> cleared.** In that window the verdict was attached to "the slot just filled",
+> which mis-attributes as soon as two packets are in flight: one packet's verdict
+> lands on another. A wrongly stamped row is indistinguishable from a correct
+> one, so the honest move is to drop the lot rather than keep four rows that
+> might be right. That includes `doorgelaten` rows — the fault had no preference
+> for one verdict over the other.
+>
+> ```sql
+> -- <flash> = when 2.8.1 went on the node, in the same format as packets.ts
+> UPDATE packets SET fwd = NULL, fwd_reason = NULL WHERE ts < '<flash>';
+> ```
+>
+> Not done as a migration: a migration runs once at a moment nobody chose, and it
+> cannot know when a node was flashed. This is an operator action with a date the
+> operator knows.
+
+**What the blank still hides, and why it is not guessed at.** MeshCore drops a
+packet it has already heard before the forwarding decision is reached, and that
+leaves no trace an outside reader can see. Measured on the roof repeater after
+2.8.1: of ~40 packets, only 2 ever reached a verdict, none was lost in transit
+(`vlate` = 0) and a verdict took 1–2 ms. So the problem was never timing —
+`allowPacketForward()` simply is not called for most traffic. The node therefore
+counts repeats itself as `vdup` in `/api/status`; that is a figure over all
+traffic, not a claim about any one packet, and the archive does not pretend
+otherwise.
 
 The blank is a finding, not a rounding of `doorgelaten`. The filter only ever
 judges flood packets it is asked to forward, so a packet addressed to the node, a

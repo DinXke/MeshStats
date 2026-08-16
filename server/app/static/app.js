@@ -384,8 +384,15 @@
     // en de afwezigheid van de regel zegt hetzelfde zonder ruis.
     var fwdRow = document.getElementById("pkt-fwd-row");
     if (fwdRow) {
-      fwdRow.hidden = !d.fwd;
-      if (d.fwd) {
+      // Ook tonen als er GEEN oordeel is maar we wel weten waarom niet:
+      // 'er viel niets te beslissen' is een antwoord, en een lege regel is dat
+      // niet. Alleen bij werkelijk onbekend blijft de regel weg.
+      var geenOordeel = unjudged(d);
+      fwdRow.hidden = !d.fwd && !geenOordeel;
+      if (!d.fwd && geenOordeel) {
+        txt("pkt-fwd", t("nojudge." + geenOordeel) + " · " + (d.observer_name || d.observer || ""));
+        document.getElementById("pkt-fwd").className = "fwd--nojudge";
+      } else if (d.fwd) {
         var fwdEl = document.getElementById("pkt-fwd");
         // Welke regel greep in, en op welke node. Die tweede helft is de
         // belangrijkste: een pakket wordt geweerd door één repeater, niet door
@@ -3612,6 +3619,38 @@
      * list) get none, because a button producing "Onbekend veld" would be a trap
      * dressed as a feature.
      */
+    /* Waarom een pakket geen oordeel van het filter heeft.
+     *
+     * "Niet beoordeeld" was tot nu toe één hoop, en dat is te grof. Een pakket
+     * dat direct gerouteerd was of aan deze node zelf gericht is geen onbekende
+     * toestand maar een bekende: er viel niets te beslissen. Alleen wat daar
+     * niet onder valt is werkelijk onbekend.
+     *
+     * Dit wordt hier uitgerekend en niet als kolom opgeslagen, omdat het volledig
+     * volgt uit velden die al in de rij staan. Het filter beoordeelt alleen
+     * floodverkeer (zie de hook in repeater-hooks.patch), en een pakket dat aan
+     * de waarnemer zelf gericht is wordt afgehandeld in plaats van doorgestuurd.
+     * Een kolom zou dezelfde afleiding zijn, alleen bevroren op het moment van
+     * opslaan -- en dan zou een verbeterde afleiding de oude rijen niet meer
+     * bereiken.
+     *
+     * Wat hier NIET geraden wordt: of MeshCore het als herhaling liet vallen.
+     * Dat is van buitenaf niet te zien. De node telt het zelf als vdup in
+     * /api/status, en dat is een teller over al het verkeer -- geen uitspraak
+     * over dit ene pakket, en die zou het ook niet kunnen zijn. */
+    function unjudged(p) {
+      if (p.fwd) return null;
+      if (p.route === "DIRECT" || p.route === "TRANSPORT_DIRECT") return "direct";
+      // De bestemmingshash is één byte, de waarnemer een sleutelprefix. Komt die
+      // byte overeen, dan was dit pakket voor deze node en is het nooit ter
+      // doorsturing aangeboden.
+      if (p.dest_hash && p.observer &&
+          p.observer.slice(0, 2).toLowerCase() === String(p.dest_hash).toLowerCase()) {
+        return "self";
+      }
+      return null;
+    }
+
     var COLUMN_CELLS = {
       time: function (p) {
         // Absolute time, not relative: the archive exists to pin down when
@@ -3696,7 +3735,10 @@
       // waarde over, dus er komt ook geen plus/min-knop op iets wat geen waarde
       // is.
       filter: function (p) {
-        var el = cell2("pkt-fwd", p.fwd ? t("fwd." + p.fwd) : "—", "filter", p.fwd);
+        var reden = unjudged(p);
+        var tekst = p.fwd ? t("fwd." + p.fwd) : (reden ? t("nojudge." + reden) : "—");
+        var el = cell2("pkt-fwd", tekst, "filter", p.fwd);
+        if (!p.fwd && reden) el.classList.add("fwd--nojudge");
         if (p.fwd) el.classList.add("fwd--" + p.fwd);
         // De reden hoort bij het oordeel en niet in een aparte kolom die je
         // eerst moet aanzetten -- behalve als die kolom er al staat, want dan

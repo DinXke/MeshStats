@@ -944,7 +944,7 @@ publiceren gaat *vóór* ontvangen-en-beslissen. Een pakket dat in ronde N
 binnenkomt vertrekt aan het begin van ronde N+1 en heeft dus alleen de rest van
 ronde N om zijn oordeel op te halen; MeshCore stelt het doorsturen van
 floodverkeer uit, dus het oordeel valt vaak later. Sinds 2.8.1 mag een nog niet
-beoordeeld pakket daarom tot `RX_VERDICT_GRACE_MS` (400 ms) wachten voordat het
+beoordeeld pakket daarom tot `RX_VERDICT_GRACE_MS` (50 ms sinds 2.8.2) wachten voordat het
 alsnog vertrekt.
 
 Dat is **niet** de afgewezen opzet waarbij publicatie wacht tot ná de
@@ -962,9 +962,22 @@ het tweede. Er wordt nu op inhoud gekoppeld — `payload` is de staart van het
 bewaarde frame (`protocol.md` §1.1), dus een `memcmp` op die staart wijst het
 pakket exact aan.
 
-`/api/status` meldt onder `mqtt` de tellers `vok`, `vlate`, `vforced`, `vavg` en
-`vmax`, zodat de wachttijd op een meting gezet kan worden in plaats van op een
-gevoel.
+`/api/status` meldt onder `mqtt` de tellers `vok`, `vlate`, `vforced`, `vdup`,
+`vavg` en `vmax`, zodat de wachttijd op een meting gezet kan worden in plaats van
+op een gevoel. En dat is gebeurd: 2.8.1 mat `vavg` 1 ms en `vmax` 2 ms, dus 2.8.2
+bracht de wachttijd terug van 400 naar 50 ms — vijfentwintig keer de traagste
+meting in plaats van tweehonderd. Niet naar 5 ms: die `vmax` steunt op twee
+waarnemingen, en een grens strak om een steekproef van twee leggen is dezelfde
+fout als 400 ms, alleen de andere kant op.
+
+`vdup` is het ene dat de server niet zelf kan uitrekenen: hoeveel van de niet
+beoordeelde pakketten herhalingen waren die MeshCore al had laten vallen. Het is
+een schatting en dat staat erbij — de payloadgrens is op de node niet bekend, dus
+de vingerafdruk gaat over de laatste 16 bytes van het frame. De payload is de
+staart en twee ontvangsten van hetzelfde floodpakket verschillen alleen in hun
+pad, dus die staart komt overeen; een payload korter dan het venster reikt in het
+pad en telt niet mee, wat het getal een ondergrens maakt en nooit een
+overschatting.
 
 De ontwerpbeperkingen zijn op beide firmwares dezelfde, maar **de getallen niet**,
 en ze door elkaar halen is makkelijk:

@@ -5,6 +5,38 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.8.2  Er is geen bug: voor bijna al het verkeer valt er niets te beslissen.
+ *        De meting van 2.8.1 wees ergens anders heen dan zowel ik als de
+ *        beheerder verwachtte, en dat is de reden dat die tellers er staan. Over
+ *        ~40 pakketten: vok=2, vlate=0, vforced=38, vavg=1ms, vmax=2ms.
+ *        Wat dat zegt. De koppeling werkt -- geen enkel oordeel raakt zijn pakket
+ *        kwijt. De timing is geen probleem -- een oordeel is er in 1 a 2 ms
+ *        terwijl er 400 ms gewacht werd. Het uitstellen uit 2.8.1 is dus correct
+ *        gebouwd en loste iets op wat het probleem niet was. Het werkelijke beeld
+ *        is dat allowPacketForward() voor 95% van het verkeer NIET wordt
+ *        aangeroepen: niet te laat, maar helemaal niet.
+ *        DE WACHTTIJD terug van 400 naar 50 ms. Vijfentwintig keer de traagste
+ *        meting in plaats van tweehonderd keer. Niet naar 5 ms, want die vmax
+ *        steunt op twee waarnemingen, en een grens strak om een steekproef van
+ *        twee is dezelfde fout als 400 ms met de andere kant op.
+ *        EEN TELLER ERBIJ, EN MAAR EEN. De vraag is nu waarom er niets te
+ *        beslissen viel, en het antwoord daarop is verdeeld: dat een pakket
+ *        direct gerouteerd was of aan deze node gericht, kan de SERVER zelf uit
+ *        het frame zien -- die ontleedt het toch al, en de node ontleedt met
+ *        opzet niets. Wat de server niet kan zien is dat MeshCore een al eerder
+ *        gehoord pakket liet vallen voordat het bij de doorstuurbeslissing kwam;
+ *        die beslissing valt binnen MeshCore en laat geen spoor na. Vandaar
+ *        precies een teller hier: vdup.
+ *        Het is een SCHATTING en dat staat erbij. De payloadgrens is hier niet
+ *        bekend, dus de vingerafdruk gaat over de laatste 16 bytes van het frame.
+ *        De payload is de staart en twee ontvangsten van hetzelfde floodpakket
+ *        verschillen alleen in hun pad, dus die staart is gelijk. Bij een payload
+ *        korter dan 16 byte reikt het venster in het pad en telt de herhaling
+ *        niet mee -- het getal is dus een ondergrens en nooit een overschatting.
+ *        Komt vdup in de buurt van vforced, dan is 'niets te beslissen'
+ *        grotendeels 'al eerder gehoord' en is er geen bug maar een verkeerde
+ *        verwachting. Blijft vdup laag, dan zit de verklaring elders en heeft
+ *        raden nog steeds geen zin.
  * 2.8.1  Het oordeel van het filter kwam voor tweederde van het floodverkeer te
  *        laat, en soms op het verkeerde pakket. Beide zijn opgelost.
  *        DE METING EERST, want die weerlegde een aanname uit 2.7.0. Van 72
@@ -1142,7 +1174,21 @@ static volatile uint8_t _rx_head = 0, _rx_tail = 0;
  * De waarde hieronder is een startwaarde die opgemeten hoort te worden: de
  * tellers _v_delay_max en _v_delay_sum onder /api/status zeggen hoe lang een
  * oordeel er werkelijk over doet, en daar hoort deze grens omheen te passen. */
-#define RX_VERDICT_GRACE_MS   400
+/* Gemeten en teruggebracht van 400 ms. Op de dakrepeater kwam een oordeel er in
+ * 1 a 2 ms (vavg 1, vmax 2), dus 400 ms was geen voorzichtigheid maar giswerk
+ * dat toevallig niets kostte.
+ *
+ * Niet naar 5 ms, en dat is met opzet: die vmax van 2 ms steunt op TWEE
+ * waarnemingen (vok = 2 van de 40). Een grens strak om een steekproef van twee
+ * leggen is dezelfde soort fout als 400 ms, alleen de andere kant op. 50 ms is
+ * vijfentwintig keer de traagste meting en nog altijd een twintigste van wat er
+ * stond; ruim genoeg voor een uitschieter die we nog niet gezien hebben, en kort
+ * genoeg dat de ring er niet van volloopt.
+ *
+ * Groeit vok en blijft vmax laag, dan mag dit omlaag. Dat is af te lezen zonder
+ * te bouwen: /api/status meldt beide.
+ */
+#define RX_VERDICT_GRACE_MS   50
 
 /* Meetpunten voor precies die afweging. Ze staan in het statusantwoord omdat de
  * vraag 'komt het oordeel op tijd' anders alleen achteraf te beantwoorden is,
@@ -1153,6 +1199,66 @@ static uint32_t _v_late = 0;       // oordelen die niets meer vonden om te stemp
 static uint32_t _v_forced = 0;     // pakketten die het zonder oordeel moesten doen
 static uint32_t _v_delay_sum = 0;  // opgetelde vertraging van gevonden oordelen, ms
 static uint16_t _v_delay_max = 0;  // en de traagste ervan
+
+/* Hoeveel van de ongestempelde pakketten een HERHALING waren.
+ *
+ * Dit is de enige vraag over 'waarom viel er niets te beslissen' die de node
+ * beter kan beantwoorden dan de server. De server ontleedt het frame toch al en
+ * kan daaruit zelf zien dat iets direct gerouteerd was of aan deze node gericht;
+ * wat hij NIET kan zien is dat MeshCore een al eerder gehoord pakket liet vallen
+ * voordat het bij de doorstuurbeslissing kwam. Die beslissing valt binnen
+ * MeshCore en laat verder geen spoor na.
+ *
+ * Het is nadrukkelijk een SCHATTING en geen waarneming van MeshCore's eigen
+ * ontdubbeling. We kennen hier de payloadgrens niet -- het frame wordt met opzet
+ * niet ontleed op de node -- dus wordt er gevingerafdrukt over de laatste bytes
+ * van het frame. De payload is de staart (docs/protocol.md 1.1), en twee
+ * ontvangsten van hetzelfde floodpakket verschillen alleen in hun PAD, dus de
+ * staart is gelijk terwijl de rest van het frame dat niet is. Bij een payload
+ * korter dan het venster reikt de vingerafdruk in het pad en telt de herhaling
+ * niet mee; dat maakt dit getal een ondergrens en nooit een overschatting.
+ *
+ * Waar het voor dient: als vdup in de buurt van vforced komt, is 'niets te
+ * beslissen' grotendeels 'al eerder gehoord' en is er geen bug maar een
+ * verkeerde verwachting. Blijft vdup laag, dan zit de verklaring ergens anders
+ * en heeft raden geen zin. */
+#define DUP_WINDOW_N     24        // hoeveel recente frames we onthouden
+#define DUP_TAIL_BYTES   16        // waarover de vingerafdruk gaat
+#define DUP_WINDOW_MS    60000UL   // en hoe lang een herhaling nog een herhaling is
+
+static uint32_t _dup_fp[DUP_WINDOW_N];
+static uint32_t _dup_ms[DUP_WINDOW_N];
+static uint8_t  _dup_next = 0;
+static uint32_t _v_dup = 0;        // ongestempeld EN eerder gehoord
+
+/* FNV-1a over de staart van het frame. Geen sha256: dit is een teller voor een
+ * diagnose, geen sleutel waar iets aan opgehangen wordt. */
+static uint32_t dupFingerprint(const uint8_t *data, uint8_t len) {
+  uint8_t n = (len < DUP_TAIL_BYTES) ? len : DUP_TAIL_BYTES;
+  uint32_t h = 2166136261UL;
+  for (uint8_t i = (uint8_t)(len - n); i < len; i++) {
+    h ^= data[i];
+    h *= 16777619UL;
+  }
+  return h;
+}
+
+// Kijkt of dit frame een herhaling is en onthoudt het daarna hoe dan ook.
+static bool dupSeenBefore(const uint8_t *data, uint8_t len) {
+  uint32_t fp = dupFingerprint(data, len);
+  uint32_t nu = millis();
+  bool eerder = false;
+  for (uint8_t i = 0; i < DUP_WINDOW_N; i++) {
+    if (_dup_ms[i] && _dup_fp[i] == fp && (nu - _dup_ms[i]) < DUP_WINDOW_MS) {
+      eerder = true;
+      break;
+    }
+  }
+  _dup_fp[_dup_next] = fp;
+  _dup_ms[_dup_next] = nu ? nu : 1;      // 0 betekent 'leeg'
+  _dup_next = (uint8_t)((_dup_next + 1) % DUP_WINDOW_N);
+  return eerder;
+}
 
 /* The web server runs in its own task. We never write settings from there, but
  * in loop(); these flags hand the work over. */
@@ -2852,6 +2958,11 @@ static void mqttDrainRx() {
       // Eén teller voor allebei, want de vraag is hoeveel er ongestempeld
       // weggaan -- niet welke van de twee redenen dat deed.
       _v_forced++;
+      // En hoeveel daarvan we al eens gehoord hadden. Hier gemeten en niet
+      // bij ontvangst, want de vraag gaat over pakketten die GEEN oordeel
+      // kregen; een pakket dat wel beoordeeld werd was per definitie nieuw
+      // voor MeshCore.
+      if (dupSeenBefore(it.data, it.len)) _v_dup++;
     }
 
     /* 'fwd' ontbreekt als het filter dit pakket niet beoordeeld heeft, en dat is
@@ -6249,7 +6360,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
     "\"queue\":%u,\"fail\":%u,\"err\":\"%s\",\"rc\":%d,"
     /* Komt het oordeel van het filter op tijd? 'vlate' naast 'vok' is het
      * antwoord, en 'vmax' zegt of RX_VERDICT_GRACE_MS ruim genoeg staat. */
-    "\"vok\":%u,\"vlate\":%u,\"vforced\":%u,\"vavg\":%u,\"vmax\":%u}}",
+    "\"vok\":%u,\"vlate\":%u,\"vforced\":%u,\"vdup\":%u,\"vavg\":%u,\"vmax\":%u}}",
     e_host, _cfg.mqtt_port, e_user, e_prefix,
     _cfg.mqtt_enabled, _cfg.mqtt_rx,
     !_cfg.mqtt_enabled ? "off" : (_mqtt.connected() ? "conn"
@@ -6257,7 +6368,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
     (unsigned)_stats_count, (unsigned)_rx_count, (unsigned)_drop_count,
     (unsigned)((_rx_head - _rx_tail + MQTT_RX_QUEUE) % MQTT_RX_QUEUE),
     (unsigned)_fail_count, _mqtt_err, _mqtt_err_rc,
-    (unsigned)_v_stamped, (unsigned)_v_late, (unsigned)_v_forced,
+    (unsigned)_v_stamped, (unsigned)_v_late, (unsigned)_v_forced, (unsigned)_v_dup,
     (unsigned)(_v_stamped ? _v_delay_sum / _v_stamped : 0),
     (unsigned)_v_delay_max);
 

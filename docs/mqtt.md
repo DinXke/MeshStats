@@ -890,7 +890,7 @@ publishing happens *before* receiving-and-deciding. A packet received in pass N
 leaves at the start of pass N+1 and has only the remainder of pass N to collect
 its verdict; MeshCore defers flood forwarding, so the verdict is often later than
 that. Since 2.8.1 an unjudged packet may therefore wait up to
-`RX_VERDICT_GRACE_MS` (400 ms) before it is published anyway.
+`RX_VERDICT_GRACE_MS` (50 ms since 2.8.2) before it is published anyway.
 
 That is **not** the rejected design of holding publication until after the
 decision. Everything is still published: a frame that never parses simply waits
@@ -905,8 +905,20 @@ flight: the first packet's verdict lands on the second. Matching is now on
 content — `payload` is the tail of the stored frame (`protocol.md` §1.1), so a
 `memcmp` on that tail identifies the packet exactly.
 
-`/api/status` reports `vok`, `vlate`, `vforced`, `vavg` and `vmax` under `mqtt`
-so the grace can be set from measurement instead of taste.
+`/api/status` reports `vok`, `vlate`, `vforced`, `vdup`, `vavg` and `vmax` under
+`mqtt` so the grace can be set from measurement instead of taste. It was: 2.8.1
+measured `vavg` 1 ms and `vmax` 2 ms, so 2.8.2 cut the grace from 400 ms to 50 ms
+— twenty-five times the slowest observation rather than two hundred. Not to 5 ms:
+that `vmax` rests on two samples, and drawing a bound tightly around a sample of
+two is the same mistake as 400 ms in the other direction.
+
+`vdup` is the one thing the server cannot work out for itself: how many of the
+unjudged packets were repeats MeshCore had already dropped. It is an estimate and
+says so — the payload boundary is not known on the node, so the fingerprint runs
+over the last 16 bytes of the frame. The payload is the tail and two receptions
+of the same flood packet differ only in their path, so that tail matches; a
+payload shorter than the window reaches into the path and is not counted, which
+makes the figure a floor and never an overstatement.
 
 The design constraints are the same on both firmwares, but **the numbers are
 not**, and conflating them is easy:

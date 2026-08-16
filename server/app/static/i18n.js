@@ -187,6 +187,8 @@
       // --- bereik van een pakket (transportcodes) ---
       "fwd.geweerd": "geweerd",
       "fwd.doorgelaten": "doorgelaten",
+      "nojudge.direct": "niet beoordeeld — direct gerouteerd",
+      "nojudge.self": "niet beoordeeld — aan deze node gericht",
       "reason.type": "type helemaal dicht",
       "reason.hops": "te veel hops",
       "reason.rate": "over de snelheidslimiet",
@@ -617,6 +619,8 @@
       // --- packet scope (transport codes) ---
       "fwd.geweerd": "refused",
       "fwd.doorgelaten": "forwarded",
+      "nojudge.direct": "not judged — direct-routed",
+      "nojudge.self": "not judged — addressed to this node",
       "reason.type": "type closed off entirely",
       "reason.hops": "too many hops",
       "reason.rate": "over the rate limit",

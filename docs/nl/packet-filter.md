@@ -226,13 +226,47 @@ Elk gearchiveerd pakket draagt nu een van drie toestanden:
 | `doorgelaten` | het filter van deze waarnemer beoordeelde het en liet het door |
 | *leeg* | het filter heeft het niet beoordeeld |
 
-Leeg kwam tot firmware **2.8.1** veel vaker voor dan hoort: 68% van het
-floodverkeer vertrok voordat zijn oordeel bestond, omdat publiceren in de
-hoofdlus vóór ontvangen-en-beslissen gaat. Een nog niet beoordeeld pakket wacht
-nu tot 400 ms op zijn oordeel, en het oordeel wordt op inhoud aan zijn pakket
-gekoppeld in plaats van op positie — die oude koppeling kon het oordeel van het
-ene pakket op het andere zetten zodra er twee tegelijk onderweg waren. Zie
-`mqtt.md`, *Hoe lang het mag wachten*.
+Leeg is in het archief verder opgesplitst, want het dekte twee verschillende
+dingen:
+
+| Getoond als | Wanneer |
+|---|---|
+| *niet beoordeeld — direct gerouteerd* | het filter beoordeelt alleen floodverkeer |
+| *niet beoordeeld — aan deze node gericht* | het werd hier afgehandeld en nooit ter doorsturing aangeboden |
+| *leeg* | werkelijk onbekend |
+
+Die eerste twee worden bij het lezen afgeleid uit het frame zelf — het routetype
+en de bestemmingshash staan al in de rij — en niet opgeslagen. Een kolom zou
+dezelfde afleiding zijn, bevroren op het moment van schrijven, en zou nooit meer
+kunnen verbeteren voor pakketten die er al in staan.
+
+> **Rijen die tussen 2.7.0 en 2.8.1 geschreven zijn, zijn niet te vertrouwen en
+> horen gewist te worden.** In dat venster werd het oordeel op 'de sleuf die
+> zojuist gevuld is' gezet, en dat koppelt verkeerd zodra er twee pakketten
+> tegelijk onderweg zijn: het oordeel van het ene pakket belandt op het andere.
+> Een verkeerd gestempelde rij is niet van een juiste te onderscheiden, dus het
+> eerlijke antwoord is ze allemaal laten vallen in plaats van vier rijen te
+> bewaren die misschien kloppen. Dat geldt ook voor `doorgelaten`-rijen: de fout
+> had geen voorkeur voor een van beide uitslagen.
+>
+> ```sql
+> -- <flash> = het moment waarop 2.8.1 op de node kwam, zelfde vorm als packets.ts
+> UPDATE packets SET fwd = NULL, fwd_reason = NULL WHERE ts < '<flash>';
+> ```
+>
+> Bewust geen migratie: een migratie draait één keer op een moment dat niemand
+> gekozen heeft, en ze kan niet weten wanneer een node geflasht is. Dit is een
+> beheerdershandeling met een datum die de beheerder wél kent.
+
+**Wat leeg nog steeds verbergt, en waarom daar niet naar geraden wordt.**
+MeshCore laat een al eerder gehoord pakket vallen voordat de doorstuurbeslissing
+in beeld komt, en dat laat van buitenaf geen spoor na. Gemeten op de dakrepeater
+na 2.8.1: van ~40 pakketten haalden er 2 een oordeel, ging er geen enkel oordeel
+onderweg verloren (`vlate` = 0) en duurde een oordeel 1 à 2 ms. Het probleem was
+dus nooit de timing — `allowPacketForward()` wordt voor het meeste verkeer
+eenvoudigweg niet aangeroepen. De node telt herhalingen daarom zelf als `vdup` in
+`/api/status`; dat is een getal over al het verkeer en geen bewering over één
+pakket, en het archief doet ook niet alsof.
 
 Leeg is een vaststelling en geen afronding van `doorgelaten`. Het filter
 beoordeelt uitsluitend floodpakketten die het moet doorsturen, dus een pakket aan

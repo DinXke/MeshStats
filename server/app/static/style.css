@@ -608,6 +608,10 @@ button:focus-visible, .noderow-name:focus-visible {
    oordeel. */
 .fwd--geweerd { color: var(--red); }
 .fwd--doorgelaten { color: var(--muted); }
+/* 'Er viel niets te beslissen' is een bekende toestand en geen uitslag, dus
+   het krijgt de kleur van bijschrift en niet die van een oordeel. Cursief zodat
+   het ook zonder kleurverschil van de twee echte uitslagen te onderscheiden is. */
+.fwd--nojudge { color: var(--muted); font-style: italic; }
 .pkt-snr { flex: 0 0 4.2rem; text-align: right; }
 .pkt-rssi { flex: 0 0 4.8rem; text-align: right; }
 .pkt-hops { flex: 0 0 4.2rem; text-align: right; }
