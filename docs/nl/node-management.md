@@ -993,6 +993,9 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Mesh-transport forceren voor een node die een IP-pad heeft | **niet gebouwd.** Vraagt eerst om het LoRa-schrijfpad, en dat vraagt om een relais dat het doel monitort |
 | Telemetrie opvragen zonder inloggegevens | **onderzocht, niet gebouwd.** Het werkt en levert meer op dan verwacht — zie hierboven |
 | MeshCore-versie van doorgestuurde nodes | **gebouwd** — `ver` gaat mee in de sweep, en één antwoord vult allebei de versiekolommen |
+| Tonen welk recht een monitor per doelnode gebruikt | **gebouwd** — toegangslijst of wachtwoord, gelezen uit de monitorlijst van de monitor zelf, die meldt *dát* er een wachtwoord staat en nooit *welk* |
+| De drie stiltes uit elkaar houden | **gebouwd** — buiten bereik / niet binnengelaten / alleen lezen, uit de loginstatus plus de gehoorde lijst |
+| Het wachtwoord van een doelnode vanaf de site zetten | **gebouwd als doorgeefluik** — `nodeconfig.push_monitor_password()` stuurt het naar de monitor en bewaart niets. Nog niet op een pagina: het formulier is het resterende stuk |
 
 > Zolang hieraan gewerkt wordt, wordt er **helemaal niet naar JessaZH
 > geschreven** — geen test-`set`, niets. Hij wordt alleen over LoRa bereikt, dus
