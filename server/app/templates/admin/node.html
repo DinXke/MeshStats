@@ -462,15 +462,59 @@
   <p class="muted small">
     <strong>Niet mogelijk:</strong>
     {%- if cfg_route.blocker == "no_credentials" %}
-    de server heeft geen inloggegevens voor de beheerpagina's van de nodes. Zet
+    de server heeft geen weblogin voor de beheerpagina van <em>deze</em> node. Zet
     <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in de omgeving van de
-    server.
+    server. Let op dat dit alleen gaat over nodes van jezelf die de server over IP
+    bereikt: voor een node die alleen over LoRa te bereiken is, hoeft de server nooit
+    inloggegevens te hebben — die rechten horen bij de monitor die de opvragingen doet.
     {%- elif cfg_route.blocker == "relayed_only" %}
     deze repeater draait onze firmware niet en heeft geen IP-pad; zijn cijfers komen
     over LoRa binnen via <span class="mono">{{ rep.source_prefix }}</span>. De weg die
     daarvoor ontworpen is loopt via die monitor over LoRa en is nog niet gebouwd
     (zie <code>docs/nl/node-management.md</code>). Dit is dus geen ontbrekende
-    instelling maar een blijvende toestand.
+    instelling maar een blijvende toestand — en er hoeft hier geen wachtwoord
+    ingesteld te worden: de rechten op deze node horen bij zijn monitor, niet bij
+    de server.
+  </p>
+  {% if rights %}
+  <p class="small">
+    <strong>Hoe {{ relay.name if relay else "de monitor" }} bij deze node binnenkomt:</strong>
+    {%- if not rights.ok %} onbekend — {{ rights.error }}.
+    {%- elif not rights.known %} deze node staat niet in zijn monitorlijst.
+    {%- elif rights.mode == "acl" %} via de <strong>toegangslijst</strong> van deze node,
+    zonder wachtwoord. Dat is de aanbevolen manier: niemand geeft een geheim uit
+    handen en de eigenaar aan de overkant kan het alleen intrekken.
+    {%- else %} met een <strong>wachtwoord</strong> dat de monitor bewaart. Werkt, maar
+    de toegangslijst verdient de voorkeur: <code>setperm &lt;pubkey van de monitor&gt; 3</code>
+    aan de overkant maakt het wachtwoord overbodig.
+    {%- endif %}
+  </p>
+  {% if rights.ok and rights.known %}
+  <p class="small">
+    <strong>Werkt dat?</strong>
+    {%- if rights.diagnosis == "goed" %} Ja — {{ rights.oks }} van {{ rights.polls }}
+    opvragingen kwamen terug.
+    {%- elif rights.diagnosis == "alleen_lezen" %}
+    <strong>Ingelogd, maar alles zwijgt.</strong> Dat is bijna altijd hetzelfde: de
+    monitor is binnen als lézer en niet als beheerder, en een repeater voert een
+    CLI-commando alleen uit voor een client met adminrechten. Vraag de eigenaar om
+    <code>setperm &lt;pubkey van de monitor&gt; 3</code>, of geef de monitor het
+    adminwachtwoord. Van een afstand ziet dit eruit als een node die niet
+    bereikbaar is, en dat is het niet.
+    {%- elif rights.diagnosis == "geen_toegang" %}
+    <strong>Nee, en het ligt niet aan het bereik.</strong> De login wordt niet
+    beantwoord, maar we horen zijn adverts wél — dus hij is er en hij laat ons niet
+    binnen. Onze sleutel staat niet in zijn toegangslijst, of het wachtwoord klopt
+    niet.
+    {%- elif rights.diagnosis == "buiten_bereik" %}
+    <strong>Nee, en we horen hem ook niet.</strong> De login wordt niet beantwoord en
+    er komen geen adverts binnen. Dat wijst op bereik en niet op rechten.
+    {%- else %} Nog niet geprobeerd sinds de laatste herstart van de monitor.
+    {%- endif %}
+  </p>
+  {% endif %}
+  {% endif %}
+  <p class="muted small">
     {%- elif cfg_route.blocker == "no_host" %}
     er is geen beheeradres ingevuld voor deze node. Dat doe je op het tabblad
     <a href="/admin/firmware">Firmware</a>; hetzelfde adres wordt voor beide gebruikt.

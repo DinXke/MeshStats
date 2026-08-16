@@ -702,6 +702,14 @@ def _node_page(request: Request, rid: int, **extra):
     cfg = nodeconfig.cfg_route(rep)
     cfg_params = (nodeconfig.params(cfg["host"]) if cfg["can"]
                   else {"ok": False, "error": "", "params": []})
+
+    # Voor een doorgestuurde node: hoe komt zijn monitor bij hem binnen, en werkt
+    # dat. Alleen ophalen als er een monitor met een beheeradres is, anders staat
+    # elke paginaweergave op een node te wachten die er niet is.
+    relay = db.find_repeater(rep["source_prefix"]) if cfg["relayed"] else None
+    relay_host = str((relay["ota_host"] if relay else "") or "")
+    rights = (nodeconfig.rights_for(relay_host, rep["pubkey_prefix"])
+              if relay_host else None)
     return templates.TemplateResponse(request, "admin/node.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
         "settings_rows": rows,
@@ -755,6 +763,12 @@ def _node_page(request: Request, rid: int, **extra):
         # Alleen ophalen als er ook echt een weg is, anders staat elke
         # paginaweergave tien seconden op een node te wachten die er niet is.
         "cfg_route": cfg,
+        # Welke van de twee wegen zijn monitor gebruikt, en waar het op stukloopt.
+        # Een sweep die op stilte uitloopt heeft drie oorzaken die er van hieraf
+        # identiek uitzien, en dat verschil is waar iemand een half uur op
+        # verliest.
+        "rights": rights,
+        "relay": relay,
         "cfg_params": cfg_params,
         # Gegroepeerd op risicoklasse, want dat is waar de bediening op stuurt:
         # gewoon opslaan, bevestigen, of de naam overtypen. De groepen komen uit

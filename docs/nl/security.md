@@ -21,16 +21,85 @@ het beschermen waard zijn, zijn dus niet de metingen.
 | API-tokens | Serverdatabank, HA-configuratie, nodeconfiguratie | Schrijftoegang tot de ingest-API |
 | Gegevensintegriteit | De ingestwegen | Iemand die valse metingen injecteert |
 
-De structurele eigenschap die als eerste gezegd moet worden:
+De structurele eigenschap die als eerste gezegd moet worden — en die opnieuw
+gezegd moet worden, want ze was sterker dan ze nu is:
 
-**De server bewaart geen inloggegevens voor je mesh.** Er is geen bewaard
-nodewachtwoord en geen manier waarop de site een radio kan instellen. Een
-volledige compromittering van de website geeft een aanvaller geen controle over
-ook maar één node.
+**De server bewaart geen wachtwoorden van andermans nodes.** Er is geen bewaard
+nodewachtwoord voor een repeater die niet van jou is, en er is geen manier
+waarop de site er een bereikt anders dan via een monitor die er al rechten op
+had.
 
-Gegevens stroomden vroeger strikt één kant op, en dat is niet langer letterlijk
-waar. Er bestaan twee smalle terugwegen, en beide zijn het waard te begrijpen
-voor je op de zin hierboven vertrouwt.
+Dat is een smallere belofte dan deze pagina deed tot firmware 2.1.0, en die
+verandering is een keuze en geen verzuim. Er stond dat de site helemaal geen
+radio kon instellen, en dat een volledige compromittering van de website een
+aanvaller over geen enkele node macht gaf. **Allebei is nu onwaar**, en wie zijn
+brokerconfiguratie daarop gebaseerd heeft, hoort de volgende drie alinea's te
+lezen.
+
+### Wat er precies veranderd is
+
+**De site kan firmware en instellingen schrijven naar nodes die van jou zijn.**
+`POST /api/fw` installeert een image; `POST /api/cfg` zet een CLI-parameter,
+zendvermogen en radioparameters inbegrepen. Allebei lopen ze over HTTP naar de
+beheerpagina van de node zelf, en allebei vragen ze de weblogin van die node —
+die de server bijhoudt in `MM_FW_NODE_USER` / `MM_FW_NODE_PASS`, in de omgeving.
+
+De eerlijke zin luidt dus: **zet je die twee variabelen, dan geeft een volledige
+compromittering van de website een aanvaller alles wat die inloggegevens
+toelaten — en dat is firmware schrijven naar elke node die de server over IP
+bereikt.** Zet je ze niet, dan zijn die wegen simpelweg dicht, staan de knoppen
+uitgegrijsd met die reden erbij, en werkt de rest gewoon.
+
+Dat is het afwegen waard in plaats van het stilzwijgend aan te zetten, en het
+weegt anders nu de site vanaf het publieke internet bereikbaar is. Twee
+maatregelen, en geen van beide is schijnbeweging:
+
+- **Laat de variabelen leeg** tenzij je bezig bent met upgraden. De functie is
+  dan uit, niet halfslachtig.
+- **Houd het beheernetwerk van de nodes onbereikbaar vanaf de publieke kant van
+  de site.** De server heeft een route naar de nodes nodig; het internet heeft
+  geen route nodig naar de nodekant van de server.
+
+### Wat er *niet* veranderd is
+
+**Inloggegevens van andermans nodes staan hier niet, en dat is structureel en
+geen beleid.** Een repeater die niet van jou is bereik je over LoRa, vanaf een
+monitor, en de rechten daarvoor horen bij die monitor:
+
+- Bij voorkeur staat zijn publieke sleutel in de toegangslijst van de overkant
+  (`setperm <monitor-pubkey> 3`). Dan is er **nergens een wachtwoord** — niet op
+  de server, niet op de monitor. De eigenaar van de overkant kan het alleen
+  intrekken, en niemand heeft ooit een geheim uit handen gegeven.
+- Anders houdt de monitor het adminwachtwoord van die node, in zijn eigen
+  monitorlijst, op het apparaat — waar het toch al moest staan om überhaupt te
+  kunnen inloggen.
+
+De site kan dat wachtwoord wel *zetten*, en hij **geeft het door zonder het te
+houden**: het gaat naar de monitor en wordt niet naar de databank, niet naar een
+instelling en niet naar een logregel geschreven. Wat dat kost staat hier in
+plaats van verstopt — de site kan je niet tonen wat er ingesteld staat en kan het
+niet opnieuw versturen zonder dat jij het opnieuw intikt. Wat het oplevert is dat
+een inbraak hier geen sleutelbos is voor andermans apparatuur.
+
+### Wat een aanvaller krijgt bij een volledige compromittering
+
+| | Vóór firmware 2.1.0 | Nu |
+|---|---|---|
+| Alle statistieken en pakkethistorie lezen | ja | ja |
+| De drie vaste woorden op het `cmd`-topic publiceren | ja | ja |
+| Wachtwoorden van repeaters die niet van jou zijn | nee | **nee** — nog steeds |
+| Een radio instellen die niet van jou is | nee | **nee** — daarvoor zijn rechten nodig die de monitor houdt |
+| Firmware schrijven naar je eigen nodes | nee | **ja, als `MM_FW_NODE_*` gezet is** |
+| CLI-instellingen wijzigen op je eigen nodes | nee | **ja, als `MM_FW_NODE_*` gezet is** |
+
+Die laatste twee regels zijn de verandering. Ze zijn de prijs van een repeater op
+een dak kunnen upgraden zonder ladder, en de schakelaar die hem betaalt is een
+paar omgevingsvariabelen die jij beheert.
+
+Gegevens stroomden vroeger strikt één kant op. Naast de twee HTTP-wegen hierboven
+bestaan er twee *smalle* terugwegen over MQTT, en beide zijn het waard te
+begrijpen: ze staan open voor iedereen met brokergegevens, en dat is een ruimere
+groep dan wie de weblogin van de node heeft.
 
 **1. Het MQTT-commandotopic.** De server publiceert op `meshmanager/<node>/cmd`, en
 de firmware aanvaardt daar precies drie woorden: `settings` (lees nu mijn eigen
