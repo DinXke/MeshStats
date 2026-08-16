@@ -207,6 +207,12 @@
       "pkt.cand_dropped_one": "1 kandidaat afgevallen ({list}): te ver weg voor het aantal hops van dit pakket",
       "pkt.cand_dropped": "{n} kandidaten afgevallen ({list}): te ver weg voor het aantal hops van dit pakket",
       "pkt.cand_none_left": "geen kandidaat over",
+      // Twee verschillende soorten niets, en het verschil is de moeite waard:
+      // hierboven bleef er niemand over ná uitsluiting, hier paste er van meet
+      // af aan niemand. In beide gevallen toont de rij de byte zelf — dat is
+      // wat we wél weten, en het is in elk pakket van diezelfde afzender
+      // dezelfde byte.
+      "pkt.cand_none": "geen enkel bekend contact past op deze adreshash",
       "pkt.origin": "afzender",
       "pkt.destination": "waarnemer",
       "pkt.path_note": "Een hop is maar 1, 2 of 3 bytes van een publieke sleutel — zie de hashgrootte hieronder — dus meerdere nodes kunnen dezelfde hop opleveren. Onzekere stukken staan gestippeld op de kaart.",
@@ -569,6 +575,7 @@
       "pkt.cand_dropped_one": "1 candidate ruled out ({list}): too far away for this packet's hop count",
       "pkt.cand_dropped": "{n} candidates ruled out ({list}): too far away for this packet's hop count",
       "pkt.cand_none_left": "no candidate left",
+      "pkt.cand_none": "no known contact matches this address hash",
       "pkt.origin": "sender",
       "pkt.destination": "observer",
       "pkt.path_note": "A hop is only 1, 2 or 3 bytes of a public key — see the hash size below — so several nodes can answer to the same hop. Uncertain stretches are dashed on the map.",

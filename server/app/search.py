@@ -88,6 +88,18 @@ FIELDS: dict[str, Field] = {
     "sender":   Field("p.sender", _TEXT, "Afzender (sleutel)", "2ae7c1", facet=True,
                       sort=True),
     "observer": Field("p.observer", _TEXT, "Waarnemer (sleutel)", "2ae7c1d40f93", facet=True),
+    # The 1-byte source hash, exactly as the frame carried it. 'sender' holds
+    # the full key an ADVERT stated, which most packets simply do not have;
+    # this is the byte the rest of them carry. Two fields rather than one,
+    # because they answer different questions -- "packets from this node"
+    # against "packets from whoever this byte is" -- and a search that quietly
+    # widened the first into the second would return rows nobody asked for. It
+    # earns its place the moment the list can print the byte: a sender we
+    # cannot name is still the same sender in every packet it sends, and this
+    # is how you ask for the rest of them. One byte names nobody by itself, so
+    # the API resolves it against the contacts table with all the honesty that
+    # needs -- but the search matches the stored byte, the part that is a fact.
+    "src":      Field("p.src_hash", _TEXT, "Afzender (hash)", "e3"),
     "name":     Field("COALESCE(c.name, '') || ' ' || COALESCE(o.name, '')", _TEXT,
                       "Naam van afzender of waarnemer", "BE-HSS"),
     "country":  Field("COALESCE(c.country, o.country)", _TEXT, "Land", "BE", facet=True,

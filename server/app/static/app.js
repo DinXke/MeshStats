@@ -27,7 +27,19 @@
   //   ambiguous  several stand and nothing separates them. "N mogelijk", as
   //              before: putting one of them first here would be a coin toss
   //              printed as a conclusion.
-  //   unknown    nothing stands.
+  //   unknown    nothing stands. Not "no information": the byte off the wire is
+  //              still there, and it is printed as 0xNN. It is the only handle
+  //              this sender has, it is the same handle in every packet they
+  //              send, and the archive can filter on it -- so a row that showed
+  //              only the word "onbekend" was throwing away the one fact the
+  //              frame did give.
+  //
+  // A fifth state is not needed for "this packet type carries no such hash at
+  // all" -- an ADVERT names its sender outright, an ACK names nobody. The
+  // server sends no object at all for those, and a missing object is a
+  // different thing from an object whose hash matched nothing. Where the
+  // helpers below return null, the caller's own wording applies ("onbekend",
+  // "—"); where they return a label, there was a byte on the wire.
   //
   // Shared between the live feed and the archive, which render the same packets
   // in two places and must tell the same story in both.
@@ -97,17 +109,34 @@
     } else if (res.state === "ambiguous") {
       bits.push(t("pkt.src_candidates", { list: names.join(", "),
                                           h: (res.hash || "").toUpperCase() }));
+    } else if (!names.length) {
+      // Two different nothings, and the difference is the whole reason the
+      // exclusion prints its own note: a hash that fits no contact we have ever
+      // heard of, against one whose candidates were all ruled out.
+      bits.push(t(droppedTotal(res) ? "pkt.cand_none_left" : "pkt.cand_none"));
     }
     var drop = droppedNote(res);
     if (drop) bits.push(drop);
     return bits.join(" · ");
   }
 
+  // The hash as the list prints it: 0x92, never a bare 92. Node keys are shown
+  // as bare uppercase hex all over this site, so an unprefixed byte would read
+  // as a very short key prefix -- which is exactly the confusion this whole
+  // module exists to prevent.
+  function hashText(res) {
+    return "0x" + (res.hash || "").toUpperCase();
+  }
+
+  // Null only when there was no such hash on the wire at all. Every other case
+  // -- named, ranked, ambiguous, or matching nothing we know -- has something
+  // true to print, and the caller marks all of them as derived.
   function srcLabel(src, t) {
-    if (!src || !src.matches || !src.matches.length) return null;
-    var text = src.state === "ambiguous"
-      ? t("pkt.src_multi", { n: candTotal(src) })
-      : candNames(src)[0];
+    if (!src || !src.hash) return null;
+    var named = src.matches && src.matches.length;
+    var text = !named ? hashText(src)
+      : (src.state === "ambiguous" ? t("pkt.src_multi", { n: candTotal(src) })
+                                   : candNames(src)[0]);
     var rank = rankNote(src);
     return { text: text, title: hashNote(src) + (rank ? " · " + rank : "") };
   }
@@ -205,28 +234,21 @@
    */
   function fillResolved(id, res) {
     var el = document.getElementById(id);
-    if (!el || !res) return false;
+    if (!el) return false;
+    var lbl = srcLabel(res, t);
+    if (!lbl) return false;
     el.textContent = "";
-    if (!res.matches || !res.matches.length) {
-      // Every candidate excluded is a different answer from never having had
-      // one, and the note below is what carries that difference.
-      if (!res.hash) return false;
-      el.appendChild(document.createTextNode(
-        "0x" + res.hash.toUpperCase() + " · " +
-        t(droppedTotal(res) ? "pkt.cand_none_left" : "pkt.hop_unknown")));
-      var gone = droppedNote(res);
-      if (gone) el.appendChild(candNote(gone));
-      return true;
-    }
+    // One builder for all four states, the nameless one included. It used to
+    // branch, and the branch drifted: the panel said "onbekende node" where the
+    // list said nothing at all. Whatever srcLabel prints in a row is what the
+    // panel prints too, with the reasoning spelled out underneath instead of
+    // hidden in a tooltip.
     var main = document.createElement("span");
     main.className = "src-derived";
-    main.textContent = res.state === "ambiguous"
-      ? t("pkt.src_multi", { n: candTotal(res) })
-      : candNames(res)[0];
+    main.textContent = lbl.text;
     main.title = hashNote(res);
     el.appendChild(main);
-    var rank = rankNote(res);
-    el.appendChild(candNote(rank ? hashNote(res) + " · " + rank : hashNote(res)));
+    el.appendChild(candNote(lbl.title));
     return true;
   }
 
@@ -298,18 +320,28 @@
     var stated = nodeLabel(d.sender, d.sender_name);
     if (stated) txt("pkt-sender", stated);
     else if (!fillResolved("pkt-sender", d.src)) txt("pkt-sender", t("pkt.sender_unknown"));
-    // Only a sender stated by an advert has a key to filter on. A sender merely
-    // derived from the one-byte address hash gets no buttons: sender: searches
-    // the stored key column, and offering it here would silently filter on
-    // something other than the guess printed next to it.
-    filterBtns(document.getElementById("pkt-sender"), "sender", d.sender, onFilter);
+    // Which field the buttons filter on follows what the row is actually
+    // showing. A sender an advert stated has a key, so sender: asks for that
+    // node. A sender only derived from the address byte has no key -- sender:
+    // would filter on something other than what is printed, which is why it was
+    // withheld here -- but src: asks for every packet carrying that byte, which
+    // is exactly what the row was derived from. Wider than "this node", and
+    // honest about being wider.
+    if (d.sender) {
+      filterBtns(document.getElementById("pkt-sender"), "sender", d.sender, onFilter);
+    } else if (d.src && d.src.hash) {
+      filterBtns(document.getElementById("pkt-sender"), "src", d.src.hash, onFilter);
+    }
     txt("pkt-observer", nodeLabel(d.observer, d.observer_name) || "—");
     filterBtns(document.getElementById("pkt-observer"), "observer", d.observer, onFilter);
     // The destination row only exists for packet types that name one; an empty
     // row on every ACK and advert would be noise.
     var destRow = document.getElementById("pkt-dest-row");
     destRow.hidden = !(d.dest && d.dest.hash);
-    if (!destRow.hidden) fillResolved("pkt-dest", d.dest);
+    if (!destRow.hidden) {
+      fillResolved("pkt-dest", d.dest);
+      filterBtns(document.getElementById("pkt-dest"), "dest", d.dest.hash, onFilter);
+    }
     // Whose country to show follows whose position the map used for this
     // packet: the sender's when we know it, the observer's otherwise.
     var countryRow = document.getElementById("pkt-country-row");
@@ -1817,9 +1849,11 @@
 
     // The sender leads: it is what a reader is looking for. An advert names its
     // own; everything else falls back to the resolved 1-byte source hash, shown
-    // in the muted style of a derivation rather than a stated fact. Only when
-    // even that gives nothing does the column say "unknown" -- the full reason
-    // belongs in the detail panel, not here.
+    // in the muted style of a derivation rather than a stated fact. Where that
+    // hash fits no node we know, the byte itself is printed -- 0x92 -- because
+    // it is still the same sender in every packet it sends, and a row reading
+    // only "onbekend" made that unknowable. The word is left for the packets
+    // that genuinely carry no sender byte at all.
     function senderCell(p) {
       var el = document.createElement("span");
       el.className = "pkt-who";

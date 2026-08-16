@@ -328,3 +328,70 @@ def test_onbekende_hash_blijft_onbekend(db):
     res = api._resolve_hop("77", WAARNEMER_SLEUTEL, "dest", "FLOOD", 0)
     assert res["state"] == "unknown"
     assert res["matches"] == []
+
+
+# --- de byte blijft staan waar de naam ontbreekt -----------------------------
+# Een adreshash die op geen enkel bekend contact past is geen reden om het
+# pakket anoniem te noemen: de byte staat in het frame, hij is in elk pakket van
+# diezelfde afzender dezelfde, en het archief kan er op filteren. Wat wél
+# onderscheiden moet blijven is het pakkettype dat zo'n byte helemaal niet
+# draagt -- een ADVERT noemt zijn afzender voluit, een ACK noemt niemand. Daar
+# een hash tonen zou liegen, dus daar geeft de API geen object en geen hash.
+
+def _pakket(db, **kolommen):
+    velden = {"ts": "2026-08-15T12:00:00Z", "observer": WAARNEMER_SLEUTEL,
+              "route": "FLOOD", "payload_name": "TXT_MSG", "path_len": 0}
+    velden.update(kolommen)
+    namen = ",".join(velden)
+    db.execute(f"INSERT INTO packets({namen}) VALUES({','.join('?' * len(velden))})",
+               tuple(velden.values()))
+    return db.qone("SELECT * FROM packets ORDER BY id DESC LIMIT 1")
+
+
+def test_hash_zonder_treffer_houdt_zijn_byte(db):
+    """Niets past erop, maar de byte gaat wel mee naar de client.
+
+    Onbekend is niet hetzelfde als niets: de hash staat in het frame, hij is in
+    elk pakket van diezelfde afzender dezelfde, en het archief kan er op
+    filteren. De lijst toont hem dan ook als 0x92 in plaats van enkel het woord
+    "onbekend".
+    """
+    _vul_mesh(db)
+    api = _verse_resolver()
+    rij = _pakket(db, src_hash="92", dest_hash="93")
+
+    src = api._resolve_src(rij)
+    dest = api._resolve_hop("93", WAARNEMER_SLEUTEL, "dest", "FLOOD", 0)
+    for res in (src, dest):
+        assert res is not None
+        assert res["state"] == "unknown"
+        assert res["matches"] == []
+    assert src["hash"] == "92"
+    assert dest["hash"] == "93"
+
+
+def test_pakket_zonder_adreshash_geeft_geen_object(db):
+    """De lege string is de sentinel van de decoder voor "dit type draagt er geen".
+
+    Dit is het onderscheid dat de weergave nodig heeft en dat geen vijfde
+    toestand vraagt: geen object betekent "hier valt niets te tonen", en daar is
+    "onbekend" het juiste woord. Een object met een hash die nergens op past
+    betekent "we weten wél iets", en daar hoort de byte te staan. Een byte
+    verzinnen waar het frame er geen draagt zou liegen zijn.
+    """
+    _vul_mesh(db)
+    api = _verse_resolver()
+    leeg = _pakket(db, payload_name="ACK", src_hash="", dest_hash="")
+    assert api._resolve_src(leeg) is None
+
+    # En een rij van vóór de kolommen bestonden: NULL, niet leeg, zelfde antwoord.
+    oud = _pakket(db, payload_name="ACK")
+    assert api._resolve_src(oud) is None
+
+
+def test_advert_leidt_geen_afzender_af(db):
+    """Een advert noemt zijn afzender voluit; dan is de byte overbodig."""
+    _vul_mesh(db)
+    api = _verse_resolver()
+    adv = _pakket(db, payload_name="ADVERT", sender="55a001", src_hash="55")
+    assert api._resolve_src(adv) is None
