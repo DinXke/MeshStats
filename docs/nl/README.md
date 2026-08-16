@@ -64,6 +64,8 @@ draait. Het MeshCore-wireformaat staat nergens anders beschreven.
 | Document | Wat je er vindt |
 |---|---|
 | [`firmware.md`](firmware.md) | Elke wijziging die MeshStats in MeshCore aanbrengt — meerdere companions tegelijk, de statspublisher, de netwerkmodule van de repeater — en hoe je het bouwt en flasht |
+| [`firmware-upgrade.md`](firmware-upgrade.md) | Hoe een node aan een nieuw image komt: GitHub-releases, de checksum die twee keer gecontroleerd wordt, waarom alleen succes herstart, hoe je teruggaat, en wat een checksum **niet** bewijst |
+| [`node-management.md`](node-management.md) | Wat de site met een node mag doen en wat hij met opzet niet doet: de drie beheerniveaus, welke instellingen geschreven mogen worden en welke nooit op afstand |
 
 ---
 
@@ -108,6 +110,8 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | Wat betekenen deze bytes? | [`protocol.md`](protocol.md) |
 | Waarom zegt de site hier "onbekend"? | [`candidates.md`](candidates.md), [`decoder.md`](decoder.md) |
 | Hoe krijg ik mijn node aan het publiceren? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
+| Hoe upgrade ik een node vanaf de site? | [`firmware-upgrade.md`](firmware-upgrade.md) |
+| Waarom is deze knop grijs bij deze node? | [`node-management.md`](node-management.md), [`commanding.md`](commanding.md) |
 | Is het veilig dit op het internet te zetten? | [`security.md`](security.md) |
 | Mijn data komt uit Home Assistant | [`homeassistant.md`](homeassistant.md) |
 | Ik kan geen firmware flashen | [`proxy.md`](proxy.md) |
