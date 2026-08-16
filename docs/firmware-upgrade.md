@@ -338,19 +338,90 @@ partition, so a second upload while one is running is refused rather than joined
 
 ---
 
-## Assumptions worth being explicit about
+## Threat model
 
-- **The node's HTTP login is the only authorisation.** There is no signature on
-  the image and no allow-list of who may upload. Anyone who can reach port 80 of
-  the node *and* has the credentials can write firmware — the same people who can
-  already download the private key. The management network is the boundary.
+The most important sentence on this page: **a checksum proves integrity, not
+authenticity.** The digest that the server checks and the node checks again
+proves that the bytes arrived exactly as they left. It proves nothing at all
+about who made them. Confusing those two is the classic way to feel safe about
+an update channel that is not, so this section says plainly where the line is.
+
+### What is actually checked
+
+| Check | Where | Proves |
+|---|---|---|
+| SHA-256 against the published `.sha256` | server, before sending | the download is not truncated or corrupted |
+| SHA-256 again, over the bytes written | node, before switching partitions | nothing was lost or mangled between server and node |
+| ESP32 image header and size | node, inside `Update.begin()`/`Update.end()` | this is *an* application image, of a size that fits |
+| HTTP login | node | the uploader has the node's admin credentials |
+
+There is **no code signing and no secure boot**. `Update` will happily accept any
+well-formed ESP32 application image. So:
+
+> **Anyone who can reach the node's port 80 and has its credentials can flash
+> arbitrary firmware.** That is the same set of people who can already download
+> the private key through `/api/backup`. The management network is the boundary,
+> and it is the only boundary.
+
+### What the trust chain actually rests on
+
+1. **GitHub**, for storing the release and its assets.
+2. **The server's HTTPS connection to GitHub**, for delivering both the image and
+   the `.sha256` unmodified. Note that the digest and the image travel the same
+   way from the same place: someone who can substitute one can substitute the
+   other, so this check catches accidents, not adversaries.
+3. **The workflow that built the image**, which is why it builds from a tag in
+   this repository and not from somebody's laptop — it makes "which source is my
+   roof node running" a question with an answer.
+4. **Whoever holds the node's admin credentials**, and whoever can reach the
+   network the node is on.
+
+Everything downstream of a compromise at any of those four is unprotected.
+
+### Would a signature help, and can we have one?
+
+Yes to the first, and it looks feasible — but it is **not built today**, and
+saying so is more useful than implying otherwise.
+
+The shape it would take: CI signs the image digest with a private key held as a
+repository secret; the public key is compiled into the firmware; the node
+verifies the signature *at the point where it already compares the digest*, just
+before `Update.end()`. Ed25519 is the natural choice because MeshCore already
+carries an Ed25519 implementation for node identities, so it costs no new
+dependency and very little flash.
+
+That would close the gap at step 1 and 2 above: a substituted asset would no
+longer be accepted, because whoever substituted it cannot produce the signature.
+It would **not** close step 4 — a signing key in a GitHub secret is still trusted
+to GitHub, and someone at the node's USB port or with `start ota` can still flash
+anything, because without secure boot the bootloader does not care either.
+
+Two reasons it is not in this release, both worth knowing before someone adds it:
+
+- **A signing scheme is a way to lose a node.** If the key is lost, or the
+  verification has a bug, the OTA path stops accepting *any* image — on a
+  repeater on a roof. So a signed path must always keep an unsigned fallback
+  (`/update`, `start ota`, USB), which means it raises the bar without ever being
+  the only door. Worth doing, but not worth rushing.
+- **Key handling is a decision, not a detail.** Where the private key lives, who
+  can trigger a signing build, and what happens when it is rotated on nodes that
+  already carry the old public key are questions with real answers, and picking
+  them silently is worse than not signing yet.
+
+Until then: **treat the node's admin password and the network it sits on as the
+things that protect it**, because they are.
+
+### Other assumptions
+
 - **The `cmd` MQTT topic is not part of this path.** No upgrade verb was added to
   it, and none should be: that topic is reachable by anyone holding broker
-  credentials, and it accepts three fixed words for exactly that reason.
-- **The server checks the digest before sending**, so a half-finished download
-  never reaches the air. The node checks it again, because the two hops are
-  different failure domains.
-- **The published `.sha256` is what both sides check against.** It is only as
-  trustworthy as the release it sits next to; the release is only as trustworthy
-  as the workflow that built it. That is why the workflow builds from a tag and
-  not from a laptop.
+  credentials, and it accepts a short fixed list of words for exactly that
+  reason. The only MQTT message this feature sends is `status`, after a
+  successful upgrade, to make the node publish its new version instead of leaving
+  the site showing the old one until the next scheduled message.
+- **The node's `/api/fw` is behind the login too**, including the read-only GET.
+  `env` plus `ver` is a shopping list for anyone who would like to write the
+  wrong image.
+- **The management address is typed by an operator**, and is validated to be
+  `http://` or `https://` before it is used — a host field that accepted
+  `file:///etc/...` would be a way to make the server read its own disk.

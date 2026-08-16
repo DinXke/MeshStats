@@ -139,6 +139,27 @@ COLUMN_MIGRATIONS = [
     # twee voorvoegsels, maar een opdracht moet naar het ene waar deze node
     # werkelijk meeleest.
     ("repeaters", "topic_prefix", "TEXT"),
+    # Where this node's management page lives, and which build the image on it
+    # came from. Two things that cannot come from anywhere else:
+    #
+    # ``ota_host`` is typed in by an operator, because no message a node sends
+    # contains its own IP -- and there is no reason to want one: whether the
+    # server can reach a node over IP is a property of the network between them,
+    # not of the node. Empty means "no IP path", which for a relayed node is a
+    # permanent state and not a forgotten setting.
+    #
+    # ``pio_env`` is the PlatformIO build environment the node reports about
+    # itself. Kept here so the page can show which image belongs to it without
+    # touching the network first; never relied on when actually writing, where it
+    # is read from the node again -- a board can have been swapped since.
+    ("repeaters", "ota_host", "TEXT"),
+    ("repeaters", "pio_env", "TEXT"),
+    # Whether this node counts as critical. A flag rather than something derived,
+    # because "critical" is the operator's judgement about what breaks when this
+    # node goes away, and that is nothing the traffic can be read for. With it
+    # on, an upgrade first asks for the node's name -- upgrading the wrong node
+    # is the most expensive mistake available on this page.
+    ("repeaters", "is_critical", "INTEGER NOT NULL DEFAULT 0"),
     # The hop hashes of the packet's path, comma-separated. Denormalised out of
     # ``raw`` on purpose: the packet detail view resolves every hop against the
     # contacts table, and re-decoding frames for that is work the ingest path has
@@ -1341,6 +1362,29 @@ def record_firmware(repeater_id: int, fw=None, fw_module=None) -> None:
     if not sets:
         return
     execute(f"UPDATE repeaters SET {', '.join(sets)} WHERE id=?", (*args, repeater_id))
+
+
+def record_pio_env(repeater_id: int, env: str) -> None:
+    """Note the build environment a node reported about itself.
+
+    Written only when the node actually said one, for the same reason
+    record_firmware() never erases on silence: a stale-but-true answer beats an
+    empty one, and an empty one here means the page stops offering an upgrade.
+    """
+    text = str(env or "").strip()[:64]
+    if text:
+        execute("UPDATE repeaters SET pio_env=? WHERE id=?", (text, repeater_id))
+
+
+def set_ota_host(repeater_id: int, host: str) -> None:
+    """Where this node's management page is, or empty to say there is no IP path."""
+    text = str(host or "").strip()[:120]
+    execute("UPDATE repeaters SET ota_host=? WHERE id=?", (text or None, repeater_id))
+
+
+def set_critical(repeater_id: int, critical: bool) -> None:
+    execute("UPDATE repeaters SET is_critical=? WHERE id=?",
+            (1 if critical else 0, repeater_id))
 
 
 # When the Home Assistant poller last emptied the command queue. The queue is
