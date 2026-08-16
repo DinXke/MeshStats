@@ -178,6 +178,7 @@ Since the split there are two worlds, with a tab bar between them:
 |---|---|
 | `GET /admin` | **Nodes and repeaters** — everything that is an action on, or information about, a physical device |
 | `GET /admin/repeaters/{rid}` | One node: identity and versions, visibility, look-ups, clock, firmware, delete |
+| `GET /admin/firmware` | **Firmware** — which release runs where, which are available, and who can be written to |
 | `GET /admin/server` | **Server and site** — everything that configures this installation and touches no device |
 
 The POST routes stayed where they were, so an admin page already open in a tab
@@ -275,12 +276,19 @@ to the device, red for irreversible. The clock and delete buttons ask for
 confirmation naming the node and its key prefix, because the question has to be
 about *that* node rather than about "this one".
 
-Two blocks are deliberately empty rather than filled with a promise: the firmware
-upgrade path, and the finer-grained visibility choice (show position, show name).
-Both carry a comment saying what belongs there — including the six endpoints in
-`routes_api.py` that expose a tracked repeater's position, since a switch that
-claims to hide a position while the heat map still serves it is worse than no
-switch at all.
+The firmware block links to `/admin/firmware` rather than repeating it. Which
+release runs where is a question you ask across all nodes at once, so it has its
+own page; the button per node sits there too. The version currently on this node
+is not repeated either — it is in *Identity and versions* above, and two places
+showing the same number are two places that eventually disagree. Whether an
+upgrade is possible does **not** follow from `route["level"]`: that verdict is
+`firmware.ota_route()`.
+
+One block is deliberately empty rather than filled with a promise: the
+finer-grained visibility choice (show position, show name). It carries a comment
+saying what belongs there — including the six endpoints in `routes_api.py` that
+expose a tracked repeater's position, since a switch that claims to hide a
+position while the heat map still serves it is worse than no switch at all.
 
 ## Server and site — `GET /admin/server`
 

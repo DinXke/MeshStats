@@ -185,6 +185,7 @@ Sinds de splitsing zijn er twee werelden, met een tabbalk ertussen:
 |---|---|
 | `GET /admin` | **Nodes en repeaters** — alles wat een handeling op of informatie over een fysiek apparaat is |
 | `GET /admin/repeaters/{rid}` | Eén node: identiteit en versies, zichtbaarheid, uitvragen, klok, firmware, verwijderen |
+| `GET /admin/firmware` | **Firmware** — welke release waar draait, welke er zijn, en wie er een image kan krijgen |
 | `GET /admin/server` | **Server en site** — alles wat deze installatie configureert en geen apparaat raakt |
 
 De POST-routes zijn gebleven waar ze stonden, zodat een beheerpagina die al in
@@ -287,12 +288,20 @@ oranje voor wat op het apparaat schrijft, rood voor wat onomkeerbaar is. De klok
 en verwijderknop vragen een bevestiging die de node bij naam en sleutelprefix
 noemt, omdat de vraag over *die* node moet gaan en niet over "deze".
 
-Twee blokken zijn bewust leeg gelaten in plaats van gevuld met een belofte: de
-firmware-upgradeweg, en de fijnmazige zichtbaarheidskeuze (positie tonen, naam
-tonen). Op beide plekken staat in commentaar wat er hoort te komen — inclusief de
-zes endpoints in `routes_api.py` waar de positie van een gevolgde repeater naar
-buiten komt, want een schakelaar die belooft een positie te verbergen terwijl de
-heatmap hem nog uitlevert, is erger dan geen schakelaar.
+Het firmwareblok verwijst naar `/admin/firmware` in plaats van het te herhalen.
+Welke release waar draait is een vraag die je over alle nodes tegelijk stelt, dus
+heeft die een eigen pagina; de knop per node staat daar ook. De versie die nu op
+deze node staat wordt evenmin herhaald — die staat hierboven bij *Identiteit en
+versies*, en twee plaatsen die hetzelfde getal tonen zijn twee plaatsen die het
+een keer oneens worden. Of een upgrade mogelijk is volgt **niet** uit
+`route["level"]`: dat oordeel is `firmware.ota_route()`.
+
+Eén blok is bewust leeg gelaten in plaats van gevuld met een belofte: de
+fijnmazige zichtbaarheidskeuze (positie tonen, naam tonen). Daar staat in
+commentaar wat er hoort te komen — inclusief de zes endpoints in `routes_api.py`
+waar de positie van een gevolgde repeater naar buiten komt, want een schakelaar
+die belooft een positie te verbergen terwijl de heatmap hem nog uitlevert, is
+erger dan geen schakelaar.
 
 ## Server en site — `GET /admin/server`
 
