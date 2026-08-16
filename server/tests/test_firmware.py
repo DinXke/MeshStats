@@ -361,3 +361,88 @@ def test_kritieke_node_met_de_juiste_naam_start_wel(knop):
     uit = knop(confirm="DinX-Home")
     assert uit["started"]["ok"] is True
     assert knop.gestart == [(knop.rid, "fw-v1.12.0", "env_a")]
+
+
+# --- de pagina zelf -----------------------------------------------------------
+
+def _render(**ctx):
+    """De echte sjabloon door de echte Jinja-omgeving.
+
+    De rest van de suite roept routehandlers rechtstreeks aan en komt dus nooit
+    langs een sjabloon. Voor deze pagina is dat te weinig: bijna alles wat er mis
+    kan gaan zit in de takken die zeggen waaróm een knop er niet is, en die
+    branden pas bij het renderen. Een tikfout in zo'n tak levert geen testfout op
+    maar een lege beheerpagina, precies op het moment dat iemand hem nodig heeft.
+    """
+    from app.templating import templates
+    basis = {
+        "site_name": "MeshManager", "user": "beheerder", "csrf": "x",
+        "rows": [], "releases": [], "rel_error": "", "rel_at": 0,
+        "repo": "DinXke/MeshStats", "have_credentials": True,
+    }
+    basis.update(ctx)
+    return templates.env.get_template("admin/firmware.html").render(basis)
+
+
+def _row(blocker="", can=True, env="heltec_v4_repeater_meshstats", job=None, builds=None,
+         **rep_overrides):
+    r = rep(**rep_overrides)
+    return {
+        "rep": r,
+        "ota": {"can": can, "blocker": blocker, "host": r["ota_host"], "env": env,
+                "installed": r.get("fw_meshmanager", ""), "critical": bool(r["is_critical"]),
+                "relayed": False},
+        "job": job,
+        "builds": builds if builds is not None else [
+            {"tag": "fw-v1.12.0", "version": "1.12.0", "images": {}, "envs": []}],
+    }
+
+
+def test_pagina_rendert_met_een_node_die_geupgraded_kan_worden():
+    html = _render(rows=[_row()])
+    assert "Upgraden" in html and "1.12.0" in html
+
+
+@pytest.mark.parametrize("blocker,zin", [
+    ("no_credentials", "geen inloggegevens"),
+    ("relayed_only", "dágen zendtijd"),
+    ("no_host", "geen beheeradres"),
+    ("no_fw", "geen MeshStats-versie"),
+])
+def test_elke_reden_om_niet_te_kunnen_upgraden_krijgt_zijn_eigen_zin(blocker, zin):
+    """Geen knop die verdwijnt zonder uitleg: de vraag 'waarom kan dit hier niet'
+    is precies de vraag die iemand heeft op het moment dat hij de knop zoekt."""
+    html = _render(rows=[_row(blocker=blocker, can=False)])
+    assert zin in html
+    assert "Upgraden</button>" not in html
+
+
+def test_node_die_niet_terugkwam_blijft_op_de_pagina_staan():
+    html = _render(rows=[_row(job={
+        "state": "niet_teruggekomen", "version": "1.12.0", "step": "", "bytes": 0,
+        "msg": "de node antwoordt nog niet"})])
+    assert "niet teruggekomen" in html.lower()
+    # ...met de weg terug erbij, want die loopt niet over het netwerk dat weg is.
+    assert "wifi fw rollback" in html
+    assert "Wegklikken" in html
+
+
+def test_kritieke_node_vraagt_om_de_naam():
+    html = _render(rows=[_row(is_critical=1)])
+    assert "Bevestig met de naam" in html
+    assert 'placeholder="DinX-Home"' in html
+
+
+def test_zonder_bouwomgeving_geen_keuzelijst_maar_uitleg():
+    html = _render(rows=[_row(env="", builds=[])])
+    assert "Node uitvragen" in html
+    assert "vast te stellen welk image" in html
+    # Geen keuzelijst: kiezen uit versies suggereert dat er iets te kiezen valt.
+    assert '<select name="tag">' not in html
+
+
+def test_limiet_bij_github_haalt_de_pagina_niet_onderuit():
+    html = _render(rel_error="rate_limited", rows=[_row()])
+    assert "anonieme limiet" in html
+    # De laatst opgehaalde lijst blijft bruikbaar; de knop blijft staan.
+    assert "Upgraden" in html
