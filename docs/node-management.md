@@ -61,6 +61,7 @@ both are things it notices.
 | **Write CLI settings** | no | designed, not built | **built** — full surface, risk-classed |
 | Set the clock | no | yes, through the monitor | yes |
 | Firmware upgrade | no | **no** | only with an IP path |
+| Telemetry polling without credentials | usually **yes** — a property beside the level, not part of it | usually yes | usually yes |
 
 **Firmware upgrade is deliberately not part of the level.** A `full_managed`
 node can accept a twenty-byte command over MQTT and still be unable to accept a
@@ -399,6 +400,164 @@ the other operator can revoke us on their side alone.
 
 ---
 
+## Telemetry without credentials
+
+Can the site read anything useful from a repeater it holds no password for? This
+was researched before building anything, because the answer decides whether the
+feature is worth having. **It is: rather more than expected.**
+
+### What the source says
+
+A login is always required — `handleLoginReq()` in `examples/simple_repeater/MyMesh.cpp`
+returns `0` (no reply at all) for anything it does not accept. But there are
+three ways to be accepted, and the third is the interesting one:
+
+1. **Blank password + the sender is in the ACL.** The operator put you there with
+   `setperm <pubkey> 1`. This is the tidy arrangement the monitor list already
+   uses.
+2. **The admin password.**
+3. **The guest password** — and `guest_password[0] = 0` in `CommonCLI.h:189`, so
+   it is **empty by default**. A blank password therefore matches it.
+
+That third path is the answer. On a stock repeater whose operator never ran
+`set guest.password`, an unknown node logging in with a blank password is
+accepted as `PERM_ACL_GUEST`.
+
+### What a guest may then ask for
+
+| Request | Guest gets it | What it contains |
+|---|---|---|
+| `REQ_TYPE_GET_STATUS` `0x01` | **yes**, no permission check at all — the source even says so: *"guests can also access this now"* | The whole `RepeaterStats`: uptime, air time, TX/RX counters, flood/direct split, duplicates, error flags, battery millivolts, noise floor, last RSSI and SNR, queue length |
+| `REQ_TYPE_GET_TELEMETRY_DATA` `0x03` | **yes, but reduced** — `perm_mask` is forced to `0x00` for a guest | Battery voltage and MCU temperature. External sensors are withheld |
+| `REQ_TYPE_GET_NEIGHBOURS` `0x06` | **yes**, no permission check | The neighbour list |
+| `REQ_TYPE_GET_ACCESS_LIST` `0x05` | no — `&& sender->isAdmin()` | — |
+| CLI commands (`get`/`set`) | no — `handleCommand` is reached only under `client->isAdmin()` | — |
+
+So a credential-free poll yields roughly what this site already shows for a
+monitored repeater, minus the CLI settings. That is a real feature, not a
+consolation prize.
+
+### Two findings worth writing down
+
+**`allow.read.only` does nothing on a repeater.** It is stored, it is readable and
+writable over the CLI, and the only code that consults it is
+`examples/simple_room_server/MyMesh.cpp:351`. On a repeater it is an inert
+setting. It is still classified as a dangerous parameter here, because the same
+module can be built for a room server where it *does* gate access — but nobody
+should expect toggling it on a repeater to change who may poll it.
+
+**A refusal is silent.** `handleLoginReq` returns `0` and sends nothing. So a
+repeater whose operator *has* set a guest password is indistinguishable, from
+here, from one that is out of range or switched off. That ambiguity is real and
+cannot be resolved by trying harder; it can only be reported honestly.
+
+### What this means for the design
+
+Three states, and the page must not merge them:
+
+| Result | Meaning |
+|---|---|
+| Answered | Telemetry is available without credentials |
+| No answer | **Any of**: out of range, guest password set, firmware too old. Not distinguishable |
+| Answered before, silent now | Something changed — worth showing differently from never-answered |
+
+The heard list is the one thing that narrows the middle row: if the node's
+adverts are still arriving, "out of range" becomes unlikely and "not allowed"
+becomes probable. That is a hint, not proof, and should be worded as one.
+
+### Restraint, deliberately
+
+This is polling **other people's equipment** on a shared band, so:
+
+- **No automatic sweep of everything heard.** A discovery that knocks on every
+  node it has ever heard is exactly the behaviour a shared mesh does not need.
+  The operator picks who is asked.
+- **The air-time cost is shown before the button is pressed**, not after.
+- **Monitoring this way is telemetry only.** A node polled without credentials
+  gets no management controls, because there are none to give — the CLI is
+  closed to guests. That is enforced by the far side, which is the best kind of
+  enforcement.
+
+### Level, or a property beside it?
+
+**A property beside the level, not a fourth level.** `unmanaged` /
+`semi_managed` / `full_managed` answers "what may we *do* to this node", and
+polling telemetry is not doing anything to it — it asks, and the node decides.
+A node we poll for telemetry is still `unmanaged`: we cannot change one setting
+on it, we cannot write firmware, and we hold no credentials.
+
+Making it a fourth level would also break the ordering the levels currently
+have, which is one of increasing capability. Telemetry-polling is not "more than
+unmanaged and less than semi-managed" — a `full_managed` node can be polled this
+way too. It is a different axis, so it gets a different field.
+
+---
+
+## Working without internet
+
+This project exists partly for emergency communication, so "does it still work
+when the internet is gone" is not a curiosity — it is a requirement somebody has
+to be able to check *before* they need it. The honest answer has three layers,
+and they are not the same question.
+
+### Layer 1 — no internet, local network intact
+
+**Almost everything works.** The server, the broker, the database and the mesh
+are all local; none of them reach out to the internet to do their job.
+
+| Works | Does not work |
+|---|---|
+| Statistics ingest over MQTT | **Fetching firmware releases from GitHub** |
+| Reading CLI settings, over MQTT and over LoRa | Map tiles, if the map provider is remote |
+| **Writing CLI settings**, both transports | |
+| Setting the clock | |
+| The whole admin interface, the comparison table, the packet archive | |
+| Pushing a firmware image the server **already downloaded** | |
+
+The one real casualty is the firmware page. It lists releases by asking
+`api.github.com`, and without internet that call fails. The page keeps working —
+it shows the last list it managed to fetch, with the reason beside it — but a
+release published while you were offline is not visible, and an image that was
+never downloaded cannot be installed.
+
+That is a reason to **fetch before you need it**, not a reason to distrust the
+rest of the site. Nothing else on this list touches a remote host.
+
+### Layer 2 — no local network either
+
+The site cannot reach *any* node, by any transport. This is worth stating plainly
+because "forced over the mesh" sounds like it should help here, and it does not:
+
+> **Choosing the mesh transport does not remove the site's own need for one
+> IP-reachable node.** It removes the *target's* need to be reachable. The server
+> still has to hand the command to some node over MQTT or HTTP, and that node
+> then carries it onward over LoRa.
+
+So with the LAN down, the route back in is not this site at all — it is the mesh
+CLI from a companion app on a phone, over Bluetooth or over LoRa. That path never
+involved the server and is unaffected by anything here.
+
+### Layer 3 — what the mesh transport is actually for
+
+Given layer 2, why offer it at all? Because the interesting failure is not "the
+network is gone" but "**the target is not on the network**":
+
+- A repeater on a roof with no WiFi in range — the permanent state for the roof
+  repeater in this installation.
+- A node whose WiFi credentials were changed, or whose access point died, while
+  its radio is perfectly healthy.
+- A node in power-save mode with its WiFi asleep, which still hears LoRa.
+
+In all three the site is online, the broker is up, and one node is reachable —
+and the target is not. That is the case the mesh transport exists for, and it is
+the common one.
+
+It is also why forcing the mesh for a node that *is* IP-reachable is worth
+having: it is the only way to exercise the LoRa write path against a node you can
+still fix with a browser if it goes wrong.
+
+---
+
 ## Discovery: point, then test once
 
 The site sees every node in the traffic, so it could try each of them to find out
@@ -431,6 +590,11 @@ against a node a human named.
 | Writing to a node's WiFi and MQTT settings | **not offered here.** Those are ours, not MeshCore's, and they already have their own forms on the node's own admin page and the `wifi` CLI |
 | Confirm-or-revert | **examined and rejected**, with the reasoning above |
 | Automatic rights discovery | **rejected**, point-and-test-once instead |
+| Cross-repeater comparison table | **built** — `/admin/compare`, chosen columns, deviations from the majority marked |
+| Editing from that table | **not built.** The design is one editor driven by the table rather than an input in every cell; see below |
+| Bulk edit across several nodes | **not built, and gated by design**: plain-class parameters only, never the two heavier classes. Ten nodes in one click is also ten nodes lost in one click |
+| Forced mesh transport for a node that has an IP path | **not built.** Needs the LoRa write path first, and that needs a relay that monitors the target |
+| Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |
 
 > While this is being developed, **JessaZH is not written to at all** — not a
 > test `set`, not anything. It is reached only over LoRa, so a mistake there is
