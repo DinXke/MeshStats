@@ -503,6 +503,145 @@ been committed, rotate it — rewriting history does not un-publish it.
 
 ---
 
+## Audit notes (2026-08)
+
+A defensive review of the whole tree. Most of what it found was already written
+down above or in the code's own comments; this section records the gaps that were
+not, ranked by severity, plus what was checked and found sound.
+
+### Fixed here
+
+**The MQTT ingest path honoured an attacker-supplied `force`.**
+`mqtt_ingest._handle_payload()` passed `force=bool(body.get("force"))` into
+`db.ingest()`. `force` means "store this point even if it did not change", which
+skips the heartbeat de-duplication that keeps the `samples` table small. It
+belongs to the manual refresh on the token-authenticated HTTP path (Home
+Assistant, `pusher.py::push_repeater(force=True)`); the node firmware never puts
+it in its MQTT JSON. On the `stats` topic the input is device data that is not all
+the owner's — anyone with broker credentials can publish under it — so a `force`
+arriving there was not a refresh but a way to defeat the de-duplication and fill
+`samples`. The path now always ingests with `force=False`. Real nodes are
+unaffected because they never send the field.
+
+### Open: unbounded growth in tables retention never prunes
+
+`db.prune()` (`server/app/db.py`) bounds `packets` (age, row cap, byte ceiling),
+`samples` (age) and `neighbors` (age). It does **not** touch `latest`,
+`repeater_cli` or `repeaters`. Those grow one row per distinct
+`(repeater_id, metric)`, per CLI parameter, and per public-key subject — and
+nothing ages them out.
+
+An untrusted MQTT publisher reaches all three from the `stats` topic:
+
+- `_handle_payload()` stores every key in `metrics` verbatim (`db.ingest`, one
+  `latest` row each) and every `neighbors[].prefix` (a `neighbor_<prefix>` row),
+  with no cap on how many and no check that a neighbour prefix is hex. Distinct
+  names rotated across messages accumulate forever.
+- the payload `pubkey_prefix` (subject) is not validated as a key before
+  `get_or_create_repeater()` creates a **public** row for it
+  (`repeaters.is_public` defaults to 1), so junk subjects both pollute `latest`
+  and appear on the public home page.
+
+Mosquitto's `message_size_limit 8192` caps one message, so this is drip rather
+than flood, and the honest likelihood on this deployment — a LAN behind a VPN,
+one broker, per-node ACLs — is low: it needs a credentialled or compromised node.
+But the byte ceiling in `prune()` cannot save you here, because it only ever
+deletes from `packets`; bloat in `latest` would leave it trimming packets down to
+the FIFO floor while the file stays large. Smallest adequate measure: validate the
+subject as bounded hex at the trust boundary, and give `latest`/`repeater_cli`
+their own prune (drop rows whose repeater or metric has not been seen within the
+sample-retention window). Left for the owning `db.py`/`mqtt_ingest.py` work rather
+than changed mid-audit.
+
+### Open: firmware image authenticity
+
+The node's `/update` (and `start ota`) route uses the ESP32 `Update` library
+(`firmware/examples/simple_repeater/MeshStatsNet.cpp`). That verifies an image is a
+structurally valid app partition of the right size — integrity, not authenticity.
+There is no code signing and no secure boot, so anyone who can reach the OTA
+endpoint (behind the node's HTTP basic auth, LAN/VPN only) can flash arbitrary
+firmware. When the server-side firmware-upgrade path now under construction lands,
+a checksum on the downloaded image will prove the download arrived intact — not
+that it came from the expected maker. Authenticity needs a signature the node
+checks against a built-in public key (or ESP32 Secure Boot); a hash alone does
+not provide it. Worth stating in the threat model before that path ships.
+
+### Checked and found sound
+
+- **Search and sort SQL** (`search.py`): column names come only from the fixed
+  `FIELDS`/`SORTS` tables, values are always bound parameters, `REGION_SQL` is a
+  constant, and `_escape_like()` neutralises `%`/`_`/`\`. The sort key is looked
+  up in `SORTS` and an unknown one raises rather than being interpolated. No
+  injection route found.
+- **Packet decoder** (`packets.py`): `decode()` never raises (broad catch around
+  `_decode_into`), every offset is bounds-checked before use, and the five
+  admission rules mirror the firmware's `tryParsePacket()`/`isValidPathLen()`. A
+  crafted frame yields a partial dict with an `error`, not an exception.
+- **Auth, sessions, CSRF, throttle** (`auth.py`, `routes_admin.py`,
+  `ratelimit.py`): PBKDF2 200k, `hmac.compare_digest` on every secret, password
+  hash stamped into the session so a change revokes old cookies, per-form CSRF
+  bound to a cookie the attacker cannot read, and a two-bucket login throttle.
+  API-token lookup is a SQL equality on a SHA-256 of 256 random bits, not
+  constant-time — noted above and not practically attackable.
+- **Frontend** (`static/app.js`, templates): third-party node names and packet
+  contents reach the DOM through `textContent` and attribute assignment, never as
+  HTML; the two `innerHTML` uses write static markup and fill it via `textContent`
+  afterwards. Jinja autoescaping is on. No XSS sink found for mesh-supplied data.
+- **Secrets in history**: 74 commits scanned; `.env.example` carries only the
+  placeholder `verander-dit-wachtwoord`, `platformio.local.ini.example` only
+  `JOUW_WIFI`/`password`, and no `passwd`, `*.key`, `acl` or `.env` file was ever
+  committed. History is clean.
+- **Privacy**: the public map and pages show other operators' node names and
+  positions (`routes_api.py::repeater_map`), which come from adverts anyone with a
+  radio can hear, but the only owner control is the per-repeater `is_public`
+  toggle — all or nothing, and public by default. A per-node "hide position but
+  keep statistics" choice does not exist; worth considering, since a position is
+  more sensitive than a battery reading.
+
+### Firmware cross-check
+
+A documentation pass (commits `097efd8`, `f603aa5`) flagged several code/doc
+mismatches. Reviewed here for security impact; several turn out to be sound, and
+saying so is part of the point.
+
+- **The `"via"` field is safe because the server ignores it.** Relayed messages
+  carry a top-level `"via":"<node_hex>"`
+  (`MeshStatsNet.cpp` ~line 2588). `mqtt_ingest.py` never reads it: publisher
+  identity comes only from the topic (`_topic_node()`), which a per-node ACL
+  binds. So a node cannot impersonate another through `via`. The risk is latent,
+  not present — anyone who later starts trusting `via` for identity reintroduces
+  exactly the payload-versus-topic hole the current code avoids. Leave it unread.
+- **`createGroupDatagram()`'s 168-byte guard versus `MAX_GROUP_DATA_LENGTH`
+  (165): not attacker-reachable here.** `createGroupDatagram()` is upstream
+  MeshCore, not vendored in this repo, so its internal bound cannot be audited or
+  changed from here. The in-repo callers are all *send* paths
+  (`BaseChatMesh::sendGroupData`/`sendGroupMessage`) fed by local application
+  input, not by received frames: `sendGroupData` guards `data_len <=
+  MAX_GROUP_DATA_LENGTH` and sizes its buffer at `3 + MAX_GROUP_DATA_LENGTH` (168)
+  before writing `3 + data_len` (<=168), which fits. Received traffic reaches the
+  decoder, never these builders. No over-the-air overflow found; the three-byte
+  slack is worth tidying upstream but is not a vector on this deployment.
+- **`STATS_TRACE=1` ("TEMPORARY") leaks only to the serial console.** The `TRACE`
+  macros in `StatsPublisher.cpp` expand to `Serial.printf`, printing the request
+  URI and free heap over USB — never onto the network or MQTT. Reading it needs a
+  cable on the device, i.e. the physical access that already owns the node. So it
+  is left-on debug (noise, a little airtime for the print), not remote
+  disclosure. Turn it off in a production build anyway.
+- **`gen_page.py` writes `StatsPage.h` before it checks the size.** On an oversize
+  page it leaves the bad artifact on disk *and* exits 1 (lines 68 vs 73-76). Not
+  an attack path, but a failed build that a later build could pick up — check
+  before writing, or write to a temp file and rename on success. Endorsed as
+  build hygiene.
+- **`MAX_CONTACTS` is a hard cap, and the contradiction is only in the numbers.**
+  Default 100 (`MyMesh.h`), 260 in `platformio.local.ini.example`, 350 in a
+  comment. The cap itself is the availability protection — third-party adverts
+  cannot grow the table past it. The disagreement is a config-clarity problem to
+  reconcile, not an exhaustion vector.
+- **`DualSerialInterface.h` is inert, not compiled.** Nothing includes it; both
+  `AbstractUITask.h` and `main.cpp` include `MultiSerialInterface.h` instead. So
+  it is dead code on disk, not a live surface. Remove it for hygiene; it changes
+  no attack surface today.
+
 ## Checklist for a public deployment
 
 - [ ] Change the admin password immediately after first start
