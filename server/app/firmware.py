@@ -97,14 +97,14 @@ MAX_IMAGE = 6_553_600
 # Weg te halen als er geen release meer in de lijst staat met de oude naam.
 # Dat is af te lezen op /admin/firmware en niet te gokken.
 ASSET_RE = re.compile(
-    r"^(?:meshmanager|meshmanager)-(?P<env>.+)-(?P<version>\d+\.\d+\.\d+)\.bin$")
+    r"^(?:meshmanager|meshstats)-(?P<env>.+)-(?P<version>\d+\.\d+\.\d+)\.bin$")
 
 # Bouwomgevingen die van naam veranderd zijn: {wat de node meldt: hoe het
 # image nu heet}.
 #
 # Zonder dit zou de hernoeming naar MeshManager alleen met een USB-kabel te
 # installeren zijn, en dat is op een dak geen upgradeweg. Een node die nog
-# 1.12.0 draait, is gebouwd onder heltec_v4_repeater_meshmanager en meldt die
+# 1.12.0 draait, is gebouwd onder heltec_v4_repeater_meshstats en meldt die
 # naam; de release die hem eroverheen moet helpen draagt
 # heltec_v4_repeater_meshmanager. Precies een keer moeten die twee elkaar
 # vinden -- daarna meldt de node zelf de nieuwe naam.
@@ -117,7 +117,7 @@ ASSET_RE = re.compile(
 # Weg te halen zodra geen enkele node de oude envnaam nog meldt; /admin
 # toont per node wat hij meldt.
 ENV_ALIAS = {
-    "heltec_v4_repeater_meshmanager": "heltec_v4_repeater_meshmanager",
+    "heltec_v4_repeater_meshstats": "heltec_v4_repeater_meshmanager",
 }
 
 
