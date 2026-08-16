@@ -436,7 +436,7 @@ def _render(**over):
         "cfg_groups": [(r, [q for q in params if q["risk"] == r])
                        for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],
         "cfg_now": {"name": "DinX-Home", "tx": "22"},
-        "cfg_result": None,
+        "cfg_result": None, "rights": None, "relay": None,
     }
     ctx.update(over)
     return templates.env.get_template("admin/node.html").render(ctx)
@@ -486,7 +486,7 @@ def test_de_middelste_klasse_vraagt_een_uitdrukkelijke_bevestiging():
 
 
 @pytest.mark.parametrize("blocker,zin", [
-    ("no_credentials", "geen inloggegevens"),
+    ("no_credentials", "geen weblogin voor de beheerpagina"),
     ("relayed_only", "blijvende toestand"),
     ("no_host", "geen beheeradres"),
     ("old_fw", "bestaat pas vanaf"),
@@ -558,3 +558,165 @@ def _volle_lijst_met_geheim(monkeypatch):
     monkeypatch.setattr(nodeconfig, "params",
                         lambda host, force=False: {"ok": True, "error": "",
                                                    "params": lijst, "at": 0})
+
+
+# --- rechten van de monitor op zijn doelnode ---------------------------------
+
+def _monlijst(monkeypatch, entries, heard=()):
+    monkeypatch.setattr(nodeconfig, "monitors",
+                        lambda host: {"ok": True, "error": "",
+                                      "entries": list(entries), "heard": list(heard)})
+
+
+DOEL = "e3d3f4d7edd0"
+
+
+def test_geen_wachtwoord_betekent_de_acl_weg(monkeypatch):
+    """Een lege wachtwoordkolom is een keuze en geen omissie: de overkant slaat
+    de wachtwoordcontrole over en zoekt onze sleutel op in zijn toegangslijst."""
+    _monlijst(monkeypatch, [{"k": DOEL, "pw": 0, "lr": 1, "polls": 3, "oks": 3}])
+    r = nodeconfig.rights_for("http://x", DOEL)
+    assert r["mode"] == nodeconfig.MON_MODE_ACL
+    assert r["diagnosis"] == "goed"
+
+
+def test_met_wachtwoord_wordt_dat_ook_zo_gemeld(monkeypatch):
+    _monlijst(monkeypatch, [{"k": DOEL, "pw": 1, "lr": 1, "polls": 2, "oks": 2}])
+    assert nodeconfig.rights_for("http://x", DOEL)["mode"] == nodeconfig.MON_MODE_PASSWORD
+
+
+def test_ingelogd_maar_alles_zwijgt_is_alleen_lezen(monkeypatch):
+    """Het verraderlijke geval: de login lukt perfect en achttien commando's
+    krijgen niets terug, omdat de overkant een CLI-commando alleen uitvoert voor
+    een client met adminrechten. Van een afstand ziet dat eruit als een node die
+    niet bereikbaar is."""
+    _monlijst(monkeypatch, [{"k": DOEL, "pw": 0, "lr": 1, "polls": 4, "oks": 0}])
+    assert nodeconfig.rights_for("http://x", DOEL)["diagnosis"] == "alleen_lezen"
+
+
+def test_login_zonder_antwoord_terwijl_we_hem_horen_is_geen_toegang(monkeypatch):
+    _monlijst(monkeypatch, [{"k": DOEL, "pw": 0, "lr": 0, "polls": 4, "oks": 0}],
+              heard=[{"k": DOEL}])
+    assert nodeconfig.rights_for("http://x", DOEL)["diagnosis"] == "geen_toegang"
+
+
+def test_login_zonder_antwoord_en_niet_gehoord_is_buiten_bereik(monkeypatch):
+    """Het onderscheid waar iemand anders een half uur op verliest. De heardlijst
+    is het enige wat 'mag niet' van 'kan niet' scheidt."""
+    _monlijst(monkeypatch, [{"k": DOEL, "pw": 0, "lr": 0, "polls": 4, "oks": 0}])
+    assert nodeconfig.rights_for("http://x", DOEL)["diagnosis"] == "buiten_bereik"
+
+
+def test_een_node_die_niet_gemonitord_wordt(monkeypatch):
+    _monlijst(monkeypatch, [{"k": "aaaaaaaaaaaa", "pw": 0, "lr": 1, "polls": 1, "oks": 1}])
+    r = nodeconfig.rights_for("http://x", DOEL)
+    assert r["known"] is False and r["diagnosis"] == "niet_gemonitord"
+
+
+def test_het_wachtwoord_gaat_naar_de_monitor_en_wordt_niet_bewaard(db, monkeypatch):
+    """Doorgeven en vergeten. Een inbraak op deze website mag geen sleutelbos
+    opleveren voor de nodes van anderen."""
+    gezien = {}
+
+    class _Resp:
+        def read(self):
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def nep(host, path, data=None, timeout=10):
+        gezien["path"] = path
+        gezien["data"] = data
+        return _Resp()
+
+    monkeypatch.setattr(nodeconfig, "_open", nep)
+    uit = nodeconfig.push_monitor_password("http://x", DOEL, "geheim")
+    assert uit["ok"] is True
+    assert gezien["path"] == "/api/mon"
+    assert b"act=pass" in gezien["data"] and b"geheim" in gezien["data"]
+
+    # ...en nergens blijft het hangen.
+    alles = " ".join(str(r) for r in db.q("SELECT key, value FROM settings"))
+    assert "geheim" not in alles
+
+
+def test_een_leeg_wachtwoord_zet_terug_op_de_acl_weg(db, monkeypatch):
+    """Geen 'niets doen' maar een geldige opdracht: wissen en terug naar de
+    aanbevolen manier."""
+    gezien = {}
+
+    class _Resp:
+        def read(self):
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(nodeconfig, "_open",
+                        lambda host, path, data=None, timeout=10:
+                        gezien.update(data=data) or _Resp())
+    assert nodeconfig.push_monitor_password("http://x", DOEL, "")["ok"] is True
+    assert b"pass=" in gezien["data"]
+
+
+def test_een_doorgestuurde_node_klaagt_nooit_over_serverinloggegevens(monkeypatch):
+    """De ontwerpfout die dit vangt. 'De server heeft geen inloggegevens' stond
+    bovenaan in de volgorde en kreeg daardoor ook de doorgestuurde nodes te
+    pakken -- terwijl juist voor die nodes de server nooit inloggegevens hoeft te
+    hebben. Hun rechten horen bij de monitor."""
+    monkeypatch.setattr(firmware, "NODE_USER", "")
+    route = nodeconfig.cfg_route(rep(pubkey_prefix="e3d3f4d7edd0",
+                                     source_prefix="55d9a320a4e3", ota_host=""))
+    assert route["blocker"] == "relayed_only"
+
+
+def test_een_eigen_node_zonder_weblogin_klaagt_daar_wel_over(monkeypatch):
+    monkeypatch.setattr(firmware, "NODE_USER", "")
+    assert nodeconfig.cfg_route(rep())["blocker"] == "no_credentials"
+
+
+@pytest.mark.parametrize("diagnose,zin", [
+    ("goed", "Ja —"),
+    ("alleen_lezen", "Ingelogd, maar alles zwijgt"),
+    ("geen_toegang", "het ligt niet aan het bereik"),
+    ("buiten_bereik", "we horen hem ook niet"),
+])
+def test_elke_stilte_krijgt_zijn_eigen_diagnose_op_de_pagina(diagnose, zin):
+    """De drie stiltes zien er van een afstand identiek uit, en dat is waar
+    iemand een half uur op verliest."""
+    html = _render(
+        cfg_route={"can": False, "blocker": "relayed_only", "host": "",
+                   "fw": "", "min_fw": "2.1.0", "relayed": True},
+        relay={"name": "DinX-Home", "id": 2},
+        rights={"ok": True, "known": True, "mode": "acl", "diagnosis": diagnose,
+                "polls": 4, "oks": 4 if diagnose == "goed" else 0,
+                "heard": True, "error": ""})
+    assert zin in html
+
+
+def test_de_toegangslijst_wordt_als_de_betere_weg_gepresenteerd():
+    html = _render(
+        cfg_route={"can": False, "blocker": "relayed_only", "host": "",
+                   "fw": "", "min_fw": "2.1.0", "relayed": True},
+        relay={"name": "DinX-Home", "id": 2},
+        rights={"ok": True, "known": True, "mode": "password", "diagnosis": "goed",
+                "polls": 2, "oks": 2, "heard": True, "error": ""})
+    assert "toegangslijst verdient de voorkeur" in html
+    assert "setperm" in html
+
+
+def test_een_doorgestuurde_node_vraagt_niet_om_serverinloggegevens_op_de_pagina():
+    """De ontwerpfout zoals Björn hem zag: 'de server heeft geen inloggegevens'
+    onder een node waarvoor de server die nooit hoeft te hebben."""
+    html = _render(cfg_route={"can": False, "blocker": "relayed_only", "host": "",
+                              "fw": "", "min_fw": "2.1.0", "relayed": True},
+                   relay=None, rights=None)
+    assert "MM_FW_NODE_USER" not in html
+    assert "horen bij zijn monitor" in html

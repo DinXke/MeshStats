@@ -689,6 +689,71 @@ pas bij de herstart aan het licht. Stap 2 tot 5 zijn ook daar de weg terug.
 
 ---
 
+## Twee soorten inloggegevens, en ze staan op verschillende plaatsen
+
+Dit is het deel dat het eerste ontwerp verkeerd had, en het verschil is genoeg
+waard om uit te schrijven.
+
+| Pad | Wie er inlogt | Waar het geheim staat |
+|---|---|---|
+| Server → node, over HTTP (`/api/fw`, `/api/cfg`, `/api/mon`) | de server toont de **weblogin** van díe node | op de server, in `MM_FW_NODE_USER` / `MM_FW_NODE_PASS` |
+| Monitor → doel, over LoRa (de CLI-sweep, en het schrijven) | de **monitor** logt in bij het doel | op de monitor: ofwel helemaal niets, ofwel het beheerderswachtwoord van het doel in zijn eigen monitorlijst |
+
+Het eerste ontwerp vroeg de server om inloggegevens in het *tweede* geval, en dat
+is omgekeerd. **De server hoeft het wachtwoord van een doelnode nooit te kennen.**
+Hij moet zijn eigen monitor bereiken; de monitor houdt bij — of heeft niet nodig —
+wat het doel vraagt.
+
+Die vergissing was zichtbaar in de interface: bij een doorgestuurde node stond
+*"de server heeft geen inloggegevens voor de beheerpagina's van de nodes"*, wat
+tegelijk waar en niet ter zake is. Geen enkel gegeven op de server had die node
+ooit geholpen.
+
+### De twee manieren waarop een monitor binnenkomt, en welke de voorkeur heeft
+
+**Toegangslijst — aanbevolen.** De operator aan de overkant voert één keer
+`setperm <monitor-pubkey> 3` uit. Er staat dan **nergens een wachtwoord**: de
+monitor logt in met een lege tekenreeks en de overkant zoekt onze publieke
+sleutel op in zijn eigen toegangslijst. Niemand geeft een geheim uit handen, en
+de andere operator kan het in zijn eentje intrekken zonder ons iets te vragen.
+
+Die `3` doet ertoe. `1` is alleen-lezen en is genoeg om de status te pollen, maar
+**niet** voor de instellingensweep: een repeater voert een CLI-commando alleen
+uit voor een client die hij als admin beschouwt. Een alleen-lezen monitor logt
+perfect in en wordt daarna met stilte beantwoord, commando na commando.
+
+**Wachtwoord — tweede keuze.** De monitor houdt het beheerderswachtwoord van het
+doel in zijn eigen monitorlijst. De site kan dat wachtwoord *zetten* en **geeft
+het door zonder het te bewaren**: het gaat naar de monitor en wordt niet naar de
+database, niet naar een instelling en niet naar een logboek geschreven.
+
+De prijs staat er eerlijk bij in plaats van verstopt: de site kan je niet laten
+zien wát er ingesteld is — alleen *dát* er iets is — en kan het niet opnieuw
+versturen zonder dat je het weer intikt. Het voordeel is dat een inbraak op de
+website geen sleutelbos voor de apparatuur van anderen oplevert. Zie
+[`security.md`](security.md), waar die belofte nu in zijn smallere, ware vorm
+staat.
+
+### De drie stiltes uit elkaar houden
+
+Een sweep die in stilte eindigt heeft drie oorzaken die er van een afstand
+identiek uitzien, en dit is waar iemand een half uur verliest. De monitor weet al
+genoeg om ze te scheiden, dus meldt de site welke van de drie het is:
+
+| Wat de monitor meldt | Diagnose | Wat het oplost |
+|---|---|---|
+| De login antwoordde nooit, en we horen de adverts van de node **niet** | Buiten bereik | Hier valt niets te doen — het is een radioprobleem |
+| De login antwoordde nooit, maar we horen zijn adverts **wel** | Niet binnengelaten: onze sleutel staat niet in zijn toegangslijst, of het wachtwoord klopt niet | `setperm <our-pubkey> 3` aan de overkant, of het juiste wachtwoord |
+| De login lukte, elk commando blijft stil | **Alleen-lezen.** Binnen als lezer, niet als beheerder | `setperm <our-pubkey> 3`, of het beheerderswachtwoord |
+| Commando's antwoorden | In orde | — |
+
+De derde regel is de verraderlijke: alles ziet er gezond uit en er komt niets
+terug. De gehoorde lijst is het enige wat de eerste regel van de tweede scheidt —
+komen zijn adverts binnen, dan houdt "kan hem niet bereiken" op de verklaring te
+zijn en wordt "mag niet" het.
+
+---
+
 ## Rechten zijn het scharnier, en ze falen op een verwarrende manier
 
 Een MeshCore-repeater voert een CLI-commando alleen uit voor een client die hij

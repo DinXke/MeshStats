@@ -84,14 +84,20 @@ def cfg_route(rep, relay=None) -> dict:
     out = {"can": False, "blocker": "", "host": host, "fw": fw,
            "min_fw": ".".join(str(n) for n in MIN_CFG_VERSION), "relayed": relayed}
 
-    if not firmware.NODE_USER:
-        out["blocker"] = "no_credentials"
-    elif relayed:
+    # Volgorde omgedraaid ten opzichte van de eerste opzet, en dat is de correctie
+    # van een ontwerpfout. 'De server heeft geen inloggegevens' stond bovenaan en
+    # kreeg daardoor ook de doorgestuurde nodes te pakken -- terwijl juist voor
+    # die nodes de server nooit inloggegevens hoeft te hebben. Hun rechten horen
+    # bij de monitor. De blijvende toestand hoort dus eerst, en de ontbrekende
+    # weblogin geldt alleen voor de nodes waarvoor die weg überhaupt bestaat.
+    if relayed:
         # Voor de dakrepeater is dit de blijvende toestand en geen ontbrekende
         # instelling: hij draait geen firmware van ons en heeft geen IP-pad. De
         # weg die voor hem ontworpen is loopt via zijn monitor en bestaat nog
         # niet, en dat hoort er te staan in plaats van een leeg adresveld.
         out["blocker"] = "relayed_only"
+    elif not firmware.NODE_USER:
+        out["blocker"] = "no_credentials"
     elif not host:
         out["blocker"] = "no_host"
     elif version is None:
@@ -321,3 +327,154 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
         if rid:
             db.execute("UPDATE repeaters SET name=? WHERE id=?", (out["applied"][:64], rid))
     return out
+
+
+# --- rechten van de monitor op zijn doelnode ---------------------------------
+#
+# Dit is het stuk waar de eerste opzet de plank missloeg, en het verschil is
+# wezenlijk genoeg om het uit te schrijven.
+#
+# Er zijn TWEE soorten inloggegevens in dit project en ze horen op verschillende
+# plaatsen:
+#
+#   server -> node, over HTTP      de beheerpagina van een node van onszelf
+#                                  (/api/fw, /api/cfg, /api/mon). Die login houdt
+#                                  de server, in de omgeving. Zonder is die weg
+#                                  dicht -- en dat is het enige wat er dan dicht
+#                                  is.
+#   monitor -> doelnode, over LoRa  de CLI van een node van iemand anders. Die
+#                                  rechten horen bij de MONITOR en niet bij de
+#                                  server: die logt in, die voert het commando
+#                                  uit, en die heeft er dus de rechten voor
+#                                  nodig.
+#
+# De eerste opzet vroeg de server om inloggegevens voor het tweede geval, en dat
+# is verkeerd om. De server hoeft de doelnode nooit te kennen; hij hoeft zijn
+# eigen monitor te kunnen bereiken, en die monitor houdt (of heeft niet nodig)
+# wat er voor de doelnode geldt.
+#
+# Twee manieren waarop een monitor binnenkomt, en de eerste verdient de voorkeur:
+#
+#   ACL         de eigenaar van de doelnode zette `setperm <monitor-pubkey> 3`.
+#               Er is dan HELEMAAL GEEN wachtwoord: de monitor logt in met een
+#               lege string en de overkant zoekt zijn sleutel op in de eigen
+#               toegangslijst. Niemand geeft een wachtwoord uit handen, en de
+#               andere eigenaar kan het aan zijn kant intrekken zonder ons iets
+#               te vragen.
+#   wachtwoord  de monitor kent het adminwachtwoord van de doelnode en bewaart
+#               het in zijn eigen monitorlijst.
+#
+# Wat deze module met dat wachtwoord doet is doorgeven en vergeten. Het komt één
+# keer binnen, gaat naar de monitor, en wordt hier niet bewaard -- niet in de
+# databank, niet in een instelling, nergens. Dat kost iets (de site kan het niet
+# tonen en niet opnieuw doorgeven zonder dat iemand het opnieuw intikt) en het
+# levert het enige op wat hier telt: een gecompromitteerde website is geen
+# sleutelbos. Zie docs/security.md, waar die afweging staat en waar ook staat wat
+# er sinds de firmware-upgradeweg NIET meer waar is aan de oude belofte.
+
+MON_MODE_ACL = "acl"
+MON_MODE_PASSWORD = "password"
+MON_MODE_UNKNOWN = "unknown"
+
+
+def monitors(host: str) -> dict:
+    """De monitorlijst van een node, zoals hij hem zelf rapporteert.
+
+    Alleen wat de node vrijgeeft, en dat is met opzet niet het wachtwoord: de
+    firmware meldt per regel ``pw`` als 0 of 1 -- of er een wachtwoord staat, niet
+    welk. Precies genoeg om de modus te tonen en te weinig om er iets mee te
+    kunnen, wat de juiste hoeveelheid is.
+    """
+    out = {"ok": False, "error": "", "entries": [], "heard": []}
+    if not (host or "").strip():
+        out["error"] = "geen beheeradres"
+        return out
+    try:
+        with _open(host, "/api/mon") as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        out["error"] = ("aanmelden geweigerd door de node" if exc.code == 401
+                        else f"node antwoordde HTTP {exc.code}")
+        return out
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        out["error"] = f"niet bereikbaar ({type(exc).__name__})"
+        return out
+    out.update(ok=True, entries=list(data.get("mon") or data.get("entries") or []),
+               heard=list(data.get("heard") or []))
+    return out
+
+
+def rights_for(monitor_host: str, target_key: str) -> dict:
+    """Hoe komt deze monitor binnen bij deze doelnode, en werkt dat?
+
+    Het antwoord op de vraag waar iemand anders een half uur aan kwijt is. Een
+    sweep die op stilte uitloopt heeft drie verschillende oorzaken die er van
+    hieraf identiek uitzien, en de monitor weet genoeg om ze uit elkaar te
+    houden:
+
+    - de login werd nooit beantwoord én we horen de node niet -> buiten bereik;
+    - de login werd nooit beantwoord maar we horen hem wel -> onze sleutel staat
+      niet in zijn toegangslijst, of het wachtwoord klopt niet;
+    - de login lukte en de commando's zwijgen -> we zijn binnen als lezer maar
+      niet als beheerder. Dat is het verraderlijke geval: alles ziet er goed uit
+      en er komt niets. `setperm <onze-pubkey> 3` of het adminwachtwoord.
+
+    Die laatste staat zo uitgebreid in de firmware beschreven omdat hij daar
+    gemeten is; hier wordt hij alleen doorverteld.
+    """
+    uit = {"ok": False, "error": "", "mode": MON_MODE_UNKNOWN, "known": False,
+           "login_ok": False, "polls": 0, "oks": 0, "heard": False, "diagnosis": ""}
+    lijst = monitors(monitor_host)
+    if not lijst["ok"]:
+        uit["error"] = lijst["error"]
+        return uit
+
+    sleutel = (target_key or "").lower()
+    regel = next((e for e in lijst["entries"]
+                  if str(e.get("k", "")).lower().startswith(sleutel[:12])), None)
+    uit["heard"] = any(str(h.get("k", "")).lower().startswith(sleutel[:12])
+                       for h in lijst["heard"])
+    if regel is None:
+        uit.update(ok=True, diagnosis="niet_gemonitord")
+        return uit
+
+    uit.update(ok=True, known=True,
+               mode=MON_MODE_PASSWORD if regel.get("pw") else MON_MODE_ACL,
+               login_ok=bool(regel.get("lr")),
+               polls=int(regel.get("polls") or 0), oks=int(regel.get("oks") or 0))
+
+    if uit["login_ok"] and uit["oks"] == 0 and uit["polls"] > 0:
+        uit["diagnosis"] = "alleen_lezen"
+    elif not uit["login_ok"] and uit["polls"] > 0:
+        uit["diagnosis"] = "geen_toegang" if uit["heard"] else "buiten_bereik"
+    elif uit["oks"] > 0:
+        uit["diagnosis"] = "goed"
+    else:
+        uit["diagnosis"] = "nog_niet_geprobeerd"
+    return uit
+
+
+def push_monitor_password(monitor_host: str, target_key: str, password: str) -> dict:
+    """Het wachtwoord van een doelnode aan de monitor geven. En dan vergeten.
+
+    De server bewaart het niet -- niet hier, niet in de databank, nergens. Wat
+    dat kost staat in de moduletekst hierboven; wat het oplevert is dat een
+    inbraak op deze website geen wachtwoorden van andermans nodes oplevert.
+
+    Een lege waarde is geen 'niets doen' maar een geldige opdracht: die wist het
+    wachtwoord en zet de monitor terug op de ACL-weg, wat de aanbevolen manier
+    is. Vandaar dat hier niet op leegte gecontroleerd wordt.
+    """
+    uit = {"ok": False, "error": ""}
+    body = urllib.parse.urlencode({"act": "pass", "key": target_key,
+                                   "pass": password}).encode()
+    try:
+        with _open(monitor_host, "/api/mon", data=body) as resp:
+            resp.read()
+        uit["ok"] = True
+    except urllib.error.HTTPError as exc:
+        uit["error"] = ("aanmelden geweigerd door de monitor" if exc.code == 401
+                        else f"monitor antwoordde HTTP {exc.code}")
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        uit["error"] = f"monitor niet bereikbaar ({type(exc).__name__})"
+    return uit

@@ -654,6 +654,69 @@ the restart. Steps 2 to 5 are the way back from that too.
 
 ---
 
+## Two kinds of credentials, and they live in different places
+
+This is the part the first design got wrong, and the difference matters enough to
+write out.
+
+| Path | Who authenticates | Where the secret lives |
+|---|---|---|
+| Server → node, over HTTP (`/api/fw`, `/api/cfg`, `/api/mon`) | the server presents that node's **web login** | on the server, in `MM_FW_NODE_USER` / `MM_FW_NODE_PASS` |
+| Monitor → target, over LoRa (the CLI sweep, and writing) | the **monitor** logs in to the target | on the monitor: either nothing at all, or the target's admin password in its own monitor list |
+
+The first design asked the server for credentials in the *second* case, which is
+backwards. **The server never needs to know a target node's password.** It needs
+to reach its own monitor; the monitor holds — or does not need — whatever the
+target requires.
+
+That mistake was visible in the interface: a relayed node showed *"the server has
+no credentials for the nodes' management pages"*, which is both true and
+irrelevant. No credential on the server would ever have helped that node.
+
+### The two ways a monitor gets in, and which to prefer
+
+**Access list — recommended.** The far side's operator runs
+`setperm <monitor-pubkey> 3` once. There is then **no password anywhere**: the
+monitor logs in with an empty string and the far side looks our public key up in
+its own access list. Nobody hands a secret over, and the other operator can
+revoke it from their side alone without asking us anything.
+
+The `3` matters. `1` is read-only and is enough for status polling, but **not**
+for the settings sweep: a repeater only runs a CLI command for a client it
+considers an admin. A read-only monitor logs in perfectly and is then met with
+silence, command after command.
+
+**Password — second choice.** The monitor holds the target's admin password in
+its own monitor list. The site can *set* that password and **passes it through
+without keeping it**: it goes to the monitor and is not written to the database,
+to a setting, or to a log.
+
+The cost is stated rather than hidden: the site cannot show you what is
+configured — only *that* something is — and cannot re-send it without you typing
+it again. The benefit is that a break-in on the website is not a keyring for
+other people's equipment. See [`security.md`](security.md), where that promise is
+now stated in its narrower, true form.
+
+### Telling the three silences apart
+
+A sweep that ends in silence has three causes that look identical from a
+distance, and this is where somebody loses half an hour. The monitor already
+knows enough to separate them, so the site reports which one it is:
+
+| What the monitor reports | Diagnosis | What fixes it |
+|---|---|---|
+| Login never answered, and we do **not** hear the node's adverts | Out of range | Nothing here — it is a radio problem |
+| Login never answered, but we **do** hear its adverts | Not allowed in: our key is not in its access list, or the password is wrong | `setperm <our-pubkey> 3` on the far side, or the right password |
+| Login succeeded, every command silent | **Read-only.** In as a reader, not as an administrator | `setperm <our-pubkey> 3`, or the admin password |
+| Commands answered | Fine | — |
+
+The third row is the treacherous one: everything looks healthy and nothing comes
+back. The heard list is the only thing that separates row one from row two —
+if its adverts are arriving, "cannot reach" stops being the explanation and
+"may not" becomes it.
+
+---
+
 ## Rights are the hinge, and their failure mode is confusing
 
 A MeshCore repeater runs a CLI command only for a client it considers an **admin**
@@ -881,6 +944,9 @@ against a node a human named.
 | Forced mesh transport for a node that has an IP path | **not built.** Needs the LoRa write path first, and that needs a relay that monitors the target |
 | Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |
 | MeshCore version for relayed nodes | **built** — `ver` joins the sweep, and one answer fills both version columns |
+| Showing which right a monitor uses per target | **built** — access list or password, read from the monitor's own list, which reports *that* a password is set and never *which* |
+| Telling the three silences apart | **built** — out of range / not allowed in / read-only, from login state plus the heard list |
+| Setting a target's password from the site | **built as pass-through** — `nodeconfig.push_monitor_password()` sends it to the monitor and stores nothing. Not yet on a page: the form is the remaining piece |
 
 > While this is being developed, **JessaZH is not written to at all** — not a
 > test `set`, not anything. It is reached only over LoRa, so a mistake there is

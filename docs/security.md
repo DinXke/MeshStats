@@ -20,15 +20,84 @@ protecting are not the readings.
 | API tokens | Server database, HA config, node config | Write access to the ingest API |
 | Data integrity | Ingest paths | Someone injecting fake readings |
 
-The structural property worth stating first:
+The structural property worth stating first — and it needs restating, because it
+used to be stronger than it is now:
 
-**The server holds no credentials for your mesh.** There is no stored node
-password and no way for the site to configure a radio. Full compromise of the
-website does not give an attacker control of a single node.
+**The server stores no passwords for anybody else's nodes.** There is no stored
+node password for a repeater you do not own, and there is no way for the site to
+reach one except through a monitor that already had rights on it.
 
-Data used to flow strictly one way, and that is no longer literally true. Two
-narrow return paths exist, and both are worth understanding before trusting the
-sentence above.
+That is a narrower promise than this page made until firmware 2.1.0, and the
+change is deliberate rather than an oversight. What it used to say was that the
+site could not configure a radio at all, and that a full compromise of the
+website gave an attacker control of no node whatsoever. **Both of those are now
+false**, and anybody who based a broker configuration on them should read the
+next three paragraphs.
+
+### What changed, exactly
+
+**The site can write firmware and settings to nodes you own.** `POST /api/fw`
+installs an image; `POST /api/cfg` sets a CLI parameter, including transmit power
+and radio parameters. Both go over HTTP to the node's own management page, and
+both require the node's web login — which the server holds in
+`MM_FW_NODE_USER` / `MM_FW_NODE_PASS`, in the environment.
+
+So the honest sentence is: **if you set those two variables, a full compromise of
+the website gives an attacker whatever those credentials allow — which is
+firmware write on every node the server can reach over IP.** If you do not set
+them, those paths are simply closed, the buttons are greyed out with that reason,
+and nothing else stops working.
+
+This is worth weighing rather than accepting by default, and it weighs
+differently now that the site is reachable from the public internet. Two
+mitigations, neither of which is theatre:
+
+- **Leave the variables unset** unless you are actively upgrading. The feature is
+  off, not degraded.
+- **Keep the node management network unreachable from the site's public
+  interface.** The server needs a route to the nodes; the internet does not need
+  a route to the server's node-facing side.
+
+### What did *not* change
+
+**Credentials for other people's nodes are not stored here, and that is
+structural rather than a policy.** Reaching a repeater you do not own happens
+over LoRa, from a monitor, and the rights for it belong to that monitor:
+
+- Preferably its public key is in the far side's access list (`setperm
+  <monitor-pubkey> 3`). Then **there is no password anywhere** — not on the
+  server, not on the monitor. The far side's operator can revoke it alone, and
+  nobody ever handed a secret over.
+- Otherwise the monitor holds that node's admin password, in its own monitor
+  list, on the node — which is where it already had to be for the monitor to log
+  in at all.
+
+The site can *set* that password, and it **passes it through without keeping
+it**: it goes to the monitor and is not written to the database, to a setting, or
+to a log. The cost is real and is stated here rather than hidden — the site
+cannot show you what is configured and cannot re-send it without you typing it
+again. The benefit is that a break-in here is not a keyring for other people's
+equipment.
+
+### What an attacker gets from a full site compromise
+
+| | Before firmware 2.1.0 | Now |
+|---|---|---|
+| Read all statistics and packet history | yes | yes |
+| Publish the three fixed words on the `cmd` topic | yes | yes |
+| Passwords for repeaters you do not own | no | **no** — still |
+| Configure a radio you do not own | no | **no** — needs rights the monitor holds |
+| Write firmware to your own nodes | no | **yes, if `MM_FW_NODE_*` is set** |
+| Change CLI settings on your own nodes | no | **yes, if `MM_FW_NODE_*` is set** |
+
+The last two rows are the change. They are the price of being able to upgrade a
+repeater on a roof without a ladder, and the switch that pays it is a pair of
+environment variables you control.
+
+Data used to flow strictly one way. Beside the two HTTP paths above there are
+two *narrow* return paths over MQTT, and both are worth understanding: they are
+open to anyone holding broker credentials, which is a wider set of people than
+those holding the node's web login.
 
 **1. The MQTT command topic.** The server publishes on `meshmanager/<node>/cmd`, and
 the firmware accepts exactly three words there: `settings` (read my own CLI
