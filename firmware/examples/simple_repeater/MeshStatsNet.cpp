@@ -1,5 +1,50 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.12.0 An upgrade path that tells the truth: POST /api/fw with the image as
+ *        the raw body and its SHA-256 as a query parameter, GET /api/fw for
+ *        what is installed and what can be gone back to, POST /api/fw/rollback
+ *        and 'wifi fw rollback' to actually go back. The image also says which
+ *        PlatformIO env it was built for, in /api/status and in the answer of
+ *        both /api/fw calls.
+ *        Why, with the measurement: an upload to the existing /update of
+ *        1.284.538 bytes, sent as 'update=@firmware.bin' without an MD5 field,
+ *        was accepted, discarded, and followed by a restart onto the OLD
+ *        firmware. The caller saw HTTP 000, because that handler restarts the
+ *        node before the response leaves -- and restarts it whether Update.end()
+ *        succeeded or not. So the only observable signal, "it rebooted", is
+ *        emitted identically by a successful upgrade and by one that wrote
+ *        nothing. On a repeater on a roof that is not a rough edge, it is an
+ *        upgrade path that lies.
+ *        What the new one does differently, in one line: the digest is checked
+ *        before the boot partition is switched, only success reboots, and the
+ *        answer says which step failed, what was expected, what was found and
+ *        how many bytes arrived. The full reasoning, including the two designs
+ *        that were rejected (staging the image in SPIFFS first, and rebooting on
+ *        failure "to be safe"), sits above fwBody().
+ *        Why the old /update stays anyway: it is the fallback for when this new
+ *        path is broken, and a recovery route may never depend on the thing you
+ *        are recovering from. Same rule that gave 'start ota' its stock
+ *        behaviour back in an earlier release.
+ *        Why the env name is published and the board name is not enough: the
+ *        server picks a release asset per build environment, and matching that
+ *        against getManufacturerName() ("Heltec V4.3 OLED") means matching on
+ *        upstream prose that differs between boards taking the same binary and
+ *        agrees between boards that do not. MESHSTATS_ENV comes from $PIOENV, so
+ *        it is exactly the key the image was built under. It is empty on an
+ *        image built without the flag, and that stays empty rather than being
+ *        guessed at: the cost of a wrong guess is a bricked node on a roof.
+ *        Rollback is possible because the partition table has two application
+ *        slots and an OTA never erases the one it is not writing -- so the
+ *        firmware from before the last upgrade is still in flash and going back
+ *        is one otadata write. Not automatic, deliberately: this node reboots
+ *        for reasons that have nothing to do with firmware (a solar cell browns
+ *        the board out on a November night), and an automatic rollback would
+ *        quietly undo a good upgrade and keep undoing it. Reachability is
+ *        already guaranteed by safe mode, which comes up regardless of what the
+ *        new image broke; rollback is the repair, and a repair is a decision.
+ *        The one thing it cannot survive is DISABLE_BOOTS: at six restarts this
+ *        module does not start, so neither does the command. What remains there
+ *        is stock MeshCore and 'start ota'.
  * 1.11.0 The sweep collects the region tree again, under the key the site has
  *        always stored it as: 'cmd:region'.
  *        Why it was missing: 1.7.1 took 'region' out of the table because its
@@ -258,6 +303,9 @@
 #include <Update.h>
 #include <esp_task_wdt.h>
 #include <esp_idf_version.h>
+#include <esp_ota_ops.h>
+#include <mbedtls/sha256.h>
+#include <mbedtls/version.h>
 #include <helpers/sensors/LPPDataHelpers.h>   // decodes the telemetry replies
 
 #define MSNET_CFG_FILE    "/msnet.json"
@@ -4332,7 +4380,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
 
   int n = snprintf(body, sizeof(body),
     "{\"name\":\"%s\",\"node\":\"%s\",\"board\":\"%s\",\"fw\":\"%s\","
-    "\"ms\":\"%s v%s\",\"ssid\":\"%s\",\"safe\":%d,"
+    "\"ms\":\"%s v%s\",\"env\":\"%s\",\"ssid\":\"%s\",\"safe\":%d,"
     "\"wifi\":{\"st\":\"%s\",\"ip\":\"%s\",\"net\":\"%s\",\"rssi\":%d,"
     "\"up\":%lu,\"heap\":%u},"
     "\"bat\":{\"known\":%d,\"mv\":%u,\"pct\":%u,\"lv\":%u},\"wdt\":%d,\"wdt_s\":%d,"
@@ -4342,7 +4390,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
     "\"live\":\"%s\",\"livepct\":%u,",
     e_name, _node_hex,
     board.getManufacturerName(), FIRMWARE_VERSION,
-    MESHSTATS_NAME, MESHSTATS_VERSION,
+    MESHSTATS_NAME, MESHSTATS_VERSION, MESHSTATS_ENV,
     e_ssid, _safe_mode ? 1 : 0,
     wifiStateCode(), ip.toString().c_str(),
     e_net,
@@ -4810,6 +4858,487 @@ static bool applyRestore(char *err, size_t err_max) {
 
 static volatile bool _reboot_pending = false;
 static unsigned long _reboot_at = 0;
+
+// -------------------------------------------------------- firmware upgrade
+
+/* A second way to write firmware, beside the /update page that AsyncElegantOTA
+ * puts on this same server. Both stay, and the reason both stay is at the
+ * bottom of this comment.
+ *
+ * Why a second one exists at all. The elegant path has three properties which
+ * together make a failed upgrade indistinguishable from a successful one:
+ *
+ *  - It parses a multipart form and recognises the image only under the field
+ *    name 'file', with an MD5 field beside it. Send the same bytes as
+ *    'update=@firmware.bin' and 1.284.538 of them travel, are accepted, and are
+ *    thrown away. Measured on this hardware, not deduced from the source.
+ *  - Its handler restarts the node whether Update.end() succeeded or not. So
+ *    "the node rebooted" -- the one signal a caller gets -- carries no
+ *    information at all. It reboots just as promptly after writing nothing.
+ *  - That restart happens before the HTTP response is flushed, so curl reports
+ *    000 and there is nothing to read. The node then comes back on the OLD
+ *    firmware, looking exactly like a node that came back on the new one.
+ *
+ * An upgrade path that lies by omission, on a repeater that hangs on a roof.
+ * Hence this endpoint, built on the opposite rule: nothing becomes definitive
+ * before it has been checked, and the caller always gets a sentence naming the
+ * step that failed.
+ *
+ * No multipart. The image is the raw request body; everything else is a query
+ * parameter. The bug above was a multipart field name, and a format without
+ * field names cannot have it. It also keeps AsyncWebServer streaming the bytes
+ * to us in chunks rather than assembling 1,3 MB in a heap this node does not
+ * have.
+ *
+ * SHA-256 rather than MD5, computed here over the bytes actually written. MD5
+ * is what the old path takes and would have worked; SHA-256 is what a release
+ * pipeline publishes next to a binary, and having the node check the same digest
+ * the server checked means the two cannot disagree about what "this image" is.
+ *
+ * The verification happens BEFORE anything is made definitive, and that ordering
+ * is the whole point rather than an implementation detail. An ESP32 has two
+ * application partitions; Update writes into the one we are not running from,
+ * which changes nothing about what boots. The single definitive act is the
+ * otadata switch inside Update.end(), and that is reached only after the digest
+ * matched. A mismatch calls Update.abort(), and this node carries on running the
+ * firmware it booted with, from a partition nothing has touched.
+ *
+ * Rejected: buffering the whole image into SPIFFS first and copying it to flash
+ * only after the digest matched, which is what "check before you write" sounds
+ * like it ought to mean. There is room (the data partition is 3,4 MB), but it
+ * doubles both the write time and the flash wear to buy a guarantee we already
+ * have -- writing into the passive partition commits to nothing.
+ *
+ * Rejected: rebooting on failure "to be safe". A failed write leaves a perfectly
+ * healthy system running, and restarting it is the one action that can turn a
+ * failed upgrade into an outage. Only success reboots, and only after the
+ * answer has had 1,5 s to leave -- the same delay the restore handler uses.
+ *
+ * And the thing this may never do: replace the old path. That path is what you
+ * fall back to when this one is broken, and a recovery route may not depend on
+ * the thing you are recovering from. Same reasoning that gave 'start ota' its
+ * stock behaviour back; see msnet_handle_command().
+ */
+
+/* Records which version sits in the partition we are NOT running from. The
+ * partition table knows there is an image there and esp_ota_get_partition_
+ * description() will even hand over its esp_app_desc_t, but that struct carries
+ * the ESP-IDF project version -- a constant Arduino sets to something like "1"
+ * -- and never MESHSTATS_VERSION. So the only way to answer "what do I fall
+ * back to" with a number a human recognises is to write it down ourselves, at
+ * the moment we know it: just before rebooting into a freshly written image, the
+ * version we are still running is the version that stays behind. */
+#define FW_NOTE_FILE   "/msfw.json"
+#define FW_SHA_HEX     64
+#define FW_VER_MAX     24
+#define FW_SLOT_MAX    16
+
+/* Build environment this image was compiled for -- the PlatformIO env name,
+ * e.g. heltec_v4_repeater_meshstats. Set it from platformio.ini with
+ *
+ *     -D MESHSTATS_ENV='"$PIOENV"'
+ *
+ * so it can never drift from the env that actually built the binary.
+ *
+ * Why the env name and not the board name. getManufacturerName() already
+ * answers "Heltec V4.3 OLED", and matching a release asset against that was the
+ * obvious route. It is also the route that eventually flashes an ESP32-S3 image
+ * onto an nRF52: that string is free-form prose maintained upstream, it differs
+ * between boards that take the same binary and matches between boards that do
+ * not, and a MeshCore release may reword it without anyone noticing here. The
+ * env name is the exact key the image was built under, so image and node either
+ * match or they do not, with no judgement in between.
+ *
+ * Empty when the flag was not set, and that is deliberately not papered over
+ * with a guess: a node that cannot say what it was built from gets no automatic
+ * upgrade, because the failure mode is a bricked repeater on a roof. */
+#ifndef MESHSTATS_ENV
+  #define MESHSTATS_ENV ""
+#endif
+
+static struct {
+  bool     active;              // a transfer is running (index 0 seen, not finished)
+  bool     answered;            // we already sent a response from the body handler
+  bool     any;                 // there has been a transfer since boot
+  bool     ok;                  // ...and it succeeded
+  uint32_t got;                 // bytes received
+  uint32_t total;               // Content-Length of the transfer
+  const char *step;             // "" while healthy, else where it died
+  char     err[100];
+  char     want[FW_SHA_HEX + 1];
+  char     have[FW_SHA_HEX + 1];
+  char     ver[FW_VER_MAX];     // version label the caller claims to be sending
+} _fw;
+
+static mbedtls_sha256_context _fw_sha;
+
+/* mbedtls renamed these in 3.0: the _ret suffix only ever existed while return
+ * values were being added, and went away once every function had one. Arduino
+ * core 2.x ships mbedtls 2.x and core 3.x ships 3.x, and this file compiles
+ * against both -- the same reason wdtBegin() picks its API at compile time. */
+#if defined(MBEDTLS_VERSION_MAJOR) && MBEDTLS_VERSION_MAJOR >= 3
+  #define FW_SHA_STARTS(c)        mbedtls_sha256_starts((c), 0)
+  #define FW_SHA_UPDATE(c, d, n)  mbedtls_sha256_update((c), (d), (n))
+  #define FW_SHA_FINISH(c, o)     mbedtls_sha256_finish((c), (o))
+#else
+  #define FW_SHA_STARTS(c)        mbedtls_sha256_starts_ret((c), 0)
+  #define FW_SHA_UPDATE(c, d, n)  mbedtls_sha256_update_ret((c), (d), (n))
+  #define FW_SHA_FINISH(c, o)     mbedtls_sha256_finish_ret((c), (o))
+#endif
+
+static void fwHex(char *out, const uint8_t *b, int n) {
+  for (int i = 0; i < n; i++) {
+    out[i * 2]     = HEXCHARS[b[i] >> 4];
+    out[i * 2 + 1] = HEXCHARS[b[i] & 0x0f];
+  }
+  out[n * 2] = 0;
+}
+
+// One place to fail, so every failure leaves the same three facts behind: which
+// step, why, and a Update that is no longer half-open.
+static void fwFail(const char *step, const char *fmt, ...) {
+  _fw.step = step;
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(_fw.err, sizeof(_fw.err), fmt, ap);
+  va_end(ap);
+  if (Update.isRunning()) Update.abort();
+  Serial.printf("MeshStatsNet: firmware-upload mislukt (%s): %s\n", step, _fw.err);
+}
+
+// The image now in the partition we are not running from, as far as we know.
+static void fwNoteOther(const char *ver, const char *slot) {
+  if (!_fs) return;
+  File f = _fs->open(FW_NOTE_FILE, "w");
+  if (!f) return;
+  f.printf("{\"ver\":\"%.*s\",\"slot\":\"%.*s\"}",
+           FW_VER_MAX - 1, ver, FW_SLOT_MAX - 1, slot);
+  f.close();
+}
+
+/* Reads that note back, but only believes it when the slot it names is still
+ * the slot we would fall back to. A USB reflash writes app0 without telling
+ * anyone, and a note claiming "1.11.0 lives in app1" would then be a confident
+ * lie about a partition somebody else overwrote. Same small hand-written parser
+ * as loadConfig(), for the same reason: we write this file ourselves. */
+static bool fwReadOther(const char *slot, char *ver, size_t ver_max) {
+  ver[0] = 0;
+  if (!_fs || !slot) return false;
+  File f = _fs->open(FW_NOTE_FILE, "r");
+  if (!f) return false;
+  String s = f.readString();
+  f.close();
+
+  int i = s.indexOf("\"slot\":\"");
+  if (i < 0) return false;
+  i += 8;
+  int j = s.indexOf('"', i);
+  if (j < 0 || s.substring(i, j) != slot) return false;
+
+  i = s.indexOf("\"ver\":\"");
+  if (i < 0) return false;
+  i += 7;
+  j = s.indexOf('"', i);
+  if (j < 0) return false;
+  strncpy(ver, s.substring(i, j).c_str(), ver_max - 1);
+  ver[ver_max - 1] = 0;
+  return true;
+}
+
+/* The image bytes, streamed. Runs on the AsyncWebServer task, once per chunk,
+ * and is expected to keep being called after a failure -- refusing to read the
+ * rest of a body does not make the sender stop sending it, it only means the
+ * connection dies before the answer explaining what went wrong can be
+ * delivered. So every failure sets _fw.step and the remaining chunks are read
+ * and dropped. */
+static void fwBody(AsyncWebServerRequest *req, uint8_t *data, size_t len,
+                   size_t index, size_t total) {
+  if (index == 0) {
+    memset(&_fw, 0, sizeof(_fw));
+    _fw.step   = "";
+    _fw.any    = true;
+    _fw.active = true;
+    _fw.total  = (uint32_t)total;
+
+    /* requestAuthentication() has already put a 401 on this request, so the
+     * completion handler must keep its hands off it. Whoever can write firmware
+     * here can also download the private key through /api/backup. */
+    if (!requireAuth(req)) {
+      _fw.answered = true;
+      fwFail("auth", "aanmelden mislukt");
+      return;
+    }
+
+    if (!req->hasParam("sha256")) {
+      fwFail("param", "parameter sha256 ontbreekt");
+      return;
+    }
+    String want = req->getParam("sha256")->value();
+    want.toLowerCase();
+    if (want.length() != FW_SHA_HEX) {
+      fwFail("param", "sha256 moet %d hextekens zijn, kreeg %u",
+             FW_SHA_HEX, (unsigned)want.length());
+      return;
+    }
+    for (int i = 0; i < FW_SHA_HEX; i++) {
+      if (!isxdigit((unsigned char)want[i])) {
+        fwFail("param", "sha256 bevat een teken dat geen hex is");
+        return;
+      }
+    }
+    strcpy(_fw.want, want.c_str());
+
+    /* An optional second opinion on the length. It cannot catch anything the
+     * digest does not also catch, but it catches it before the partition is
+     * erased instead of two minutes later, and the difference between "refused"
+     * and "erased, then refused" matters on a node you cannot walk up to. */
+    if (req->hasParam("size")) {
+      uint32_t claimed = (uint32_t)req->getParam("size")->value().toInt();
+      if (claimed != (uint32_t)total) {
+        fwFail("param", "size=%lu maar de body is %lu bytes",
+               (unsigned long)claimed, (unsigned long)total);
+        return;
+      }
+    }
+    if (req->hasParam("ver")) {
+      strncpy(_fw.ver, req->getParam("ver")->value().c_str(), FW_VER_MAX - 1);
+      _fw.ver[FW_VER_MAX - 1] = 0;
+    }
+
+    /* Refuse rather than join in. Two writers on one Update object interleave
+     * their bytes into one partition and the digest of neither will match --
+     * true, but by then both partitions are useless. */
+    if (Update.isRunning()) {
+      fwFail("bezig", "er loopt al een firmware-upload");
+      return;
+    }
+
+    /* The real length, not UPDATE_SIZE_UNKNOWN: that erases the whole partition
+     * up front, which on a 6,25 MB slot is seconds of stopped world for an image
+     * of 1,3 MB. Update also rejects a body that is larger than the slot here,
+     * before a byte is written, and checks the ESP32 image magic on the first
+     * chunk -- so an HTML error page saved as .bin fails at 'begin' with a
+     * legible reason rather than at 'sha' after a full upload. */
+    if (!Update.begin((size_t)total, U_FLASH)) {
+      fwFail("begin", "%s", Update.errorString());
+      return;
+    }
+
+    mbedtls_sha256_init(&_fw_sha);
+    FW_SHA_STARTS(&_fw_sha);
+    Serial.printf("MeshStatsNet: firmware-upload gestart, %lu bytes\n",
+                  (unsigned long)total);
+  }
+
+  if (_fw.step[0]) return;                 // already dead; swallow the remainder
+
+  FW_SHA_UPDATE(&_fw_sha, data, len);
+  if (Update.write(data, len) != len) {
+    fwFail("write", "%s na %lu bytes", Update.errorString(),
+           (unsigned long)_fw.got);
+    return;
+  }
+  _fw.got = (uint32_t)(index + len);
+}
+
+/* Runs once, after the last chunk. This is the only place that may make
+ * anything definitive, and the order below is the guarantee: digest first,
+ * length second, otadata switch last. */
+static void fwDone(AsyncWebServerRequest *req) {
+  if (_fw.answered) {           // the 401 from the body handler stands
+    _fw.answered = false;
+    _fw.active   = false;
+    return;
+  }
+  if (!_fw.active) {
+    req->send(400, "application/json",
+              "{\"ok\":0,\"step\":\"leeg\",\"msg\":\"geen inhoud; het beeld hoort "
+              "de body van de POST te zijn\"}");
+    return;
+  }
+
+  if (!_fw.step[0]) {
+    uint8_t digest[32];
+    FW_SHA_FINISH(&_fw_sha, digest);
+    mbedtls_sha256_free(&_fw_sha);
+    fwHex(_fw.have, digest, 32);
+    if (strcmp(_fw.have, _fw.want) != 0) {
+      fwFail("sha", "checksum klopt niet na %lu van %lu bytes",
+             (unsigned long)_fw.got, (unsigned long)_fw.total);
+    } else if (_fw.got != _fw.total) {
+      /* Belt and braces: a digest over fewer bytes than announced cannot match
+       * the digest of the whole image, so this is unreachable in practice. It
+       * stays because the alternative to an impossible branch here is
+       * Update.end() being asked to accept a short image. */
+      fwFail("kort", "%lu van %lu bytes ontvangen",
+             (unsigned long)_fw.got, (unsigned long)_fw.total);
+    } else if (!Update.end(true)) {
+      fwFail("end", "%s", Update.errorString());
+    }
+  }
+
+  _fw.active = false;
+  _fw.ok     = (_fw.step[0] == 0);
+
+  const esp_partition_t *run = esp_ota_get_running_partition();
+
+  static char body[420];
+  snprintf(body, sizeof(body),
+           "{\"ok\":%d,\"step\":\"%s\",\"msg\":\"%s\",\"bytes\":%lu,\"total\":%lu,"
+           "\"want\":\"%s\",\"have\":\"%s\",\"from\":\"%s\",\"to\":\"%s\","
+           "\"env\":\"%s\",\"reboot\":%d}",
+           _fw.ok ? 1 : 0, _fw.step, _fw.ok ? "geschreven en geverifieerd" : _fw.err,
+           (unsigned long)_fw.got, (unsigned long)_fw.total,
+           _fw.want, _fw.have, MESHSTATS_VERSION, _fw.ver, MESHSTATS_ENV,
+           _fw.ok ? 1 : 0);
+  req->send(_fw.ok ? 200 : 400, "application/json", body);
+
+  if (_fw.ok) {
+    // We are still the old image; after the reboot we are the one behind.
+    fwNoteOther(MESHSTATS_VERSION, run ? run->label : "?");
+    Serial.printf("MeshStatsNet: firmware geschreven, herstart over 1,5 s\n");
+    _reboot_pending = true;
+    _reboot_at = millis() + 1500;
+  }
+}
+
+/* Everything a caller needs to decide whether to send an image, and everything
+ * it needs afterwards to explain what happened. Readable without a login is not
+ * an option: 'env' plus 'ver' is a shopping list for whoever wants to write the
+ * wrong image here. */
+static void fwState(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+
+  const esp_partition_t *run   = esp_ota_get_running_partition();
+  const esp_partition_t *other = esp_ota_get_next_update_partition(NULL);
+
+  /* ESP_OK here means the slot holds something with a valid ESP32 application
+   * header -- which is what makes a fallback possible at all. On a node that has
+   * only ever been flashed over USB the second slot is erased and this fails,
+   * and saying so is the honest answer to "can I go back": no. */
+  esp_app_desc_t desc;
+  bool other_valid = other && esp_ota_get_partition_description(other, &desc) == ESP_OK;
+
+  char other_ver[FW_VER_MAX];
+  bool other_known = other_valid && fwReadOther(other->label, other_ver, sizeof(other_ver));
+
+  static char body[560];
+  snprintf(body, sizeof(body),
+           "{\"ver\":\"%s\",\"fw\":\"%s\",\"env\":\"%s\",\"board\":\"%s\","
+           "\"busy\":%d,\"got\":%lu,\"total\":%lu,"
+           "\"run\":\"%s\",\"other\":{\"slot\":\"%s\",\"valid\":%d,\"ver\":\"%s\"},"
+           "\"last\":{\"any\":%d,\"ok\":%d,\"step\":\"%s\",\"msg\":\"%s\","
+           "\"bytes\":%lu,\"total\":%lu}}",
+           MESHSTATS_VERSION, FIRMWARE_VERSION, MESHSTATS_ENV,
+           board.getManufacturerName(),
+           _fw.active ? 1 : 0, (unsigned long)_fw.got, (unsigned long)_fw.total,
+           run ? run->label : "?",
+           other ? other->label : "?", other_valid ? 1 : 0,
+           other_known ? other_ver : "",
+           _fw.any ? 1 : 0, _fw.ok ? 1 : 0,
+           _fw.any ? _fw.step : "", _fw.any && !_fw.ok ? _fw.err : "",
+           (unsigned long)_fw.got, (unsigned long)_fw.total);
+  req->send(200, "application/json", body);
+}
+
+/* Boot from the other partition again. Cheap, because the image is already
+ * there: an OTA never erases the slot it is not writing, so the firmware this
+ * node ran before the last upgrade is still sitting in flash, untouched, and
+ * going back is one otadata write and a restart. No download, no radio, no
+ * network beyond the request itself.
+ *
+ * Deliberately NOT automatic. The tempting version is "if the boot counter
+ * reaches three, roll back" -- and this node has a boot counter for exactly
+ * that reason. It is refused because a solar repeater reboots for reasons that
+ * have nothing to do with firmware: a flat cell in November browns the board out
+ * three times in a night, and an automatic rollback would quietly undo a good
+ * upgrade and then keep undoing it. The reachability guarantee is already
+ * elsewhere and does not need this: three restarts drop the node into safe mode,
+ * where its own AP and this page come up regardless of what the new firmware
+ * broke. Safe mode is what keeps the node reachable; this is what repairs it,
+ * and repairs are a decision. */
+static bool fwRollback(char *msg, size_t msg_max) {
+  const esp_partition_t *other = esp_ota_get_next_update_partition(NULL);
+  esp_app_desc_t desc;
+  if (!other || esp_ota_get_partition_description(other, &desc) != ESP_OK) {
+    snprintf(msg, msg_max, "geen geldig beeld in de andere sleuf");
+    return false;
+  }
+  esp_err_t e = esp_ota_set_boot_partition(other);
+  if (e != ESP_OK) {
+    snprintf(msg, msg_max, "otadata schrijven mislukt: %s", esp_err_to_name(e));
+    return false;
+  }
+
+  char ver[FW_VER_MAX];
+  bool known = fwReadOther(other->label, ver, sizeof(ver));
+
+  // The roles swap: what we are running now is what stays behind in our slot.
+  const esp_partition_t *run = esp_ota_get_running_partition();
+  fwNoteOther(MESHSTATS_VERSION, run ? run->label : "?");
+
+  snprintf(msg, msg_max, "terug naar %s in %s",
+           known ? ver : "de vorige firmware", other->label);
+  return true;
+}
+
+/* The same fallback from the mesh CLI, and this is the version that matters
+ * most. Every other way into this node runs over IP, so an upgrade whose only
+ * fault is that it cannot join the WiFi takes all of them away at once: no admin
+ * page, no console, no /api/fw to undo it with. The mesh does not care -- LoRa
+ * comes up from the radio driver, before any of that -- so 'wifi fw rollback'
+ * over the mesh CLI reaches a node that has become invisible on the network and
+ * puts the previous image back.
+ *
+ * Still gone once the boot counter passes DISABLE_BOOTS: at six restarts this
+ * whole module stays down and a plain MeshCore repeater remains, whose way back
+ * is 'start ota' and a soft-AP. That is the floor, and it is deliberate -- a
+ * command that survives its own module's failure would have to live outside it.
+ */
+static void handleFwCommand(const char *arg, char *reply) {
+  const esp_partition_t *run   = esp_ota_get_running_partition();
+  const esp_partition_t *other = esp_ota_get_next_update_partition(NULL);
+
+  if (memcmp(arg, "rollback", 8) == 0) {
+    char msg[96];
+    if (!fwRollback(msg, sizeof(msg))) {
+      snprintf(reply, 155, "Err - %s", msg);
+      return;
+    }
+    /* Three seconds rather than the 1,5 the HTTP path uses: a reply over the
+     * mesh has to be encrypted, queued behind whatever else is in the transmit
+     * queue and actually radiated before this node may disappear, and a
+     * rollback nobody heard confirmed is a rollback somebody repeats. */
+    _reboot_pending = true;
+    _reboot_at = millis() + 3000;
+    snprintf(reply, 155, "OK - %s, herstart over 3 s", msg);
+    return;
+  }
+
+  esp_app_desc_t desc;
+  bool other_valid = other && esp_ota_get_partition_description(other, &desc) == ESP_OK;
+  char ver[FW_VER_MAX];
+  bool known = other_valid && fwReadOther(other->label, ver, sizeof(ver));
+
+  snprintf(reply, 155, "v%s in %s, env=%s; terug kan naar %s; laatste upload: %s",
+           MESHSTATS_VERSION, run ? run->label : "?",
+           MESHSTATS_ENV[0] ? MESHSTATS_ENV : "onbekend",
+           !other_valid ? "niets (andere sleuf leeg)" : (known ? ver : "onbekende versie"),
+           !_fw.any ? "geen" : (_fw.ok ? "gelukt" : _fw.step));
+}
+
+static void fwRollbackPost(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+  char msg[96];
+  bool ok = fwRollback(msg, sizeof(msg));
+  char body[160];
+  snprintf(body, sizeof(body), "{\"ok\":%d,\"msg\":\"%s\"}", ok ? 1 : 0, msg);
+  req->send(ok ? 200 : 409, "application/json", body);
+  if (ok) {
+    _reboot_pending = true;
+    _reboot_at = millis() + 1500;
+  }
+}
 
 // ------------------------------------------------------------------- console
 
@@ -5411,6 +5940,8 @@ bool msnet_handle_command(const char *command, char *reply) {
     handleSettingsCommand(v, reply);
   } else if ((v = subArg(arg, "power")) != NULL) {
     handlePowerCommand(v, reply);
+  } else if ((v = subArg(arg, "fw")) != NULL) {
+    handleFwCommand(v, reply);
   } else if (memcmp(arg, "clock", 5) == 0) {
     handleClockCommand(reply);
   } else if ((v = subArg(arg, "console")) != NULL) {
@@ -5526,6 +6057,14 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
       if (up) up.write(data, len);
       if (final && up) up.close();
     });
+
+  /* Our own upgrade path. Registered before AsyncElegantOTA so that a future
+   * version of that library claiming /api/* cannot shadow it, and registered
+   * unconditionally -- including in safe mode, which is exactly the state in
+   * which somebody needs to put a working image back on this node. */
+  _server.on("/api/fw", HTTP_GET, fwState);
+  _server.on("/api/fw", HTTP_POST, fwDone, NULL, fwBody);
+  _server.on("/api/fw/rollback", HTTP_POST, fwRollbackPost);
 
   // The firmware upload behind the same login too: whoever gets in here can
   // write firmware and download your keys.

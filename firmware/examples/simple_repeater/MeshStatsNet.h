@@ -110,8 +110,16 @@
  *  - radio init fails?        we do not hang forever like the stock firmware,
  *                             but start the network side anyway so you can
  *                             reflash
- *  - upgrading?               /update on the normal admin page, so over your
- *                             own WiFi and not only via the OTA soft-AP
+ *  - upgrading?               POST /api/fw, which verifies the image before it
+ *                             switches the boot partition and only restarts
+ *                             when that succeeded. /update is still there,
+ *                             unchanged, as the fallback for when this path is
+ *                             the thing that broke
+ *  - upgrade went wrong?      the previous image is still in the other
+ *                             application partition, and POST /api/fw/rollback
+ *                             or 'wifi fw rollback' boots it again. The mesh
+ *                             CLI form is the one that survives an upgrade
+ *                             which lost the WiFi
  *  - battery running down?    the publish interval follows the cell level (and
  *                             the clock, if it happens to be valid), and in
  *                             power-save mode WiFi is off most of the time --
@@ -135,7 +143,7 @@
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
 #define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.11.0"
+#define MESHSTATS_VERSION  "1.12.0"
 
 class MyMesh;
 
@@ -210,6 +218,16 @@ int meshstats_batt_percent(uint16_t milli_volts);
  *                        mon trace' that is how a sweep which fails silently
  *                        (see the admin-rights note above) gets diagnosed
  *                        without a serial cable.
+ *   wifi fw              which version runs from which application partition,
+ *                        which build environment this image was compiled for,
+ *                        what the other partition holds and how the last upload
+ *                        ended.
+ *   wifi fw rollback     boot the other partition again -- the firmware from
+ *                        before the last upgrade, still in flash because an OTA
+ *                        never erases the slot it is not writing. Over the mesh
+ *                        on purpose: an upgrade whose only fault is that it
+ *                        cannot join the WiFi takes every IP route into this
+ *                        node with it, and LoRa is up before any of them.
  *   wifi clock           our own clock, when the site last set it, and what the
  *                        last check of the monitored nodes' clocks found.
  *                        Read-only on purpose: there is no way to type a time
