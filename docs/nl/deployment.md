@@ -134,6 +134,7 @@ volgende hoofdversie.
 |---|---|---|
 | `MM_DATA_DIR` | `server/data` | Waar de databank en de geheime sleutel staan. Docker zet `/data`; systemd zet `/var/lib/meshmanager`. |
 | `MM_MQTT_PREFIX` | `meshmanager` | Het MQTT-topicvoorvoegsel dat deze installatie bezit. Er wordt daarnaast naar het oude `meshcore` geluisterd, zolang er nog niet-geflashte nodes onder publiceren. |
+| `MM_MQTT_QUIET_MIN` | `90` | Minuten stilte waarna `/admin` meldt dat de invoer wel verbonden is maar niets binnenkrijgt. Ruim, want een node op zonnestroom publiceert 's nachts hooguit één keer per uur, en een waarschuwing die elke nacht afgaat leert iedereen te negeren. |
 | `MM_SITE_NAME` | `MeshManager` | Titel in de kop |
 | `MM_RETENTION_DAYS` | `180` | Bewaartermijn voor metingen. Wordt overruled door de instelling in de databank als je hem in `/admin` wijzigt. |
 | `MM_HEARTBEAT_MIN` | `5` | Minuten; forceert een grafiekpunt ook als de waarde niet veranderde. Ook aanpasbaar in `/admin`. |

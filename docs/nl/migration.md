@@ -60,20 +60,65 @@ hij poort 8080 bezet, en start de nieuwe nooit.
 
 Verder is er niets nodig. In het bijzonder hoef je **niet** aan te raken:
 
-- **je `.env`** — elke `MCS_*`-naam wordt nog gelezen. Hernoem ze wanneer het je
-  uitkomt; zet je beide, dan wint de nieuwe.
+- **je `.env`** — elke `MCS_*`-naam wordt nog gelezen, door de applicatie én
+  door `docker-compose.yml`. Hernoem ze wanneer het je uitkomt; zet je beide,
+  dan wint de nieuwe.
 - **je databank** — een bestaand `mcs.sqlite3` wordt geopend waar het staat en
   nooit hernoemd. Zie [waarom](#namen-die-met-opzet-blijven-staan).
 - **je Docker-volumes** — de projectnaam van compose staat nu vast op
   `meshstats`, dus de volumes houden de namen die ze hebben.
 
-Kijk daarna op `/admin`: het MQTT-blok toont per voorvoegsel hoeveel nodes er
-binnenkomen. Ze staan allemaal nog op `meshcore` — dat klopt, je hebt nog niets
-geflasht.
+#### Controleer daarna of er werkelijk gegevens binnenkomen
+
+**Sla dit niet over.** Het is één pagina openen, en het is het enige dat tussen
+jou en de storing hieronder staat.
+
+Ga naar `/admin` → **Gegevensinvoer**. De bovenste regel hoort **in orde** te
+zeggen. Staat er `geweigerd`, `weg` of `stil`, dan noemt een rood blok boven de
+tabel de oorzaak.
+
+Verderop toont het MQTT-blok per voorvoegsel hoeveel nodes er binnenkomen. Ze
+staan allemaal nog op `meshcore` — dat klopt, je hebt nog niets geflasht.
+
+> #### De storing die dit vervangt
+>
+> Op de referentie-installatie kostte deze upgrade **dertien minuten
+> datastroom**, en waarom dat dertien minuten duurde in plaats van één verdient
+> het om hardop gezegd te worden: **de site blijft er intussen gezond uitzien.**
+> Elke pagina antwoordt 200. Elke grafiek tekent nog. Elk getal staat er nog —
+> alleen is het het getal van vóór de upgrade, en nergens staat dat erbij.
+>
+> Wat er gebeurde: `docker-compose.yml` was meegehernoemd naar `${MM_MQTT_USER}`
+> en zo, terwijl de draaiende `.env` nog `MCS_MQTT_USER` zei. De applicatie
+> heeft daar een terugval voor; Compose niet — die vulde de standaard in. De
+> container kwam op met gebruiker `meshmanager` en een leeg wachtwoord, de
+> broker weigerde hem, en het enige spoor was `Not authorized` in de
+> containerlogs.
+>
+> Allebei die helften zijn nu gerepareerd. `docker-compose.yml` valt terug op de
+> oude namen (`${MM_X:-${MCS_X:-standaard}}`, getoetst tegen echte Compose in
+> `server/tests/test_compose.py`), en een geweigerde MQTT-verbinding levert nu
+> een rood blok op `/admin` op dat de twee variabelen noemt die je moet
+> nakijken. De controle hierboven blijft toch de moeite, om één reden: is jouw
+> Compose oud genoeg om geneste standaardwaarden niet te kennen, dan levert de
+> substitutie stilletjes weer iets verkeerds op — en `/admin` is waar je dat
+> ziet.
+>
+> Wil je het zekere voor het onzekere: zet de nieuwe namen met je bestaande
+> waarden in `.env` vóór je bijwerkt.
+>
+> ```bash
+> cp .env .env.bak-voor-meshmanager
+> sed -n 's/^MCS_/MM_/p; s/^MESHSTATS_PORT=/MESHMANAGER_PORT=/p' \
+>   .env.bak-voor-meshmanager >> .env
+> ```
+>
+> Dat zet er voor elke `MCS_`-regel die je al hebt een `MM_`-tweeling bij.
+> Bestaande regels blijven staan, dus twee keer draaien kan geen kwaad.
 
 ### 3. Nodes
 
-Flash firmware **2.0.0** of hoger. Over de lucht via `/admin/firmware`, of over
+Flash firmware **2.0.1** of hoger. Over de lucht via `/admin/firmware`, of over
 USB.
 
 De site vertaalt de oude naam van de bouwomgeving precies één keer naar de
@@ -88,7 +133,7 @@ zonder MQTT, en zonder één foutmelding.
 
 **Bevestigen dat een node om is**, op twee onafhankelijke manieren:
 
-- `ver` op eender welke CLI hoort `MeshManager (by DinX) v2.0.0` te antwoorden.
+- `ver` op eender welke CLI hoort `MeshManager (by DinX) v2.0.1` of hoger te antwoorden.
   Iets anders, ook een gewoon MeshCore-antwoord, betekent dat de module niet
   draait.
 - `/admin` toont de node binnen één publicatieronde onder voorvoegsel
@@ -105,6 +150,19 @@ Wat de node zelf doet, en wat niet:
   bewust iets anders, dan gebeurt er niets. En zet je het na deze upgrade met
   opzet terug op `meshcore`, dan blijft dat staan: de verhuizing wordt met een
   `cfg_ver` in het configuratiebestand vastgelegd en gebeurt niet opnieuw.
+
+  **Hiervoor is 2.0.1 of hoger nodig.** In 2.0.0 kon die verhuizing nooit
+  afgaan: de configuratieversie kreeg zijn standaard bij elke start in plaats
+  van alleen bij een verse node, waardoor de test "ben ik ouder dan dit?" nooit
+  waar was. Een node die naar 2.0.0 ging, publiceert dus gewoon door op
+  `meshcore` — wat de server opvangt, dus er ging niets verloren, maar het
+  terugvalpad werd er stilletjes permanent mee. 2.0.1 repareert het en verhoogt
+  de configuratieversie, zodat nodes die al op 2.0.0 staan alsnog meegaan.
+
+  Kijken op `/admin`, in het MQTT-blok: een node die om is, staat binnen één
+  publicatieronde onder `meshmanager`. Staat hij na 2.0.1 nog op `meshcore`, dan
+  koos hij zelf een voorvoegsel of heeft hij nog niet gepubliceerd. Met de hand
+  kan altijd: `wifi mqtt prefix meshmanager`.
 - Een **companion verhuist niet vanzelf**. Zet dat op zijn eigen beheerpagina,
   of met `wifi mqtt prefix meshmanager`.
 

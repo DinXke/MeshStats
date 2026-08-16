@@ -5,6 +5,22 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.0.1  De eenmalige verhuizing van het topicvoorvoegsel ging nooit af.
+ *        Waargenomen op een node die 2.0.0 draaide en netjes zijn cijfers
+ *        stuurde -- op meshcore/, waar de server ze ook opvangt, dus er ging
+ *        niets verloren en er stond nergens een fout. Alleen was het
+ *        terugvalpad daarmee stilletjes permanent geworden.
+ *        De oorzaak: cfg_ver kreeg zijn standaard in het DEFAULTS-blok van
+ *        loadConfig(), en dat blok draait bij elke start en niet alleen bij een
+ *        verse node. Een bestand zonder cfg_ver hield dus de standaard, en de
+ *        test 'ben ik ouder dan de huidige versie' was nooit waar. De
+ *        standaard is nu 0 en een verse node wordt bijgezet op de plek waar
+ *        vaststaat dat er geen configuratiebestand ligt.
+ *        MMNET_CFG_VERSION gaat naar 2, want nodes die 2.0.0 al draaien
+ *        hebben inmiddels 'cfg_ver:1' opgeslagen, en met alleen de reparatie
+ *        zou de verhuizing daar alsnog nooit gebeuren.
+ *        Wat dit NIET was: dataverlies. De server luistert naar allebei de
+ *        voorvoegsels, en dat vangnet heeft precies gedaan waarvoor het er is.
  * 2.0.0  Alles heet MeshManager: de module, de bestanden, de defines, het
  *        MQTT-topicvoorvoegsel, de sleutel waaronder de versie gepubliceerd
  *        wordt, de kopregel van een backup, de client-id op de broker, het
@@ -388,8 +404,19 @@
  * terugzet naar het oude voorvoegsel dat bij elke herstart teruggedraaid
  * zien worden, zonder te kunnen zien waarom.
  *   0 = van voor de hernoeming naar MeshManager
- *   1 = topicvoorvoegsel verhuisd */
-#define MMNET_CFG_VERSION  1
+ *   1 = topicvoorvoegsel verhuisd (2.0.0 -- deze stap heeft nooit gewerkt)
+ *   2 = topicvoorvoegsel verhuisd, nu werkelijk (2.0.1)
+ *
+ * Waarom er een 2 nodig is en 1 niet volstond. In 2.0.0 stond de standaard voor
+ * dit veld in het DEFAULTS-blok van loadConfig(), en dat blok draait bij elke
+ * start -- niet alleen bij een verse node. Een oud bestand zonder 'cfg_ver'
+ * hield daardoor de standaard 1, en de test 'cfg_ver < 1' was nooit waar: de
+ * verhuizing was dode code op precies de nodes waarvoor ze geschreven was.
+ * Erger nog, zodra zo'n node daarna iets opsloeg, kwam er 'cfg_ver:1' in het
+ * bestand te staan -- een leugen die met de reparatie alleen niet te herstellen
+ * is. Vandaar een nieuw nummer: 1 < 2 is waar voor allebei de gevallen, voor
+ * een bestand dat nog niets zegt en voor een bestand dat 1 beweert. */
+#define MMNET_CFG_VERSION  2
 
 #define SSID_MAX      33
 #define PASS_MAX      65
@@ -871,6 +898,30 @@ static void jsonEsc(char *dest, size_t max, const char *src) {
  * die zichzelf niet vastlegt is er een die elke herstart opnieuw gebeurt. */
 static bool _cfg_dirty = false;
 
+/* Moet het topicvoorvoegsel van deze node eenmalig mee verhuizen?
+ *
+ * Zuiver met opzet: geen globals, geen bestandssysteem, alleen de twee dingen
+ * waar het antwoord van afhangt. Dat is niet netheid maar de les van 2.0.0 --
+ * daar zat deze beslissing verweven in een inleesfunctie van honderd regels,
+ * en dat een van haar invoerwaarden nooit de waarde kon hebben die de test
+ * verwachtte, was op geen enkele manier te zien. Zo staat de hele voorwaarde
+ * op een regel en is ze na te lezen zonder de rest erbij te halen.
+ *
+ * Twee eisen, en allebei doen ze werk:
+ *
+ *  - het bestand moet OUDER zijn dan de huidige configuratieversie. Wie na de
+ *    verhuizing met opzet terugzet naar het oude voorvoegsel, moet dat kunnen;
+ *    zonder deze eis zou elke herstart die keuze stil overschrijven.
+ *  - er moet letterlijk de oude STANDAARD staan. Wie zelf een voorvoegsel koos
+ *    -- een eigen tak op een gedeelde broker -- wordt niet aangeraakt.
+ *
+ * Gaat dit onverhoopt toch mis, dan valt er nog steeds geen bericht op de
+ * grond: de server luistert in deze periode naar allebei de voorvoegsels. */
+static bool mmnetNeedsPrefixMigration(uint16_t cfg_ver, const char *prefix) {
+  return cfg_ver < MMNET_CFG_VERSION &&
+         strcmp(prefix, MQTT_PREFIX_LEGACY) == 0;
+}
+
 static void loadConfig() {
   memset(&_cfg, 0, sizeof(_cfg));
   strncpy(_cfg.ssid, WIFI_SSID, SSID_MAX - 1);
@@ -880,8 +931,11 @@ static void loadConfig() {
   strcpy(_cfg.console_pass, "meshmanager");
 
   strcpy(_cfg.mqtt_prefix, MQTT_PREFIX_DEFAULT);
-  /* Een verse node is per definitie al bij: hij heeft niets te verhuizen. */
-  _cfg.cfg_ver = MMNET_CFG_VERSION;
+  /* 0 = "we weten nog niet wat voor bestand hier ligt". Dit blok is de basis
+   * voor ELKE start en niet het pad van een verse node -- dat onderscheid is
+   * precies waar 2.0.0 op stukliep. Een verse node wordt hieronder bijgezet,
+   * op de plek waar vaststaat dat er geen configuratiebestand is. */
+  _cfg.cfg_ver = 0;
   _cfg.mqtt_port = 1883;
   _cfg.mqtt_enabled = 0;
   _cfg.mqtt_rx = 1;
@@ -909,9 +963,13 @@ static void loadConfig() {
   _cfg.night_to = 5;
   _cfg.night_factor = 4;
 
-  if (!_fs) return;
+  /* Geen bestandssysteem of geen configuratiebestand: een verse node. Die
+   * heeft niets te verhuizen, dus hij is per definitie bij -- en dat moet hier
+   * gezegd worden, want het migratieblok onderaan wordt door deze returns
+   * overgeslagen. */
+  if (!_fs) { _cfg.cfg_ver = MMNET_CFG_VERSION; return; }
   File f = _fs->open(MMNET_CFG_FILE, "r");
-  if (!f) return;
+  if (!f) { _cfg.cfg_ver = MMNET_CFG_VERSION; return; }
   String s = f.readString();
   f.close();
 
@@ -1005,12 +1063,12 @@ static void loadConfig() {
    * moet dat kunnen. Zonder cfg_ver zou elke herstart die keuze stil
    * overschrijven, en zou niemand begrijpen waarom de instelling niet
    * blijft staan. */
+  if (mmnetNeedsPrefixMigration(_cfg.cfg_ver, _cfg.mqtt_prefix)) {
+    strcpy(_cfg.mqtt_prefix, MQTT_PREFIX_DEFAULT);
+    Serial.printf("MeshManagerNet: topicvoorvoegsel verhuisd van %s naar %s\n",
+                  MQTT_PREFIX_LEGACY, MQTT_PREFIX_DEFAULT);
+  }
   if (_cfg.cfg_ver < MMNET_CFG_VERSION) {
-    if (strcmp(_cfg.mqtt_prefix, MQTT_PREFIX_LEGACY) == 0) {
-      strcpy(_cfg.mqtt_prefix, MQTT_PREFIX_DEFAULT);
-      Serial.printf("MeshManagerNet: topicvoorvoegsel verhuisd van %s naar %s\n",
-                    MQTT_PREFIX_LEGACY, MQTT_PREFIX_DEFAULT);
-    }
     _cfg.cfg_ver = MMNET_CFG_VERSION;
     _cfg_dirty = true;      // mmnet_begin() schrijft het weg
   }

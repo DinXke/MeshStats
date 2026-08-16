@@ -131,6 +131,7 @@ version.
 |---|---|---|
 | `MM_DATA_DIR` | `server/data` | Where the database and secret key live. Docker sets `/data`; systemd sets `/var/lib/meshmanager`. |
 | `MM_MQTT_PREFIX` | `meshmanager` | The MQTT topic prefix this installation owns. The old `meshcore` prefix is subscribed to as well, for as long as unflashed nodes still publish under it. |
+| `MM_MQTT_QUIET_MIN` | `90` | Minutes of silence after which `/admin` reports the ingest as connected but receiving nothing. Deliberately generous: a node on solar publishes at most hourly at night, and a warning that fires every night is one everybody learns to ignore. |
 | `MM_SITE_NAME` | `MeshManager` | Title in the header |
 | `MM_RETENTION_DAYS` | `180` | Sample retention. Overridden by the DB setting if changed in `/admin`. |
 | `MM_HEARTBEAT_MIN` | `5` | Minutes; force a graph point even when the value has not changed. Also overridable in `/admin`. |

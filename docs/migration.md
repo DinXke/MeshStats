@@ -61,20 +61,63 @@ holds port 8080, and the new one never starts.
 
 Nothing else is required. Specifically, you do **not** need to touch:
 
-- **your `.env`** — every `MCS_*` name is still read. Rename them at your
-  leisure; the new `MM_*` name wins if both are set.
+- **your `.env`** — every `MCS_*` name is still read, by the application *and*
+  by `docker-compose.yml`. Rename them at your leisure; the new `MM_*` name
+  wins if both are set.
 - **your database** — an existing `mcs.sqlite3` is opened where it is and is
   never renamed. See [why](#things-that-deliberately-keep-their-old-name).
 - **your Docker volumes** — the compose project name is now pinned to
   `meshstats`, so the volumes keep the names they have.
 
-Check afterwards on `/admin`: the MQTT block lists how many nodes arrive on
-which prefix. All of them will still say `meshcore` — that is correct, you have
-not flashed anything yet.
+#### Then check that data is actually coming in
+
+**Do not skip this.** It is one page load, and it is the only thing standing
+between you and the failure described below.
+
+Open `/admin` → **Data input**. The first row must say **in orde**. If it says
+`geweigerd`, `weg` or `stil`, a red block above the table names the cause.
+
+Then, lower down, the MQTT block lists how many nodes arrive on which prefix.
+All of them will still say `meshcore` — that is correct, you have not flashed
+anything yet.
+
+> #### The failure this replaces
+>
+> On the reference installation this upgrade cost **thirteen minutes of data**,
+> and the reason it took thirteen minutes rather than one is worth stating
+> plainly: **the site stays healthy-looking while it happens.** Every page
+> returns 200. Every chart still renders. Every number is still there — it is
+> just the number from before the upgrade, and nothing on any page says so.
+>
+> What happened: `docker-compose.yml` had been renamed to `${MM_MQTT_USER}` and
+> friends, while the running `.env` still said `MCS_MQTT_USER`. The application
+> has a fallback for that; Compose did not — it substituted the default. The
+> container came up as user `meshmanager` with an empty password, the broker
+> refused it, and the only trace was `Not authorized` in the container logs.
+>
+> Both halves of that are now fixed. `docker-compose.yml` falls back to the old
+> names (`${MM_X:-${MCS_X:-default}}`, tested against real Compose in
+> `server/tests/test_compose.py`), and a refused MQTT connection now shows as a
+> red block on `/admin` naming the two variables to check. But the check above
+> is still worth doing, for one reason: if your Compose is old enough not to
+> support nested defaults, the substitution silently produces something wrong
+> again, and `/admin` is where you will see it.
+>
+> Belt and braces, if you would rather not find out: add the new names to
+> `.env` with your existing values *before* updating.
+>
+> ```bash
+> cp .env .env.bak-before-meshmanager
+> sed -n 's/^MCS_/MM_/p; s/^MESHSTATS_PORT=/MESHMANAGER_PORT=/p' \
+>   .env.bak-before-meshmanager >> .env
+> ```
+>
+> That appends an `MM_` twin for every `MCS_` line you already have. Existing
+> lines are left alone, so it is safe to run twice.
 
 ### 3. Nodes
 
-Flash firmware **2.0.0** or later. Over the air via `/admin/firmware`, or over
+Flash firmware **2.0.1** or later. Over the air via `/admin/firmware`, or over
 USB.
 
 The site translates the old build-environment name to the new one exactly once,
@@ -89,7 +132,7 @@ and without a single error message.
 
 **Confirming a node came across**, two independent ways:
 
-- `ver` on any CLI must answer `MeshManager (by DinX) v2.0.0`. Anything else,
+- `ver` on any CLI must answer `MeshManager (by DinX) v2.0.1` or later. Anything else,
   including a stock MeshCore answer, means the module is not running.
 - `/admin` shows the node under prefix `meshmanager` within one publish
   interval, and its module version on the node's own page.
@@ -105,6 +148,18 @@ What the node does by itself, and what it does not:
   something else, nothing happens. And if you deliberately set it back to
   `meshcore` after this upgrade, it stays there: the move is recorded with a
   `cfg_ver` in the config file and is not repeated.
+
+  **This needs 2.0.1 or later.** In 2.0.0 the move could never fire: the config
+  version defaulted to "current" on every load instead of only on a fresh node,
+  so the "am I older than this?" test was never true. A node upgraded to 2.0.0
+  keeps publishing on `meshcore` — which the server picks up, so nothing was
+  lost, but the fallback quietly became permanent. 2.0.1 fixes it and bumps the
+  config version, so nodes already on 2.0.0 move too.
+
+  Check on `/admin`, in the MQTT block: a node that came across is listed under
+  `meshmanager` within one publish interval. A node still on `meshcore` after
+  flashing 2.0.1 either chose its own prefix or has not published yet. You can
+  always do it by hand with `wifi mqtt prefix meshmanager`.
 - A **companion node does not move by itself**. Set it on its own management
   page, or with `wifi mqtt prefix meshmanager`.
 

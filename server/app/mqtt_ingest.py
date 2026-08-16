@@ -227,9 +227,35 @@ MAX_LOG_EXCERPT = 240
 # Retention has no scheduler of its own, so the packet firehose drives it.
 PRUNE_EVERY_PACKETS = 2000
 
+# Wat de broker terugstuurt als hij een verbinding weigert, in woorden waar
+# iemand iets mee kan. "connection refused (code 5)" is geen aanwijzing; "de
+# broker weigert de inloggegevens" wijst naar de twee variabelen die je moet
+# nakijken.
+#
+# Dit is niet theoretisch. Bij de hernoeming naar MeshManager startte een
+# container met een leeg wachtwoord omdat docker-compose de oude .env niet meer
+# las, en de enige aanwijzing was 'Not authorized' in de containerlogs -- de
+# site bleef 200 antwoorden en oogde op elke pagina gezond. Dertien minuten
+# zonder gegevens, en de enige manier om het te zien was de pakkettelling
+# vergelijken.
+_WEIGERING = {
+    1: "de broker spreekt deze protocolversie niet",
+    2: "de broker weigert de client-id",
+    3: "de broker is er wel maar niet beschikbaar",
+    4: "de broker weigert de gebruikersnaam of het wachtwoord "
+       "(MM_MQTT_USER / MM_MQTT_PASS)",
+    5: "de broker weigert de inloggegevens: niet geautoriseerd "
+       "(MM_MQTT_USER / MM_MQTT_PASS, en de ACL op de broker)",
+}
+
+# Hoe lang de ingest stil mag zijn voor de pagina er iets van zegt. Ruim, want
+# een node in zuinige modus publiceert 's nachts hooguit een keer per uur, en
+# een waarschuwing die elke nacht afgaat leert iedereen hem te negeren.
+QUIET_MIN = int(config.env("MQTT_QUIET_MIN", "90") or 90)
+
 _state = {"connected": False, "messages": 0, "packets": 0, "errors": 0,
           "last_error": "", "last_msg": None, "last_packet": None,
-          "commands": 0}
+          "commands": 0, "refusals": 0, "connects": 0, "started": None}
 
 # The live client, so the request handlers can publish over the connection the
 # subscriber already holds. None until the background thread has built one.
@@ -250,8 +276,78 @@ def status() -> dict:
         "cmd_topic": MQTT_CMD_TOPIC,
         "prefix": PREFIX,
         "legacy_prefix": LEGACY_PREFIX,
+        "health": health(),
+        "quiet_min": QUIET_MIN,
         **_state,
     }
+
+
+def health() -> dict:
+    """Doet de ingest zijn werk? Een oordeel, geen tellers.
+
+    Bestaat omdat de tellers hierboven de verkeerde vraag beantwoorden. Ze
+    stonden al op de beheerpagina -- "Verbonden: nee", in grijs, tussen twaalf
+    andere regels -- en dat is precies zacht genoeg om over te lezen op een
+    site die verder overal 200 antwoordt. Deze functie zegt in een woord wat er
+    aan de hand is, en de pagina kan dat luid maken.
+
+    Vier toestanden, en het onderscheid tussen de laatste twee is het punt:
+
+    ``uit``        geen broker ingesteld. Geen alarm: de HTTP-ingest is een
+                   geldige manier om dit te draaien.
+    ``geweigerd``  de broker wijst ons af. Ondubbelzinnig kapot, en de reden
+                   staat erbij -- dit is de toestand die dertien minuten
+                   onopgemerkt bleef.
+    ``weg``        ingesteld, maar er is geen verbinding. Netwerk, verkeerde
+                   host, broker plat.
+    ``stil``       verbonden, maar er komt niets binnen. Kan kloppen (een mesh
+                   waar niemand publiceert) en kan de ergste storing van
+                   allemaal zijn (een ACL die alles weggooit). Daarom een
+                   waarschuwing met de duur erbij, en geen fout.
+    ``goed``       verbonden en er komt verkeer binnen.
+
+    Er wordt met opzet niet geraden welke van de twee ``stil`` is. Het verschil
+    is van buitenaf niet te zien, en een pagina die gokt is een pagina die je
+    de volgende keer niet gelooft.
+    """
+    now = db.utcnow()
+    if not MQTT_HOST:
+        return {"state": "uit", "ok": True,
+                "why": "geen broker ingesteld; nodes leveren via HTTP aan"}
+    if _state["refusals"] and not _state["connected"]:
+        return {"state": "geweigerd", "ok": False,
+                "why": _state["last_error"] or "de broker weigert de verbinding"}
+    if not _state["connected"]:
+        return {"state": "weg", "ok": False,
+                "why": _state["last_error"] or "geen verbinding met de broker"}
+
+    laatste = _state["last_msg"] or _state["last_packet"]
+    sinds = _state["started"]
+    stil_sinds = laatste or sinds
+    minuten = _minuten_geleden(stil_sinds, now)
+    if minuten is not None and minuten >= QUIET_MIN:
+        wat = "sinds de start" if laatste is None else "sinds het laatste bericht"
+        return {"state": "stil", "ok": False,
+                "why": f"verbonden, maar {int(minuten)} minuten niets ontvangen "
+                       f"({wat}). Controleer de ACL op de broker en of de nodes "
+                       f"publiceren."}
+    return {"state": "goed", "ok": True, "why": ""}
+
+
+def _minuten_geleden(wanneer, nu) -> float | None:
+    """Minuten tussen twee ISO-tijdstempels, of None als dat niet lukt.
+
+    Mag nooit opwerpen: dit draait in de weergave van een beheerpagina, en een
+    kapotte tijdstempel hoort geen pagina te breken die juist moet vertellen
+    dat er iets mis is.
+    """
+    from datetime import datetime
+    try:
+        a = datetime.fromisoformat(str(wanneer).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(nu).replace("Z", "+00:00"))
+        return (b - a).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        return None
 
 
 def can_publish() -> bool:
@@ -689,6 +785,7 @@ def _run() -> None:
     def on_connect(client, userdata, flags, rc, properties=None):
         if rc == 0:
             _state["connected"] = True
+            _state["connects"] += 1
             _state["last_error"] = ""
             topics = MQTT_TOPICS + MQTT_RX_TOPICS
             for topic in topics:
@@ -697,8 +794,14 @@ def _run() -> None:
                      MQTT_HOST, MQTT_PORT, ", ".join(topics))
         else:
             _state["connected"] = False
-            _state["last_error"] = f"connection refused (code {rc})"
-            log.warning("MQTT connection refused: %s", rc)
+            _state["refusals"] += 1
+            uitleg = _WEIGERING.get(int(rc) if str(rc).isdigit() else -1, "")
+            _state["last_error"] = (f"verbinding geweigerd (code {rc})"
+                                    + (f": {uitleg}" if uitleg else ""))
+            # Foutniveau en niet waarschuwing: een geweigerde verbinding is geen
+            # hik maar een installatie die vanaf nu niets meer binnenkrijgt.
+            log.error("MQTT-verbinding geweigerd (code %s)%s", rc,
+                      f": {uitleg}" if uitleg else "")
 
     def on_disconnect(client, userdata, rc, properties=None, reason=None):
         _state["connected"] = False
@@ -738,5 +841,9 @@ def start() -> None:
     if not MQTT_HOST:
         log.info("No MM_MQTT_HOST configured; MQTT ingest is off")
         return
+    # Vanaf wanneer "er komt niets binnen" iets betekent. Zonder dit ijkpunt
+    # zou een verse start er hetzelfde uitzien als een ingest die al uren stil
+    # ligt.
+    _state["started"] = db.utcnow()
     t = threading.Thread(target=_run, name="mqtt-ingest", daemon=True)
     t.start()

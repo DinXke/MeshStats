@@ -148,7 +148,7 @@
  * Zo is de overgang na het flashen af te lezen in plaats van te moeten
  * geloven. */
 #define MESHMANAGER_NAME     "MeshManager (by DinX)"
-#define MESHMANAGER_VERSION  "2.0.0"
+#define MESHMANAGER_VERSION  "2.0.1"
 
 class MyMesh;
 

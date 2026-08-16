@@ -1,3 +1,30 @@
+# TERUGVAL OP DE OUDE VARIABELENAMEN
+#
+# Elke ${MM_X:-${MCS_X:-standaard}} hieronder leest eerst de nieuwe naam, dan de
+# oude, dan pas de standaard. Dat is geen sierlijkheid: het is de reparatie van
+# een storing die in productie dertien minuten datastroom gekost heeft.
+#
+# Wat er misging. De code heeft die terugval al (server/app/config.py), maar
+# Compose is geen code -- die substitueert. Een draaiende installatie heeft een
+# .env met MCS_MQTT_USER en MCS_MQTT_PASS erin, en na de hernoeming vulde
+# Compose voor de ONTBREKENDE MM_-namen gewoon de standaard in: gebruiker
+# 'meshmanager' en een leeg wachtwoord, terwijl de broker alleen het oude
+# account kende. De container startte, de site antwoordde 200, alle pagina's
+# zagen er gezond uit -- en er kwam geen enkel pakket meer binnen. De enige
+# aanwijzing stond in de containerlogs.
+#
+# Waarom deze weg en niet "zet het in de handleiding". Een handleiding die je
+# moet lezen VOOR je 'docker compose up' typt, is een handleiding die de helft
+# van de mensen achteraf leest. De terugval hoort te staan waar de fout gemaakt
+# wordt. Dat de handleiding het ook zegt, is het vangnet en niet de oplossing.
+#
+# Getoetst met 'docker compose config' op v5.0.2, in alle vier de gevallen:
+# alleen de oude naam gezet, alleen de nieuwe, allebei (nieuw wint), geen van
+# beide (standaard). server/tests/test_compose.py bewaakt dat er geen
+# MM_-variabele bijkomt zonder terugval.
+#
+# Weg te halen samen met de rest van de MCS_-terugval; zie server/app/config.py.
+
 # De projectnaam staat hier vast en wordt niet meer van de mapnaam afgeleid.
 # Docker Compose zet hem voor elk volume: de databank leeft in
 # meshstats_meshstats-data. Zou de naam de map volgen, dan maakt het
@@ -20,35 +47,35 @@ services:
     container_name: meshmanager
     restart: unless-stopped
     ports:
-      - "${MESHMANAGER_PORT:-8080}:8080"
+      - "${MESHMANAGER_PORT:-${MESHSTATS_PORT:-8080}}:8080"
     environment:
       # Weergave en bewaartermijn (ook aanpasbaar via /admin)
-      MM_SITE_NAME: "${MM_SITE_NAME:-MeshManager}"
-      MM_RETENTION_DAYS: "${MM_RETENTION_DAYS:-180}"
-      MM_HEARTBEAT_MIN: "${MM_HEARTBEAT_MIN:-5}"
+      MM_SITE_NAME: "${MM_SITE_NAME:-${MCS_SITE_NAME:-MeshManager}}"
+      MM_RETENTION_DAYS: "${MM_RETENTION_DAYS:-${MCS_RETENTION_DAYS:-180}}"
+      MM_HEARTBEAT_MIN: "${MM_HEARTBEAT_MIN:-${MCS_HEARTBEAT_MIN:-5}}"
       # Beveiliging: bodylimiet en het aantal proxies vóór de app (zie .env.example)
-      MM_MAX_BODY_BYTES: "${MM_MAX_BODY_BYTES:-2000000}"
-      MM_TRUSTED_PROXY_HOPS: "${MM_TRUSTED_PROXY_HOPS:-1}"
+      MM_MAX_BODY_BYTES: "${MM_MAX_BODY_BYTES:-${MCS_MAX_BODY_BYTES:-2000000}}"
+      MM_TRUSTED_PROXY_HOPS: "${MM_TRUSTED_PROXY_HOPS:-${MCS_TRUSTED_PROXY_HOPS:-1}}"
       # MQTT: nodes publiceren hun statistieken naar de broker hieronder
-      MM_MQTT_HOST: "${MM_MQTT_HOST:-mosquitto}"
-      MM_MQTT_PORT: "${MM_MQTT_PORT:-1883}"
-      MM_MQTT_USER: "${MM_MQTT_USER:-meshmanager}"
-      MM_MQTT_PASS: "${MM_MQTT_PASS:-}"
-      MM_MQTT_PREFIX: "${MM_MQTT_PREFIX:-meshmanager}"
+      MM_MQTT_HOST: "${MM_MQTT_HOST:-${MCS_MQTT_HOST:-mosquitto}}"
+      MM_MQTT_PORT: "${MM_MQTT_PORT:-${MCS_MQTT_PORT:-1883}}"
+      MM_MQTT_USER: "${MM_MQTT_USER:-${MCS_MQTT_USER:-meshmanager}}"
+      MM_MQTT_PASS: "${MM_MQTT_PASS:-${MCS_MQTT_PASS:-}}"
+      MM_MQTT_PREFIX: "${MM_MQTT_PREFIX:-${MCS_MQTT_PREFIX:-meshmanager}}"
       # Leeg als standaard, en niet het oude vaste topic: de app luistert
       # zelf al naar het nieuwe en het oude voorvoegsel. Een waarde hier zet
       # daar een EXTRA inschrijving bovenop, voor wie op een gedeelde broker
       # onder een eigen tak draait. Leeg wordt genegeerd.
-      MM_MQTT_TOPIC: "${MM_MQTT_TOPIC:-}"
-      MM_MQTT_RX_TOPIC: "${MM_MQTT_RX_TOPIC:-}"
+      MM_MQTT_TOPIC: "${MM_MQTT_TOPIC-${MCS_MQTT_TOPIC-}}"
+      MM_MQTT_RX_TOPIC: "${MM_MQTT_RX_TOPIC-${MCS_MQTT_RX_TOPIC-}}"
       # Kloksynchronisatie naar de nodes: de site is de enige in deze keten die
       # weet hoe laat het is (zie .env.example en server/app/clocksync.py)
-      MM_CLOCKSYNC_ENABLED: "${MM_CLOCKSYNC_ENABLED:-1}"
-      MM_CLOCKSYNC_HOURS: "${MM_CLOCKSYNC_HOURS:-24}"
-      MM_CLOCKSYNC_MAX_ERROR_S: "${MM_CLOCKSYNC_MAX_ERROR_S:-10}"
-      MM_CLOCKSYNC_MAX_JUMP_S: "${MM_CLOCKSYNC_MAX_JUMP_S:-30}"
+      MM_CLOCKSYNC_ENABLED: "${MM_CLOCKSYNC_ENABLED:-${MCS_CLOCKSYNC_ENABLED:-1}}"
+      MM_CLOCKSYNC_HOURS: "${MM_CLOCKSYNC_HOURS:-${MCS_CLOCKSYNC_HOURS:-24}}"
+      MM_CLOCKSYNC_MAX_ERROR_S: "${MM_CLOCKSYNC_MAX_ERROR_S:-${MCS_CLOCKSYNC_MAX_ERROR_S:-10}}"
+      MM_CLOCKSYNC_MAX_JUMP_S: "${MM_CLOCKSYNC_MAX_JUMP_S:-${MCS_CLOCKSYNC_MAX_JUMP_S:-30}}"
       # Tijdreeksen: leeg laten om alles in SQLite te houden
-      MM_TSDB_URL: "${MM_TSDB_URL:-http://victoria:8428}"
+      MM_TSDB_URL: "${MM_TSDB_URL-${MCS_TSDB_URL-http://victoria:8428}}"
     volumes:
       # Zelfde reden als de projectnaam hierboven: de sleutel van dit volume
       # is de naam waaronder de databank op schijf staat. Hernoemen levert
@@ -68,7 +95,7 @@ services:
     restart: unless-stopped
     command:
       - "-storageDataPath=/victoria-metrics-data"
-      - "-retentionPeriod=${MM_TSDB_RETENTION:-180d}"
+      - "-retentionPeriod=${MM_TSDB_RETENTION:-${MCS_TSDB_RETENTION:-180d}}"
       # Zonder rem eist VictoriaMetrics een groot deel van het werkgeheugen op en
       # verdringt hij de site. Een percentage in plaats van een vast getal, zodat
       # dit meeschaalt als de machine groter wordt: 128 MB bij 512 MB, 512 MB bij

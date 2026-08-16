@@ -15,12 +15,12 @@ a short index; the detail — including *why* an OTA does not lose your keys —
 there.
 
 > **Coming from MeshStats?** The module was called `MeshStatsNet` up to and
-> including 1.12.0. Version 2.0.0 renames everything, the MQTT topic prefix
+> including 1.12.0. Version 2.0.0 renamed everything, the MQTT topic prefix
 > included, so **update the server first** — it listens to both prefixes, a node
 > does not. In your own `platformio.local.ini`, rename `-D MESHSTATS_NET` to
 > `-D MESHMANAGER_NET`; forget it and you get a build that starts as a plain
 > MeshCore repeater without saying so. After flashing, `ver` must answer
-> `MeshManager (by DinX) v2.0.0`. The config on the data partition keeps its
+> `MeshManager (by DinX) v2.0.1` or later. The config on the data partition keeps its
 > filenames and survives, and the topic prefix moves itself once. Full order of
 > operations: [`../docs/migration.md`](../docs/migration.md).
 
