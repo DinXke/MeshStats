@@ -19,11 +19,23 @@ werkkopie aanmaakt.
 |---|---|
 | `test_packets.py` | De rauwe-pakketdecoder (`app/packets.py`): scope-indeling, adreshashes per payloadtype, ADVERT-velden, padparsing, truncaties |
 | `test_search.py` | De zoektaal (`app/search.py`): syntaxis, LIKE-escaping, en de belofte dat onbegrijpelijke invoer een fout is en nooit stilte |
+| `test_search_sort.py` | Het sorteren van archiefresultaten: `parse_sort` maakt er een ORDER BY van, en het endpoint past die op de rijen toe en op niets anders |
 | `test_db.py` | Opslag en herstel (`app/db.py`): decoderkolommen bij insert, `_backfill_from_raw`, en de `COLUMN_MIGRATIONS`-aanpak |
+| `test_candidates.py` | De kandidaatweging (`app/candidates.py`): niet "welke node is het", maar wanneer we dat mogen zeggen |
+| `test_clocksync.py` | De klok die de site naar het mesh stuurt (`app/clocksync.py`); bijna allemaal weigeringen, want de correctie gaat één kant op |
+| `test_commanding.py` | "Kan deze knop iets doen?" (`app/commanding.py`), beantwoord uit vier losse bronnen |
+| `test_mqtt_command.py` | De keten site → broker → node, en de eigenschap dat publiceren niets zegt over aankomen |
+| `test_mqtt_ingest.py` | Berichten die niet te lezen vallen; regressie voor een nodenaam met een aanhalingsteken erin |
+| `test_nodes.py` | Het nodedetail achter een bolletje op de live kaart, dat bijna helemaal uit afleidingen bestaat |
+| `test_retention.py` | Het opruimen: de bewaartermijn, de twee bovengrenzen, en vooral de volgorde waarin ze bijten |
+| `test_settings_chain.py` | De instellingenketen knop → wachtrij → poller → opslag, met zijn clear-on-read-wachtrij |
 | `frames.py` | Bouwstenen voor zelfgemaakte MeshCore-frames, naar `docs/protocol.md` §1 |
 
 De testvectoren zijn allemaal zelfgemaakt uit de protocolkennis in
 `docs/protocol.md`; er staat geen enkel echt, opgevangen pakket in deze map.
+
+Een uitgebreidere beschrijving per module — en waarom die een eigen bestand
+verdient — staat in [`docs/nl/testing.md`](../../docs/nl/testing.md).
 
 ## Wat hier bewust niet ligt
 
