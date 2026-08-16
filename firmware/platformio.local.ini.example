@@ -22,6 +22,12 @@ build_flags =
   ; foutmelding. Controle na het flashen: 'ver' hoort
   ; "MeshManager (by DinX) v2.0.0" te antwoorden.
   -D MESHMANAGER_NET=1
+  ; De naam van deze sectie, zoals de node hem meldt via 'ver' en /api/fw. De
+  ; site legt die naast de bestandsnaam van een release-image, en weigert te
+  ; upgraden wanneer een node niets meldt -- liever dan gokken welk image bij
+  ; welk bord hoort. Laat je dit weg, dan werkt de node prima maar is hij alleen
+  ; nog met een USB-kabel bij te werken.
+  -D MESHMANAGER_ENV='"$PIOENV"'
   ; DISABLE_WIFI_OTA bewust NIET gezet: zolang onze module draait vangt zij
   ; 'start ota' af (er staat al een webserver op poort 80), maar schakelt zij
   ; zichzelf uit na herhaalde herstarts, dan werkt de standaard-OTA weer.

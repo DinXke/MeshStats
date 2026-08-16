@@ -299,11 +299,26 @@ git push origin fw-v1.12.0
    zoek sturen naar een upgrade die iets anders installeert;
 2. de build-matrix lezen uit de `[env:...]`-secties van
    `firmware/platformio.ci.ini`;
-3. MeshCore uitchecken op de vastgezette `MESHCORE_REF`, `firmware/src` en
+3. MeshCore uitchecken op de vastgezette `MESHCORE_REF`,
+   `firmware/repeater-hooks.patch` erop toepassen, `firmware/src` en
    `firmware/examples` eroverheen kopiëren, en elke omgeving bouwen;
-4. per omgeving `meshmanager-<env>-<version>.bin` en `.sha256` publiceren;
-5. het changelog-blok voor die versie, rechtstreeks uit `MeshManagerNet.cpp`,
+4. **het gebouwde `.bin` teruglezen** met `firmware/tools/verify_image.py` en
+   falen als `MESHMANAGER_NAME`, `MESHMANAGER_VERSION` of `MESHMANAGER_ENV` er
+   niet in staat;
+5. per omgeving `meshmanager-<env>-<version>.bin` en `.sha256` publiceren;
+6. het changelog-blok voor die versie, rechtstreeks uit `MeshManagerNet.cpp`,
    gebruiken als release notes. Eenmaal geschreven, tweemaal gepubliceerd.
+
+Stap 3 en 4 zijn dezelfde les, twee keer geleerd. De hooks zijn aanpassingen
+bínnen upstreams eigen `simple_repeater`-bestanden, dus een kopie van de
+bestanden uit deze repository draagt ze niet mee; zonder die hooks compileert
+`MeshManagerNet.cpp` niet, en dat is de luide versie van het probleem. De stille
+versie is een ontbrekende `-D MESHMANAGER_NET`: alles compileert, de linker gooit
+een module weg waar niemand naar verwijst, en er rolt een doodgewone
+MeshCore-repeater uit met een MeshManager-bestandsnaam. De site zou die als
+upgrade aanbieden, een node op een dak zou hem installeren, en er zou geen
+beheerpagina meer zijn om het terug te draaien. Vandaar een controle op de bytes
+in plaats van op de afloopcode van de compiler.
 
 ### De build heeft geen geheimen nodig
 

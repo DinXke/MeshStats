@@ -287,11 +287,25 @@ git push origin fw-v1.12.0
    looking for an upgrade that installs something else;
 2. reads the build matrix from the `[env:...]` sections of
    `firmware/platformio.ci.ini`;
-3. checks out MeshCore at the pinned `MESHCORE_REF`, copies `firmware/src` and
+3. checks out MeshCore at the pinned `MESHCORE_REF`, applies
+   `firmware/repeater-hooks.patch` to it, copies `firmware/src` and
    `firmware/examples` over it, and builds each environment;
-4. publishes `meshmanager-<env>-<version>.bin` and `.sha256` per environment;
-5. uses the changelog block for that version, taken straight out of
+4. **reads the built `.bin` back** with `firmware/tools/verify_image.py` and
+   fails if `MESHMANAGER_NAME`, `MESHMANAGER_VERSION` or `MESHMANAGER_ENV` is
+   not in it;
+5. publishes `meshmanager-<env>-<version>.bin` and `.sha256` per environment;
+6. uses the changelog block for that version, taken straight out of
    `MeshManagerNet.cpp`, as the release notes. Written once, published twice.
+
+Steps 3 and 4 are one lesson learned twice. The hooks are edits inside upstream's
+own `simple_repeater` files, so a copy of this repository's files does not carry
+them; without them `MeshManagerNet.cpp` does not compile, which is the loud
+version of the problem. The quiet version is a missing `-D MESHMANAGER_NET`:
+everything compiles, the linker drops a module nobody references, and out comes a
+plain MeshCore repeater with a MeshManager file name. The site would offer that
+as an upgrade, a node on a roof would install it, and there would be no
+management page left to undo it with. Hence a check on the bytes rather than on
+the exit code of the compiler.
 
 ### The build needs no secrets
 

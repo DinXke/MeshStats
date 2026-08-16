@@ -34,8 +34,9 @@ there.
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet hook |
 | `examples/companion_radio/main.cpp` | Wires the module in |
 | `examples/simple_repeater/MeshManagerNet.{h,cpp}` | Repeater: WiFi, management page, OTA, console, backup |
-| `repeater-hooks.patch` | The three small edits in `simple_repeater` |
-| `meshmanager.patch` | Everything, as one patch |
+| `repeater-hooks.patch` | The edits in `simple_repeater`, **required** — see *Applying* |
+| `meshmanager.patch` | The in-place edits of both examples, as one patch |
+| `tools/verify_image.py` | Proves a built `.bin` really contains the module |
 
 ## Why these changes
 
@@ -72,13 +73,20 @@ git clone https://github.com/meshcore-dev/MeshCore.git
 cd MeshCore
 git checkout companion-v1.17.0
 
-# copy the files from this directory over the tree
+# 1. copy the files from this directory over the tree
 cp -r /path/to/MeshManager/firmware/src/*      src/
 cp -r /path/to/MeshManager/firmware/examples/* examples/
 
-# or apply as a patch
-git apply /path/to/MeshManager/firmware/meshmanager.patch
+# 2. and the repeater hooks, which are edits inside upstream's own files
+git apply /path/to/MeshManager/firmware/repeater-hooks.patch
 ```
+
+> **Both steps.** `examples/simple_repeater/` here holds only
+> `MeshManagerNet.{cpp,h}`; the calls that tie the module into `MyMesh.cpp` and
+> `main.cpp` live in `repeater-hooks.patch`, because those are upstream files we
+> only edit. Without the patch `MeshManagerNet.cpp` does not compile at all.
+> `meshmanager.patch` is those in-place edits for both examples in one file —
+> it contains no new files, so it does not replace step 1 either.
 
 Create a `platformio.local.ini` with your own settings (see
 `platformio.local.ini.example`) and build:

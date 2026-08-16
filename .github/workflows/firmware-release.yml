@@ -113,9 +113,26 @@ jobs:
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
-      # The same two copies the README tells a human to make. Not `git apply` of
-      # meshmanager.patch: the patch and the files are two representations of one
-      # change, and if they ever drift the files are the ones that were compiled.
+      # Eerst de hooks, en die zijn een patch en geen bestandskopie omdat het
+      # bewerkingen zijn BINNEN upstreams eigen MyMesh.cpp/MyMesh.h/main.cpp:
+      # de aanroepen achter `#ifdef MESHMANAGER_NET` waarmee de module aan de
+      # repeater wordt geknoopt. Die drie bestanden meeleveren zou betekenen dat
+      # we ze bij elke MeshCore-release opnieuw met upstream moeten samenvoegen;
+      # als patch klapt het hoorbaar zodra upstream eronder verschuift.
+      #
+      # Zonder deze stap compileert MeshManagerNet.cpp niet eens -- hij roept
+      # methodes op MyMesh aan die de patch toevoegt (fillStatsJson,
+      # getNumNeighbours, addMonitor, ...). Daarop strandde de eerste release-run.
+      - name: Apply the repeater hooks
+        working-directory: meshcore
+        run: git apply --verbose ../meshmanager/firmware/repeater-hooks.patch
+
+      # Dan de bestanden, dezelfde kopie die de README een mens laat maken. Wat
+      # hier als heel bestand meegaat is nieuw of vervangt upstream volledig, en
+      # daarvoor is een kopie beter dan meshmanager.patch: die twee zijn
+      # voorstellingen van dezelfde wijziging, en lopen ze uit elkaar, dan zijn
+      # de bestanden degene die gecompileerd zijn. Bewerkingen in een bestand dat
+      # van upstream blijft, kunnen dat niet zijn -- vandaar de patch hierboven.
       - name: Apply the MeshManager changes
         run: |
           cp -r meshmanager/firmware/src/*      meshcore/src/
@@ -125,6 +142,18 @@ jobs:
       - name: Build ${{ matrix.pioenv }}
         working-directory: meshcore
         run: pio run -e ${{ matrix.pioenv }}
+
+      # Een groene build is niet wat je wilt weten. De module wordt alleen
+      # meegelinkt dankzij de hooks hierboven, en de linker gooit hem zonder
+      # melding weg zodra die ontbreken -- zie de notitie boven in
+      # firmware/tools/verify_image.py. Een release die stilzwijgend een gewone
+      # repeater bevat is erger dan een gefaalde build, dus worden de bytes
+      # teruggelezen voordat er iets geüpload wordt.
+      - name: The image must actually contain the module
+        run: |
+          python3 meshmanager/firmware/tools/verify_image.py \
+            "meshcore/.pio/build/${{ matrix.pioenv }}/firmware.bin" \
+            --env "${{ matrix.pioenv }}"
 
       # The asset name carries the env, because that is the key the site matches
       # against MESHMANAGER_ENV as reported by the node itself. A name that only

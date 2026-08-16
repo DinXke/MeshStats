@@ -24,8 +24,9 @@ Alles is opt-in bij het bouwen. Zonder de vlaggen krijgt u standaard MeshCore.
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet-hook |
 | `examples/companion_radio/main.cpp` | Koppelt de publisher in |
 | `examples/simple_repeater/MeshManagerNet.{h,cpp}` | De netwerkmodule van de repeater |
-| `repeater-hooks.patch` | De aanpassingen in `simple_repeater` (inclusief zijn `fillStatsJson()`) |
-| `meshmanager.patch` | Alles, als één patch |
+| `repeater-hooks.patch` | De aanpassingen in `simple_repeater` (inclusief zijn `fillStatsJson()`) — **verplicht**, ze zijn wat de module inkoppelt |
+| `meshmanager.patch` | De aanpassingen in beide voorbeelden, als één patch |
+| `tools/verify_image.py` | Bewijst dat een gebouwd `.bin` de module werkelijk bevat |
 
 Twee versienummers reizen samen mee en mogen niet verward worden.
 `FIRMWARE_VERSION` is die van MeshCore; `MESHMANAGER_VERSION`
@@ -1515,18 +1516,42 @@ git clone https://github.com/meshcore-dev/MeshCore.git
 cd MeshCore
 git checkout companion-v1.17.0
 
-# copy the files over
+# 1. de bestanden erover kopiëren
 cp -r /path/to/MeshManager/firmware/src/*      src/
 cp -r /path/to/MeshManager/firmware/examples/* examples/
 
-# or apply as a patch
-git apply /path/to/MeshManager/firmware/meshmanager.patch
+# 2. en de repeater-hooks, aanpassingen bínnen upstreams eigen bestanden
+git apply /path/to/MeshManager/firmware/repeater-hooks.patch
 ```
 
-`repeater-hooks.patch` bevat alleen de aanpassingen in `simple_repeater`, voor wie
-die zonder de rest wil. Hij draagt ook de eigen `fillStatsJson()` van dat
-voorbeeld, en daar wordt de stats-payload van de repeater gebouwd — een andere en
-rijkere payload dan die van de companion, zie [`mqtt.md`](mqtt.md).
+**Allebei, niet het een of het ander.** Het zijn geen twee schrijfwijzen van
+hetzelfde, en stap 2 is de valkuil: `examples/simple_repeater/` levert hier
+alleen `MeshManagerNet.{cpp,h}`, want `MyMesh.{cpp,h}` en `main.cpp` zijn
+upstreambestanden die we enkel bewerken. Die bewerkingen zijn de aanroepen
+achter `#ifdef MESHMANAGER_NET`, en ze zijn het enige dat de module aan de
+repeater knoopt. Sla de patch over en `MeshManagerNet.cpp` compileert niet eens
+— hij roept methodes op `MyMesh` aan die de patch toevoegt.
+`repeater-hooks.patch` draagt ook de eigen `fillStatsJson()` van dat voorbeeld,
+en daar wordt de stats-payload van de repeater gebouwd — een andere en rijkere
+payload dan die van de companion, zie [`mqtt.md`](mqtt.md).
+
+`meshmanager.patch` is dezelfde soort aanpassingen voor *beide* voorbeelden in
+één bestand. Ook dat vervangt stap 1 niet: er zitten geen nieuwe bestanden in,
+dus `MeshManagerNet.{cpp,h}`, `StatsPublisher.{cpp,h}` en de rest moeten nog
+steeds gekopieerd worden.
+
+Controleer na het bouwen of de module werkelijk in het image beland is:
+
+```bash
+python firmware/tools/verify_image.py \
+  .pio/build/<jouw_env>/firmware.bin --env <jouw_env>
+```
+
+Die controle bestaat omdat de fout die ze vangt stil is: zonder
+`-D MESHMANAGER_NET` of zonder de hooks compileert alles, gooit de linker de
+module weg waar niemand naar verwijst, en rolt er een doodgewone
+MeshCore-repeater uit die dat nergens zegt. De releaseworkflow draait hetzelfde
+script.
 
 ### 5.2 De build configureren
 
