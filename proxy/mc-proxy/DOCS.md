@@ -10,7 +10,7 @@ WiFi node  <-->  MeshCore Proxy (this add-on)  <-->  meshcore-ha integration (12
                                                <-->  meshcore-cli
 ```
 
-If you are able to flash modified firmware, you do not need this: the MeshStats
+If you are able to flash modified firmware, you do not need this: the MeshManager
 firmware's `SerialWifiInterface` handles four simultaneous clients on the node
 itself, with proper reply routing. See
 [`docs/firmware.md`](../../docs/firmware.md#1-multiple-companions-on-one-node).
@@ -100,7 +100,7 @@ network, set `allowed_ips`, and **never** port-forward it to the internet
 - If the node reboots, the proxy reconnects automatically within seconds;
   clients stay connected to the proxy throughout. Clients are only dropped when
   the node has been unreachable for longer than the grace period.
-- The proxy carries no statistics and never talks to a MeshStats server. It is a
+- The proxy carries no statistics and never talks to a MeshManager server. It is a
   transport helper only.
 
 Full documentation: https://github.com/DinXke/MeshCore-Proxy

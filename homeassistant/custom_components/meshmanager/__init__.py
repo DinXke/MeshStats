@@ -1,4 +1,4 @@
-"""MC Repeater Stats: pusht MeshCore-repeaterstatistieken naar een externe statistiekensite."""
+"""MeshManager: pusht MeshCore-repeaterstatistieken naar een externe statistiekensite."""
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry

@@ -15,23 +15,36 @@
 # --- de site zelf: leest alles, schrijft alleen opdrachten -------------------
 # Het cmd-topic is het enige waarop de site publiceert: één woord ('settings' of
 # 'status') dat een node vraagt nu iets te doen. Bewust geen 'topic write
-# meshcore/#', want dan zou de site ook onder de stats- en rx-topics van nodes
+# <voorvoegsel>/#', want dan zou de site ook onder de stats- en rx-topics van nodes
 # kunnen publiceren, en verliest het topic net datgene wat het waard is: dat de
 # broker afdwingt wie er spreekt.
-user meshstats
+# Twee voorvoegsels, zolang de overgang naar MeshManager loopt. Een node die
+# nog niet geflasht is publiceert op meshcore/, een geflashte op
+# meshmanager/, en de site luistert naar allebei. Ontbreekt hier een van de
+# twee, dan weigert de broker die berichten zonder dat iemand het merkt: de
+# node meldt een geslaagde publish en de site wacht op cijfers die nooit
+# komen. De meshcore-regels mogen weg zodra /admin geen nodes meer op dat
+# voorvoegsel toont.
+user meshmanager
+topic read meshmanager/#
+topic write meshmanager/+/cmd
 topic read meshcore/#
 topic write meshcore/+/cmd
 
 # --- één blok per node -------------------------------------------------------
 # Alleen schrijven onder de eigen pubkey-prefix. 'stats' en 'rx' apart in plaats
-# van meshcore/<prefix>/# , zodat een node geen topics kan aanmaken die de server
+# van <voorvoegsel>/<prefix>/# , zodat een node geen topics kan aanmaken die de server
 # later voor iets anders gebruikt.
 #
-# De leesregel hoort erbij vanaf MeshStats-firmware 1.8.0: daarmee ontvangt de
+# De leesregel hoort erbij vanaf nodefirmware 1.8.0: daarmee ontvangt de
 # node opdrachten van de site. Zonder die regel verbindt hij, schrijft hij zich
 # in, weigert de broker dat, en merkt niemand er iets van — de opvraagknop op de
 # site lijkt dan even dood als vóór dit alles bestond.
 user node-e3d3f4d7ed01
+topic write meshmanager/e3d3f4d7ed01/stats
+topic write meshmanager/e3d3f4d7ed01/rx
+topic read  meshmanager/e3d3f4d7ed01/cmd
+# Dezelfde drie op het oude voorvoegsel, tot deze node geflasht is.
 topic write meshcore/e3d3f4d7ed01/stats
 topic write meshcore/e3d3f4d7ed01/rx
 topic read  meshcore/e3d3f4d7ed01/cmd

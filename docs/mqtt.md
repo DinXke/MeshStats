@@ -18,33 +18,60 @@ snprintf(out, max, "%s/%s/%s", _cfg.prefix,
 
 | Part | Value |
 |---|---|
-| `<prefix>` | Configured on the node, default `meshcore` |
+| `<prefix>` | Configured on the node, default `meshmanager` |
 | `<node>` | 12 hex chars: the first **6 bytes** of the node's Ed25519 public key, lowercase |
 | `<leaf>` | `stats` or `rx` from the node, `cmd` towards it |
 
-Example: `meshcore/e3d3f4d7ed01/stats`.
+Example: `meshmanager/e3d3f4d7ed01/stats`.
 
 If the node has not resolved its own key yet, `<node>` falls back to the literal
-string `node`. Seeing `meshcore/node/stats` means the publisher started before
+string `node`. Seeing `meshmanager/node/stats` means the publisher started before
 the mesh identity was available.
+
+### Two prefixes at once
+
+The server subscribes to **both** `meshmanager/…` and `meshcore/…`, and handles
+them identically. That is not politeness — it is what makes the rename
+survivable. Nodes and server are never upgraded at the same moment, and a node
+can only publish on one prefix, so the side that can be taught to understand
+both has to do it.
+
+A command goes out on the prefix that node **reports itself on**, remembered on
+arrival and stored in `repeaters.topic_prefix` so it survives a restart of the
+site. A node never heard from gets it on both — two eight-byte messages are
+cheaper than a button that does nothing.
+
+`/admin` lists how many nodes arrive on which prefix. That is the number that
+answers "may the fallback go?", and it is why it is on the page rather than in
+someone's head. See [`migration.md`](migration.md).
 
 ### Server subscriptions
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `MCS_MQTT_TOPIC` | `meshcore/+/stats` | Periodic statistics |
-| `MCS_MQTT_RX_TOPIC` | `meshcore/+/rx` | Raw received packets (**in development**) |
+| `MM_MQTT_PREFIX` | `meshmanager` | The prefix this project owns. `meshcore` is always subscribed to as well |
+| `MM_MQTT_TOPIC` | *(empty)* | An **extra** pattern for periodic statistics, on top of the prefixes above |
+| `MM_MQTT_RX_TOPIC` | *(empty)* | An extra pattern for raw received packets |
 
-Both are subscribed at **QoS 0**.
+All of them are subscribed at **QoS 0**.
+
+The last two used to hold the full topic and are now empty by default: the
+prefixes cover it. A value set there is added to the subscriptions rather
+than replacing them, so an installation running under its own branch on a
+shared broker keeps working across this rename instead of going deaf at the
+moment it updates.
 
 ### The one topic the server publishes on
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | One command for one node |
+| `MM_MQTT_CMD_TOPIC` | `{prefix}/{node}/cmd` | One command for one node |
 
 `{node}` is filled in with that node's own pubkey prefix, so a broker ACL can
 bind a node's *read* permission to the same prefix as its *write* permission.
+`{prefix}` is filled in with the prefix **that node** reports itself on. A
+pattern without `{prefix}` is used exactly as written — whoever sets a fixed
+topic means it.
 See [Asking a node for something](#asking-a-node-for-something).
 
 The clock synchronisation publishes on this same topic and has its own settings,
@@ -52,10 +79,10 @@ because the question it answers is not "which topic" but "may we speak at all":
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `MCS_CLOCKSYNC_ENABLED` | `1` | Send the time to the nodes at all |
-| `MCS_CLOCKSYNC_HOURS` | `24` | Hours between two rounds |
-| `MCS_CLOCKSYNC_MAX_ERROR_S` | `10` | Uncertainty the kernel may have about its own clock before we stop believing it |
-| `MCS_CLOCKSYNC_MAX_JUMP_S` | `30` | Wall-clock jump against the monotonic clock that counts as a jump rather than a correction |
+| `MM_CLOCKSYNC_ENABLED` | `1` | Send the time to the nodes at all |
+| `MM_CLOCKSYNC_HOURS` | `24` | Hours between two rounds |
+| `MM_CLOCKSYNC_MAX_ERROR_S` | `10` | Uncertainty the kernel may have about its own clock before we stop believing it |
+| `MM_CLOCKSYNC_MAX_JUMP_S` | `30` | Wall-clock jump against the monotonic clock that counts as a jump rather than a correction |
 
 See [Setting the clock](#setting-the-clock).
 
@@ -66,7 +93,7 @@ the payload, and the two are kept apart on purpose:
 
 | | Answers | Comes from |
 |---|---|---|
-| **Publisher** | which node sent this message | the topic, `meshcore/<node>/…` |
+| **Publisher** | which node sent this message | the topic, `meshmanager/<node>/…` |
 | **Subject** | which repeater the numbers describe | `repeater.pubkey_prefix` in the payload |
 
 Usually the same node reporting on itself. They are **allowed to differ**,
@@ -141,7 +168,7 @@ duplicates".
 |---|---|---|
 | **Companion** | `MyMesh::fillStatsJson()` in `examples/companion_radio` | itself |
 | **Repeater** | `MyMesh::fillStatsJson()` added by `repeater-hooks.patch` | itself |
-| **Monitor relaying a repeater** | `publishMonitorRound()` in `MeshStatsNet.cpp` | *another* repeater |
+| **Monitor relaying a repeater** | `publishMonitorRound()` in `MeshManagerNet.cpp` | *another* repeater |
 
 All three publish on `<prefix>/<node>/stats`. The first two describe the node in
 the topic; the third describes somebody else and says so in
@@ -154,10 +181,10 @@ the topic; the third describes somebody else and says so in
 | `repeater.pubkey_prefix` | string | — | ✓ | ✓ | ✓ | first 6 bytes of the public key, hex. Optional on the first two: left out, the server reads it from the topic |
 | `repeater.name` | string | — | ✓ | ✓ | ✓ | `_prefs.node_name`, or the monitor's name for that entry. JSON-escaped since 1.9.1 |
 | `repeater.fw` | string | — | | ✓ | | `FIRMWARE_VERSION` — MeshCore's version |
-| `repeater.fw_meshstats` | string | — | | ✓ | | `MESHSTATS_VERSION`, empty when the module is not compiled in |
+| `repeater.fw_meshmanager` | string | — | | ✓ | | `MESHMANAGER_VERSION`, empty when the module is not compiled in |
 | `online` | bool | — | ✓ | ✓ | ✓ | always `true`; a liveness marker |
 | `bat` | float | V | ✓ | ✓ | ✓ | cell voltage |
-| `battery_percentage` | int | % | | ✓ | ✓ | shared curve, see `meshstats_batt_percent()` |
+| `battery_percentage` | int | % | | ✓ | ✓ | shared curve, see `meshmanager_batt_percent()` |
 | `ch1_voltage` | float | V | | ✓ | | the same cell voltage under a telemetry channel name |
 | `uptime` | float | **days** | ✓ | ✓ | ✓ | 5 decimals |
 | `noise_floor` | int | dBm | ✓ | ✓ | ✓ | omitted unless negative |
@@ -301,7 +328,7 @@ message:
 }
 ```
 
-Nineteen keys, one per entry in `SET_PARAMS` in `MeshStatsNet.cpp`. Eighteen of
+Nineteen keys, one per entry in `SET_PARAMS` in `MeshManagerNet.cpp`. Eighteen of
 them are one-line values; `cmd:region` is a tree and is the reason `\n` survives
 JSON escaping at all — see below and
 [`firmware.md`](firmware.md#set_params--the-parameter-table).
@@ -310,7 +337,7 @@ The keys are whatever the sweep table in the firmware names them — the server
 stores and shows every key it receives, known or not. The parameter list on the
 admin settings page steers the Home Assistant look-up only; a parameter added
 there does **not** reach nodes publishing over MQTT until the firmware's own
-table (`SET_PARAMS` in `MeshStatsNet.cpp`) asks for it too.
+table (`SET_PARAMS` in `MeshManagerNet.cpp`) asks for it too.
 
 It fills the same admin page as `POST /api/v1/repeater_settings`, so a node can
 populate it with no Home Assistant in the picture.
@@ -326,10 +353,10 @@ minutes of LoRa airtime — and the admin page would keep showing the last sweep
 that did land, with nothing to say that anything had failed since.
 
 **Why it is not on a topic of its own.** It was going to be
-`meshcore/<node>/settings`, until a check of `mqtt_ingest.py` showed this
+`meshmanager/<node>/settings`, until a check of `mqtt_ingest.py` showed this
 subscriber listens to exactly two patterns. A third topic would have been
 accepted by the broker and then dropped unread — the same failure that lost the
-monitored repeaters once before. Adding a topic means adding it to `MCS_MQTT_*`
+monitored repeaters once before. Adding a topic means adding it to `MM_MQTT_*`
 **and** to the subscribe calls in `on_connect`; until both happen, the messages
 go nowhere. That rule is about *publishing*, and says nothing about the
 direction the `cmd` topic below runs in.
@@ -343,14 +370,14 @@ chain — which is exactly what a node publishing straight to MQTT is for — an
 the button wrote into a queue nobody read, while the page promised a look-up
 that had already started.
 
-So the server publishes one word on `meshcore/<node>/cmd`:
+So the server publishes one word on `meshmanager/<node>/cmd`:
 
 | Word | The node does |
 |---|---|
 | `settings` | reads its CLI parameters now, and publishes them with the statistics message it sends as soon as the sweep finishes |
-| `settings <key>` | logs in to a repeater it *monitors*, reads **that** repeater's CLI parameters over LoRa, and publishes them under that repeater's name (MeshStats 1.9.0) |
+| `settings <key>` | logs in to a repeater it *monitors*, reads **that** repeater's CLI parameters over LoRa, and publishes them under that repeater's name (nodefirmware 1.9.0) |
 | `status` | publishes a statistics message immediately |
-| `time <epoch>` | sets its own clock to that UNIX time in UTC seconds, then checks the clocks of the repeaters it monitors over LoRa (MeshStats 1.10.0) |
+| `time <epoch>` | sets its own clock to that UNIX time in UTC seconds, then checks the clocks of the repeaters it monitors over LoRa (nodefirmware 1.10.0) |
 
 The answer comes back on the ordinary `stats` topic. Nothing else in the ingest
 path changes, and a receiver that knows nothing about `cmd` still works. `time`
@@ -378,7 +405,7 @@ it is read out a repeater the operator already chose to monitor — at most once
 every ten minutes.
 
 The one on `time` is a number, checked against a window of years at both ends
-(2025–2100, in `mqtt_ingest.py` and again in `MeshStatsNet.cpp`) and applied by
+(2025–2100, in `mqtt_ingest.py` and again in `MeshManagerNet.cpp`) and applied by
 code that only ever moves a clock **forward**. So this word does grant a real
 capability that the other two do not: it changes state. Named plainly, because
 it is the one that deserves an ACL: an attacker on the broker can push a node's
@@ -448,7 +475,7 @@ today, and nothing on the mesh corrects it, because nothing on the mesh knows
 better either.
 
 The server does, so it publishes `time <epoch>` on a schedule
-(`MCS_CLOCKSYNC_HOURS`, default 24). The format was not chosen: it is what
+(`MM_CLOCKSYNC_HOURS`, default 24). The format was not chosen: it is what
 `CommonCLI::handleCommand` parses in its `time ` branch — `_atoi` of the rest of
 the line, straight into `setCurrentTime`, UNIX seconds in UTC.
 
@@ -524,7 +551,7 @@ VPN/LAN with no outbound reference, so that check would pass in development and
 report "unreachable" forever on the real machine, which is a check that gets
 switched off within a week.
 
-What the node does with it is in `MeshStatsNet.cpp` above `MON_CLK_FIRST_MS`: it
+What the node does with it is in `MeshManagerNet.cpp` above `MON_CLK_FIRST_MS`: it
 sets its own clock, then walks its monitor list asking each repeater `clock` (one
 round trip), and only sends `clock sync` to one whose reading is more than two
 minutes behind. Reading first costs the same as syncing blind — one command, one
@@ -559,7 +586,7 @@ accordingly — on request only and never on a schedule, at most one sweep every
 ten minutes, two seconds between commands, twelve per answer, and a stop after
 three consecutive silences. The reasoning behind each of those numbers,
 including which of the Home Assistant integration's values were copied and which
-were deliberately not, sits above `MON_SET_FIRST_MS` in `MeshStatsNet.cpp`.
+were deliberately not, sits above `MON_SET_FIRST_MS` in `MeshManagerNet.cpp`.
 
 Two things about the result are worth knowing before reading the page:
 
@@ -574,7 +601,7 @@ Two things about the result are worth knowing before reading the page:
 - **A sweep whose login never answered publishes nothing at all**, because it
   asked nothing and learned nothing. Throwing away values an earlier sweep did
   get would be the wrong kind of honest.
-- **`cmd:region` is a tree, not a value** (MeshStats 1.11.0). It is the one
+- **`cmd:region` is a tree, not a value** (nodefirmware 1.11.0). It is the one
   parameter whose answer spans lines, and whose line breaks *and indentation*
   carry the meaning: indentation is parent/child nesting, `^` marks the home
   region, a trailing ` F` means flooding is allowed there and its absence means
@@ -615,15 +642,22 @@ a relayed repeater stays on the poller route or stays grey.
 
 Add the read side to the node's account and the write side to the server's:
 
+
+> **During the rename**, every rule below needs its `meshcore/…` twin as
+> well: a node publishes on the old prefix until it is flashed and on the new
+> one after. An ACL that knows only one of the two lets exactly one of those
+> two states die in silence — the node reports a successful publish and the
+> broker drops the message. `init-passwd.sh` and `add-node-user.sh` already
+> generate both. See [`migration.md`](migration.md).
 ```
-user meshstats
-topic read meshcore/#
-topic write meshcore/+/cmd
+user meshmanager
+topic read meshmanager/#
+topic write meshmanager/+/cmd
 
 user node-e3d3f4d7ed01
-topic write meshcore/e3d3f4d7ed01/stats
-topic write meshcore/e3d3f4d7ed01/rx
-topic read  meshcore/e3d3f4d7ed01/cmd
+topic write meshmanager/e3d3f4d7ed01/stats
+topic write meshmanager/e3d3f4d7ed01/rx
+topic read  meshmanager/e3d3f4d7ed01/cmd
 ```
 
 Without the read rule the node connects, subscribes, is refused by the broker,
@@ -703,7 +737,7 @@ as it came off the radio and lets the server decode it using
 The design constraints are the same on both firmwares, but **the numbers are
 not**, and conflating them is easy:
 
-| | Companion (`StatsPublisher`) | Repeater (`MeshStatsNet`) |
+| | Companion (`StatsPublisher`) | Repeater (`MeshManagerNet`) |
 |---|---|---|
 | Ring size | `STATS_RX_QUEUE` = **4** slots | `MQTT_RX_QUEUE` = **8** slots |
 | Slot size | `STATS_RX_MAX_LEN` = 255 (a full MTU, 264 B with padding) | `MQTT_RX_MAX_LEN` = 255 |
@@ -830,17 +864,18 @@ time comes straight out of the mesh. `setSocketTimeout(4)` and
 
 | Env var | Default | Notes |
 |---|---|---|
-| `MCS_MQTT_HOST` | *(empty)* | **Empty disables MQTT ingest entirely** |
-| `MCS_MQTT_PORT` | `1883` | |
-| `MCS_MQTT_USER` | *(empty)* | Empty = connect anonymously |
-| `MCS_MQTT_PASS` | *(empty)* | |
-| `MCS_MQTT_TOPIC` | `meshcore/+/stats` | |
-| `MCS_MQTT_RX_TOPIC` | `meshcore/+/rx` | in development |
+| `MM_MQTT_HOST` | *(empty)* | **Empty disables MQTT ingest entirely** |
+| `MM_MQTT_PORT` | `1883` | |
+| `MM_MQTT_USER` | *(empty)* | Empty = connect anonymously |
+| `MM_MQTT_PASS` | *(empty)* | |
+| `MM_MQTT_PREFIX` | `meshmanager` | `meshcore` is subscribed to as well |
+| `MM_MQTT_TOPIC` | *(empty)* | Extra pattern, on top of the prefixes |
+| `MM_MQTT_RX_TOPIC` | *(empty)* | Extra pattern; raw packets are in development |
 
 Note the Docker Compose file supplies different effective defaults:
-`MCS_MQTT_HOST=mosquitto` and `MCS_MQTT_USER=meshstats`.
+`MM_MQTT_HOST=mosquitto` and `MM_MQTT_USER=meshmanager`.
 
-The subscriber runs on a daemon thread with client id `meshstats-ingest`,
+The subscriber runs on a daemon thread with client id `meshmanager-ingest`,
 keepalive 60 s, and paho's own reconnect backoff (2 s to 60 s).
 
 > The client id is **hardcoded**. Two server instances against one broker will
@@ -889,7 +924,7 @@ Three settings deserve attention:
 
 ```bash
 cp .env.example .env
-# edit .env: set MCS_MQTT_USER and MCS_MQTT_PASS
+# edit .env: set MM_MQTT_USER and MM_MQTT_PASS
 ./mosquitto/init-passwd.sh
 ```
 
@@ -933,11 +968,11 @@ The script:
 
 ```
 user node-e3d3f4d7ed01
-topic write meshcore/e3d3f4d7ed01/stats
-topic write meshcore/e3d3f4d7ed01/rx
+topic write meshmanager/e3d3f4d7ed01/stats
+topic write meshmanager/e3d3f4d7ed01/rx
 ```
 
-`stats` and `rx` are listed separately rather than `meshcore/<prefix>/#`, so a
+`stats` and `rx` are listed separately rather than `meshmanager/<prefix>/#`, so a
 node cannot create topics the server may later use for something else.
 
 Put the printed credentials on the node's management page and restart the broker:
@@ -948,14 +983,14 @@ docker compose restart mosquitto
 
 #### Finishing the migration
 
-`init-passwd.sh` leaves the shared account with `topic write meshcore/#` so
+`init-passwd.sh` leaves the shared account with `topic write meshmanager/#` so
 nothing breaks while nodes are still on it. That line is also what keeps
 impersonation possible. Once every node has its own account:
 
 ```
-user meshstats
-topic read meshcore/#
-# topic write meshcore/#   <- delete this line
+user meshmanager
+topic read meshmanager/#
+# topic write meshmanager/#   <- delete this line
 ```
 
 Restart the broker. From then on the broker enforces that a node can only publish
@@ -975,18 +1010,18 @@ Verify with the account you just created:
 ```bash
 # allowed
 mosquitto_pub -h <broker> -u node-e3d3f4d7ed01 -P <pass> \
-  -t meshcore/e3d3f4d7ed01/stats -m '{"metrics":{"online":true}}'
+  -t meshmanager/e3d3f4d7ed01/stats -m '{"metrics":{"online":true}}'
 
 # refused by the broker
 mosquitto_pub -h <broker> -u node-e3d3f4d7ed01 -P <pass> \
-  -t meshcore/aabbccddeeff/stats -m '{"metrics":{"online":true}}'
+  -t meshmanager/aabbccddeeff/stats -m '{"metrics":{"online":true}}'
 ```
 
 ## Troubleshooting
 
 | Symptom | Where to look |
 |---|---|
-| `/admin` shows MQTT disabled | `MCS_MQTT_HOST` is empty |
+| `/admin` shows MQTT disabled | `MM_MQTT_HOST` is empty |
 | Connected, zero messages | Node `enabled` off, or `host` empty on the node |
 | Node page says "not connected" | Broker credentials; the node retries every 15 s |
 | Messages counted, no repeater appears | Errors counter and `last_error` in `/admin`; usually a missing `pubkey_prefix` |
@@ -995,10 +1030,10 @@ mosquitto_pub -h <broker> -u node-e3d3f4d7ed01 -P <pass> \
 | Node connects but nothing is published | ACL: the account has no `topic write` block, or the topic prefix does not match it. Check the broker log |
 | Broker refuses to start | `mosquitto/acl` is missing or unreadable — run `init-passwd.sh` |
 | Graph has gaps | Expected with QoS 0. Check WiFi stability, and `heartbeat_min` |
-| Two servers keep disconnecting | Both use client id `meshstats-ingest`. Run one. |
+| Two servers keep disconnecting | Both use client id `meshmanager-ingest`. Run one. |
 
 To watch the traffic directly:
 
 ```bash
-mosquitto_sub -h <broker> -u <user> -P <pass> -t 'meshcore/#' -v
+mosquitto_sub -h <broker> -u <user> -P <pass> -t 'meshmanager/#' -v
 ```

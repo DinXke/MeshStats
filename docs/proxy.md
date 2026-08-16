@@ -6,7 +6,7 @@
 WiFi node. It is a Home Assistant add-on, but the program underneath is a single
 dependency-free Python file that runs anywhere.
 
-**It carries no statistics and never talks to a MeshStats server.** It is a
+**It carries no statistics and never talks to a MeshManager server.** It is a
 transport helper, and it is in this repository only because the problem it solves
 sits directly in front of everything else here.
 
@@ -56,7 +56,7 @@ The proxy holds that single connection itself and shares it:
 
 | Situation | Answer |
 |---|---|
-| You can flash the MeshStats firmware | **No.** `SerialWifiInterface` handles four simultaneous clients on the node itself, with targeted reply routing. See [`firmware.md`](firmware.md#1-multiple-companions-on-one-node) |
+| You can flash the MeshManager firmware | **No.** `SerialWifiInterface` handles four simultaneous clients on the node itself, with targeted reply routing. See [`firmware.md`](firmware.md#1-multiple-companions-on-one-node) |
 | You cannot flash firmware, and want more than one client | **Yes** |
 | You have exactly one client and always will | No |
 
@@ -290,11 +290,11 @@ port-forward it to the internet — use a VPN. See [`security.md`](security.md).
 - **Message sync is destructive in the companion protocol.** With several clients
   connected, a chat message is consumed by whichever client syncs first. It will
   appear in one client, not all. Telemetry, management and statistics are
-  unaffected — which is why this is acceptable for MeshStats' purposes and not
+  unaffected — which is why this is acceptable for MeshManager' purposes and not
   for a chat-first setup.
 - **The node still has one slot.** The proxy occupies it. Any client that
   connects to the node directly will fight the proxy for it, and both will lose.
-- **No statistics, no MQTT, no MeshStats server.** Transport only.
+- **No statistics, no MQTT, no MeshManager server.** Transport only.
 
 ---
 

@@ -1,0 +1,27 @@
+[Unit]
+Description=MeshManager (MeshCore-repeaters meten en beheren)
+After=network.target
+
+[Service]
+Type=simple
+# __USER__ en __DATA_DIR__ worden door deploy/install.sh ingevuld. De datamap
+# is geen vaste waarde, omdat een installatie van voor de hernoeming zijn
+# databank nog in /var/lib/mc-repeater-stats heeft staan -- en die blijft daar.
+# Een lege site na een update is erger dan een map met een oude naam.
+User=__USER__
+Group=__USER__
+WorkingDirectory=/opt/meshmanager/server
+Environment=MM_DATA_DIR=__DATA_DIR__
+ExecStart=/opt/meshmanager/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips "*"
+Restart=always
+RestartSec=5
+
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=__DATA_DIR__
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

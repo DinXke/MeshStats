@@ -90,21 +90,21 @@ MAX_IMAGE = 6_553_600
 
 # Beide voorvoegsels, en dat blijft even zo. De images heten sinds de
 # hernoeming meshmanager-<env>-<versie>.bin, maar de releases die er nu al
-# liggen heten meshstats-...: een site die alleen de nieuwe naam kent, ziet
+# liggen heten meshmanager-...: een site die alleen de nieuwe naam kent, ziet
 # in elke oudere release nul images en kan dus niet terug. Juist terug
 # kunnen is waar de rollback voor bestaat.
 #
 # Weg te halen als er geen release meer in de lijst staat met de oude naam.
 # Dat is af te lezen op /admin/firmware en niet te gokken.
 ASSET_RE = re.compile(
-    r"^(?:meshmanager|meshstats)-(?P<env>.+)-(?P<version>\d+\.\d+\.\d+)\.bin$")
+    r"^(?:meshmanager|meshmanager)-(?P<env>.+)-(?P<version>\d+\.\d+\.\d+)\.bin$")
 
 # Bouwomgevingen die van naam veranderd zijn: {wat de node meldt: hoe het
 # image nu heet}.
 #
 # Zonder dit zou de hernoeming naar MeshManager alleen met een USB-kabel te
 # installeren zijn, en dat is op een dak geen upgradeweg. Een node die nog
-# 1.12.0 draait, is gebouwd onder heltec_v4_repeater_meshstats en meldt die
+# 1.12.0 draait, is gebouwd onder heltec_v4_repeater_meshmanager en meldt die
 # naam; de release die hem eroverheen moet helpen draagt
 # heltec_v4_repeater_meshmanager. Precies een keer moeten die twee elkaar
 # vinden -- daarna meldt de node zelf de nieuwe naam.
@@ -117,7 +117,7 @@ ASSET_RE = re.compile(
 # Weg te halen zodra geen enkele node de oude envnaam nog meldt; /admin
 # toont per node wat hij meldt.
 ENV_ALIAS = {
-    "heltec_v4_repeater_meshstats": "heltec_v4_repeater_meshmanager",
+    "heltec_v4_repeater_meshmanager": "heltec_v4_repeater_meshmanager",
 }
 
 
@@ -154,7 +154,7 @@ def repo_slug() -> str:
 
     Leeg als geen van beide iets oplevert, en dan is de firmwarepagina uit met
     die reden erbij. Dat is het eerlijke antwoord in een container zonder .git
-    en zonder MCS_GITHUB_REPO.
+    en zonder MM_GITHUB_REPO.
     """
     if REPO_OVERRIDE:
         return REPO_OVERRIDE
@@ -187,7 +187,7 @@ def _get(url: str, timeout: int, accept: str = "application/vnd.github+json") ->
         "Accept": accept,
         # GitHub weigert verzoeken zonder User-Agent met een 403 die er als een
         # limiet uitziet. Dat is een uur zoeken waard geweest voor iemand.
-        "User-Agent": "MeshStats",
+        "User-Agent": "MeshManager",
         "X-GitHub-Api-Version": "2022-11-28",
     })
     with urllib.request.urlopen(req, timeout=timeout) as resp:

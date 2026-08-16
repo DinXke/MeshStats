@@ -2,7 +2,7 @@
 
 *[Nederlands](nl/firmware-upgrade.md)*
 
-How a repeater running `MeshStatsNet` gets a new image: where the image comes
+How a repeater running `MeshManagerNet` gets a new image: where the image comes
 from, which node it is allowed to go to, what is checked before anything is made
 permanent, and how to get back if it was a mistake.
 
@@ -109,7 +109,7 @@ The answer is always readable JSON:
 ```json
 {"ok":0,"step":"sha","msg":"checksum klopt niet na 1284538 van 1284538 bytes",
  "bytes":1284538,"total":1284538,"want":"ab12…","have":"cd34…",
- "from":"1.11.0","to":"1.12.0","env":"heltec_v4_repeater_meshstats","reboot":0}
+ "from":"1.11.0","to":"1.12.0","env":"heltec_v4_repeater_meshmanager","reboot":0}
 ```
 
 `step` is one of `auth`, `param`, `bezig`, `begin`, `write`, `sha`, `kort`,
@@ -120,7 +120,7 @@ The answer is always readable JSON:
 What is installed, what can be gone back to, and how the last attempt ended.
 
 ```json
-{"ver":"1.12.0","fw":"v1.17.0","env":"heltec_v4_repeater_meshstats",
+{"ver":"1.12.0","fw":"v1.17.0","env":"heltec_v4_repeater_meshmanager",
  "board":"Heltec V4.3 OLED","busy":0,"got":0,"total":0,
  "run":"app0","other":{"slot":"app1","valid":1,"ver":"1.11.0"},
  "last":{"any":1,"ok":1,"step":"","msg":"","bytes":1284538,"total":1284538}}
@@ -148,8 +148,8 @@ This is the part that can destroy hardware. An image built for a different board
 written to a node on a roof is not recoverable over the air.
 
 **The node reports the PlatformIO environment it was built under**, in
-`MESHSTATS_ENV`, set from `$PIOENV` in `platformio.ci.ini`. A release carries one
-asset per environment, named `meshstats-<env>-<version>.bin`. The site matches
+`MESHMANAGER_ENV`, set from `$PIOENV` in `platformio.ci.ini`. A release carries one
+asset per environment, named `meshmanager-<env>-<version>.bin`. The site matches
 those two **exactly**, and refuses when it cannot.
 
 The rejected alternative was matching on the board name the node already
@@ -167,7 +167,7 @@ determine which image belongs here", not a best guess.
 
 1. Add an `[env:...]` section to `firmware/platformio.ci.ini`. Point `extends` at
    the right variant from MeshCore's `variants/` tree, and keep
-   `-D MESHSTATS_ENV='"$PIOENV"'`.
+   `-D MESHMANAGER_ENV='"$PIOENV"'`.
 2. That is all. The release workflow derives its build matrix from the section
    names in that file.
 
@@ -177,7 +177,7 @@ else.
 
 ### Boards that cannot use this at all
 
-`MeshStatsNet` is a WiFi module. On a variant without WiFi it is not compiled in,
+`MeshManagerNet` is a WiFi module. On a variant without WiFi it is not compiled in,
 there is no HTTP anything, and this page does not apply — those nodes are
 upgraded over USB.
 
@@ -275,23 +275,23 @@ this feature rather than a separate concern.
 ### Tagging a release
 
 ```bash
-# MESHSTATS_VERSION in MeshStatsNet.h must already say 1.12.0
+# MESHMANAGER_VERSION in MeshManagerNet.h must already say 1.12.0
 git tag fw-v1.12.0
 git push origin fw-v1.12.0
 ```
 
 `.github/workflows/firmware-release.yml` then:
 
-1. **refuses** if the tag and `MESHSTATS_VERSION` disagree — a release whose
+1. **refuses** if the tag and `MESHMANAGER_VERSION` disagree — a release whose
    assets report a different version than the release does would send the site
    looking for an upgrade that installs something else;
 2. reads the build matrix from the `[env:...]` sections of
    `firmware/platformio.ci.ini`;
 3. checks out MeshCore at the pinned `MESHCORE_REF`, copies `firmware/src` and
    `firmware/examples` over it, and builds each environment;
-4. publishes `meshstats-<env>-<version>.bin` and `.sha256` per environment;
+4. publishes `meshmanager-<env>-<version>.bin` and `.sha256` per environment;
 5. uses the changelog block for that version, taken straight out of
-   `MeshStatsNet.cpp`, as the release notes. Written once, published twice.
+   `MeshManagerNet.cpp`, as the release notes. Written once, published twice.
 
 ### The build needs no secrets
 
@@ -323,7 +323,7 @@ bottom rung of the fallback ladder.
 
 ## Safety nets, and how this path stays out of their way
 
-`MeshStatsNet` already had four, described in [`firmware.md`](firmware.md). The
+`MeshManagerNet` already had four, described in [`firmware.md`](firmware.md). The
 upgrade path was built to lean on them rather than around them:
 
 | Net | Interaction |

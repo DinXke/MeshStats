@@ -2,13 +2,13 @@
 
 *[Nederlands](nl/firmware.md)*
 
-MeshStats ships a set of changes to the [MeshCore](https://github.com/meshcore-dev/MeshCore)
+MeshManager ships a set of changes to the [MeshCore](https://github.com/meshcore-dev/MeshCore)
 firmware. They fall into two groups:
 
 - **Companion node** (`examples/companion_radio`) — multiple simultaneous WiFi
   clients, a channel-counter fix, and the stats publisher with its web chat
   client.
-- **Repeater** (`examples/simple_repeater`) — `MeshStatsNet`: WiFi with AP
+- **Repeater** (`examples/simple_repeater`) — `MeshManagerNet`: WiFi with AP
   fallback, a management page, OTA over your normal network, a telnet console on
   the MeshCore CLI, MQTT publishing, monitoring of other repeaters, clock
   synchronisation, and filesystem backup/restore.
@@ -23,14 +23,14 @@ Everything is opt-in at build time. Without the flags, you get stock MeshCore.
 | `examples/companion_radio/page.html`, `gen_page.py`, `StatsPage.h` | The web client, its build step and its generated output |
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet hook |
 | `examples/companion_radio/main.cpp` | Wires the publisher in |
-| `examples/simple_repeater/MeshStatsNet.{h,cpp}` | The repeater network module |
+| `examples/simple_repeater/MeshManagerNet.{h,cpp}` | The repeater network module |
 | `repeater-hooks.patch` | The edits in `simple_repeater` (including its `fillStatsJson()`) |
-| `meshstats.patch` | Everything, as one patch |
+| `meshmanager.patch` | Everything, as one patch |
 
 Two version numbers travel together and must not be confused. `FIRMWARE_VERSION`
-is MeshCore's; `MESHSTATS_VERSION` (`MeshStatsNet.h:138`) is this module's, and
+is MeshCore's; `MESHMANAGER_VERSION` (`MeshManagerNet.h:138`) is this module's, and
 the two move independently. `ver` prints both, and both appear in every stats
-payload as `repeater.fw` and `repeater.fw_meshstats` — because when something is
+payload as `repeater.fw` and `repeater.fw_meshmanager` — because when something is
 wrong, the first question is which of the two you are looking at.
 
 ---
@@ -188,7 +188,7 @@ with it.
 the top of `MyMesh.cpp`:
 
 ```cpp
-void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
+void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
 ```
 
 which the publisher defines (`StatsPublisher.cpp:14-24`) and points at itself in
@@ -521,11 +521,11 @@ packet.
 
 ---
 
-## 4. `MeshStatsNet` — the repeater module
+## 4. `MeshManagerNet` — the repeater module
 
-`examples/simple_repeater/MeshStatsNet.{h,cpp}`, enabled with `-D MESHSTATS_NET=1`.
+`examples/simple_repeater/MeshManagerNet.{h,cpp}`, enabled with `-D MESHMANAGER_NET=1`.
 
-The premise, stated in the header comment (`MeshStatsNet.h:94-124`): this
+The premise, stated in the header comment (`MeshManagerNet.h:94-124`): this
 repeater is on a roof and runs off a solar panel. **It may never become
 unreachable, and it may never spend more energy than the panel brings in.**
 Every design choice below follows from those two sentences, and where a choice
@@ -539,18 +539,18 @@ void msnet_loop();                                            // in loop()
 bool msnet_handle_command(const char *command, char *reply);  // from any CLI
 ```
 
-Four more hooks feed it from the mesh side (`MeshStatsNet.h:148-180`):
-`meshstats_on_raw_packet()`, `meshstats_on_monitor_response()`,
-`meshstats_on_advert()` and `meshstats_advert_name()`, plus
-`meshstats_batt_percent()` which exists so that the admin page, the power
+Four more hooks feed it from the mesh side (`MeshManagerNet.h:148-180`):
+`meshmanager_on_raw_packet()`, `meshmanager_on_monitor_response()`,
+`meshmanager_on_advert()` and `meshmanager_advert_name()`, plus
+`meshmanager_batt_percent()` which exists so that the admin page, the power
 management and the published statistics all quote the *same* battery figure —
 two curves disagreeing by a few percent is a bug report waiting to happen.
 
 ### 4.1 Version history
 
 The authoritative changelog is the block comment at the top of
-`MeshStatsNet.cpp` (lines 1–262). The current version is in
-`MeshStatsNet.h:138`. This table is a reading aid, not a replacement: the
+`MeshManagerNet.cpp` (lines 1–262). The current version is in
+`MeshManagerNet.h:138`. This table is a reading aid, not a replacement: the
 comment records the *reasoning*, which is the part that matters when you are
 deciding whether to change something.
 
@@ -803,7 +803,7 @@ python -m esptool --port COM4 read_flash 0 0x1000000 backup.bin
 side ever holds a whole file in RAM:
 
 ```
-MESHSTATS-BACKUP 1
+MESHMANAGER-BACKUP 1
 FILE /identity 64
 <up to 64 bytes per line, lowercase hex>
 FILE /repeater_prefs 128
@@ -859,7 +859,7 @@ no other way in.
 
 | Command | Effect |
 |---|---|
-| `ver` | This module's version plus the MeshCore version it is built on. **No MeshStats name in the answer means this module is not running** |
+| `ver` | This module's version plus the MeshCore version it is built on. **No MeshManager name in the answer means this module is not running** |
 | `wifi` | State, IP, signal, battery, publish interval |
 | `wifi ssid <name>` | Set the network; empty restores the compiled-in default |
 | `wifi pass <word>` | Set the WiFi password |
@@ -1100,7 +1100,7 @@ the exact five-byte Home Assistant keys this feature exists for.
 
 #### `SET_PARAMS` — the parameter table
 
-Nineteen entries, in `MeshStatsNet.cpp:1352`. The same table is used for this
+Nineteen entries, in `MeshManagerNet.cpp:1352`. The same table is used for this
 node's own daily sweep and for the LoRa sweep of a monitored node, because both
 land in the same column of the same table on the site — and a rule that held for
 one and not the other is exactly how `cmd:temp = Unknown command` gets into a
@@ -1346,7 +1346,7 @@ a character before it reaches the publisher.
 <a id="the-three-safety-nets"></a>
 ### 4.14 The safety nets
 
-`MeshStatsNet` is custom code running on a node that must not die. It therefore
+`MeshManagerNet` is custom code running on a node that must not die. It therefore
 assumes it might itself be the thing that is broken. There are **four** nets, and
 each covers a failure the others cannot see.
 
@@ -1370,7 +1370,7 @@ everything again.
 
 **Why the radio case matters.** Stock `simple_repeater` calls `halt()` when the
 radio fails to initialise, which on a rooftop node means a brick. With
-`MESHSTATS_NET`:
+`MESHMANAGER_NET`:
 
 ```cpp
 if (!radio_ok) {
@@ -1438,11 +1438,11 @@ cd MeshCore
 git checkout companion-v1.17.0
 
 # copy the files over
-cp -r /path/to/MeshStats/firmware/src/*      src/
-cp -r /path/to/MeshStats/firmware/examples/* examples/
+cp -r /path/to/MeshManager/firmware/src/*      src/
+cp -r /path/to/MeshManager/firmware/examples/* examples/
 
 # or apply as a patch
-git apply /path/to/MeshStats/firmware/meshstats.patch
+git apply /path/to/MeshManager/firmware/meshmanager.patch
 ```
 
 `repeater-hooks.patch` contains only the `simple_repeater` edits, if you want
@@ -1500,7 +1500,7 @@ build_flags =
   -D ADVERT_LON=0.0
   -D ADMIN_PASSWORD='"CHANGE_ME"'
   -D MAX_NEIGHBOURS=50
-  -D MESHSTATS_NET=1
+  -D MESHMANAGER_NET=1
   -D WIFI_SSID='"YOUR_SSID"'
   -D WIFI_PWD='"YOUR_PASSWORD"'
 build_src_filter = ${heltec_v4_oled.build_src_filter}
@@ -1513,11 +1513,11 @@ lib_deps =
   knolleary/PubSubClient @ ^2.8
 ```
 
-Do **not** set `DISABLE_WIFI_OTA`. While `MeshStatsNet` runs it intercepts
+Do **not** set `DISABLE_WIFI_OTA`. While `MeshManagerNet` runs it intercepts
 `start ota`; if it disables itself after repeated crashes, stock OTA is your
 fallback (§4.14).
 
-The compiled-in `WIFI_SSID` / `WIFI_PWD` are defaults only. `MeshStatsNet`
+The compiled-in `WIFI_SSID` / `WIFI_PWD` are defaults only. `MeshManagerNet`
 overrides them from `/msnet.json` once you set anything through the page or the
 CLI. They exist so the very first flash comes up on the network.
 
@@ -1525,7 +1525,7 @@ CLI. They exist so the very first flash comes up on the network.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `MESHSTATS_NET` | unset | Enable the repeater network module |
+| `MESHMANAGER_NET` | unset | Enable the repeater network module |
 | `WIFI_MAX_CLIENTS` | 4 | Simultaneous companion clients (~2–3 kB RAM each) |
 | `TCP_PORT` | 5000 | Companion TCP port |
 | `MAX_CONTACTS` | — | Contact slots; ~316 bytes each. See above |
@@ -1613,7 +1613,7 @@ Built and tested on a Heltec V3 (ESP32-S3) companion and a Heltec V4 repeater.
 | Channel-counter fix | working |
 | Companion management page, chat client and `/stats.json` | working |
 | MQTT stats publishing | working |
-| `MeshStatsNet` on the repeater | working |
+| `MeshManagerNet` on the repeater | working |
 | Monitoring other repeaters over LoRa | working |
 | Commands from the site over MQTT (`cmd` topic, 1.8.0) | written and reviewed, **not flashed on any node yet** |
 | Settings sweep of a monitored repeater over LoRa (1.9.0) | written and reviewed, **not flashed on any node yet** — needs 1.9.0 on the monitoring node and admin rights on the monitored one |

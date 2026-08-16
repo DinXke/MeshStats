@@ -58,8 +58,8 @@ Het maximale on-air frame is `MAX_TRANS_UNIT` = **255** bytes.
 Een frame van de radio is nog geen geldig frame. `Dispatcher::checkRecv()` roept
 **eerst** de raw-logging-hook aan (`src/Dispatcher.cpp` regel 199) en pas daarna
 `tryParsePacket()` (regel 205), waarbij het pakket weer wordt vrijgegeven als dat
-mislukt. MeshStats ontvangt zijn pakketten via precies die hook
-(`MyMesh::logRxRaw()` → `meshstats_on_raw_packet()`), dus **de ruwe MQTT-feed
+mislukt. MeshManager ontvangt zijn pakketten via precies die hook
+(`MyMesh::logRxRaw()` → `meshmanager_on_raw_packet()`), dus **de ruwe MQTT-feed
 bevat frames die geen enkele MeshCore-node ooit heeft geaccepteerd** — ruis die
 de PHY-CRC heeft overleefd, en frames van protocolvarianten die deze firmware
 weigert.
@@ -367,10 +367,10 @@ begrepen worden:
 
 - Het is **geen** mesh-brede eigenschap en ook geen protocolversie-eigenschap. De
   groottes 1, 2 en 3 reizen naast elkaar door dezelfde lucht; in een steekproef van
-  400 pakketten live verkeer zag MeshStats 312 × 1-byte, 76 × 2-byte en 9 ×
+  400 pakketten live verkeer zag MeshManager 312 × 1-byte, 76 × 2-byte en 9 ×
   3-byte.
 - Het **is** afleesbaar uit het frame, dus er hoeft niets aangenomen te worden.
-  MeshStats rapporteert het als `path_hash_size`.
+  MeshManager rapporteert het als `path_hash_size`.
 - Het zegt niets over de **adres-hashes in de payload**. Die liggen vast op één
   byte via `PATH_HASH_SIZE` (`src/Mesh.cpp` 462, `src/Identity.h` 19–26) en via
   `PAYLOAD_VER_1`, waarvan de hele definitie luidt "1-byte src/dest-hashes, 2-byte
@@ -410,14 +410,14 @@ schuiven en de teller te verlagen. Het pad krimpt naarmate het pakket reist.
 
 ### Wat een pad je wel en niet kan vertellen
 
-Dit is van belang voor alles wat een route probeert te *tonen*, en MeshStats doet
+Dit is van belang voor alles wat een route probeert te *tonen*, en MeshManager doet
 precies dat op zijn live kaart, dus de beperking is het waard om onomwonden te
 stellen.
 
 Een hop-entry is een sleutelprefix, geen identifier. Met `PATH_HASH_SIZE` = 1 zijn
 er **256** mogelijke waarden. Een mesh van een paar honderd nodes heeft dus
 hopwaarden waarop meerdere nodes reageren — volgens de birthday bound wordt een
-botsing bij 256 buckets waarschijnlijk rond de 20 nodes, en MeshStats volgt er al
+botsing bij 256 buckets waarschijnlijk rond de 20 nodes, en MeshManager volgt er al
 meer dan 200. Ambiguïteit is het normale geval, geen datafout.
 
 Gevolgen voor wie het pad leest:
@@ -430,7 +430,7 @@ Gevolgen voor wie het pad leest:
 
 De firmware werkt zelf ook zo: `Mesh::searchPeersByHash()` geeft tot 4 kandidaten
 terug en probeert er simpelweg elk. Elke renderer die één "beste" kandidaat kiest,
-verzint een zekerheid die het wire-formaat niet draagt. MeshStats lost elke
+verzint een zekerheid die het wire-formaat niet draagt. MeshManager lost elke
 kandidaat op (`_resolve_hop()` in `server/app/routes_api.py`) en tekent
 onopgeloste en ambigue hops als onderbroken gaten in plaats van als lijnen naar een
 gok.
@@ -589,7 +589,7 @@ als `data[4] >> 2` (regel 232).
 (`BaseChatMesh.cpp` 386–388), en pogingnummers boven 3 worden verborgen als een
 extra afsluitende byte (`434–436`).
 
-`TXT_TYPE_CLI_DATA` is degene waar MeshStats van afhangt: zo komt een CLI-antwoord
+`TXT_TYPE_CLI_DATA` is degene waar MeshManager van afhangt: zo komt een CLI-antwoord
 van een bewaakte repeater via de lucht terug — zie
 [`firmware.md`](firmware.md).
 
@@ -988,7 +988,7 @@ offset  bytes         field
 ## 1.9 Het admin-/serverrequestprotocol
 
 Alles hierboven beschrijft de envelop. Binnen een ontsleutelde `REQ`-payload zit
-een tweede protocol op applicatieniveau, en dat is wat MeshStats werkelijk spreekt
+een tweede protocol op applicatieniveau, en dat is wat MeshManager werkelijk spreekt
 wanneer een monitoringnode een repeater bevraagt. Het maakt geen deel uit van
 `src/`: elke voorbeeldfirmware definieert zijn eigen requestnummers, en daarom
 zijn de tabellen hieronder per rol opgesteld.
@@ -1067,7 +1067,7 @@ Kanaalnummering: GPS is altijd kanaal 1, en elke andere sensor krijgt sequentiee
 een kanaal toegewezen vanaf `TELEM_CHANNEL_SELF + 1`
 (`src/helpers/sensors/EnvironmentSensorManager.cpp` 668, 671). Wat een kanaal
 betekent, is dus een eigenschap van de antwoordende node en niet van het protocol
-— en daarom slaat MeshStats telemetrie op als `ch<N>_temperature` /
+— en daarom slaat MeshManager telemetrie op als `ch<N>_temperature` /
 `ch<N>_voltage`, onder het kanaal dat de bron zelf gebruikte, in plaats van het te
 hernoemen naar iets waarvan het aanneemt dat het dat betekent. Op een
 MeshCore-repeater is kanaal 1 zijn eigen board, dus `ch1_temperature` is daar de
@@ -1127,9 +1127,9 @@ De vermenigvuldigers staan op regels 34–60; de foutcodes zijn `LPP_ERROR_OK` 0
 `LPP_ERROR_OVERFLOW` 1 en `LPP_ERROR_UNKOWN_TYPE` 2 (spelling zoals in de
 broncode), regels 62–64.
 
-MeshStats decodeert er slechts twee van — `LPP_TEMPERATURE` en `LPP_VOLTAGE` — naar
+MeshManager decodeert er slechts twee van — `LPP_TEMPERATURE` en `LPP_VOLTAGE` — naar
 `ch<N>_temperature` en `ch<N>_voltage`, via `helpers/sensors/LPPDataHelpers.h` dat
-door `MeshStatsNet.cpp` wordt geïncludeerd. De rest staat hier vermeld zodat een
+door `MeshManagerNet.cpp` wordt geïncludeerd. De rest staat hier vermeld zodat een
 uitbreiding de tabel niet opnieuw hoeft te ontdekken.
 
 ---
@@ -1138,17 +1138,17 @@ uitbreiding de tabel niet opnieuw hoeft te ontdekken.
 
 Dit is de verbinding tussen een node en een clientapplicatie: de
 MeshCore-telefoonapp, `meshcore-cli`, de `meshcore`-integratie van Home Assistant,
-of MeshStats' eigen gereedschap. Het is geen mesh-protocol; het verlaat de lokale
+of MeshManager' eigen gereedschap. Het is geen mesh-protocol; het verlaat de lokale
 link nooit.
 
 Referentiebron:
 
 | Onderwerp | Bestand |
 |---|---|
-| TCP-framing, meerdere clients | `MeshStats/firmware/src/helpers/esp32/SerialWifiInterface.cpp` |
+| TCP-framing, meerdere clients | `MeshManager/firmware/src/helpers/esp32/SerialWifiInterface.cpp` |
 | Bovengrens framegrootte | `MeshCore/src/helpers/BaseSerialInterface.h` |
 | Commando-/responscodes | `MeshCore/examples/companion_radio/MyMesh.cpp` |
-| Een onafhankelijke implementatie | `MeshStats/proxy/mc-proxy/mc_proxy.py` |
+| Een onafhankelijke implementatie | `MeshManager/proxy/mc-proxy/mc_proxy.py` |
 
 ## 2.1 Framing
 
@@ -1310,7 +1310,7 @@ dus het hoogste bit onderscheidt een push van een respons:
 
 (`examples/companion_radio/MyMesh.cpp` 120–136.) `PUSH_CODE_LOG_RX_DATA`
 (`0x88`) is degene die door `MyMesh::logRxRaw()` wordt uitgezonden — dezelfde hook
-die MeshStats aftapt voor zijn ruwe feed.
+die MeshManager aftapt voor zijn ruwe feed.
 
 `PUSH_CODE_LOGIN_SUCCESS` / `PUSH_CODE_LOGIN_FAIL` zijn het vermelden waard naast
 [het zwijgen van de repeater bij een geweigerde login](firmware.md): over de
@@ -1349,7 +1349,7 @@ if (newClient) {
 }
 ```
 
-Home Assistant en je telefoon konden dus niet allebei verbonden zijn. MeshStats
+Home Assistant en je telefoon konden dus niet allebei verbonden zijn. MeshManager
 lost dit twee keer op, op twee verschillende plaatsen, en de twee oplossingen
 verschillen op een belangrijk punt.
 

@@ -1,7 +1,7 @@
-"""Constanten voor MC Repeater Stats."""
+"""Constanten voor MeshManager."""
 import re
 
-DOMAIN = "mc_repeater_stats"
+DOMAIN = "meshmanager"
 
 CONF_BASE_URL = "base_url"
 CONF_TOKEN = "token"

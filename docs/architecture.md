@@ -2,7 +2,7 @@
 
 *[Nederlands](nl/architecture.md)*
 
-MeshStats turns a MeshCore node's own view of the mesh into a public statistics
+MeshManager turns a MeshCore node's own view of the mesh into a public statistics
 site. This document explains what the pieces are, how data moves between them,
 and why the transport is MQTT rather than HTTP.
 
@@ -12,7 +12,7 @@ and why the transport is MQTT rather than HTTP.
 |---|---|
 | `server/` | FastAPI + SQLite. Public pages, admin, ingest API, MQTT subscriber. |
 | `server/tools/` | Build scripts for generated data files, kept next to what they generate. |
-| `firmware/` | Modifications to the MeshCore firmware: multi-client WiFi, `MeshStatsNet`, the stats publisher. |
+| `firmware/` | Modifications to the MeshCore firmware: multi-client WiFi, `MeshManagerNet`, the stats publisher. |
 | `homeassistant/` | Optional HA integration that pushes repeater data over HTTP. |
 | `proxy/` | Optional TCP fan-out proxy for people who cannot flash modified firmware. |
 | `mosquitto/` | Broker configuration for the Docker deployment. |
@@ -30,8 +30,8 @@ helper that is not a data path at all.
   | mesh + WiFi + BLE |          |           |       | mqtt_ingest  |
   |                   |  MQTT    |           |  sub  |    |         |
   | StatsPublisher    |--------->| Mosquitto |------>|    v         |
-  |  meshcore/<id>/stats         |           |       |  db.ingest   |
-  |  meshcore/<id>/rx (dev)      |           |       |    |         |
+  |  meshmanager/<id>/stats         |           |       |  db.ingest   |
+  |  meshmanager/<id>/rx (dev)      |           |       |    |         |
   +-------------------+          +-----------+       |    v         |
                                                      |  SQLite      |
                                                      +--------------+
@@ -41,7 +41,7 @@ The node holds one MQTT connection open and publishes a JSON snapshot of itself
 every `interval` seconds (default 300). No Home Assistant, no HTTP client, no
 TLS stack on the node.
 
-The server subscribes with a wildcard (`meshcore/+/stats`). The topic segment
+The server subscribes with a wildcard (`meshmanager/+/stats`). The topic segment
 names the node that **published** the message; the JSON body names the repeater
 the message is **about**. Usually the same node reporting on itself, but a node
 may also relay statistics for repeaters it monitors, so the publisher is stored
@@ -49,7 +49,7 @@ alongside the subject rather than assumed equal to it. See [`mqtt.md`](mqtt.md).
 
 The same connection carries one message the other way. The admin page can ask a
 node to read its CLI settings now, or to publish immediately, by putting a single
-word on `meshcore/<node>/cmd`. The answer comes back on the ordinary `stats`
+word on `meshmanager/<node>/cmd`. The answer comes back on the ordinary `stats`
 topic, so this is a trigger and not a second data path. The firmware accepts
 those two words and nothing else — see
 [`mqtt.md`](mqtt.md#asking-a-node-for-something) for why that restriction is the
@@ -62,7 +62,7 @@ point rather than an omission.
                                                       |
                                                  entities in HA
                                                       |
-                                          mc_repeater_stats (Pusher)
+                                          meshmanager (Pusher)
                                                       |
                                              HTTPS POST + Bearer
                                                       v
@@ -71,7 +71,7 @@ point rather than an omission.
 
 Home Assistant already runs the `meshcore` integration for many people, and that
 integration already holds sensor entities for every repeater it hears. The
-`mc_repeater_stats` custom component scrapes those entities out of the state
+`meshmanager` custom component scrapes those entities out of the state
 machine, builds the same JSON body, and POSTs it.
 
 It can do something no node can: talk *to* repeaters that are not its own. It
@@ -81,7 +81,7 @@ settings of a repeater running stock firmware reach `/admin`. A node publishing
 over MQTT only ever reports on itself.
 
 This path is optional, and no longer the only way to fill that view. A node
-running the MeshStats firmware reads its own CLI once a day and can be asked to
+running the MeshManager firmware reads its own CLI once a day and can be asked to
 do it now over the `cmd` topic above; a repeater that only a poller can reach
 still needs this path. `commanding.py` works out per repeater which of the two is
 available, and the admin page disables the button and says why when neither is —
@@ -97,7 +97,7 @@ You can run both at once; whichever arrives most recently wins.
 **one** companion TCP client. If Home Assistant is connected, your phone is not.
 `mc-proxy` holds the single upstream connection and fans it out to many clients.
 
-It carries no statistics and never talks to the MeshStats server. Use it when
+It carries no statistics and never talks to the MeshManager server. Use it when
 you cannot flash modified firmware; if you can, the firmware's own 4-slot
 `SerialWifiInterface` does the same job with better reply routing. See
 [`protocol.md`](protocol.md#23-the-single-client-problem).
@@ -170,7 +170,7 @@ lesson from different angles:
   modem-sleep latency spikes the main loop stalled inside them — taking the mesh
   down with it. It is now a single `send_P` of a static page that fetches its
   data as JSON afterwards.
-- `MeshStatsNet.h`: the repeater's web server is `AsyncWebServer` specifically
+- `MeshManagerNet.h`: the repeater's web server is `AsyncWebServer` specifically
   because "a blocking server holds up the main loop, and with it the mesh — we
   have already seen that behaviour on the companion node."
 
@@ -236,7 +236,7 @@ Three things can go wrong, and they all end in the same place:
 
 | | |
 |---|---|
-| `MCS_TSDB_URL` empty | points go straight to SQLite `samples` |
+| `MM_TSDB_URL` empty | points go straight to SQLite `samples` |
 | write fails (twice) | the batch is spilled to `samples` |
 | queue full (20 000 points) | the point is spilled to `samples` |
 
@@ -246,7 +246,7 @@ reads `samples`. A metric that merely has no data returns an empty list instead,
 so "no history yet" and "database unavailable" stay distinguishable.
 
 This is why **`samples` is not dead weight and must not be dropped.** It is the
-safety net, and it is what makes the move reversible: set `MCS_TSDB_URL` empty and
+safety net, and it is what makes the move reversible: set `MM_TSDB_URL` empty and
 the site is back to its old behaviour without losing a day.
 
 The airtime utilisation tiles follow the same path. They are computed from the
@@ -314,7 +314,7 @@ two fields the live map needs:
   the decoder immediately improves packets already stored.
 
 Storing the frame roughly doubles a packet row, which is affordable only because
-packets carry their own retention: `MCS_PACKET_RETENTION_DAYS`, 7 by default,
+packets carry their own retention: `MM_PACKET_RETENTION_DAYS`, 7 by default,
 against 180 for samples. Both columns were added through `COLUMN_MIGRATIONS`, so
 an existing database keeps its rows and simply has them empty — which the UI
 reports as "not stored" instead of as "no hops".
@@ -347,7 +347,7 @@ achieved, and both the admin page and the archive's own hint say so with the
 real number next to the configured one. A retention that quietly under-delivers
 is how a gap in a graph becomes an evening of debugging.
 
-The pass runs at startup **and** every `MCS_PRUNE_MINUTES`, in a thread of its
+The pass runs at startup **and** every `MM_PRUNE_MINUTES`, in a thread of its
 own, the same shape as `clocksync.py`. Pruning only at startup made the
 retention an act rather than a rule: a container that ran for months never threw
 anything away, and the first sign of that is a full disk.

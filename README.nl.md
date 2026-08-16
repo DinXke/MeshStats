@@ -1,4 +1,4 @@
-# MeshStats
+# MeshManager
 
 *[English](README.md)*
 
@@ -7,14 +7,14 @@
 firmware om dat te doen.**
 
 Een MeshCore-node weet al heel wat: over zichzelf, over de repeaters die hij
-hoort, en over elk pakket dat langs zijn antenne komt. MeshStats maakt daar een
+hoort, en over elk pakket dat langs zijn antenne komt. MeshManager maakt daar een
 publieke site van — live cijfers, een live kaart, een doorzoekbaar
 pakketarchief, historiek en een linkkaart — en levert de
 firmwareaanpassingen mee waarmee een node dat kan publiceren zonder iets
 ertussen.
 
 ```
-  Heltec / ESP32-node ──MQTT──▶ Mosquitto ──▶ MeshStats ──▶ publieke site
+  Heltec / ESP32-node ──MQTT──▶ Mosquitto ──▶ MeshManager ──▶ publieke site
    (of Home Assistant) ──HTTP──────────────▶  (SQLite)      + live kaart
 ```
 
@@ -98,12 +98,12 @@ De site draait op poort **8080**. Bij de eerste start wordt een beheerdersaccoun
 aangemaakt en het wachtwoord één keer afgedrukt:
 
 ```bash
-docker compose logs meshstats | grep -i password
+docker compose logs meshmanager | grep -i password
 ```
 
 Log in op `/admin`, wijzig het wachtwoord, en maak een API-token aan als je ook
 over HTTP wilt pushen. Wijs daarna een node naar de broker — zie
-[`docs/mqtt.md`](docs/nl/mqtt.md) — of flash de MeshStats-firmware uit
+[`docs/mqtt.md`](docs/nl/mqtt.md) — of flash de MeshManager-firmware uit
 [`docs/firmware.md`](docs/nl/firmware.md).
 
 Zonder Docker: `sudo bash deploy/install.sh` (Debian/Ubuntu, systemd, poort
@@ -123,6 +123,7 @@ Om mee te beginnen:
 
 | Document | Wat erin staat |
 |---|---|
+| [`docs/nl/migration.md`](docs/nl/migration.md) | **Kom je van MeshStats?** De volgorde waarin je een draaiende installatie bijwerkt |
 | [`docs/nl/architecture.md`](docs/nl/architecture.md) | Hoe de onderdelen samenhangen, en waarom MQTT het van HTTP overnam |
 | [`docs/nl/glossary.md`](docs/nl/glossary.md) | Het MeshCore-vocabulaire dat deze documenten veronderstellen |
 | [`docs/nl/protocol.md`](docs/nl/protocol.md) | Het pakketformaat in de ether en het companion-protocol, volledig gespecificeerd |
@@ -174,7 +175,7 @@ Volledig routeoverzicht: [`docs/api.md`](docs/nl/api.md).
 |---|---|---|
 | `MM_DATA_DIR` | `server/data` | Waar SQLite en de geheime sleutel staan. Docker zet `/data` |
 | `MM_MQTT_PREFIX` | `meshmanager` | Het MQTT-topicvoorvoegsel dat deze installatie in eigendom heeft |
-| `MM_SITE_NAME` | MeshCore Repeater Stats | Naam in de kop |
+| `MM_SITE_NAME` | MeshManager | Naam in de kop |
 | `MM_RETENTION_DAYS` | 180 | Bewaartermijn van de historiek |
 | `MM_PACKET_RETENTION_DAYS` | 7 | Bewaartermijn van het pakketarchief, en tevens het venster van de heatmap |
 | `MM_PACKET_MAX_ROWS` | 200000 | Bovengrens aan rijen in het archief; de oudste gaan eerst |
@@ -185,7 +186,7 @@ Volledig routeoverzicht: [`docs/api.md`](docs/nl/api.md).
 | `MM_MQTT_HOST` | *(leeg)* | Broker; leeg schakelt MQTT uit |
 | `MM_MQTT_CMD_TOPIC` | `{prefix}/{node}/cmd` | Het enige topic waarop de site publiceert |
 
-Elke variabele heet `MM_<NAAM>`. De oude schrijfwijze `MCS_<NAAM>` wordt **nog
+Elke variabele heet `MM_<NAAM>`. De oude schrijfwijze `MM_<NAAM>` wordt **nog
 steeds gelezen** als terugval, dus een bestaande `.env` blijft gewoon werken. De
 meeste hiervan zijn ook in `/admin` te bewerken, waar de databasewaarde wint.
 Volledige lijst:

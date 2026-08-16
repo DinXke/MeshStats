@@ -32,7 +32,7 @@ Every method and route is additionally capped at `MM_MAX_BODY_BYTES` (2 MB) by
 Connection test for the Home Assistant integration.
 
 ```json
-{"ok": true, "app": "mc-repeater-stats", "version": 1}
+{"ok": true, "app": "meshmanager", "version": 1}
 ```
 
 ### `POST /api/v1/ingest`

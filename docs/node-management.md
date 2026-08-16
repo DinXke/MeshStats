@@ -28,7 +28,7 @@ true, and a button would let it say something that is not.
 
 Derivation order, which is also the order in which the evidence is strongest:
 
-1. The node publishes statistics itself **and** reports a `fw_meshstats`
+1. The node publishes statistics itself **and** reports a `fw_meshmanager`
    version → `full_managed`. Its `cmd` topic is reachable, so it can be steered
    directly.
 2. It does not publish itself, but a monitor with CLI rights reaches it →
@@ -84,7 +84,7 @@ recommended design does not do it that way.**
 ### Why not the `cmd` topic
 
 The topic accepts `settings`, `status` and `time <epoch>` — a strict allow-list,
-never a pipe into the CLI. The reasoning is in `MeshStatsNet.h` and it is about
+never a pipe into the CLI. The reasoning is in `MeshManagerNet.h` and it is about
 who can reach that topic: **anyone holding broker credentials**, shared, leaked
 or mistyped. One `reboot` in a loop costs you the roof repeater.
 
@@ -130,8 +130,8 @@ that has to hold.
 Then the broker configuration becomes load-bearing rather than hygienic, and
 `mosquitto/acl.example` has to say so:
 
-- The site's account is the **only** one with `write meshcore/+/cmd`. Node
-  accounts get `write meshcore/<own-id>/#` and nothing else, so a compromised
+- The site's account is the **only** one with `write meshmanager/+/cmd`. Node
+  accounts get `write meshmanager/<own-id>/#` and nothing else, so a compromised
   node cannot command its neighbours.
 - Every node account is per node, never shared. A shared account means a leak
   cannot be contained without re-provisioning every node.
@@ -194,7 +194,7 @@ are not offered at all.
   editable by whoever runs the site and the node's is compiled in.
 
 For a `semi_managed` target the transmitting node is the monitor, running our
-firmware — so the tier table and its validation live in `MeshStatsNet`, applied
+firmware — so the tier table and its validation live in `MeshManagerNet`, applied
 before anything is radiated. The target is stock MeshCore and validates almost
 nothing: `set` parses with `_atoi` and takes what it gets. **A node that accepts
 a nonsense value is more dangerous than one that refuses**, and the stock

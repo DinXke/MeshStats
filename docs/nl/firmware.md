@@ -2,13 +2,13 @@
 
 *[English](../firmware.md)*
 
-MeshStats levert een reeks aanpassingen op de [MeshCore](https://github.com/meshcore-dev/MeshCore)-
+MeshManager levert een reeks aanpassingen op de [MeshCore](https://github.com/meshcore-dev/MeshCore)-
 firmware. Ze vallen uiteen in twee groepen:
 
 - **Companion-node** (`examples/companion_radio`) — meerdere gelijktijdige
   WiFi-clients, een fix voor de kanaalteller, en de stats-publisher met zijn
   webchatclient.
-- **Repeater** (`examples/simple_repeater`) — `MeshStatsNet`: WiFi met
+- **Repeater** (`examples/simple_repeater`) — `MeshManagerNet`: WiFi met
   AP-fallback, een beheerpagina, OTA over het gewone netwerk, een telnetconsole
   op de MeshCore-CLI, MQTT-publicatie, monitoring van andere repeaters,
   kloksynchronisatie, en back-up/herstel van het bestandssysteem.
@@ -23,15 +23,15 @@ Alles is opt-in bij het bouwen. Zonder de vlaggen krijgt u standaard MeshCore.
 | `examples/companion_radio/page.html`, `gen_page.py`, `StatsPage.h` | De webclient, zijn buildstap en zijn gegenereerde uitvoer |
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet-hook |
 | `examples/companion_radio/main.cpp` | Koppelt de publisher in |
-| `examples/simple_repeater/MeshStatsNet.{h,cpp}` | De netwerkmodule van de repeater |
+| `examples/simple_repeater/MeshManagerNet.{h,cpp}` | De netwerkmodule van de repeater |
 | `repeater-hooks.patch` | De aanpassingen in `simple_repeater` (inclusief zijn `fillStatsJson()`) |
-| `meshstats.patch` | Alles, als één patch |
+| `meshmanager.patch` | Alles, als één patch |
 
 Twee versienummers reizen samen mee en mogen niet verward worden.
-`FIRMWARE_VERSION` is die van MeshCore; `MESHSTATS_VERSION`
-(`MeshStatsNet.h:138`) is die van deze module, en de twee bewegen onafhankelijk
+`FIRMWARE_VERSION` is die van MeshCore; `MESHMANAGER_VERSION`
+(`MeshManagerNet.h:138`) is die van deze module, en de twee bewegen onafhankelijk
 van elkaar. `ver` drukt beide af, en beide verschijnen in elke stats-payload als
-`repeater.fw` en `repeater.fw_meshstats` — want wanneer er iets misloopt, is de
+`repeater.fw` en `repeater.fw_meshmanager` — want wanneer er iets misloopt, is de
 eerste vraag naar welke van de twee men kijkt.
 
 ---
@@ -196,7 +196,7 @@ in zijn val mag sleuren.
 bovenaan `MyMesh.cpp` gedeclareerd zijn:
 
 ```cpp
-void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
+void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
 ```
 
 die de publisher definieert (`StatsPublisher.cpp:14-24`) en in `begin()` naar
@@ -540,12 +540,12 @@ omdat verzenden slechts een pakket in de wachtrij zet.
 
 ---
 
-## 4. `MeshStatsNet` — de repeatermodule
+## 4. `MeshManagerNet` — de repeatermodule
 
-`examples/simple_repeater/MeshStatsNet.{h,cpp}`, ingeschakeld met
-`-D MESHSTATS_NET=1`.
+`examples/simple_repeater/MeshManagerNet.{h,cpp}`, ingeschakeld met
+`-D MESHMANAGER_NET=1`.
 
-Het uitgangspunt, gesteld in de headercommentaar (`MeshStatsNet.h:94-124`): deze
+Het uitgangspunt, gesteld in de headercommentaar (`MeshManagerNet.h:94-124`): deze
 repeater staat op een dak en draait op een zonnepaneel. **Hij mag nooit
 onbereikbaar worden, en hij mag nooit meer energie verbruiken dan het paneel
 binnenbrengt.** Elke ontwerpkeuze hieronder volgt uit die twee zinnen, en waar
@@ -561,18 +561,18 @@ void msnet_loop();                                            // in loop()
 bool msnet_handle_command(const char *command, char *reply);  // from any CLI
 ```
 
-Vier bijkomende hooks voeden hem vanaf de meshzijde (`MeshStatsNet.h:148-180`):
-`meshstats_on_raw_packet()`, `meshstats_on_monitor_response()`,
-`meshstats_on_advert()` en `meshstats_advert_name()`, plus
-`meshstats_batt_percent()`, dat bestaat opdat de beheerpagina, het energiebeheer
+Vier bijkomende hooks voeden hem vanaf de meshzijde (`MeshManagerNet.h:148-180`):
+`meshmanager_on_raw_packet()`, `meshmanager_on_monitor_response()`,
+`meshmanager_on_advert()` en `meshmanager_advert_name()`, plus
+`meshmanager_batt_percent()`, dat bestaat opdat de beheerpagina, het energiebeheer
 en de gepubliceerde statistieken alle drie *hetzelfde* batterijcijfer citeren —
 twee curves die enkele procenten van elkaar verschillen, zijn een bugmelding in
 wording.
 
 ### 4.1 Versiegeschiedenis
 
-De gezaghebbende changelog is het blokcommentaar bovenaan `MeshStatsNet.cpp`
-(regels 1–262). De huidige versie staat in `MeshStatsNet.h:138`. Deze tabel is
+De gezaghebbende changelog is het blokcommentaar bovenaan `MeshManagerNet.cpp`
+(regels 1–262). De huidige versie staat in `MeshManagerNet.h:138`. Deze tabel is
 een leeshulp, geen vervanging: het commentaar legt de *redenering* vast, en dat
 is het deel dat telt wanneer beslist moet worden of er iets gewijzigd wordt.
 
@@ -831,7 +831,7 @@ python -m esptool --port COM4 read_flash 0 0x1000000 backup.bin
 geen van beide zijden ooit een volledig bestand in RAM houdt:
 
 ```
-MESHSTATS-BACKUP 1
+MESHMANAGER-BACKUP 1
 FILE /identity 64
 <up to 64 bytes per line, lowercase hex>
 FILE /repeater_prefs 128
@@ -889,7 +889,7 @@ verkeerde SSID heeft geen andere weg naar binnen.
 
 | Commando | Effect |
 |---|---|
-| `ver` | De versie van deze module plus de MeshCore-versie waarop ze gebouwd is. **Geen MeshStats-naam in het antwoord betekent dat deze module niet draait** |
+| `ver` | De versie van deze module plus de MeshCore-versie waarop ze gebouwd is. **Geen MeshManager-naam in het antwoord betekent dat deze module niet draait** |
 | `wifi` | Toestand, IP, signaal, batterij, publicatie-interval |
 | `wifi ssid <name>` | Het netwerk instellen; leeg herstelt de ingecompileerde standaardwaarde |
 | `wifi pass <word>` | Het WiFi-wachtwoord instellen |
@@ -1145,7 +1145,7 @@ vijf bytes geweigerd werden waarvoor deze functie bestaat.
 
 #### `SET_PARAMS` — de parametertabel
 
-Negentien records, in `MeshStatsNet.cpp:1352`. Dezelfde tabel wordt gebruikt voor
+Negentien records, in `MeshManagerNet.cpp:1352`. Dezelfde tabel wordt gebruikt voor
 de eigen dagelijkse sweep van deze node en voor de LoRa-sweep van een gemonitorde
 node, omdat beide in dezelfde kolom van dezelfde tabel op de site belanden — en
 een regel die voor de ene wel en voor de andere niet gold, is precies hoe
@@ -1406,7 +1406,7 @@ twee bytes belandt, is al een half teken voor hij de publisher bereikt.
 <a id="the-three-safety-nets"></a>
 ### 4.14 De vangnetten
 
-`MeshStatsNet` is maatwerkcode die draait op een node die niet mag sterven. Ze
+`MeshManagerNet` is maatwerkcode die draait op een node die niet mag sterven. Ze
 gaat er daarom van uit dat zij zelf het defecte onderdeel zou kunnen zijn. Er
 zijn **vier** netten, en elk dekt een storing af die de andere niet kunnen zien.
 
@@ -1430,7 +1430,7 @@ volgende boot na een oplossing alles opnieuw probeert.
 
 **Waarom het radiogeval telt.** De standaard `simple_repeater` roept `halt()` aan
 wanneer de radio niet initialiseert, wat op een daknode een baksteen betekent. Met
-`MESHSTATS_NET`:
+`MESHMANAGER_NET`:
 
 ```cpp
 if (!radio_ok) {
@@ -1503,11 +1503,11 @@ cd MeshCore
 git checkout companion-v1.17.0
 
 # copy the files over
-cp -r /path/to/MeshStats/firmware/src/*      src/
-cp -r /path/to/MeshStats/firmware/examples/* examples/
+cp -r /path/to/MeshManager/firmware/src/*      src/
+cp -r /path/to/MeshManager/firmware/examples/* examples/
 
 # or apply as a patch
-git apply /path/to/MeshStats/firmware/meshstats.patch
+git apply /path/to/MeshManager/firmware/meshmanager.patch
 ```
 
 `repeater-hooks.patch` bevat alleen de aanpassingen in `simple_repeater`, voor wie
@@ -1566,7 +1566,7 @@ build_flags =
   -D ADVERT_LON=0.0
   -D ADMIN_PASSWORD='"CHANGE_ME"'
   -D MAX_NEIGHBOURS=50
-  -D MESHSTATS_NET=1
+  -D MESHMANAGER_NET=1
   -D WIFI_SSID='"YOUR_SSID"'
   -D WIFI_PWD='"YOUR_PASSWORD"'
 build_src_filter = ${heltec_v4_oled.build_src_filter}
@@ -1579,12 +1579,12 @@ lib_deps =
   knolleary/PubSubClient @ ^2.8
 ```
 
-Zet `DISABLE_WIFI_OTA` **niet**. Zolang `MeshStatsNet` draait, onderschept het
+Zet `DISABLE_WIFI_OTA` **niet**. Zolang `MeshManagerNet` draait, onderschept het
 `start ota`; schakelt het zichzelf uit na herhaalde crashes, dan is de standaard
 OTA de fallback (§4.14).
 
 De ingecompileerde `WIFI_SSID` / `WIFI_PWD` zijn enkel standaardwaarden.
-`MeshStatsNet` overschrijft ze vanuit `/msnet.json` zodra er iets via de pagina of
+`MeshManagerNet` overschrijft ze vanuit `/msnet.json` zodra er iets via de pagina of
 de CLI ingesteld wordt. Ze bestaan opdat de allereerste flash op het netwerk
 opkomt.
 
@@ -1592,7 +1592,7 @@ opkomt.
 
 | Vlag | Standaard | Betekenis |
 |---|---|---|
-| `MESHSTATS_NET` | niet gezet | De netwerkmodule van de repeater inschakelen |
+| `MESHMANAGER_NET` | niet gezet | De netwerkmodule van de repeater inschakelen |
 | `WIFI_MAX_CLIENTS` | 4 | Gelijktijdige companion-clients (~2–3 kB RAM elk) |
 | `TCP_PORT` | 5000 | TCP-poort voor de companion |
 | `MAX_CONTACTS` | — | Contactslots; ~316 bytes elk. Zie hierboven |
@@ -1683,7 +1683,7 @@ repeater.
 | Fix voor de kanaalteller | werkt |
 | Beheerpagina, chatclient en `/stats.json` op de companion | werkt |
 | MQTT-publicatie van statistieken | werkt |
-| `MeshStatsNet` op de repeater | werkt |
+| `MeshManagerNet` op de repeater | werkt |
 | Andere repeaters monitoren over LoRa | werkt |
 | Commando's vanaf de site over MQTT (`cmd`-topic, 1.8.0) | geschreven en nagelezen, **nog op geen enkele node geflasht** |
 | Instellingensweep van een gemonitorde repeater over LoRa (1.9.0) | geschreven en nagelezen, **nog op geen enkele node geflasht** — vereist 1.9.0 op de monitorende node en adminrechten op de gemonitorde |

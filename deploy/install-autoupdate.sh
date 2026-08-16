@@ -15,14 +15,14 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 echo "== Systemd =="
 # Het pad van deze kloon wordt in de service-unit ingevuld; systemd kent geen
 # relatieve paden en de docs schrijven niet voor waar je kloont.
-sed "s|__REPO_DIR__|$REPO_DIR|g" "$REPO_DIR/deploy/meshstats-autoupdate.service" \
-  > /etc/systemd/system/meshstats-autoupdate.service
-cp "$REPO_DIR/deploy/meshstats-autoupdate.timer" /etc/systemd/system/
+sed "s|__REPO_DIR__|$REPO_DIR|g" "$REPO_DIR/deploy/meshmanager-autoupdate.service" \
+  > /etc/systemd/system/meshmanager-autoupdate.service
+cp "$REPO_DIR/deploy/meshmanager-autoupdate.timer" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now meshstats-autoupdate.timer
+systemctl enable --now meshmanager-autoupdate.timer
 
-systemctl --no-pager list-timers meshstats-autoupdate.timer || true
+systemctl --no-pager list-timers meshmanager-autoupdate.timer || true
 echo
 echo "Klaar. De timer draait als root; zorg dat deze kloon ook van root is,"
 echo "anders weigert git ('dubious ownership')."
-echo "Volgen: journalctl -u meshstats-autoupdate -f   (stil als er niets is)"
+echo "Volgen: journalctl -u meshmanager-autoupdate -f   (stil als er niets is)"

@@ -18,7 +18,7 @@
 <div class="card notice">
   <strong>Geen repository bekend.</strong> De site leidt af waar de releases staan uit de
   git-remote van de werkkopie, en die is hier niet te vinden — in een container zit geen
-  <code>.git</code>. Zet <code>MCS_GITHUB_REPO</code> op <code>eigenaar/repo</code>.
+  <code>.git</code>. Zet <code>MM_GITHUB_REPO</code> op <code>eigenaar/repo</code>.
 </div>
 {% elif rel_error == "rate_limited" %}
 <div class="card notice">
@@ -36,8 +36,8 @@
 {% if not have_credentials %}
 <div class="card notice">
   <strong>Geen inloggegevens voor de nodes.</strong> Een image gaat over de beheerpagina van
-  de node zelf, achter zijn eigen login. Zet <code>MCS_FW_NODE_USER</code> en
-  <code>MCS_FW_NODE_PASS</code> in de omgeving van de server. Zolang die leeg zijn blijft
+  de node zelf, achter zijn eigen login. Zet <code>MM_FW_NODE_USER</code> en
+  <code>MM_FW_NODE_PASS</code> in de omgeving van de server. Zolang die leeg zijn blijft
   elke upgradeknop uit.
 </div>
 {% endif %}
@@ -185,7 +185,7 @@
       er is geen beheeradres ingevuld, dus de server kent geen IP-pad naar deze node.
       Vul er een in als die er wel is.
       {%- elif ota.blocker == "no_fw" %}
-      deze node meldt geen MeshStats-versie, dus draait hij onze firmware waarschijnlijk
+      deze node meldt geen MeshManager-versie, dus draait hij onze firmware waarschijnlijk
       niet. Een image van dit project hoort daar niet heen.
       {%- else %}{{ ota.blocker }}.
       {%- endif %}

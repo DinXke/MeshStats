@@ -12,14 +12,14 @@ On first start, `main.bootstrap()` creates an `admin` account with a
 `secrets.token_urlsafe(12)` password and prints it to stdout **once**:
 
 ```
-[mc-repeater-stats] Eerste start: admin-account aangemaakt.
-[mc-repeater-stats] Gebruikersnaam: admin  Wachtwoord: <…>
-[mc-repeater-stats] Wijzig dit meteen via /admin.
+[meshmanager] Eerste start: admin-account aangemaakt.
+[meshmanager] Gebruikersnaam: admin  Wachtwoord: <…>
+[meshmanager] Wijzig dit meteen via /admin.
 ```
 
 ```bash
-docker compose logs meshstats | grep -i wachtwoord     # Docker
-journalctl -u mc-repeater-stats | grep -i wachtwoord   # systemd
+docker compose logs meshmanager | grep -i wachtwoord     # Docker
+journalctl -u meshmanager | grep -i wachtwoord   # systemd
 ```
 
 It is only created when the `admins` table is **empty**, so it never reappears
@@ -28,7 +28,7 @@ after you have deleted or renamed the account.
 ### Setting a password from the command line
 
 ```bash
-docker compose exec meshstats python -m app.main set-password admin
+docker compose exec meshmanager python -m app.main set-password admin
 ```
 
 Reads the password from stdin, minimum 8 characters, and creates the account if
@@ -52,7 +52,7 @@ attacking.
 
 ## Sessions
 
-The session cookie `mcs_session` is `base64(payload).hmac`, signed with the key
+The session cookie `mm_session` is `base64(payload).hmac`, signed with the key
 in `<data>/secret.key`. The payload holds:
 
 | Field | Contents |
@@ -92,7 +92,7 @@ characters. Every `POST` under `/admin` carries it as a form field and
 session cookie.
 
 The login form has no session yet, so its token hangs off a **short-lived login
-nonce** in the `mcs_login` cookie (`LOGIN_TTL` = 30 minutes), issued fresh on
+nonce** in the `mm_login` cookie (`LOGIN_TTL` = 30 minutes), issued fresh on
 every view of the page. The token is worthless to an attacker who cannot also
 read the cookie it is derived from.
 
@@ -151,10 +151,10 @@ visitor onto one proxy address. Raise it only when you really added a hop.
 Created in `/admin`, used as `Authorization: Bearer <token>` on the ingest
 endpoints.
 
-- The token is `mcs_` + `secrets.token_urlsafe(32)`.
+- The token is `mm_` + `secrets.token_urlsafe(32)`.
 - Only its SHA-256 is stored. **The site cannot show it again.**
 - It is handed to the browser once through a 60-second `HttpOnly` cookie
-  (`mcs_new_token`) rather than through the URL, so it does not land in a proxy
+  (`mm_new_token`) rather than through the URL, so it does not land in a proxy
   log or a browser history.
 - Revoking sets a flag rather than deleting the row, so `last_used` survives.
 - `last_used` is written on every successful check, which is how a token nobody

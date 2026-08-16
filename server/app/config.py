@@ -104,7 +104,7 @@ DB_MAX_MB = int(env("DB_MAX_MB", "512"))
 # Minutes between two retention passes. Pruning only at startup means a server
 # that runs for months never prunes at all -- see retention.py.
 PRUNE_MINUTES = int(env("PRUNE_MINUTES", "60"))
-SITE_NAME = env("SITE_NAME", "MeshCore Repeater Stats")
+SITE_NAME = env("SITE_NAME", "MeshManager")
 # Heartbeat: also store a sample when the value did not change but the previous
 # one is older than this many minutes, so charts keep running.
 HEARTBEAT_MIN = int(env("HEARTBEAT_MIN", "5"))

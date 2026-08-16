@@ -19,7 +19,7 @@ De site draait op poort **8080**. Bij de eerste start wordt een admin-account
 aangemaakt en het wachtwoord één keer afgedrukt:
 
 ```bash
-docker compose logs meshstats | grep -i wachtwoord
+docker compose logs meshmanager | grep -i wachtwoord
 ```
 
 Log in op `/admin`, wijzig het wachtwoord, en maak een API-token aan als je ook
@@ -29,11 +29,11 @@ over HTTP wilt pushen.
 
 | Service | Image | Poort | Volumes |
 |---|---|---|---|
-| `meshstats` | gebouwd uit `./server` | `${MESHSTATS_PORT:-8080}` → 8080 | `meshstats-data:/data` |
+| `meshmanager` | gebouwd uit `./server` | `${MESHMANAGER_PORT:-8080}` → 8080 | `meshstats-data:/data` |
 | `mosquitto` | `eclipse-mosquitto:2` | `${MQTT_PORT:-1883}` → 1883 | config (ro), `mosquitto-data`, `mosquitto-log` |
 | `victoria` | `victoriametrics/victoria-metrics` | geen (alleen intern) | `victoria-data:/victoria-metrics-data` |
 
-`meshstats` verklaart `depends_on: [mosquitto, victoria]`. Dat regelt alleen de
+`meshmanager` verklaart `depends_on: [mosquitto, victoria]`. Dat regelt alleen de
 startvolgorde en geen gereedheid — beide clients proberen het uit zichzelf
 opnieuw, dus een afhankelijkheid die nog niet draait is geen probleem.
 
@@ -74,18 +74,18 @@ Op Debian/Ubuntu doet dit:
 
 1. `python3`, `python3-venv` en `rsync` installeren
 2. een systeemgebruiker `mcstats` aanmaken
-3. `server/` naar `/opt/mc-repeater-stats/server` rsyncen
+3. `server/` naar `/opt/meshmanager/server` rsyncen
 4. een venv bouwen en `requirements.txt` installeren
-5. `mc-repeater-stats.service` installeren en starten
+5. `meshmanager.service` installeren en starten
 
-De gegevens staan in `/var/lib/mc-repeater-stats`. De unit draait met
+De gegevens staan in `/var/lib/meshmanager`. De unit draait met
 `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp` en
 `ReadWritePaths` beperkt tot de datamap.
 
 Het wachtwoord van de eerste start gaat naar het journal:
 
 ```bash
-journalctl -u mc-repeater-stats | grep -i wachtwoord
+journalctl -u meshmanager | grep -i wachtwoord
 ```
 
 > **De systemd-unit zet geen `MM_MQTT_*`-variabelen, dus MQTT-ingest staat uit
@@ -93,12 +93,12 @@ journalctl -u mc-repeater-stats | grep -i wachtwoord
 > mee:
 >
 > ```bash
-> sudo systemctl edit mc-repeater-stats
+> sudo systemctl edit meshmanager
 > ```
 > ```ini
 > [Service]
 > Environment=MM_MQTT_HOST=127.0.0.1
-> Environment=MM_MQTT_USER=meshstats
+> Environment=MM_MQTT_USER=meshmanager
 > Environment=MM_MQTT_PASS=...
 > ```
 >
@@ -106,12 +106,12 @@ journalctl -u mc-repeater-stats | grep -i wachtwoord
 > die via `systemctl show` leesbaar zijn.
 
 `install.sh` opnieuw draaien werkt ter plaatse bij. Het gebruikt
-`rsync --delete`, dus alles wat je onder `/opt/mc-repeater-stats/server`
+`rsync --delete`, dus alles wat je onder `/opt/meshmanager/server`
 toevoegde, wordt verwijderd.
 
 ## Omgevingsvariabelen
 
-Elke variabele heet `MM_<NAAM>`. De oude schrijfwijze `MCS_<NAAM>` wordt **nog
+Elke variabele heet `MM_<NAAM>`. De oude schrijfwijze `MM_<NAAM>` wordt **nog
 steeds gelezen** als terugval (`config.env()`), zodat een bestaande `.env` de
 hernoeming gewoon overleeft: wie zijn installatie draaiend heeft, hoort niet
 eerst een configuratiebestand te moeten herschrijven voor de site weer opstart.
@@ -132,9 +132,9 @@ volgende hoofdversie.
 
 | Variabele | Standaard | Betekenis |
 |---|---|---|
-| `MM_DATA_DIR` | `server/data` | Waar de databank en de geheime sleutel staan. Docker zet `/data`; systemd zet `/var/lib/mc-repeater-stats`. |
+| `MM_DATA_DIR` | `server/data` | Waar de databank en de geheime sleutel staan. Docker zet `/data`; systemd zet `/var/lib/meshmanager`. |
 | `MM_MQTT_PREFIX` | `meshmanager` | Het MQTT-topicvoorvoegsel dat deze installatie bezit. Er wordt daarnaast naar het oude `meshcore` geluisterd, zolang er nog niet-geflashte nodes onder publiceren. |
-| `MM_SITE_NAME` | `MeshCore Repeater Stats` | Titel in de kop |
+| `MM_SITE_NAME` | `MeshManager` | Titel in de kop |
 | `MM_RETENTION_DAYS` | `180` | Bewaartermijn voor metingen. Wordt overruled door de instelling in de databank als je hem in `/admin` wijzigt. |
 | `MM_HEARTBEAT_MIN` | `5` | Minuten; forceert een grafiekpunt ook als de waarde niet veranderde. Ook aanpasbaar in `/admin`. |
 | `MM_PACKET_RETENTION_DAYS` | `7` | Bewaartermijn voor ruwe pakketten; die komen veel sneller binnen dan metingen. Aanpasbaar in `/admin`, en het is meteen het venster van de heatmap. |
@@ -150,7 +150,7 @@ volgende hoofdversie.
 |---|---|---|
 | `MM_MQTT_HOST` | *(leeg — MQTT uit)* | `mosquitto` |
 | `MM_MQTT_PORT` | `1883` | `1883` |
-| `MM_MQTT_USER` | *(leeg)* | `meshstats` |
+| `MM_MQTT_USER` | *(leeg)* | `meshmanager` |
 | `MM_MQTT_PASS` | *(leeg)* | uit `.env` |
 | `MM_MQTT_TOPIC` | *(leeg — `<voorvoegsel>/+/stats` voor elk voorvoegsel)* | idem |
 | `MM_MQTT_RX_TOPIC` | *(leeg — `<voorvoegsel>/+/rx` voor elk voorvoegsel)* | idem |
@@ -215,7 +215,7 @@ nakijken als hij zich misdraagt.
 
 | Variabele | Standaard | Betekenis |
 |---|---|---|
-| `MESHSTATS_PORT` | `8080` | Hostpoort voor de site |
+| `MESHMANAGER_PORT` | `8080` | Hostpoort voor de site |
 | `MQTT_PORT` | `1883` | Hostpoort voor de broker |
 
 De meeste applicatie-instellingen zijn ook in `/admin` te wijzigen, waar ze in de
@@ -316,7 +316,7 @@ Voor een compose-installatie die `main` uit zichzelf moet volgen:
 sudo bash deploy/install-autoupdate.sh
 ```
 
-Dat installeert `meshstats-autoupdate.timer`, die elke vijf minuten
+Dat installeert `meshmanager-autoupdate.timer`, die elke vijf minuten
 `deploy/autoupdate.sh` draait vanuit de kloon waarin je het installatiescript
 uitvoerde. Het script haalt `main` op, stopt stil als er niets nieuws is, en doet
 anders precies de handmatige reeks hierboven: `git pull --ff-only`,
@@ -345,8 +345,8 @@ De timer is stil van opzet — alleen rondes die werk vonden, of op een fout
 stuitten, schrijven iets:
 
 ```bash
-journalctl -u meshstats-autoupdate -f
-systemctl list-timers meshstats-autoupdate.timer
+journalctl -u meshmanager-autoupdate -f
+systemctl list-timers meshmanager-autoupdate.timer
 ```
 
 De unit draait als root (docker heeft dat nodig); kloon de repository ook als
@@ -361,10 +361,10 @@ om te herbouwen, dus daar is de timer niet van toepassing.
 ### Back-up
 
 ```bash
-docker compose exec meshstats \
+docker compose exec meshmanager \
   sqlite3 /data/meshmanager.sqlite3 ".backup '/data/backup.sqlite3'"
-docker compose cp meshstats:/data/backup.sqlite3 ./backup.sqlite3
-docker compose cp meshstats:/data/secret.key ./secret.key
+docker compose cp meshmanager:/data/backup.sqlite3 ./backup.sqlite3
+docker compose cp meshmanager:/data/secret.key ./secret.key
 ```
 
 Gebruik `.backup` in plaats van het bestand te kopiëren — de databank draait in
@@ -373,7 +373,7 @@ WAL-modus en een kale kopie kan inconsistent zijn.
 ### Het adminwachtwoord opnieuw zetten
 
 ```bash
-docker compose exec meshstats python -m app.main set-password admin
+docker compose exec meshmanager python -m app.main set-password admin
 ```
 
 Leest het nieuwe wachtwoord van stdin; minstens 8 tekens.
@@ -402,12 +402,12 @@ hostpoort):
 
 ```bash
 # staat hij aan?
-docker compose exec meshstats python -c \
+docker compose exec meshmanager python -c \
   "import urllib.request;print(urllib.request.urlopen('http://victoria:8428/health').read())"
 
 # welke reeksen bestaan er -- let op de expliciete start/end: zonder die kijkt de
 # label-API maar een paar uur terug en denk je dat er gegevens ontbreken
-docker compose exec meshstats python -c \
+docker compose exec meshmanager python -c \
   "import json,urllib.request,time;e=int(time.time());print(len(json.load(urllib.request.urlopen(
    f'http://victoria:8428/api/v1/label/__name__/values?start={e-400*86400}&end={e}'))['data']))"
 ```
@@ -473,9 +473,9 @@ door het aantal repeaters en contacten, dus dat is meestal geen probleem.
 ### Logboeken
 
 ```bash
-docker compose logs -f meshstats
+docker compose logs -f meshmanager
 docker compose logs -f mosquitto
-journalctl -u mc-repeater-stats -f     # systemd
+journalctl -u meshmanager -f     # systemd
 ```
 
 Loggernamen, zodat een filter er een uit kan pikken: `meshmanager.mqtt` (ingest en
@@ -513,8 +513,8 @@ de testmap.
 
 Noch de HA-integratie noch de TCP-proxy hoort bij de compose-stack.
 
-**`mc_repeater_stats`** — kopieer
-`homeassistant/custom_components/mc_repeater_stats/` naar je
+**`meshmanager`** — kopieer
+`homeassistant/custom_components/meshmanager/` naar je
 HA-`config/custom_components/`, herstart, en voeg de integratie toe. Ze vraagt om
 de URL van de site en een API-token dat je in `/admin` aanmaakte. Ze vereist de
 `meshcore`-integratie, want ze leest diens entiteiten en roept

@@ -1,5 +1,5 @@
 [Unit]
-Description=MeshStats bijwerken vanaf git (poll, dan docker compose rebuild)
+Description=MeshManager bijwerken vanaf git (poll, dan docker compose rebuild)
 # Wants en geen Requires: herstart docker toevallig net, dan moet deze ronde
 # gewoon falen en de volgende het opnieuw proberen -- niet mee omvallen.
 Wants=network-online.target docker.service

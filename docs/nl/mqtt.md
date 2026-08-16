@@ -19,22 +19,48 @@ snprintf(out, max, "%s/%s/%s", _cfg.prefix,
 
 | Deel | Waarde |
 |---|---|
-| `<prefix>` | Ingesteld op de node, standaard `meshcore` |
+| `<prefix>` | Ingesteld op de node, standaard `meshmanager` |
 | `<node>` | 12 hextekens: de eerste **6 bytes** van de Ed25519-publieke sleutel van de node, in kleine letters |
 | `<leaf>` | `stats` of `rx` vanaf de node, `cmd` ernaartoe |
 
-Voorbeeld: `meshcore/e3d3f4d7ed01/stats`.
+Voorbeeld: `meshmanager/e3d3f4d7ed01/stats`.
 
 Als de node zijn eigen sleutel nog niet heeft kunnen bepalen, valt `<node>` terug
-op de letterlijke tekst `node`. Zie je `meshcore/node/stats`, dan is de publisher
+op de letterlijke tekst `node`. Zie je `meshmanager/node/stats`, dan is de publisher
 gestart voordat de mesh-identiteit beschikbaar was.
+
+### Twee voorvoegsels tegelijk
+
+De server schrijft zich in op **allebei**: `meshmanager/…` en `meshcore/…`, en
+behandelt ze identiek. Dat is geen vriendelijkheid maar wat de hernoeming
+overleefbaar maakt. Nodes en server gaan nooit op hetzelfde moment om, en een
+node kan maar op één voorvoegsel publiceren, dus de kant die te leren is allebei
+te verstaan moet dat doen.
+
+Een opdracht vertrekt op het voorvoegsel waarop die node **zich meldt** —
+onthouden bij binnenkomst en vastgelegd in `repeaters.topic_prefix`, zodat het
+een herstart van de site overleeft. Een node waar we nog nooit iets van hoorden,
+krijgt het op allebei: twee berichtjes van acht bytes zijn goedkoper dan een
+knop die niets doet.
+
+`/admin` toont per voorvoegsel hoeveel nodes er binnenkomen. Dat is het getal
+dat de vraag "mag de terugval weg?" beantwoordt, en daarom staat het op de
+pagina en niet in iemands hoofd. Zie [`migration.md`](migration.md).
 
 ### Abonnementen van de server
 
 | Env-variabele | Standaard | Doel |
 |---|---|---|
-| `MCS_MQTT_TOPIC` | `meshcore/+/stats` | Periodieke statistieken |
-| `MCS_MQTT_RX_TOPIC` | `meshcore/+/rx` | Ruwe ontvangen pakketten (**in ontwikkeling**) |
+| `MM_MQTT_PREFIX` | `meshmanager` | Het voorvoegsel dat dit project bezit. Er wordt altijd ook naar `meshcore` geluisterd |
+| `MM_MQTT_TOPIC` | *(leeg)* | Een **extra** patroon voor periodieke statistieken, bovenop de voorvoegsels hierboven |
+| `MM_MQTT_RX_TOPIC` | *(leeg)* | Een extra patroon voor ruwe ontvangen pakketten |
+
+De laatste twee bevatten vroeger het volledige topic en zijn nu standaard
+leeg: de voorvoegsels dekken het af. Een waarde die je er wél zet, komt bij
+de inschrijvingen bovenop in plaats van ervoor in de plaats — zodat een
+installatie die op een gedeelde broker onder een eigen tak draait deze
+hernoeming doorkomt in plaats van doof te worden op het moment dat ze
+bijwerkt.
 
 Beide worden geabonneerd op **QoS 0**.
 
@@ -42,7 +68,11 @@ Beide worden geabonneerd op **QoS 0**.
 
 | Env-variabele | Standaard | Doel |
 |---|---|---|
-| `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | Eén commando voor één node |
+| `MM_MQTT_CMD_TOPIC` | `{prefix}/{node}/cmd` | Eén commando voor één node |
+
+`{prefix}` wordt ingevuld met het voorvoegsel waarop **die node** zich meldt.
+Een patroon zonder `{prefix}` wordt letterlijk gebruikt: wie een vast topic
+opgeeft, bedoelt dat.
 
 `{node}` wordt ingevuld met de eigen pubkey-prefix van die node, zodat een
 broker-ACL de *lees*rechten van een node aan dezelfde prefix kan binden als zijn
@@ -54,10 +84,10 @@ spreken":
 
 | Env-variabele | Standaard | Doel |
 |---|---|---|
-| `MCS_CLOCKSYNC_ENABLED` | `1` | De tijd al dan niet naar de nodes sturen |
-| `MCS_CLOCKSYNC_HOURS` | `24` | Uren tussen twee rondes |
-| `MCS_CLOCKSYNC_MAX_ERROR_S` | `10` | Onzekerheid die de kernel over zijn eigen klok mag hebben voordat we ze niet meer geloven |
-| `MCS_CLOCKSYNC_MAX_JUMP_S` | `30` | Sprong van de wandklok ten opzichte van de monotone klok die als sprong telt in plaats van als correctie |
+| `MM_CLOCKSYNC_ENABLED` | `1` | De tijd al dan niet naar de nodes sturen |
+| `MM_CLOCKSYNC_HOURS` | `24` | Uren tussen twee rondes |
+| `MM_CLOCKSYNC_MAX_ERROR_S` | `10` | Onzekerheid die de kernel over zijn eigen klok mag hebben voordat we ze niet meer geloven |
+| `MM_CLOCKSYNC_MAX_JUMP_S` | `30` | Sprong van de wandklok ten opzichte van de monotone klok die als sprong telt in plaats van als correctie |
 
 Zie [De klok gelijkzetten](#de-klok-gelijkzetten).
 
@@ -68,7 +98,7 @@ dan de payload, en de twee worden bewust gescheiden gehouden:
 
 | | Beantwoordt | Komt uit |
 |---|---|---|
-| **Publisher** | welke node dit bericht verstuurde | het topic, `meshcore/<node>/…` |
+| **Publisher** | welke node dit bericht verstuurde | het topic, `meshmanager/<node>/…` |
 | **Onderwerp** | welke repeater de cijfers beschrijven | `repeater.pubkey_prefix` in de payload |
 
 Meestal is dat dezelfde node die over zichzelf rapporteert. Ze **mogen
@@ -144,7 +174,7 @@ rapporteert".
 |---|---|---|
 | **Companion** | `MyMesh::fillStatsJson()` in `examples/companion_radio` | zichzelf |
 | **Repeater** | `MyMesh::fillStatsJson()` toegevoegd door `repeater-hooks.patch` | zichzelf |
-| **Monitor die een repeater doorgeeft** | `publishMonitorRound()` in `MeshStatsNet.cpp` | een *andere* repeater |
+| **Monitor die een repeater doorgeeft** | `publishMonitorRound()` in `MeshManagerNet.cpp` | een *andere* repeater |
 
 Alle drie publiceren op `<prefix>/<node>/stats`. De eerste twee beschrijven de
 node in het topic; de derde beschrijft iemand anders en zegt dat in
@@ -157,10 +187,10 @@ node in het topic; de derde beschrijft iemand anders en zegt dat in
 | `repeater.pubkey_prefix` | string | — | ✓ | ✓ | ✓ | eerste 6 bytes van de publieke sleutel, hex. Optioneel bij de eerste twee: laat je het weg, dan leest de server het uit het topic |
 | `repeater.name` | string | — | ✓ | ✓ | ✓ | `_prefs.node_name`, of de naam die de monitor voor dat item heeft. JSON-escaped sinds 1.9.1 |
 | `repeater.fw` | string | — | | ✓ | | `FIRMWARE_VERSION` — de versie van MeshCore |
-| `repeater.fw_meshstats` | string | — | | ✓ | | `MESHSTATS_VERSION`, leeg wanneer de module niet meegecompileerd is |
+| `repeater.fw_meshmanager` | string | — | | ✓ | | `MESHMANAGER_VERSION`, leeg wanneer de module niet meegecompileerd is |
 | `online` | bool | — | ✓ | ✓ | ✓ | altijd `true`; een levensteken |
 | `bat` | float | V | ✓ | ✓ | ✓ | celspanning |
-| `battery_percentage` | int | % | | ✓ | ✓ | gedeelde curve, zie `meshstats_batt_percent()` |
+| `battery_percentage` | int | % | | ✓ | ✓ | gedeelde curve, zie `meshmanager_batt_percent()` |
 | `ch1_voltage` | float | V | | ✓ | | dezelfde celspanning onder een telemetriekanaalnaam |
 | `uptime` | float | **dagen** | ✓ | ✓ | ✓ | 5 decimalen |
 | `noise_floor` | int | dBm | ✓ | ✓ | ✓ | weggelaten tenzij negatief |
@@ -311,7 +341,7 @@ statistiekbericht:
 }
 ```
 
-Negentien sleutels, één per item in `SET_PARAMS` in `MeshStatsNet.cpp`. Achttien
+Negentien sleutels, één per item in `SET_PARAMS` in `MeshManagerNet.cpp`. Achttien
 daarvan zijn waarden van één regel; `cmd:region` is een boom en is de reden dat
 `\n` de JSON-escaping überhaupt overleeft — zie hieronder en
 [`firmware.md`](firmware.md).
@@ -321,7 +351,7 @@ elke sleutel die hij ontvangt op en toont ze, bekend of niet. De parameterlijst
 op de instellingenpagina van de admin stuurt enkel de opzoeking via Home
 Assistant aan; een parameter die daar wordt toegevoegd, bereikt **geen** nodes
 die over MQTT publiceren totdat de eigen tabel van de firmware (`SET_PARAMS` in
-`MeshStatsNet.cpp`) er ook om vraagt.
+`MeshManagerNet.cpp`) er ook om vraagt.
 
 Het vult dezelfde adminpagina als `POST /api/v1/repeater_settings`, zodat een
 node ze kan vullen zonder dat er Home Assistant aan te pas komt.
@@ -338,12 +368,12 @@ LoRa-zendtijd werd weggegooid — en de adminpagina bleef de laatste sweep tonen
 die wél was aangekomen, zonder ook maar iets dat verried dat er sindsdien iets
 mislukt was.
 
-**Waarom het geen eigen topic heeft.** Het zou `meshcore/<node>/settings`
+**Waarom het geen eigen topic heeft.** Het zou `meshmanager/<node>/settings`
 worden, tot een controle van `mqtt_ingest.py` uitwees dat deze abonnee naar
 precies twee patronen luistert. Een derde topic zou door de broker aanvaard zijn
 en daarna ongelezen zijn weggevallen — dezelfde fout die de gemonitorde
 repeaters eerder al eens deed verdwijnen. Een topic toevoegen betekent het
-toevoegen aan `MCS_MQTT_*` **én** aan de subscribe-oproepen in `on_connect`;
+toevoegen aan `MM_MQTT_*` **én** aan de subscribe-oproepen in `on_connect`;
 zolang niet beide gebeuren, gaan de berichten nergens heen. Die regel gaat over
 *publiceren*, en zegt niets over de richting waarin het `cmd`-topic hieronder
 loopt.
@@ -358,14 +388,14 @@ rechtstreeks naar MQTT publiceert voor dient — en de knop schreef in een
 wachtrij die niemand las, terwijl de pagina een opzoeking beloofde die al gestart
 zou zijn.
 
-Daarom publiceert de server één woord op `meshcore/<node>/cmd`:
+Daarom publiceert de server één woord op `meshmanager/<node>/cmd`:
 
 | Woord | De node doet |
 |---|---|
 | `settings` | leest nu zijn CLI-parameters, en publiceert ze met het statistiekbericht dat hij verstuurt zodra de sweep klaar is |
-| `settings <key>` | logt in op een repeater die hij *monitort*, leest de CLI-parameters van **die** repeater over LoRa, en publiceert ze onder de naam van die repeater (MeshStats 1.9.0) |
+| `settings <key>` | logt in op een repeater die hij *monitort*, leest de CLI-parameters van **die** repeater over LoRa, en publiceert ze onder de naam van die repeater (nodefirmware 1.9.0) |
 | `status` | publiceert onmiddellijk een statistiekbericht |
-| `time <epoch>` | zet zijn eigen klok op die UNIX-tijd in UTC-seconden, en controleert daarna over LoRa de klokken van de repeaters die hij monitort (MeshStats 1.10.0) |
+| `time <epoch>` | zet zijn eigen klok op die UNIX-tijd in UTC-seconden, en controleert daarna over LoRa de klokken van de repeaters die hij monitort (nodefirmware 1.10.0) |
 
 Het antwoord komt terug op het gewone `stats`-topic. Verder verandert er niets
 aan het ingestpad, en een ontvanger die niets van `cmd` afweet, blijft werken.
@@ -395,7 +425,7 @@ een brokeraccount ermee kan, is een repeater uitlezen die de operator al gekozen
 had om te monitoren — hoogstens één keer per tien minuten.
 
 Dat bij `time` is een getal, gecontroleerd tegen een venster van jaren aan beide
-kanten (2025–2100, in `mqtt_ingest.py` en nogmaals in `MeshStatsNet.cpp`) en
+kanten (2025–2100, in `mqtt_ingest.py` en nogmaals in `MeshManagerNet.cpp`) en
 toegepast door code die een klok alleen ooit **vooruit** zet. Dit woord verleent
 dus wel een echte capaciteit die de andere twee niet geven: het verandert
 toestand. Onomwonden benoemd, omdat het het woord is dat een ACL verdient: een
@@ -468,7 +498,7 @@ datum die niets met vandaag te maken heeft, en niets op de mesh corrigeert dat,
 omdat niets op de mesh het zelf beter weet.
 
 De server wel, dus die publiceert `time <epoch>` volgens een schema
-(`MCS_CLOCKSYNC_HOURS`, standaard 24). Het formaat is niet gekozen: het is wat
+(`MM_CLOCKSYNC_HOURS`, standaard 24). Het formaat is niet gekozen: het is wat
 `CommonCLI::handleCommand` in zijn `time `-tak parset — `_atoi` van de rest van
 de regel, rechtstreeks naar `setCurrentTime`, UNIX-seconden in UTC.
 
@@ -550,7 +580,7 @@ zit achter VPN/LAN zonder uitgaande referentie, dus die controle zou slagen in
 ontwikkeling en op de echte machine eeuwig "onbereikbaar" rapporteren, wat een
 controle is die binnen de week wordt uitgezet.
 
-Wat de node ermee doet, staat in `MeshStatsNet.cpp` boven `MON_CLK_FIRST_MS`: hij
+Wat de node ermee doet, staat in `MeshManagerNet.cpp` boven `MON_CLK_FIRST_MS`: hij
 zet zijn eigen klok, loopt dan zijn monitorlijst af en vraagt elke repeater
 `clock` (één heen-en-terug), en stuurt enkel `clock sync` naar wie meer dan twee
 minuten achterloopt. Eerst lezen kost evenveel als blind synchroniseren — één
@@ -587,7 +617,7 @@ navenant — enkel op verzoek en nooit volgens een schema, hoogstens één sweep
 tien minuten, twee seconden tussen commando's, twaalf per antwoord, en stoppen na
 drie opeenvolgende stiltes. De redenering achter elk van die getallen, inclusief
 welke waarden van de Home Assistant-integratie zijn overgenomen en welke bewust
-niet, staat boven `MON_SET_FIRST_MS` in `MeshStatsNet.cpp`.
+niet, staat boven `MON_SET_FIRST_MS` in `MeshManagerNet.cpp`.
 
 Twee dingen over het resultaat zijn het waard om te weten voor je de pagina
 leest:
@@ -604,7 +634,7 @@ leest:
 - **Een sweep waarvan de login nooit antwoordde, publiceert helemaal niets**,
   want hij vroeg niets en leerde niets. Waarden weggooien die een eerdere sweep
   wél kreeg, zou de verkeerde soort eerlijkheid zijn.
-- **`cmd:region` is een boom, geen waarde** (MeshStats 1.11.0). Het is de ene
+- **`cmd:region` is een boom, geen waarde** (nodefirmware 1.11.0). Het is de ene
   parameter waarvan het antwoord over meerdere regels loopt, en waarvan de
   regeleindes *en de inspringing* de betekenis dragen: inspringing is
   ouder/kind-nesting, `^` markeert de thuisregio, een afsluitende ` F` betekent
@@ -651,15 +681,23 @@ blijft grijs.
 Voeg de leeskant toe aan het account van de node en de schrijfkant aan dat van de
 server:
 
+
+> **Tijdens de hernoeming** heeft elke regel hieronder ook zijn
+> `meshcore/…`-tegenhanger nodig: een node publiceert op het oude voorvoegsel
+> tot hij geflasht is en op het nieuwe daarna. Een ACL die er maar één van de
+> twee kent, laat precies één van die twee toestanden in stilte doodlopen —
+> de node meldt een geslaagde publish en de broker gooit het bericht weg.
+> `init-passwd.sh` en `add-node-user.sh` genereren allebei al. Zie
+> [`migration.md`](migration.md).
 ```
-user meshstats
-topic read meshcore/#
-topic write meshcore/+/cmd
+user meshmanager
+topic read meshmanager/#
+topic write meshmanager/+/cmd
 
 user node-e3d3f4d7ed01
-topic write meshcore/e3d3f4d7ed01/stats
-topic write meshcore/e3d3f4d7ed01/rx
-topic read  meshcore/e3d3f4d7ed01/cmd
+topic write meshmanager/e3d3f4d7ed01/stats
+topic write meshmanager/e3d3f4d7ed01/rx
+topic read  meshmanager/e3d3f4d7ed01/cmd
 ```
 
 Zonder de leesregel verbindt de node, abonneert hij zich, wordt hij door de
@@ -742,7 +780,7 @@ het van de radio kwam en laat de server het decoderen met
 De ontwerpbeperkingen zijn op beide firmwares dezelfde, maar **de getallen niet**,
 en ze door elkaar halen is makkelijk:
 
-| | Companion (`StatsPublisher`) | Repeater (`MeshStatsNet`) |
+| | Companion (`StatsPublisher`) | Repeater (`MeshManagerNet`) |
 |---|---|---|
 | Ringgrootte | `STATS_RX_QUEUE` = **4** plaatsen | `MQTT_RX_QUEUE` = **8** plaatsen |
 | Grootte per plaats | `STATS_RX_MAX_LEN` = 255 (een volledige MTU, 264 B met padding) | `MQTT_RX_MAX_LEN` = 255 |
@@ -875,17 +913,18 @@ die tijd gaat rechtstreeks van de mesh af. `setSocketTimeout(4)` en
 
 | Env-variabele | Standaard | Opmerkingen |
 |---|---|---|
-| `MCS_MQTT_HOST` | *(leeg)* | **Leeg schakelt MQTT-ingest volledig uit** |
-| `MCS_MQTT_PORT` | `1883` | |
-| `MCS_MQTT_USER` | *(leeg)* | Leeg = anoniem verbinden |
-| `MCS_MQTT_PASS` | *(leeg)* | |
-| `MCS_MQTT_TOPIC` | `meshcore/+/stats` | |
-| `MCS_MQTT_RX_TOPIC` | `meshcore/+/rx` | in ontwikkeling |
+| `MM_MQTT_HOST` | *(leeg)* | **Leeg schakelt MQTT-ingest volledig uit** |
+| `MM_MQTT_PORT` | `1883` | |
+| `MM_MQTT_USER` | *(leeg)* | Leeg = anoniem verbinden |
+| `MM_MQTT_PASS` | *(leeg)* | |
+| `MM_MQTT_PREFIX` | `meshmanager` | Er wordt ook naar `meshcore` geluisterd |
+| `MM_MQTT_TOPIC` | *(leeg)* | Extra patroon, bovenop de voorvoegsels |
+| `MM_MQTT_RX_TOPIC` | *(leeg)* | Extra patroon; ruwe pakketten zijn in ontwikkeling |
 
 Merk op dat het Docker Compose-bestand andere effectieve standaardwaarden
-meegeeft: `MCS_MQTT_HOST=mosquitto` en `MCS_MQTT_USER=meshstats`.
+meegeeft: `MM_MQTT_HOST=mosquitto` en `MM_MQTT_USER=meshmanager`.
 
-De abonnee draait op een daemonthread met client-id `meshstats-ingest`,
+De abonnee draait op een daemonthread met client-id `meshmanager-ingest`,
 keepalive 60 s, en paho's eigen reconnect-backoff (2 s tot 60 s).
 
 > De client-id is **hardcoded**. Twee serverinstanties tegen één broker vechten
@@ -935,7 +974,7 @@ Drie instellingen verdienen aandacht:
 
 ```bash
 cp .env.example .env
-# edit .env: set MCS_MQTT_USER and MCS_MQTT_PASS
+# edit .env: set MM_MQTT_USER and MM_MQTT_PASS
 ./mosquitto/init-passwd.sh
 ```
 
@@ -983,11 +1022,11 @@ Het script:
 
 ```
 user node-e3d3f4d7ed01
-topic write meshcore/e3d3f4d7ed01/stats
-topic write meshcore/e3d3f4d7ed01/rx
+topic write meshmanager/e3d3f4d7ed01/stats
+topic write meshmanager/e3d3f4d7ed01/rx
 ```
 
-`stats` en `rx` worden apart opgesomd in plaats van `meshcore/<prefix>/#`, zodat
+`stats` en `rx` worden apart opgesomd in plaats van `meshmanager/<prefix>/#`, zodat
 een node geen topics kan aanmaken die de server later voor iets anders wil
 gebruiken.
 
@@ -1000,14 +1039,14 @@ docker compose restart mosquitto
 
 #### De migratie afronden
 
-`init-passwd.sh` laat het gedeelde account achter met `topic write meshcore/#`
+`init-passwd.sh` laat het gedeelde account achter met `topic write meshmanager/#`
 zodat er niets stukgaat zolang er nog nodes op zitten. Precies die regel houdt
 impersonatie ook mogelijk. Zodra elke node zijn eigen account heeft:
 
 ```
-user meshstats
-topic read meshcore/#
-# topic write meshcore/#   <- delete this line
+user meshmanager
+topic read meshmanager/#
+# topic write meshmanager/#   <- delete this line
 ```
 
 Herstart de broker. Vanaf dan dwingt de broker af dat een node enkel onder zijn
@@ -1028,18 +1067,18 @@ Controleer met het account dat je net hebt aangemaakt:
 ```bash
 # allowed
 mosquitto_pub -h <broker> -u node-e3d3f4d7ed01 -P <pass> \
-  -t meshcore/e3d3f4d7ed01/stats -m '{"metrics":{"online":true}}'
+  -t meshmanager/e3d3f4d7ed01/stats -m '{"metrics":{"online":true}}'
 
 # refused by the broker
 mosquitto_pub -h <broker> -u node-e3d3f4d7ed01 -P <pass> \
-  -t meshcore/aabbccddeeff/stats -m '{"metrics":{"online":true}}'
+  -t meshmanager/aabbccddeeff/stats -m '{"metrics":{"online":true}}'
 ```
 
 ## Problemen oplossen
 
 | Symptoom | Waar te kijken |
 |---|---|
-| `/admin` toont MQTT als uitgeschakeld | `MCS_MQTT_HOST` is leeg |
+| `/admin` toont MQTT als uitgeschakeld | `MM_MQTT_HOST` is leeg |
 | Verbonden, nul berichten | `enabled` staat af op de node, of `host` is leeg op de node |
 | Nodepagina zegt "niet verbonden" | Brokergegevens; de node probeert het elke 15 s opnieuw |
 | Berichten geteld, geen repeater verschijnt | Foutenteller en `last_error` in `/admin`; meestal een ontbrekende `pubkey_prefix` |
@@ -1048,10 +1087,10 @@ mosquitto_pub -h <broker> -u node-e3d3f4d7ed01 -P <pass> \
 | Node verbindt maar er wordt niets gepubliceerd | ACL: het account heeft geen `topic write`-blok, of de topicprefix komt er niet mee overeen. Bekijk het brokerlog |
 | Broker weigert op te starten | `mosquitto/acl` ontbreekt of is onleesbaar — draai `init-passwd.sh` |
 | Grafiek heeft gaten | Te verwachten bij QoS 0. Controleer de WiFi-stabiliteit, en `heartbeat_min` |
-| Twee servers verbreken elkaars verbinding | Beide gebruiken client-id `meshstats-ingest`. Draai er één. |
+| Twee servers verbreken elkaars verbinding | Beide gebruiken client-id `meshmanager-ingest`. Draai er één. |
 
 Om het verkeer rechtstreeks mee te volgen:
 
 ```bash
-mosquitto_sub -h <broker> -u <user> -P <pass> -t 'meshcore/#' -v
+mosquitto_sub -h <broker> -u <user> -P <pass> -t 'meshmanager/#' -v
 ```

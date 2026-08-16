@@ -442,7 +442,7 @@ API tokens for the HTTP ingest path.
 | `last_used` | TEXT | Written on every successful `check_token()` |
 | `revoked` | INTEGER | 1 hides the row and refuses the token |
 
-The token is `mcs_` + `secrets.token_urlsafe(32)` and is shown once, through a
+The token is `mm_` + `secrets.token_urlsafe(32)` and is shown once, through a
 60-second cookie rather than a URL. Revoking is a flag rather than a delete, so
 `last_used` survives the revocation.
 

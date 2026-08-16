@@ -2,7 +2,7 @@
 
 *[English](../firmware-upgrade.md)*
 
-Hoe een repeater die `MeshStatsNet` draait aan een nieuw image komt: waar dat
+Hoe een repeater die `MeshManagerNet` draait aan een nieuw image komt: waar dat
 image vandaan komt, naar welke node het toe mag, wat er gecontroleerd wordt
 voordat er iets definitief wordt, en hoe je terugkomt als het een vergissing was.
 
@@ -114,7 +114,7 @@ Het antwoord is altijd leesbare JSON:
 ```json
 {"ok":0,"step":"sha","msg":"checksum klopt niet na 1284538 van 1284538 bytes",
  "bytes":1284538,"total":1284538,"want":"ab12…","have":"cd34…",
- "from":"1.11.0","to":"1.12.0","env":"heltec_v4_repeater_meshstats","reboot":0}
+ "from":"1.11.0","to":"1.12.0","env":"heltec_v4_repeater_meshmanager","reboot":0}
 ```
 
 `step` is een van `auth`, `param`, `bezig`, `begin`, `write`, `sha`, `kort`,
@@ -126,7 +126,7 @@ Wat er geïnstalleerd is, waar naartoe teruggegaan kan worden, en hoe de laatste
 poging afliep.
 
 ```json
-{"ver":"1.12.0","fw":"v1.17.0","env":"heltec_v4_repeater_meshstats",
+{"ver":"1.12.0","fw":"v1.17.0","env":"heltec_v4_repeater_meshmanager",
  "board":"Heltec V4.3 OLED","busy":0,"got":0,"total":0,
  "run":"app0","other":{"slot":"app1","valid":1,"ver":"1.11.0"},
  "last":{"any":1,"ok":1,"step":"","msg":"","bytes":1284538,"total":1284538}}
@@ -155,9 +155,9 @@ board gebouwd is en naar een node op een dak geschreven wordt, valt niet over de
 lucht te herstellen.
 
 **De node meldt de PlatformIO-omgeving waaronder hij gebouwd is**, in
-`MESHSTATS_ENV`, gezet vanuit `$PIOENV` in `platformio.ci.ini`. Een release
+`MESHMANAGER_ENV`, gezet vanuit `$PIOENV` in `platformio.ci.ini`. Een release
 draagt één asset per bouwomgeving, met de naam
-`meshstats-<env>-<version>.bin`. De site legt die twee **exact** naast elkaar, en
+`meshmanager-<env>-<version>.bin`. De site legt die twee **exact** naast elkaar, en
 weigert wanneer dat niet lukt.
 
 Het verworpen alternatief was matchen op de boardnaam die de node toch al meldt —
@@ -176,7 +176,7 @@ is "niet vast te stellen welk image hier hoort", en niet een beste gok.
 
 1. Voeg een `[env:...]`-sectie toe aan `firmware/platformio.ci.ini`. Laat
    `extends` naar de juiste variant uit MeshCore's `variants/`-boom wijzen, en
-   behoud `-D MESHSTATS_ENV='"$PIOENV"'`.
+   behoud `-D MESHMANAGER_ENV='"$PIOENV"'`.
 2. Dat is alles. De release-workflow leidt zijn build-matrix af uit de
    sectienamen in dat bestand.
 
@@ -186,7 +186,7 @@ en niets anders.
 
 ### Boards die dit helemaal niet kunnen gebruiken
 
-`MeshStatsNet` is een WiFi-module. Op een variant zonder WiFi wordt hij niet
+`MeshManagerNet` is een WiFi-module. Op een variant zonder WiFi wordt hij niet
 meegecompileerd, is er geen HTTP van welke aard dan ook, en gaat deze pagina niet
 op — die nodes worden over USB geüpgraded.
 
@@ -287,22 +287,22 @@ deze functionaliteit en zijn geen los verhaal.
 ### Een release taggen
 
 ```bash
-# MESHSTATS_VERSION in MeshStatsNet.h must already say 1.12.0
+# MESHMANAGER_VERSION in MeshManagerNet.h must already say 1.12.0
 git tag fw-v1.12.0
 git push origin fw-v1.12.0
 ```
 
 `.github/workflows/firmware-release.yml` doet dan het volgende:
 
-1. **weigeren** als de tag en `MESHSTATS_VERSION` niet overeenkomen — een release
+1. **weigeren** als de tag en `MESHMANAGER_VERSION` niet overeenkomen — een release
    waarvan de assets een andere versie melden dan de release zelf, zou de site op
    zoek sturen naar een upgrade die iets anders installeert;
 2. de build-matrix lezen uit de `[env:...]`-secties van
    `firmware/platformio.ci.ini`;
 3. MeshCore uitchecken op de vastgezette `MESHCORE_REF`, `firmware/src` en
    `firmware/examples` eroverheen kopiëren, en elke omgeving bouwen;
-4. per omgeving `meshstats-<env>-<version>.bin` en `.sha256` publiceren;
-5. het changelog-blok voor die versie, rechtstreeks uit `MeshStatsNet.cpp`,
+4. per omgeving `meshmanager-<env>-<version>.bin` en `.sha256` publiceren;
+5. het changelog-blok voor die versie, rechtstreeks uit `MeshManagerNet.cpp`,
    gebruiken als release notes. Eenmaal geschreven, tweemaal gepubliceerd.
 
 ### De build heeft geen geheimen nodig
@@ -336,7 +336,7 @@ de onderste sport van de terugvalladder.
 
 ## Vangnetten, en hoe dit pad ze niet voor de voeten loopt
 
-`MeshStatsNet` had er al vier, beschreven in [`firmware.md`](firmware.md). Het
+`MeshManagerNet` had er al vier, beschreven in [`firmware.md`](firmware.md). Het
 upgradepad is gebouwd om erop te leunen in plaats van eromheen:
 
 | Vangnet | Wisselwerking |

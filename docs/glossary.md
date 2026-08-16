@@ -2,7 +2,7 @@
 
 *[Nederlands](nl/glossary.md)*
 
-MeshCore vocabulary, as MeshStats uses it. Every entry says what the word means,
+MeshCore vocabulary, as MeshManager uses it. Every entry says what the word means,
 where it comes from, and — where it matters — what it does **not** mean. The
 byte-level definitions live in [`protocol.md`](protocol.md); this page is the
 short version you can keep open beside the site.
@@ -27,13 +27,13 @@ faked. The key cannot.
 A node whose job is to forward other people's traffic. Firmware
 `examples/simple_repeater`. It has no chat UI, keeps counters about what it
 forwarded, and answers a small CLI over LoRa to whoever logs in with its admin
-password. Repeaters are what MeshStats is a statistics site *about*.
+password. Repeaters are what MeshManager is a statistics site *about*.
 
 ### Companion
 
 A node paired with an app or a computer, over USB serial, BLE or TCP/WiFi.
 Firmware `examples/companion_radio`. It is the node that *hears* the mesh and
-has a route out to the internet, so in MeshStats it is the node that publishes.
+has a route out to the internet, so in MeshManager it is the node that publishes.
 See [`protocol.md` §2](protocol.md#2-the-companion-protocol-tcp-and-serial) for
 the protocol it speaks to its app.
 
@@ -71,7 +71,7 @@ signature, and optional extras (name, location, node type). It is **Ed25519
 signed**, so an advert is the one packet type whose authorship can be verified
 without holding any shared secret.
 
-Adverts are where MeshStats gets node names and map positions from. Full byte
+Adverts are where MeshManager gets node names and map positions from. Full byte
 layout: [`protocol.md` §1.6](protocol.md#advert-0x04).
 
 ### Flood
@@ -111,7 +111,7 @@ It is decided **per packet, by whoever sent it first**, from that node's
 mesh-wide or firmware-version property: sizes 1, 2 and 3 travel side by side on
 the same air.
 
-MeshStats reads it off the frame and reports it as `path_hash_size`. Details and
+MeshManager reads it off the frame and reports it as `path_hash_size`. Details and
 the bit packing: [`protocol.md` §1.4](protocol.md#14-the-path-field).
 
 ### Address hash
@@ -144,7 +144,7 @@ So the presence of the codes proves a packet was scoped. The codes themselves do
 
 ### Scoped / unscoped / share
 
-The three values MeshStats reports in the `scope` column
+The three values MeshManager reports in the `scope` column
 (`server/app/packets.py`):
 
 | Value | Meaning |
@@ -185,7 +185,7 @@ packets.
 | **Slug** | The URL-safe name of a repeater on the site: `/r/<slug>`. |
 | **Snapshot** | One `POST /api/v1/ingest` body: one repeater, its current metrics, its neighbours. |
 | **Neighbour** | Another node this repeater has heard directly, with the SNR it was heard at. The raw material of the link map. |
-| **Heartbeat** | A forced graph point written even when nothing changed, so a flat line is visibly flat rather than absent (`MCS_HEARTBEAT_MIN`). |
+| **Heartbeat** | A forced graph point written even when nothing changed, so a flat line is visibly flat rather than absent (`MM_HEARTBEAT_MIN`). |
 | **Clock sync** | The site telling a node what time it is — directly over MQTT, or via that node's monitor over LoRa. `server/app/clocksync.py`. |
 | **Settings fetch** | Asking a repeater to read back its own CLI settings. Read-only: the site can request values, never write them. |
 | **Facet** | A "top values" breakdown for a searchable field in the packet archive. |

@@ -31,7 +31,7 @@ De afleidingsvolgorde, die tegelijk de volgorde is waarin het bewijs het sterkst
 is:
 
 1. De node publiceert zelf statistieken **en** meldt een
-   `fw_meshstats`-versie → `full_managed`. Zijn `cmd`-topic is bereikbaar, dus
+   `fw_meshmanager`-versie → `full_managed`. Zijn `cmd`-topic is bereikbaar, dus
    hij kan rechtstreeks aangestuurd worden.
 2. Hij publiceert niet zelf, maar een monitor met CLI-rechten bereikt hem →
    `semi_managed`.
@@ -89,7 +89,7 @@ het aanbevolen ontwerp doet het niet zo.**
 
 Het topic accepteert `settings`, `status` en `time <epoch>` — een strikte
 toelatingslijst, nooit een doorgeefluik naar de CLI. De redenering staat in
-`MeshStatsNet.h` en gaat over wie dat topic kan bereiken: **iedereen met
+`MeshManagerNet.h` en gaat over wie dat topic kan bereiken: **iedereen met
 broker-inloggegevens**, gedeeld, gelekt of vertypt. Eén `reboot` in een lus kost
 je de dakrepeater.
 
@@ -139,8 +139,8 @@ de categorietabel hieronder als datgene wat overeind moet blijven.
 Dan wordt de brokerconfiguratie dragend in plaats van hygiënisch, en moet
 `mosquitto/acl.example` dat ook zeggen:
 
-- Het account van de site is het **enige** met `write meshcore/+/cmd`.
-  Node-accounts krijgen `write meshcore/<own-id>/#` en verder niets, zodat een
+- Het account van de site is het **enige** met `write meshmanager/+/cmd`.
+  Node-accounts krijgen `write meshmanager/<own-id>/#` en verder niets, zodat een
   gecompromitteerde node zijn buren niet kan commanderen.
 - Elk node-account is per node, nooit gedeeld. Een gedeeld account betekent dat
   een lek niet in te dammen is zonder elke node opnieuw in te richten.
@@ -206,7 +206,7 @@ een `semi_managed` node worden ze helemaal niet aangeboden.
   meegecompileerd.
 
 Bij een `semi_managed` doel is de uitzendende node de monitor, met onze firmware
-— dus de categorietabel en de validatie ervan wonen in `MeshStatsNet`, toegepast
+— dus de categorietabel en de validatie ervan wonen in `MeshManagerNet`, toegepast
 voordat er iets de lucht in gaat. Het doel is standaard MeshCore en valideert
 bijna niets: `set` parseert met `_atoi` en neemt wat het krijgt. **Een node die
 een onzinnige waarde aanneemt is gevaarlijker dan een die weigert**, en de

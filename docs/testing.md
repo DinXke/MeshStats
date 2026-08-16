@@ -64,8 +64,8 @@ is the convention.
 ### `conftest.py` does exactly one thing
 
 ```python
-os.environ.setdefault("MCS_DATA_DIR",
-                      tempfile.mkdtemp(prefix="meshstats-test-data-"))
+os.environ.setdefault("MM_DATA_DIR",
+                      tempfile.mkdtemp(prefix="meshmanager-test-data-"))
 ```
 
 Importing `app.config` **creates the data directory and writes a secret key into

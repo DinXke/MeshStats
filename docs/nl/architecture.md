@@ -2,7 +2,7 @@
 
 *[English](../architecture.md)*
 
-MeshStats maakt van het beeld dat een MeshCore-node zelf van het mesh heeft een
+MeshManager maakt van het beeld dat een MeshCore-node zelf van het mesh heeft een
 publieke statistiekensite. Dit document legt uit wat de onderdelen zijn, hoe data
 zich ertussen beweegt, en waarom het transport MQTT is en geen HTTP.
 
@@ -12,7 +12,7 @@ zich ertussen beweegt, en waarom het transport MQTT is en geen HTTP.
 |---|---|
 | `server/` | FastAPI + SQLite. Publieke pagina's, beheer, ingest-API, MQTT-abonnee. |
 | `server/tools/` | Buildscripts voor gegenereerde databestanden, bewaard naast wat ze genereren. |
-| `firmware/` | Aanpassingen aan de MeshCore-firmware: WiFi met meerdere clients, `MeshStatsNet`, de statistiekenpublicist. |
+| `firmware/` | Aanpassingen aan de MeshCore-firmware: WiFi met meerdere clients, `MeshManagerNet`, de statistiekenpublicist. |
 | `homeassistant/` | Optionele HA-integratie die repeaterdata over HTTP pusht. |
 | `proxy/` | Optionele TCP-fan-outproxy voor wie geen aangepaste firmware kan flashen. |
 | `mosquitto/` | Brokerconfiguratie voor de Docker-uitrol. |
@@ -30,8 +30,8 @@ optionele hulp die helemaal geen dataweg is.
   | mesh + WiFi + BLE |          |           |       | mqtt_ingest  |
   |                   |  MQTT    |           |  sub  |    |         |
   | StatsPublisher    |--------->| Mosquitto |------>|    v         |
-  |  meshcore/<id>/stats         |           |       |  db.ingest   |
-  |  meshcore/<id>/rx (dev)      |           |       |    |         |
+  |  meshmanager/<id>/stats         |           |       |  db.ingest   |
+  |  meshmanager/<id>/rx (dev)      |           |       |    |         |
   +-------------------+          +-----------+       |    v         |
                                                      |  SQLite      |
                                                      +--------------+
@@ -41,7 +41,7 @@ De node houdt één MQTT-verbinding open en publiceert elke `interval` seconden
 (standaard 300) een JSON-momentopname van zichzelf. Geen Home Assistant, geen
 HTTP-client, geen TLS-stack op de node.
 
-De server schrijft zich met een jokerteken in (`meshcore/+/stats`). Het
+De server schrijft zich met een jokerteken in (`meshmanager/+/stats`). Het
 topicsegment noemt de node die het bericht **publiceerde**; het JSON-lichaam
 noemt de repeater waarover het bericht **gaat**. Meestal is dat dezelfde node die
 over zichzelf rapporteert, maar een node kan ook statistieken doorsturen voor
@@ -50,7 +50,7 @@ plaats van er gelijk aan verondersteld. Zie [`mqtt.md`](mqtt.md).
 
 Dezelfde verbinding draagt één bericht de andere kant op. De beheerpagina kan een
 node vragen zijn CLI-instellingen nu te lezen, of meteen te publiceren, door één
-woord op `meshcore/<node>/cmd` te zetten. Het antwoord komt terug op het gewone
+woord op `meshmanager/<node>/cmd` te zetten. Het antwoord komt terug op het gewone
 `stats`-topic, dus dit is een aanleiding en geen tweede dataweg. De firmware
 aanvaardt die twee woorden en niets anders — zie
 [`mqtt.md`](mqtt.md#iets-vragen-aan-een-node) voor waarom die beperking de
@@ -63,7 +63,7 @@ bedoeling is en geen omissie.
                                                       |
                                                  entities in HA
                                                       |
-                                          mc_repeater_stats (Pusher)
+                                          meshmanager (Pusher)
                                                       |
                                              HTTPS POST + Bearer
                                                       v
@@ -72,7 +72,7 @@ bedoeling is en geen omissie.
 
 Home Assistant draait bij veel mensen al de `meshcore`-integratie, en die
 integratie bezit al sensorentiteiten voor elke repeater die ze hoort. Het
-aangepaste onderdeel `mc_repeater_stats` schraapt die entiteiten uit de
+aangepaste onderdeel `meshmanager` schraapt die entiteiten uit de
 toestandsmachine, bouwt hetzelfde JSON-lichaam en POSTt het.
 
 Het kan iets wat geen node kan: praten *tegen* repeaters die niet de zijne zijn.
@@ -82,7 +82,7 @@ CLI-instellingen van een repeater op fabrieksfirmware `/admin`. Een node die ove
 MQTT publiceert rapporteert altijd alleen over zichzelf.
 
 Deze weg is optioneel en niet langer de enige manier om dat overzicht te vullen.
-Een node met de MeshStats-firmware leest zijn eigen CLI eens per dag en kan
+Een node met de MeshManager-firmware leest zijn eigen CLI eens per dag en kan
 gevraagd worden het nu te doen over het `cmd`-topic hierboven; een repeater die
 alleen een poller kan bereiken heeft deze weg nog steeds nodig. `commanding.py`
 zoekt per repeater uit welke van de twee beschikbaar is, en de beheerpagina zet de
@@ -101,7 +101,7 @@ wint.
 niet. `mc-proxy` houdt de ene verbinding stroomopwaarts vast en waaiert ze uit
 naar veel clients.
 
-Hij draagt geen statistieken en praat nooit met de MeshStats-server. Gebruik hem
+Hij draagt geen statistieken en praat nooit met de MeshManager-server. Gebruik hem
 wanneer je geen aangepaste firmware kunt flashen; kun je dat wel, dan doet de
 eigen `SerialWifiInterface` met 4 slots dezelfde klus met betere
 antwoordroutering. Zie
@@ -177,7 +177,7 @@ dezelfde les vanuit een andere hoek:
   latentiepieken van de modem-sleep van ESP32-WiFi liep de hoofdlus daarin vast —
   en nam het mesh mee. Het is nu één `send_P` van een statische pagina die haar
   gegevens achteraf als JSON ophaalt.
-- `MeshStatsNet.h`: de webserver van de repeater is `AsyncWebServer` juist omdat
+- `MeshManagerNet.h`: de webserver van de repeater is `AsyncWebServer` juist omdat
   "een blokkerende server de hoofdlus ophoudt, en daarmee het mesh — dat gedrag
   hebben we al gezien op de companionnode."
 
@@ -243,7 +243,7 @@ Er kunnen drie dingen misgaan, en ze eindigen alle drie op dezelfde plek:
 
 | | |
 |---|---|
-| `MCS_TSDB_URL` leeg | punten gaan rechtstreeks naar SQLite `samples` |
+| `MM_TSDB_URL` leeg | punten gaan rechtstreeks naar SQLite `samples` |
 | schrijven mislukt (twee keer) | de batch wijkt uit naar `samples` |
 | wachtrij vol (20 000 punten) | het punt wijkt uit naar `samples` |
 
@@ -254,7 +254,7 @@ heeft, geeft in de plaats een lege lijst terug, zodat "nog geen historiek" en
 "databank niet beschikbaar" onderscheidbaar blijven.
 
 Daarom is **`samples` geen dood gewicht en mag het niet weg.** Het is het vangnet,
-en het is wat de overstap omkeerbaar maakt: maak `MCS_TSDB_URL` leeg en de site
+en het is wat de overstap omkeerbaar maakt: maak `MM_TSDB_URL` leeg en de site
 doet weer wat ze deed, zonder één dag te verliezen.
 
 De kaartjes met de zendtijdbenutting volgen dezelfde weg. Ze worden berekend uit
@@ -328,7 +328,7 @@ twee velden die de live kaart nodig heeft:
   bewaarde pakketten verbetert.
 
 Het frame bewaren verdubbelt een pakketrij ruwweg, en dat is alleen betaalbaar
-omdat pakketten hun eigen bewaartermijn dragen: `MCS_PACKET_RETENTION_DAYS`,
+omdat pakketten hun eigen bewaartermijn dragen: `MM_PACKET_RETENTION_DAYS`,
 standaard 7, tegenover 180 voor samples. Beide kolommen zijn via
 `COLUMN_MIGRATIONS` toegevoegd, dus een bestaande databank houdt haar rijen en
 heeft ze simpelweg leeg — wat de interface als "niet bewaard" meldt in plaats van
@@ -365,7 +365,7 @@ het archief zelf zegt dat, met het echte getal naast het ingestelde. Een
 bewaartermijn die stilzwijgend te weinig levert, is hoe een gat in een grafiek een
 avond debuggen wordt.
 
-De ronde draait bij het opstarten **en** elke `MCS_PRUNE_MINUTES`, in een eigen
+De ronde draait bij het opstarten **en** elke `MM_PRUNE_MINUTES`, in een eigen
 thread, dezelfde vorm als `clocksync.py`. Alleen bij het opstarten snoeien maakte
 van de bewaartermijn een handeling in plaats van een regel: een container die
 maanden draaide gooide nooit iets weg, en het eerste teken daarvan is een volle

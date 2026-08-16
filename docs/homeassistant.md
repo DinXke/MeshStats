@@ -2,12 +2,12 @@
 
 *[Nederlands](nl/homeassistant.md)*
 
-`homeassistant/custom_components/mc_repeater_stats/` — a custom integration that
+`homeassistant/custom_components/meshmanager/` — a custom integration that
 reads MeshCore repeater data out of the Home Assistant state machine and pushes
-it to a MeshStats site over HTTP.
+it to a MeshManager site over HTTP.
 
 **It is optional, and it is no longer the recommended path.** A node running the
-MeshStats firmware publishes to MQTT by itself, with no Home Assistant in the
+MeshManager firmware publishes to MQTT by itself, with no Home Assistant in the
 middle. This document exists because the integration still does two things the
 MQTT path does not, and because plenty of installations were built on it before
 MQTT existed.
@@ -36,7 +36,7 @@ MQTT existed.
 
 | Situation | Use |
 |---|---|
-| You can flash the MeshStats firmware onto a companion node | **MQTT.** [`mqtt.md`](mqtt.md) — no Home Assistant needed |
+| You can flash the MeshManager firmware onto a companion node | **MQTT.** [`mqtt.md`](mqtt.md) — no Home Assistant needed |
 | You cannot flash firmware, but you already run Home Assistant with the `meshcore` integration | **This integration** |
 | You want repeater CLI settings fetched over LoRa without a monitor node | **This integration** — it is the only path that logs in to a repeater from HA |
 | You want both | Fine. Both write through the same ingest handler; the newest value wins |
@@ -64,7 +64,7 @@ What it still buys you:
   producing `sensor.meshcore_*` / `binary_sensor.meshcore_*` entities. This
   integration reads those entities and calls `meshcore.execute_command`; without
   it, there is nothing to read and nothing to command.
-- A MeshStats site reachable over HTTP(S) from the HA machine.
+- A MeshManager site reachable over HTTP(S) from the HA machine.
 - An **API token** minted in `/admin`.
 - Optionally, the **admin password of each repeater** you want settings fetched
   from.
@@ -77,12 +77,12 @@ empty `dependencies`.
 ## Installation
 
 ```
-config/custom_components/mc_repeater_stats/     <- copy the directory here
+config/custom_components/meshmanager/     <- copy the directory here
 ```
 
-Copy `homeassistant/custom_components/mc_repeater_stats/` from this repository
+Copy `homeassistant/custom_components/meshmanager/` from this repository
 into your Home Assistant `config/custom_components/`, restart Home Assistant,
-then **Settings → Devices & services → Add integration → MC Repeater Stats**.
+then **Settings → Devices & services → Add integration → MeshManager**.
 
 There is no HACS repository and no release artefact; the directory is the
 deliverable.
@@ -329,7 +329,7 @@ change one, change the other.
 
 | Service | Effect |
 |---|---|
-| `mc_repeater_stats.push_now` | Immediately push a full snapshot of every synced repeater, for every configured site |
+| `meshmanager.push_now` | Immediately push a full snapshot of every synced repeater, for every configured site |
 
 Registered once, globally, not per config entry: it iterates every pusher in
 `hass.data[DOMAIN]`.
@@ -369,13 +369,13 @@ Registered once, globally, not per config entry: it iterates every pusher in
 | Site shows a repeater but no map position | Positions come from contacts, not snapshots. Check that the contact sensors carry `adv_lat` / `adv_lon` |
 | Values stop updating but nothing errors | Sensors are in `unknown` / `unavailable`; those states are skipped by design |
 
-The integration logs under `custom_components.mc_repeater_stats`. Turn it up in
+The integration logs under `custom_components.meshmanager`. Turn it up in
 `configuration.yaml`:
 
 ```yaml
 logger:
   logs:
-    custom_components.mc_repeater_stats: debug
+    custom_components.meshmanager: debug
 ```
 
 ---

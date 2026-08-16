@@ -1,4 +1,4 @@
-# MeshStats-documentatie
+# MeshManager-documentatie
 
 *[English](../README.md)*
 
@@ -19,6 +19,7 @@ van taal.
 | [README van de repo](../../README.nl.md) | Wat dit project is, wat de site kan, en een snelstart van vijf commando's |
 | [`architecture.md`](architecture.md) | Hoe de onderdelen samenhangen, welke wegen data van een radio naar de site kan afleggen, en waarom het transport MQTT is en geen HTTP |
 | [`glossary.md`](glossary.md) | Advert, flood, direct, scoped, hop, adreshash, padhash, transportcodes, companion, repeater, monitor — het vocabulaire dat de rest van deze documenten veronderstelt |
+| [`migration.md`](migration.md) | Kom je van MeshStats: in welke volgorde je een draaiende installatie bijwerkt zodat de datastroom niet stilvalt, en welke vier namen met opzet blijven staan |
 | [`deployment.md`](deployment.md) | De site installeren en draaien: Docker Compose, systemd zonder Docker, omgevingsvariabelen, reverse proxies, back-ups, upgrades |
 
 Nieuw in MeshCore zelf? Lees eerst de [woordenlijst](glossary.md), daarna
@@ -65,7 +66,7 @@ draait. Het MeshCore-wireformaat staat nergens anders beschreven.
 
 | Document | Wat je er vindt |
 |---|---|
-| [`firmware.md`](firmware.md) | Elke wijziging die MeshStats in MeshCore aanbrengt — meerdere companions tegelijk, de statspublisher, de netwerkmodule van de repeater — en hoe je het bouwt en flasht |
+| [`firmware.md`](firmware.md) | Elke wijziging die MeshManager in MeshCore aanbrengt — meerdere companions tegelijk, de statspublisher, de netwerkmodule van de repeater — en hoe je het bouwt en flasht |
 | [`firmware-upgrade.md`](firmware-upgrade.md) | Hoe een node aan een nieuw image komt: GitHub-releases, de checksum die twee keer gecontroleerd wordt, waarom alleen succes herstart, hoe je teruggaat, en wat een checksum **niet** bewijst |
 | [`node-management.md`](node-management.md) | Wat de site met een node mag doen en wat hij met opzet niet doet: de drie beheerniveaus, welke instellingen geschreven mogen worden en welke nooit op afstand |
 

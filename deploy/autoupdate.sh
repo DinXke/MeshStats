@@ -1,7 +1,7 @@
 #!/bin/bash
 # Werkt de site bij zodra er nieuwe commits op main staan: git pull --ff-only,
 # docker compose build, docker compose up -d. Bedoeld om elke vijf minuten te
-# draaien via meshstats-autoupdate.timer; met de hand aanroepen kan ook.
+# draaien via meshmanager-autoupdate.timer; met de hand aanroepen kan ook.
 # Gebruik: sudo bash deploy/autoupdate.sh   (vanuit de deploy-kloon)
 #
 # Polling en geen webhook, bewust: de server staat achter LAN/VPN zonder
@@ -49,7 +49,13 @@ git merge --ff-only --quiet origin/main
 # de fout komt in het journal en de marker blijft achter, dus de volgende
 # ronde probeert het opnieuw.
 docker compose build
-docker compose up -d
+# --remove-orphans omdat de services van naam veranderd zijn bij de
+# hernoeming naar MeshManager. Zonder dit blijft de oude container
+# ("meshstats") draaien naast de nieuwe, houdt hij poort 8080 bezet, en
+# start de nieuwe niet -- terwijl dit script elke vijf minuten zonder
+# toezicht draait en de fout dus alleen in het journal staat. Het volume
+# blijft ongemoeid: --remove-orphans raakt containers, geen volumes.
+docker compose up -d --remove-orphans
 
 echo "$REMOTE" > "$MARK"
 echo "Klaar: site draait op $(git rev-parse --short HEAD)."

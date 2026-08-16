@@ -13,14 +13,14 @@ wachtwoord uit `secrets.token_urlsafe(12)` en schrijft dat **één keer** naar
 stdout:
 
 ```
-[mc-repeater-stats] Eerste start: admin-account aangemaakt.
-[mc-repeater-stats] Gebruikersnaam: admin  Wachtwoord: <…>
-[mc-repeater-stats] Wijzig dit meteen via /admin.
+[meshmanager] Eerste start: admin-account aangemaakt.
+[meshmanager] Gebruikersnaam: admin  Wachtwoord: <…>
+[meshmanager] Wijzig dit meteen via /admin.
 ```
 
 ```bash
-docker compose logs meshstats | grep -i wachtwoord     # Docker
-journalctl -u mc-repeater-stats | grep -i wachtwoord   # systemd
+docker compose logs meshmanager | grep -i wachtwoord     # Docker
+journalctl -u meshmanager | grep -i wachtwoord   # systemd
 ```
 
 Het wordt alleen aangemaakt als de tabel `admins` **leeg** is, dus het komt nooit
@@ -29,7 +29,7 @@ terug nadat je het account verwijderd of hernoemd hebt.
 ### Een wachtwoord zetten vanaf de opdrachtregel
 
 ```bash
-docker compose exec meshstats python -m app.main set-password admin
+docker compose exec meshmanager python -m app.main set-password admin
 ```
 
 Leest het wachtwoord van stdin, minstens 8 tekens, en maakt het account aan als
@@ -53,7 +53,7 @@ welke accounts de moeite van het aanvallen waard zijn.
 
 ## Sessies
 
-De sessiecookie `mcs_session` is `base64(payload).hmac`, ondertekend met de
+De sessiecookie `mm_session` is `base64(payload).hmac`, ondertekend met de
 sleutel in `<data>/secret.key`. De payload bevat:
 
 | Veld | Inhoud |
@@ -93,7 +93,7 @@ hextekens. Elke `POST` onder `/admin` draagt hem als formulierveld en
 afgeleid wordt.
 
 Het inlogformulier heeft nog geen sessie, dus zijn token hangt aan een
-**kortlevende inlognonce** in de cookie `mcs_login` (`LOGIN_TTL` = 30 minuten),
+**kortlevende inlognonce** in de cookie `mm_login` (`LOGIN_TTL` = 30 minuten),
 vers uitgegeven bij elke weergave van de pagina. Het token is waardeloos voor een
 aanvaller die de cookie waaruit het afgeleid is niet ook kan lezen.
 
@@ -156,10 +156,10 @@ bij zet.
 Aangemaakt in `/admin`, gebruikt als `Authorization: Bearer <token>` op de
 ingest-endpoints.
 
-- Het token is `mcs_` + `secrets.token_urlsafe(32)`.
+- Het token is `mm_` + `secrets.token_urlsafe(32)`.
 - Alleen zijn SHA-256 wordt bewaard. **De site kan hem niet opnieuw tonen.**
 - Hij wordt één keer aan de browser gegeven via een `HttpOnly`-cookie van 60
-  seconden (`mcs_new_token`) en niet via de URL, zodat hij niet in een proxylogboek
+  seconden (`mm_new_token`) en niet via de URL, zodat hij niet in een proxylogboek
   of een browsergeschiedenis belandt.
 - Intrekken zet een vlag in plaats van de rij te verwijderen, zodat `last_used`
   blijft bestaan.

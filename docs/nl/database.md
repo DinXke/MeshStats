@@ -459,7 +459,7 @@ API-tokens voor de HTTP-ingestweg.
 | `last_used` | TEXT | Geschreven bij elke geslaagde `check_token()` |
 | `revoked` | INTEGER | 1 verbergt de rij en weigert het token |
 
-Het token is `mcs_` + `secrets.token_urlsafe(32)` en wordt één keer getoond, via
+Het token is `mm_` + `secrets.token_urlsafe(32)` en wordt één keer getoond, via
 een cookie van 60 seconden in plaats van via een URL. Intrekken is een vlag en
 geen verwijdering, zodat `last_used` de intrekking overleeft.
 

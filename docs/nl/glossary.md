@@ -2,7 +2,7 @@
 
 *[English](../glossary.md)*
 
-MeshCore-vocabulaire, zoals MeshStats het gebruikt. Elk lemma zegt wat het woord
+MeshCore-vocabulaire, zoals MeshManager het gebruikt. Elk lemma zegt wat het woord
 betekent, waar het vandaan komt, en — waar dat uitmaakt — wat het **niet**
 betekent. De definities op byteniveau staan in [`protocol.md`](protocol.md);
 deze pagina is de korte versie die je naast de site open kunt houden.
@@ -27,14 +27,14 @@ vervalst worden. De sleutel niet.
 Een node die het verkeer van anderen doorgeeft. Firmware
 `examples/simple_repeater`. Hij heeft geen chat-interface, houdt tellers bij van
 wat hij doorstuurde, en beantwoordt over LoRa een kleine CLI voor wie inlogt met
-zijn beheerderswachtwoord. Repeaters zijn datgene waarover MeshStats een
+zijn beheerderswachtwoord. Repeaters zijn datgene waarover MeshManager een
 statistiekensite *is*.
 
 ### Companion
 
 Een node die aan een app of computer gekoppeld is, via USB-serieel, BLE of
 TCP/WiFi. Firmware `examples/companion_radio`. Dit is de node die het mesh
-*hoort* én een weg naar het internet heeft, en dus in MeshStats de node die
+*hoort* én een weg naar het internet heeft, en dus in MeshManager de node die
 publiceert. Het protocol dat hij met zijn app spreekt staat in
 [`protocol.md` §2](protocol.md#2-het-companion-protocol-tcp-en-serieel).
 
@@ -75,7 +75,7 @@ nodetype). Het is **Ed25519-ondertekend**, waarmee een advert het enige
 pakkettype is waarvan het auteurschap te verifiëren valt zonder enig gedeeld
 geheim.
 
-Adverts zijn de bron van de nodenamen en kaartposities in MeshStats. Volledige
+Adverts zijn de bron van de nodenamen en kaartposities in MeshManager. Volledige
 byte-indeling: [`protocol.md` §1.6](protocol.md#advert-0x04).
 
 ### Flood
@@ -117,7 +117,7 @@ uit diens `hash_mode`-CLI-instelling, en elke doorgever laat het staan. Het is
 dus geen eigenschap van het mesh of van een firmwareversie: grootte 1, 2 en 3
 reizen naast elkaar door dezelfde ether.
 
-MeshStats leest het van het frame af en rapporteert het als `path_hash_size`.
+MeshManager leest het van het frame af en rapporteert het als `path_hash_size`.
 Details en de bitindeling: [`protocol.md` §1.4](protocol.md#14-het-path-veld).
 
 ### Adreshash
@@ -153,7 +153,7 @@ halen.
 
 ### Scoped / unscoped / share
 
-De drie waarden die MeshStats in de kolom `scope` rapporteert
+De drie waarden die MeshManager in de kolom `scope` rapporteert
 (`server/app/packets.py`):
 
 | Waarde | Betekenis |
@@ -195,7 +195,7 @@ van twee pakketten.
 | **Slug** | De URL-veilige naam van een repeater op de site: `/r/<slug>`. |
 | **Snapshot** | Eén `POST /api/v1/ingest`-body: één repeater, zijn huidige metrics, zijn buren. |
 | **Buur (neighbour)** | Een andere node die deze repeater rechtstreeks gehoord heeft, met de SNR waarop dat gebeurde. De grondstof van de linkkaart. |
-| **Hartslag (heartbeat)** | Een afgedwongen grafiekpunt dat ook geschreven wordt als er niets veranderde, zodat een vlakke lijn zichtbaar vlak is in plaats van afwezig (`MCS_HEARTBEAT_MIN`). |
+| **Hartslag (heartbeat)** | Een afgedwongen grafiekpunt dat ook geschreven wordt als er niets veranderde, zodat een vlakke lijn zichtbaar vlak is in plaats van afwezig (`MM_HEARTBEAT_MIN`). |
 | **Kloksynchronisatie** | De site die een node vertelt hoe laat het is — rechtstreeks over MQTT, of via de monitor van die node over LoRa. `server/app/clocksync.py`. |
 | **Instellingenopvraging** | Een repeater vragen zijn eigen CLI-instellingen terug te lezen. Alleen-lezen: de site kan waarden opvragen, nooit schrijven. |
 | **Facet** | Een "meestvoorkomende waarden"-uitsplitsing voor een doorzoekbaar veld in het pakketarchief. |

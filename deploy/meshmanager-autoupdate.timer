@@ -1,5 +1,5 @@
 [Unit]
-Description=Elke vijf minuten kijken of MeshStats nieuwe commits heeft
+Description=Elke vijf minuten kijken of MeshManager nieuwe commits heeft
 
 [Timer]
 # OnUnitActiveSec telt vanaf de vorige activering: een ronde die zelf lang

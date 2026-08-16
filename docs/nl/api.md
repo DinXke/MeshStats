@@ -34,7 +34,7 @@ door `limits.BodySizeLimitMiddleware`, geteld tijdens het lezen.
 Verbindingstest voor de Home Assistant-integratie.
 
 ```json
-{"ok": true, "app": "mc-repeater-stats", "version": 1}
+{"ok": true, "app": "meshmanager", "version": 1}
 ```
 
 ### `POST /api/v1/ingest`

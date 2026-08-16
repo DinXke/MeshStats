@@ -8,7 +8,7 @@ staat dat er.
 
 ## Dreigingsmodel
 
-MeshStats publiceert statistieken over een radionetwerk. De gegevens zelf zijn
+MeshManager publiceert statistieken over een radionetwerk. De gegevens zelf zijn
 niet geheim; iedereen met een LoRa-radio hoort dezelfde adverts. De zaken die
 het beschermen waard zijn, zijn dus niet de metingen.
 
@@ -31,7 +31,7 @@ Gegevens stroomden vroeger strikt één kant op, en dat is niet langer letterlij
 waar. Er bestaan twee smalle terugwegen, en beide zijn het waard te begrijpen
 voor je op de zin hierboven vertrouwt.
 
-**1. Het MQTT-commandotopic.** De server publiceert op `meshcore/<node>/cmd`, en
+**1. Het MQTT-commandotopic.** De server publiceert op `meshmanager/<node>/cmd`, en
 de firmware aanvaardt daar precies drie woorden: `settings` (lees nu mijn eigen
 CLI-parameters), `status` (publiceer nu een statistiekbericht) en `time <epoch>`
 (zet mijn klok). Het is een
@@ -50,7 +50,7 @@ over de lucht niet terug te draaien en vergt een herstart om te herstellen. Dát
 is het werkelijke plafond van deze weg, en het ligt hoger dan "een node een
 statistiekbericht laten publiceren". Begrens het
 verder met een ACL die elke node enkel leesrecht geeft op zijn eigen
-`cmd`-topic, en de server enkel schrijfrecht op `meshcore/+/cmd` — zie
+`cmd`-topic, en de server enkel schrijfrecht op `meshmanager/+/cmd` — zie
 `mosquitto/acl.example`.
 
 **2. De pollwachtrij.** De HA-integratie pollt `GET /api/v1/commands` en handelt
@@ -95,14 +95,14 @@ geschreven. Het wordt nooit in klare tekst bewaard.
 Wijzig het via `/admin` of met:
 
 ```bash
-docker compose exec meshstats python -m app.main set-password admin
+docker compose exec meshmanager python -m app.main set-password admin
 ```
 
 De minimumlengte is 8 tekens, afgedwongen in beide wegen.
 
 ### API-tokens
 
-- Aangemaakt als `"mcs_" + secrets.token_urlsafe(32)` — 256 bit.
+- Aangemaakt als `"mm_" + secrets.token_urlsafe(32)` — 256 bit.
 - **Alleen** bewaard als `hashlib.sha256(token).hexdigest()`. De klare tekst
   wordt nooit naar de databank geschreven.
 - Precies één keer aan de beheerder getoond, via een `httponly`-cookie van 60
@@ -135,7 +135,7 @@ aangemaakt met modus `0600`.
 
 | Eigenschap | Waarde |
 |---|---|
-| Cookienaam | `mcs_session` |
+| Cookienaam | `mm_session` |
 | Levensduur | 12 uur (`SESSION_TTL`) |
 | `HttpOnly` | ja |
 | `SameSite` | `lax` |
@@ -189,8 +189,8 @@ is. Elke beheer-POST die toestand wijzigt, valideert hem.
 
 | Formulier | Ankercookie | Levensduur |
 |---|---|---|
-| Elk beheerformulier na inloggen | `mcs_session` | met de sessie (12 u) |
-| `POST /admin/login` | `mcs_login` | 30 min (`LOGIN_TTL`) |
+| Elk beheerformulier na inloggen | `mm_session` | met de sessie (12 u) |
+| `POST /admin/login` | `mm_login` | 30 min (`LOGIN_TTL`) |
 
 **Het inlogformulier heeft zijn eigen anker** omdat de bezoeker nog geen sessie
 heeft: `GET /admin/login` slaat een willekeurige nonce, zet die als
@@ -278,7 +278,7 @@ openapi_url=None`).
 ### Grenzen op verzoeken
 
 `BodySizeLimitMiddleware` (`app/limits.py`) begrenst elk requestlichaam op
-`MCS_MAX_BODY_BYTES`, standaard 2 MB, op elke route en elke methode.
+`MM_MAX_BODY_BYTES`, standaard 2 MB, op elke route en elke methode.
 
 Het werkt in twee stappen:
 
@@ -332,11 +332,11 @@ zou een aanvaller per verzoek een verse emmer laten slaan.
 
 Proxy's *voegen* het adres dat ze zagen achteraan *toe*, dus de header is
 betrouwbaar vanaf rechts. `ratelimit.client_ip()` telt
-`MCS_TRUSTED_PROXY_HOPS` vermeldingen van rechts naar binnen (standaard `1`, wat
+`MM_TRUSTED_PROXY_HOPS` vermeldingen van rechts naar binnen (standaard `1`, wat
 overeenkomt met cloudflared rechtstreeks naar de toepassing), controleert of het
 resultaat als IP-adres te lezen is, en valt anders terug op het transportadres.
 
-Zet `MCS_TRUSTED_PROXY_HOPS` op het aantal proxy's dat je werkelijk draait. Te
+Zet `MM_TRUSTED_PROXY_HOPS` op het aantal proxy's dat je werkelijk draait. Te
 hoog en je leest weer vermeldingen die de client zelf aanlevert; te laag en elke
 bezoeker deelt één proxyadres in één emmer.
 
@@ -407,7 +407,7 @@ tokencontrole.
 nooit naar het topic, dus elke client die mocht publiceren kon beweren eender
 welke repeater te zijn. Nu leest hij beide, en houdt hij ze uit elkaar:
 
-- **Het topic noemt de publicist.** `meshcore/<node_hex>/stats` — de node die het
+- **Het topic noemt de publicist.** `meshmanager/<node_hex>/stats` — de node die het
   bericht stuurde.
 - **De payload noemt het onderwerp.** `repeater.pubkey_prefix` — de repeater waar
   de cijfers over gaan. Ontbreekt hij, dan betekent dat "mezelf" en levert het
@@ -440,7 +440,7 @@ docker compose restart mosquitto
 
 `mosquitto.conf` verwijst naar `acl_file /mosquitto/config/acl`; het bestand
 wordt gegenereerd door `init-passwd.sh` en aangevuld door `add-node-user.sh`. Het
-gedeelde account behoudt `topic write meshcore/#` zodat er halverwege de migratie
+gedeelde account behoudt `topic write meshmanager/#` zodat er halverwege de migratie
 niets stukgaat — haal die regel weg zodra elke node zijn eigen account heeft, en
 pas dan wordt het topic werkelijk afgedwongen. Details en voorbehouden in
 [`mqtt.md`](mqtt.md#accounts-en-acls-per-node).
@@ -454,7 +454,7 @@ Mosquitto's `message_size_limit 8192` is daar de enige bovengrens.
 
 ## De beheerendpoints op de node
 
-### De repeater: `MeshStatsNet`
+### De repeater: `MeshManagerNet`
 
 Alles wat gevoelig is zit achter **HTTP basic auth**, met inloggegevens die
 gedeeld worden tussen de webpagina en de telnetconsole (standaard `admin` /
@@ -626,7 +626,7 @@ verborgen binnen en moeten worden vrijgegeven.
 ### Open: authenticiteit van het firmware-image
 
 De route `/update` (en `start ota`) van de node gebruikt de ESP32-bibliotheek
-`Update` (`firmware/examples/simple_repeater/MeshStatsNet.cpp`). Die controleert
+`Update` (`firmware/examples/simple_repeater/MeshManagerNet.cpp`). Die controleert
 of een image een structureel geldige app-partitie van de juiste grootte is —
 integriteit, geen authenticiteit. Er is geen code signing en geen secure boot,
 dus iedereen die het OTA-endpoint kan bereiken (achter de HTTP basic auth van de
@@ -693,7 +693,7 @@ beveiliging; verscheidene blijken in orde te zijn, en dat zeggen hoort erbij.
 
 - **Het veld `"via"` is veilig omdat de server het negeert.** Doorgestuurde
   berichten dragen op het hoogste niveau `"via":"<node_hex>"`
-  (`MeshStatsNet.cpp`, rond regel 2588). `mqtt_ingest.py` leest het nooit: de
+  (`MeshManagerNet.cpp`, rond regel 2588). `mqtt_ingest.py` leest het nooit: de
   identiteit van de publicist komt enkel uit het topic (`_topic_node()`), dat een
   ACL per node vastlegt. Een node kan zich via `via` dus niet voordoen als een
   andere. Het risico is latent, niet aanwezig — wie later `via` wél voor
@@ -739,7 +739,7 @@ beveiliging; verscheidene blijken in orde te zijn, en dat zeggen hoort erbij.
 ## Checklist voor een publieke installatie
 
 - [ ] Wijzig het adminwachtwoord meteen na de eerste start
-- [ ] Zet `MCS_TRUSTED_PROXY_HOPS` op het aantal proxy's dat werkelijk voor de
+- [ ] Zet `MM_TRUSTED_PROXY_HOPS` op het aantal proxy's dat werkelijk voor de
       toepassing staat (standaard `1`) — de inlogrem sleutelt erop
 - [ ] Zet ook een toegangsslot vóór `/admin*`; de ingebouwde rem geldt per proces
       en vergeet bij een herstart
@@ -748,7 +748,7 @@ beveiliging; verscheidene blijken in orde te zijn, en dat zeggen hoort erbij.
 - [ ] Begrens de grootte van het requestlichaam ook op de proxy
 - [ ] Stel de MQTT-poort niet bloot aan het internet
 - [ ] Eén brokeraccount per node (`mosquitto/add-node-user.sh`), en haal daarna
-      `topic write meshcore/#` weg bij het gedeelde account in `mosquitto/acl`
+      `topic write meshmanager/#` weg bij het gedeelde account in `mosquitto/acl`
 - [ ] Controleer de kolom **Bron** in `/admin` — statistieken die via een
       onverwachte node binnenkomen zijn een blik waard
 - [ ] Wijzig de standaardlogin `admin` / `meshcore` van de node voor hij op een netwerk komt

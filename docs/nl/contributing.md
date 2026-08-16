@@ -479,6 +479,39 @@ zoals een UI-string in maar één taal een fout in de site is.
 
 ---
 
+## De repository hernoemen
+
+GitHub houdt de oude naam als doorverwijzing, dus bestaande klonen, `git
+remote`s en links blijven na een hernoeming werken. Dat maakt dit een ingreep
+met weinig risico — maar niet nul, want een paar dingen wijzen naar de naam in
+tekst in plaats van via de remote.
+
+In de GitHub-instellingen: Settings → General → Repository name → `MeshManager`.
+
+Daarna, in de repo:
+
+| Wat | Waar |
+|---|---|
+| Clone-URL's in de documentatie | `README.md`, `README.nl.md`, `docs/deployment.md`, `docs/nl/deployment.md` |
+| Links van de integratie | `homeassistant/custom_components/meshmanager/manifest.json` (`documentation`, `issue_tracker`) |
+| Badges, als die er later bij komen | `README.md` |
+
+En op de deploy-machine, desgewenst — door de doorverwijzing is het niet nodig:
+
+```bash
+git remote set-url origin https://github.com/DinXke/MeshManager.git
+```
+
+**Hernoem de map van de deploy-kloon niet.** De projectnaam van Docker Compose
+staat juist vast op `meshstats` zodat de volumes de map niet meer volgen, maar
+het pad van de kloon staat ook in de systemd-unit die
+`deploy/install-autoupdate.sh` schrijft. Hernoemen betekent dat script opnieuw
+draaien.
+
+Zie [`migration.md`](migration.md) voor de rest van de hernoeming.
+
+---
+
 ## Zie ook
 
 | | |

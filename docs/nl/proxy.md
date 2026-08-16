@@ -6,7 +6,7 @@
 WiFi-node kunnen delen. Het is een Home Assistant-add-on, maar het programma
 eronder is één Python-bestand zonder afhankelijkheden dat overal draait.
 
-**Hij draagt geen statistieken en praat nooit met een MeshStats-server.** Het is
+**Hij draagt geen statistieken en praat nooit met een MeshManager-server.** Het is
 een transporthulpje, en het staat alleen in deze repo omdat het probleem dat het
 oplost pal vóór al het andere hier ligt.
 
@@ -55,7 +55,7 @@ De proxy houdt die ene verbinding zelf vast en deelt hem:
 
 | Situatie | Antwoord |
 |---|---|
-| Je kunt de MeshStats-firmware flashen | **Nee.** `SerialWifiInterface` bedient vier clients tegelijk op de node zelf, met gerichte antwoordroutering. Zie [`firmware.md`](firmware.md#1-meerdere-companions-op-één-node) |
+| Je kunt de MeshManager-firmware flashen | **Nee.** `SerialWifiInterface` bedient vier clients tegelijk op de node zelf, met gerichte antwoordroutering. Zie [`firmware.md`](firmware.md#1-meerdere-companions-op-één-node) |
 | Je kunt geen firmware flashen en wilt meer dan één client | **Ja** |
 | Je hebt precies één client en houdt dat zo | Nee |
 
@@ -295,11 +295,11 @@ verkeer lezen, instellingen wijzigen. Houd hem binnen een vertrouwd netwerk, zet
   meerdere verbonden clients wordt een chatbericht opgesnoept door wie het eerst
   synchroniseert. Het verschijnt in één client, niet in alle. Telemetrie, beheer
   en statistieken hebben er geen last van — en daarom is dit voor de doelen van
-  MeshStats aanvaardbaar en voor een chat-eerst-opstelling niet.
+  MeshManager aanvaardbaar en voor een chat-eerst-opstelling niet.
 - **De node heeft nog steeds één plek.** De proxy bezet hem. Elke client die
   rechtstreeks met de node verbindt vecht er met de proxy om, en allebei
   verliezen.
-- **Geen statistieken, geen MQTT, geen MeshStats-server.** Alleen transport.
+- **Geen statistieken, geen MQTT, geen MeshManager-server.** Alleen transport.
 
 ---
 

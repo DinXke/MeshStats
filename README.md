@@ -1,4 +1,4 @@
-# MeshStats
+# MeshManager
 
 *[Nederlands](README.nl.md)*
 
@@ -6,13 +6,13 @@
 repeaters, fed by the nodes themselves — with the firmware to do it.**
 
 A MeshCore node already knows a great deal: about itself, about the repeaters it
-hears, and about every packet that passes its antenna. MeshStats turns that into
+hears, and about every packet that passes its antenna. MeshManager turns that into
 a public site — live figures, a live map, a searchable packet archive, history
 and a link map — and ships the firmware changes that let a node publish it
 without anything in between.
 
 ```
-  Heltec / ESP32 node ──MQTT──▶ Mosquitto ──▶ MeshStats ──▶ public site
+  Heltec / ESP32 node ──MQTT──▶ Mosquitto ──▶ MeshManager ──▶ public site
    (or Home Assistant) ──HTTP──────────────▶  (SQLite)      + live map
 ```
 
@@ -95,12 +95,12 @@ The site runs on port **8080**. An admin account is created on first start and
 the password is printed once:
 
 ```bash
-docker compose logs meshstats | grep -i password
+docker compose logs meshmanager | grep -i password
 ```
 
 Log in at `/admin`, change the password, and create an API token if you also
 want to push over HTTP. Then point a node at the broker — see
-[`docs/mqtt.md`](docs/mqtt.md) — or flash the MeshStats firmware from
+[`docs/mqtt.md`](docs/mqtt.md) — or flash the MeshManager firmware from
 [`docs/firmware.md`](docs/firmware.md).
 
 Without Docker: `sudo bash deploy/install.sh` (Debian/Ubuntu, systemd, port
@@ -119,6 +119,7 @@ The ones to start with:
 
 | Document | What is in it |
 |---|---|
+| [`docs/migration.md`](docs/migration.md) | **Coming from MeshStats?** The order in which to update a running installation |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit together, and why MQTT replaced HTTP |
 | [`docs/glossary.md`](docs/glossary.md) | The MeshCore vocabulary these documents assume |
 | [`docs/protocol.md`](docs/protocol.md) | The over-the-air packet format and the companion protocol, fully specified |
@@ -170,7 +171,7 @@ Full route reference: [`docs/api.md`](docs/api.md).
 |---|---|---|
 | `MM_DATA_DIR` | `server/data` | Where SQLite and the secret key live. Docker sets `/data` |
 | `MM_MQTT_PREFIX` | `meshmanager` | The MQTT topic prefix this installation owns |
-| `MM_SITE_NAME` | MeshCore Repeater Stats | Name in the header |
+| `MM_SITE_NAME` | MeshManager | Name in the header |
 | `MM_RETENTION_DAYS` | 180 | History retention |
 | `MM_PACKET_RETENTION_DAYS` | 7 | Packet archive retention, and the heatmap's window |
 | `MM_PACKET_MAX_ROWS` | 200000 | Row ceiling for the archive; oldest go first |
@@ -181,7 +182,7 @@ Full route reference: [`docs/api.md`](docs/api.md).
 | `MM_MQTT_HOST` | *(empty)* | Broker; empty disables MQTT |
 | `MM_MQTT_CMD_TOPIC` | `{prefix}/{node}/cmd` | The only topic the site publishes on |
 
-Every variable is `MM_<NAME>`. The old `MCS_<NAME>` spelling is **still read** as
+Every variable is `MM_<NAME>`. The old `MM_<NAME>` spelling is **still read** as
 a fallback, so an existing `.env` keeps working. Most of these are also editable
 in `/admin`, where the database value wins. Full list:
 [`docs/deployment.md`](docs/deployment.md#environment-variables).

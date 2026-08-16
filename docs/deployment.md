@@ -19,7 +19,7 @@ The site is on port **8080**. On first start an admin account is created and the
 password is printed once:
 
 ```bash
-docker compose logs meshstats | grep -i password
+docker compose logs meshmanager | grep -i password
 ```
 
 Log in at `/admin`, change the password, and create an API token if you also want
@@ -29,11 +29,11 @@ to push over HTTP.
 
 | Service | Image | Port | Volumes |
 |---|---|---|---|
-| `meshstats` | built from `./server` | `${MESHSTATS_PORT:-8080}` → 8080 | `meshstats-data:/data` |
+| `meshmanager` | built from `./server` | `${MESHMANAGER_PORT:-8080}` → 8080 | `meshstats-data:/data` |
 | `mosquitto` | `eclipse-mosquitto:2` | `${MQTT_PORT:-1883}` → 1883 | config (ro), `mosquitto-data`, `mosquitto-log` |
 | `victoria` | `victoriametrics/victoria-metrics` | none (internal only) | `victoria-data:/victoria-metrics-data` |
 
-`meshstats` declares `depends_on: [mosquitto, victoria]`. That controls start
+`meshmanager` declares `depends_on: [mosquitto, victoria]`. That controls start
 order only, not readiness — both clients retry on their own, so a dependency that
 is not up yet is not a problem.
 
@@ -74,30 +74,30 @@ On Debian/Ubuntu this:
 
 1. installs `python3`, `python3-venv`, `rsync`
 2. creates a system user `mcstats`
-3. rsyncs `server/` to `/opt/mc-repeater-stats/server`
+3. rsyncs `server/` to `/opt/meshmanager/server`
 4. builds a venv and installs `requirements.txt`
-5. installs and starts `mc-repeater-stats.service`
+5. installs and starts `meshmanager.service`
 
-Data lives in `/var/lib/mc-repeater-stats`. The unit runs with
+Data lives in `/var/lib/meshmanager`. The unit runs with
 `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, and
 `ReadWritePaths` limited to the data directory.
 
 The first-start password goes to the journal:
 
 ```bash
-journalctl -u mc-repeater-stats | grep -i password
+journalctl -u meshmanager | grep -i password
 ```
 
 > **The systemd unit sets no `MM_MQTT_*` variables, so MQTT ingest is off in
 > this deployment.** Add them with a drop-in and bring your own broker:
 >
 > ```bash
-> sudo systemctl edit mc-repeater-stats
+> sudo systemctl edit meshmanager
 > ```
 > ```ini
 > [Service]
 > Environment=MM_MQTT_HOST=127.0.0.1
-> Environment=MM_MQTT_USER=meshstats
+> Environment=MM_MQTT_USER=meshmanager
 > Environment=MM_MQTT_PASS=...
 > ```
 >
@@ -105,11 +105,11 @@ journalctl -u mc-repeater-stats | grep -i password
 > which are readable via `systemctl show`.
 
 Re-running `install.sh` upgrades in place. It uses `rsync --delete`, so anything
-you added under `/opt/mc-repeater-stats/server` is removed.
+you added under `/opt/meshmanager/server` is removed.
 
 ## Environment variables
 
-Every variable is `MM_<NAME>`. The old `MCS_<NAME>` spelling is **still read**
+Every variable is `MM_<NAME>`. The old `MM_<NAME>` spelling is **still read**
 as a fallback (`config.env()`), so an existing `.env` keeps working across the
 rename: whoever has an installation running should not have to rewrite a
 configuration file before the site comes back up. When both are set the new name
@@ -129,9 +129,9 @@ version.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MM_DATA_DIR` | `server/data` | Where the database and secret key live. Docker sets `/data`; systemd sets `/var/lib/mc-repeater-stats`. |
+| `MM_DATA_DIR` | `server/data` | Where the database and secret key live. Docker sets `/data`; systemd sets `/var/lib/meshmanager`. |
 | `MM_MQTT_PREFIX` | `meshmanager` | The MQTT topic prefix this installation owns. The old `meshcore` prefix is subscribed to as well, for as long as unflashed nodes still publish under it. |
-| `MM_SITE_NAME` | `MeshCore Repeater Stats` | Title in the header |
+| `MM_SITE_NAME` | `MeshManager` | Title in the header |
 | `MM_RETENTION_DAYS` | `180` | Sample retention. Overridden by the DB setting if changed in `/admin`. |
 | `MM_HEARTBEAT_MIN` | `5` | Minutes; force a graph point even when the value has not changed. Also overridable in `/admin`. |
 | `MM_PACKET_RETENTION_DAYS` | `7` | Raw packet retention; they arrive far faster than samples. Overridable in `/admin`, and it is also the heat map's window. |
@@ -147,7 +147,7 @@ version.
 |---|---|---|
 | `MM_MQTT_HOST` | *(empty — MQTT off)* | `mosquitto` |
 | `MM_MQTT_PORT` | `1883` | `1883` |
-| `MM_MQTT_USER` | *(empty)* | `meshstats` |
+| `MM_MQTT_USER` | *(empty)* | `meshmanager` |
 | `MM_MQTT_PASS` | *(empty)* | from `.env` |
 | `MM_MQTT_TOPIC` | *(empty — `<prefix>/+/stats` for every prefix)* | same |
 | `MM_MQTT_RX_TOPIC` | *(empty — `<prefix>/+/rx` for every prefix)* | same |
@@ -210,7 +210,7 @@ check when it misbehaves.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MESHSTATS_PORT` | `8080` | Host port for the site |
+| `MESHMANAGER_PORT` | `8080` | Host port for the site |
 | `MQTT_PORT` | `1883` | Host port for the broker |
 
 Most application settings are also editable in `/admin`, where they are stored in
@@ -309,7 +309,7 @@ For a compose deployment that should track `main` on its own:
 sudo bash deploy/install-autoupdate.sh
 ```
 
-This installs `meshstats-autoupdate.timer`, which runs `deploy/autoupdate.sh`
+This installs `meshmanager-autoupdate.timer`, which runs `deploy/autoupdate.sh`
 every five minutes from the clone you ran the installer in. The script fetches
 `main`, exits silently when there is nothing new, and otherwise performs
 exactly the manual sequence above: `git pull --ff-only`,
@@ -337,8 +337,8 @@ The timer is quiet by design — only runs that found work, or hit an error,
 write anything:
 
 ```bash
-journalctl -u meshstats-autoupdate -f
-systemctl list-timers meshstats-autoupdate.timer
+journalctl -u meshmanager-autoupdate -f
+systemctl list-timers meshmanager-autoupdate.timer
 ```
 
 The unit runs as root (docker needs it); clone the repository as root too, or
@@ -353,10 +353,10 @@ rebuild, so the timer does not apply there.
 ### Backup
 
 ```bash
-docker compose exec meshstats \
+docker compose exec meshmanager \
   sqlite3 /data/meshmanager.sqlite3 ".backup '/data/backup.sqlite3'"
-docker compose cp meshstats:/data/backup.sqlite3 ./backup.sqlite3
-docker compose cp meshstats:/data/secret.key ./secret.key
+docker compose cp meshmanager:/data/backup.sqlite3 ./backup.sqlite3
+docker compose cp meshmanager:/data/secret.key ./secret.key
 ```
 
 Use `.backup` rather than copying the file — the database runs in WAL mode and a
@@ -365,7 +365,7 @@ plain copy can be inconsistent.
 ### Reset the admin password
 
 ```bash
-docker compose exec meshstats python -m app.main set-password admin
+docker compose exec meshmanager python -m app.main set-password admin
 ```
 
 Reads the new password from stdin; minimum 8 characters.
@@ -393,12 +393,12 @@ error. Same information in the log under `meshmanager.tsdb`.
 
 ```bash
 # is it up?
-docker compose exec meshstats python -c \
+docker compose exec meshmanager python -c \
   "import urllib.request;print(urllib.request.urlopen('http://victoria:8428/health').read())"
 
 # which series exist -- note the explicit start/end: without them the label API
 # only looks at the last few hours and you will think data is missing
-docker compose exec meshstats python -c \
+docker compose exec meshmanager python -c \
   "import json,urllib.request,time;e=int(time.time());print(len(json.load(urllib.request.urlopen(
    f'http://victoria:8428/api/v1/label/__name__/values?start={e-400*86400}&end={e}'))['data']))"
 ```
@@ -462,9 +462,9 @@ number of repeaters and contacts, so this is not usually a problem.
 ### Logs
 
 ```bash
-docker compose logs -f meshstats
+docker compose logs -f meshmanager
 docker compose logs -f mosquitto
-journalctl -u mc-repeater-stats -f     # systemd
+journalctl -u meshmanager -f     # systemd
 ```
 
 Logger names, so a filter can pick one out: `meshmanager.mqtt` (ingest and the one
@@ -501,8 +501,8 @@ directory.
 
 Neither the HA integration nor the TCP proxy is part of the compose stack.
 
-**`mc_repeater_stats`** — copy
-`homeassistant/custom_components/mc_repeater_stats/` into your HA
+**`meshmanager`** — copy
+`homeassistant/custom_components/meshmanager/` into your HA
 `config/custom_components/`, restart, and add the integration. It asks for the
 site URL and an API token created in `/admin`. It requires the `meshcore`
 integration to be present, since it reads its entities and calls

@@ -465,6 +465,38 @@ UI string in only one language is a bug in the site.
 
 ---
 
+## Renaming the repository
+
+GitHub keeps the old name as a redirect, so existing clones, `git remote`s and
+links keep working after a rename. That makes this a low-risk operation — but
+not a no-op, because a few things point at the name in text rather than through
+the remote.
+
+In the GitHub settings: Settings → General → Repository name → `MeshManager`.
+
+Afterwards, in the repository:
+
+| What | Where |
+|---|---|
+| Clone URLs in the docs | `README.md`, `README.nl.md`, `docs/deployment.md`, `docs/nl/deployment.md` |
+| Integration links | `homeassistant/custom_components/meshmanager/manifest.json` (`documentation`, `issue_tracker`) |
+| Badges, if any are added later | `README.md` |
+
+And on the deploy host, optionally — the redirect means it is not required:
+
+```bash
+git remote set-url origin https://github.com/DinXke/MeshManager.git
+```
+
+**Do not rename the directory of the deploy clone.** The Docker Compose project
+name is pinned to `meshstats` precisely so the volumes no longer follow the
+directory, but the clone path is also baked into the systemd unit by
+`deploy/install-autoupdate.sh`. Renaming it means re-running that script.
+
+See [`migration.md`](migration.md) for the rest of the rename.
+
+---
+
 ## See also
 
 | | |

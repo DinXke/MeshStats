@@ -37,12 +37,21 @@ fi
 docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 \
   mosquitto_passwd -b /m/passwd "$USER" "$PASS"
 
-# De leesregel laat de node opdrachten van de site ontvangen (MeshStats 1.8.0 en
-# hoger). Zonder die regel weigert de broker de inschrijving zonder dat iemand
-# dat merkt, en lijkt de opvraagknop op de site dood.
+# De leesregel laat de node opdrachten van de site ontvangen (nodefirmware
+# 1.8.0 en hoger). Zonder die regel weigert de broker de inschrijving zonder
+# dat iemand dat merkt, en lijkt de opvraagknop op de site dood.
+#
+# Allebei de voorvoegsels, zolang de overgang naar MeshManager loopt: een node
+# publiceert op meshcore/ tot hij geflasht is en op meshmanager/ daarna, en
+# een ACL die maar een van de twee kent, laat precies een van die twee
+# toestanden in stilte doodlopen. De meshcore-regels mogen per node weg zodra
+# /admin die node op meshmanager/ toont.
 cat >> mosquitto/acl <<EOF
 
 user $USER
+topic write meshmanager/$NODE/stats
+topic write meshmanager/$NODE/rx
+topic read  meshmanager/$NODE/cmd
 topic write meshcore/$NODE/stats
 topic write meshcore/$NODE/rx
 topic read  meshcore/$NODE/cmd

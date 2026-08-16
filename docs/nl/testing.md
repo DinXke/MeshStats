@@ -65,8 +65,8 @@ afwezigheid is de conventie.
 ### `conftest.py` doet precies één ding
 
 ```python
-os.environ.setdefault("MCS_DATA_DIR",
-                      tempfile.mkdtemp(prefix="meshstats-test-data-"))
+os.environ.setdefault("MM_DATA_DIR",
+                      tempfile.mkdtemp(prefix="meshmanager-test-data-"))
 ```
 
 Het importeren van `app.config` **maakt de datamap aan en schrijft er een geheime

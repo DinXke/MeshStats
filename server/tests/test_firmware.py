@@ -30,16 +30,16 @@ def rep(**overrides):
         "id": 1, "name": "DinX-Home", "pubkey_prefix": "55d9a320a4e3",
         "fw": "v1.17.0", "fw_meshmanager": "1.11.0",
         "source_prefix": "55d9a320a4e3", "ota_host": "http://node.invalid",
-        "pio_env": "heltec_v4_repeater_meshstats", "is_critical": 0,
+        "pio_env": "heltec_v4_repeater_meshmanager", "is_critical": 0,
     }
     row.update(overrides)
     return row
 
 
-def release(tag="fw-v1.12.0", envs=("heltec_v4_repeater_meshstats",)):
+def release(tag="fw-v1.12.0", envs=("heltec_v4_repeater_meshmanager",)):
     assets = []
     for env in envs:
-        name = f"meshstats-{env}-{tag[len('fw-v'):]}.bin"
+        name = f"meshmanager-{env}-{tag[len('fw-v'):]}.bin"
         assets.append({"name": name, "browser_download_url": f"https://x/{name}", "size": 1_289_053})
         assets.append({"name": name + ".sha256", "browser_download_url": f"https://x/{name}.sha256",
                        "size": 100})
@@ -63,10 +63,10 @@ def test_assets_worden_per_bouwomgeving_uitgesorteerd():
 
 def test_assets_die_niet_aan_het_patroon_voldoen_verdwijnen_stil():
     raw = release()
-    raw["assets"].append({"name": "meshstats-losseflodder.bin",
+    raw["assets"].append({"name": "meshmanager-losseflodder.bin",
                           "browser_download_url": "https://x/l", "size": 1})
     parsed = firmware._parse_release(raw)
-    assert list(parsed["images"]) == ["heltec_v4_repeater_meshstats"]
+    assert list(parsed["images"]) == ["heltec_v4_repeater_meshmanager"]
 
 
 # --- de hernoeming naar MeshManager -------------------------------------------
@@ -98,16 +98,16 @@ def test_images_met_de_oude_naam_blijven_herkend():
     # terugrollen naar de versie van gisteren onmogelijk geworden -- juist
     # waarvoor de rollback bestaat.
     parsed = firmware._parse_release(release())
-    assert parsed["envs"] == ["heltec_v4_repeater_meshstats"]
+    assert parsed["envs"] == ["heltec_v4_repeater_meshmanager"]
 
 
 def test_een_node_op_de_oude_envnaam_krijgt_het_nieuwe_image():
     # De kern van de overgang. Een node die nog 1.12.0 draait is gebouwd onder
-    # heltec_v4_repeater_meshstats en meldt die naam; de release die hem
+    # heltec_v4_repeater_meshmanager en meldt die naam; de release die hem
     # eroverheen helpt draagt de nieuwe. Zonder deze vertaling is 2.0.0 alleen
     # met een USB-kabel te installeren, en dat is op een dak geen upgradeweg.
     parsed = firmware._parse_release(_meshmanager_release())
-    image = firmware.image_for(parsed, "heltec_v4_repeater_meshstats")
+    image = firmware.image_for(parsed, "heltec_v4_repeater_meshmanager")
     assert image is not None
     assert image["env"] == "heltec_v4_repeater_meshmanager"
 
@@ -117,9 +117,9 @@ def test_de_eigen_envnaam_gaat_voor_op_de_vertaling():
     # image dat er echt bij hoort. Een alias die daaroverheen walst zou een
     # terugrol naar een oudere versie het verkeerde bestand geven.
     parsed = firmware._parse_release(release(
-        envs=("heltec_v4_repeater_meshstats", "heltec_v4_repeater_meshmanager")))
-    image = firmware.image_for(parsed, "heltec_v4_repeater_meshstats")
-    assert image["env"] == "heltec_v4_repeater_meshstats"
+        envs=("heltec_v4_repeater_meshmanager", "heltec_v4_repeater_meshmanager")))
+    image = firmware.image_for(parsed, "heltec_v4_repeater_meshmanager")
+    assert image["env"] == "heltec_v4_repeater_meshmanager"
 
 
 def test_een_onbekende_bouwomgeving_krijgt_niets():
@@ -151,7 +151,7 @@ def test_eigen_node_zonder_adres_krijgt_no_host(monkeypatch):
     assert firmware.ota_route(rep(ota_host=""))["blocker"] == "no_host"
 
 
-def test_node_zonder_meshstats_versie_krijgt_niets(monkeypatch):
+def test_node_zonder_meshmanager_versie_krijgt_niets(monkeypatch):
     monkeypatch.setattr(firmware, "NODE_USER", "admin")
     assert firmware.ota_route(rep(fw_meshmanager=""))["blocker"] == "no_fw"
 
@@ -248,7 +248,7 @@ def test_een_node_die_iets_anders_meldt_dan_de_pagina_dacht_krijgt_niets(db, mon
     monkeypatch.setattr(firmware, "push", lambda *a, **k: pytest.fail("mocht niet versturen"))
 
     firmware._save_job(1, {"state": "voorbereiden"})
-    firmware._run_inner(1, "http://node.invalid", "fw-v1.12.0", "heltec_v4_repeater_meshstats")
+    firmware._run_inner(1, "http://node.invalid", "fw-v1.12.0", "heltec_v4_repeater_meshmanager")
     assert firmware.job(1)["step"] == "env"
 
 
@@ -256,7 +256,7 @@ def test_release_zonder_image_voor_deze_bouwomgeving(db, monkeypatch):
     monkeypatch.setattr(firmware, "release_by_tag",
                         lambda tag: firmware._parse_release(release(envs=("ander_bord",))))
     monkeypatch.setattr(firmware, "probe", lambda host, timeout=5: {
-        "ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshstats",
+        "ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshmanager",
         "board": "", "run": "app0", "other": {}})
     monkeypatch.setattr(firmware, "push", lambda *a, **k: pytest.fail("mocht niet versturen"))
 
@@ -277,11 +277,11 @@ def test_geslaagde_upgrade_wordt_pas_gelukt_als_de_node_het_bevestigt(db, monkey
     monkeypatch.setattr(firmware, "_nudge", lambda rep_id: None)
 
     antwoorden = iter([
-        {"ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshstats",
+        {"ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshmanager",
          "board": "", "run": "app0", "other": {}},                       # vooraf
         {"ok": False, "error": "niet bereikbaar", "ver": "", "env": "",
          "board": "", "run": "", "other": {}},                           # herstart bezig
-        {"ok": True, "error": "", "ver": "1.12.0", "env": "heltec_v4_repeater_meshstats",
+        {"ok": True, "error": "", "ver": "1.12.0", "env": "heltec_v4_repeater_meshmanager",
          "board": "", "run": "app1", "other": {}},                       # terug, nieuw
     ])
     monkeypatch.setattr(firmware, "probe", lambda host, timeout=5: next(antwoorden))
@@ -302,9 +302,9 @@ def test_node_terug_op_de_oude_versie_is_een_eigen_uitkomst(db, monkeypatch):
     monkeypatch.setattr(firmware, "RETURN_POLL_S", 0)
     monkeypatch.setattr(firmware, "_nudge", lambda rep_id: None)
     antwoorden = iter([
-        {"ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshstats",
+        {"ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshmanager",
          "board": "", "run": "app0", "other": {}},
-        {"ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshstats",
+        {"ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshmanager",
          "board": "", "run": "app0", "other": {}},
     ])
     monkeypatch.setattr(firmware, "probe", lambda host, timeout=5: next(antwoorden))
@@ -323,7 +323,7 @@ def test_node_die_niet_terugkomt_blijft_zichtbaar(db, monkeypatch):
     monkeypatch.setattr(firmware, "RETURN_WAIT_S", 0)
     monkeypatch.setattr(firmware, "RETURN_POLL_S", 0)
     monkeypatch.setattr(firmware, "probe", lambda host, timeout=5: {
-        "ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshstats",
+        "ok": True, "error": "", "ver": "1.11.0", "env": "heltec_v4_repeater_meshmanager",
         "board": "", "run": "app0", "other": {}})
 
     db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
@@ -442,7 +442,7 @@ def _render(**ctx):
     return templates.env.get_template("admin/firmware.html").render(basis)
 
 
-def _row(blocker="", can=True, env="heltec_v4_repeater_meshstats", job=None, builds=None,
+def _row(blocker="", can=True, env="heltec_v4_repeater_meshmanager", job=None, builds=None,
          **rep_overrides):
     r = rep(**rep_overrides)
     return {
@@ -465,7 +465,7 @@ def test_pagina_rendert_met_een_node_die_geupgraded_kan_worden():
     ("no_credentials", "geen inloggegevens"),
     ("relayed_only", "dágen zendtijd"),
     ("no_host", "geen beheeradres"),
-    ("no_fw", "geen MeshStats-versie"),
+    ("no_fw", "geen MeshManager-versie"),
 ])
 def test_elke_reden_om_niet_te_kunnen_upgraden_krijgt_zijn_eigen_zin(blocker, zin):
     """Geen knop die verdwijnt zonder uitleg: de vraag 'waarom kan dit hier niet'

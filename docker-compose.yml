@@ -1,35 +1,58 @@
+# De projectnaam staat hier vast en wordt niet meer van de mapnaam afgeleid.
+# Docker Compose zet hem voor elk volume: de databank leeft in
+# meshstats_meshstats-data. Zou de naam de map volgen, dan maakt het
+# hernoemen van de kloon -- precies wat je bij een projecthernoeming wilt
+# doen -- in stilte een nieuwe, lege set volumes aan, en komt de site zonder
+# repeaters, zonder historiek en zonder beheerderswachtwoord terug. De
+# autoupdate draait elke vijf minuten zonder toezicht, dus dat zou gebeuren
+# terwijl niemand kijkt.
+#
+# Blijft daarom "meshstats", ook nu alles MeshManager heet: dit is een naam
+# die IN DE DATA staat en niet in de code. Wie hem toch wil laten
+# meeverhuizen, verhuist eerst de volumes -- docs/migration.md beschrijft
+# hoe, en waarom je het waarschijnlijk niet moet doen.
+name: meshstats
+
 services:
-  meshstats:
+  meshmanager:
     build: ./server
-    image: meshstats:latest
-    container_name: meshstats
+    image: meshmanager:latest
+    container_name: meshmanager
     restart: unless-stopped
     ports:
-      - "${MESHSTATS_PORT:-8080}:8080"
+      - "${MESHMANAGER_PORT:-8080}:8080"
     environment:
       # Weergave en bewaartermijn (ook aanpasbaar via /admin)
-      MCS_SITE_NAME: "${MCS_SITE_NAME:-MeshCore Repeater Stats}"
-      MCS_RETENTION_DAYS: "${MCS_RETENTION_DAYS:-180}"
-      MCS_HEARTBEAT_MIN: "${MCS_HEARTBEAT_MIN:-5}"
+      MM_SITE_NAME: "${MM_SITE_NAME:-MeshManager}"
+      MM_RETENTION_DAYS: "${MM_RETENTION_DAYS:-180}"
+      MM_HEARTBEAT_MIN: "${MM_HEARTBEAT_MIN:-5}"
       # Beveiliging: bodylimiet en het aantal proxies vóór de app (zie .env.example)
-      MCS_MAX_BODY_BYTES: "${MCS_MAX_BODY_BYTES:-2000000}"
-      MCS_TRUSTED_PROXY_HOPS: "${MCS_TRUSTED_PROXY_HOPS:-1}"
+      MM_MAX_BODY_BYTES: "${MM_MAX_BODY_BYTES:-2000000}"
+      MM_TRUSTED_PROXY_HOPS: "${MM_TRUSTED_PROXY_HOPS:-1}"
       # MQTT: nodes publiceren hun statistieken naar de broker hieronder
-      MCS_MQTT_HOST: "${MCS_MQTT_HOST:-mosquitto}"
-      MCS_MQTT_PORT: "${MCS_MQTT_PORT:-1883}"
-      MCS_MQTT_USER: "${MCS_MQTT_USER:-meshstats}"
-      MCS_MQTT_PASS: "${MCS_MQTT_PASS:-}"
-      MCS_MQTT_TOPIC: "${MCS_MQTT_TOPIC:-meshcore/+/stats}"
-      MCS_MQTT_RX_TOPIC: "${MCS_MQTT_RX_TOPIC:-meshcore/+/rx}"
+      MM_MQTT_HOST: "${MM_MQTT_HOST:-mosquitto}"
+      MM_MQTT_PORT: "${MM_MQTT_PORT:-1883}"
+      MM_MQTT_USER: "${MM_MQTT_USER:-meshmanager}"
+      MM_MQTT_PASS: "${MM_MQTT_PASS:-}"
+      MM_MQTT_PREFIX: "${MM_MQTT_PREFIX:-meshmanager}"
+      # Leeg als standaard, en niet het oude vaste topic: de app luistert
+      # zelf al naar het nieuwe en het oude voorvoegsel. Een waarde hier zet
+      # daar een EXTRA inschrijving bovenop, voor wie op een gedeelde broker
+      # onder een eigen tak draait. Leeg wordt genegeerd.
+      MM_MQTT_TOPIC: "${MM_MQTT_TOPIC:-}"
+      MM_MQTT_RX_TOPIC: "${MM_MQTT_RX_TOPIC:-}"
       # Kloksynchronisatie naar de nodes: de site is de enige in deze keten die
       # weet hoe laat het is (zie .env.example en server/app/clocksync.py)
-      MCS_CLOCKSYNC_ENABLED: "${MCS_CLOCKSYNC_ENABLED:-1}"
-      MCS_CLOCKSYNC_HOURS: "${MCS_CLOCKSYNC_HOURS:-24}"
-      MCS_CLOCKSYNC_MAX_ERROR_S: "${MCS_CLOCKSYNC_MAX_ERROR_S:-10}"
-      MCS_CLOCKSYNC_MAX_JUMP_S: "${MCS_CLOCKSYNC_MAX_JUMP_S:-30}"
+      MM_CLOCKSYNC_ENABLED: "${MM_CLOCKSYNC_ENABLED:-1}"
+      MM_CLOCKSYNC_HOURS: "${MM_CLOCKSYNC_HOURS:-24}"
+      MM_CLOCKSYNC_MAX_ERROR_S: "${MM_CLOCKSYNC_MAX_ERROR_S:-10}"
+      MM_CLOCKSYNC_MAX_JUMP_S: "${MM_CLOCKSYNC_MAX_JUMP_S:-30}"
       # Tijdreeksen: leeg laten om alles in SQLite te houden
-      MCS_TSDB_URL: "${MCS_TSDB_URL:-http://victoria:8428}"
+      MM_TSDB_URL: "${MM_TSDB_URL:-http://victoria:8428}"
     volumes:
+      # Zelfde reden als de projectnaam hierboven: de sleutel van dit volume
+      # is de naam waaronder de databank op schijf staat. Hernoemen levert
+      # een leeg volume op naast een vol volume dat niemand meer opent.
       - meshstats-data:/data
     depends_on:
       - mosquitto
@@ -41,11 +64,11 @@ services:
   # waardoor volledige resolutie bewaren goedkoper is dan uitdunnen in SQLite.
   victoria:
     image: victoriametrics/victoria-metrics:v1.102.1
-    container_name: meshstats-tsdb
+    container_name: meshmanager-tsdb
     restart: unless-stopped
     command:
       - "-storageDataPath=/victoria-metrics-data"
-      - "-retentionPeriod=${MCS_TSDB_RETENTION:-180d}"
+      - "-retentionPeriod=${MM_TSDB_RETENTION:-180d}"
       # Zonder rem eist VictoriaMetrics een groot deel van het werkgeheugen op en
       # verdringt hij de site. Een percentage in plaats van een vast getal, zodat
       # dit meeschaalt als de machine groter wordt: 128 MB bij 512 MB, 512 MB bij
@@ -59,7 +82,7 @@ services:
 
   mosquitto:
     image: eclipse-mosquitto:2
-    container_name: meshstats-mqtt
+    container_name: meshmanager-mqtt
     restart: unless-stopped
     ports:
       - "${MQTT_PORT:-1883}:1883"
@@ -71,6 +94,7 @@ services:
       - mosquitto-log:/mosquitto/log
 
 volumes:
+  # Zie de noot bij "name:" bovenaan: deze sleutels blijven staan.
   meshstats-data:
   mosquitto-data:
   mosquitto-log:

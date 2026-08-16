@@ -1,4 +1,4 @@
-# MeshStats documentation
+# MeshManager documentation
 
 *[Nederlands](nl/README.md)*
 
@@ -19,6 +19,7 @@ switches language.
 | [Repository README](../README.md) | What this project is, what the site can do, and a five-command quick start |
 | [`architecture.md`](architecture.md) | How the pieces fit together, which paths data can take from a radio to the site, and why the transport is MQTT rather than HTTP |
 | [`glossary.md`](glossary.md) | Advert, flood, direct, scoped, hop, address hash, path hash, transport codes, companion, repeater, monitor — the vocabulary the rest of these documents assume |
+| [`migration.md`](migration.md) | Coming from MeshStats: in which order to update a running installation so the data never stops flowing, and which four names deliberately did not move |
 | [`deployment.md`](deployment.md) | Installing and running the site: Docker Compose, systemd without Docker, environment variables, reverse proxies, backups, upgrades |
 
 New to MeshCore itself? Read the [glossary](glossary.md) first, then
@@ -65,7 +66,7 @@ The MeshCore wire format is documented nowhere else.
 
 | Document | What you will find |
 |---|---|
-| [`firmware.md`](firmware.md) | Every change MeshStats makes to MeshCore — multiple simultaneous companions, the stats publisher, the repeater's network module — and how to build and flash it |
+| [`firmware.md`](firmware.md) | Every change MeshManager makes to MeshCore — multiple simultaneous companions, the stats publisher, the repeater's network module — and how to build and flash it |
 | [`firmware-upgrade.md`](firmware-upgrade.md) | How a node gets a new image: GitHub releases, the checksum that is verified twice, why only success reboots, how to roll back, and what a checksum does **not** prove |
 | [`node-management.md`](node-management.md) | What the site may do to a node and what it deliberately will not: the three management levels, which settings may be written and which must never be written remotely |
 
@@ -110,6 +111,7 @@ cover.
 |---|---|
 | What does this word mean? | [`glossary.md`](glossary.md) |
 | How do I get this running? | [`deployment.md`](deployment.md) |
+| I am upgrading from MeshStats | [`migration.md`](migration.md) |
 | What does this API endpoint return? | [`api.md`](api.md) |
 | How do I search the packet archive? | [`search.md`](search.md) |
 | What is in this database column? | [`database.md`](database.md) |
