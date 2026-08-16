@@ -57,6 +57,42 @@
  *        node: die leest zijn wachtwoorden uit /msnet.json, dat blijft
  *        staan.
  *
+ * 1.13.0 The site can write a setting instead of only reading one: POST
+ *        /api/cfg with a key and a value, GET /api/cfg for which keys this
+ *        image allows and between which bounds.
+ *        Why a compiled-in list and not simply the CLI. The telnet console
+ *        already hands every line straight to handleCommand(), and there that is
+ *        right: a person typed a password and knows what they are doing. A
+ *        button on a web page is a different thing -- it gets clicked, sometimes
+ *        on the wrong row -- and the consequences are not symmetrical. A wrong
+ *        'set name' is an ugly name; a wrong 'set radio' is a node listening on
+ *        another frequency that nobody ever sees again. So this release ships
+ *        seven parameters that cannot cut off reachability by any route: name,
+ *        lat, lon, advert.interval, flood.advert.interval, rxdelay, txdelay.
+ *        The list lives in the firmware rather than in the server, because the
+ *        server is editable by whoever runs the site and this is what actually
+ *        stands between a click and the radio. The server keeps its own copy to
+ *        refuse a typo on the page; that copy is the courtesy, this one is the
+ *        protection.
+ *        Why the value is read back rather than trusting "OK", with the two
+ *        measurements that settled it. MeshCore's 'set lat' is a bare atof(),
+ *        and atof("noord") is 0.0 -- a node that answers OK and then claims to
+ *        stand in the Gulf of Guinea. And 'set advert.interval' stores minutes/2
+ *        in one byte while 'get' multiplies by two again, so 61 becomes 60. Both
+ *        answer "OK", and in both cases something other than what was asked is
+ *        now in the node. This endpoint therefore returns what is in the node
+ *        AFTER the write, next to what was asked, plus an 'exact' flag -- and
+ *        leaves it to the page to say the two differ.
+ *        The CLI call deliberately passes a non-zero sender timestamp. The
+ *        console passes 0, which MeshCore reads as "this came from the serial
+ *        cable" and which unlocks commands that belong only there ('erase', 'get
+ *        prv.key'). This path needs none of them, so it does not get them: if
+ *        the table ever turns out to have a hole, the hole is at least smaller.
+ *        Not in this release, and named so nobody assumes otherwise: writing to
+ *        a MONITORED node over LoRa. That needs a state machine beside the
+ *        settings sweep, and the node it exists for is a stock MeshCore repeater
+ *        on a roof reachable no other way -- so it gets built against a node
+ *        somebody can physically touch, and not before.
  * 1.12.0 An upgrade path that tells the truth: POST /api/fw with the image as
  *        the raw body and its SHA-256 as a query parameter, GET /api/fw for
  *        what is installed and what can be gone back to, POST /api/fw/rollback
@@ -5474,6 +5510,233 @@ static void fwRollbackPost(AsyncWebServerRequest *req) {
   }
 }
 
+// --------------------------------------------------- instellingen schrijven
+
+/* Eén CLI-parameter van deze node zetten vanaf de site, en meteen teruglezen.
+ *
+ * Waarom hier een tabel staat en niet gewoon de CLI wordt doorgegeven. De
+ * telnetconsole hieronder doet precies dat -- elke regel gaat door naar
+ * MyMesh::handleCommand -- en daar mag dat, want daar zit een mens achter die
+ * een wachtwoord heeft ingetypt en die weet wat hij doet. Een knop op een
+ * webpagina is iets anders: die wordt aangeklikt, soms op de verkeerde regel,
+ * en de gevolgen van een verkeerde parameter zijn niet symmetrisch. 'set name'
+ * fout is een lelijke naam; 'set radio' fout is een node die op een andere
+ * frequentie gaat luisteren en die je nooit meer terugziet.
+ *
+ * Vandaar een lijst die in de firmware ingebakken zit. Niet in de server, want
+ * die is te bewerken door wie de site draait; deze lijst is wat er werkelijk
+ * tussen een klik en de radio staat. De server heeft zijn eigen kopie om een
+ * tikfout al op de pagina te kunnen weigeren, maar dát is de beleefdheid en dit
+ * is de beveiliging.
+ *
+ * Wat er in mag: alleen parameters die de bereikbaarheid van deze node langs
+ * geen enkele weg kunnen afsnijden. Dus geen freq, radio, tx, role of region --
+ * die worden van kracht en nemen in dezelfde tel de enige weg terug mee. Ook
+ * geen repeat of allow.read.only in deze ronde: die maken een node niet
+ * onbereikbaar maar veranderen wel wie er nog in mag, en dat verdient een eigen
+ * bevestiging die er nog niet is. Het veld 'tier' staat er alvast, zodat die
+ * tweede categorie later een tabelregel is en geen verbouwing.
+ *
+ * En waarom er teruggelezen wordt in plaats van 'OK' te geloven. MeshCore
+ * controleert lang niet alles wat het aanneemt: 'set lat' is een kale atof(),
+ * en atof("noord") is 0.0 -- een node die na een tikfout beweert dat hij in de
+ * Golf van Guinee staat, met "OK" als antwoord. Erger nog is advert.interval:
+ * dat wordt bewaard als minuten/2 in één byte, dus 'set advert.interval 61'
+ * legt 30 vast en leest terug als 60. Beide keren luidt het antwoord "OK" en
+ * beide keren staat er iets anders in de node dan er gevraagd is. Daarom geeft
+ * dit endpoint niet terug wat er gevraagd was maar wat er ná afloop in de node
+ * staat, met de vraag ernaast, en laat het aan de pagina om te melden dat die
+ * twee verschillen. */
+
+#define CFG_VALUE_MAX   40
+#define CFG_KEY_MAX     28
+
+enum CfgKind { CFG_TEXT = 0, CFG_INT = 1, CFG_FLOAT = 2 };
+
+struct CfgParam {
+  const char *key;      // wat de aanroeper vraagt; ook wat 'get <key>' teruggeeft
+  uint8_t     kind;
+  float       lo, hi;   // eigen grenzen, inclusief -- niet per se die van MeshCore
+  uint8_t     tier;     // 1 = kan de bereikbaarheid langs geen weg afsnijden
+};
+
+/* De grenzen zijn de onze en soms strenger dan die van MeshCore, met opzet.
+ * MeshCore aanvaardt advert.interval 0 ("stop met adverteren"); dat maakt een
+ * node niet onbereikbaar maar laat hem wel uit ieders lijst wegzakken, wat op
+ * een dak hetzelfde voelt. Lat en lon hebben aan de overkant helemaal geen
+ * controle, dus die van hier is de enige die er is. */
+static const CfgParam CFG_PARAMS[] = {
+  { "name",                  CFG_TEXT,     0,      0,   1 },
+  { "lat",                   CFG_FLOAT,  -90,     90,   1 },
+  { "lon",                   CFG_FLOAT, -180,    180,   1 },
+  { "advert.interval",       CFG_INT,     60,    240,   1 },   // minuten, stappen van 2
+  { "flood.advert.interval", CFG_INT,      3,    168,   1 },   // uren
+  { "rxdelay",               CFG_FLOAT,    0,     20,   1 },
+  { "txdelay",               CFG_FLOAT,    0,      2,   1 },
+};
+#define CFG_PARAM_COUNT ((int)(sizeof(CFG_PARAMS) / sizeof(CFG_PARAMS[0])))
+
+static const CfgParam *cfgFind(const char *key) {
+  for (int i = 0; i < CFG_PARAM_COUNT; i++) {
+    if (strcmp(CFG_PARAMS[i].key, key) == 0) return &CFG_PARAMS[i];
+  }
+  return NULL;
+}
+
+/* Tekens die MeshCore's isValidName() weigert, plus alles onder 0x20. Die
+ * laatste staan er niet omdat MeshCore ze verbiedt -- dat doet het niet -- maar
+ * omdat een naam met een regeleinde erin een JSON-bericht oplevert dat de
+ * server weggooit, waarna de node uit de statistieken verdwijnt zonder dat er
+ * ergens een fout te zien is. Dezelfde les als bij jsonEsc(). */
+static bool cfgNameOk(const char *v) {
+  if (*v == 0) return false;
+  for (const char *p = v; *p; p++) {
+    if ((unsigned char)*p < 0x20) return false;
+    if (strchr("[]\\:,?*", *p)) return false;
+  }
+  return true;
+}
+
+/* Een getal en niets anders. strtof() alleen is niet genoeg: die leest "12abc"
+ * als 12 en meldt dat het goed ging, en juist dát is de fout die we van
+ * MeshCore proberen op te vangen in plaats van na te doen. */
+static bool cfgNumber(const char *v, float &out) {
+  if (*v == 0) return false;
+  char *end = NULL;
+  out = strtof(v, &end);
+  if (end == v) return false;
+  while (*end == ' ') end++;
+  return *end == 0 && !isnan(out) && !isinf(out);
+}
+
+// "> 60" -> "60"; een foutmelding van de overkant blijft staan zoals hij is.
+static const char *cfgStripMarker(const char *reply) {
+  if (reply[0] == '>' && reply[1] == ' ') return reply + 2;
+  return reply;
+}
+
+// Beide spellingen waarmee MeshCore weigert. Voluit, zodat een node die
+// 'Erratic' heet zijn eigen naam nog kan terugkrijgen.
+static bool cfgIsError(const char *reply) {
+  return strncmp(reply, "Error", 5) == 0 || strncmp(reply, "Err - ", 6) == 0;
+}
+
+/* De CLI van deze node aanroepen. Het commando wordt opgebouwd uit een sleutel
+ * die uit CFG_PARAMS komt en nooit uit het verzoek, dus er valt niets in te
+ * smokkelen: de waarde is altijd het laatste woord en er is geen scheider
+ * waarmee een tweede commando begint.
+ *
+ * De tijdstempel is met opzet niet 0. De console gebruikt 0, en dat betekent in
+ * MeshCore "dit komt van de seriële kabel", wat een handvol commando's
+ * ontgrendelt die alleen daar horen ('erase', 'get prv.key'). Deze weg heeft er
+ * geen van nodig, dus krijgt hij ze ook niet -- blijkt de tabel hierboven ooit
+ * een gat te hebben, dan is dat gat in elk geval kleiner. */
+static void cfgCli(char *reply, size_t reply_max, const char *fmt, ...) {
+  char cmd[80];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(cmd, sizeof(cmd), fmt, ap);
+  va_end(ap);
+
+  reply[0] = 0;
+  if (!_mesh) {
+    strncpy(reply, "Error: geen mesh", reply_max - 1);
+    reply[reply_max - 1] = 0;
+    return;
+  }
+  _mesh->handleCommand(1, cmd, reply);
+}
+
+static void handleCfgPost(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+
+  char key[CFG_KEY_MAX] = "", value[CFG_VALUE_MAX] = "";
+  copyParam(req, "key", key, sizeof(key));
+  copyParam(req, "value", value, sizeof(value));
+
+  static char body[480];
+  const CfgParam *p = cfgFind(key);
+  if (!p) {
+    /* Bewust dezelfde tekst voor "bestaat niet" en "mag niet": welke parameters
+     * er zijn is geen geheim -- ze staan in de documentatie en in /api/cfg --
+     * maar een antwoord dat die twee uit elkaar houdt nodigt uit tot aftasten,
+     * en daar valt niets mee te winnen. */
+    snprintf(body, sizeof(body),
+             "{\"ok\":0,\"step\":\"sleutel\",\"msg\":\"deze parameter staat niet op de "
+             "lijst van wat er van afstand gezet mag worden\"}");
+    req->send(400, "application/json", body);
+    return;
+  }
+
+  float num = 0;
+  if (p->kind == CFG_TEXT) {
+    if (!cfgNameOk(value)) {
+      snprintf(body, sizeof(body),
+               "{\"ok\":0,\"step\":\"waarde\",\"msg\":\"leeg of met een teken dat niet "
+               "mag ([ ] \\\\ : , ? * of een stuurteken)\"}");
+      req->send(400, "application/json", body);
+      return;
+    }
+  } else {
+    bool ok = cfgNumber(value, num);
+    if (ok && (num < p->lo || num > p->hi)) ok = false;
+    if (ok && p->kind == CFG_INT && num != (float)(long)num) ok = false;
+    if (!ok) {
+      snprintf(body, sizeof(body),
+               "{\"ok\":0,\"step\":\"waarde\",\"msg\":\"%s moet een %s tussen %g en %g "
+               "zijn\"}", p->key,
+               p->kind == CFG_INT ? "geheel getal" : "getal", p->lo, p->hi);
+      req->send(400, "application/json", body);
+      return;
+    }
+  }
+
+  char set_reply[160];
+  cfgCli(set_reply, sizeof(set_reply), "set %s %s", p->key, value);
+
+  char get_reply[160];
+  cfgCli(get_reply, sizeof(get_reply), "get %s", p->key);
+  const char *applied = cfgStripMarker(get_reply);
+
+  bool refused = cfgIsError(set_reply);
+  /* 'Toegepast' is niet hetzelfde als 'gelijk aan wat er gevraagd is', en dat
+   * verschil hoort de aanroeper te zien in plaats van te moeten raden. Bij
+   * advert.interval is het zelfs het gewone geval: 61 wordt 60. */
+  bool exact = !refused && strcmp(applied, value) == 0;
+
+  static char e_set[320], e_applied[320], e_asked[CFG_VALUE_MAX * 2];
+  jsonEsc(e_set, sizeof(e_set), set_reply);
+  jsonEsc(e_applied, sizeof(e_applied), applied);
+  jsonEsc(e_asked, sizeof(e_asked), value);
+
+  snprintf(body, sizeof(body),
+           "{\"ok\":%d,\"step\":\"%s\",\"key\":\"%s\",\"asked\":\"%s\","
+           "\"applied\":\"%s\",\"exact\":%d,\"reply\":\"%s\"}",
+           refused ? 0 : 1, refused ? "node" : "",
+           p->key, e_asked, e_applied, exact ? 1 : 0, e_set);
+  req->send(refused ? 400 : 200, "application/json", body);
+}
+
+/* Welke parameters deze node van afstand laat zetten, met hun grenzen. Zodat de
+ * pagina de lijst niet hoeft te kennen om hem te tonen, en -- belangrijker --
+ * zodat een server die een parameter aanbiedt die deze firmware niet kent dat
+ * merkt vóórdat iemand erop drukt in plaats van erna. */
+static void handleCfgList(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+  static char body[700];
+  int n = snprintf(body, sizeof(body), "{\"params\":[");
+  for (int i = 0; i < CFG_PARAM_COUNT && n < (int)sizeof(body) - 120; i++) {
+    const CfgParam &p = CFG_PARAMS[i];
+    n += snprintf(body + n, sizeof(body) - n,
+                  "%s{\"key\":\"%s\",\"kind\":\"%s\",\"lo\":%g,\"hi\":%g,\"tier\":%u}",
+                  i ? "," : "", p.key,
+                  p.kind == CFG_TEXT ? "text" : (p.kind == CFG_INT ? "int" : "float"),
+                  p.lo, p.hi, (unsigned)p.tier);
+  }
+  snprintf(body + n, sizeof(body) - n, "]}");
+  req->send(200, "application/json", body);
+}
+
 // ------------------------------------------------------------------- console
 
 static void consolePrompt() {
@@ -6197,6 +6460,8 @@ void mmnet_begin(FS &fs, MyMesh *mesh) {
    * version of that library claiming /api/* cannot shadow it, and registered
    * unconditionally -- including in safe mode, which is exactly the state in
    * which somebody needs to put a working image back on this node. */
+  _server.on("/api/cfg", HTTP_GET, handleCfgList);
+  _server.on("/api/cfg", HTTP_POST, handleCfgPost);
   _server.on("/api/fw", HTTP_GET, fwState);
   _server.on("/api/fw", HTTP_POST, fwDone, NULL, fwBody);
   _server.on("/api/fw/rollback", HTTP_POST, fwRollbackPost);

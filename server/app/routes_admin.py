@@ -25,7 +25,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (auth, clocksync, commanding, config, db, firmware, metrics,
-               mqtt_ingest, ratelimit, retention, tsdb)
+               mqtt_ingest, nodeconfig, ratelimit, retention, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -379,6 +379,18 @@ def repeater_settings_redirect(request: Request, rid: int):
 @router.get("/repeaters/{rid}", response_class=HTMLResponse)
 def node_page(request: Request, rid: int):
     """Alles over één node: identiteit, uitvragen, klok, firmware, verwijderen."""
+    return _node_page(request, rid)
+
+
+def _node_page(request: Request, rid: int, **extra):
+    """De pagina van één node, eventueel met de uitslag van een handeling erbij.
+
+    Een eigen functie omdat een schrijfactie diezelfde pagina teruggeeft met zijn
+    antwoord erin, en niet een 303 naar een pagina die het antwoord kwijt is. Het
+    antwoord van een schrijfactie is namelijk meer dan gelukt-of-niet: er staat in
+    wat er ná afloop in de node staat, en dat kan afwijken van wat er gevraagd is.
+    Dat past niet in een queryparameter zonder het te verminken.
+    """
     user = require_login(request)
     rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not rep:
@@ -396,6 +408,7 @@ def node_page(request: Request, rid: int):
     # eindigt een klik op "er is niets verstuurd", en dat kan de pagina van
     # tevoren zeggen in plaats van achteraf.
     broker = mqtt_ingest.can_publish()
+    cfg = nodeconfig.cfg_route(rep)
     return templates.TemplateResponse(request, "admin/node.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
         "settings_rows": rows,
@@ -443,7 +456,38 @@ def node_page(request: Request, rid: int):
         # is hangt af van de weg (1.8.0 voor de node zelf, 1.9.0 voor een
         # monitor), en twee plaatsen die dat allebei uitrekenen is er één te veel.
         "route": commanding.describe(rep, broker_connected=broker),
+        # Instellingen schrijven. De parameterlijst komt van de node zelf en
+        # niet uit een tabel hier: de firmware is er de baas over, en een tweede
+        # lijst zou vroeg of laat een parameter aanbieden die de node weigert.
+        # Alleen ophalen als er ook echt een weg is, anders staat elke
+        # paginaweergave tien seconden op een node te wachten die er niet is.
+        "cfg_route": cfg,
+        "cfg_params": (nodeconfig.params(cfg["host"]) if cfg["can"]
+                       else {"ok": False, "error": "", "params": []}),
+        **extra,
     })
+
+
+@router.post("/repeaters/{rid}/config")
+def write_config(request: Request, rid: int, key: str = Form(...),
+                 value: str = Form(""), csrf: str = Form(...)):
+    """Eén instelling van deze node zetten en meteen teruglezen.
+
+    Synchroon, anders dan de firmware-upgrade: dit is één CLI-aanroep over het
+    lokale netwerk en die is in tienden van seconden klaar. Een achtergrondtaak
+    met een toestand om te pollen zou hier machinerie zijn om niets.
+
+    Geeft de pagina terug in plaats van een 303, want het antwoord bevat wat er
+    ná afloop in de node staat -- en dat is soms iets anders dan wat er gevraagd
+    is. Zie nodeconfig.write() voor de twee gemeten redenen waarom.
+    """
+    require_login(request)
+    check_csrf(request, csrf)
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+    result = nodeconfig.write(rep, key.strip(), value.strip())
+    return _node_page(request, rid, cfg_result=result)
 
 
 @router.post("/repeaters/{rid}/settings/refresh")

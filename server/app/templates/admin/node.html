@@ -395,6 +395,96 @@
     terugdraaien. Wat er hieronder zo uitgebreid staat, staat er om dezelfde
     reden als bij de opvraagknop hierboven: dit loopt over een radio en kan op
     meer dan één plaats doodlopen zonder ergens een fout op te leveren. -#}
+{#- Instellingen schrijven. Bewust ná "Uitvragen" en vóór "Klok": lezen is
+    gratis en onschuldig, dit niet. De lijst met parameters komt van de node
+    zelf, want de firmware is er de baas over; een tweede lijst hier zou vroeg
+    of laat iets aanbieden dat de node weigert. -#}
+<section>
+  <h2>Instellingen schrijven</h2>
+  <div class="card">
+
+  {% if cfg_result %}
+  <div class="notice small">
+    {% if cfg_result.ok and cfg_result.exact %}
+    <strong>Gezet.</strong> <span class="mono">{{ cfg_result.key }}</span> staat nu op
+    <span class="mono">{{ cfg_result.applied }}</span>.
+    {% elif cfg_result.ok %}
+    {#- Het geval waar het teruglezen voor bestaat: de node zei "OK" en er staat
+        iets anders in dan er gevraagd is. advert.interval doet dit altijd, want
+        die wordt bewaard als minuten/2. -#}
+    <strong>Gezet, maar niet precies.</strong> Gevraagd
+    <span class="mono">{{ cfg_result.asked }}</span>, in de node staat nu
+    <span class="mono">{{ cfg_result.applied }}</span>. Dat is geen fout: de node
+    legt sommige waarden afgerond vast. De waarde hierboven is wat er werkelijk staat.
+    {% else %}
+    <strong>Niet gezet.</strong>
+    {% if cfg_result.step %}<span class="mono">[{{ cfg_result.step }}]</span>{% endif %}
+    {{ cfg_result.msg }}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if not cfg_route.can %}
+  <p class="muted small">
+    <strong>Niet mogelijk:</strong>
+    {%- if cfg_route.blocker == "no_credentials" %}
+    de server heeft geen inloggegevens voor de beheerpagina's van de nodes. Zet
+    <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in de omgeving van de
+    server.
+    {%- elif cfg_route.blocker == "relayed_only" %}
+    deze repeater draait onze firmware niet en heeft geen IP-pad; zijn cijfers komen
+    over LoRa binnen via <span class="mono">{{ rep.source_prefix }}</span>. De weg die
+    daarvoor ontworpen is loopt via die monitor over LoRa en is nog niet gebouwd
+    (zie <code>docs/nl/node-management.md</code>). Dit is dus geen ontbrekende
+    instelling maar een blijvende toestand.
+    {%- elif cfg_route.blocker == "no_host" %}
+    er is geen beheeradres ingevuld voor deze node. Dat doe je op het tabblad
+    <a href="/admin/firmware">Firmware</a>; hetzelfde adres wordt voor beide gebruikt.
+    {%- elif cfg_route.blocker == "no_fw" %}
+    deze node meldt geen versie van onze firmware, dus draait hij hem waarschijnlijk niet.
+    {%- elif cfg_route.blocker == "old_fw" %}
+    deze node draait <span class="mono">{{ cfg_route.fw }}</span>; instellingen schrijven
+    bestaat pas vanaf <span class="mono">{{ cfg_route.min_fw }}</span>.
+    {%- else %}{{ cfg_route.blocker }}.
+    {%- endif %}
+  </p>
+  {% elif not cfg_params.ok %}
+  <p class="muted small">
+    <strong>Lijst niet op te halen:</strong> {{ cfg_params.error }}.
+    Zonder de lijst van de node zelf wordt hier niets aangeboden — een formulier uit
+    een tabel op de server zou een parameter kunnen tonen die deze node weigert.
+  </p>
+  {% else %}
+  <p class="muted small">
+    Alleen parameters die de bereikbaarheid van deze node langs geen enkele weg kunnen
+    afsnijden. Frequentie, radio-instellingen, zendvermogen en rol staan er met opzet
+    niet bij: die worden van kracht en nemen in dezelfde tel de weg terug mee. Na het
+    schrijven wordt de waarde teruggelezen, want de node antwoordt ook "OK" op dingen
+    die hij anders opslaat dan gevraagd.
+  </p>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/config" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Parameter
+      <select name="key" id="cfgkey">
+        {% for p in cfg_params.params %}
+        <option value="{{ p.key }}"
+                data-kind="{{ p.kind }}" data-lo="{{ p.lo }}" data-hi="{{ p.hi }}">
+          {{ p.key }}{% if p.kind != "text" %} ({{ p.lo }}–{{ p.hi }}){% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Waarde
+      <input name="value" id="cfgvalue" autocomplete="off" required>
+    </label>
+    <button type="submit">Schrijven</button>
+  </form>
+  <p class="muted small" id="cfghint"></p>
+  {% endif %}
+
+  </div>
+</section>
+
 <section>
   <h2>Klok</h2>
   <div class="card">
