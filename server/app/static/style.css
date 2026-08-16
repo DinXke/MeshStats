@@ -20,6 +20,30 @@
   --thermo-track: #1e2b3a;
   --gridline: rgba(255, 255, 255, .014);
   --chart-grid: rgba(125, 143, 160, .12);
+  /* Ankerpunten van de kleurschaal voor de drukte-heatmap: --heat-1 het
+     rustigst, --heat-5 het drukst, lichtblauw -> groen -> geel -> oranje ->
+     rood. app.js interpoleert er in Oklab een gladde rampe tussenuit, dus dit
+     zijn geen vijf klassen maar vijf ijkpunten.
+
+     Bewust een regenboog en geen eenkleurig verloop: dat is de kleurkeuze van
+     de eigenaar van de site. Om de bekende bezwaren tegen een regenboog niet
+     mee te erven zijn de ankers gemonsterd uit *Turbo* (Anton Mikhailov,
+     Google 2019, ontworpen als vervanger van Jet: geen valse randen op vlakke
+     data, grotendeels oplopende helderheid), op de posities t = 0,18 / 0,36 /
+     0,62 / 0,74 / 0,85 van zijn polynoombenadering. Die vijf posities zijn
+     niet met de hand gekozen maar uitgezocht op de grootste kleinste afstand
+     tussen twee buren, gemeten in Oklab en onder gesimuleerde kleurenblindheid
+     (Machado-Oliveira-Fernandes 2009). Resultaat op de donkere CARTO-tegels
+     (≈ #26282b): kleinste buurafstand ΔE 17,1 bij normaal zicht en 9,9 bij
+     protanopie/deuteranopie, en alle vijf boven 3:1 contrast met de kaart.
+     Een regenboog blijft desondanks minder kleurenblindvriendelijk dan één
+     tint; de lijndikte loopt daarom mee met dezelfde waarde, zodat de
+     informatie ook zonder kleuronderscheid te lezen blijft. */
+  --heat-1: #3490f8;
+  --heat-2: #39ef9c;
+  --heat-3: #ebd22e;
+  --heat-4: #ff871e;
+  --heat-5: #d93b10;
   --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
 }
@@ -44,6 +68,23 @@
   --thermo-track: #d2ddd7;
   --gridline: rgba(10, 40, 25, .04);
   --chart-grid: rgba(70, 90, 80, .16);
+  /* Zelfde vijf tinten in dezelfde volgorde, maar donkerder gezet. Turbo is
+     gemaakt voor een zwarte achtergrond: op de lichte CARTO-tegels (≈ #f5f3f0)
+     haalt zijn hele middenstuk -- groen tot oranje -- nog geen 1,5:1 en
+     verdwijnt de lijn gewoon in de kaart. De tint van elk anker is
+     aangehouden, alleen de helderheid is opnieuw gekozen, en met opzet om en
+     om hoog/laag: geel en oranje liggen qua tint dicht bij elkaar en zouden
+     op gelijke helderheid samenvallen. Gemeten tegen #f5f3f0: kleinste
+     buurafstand ΔE 16,0 normaal en 10,5 onder kleurenblindheid. Blauw
+     (2,82:1) en geel (2,19:1) blijven onder 3:1 -- op een witte kaart bestaat
+     er geen echt geel dat dat haalt. Dat is toegestaan zolang de waarde ook
+     zonder kleur te lezen valt, en dat kan hier: de dikte loopt mee en de
+     tooltip noemt het exacte aantal ritten. */
+  --heat-1: #3793fb;
+  --heat-2: #11915b;
+  --heat-3: #bca70f;
+  --heat-4: #c96601;
+  --heat-5: #952101;
 }
 * { box-sizing: border-box; }
 html { background: var(--bg); scrollbar-color: var(--card-edge) var(--bg); }
@@ -298,6 +339,40 @@ label input { width: 100%; margin-top: .25rem; }
   backdrop-filter: blur(4px);
 }
 .mapempty[hidden] { display: none; }
+
+/* --- drempel en legende van de drukte-heatmap -------------------------------- */
+/* Staat naast het vinkje in de kaartbalk, die zelf al afbreekt naar meerdere
+   regels; de schuif krijgt daarom een vaste, bescheiden breedte en de teller
+   mag eronder vallen. Zo blijft het geheel bruikbaar vanaf 320 px. */
+.heatctl { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; margin: 0; }
+.heatctl[hidden] { display: none; }
+.heatrange {
+  /* De algemene input-regel geeft elk invoerveld een rand en een vlak; een
+     schuifbalk moet daar juist vanaf, anders staat hij in een doosje. */
+  width: 6.5rem; flex: 0 0 auto; padding: 0; margin: 0;
+  border: 0; background: transparent; border-radius: 0;
+  accent-color: var(--amber); cursor: pointer; vertical-align: middle;
+}
+.heatrange:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.heatcount { font-family: var(--mono); font-size: .74rem; color: var(--muted); }
+/* Boven Leafletlagen, onder de kaartbediening -- zelfde verdieping als de
+   "niets gevonden"-melding hierboven. Wel aanwijsbaar: elk staal draagt in
+   zijn tooltip het aantal ritten waar die kleur voor staat. */
+.heatlegend {
+  position: absolute; z-index: 700; left: .5rem; bottom: .5rem;
+  display: flex; align-items: center; gap: .35rem;
+  padding: .25rem .45rem; border-radius: 7px;
+  background: var(--topbar-bg); border: 1px solid var(--card-edge);
+  color: var(--muted); font-family: var(--mono); font-size: .68rem;
+  backdrop-filter: blur(4px); max-width: calc(100% - 1rem);
+}
+.heatlegend[hidden] { display: none; }
+/* Het balkje zelf krijgt zijn verloop uit app.js, uit precies dezelfde
+   opzoektabel waarmee de lijnen getekend worden -- een los CSS-verloop over
+   dezelfde ankers zou in sRGB mengen en dus nét andere tussenkleuren geven
+   dan de kaart. */
+.heatramp { display: block; flex: 0 0 auto; width: 4.5rem; height: .5rem;
+            border-radius: 2px; border: 1px solid var(--card-edge); }
 .livecount { font-family: var(--mono); }
 .livefeed {
   list-style: none; margin: .6rem 0 0; padding: 0;

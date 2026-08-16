@@ -36,9 +36,19 @@
           <label class="maptoggle" data-i18n-title="live.motion_title" title="Toon elk pakket als een stipje dat van de afzender via elke hop naar de waarnemende node reist">
             <input type="checkbox" id="pkt-motion"> <span data-i18n="live.motion">Pakketten laten bewegen</span>
           </label>
-          <label class="maptoggle" data-i18n-title="live.heat_title" title="Tekent elke verbinding waarover in de hele bewaarde periode pakketten reisden; hoe drukker bereisd ten opzichte van de rest, hoe dikker de lijn. Alleen stukken tussen twee eenduidig geplaatste nodes tellen mee.">
+          <label class="maptoggle" data-i18n-title="live.heat_title" title="Tekent elke verbinding waarover in de hele bewaarde periode pakketten reisden; hoe drukker bereisd ten opzichte van de rest, hoe warmer en dikker de lijn. Alleen stukken tussen twee eenduidig geplaatste nodes tellen mee.">
             <input type="checkbox" id="pkt-heat"> <span data-i18n="live.heat">Drukte op paden tonen</span>
           </label>
+          <!-- Verschijnt pas als de laag aanstaat: een drempel instellen voor een
+               kaartlaag die niet getekend wordt, is een knop zonder gevolg. -->
+          <span class="heatctl" id="heat-ctl" hidden>
+            <input type="range" id="heat-min" class="heatrange" min="0" max="0" step="1" value="0"
+                   data-i18n-title="live.heat_min_title"
+                   title="Verbergt verbindingen waarover minder vaak een pakket reisde dan de drempel. Helemaal links staat de drempel op 1 en zie je alles."
+                   data-i18n-aria="live.heat_min_aria"
+                   aria-label="Minimaal aantal ritten om een verbinding te tonen">
+            <output class="heatcount" id="heat-count" for="heat-min" aria-live="polite"></output>
+          </span>
           <a class="archlink small" href="/pakketten" data-i18n="arch.link">Zoeken in het archief</a>
           <span class="livecount muted small" id="live-count" data-i18n="live.waiting">wachten op verkeer&hellip;</span>
         </span>
@@ -48,6 +58,18 @@
       <div class="mapwrap">
         <div id="livemap"></div>
         <p class="mapempty" id="map-empty" hidden data-i18n="live.map_nomatch">Geen nodes op de kaart die aan het filter voldoen.</p>
+        <!-- Zonder legende is een kleurschaal niet te lezen; de stalen en de twee
+             getallen eromheen worden door app.js gevuld met de werkelijke
+             aantallen ritten van de laag die op dat moment getekend staat. -->
+        <div class="heatlegend" id="heat-legend" hidden
+             data-i18n-title="live.heat_legend_title"
+             title="Kleur en dikte van een lijn zeggen hoe druk die verbinding is ten opzichte van de andere getoonde verbindingen.">
+          <span data-i18n="live.heat_quiet">rustig</span>
+          <span class="heatcount" id="heat-legend-lo"></span>
+          <span class="heatramp" id="heat-legend-ramp"></span>
+          <span class="heatcount" id="heat-legend-hi"></span>
+          <span data-i18n="live.heat_busy">druk</span>
+        </div>
       </div>
       <div class="feedbar">
         <input type="search" id="pkt-filter" class="pktfilter" autocomplete="off"

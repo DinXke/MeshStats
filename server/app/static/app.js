@@ -1442,50 +1442,250 @@
     // does the traffic flow", and a backbone with the busiest half filtered
     // away would be redrawn as something it is not.
     var HEAT_KEY = "mcs-pktheat";
+    var HEAT_MIN_KEY = "mcs-pktheat-min";
     var HEAT_REFRESH_MS = 300000;  // a summary of a week can be five minutes old
-    // Amber: legible over both tile themes, and not a colour the packet dots or
-    // the opened route already speak in.
-    var HEAT_COLOR = cssVar("--amber", "#ffb454");
+    // Five anchors, quietest first, sampled from the Turbo colormap; see the
+    // --heat-* block in style.css for where they come from and what they were
+    // measured at. They live in CSS so each theme can carry its own set: the
+    // hues are identical in both, only the lightness differs, because Turbo is
+    // designed for a black background and its middle vanishes on a white map.
+    // The fallbacks are the dark set, so the layer still draws if the
+    // stylesheet somehow did not load.
+    var HEAT_ANCHORS = [
+      cssVar("--heat-1", "#3490f8"),
+      cssVar("--heat-2", "#39ef9c"),
+      cssVar("--heat-3", "#ebd22e"),
+      cssVar("--heat-4", "#ff871e"),
+      cssVar("--heat-5", "#d93b10"),
+    ];
+    // Line width runs off the same value as the colour, on purpose. A rainbow
+    // is the one thing every colour-accessibility guide warns about, and this
+    // one was picked deliberately anyway -- so the magnitude gets a second,
+    // colour-free channel to travel on. Anyone who cannot separate the green
+    // from the yellow can still see which line is thicker.
+    var HEAT_W_MIN = 1.2, HEAT_W_MAX = 5.6;
+    // Opacity varies little and stays high. A nearly transparent line is
+    // invisible on its own, but a few hundred of them stacked add up to an
+    // even wash -- precisely the fog this layer used to be. From 0.55 up a
+    // single line reads as a line and an overlap covers rather than sums.
+    var HEAT_O_MIN = 0.55, HEAT_O_MAX = 0.95;
+    // Steps in the lookup table. Interpolating on the fly per segment would be
+    // a thousand colour conversions per redraw; 64 steps is far past the point
+    // where a reader could see a band, and it is built once.
+    var HEAT_STEPS = 64;
+
+    // --- Oklab interpolation ----------------------------------------------
+    // Mixing two saturated colours channel by channel in sRGB drags the
+    // midpoint through a muddy, darker shade -- the halfway point between the
+    // green and the yellow anchor is the worst of it. Oklab is near enough to
+    // perceptually uniform that a straight line through it stays as bright and
+    // as colourful as its two ends, which is what keeps the ramp free of the
+    // dead stretch a naive rainbow has.
+    function srgbToLinear(c) {
+      return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+    function linearToSrgb(c) {
+      return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+    }
+    function hexToOklab(hex) {
+      var h = String(hex).replace("#", "");
+      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      var n = parseInt(h, 16);
+      if (!isFinite(n)) n = 0;
+      var r = srgbToLinear(((n >> 16) & 255) / 255);
+      var g = srgbToLinear(((n >> 8) & 255) / 255);
+      var b = srgbToLinear((n & 255) / 255);
+      var l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+      var m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+      var s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+      return [
+        0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+        1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+        0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+      ];
+    }
+    function oklabToHex(lab) {
+      var l = Math.pow(lab[0] + 0.3963377774 * lab[1] + 0.2158037573 * lab[2], 3);
+      var m = Math.pow(lab[0] - 0.1055613458 * lab[1] - 0.0638541728 * lab[2], 3);
+      var s = Math.pow(lab[0] - 0.0894841775 * lab[1] - 1.2914855480 * lab[2], 3);
+      var rgb = [
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+      ];
+      var out = "#";
+      for (var i = 0; i < 3; i++) {
+        // Clamp per channel: a point between two in-gamut colours can still
+        // land just outside sRGB, and a wrapped byte would be a wild colour.
+        var v = Math.round(Math.min(1, Math.max(0, linearToSrgb(rgb[i]))) * 255);
+        out += (v < 16 ? "0" : "") + v.toString(16);
+      }
+      return out;
+    }
+    // The ramp, built once: HEAT_LUT[i] is the colour at i/(steps-1) along it.
+    var HEAT_LUT = (function () {
+      var labs = HEAT_ANCHORS.map(hexToOklab);
+      var lut = [];
+      for (var i = 0; i < HEAT_STEPS; i++) {
+        var pos = (i / (HEAT_STEPS - 1)) * (labs.length - 1);
+        var a = Math.min(labs.length - 2, Math.floor(pos));
+        var f = pos - a;
+        lut.push(oklabToHex([
+          labs[a][0] + (labs[a + 1][0] - labs[a][0]) * f,
+          labs[a][1] + (labs[a + 1][1] - labs[a][1]) * f,
+          labs[a][2] + (labs[a + 1][2] - labs[a][2]) * f,
+        ]));
+      }
+      return lut;
+    })();
+    function heatColor(k) {
+      var i = Math.round(k * (HEAT_STEPS - 1));
+      return HEAT_LUT[Math.min(HEAT_STEPS - 1, Math.max(0, i))];
+    }
+    // Default threshold. What this layer is for is seeing which links actually
+    // carry the mesh -- the roads the traffic follows -- not an inventory of
+    // every link ever overheard. 1 (draw everything) is the honest-looking
+    // choice and the wrong default for that question: on a week of traffic
+    // well over a third of the segments were travelled exactly once, and a
+    // single traversal is the weakest thing this data can say -- one packet
+    // whose path was reconstructed, with nothing confirming the link a second
+    // time. They are also the single largest source of visual noise. 2 drops
+    // exactly that class and nothing else, so the map opens on every link seen
+    // at least twice. The slider's leftmost notch is always 1, one keystroke
+    // away, for anyone who wants the raw picture back -- and the readout beside
+    // the slider states from the first paint how many links are being held
+    // back, so nobody mistakes the opening view for the whole mesh.
+    var HEAT_MIN_DEFAULT = 2;
+    var HEAT_REDRAW_MS = 90;  // one drag emits dozens of input events
     var heatEl = document.getElementById("pkt-heat");
+    var heatCtlEl = document.getElementById("heat-ctl");
+    var heatMinEl = document.getElementById("heat-min");
+    var heatCountEl = document.getElementById("heat-count");
+    var heatLegendEl = document.getElementById("heat-legend");
+    var heatLegendLoEl = document.getElementById("heat-legend-lo");
+    var heatLegendHiEl = document.getElementById("heat-legend-hi");
+    var heatLegendRampEl = document.getElementById("heat-legend-ramp");
     var heatLayer = null;
     var heatOn = false;
+    // The payload is kept so the slider can refilter what is already in memory:
+    // dragging must not fire a request per notch, and the server's answer is
+    // cached for minutes anyway, so a round trip would only add lag.
+    var heatData = null;
+    var heatStops = [1];
+    var heatMin = HEAT_MIN_DEFAULT;
+    var heatRedrawTimer = null;
     try {
       heatOn = localStorage.getItem(HEAT_KEY) === "1";
+      var storedMin = parseInt(localStorage.getItem(HEAT_MIN_KEY), 10);
+      if (isFinite(storedMin) && storedMin >= 1) heatMin = storedMin;
     } catch (e) { /* blocked */ }
 
-    function clearHeat() {
+    function dropHeatLayer() {
       if (heatLayer) { lmap.removeLayer(heatLayer); heatLayer = null; }
     }
 
+    function clearHeat() {
+      dropHeatLayer();
+      heatData = null;
+      if (heatCtlEl) heatCtlEl.hidden = true;
+      if (heatLegendEl) heatLegendEl.hidden = true;
+    }
+
+    // Slider notches are the traversal counts that actually occur in this data
+    // set, in order. A linear 1..max slider is unusable here -- with a busiest
+    // link near 900 and half the field at 1 or 2, every setting worth having
+    // sits in the first one percent of the travel. A log scale fixes the worst
+    // of that but still spends notches on counts nobody recorded. Walking the
+    // observed values gives a scale that is percentile-shaped for free: the
+    // crowded low end (1, 2, 3, 4, 5 ...) gets a notch each, exactly where the
+    // useful settings are, the long thin tail collapses to a handful of steps,
+    // no notch is a no-op, position 0 is always 1 ("show everything"), and the
+    // range re-fits itself when the traffic changes instead of hard-coding a
+    // maximum that goes stale.
+    function heatScale(segs) {
+      var seen = {};
+      var stops = [];
+      segs.forEach(function (s) {
+        if (!seen[s.n]) { seen[s.n] = 1; stops.push(s.n); }
+      });
+      stops.sort(function (a, b) { return a - b; });
+      return stops.length ? stops : [1];
+    }
+
+    // Nearest notch at or below the wanted threshold: a remembered value of 7
+    // must still mean "roughly there" on a day when no link was travelled
+    // exactly seven times.
+    function heatStopIndex(want) {
+      var idx = 0;
+      for (var i = 0; i < heatStops.length; i++) {
+        if (heatStops[i] <= want) idx = i; else break;
+      }
+      return idx;
+    }
+
+    // A fresh payload: re-fit the slider to it, then draw. Split from the
+    // drawing itself so the slider can redraw without touching the network.
     function drawHeat(d) {
-      clearHeat();
-      if (!heatOn || !d.segments || !d.segments.length) return;
+      dropHeatLayer();
+      heatData = (d && d.segments && d.segments.length) ? d : null;
+      if (!heatOn || !heatData) {
+        if (heatCtlEl) heatCtlEl.hidden = true;
+        if (heatLegendEl) heatLegendEl.hidden = true;
+        return;
+      }
+      heatStops = heatScale(heatData.segments);
+      var idx = heatStopIndex(heatMin);
+      heatMin = heatStops[idx];
+      if (heatMinEl) {
+        heatMinEl.max = String(heatStops.length - 1);
+        heatMinEl.value = String(idx);
+      }
+      if (heatCtlEl) heatCtlEl.hidden = false;
+      renderHeat();
+    }
+
+    function renderHeat() {
+      dropHeatLayer();
+      if (!heatOn || !heatData) return;
+      var d = heatData;
       var group = L.layerGroup();
-      var segs = d.segments;
+      var all = d.segments;
       var days = Math.max(1, Math.round((d.window_h || 24) / 24));
+      // Ascending by count, so ties sit together for the rank walk below and
+      // the busiest lines are drawn last -- where two links cross, the busier
+      // one ends up on top, which is the one a reader is looking for.
+      var segs = all.filter(function (s) { return s.n >= heatMin; })
+        .sort(function (a, b) { return a.n - b.n; });
+      heatReadout(segs.length, all.length);
+      if (!segs.length) {
+        if (heatLegendEl) heatLegendEl.hidden = true;
+        return;
+      }
       // Rank-scaled (empirical CDF), not log(1+n)/log(1+max) as before. The
-      // measured distribution is brutally heavy-tailed: with a max of 304
-      // traversals, half the segments sit at exactly 1 and ninety percent
-      // under 5, so any magnitude-preserving scale -- log included -- crammed
-      // ninety percent of the links into the bottom tenth of the visual range
-      // and hundreds of near-identical lines melted into one amber wash. The
-      // rank scale spends the range on where a link *stands among the others*
-      // instead, which is the question a reader asks of a heat map; the exact
-      // magnitude lives in the tooltip. It also has no degenerate case: when
-      // every link was travelled equally often, everything lands in one tie
-      // group at the floor and the map honestly shows nothing standing out
-      // (the old max-normalisation drew that same situation at full blast).
-      // Min/max normalisation with a max==min guard was rejected as it keeps
-      // the crammed-bottom problem; server-sent quantiles were rejected as
-      // redundant -- the server already sorts ascending, so the rank is free.
+      // measured distribution is brutally heavy-tailed: with a busiest link
+      // near nine hundred traversals, half the segments sit at 1 or 2 and
+      // ninety percent under 15, so any magnitude-preserving scale -- log
+      // included -- crammed ninety percent of the links into the bottom tenth
+      // of the visual range and hundreds of near-identical lines melted into
+      // one amber wash. The rank scale spends the range on where a link
+      // *stands among the others* instead, which is the question a reader asks
+      // of a heat map; the exact magnitude lives in the tooltip and in the
+      // legend. It also has no degenerate case: when every link was travelled
+      // equally often, everything lands in one tie group at the floor and the
+      // map honestly shows nothing standing out (the old max-normalisation
+      // drew that same situation at full blast). Min/max normalisation with a
+      // max==min guard was rejected as it keeps the crammed-bottom problem.
       //
       // k for a segment = fraction of segments strictly lighter than it, so
-      // ties share one k (equal counts must look equal) and the once-heard
-      // half starts at the very floor: hairline-thin and faint, present but
-      // no longer a wash. Hiding them outright was rejected -- honesty about
-      // what was heard beats tidiness, and a threshold toggle is a control
-      // nobody asked for solving a problem the faint rendering already
-      // solves. One forward walk finds the tie groups.
+      // ties share one k: equal counts must look equal. The rank is taken over
+      // the segments *currently shown*, not over the whole data set. That does
+      // mean sliding the threshold repaints the survivors, which is normally a
+      // sin -- but the rule it breaks is about colour that carries identity,
+      // where the hue is the thing's name. Here the colour is a magnitude
+      // scale, it never appears without the legend that states its class
+      // boundaries in real traversal counts, and a scale that keeps spending
+      // its two lowest classes on links the reader just asked to hide is
+      // exactly the unreadable map we started from.
       var ks = new Array(segs.length);
       var start = 0;
       for (var i = 1; i <= segs.length; i++) {
@@ -1501,7 +1701,12 @@
         // The node markers are lifted above the lines below, so where the two
         // overlap the node still wins the pointer.
         L.polyline([[s.a.lat, s.a.lon], [s.b.lat, s.b.lon]], {
-          color: HEAT_COLOR, weight: 1 + 5 * k, opacity: 0.12 + 0.68 * k,
+          color: heatColor(k),
+          weight: HEAT_W_MIN + (HEAT_W_MAX - HEAT_W_MIN) * k,
+          opacity: HEAT_O_MIN + (HEAT_O_MAX - HEAT_O_MIN) * k,
+          // Round ends and joins: a mesh link is a hairline at the quiet end
+          // and butt caps leave visible nicks where segments meet at a node.
+          lineCap: "round", lineJoin: "round",
         }).addTo(group).bindTooltip(t("live.heat_tip", {
           a: s.a.name || s.a.prefix.toUpperCase(),
           b: s.b.name || s.b.prefix.toUpperCase(),
@@ -1509,6 +1714,7 @@
           days: days,
         }), { direction: "top", sticky: true });
       });
+      heatLegend(segs[0].n, segs[segs.length - 1].n);
       // The toggle's tooltip promises the whole retained period; when the
       // server had to cap the aggregation, that promise needs a footnote --
       // silently presenting a truncated week as complete is the one lie this
@@ -1525,11 +1731,73 @@
       nodeMarkers.forEach(function (e) { e.m.bringToFront(); });
     }
 
+    // No silent filtering: the moment the threshold hides links, the page says
+    // how many and out of how many. A map that quietly drops four hundred
+    // observations and looks tidy for it is the same lie as a truncated week
+    // presented as complete. The slider's own value is spoken through
+    // aria-valuetext, because "8 of 46" tells a screen reader nothing -- the
+    // notch index is an implementation detail, the traversal count is the fact.
+    function heatReadout(shown, total) {
+      if (heatMinEl) {
+        heatMinEl.setAttribute("aria-valuetext", t("live.heat_min_value", { n: heatMin }));
+      }
+      if (!heatCountEl) return;
+      var key = shown >= total ? "live.heat_shown_all"
+        : (shown ? "live.heat_shown" : "live.heat_shown_none");
+      heatCountEl.textContent = t(key, {
+        shown: shown, total: total, hidden: total - shown,
+      });
+    }
+
+    // A colour scale nobody can decode is decoration. The bar is painted from
+    // the same lookup table the lines use, and the two numbers beside it are
+    // the lowest and highest traversal count actually on the map right now --
+    // so a colour can be turned back into a number, and both ends move with
+    // the threshold instead of quietly claiming a range that is not drawn.
+    function heatLegend(lo, hi) {
+      if (!heatLegendEl || !heatLegendRampEl) return;
+      if (!heatLegendRampEl.style.backgroundImage) {
+        var stops = [];
+        for (var i = 0; i < HEAT_LUT.length; i++) {
+          stops.push(HEAT_LUT[i] + " " + ((i / (HEAT_LUT.length - 1)) * 100).toFixed(2) + "%");
+        }
+        heatLegendRampEl.style.backgroundImage =
+          "linear-gradient(90deg, " + stops.join(", ") + ")";
+      }
+      if (heatLegendLoEl) heatLegendLoEl.textContent = lo + "×";
+      if (heatLegendHiEl) heatLegendHiEl.textContent = hi + "×";
+      heatLegendEl.hidden = false;
+    }
+
     function loadHeat() {
       fetch("/api/v1/packets/heatmap")
         .then(function (r) { return r.json(); })
         .then(function (d) { if (heatOn) drawHeat(d); })
         .catch(function () { /* the next toggle or refresh tries again */ });
+    }
+
+    if (heatMinEl) {
+      heatMinEl.addEventListener("input", function () {
+        var idx = parseInt(heatMinEl.value, 10);
+        if (!isFinite(idx)) idx = 0;
+        idx = Math.max(0, Math.min(heatStops.length - 1, idx));
+        heatMin = heatStops[idx];
+        try {
+          localStorage.setItem(HEAT_MIN_KEY, String(heatMin));
+        } catch (e) { /* blocked */ }
+        // The readout is a handful of comparisons and must feel instant while
+        // dragging; tearing down and rebuilding a thousand Leaflet polylines
+        // is not, so that trails behind on a short timer. Held to the trailing
+        // edge on purpose: what a reader wants to see is where they let go.
+        heatReadout(heatData ? heatData.segments.filter(function (s) {
+          return s.n >= heatMin;
+        }).length : 0, heatData ? heatData.segments.length : 0);
+        if (heatRedrawTimer) clearTimeout(heatRedrawTimer);
+        heatRedrawTimer = setTimeout(function () {
+          heatRedrawTimer = null;
+          renderHeat();
+        }, HEAT_REDRAW_MS);
+      });
     }
 
     if (heatEl) {
