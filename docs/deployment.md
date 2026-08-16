@@ -1,5 +1,7 @@
 # Deployment
 
+*[Nederlands](nl/deployment.md)*
+
 Two supported ways to run the server: Docker Compose (recommended, brings its own
 broker) and a systemd service on Debian/Ubuntu.
 
@@ -134,16 +136,36 @@ you added under `/opt/mc-repeater-stats/server` is removed.
 | `MCS_MQTT_RX_TOPIC` | `meshcore/+/rx` | same |
 | `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | same |
 
-`MCS_MQTT_CMD_TOPIC` is the only topic the site publishes on: one word asking a
-node to read its CLI settings or to publish a status message now. It needs a
-broker ACL that lets each node read its own `cmd` topic — without that the node's
-subscribe is refused and nothing anywhere reports it. See
-[`mqtt.md`](mqtt.md#asking-a-node-for-something).
+`MCS_MQTT_CMD_TOPIC` is the only topic the site publishes on. It carries exactly
+three words — `settings`, `status` and `time <epoch>` — asking a node to read its
+CLI settings now, to publish a status message now, or to set its clock. It needs
+a broker ACL that lets each node read its own `cmd` topic — without that the
+node's subscribe is refused and nothing anywhere reports it. See
+[`mqtt.md`](mqtt.md#asking-a-node-for-something) and
+[`commanding.md`](commanding.md).
 
 The code defaults and the compose defaults differ. If you run the container
 outside compose, set `MCS_MQTT_HOST` explicitly or ingest stays off.
 
 Details in [`mqtt.md`](mqtt.md).
+
+### Clock synchronisation
+
+The site periodically publishes `time <epoch>` to every node that publishes
+directly, because a MeshCore node never sets its own clock. All four variables,
+and the checks the server performs on its own clock before anything leaves, are
+in [`clocksync.md`](clocksync.md#configuration).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MCS_CLOCKSYNC_ENABLED` | `1` | `0`, `false`, `no`, `nee`, `off` or empty switches it off |
+| `MCS_CLOCKSYNC_HOURS` | `24` | Hours between two rounds, minimum 1 |
+| `MCS_CLOCKSYNC_MAX_ERROR_S` | `10` | How much uncertainty the kernel may have about its own clock and still be believed |
+| `MCS_CLOCKSYNC_MAX_JUMP_S` | `30` | How far the wall clock may shift against the monotonic clock before it counts as a jump |
+
+Requires MeshStats firmware 1.10.0 on the node. In an LXC the clock check reads
+the **host** kernel's discipline, so the correctness of every clock in the mesh
+ultimately hangs on the NTP configuration of that host.
 
 ### Time-series database
 
@@ -324,9 +346,14 @@ docker compose exec meshstats python -m app.main set-password admin
 
 Reads the new password from stdin; minimum 8 characters.
 
-> Changing the password does **not** invalidate existing sessions. Cookies are
-> stateless and stay valid until they expire (12 hours). To force everyone out,
-> delete `/data/secret.key` and restart — that also invalidates CSRF tokens.
+> Changing a password **does** invalidate every session minted under the old
+> one. Each cookie carries an HMAC fingerprint of the account's password hash,
+> so the `admins` row is the revocation list and no session table is needed. The
+> one exception is the browser that performed the change through `/admin`, which
+> is handed a fresh cookie so the person who just changed the password is not
+> logged out of their own admin page. Deleting `/data/secret.key` and restarting
+> remains the blunt instrument: it invalidates every session **and** every CSRF
+> token. Details in [`admin.md`](admin.md#sessions).
 
 ### Time-series database
 
@@ -381,20 +408,29 @@ for that period until it is switched on again.
 
 ### Disk usage
 
-In SQLite, samples dominate — but only when there is no time-series database. With
-one, `samples` receives nothing except during an outage, and `packets` becomes the
-largest table. Retention defaults to 180 days and pruning runs at startup, when
-settings are saved, and on roughly every 500th HTTP ingest.
+In SQLite, `samples` dominates by row count — but only as an inheritance. With a
+time-series database configured it receives nothing except during an outage, so
+it shrinks as its 180-day retention passes, and `packets` becomes the table that
+actually grows.
+
+Three limits hold the packets table down, applied in this order: the retention
+period, a row ceiling (`MCS_PACKET_MAX_ROWS`), and a ceiling on the whole
+database file including its WAL (`MCS_DB_MAX_MB`). Age is the aim, the two
+ceilings are the promise, and when they collide the oldest packets go first. A
+pruning pass runs hourly (`MCS_PRUNE_MINUTES`), at startup, when the settings
+are saved, on roughly every 500th HTTP ingest and every 2000 received MQTT
+packets. The full reasoning, and when the file is rewritten with `VACUUM` to
+actually give the space back, is in [`retention.md`](retention.md).
+
+Whenever one of the two ceilings does the cutting, the configured period was not
+met — and `/admin` says so rather than absorbing it, because a retention that is
+quietly not honoured is only discovered when somebody wonders where a week of
+graph went.
 
 VictoriaMetrics keeps its own retention (`MCS_TSDB_RETENTION`, 180 d) and
 compresses to roughly a byte per point. A node publishing every 10 s with 100
 metrics is about 315 M points a year, on the order of a few hundred MB — which is
 why full resolution is affordable there and was not in SQLite.
-
-> `db.prune()` is **not** called on the MQTT path. On an MQTT-only deployment
-> nothing triggers pruning except restarts and admin settings saves. If you run
-> MQTT-only and never touch `/admin`, restart the container periodically or save
-> the settings form occasionally.
 
 `latest`, `contacts` and `repeater_cli` are never pruned. They are bounded by the
 number of repeaters and contacts, so this is not usually a problem.
@@ -407,9 +443,35 @@ docker compose logs -f mosquitto
 journalctl -u mc-repeater-stats -f     # systemd
 ```
 
-MQTT ingest logs under the logger name `meshstats.mqtt`, the time-series writer
-under `meshstats.tsdb`. Connection state, counters and last error for both are
-also shown in `/admin`.
+Logger names, so a filter can pick one out: `meshstats.mqtt` (ingest and the one
+publish topic), `meshstats.tsdb` (the time-series writer), `meshstats.clocksync`
+(the clock rounds and their refusals), `meshstats.retention` (pruning and
+VACUUM) and `meshstats.countries` (the border file at startup). Connection
+state, counters and last error for each are also shown in `/admin`.
+
+Two things are logged loudly on purpose, because they are the states in which a
+feature stops working: a clock round refused by the clock check, and a pruning
+pass in which a ceiling rather than the retention did the cutting. Both are
+WARNING.
+
+### Running the tests
+
+```bash
+cd server
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+`pytest.ini` sets the test directory and the import path; there is nothing else
+to configure. The tests touch no network, no MQTT and no real database:
+everything runs against temporary SQLite files, and `tests/conftest.py` points
+the application's data directory at a throwaway directory so a test run never
+creates `server/data/` in your working copy — which it otherwise would, complete
+with a `secret.key`, on the first import of `app.config`.
+
+All test vectors are built from the protocol knowledge in
+[`protocol.md`](protocol.md); there is not one real, captured packet in the test
+directory.
 
 ## Home Assistant components
 
