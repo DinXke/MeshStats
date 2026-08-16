@@ -56,8 +56,10 @@
     omdat "welke release draait waar" een vraag is die je over alle nodes
     tegelijk stelt. -#}
 <nav class="adminnav" aria-label="Beheeronderdelen">
-  <a href="/admin"{% if world == 'nodes' and not firmware_tab %} class="on" aria-current="page"{% endif %}>
+  <a href="/admin"{% if world == 'nodes' and not firmware_tab and not compare_tab %} class="on" aria-current="page"{% endif %}>
     &#128225; Nodes en repeaters</a>
+  <a href="/admin/compare"{% if compare_tab %} class="on" aria-current="page"{% endif %}>
+    &#9707; Vergelijken</a>
   <a href="/admin/firmware"{% if firmware_tab %} class="on" aria-current="page"{% endif %}>
     &#8679; Firmware</a>
   <a href="/admin/server"{% if world == 'server' %} class="on" aria-current="page"{% endif %}>

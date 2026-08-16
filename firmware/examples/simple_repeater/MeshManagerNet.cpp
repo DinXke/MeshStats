@@ -5,6 +5,59 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.1.0  De site kan een instelling schrijven in plaats van alleen lezen: POST
+ *        /api/cfg met een sleutel en een waarde, GET /api/cfg voor welke
+ *        sleutels dit image toelaat, van welk type, tussen welke grenzen en in
+ *        welke risicoklasse.
+ *        Het is het hele oppervlak van handleSetCmd() in CommonCLI.cpp --
+ *        achtentwintig parameters -- en met opzet geen met de hand gekozen
+ *        veilig hoekje. Die eerste opzet liet alleen toe wat de bereikbaarheid
+ *        niet kon afsnijden, en dat was veilig en naast de kwestie: juist de
+ *        instellingen die je op afstand nodig hebt -- zendvermogen,
+ *        radioparameters -- zijn de gevaarlijke, en ze weglaten haalt het risico
+ *        er niet uit maar zorgt dat iemand een ladder haalt en hetzelfde doet met
+ *        minder zorg en zonder dat het ergens vastligt. Het risico verhuist dus
+ *        van weglaten naar afvangen: elke parameter draagt een risicoklasse, en
+ *        de bedieningskant hangt daar de zwaarte van de bevestiging aan op.
+ *        Waarom een tabel in de firmware en niet gewoon de CLI doorgeven. De
+ *        telnetconsole doet dat laatste, en daar mag het: er zit een mens achter
+ *        die een wachtwoord intypte. Een knop op een webpagina wordt aangeklikt,
+ *        soms op de verkeerde regel. De tabel staat hier en niet in de server,
+ *        want de server is te bewerken door wie de site draait en dit is wat er
+ *        werkelijk tussen een klik en de radio staat. De server houdt dan ook
+ *        geen tweede lijst maar haalt deze op: één waarheid, en een parameter
+ *        die deze firmware niet kent kan niet worden aangeboden.
+ *        Drie dingen ontbreken, en niet per ongeluk. 'prv.key' vervangt de
+ *        identiteit van de node -- geen instelling maar een andere node, waarna
+ *        elke contactlijst, ACL en monitorregel elders in het mesh naar iemand
+ *        wijst die niet meer bestaat. 'bridge.secret' komt bij het teruglezen
+ *        gewoon weer tevoorschijn, en een wachtwoord dat in een logregel geweest
+ *        is, is weg. En 'set freq' laat MeshCore alleen toe vanaf de seriële
+ *        kabel (sender_timestamp == 0), wat deze weg met opzet niet is;
+ *        frequentie hoort bij de andere drie radiowaarden en gaat via 'radio',
+ *        dat wél gecontroleerd wordt.
+ *        Er wordt teruggelezen in plaats van "OK" te geloven, en dat is niet
+ *        theoretisch. MeshCore's 'set lat' is een kale atof(), dus atof("noord")
+ *        is 0.0 -- een node die OK antwoordt en daarna beweert in de Golf van
+ *        Guinee te staan. En 'set advert.interval' bewaart minuten/2 in één byte
+ *        terwijl 'get' weer verdubbelt, dus 61 komt terug als 60, ook met "OK".
+ *        Het antwoord draagt daarom 'asked' en 'applied' apart, plus een vlag of
+ *        ze gelijk zijn.
+ *        Vergelijken gebeurt op waarde en niet op tekst, wat pietluttig klinkt
+ *        en het verschil is tussen een waarschuwing die iets betekent en een die
+ *        niemand leest: 'set radio' neemt spaties en 'get radio' geeft komma's
+ *        terug, en 'set dutycycle 50' leest terug als "50.0%". Een strcmp() zou
+ *        beide als "niet toegepast" melden.
+ *        Eén parameter is gemarkeerd als geheim: 'guest.password'. Die wordt
+ *        teruggelezen en vergeleken zoals al het andere -- dat is de hele reden
+ *        dat dit endpoint bestaat -- maar de gelezen waarde gaat niet mee terug.
+ *        Anders staat het wachtwoord dat je net zette in de HTML van de
+ *        beheerpagina, in de browsergeschiedenis en in elke schermafdruk ervan.
+ *        De CLI-aanroep geeft een tijdstempel ongelijk aan nul mee. Nul betekent
+ *        in MeshCore "van de seriële kabel" en ontgrendelt 'erase', 'get prv.key'
+ *        en 'set freq'. Deze weg heeft die niet nodig, dus blijkt de tabel ooit
+ *        een gat te hebben, dan is dat gat kleiner.
+ *
  * 2.0.1  De eenmalige verhuizing van het topicvoorvoegsel ging nooit af.
  *        Waargenomen op een node die 2.0.0 draaide en netjes zijn cijfers
  *        stuurde -- op meshcore/, waar de server ze ook opvangt, dus er ging
@@ -5532,6 +5585,433 @@ static void fwRollbackPost(AsyncWebServerRequest *req) {
   }
 }
 
+// --------------------------------------------------- instellingen schrijven
+
+/* Eén CLI-parameter van deze node zetten vanaf de site, en meteen teruglezen.
+ *
+ * Waarom hier een tabel staat en niet gewoon de CLI wordt doorgegeven. De
+ * telnetconsole hieronder doet precies dat -- elke regel gaat door naar
+ * MyMesh::handleCommand -- en daar mag dat, want daar zit een mens achter die
+ * een wachtwoord heeft ingetypt en die weet wat hij doet. Een knop op een
+ * webpagina is iets anders: die wordt aangeklikt, soms op de verkeerde regel,
+ * en de gevolgen van een verkeerde parameter zijn niet symmetrisch. 'set name'
+ * fout is een lelijke naam; 'set radio' fout is een node die op een andere
+ * frequentie gaat luisteren en die je nooit meer terugziet.
+ *
+ * Vandaar een lijst die in de firmware ingebakken zit. Niet in de server, want
+ * die is te bewerken door wie de site draait; deze lijst is wat er werkelijk
+ * tussen een klik en de radio staat. De server heeft zijn eigen kopie om een
+ * tikfout al op de pagina te kunnen weigeren, maar dát is de beleefdheid en dit
+ * is de beveiliging.
+ *
+ * Wat er in mag: alles wat de CLI van een repeater kan, op drie uitzonderingen
+ * na die hieronder bij de tabel staan uitgelegd. Dat is met opzet ruimer dan de
+ * eerste opzet, die alleen parameters toeliet welke de bereikbaarheid niet
+ * konden afsnijden. Die insteek was veilig en te krap: de instellingen die je
+ * op afstand het hardst nodig hebt -- zendvermogen, radioparameters -- zijn nu
+ * juist de gevaarlijke, en ze weglaten betekent alleen dat iemand een ladder
+ * pakt of een seriële kabel zoekt, niet dat het risico verdwijnt.
+ *
+ * Het risico is dus verplaatst van weglaten naar afvangen, en dat is wat het
+ * veld 'risk' doet. Het reist mee in /api/cfg, en de bedieningskant hangt er de
+ * zwaarte van de bevestiging aan op: gewoon opslaan, een bevestiging die node en
+ * sleutel noemt, of de naam van de node overtypen. Wat er hier in de firmware
+ * blijft staan is de grens van wat een waarde mág zijn; wat er aan de overkant
+ * bij komt is hoeveel moeite het kost om hem te zetten.
+ *
+ * Wat NIET verplaatst is: de controle op de waarde zelf. Die staat hier, en
+ * juist bij de gevaarlijke klasse is dat de laatste zeef -- een frequentie
+ * buiten de band is niet riskant maar gewoon fout, en zo'n waarde hoort de
+ * radio nooit te bereiken, hoeveel bevestigingen iemand ook wegklikt.
+ *
+ * En waarom er teruggelezen wordt in plaats van 'OK' te geloven. MeshCore
+ * controleert lang niet alles wat het aanneemt: 'set lat' is een kale atof(),
+ * en atof("noord") is 0.0 -- een node die na een tikfout beweert dat hij in de
+ * Golf van Guinee staat, met "OK" als antwoord. Erger nog is advert.interval:
+ * dat wordt bewaard als minuten/2 in één byte, dus 'set advert.interval 61'
+ * legt 30 vast en leest terug als 60. Beide keren luidt het antwoord "OK" en
+ * beide keren staat er iets anders in de node dan er gevraagd is. Daarom geeft
+ * dit endpoint niet terug wat er gevraagd was maar wat er ná afloop in de node
+ * staat, met de vraag ernaast, en laat het aan de pagina om te melden dat die
+ * twee verschillen. */
+
+#define CFG_VALUE_MAX   40
+#define CFG_KEY_MAX     28
+
+enum CfgKind {
+  CFG_TEXT = 0,   // vrije tekst
+  CFG_INT = 1,    // geheel getal tussen lo en hi
+  CFG_FLOAT = 2,  // kommagetal tussen lo en hi
+  CFG_BOOL = 3,   // on/off -- MeshCore leest letterlijk "on" of "off"
+  CFG_ENUM = 4,   // één woord uit 'choices', gescheiden door |
+  CFG_RADIO = 5,  // vier getallen: freq bw sf cr
+};
+
+/* Risicoklasse, en die stuurt aan de andere kant de bevestiging. De grens tussen
+ * 2 en 3 is de enige die er echt toe doet en luidt: kan het misgaan-geval deze
+ * node onbereikbaar maken langs de weg waarlangs je hem bestuurt? Voor een node
+ * op een dak zonder IP-pad is dat het einde -- er is dan geen tweede weg om de
+ * fout mee terug te draaien. */
+enum CfgRisk {
+  RISK_PLAIN  = 1,   // zo weer terug te zetten
+  RISK_WRITES = 2,   // verandert merkbaar hoe de node zich gedraagt
+  RISK_CUTOFF = 3,   // kan de bereikbaarheid afsnijden
+};
+
+struct CfgParam {
+  const char *key;      // wat de aanroeper vraagt; ook wat 'get <key>' teruggeeft
+  uint8_t     kind;
+  float       lo, hi;   // eigen grenzen, inclusief -- niet per se die van MeshCore
+  const char *choices;  // alleen bij CFG_ENUM: de toegestane woorden, met |
+  uint8_t     risk;
+  uint8_t     reboot;   // 1 = wordt nu bewaard, pas actief na een herstart
+  /* 1 = de waarde is een geheim. Er wordt nog steeds teruggelezen en vergeleken
+   * -- de controle blijft dus overeind -- maar de gelezen waarde gaat niet mee
+   * in het antwoord. Anders staat het wachtwoord dat je net zette in het
+   * HTML van de beheerpagina, in de browsergeschiedenis en in elke
+   * schermafdruk ervan, en een wachtwoord dat daar geweest is, is weg. Dat is
+   * dezelfde reden waarom bridge.secret helemaal niet aangeboden wordt; het
+   * verschil is dat guest.password een instelling is die je werkelijk van
+   * afstand wilt kunnen zetten. */
+  uint8_t     secret;
+};
+
+/* Het volledige oppervlak van handleSetCmd() in CommonCLI.cpp, op drie soorten
+ * na. Die drie ontbreken niet per ongeluk:
+ *
+ *   prv.key       vervangt de identiteit van de node. Dat is geen instelling en
+ *                 geen risico maar een andere node: elke contactlijst, elke ACL
+ *                 en elke monitorregel elders in het mesh wijst daarna naar
+ *                 iemand die niet meer bestaat. Er is geen bevestiging die dat
+ *                 een goed idee maakt vanaf een webpagina.
+ *   bridge.secret gedeeld geheim. Schrijven zou kunnen, maar de waarde komt bij
+ *                 het teruglezen gewoon weer tevoorschijn, en een wachtwoord dat
+ *                 in een logregel of een schermafdruk beland is, is weg.
+ *   freq          MeshCore laat 'set freq' alleen toe vanaf de seriële kabel
+ *                 (sender_timestamp == 0). Deze weg geeft met opzet een andere
+ *                 tijdstempel mee, dus die tak is hier onbereikbaar -- en dat is
+ *                 maar goed ook. De frequentie hoort bij de andere drie
+ *                 radiowaarden en gaat via 'radio', dat wél gecontroleerd wordt.
+ *
+ * De grenzen zijn de onze. Soms strenger dan MeshCore (advert.interval 0 is daar
+ * geldig en betekent "stop met adverteren": dat maakt een node niet onbereikbaar
+ * maar laat hem wel uit ieders lijst wegzakken, wat op een dak hetzelfde voelt),
+ * en soms de enige die er is -- lat, lon, af, tx, int.thresh, multi.acks en
+ * adc.multiplier worden aan de overkant met een kale atof()/atoi() ingelezen
+ * zonder één controle. */
+static const CfgParam CFG_PARAMS[] = {
+  // --- zo weer terug te zetten ---------------------------------------------
+  { "name",                  CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0 },
+  { "lat",                   CFG_FLOAT,  -90,     90, NULL,                          RISK_PLAIN,  0, 0 },
+  { "lon",                   CFG_FLOAT, -180,    180, NULL,                          RISK_PLAIN,  0, 0 },
+  { "owner.info",            CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0 },
+  { "advert.interval",       CFG_INT,     60,    240, NULL,                          RISK_PLAIN,  0, 0 },  // minuten, stappen van 2
+  { "flood.advert.interval", CFG_INT,      3,    168, NULL,                          RISK_PLAIN,  0, 0 },  // uren
+  { "rxdelay",               CFG_FLOAT,    0,     20, NULL,                          RISK_PLAIN,  0, 0 },
+  { "txdelay",               CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0 },
+  { "direct.txdelay",        CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0 },
+
+  // --- verandert merkbaar hoe de node zich gedraagt -------------------------
+  { "dutycycle",             CFG_FLOAT,    1,    100, NULL,                          RISK_WRITES, 0, 0 },
+  { "af",                    CFG_FLOAT,    0,    100, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max",             CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max.unscoped",    CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max.advert",      CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "int.thresh",            CFG_INT,      0,    255, NULL,                          RISK_WRITES, 0, 0 },
+  { "agc.reset.interval",    CFG_INT,      0,   1020, NULL,                          RISK_WRITES, 0, 0 },  // bewaard als /4
+  { "multi.acks",            CFG_INT,      0,      3, NULL,                          RISK_WRITES, 0, 0 },
+  { "path.hash.mode",        CFG_INT,      0,      2, NULL,                          RISK_WRITES, 0, 0 },
+  { "loop.detect",           CFG_ENUM,     0,      0, "off|minimal|moderate|strict", RISK_WRITES, 0, 0 },
+  { "cad",                   CFG_BOOL,     0,      0, NULL,                          RISK_WRITES, 0, 0 },
+  { "adc.multiplier",        CFG_FLOAT,    0,     10, NULL,                          RISK_WRITES, 0, 0 },
+
+  // --- kan de bereikbaarheid afsnijden --------------------------------------
+  /* Alle vijf hieronder raken de radio of wie er mag inloggen. Op een node met
+   * twee onafhankelijke wegen naar binnen (de onze: mesh én IP) is een fout hier
+   * hinderlijk; op een stock repeater die alleen over LoRa te bereiken is, is
+   * hij blijvend. Vandaar de zwaarste drempel aan de bedieningskant. */
+  { "tx",                    CFG_INT,      0,     30, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "repeat",                CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "allow.read.only",       CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "radio.rxgain",          CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "radio.fem.rxgain",      CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "guest.password",        CFG_TEXT,     0,      0, NULL,                          RISK_CUTOFF, 0, 1 },
+  /* Vier getallen tegelijk, en de enige met reboot=1: MeshCore antwoordt hier
+   * "OK - reboot to apply". Het teruglezen laat dus de nieuwe waarden zien
+   * terwijl de radio nog op de oude staat, en pas bij de herstart blijkt of ze
+   * kloppen. Dat is precies het scenario waarin een node niet terugkomt. */
+  { "radio",                 CFG_RADIO,    0,      0, NULL,                          RISK_CUTOFF, 1, 0 },
+};
+#define CFG_PARAM_COUNT ((int)(sizeof(CFG_PARAMS) / sizeof(CFG_PARAMS[0])))
+
+static const char *cfgKindName(uint8_t kind) {
+  switch (kind) {
+    case CFG_INT:   return "int";
+    case CFG_FLOAT: return "float";
+    case CFG_BOOL:  return "bool";
+    case CFG_ENUM:  return "enum";
+    case CFG_RADIO: return "radio";
+    default:        return "text";
+  }
+}
+
+static const CfgParam *cfgFind(const char *key) {
+  for (int i = 0; i < CFG_PARAM_COUNT; i++) {
+    if (strcmp(CFG_PARAMS[i].key, key) == 0) return &CFG_PARAMS[i];
+  }
+  return NULL;
+}
+
+/* Tekens die MeshCore's isValidName() weigert, plus alles onder 0x20. Die
+ * laatste staan er niet omdat MeshCore ze verbiedt -- dat doet het niet -- maar
+ * omdat een naam met een regeleinde erin een JSON-bericht oplevert dat de
+ * server weggooit, waarna de node uit de statistieken verdwijnt zonder dat er
+ * ergens een fout te zien is. Dezelfde les als bij jsonEsc(). */
+static bool cfgNameOk(const char *v) {
+  if (*v == 0) return false;
+  for (const char *p = v; *p; p++) {
+    if ((unsigned char)*p < 0x20) return false;
+    if (strchr("[]\\:,?*", *p)) return false;
+  }
+  return true;
+}
+
+/* Een getal en niets anders. strtof() alleen is niet genoeg: die leest "12abc"
+ * als 12 en meldt dat het goed ging, en juist dát is de fout die we van
+ * MeshCore proberen op te vangen in plaats van na te doen. */
+static bool cfgNumber(const char *v, float &out) {
+  if (*v == 0) return false;
+  char *end = NULL;
+  out = strtof(v, &end);
+  if (end == v) return false;
+  while (*end == ' ') end++;
+  return *end == 0 && !isnan(out) && !isinf(out);
+}
+
+// Eén woord uit 'choices' ("off|minimal|moderate|strict"), hoofdlettergevoelig
+// omdat MeshCore de zijne ook zo vergelijkt.
+static bool cfgEnumOk(const char *choices, const char *v) {
+  size_t n = strlen(v);
+  if (n == 0) return false;
+  for (const char *p = choices; *p; ) {
+    const char *bar = strchr(p, '|');
+    size_t len = bar ? (size_t)(bar - p) : strlen(p);
+    if (len == n && strncmp(p, v, n) == 0) return true;
+    if (!bar) break;
+    p = bar + 1;
+  }
+  return false;
+}
+
+/* Vier getallen: freq bw sf cr. Dezelfde grenzen die MeshCore zelf aanhoudt
+ * (CommonCLI.cpp, de 'radio ' tak), hier herhaald omdat dit de enige parameter
+ * is waarbij een geweigerde waarde en een aanvaarde waarde allebei "OK" kunnen
+ * opleveren aan de kant van de aanroeper: de radio gaat pas bij de herstart om,
+ * dus wie hier iets doorlaat wat de node niet aankan, merkt dat pas als de node
+ * wegblijft. */
+static bool cfgRadioOk(const char *v) {
+  float freq = 0, bw = 0;
+  int sf = 0, cr = 0;
+  char extra = 0;
+  if (sscanf(v, "%f %f %d %d %c", &freq, &bw, &sf, &cr, &extra) != 4) return false;
+  return freq >= 150.0f && freq <= 2500.0f && bw >= 7.0f && bw <= 500.0f &&
+         sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8;
+}
+
+/* Is wat er nu in de node staat dezelfde waarde als wat er gevraagd is?
+ *
+ * Nadrukkelijk 'dezelfde waarde' en niet 'dezelfde tekst', want MeshCore schrijft
+ * en leest sommige parameters in verschillende vormen op. 'set radio' neemt vier
+ * getallen gescheiden door spaties, 'get radio' geeft ze terug gescheiden door
+ * komma's. 'set dutycycle 50' antwoordt bij het lezen met "50.0%". Een kale
+ * strcmp() zou die twee als 'niet toegepast' melden, en dan staat er bij elke
+ * radio-instelling een waarschuwing die niets betekent -- waarna niemand meer
+ * kijkt op het moment dat er wél iets afwijkt. Een melding die te vaak afgaat is
+ * net zo onbruikbaar als een melding die nooit afgaat. */
+static bool cfgSameValue(const CfgParam *p, const char *asked, const char *applied) {
+  if (p->kind == CFG_RADIO) {
+    float fa[4] = {0, 0, 0, 0}, fb[4] = {0, 0, 0, 0};
+    // Beide vormen toestaan, want de ene kant schrijft spaties en de andere komma's.
+    if (sscanf(asked,   "%f %f %f %f", &fa[0], &fa[1], &fa[2], &fa[3]) != 4 &&
+        sscanf(asked,   "%f,%f,%f,%f", &fa[0], &fa[1], &fa[2], &fa[3]) != 4) return false;
+    if (sscanf(applied, "%f,%f,%f,%f", &fb[0], &fb[1], &fb[2], &fb[3]) != 4 &&
+        sscanf(applied, "%f %f %f %f", &fb[0], &fb[1], &fb[2], &fb[3]) != 4) return false;
+    for (int i = 0; i < 4; i++) {
+      if (fabsf(fa[i] - fb[i]) > 0.0005f) return false;
+    }
+    return true;
+  }
+  if (p->kind == CFG_INT || p->kind == CFG_FLOAT) {
+    float a = 0, b = 0;
+    if (!cfgNumber(asked, a)) return false;
+    // Het percentteken van 'get dutycycle' hoort bij de opmaak, niet bij de waarde.
+    char trimmed[CFG_VALUE_MAX];
+    strncpy(trimmed, applied, sizeof(trimmed) - 1);
+    trimmed[sizeof(trimmed) - 1] = 0;
+    size_t n = strlen(trimmed);
+    if (n && trimmed[n - 1] == '%') trimmed[n - 1] = 0;
+    if (!cfgNumber(trimmed, b)) return false;
+    return fabsf(a - b) <= 0.0005f;
+  }
+  return strcmp(asked, applied) == 0;
+}
+
+// "> 60" -> "60"; een foutmelding van de overkant blijft staan zoals hij is.
+static const char *cfgStripMarker(const char *reply) {
+  if (reply[0] == '>' && reply[1] == ' ') return reply + 2;
+  return reply;
+}
+
+// Beide spellingen waarmee MeshCore weigert. Voluit, zodat een node die
+// 'Erratic' heet zijn eigen naam nog kan terugkrijgen.
+static bool cfgIsError(const char *reply) {
+  return strncmp(reply, "Error", 5) == 0 || strncmp(reply, "Err - ", 6) == 0;
+}
+
+/* De CLI van deze node aanroepen. Het commando wordt opgebouwd uit een sleutel
+ * die uit CFG_PARAMS komt en nooit uit het verzoek, dus er valt niets in te
+ * smokkelen: de waarde is altijd het laatste woord en er is geen scheider
+ * waarmee een tweede commando begint.
+ *
+ * De tijdstempel is met opzet niet 0. De console gebruikt 0, en dat betekent in
+ * MeshCore "dit komt van de seriële kabel", wat een handvol commando's
+ * ontgrendelt die alleen daar horen ('erase', 'get prv.key'). Deze weg heeft er
+ * geen van nodig, dus krijgt hij ze ook niet -- blijkt de tabel hierboven ooit
+ * een gat te hebben, dan is dat gat in elk geval kleiner. */
+static void cfgCli(char *reply, size_t reply_max, const char *fmt, ...) {
+  char cmd[80];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(cmd, sizeof(cmd), fmt, ap);
+  va_end(ap);
+
+  reply[0] = 0;
+  if (!_mesh) {
+    strncpy(reply, "Error: geen mesh", reply_max - 1);
+    reply[reply_max - 1] = 0;
+    return;
+  }
+  _mesh->handleCommand(1, cmd, reply);
+}
+
+static void handleCfgPost(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+
+  char key[CFG_KEY_MAX] = "", value[CFG_VALUE_MAX] = "";
+  copyParam(req, "key", key, sizeof(key));
+  copyParam(req, "value", value, sizeof(value));
+
+  static char body[480];
+  const CfgParam *p = cfgFind(key);
+  if (!p) {
+    /* Bewust dezelfde tekst voor "bestaat niet" en "mag niet": welke parameters
+     * er zijn is geen geheim -- ze staan in de documentatie en in /api/cfg --
+     * maar een antwoord dat die twee uit elkaar houdt nodigt uit tot aftasten,
+     * en daar valt niets mee te winnen. */
+    snprintf(body, sizeof(body),
+             "{\"ok\":0,\"step\":\"sleutel\",\"msg\":\"deze parameter staat niet op de "
+             "lijst van wat er van afstand gezet mag worden\"}");
+    req->send(400, "application/json", body);
+    return;
+  }
+
+  float num = 0;
+  const char *bad = NULL;                 // NULL = waarde in orde
+  switch (p->kind) {
+    case CFG_TEXT:
+      if (!cfgNameOk(value)) {
+        bad = "leeg of met een teken dat niet mag ([ ] \\\\ : , ? * of een stuurteken)";
+      }
+      break;
+    case CFG_BOOL:
+      /* MeshCore vergelijkt hier met memcmp(&config[n], \"on\", 2), dus alles wat
+       * met 'on' begint telt als aan en de rest als uit -- \"onzin\" zet het aan.
+       * Hier alleen precies de twee woorden, want dit is de enige plek waar een
+       * tikfout nog geweigerd kan worden. */
+      if (strcmp(value, "on") != 0 && strcmp(value, "off") != 0) bad = "moet on of off zijn";
+      break;
+    case CFG_ENUM:
+      if (!cfgEnumOk(p->choices, value)) bad = "staat niet in de lijst met toegestane waarden";
+      break;
+    case CFG_RADIO:
+      if (!cfgRadioOk(value)) {
+        bad = "moet 'freq bw sf cr' zijn: 150-2500 MHz, 7-500 kHz, sf 5-12, cr 5-8";
+      }
+      break;
+    default: {                            // CFG_INT en CFG_FLOAT
+      bool ok = cfgNumber(value, num);
+      if (ok && (num < p->lo || num > p->hi)) ok = false;
+      if (ok && p->kind == CFG_INT && num != (float)(long)num) ok = false;
+      if (!ok) {
+        static char range[80];
+        snprintf(range, sizeof(range), "moet een %s tussen %g en %g zijn",
+                 p->kind == CFG_INT ? "geheel getal" : "getal", p->lo, p->hi);
+        bad = range;
+      }
+      break;
+    }
+  }
+  if (bad) {
+    snprintf(body, sizeof(body),
+             "{\"ok\":0,\"step\":\"waarde\",\"msg\":\"%s %s\"}", p->key, bad);
+    req->send(400, "application/json", body);
+    return;
+  }
+
+  char set_reply[160];
+  cfgCli(set_reply, sizeof(set_reply), "set %s %s", p->key, value);
+
+  char get_reply[160];
+  cfgCli(get_reply, sizeof(get_reply), "get %s", p->key);
+  const char *applied = cfgStripMarker(get_reply);
+
+  bool refused = cfgIsError(set_reply);
+  /* 'Toegepast' is niet hetzelfde als 'gelijk aan wat er gevraagd is', en dat
+   * verschil hoort de aanroeper te zien in plaats van te moeten raden. Bij
+   * advert.interval is het zelfs het gewone geval: 61 wordt 60. */
+  bool exact = !refused && cfgSameValue(p, value, applied);
+  /* Wel vergeleken, niet verklapt. Het teruglezen is de hele reden dat dit
+   * endpoint bestaat, dus dat blijft; alleen de waarde zelf gaat niet mee terug
+   * de wereld in. */
+  if (p->secret) applied = "(verborgen)";
+
+  static char e_set[320], e_applied[320], e_asked[CFG_VALUE_MAX * 2];
+  jsonEsc(e_set, sizeof(e_set), set_reply);
+  jsonEsc(e_applied, sizeof(e_applied), applied);
+  jsonEsc(e_asked, sizeof(e_asked), value);
+
+  snprintf(body, sizeof(body),
+           "{\"ok\":%d,\"step\":\"%s\",\"key\":\"%s\",\"asked\":\"%s\","
+           "\"applied\":\"%s\",\"exact\":%d,\"reply\":\"%s\"}",
+           refused ? 0 : 1, refused ? "node" : "",
+           p->key, e_asked, e_applied, exact ? 1 : 0, e_set);
+  req->send(refused ? 400 : 200, "application/json", body);
+}
+
+/* Welke parameters deze node van afstand laat zetten, met hun grenzen. Zodat de
+ * pagina de lijst niet hoeft te kennen om hem te tonen, en -- belangrijker --
+ * zodat een server die een parameter aanbiedt die deze firmware niet kent dat
+ * merkt vóórdat iemand erop drukt in plaats van erna. */
+static void handleCfgList(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+  /* Groter dan het lijkt te hoeven: achtentwintig parameters met hun grenzen,
+   * keuzelijst en risicoklasse lopen tegen de 2,5 kB. Statisch, want de taak van
+   * de webserver heeft de krapste stack op deze node. */
+  static char body[3000];
+  int n = snprintf(body, sizeof(body), "{\"params\":[");
+  for (int i = 0; i < CFG_PARAM_COUNT && n < (int)sizeof(body) - 200; i++) {
+    const CfgParam &p = CFG_PARAMS[i];
+    n += snprintf(body + n, sizeof(body) - n,
+                  "%s{\"key\":\"%s\",\"kind\":\"%s\",\"lo\":%g,\"hi\":%g,"
+                  "\"choices\":\"%s\",\"risk\":%u,\"reboot\":%u,\"secret\":%u}",
+                  i ? "," : "", p.key, cfgKindName(p.kind),
+                  p.lo, p.hi, p.choices ? p.choices : "",
+                  (unsigned)p.risk, (unsigned)p.reboot, (unsigned)p.secret);
+  }
+  snprintf(body + n, sizeof(body) - n, "]}");
+  req->send(200, "application/json", body);
+}
+
 // ------------------------------------------------------------------- console
 
 static void consolePrompt() {
@@ -6255,6 +6735,8 @@ void mmnet_begin(FS &fs, MyMesh *mesh) {
    * version of that library claiming /api/* cannot shadow it, and registered
    * unconditionally -- including in safe mode, which is exactly the state in
    * which somebody needs to put a working image back on this node. */
+  _server.on("/api/cfg", HTTP_GET, handleCfgList);
+  _server.on("/api/cfg", HTTP_POST, handleCfgPost);
   _server.on("/api/fw", HTTP_GET, fwState);
   _server.on("/api/fw", HTTP_POST, fwDone, NULL, fwBody);
   _server.on("/api/fw/rollback", HTTP_POST, fwRollbackPost);

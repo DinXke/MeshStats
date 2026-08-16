@@ -689,7 +689,12 @@ hoofdlus op en daarmee de mesh, wat op de companion-node al was vastgesteld.
 | `/api/mon` | POST | basic | `add`, `del`, `pass`, `en`, `iv`, `poll` |
 | `/api/backup` | GET | basic | Het volledige bestandssysteem downloaden |
 | `/api/restore` | POST | basic | Een back-up uploaden, daarna herstarten |
-| `/update` | GET/POST | basic | Firmware-upload via `AsyncElegantOTA` |
+| `/api/cfg` | GET | basic | Welke CLI-parameters van afstand gezet mogen worden, met hun type, grenzen, toegestane woorden en risicoklasse (2.1.0+) |
+| `/api/cfg` | POST | basic | Er één zetten en meteen teruglezen — zie [`node-management.md`](node-management.md) (2.1.0+) |
+| `/api/fw` | GET | basic | Geïnstalleerde versie, bouwomgeving, welke partitie draait en wat er in de andere staat (1.12.0+) |
+| `/api/fw` | POST | basic | Firmware-image als kale body; de digest wordt gecontroleerd vóór de bootpartitie omgezet wordt — zie [`firmware-upgrade.md`](firmware-upgrade.md) (1.12.0+) |
+| `/api/fw/rollback` | POST | basic | De andere applicatiepartitie weer opstarten (1.12.0+) |
+| `/update` | GET/POST | basic | Firmware-upload via `AsyncElegantOTA`. Blijft bestaan als terugval voor wanneer de weg hierboven juist het kapotte onderdeel is |
 
 De authenticatie is **HTTP basic**, met dezelfde inloggegevens als de console
 (`_cfg.user` / `_cfg.console_pass`, standaard `admin` / `meshcore`). `/` zelf is
@@ -903,7 +908,15 @@ verkeerde SSID heeft geen andere weg naar binnen.
 | `wifi mon …` | Gemonitorde repeaters; zie §4.11 |
 | `wifi settings …` | De eigen CLI-instellingensweep van de node |
 | `wifi clock` | Klokstatus; **bewust alleen-lezen**, zie §4.12 |
+| `wifi fw` | Welke versie vanuit welke applicatiepartitie draait, voor welke bouwomgeving dit image gemaakt is, wat er in de andere partitie staat en hoe de laatste upload afliep (1.12.0+) |
+| `wifi fw rollback` | De andere applicatiepartitie weer opstarten — de firmware van vóór de laatste upgrade (1.12.0+) |
 | `wifi wdt` | Doelbewust de lus blokkeren en nagaan of de watchdog afgaat |
+
+Van deze lijst is `wifi fw rollback` degene die over de **mesh** het meeste
+uitmaakt. Elke andere weg naar binnen loopt over IP, dus een upgrade waarvan de
+enige fout is dat hij de wifi niet meer haalt, neemt ze in één klap allemaal mee
+— en LoRa komt op vanuit de radiodriver, nog vóór al die andere. Zie
+[`firmware-upgrade.md`](firmware-upgrade.md).
 
 Subcommando's van `wifi mqtt`: `host`, `port`, `user`, `pass`, `prefix`,
 `rx <on/off>`, `on`/`off`. Zonder argument drukt het een statusregel af:

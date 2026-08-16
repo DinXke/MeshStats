@@ -1,0 +1,209 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Vergelijken — beheer — {{ site_name }}{% endblock %}
+{% block admin %}
+<h1>Repeaters vergelijken</h1>
+
+<p class="muted">
+  Alle repeaters naast elkaar. De nadruk ligt op wat er <strong>uit de pas
+  loopt</strong>: bij drie nodes zie je dat zelf nog, bij twintig niet meer, en
+  dan is een node met een afwijkende instelling iets wat je pas ontdekt als er
+  iets misgaat.
+</p>
+
+{#- De legenda staat vóór de tabel en niet erna. Een lezer die niet weet wat een
+    gemarkeerd vakje betekent, leest de markering als een fout van de site. -#}
+<div class="card">
+  <p class="small" style="margin:0">
+    <span class="cmp-off">afwijkend</span> — deze node zegt iets anders dan de
+    meerderheid.
+    <span class="cmp-quiet">geen antwoord</span> — gevraagd, niets teruggekregen.
+    <span class="cmp-never">niet gevraagd</span> — deze parameter staat niet in
+    de uitleeslijst, of er is nooit een ronde geweest.
+  </p>
+  <p class="muted small" style="margin:.4rem 0 0">
+    Er wordt alleen gemarkeerd als er een <em>echte</em> meerderheid is om van af
+    te wijken, en pas vanaf drie nodes met een waarde. Twee nodes die het oneens
+    zijn hebben geen afwijker — ze zijn het gewoon oneens, en beide vakjes
+    kleuren zegt niets.
+  </p>
+</div>
+
+{% if tabel.rijen %}
+<div class="card tablecard">
+  <div class="cmp-scroll">
+  <table class="cmptable">
+    <thead>
+      <tr>
+        <th>Node</th>
+        {% for k in tabel.kolommen %}
+        <th class="mono" title="{{ k }}">{{ tabel.labels.get(k, k) }}
+          {%- if tabel.norm.get(k) %}<br><span class="muted cmp-norm">meerderheid: {{ tabel.norm[k] }}</span>{% endif %}
+        </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+    {% for rij in tabel.rijen %}
+      <tr>
+        <td>
+          <a href="/admin/repeaters/{{ rij.rep.id }}">{{ rij.rep.name }}</a>
+          <br><span class="mono muted small">{{ rij.rep.pubkey_prefix }}</span>
+        </td>
+        {% for k in tabel.kolommen %}
+        {#- Drie toestanden en niet twee: 'nooit gevraagd' en 'geen antwoord'
+            zeggen iets over ons en niet over de instelling van de node, en ze
+            als afwijking tonen stuurt je naar de verkeerde node. -#}
+        <td class="mono
+          {%- if rij.afwijkend[k] %} cmp-off
+          {%- elif rij.stil[k] %} cmp-quiet
+          {%- elif rij.onbekend[k] %} cmp-never{% endif %}"
+          {%- if rij.ouderdom.get(k) %} title="gelezen: {{ rij.ouderdom[k] }}"{% endif %}>
+          {%- if rij.onbekend[k] %}<span class="muted">—</span>
+          {%- elif rij.stil[k] %}<span class="muted">(geen antwoord)</span>
+          {%- elif rij.waarden[k] == "" %}<span class="muted">(leeg)</span>
+          {%- else %}{{ rij.waarden[k] }}{% endif %}
+          {#- Bewerken opent de bewerker onderaan met deze node en deze parameter
+              ingevuld. Geen invoerveld in het vakje zelf: bij twintig nodes en
+              zes kolommen zijn dat honderdtwintig formulieren met elk hun eigen
+              bevestiging, en juist die bevestiging wordt dan onleesbaar. -#}
+          {%- if rij.cfg.can and k not in builtin_keys %}
+          <a class="cmp-edit" title="Deze waarde zetten"
+             href="/admin/compare?edit={{ rij.rep.id }}:{{ k }}">&#9998;</a>
+          {%- endif %}
+        </td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if tabel.afwijkers %}
+  <p class="small" style="margin:.6rem 0 0">
+    <strong>{{ tabel.afwijkers }}</strong>
+    {% if tabel.afwijkers == 1 %}vakje wijkt{% else %}vakjes wijken{% endif %}
+    af van de meerderheid.
+  </p>
+  {% else %}
+  <p class="muted small" style="margin:.6rem 0 0">
+    Geen afwijkingen in de getoonde kolommen.
+  </p>
+  {% endif %}
+</div>
+{% else %}
+<div class="card"><p class="muted">Nog geen repeaters.</p></div>
+{% endif %}
+
+{% if cfg_result %}
+<div class="card notice">
+  {% if cfg_result.ok and cfg_result.exact %}
+  <strong>Gezet.</strong> <span class="mono">{{ cfg_result.key }}</span> staat nu op
+  <span class="mono">{{ cfg_result.applied }}</span>.
+  {% elif cfg_result.ok %}
+  <strong>Gezet, maar niet precies.</strong> Gevraagd
+  <span class="mono">{{ cfg_result.asked }}</span>, in de node staat nu
+  <span class="mono">{{ cfg_result.applied }}</span>.
+  {% else %}
+  <strong>Niet gezet.</strong>
+  {% if cfg_result.step %}<span class="mono">[{{ cfg_result.step }}]</span>{% endif %}
+  {{ cfg_result.msg }}
+  {% endif %}
+  {% if cfg_result.ok and cfg_result.reboot %}
+  <br><strong>Nog niet actief.</strong> De node bewaart dit en past het pas toe bij een
+  herstart; tot dan draait de radio op de oude waarden.
+  {% endif %}
+</div>
+{% endif %}
+
+{% if bewerken %}
+<section>
+  <h2>Zetten: <span class="mono">{{ bewerken.key }}</span> op
+    <a href="/admin/repeaters/{{ bewerken.rij.rep.id }}">{{ bewerken.rij.rep.name }}</a></h2>
+  <div class="card">
+  {% if not bewerken.lijst.ok %}
+    <p class="muted small"><strong>Kan niet:</strong>
+      {{ bewerken.lijst.error or "deze node biedt geen parameterlijst aan" }}.</p>
+  {% elif not bewerken.param %}
+    <p class="muted small"><strong>Kan niet:</strong> deze node biedt
+      <span class="mono">{{ bewerken.key }}</span> niet aan om van afstand te zetten.</p>
+  {% else %}
+    {% set p = bewerken.param %}
+    <p class="muted small">
+      Nu:
+      {% if bewerken.huidig %}<span class="mono">{{ bewerken.huidig }}</span>
+      {% else %}<span class="muted">onbekend</span>{% endif %}.
+      {%- if p.risk == 3 %} <strong>Deze instelling kan de node onbereikbaar maken.</strong>
+      Gaat het mis op een node die je alleen over de radio bereikt, dan is er geen
+      tweede weg om het mee terug te draaien.{% endif %}
+    </p>
+    <form method="post" action="/admin/compare/write" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="rid" value="{{ bewerken.rij.rep.id }}">
+      <input type="hidden" name="key" value="{{ bewerken.key }}">
+      {% if p.kind == "bool" %}
+      <select name="value"><option value="on">on</option><option value="off">off</option></select>
+      {% elif p.kind == "enum" %}
+      <select name="value">
+        {% for c in p.choices.split("|") if c %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+      {% elif p.kind == "radio" %}
+      <input type="number" name="rf" step="0.001" min="150" max="2500" placeholder="freq" required>
+      <input type="number" name="rb" step="0.001" min="7" max="500" placeholder="bw" required>
+      <input type="number" name="rs" step="1" min="5" max="12" placeholder="sf" required>
+      <input type="number" name="rc" step="1" min="5" max="8" placeholder="cr" required>
+      {% elif p.kind == "int" %}
+      <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}" required>
+      {% elif p.kind == "float" %}
+      <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}" required>
+      {% elif p.secret %}
+      <input type="password" name="value" maxlength="39" autocomplete="new-password" required>
+      {% else %}
+      <input name="value" maxlength="39" autocomplete="off" required>
+      {% endif %}
+
+      {% if p.risk == 2 %}
+      <label class="cfgconfirm"><input type="checkbox" name="confirm" value="ja" required>
+        bevestig</label>
+      {% elif p.risk == 3 %}
+      <input name="confirm" placeholder="{{ bewerken.rij.rep.name }}" autocomplete="off" required
+             title="Typ de naam van deze node over om te bevestigen">
+      {% endif %}
+      <button type="submit" {% if p.risk == 3 %}class="danger"{% endif %}>Zet</button>
+      <a href="/admin/compare" class="muted small">annuleren</a>
+    </form>
+  {% endif %}
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <h2>Kolommen</h2>
+  <div class="card">
+    <p class="muted small">
+      Wat er te kiezen valt zijn de vaste gegevens plus elke parameter die van
+      minstens één node ooit uitgelezen is. Een parameter die nergens gelezen is
+      staat er niet bij: een lege kolom lijkt op een probleem terwijl er alleen
+      nooit iets uitgevraagd is.
+    </p>
+    <form method="post" action="/admin/compare/columns">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="cmp-cols">
+        {% for k, label in tabel.keuzes %}
+        <label class="cmp-col">
+          <input type="checkbox" name="col" value="{{ k }}"
+                 {% if k in tabel.kolommen %}checked{% endif %}>
+          <span class="mono">{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit">Kolommen opslaan</button>
+    </form>
+    <p class="muted small" style="margin-top:.6rem">
+      De keuze wordt op de server bewaard en geldt dus voor iedereen die inlogt —
+      beheer is een gedeelde taak, en wie een tabel inricht die laat zien dat één
+      node uit de pas loopt, wil dat de volgende hetzelfde ziet. Een
+      <code>?cols=</code> in de URL wint eenmalig, om een blik te kunnen delen
+      zonder de opgeslagen keuze te overschrijven.
+    </p>
+  </div>
+</section>
+{% endblock %}

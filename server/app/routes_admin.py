@@ -24,8 +24,8 @@ klikken een 404 oplevert. Waar een GET-URL wél verhuisde staat een omleiding.
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import (auth, clocksync, commanding, config, db, firmware, metrics,
-               mqtt_ingest, ratelimit, retention, tsdb)
+from . import (auth, clocksync, commanding, compare, config, db, firmware,
+               metrics, mqtt_ingest, nodeconfig, ratelimit, retention, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -177,6 +177,126 @@ def nodes_page(request: Request):
         "groups": [g for g in groups if g["reps"]],
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
     })
+
+
+@router.get("/compare", response_class=HTMLResponse)
+def compare_page(request: Request):
+    """Alle repeaters naast elkaar, met de afwijkers gemarkeerd."""
+    return _compare_page(request)
+
+
+def _compare_page(request: Request, extra: dict | None = None):
+    """De tabel, eventueel met de uitslag van een schrijfactie erbij.
+
+    Een eigen weergave naast /admin en niet een kolom erbij, omdat het een andere
+    vraag beantwoordt. /admin vraagt "hoe staat deze node ervoor" en groepeert
+    daarom op beheerniveau; hier is de vraag "welke node loopt uit de pas", en die
+    kun je alleen stellen als de waarden naast elkaar staan.
+
+    De kolomkeuze volgt de afspraak van het pakketarchief -- een URL-parameter
+    wint van wat er bewaard is -- maar bewaart serverzijdig in plaats van in
+    localStorage. Reden: beheer is een gedeelde taak. Wie een tabel inricht die
+    laat zien dat één node uit de pas loopt, wil dat de volgende die inlogt
+    hetzelfde ziet, en niet dat die keuze in één browser blijft hangen.
+    """
+    user = require_login(request)
+    repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    broker = mqtt_ingest.can_publish()
+
+    gekozen = request.query_params.get("cols", "")
+    if not gekozen:
+        gekozen = db.get_setting(compare.SETTING_KEY, "")
+
+    voorlopig = compare.build(repeaters, None, broker_connected=broker)
+    keys = [k for k, _ in voorlopig["keuzes"]]
+    kolommen = compare.parse_columns(gekozen, keys)
+    tabel = compare.build(repeaters, kolommen, broker_connected=broker)
+
+    return templates.TemplateResponse(request, "admin/compare.html", {
+        "site_name": config.SITE_NAME, "user": user, "world": "nodes",
+        "compare_tab": True,
+        "tabel": tabel,
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+        "bewerken": _compare_editor(request.query_params.get("edit", ""), tabel),
+        # De vaste kolommen komen uit de repeatertabel en niet uit de CLI, dus
+        # daar valt niets aan te zetten -- het sjabloon moet dat verschil kennen
+        # om geen potloodje te tekenen bij een waarde die geen knop verdient.
+        "builtin_keys": compare.BUILTIN_KEYS,
+        "cfg_result": None,
+        **(extra or {}),
+    })
+
+
+def _compare_editor(spec: str, tabel: dict) -> dict | None:
+    """Het bewerkvenster onder de tabel, of None.
+
+    Eén bewerker die de tabel aanstuurt, en niet een invoerveld in elk vakje.
+    Bij twintig nodes en zes kolommen zijn dat honderdtwintig formulieren op één
+    pagina, elk met hun eigen bevestiging -- en juist de bevestiging is wat er
+    dan onleesbaar wordt. De risicoklassen blijven onverkort gelden; ze staan
+    hier alleen op één plek in beeld in plaats van honderdtwintig keer.
+
+    ``edit`` heeft de vorm ``<rid>:<sleutel>``. Klopt er iets niet aan, dan geen
+    bewerker in plaats van een foutmelding: dit komt uit een URL die iemand
+    geplakt of bewaard kan hebben, en een tabel die niet meer laadt omdat een
+    node verwijderd is, is erger dan een tabel zonder bewerker.
+    """
+    if ":" not in (spec or ""):
+        return None
+    rid_raw, _, key = spec.partition(":")
+    if not rid_raw.isdigit():
+        return None
+    rij = next((r for r in tabel["rijen"] if r["rep"]["id"] == int(rid_raw)), None)
+    if rij is None or not key:
+        return None
+
+    lijst = nodeconfig.params(rij["cfg"]["host"]) if rij["cfg"]["can"] else         {"ok": False, "error": "", "params": []}
+    param = next((p for p in lijst.get("params") or [] if p.get("key") == key), None)
+    return {
+        "rij": rij, "key": key, "param": param, "lijst": lijst,
+        "huidig": rij["waarden"].get(key),
+    }
+
+
+@router.post("/compare/write")
+def compare_write(request: Request, rid: int = Form(...), key: str = Form(...),
+                  value: str = Form(""), confirm: str = Form(""),
+                  rf: str = Form(""), rb: str = Form(""), rs: str = Form(""),
+                  rc: str = Form(""), csrf: str = Form(...)):
+    """Eén instelling zetten vanuit de vergelijkingstabel.
+
+    Dezelfde weg als vanaf de nodepagina -- letterlijk dezelfde functie -- zodat
+    de risicoklassen, de grenzen en het teruglezen hier vanzelf gelden. Een
+    tweede schrijfpad naast nodeconfig.write() zou een tweede plek zijn waar die
+    drempels kunnen ontbreken, en dat is precies de fout die je pas ontdekt als
+    er een node stil is.
+    """
+    require_login(request)
+    check_csrf(request, csrf)
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+    if key.strip() == "radio" and (rf or rb or rs or rc):
+        value = " ".join(v.strip() for v in (rf, rb, rs, rc))
+    result = nodeconfig.write(rep, key.strip(), value.strip(), confirm)
+    return _compare_page(request, {"cfg_result": result, "cfg_rid": rid})
+
+
+@router.post("/compare/columns")
+def compare_columns(request: Request, csrf: str = Form(...),
+                    col: list[str] = Form(default=[])):
+    """De kolomkeuze bewaren.
+
+    Vinkjes, dus wat niet meekomt is uitgezet -- en een lege keuze is dan ook een
+    geldig verzoek, geen fout. ``compare.parse_columns`` maakt er bij het tonen
+    weer de standaardkolommen van, want een tabel zonder kolommen is geen tabel;
+    dat hoort daar en niet hier, zodat een handmatig leeggemaakte instelling
+    hetzelfde uitpakt als een instelling die nooit gezet is.
+    """
+    require_login(request)
+    check_csrf(request, csrf)
+    db.set_setting(compare.SETTING_KEY, ",".join(c.strip() for c in col if c.strip()))
+    return RedirectResponse("/admin/compare", status_code=303)
 
 
 @router.get("/server", response_class=HTMLResponse)
@@ -379,6 +499,18 @@ def repeater_settings_redirect(request: Request, rid: int):
 @router.get("/repeaters/{rid}", response_class=HTMLResponse)
 def node_page(request: Request, rid: int):
     """Alles over één node: identiteit, uitvragen, klok, firmware, verwijderen."""
+    return _node_page(request, rid)
+
+
+def _node_page(request: Request, rid: int, **extra):
+    """De pagina van één node, eventueel met de uitslag van een handeling erbij.
+
+    Een eigen functie omdat een schrijfactie diezelfde pagina teruggeeft met zijn
+    antwoord erin, en niet een 303 naar een pagina die het antwoord kwijt is. Het
+    antwoord van een schrijfactie is namelijk meer dan gelukt-of-niet: er staat in
+    wat er ná afloop in de node staat, en dat kan afwijken van wat er gevraagd is.
+    Dat past niet in een queryparameter zonder het te verminken.
+    """
     user = require_login(request)
     rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not rep:
@@ -396,6 +528,9 @@ def node_page(request: Request, rid: int):
     # eindigt een klik op "er is niets verstuurd", en dat kan de pagina van
     # tevoren zeggen in plaats van achteraf.
     broker = mqtt_ingest.can_publish()
+    cfg = nodeconfig.cfg_route(rep)
+    cfg_params = (nodeconfig.params(cfg["host"]) if cfg["can"]
+                  else {"ok": False, "error": "", "params": []})
     return templates.TemplateResponse(request, "admin/node.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
         "settings_rows": rows,
@@ -443,7 +578,58 @@ def node_page(request: Request, rid: int):
         # is hangt af van de weg (1.8.0 voor de node zelf, 1.9.0 voor een
         # monitor), en twee plaatsen die dat allebei uitrekenen is er één te veel.
         "route": commanding.describe(rep, broker_connected=broker),
+        # Instellingen schrijven. De parameterlijst komt van de node zelf en
+        # niet uit een tabel hier: de firmware is er de baas over, en een tweede
+        # lijst zou vroeg of laat een parameter aanbieden die de node weigert.
+        # Alleen ophalen als er ook echt een weg is, anders staat elke
+        # paginaweergave tien seconden op een node te wachten die er niet is.
+        "cfg_route": cfg,
+        "cfg_params": cfg_params,
+        # Gegroepeerd op risicoklasse, want dat is waar de bediening op stuurt:
+        # gewoon opslaan, bevestigen, of de naam overtypen. De groepen komen uit
+        # de firmware mee zodat de indeling niet op twee plaatsen bestaat.
+        "cfg_groups": [
+            (risk, [q for q in cfg_params.get("params") or []
+                    if int(q.get("risk") or 1) == risk])
+            for risk in (nodeconfig.RISK_PLAIN, nodeconfig.RISK_WRITES,
+                         nodeconfig.RISK_CUTOFF)
+        ],
+        # Wat de laatste uitleesronde vond, zodat elk veld zijn huidige waarde
+        # kan tonen in plaats van leeg te beginnen. Een leeg veld naast een
+        # parameter nodigt uit tot gokken.
+        "cfg_now": {r["param"]: r["value"] for r in rows if r["value"] is not None},
+        **extra,
     })
+
+
+@router.post("/repeaters/{rid}/config")
+def write_config(request: Request, rid: int, key: str = Form(...),
+                 value: str = Form(""), confirm: str = Form(""),
+                 rf: str = Form(""), rb: str = Form(""), rs: str = Form(""),
+                 rc: str = Form(""), csrf: str = Form(...)):
+    """Eén instelling van deze node zetten en meteen teruglezen.
+
+    Synchroon, anders dan de firmware-upgrade: dit is één CLI-aanroep over het
+    lokale netwerk en die is in tienden van seconden klaar. Een achtergrondtaak
+    met een toestand om te pollen zou hier machinerie zijn om niets.
+
+    Geeft de pagina terug in plaats van een 303, want het antwoord bevat wat er
+    ná afloop in de node staat -- en dat is soms iets anders dan wat er gevraagd
+    is. Zie nodeconfig.write() voor de twee gemeten redenen waarom.
+    """
+    require_login(request)
+    check_csrf(request, csrf)
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+    # 'radio' is de enige parameter die uit vier getallen bestaat, en die vier
+    # krijgen elk hun eigen invoerveld met hun eigen minimum en maximum. Eén
+    # tekstveld waarin je "869.525 250 11 5" moet typen is precies het soort veld
+    # waarin een tikfout een node van de lucht haalt.
+    if key.strip() == "radio" and (rf or rb or rs or rc):
+        value = " ".join(v.strip() for v in (rf, rb, rs, rc))
+    result = nodeconfig.write(rep, key.strip(), value.strip(), confirm)
+    return _node_page(request, rid, cfg_result=result)
 
 
 @router.post("/repeaters/{rid}/settings/refresh")

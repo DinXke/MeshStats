@@ -1241,3 +1241,40 @@ a.nodelist-who { color: var(--cyan); }
    advert: dotted underline, candidates in the title. The distinction between
    knowing and deriving must survive into the pixels. */
 .src-derived { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+
+/* Instellingen schrijven: één regel per parameter, met de bediening die bij het
+   type hoort. Smalle velden, want een getal tussen 0 en 64 heeft geen halve
+   schermbreedte nodig en een rij van vier radiowaarden moet naast elkaar passen.
+   De formulieren in de laatste kolom mogen niet de hoogte van de rij bepalen --
+   vandaar margin 0 op .rowform hierbinnen. */
+.cfgtable td { vertical-align: middle; }
+.cfgtable .rowform { margin-top: 0; align-items: center; gap: .35rem; }
+.cfgtable input[type="number"] { width: 6.5rem; }
+.cfgtable input[type="text"], .cfgtable input:not([type]) { width: 11rem; }
+.cfgtable select { min-width: 7rem; }
+.cfgconfirm {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .78rem; color: var(--muted); white-space: nowrap;
+}
+
+/* Repeaters vergelijken. De tabel kan breder worden dan het scherm zodra er
+   kolommen bij gekozen worden, dus hij schuift in zijn eigen venster in plaats
+   van de pagina mee te trekken. */
+.cmp-scroll { overflow-x: auto; }
+.cmptable { min-width: 100%; }
+.cmptable th, .cmptable td { white-space: nowrap; padding: .35rem .5rem; }
+.cmp-norm { font-size: .7rem; font-weight: 400; }
+
+/* Drie toestanden, drie signalen -- en alleen de eerste is een waarschuwing.
+   'Geen antwoord' en 'niet gevraagd' zeggen iets over ons en niet over de node,
+   dus die krijgen grijs en geen kleur: wie ze als fout leest, gaat de verkeerde
+   node repareren. */
+.cmp-off { background: rgba(255, 92, 92, .16); color: var(--red); font-weight: 600; }
+.cmp-quiet, .cmp-never { color: var(--muted); }
+.cmp-never { opacity: .65; }
+td.cmp-off { border-left: 2px solid var(--red); }
+
+.cmp-cols { display: flex; flex-wrap: wrap; gap: .3rem .9rem; margin-bottom: .7rem; }
+.cmp-col { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; }
+.cmp-edit { margin-left: .3rem; opacity: .45; text-decoration: none; font-size: .85em; }
+.cmp-edit:hover { opacity: 1; }

@@ -58,9 +58,10 @@ both are things it notices.
 | Read from traffic (adverts, SNR, path, position) | yes | yes | yes |
 | Own statistics (uptime, airtime, counters) | no | no | yes |
 | Read CLI settings | no | yes, over LoRa | yes |
-| **Write CLI settings** | no | designed, bounded | designed, bounded |
+| **Write CLI settings** | no | designed, not built | **built** — full surface, risk-classed |
 | Set the clock | no | yes, through the monitor | yes |
 | Firmware upgrade | no | **no** | only with an IP path |
+| Telemetry polling without credentials | usually **yes** — a property beside the level, not part of it | usually yes | usually yes |
 
 **Firmware upgrade is deliberately not part of the level.** A `full_managed`
 node can accept a twenty-byte command over MQTT and still be unable to accept a
@@ -122,8 +123,8 @@ What it buys:
 What it costs: a `full_managed` node with no IP path cannot be written to at all,
 even though its `cmd` topic works. That case does not exist in this installation
 today. If it appears, the answer is not to widen the MQTT allow-list quietly —
-it is to reopen this decision on purpose, with the tier table below as the thing
-that has to hold.
+it is to reopen this decision on purpose, with the risk classes below as the
+thing that has to hold.
 
 ### If it were ever done over MQTT anyway
 
@@ -147,61 +148,173 @@ That is a lot of machinery to make a route safe that we do not need. Hence HTTP.
 
 ## Which settings may be written
 
-Not a whitelist because whitelists are fashionable, but because the failure mode
-is losing a node permanently. Three tiers.
+**All of them, bar three.** The list is the full `handleSetCmd()` surface of
+`src/helpers/CommonCLI.cpp` — twenty-eight parameters — not a curated safe
+corner.
 
-### Tier 1 — safe
+That is a deliberate reversal of the first design, which admitted only
+parameters that could not cut off reachability. Safe, and beside the point: the
+settings you most need at a distance *are* the dangerous ones — transmit power,
+radio parameters — and omitting them does not remove the risk. It only means
+somebody fetches a ladder, or a serial cable, and does the same thing with less
+care and no record.
 
-Cannot cut off reachability by any route. Offered on every node the site can
-write to, with no extra confirmation.
+So the risk moved from **omission** to **handling**. Every parameter carries a
+risk class, and the class decides how much friction a change costs.
 
-`name`, `lat`, `lon`, `advert.interval`, `flood.advert.interval`, `af`
-(airtime factor), `rxdelay`, `txdelay`
+### The three that are still absent
 
-The worst outcome in this tier is a node that advertises less often or delays
-differently. Both are visible in the statistics and both are correctable by the
-same route that set them.
+| Not offered | Why |
+|---|---|
+| `prv.key` | Replaces the node's identity. That is not a setting, it is a different node: every contact list, ACL and monitor entry elsewhere in the mesh then points at somebody who no longer exists. There is no confirmation that makes this a good idea from a web page |
+| `bridge.secret` | A shared secret that comes straight back out on the read-back. A password that has been in a log line or a screenshot is gone |
+| `freq` | MeshCore accepts `set freq` **only from the serial cable** (`sender_timestamp == 0`), and this path deliberately passes something else. Frequency belongs with the other three radio values and goes through `radio`, which *is* validated — `set freq` is not |
 
-### Tier 2 — risky, behind an explicit confirmation that names the risk
+### Risk classes
 
-`flood.max`, `flood.max.unscoped`, `repeat`, `allow.read.only`
+| Class | Meaning | Confirmation |
+|---|---|---|
+| **Plain** | A value you can just set back | Save is enough |
+| **Writes noticeably** | Changes how the node behaves on the mesh, but cannot put it out of reach | An explicit tick |
+| **Can cut off reachability** | Touches the radio or who may log in | Type the node's name |
 
-These change how the node participates in the mesh. They do not sever the
-management route by themselves, but they can change what the mesh looks like
-enough that diagnosing the next problem gets harder. `allow.read.only` in
-particular changes who may log in — including, potentially, us.
+**Plain** (9) — `name`, `lat`, `lon`, `owner.info`, `advert.interval`,
+`flood.advert.interval`, `rxdelay`, `txdelay`, `direct.txdelay`
 
-### Tier 3 — never remotely on a node reached only over LoRa
+**Writes noticeably** (12) — `dutycycle`, `af`, `flood.max`,
+`flood.max.unscoped`, `flood.max.advert`, `int.thresh`, `agc.reset.interval`,
+`multi.acks`, `path.hash.mode`, `loop.detect`, `cad`, `adc.multiplier`
 
-`freq`, `radio` (bandwidth / spreading factor / coding rate), `tx`, `role`,
-`region.*`, and anything to do with WiFi.
+**Can cut off reachability** (7) — `tx`, `repeat`, `allow.read.only`,
+`radio.rxgain`, `radio.fem.rxgain`, `guest.password`, `radio`
 
-Every one of these can take effect and, in the same instant, remove the only path
-back. There is no acknowledgement that helps: the acknowledgement would have to
-travel over the link the change just broke.
+The line that matters is the one between the second and third class, and it is a
+single question: *if this goes wrong, can the node still be reached along the
+route you steer it with?* On a node of ours there are two independent ways in —
+break the WiFi and the mesh CLI answers, break the radio settings and the admin
+page answers — so a mistake is annoying. On a stock repeater reachable only over
+LoRa there is one way in, and a wrong frequency is the end of it.
 
-They may be offered on a node that has **two independent paths** — our firmware
-with both an IP route and a mesh route, where breaking one leaves the other — and
-even then behind the same confirmation as tier 2. On a `semi_managed` node they
-are not offered at all.
+Typing the node's name is the same device the firmware page uses for critical
+nodes, and it is there for the same reason: the failure it catches is not doubt,
+it is a click on the wrong row, and a yes/no question does not help against that.
+
+**The confirmation is enforced on the server, not only in the page.** A
+threshold you can skip with a hand-edited form is a styling choice, not a
+threshold.
+
+### Type drives the control
+
+An input you *can* type an invalid value into is an input that can break a node,
+so the control follows the declared type:
+
+| Type | Control |
+|---|---|
+| `enum` | Dropdown containing exactly the allowed words (`loop.detect` → off / minimal / moderate / strict) |
+| `bool` | Dropdown of `on` / `off` — not a free field, because MeshCore compares with `memcmp(…, "on", 2)`, so upstream `onzin` means *on* |
+| `int` / `float` | Number field carrying that parameter's own `min` and `max` |
+| `radio` | **Four** number fields — frequency, bandwidth, spreading factor, coding rate — each with its own range. One text box in which you must type `869.525 250 11 5` is exactly the box a typo turns into a lost node |
+| `text` | Free text, only where it really is free text |
+| `text` + secret | Password field, never pre-filled — see below |
+
+### Where the list actually lives
+
+**In the firmware**, compiled in (`CFG_PARAMS` in `MeshManagerNet.cpp`). Not in the
+server, because the server is editable by whoever runs the site, and this list is
+what stands between a click and the radio.
+
+The server keeps **no second copy**. It asks the node (`GET /api/cfg`) which keys
+it allows, of what type, between which bounds and in which risk class, builds the
+form from that answer, and validates against it before sending. That still
+satisfies "validate on both sides" — the server check gives a fast error next to
+the input field, the node check is the one that counts — but there is only ever
+one list, so the two cannot drift into offering a parameter the node refuses.
+
+Bounds are ours, and in several places they are the **only** ones there are:
+`lat`, `lon`, `af`, `tx`, `int.thresh`, `multi.acks` and `adc.multiplier` are
+read upstream with a bare `atof()`/`atoi()` and no check whatsoever.
+`atof("noord")` is `0.0`, so a typo puts the node in the Gulf of Guinea and the
+CLI answers `OK`. **A node that accepts a nonsense value is more dangerous than
+one that refuses**, and stock MeshCore is the accepting kind.
+
+Elsewhere ours are stricter on purpose: MeshCore accepts `0` for both advert
+intervals, meaning "stop advertising" — that does not make a node unreachable,
+but it does let it sink out of everyone's list, which on a roof feels the same.
+
+### One setting is a secret
+
+`guest.password` is marked secret. It is read back and compared like everything
+else — the verification is the whole point of this endpoint — but **the value
+read is not returned**, and the page shows `(verborgen)` instead. The input is a
+password field and the current value is never pre-filled.
+
+Otherwise the password you just set would sit in the admin page's HTML, in the
+browser history and in every screenshot of it, and a password that has been there
+is gone. That is the same reason `bridge.secret` is absent altogether; the
+difference is that `guest.password` is a setting you genuinely want to change
+from a distance, so it is handled rather than dropped.
+
+### One setting only takes effect on reboot
+
+`radio` answers `OK - reboot to apply`. So the read-back shows the new values
+while the radio is still running on the old ones, and whether the new ones work
+is only discovered at the restart. That is precisely the situation in which a
+node does not come back, and the page says so rather than reporting a plain
+success.
+
+### The endpoints
+
+Both behind the node's own HTTP login, the same one that guards `/api/fw` and
+`/api/backup`.
+
+**`GET /api/cfg`** — what this image allows, so the page never offers a key the
+firmware does not have:
+
+```json
+{"params":[{"key":"loop.detect","kind":"enum","lo":0,"hi":0,
+            "choices":"off|minimal|moderate|strict","risk":2,"reboot":0},
+           {"key":"radio","kind":"radio","lo":0,"hi":0,
+            "choices":"","risk":3,"reboot":1}]}
+```
+
+**`POST /api/cfg`** with form fields `key` and `value`:
+
+```json
+{"ok":1,"step":"","key":"advert.interval","asked":"61",
+ "applied":"60","exact":0,"reply":"OK"}
+```
+
+`step` on failure is one of `sleutel` (not on the list), `waarde` (outside the
+bounds), `bevestiging` (confirmation too light) or `node` (the CLI refused), and
+never merely `error`.
+
+The key is never taken from the request when the command is built — it is looked
+up in the compiled-in table and the table's own spelling is used — so there is no
+string from the caller in the command except the value, which is always the last
+word. The CLI call also passes a **non-zero sender timestamp**: `0` means "this
+came from the serial cable" in MeshCore and unlocks commands that belong only
+there (`erase`, `get prv.key`, and `set freq`). This path needs none of them, so
+if the table ever turns out to have a hole, the hole is smaller.
 
 ### Validation happens on both sides, and they are not the same check
 
 - **The server** validates type and range before sending, so a typo produces a
-  refusal on a page instead of a packet.
-- **The node doing the transmitting** validates again before it issues `set`.
-  This is the check that actually protects the mesh, because the server's list is
-  editable by whoever runs the site and the node's is compiled in.
+  refusal next to the input field instead of a packet. It validates against the
+  bounds the *node* reported, not against a list of its own.
+- **The node** validates again before it issues `set`. This is the check that
+  actually protects the mesh, because the server is editable by whoever runs the
+  site and the firmware's table is compiled in.
 
-For a `semi_managed` target the transmitting node is the monitor, running our
-firmware — so the tier table and its validation live in `MeshManagerNet`, applied
-before anything is radiated. The target is stock MeshCore and validates almost
-nothing: `set` parses with `_atoi` and takes what it gets. **A node that accepts
-a nonsense value is more dangerous than one that refuses**, and the stock
-firmware is the accepting kind. That is precisely why the refusal has to happen
-before transmission.
+That second check matters most for the dangerous class, and for a reason worth
+being exact about: a frequency outside the band is not *risky*, it is simply
+**wrong**, and no number of confirmations should let it reach the radio. The
+confirmation governs whether a legal value may be set; the bounds govern whether
+a value is legal at all. They are different questions and they are answered in
+different places.
 
----
+For a `semi_managed` target — the path that is designed but not built — the
+transmitting node would be the monitor, running our firmware, so the table and
+its validation apply before anything is radiated.
 
 ## Confirm-or-revert: examined, and deliberately not built
 
@@ -223,23 +336,38 @@ it.**
   answers. Break the radio settings and the admin page still answers. The node
   that could hold a revert timer is the node that already has a second door.
 
-So the effort goes into the tier table instead, which prevents the change rather
-than undoing it. A prevention that works on stock firmware beats a rollback that
-only works where it is not needed.
+So the effort goes into the risk classes and the bounds instead, which stop the
+change rather than undo it. A prevention that works on stock firmware beats a
+rollback that only works where it is not needed. It is also why the heaviest
+class asks for the node's name rather than promising to put things back: nothing
+here can promise that.
 
 ---
 
 ## After a write, read it back
 
 A write is never reported as a success on the strength of having been sent. The
-site re-reads the parameter and shows what the node actually made of it.
+node re-reads the parameter with `get <key>` immediately after the `set`, in the
+same request, and the answer carries **`asked` and `applied` separately** plus an
+`exact` flag.
 
-This is the same discipline as the firmware upgrade, and for the same reason:
-`publish()` reporting success means the broker took the bytes, and a `set` that
-was transmitted means it was transmitted. Neither says anything about the value
-now in the node. The existing settings sweep is the mechanism — one parameter, or
-the whole table — so there is no second code path that could disagree with the
-first.
+This is not defensive habit. It is two measured behaviours in MeshCore that both
+answer `OK` while storing something else:
+
+- **`set lat abc`** → `atof()` yields `0.0`. Answer: `OK`. The node now claims a
+  position it was never given.
+- **`set advert.interval 61`** → stored as `minutes / 2` in a single byte, so
+  `30`; `get advert.interval` multiplies by two again and returns `60`. Answer:
+  `OK`. **Odd minute values always come back rounded down to even**, and this is
+  the normal case rather than an error.
+
+So the admin page has three outcomes, not two: *set*, *set but not exactly* (with
+both numbers shown, and a note that this is not a fault), and *not set* with the
+node's own reason. Anything that collapsed the middle one into "success" would be
+telling the same kind of half-truth the old OTA path told.
+
+`get <key>` is the same read the daily settings sweep uses, so there is no second
+code path that could disagree with the first.
 
 ---
 
@@ -272,6 +400,164 @@ the other operator can revoke us on their side alone.
 
 ---
 
+## Telemetry without credentials
+
+Can the site read anything useful from a repeater it holds no password for? This
+was researched before building anything, because the answer decides whether the
+feature is worth having. **It is: rather more than expected.**
+
+### What the source says
+
+A login is always required — `handleLoginReq()` in `examples/simple_repeater/MyMesh.cpp`
+returns `0` (no reply at all) for anything it does not accept. But there are
+three ways to be accepted, and the third is the interesting one:
+
+1. **Blank password + the sender is in the ACL.** The operator put you there with
+   `setperm <pubkey> 1`. This is the tidy arrangement the monitor list already
+   uses.
+2. **The admin password.**
+3. **The guest password** — and `guest_password[0] = 0` in `CommonCLI.h:189`, so
+   it is **empty by default**. A blank password therefore matches it.
+
+That third path is the answer. On a stock repeater whose operator never ran
+`set guest.password`, an unknown node logging in with a blank password is
+accepted as `PERM_ACL_GUEST`.
+
+### What a guest may then ask for
+
+| Request | Guest gets it | What it contains |
+|---|---|---|
+| `REQ_TYPE_GET_STATUS` `0x01` | **yes**, no permission check at all — the source even says so: *"guests can also access this now"* | The whole `RepeaterStats`: uptime, air time, TX/RX counters, flood/direct split, duplicates, error flags, battery millivolts, noise floor, last RSSI and SNR, queue length |
+| `REQ_TYPE_GET_TELEMETRY_DATA` `0x03` | **yes, but reduced** — `perm_mask` is forced to `0x00` for a guest | Battery voltage and MCU temperature. External sensors are withheld |
+| `REQ_TYPE_GET_NEIGHBOURS` `0x06` | **yes**, no permission check | The neighbour list |
+| `REQ_TYPE_GET_ACCESS_LIST` `0x05` | no — `&& sender->isAdmin()` | — |
+| CLI commands (`get`/`set`) | no — `handleCommand` is reached only under `client->isAdmin()` | — |
+
+So a credential-free poll yields roughly what this site already shows for a
+monitored repeater, minus the CLI settings. That is a real feature, not a
+consolation prize.
+
+### Two findings worth writing down
+
+**`allow.read.only` does nothing on a repeater.** It is stored, it is readable and
+writable over the CLI, and the only code that consults it is
+`examples/simple_room_server/MyMesh.cpp:351`. On a repeater it is an inert
+setting. It is still classified as a dangerous parameter here, because the same
+module can be built for a room server where it *does* gate access — but nobody
+should expect toggling it on a repeater to change who may poll it.
+
+**A refusal is silent.** `handleLoginReq` returns `0` and sends nothing. So a
+repeater whose operator *has* set a guest password is indistinguishable, from
+here, from one that is out of range or switched off. That ambiguity is real and
+cannot be resolved by trying harder; it can only be reported honestly.
+
+### What this means for the design
+
+Three states, and the page must not merge them:
+
+| Result | Meaning |
+|---|---|
+| Answered | Telemetry is available without credentials |
+| No answer | **Any of**: out of range, guest password set, firmware too old. Not distinguishable |
+| Answered before, silent now | Something changed — worth showing differently from never-answered |
+
+The heard list is the one thing that narrows the middle row: if the node's
+adverts are still arriving, "out of range" becomes unlikely and "not allowed"
+becomes probable. That is a hint, not proof, and should be worded as one.
+
+### Restraint, deliberately
+
+This is polling **other people's equipment** on a shared band, so:
+
+- **No automatic sweep of everything heard.** A discovery that knocks on every
+  node it has ever heard is exactly the behaviour a shared mesh does not need.
+  The operator picks who is asked.
+- **The air-time cost is shown before the button is pressed**, not after.
+- **Monitoring this way is telemetry only.** A node polled without credentials
+  gets no management controls, because there are none to give — the CLI is
+  closed to guests. That is enforced by the far side, which is the best kind of
+  enforcement.
+
+### Level, or a property beside it?
+
+**A property beside the level, not a fourth level.** `unmanaged` /
+`semi_managed` / `full_managed` answers "what may we *do* to this node", and
+polling telemetry is not doing anything to it — it asks, and the node decides.
+A node we poll for telemetry is still `unmanaged`: we cannot change one setting
+on it, we cannot write firmware, and we hold no credentials.
+
+Making it a fourth level would also break the ordering the levels currently
+have, which is one of increasing capability. Telemetry-polling is not "more than
+unmanaged and less than semi-managed" — a `full_managed` node can be polled this
+way too. It is a different axis, so it gets a different field.
+
+---
+
+## Working without internet
+
+This project exists partly for emergency communication, so "does it still work
+when the internet is gone" is not a curiosity — it is a requirement somebody has
+to be able to check *before* they need it. The honest answer has three layers,
+and they are not the same question.
+
+### Layer 1 — no internet, local network intact
+
+**Almost everything works.** The server, the broker, the database and the mesh
+are all local; none of them reach out to the internet to do their job.
+
+| Works | Does not work |
+|---|---|
+| Statistics ingest over MQTT | **Fetching firmware releases from GitHub** |
+| Reading CLI settings, over MQTT and over LoRa | Map tiles, if the map provider is remote |
+| **Writing CLI settings**, both transports | |
+| Setting the clock | |
+| The whole admin interface, the comparison table, the packet archive | |
+| Pushing a firmware image the server **already downloaded** | |
+
+The one real casualty is the firmware page. It lists releases by asking
+`api.github.com`, and without internet that call fails. The page keeps working —
+it shows the last list it managed to fetch, with the reason beside it — but a
+release published while you were offline is not visible, and an image that was
+never downloaded cannot be installed.
+
+That is a reason to **fetch before you need it**, not a reason to distrust the
+rest of the site. Nothing else on this list touches a remote host.
+
+### Layer 2 — no local network either
+
+The site cannot reach *any* node, by any transport. This is worth stating plainly
+because "forced over the mesh" sounds like it should help here, and it does not:
+
+> **Choosing the mesh transport does not remove the site's own need for one
+> IP-reachable node.** It removes the *target's* need to be reachable. The server
+> still has to hand the command to some node over MQTT or HTTP, and that node
+> then carries it onward over LoRa.
+
+So with the LAN down, the route back in is not this site at all — it is the mesh
+CLI from a companion app on a phone, over Bluetooth or over LoRa. That path never
+involved the server and is unaffected by anything here.
+
+### Layer 3 — what the mesh transport is actually for
+
+Given layer 2, why offer it at all? Because the interesting failure is not "the
+network is gone" but "**the target is not on the network**":
+
+- A repeater on a roof with no WiFi in range — the permanent state for the roof
+  repeater in this installation.
+- A node whose WiFi credentials were changed, or whose access point died, while
+  its radio is perfectly healthy.
+- A node in power-save mode with its WiFi asleep, which still hears LoRa.
+
+In all three the site is online, the broker is up, and one node is reachable —
+and the target is not. That is the case the mesh transport exists for, and it is
+the common one.
+
+It is also why forcing the mesh for a node that *is* IP-reachable is worth
+having: it is the only way to exercise the LoRa write path against a node you can
+still fix with a browser if it goes wrong.
+
+---
+
 ## Discovery: point, then test once
 
 The site sees every node in the traffic, so it could try each of them to find out
@@ -299,9 +585,16 @@ against a node a human named.
 | Levels as an explicit concept in code and UI | **being built** — `level` / `level_why` on `commanding.describe()` |
 | Firmware upgrade over HTTP, with checksum and rollback | **built**, see [`firmware-upgrade.md`](firmware-upgrade.md) |
 | `ota_route()` as a separate capability key | **built** |
-| Writing settings | **designed, not built.** The route (HTTP to a reachable node, LoRa onward), the tier table, the both-sides validation and the read-back are settled; the endpoints are not written |
+| Writing settings to a `full_managed` node with an IP path | **built** — firmware 2.1.0 `POST /api/cfg`: the whole CLI surface bar three, typed controls, risk-driven confirmation, read-back. Requires the node's management address to be filled in |
+| Writing settings to a `semi_managed` node over LoRa | **designed, not built.** Needs a state machine beside the settings sweep, and the node it exists for is the roof repeater — so it gets built against something touchable first |
+| Writing to a node's WiFi and MQTT settings | **not offered here.** Those are ours, not MeshCore's, and they already have their own forms on the node's own admin page and the `wifi` CLI |
 | Confirm-or-revert | **examined and rejected**, with the reasoning above |
 | Automatic rights discovery | **rejected**, point-and-test-once instead |
+| Cross-repeater comparison table | **built** — `/admin/compare`, chosen columns, deviations from the majority marked |
+| Editing from that table | **built** — a pencil per editable cell opens one editor below the table, pre-filled. One editor rather than an input in every cell: twenty nodes by six columns is a hundred and twenty forms each with its own confirmation, and the confirmation is exactly what becomes unreadable. It calls the same `nodeconfig.write()` as the node page, so the risk classes, the bounds and the read-back apply unchanged |
+| Bulk edit across several nodes | **not built, and gated by design**: plain-class parameters only, never the two heavier classes. Ten nodes in one click is also ten nodes lost in one click |
+| Forced mesh transport for a node that has an IP path | **not built.** Needs the LoRa write path first, and that needs a relay that monitors the target |
+| Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |
 
 > While this is being developed, **JessaZH is not written to at all** — not a
 > test `set`, not anything. It is reached only over LoRa, so a mistake there is
