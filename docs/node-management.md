@@ -880,6 +880,7 @@ against a node a human named.
 | Bulk edit across several nodes | **not built, and gated by design**: plain-class parameters only, never the two heavier classes. Ten nodes in one click is also ten nodes lost in one click |
 | Forced mesh transport for a node that has an IP path | **not built.** Needs the LoRa write path first, and that needs a relay that monitors the target |
 | Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |
+| MeshCore version for relayed nodes | **built** — `ver` joins the sweep, and one answer fills both version columns |
 
 > While this is being developed, **JessaZH is not written to at all** — not a
 > test `set`, not anything. It is reached only over LoRa, so a mistake there is

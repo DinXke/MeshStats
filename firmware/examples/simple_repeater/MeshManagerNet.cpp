@@ -5,6 +5,26 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.2.0  De sweep vraagt ook 'ver', zodat de site van elke gemonitorde node de
+ *        MeshCore-versie kent en niet alleen van de nodes die zelf publiceren.
+ *        Het commando is 'ver' en niet 'show version': CommonCLI.cpp regel 271,
+ *        `memcmp(command, "ver", 3)`, antwoordt met "%s (Build: %s)" uit
+ *        getFirmwareVer() en getBuildDate(). Op een node met deze module ervoor
+ *        komt er meer terug, want mmnet_handle_command() vangt 'ver' af en zet
+ *        er de moduleversie voor: "<naam> v<module> - MeshCore <fw> (Build:
+ *        <datum>)". Eén vraag, twee kolommen -- en dus geen tweede ronde
+ *        zendtijd voor de moduleversie, wat op een dak het verschil is tussen
+ *        een regel erbij en een besluit.
+ *        Waarom dit meer is dan een kolom: met de upgradeweg erbij bepaalt de
+ *        MeshCore-versie wat een node aankan. flood.max.unscoped bestaat niet op
+ *        oudere firmware, en zonder deze regel merk je dat pas achteraf aan een
+ *        '??'-antwoord waar geen versie bij staat om het aan op te hangen. Het
+ *        is de tegenhanger van de bouwomgeving bij het schrijven van een image:
+ *        de site weigert daar al te gokken, en dit is dezelfde vraag voor de CLI.
+ *        Eerst in de tabel, met opzet, want het is de vraag die betekenis geeft
+ *        aan de rest ervan. De sweep gaat daarmee van negentien naar twintig
+ *        parameters: nominaal 286 s tegen een cap van 360 s, dus de marge blijft
+ *        ruim. Bij vierentwintig is hij op, en dat staat er nu bij.
  * 2.1.0  De site kan een instelling schrijven in plaats van alleen lezen: POST
  *        /api/cfg met een sleutel en een waarde, GET /api/cfg voor welke
  *        sleutels dit image toelaat, van welk type, tussen welke grenzen en in
@@ -1627,6 +1647,23 @@ struct SetParam {
 };
 
 static const SetParam SET_PARAMS[] = {
+  /* Eerst, en dat is een keuze. 'ver' is het antwoord op "wat kan deze node
+   * eigenlijk", en dat is de vraag die je stelt vóórdat de rest van de tabel
+   * betekenis heeft: flood.max.unscoped bestaat niet op oudere MeshCore, en
+   * zonder deze regel merk je dat pas achteraf aan een '??'-antwoord waar geen
+   * versie bij staat om het aan op te hangen.
+   *
+   * Het commando is 'ver' en niet 'show version' -- CommonCLI.cpp regel 271,
+   * `memcmp(command, "ver", 3)`, dat antwoordt met "%s (Build: %s)" uit
+   * getFirmwareVer() en getBuildDate(). Op een node met deze module ervoor komt
+   * er meer terug: mmnet_handle_command() vangt 'ver' af en antwoordt met
+   * "<naam> v<module> - MeshCore <fw> (Build: <datum>)". Eén vraag, twee
+   * kolommen, en dus geen tweede ronde zendtijd voor de moduleversie.
+   *
+   * 'cmd:' ervoor omdat het letterlijk uitgevoerd wordt in plaats van als
+   * 'get ver' -- dezelfde notatie als cmd:region, en de sleutel waaronder de
+   * site het opslaat. */
+  { "cmd:ver",               "ver",                       NULL,  false },
   { "name",                  "get name",                  NULL,  false },
   { "role",                  "get role",                  NULL,  false },
   { "radio",                 "get radio",                 NULL,  false },
@@ -2992,14 +3029,18 @@ static void monRoundFailed(MonEntry &m) {
  *
  * Raised from 300 s in 1.11.0, when the table went from eighteen parameters to
  * nineteen. The nominal cost of a sweep is MON_SET_FIRST_MS plus (n-1) times
- * MON_SET_STEP_MS + MON_SET_GAP_MS: 258 s at eighteen, 272 s at nineteen. A cap
- * only 28 s above the nominal run does not bound a runaway, it truncates a
- * normal one -- the last parameters would be dropped by the budget every time
- * anything went slightly slowly, and 'geen antwoord' would be reported for
- * commands that were never sent. 360 s restores roughly the margin the 300 s
- * cap had at eighteen. What a longer cap actually costs is a poll round that
- * starts later, since the two share this state machine, and that is the cheaper
- * of the two failures by a wide margin. */
+ * MON_SET_STEP_MS + MON_SET_GAP_MS: 258 s at eighteen, 272 s at nineteen, and
+ * 286 s at twenty since 'cmd:ver' joined the table. A cap only 28 s above the
+ * nominal run does not bound a runaway, it truncates a normal one -- the last
+ * parameters would be dropped by the budget every time anything went slightly
+ * slowly, and 'geen antwoord' would be reported for commands that were never
+ * sent. 360 s restores roughly the margin the 300 s cap had at eighteen, and
+ * still leaves 74 s of it at twenty. What a longer cap actually costs is a poll
+ * round that starts later, since the two share this state machine, and that is
+ * the cheaper of the two failures by a wide margin.
+ *
+ * The next parameter added here is worth a moment's arithmetic rather than a
+ * shrug: at twenty-four the nominal run is 342 s and the margin is gone. */
 #define MON_SET_TOTAL_MS    360000UL
 #define MON_SET_MIN_GAP_MS  600000UL   // between two sweeps, for any node
 

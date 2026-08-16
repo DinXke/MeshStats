@@ -640,6 +640,51 @@ def _clean_settings(values: dict) -> dict:
     return out
 
 
+# 'ver' antwoordt in twee vormen, en beide horen hier gelezen te worden.
+#
+#   standaard MeshCore   "v1.17.0 (Build: 12 Jan 2026)"
+#                        CommonCLI.cpp:271 -- memcmp(command, "ver", 3), dat
+#                        antwoordt met "%s (Build: %s)" uit getFirmwareVer() en
+#                        getBuildDate().
+#   met onze module      "MeshManager (by DinX) v2.1.0 - MeshCore v1.17.0 (Build: ...)"
+#                        mmnet_handle_command() vangt 'ver' af vóór MeshCore en
+#                        zet er de moduleversie voor.
+#
+# Eén vraag, twee kolommen. Dat is de reden dat 'ver' in de sweep staat en niet
+# een tweede commando voor de moduleversie: over LoRa is elke vraag zendtijd van
+# een repeater op een dak.
+_VER_MODULE = re.compile(r"v(\d+\.\d+\.\d+)\s+-\s+MeshCore\s+(\S+)")
+_VER_PLAIN = re.compile(r"^\s*(\S+)")
+
+
+def parse_ver(answer: str) -> tuple[str, str]:
+    """(MeshCore-versie, moduleversie) uit een antwoord op 'ver'.
+
+    Lege strings waar niets te halen valt, want dat is wat ``record_firmware``
+    als "hier weet ik niets van" leest -- en die laat een kolom dan met rust in
+    plaats van hem leeg te schrijven. Een node die 'ver' niet kent antwoordt met
+    iets anders of met niets, en beide moeten hier stil aflopen: dit draait in de
+    ingest van elk statistiekbericht, en een parser die daar struikelt kost de
+    hele boodschap.
+    """
+    text = (answer or "").strip()
+    if not text:
+        return "", ""
+    m = _VER_MODULE.search(text)
+    if m:
+        return m.group(2), m.group(1)
+    # Geen module ervoor: dan is het eerste woord de MeshCore-versie, en de rest
+    # is "(Build: ...)" dat we niet bewaren -- de bouwdatum zegt niets wat het
+    # versienummer niet al zegt, en hij maakt de kolom twee keer zo breed.
+    m = _VER_PLAIN.match(text)
+    kandidaat = m.group(1) if m else ""
+    # Een antwoord dat niet op een versie lijkt is geen versie. 'Err - ...' en
+    # '??' komen hier langs op firmware die het commando niet kent.
+    if not re.match(r"^v?\d", kandidaat):
+        return "", ""
+    return kandidaat, ""
+
+
 def _handle_settings(row, publisher: str, values: dict, prior_source=None) -> None:
     """Store CLI settings that rode along with a statistics message.
 
@@ -690,6 +735,19 @@ def _handle_settings(row, publisher: str, values: dict, prior_source=None) -> No
     # parameter because one sweep missed it is the same as overwriting it with
     # nothing.
     db.upsert_cli_settings(row["id"], clean, prune=False)
+
+    # 'cmd:ver' is de enige parameter in de sweep die niet alleen een instelling
+    # is maar ook een eigenschap van de node zelf, en daar heeft de site een
+    # kolom voor. Voor een repeater die zelf publiceert staat fw al in zijn
+    # statistiekbericht; voor een doorgestuurde repeater is DIT de enige plek
+    # waar hij ooit vandaan komt. Zonder deze regel blijft de MeshCore-kolom
+    # leeg voor precies de nodes waarvoor hij bedoeld is.
+    ver = clean.get("cmd:ver")
+    if ver:
+        fw, module = parse_ver(ver)
+        if fw or module:
+            db.record_firmware(row["id"], fw=fw, fw_module=module)
+
     answered = sum(1 for v in clean.values() if v is not None)
     log.info("CLI settings updated for %s (%d parameters, %d answered)",
              row["slug"], len(clean), answered)

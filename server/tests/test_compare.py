@@ -287,3 +287,99 @@ def test_de_zwaarste_klasse_vraagt_ook_hier_om_de_naam(db, monkeypatch):
     })
     assert 'placeholder="%s"' % reps[0]["name"] in html
     assert "kan de node onbereikbaar maken" in html
+
+
+# --- de MeshCore-kolom --------------------------------------------------------
+
+def test_meshcore_versie_van_een_node_die_zelf_publiceert(db):
+    """Die stuurt hem mee in zijn statistiekbericht; er hoeft niets gevraagd."""
+    reps = _nodes(db, 3)
+    db.execute("UPDATE repeaters SET fw='v1.17.0'")
+    reps = [db.qone("SELECT * FROM repeaters WHERE id=?", (r["id"],)) for r in reps]
+    t = compare.build(reps, ["fw"])
+    assert [r["waarden"]["fw"] for r in t["rijen"]] == ["v1.17.0"] * 3
+
+
+def test_zonder_versie_hangt_het_vakje_af_van_of_er_gevraagd_is(db):
+    """Het geval waar deze kolom voor bedoeld is. Een doorgestuurde repeater
+    stuurt geen fw mee, dus die komt van 'cmd:ver' over LoRa -- en een node die
+    nooit uitgevraagd is mag er niet hetzelfde uitzien als een die zweeg."""
+    reps = _nodes(db, 3)
+    db.execute("UPDATE repeaters SET fw=NULL")
+    _zet(db, reps[0], **{"cmd:ver": "v1.16.0 (Build: x)"})   # geantwoord
+    _zet(db, reps[1], **{"cmd:ver": None})                   # gevraagd, stil
+    # reps[2] is nooit uitgevraagd
+    reps = [db.qone("SELECT * FROM repeaters WHERE id=?", (r["id"],)) for r in reps]
+
+    t = compare.build(reps, ["fw"])
+    # reps[0] antwoordde wel, maar repeaters.fw wordt door de ingest gevuld en
+    # niet door deze tabel; hier telt alleen dat de vraag gesteld is.
+    assert t["rijen"][0]["stil"]["fw"] is True
+    assert t["rijen"][1]["stil"]["fw"] is True
+    assert t["rijen"][2]["onbekend"]["fw"] is True
+
+
+def test_de_meshcore_kolom_kan_ook_een_afwijker_aanwijzen(db):
+    """Waar het uiteindelijk om gaat: welke node draait iets anders."""
+    reps = _nodes(db, 4)
+    db.execute("UPDATE repeaters SET fw='v1.17.0'")
+    db.execute("UPDATE repeaters SET fw='v1.15.0' WHERE id=?", (reps[3]["id"],))
+    reps = [db.qone("SELECT * FROM repeaters WHERE id=?", (r["id"],)) for r in reps]
+    t = compare.build(reps, ["fw"])
+    assert [r["afwijkend"]["fw"] for r in t["rijen"]] == [False, False, False, True]
+
+
+# --- het antwoord op 'ver' ----------------------------------------------------
+
+@pytest.mark.parametrize("antwoord,fw,module", [
+    # Standaard MeshCore: CommonCLI.cpp:271, "%s (Build: %s)".
+    ("v1.17.0 (Build: 12 Jan 2026)", "v1.17.0", ""),
+    ("1.16.0 (Build: x)", "1.16.0", ""),
+    # Met onze module ervoor: mmnet_handle_command vangt 'ver' af.
+    ("MeshManager (by DinX) v2.1.0 - MeshCore v1.17.0 (Build: 12 Jan 2026)",
+     "v1.17.0", "2.1.0"),
+    # De oude naam moet ook nog gelezen kunnen worden: die draait nog op daken.
+    ("MeshStats (by DinX) v1.11.0 - MeshCore v1.16.0 (Build: 3 Aug 2025)",
+     "v1.16.0", "1.11.0"),
+    # Firmware die het commando niet kent, en stilte.
+    ("Err - unknown command", "", ""),
+    ("??", "", ""),
+    ("unknown config: ver", "", ""),
+    ("", "", ""),
+])
+def test_ver_wordt_uit_beide_antwoordvormen_gelezen(antwoord, fw, module):
+    from app import mqtt_ingest
+    assert mqtt_ingest.parse_ver(antwoord) == (fw, module)
+
+
+def test_ver_uit_de_sweep_vult_de_firmwarekolom(db, monkeypatch):
+    """Eén vraag, twee kolommen -- en voor een doorgestuurde repeater is dit de
+    enige plek waar de MeshCore-versie ooit vandaan komt."""
+    from app import mqtt_ingest
+    baas = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+    doel = db.get_or_create_repeater("e3d3f4d7edd0", "JessaZH")
+    db.record_source(doel["id"], baas["pubkey_prefix"])
+    doel = db.qone("SELECT * FROM repeaters WHERE id=?", (doel["id"],))
+
+    mqtt_ingest._handle_settings(
+        doel, baas["pubkey_prefix"],
+        {"cmd:ver": "v1.16.0 (Build: 3 Aug 2025)"},
+        prior_source=baas["pubkey_prefix"])
+
+    na = db.qone("SELECT * FROM repeaters WHERE id=?", (doel["id"],))
+    assert na["fw"] == "v1.16.0"
+
+
+def test_een_onleesbaar_ver_antwoord_wist_de_kolom_niet(db):
+    """record_firmware overschrijft alleen wat er genoemd is. Een node die 'ver'
+    niet kent mag een versie die we al hadden niet weggooien."""
+    from app import mqtt_ingest
+    baas = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+    db.record_firmware(baas["id"], fw="v1.17.0")
+    baas = db.qone("SELECT * FROM repeaters WHERE id=?", (baas["id"],))
+
+    mqtt_ingest._handle_settings(baas, baas["pubkey_prefix"],
+                                 {"cmd:ver": "Err - unknown command"},
+                                 prior_source=baas["pubkey_prefix"])
+    na = db.qone("SELECT * FROM repeaters WHERE id=?", (baas["id"],))
+    assert na["fw"] == "v1.17.0"

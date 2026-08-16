@@ -159,7 +159,23 @@ def build(repeaters, columns: list[str] | None = None, broker_connected: bool = 
             if k == "level":
                 waarden[k] = route.get("level", "")
             elif k in BUILTIN_KEYS:
-                waarden[k] = str(firmware._field(rep, k) or "")
+                waarde = str(firmware._field(rep, k) or "")
+                # De MeshCore-kolom is de enige vaste kolom die ook uit de sweep
+                # gevuld kan worden: een repeater die zelf publiceert stuurt zijn
+                # versie mee, een doorgestuurde repeater niet, en voor die tweede
+                # komt hij van 'cmd:ver' over LoRa. Staat er niets, dan hangt de
+                # toestand van dat vakje dus af van of die vraag gesteld is --
+                # anders zou een node die nog nooit uitgevraagd is er hetzelfde
+                # uitzien als een die weigerde te antwoorden.
+                if waarde or k != "fw":
+                    waarden[k] = waarde
+                elif "cmd:ver" in per_node.get(rid, {}):
+                    # Gevraagd. Of de node zweeg, of hij antwoordde iets waar
+                    # geen versie uit te halen viel -- van hieraf hetzelfde:
+                    # we hebben het gevraagd en we weten het niet.
+                    waarden[k] = None
+                else:
+                    waarden[k] = MISSING
             else:
                 gelezen = per_node.get(rid, {})
                 # MISSING = nooit gevraagd, None = gevraagd zonder antwoord.

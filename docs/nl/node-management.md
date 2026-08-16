@@ -927,6 +927,7 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Meerdere nodes tegelijk bewerken | **niet gebouwd, en in het ontwerp al ingeperkt**: alleen parameters uit de klasse Gewoon, nooit de twee zwaardere klassen. Tien nodes in één klik is ook tien nodes kwijt in één klik |
 | Mesh-transport forceren voor een node die een IP-pad heeft | **niet gebouwd.** Vraagt eerst om het LoRa-schrijfpad, en dat vraagt om een relais dat het doel monitort |
 | Telemetrie opvragen zonder inloggegevens | **onderzocht, niet gebouwd.** Het werkt en levert meer op dan verwacht — zie hierboven |
+| MeshCore-versie van doorgestuurde nodes | **gebouwd** — `ver` gaat mee in de sweep, en één antwoord vult allebei de versiekolommen |
 
 > Zolang hieraan gewerkt wordt, wordt er **helemaal niet naar JessaZH
 > geschreven** — geen test-`set`, niets. Hij wordt alleen over LoRa bereikt, dus
