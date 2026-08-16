@@ -566,15 +566,17 @@ are in [`admin.md`](admin.md).
 |---|---|---|
 | `/admin/login` | GET, POST | Login form and submission. Throttled per address and per username |
 | `/admin/logout` | GET | Clears the session cookie |
-| `/admin` | GET | Dashboard: repeaters, tokens, settings, layout, MQTT/TSDB/clock status |
-| `/admin/settings` | POST | Retention limits and `history_ranges`. Runs a full retention pass immediately — see [`retention.md`](retention.md#the-settings-form) |
+| `/admin` | GET | Nodes and repeaters, grouped by management level |
+| `/admin/repeaters/{rid}` | GET | One node: identity, visibility, look-ups, clock, firmware, delete |
+| `/admin/server` | GET | Server and site: access, tokens, retention, display, parameters, clock sync, status |
+| `/admin/settings` | POST | Retention limits and `history_ranges`, every field optional. Runs a full retention pass when a limit changed — see [`retention.md`](retention.md#the-settings-form) |
 | `/admin/layout` | POST | Block order and visibility on a repeater page |
 | `/admin/cli_params` | POST | The CLI parameter list a poller asks for |
-| `/admin/repeaters/{rid}/refresh` | POST | Ask for a fresh status now |
-| `/admin/repeaters/{rid}/settings` | GET | Read-only view of a repeater's CLI settings |
+| `/admin/repeaters/{rid}/refresh` | POST | Ask for a fresh status now. `back=node` returns to the node page instead of the public one |
+| `/admin/repeaters/{rid}/settings` | GET | Redirect to `/admin/repeaters/{rid}`, query string included. Kept for bookmarks |
 | `/admin/repeaters/{rid}/settings/refresh` | POST | Ask for a CLI settings sweep now |
 | `/admin/repeaters/{rid}/clocksync` | POST | Set this repeater's clock now. See [`clocksync.md`](clocksync.md) |
-| `/admin/repeaters/{rid}/toggle` | POST | Flip `is_public` |
+| `/admin/repeaters/{rid}/toggle` | POST | Flip `is_public`. `back=node` returns to the node page |
 | `/admin/repeaters/{rid}/rename` | POST | Change the display name |
 | `/admin/repeaters/{rid}/delete` | POST | Delete the repeater and its samples, latest and neighbours |
 | `/admin/tokens` | POST | Create an API token; shown once through a 60-second cookie |

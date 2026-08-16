@@ -578,15 +578,17 @@ in [`admin.md`](admin.md).
 |---|---|---|
 | `/admin/login` | GET, POST | Inlogformulier en verzending. Begrensd per adres en per gebruikersnaam |
 | `/admin/logout` | GET | Wist de sessiecookie |
-| `/admin` | GET | Overzicht: repeaters, tokens, instellingen, indeling, MQTT-/TSDB-/klokstatus |
-| `/admin/settings` | POST | Bewaargrenzen en `history_ranges`. Draait meteen een volledige opruimronde — zie [`retention.md`](retention.md#het-instellingenformulier) |
+| `/admin` | GET | Nodes en repeaters, gegroepeerd op beheerniveau |
+| `/admin/repeaters/{rid}` | GET | Eén node: identiteit, zichtbaarheid, uitvragen, klok, firmware, verwijderen |
+| `/admin/server` | GET | Server en site: toegang, tokens, bewaring, weergave, parameters, kloksync, status |
+| `/admin/settings` | POST | Bewaargrenzen en `history_ranges`, elk veld optioneel. Draait een volledige opruimronde zodra er een grens wijzigde — zie [`retention.md`](retention.md#het-instellingenformulier) |
 | `/admin/layout` | POST | Blokvolgorde en zichtbaarheid op een repeaterpagina |
 | `/admin/cli_params` | POST | De lijst CLI-parameters waar een poller om vraagt |
-| `/admin/repeaters/{rid}/refresh` | POST | Nu om een verse status vragen |
-| `/admin/repeaters/{rid}/settings` | GET | Alleen-lezen overzicht van de CLI-instellingen van een repeater |
+| `/admin/repeaters/{rid}/refresh` | POST | Nu om een verse status vragen. Met `back=node` terug naar de nodepagina in plaats van de publieke |
+| `/admin/repeaters/{rid}/settings` | GET | Omleiding naar `/admin/repeaters/{rid}`, querystring inbegrepen. Blijft bestaan voor bladwijzers |
 | `/admin/repeaters/{rid}/settings/refresh` | POST | Nu om een CLI-instellingenronde vragen |
 | `/admin/repeaters/{rid}/clocksync` | POST | De klok van deze repeater nu zetten. Zie [`clocksync.md`](clocksync.md) |
-| `/admin/repeaters/{rid}/toggle` | POST | `is_public` omzetten |
+| `/admin/repeaters/{rid}/toggle` | POST | `is_public` omzetten. Met `back=node` terug naar de nodepagina |
 | `/admin/repeaters/{rid}/rename` | POST | De weergavenaam wijzigen |
 | `/admin/repeaters/{rid}/delete` | POST | De repeater en zijn metingen, actuele waarden en buren verwijderen |
 | `/admin/tokens` | POST | Een API-token aanmaken; eenmalig getoond via een cookie van 60 seconden |

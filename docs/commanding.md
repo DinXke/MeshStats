@@ -77,6 +77,8 @@ without an MQTT client or a database anywhere near.
 | `fw_meshmanager` | Firmware of the node receiving the command |
 | `min_fw` | The version this route requires |
 | `node_seen`, `node_stale` | When that node last published, and whether that is too long ago |
+| `level` | The management level of this node: `unmanaged`, `semi_managed` or `full_managed` |
+| `level_why` | What that level is seen by, naming the node that makes it possible |
 | `ha`, `poller_seen` | Whether a poller has been seen within `POLLER_STALE_SECS` |
 
 **`commands` is not a formality.** A monitor can be asked to fetch somebody
@@ -98,6 +100,39 @@ not know it is exactly the kind of promise this module had to clear away:
 | `no_fw` | No module version known |
 | `old_fw` | Version below `min_fw` |
 | `broker_down` | Not connected to the broker |
+
+### The management level
+
+`_level()` answers a different question from `mqtt`/`ha`: not "can something be
+sent right now" but "what is this node". Three answers, in the order they are
+tested:
+
+| Level | Evidence |
+|---|---|
+| `full_managed` | Publishes its own figures over MQTT *and* reports a firmware version, so its `cmd` topic exists |
+| `semi_managed` | No firmware of ours, but rights on its CLI: a monitor running `MIN_MON_CMD_VERSION` or newer, or a poller that logs in with the repeater password |
+| `unmanaged` | Neither — seen in the traffic and nothing more |
+
+It is an **observation, never a setting**. There is no column for it and no
+control to set one: storing it would guarantee it drifts away from reality, and
+then a button says "can" about a node that has lost its firmware.
+
+It deliberately ignores `broker_connected`. A full-managed node behind a dropped
+broker is still full managed — there is just no route at this moment, which is
+what `mqtt` is for. Letting the level swing with the server's network would make
+it a statement about us rather than about the node.
+
+The poller is not in the level names, and it counts anyway: the Home Assistant
+integration logs in with the repeater password and reads and writes the same CLI.
+Leaving it out would call a repeater that only arrives that way "unmanaged" while
+the button next to it works. That evidence is more brittle than a monitor — it
+lapses once the poller has been quiet for fifteen minutes — and `level_why` says
+so.
+
+Whether a **firmware upgrade** is possible does not follow from the level and is
+a separate field: a full-managed node without an IP path takes commands but not a
+megabyte image, and a node whose build environment is unknown may not receive one
+at all.
 
 `broker_down` is tested **last**, on purpose, so a temporarily absent broker does
 not overshadow the permanent reason: "firmware too old" does not fix itself.

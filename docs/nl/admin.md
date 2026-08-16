@@ -171,23 +171,156 @@ heeft geen raadbare structuur, dus de trage hash die een door mensen gekozen
 wachtwoord beschermt levert niets op en zou 200 000 rondes kosten bij elk
 ingestverzoek.
 
-## Het overzicht — `GET /admin`
+## Twee werelden
 
-| Blok | Inhoud |
+De beheerpagina was één lange lijst secties geworden, in de volgorde waarin ze
+ooit toegevoegd zijn. Een knop die een node over de radio uitvraagt stond naast
+het invoerveld voor de bewaartermijn van de databank. Die twee horen niet in
+dezelfde visuele rang: de ene kost zendtijd op een gedeelde band en raakt een
+apparaat op een dak, de andere zet je met een tweede klik weer terug.
+
+Sinds de splitsing zijn er twee werelden, met een tabbalk ertussen:
+
+| URL | Wereld |
 |---|---|
-| Repeaters | Elke repeater, publiek of niet, met hernoemen, publiceren/verbergen, verwijderen, en een link naar zijn instellingenpagina |
-| Tokens | Actieve tokens met `created_at` en `last_used`; aanmaken en intrekken |
-| Instellingen | `heartbeat_min`, `retention_days`, `packet_retention_days`, `packet_max_rows`, `db_max_mb`, `history_ranges` |
-| Opslag | `retention.overview()`: bestandsgrootte tegenover de bovengrens, aantal pakketten, de werkelijk gedekte periode, en de laatste opruimronde |
-| Indeling | Blokvolgorde en zichtbaarheid op een repeaterpagina |
-| MQTT | `mqtt_ingest.status()`: verbonden, broker, topics, berichten, pakketten, fouten, laatste fout, verstuurde opdrachten |
-| Metingen | `tsdb.status()`: bereikbaar, geschreven punten, batches, wachtrijdiepte, uitgeweken naar SQLite, laatste fout, laatste schrijfactie |
-| Klok | `clocksync.status()` plus `clocksync.targets()` — per repeater of hij bereikt kan worden en zo niet, waarom |
+| `GET /admin` | **Nodes en repeaters** — alles wat een handeling op of informatie over een fysiek apparaat is |
+| `GET /admin/repeaters/{rid}` | Eén node: identiteit en versies, zichtbaarheid, uitvragen, klok, firmware, verwijderen |
+| `GET /admin/server` | **Server en site** — alles wat deze installatie configureert en geen apparaat raakt |
+
+De POST-routes zijn gebleven waar ze stonden, zodat een beheerpagina die al in
+een tabblad openstond bij de volgende klik geen 404 oplevert.
+`GET /admin/repeaters/{rid}/settings` is de enige URL die verhuisd is; hij leidt
+om naar `/admin/repeaters/{rid}` en neemt zijn querystring mee, zodat een melding
+onderweg niet verloren gaat.
+
+### Taal
+
+De beheerpagina's zijn eentalig Nederlands, en dat is een keuze en geen
+achterstand. De publieke site is tweetalig doordat elke vertaalbare knoop een
+`data-i18n`-sleutel draagt; beheer heeft er geen enkele, en de teksten daar zijn
+geen labels maar alinea's die uitleggen wat de site wel en niet weet over een
+node op een dak. Dat vertalen is honderden sleutels en een tweede plek waar
+dezelfde nuance juist moet blijven — en één verkeerd vertaalde zin over een klok
+die niet terug te draaien is, kost een ritje naar dat dak. Als het gebeurt, hoort
+het in één stap te gebeuren die alle beheerteksten tegelijk van sleutels
+voorziet, niet knop voor knop.
+
+Dus ontbreekt de taalknop op de beheerpagina's, en zet
+`<html data-lang-lock="nl">` ook de door JavaScript gebouwde teksten (relatieve
+tijden) op Nederlands vast. Dat repareert meteen een bestaand euvel: wie op de
+publieke site ooit Engels koos, kreeg Engelse relatieve tijden en een Engels
+`lang`-attribuut boven Nederlandse tekst.
+
+## Nodes en repeaters — `GET /admin`
+
+De lijst is gegroepeerd op **beheerniveau**, omdat wat je met een node kunt doen
+per groep verschilt en dat hier de enige indeling is die de knoppen eronder
+verklaart. Het niveau is een *waarneming*, nooit een instelling — er is nergens
+een knop om het te zetten, het volgt uit wat er binnenkomt, en de zin achter elke
+node zegt waaraan we het zien. Het wordt op één plek afgeleid,
+`commanding._level()`, naast `describe()`, zodat er geen tweede definitie kan
+ontstaan die van de eerste wegloopt.
+
+| Niveau | Betekenis | Wat werkt |
+|---|---|---|
+| `full_managed` | Onze firmware met MQTT-koppeling: de node publiceert zijn eigen cijfers en meldt een firmwareversie | Uitvragen, instellingen, klok, en — als er een IP-pad is — een firmware-upgrade |
+| `semi_managed` | Geen firmware van ons, wél rechten op zijn CLI: een monitorende node vraagt hem over LoRa uit, of de poller logt in met zijn wachtwoord | Instellingen lezen, begrensd schrijven, de klok zetten |
+| `unmanaged` | Alleen telemetrie: waargenomen in het verkeer en verder niets | Niets — de knoppen staan er, uitgeschakeld, elk met zijn reden |
+
+Het niveau kijkt bewust **niet** naar `broker_connected`. Wat er nu openstaat
+staat in `route["mqtt"]`; wat een node *is* staat in `route["level"]`. Een full
+managed node achter een weggevallen broker blijft full managed — er is alleen op
+dit ogenblik geen weg. Die twee door elkaar halen zou het niveau laten meebewegen
+met het netwerk van de server in plaats van met de node.
+
+Of een firmware-upgrade mogelijk is, is **niet** uit het niveau af te leiden: een
+full managed node zonder IP-pad neemt commando's aan maar geen image van een
+megabyte. Dat is een apart veld uit de firmwareweg.
+
+Per node toont de lijst het sleutelprefix, via welke node zijn cijfers
+binnenkomen, de firmware, wanneer hij het laatst gezien is, de weg die nu
+openstaat, en de publiek/verborgen-schakelaar. Hernoemen en verwijderen staan er
+*niet*: die horen op de eigen pagina van die node, waar zijn naam en sleutel
+bovenaan staan. Een prullenbakje in een dichte tabelrij is precies hoe je de
+verkeerde node wist, en dat is de duurste fout die deze site toelaat.
+
+## Eén node — `GET /admin/repeaters/{rid}`
+
+Alles over één apparaat, in oplopende onomkeerbaarheid: identiteit en versies,
+zichtbaarheid, uitvragen (leest), klok (schrijft één getal), firmware (schrijft
+het hele apparaat), verwijderen.
+
+| Veld | Betekenis |
+|---|---|
+| `route` | `commanding.describe(rep)` — niveau, reden van dat niveau, of een knop iets kan en zo niet, welke blocker |
+| `settings_rows` | De bewaarde CLI-parameters en hun `updated`-tijdstempels. Een NULL-waarde toont als "(geen antwoord)" |
+| `queued_since` | Een opvraging die er **nog steeds** staat: er heeft niets gepolld sinds de klik |
+| `delivered_since` | Wanneer de wachtrij het laatst een opvraging uitreikte |
+| `delivery_unanswered` | Waar als het nieuwste bewaarde antwoord ouder is dan die uitreiking |
+| `requested`, `status` | `mqtt`, `queued`, `both` of `none` van de laatste opvraag- of statusklik |
+| `clock_route` | `clocksync.time_route(rep)` — welke node de tijd zou krijgen |
+| `clock_sent` | Wanneer deze site die node het laatst een tijd stuurde |
+| `clock`, `clock_wait` | De uitkomst van de laatste klik, en de wachttijd in minuten |
+| `clocksync_reason` | De reden uit de laatste klokcontrole, zodat een weigering hier meteen zegt wát er mis was |
+| `broker` | `mqtt_ingest.can_publish()` — zie hieronder |
+
+`queued_since` en `delivery_unanswered` bestaan omdat de wachtrij bij het lezen
+gewist wordt: staat het verzoek er nog, dan heeft er niets gepolld sinds de knop
+ingedrukt werd, en is het weg, dan nam de poller het mee en is de stilte die
+volgt de zijne. Zonder dat onderscheid zien beide er identiek uit — een pagina
+die "opvraging gestart" zegt en nooit verandert.
+
+De knoppen worden uit `route` getekend, en een knop die niets kan doen is
+uitgeschakeld **en zegt waarom**. De vereiste firmwareversie komt uit die route
+in plaats van hier apart berekend te worden: welke versie nodig is hangt af van
+de weg (1.8.0 voor de node zelf, 1.9.0 voor een monitor). Zie
+[`commanding.md`](commanding.md).
+
+De klokknop kijkt daarnaast naar `broker`. `clocksync.time_route()` doet dat
+bewust niet — die vraag hoort bij het versturen en niet bij de weg — maar de knop
+hoort het wel te weten: zonder verbinding eindigde een klik op "er is niets
+verstuurd", terwijl de pagina dat vooraf kon zeggen.
+
+Handelingen dragen hun prijs in hun vorm en niet alleen in hun tekst: een blauwe
+linkerrand met het etiket "kost zendtijd" voor wat leest maar zendtijd kost,
+oranje voor wat op het apparaat schrijft, rood voor wat onomkeerbaar is. De klok-
+en verwijderknop vragen een bevestiging die de node bij naam en sleutelprefix
+noemt, omdat de vraag over *die* node moet gaan en niet over "deze".
+
+Twee blokken zijn bewust leeg gelaten in plaats van gevuld met een belofte: de
+firmware-upgradeweg, en de fijnmazige zichtbaarheidskeuze (positie tonen, naam
+tonen). Op beide plekken staat in commentaar wat er hoort te komen — inclusief de
+zes endpoints in `routes_api.py` waar de positie van een gevolgde repeater naar
+buiten komt, want een schakelaar die belooft een positie te verbergen terwijl de
+heatmap hem nog uitlevert, is erger dan geen schakelaar.
+
+## Server en site — `GET /admin/server`
+
+| Anker | Blok | Inhoud |
+|---|---|---|
+| `#toegang` | Toegang | Als wie je bent ingelogd, en het wachtwoord wijzigen |
+| `#tokens` | API-tokens | Actieve tokens met `created_at` en `last_used`; aanmaken en intrekken |
+| `#opslag` | Bewaartermijn en opslag | De bewaartermijn- en FIFO-velden samen met `retention.overview()`: bestandsgrootte tegenover de bovengrens, aantal pakketten, de werkelijk gedekte periode, en de laatste opruimronde |
+| `#weergave` | Weergave | `heartbeat_min`, `history_ranges`, en de blokvolgorde van de publieke pagina |
+| `#cli-params` | Op te vragen parameters | `cli_params` — één lijst voor alle repeaters |
+| `#kloksync` | Kloksynchronisatie | `clocksync.status()` plus `clocksync.targets()` — per repeater of hij bereikt kan worden en zo niet, waarom |
+| `#invoer` | Gegevensinvoer | `mqtt_ingest.status()`: verbonden, broker, topics, nodes per topicvoorvoegsel, berichten, pakketten, fouten |
+| `#tsdb` | Metingen | `tsdb.status()`: bereikbaar, geschreven punten, batches, wachtrijdiepte, uitgeweken naar SQLite, laatste fout |
+
+Instellen en uitkomst staan in één blok en niet in twee secties ver uit elkaar:
+het getal dat je invult en het gevolg dat het heeft zijn dezelfde vraag, en wie
+de termijn verlaagt hoort meteen te zien dat de bovengrens hem misschien toch
+eerder afsnijdt.
+
+`cli_params` stond op de pagina van één repeater terwijl hij voor allemaal geldt;
+wie hem daar wijzigde, wijzigde hem stilletjes ook voor de andere nodes.
 
 `clock_targets` wordt berekend met **dezelfde** `time_route()` die de knop
 gebruikt, met de monitorweg dicht. Toen die redenering hier zijn eigen kopie had,
 kon de pagina van een repeater iets anders beweren dan de dagelijkse ronde deed —
 en dat verschil valt pas op als iemand de logboeken naast de beheerpagina legt.
+De knop om het *nu* te doen staat waar hij hoort: op de pagina van die ene node,
+met zijn bevestigingsstap.
 
 ### Instellingen, en wat ze overrulen
 
@@ -202,14 +335,17 @@ en dat verschil valt pas op als iemand de logboeken naast de beheerpagina legt.
 
 Een instelling die hier staat **gaat vóór de omgevingsvariabele** met dezelfde
 betekenis, dus een bewaartermijn verhogen vraagt geen herstart van de container.
-Opslaan draait meteen `retention.run_once()`, zodat een verlaagde termijn wordt
-toegepast — en het resultaat getoond — op de pagina waar je net op klikte.
 
-De drie pakketvelden hebben standaard `0` in plaats van verplicht te zijn, en `0`
-betekent "dit formulier ging er niet over": het laat de bestaande waarde staan.
-Zonder dat zou een oudere pagina die nog in een tabblad openstond de
-bewaargrenzen op nul zetten, en dat is precies de instelling waarvan het verkeerd
-zetten data kost. Details in
+Elk veld op `POST /admin/settings` is optioneel, en dat is de kern van de zaak en
+geen slordigheid: ze staan nu over twee formulieren verdeeld. Met verplichte
+velden zou het ene formulier de waarden van het andere als verborgen velden
+moeten meesturen, en dan overschrijft een pagina die even openstond stilletjes
+een instelling die intussen elders gewijzigd is. Ontbreken betekent "dit
+formulier ging er niet over". De sentinel is `None` en niet `0`, want `0` is voor
+deze velden geen geldige waarde en "niet ingevuld" is iets anders dan "op nul
+gezet". Is er wél een termijn of grens gewijzigd, dan draait meteen
+`retention.run_once()`, zodat het resultaat op de pagina staat waar je net op
+klikte; het weergaveformulier lokt geen opruimronde uit. Details in
 [`retention.md`](retention.md#het-instellingenformulier).
 
 De indeling is een JSON-lijst van `{key, visible}`, gevalideerd door
@@ -218,38 +354,6 @@ genegeerd, en elk blok dat in de bewaarde waarde ontbreekt wordt in zijn
 standaardvolgorde achteraan toegevoegd. Een blok zonder iets te tonen wordt bij
 het renderen overgeslagen, dus een blok verbergen en er geen gegevens voor hebben
 zien er voor een bezoeker hetzelfde uit.
-
-## De instellingenpagina van een repeater — `GET /admin/repeaters/{rid}/settings`
-
-Een alleen-lezen weergave van `repeater_cli`, plus de twee knoppen en alles wat
-nodig is om eerlijk te zeggen wat ze kunnen.
-
-| Veld | Betekenis |
-|---|---|
-| `settings_rows` | De bewaarde CLI-parameters en hun `updated`-tijdstempels. Een NULL-waarde toont als "(geen antwoord)" |
-| `cli_params` | De lijst parameters waar een poller om gevraagd wordt. Bewerkbaar, `,`/`;`-gescheiden, begrensd op 40 |
-| `route` | `commanding.describe(rep)` — of de knop iets kan en zo niet, welke blocker |
-| `queued_since` | Een opvraging die er **nog steeds** staat: er heeft niets gepolld sinds de klik |
-| `delivered_since` | Wanneer de wachtrij het laatst een opvraging uitreikte |
-| `delivery_unanswered` | Waar als het nieuwste bewaarde antwoord ouder is dan die uitreiking |
-| `requested` | `mqtt`, `queued`, `both` of `none` van de laatste klik |
-| `clock_route` | `clocksync.time_route(rep)` — welke node de tijd zou krijgen |
-| `clock_sent` | Wanneer deze site die node het laatst een tijd stuurde |
-| `clock`, `clock_wait` | De uitkomst van de laatste klik, en de wachttijd in minuten |
-| `clocksync_reason` | De reden uit de laatste klokcontrole, zodat een weigering hier meteen zegt wát er mis was in plaats van naar `/admin` te verwijzen |
-
-`queued_since` en `delivery_unanswered` bestaan omdat de wachtrij bij het lezen
-gewist wordt: staat het verzoek er nog, dan heeft er niets gepolld sinds de knop
-ingedrukt werd, en is het weg, dan nam de poller het mee en is de stilte die
-volgt de zijne. Zonder dat onderscheid zien beide er identiek uit — een pagina die
-"opvraging gestart" zegt en nooit verandert.
-
-De knop wordt uit `route` getekend, en een knop die niets kan doen is
-uitgeschakeld **en zegt waarom**. De vereiste firmwareversie komt uit die route
-in plaats van hier apart berekend te worden: welke versie nodig is hangt af van
-de weg (1.8.0 voor de node zelf, 1.9.0 voor een monitor), en twee plaatsen die
-dat allebei uitrekenen is er één te veel. Zie
-[`commanding.md`](commanding.md).
 
 ## Een repeater publiek maken
 

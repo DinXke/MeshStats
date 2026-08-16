@@ -213,17 +213,25 @@ still be there.
 | `packet_max_rows` | `PACKET_FIFO_FLOOR`–50 000 000 | Lower than the floor cannot be honoured anyway |
 | `db_max_mb` | 16–1 000 000 | |
 
-The three packet fields default to `0` rather than being required, and that is
-not sloppiness: **0 means "this form was not about that"** and leaves the
-existing value alone. Without it, an older page still open in a tab, or a script
-that only wants to set the heartbeat, would set the retention limits to zero —
-and that is precisely the setting where getting it wrong costs data.
+Every field is optional rather than required, and that is not sloppiness:
+**missing means "this form was not about that"** and leaves the existing value
+alone. Since the admin restructure these fields are spread over two forms
+(retention and storage, and display), so a required field would force one form to
+carry the other's values as hidden inputs — after which an older page still open
+in a tab, or a script that only wants to set the heartbeat, quietly overwrites
+the retention limits. That is precisely the setting where getting it wrong costs
+data.
+
+The sentinel is `None` and not `0`, because `0` is not a valid value for these
+fields and "not submitted" is a different thing from "set to zero" — a
+distinction a default of `0` could not make.
 
 Saving goes through `retention.run_once()` and not straight to `db.prune()`, so
 a lowered retention walks the same path as the hourly pass — including the VACUUM
 decision, because lowering a retention is exactly the case where the file
 otherwise stays large while its contents have been pruned — and the result is on
-the page the user just clicked on.
+the page the user just clicked on. It only runs when a retention or ceiling
+actually changed: the display form has no business provoking a pruning pass.
 
 ## What the settings reach
 

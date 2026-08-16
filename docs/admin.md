@@ -164,24 +164,150 @@ Plain SHA-256 rather than PBKDF2 is deliberate: a 32-byte random token has no
 guessable structure, so the slow hash that protects a human-chosen password buys
 nothing and would cost 200 000 rounds on every ingest request.
 
-## The dashboard — `GET /admin`
+## Two worlds
 
-| Block | Contents |
+The admin area had become one long list of sections, in the order they happened
+to be added. A button that asks a node over the radio sat next to the input for
+the database retention. Those two do not belong in the same visual rank: one
+costs airtime on a shared band and touches a device on a roof, the other you put
+back with a second click.
+
+Since the split there are two worlds, with a tab bar between them:
+
+| URL | World |
 |---|---|
-| Repeaters | Every repeater, public or not, with rename, publish/unpublish, delete, and a link to its settings page |
-| Tokens | Active tokens with `created_at` and `last_used`; create and revoke |
-| Settings | `heartbeat_min`, `retention_days`, `packet_retention_days`, `packet_max_rows`, `db_max_mb`, `history_ranges` |
-| Storage | `retention.overview()`: file size against the ceiling, packets held, the period actually covered, and the last pruning pass |
-| Layout | Block order and visibility on a repeater page |
-| MQTT | `mqtt_ingest.status()`: connected, broker, topics, messages, packets, errors, last error, commands sent |
-| Measurements | `tsdb.status()`: reachable, points written, batches, queue depth, spilled to SQLite, last error, last write |
-| Clock | `clocksync.status()` plus `clocksync.targets()` — per repeater whether it can be reached and, if not, why |
+| `GET /admin` | **Nodes and repeaters** — everything that is an action on, or information about, a physical device |
+| `GET /admin/repeaters/{rid}` | One node: identity and versions, visibility, look-ups, clock, firmware, delete |
+| `GET /admin/server` | **Server and site** — everything that configures this installation and touches no device |
+
+The POST routes stayed where they were, so an admin page already open in a tab
+does not answer 404 on the next click. `GET /admin/repeaters/{rid}/settings` is
+the one URL that moved; it redirects to `/admin/repeaters/{rid}` and carries its
+query string along, so a notice does not get lost on the way.
+
+### Language
+
+The admin pages are Dutch only, and that is a decision rather than a backlog
+item. The public site is bilingual because every translatable node carries a
+`data-i18n` key; the admin pages carry none, and their text is not labels but
+paragraphs explaining what the site does and does not know about a node on a
+roof. Translating that is hundreds of keys and a second place where the same
+nuance has to stay right — and one mistranslated sentence about a clock that
+cannot be turned back costs a trip to that roof. If it happens, it should happen
+in one step that keys every admin string at once, not button by button.
+
+So the language toggle is absent on admin pages, and `<html data-lang-lock="nl">`
+pins the JavaScript-built text (relative times) to Dutch as well. That also fixes
+an existing wart: a visitor who once picked English on the public site used to
+get English relative times and an English `lang` attribute above Dutch prose.
+
+## Nodes and repeaters — `GET /admin`
+
+The list is grouped by **management level**, because what you can do with a node
+differs per group and that is the only grouping that explains the buttons below
+it. The level is an *observation*, never a setting — there is no control to set
+it, it follows from what comes in, and the sentence behind each node says what we
+see it by. It is derived in one place, `commanding._level()`, next to
+`describe()`, so a second definition cannot drift away from the first.
+
+| Level | Meaning | What works |
+|---|---|---|
+| `full_managed` | Our firmware with an MQTT link: the node publishes its own figures and reports a firmware version | Look-ups, settings, clock, and — given an IP path — a firmware upgrade |
+| `semi_managed` | No firmware of ours, but rights on its CLI: a monitoring node queries it over LoRa, or the poller logs in with its password | Reading settings, bounded writes, setting the clock |
+| `unmanaged` | Telemetry only: seen in the traffic and nothing more | Nothing — the buttons are there and disabled, each with its reason |
+
+The level deliberately does **not** look at `broker_connected`. What is open
+right now lives in `route["mqtt"]`; what a node *is* lives in `route["level"]`. A
+full-managed node behind a dropped broker is still full managed — there is just
+no route at this moment. Mixing the two would make the level swing with the
+server's network instead of with the node.
+
+Whether a firmware upgrade is possible is **not** derivable from the level: a
+full-managed node without an IP path takes commands but not a megabyte image.
+That is a separate field from the firmware path.
+
+Per node the list shows the key prefix, which node its figures come in through,
+firmware, last seen, the route open right now, and the public/hidden toggle.
+Rename and delete are *not* here — they live on the node's own page, where its
+name and key are at the top. A trash icon in a dense table row is exactly how you
+wipe the wrong node, and that is the most expensive mistake this site allows.
+
+## One node — `GET /admin/repeaters/{rid}`
+
+Everything about one device, in ascending order of irreversibility: identity and
+versions, visibility, look-ups (read), clock (writes one number), firmware
+(writes the whole device), delete.
+
+| Field | Meaning |
+|---|---|
+| `route` | `commanding.describe(rep)` — level, level reason, whether a button can do anything and, if not, which blocker |
+| `settings_rows` | The stored CLI parameters and their `updated` timestamps. A NULL value renders as "(geen antwoord)" |
+| `queued_since` | A queued look-up that is **still there**: nothing has polled since the click |
+| `delivered_since` | When the queue last handed a look-up out |
+| `delivery_unanswered` | True when the newest stored answer is older than that hand-out |
+| `requested`, `status` | `mqtt`, `queued`, `both` or `none` from the last look-up or status click |
+| `clock_route` | `clocksync.time_route(rep)` — which node would get the time |
+| `clock_sent` | When this site last sent that node a time |
+| `clock`, `clock_wait` | The outcome of the last click, and the wait in minutes |
+| `clocksync_reason` | The reason from the last clock check, so a refusal says what was wrong here |
+| `broker` | `mqtt_ingest.can_publish()` — see below |
+
+`queued_since` and `delivery_unanswered` exist because the queue is
+clear-on-read: a request still sitting there means nothing has polled since the
+button was pressed, and one that is gone means the poller took it and the silence
+that follows is its own. Without that distinction both look identical — a page
+that says "look-up started" and never changes.
+
+Buttons are drawn from `route`, and a button that cannot do anything is disabled
+**and says why**. The required firmware version comes out of that route rather
+than being computed separately here: which version is needed depends on the route
+(1.8.0 for the node itself, 1.9.0 for a monitor). See
+[`commanding.md`](commanding.md).
+
+The clock button also checks `broker`. `clocksync.time_route()` deliberately does
+not — that question belongs to sending, not to the route — but the button should
+know: without a connection a click ended on "nothing was sent", which the page
+could have said beforehand.
+
+Actions carry their price in their shape, not only in their text: a blue left
+border and a "kost zendtijd" tag for reads that cost airtime, amber for writing
+to the device, red for irreversible. The clock and delete buttons ask for
+confirmation naming the node and its key prefix, because the question has to be
+about *that* node rather than about "this one".
+
+Two blocks are deliberately empty rather than filled with a promise: the firmware
+upgrade path, and the finer-grained visibility choice (show position, show name).
+Both carry a comment saying what belongs there — including the six endpoints in
+`routes_api.py` that expose a tracked repeater's position, since a switch that
+claims to hide a position while the heat map still serves it is worse than no
+switch at all.
+
+## Server and site — `GET /admin/server`
+
+| Anchor | Block | Contents |
+|---|---|---|
+| `#toegang` | Access | Who you are signed in as, and the password change |
+| `#tokens` | API tokens | Active tokens with `created_at` and `last_used`; create and revoke |
+| `#opslag` | Retention and storage | The retention and FIFO fields together with `retention.overview()`: file size against the ceiling, packets held, the period actually covered, and the last pruning pass |
+| `#weergave` | Display | `heartbeat_min`, `history_ranges`, and the block order for the public page |
+| `#cli-params` | Parameters to fetch | `cli_params` — one list for all repeaters |
+| `#kloksync` | Clock sync | `clocksync.status()` plus `clocksync.targets()` — per repeater whether it can be reached and, if not, why |
+| `#invoer` | Data intake | `mqtt_ingest.status()`: connected, broker, topics, nodes per topic prefix, messages, packets, errors |
+| `#tsdb` | Measurements | `tsdb.status()`: reachable, points written, batches, queue depth, spilled to SQLite, last error |
+
+Setting and outcome sit in one block rather than two sections apart: the number
+you type and the effect it has are the same question, and whoever lowers a
+retention should see immediately that the ceiling may cut in earlier anyway.
+
+`cli_params` used to live on one repeater's page while it applies to all of them,
+so changing it there silently changed it for the other nodes too.
 
 `clock_targets` is computed with the **same** `time_route()` the button uses,
 with the monitor route closed. When that reasoning had its own copy here, a
 repeater's page could claim something different from what the daily round did —
 and that difference only shows up if somebody puts the logs next to the admin
-page.
+page. The button to do it *now* stays where it belongs: on that one node's page,
+with its confirmation step.
 
 ### Settings, and what they override
 
@@ -195,52 +321,24 @@ page.
 | `history_ranges` | 1–8760 per value | The hour buttons on a repeater page's charts |
 
 A setting stored here **takes precedence over the environment variable** of the
-same meaning, so raising a retention does not need a container restart. Saving
-runs `retention.run_once()` immediately, so a lowered retention is applied — and
-its result shown — on the page you just clicked on.
+same meaning, so raising a retention does not need a container restart.
 
-The three packet fields default to `0` rather than being required, and `0` means
-"this form was not about that": it leaves the existing value alone. Without
-that, an older page still open in a tab would set the retention limits to zero,
-which is precisely the setting where getting it wrong costs data. Details in
-[`retention.md`](retention.md#the-settings-form).
+Every field on `POST /admin/settings` is optional, and that is the point rather
+than sloppiness: they are spread over two forms now. With required fields, one
+form would have to carry the other's values as hidden inputs, and then a page
+that sat open for a while silently overwrites a setting changed elsewhere in the
+meantime. Missing means "this form was not about that". The sentinel is `None`
+and not `0`, because `0` is not a valid value for these fields and "not
+submitted" is a different thing from "set to zero". When a retention or ceiling
+did change, `retention.run_once()` runs immediately, so the result shows on the
+page you just clicked on; the display form does not provoke a pruning pass.
+Details in [`retention.md`](retention.md#the-settings-form).
 
 The layout is a JSON list of `{key, visible}` validated by
 `metrics.parse_layout()`: unknown keys are dropped, duplicates ignored, and any
 block missing from the stored value is appended in its default order. A block
 with nothing to show is skipped when the page is rendered, so hiding a block and
 having no data for it look the same to a visitor.
-
-## The repeater settings page — `GET /admin/repeaters/{rid}/settings`
-
-A read-only view of `repeater_cli`, plus the two buttons and everything needed to
-say honestly what they can do.
-
-| Field | Meaning |
-|---|---|
-| `settings_rows` | The stored CLI parameters and their `updated` timestamps. A NULL value renders as "(geen antwoord)" |
-| `cli_params` | The parameter list a poller is asked for. Editable, `,`/`;` separated, capped at 40 |
-| `route` | `commanding.describe(rep)` — whether the button can do anything and, if not, which blocker |
-| `queued_since` | A queued look-up that is **still there**: nothing has polled since the click |
-| `delivered_since` | When the queue last handed a look-up out |
-| `delivery_unanswered` | True when the newest stored answer is older than that hand-out |
-| `requested` | `mqtt`, `queued`, `both` or `none` from the last click |
-| `clock_route` | `clocksync.time_route(rep)` — which node would get the time |
-| `clock_sent` | When this site last sent that node a time |
-| `clock`, `clock_wait` | The outcome of the last click, and the wait in minutes |
-| `clocksync_reason` | The reason from the last clock check, so a refusal says what was wrong here instead of pointing at `/admin` |
-
-`queued_since` and `delivery_unanswered` exist because the queue is
-clear-on-read: a request still sitting there means nothing has polled since the
-button was pressed, and one that is gone means the poller took it and the silence
-that follows is its own. Without that distinction both look identical — a page
-that says "look-up started" and never changes.
-
-The button is drawn from `route`, and a button that cannot do anything is
-disabled **and says why**. The required firmware version comes out of that route
-rather than being computed separately here: which version is needed depends on
-the route (1.8.0 for the node itself, 1.9.0 for a monitor), and two places both
-working that out is one too many. See [`commanding.md`](commanding.md).
 
 ## Making a repeater public
 

@@ -79,6 +79,8 @@ die te testen blijft zonder een MQTT-client of een databank in de buurt.
 | `fw_meshmanager` | Firmware van de node die de opdracht krijgt |
 | `min_fw` | De versie die deze weg vereist |
 | `node_seen`, `node_stale` | Wanneer die node het laatst publiceerde, en of dat te lang geleden is |
+| `level` | Het beheerniveau van deze node: `unmanaged`, `semi_managed` of `full_managed` |
+| `level_why` | Waaraan dat niveau te zien is, met de node erbij die het mogelijk maakt |
 | `ha`, `poller_seen` | Of er binnen `POLLER_STALE_SECS` een poller gezien is |
 
 **`commands` is geen formaliteit.** Een monitor kan gevraagd worden de
@@ -101,6 +103,39 @@ deze module moest wegwerken:
 | `no_fw` | Geen moduleversie bekend |
 | `old_fw` | Versie lager dan `min_fw` |
 | `broker_down` | Niet verbonden met de broker |
+
+### Het beheerniveau
+
+`_level()` beantwoordt een andere vraag dan `mqtt`/`ha`: niet "kan er nu iets
+vertrekken" maar "wat is deze node". Drie antwoorden, in de volgorde waarin ze
+getoetst worden:
+
+| Niveau | Bewijs |
+|---|---|
+| `full_managed` | Publiceert zijn eigen cijfers over MQTT *en* meldt een firmwareversie, dus zijn `cmd`-topic bestaat |
+| `semi_managed` | Geen firmware van ons, maar rechten op zijn CLI: een monitor met `MIN_MON_CMD_VERSION` of nieuwer, of een poller die met het repeaterwachtwoord inlogt |
+| `unmanaged` | Geen van beide — waargenomen in het verkeer en verder niets |
+
+Het is een **waarneming, nooit een instelling**. Er is geen kolom voor en geen
+knop om er een te zetten: het opslaan ervan zou gegarandeerd uit de pas lopen met
+de werkelijkheid, en dan zegt een knop "kan" over een node die zijn firmware
+kwijt is.
+
+Het negeert bewust `broker_connected`. Een full managed node achter een
+weggevallen broker blijft full managed — er is alleen op dit ogenblik geen weg,
+en daar is `mqtt` voor. Het niveau laten meebewegen met het netwerk van de server
+zou er een uitspraak over ons van maken in plaats van over de node.
+
+De poller staat niet in de namen van de niveaus, en telt toch mee: de Home
+Assistant-integratie logt met het repeaterwachtwoord in en leest en schrijft
+dezelfde CLI. Hem weglaten zou een repeater die alleen zo binnenkomt "unmanaged"
+noemen terwijl de knop ernaast werkt. Dat bewijs is brozer dan een monitor — het
+vervalt zodra de poller een kwartier zwijgt — en `level_why` zegt dat erbij.
+
+Of een **firmware-upgrade** mogelijk is volgt niet uit het niveau en is een apart
+veld: een full managed node zonder IP-pad neemt commando's aan maar geen image
+van een megabyte, en een node waarvan de bouwomgeving onbekend is mag er sowieso
+geen krijgen.
 
 `broker_down` wordt **als laatste** getest, met opzet, zodat een tijdelijk
 wegvallende broker de blijvende reden niet overschaduwt: "firmware te oud" lost

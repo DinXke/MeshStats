@@ -224,18 +224,26 @@ staan.
 | `packet_max_rows` | `PACKET_FIFO_FLOOR`–50 000 000 | Lager dan de ondergrens kan de FIFO toch niet honoreren |
 | `db_max_mb` | 16–1 000 000 | |
 
-De drie pakketvelden hebben `0` als standaard in plaats van verplicht te zijn, en
-dat is geen slordigheid: **0 betekent "dit formulier ging er niet over"** en laat
-de bestaande waarde staan. Zonder dat zou een oudere pagina die nog in een
-tabblad openstond, of een script dat alleen het hartslaginterval wil zetten, de
-bewaargrenzen op nul zetten — en dat is precies de instelling waarvan het
-verkeerd zetten data kost.
+Elk veld is optioneel in plaats van verplicht, en dat is geen slordigheid:
+**ontbreken betekent "dit formulier ging er niet over"** en laat de bestaande
+waarde staan. Sinds de herindeling van het beheerdeel staan deze velden over twee
+formulieren verdeeld (bewaartermijn en opslag, en weergave), dus een verplicht
+veld zou het ene formulier dwingen de waarden van het andere als verborgen velden
+mee te sturen — waarna een oudere pagina die nog in een tabblad openstond, of een
+script dat alleen het hartslaginterval wil zetten, stilletjes de bewaargrenzen
+overschrijft. Dat is precies de instelling waarvan het verkeerd zetten data kost.
+
+De sentinel is `None` en niet `0`, want `0` is voor deze velden geen geldige
+waarde en "niet ingevuld" is iets anders dan "op nul gezet" — een onderscheid dat
+met een standaard van `0` niet te maken was.
 
 Opslaan gaat via `retention.run_once()` en niet rechtstreeks naar `db.prune()`,
 zodat een verlaagde termijn hetzelfde pad aflegt als de uurlijkse ronde —
 inclusief de VACUUM-afweging, want juist het verlagen van een termijn is het
 geval waarin het bestand anders groot blijft terwijl de inhoud gesnoeid is — en
-het resultaat staat meteen op de pagina waar de gebruiker net op klikte.
+het resultaat staat meteen op de pagina waar de gebruiker net op klikte. Dat
+gebeurt alleen als er werkelijk een termijn of grens veranderd is: het
+weergaveformulier hoort geen opruimronde uit te lokken.
 
 ## Wat de instellingen bereiken
 
