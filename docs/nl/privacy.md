@@ -130,7 +130,45 @@ pagina vol knoppen hoort.
 
 ---
 
-## 3. Het hardop zeggen
+## 3. Wat het pakketfilter zegt over andermans verkeer
+
+Een repeater met een pakketfilter weigert een deel van wat hij hoort door te
+sturen. Hij telt wat hij weigerde, en sinds firmware 2.6.0 telt hij dat vrij
+gedetailleerd. Die uitsplitsing verdient een eigen paragraaf, want anders dan
+alles in §1 komt ze niet uit een advert. Een advert is identiteit die een node
+zelf uitzendt; een weigering is iets wat er met het pakket van iemand anders
+gebeurd is.
+
+De grens loopt tussen **een meting van het gedrag van deze repeater** en **een
+verslag van het verkeer van een bepaald iemand**.
+
+| Gegeven | Waar | Waarom |
+|---|---|---|
+| Totalen: weggegooid, doorgelaten, vrijgesteld via de ACL, filter aan/uit | **openbaar** | Was voor 2.6.0 al openbaar. Een repeater met een filter aan stuurt andermans verkeer niet meer door, en wie dat merkt is juist degene die niet kan inloggen |
+| Weggegooid per reden | **openbaar** | Idem: het beschrijft de repeater |
+| Weggegooid per pakkettype, en per type × reden | **openbaar** | Het pakkettype van elk bericht staat al openbaar op de pakkettenpagina. 'ADVERT sneuvelde 40 keer op de hoplimiet' zegt iets over deze repeater, niet over wie die adverts uitzond |
+| Druk op de snelheidslimiet: vensters met verkeer, vensters waarin hij beet, piek | **openbaar** | Een weggooiteller zonder noemer is geen meting. 12 op 4000 vensters is een limiet die ruim staat, 12 op 14 er een die in gewoon verkeer snijdt — en het aantal weggegooide pakketten kan gelijk zijn |
+| De ingestelde limiet zelf | **beheerder** | Dat is een regel en geen waarneming. Regeltabellen staan sinds 2.3.0 achter de login |
+| Geblokkeerd kanaal: hash en aantal treffers | **openbaar** | De hash is één byte van `sha256(kanaalsleutel)`, en die byte reist onversleuteld mee in elk groepsbericht op de lucht. Verzwijgen beschermt niemand, terwijl 'dit kanaal wordt hier geweerd, 900 keer' precies is wat iemand nodig heeft die zich afvraagt waarom zijn verkeer niet aankomt |
+| Geblokkeerd kanaal: het label | **beheerder** | Geen waarneming maar de naam die *onze* beheerder aan het kanaal van *iemand anders* gaf. Het draagt niets wat de hash niet al draagt, en publiceren zou de site een oordeel over een derde laten herhalen waar ze een gedraging van deze node hoort te melden |
+| Welk pakket weggegooid is: afzender, tijdstip, de losse gebeurtenis | **bestaat niet** | Zie hieronder |
+
+**Er wordt nergens een verslag per pakket bijgehouden, op geen enkel
+toegangsniveau.** De firmware telt; hij logt niet. Er is geen tabel met
+geweigerde pakketten, geen afzender bij een weigering, geen tijdstip per
+gebeurtenis. Dat is geen gat dat nog ingevuld moet worden: een repeater die
+opschrijft wie hij weigerde en wanneer, houdt een logboek bij van andermans
+communicatie, en dat is iets anders van soort dan het tellen van zijn eigen
+gedrag. De tellers overleven bovendien geen herstart, dus ze zeggen 'sinds deze
+node voor het laatst startte' en nooit 'ooit'.
+
+Dat begrenst ook wat een beheerder van zijn eigen node leert. Het beheerdersbeeld
+voegt de regelwaarden en de kanaallabels toe — zijn eigen configuratie — en
+verder niets over personen.
+
+---
+
+## 4. Het hardop zeggen
 
 Een node die door een zichtbaarheidskeuze uit beeld valt, wordt geteld en
 gemeld. Deze site beschouwt een stille weglating als een langzaam vertelde
@@ -150,7 +188,7 @@ zou de eerste zin onwaar maken.
 
 ---
 
-## 4. Hoe het gehandhaafd wordt
+## 5. Hoe het gehandhaafd wordt
 
 Eén view, `visible_contacts`, aangemaakt in `db._migrate()` nadat de kolommen
 bestaan. Het is `contacts` met de naam, de breedte, de lengte en het land door
@@ -171,7 +209,7 @@ aantoont dat de standaardwaarden elk van die endpoints laten zoals ze waren.
 
 ---
 
-## 5. Verder lezen
+## 6. Verder lezen
 
 - [`security.md`](security.md) — het dreigingsmodel waar dit binnen valt
 - [`database.md`](database.md) — de kolommen en de view

@@ -5,6 +5,83 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.6.0  'radio' kan niet meer van afstand gezet worden, en het filter houdt bij
+ *        WAT het weggooit in plaats van alleen HOEVEEL.
+ *        DE RADIO EERST, want dat is de regel en niet de functie. Van afstand mag
+ *        het zendvermogen gewijzigd worden en verder niets aan de radio: geen
+ *        frequentie, geen spreidingsfactor, geen coderingssnelheid, geen
+ *        bandbreedte. 'radio' is daarom uit CFG_PARAMS verdwenen; 'tx' blijft.
+ *        De asymmetrie die dat draagt: een verkeerde 'tx' maakt een node zwakker
+ *        maar bereikbaar, een verkeerde frequentie of modulatie haalt hem van de
+ *        lucht -- hij hoort niemand meer en niemand hoort hem, en er is geen
+ *        commando dat dat terugdraait omdat er geen weg meer naar binnen is. Dat
+ *        koop je niet af met een zwaardere bevestiging.
+ *        Het staat in de tabel en niet in de schermen, want die ene lijst is
+ *        tegelijk wat de beheerpagina tekent, wat de server mag aanbieden en wat
+ *        er over LoRa naar een gemonitorde repeater geschreven kan worden. Eén
+ *        regel weghalen sluit alle drie tegelijk; drie schermen die er zelf iets
+ *        van vinden, kunnen uit elkaar lopen.
+ *        Wat het kost, en dat hoort erbij gezegd: de beheerpagina van de node
+ *        blijft over wifi bereikbaar als de radio verkeerd staat -- wifi en LoRa
+ *        zijn onafhankelijk -- dus dit was de enige weg die een verkeerde
+ *        bandbreedte nog zonder ladder kon rechtzetten. Die weg is nu de seriële
+ *        kabel of de mesh-CLI. De controle eromheen (cfgRadioOk en de
+ *        grenzentabel) blijft staan, zodat terugzetten één regel is.
+ *        EN HET FILTER. Het houdt bij WAT het weggooit en niet alleen HOEVEEL, en
+ *        dat reist over MQTT mee naar de site.
+ *        Wat erbij komt: de kruising pakkettype x reden (welk type sneuvelt op
+ *        welke regel), de druk op de snelheidslimiet per type (in hoeveel
+ *        vensters met verkeer beet hij, en wat was de piek), de vrijstellingen
+ *        via de ACL per type, en de treffers per geblokkeerd kanaal.
+ *        Waarom dit meer zegt dan de zes totalen die er al waren. 'Er is 412 keer
+ *        iets weggegooid' vertelt niet welke regel te streng staat. ADVERT dat op
+ *        de hoplimiet sneuvelt is een andere diagnose dan GRP_TXT dat op de
+ *        snelheidslimiet sneuvelt, en uit één totaal zijn die twee niet te
+ *        onderscheiden. Bij de snelheidslimiet geldt dat dubbel: twaalf keer
+ *        gebeten in vierduizend vensters is een limiet die ruim staat, twaalf in
+ *        veertien er een die structureel verkeer wegsnijdt, en het aantal
+ *        weggegooide pakketten kan in beide gevallen hetzelfde zijn. Zonder
+ *        noemer is een weggooiteller geen meting maar een getal.
+ *        De vrijstelling via de ACL is het cijfer waarmee je merkt dat een filter
+ *        strenger staat dan je dacht: staat dat hoog naast een lage
+ *        'doorgelaten', dan werkt het filter vooral voor de mensen die er toch al
+ *        buiten vielen.
+ *        WELKE WEG WELKE GEGEVENS NEMEN, en dat is hier de hoofdregel. Alles
+ *        hierboven gaat uitsluitend over MQTT -- wifi of LAN, waar bandbreedte
+ *        niets kost. De sweep en de mesh-CLI blijven exact zo zuinig als ze
+ *        waren, want daar is elke byte zendtijd op een gedeelde band. De korte
+ *        vorm van ~160 byte die in elk statistiekenbericht meereist is
+ *        ONVERANDERD; de uitsplitsing komt erachteraan en kost in de praktijk
+ *        ~130 byte extra, in het volst denkbare geval 2,6 kB.
+ *        Wat er tegelijk gerepareerd is. De filterstand ging via een tijdelijke
+ *        buffer van 320 byte, en paste die niet in het bericht, dan viel het HELE
+ *        filterobject weg -- waarna de site 'deze node meldt geen filter' toont
+ *        over een node waarvan het bericht toevallig een paar buren langer was.
+ *        Dat is de faalmodus die dit project het minst wil: een publicatie die
+ *        slaagt en stilletjes iets kwijt is. Nu schrijft pf_summary_json()
+ *        rechtstreeks in de berichtbuffer met de ruimte die er werkelijk is: de
+ *        korte vorm eerst, daarna zoveel uitsplitsing als erin past, en
+ *        "trunc":1 als er iets niet meepaste. Wat er staat klopt dus altijd, en
+ *        alleen de volledigheid is voorwaardelijk -- met dat voorbehoud erbij.
+ *        Elke bijschrijving loopt via pfAppend(), dat 'vol' als toestand kent.
+ *        Zonder dat hing de veiligheid aan de vraag of de gereserveerde staart
+ *        groot genoeg was voor alle sluittekens die er nog aan kwamen, en één
+ *        keer verkeerd betekent dat p voorbij max staat, (max - p) als size_t een
+ *        enorm getal is, en de volgende snprintf buiten de buffer schrijft.
+ *        Kosten in RAM: 528 byte aan tellers (12x7 kruising, 12x3 vensterstanden,
+ *        12 vrijstellingen, plus een treffer per kanaal). Ze worden niet bewaard
+ *        over een herstart, net als de bestaande: /filter_prefs beschrijft wat er
+ *        gehandhaafd wordt, en een teller die een herstart overleeft zou zeggen
+ *        dat er iets gebeurd is sinds een moment dat niemand kan aanwijzen.
+ *        'filter reset' wist ze, zoals voorheen.
+ *        Aan de kant van de site: de uitsplitsing wordt GEEN metric. Twaalf types
+ *        maal zes redenen zijn tweeënzeventig namen, tegen een dak van 128
+ *        metrics per bericht en een FIFO van 1000 rijen per repeater -- en het is
+ *        een momentopname van een verdeling, geen reeks. Ze gaat in de bestaande
+ *        JSON-blob van repeater_filter, één rij per repeater die per definitie
+ *        niet groeit. Alleen de druk op de snelheidslimiet wordt een reeks, als
+ *        twee metrics (filter_rate_windows en filter_rate_capped), want daar is
+ *        het verloop juist de vraag.
  * 2.5.0  De beheerpagina van de node zelf kan nu alles wat de app en het filter
  *        kennen: elke CLI-instelling en het volledige pakketfilter. Tot nu toe
  *        toonde ze status, wifi, MQTT, voeding, monitorlijst en back-up -- en
@@ -2311,17 +2388,26 @@ static bool mqttPublishStats() {
    * snelheidsvensters zijn twee kilobyte die eens per maand veranderen; die
    * horen achter een verzoek van iemand die ze gaat wijzigen (GET /api/filter)
    * en niet in een bericht dat elke paar minuten vertrekt. */
+  /* Sinds 2.6.0 wordt er rechtstreeks in 'body' geschreven in plaats van via een
+   * tijdelijke buffer van 320 byte. Dat is niet alleen zuiniger: met een aparte
+   * buffer moest het hele filterobject passen of het viel in zijn geheel weg, en
+   * "de node meldt geen filter" is precies de verkeerde boodschap over een node
+   * waarvan het bericht toevallig een paar buren langer was. Nu krijgt
+   * pf_summary_json() de ruimte die er werkelijk is, vult die met de korte vorm
+   * eerst en daarna met zoveel uitsplitsing als erin past, en zet "trunc":1 als
+   * er iets niet meepaste. Wat er staat klopt dus altijd; alleen de volledigheid
+   * is voorwaardelijk, en dat staat erbij. */
   {
-    char fjson[320];
-    size_t fn = pf_summary_json(fjson, sizeof(fjson));
-    if (fn > 0 && n + fn + 12 < sizeof(body)) {
-      size_t start = n - 1;                 // over de sluitaccolade heen terug
-      int w = snprintf(body + start, sizeof(body) - start, ",\"filter\":%s}", fjson);
-      if (w > 0 && start + (size_t)w < sizeof(body)) {
-        n = start + w;
-      } else {
-        body[n - 1] = '}';                  // paste niet: laat het bericht heel
-      }
+    size_t start = n - 1;                   // over de sluitaccolade heen terug
+    size_t room = (sizeof(body) > start + 16) ? sizeof(body) - start - 16 : 0;
+    int hdr = room ? snprintf(body + start, room, ",\"filter\":") : 0;
+    size_t fn = (hdr > 0) ? pf_summary_json(body + start + hdr, room - hdr, true) : 0;
+    if (fn > 0) {
+      n = start + hdr + fn;
+      n += snprintf(body + n, sizeof(body) - n, "}");
+    } else {
+      body[n - 1] = '}';                    // paste niet eens de korte vorm: laat
+      body[n] = 0;                          // het bericht heel
     }
   }
 
@@ -6804,11 +6890,37 @@ static const CfgParam CFG_PARAMS[] = {
   { "radio.rxgain",          CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
   { "radio.fem.rxgain",      CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
   { "guest.password",        CFG_TEXT,     0,      0, NULL,                          RISK_CUTOFF, 0, 1 },
-  /* Vier getallen tegelijk, en de enige met reboot=1: MeshCore antwoordt hier
-   * "OK - reboot to apply". Het teruglezen laat dus de nieuwe waarden zien
-   * terwijl de radio nog op de oude staat, en pas bij de herstart blijkt of ze
-   * kloppen. Dat is precies het scenario waarin een node niet terugkomt. */
-  { "radio",                 CFG_RADIO,    0,      0, NULL,                          RISK_CUTOFF, 1, 0 },
+  /* 'radio' stond hier tot 2.6.0 en is er met opzet uit. De regel van de
+   * eigenaar luidt: van afstand mag het zendvermogen gewijzigd worden en verder
+   * niets aan de radio -- geen frequentie, geen spreidingsfactor, geen
+   * coderingssnelheid, geen bandbreedte.
+   *
+   * De asymmetrie die die regel draagt: een verkeerde 'tx' maakt een node
+   * zwakker maar bereikbaar, terwijl een verkeerde frequentie of modulatie hem
+   * van de lucht haalt -- hij hoort niemand meer en niemand hoort hem, en er is
+   * geen commando dat dat nog kan terugdraaien omdat er geen weg meer naar
+   * binnen is. Dat is geen risico dat je met een zwaardere bevestiging afkoopt;
+   * het is een risico dat je niet neemt.
+   *
+   * Waarom hier, in de tabel, en niet in de drie schermen. Deze lijst is wat
+   * /api/cfg publiceert, en daarmee tegelijk wat de beheerpagina van de node
+   * tekent, wat de server mag aanbieden, en wat er over LoRa naar een
+   * gemonitorde repeater geschreven kan worden (/api/moncfg). Eén regel weghalen
+   * sluit alle drie tegelijk, en dat kan niet uit elkaar lopen. Drie schermen die
+   * er elk zelf iets van vinden, kunnen dat wel.
+   *
+   * Wat dit kost, en dat hoort erbij: de beheerpagina van de node blijft
+   * bereikbaar over wifi als de radio verkeerd staat -- wifi en LoRa zijn
+   * onafhankelijk -- dus dit was de enige weg die een verkeerde bandbreedte nog
+   * zonder ladder kon rechtzetten. Die weg is nu de seriële kabel of 'set radio'
+   * over de mesh-CLI, zolang die nog draagt.
+   *
+   * De machinerie eromheen (CFG_RADIO, cfgRadioOk(), CFG_RADIO_LO/HI) blijft
+   * staan. Dat is geen vergeten code: het is de controle die er moet zijn op het
+   * moment dat iemand deze regel terugzet, en die wil je niet opnieuw hoeven
+   * schrijven onder tijdsdruk. Terugzetten is deze ene regel:
+   *   { "radio", CFG_RADIO, 0, 0, NULL, RISK_CUTOFF, 1, 0 },
+   */
 };
 #define CFG_PARAM_COUNT ((int)(sizeof(CFG_PARAMS) / sizeof(CFG_PARAMS[0])))
 

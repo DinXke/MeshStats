@@ -71,6 +71,13 @@ CATALOG = {
     "filter_drop_hash":       ("filter", "Weg: padhash te klein", None, 7),
     "filter_drop_channel":    ("filter", "Weg: geblokkeerd kanaal", None, 8),
     "filter_drop_malformed":  ("filter", "Weg: misvormde groepstekst", None, 9),
+    # De druk op de snelheidslimiet, als twee reeksen. Zonder noemer zegt 'de
+    # limiet heeft 12 keer gebeten' niets: 12 van de 4000 vensters is een limiet
+    # die ruim staat, 12 van de 14 is er een die structureel verkeer wegsnijdt,
+    # en het aantal weggegooide pakketten kan in beide gevallen gelijk zijn.
+    # Dezelfde redenering als 'Doorgelaten' naast 'Weggegooid'.
+    "filter_rate_windows":    ("filter", "Snelheidsvensters met verkeer", None, 10),
+    "filter_rate_capped":     ("filter", "Vensters waarin de limiet beet", None, 11),
     # Overig (bekend maar minder prominent)
     "request_successes":      ("other", "Verzoeken gelukt", None, 0),
     "request_failures":       ("other", "Verzoeken mislukt", None, 1),
@@ -122,6 +129,11 @@ CHARTS = [
     # lege grafiek op elke nodepagina zou suggereren dat er iets stuk is op elke
     # node die simpelweg geen filter heeft.
     ("filter", "Pakketfilter (24 u)", ["filter_dropped", "filter_passed"], 24),
+    # De druk op de snelheidslimiet in één frame: hoe vaak beet hij, tegen hoe
+    # vaak hij de kans had. Twee lijnen die uit elkaar lopen betekent een limiet
+    # die ruim staat; twee die tegen elkaar aan kruipen er een die knelt.
+    ("filter_rate", "Snelheidslimiet (24 u)",
+     ["filter_rate_capped", "filter_rate_windows"], 24),
 ]
 
 # Meters (gauges): metric -> (min, max, [(vanaf, kleur), ...])
@@ -172,6 +184,12 @@ DEFAULT_LAYOUT = [
     {"key": "battery", "visible": True},
     {"key": "messages", "visible": True},
     {"key": "airtime", "visible": True},
+    # Het pakketfilter had wel een sectie met tegels en een grafiek, maar stond
+    # niet in deze lijst -- en parse_layout laat alleen door wat in BLOCK_NAMES
+    # staat, dus die tegels zijn nooit op een nodepagina terechtgekomen. Sinds
+    # 2.6.0 staat de uitsplitsing er ook in, en dat is meteen de reden dat het
+    # gemist werd: er was tot nu toe weinig te zien.
+    {"key": "filter", "visible": True},
     {"key": "other", "visible": True},
     {"key": "charts", "visible": True},
     {"key": "map", "visible": True},
@@ -179,8 +197,8 @@ DEFAULT_LAYOUT = [
 ]
 BLOCK_NAMES = {
     "status": "Status", "battery": "Batterij & solar", "messages": "Berichten",
-    "airtime": "Airtime", "other": "Overig", "charts": "Grafieken",
-    "map": "Linkkaart", "neighbors": "Buren",
+    "airtime": "Airtime", "filter": "Pakketfilter", "other": "Overig",
+    "charts": "Grafieken", "map": "Linkkaart", "neighbors": "Buren",
 }
 
 

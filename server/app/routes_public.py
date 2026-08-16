@@ -2,7 +2,8 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from . import auth, commanding, config, db, metrics, rbac, retention, search
+from . import (auth, commanding, config, db, metrics, pktfilter, rbac,
+               retention, search)
 from .templating import templates
 
 router = APIRouter()
@@ -120,6 +121,16 @@ def repeater_page(request: Request, slug: str):
     # configurable block order and history ranges
     layout = metrics.parse_layout(db.get_setting("layout"))
     ranges = metrics.parse_ranges(db.get_setting("history_ranges"))
+
+    # Wie er meekijkt wordt hier bepaald en niet pas onderaan, want de
+    # uitsplitsing van het pakketfilter hangt ervan af: de tellingen per
+    # pakkettype zijn openbaar, de geblokkeerde kanalen niet. Zie
+    # pktfilter.breakdown() voor waar die grens ligt en waarom.
+    session_cookie = request.cookies.get(auth.SESSION_COOKIE, "")
+    ingelogd = auth.read_session(session_cookie)
+    is_admin = ingelogd is not None
+    filter_stats = pktfilter.breakdown(db.filter_state_for(r["id"]), is_admin)
+
     blocks = []
     for item in layout:
         if not item["visible"]:
@@ -133,10 +144,14 @@ def repeater_page(request: Request, slug: str):
             blocks.append({"type": "neighbors"})
         elif key in sections:
             blocks.append({"type": "section", "section": sections[key]})
+        # De uitsplitsing hangt aan het filterblok in plaats van een eigen plek
+        # in de indeling te krijgen: het is dezelfde vraag als de tegels erboven,
+        # alleen uitgesplitst, en twee losse blokken die je uit elkaar kunt
+        # slepen zouden die samenhang alleen maar kunnen breken.
+        if key == "filter" and filter_stats["bekend"]:
+            blocks.append({"type": "filterstats", "stats": filter_stats})
 
     online_row = latest.get("online")
-    session_cookie = request.cookies.get(auth.SESSION_COOKIE, "")
-    ingelogd = auth.read_session(session_cookie)
     # De opvraagknop staat op deze publieke pagina voor wie ingelogd is. Sinds
     # toegang niet meer alles-of-niets is, is "ingelogd" niet meer hetzelfde als
     # "mag deze node uitvragen": iemand kan lezer zijn op deze node, of er
@@ -144,7 +159,6 @@ def repeater_page(request: Request, slug: str):
     # met de reden erbij, zoals overal op deze site -- dus de beslissing reist
     # mee naar de sjabloon in plaats van dat de klik in een 403 eindigt.
     mag_uitvragen = rbac.decide(ingelogd, "node.uitvragen", r) if ingelogd else None
-    is_admin = ingelogd is not None
     return templates.TemplateResponse(request, "repeater.html", {
         "site_name": config.SITE_NAME, "r": r, "blocks": blocks,
         # De naam apart naast de rij, en de template gebruikt uitsluitend deze.

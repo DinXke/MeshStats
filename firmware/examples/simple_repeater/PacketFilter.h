@@ -128,5 +128,18 @@ size_t pf_json(char *out, size_t max);
  *
  * It is sent even when the filter is off, and that is the useful part: 'this
  * node reports no filter' and 'this node runs firmware too old to have one'
- * then look different on the site instead of both looking like silence. */
-size_t pf_summary_json(char *out, size_t max);
+ * then look different on the site instead of both looking like silence.
+ *
+ * 'detail' adds the breakdown: type x reason, the rate-limit pressure per type,
+ * ACL exemptions per type and hits per blocked channel. Only non-zero entries,
+ * so on a node with no filter it costs nothing and on a busy one it stays
+ * proportional to what actually happened.
+ *
+ * WHICH WAY THE DATA TRAVELS, and this is the whole reason the flag exists.
+ * The detail goes over MQTT only -- wifi or LAN, where bandwidth is free. The
+ * settings sweep and the mesh CLI stay exactly as lean as they were, because
+ * there every byte is airtime on a shared band. The short summary above is what
+ * rides in every message; the detail rides along on the same topic when it fits,
+ * and sets "trunc":1 when it did not, because a breakdown that quietly lost half
+ * its rows is worse than one that says so. */
+size_t pf_summary_json(char *out, size_t max, bool detail = false);

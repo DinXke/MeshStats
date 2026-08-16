@@ -445,3 +445,99 @@ def summarise(state_dict: dict | None) -> dict:
         "redenen": redenen,
         "updated": state_dict.get("_updated") or "",
     }
+
+
+def breakdown(state_dict: dict | None, admin: bool = False) -> dict:
+    """De uitsplitsing van wat het filter weggooide (firmware 2.6.0+).
+
+    Wat hier NIET in zit, en waarom dat een keuze is en geen omissie. De site
+    staat publiek. Weggegooide pakketten zijn andermans verkeer, en de grens die
+    dit project daarin al trekt -- zie ``docs/privacy.md`` -- is: geaggregeerde
+    tellers over het GEDRAG VAN DEZE NODE zijn openbaar, want wie merkt dat zijn
+    bericht niet aankomt heeft daar recht op; de REGELTABELLEN zijn beheerders-
+    gereedschap en staan achter een login.
+
+    Deze uitsplitsing valt aan beide kanten van die grens, en wordt daarom
+    gesplitst in plaats van als geheel de ene of de andere kant op geduwd:
+
+    ``xr`` en ``ex``    tellingen per pakkettype. Openbaar. Het pakkettype staat
+                        al op de publieke pakkettenpagina van elk bericht, en er
+                        zit geen identiteit in -- 'ADVERT sneuvelde 40 keer op de
+                        hoplimiet' zegt iets over deze repeater, niet over wie
+                        die adverts uitzond.
+    ``rate``            de druk op de limiet. Openbaar, behalve ``lim``: dat is
+                        de ingestelde waarde, en dus een regel.
+    ``chan``            de hash en het aantal treffers zijn openbaar, het LABEL
+                        niet. Die knip loopt niet tussen 'kanaal' en 'geen
+                        kanaal' maar tussen een meting en een oordeel.
+                        De hash is één byte van sha256(kanaalsleutel), en die
+                        byte staat onversleuteld in élk groepsbericht dat door de
+                        lucht gaat -- iedereen met een ontvanger leest hem mee.
+                        Hem hier verzwijgen beschermt dus niemand, terwijl 'dit
+                        kanaal wordt hier geweerd, 900 keer' precies is wat
+                        iemand nodig heeft die zich afvraagt waarom zijn verkeer
+                        niet aankomt.
+                        Het label is van een andere soort: geen waarneming maar
+                        de naam die ONZE beheerder aan het kanaal van iemand
+                        anders gaf. Het draagt geen informatie die de hash niet
+                        al draagt, en publiceren zou de site een oordeel over een
+                        derde laten herhalen ('spam') waar ze een gedraging van
+                        deze node hoort te melden. Dat hoort achter de login.
+    """
+    leeg = {"bekend": False, "xr": [], "rate": [], "ex": [], "chan": [],
+            "trunc": False}
+    if not state_dict:
+        return leeg
+    stats = state_dict.get("stats")
+    if not isinstance(stats, dict) or not stats:
+        return leeg
+
+    kruis = []
+    for naam, redenen in (stats.get("xr") or {}).items():
+        if not isinstance(redenen, dict):
+            continue
+        totaal = sum(int(v or 0) for v in redenen.values() if isinstance(v, int))
+        if not totaal:
+            continue
+        kruis.append({
+            "type": naam,
+            "totaal": totaal,
+            "redenen": sorted(((DROP_LABELS.get(k, k), int(v)) for k, v in redenen.items()
+                               if isinstance(v, int) and v), key=lambda p: -p[1]),
+        })
+    kruis.sort(key=lambda d: -d["totaal"])
+
+    tempo = []
+    for naam, regel in (stats.get("rate") or {}).items():
+        if not isinstance(regel, dict):
+            continue
+        vensters = int(regel.get("seen") or 0)
+        if not vensters:
+            continue
+        geraakt = int(regel.get("cap") or 0)
+        rij = {"type": naam, "vensters": vensters, "geraakt": geraakt,
+               "piek": int(regel.get("peak") or 0),
+               # Het aandeel is het getal waar het om gaat: 12 op 4000 is een
+               # ruime limiet, 12 op 14 een knellende, en het aantal weggegooide
+               # pakketten kan in beide gevallen gelijk zijn.
+               "aandeel": round(100.0 * geraakt / vensters, 1)}
+        if admin:
+            rij["limiet"] = int(regel.get("lim") or 0)
+        tempo.append(rij)
+    tempo.sort(key=lambda d: -d["aandeel"])
+
+    vrij = sorted(((naam, int(aantal)) for naam, aantal in (stats.get("ex") or {}).items()
+                   if isinstance(aantal, int) and aantal), key=lambda p: -p[1])
+
+    kanalen = []
+    for item in stats.get("chan") or []:
+        if not isinstance(item, dict):
+            continue
+        rij = {"hash": item.get("hash") or "", "hits": int(item.get("hits") or 0)}
+        if admin:
+            rij["label"] = item.get("label") or ""
+        kanalen.append(rij)
+    kanalen.sort(key=lambda d: -d["hits"])
+
+    return {"bekend": True, "xr": kruis, "rate": tempo, "ex": vrij,
+            "chan": kanalen, "trunc": bool(stats.get("trunc"))}

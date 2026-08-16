@@ -191,3 +191,44 @@ def test_nodelijst_noemt_de_rol_en_telt_wat_er_niet_staat(wereld):
     # naam te noemen van wat je niet mag zien.
     assert "1 node(s) worden hier niet getoond" in html
     assert "Tuinnode" not in html
+
+
+def test_de_filteruitsplitsing_lekt_geen_kanaal_op_de_publieke_pagina(wereld, db):
+    """De tellingen per pakkettype zijn openbaar, de geblokkeerde kanalen niet.
+
+    Deze test staat hier en niet bij de eenheidstests van pktfilter.breakdown(),
+    omdat het lek dat ertoe doet in het SJABLOON zit: een tak die per ongeluk
+    ``is_admin`` vergeet, levert geen fout op maar een publieke pagina met de
+    kanaalsleutel van iemand anders erop. Zie docs/privacy.md.
+    """
+    from app import routes_public
+    dak = wereld["dak"]
+    db.upsert_filter_state(dak["id"], {
+        "on": True, "passed": 900, "exempt": 87,
+        "drop": {"hops": 5},
+        "stats": {
+            "xr": {"ADVERT": {"hops": 5}},
+            "rate": {"GRP_TXT": {"seen": 41, "cap": 2, "peak": 20, "lim": 20}},
+            "ex": {"TXT_MSG": 87},
+            "chan": [{"label": "geheimkanaal", "hash": "a3", "hits": 41}],
+        },
+    }, dak["pubkey_prefix"])
+
+    anoniem = tekst(routes_public.repeater_page(
+        verzoek(f"/r/{dak['slug']}", ""), dak["slug"]))
+    # Het blok staat er ook echt. Zonder deze twee bewijst de rest niets: een
+    # sjabloon dat de hele sectie overslaat haalt net zo goed 'geen kanaal'.
+    assert "Weggegooid per pakkettype" in anoniem
+    assert "Druk op de snelheidslimiet" in anoniem
+    assert "ADVERT" in anoniem
+    # De hash mag wel: die staat onversleuteld in elk groepsbericht op de lucht.
+    assert "#a3" in anoniem
+    # Het label is de naam die onze beheerder aan het kanaal van een ander gaf.
+    assert "geheimkanaal" not in anoniem
+    # De ingestelde limiet is een REGEL, en regels staan achter de login.
+    assert ">Limiet<" not in anoniem
+
+    ingelogd = tekst(routes_public.repeater_page(
+        verzoek(f"/r/{dak['slug']}", wereld["koek"]["admin"]), dak["slug"]))
+    assert "geheimkanaal" in ingelogd
+    assert "#a3" in ingelogd

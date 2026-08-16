@@ -618,6 +618,16 @@ FILTER_DROP_METRICS = {
     "misvormd": "filter_drop_malformed",
 }
 
+# De pakkettypes zoals de firmware ze nummert (PacketFilter.cpp, TYPE_NAMES).
+# Hier herhaald en niet uit de payload overgenomen, om dezelfde reden als
+# hierboven: de afzender levert getallen, wij bepalen hoe ze heten.
+PF_TYPE_NAMES = [
+    "REQ", "RESPONSE", "TXT_MSG", "ACK", "ADVERT", "GRP_TXT",
+    "GRP_DATA", "ANON_REQ", "PATH", "TRACE", "MULTIPART", "CONTROL",
+]
+PF_MAX_CHANNELS = 16          # PF_CHAN_MAX in de firmware
+PF_MAX_LABEL = 23             # PF_LABEL_MAX - 1
+
 
 def _num(value):
     """Een teller, of None. Negatieve en onzinnige waarden vallen af."""
@@ -657,6 +667,137 @@ def _filter_metrics(state: dict) -> dict:
     # geen gok op basis van wanneer er weer iets weggegooid werd.
     if isinstance(state.get("on"), bool):
         uit["filter_on"] = 1.0 if state["on"] else 0.0
+
+    # Twee reeksen erbij, en met opzet maar twee. De snelheidslimiet is de enige
+    # regel waarvan de DRUK iets anders zegt dan de dropteller: 'hij heeft in 12
+    # van de 4000 vensters gebeten' betekent iets heel anders dan 'in 3900 van de
+    # 4000', terwijl het aantal weggegooide pakketten hetzelfde kan zijn. De
+    # verhouding tussen deze twee is het cijfer waarmee je besluit of een limiet
+    # bijgesteld moet worden.
+    #
+    # Als reeks en niet als uitsplitsing per type, want twaalf types maal drie
+    # velden zijn zesendertig namen tegen een dak van 128 metrics per bericht en
+    # een FIFO van 1000 rijen per repeater. De verdeling per type staat in de
+    # blob; hier staat het totaal, want dat is wat je in een grafiek wilt zien.
+    rate = state.get("rate")
+    if isinstance(rate, dict):
+        vensters = geraakt = 0.0
+        gezien = False
+        for waarde in list(rate.values())[:len(PF_TYPE_NAMES)]:
+            if not isinstance(waarde, dict):
+                continue
+            seen = _num(waarde.get("seen"))
+            cap = _num(waarde.get("cap"))
+            if seen is None and cap is None:
+                continue
+            gezien = True
+            vensters += seen or 0.0
+            geraakt += cap or 0.0
+        if gezien:
+            uit["filter_rate_windows"] = vensters
+            uit["filter_rate_capped"] = geraakt
+    return uit
+
+
+def _pf_type(sleutel) -> int | None:
+    """"04" -> 4, en alles wat geen bestaand pakkettype is -> None."""
+    if not isinstance(sleutel, str) or not sleutel.isdigit():
+        return None
+    nummer = int(sleutel)
+    return nummer if 0 <= nummer < len(PF_TYPE_NAMES) else None
+
+
+def _filter_breakdown(state: dict) -> dict:
+    """De uitsplitsing uit een filterblok (firmware 2.6.0+), streng nagelopen.
+
+    Dezelfde houding als bij FILTER_DROP_METRICS, en om dezelfde reden: dit komt
+    van een topic waar iedereen met brokergegevens op kan publiceren. Vaste
+    sleutels, vaste grenzen, vaste maximumaantallen. Wat er niet in past wordt
+    genegeerd in plaats van doorgegeven -- een node die onzin stuurt hoort niet
+    te kunnen bepalen wat er in de databank belandt of hoe groot het wordt.
+
+    Wat er NIET gebeurt: hier worden geen metrics van gemaakt. Twaalf types maal
+    zes redenen zijn tweeënzeventig namen, en er is één bericht per paar minuten
+    met een dak van 128 metrics en een FIFO van 1000 rijen per repeater. Dit is
+    een momentopname van een verdeling, en die hoort in de bestaande JSON-blob
+    van repeater_filter -- één rij per repeater, die per definitie niet groeit.
+    """
+    uit: dict = {}
+
+    # type x reden: {"04.hops": 3}
+    xr = state.get("xr")
+    if isinstance(xr, dict):
+        kruis: dict = {}
+        for sleutel, waarde in list(xr.items())[:len(PF_TYPE_NAMES) * len(FILTER_DROP_METRICS)]:
+            if not isinstance(sleutel, str) or "." not in sleutel:
+                continue
+            links, _, reden = sleutel.partition(".")
+            nummer = _pf_type(links)
+            getal = _num(waarde)
+            if nummer is None or reden not in FILTER_DROP_METRICS or getal is None:
+                continue
+            kruis.setdefault(PF_TYPE_NAMES[nummer], {})[reden] = int(getal)
+        if kruis:
+            uit["xr"] = kruis
+
+    # snelheidslimiet: {"05": {"seen":41,"cap":2,"peak":20,"lim":20}}
+    rate = state.get("rate")
+    if isinstance(rate, dict):
+        tempo: dict = {}
+        for sleutel, waarde in list(rate.items())[:len(PF_TYPE_NAMES)]:
+            nummer = _pf_type(sleutel)
+            if nummer is None or not isinstance(waarde, dict):
+                continue
+            regel = {}
+            for veld in ("seen", "cap", "peak", "lim"):
+                getal = _num(waarde.get(veld))
+                if getal is not None:
+                    regel[veld] = int(getal)
+            if regel:
+                tempo[PF_TYPE_NAMES[nummer]] = regel
+        if tempo:
+            uit["rate"] = tempo
+
+    # via de ACL langs het filter, per type
+    ex = state.get("ex")
+    if isinstance(ex, dict):
+        vrij: dict = {}
+        for sleutel, waarde in list(ex.items())[:len(PF_TYPE_NAMES)]:
+            nummer = _pf_type(sleutel)
+            getal = _num(waarde)
+            if nummer is None or getal is None:
+                continue
+            vrij[PF_TYPE_NAMES[nummer]] = int(getal)
+        if vrij:
+            uit["ex"] = vrij
+
+    # geblokkeerde kanalen met hun treffers
+    chan = state.get("chan")
+    if isinstance(chan, list):
+        kanalen = []
+        for item in chan[:PF_MAX_CHANNELS]:
+            if not isinstance(item, dict):
+                continue
+            label = item.get("l")
+            hash_ = item.get("h")
+            treffers = _num(item.get("hits"))
+            if not isinstance(label, str) or not isinstance(hash_, str):
+                continue
+            # Hetzelfde alfabet als labelOk() in de firmware, en dezelfde lengte.
+            label = "".join(c for c in label if c.isalnum() or c in "-_.")[:PF_MAX_LABEL]
+            hash_ = "".join(c for c in hash_.lower() if c in "0123456789abcdef")[:2]
+            if not label or len(hash_) != 2:
+                continue
+            kanalen.append({"label": label, "hash": hash_,
+                            "hits": int(treffers or 0)})
+        if kanalen:
+            uit["chan"] = kanalen
+
+    # De node zegt zelf dat er iets niet meepaste. Overnemen, want een
+    # onvolledige uitsplitsing die zich voordoet als een volledige is precies de
+    # stille fout die dit project niet wil.
+    if state.get("trunc"):
+        uit["trunc"] = True
     return uit
 
 
@@ -693,6 +834,9 @@ def _handle_filter(row, publisher: str, subject: str, state: dict) -> None:
             waarde = _num(drops.get(sleutel))
             if waarde is not None:
                 bewaard["drop"][sleutel] = int(waarde)
+    uitsplitsing = _filter_breakdown(state)
+    if uitsplitsing:
+        bewaard["stats"] = uitsplitsing
     db.upsert_filter_state(row["id"], bewaard, publisher)
 
 

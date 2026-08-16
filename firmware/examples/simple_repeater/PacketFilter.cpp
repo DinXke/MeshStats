@@ -6,6 +6,7 @@
  * gebruikt -- staat in Utils.h, dat MeshCore.h zelf meebrengt. */
 #include <Utils.h>
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,8 +40,13 @@ static const char *REASON_NAMES[PF_REASON_COUNT] = {
 // --------------------------------------------------------------- the state
 
 struct PfChannel {
-  char    label[PF_LABEL_MAX];
-  uint8_t hash;
+  char     label[PF_LABEL_MAX];
+  uint8_t  hash;
+  /* Treffers op deze regel. Niet bewaard in /filter_prefs, net als elke andere
+   * teller hier: het bestand beschrijft wat er GEHANDHAAFD wordt, en een teller
+   * die een herstart overleeft zou zeggen dat er iets gebeurd is sinds een
+   * moment dat niemand kan aanwijzen. */
+  uint32_t hits;
 };
 
 static bool     _enabled = false;
@@ -62,6 +68,31 @@ static uint32_t _drop[PF_REASON_COUNT];
 static uint32_t _drop_type[PF_TYPE_COUNT];
 static uint32_t _passed = 0;
 static uint32_t _exempted = 0;
+
+/* De uitgebreide boekhouding (2.6.0). Alles hieronder reist over MQTT en nooit
+ * over LoRa: MQTT loopt over wifi of LAN, waar bandbreedte niets kost, en de
+ * sweep en de mesh-CLI blijven zuinig omdat daar elke byte zendtijd is. Dat
+ * onderscheid is de enige reden dat dit ruimhartig mag zijn.
+ *
+ * Waarom dit meer zegt dan de zes totalen die er al waren. 'Er is 412 keer iets
+ * weggegooid' vertelt niet welke regel te streng staat. De kruising type x reden
+ * doet dat wel: ADVERT dat op de hoplimiet sneuvelt is een andere diagnose dan
+ * GRP_TXT dat op de snelheidslimiet sneuvelt, en met alleen een totaal zijn die
+ * twee niet uit elkaar te houden.
+ *
+ * Kosten in RAM: 12*7*4 + 12*4*3 + 12*4 = 528 byte. */
+static uint32_t _drop_xr[PF_TYPE_COUNT][PF_REASON_COUNT];  // type x reden
+static uint32_t _exempt_type[PF_TYPE_COUNT];               // via de ACL langs het filter
+
+/* De snelheidslimiet apart, want 'hoe vaak bijt hij' is een andere vraag dan
+ * 'hoeveel is er weggegooid'. Een limiet die nooit bijt staat te ruim en zegt
+ * niets; een limiet die in elk venster bijt staat te krap en gooit structureel
+ * verkeer weg. Het verschil tussen die twee is precies wat je wilt zien voordat
+ * je een getal bijstelt, en het is uit een dropteller niet af te leiden. */
+static uint32_t _win_seen[PF_TYPE_COUNT];    // vensters met minstens één pakket
+static uint32_t _win_capped[PF_TYPE_COUNT];  // vensters waarin de limiet geraakt werd
+static uint16_t _win_peak[PF_TYPE_COUNT];    // hoogste stand die een venster haalde
+static bool     _win_hit[PF_TYPE_COUNT];     // in DIT venster al geteld
 
 static FS   *_pf_fs = nullptr;
 static bool  _dirty = false;
@@ -109,6 +140,13 @@ static void pfDefaults() {
 static void pfClearCounters() {
   memset(_drop, 0, sizeof(_drop));
   memset(_drop_type, 0, sizeof(_drop_type));
+  memset(_drop_xr, 0, sizeof(_drop_xr));
+  memset(_exempt_type, 0, sizeof(_exempt_type));
+  memset(_win_seen, 0, sizeof(_win_seen));
+  memset(_win_capped, 0, sizeof(_win_capped));
+  memset(_win_peak, 0, sizeof(_win_peak));
+  memset(_win_hit, 0, sizeof(_win_hit));
+  for (int i = 0; i < PF_CHAN_MAX; i++) _chans[i].hits = 0;
   _passed = 0;
   _exempted = 0;
 }
@@ -319,9 +357,20 @@ static bool rateAllows(int type) {
   if (_win_start[type] == 0 || (now - _win_start[type]) >= span) {
     _win_start[type] = now;
     _win_count[type] = 0;
+    _win_hit[type] = false;
   }
-  if (_win_count[type] >= limit) return false;
+  /* Een venster telt pas mee als er verkeer in zat. Anders zou een stille nacht
+   * duizenden 'ruime' vensters opleveren en zou de verhouding tussen krap en
+   * ruim alleen nog zeggen hoe lang de node aan stond. */
+  if (_win_count[type] == 0) _win_seen[type]++;
+  if (_win_count[type] >= limit) {
+    // Eén keer per venster, niet één keer per geweigerd pakket: de vraag is in
+    // hoeveel vensters de limiet geraakt werd, niet hoe diep hij overschreden is.
+    if (!_win_hit[type]) { _win_hit[type] = true; _win_capped[type]++; }
+    return false;
+  }
   _win_count[type]++;
+  if (_win_count[type] > _win_peak[type]) _win_peak[type] = _win_count[type];
   return true;
 }
 
@@ -331,10 +380,17 @@ bool pf_allow(uint8_t payload_type, uint8_t hash_count, uint8_t hash_size,
               const uint8_t *payload, int payload_len, bool exempt) {
   if (!_enabled) return true;
   if (payload_type >= PF_TYPE_COUNT) return true;   // 0x0F RAW_CUSTOM and friends
-  if (exempt) { _exempted++; return true; }
 
   int t = (int)payload_type;
+  /* Ook per type geteld, en dat is het cijfer waarmee je merkt dat een filter
+   * strenger staat dan je dacht: alles wat hier langskomt is verkeer dat de
+   * regels WEL geraakt zou hebben en er via de ACL langs mocht. Staat dat getal
+   * hoog naast een lage 'passed', dan werkt het filter vooral voor de mensen die
+   * er toch al buiten vielen. */
+  if (exempt) { _exempted++; _exempt_type[t]++; return true; }
+
   uint8_t reason = PF_PASS;
+  int chan_idx = -1;
 
   /* Order is deliberate and differs from the order the rules are documented in.
    * The cheap, absolute tests come first, and the rate limit comes LAST -- a
@@ -351,7 +407,7 @@ bool pf_allow(uint8_t payload_type, uint8_t hash_count, uint8_t hash_size,
     reason = PF_R_MALFORMED;
   } else if (t == GRP_TXT_TYPE && _n_chans > 0 && payload_len >= 1) {
     for (int i = 0; i < _n_chans; i++) {
-      if (_chans[i].hash == payload[0]) { reason = PF_R_CHANNEL; break; }
+      if (_chans[i].hash == payload[0]) { reason = PF_R_CHANNEL; chan_idx = i; break; }
     }
   }
   if (reason == PF_PASS && !rateAllows(t)) reason = PF_R_RATE;
@@ -359,6 +415,10 @@ bool pf_allow(uint8_t payload_type, uint8_t hash_count, uint8_t hash_size,
   if (reason == PF_PASS) { _passed++; return true; }
   _drop[reason]++;
   _drop_type[t]++;
+  _drop_xr[t][reason]++;
+  // Welke regel raakte, en niet alleen dat er een kanaalregel raakte. Met zestien
+  // mogelijke regels is 'kanaal: 900' geen aanwijzing en 'spam: 900' wel.
+  if (chan_idx >= 0) _chans[chan_idx].hits++;
   return false;
 }
 
@@ -403,7 +463,28 @@ size_t pf_json(char *out, size_t max) {
   return (size_t)p;
 }
 
-size_t pf_summary_json(char *out, size_t max) {
+/* Bijschrijven dat nooit buiten de buffer komt, hoeveel er ook nog aangeboden
+ * wordt. Zonder dit hangt de veiligheid aan de vraag of de gereserveerde staart
+ * groot genoeg was voor alle sluittekens die er nog aan komen -- en die vraag
+ * moet je bij élke wijziging opnieuw goed beantwoorden. Eén keer verkeerd en
+ * 'p' staat voorbij 'max', waarna (max - p) als size_t een enorm getal is en de
+ * volgende snprintf buiten de buffer schrijft. Hier is 'vol' gewoon een
+ * toestand: er wordt niets meer bijgeschreven en p blijft op max staan.
+ *
+ * De standaardwaarde van 'detail' staat in de header, niet hier -- C++ laat hem
+ * maar op één plek toe. */
+static void pfAppend(char *out, int *p, size_t max, const char *fmt, ...) {
+  if (*p < 0 || (size_t)*p >= max) { *p = (int)max; return; }
+  va_list ap;
+  va_start(ap, fmt);
+  int w = vsnprintf(out + *p, max - *p, fmt, ap);
+  va_end(ap);
+  if (w < 0) { *p = (int)max; return; }
+  *p += w;
+  if ((size_t)*p >= max) *p = (int)max;
+}
+
+size_t pf_summary_json(char *out, size_t max, bool detail) {
   int blocked = 0;
   for (int i = 0; i < PF_TYPE_COUNT; i++) if (!_type_on[i] || _max_hops[i] == 0) blocked++;
 
@@ -420,7 +501,88 @@ size_t pf_summary_json(char *out, size_t max) {
                   REASON_NAMES[i], (unsigned long)_drop[i]);
     if (p <= 0 || (size_t)p >= max) return 0;
   }
-  p += snprintf(out + p, max - p, "}}");
+  p += snprintf(out + p, max - p, "}");
+  if (p <= 0 || (size_t)p >= max) return 0;
+
+  /* Vanaf hier is afkappen géén reden om het hele bericht weg te gooien: de
+   * korte vorm hierboven staat er al, en die is wat de site nodig heeft om te
+   * weten dat er een filter aanstaat. Wat hieronder niet past, wordt gemeld met
+   * "trunc":1 in plaats van stilletjes weggelaten -- een uitsplitsing die de
+   * helft van haar rijen kwijt is, is erger dan een die zegt dat ze dat is.
+   *
+   * TAIL is de ruimte die tot het eind gereserveerd blijft: de vier sluittekens
+   * van de deelobjecten, ,"trunc":1, de sluitaccolade en de NUL. ENTRY is de
+   * langste regel die één lus kan schrijven -- een kanaal met een label van 23
+   * tekens. Vóór elke regel wordt op ENTRY + TAIL getoetst, dus 'p' kan nooit
+   * voorbij 'max' komen. Dat is niet theoretisch: zou p over max heen gaan, dan
+   * is (max - p) als size_t een enorm getal en schrijft de volgende snprintf
+   * vrolijk buiten de buffer. */
+  if (detail && max > 240) {
+    const size_t TAIL = 64;
+    const size_t ENTRY = 64;
+    bool cut = false, first = true;
+
+    // type x reden, alleen wat werkelijk geteld is
+    pfAppend(out, &p, max, ",\"xr\":{");
+    for (int t = 0; t < PF_TYPE_COUNT && !cut; t++) {
+      for (int r = 1; r < PF_REASON_COUNT; r++) {
+        if (_drop_xr[t][r] == 0) continue;
+        if ((size_t)p + ENTRY + TAIL > max) { cut = true; break; }
+        pfAppend(out, &p, max, "%s\"%02d.%s\":%lu", first ? "" : ",",
+                      t, REASON_NAMES[r], (unsigned long)_drop_xr[t][r]);
+        first = false;
+      }
+    }
+    pfAppend(out, &p, max, "}");
+
+    /* De snelheidslimiet: hoe vaak bijt hij, en hoe ruim zat hij. Alleen types
+     * met een limiet én met verkeer -- een venster zonder pakketten zegt niets
+     * en zou de verhouding alleen maar verdunnen. */
+    pfAppend(out, &p, max, ",\"rate\":{");
+    first = true;
+    for (int t = 0; t < PF_TYPE_COUNT && !cut; t++) {
+      if (_rate_limit[t] == 0 || _win_seen[t] == 0) continue;
+      if ((size_t)p + ENTRY + TAIL > max) { cut = true; break; }
+      pfAppend(out, &p, max,
+               "%s\"%02d\":{\"seen\":%lu,\"cap\":%lu,\"peak\":%u,\"lim\":%u}",
+               first ? "" : ",", t, (unsigned long)_win_seen[t],
+               (unsigned long)_win_capped[t], (unsigned)_win_peak[t],
+               (unsigned)_rate_limit[t]);
+      first = false;
+    }
+    pfAppend(out, &p, max, "}");
+
+    // Langs het filter via de ACL, per type
+    pfAppend(out, &p, max, ",\"ex\":{");
+    first = true;
+    for (int t = 0; t < PF_TYPE_COUNT && !cut; t++) {
+      if (_exempt_type[t] == 0) continue;
+      if ((size_t)p + ENTRY + TAIL > max) { cut = true; break; }
+      pfAppend(out, &p, max, "%s\"%02d\":%lu", first ? "" : ",",
+                    t, (unsigned long)_exempt_type[t]);
+      first = false;
+    }
+    pfAppend(out, &p, max, "}");
+
+    /* Treffers per geblokkeerd kanaal. Het label is een lokale bijnaam van de
+     * beheerder en de hash is wat er werkelijk op de lucht staat; beide gaan mee,
+     * zodat de ontvangende kant kan kiezen wat ze toont -- en die kiest het label
+     * en de hash achter een login, want dit is het enige veld hier dat over het
+     * kanaal van iemand anders gaat in plaats van over het gedrag van deze node. */
+    pfAppend(out, &p, max, ",\"chan\":[");
+    for (int i = 0; i < _n_chans && !cut; i++) {
+      if ((size_t)p + ENTRY + TAIL > max) { cut = true; break; }
+      pfAppend(out, &p, max, "%s{\"l\":\"%s\",\"h\":\"%02x\",\"hits\":%lu}",
+                    i ? "," : "", _chans[i].label, (unsigned)_chans[i].hash,
+                    (unsigned long)_chans[i].hits);
+    }
+    pfAppend(out, &p, max, "]");
+
+    if (cut) pfAppend(out, &p, max, ",\"trunc\":1");
+    if (p <= 0 || (size_t)p >= max) return 0;
+  }
+
+  p += snprintf(out + p, max - p, "}");
   if (p <= 0 || (size_t)p >= max) return 0;
   return (size_t)p;
 }

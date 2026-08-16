@@ -455,3 +455,155 @@ def test_de_weg_terug_staat_er_ook_als_er_geen_schrijfweg_is():
                                  "relayed": True})
     assert "filter off" in html
     assert "mesh-CLI" in html
+
+
+# --- de uitsplitsing (firmware 2.6.0+) ----------------------------------------
+
+def _blok(**extra):
+    """Een filterblok zoals de firmware het publiceert, met uitsplitsing."""
+    blok = {
+        "on": True, "passed": 900, "exempt": 87,
+        "drop": {"hops": 5, "rate": 2},
+        "xr": {"04.hops": 5, "05.rate": 2},
+        "rate": {"05": {"seen": 41, "cap": 2, "peak": 20, "lim": 20}},
+        "ex": {"02": 87},
+        "chan": [{"l": "spam", "h": "a3", "hits": 41}],
+    }
+    blok.update(extra)
+    return blok
+
+
+def test_de_uitsplitsing_wordt_op_naam_gebracht_en_niet_op_nummer():
+    """De node stuurt typenummers; de namen komen uit onze eigen tabel.
+
+    Dezelfde regel als bij FILTER_DROP_METRICS: de afzender levert getallen, wij
+    bepalen hoe ze heten. Anders bepaalt een vreemde publisher welke sleutels er
+    in de databank verschijnen.
+    """
+    from app import mqtt_ingest
+    uit = mqtt_ingest._filter_breakdown(_blok())
+    assert uit["xr"] == {"ADVERT": {"hops": 5}, "GRP_TXT": {"rate": 2}}
+    assert uit["ex"] == {"TXT_MSG": 87}
+    assert uit["rate"]["GRP_TXT"]["cap"] == 2
+
+
+@pytest.mark.parametrize("rommel", [
+    {"xr": {"99.hops": 5}},                    # bestaat niet als pakkettype
+    {"xr": {"04.onzin": 5}},                   # bestaat niet als reden
+    {"xr": {"04.hops": -1}},                   # negatieve teller
+    {"xr": {"04.hops": "veel"}},               # geen getal
+    {"xr": "helemaal geen dict"},
+    {"rate": {"05": "geen dict"}},
+    {"ex": {"04": None}},
+    {"chan": "geen lijst"},
+])
+def test_rommel_in_de_uitsplitsing_wordt_stil_genegeerd(rommel):
+    """Iedereen met brokergegevens kan op dit topic publiceren."""
+    from app import mqtt_ingest
+    leeg = {"on": True, "drop": {}}
+    leeg.update(rommel)
+    uit = mqtt_ingest._filter_breakdown(leeg)
+    for sleutel in ("xr", "rate", "ex", "chan"):
+        assert not uit.get(sleutel), f"{sleutel} had leeg moeten blijven"
+
+
+def test_de_uitsplitsing_kan_niet_onbeperkt_groeien():
+    """Een node die duizend kanalen meldt, krijgt er zestien opgeslagen."""
+    from app import mqtt_ingest
+    uit = mqtt_ingest._filter_breakdown({
+        "chan": [{"l": f"k{i}", "h": "a3", "hits": 1} for i in range(500)],
+        "ex": {f"{i:02d}": 1 for i in range(99)},
+    })
+    assert len(uit["chan"]) == mqtt_ingest.PF_MAX_CHANNELS
+    assert len(uit["ex"]) <= len(mqtt_ingest.PF_TYPE_NAMES)
+
+
+def test_een_kanaallabel_wordt_geschoond_en_niet_vertrouwd():
+    """Het label komt van een node en belandt in HTML."""
+    from app import mqtt_ingest
+    uit = mqtt_ingest._filter_breakdown({
+        "chan": [{"l": "<script>x</script>" + "a" * 60, "h": "A3", "hits": 1}],
+    })
+    kanaal = uit["chan"][0]
+    assert "<" not in kanaal["label"] and ">" not in kanaal["label"]
+    assert len(kanaal["label"]) <= mqtt_ingest.PF_MAX_LABEL
+    assert kanaal["hash"] == "a3"
+
+
+def test_de_druk_op_de_snelheidslimiet_wordt_een_reeks_met_een_noemer():
+    """'12 keer gebeten' zegt niets zonder 'van hoeveel vensters'.
+
+    Twee reeksen en niet zesendertig: per type maal drie velden zou het dak van
+    128 metrics per bericht en de FIFO van 1000 rijen per repeater opeten. De
+    verdeling per type staat in de blob, het totaal in de grafiek.
+    """
+    from app import mqtt_ingest
+    mets = mqtt_ingest._filter_metrics(_blok())
+    assert mets["filter_rate_windows"] == 41
+    assert mets["filter_rate_capped"] == 2
+
+
+def test_zonder_uitsplitsing_komen_er_geen_snelheidsreeksen():
+    """Oudere firmware stuurt geen 'rate', en dan hoort er geen nul te staan.
+
+    Een nul zou beweren dat er nul vensters waren; er is simpelweg niets gemeld.
+    """
+    from app import mqtt_ingest
+    mets = mqtt_ingest._filter_metrics({"on": True, "drop": {"hops": 1}})
+    assert "filter_rate_windows" not in mets
+    assert "filter_rate_capped" not in mets
+
+
+def test_van_een_geblokkeerd_kanaal_is_de_hash_openbaar_en_het_label_niet():
+    """De knip loopt tussen een meting en een oordeel, niet tussen wel en niet.
+
+    De hash is een byte van sha256(kanaalsleutel), en die byte staat
+    onversleuteld in elk groepsbericht dat door de lucht gaat: verzwijgen
+    beschermt niemand, en 'dit kanaal wordt hier geweerd' is juist wat iemand
+    nodig heeft die zich afvraagt waarom zijn verkeer niet aankomt. Het label is
+    de naam die ONZE beheerder aan het kanaal van een ander gaf -- geen
+    waarneming, en het draagt niets wat de hash niet al draagt.
+    """
+    stand = {"stats": {"xr": {"ADVERT": {"hops": 5}},
+                       "chan": [{"label": "spam", "hash": "a3", "hits": 41}],
+                       "rate": {"GRP_TXT": {"seen": 41, "cap": 2, "lim": 20}}}}
+    publiek = pktfilter.breakdown(stand, admin=False)
+    beheer = pktfilter.breakdown(stand, admin=True)
+
+    assert publiek["chan"][0]["hash"] == "a3"
+    assert publiek["chan"][0]["hits"] == 41
+    assert "label" not in publiek["chan"][0]
+    assert beheer["chan"][0]["label"] == "spam"
+    # De ingestelde limiet is een REGEL, en regels staan achter de login.
+    assert "limiet" not in publiek["rate"][0]
+    assert beheer["rate"][0]["limiet"] == 20
+    # Wat wel openbaar is, is voor allebei gelijk.
+    assert publiek["xr"] == beheer["xr"]
+
+
+def test_het_aandeel_maakt_een_ruime_limiet_zichtbaar_naast_een_knellende():
+    stand = {"stats": {"rate": {
+        "GRP_TXT": {"seen": 4000, "cap": 12, "peak": 20},
+        "ADVERT": {"seen": 14, "cap": 12, "peak": 10},
+    }}}
+    uit = pktfilter.breakdown(stand)
+    op_naam = {r["type"]: r for r in uit["rate"]}
+    assert op_naam["GRP_TXT"]["aandeel"] == 0.3
+    assert op_naam["ADVERT"]["aandeel"] == 85.7
+    # De knellendste staat bovenaan, want dat is de regel die aandacht vraagt.
+    assert uit["rate"][0]["type"] == "ADVERT"
+
+
+def test_een_afgekapte_uitsplitsing_zegt_dat_ze_afgekapt_is():
+    """Een onvolledige uitsplitsing die zich voordoet als volledige is de stille
+    fout die dit project niet wil."""
+    from app import mqtt_ingest
+    uit = mqtt_ingest._filter_breakdown(_blok(trunc=1))
+    assert uit["trunc"] is True
+    assert pktfilter.breakdown({"stats": uit})["trunc"] is True
+
+
+def test_een_node_zonder_uitsplitsing_geeft_een_leeg_maar_geldig_antwoord():
+    """Firmware ouder dan 2.6.0 meldt geen uitsplitsing, en dat is geen fout."""
+    assert pktfilter.breakdown(None)["bekend"] is False
+    assert pktfilter.breakdown({"on": True, "drop": {"hops": 3}})["bekend"] is False

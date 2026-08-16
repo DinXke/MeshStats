@@ -178,6 +178,37 @@ De instellingen staan in `/filter_prefs` op het bestandssysteem van de node zelf
 en overleven een herstart. Ze worden lui weggeschreven — een reeks wijzigingen
 kost één schrijfronde en geen tien, want SPIFFS slijt.
 
+## Wat het telt, en welke weg die getallen nemen
+
+Sinds firmware **2.6.0** telt het filter niet alleen *hoeveel* het weggooide maar
+*wat*: de kruising pakkettype × reden, de druk op elke snelheidslimiet (vensters
+met verkeer, vensters waarin de limiet beet, de piek), de vrijstellingen via de
+ACL per type, en de treffers per geblokkeerd kanaal.
+
+**Welke weg de gegevens nemen is het ontwerp en geen detail.** Al het
+bovenstaande gaat **uitsluitend over MQTT** — wifi of LAN, waar bandbreedte niets
+kost. De instellingensweep en de mesh-CLI blijven exact zo zuinig als ze waren,
+want daar is elke byte zendtijd op een gedeelde band. De korte vorm van ~160 byte
+die in elk statistiekenbericht meereist is onveranderd; de uitsplitsing komt
+erachteraan en kost in de praktijk ongeveer 130 byte, in het volst denkbare geval
+2,6 kB. Past ze niet, dan zet de node `"trunc":1` in plaats van stilletjes rijen
+weg te laten.
+
+Op de server wordt de uitsplitsing **geen** metric. Twaalf types maal zes redenen
+zijn tweeënzeventig namen, tegen een dak van 128 metrics per bericht en een FIFO
+van 1000 rijen per repeater — en het is een momentopname van een verdeling, geen
+reeks. Ze gaat in de bestaande JSON-blob van `repeater_filter`: één rij per
+repeater, die per definitie niet groeit. Alleen de druk op de snelheidslimiet
+wordt een reeks, als `filter_rate_windows` en `filter_rate_capped`, want daar is
+het verloop juist de vraag.
+
+Waar je het ziet: het blok **Filter: uitsplitsing** op de publieke pagina van een
+node. Wat openbaar is en wat achter de login staat — en waarom — staat in
+[`privacy.md`](privacy.md#3-wat-het-pakketfilter-zegt-over-andermans-verkeer).
+Kort: tellingen en verdelingen beschrijven deze repeater en zijn openbaar; de
+ingestelde limieten en de kanaallabels zijn beheerdersgereedschap en niet; en er
+is op geen enkel toegangsniveau een verslag per pakket van wie er geweigerd is.
+
 ## De weg terug
 
 Een filter is precies het soort instelling dat een node nutteloos maakt zonder

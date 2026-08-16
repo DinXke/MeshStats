@@ -769,9 +769,24 @@ wordt de bediening waarin een ongeldige waarde niet uit te drukken is:
 | `bool` | een keuzelijst met twee opties, `on` / `off` — letterlijk de woorden waarmee MeshCore vergelijkt |
 | `enum` | een keuzelijst uit `choices`, met de huidige waarde geselecteerd |
 | `int` / `float` | `<input type=number>` met de eigen `min`/`max` van die parameter, `step=1` of `step=any` |
-| `radio` | **vier** getalvelden met elk hun eigen grenzen, uit `choices` (`freq:150-2500\|bw:7-500\|sf:5-12\|cr:5-8`), bij het opslaan samengevoegd met spaties |
+| `radio` | *wordt niet meer aangeboden* — zie de noot hieronder. De weergave met vier velden en hun grenzen zit nog in de pagina en in `choices`, dus terugzetten kost geen werk aan de bediening |
 | tekst, `secret=1` | `type=password`, nooit voorgevuld |
 | tekst | gewoon invoerveld, `maxlength=39` |
+
+> **`radio` is er sinds 2.6.0 uit, en dat is een regel en geen omissie.** Van
+> afstand mag het zendvermogen gewijzigd worden en verder niets aan de radio:
+> geen frequentie, geen spreidingsfactor, geen coderingssnelheid, geen
+> bandbreedte. Een verkeerde `tx` maakt een node zwakker maar bereikbaar; een
+> verkeerde frequentie of modulatie haalt hem van de lucht — hij hoort niemand
+> meer en niemand hoort hem, en geen enkel commando draait dat terug omdat er
+> geen weg meer naar binnen is. Dat koop je niet af met een zwaardere
+> bevestiging. De regel wordt afgedwongen door de regel uit `CFG_PARAMS` te
+> halen, wat deze pagina, de schrijfweg van de server én de weg over LoRa naar
+> een gemonitorde repeater in één keer sluit, in plaats van door drie schermen
+> die er elk zelf iets van vinden. Wat het kost, hardop gezegd: deze pagina
+> blijft over wifi bereikbaar als de radio verkeerd staat (wifi en LoRa zijn
+> onafhankelijk), dus dit was de laatste weg die een verkeerde bandbreedte nog
+> zonder ladder kon rechtzetten. Dat is nu de seriële kabel of de mesh-CLI.
 
 Elk veld is voorgevuld met wat er nu in de node staat, zodat "zet dit op wat het
 al is" met één klik een proefrit is over de hele schrijfweg. De vier radiovelden

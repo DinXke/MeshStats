@@ -126,7 +126,43 @@ and could not tell which physical node a page full of buttons belongs to.
 
 ---
 
-## 3. Saying so out loud
+## 3. What the packet filter says about other people's traffic
+
+A repeater with a packet filter refuses to forward some of what it hears. It
+counts what it refused, and since firmware 2.6.0 it counts it in some detail.
+That detail needs its own section, because unlike everything in §1 it is not
+derived from an advert. An advert is identity a node broadcast about itself; a
+drop is something that happened to somebody else's packet.
+
+The line runs between **a measurement of this repeater's behaviour** and **a
+record of a particular person's traffic**.
+
+| Data | Where | Why |
+|---|---|---|
+| Totals: dropped, passed, ACL-exempt, filter on/off | **public** | Public before 2.6.0 already. A repeater with a filter on stops forwarding other people's traffic, and the people who notice are precisely the ones who cannot log in |
+| Drops per reason | **public** | Same: it describes the repeater |
+| Drops per packet type, and per type × reason | **public** | The packet type of every message is already public on the packets page. "ADVERT was dropped 40 times on the hop limit" says something about this repeater, not about who sent those adverts |
+| Rate-limit pressure: windows with traffic, windows where the limit bit, peak | **public** | A drop counter without a denominator is not a measurement. 12 in 4000 windows is a limit set generously; 12 in 14 is one cutting into ordinary traffic — and the number of dropped packets can be identical |
+| The configured limit itself | **admin** | A rule, not an observation. Rule tables have sat behind the login since 2.3.0 |
+| Blocked channel: hash and hit count | **public** | The hash is one byte of `sha256(channel_key)`, and that byte travels unencrypted in every group message on the air. Withholding it protects nobody, while "this channel is refused here, 900 times" is exactly what somebody needs who wonders why their traffic does not arrive |
+| Blocked channel: the label | **admin** | Not an observation but the name *our* operator gave to *someone else's* channel. It carries nothing the hash does not, and publishing it would have the site repeat a judgement about a third party where it should report a behaviour of this node |
+| Which packet was dropped: sender, timestamp, the individual event | **does not exist** | See below |
+
+**No per-packet drop record is kept, at any access level.** The firmware counts;
+it does not log. There is no table of refused packets, no sender attached to a
+drop, no timestamp per event. That is not a gap waiting to be filled: a repeater
+recording who it refused and when would be keeping a log of other people's
+communications, which is a different kind of thing from counting its own
+behaviour. The counters also do not survive a restart, so they say "since this
+node last started" and never "ever".
+
+That bounds what an operator learns from their own node too. The admin view adds
+the rule values and the channel labels — their own configuration — and nothing
+about individuals.
+
+---
+
+## 4. Saying so out loud
 
 A node that disappears from a view because of a visibility choice is counted and
 reported. This site treats a silent omission as a lie told slowly, and the rule
@@ -145,7 +181,7 @@ make the first sentence untrue.
 
 ---
 
-## 4. How it is enforced
+## 5. How it is enforced
 
 One view, `visible_contacts`, created in `db._migrate()` after the columns
 exist. It is `contacts` with the name, latitude, longitude and country passed
@@ -166,7 +202,7 @@ the defaults leave every one of those endpoints exactly as it was.
 
 ---
 
-## 5. Related reading
+## 6. Related reading
 
 - [`security.md`](security.md) — the threat model this sits inside
 - [`database.md`](database.md) — the columns and the view

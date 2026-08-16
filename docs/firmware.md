@@ -741,9 +741,22 @@ that cannot express an invalid value:
 | `bool` | a two-option select, `on` / `off` — the literal words MeshCore compares against |
 | `enum` | a select built from `choices`, current value selected |
 | `int` / `float` | `<input type=number>` with that parameter's own `min`/`max`, `step=1` or `step=any` |
-| `radio` | **four** number fields with their own bounds, from `choices` (`freq:150-2500\|bw:7-500\|sf:5-12\|cr:5-8`), joined with spaces on submit |
+| `radio` | *no longer offered* — see the note below. The four-field rendering and its bounds are still in the page and in `choices`, so re-adding the parameter needs no UI work |
 | text, `secret=1` | `type=password`, never pre-filled |
 | text | plain input, `maxlength=39` |
+
+> **`radio` is er sinds 2.6.0 uit, en dat is een regel en geen omissie.** From
+> a distance the transmit power may be changed and nothing else about the radio:
+> no frequency, no spreading factor, no coding rate, no bandwidth. A wrong `tx`
+> makes a node weaker but reachable; a wrong frequency or modulation takes it off
+> the air — it hears nobody and nobody hears it, and no command undoes that
+> because there is no way in left. That is not a risk you buy off with a heavier
+> confirmation. The rule is enforced by removing the row from `CFG_PARAMS`, which
+> closes this page, the server's write path and the over-LoRa path to a monitored
+> repeater in one move, rather than by three screens each deciding for themselves.
+> The cost, said out loud: this page stays reachable over WiFi when the radio is
+> wrong (WiFi and LoRa are independent), so it was the last path that could fix a
+> wrong bandwidth without a ladder. That is now the serial cable or the mesh CLI.
 
 Every field is pre-filled with what the node currently holds, so "set this to what
 it already is" is a one-click dry run over the whole write path. The four radio

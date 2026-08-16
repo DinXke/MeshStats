@@ -172,6 +172,36 @@ Settings live in `/filter_prefs` on the node's own filesystem and survive a
 restart. They are written lazily — a burst of changes costs one write, not ten,
 because SPIFFS wears out.
 
+## What it counts, and where those numbers go
+
+Since firmware **2.6.0** the filter counts not only *how much* it dropped but
+*what*: the cross of packet type × reason, the pressure on each rate limit
+(windows with traffic, windows where the limit bit, the peak), ACL exemptions per
+type, and hits per blocked channel.
+
+**Which way the data travels is the design, not a detail.** All of the above goes
+over **MQTT only** — WiFi or LAN, where bandwidth costs nothing. The settings
+sweep and the mesh CLI stay exactly as lean as they were, because there every
+byte is airtime on a shared band. The ~160-byte short form that rides in every
+statistics message is unchanged; the breakdown follows it and costs about 130
+bytes in practice, 2.6 kB in the fullest case imaginable. If it does not fit, the
+node sets `"trunc":1` rather than dropping rows silently.
+
+On the server the breakdown does **not** become metrics. Twelve types by six
+reasons is seventy-two names, against a ceiling of 128 metrics per message and a
+FIFO of 1000 rows per repeater — and it is a snapshot of a distribution, not a
+series. It is stored in the existing `repeater_filter` JSON blob: one row per
+repeater, which by definition cannot grow. Only the rate-limit pressure becomes a
+series, as `filter_rate_windows` and `filter_rate_capped`, because there the
+trend is the question.
+
+Where to see it: the **Filter: uitsplitsing** block on a node's public page. What
+is public and what sits behind the login — and why — is in
+[`privacy.md`](privacy.md#3-what-the-packet-filter-says-about-other-peoples-traffic).
+In short: counts and distributions describe this repeater and are public; the
+configured limits and the channel labels are operator's tooling and are not; and
+there is no per-packet record of who was refused, at any access level.
+
 ## The way back
 
 A filter is the kind of setting that makes a node useless without making it

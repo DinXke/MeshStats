@@ -92,6 +92,108 @@
   </div>
 </section>
 
+{% elif b.type == "filterstats" %}
+{#- De uitsplitsing van het pakketfilter. Alles hier is per pakkettype geteld en
+    gaat over het gedrag van DEZE node; de geblokkeerde kanalen staan er alleen
+    voor wie ingelogd is, want een kanaalhash is een stuk van de sleutel van
+    iemand anders. Zie pktfilter.breakdown() en docs/privacy.md. -#}
+<section class="collapsible" data-ckey="filterstats">
+  <h2 class="sec-toggle"><span data-i18n="block.filterstats">Filter: uitsplitsing</span> <span class="sec-chev">&#9662;</span></h2>
+  <div class="sec-body">
+    {% if b.stats.trunc %}
+    <p class="muted small" data-i18n="filter.trunc">De node meldde dat deze uitsplitsing niet volledig in het bericht paste. Wat er staat klopt; het is alleen niet alles.</p>
+    {% endif %}
+
+    {% if b.stats.xr %}
+    <div class="card">
+      <h3 data-i18n="filter.perType">Weggegooid per pakkettype</h3>
+      <table class="tbl">
+        <thead><tr><th data-i18n="filter.type">Type</th><th data-i18n="filter.total">Totaal</th><th data-i18n="filter.why">Waarop</th></tr></thead>
+        <tbody>
+        {% for rij in b.stats.xr %}
+          <tr>
+            <td class="mono">{{ rij.type }}</td>
+            <td class="mono">{{ rij.totaal }}</td>
+            <td class="small">{% for label, aantal in rij.redenen %}{{ label }} ({{ aantal }}){{ ", " if not loop.last }}{% endfor %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if b.stats.rate %}
+    <div class="card">
+      <h3 data-i18n="filter.ratePressure">Druk op de snelheidslimiet</h3>
+      <p class="muted small" data-i18n="filter.rateHint">Hoe vaak de limiet werkelijk beet, tegenover hoe vaak hij de kans had. Een laag aandeel is een limiet die ruim staat; een hoog aandeel er een die structureel verkeer wegsnijdt.</p>
+      <table class="tbl">
+        <thead><tr>
+          <th data-i18n="filter.type">Type</th>
+          <th data-i18n="filter.windows">Vensters</th>
+          <th data-i18n="filter.bit">Beet</th>
+          <th data-i18n="filter.share">Aandeel</th>
+          <th data-i18n="filter.peak">Piek</th>
+          {% if is_admin %}<th data-i18n="filter.limit">Limiet</th>{% endif %}
+        </tr></thead>
+        <tbody>
+        {% for rij in b.stats.rate %}
+          <tr>
+            <td class="mono">{{ rij.type }}</td>
+            <td class="mono">{{ rij.vensters }}</td>
+            <td class="mono">{{ rij.geraakt }}</td>
+            <td class="mono">{{ rij.aandeel }}%</td>
+            <td class="mono">{{ rij.piek }}</td>
+            {% if is_admin %}<td class="mono">{{ rij.limiet }}</td>{% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if b.stats.ex %}
+    <div class="card">
+      <h3 data-i18n="filter.exempt">Via de access list langs het filter</h3>
+      <p class="muted small" data-i18n="filter.exemptHint">Verkeer dat de regels geraakt zou hebben en er via de access list langs mocht. Staat dit hoog naast een lage &lsquo;Doorgelaten&rsquo;, dan werkt het filter vooral voor wie er toch al buiten viel.</p>
+      <table class="tbl">
+        <thead><tr><th data-i18n="filter.type">Type</th><th data-i18n="filter.count">Aantal</th></tr></thead>
+        <tbody>
+        {% for naam, aantal in b.stats.ex %}
+          <tr><td class="mono">{{ naam }}</td><td class="mono">{{ aantal }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if b.stats.chan %}
+    <div class="card">
+      <h3 data-i18n="filter.channels">Geblokkeerde kanalen</h3>
+      <p class="muted small" data-i18n="filter.channelsHint">Een repeater ziet geen kanaalnaam, alleen &eacute;&eacute;n byte: sha256(sleutel)[0]. Die byte staat onversleuteld in elk groepsbericht, dus hij verraadt hier niets wat niet al door de lucht gaat &mdash; ongeveer 1 op de 256 kanalen deelt hem met een ander.</p>
+      <table class="tbl">
+        <thead><tr>
+          {% if is_admin %}<th>Label</th>{% endif %}
+          <th data-i18n="filter.hash">Hash</th>
+          <th data-i18n="filter.hits">Treffers</th>
+        </tr></thead>
+        <tbody>
+        {% for c in b.stats.chan %}
+          <tr>
+            {% if is_admin %}<td class="mono">{{ c.label }}</td>{% endif %}
+            <td class="mono">#{{ c.hash }}</td>
+            <td class="mono">{{ c.hits }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {%- if is_admin %}
+      <p class="muted small">Het label staat er alleen voor wie ingelogd is: dat is geen waarneming maar de naam die jij aan het kanaal van iemand anders gaf.</p>
+      {%- endif %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
 {% elif b.type == "charts" %}
 <section class="collapsible" data-ckey="charts">
   <h2 class="sec-toggle"><span data-i18n="block.charts">Grafieken</span> <span class="sec-chev">&#9662;</span></h2>
