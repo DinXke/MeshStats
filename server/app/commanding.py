@@ -3,15 +3,15 @@
 Een repeater bijwerken op verzoek kan langs twee wegen, en geen van beide is er
 altijd:
 
-**Rechtstreeks over MQTT.** De site publiceert één woord op ``meshcore/<node>/cmd``
+**Rechtstreeks over MQTT.** De site publiceert één woord op ``<voorvoegsel>/<node>/cmd``
 en de node leest daarop zijn eigen CLI uit of stuurt meteen een statusbericht.
 Dat werkt alleen als de node zelf publiceert, als zijn firmware dat topic kent
-(MeshStats 1.8.0 en hoger) en als de broker op dit ogenblik verbonden is.
+(nodefirmware 1.8.0 en hoger) en als de broker op dit ogenblik verbonden is.
 
 **Over MQTT naar de node die hem monitort.** Een repeater die zelf niet
 publiceert, maar wiens cijfers doorgestuurd worden door een node die hem
 uitleest, is niet onbereikbaar -- hij is alleen niet rechtstreeks bereikbaar.
-De monitor logt al bij hem in en pollt hem al; sinds MeshStats 1.9.0 kan die
+De monitor logt al bij hem in en pollt hem al; sinds nodefirmware 1.9.0 kan die
 monitor op verzoek ook zijn CLI-instellingen over LoRa ophalen en publiceren.
 De opdracht gaat dan naar de monitor (``settings <sleutel>``) en niet naar het
 onderwerp.
@@ -39,7 +39,7 @@ geklikt is.
 """
 from datetime import datetime, timedelta, timezone
 
-# Vanaf welke MeshStats-firmware een node opdrachten op het cmd-topic aanneemt.
+# Vanaf welke nodefirmware een node opdrachten op het cmd-topic aanneemt.
 # Ouder betekent niet "misschien": zo'n node schrijft zich niet in op het topic,
 # dus de broker gooit het bericht weg zonder dat iemand het merkt.
 MIN_CMD_VERSION = (1, 8, 0)
@@ -161,7 +161,7 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
     ``via_monitor``  de opdracht gaat naar een andere node dan het onderwerp
     ``node``         de node die de opdracht krijgt
     ``subject``      de sleutel die in die opdracht meegaat, of None
-    ``fw_meshstats`` de firmware van de node die de opdracht krijgt -- dus van
+    ``fw_meshmanager`` de firmware van de node die de opdracht krijgt -- dus van
                      de monitor als het langs een monitor gaat. Dat is de versie
                      waar de bewering over gaat, en de pagina toont hem.
     """
@@ -172,8 +172,8 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
     # Bij een doorgestuurde repeater telt de firmware van de dóórstuurder: die
     # node krijgt de opdracht, en die moet ze kennen. De versie van het onderwerp
     # zegt hier niets -- vaak staat er niet eens een, want een node die zelf niet
-    # publiceert meldt zijn MeshStats-versie nergens.
-    fw = _field(relay, "fw_meshstats") if via_monitor else _field(rep, "fw_meshstats")
+    # publiceert meldt zijn firmwareversie nergens.
+    fw = _field(relay, "fw_meshmanager") if via_monitor else _field(rep, "fw_meshmanager")
     version = parse_version(fw)
     needed = MIN_MON_CMD_VERSION if via_monitor else MIN_CMD_VERSION
 
@@ -204,7 +204,7 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
         "blocker": blocker,
         "node": node if node and node != "api" else None,
         "subject": (_field(rep, "pubkey_prefix") or "").lower().strip() or None,
-        "fw_meshstats": fw,
+        "fw_meshmanager": fw,
         "min_fw": ".".join(str(n) for n in needed),
         "node_seen": _field(rep, "source_seen"),
         "node_stale": not _fresh(_field(rep, "source_seen"), NODE_STALE_SECS, now),

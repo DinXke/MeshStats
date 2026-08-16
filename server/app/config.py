@@ -1,21 +1,80 @@
-"""Configuration and first-start bootstrap."""
+"""Configuration and first-start bootstrap.
+
+Naamswissel MeshStats -> MeshManager
+------------------------------------
+Elke omgevingsvariabele heet nu ``MM_...`` en niet meer ``MCS_...``. De oude
+naam blijft gelezen worden, zodat een bestaande ``.env`` het na een update
+gewoon doet: wie zijn installatie draaiend heeft, mag niet eerst een
+configuratiebestand hoeven herschrijven voor de site weer opstart.
+
+Waarom ``MM_`` en niet ``MESHMANAGER_``: het oude voorvoegsel was ook een
+initialenreeks (MCS = MeshCore Stats), de ``.env`` staat vol regels met een
+commentaarblok erboven, en een voorvoegsel van elf tekens duwt die regels over
+de tachtig kolommen waar de rest van dit project zich aan houdt. Het risico op
+botsing met iets anders in de omgeving is klein: deze variabelen worden gezet
+in docker-compose en in de systemd-unit, allebei een eigen omgeving, en het
+achtervoegsel (``MM_MQTT_HOST``, ``MM_TSDB_URL``) is nergens generiek.
+
+Wanneer de terugval weg mag: zodra elke installatie die deze repo gebruikt
+minstens één keer met de nieuwe namen herstart is. Praktisch: laat hem staan
+tot de volgende hoofdversie, en verwijder dan ``_LEGACY_PREFIX`` samen met de
+laatste ``MCS_``-regel uit ``.env.example``.
+"""
 import os
 import secrets
 from pathlib import Path
 
-DATA_DIR = Path(os.environ.get("MCS_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
+_PREFIX = "MM_"
+# Zie de moduletekst hierboven voor wanneer dit weg mag.
+_LEGACY_PREFIX = "MCS_"
+
+
+def env(name: str, default: str = "") -> str:
+    """Waarde van ``MM_<name>``, of anders van het oude ``MCS_<name>``.
+
+    Bewust in deze volgorde en niet omgekeerd: wie tijdens de overgang beide
+    zet -- bijvoorbeeld omdat docker-compose de nieuwe naam invult terwijl een
+    oude ``.env`` de oude nog bevat -- bedoelt de nieuwe. En bewust ``in`` en
+    geen ``os.environ.get(...) or ...``: een variabele die met opzet op leeg
+    gezet is ("geen TSDB, hou alles in SQLite") is een antwoord, geen stilte,
+    en mag niet stilletjes door de oude naam overruled worden.
+    """
+    key = _PREFIX + name
+    if key in os.environ:
+        return os.environ[key]
+    return os.environ.get(_LEGACY_PREFIX + name, default)
+
+
+DATA_DIR = Path(env("DATA_DIR", str(Path(__file__).resolve().parent.parent / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-DB_PATH = DATA_DIR / "mcs.sqlite3"
+# De databank heet sinds de hernoeming ``meshmanager.sqlite3``. Een bestaand
+# ``mcs.sqlite3`` wordt gebruikt waar het staat -- NIET hernoemd.
+#
+# Hernoemen was de andere optie en is bewust verworpen. Een hernoeming is
+# eenrichtingsverkeer: wie na de update terugrolt naar de vorige versie van de
+# site (en dat is precies wat je doet als er iets misgaat) vindt dan geen
+# databank meer, krijgt een lege aangemaakt, en ziet een site zonder repeaters,
+# zonder historiek en zonder beheerderswachtwoord. Dat het bestand er nog staat
+# maakt de schrik er niet minder om. Deze kant op kost het alleen een bestand
+# met een verouderde naam, en dat is een prijs die je op elk moment alsnog kunt
+# betalen: stop de site, hernoem de drie bestanden (``.sqlite3``, ``-wal``,
+# ``-shm``) en start opnieuw.
+_DB_NAME = "meshmanager.sqlite3"
+_LEGACY_DB_NAME = "mcs.sqlite3"
+DB_PATH = DATA_DIR / _DB_NAME
+if not DB_PATH.exists() and (DATA_DIR / _LEGACY_DB_NAME).exists():
+    DB_PATH = DATA_DIR / _LEGACY_DB_NAME
+
 SECRET_FILE = DATA_DIR / "secret.key"
 
-RETENTION_DAYS = int(os.environ.get("MCS_RETENTION_DAYS", "180"))
+RETENTION_DAYS = int(env("RETENTION_DAYS", "180"))
 # Raw packet receptions arrive far faster than metric samples and lose their
 # value within days, so they get their own, much shorter retention. All three
 # values below are only the DEFAULT for a fresh install: the admin page stores
 # the running value in the ``settings`` table, so raising a retention does not
 # need a container restart. See db.retention_settings().
-PACKET_RETENTION_DAYS = int(os.environ.get("MCS_PACKET_RETENTION_DAYS", "7"))
+PACKET_RETENTION_DAYS = int(env("PACKET_RETENTION_DAYS", "7"))
 
 # The two ceilings that make the retention above safe to raise.
 #
@@ -34,26 +93,26 @@ PACKET_RETENTION_DAYS = int(os.environ.get("MCS_PACKET_RETENTION_DAYS", "7"))
 # about 80 MB -- eight times the default 7-day window, so the cap is a guard
 # against an explosion rather than a second retention that quietly overrules
 # the first one.
-PACKET_MAX_ROWS = int(os.environ.get("MCS_PACKET_MAX_ROWS", "200000"))
+PACKET_MAX_ROWS = int(env("PACKET_MAX_ROWS", "200000"))
 # Megabytes second, because megabytes are what actually runs out. This one
 # counts the whole file (plus its WAL), not just packets, so it also catches
 # growth this app did not predict -- and it is the ceiling that cannot be
 # argued away by raising the row cap. 512 MB against the 19 GB free on the
 # reference server is 2.6% of the disk and about 35x the database as it stands,
 # which is room to grow without ever being the reason a host fills up.
-DB_MAX_MB = int(os.environ.get("MCS_DB_MAX_MB", "512"))
+DB_MAX_MB = int(env("DB_MAX_MB", "512"))
 # Minutes between two retention passes. Pruning only at startup means a server
 # that runs for months never prunes at all -- see retention.py.
-PRUNE_MINUTES = int(os.environ.get("MCS_PRUNE_MINUTES", "60"))
-SITE_NAME = os.environ.get("MCS_SITE_NAME", "MeshCore Repeater Stats")
+PRUNE_MINUTES = int(env("PRUNE_MINUTES", "60"))
+SITE_NAME = env("SITE_NAME", "MeshCore Repeater Stats")
 # Heartbeat: also store a sample when the value did not change but the previous
 # one is older than this many minutes, so charts keep running.
-HEARTBEAT_MIN = int(os.environ.get("MCS_HEARTBEAT_MIN", "5"))
+HEARTBEAT_MIN = int(env("HEARTBEAT_MIN", "5"))
 
 # Largest request body we will read, for every method and route. The API used to
 # check Content-Length only, which a chunked request simply omits; this cap is
 # enforced while streaming instead, so it also covers admin form posts.
-MAX_BODY_BYTES = int(os.environ.get("MCS_MAX_BODY_BYTES", str(2_000_000)))
+MAX_BODY_BYTES = int(env("MAX_BODY_BYTES", str(2_000_000)))
 
 # How many reverse proxies sit in front of the app. Uvicorn runs with
 # --forwarded-allow-ips "*", which makes it take the LEFTMOST X-Forwarded-For
@@ -63,7 +122,7 @@ MAX_BODY_BYTES = int(os.environ.get("MCS_MAX_BODY_BYTES", str(2_000_000)))
 # (cloudflared straight to the app), 2 when a second proxy sits behind it.
 # Too high a value hands attackers a spoofable bucket key; too low lumps every
 # visitor onto one proxy address, so only raise it when you really added a hop.
-TRUSTED_PROXY_HOPS = max(1, int(os.environ.get("MCS_TRUSTED_PROXY_HOPS", "1")))
+TRUSTED_PROXY_HOPS = max(1, int(env("TRUSTED_PROXY_HOPS", "1")))
 
 
 def get_secret() -> bytes:

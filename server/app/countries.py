@@ -29,7 +29,7 @@ import logging
 import threading
 from pathlib import Path
 
-log = logging.getLogger("meshstats.countries")
+log = logging.getLogger("meshmanager.countries")
 
 BORDERS_PATH = Path(__file__).resolve().parent / "data" / "borders.json"
 

@@ -99,6 +99,10 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
         max_age=auth.SESSION_TTL, httponly=True, samesite="lax", secure=_secure(request),
     )
     resp.delete_cookie(auth.LOGIN_COOKIE)
+    # Opruimen na de hernoeming: anders blijft een geldig ondertekende sessie
+    # onder de oude naam meereizen bij elk verzoek, ongezien en onherroepbaar.
+    resp.delete_cookie(auth.LEGACY_SESSION_COOKIE)
+    resp.delete_cookie(auth.LEGACY_LOGIN_COOKIE)
     return resp
 
 
@@ -116,13 +120,17 @@ def dashboard(request: Request):
     tokens = db.q("SELECT * FROM tokens WHERE revoked=0 ORDER BY created_at")
     layout = metrics.parse_layout(db.get_setting("layout"))
     # nieuw token éénmalig tonen via kortlevende cookie (niet via de URL)
-    new_token = request.cookies.get("mcs_new_token")
+    new_token = request.cookies.get("mm_new_token")
     resp = templates.TemplateResponse(request, "admin/dashboard.html", {
         "site_name": config.SITE_NAME, "user": user,
         "repeaters": repeaters, "tokens": tokens,
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "new_token": new_token,
         "mqtt": mqtt_ingest.status(),
+        # Wie waar binnenkomt, zodat de vraag "mag het oude
+        # topicvoorvoegsel weg?" van de pagina af te lezen is in plaats
+        # van te moeten gokken. Zie mqtt_ingest.LEGACY_PREFIX.
+        "topic_prefixes": db.topic_prefix_counts(),
         "tsdb": tsdb.status(),
         "clocksync": clocksync.status(),
         "clock_targets": clocksync.targets(repeaters),
@@ -144,7 +152,7 @@ def dashboard(request: Request):
         "block_names": metrics.BLOCK_NAMES,
     })
     if new_token:
-        resp.delete_cookie("mcs_new_token")
+        resp.delete_cookie("mm_new_token")
     return resp
 
 
@@ -393,7 +401,7 @@ def create_token(request: Request, name: str = Form(...), csrf: str = Form(...))
     check_csrf(request, csrf)
     token = auth.create_token(name.strip() or "token")
     resp = RedirectResponse("/admin", status_code=303)
-    resp.set_cookie("mcs_new_token", token, max_age=60, httponly=True,
+    resp.set_cookie("mm_new_token", token, max_age=60, httponly=True,
                     samesite="lax", secure=_secure(request))
     return resp
 

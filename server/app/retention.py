@@ -62,7 +62,7 @@ import time
 
 from . import config, db
 
-log = logging.getLogger("meshstats.retention")
+log = logging.getLogger("meshmanager.retention")
 
 # Minuten tussen twee rondes. Zie hierboven waarom een uur ruim is.
 INTERVAL_MIN = max(1, int(config.PRUNE_MINUTES))

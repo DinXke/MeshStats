@@ -127,13 +127,18 @@ COLUMN_MIGRATIONS = [
     ("repeaters", "source_prefix", "TEXT"),
     ("repeaters", "source_seen", "TEXT"),
     # Which firmware the last message came from: the MeshCore version, and the
-    # MeshStats module's own version when the node runs it. Stored rather than
+    # our own module's version when the node runs it. Stored rather than
     # merely shown, because it decides whether the site may ask this node
     # anything at all -- accepting commands on the MQTT cmd topic starts at
-    # MeshStats 1.8.0, and a button that publishes into the void on anything
+    # nodefirmware 1.8.0, and a button that publishes into the void on anything
     # older is precisely the dishonesty these columns exist to prevent.
     ("repeaters", "fw", "TEXT"),
-    ("repeaters", "fw_meshstats", "TEXT"),
+    ("repeaters", "fw_meshmanager", "TEXT"),
+    # Op welk MQTT-topicvoorvoegsel deze node zich meldt. Zie
+    # mqtt_ingest.command_prefix: tijdens de hernoeming luistert de site naar
+    # twee voorvoegsels, maar een opdracht moet naar het ene waar deze node
+    # werkelijk meeleest.
+    ("repeaters", "topic_prefix", "TEXT"),
     # The hop hashes of the packet's path, comma-separated. Denormalised out of
     # ``raw`` on purpose: the packet detail view resolves every hop against the
     # contacts table, and re-decoding frames for that is work the ingest path has
@@ -172,7 +177,29 @@ COLUMN_MIGRATIONS = [
 ]
 
 
+# Kolommen die van naam veranderd zijn: (tabel, oud, nieuw).
+#
+# Hernoemen en niet naast elkaar laten bestaan, want twee kolommen die
+# hetzelfde betekenen worden vroeg of laat allebei half gevuld. Het kan hier
+# ook veilig: de enige kolom in deze lijst wordt bij ELK statistiekbericht
+# opnieuw geschreven (record_firmware), dus zelfs als iemand na deze migratie
+# terugrolt naar de vorige versie van de site, maakt die de oude kolom weer aan
+# en staat ze bij het eerstvolgende bericht van elke node weer vol. Dat is de
+# reden dat dit mag; voor een kolom met geschiedenis erin zou het niet mogen.
+COLUMN_RENAMES = [
+    # Heette fw_meshstats tot de hernoeming naar MeshManager.
+    ("repeaters", "fw_meshstats", "fw_meshmanager"),
+]
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
+    # Eerst hernoemen, dan pas toevoegen: andersom maakt de regel hieronder
+    # eerst een lege nieuwe kolom aan, en dan zou de hernoeming stuiten op een
+    # naam die al bestaat en de oude waarden alsnog laten liggen.
+    for table, old, new in COLUMN_RENAMES:
+        names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if old in names and new not in names:
+            conn.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
     for table, column, decl in COLUMN_MIGRATIONS:
         names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in names:
@@ -1216,16 +1243,97 @@ def record_source(repeater_id: int, source: str) -> None:
             (str(source or "")[:32] or None, utcnow(), repeater_id))
 
 
-def record_firmware(repeater_id: int, fw=None, fw_meshstats=None) -> None:
+def record_topic_prefix(node: str, prefix: str) -> None:
+    """Note het MQTT-topicvoorvoegsel waarop deze node zich meldt.
+
+    Nodig omdat de site tijdens de hernoeming naar MeshManager naar twee
+    voorvoegsels tegelijk luistert, maar een opdracht op precies één moet
+    vertrekken -- op dat van de node zelf. Een node die nog niet geflasht is,
+    luistert op het oude; hem op het nieuwe aanspreken levert een knop op die
+    zegt dat hij iets verstuurd heeft terwijl er niemand meeleest.
+
+    In de databank en niet alleen in het geheugen, omdat het antwoord een
+    herstart van de site moet overleven: anders is elke opdracht in de eerste
+    minuten na een herstart een gok.
+
+    Schrijft alleen als er iets verandert -- dit komt bij elk statistiekbericht
+    langs en een UPDATE die niets wijzigt is nog steeds een schrijfactie op een
+    databank die op een SD-kaartje kan staan.
+    """
+    prefix = str(prefix or "").strip()[:32]
+    if not prefix:
+        return
+    row = find_repeater(node)
+    if row is None or _field(row, "topic_prefix") == prefix:
+        return
+    execute("UPDATE repeaters SET topic_prefix=? WHERE id=?", (prefix, row["id"]))
+
+
+def topic_prefix_counts() -> list:
+    """Hoeveel nodes zich op welk topicvoorvoegsel melden.
+
+    Bestaat voor één vraag, en het is de vraag die de hele migratie afsluit:
+    mag het oude voorvoegsel weg? Zonder dit is het antwoord "ik denk het" en
+    is de enige controle een sniffer op de broker. Nodes die nog nooit iets
+    over MQTT gestuurd hebben (HTTP-ingest, Home Assistant) hebben geen
+    voorvoegsel en tellen hier niet mee -- die luisteren ook nergens.
+    """
+    rows = q("SELECT topic_prefix AS prefix, COUNT(*) AS n FROM repeaters "
+             "WHERE topic_prefix IS NOT NULL AND topic_prefix<>'' "
+             "GROUP BY topic_prefix ORDER BY n DESC")
+    return [{"prefix": r["prefix"], "n": r["n"]} for r in rows]
+
+
+def topic_prefix_for(node: str) -> str | None:
+    """Het opgeslagen voorvoegsel van deze node, of None."""
+    row = find_repeater(node)
+    return _field(row, "topic_prefix") if row is not None else None
+
+
+def _field(row, name):
+    """Kolom uit een rij die de kolom nog niet hoeft te hebben.
+
+    Een oudere databank die net bijgewerkt wordt heeft de kolom pas na
+    _migrate(), en een sqlite3.Row werpt op een naam die hij niet kent.
+    """
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return None
+
+
+def payload_module_version(rep):
+    """De versie van onze eigen firmwaremodule uit een ``repeater``-blok.
+
+    Twee namen, en dat blijft nog even zo. Firmware van 2.0.0 en hoger stuurt
+    ``fw_meshmanager``; alles wat er nu op de daken hangt stuurt nog
+    ``fw_meshstats``. Deze versie beslist of de site een node überhaupt iets
+    mág vragen, dus de oude naam niet herkennen betekent knoppen die uitgrijzen
+    op nodes die het prima aankunnen -- precies andersom als bedoeld.
+
+    Hier en niet in de twee aanroepers (MQTT en de HTTP-ingest), zodat de dag
+    dat de oude naam weg mag maar op één plaats hoeft te gebeuren. Weg te halen
+    zodra geen enkele node nog firmware onder 2.0.0 draait; de beheerpagina
+    toont per node welke versie binnenkomt.
+    """
+    if not isinstance(rep, dict):
+        return None
+    value = rep.get("fw_meshmanager")
+    if value in (None, ""):
+        value = rep.get("fw_meshstats")
+    return value
+
+
+def record_firmware(repeater_id: int, fw=None, fw_module=None) -> None:
     """Note the firmware the last message came from.
 
     Only overwrites what the message actually named. A source that knows one of
     the two -- Home Assistant reads a repeater's MeshCore version off the mesh
-    and has no idea whether the MeshStats module is on it -- must not be able to
+    and has no idea whether our own module is on it -- must not be able to
     erase the other by staying silent about it.
     """
     sets, args = [], []
-    for column, value in (("fw", fw), ("fw_meshstats", fw_meshstats)):
+    for column, value in (("fw", fw), ("fw_meshmanager", fw_module)):
         text = str(value).strip()[:32] if value not in (None, "") else ""
         if text:
             sets.append(f"{column}=?")

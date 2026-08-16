@@ -97,7 +97,7 @@ def test_onbeantwoorde_parameter_wordt_bewaard_als_leeg(db):
 
 
 def test_firmwareversie_wordt_onthouden_en_niet_gewist(db):
-    # De MeshStats-versie beslist of de knop een opdracht mag publiceren. Een
+    # De firmwareversie beslist of de knop een opdracht mag publiceren. Een
     # bron die er niets over zegt -- de HTTP-API kent alleen de MeshCore-versie
     # -- mag wat een andere bron wel wist niet uitvegen.
     rep = db.get_or_create_repeater("e3d3f4d7edd0", "BE-HSS-JessaZH.VIR")
@@ -105,9 +105,9 @@ def test_firmwareversie_wordt_onthouden_en_niet_gewist(db):
     db.record_firmware(rep["id"], "v1.16.0", "1.8.0")
     db.record_firmware(rep["id"], "v1.16.1", None)
 
-    rij = db.qone("SELECT fw, fw_meshstats FROM repeaters WHERE id=?", (rep["id"],))
+    rij = db.qone("SELECT fw, fw_meshmanager FROM repeaters WHERE id=?", (rep["id"],))
     assert rij["fw"] == "v1.16.1"
-    assert rij["fw_meshstats"] == "1.8.0"
+    assert rij["fw_meshmanager"] == "1.8.0"
 
 
 def test_uitreiking_laat_een_spoor_na(db):

@@ -38,16 +38,80 @@ def broker(monkeypatch):
     client = FakeClient()
     monkeypatch.setattr(mqtt_ingest, "_client", client)
     monkeypatch.setattr(mqtt_ingest, "MQTT_HOST", "broker.invalid")
+    # Schoon geheugen per test: welk voorvoegsel een node gebruikt, wordt
+    # onthouden zodra er een bericht van hem binnenkomt, en een test die dat
+    # van een vorige test erft, meet iets anders dan ze denkt.
+    monkeypatch.setattr(mqtt_ingest, "_seen_prefix", {})
     mqtt_ingest._state["connected"] = True
     yield client
     mqtt_ingest._state["connected"] = False
 
 
-def test_opdracht_gaat_naar_het_cmd_topic_van_de_node(broker):
+@pytest.fixture
+def gehoord(monkeypatch):
+    """Doet alsof een node zich op een bepaald voorvoegsel gemeld heeft."""
+    def zet(node, prefix):
+        mqtt_ingest._seen_prefix[node] = prefix
+    return zet
+
+
+def _topics(broker):
+    return [m["topic"] for m in broker.published]
+
+
+def test_opdracht_gaat_naar_het_cmd_topic_van_de_node(broker, gehoord):
+    gehoord("e3d3f4d7edd0", "meshmanager")
     assert mqtt_ingest.publish_command("E3D3F4D7EDD0", "settings") is True
     (msg,) = broker.published
-    assert msg["topic"] == "meshcore/e3d3f4d7edd0/cmd"
+    assert msg["topic"] == "meshmanager/e3d3f4d7edd0/cmd"
     assert msg["payload"] == b"settings"
+
+
+# --- twee werelden tegelijk, tijdens de hernoeming --------------------------
+
+def test_een_node_op_het_oude_voorvoegsel_wordt_daar_aangesproken(broker, gehoord):
+    # Dit is de hele reden dat de opdracht niet gewoon naar het nieuwe topic
+    # gaat. Een node die nog niet geflasht is, luistert op meshcore/, en een
+    # knop die "verstuurd" meldt terwijl er niemand meeleest is precies de
+    # stilte waar dit project omheen gebouwd is.
+    gehoord("e3d3f4d7edd0", "meshcore")
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is True
+    assert _topics(broker) == ["meshcore/e3d3f4d7edd0/cmd"]
+
+
+def test_een_onbekende_node_krijgt_het_op_allebei(broker):
+    # Nooit iets van gehoord: dan is er niets om uit te kiezen. Twee berichtjes
+    # van acht bytes zijn goedkoper dan een knop die niets doet.
+    assert mqtt_ingest.publish_command("aabbccddeeff", "status") is True
+    assert _topics(broker) == ["meshmanager/aabbccddeeff/cmd",
+                               "meshcore/aabbccddeeff/cmd"]
+
+
+def test_een_vast_topic_uit_de_omgeving_blijft_vast(broker, monkeypatch):
+    # Wie een eigen patroon zet, draait op een gedeelde broker onder een eigen
+    # tak. Dat overrulen met onze voorvoegsels zou zo'n installatie stilleggen.
+    monkeypatch.setattr(mqtt_ingest, "MQTT_CMD_TOPIC", "eigen/tak/{node}/cmd")
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is True
+    assert _topics(broker) == ["eigen/tak/e3d3f4d7edd0/cmd"]
+
+
+def test_het_voorvoegsel_wordt_onthouden_uit_het_topic():
+    # _topic_node is de enige plek waar langskomt waar een node zit; als het
+    # daar niet blijft hangen, is elke opdracht daarna een gok.
+    mqtt_ingest._seen_prefix.pop("55d9a320a4e3", None)
+    assert mqtt_ingest._topic_node("meshcore/55d9a320a4e3/rx") == "55d9a320a4e3"
+    assert mqtt_ingest._seen_prefix["55d9a320a4e3"] == "meshcore"
+    assert mqtt_ingest._topic_node("meshmanager/55d9a320a4e3/stats") == "55d9a320a4e3"
+    assert mqtt_ingest._seen_prefix["55d9a320a4e3"] == "meshmanager"
+
+
+def test_er_wordt_naar_allebei_de_voorvoegsels_geluisterd():
+    # Ging alleen de server om, dan was hij doof voor elke node die nog niet
+    # geflasht is.
+    assert "meshmanager/+/stats" in mqtt_ingest.MQTT_TOPICS
+    assert "meshcore/+/stats" in mqtt_ingest.MQTT_TOPICS
+    assert "meshmanager/+/rx" in mqtt_ingest.MQTT_RX_TOPICS
+    assert "meshcore/+/rx" in mqtt_ingest.MQTT_RX_TOPICS
 
 
 def test_niets_wordt_retained(broker):
@@ -75,11 +139,12 @@ def test_onbekende_opdracht_wordt_hier_al_geweigerd(broker):
     assert broker.published == []
 
 
-def test_sleutel_wordt_tot_hex_teruggebracht(broker):
+def test_sleutel_wordt_tot_hex_teruggebracht(broker, gehoord):
     # Het topic komt uit de database en de database uit berichten van buiten.
     # Een '+' of een '#' erin zou een topic maken dat iets heel anders raakt.
+    gehoord("e3d3f4d7", "meshmanager")
     assert mqtt_ingest.publish_command("e3d3f4/#+d7", "status") is True
-    assert broker.published[0]["topic"] == "meshcore/e3d3f4d7/cmd"
+    assert broker.published[0]["topic"] == "meshmanager/e3d3f4d7/cmd"
 
 
 def test_lege_sleutel_levert_geen_publicatie_op(broker):
@@ -118,27 +183,29 @@ def test_zonder_broker_is_publiceren_uitgeschakeld(monkeypatch):
 
 # --- een opdracht mét onderwerp, voor een gemonitorde repeater --------------
 
-def test_onderwerp_reist_mee_in_de_opdracht(broker):
+def test_onderwerp_reist_mee_in_de_opdracht(broker, gehoord):
     # De opdracht gaat naar de monitor, het onderwerp staat erin. Zonder dat
     # argument leest die node zijn eigen CLI uit en publiceert hij die onder de
     # naam van een ander -- precies de verwarring die dit moest oplossen.
+    gehoord("55d9a320a4e3", "meshmanager")
     assert mqtt_ingest.publish_command("55d9a320a4e3", "settings",
                                        subject="E3D3F4D7EDD0") is True
     (msg,) = broker.published
-    assert msg["topic"] == "meshcore/55d9a320a4e3/cmd"
+    assert msg["topic"] == "meshmanager/55d9a320a4e3/cmd"
     assert msg["payload"] == b"settings e3d3f4d7edd0"
 
 
 # --- de tijd zetten ---------------------------------------------------------
 
-def test_de_tijd_gaat_als_epoch_in_seconden_mee(broker):
+def test_de_tijd_gaat_als_epoch_in_seconden_mee(broker, gehoord):
     # Het formaat is niet gekozen maar overgenomen: CommonCLI::handleCommand
     # doet _atoi() op de rest van de regel en zet dat rechtstreeks in
     # setCurrentTime(). UNIX-seconden in UTC, geen datumtekst, geen
     # milliseconden.
+    gehoord("e3d3f4d7edd0", "meshmanager")
     assert mqtt_ingest.publish_command("e3d3f4d7edd0", "time", epoch=1_800_000_000) is True
     (msg,) = broker.published
-    assert msg["topic"] == "meshcore/e3d3f4d7edd0/cmd"
+    assert msg["topic"] == "meshmanager/e3d3f4d7edd0/cmd"
     assert msg["payload"] == b"time 1800000000"
     assert msg["retain"] is False
 
@@ -160,7 +227,7 @@ def test_een_commando_zonder_tijd_neemt_er_ook_geen_aan(broker):
 @pytest.mark.parametrize("epoch", [0, 1, 1_600_000_000, 5_000_000_000])
 def test_een_tijd_buiten_het_venster_vertrekt_niet(broker, epoch):
     # Belangrijker dan het lijkt, en de reden dat deze grens twee keer bestaat
-    # (hier én in MeshStatsNet.cpp). Een node zet zijn klok alleen VOORUIT --
+    # (hier én in MeshManagerNet.cpp). Een node zet zijn klok alleen VOORUIT --
     # zijn adverts worden geweigerd als de tijdstempel niet stijgt -- dus een
     # tijd in 2128 is aan de overkant niet meer terug te draaien zonder er met
     # een kabel bij te gaan staan. En die overkant hangt op een dak.

@@ -44,7 +44,7 @@ def limit_body(request: Request, max_bytes: int = config.MAX_BODY_BYTES):
 def ping(authorization: str | None = Header(default=None)):
     """Connection test for the Home Assistant integration."""
     require_token(authorization)
-    return {"ok": True, "app": "mc-repeater-stats", "version": 1}
+    return {"ok": True, "app": "meshmanager", "version": 1}
 
 
 @router.post("/contacts")
@@ -142,7 +142,7 @@ async def ingest(request: Request, authorization: str | None = Header(default=No
     # Same bookkeeping as the MQTT path, so the admin page never shows a stale
     # node prefix for a repeater that has since switched to HTTP ingest.
     db.record_source(row["id"], "api")
-    db.record_firmware(row["id"], rep.get("fw"), rep.get("fw_meshstats"))
+    db.record_firmware(row["id"], rep.get("fw"), db.payload_module_version(rep))
 
     global _ingest_count
     _ingest_count += 1

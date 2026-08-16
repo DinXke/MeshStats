@@ -88,7 +88,7 @@
         <td>{% if row.updated %}<time class="reltime" datetime="{{ row.updated }}">{{ row.updated }}</time>{% endif %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="3" class="muted">Nog niets opgehaald. Een node met de MeshStats-firmware
+      <tr><td colspan="3" class="muted">Nog niets opgehaald. Een node met de nodefirmware
         leest zijn eigen instellingen één keer per dag uit en stuurt ze mee met zijn
         statistieken; met de knop hieronder vraag je er nu een.</td></tr>
     {% endfor %}
@@ -110,14 +110,14 @@
     én via de poller over LoRa.
     {%- elif route.mqtt and route.via_monitor %}
     Deze repeater publiceert zelf niet, maar node <span class="mono">{{ route.node }}</span>
-    monitort hem en kan hem over LoRa uitvragen (MeshStats {{ route.fw_meshstats }}).
+    monitort hem en kan hem over LoRa uitvragen (nodefirmware {{ route.fw_meshmanager }}).
     De site vraagt het aan die node; die logt in bij deze repeater, stelt de parameters
     één voor één en publiceert de antwoorden onder deze repeater. Wat onbeantwoord
     blijft komt hieronder als “(geen antwoord)” te staan in plaats van als een oude
     waarde die vers lijkt.
     {%- elif route.mqtt %}
     De site vraagt het rechtstreeks aan node <span class="mono">{{ route.node }}</span> over
-    MQTT (MeshStats {{ route.fw_meshstats }}). Die leest zijn eigen CLI uit en stuurt de
+    MQTT (nodefirmware {{ route.fw_meshmanager }}). Die leest zijn eigen CLI uit en stuurt de
     waarden mee met zijn eerstvolgende statistiekbericht.
     {%- elif route.ha %}
     De rechtstreekse weg is dicht, dus dit loopt via de wachtrij en de poller.
@@ -141,18 +141,18 @@
     en een opdracht sturen zou neerkomen op hopen dat hij hem kent.
     {%- elif route.blocker == "no_fw" and route.via_monitor %}
     deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
-    en die meldt geen MeshStats-versie. Alleen een monitor die de sweep kent kan deze
+    en die meldt geen firmwareversie. Alleen een monitor die de sweep kent kan deze
     repeater over LoRa uitvragen, en of dat zo is valt niet vast te stellen.
     {%- elif route.blocker == "no_fw" %}
-    de node meldt geen MeshStats-versie, dus valt niet vast te stellen of hij opdrachten
+    de node meldt geen firmwareversie, dus valt niet vast te stellen of hij opdrachten
     aanneemt. Publiceren zou hier neerkomen op hopen.
     {%- elif route.blocker == "old_fw" and route.via_monitor %}
     deze repeater publiceert zelf niet; node <span class="mono">{{ route.node }}</span>
-    stuurt zijn cijfers door en draait MeshStats {{ route.fw_meshstats }}. Een gemonitorde
+    stuurt zijn cijfers door en draait nodefirmware {{ route.fw_meshmanager }}. Een gemonitorde
     repeater over LoRa uitvragen kan pas vanaf {{ route.min_fw }} — oudere firmware weigert
     het argument en telt de opdracht als geweigerd.
     {%- elif route.blocker == "old_fw" %}
-    de node draait MeshStats {{ route.fw_meshstats }}. Opdrachten over MQTT bestaan pas
+    de node draait nodefirmware {{ route.fw_meshmanager }}. Opdrachten over MQTT bestaan pas
     vanaf {{ route.min_fw }}; oudere firmware schrijft zich niet in op het cmd-topic, dus de
     broker gooit het bericht weg zonder dat iemand het merkt.
     {%- elif route.blocker == "broker_down" %}
@@ -233,7 +233,7 @@
   </div>
   {% elif clock == "disabled" %}
   <div class="card notice">
-    &#9888; Kloksynchronisatie staat uit (<code>MCS_CLOCKSYNC_ENABLED=0</code>).
+    &#9888; Kloksynchronisatie staat uit (<code>MM_CLOCKSYNC_ENABLED=0</code>).
   </div>
   {% endif %}
 
@@ -261,7 +261,7 @@
     {%- if clock_route.ok and clock_route.via_monitor %}
     Deze repeater publiceert zelf niet en heeft dus geen eigen weg naar de site. Zijn klok
     komt van node <span class="mono">{{ clock_route.node }}</span>, die hem monitort
-    (MeshStats {{ clock_route.fw_meshstats }}). <strong>De knop richt zich daarom niet op
+    (nodefirmware {{ clock_route.fw_meshmanager }}). <strong>De knop richt zich daarom niet op
     deze repeater alleen:</strong> de site stuurt de tijd naar die node, en die kijkt de
     klokken na van <em>alle</em> repeaters die hij monitort. De firmware kent geen manier
     om dat op één node toe te spitsen, en dat is geen omissie — een klokronde kost per
@@ -269,7 +269,7 @@
     ongeveer een vijfde van wat één gewone pollronde kost.
     {%- elif clock_route.ok %}
     De site stuurt <code>time &lt;epoch&gt;</code> rechtstreeks naar node
-    <span class="mono">{{ clock_route.node }}</span> (MeshStats {{ clock_route.fw_meshstats }}).
+    <span class="mono">{{ clock_route.node }}</span> (nodefirmware {{ clock_route.fw_meshmanager }}).
     Die zet zijn eigen klok en kijkt daarna over LoRa de klokken na van de repeaters die
     hij monitort.
     {%- elif clock_route.blocker == "no_source" %}
@@ -283,10 +283,10 @@
     <span class="mono">{{ clock_route.node }}</span>, en die node is hier zelf geen bekende
     repeater. Van zijn firmware weten we dus niets.
     {%- elif clock_route.blocker == "no_fw" %}
-    de node die de tijd zou krijgen meldt geen MeshStats-versie, dus valt niet vast te
+    de node die de tijd zou krijgen meldt geen firmwareversie, dus valt niet vast te
     stellen of hij <code>time</code> kent. Publiceren zou hier neerkomen op hopen.
     {%- elif clock_route.blocker == "old_fw" %}
-    de node die de tijd zou krijgen draait MeshStats {{ clock_route.fw_meshstats }}. Het
+    de node die de tijd zou krijgen draait nodefirmware {{ clock_route.fw_meshmanager }}. Het
     commando <code>time</code> bestaat pas vanaf {{ clock_min_fw }}; oudere firmware weigert
     het woord en telt het als geweigerd, zonder dat iemand dat hier ziet.
     {%- elif clock_route.blocker == "stale" %}

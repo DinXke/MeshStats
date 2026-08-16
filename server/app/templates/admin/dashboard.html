@@ -101,6 +101,18 @@
     <tr><td>MQTT-broker</td><td class="mono">{{ mqtt.broker or 'niet ingesteld' }}</td></tr>
     <tr><td>Onderwerp statistieken</td><td class="mono">{{ mqtt.topic }}</td></tr>
     <tr><td>Onderwerp pakketten</td><td class="mono">{{ mqtt.rx_topic }}</td></tr>
+    {# De hernoeming naar MeshManager in één regel: waar melden de nodes zich
+       vandaag? Zolang hier nog iets op het oude voorvoegsel staat, mag de
+       terugval in mqtt_ingest.py niet weg. #}
+    <tr><td>Nodes per voorvoegsel</td><td class="mono">
+      {%- if topic_prefixes %}{% for tp in topic_prefixes %}{{ tp.prefix }}: {{ tp.n }}{% if not loop.last %} &middot; {% endif %}{% endfor %}
+        {%- if topic_prefixes|selectattr('prefix', 'equalto', mqtt.legacy_prefix)|list %}
+        <div class="muted small">Er publiceren nog nodes op het oude voorvoegsel
+          <code>{{ mqtt.legacy_prefix }}</code>. Flash die met MeshManager-firmware en zet
+          <code>wifi mqtt prefix {{ mqtt.prefix }}</code>; pas als deze regel weg is, mag de
+          terugval uit de server.</div>
+        {%- endif %}
+      {%- else %}<span class="muted">nog niets binnengekomen</span>{% endif %}</td></tr>
     <tr><td>Verbonden</td><td>{% if mqtt.connected %}<span class="pill on" style="padding:.15rem .6rem;border-radius:99px;background:rgba(53,224,140,.12);color:var(--accent)">ja</span>{% else %}<span class="muted">nee</span>{% endif %}</td></tr>
     <tr><td>Berichten ontvangen</td><td class="mono">{{ mqtt.messages }}</td></tr>
     <tr><td>Pakketten ontvangen</td><td class="mono">{{ mqtt.packets }}{% if mqtt.last_packet %} &middot; <span class="muted">laatste <time class="reltime" datetime="{{ mqtt.last_packet }}">{{ mqtt.last_packet }}</time></span>{% endif %}</td></tr>
@@ -109,7 +121,7 @@
   <p class="muted small">Nodes publiceren hun statistieken naar de MQTT-broker; dat is voor een ESP32
      veel lichter dan HTTP. Op het pakketonderwerp sturen ze bovendien elk ontvangen LoRa-pakket ruw door,
      wat de live kaart op de startpagina voedt. Instellen doe je op de node zelf (beheerpagina) en via de
-     omgevingsvariabelen <code>MCS_MQTT_*</code>. De HTTP-ingest blijft daarnaast gewoon werken.</p>
+     omgevingsvariabelen <code>MM_MQTT_*</code>. De HTTP-ingest blijft daarnaast gewoon werken.</p>
   </div>
 </section>
 
@@ -123,7 +135,7 @@
   <table>
     <tr><td>Staat aan</td><td>
       {%- if clocksync.enabled %}<span class="pill on" style="padding:.15rem .6rem;border-radius:99px;background:rgba(53,224,140,.12);color:var(--accent)">ja</span>, elke {{ clocksync.interval_hours }} uur
-      {%- else %}<span class="muted">nee &mdash; <code>MCS_CLOCKSYNC_ENABLED=0</code></span>{% endif %}</td></tr>
+      {%- else %}<span class="muted">nee &mdash; <code>MM_CLOCKSYNC_ENABLED=0</code></span>{% endif %}</td></tr>
     <tr><td>Klok van deze server</td><td>
       {%- if not clocksync.clock %}<span class="muted">nog niet gemeten</span>
       {%- elif clocksync.clock.ok %}<span class="pill on" style="padding:.15rem .6rem;border-radius:99px;background:rgba(53,224,140,.12);color:var(--accent)">bruikbaar</span>
@@ -163,7 +175,7 @@
      hij op de datum die in de firmware zit. De site stuurt daarom periodiek
      <code>time &lt;epoch&gt;</code> naar elke node die rechtstreeks publiceert; die zet zijn eigen klok
      en controleert daarna over LoRa de klokken van de repeaters die hij monitort &mdash; de enige weg
-     naar een repeater die hier zelf niets publiceert. Vereist MeshStats 1.10.0 op de node.</p>
+     naar een repeater die hier zelf niets publiceert. Vereist nodefirmware 1.10.0 op de node.</p>
   <p class="muted small"><strong>Wat &quot;bruikbaar&quot; hier wel en niet betekent.</strong> Deze app
      draait in een container en leest de tijddiscipline van de kernel (<code>adjtimex</code>, dezelfde
      bron als <code>NTPSynchronized</code> van <code>timedatectl</code>). In een LXC is dat het oordeel
@@ -197,7 +209,7 @@
      dat op volle resolutie voor ongeveer een byte per meetpunt. Schrijven gebeurt gebufferd in een aparte
      thread, zodat de ingest nooit op het netwerk staat te wachten. Valt de databank weg, dan gaan de punten
      naar de tabel <code>samples</code> in SQLite en lezen de grafieken daar weer uit: je verliest resolutie,
-     geen metingen. Instellen met <code>MCS_TSDB_URL</code> (leeg = alles in SQLite).</p>
+     geen metingen. Instellen met <code>MM_TSDB_URL</code> (leeg = alles in SQLite).</p>
   </div>
 </section>
 

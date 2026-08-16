@@ -8,12 +8,19 @@ import time
 
 from . import config, db
 
-SESSION_COOKIE = "mcs_session"
+# Koeknamen dragen de nieuwe naam. Eén keer uitloggen is de hele prijs: een
+# sessie leeft twaalf uur en het inlogscherm staat een klik verderop. De oude
+# koek expliciet wissen bij het inloggen is bewust WEL gedaan (zie
+# routes_admin.login) -- een vergeten mcs_session-koek die maanden later nog
+# meegestuurd wordt, is een geldig ondertekend token dat niemand meer ziet.
+SESSION_COOKIE = "mm_session"
+LEGACY_SESSION_COOKIE = "mcs_session"
 SESSION_TTL = 12 * 3600
 
 # Pre-session cookie that anchors the CSRF token on the login form; the visitor
 # has no session yet, so the token has to hang off something else.
-LOGIN_COOKIE = "mcs_login"
+LOGIN_COOKIE = "mm_login"
+LEGACY_LOGIN_COOKIE = "mcs_login"
 LOGIN_TTL = 30 * 60
 
 
@@ -58,7 +65,10 @@ def verify_dummy(password: str) -> None:
 # ---- API-tokens -------------------------------------------------------------
 
 def create_token(name: str) -> str:
-    token = "mcs_" + secrets.token_urlsafe(32)
+    # Nieuwe tokens dragen het nieuwe voorvoegsel. Bestaande tokens blijven
+    # gewoon werken: er wordt op de hash gecontroleerd, niet op het voorvoegsel,
+    # dus dit is enkel wat je op een token leest.
+    token = "mm_" + secrets.token_urlsafe(32)
     db.execute(
         "INSERT INTO tokens(name, token_hash, created_at) VALUES(?,?,?)",
         (name, hashlib.sha256(token.encode()).hexdigest(), db.utcnow()),

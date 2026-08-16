@@ -1,9 +1,9 @@
-# MeshStats — publieke statistiekensite voor MeshCore-repeaters
+# MeshManager — publieke statistieken- en beheersite voor MeshCore-repeaters
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    MCS_DATA_DIR=/data
+    MM_DATA_DIR=/data
 
 WORKDIR /app
 

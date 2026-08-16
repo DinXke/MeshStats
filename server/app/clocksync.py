@@ -90,23 +90,22 @@ LoRa-helft hoogstens één keer per uur, wat er ook binnenkomt.
 """
 import ctypes
 import logging
-import os
 import threading
 import time
 from datetime import datetime, timezone
 
-from . import commanding, db, mqtt_ingest
+from . import commanding, config, db, mqtt_ingest
 
-log = logging.getLogger("meshstats.clocksync")
+log = logging.getLogger("meshmanager.clocksync")
 
 # Uit zetten is een geldige keuze: wie zijn nodes met de hand bijzet, of wie
 # deze server niet vertrouwt genoeg om er een mesh op te ijken, hoort dat te
 # kunnen zeggen zonder de firmware terug te draaien.
-ENABLED = os.environ.get("MCS_CLOCKSYNC_ENABLED", "1").strip().lower() not in (
+ENABLED = config.env("CLOCKSYNC_ENABLED", "1").strip().lower() not in (
     "0", "false", "no", "nee", "off", "")
 
 # Uren tussen twee rondes. Zie de motivering hierboven.
-INTERVAL_HOURS = max(1, int(os.environ.get("MCS_CLOCKSYNC_HOURS", "24")))
+INTERVAL_HOURS = max(1, int(config.env("CLOCKSYNC_HOURS", "24")))
 
 # Hoeveel onzekerheid de kernel over zijn eigen klok mag hebben voor wij hem nog
 # geloven, in seconden.
@@ -116,15 +115,15 @@ INTERVAL_HOURS = max(1, int(os.environ.get("MCS_CLOCKSYNC_HOURS", "24")))
 # seconden is dus ruwweg "de host is in de laatste vijfeneenhalf uur nog
 # bijgestuurd" -- streng genoeg om een NTP-cliënt te betrappen die vanmiddag
 # gestopt is, ruim genoeg om een normale pollcyclus (tot 1024 s) nooit te raken.
-MAX_ERROR_S = float(os.environ.get("MCS_CLOCKSYNC_MAX_ERROR_S", "10"))
+MAX_ERROR_S = float(config.env("CLOCKSYNC_MAX_ERROR_S", "10"))
 
 # Hoeveel de wandklok en de monotone klok tussen twee rondes uit elkaar mogen
 # lopen voor we het een sprong noemen, in seconden. Ruim, want een NTP-cliënt
 # MAG bijsturen -- daar is hij voor -- en een dagelijkse correctie van een halve
 # seconde is gezond gedrag en geen alarm.
-MAX_JUMP_S = float(os.environ.get("MCS_CLOCKSYNC_MAX_JUMP_S", "30"))
+MAX_JUMP_S = float(config.env("CLOCKSYNC_MAX_JUMP_S", "30"))
 
-# Vanaf welke MeshStats-firmware een node 'time <epoch>' aanneemt. Ouder
+# Vanaf welke nodefirmware een node 'time <epoch>' aanneemt. Ouder
 # betekent niet "misschien": zo'n node weigert het woord en telt het als
 # geweigerd, en niemand ziet dat hier.
 MIN_TIME_VERSION = (1, 10, 0)
@@ -494,7 +493,7 @@ def time_route(rep, relay=None, now=None, allow_monitor: bool = True) -> dict:
     out = {"id": commanding._field(rep, "id"), "prefix": prefix,
            "name": commanding._field(rep, "name") or prefix,
            "node": None, "via_monitor": via_monitor, "ok": False,
-           "blocker": "", "why": "", "fw_meshstats": None}
+           "blocker": "", "why": "", "fw_meshmanager": None}
 
     if via_monitor and not allow_monitor:
         out["blocker"] = "relayed"
@@ -522,16 +521,16 @@ def time_route(rep, relay=None, now=None, allow_monitor: bool = True) -> dict:
         return out
 
     out["node"] = source
-    fw = commanding._field(carrier, "fw_meshstats")
-    out["fw_meshstats"] = fw
+    fw = commanding._field(carrier, "fw_meshmanager")
+    out["fw_meshmanager"] = fw
     version = commanding.parse_version(fw)
     if version is None:
         out["blocker"] = "no_fw"
-        out["why"] = "MeshStats-versie onbekend"
+        out["why"] = "firmwareversie onbekend"
         return out
     if version < MIN_TIME_VERSION:
         out["blocker"] = "old_fw"
-        out["why"] = ("MeshStats " + ".".join(str(n) for n in MIN_TIME_VERSION)
+        out["why"] = ("nodefirmware " + ".".join(str(n) for n in MIN_TIME_VERSION)
                       + " of nieuwer nodig")
         return out
     if not _fresh(commanding._field(carrier, "source_seen"), NODE_STALE_SECS, now):
@@ -753,7 +752,7 @@ def run_once(now: float | None = None) -> dict:
         log.info("Kloksynchronisatie: %d node(s) kregen de tijd", sent)
     else:
         _state["last_result"] = "geen enkele node kon bereikt worden"
-        _state["last_reason"] = ("geen node publiceert rechtstreeks met MeshStats "
+        _state["last_reason"] = ("geen node publiceert rechtstreeks met de nodefirmware "
                                  + ".".join(str(n) for n in MIN_TIME_VERSION) + " of nieuwer")
         log.info("Kloksynchronisatie: geen enkele node kwam in aanmerking")
     return dict(_state)
@@ -786,7 +785,7 @@ def start() -> None:
     """Start de planner. Doet niets als de feature uit staat."""
     global _thread
     if not ENABLED:
-        log.info("Kloksynchronisatie staat uit (MCS_CLOCKSYNC_ENABLED)")
+        log.info("Kloksynchronisatie staat uit (MM_CLOCKSYNC_ENABLED)")
         _state["last_result"] = "uitgeschakeld"
         return
     if _thread is not None:

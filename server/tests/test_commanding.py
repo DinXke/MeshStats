@@ -26,7 +26,7 @@ def rep(**overrides) -> dict:
         "pubkey_prefix": "e3d3f4d7edd0",
         "source_prefix": "e3d3f4d7edd0",
         "source_seen": stamp(2),
-        "fw_meshstats": "1.8.0",
+        "fw_meshmanager": "1.8.0",
         "fw": "v1.16.0",
     }
     base.update(overrides)
@@ -39,7 +39,7 @@ def monitor(**overrides) -> dict:
         "pubkey_prefix": "55d9a320a4e3",
         "source_prefix": "55d9a320a4e3",
         "source_seen": stamp(1),
-        "fw_meshstats": "1.9.0",
+        "fw_meshmanager": "1.9.0",
         "fw": "v1.16.0",
     }
     base.update(overrides)
@@ -64,7 +64,7 @@ def test_oudere_firmware_krijgt_geen_opdracht():
     # aanvaardt het bericht en gooit het weg: publish() slaagt, er gebeurt
     # niets, en niemand ziet het. Precies het soort stilte dat de knop vroeger
     # verborg, dus hier wordt er niet eens gepubliceerd.
-    r = route(rep_row=rep(fw_meshstats="1.7.2"))
+    r = route(rep_row=rep(fw_meshmanager="1.7.2"))
     assert r["mqtt"] is False
     assert r["blocker"] == "old_fw"
 
@@ -73,11 +73,11 @@ def test_versievergelijking_is_numeriek_niet_alfabetisch():
     # "1.10.0" < "1.8.0" als string, en dat zou net de firmware buitensluiten
     # die het wél kan.
     assert commanding.parse_version("1.10.0") > commanding.MIN_CMD_VERSION
-    assert route(rep_row=rep(fw_meshstats="1.10.0"))["mqtt"] is True
+    assert route(rep_row=rep(fw_meshmanager="1.10.0"))["mqtt"] is True
 
 
 def test_zonder_gemelde_versie_wordt_er_niet_gegokt():
-    r = route(rep_row=rep(fw_meshstats=None))
+    r = route(rep_row=rep(fw_meshmanager=None))
     assert r["mqtt"] is False
     assert r["blocker"] == "no_fw"
 
@@ -108,16 +108,16 @@ def test_monitor_moet_de_sweep_kennen():
     # 1.8.0 kent het cmd-topic wel, maar weigert het argument. Dat is geen
     # "misschien": zo'n node telt de opdracht als geweigerd en zwijgt verder,
     # wat op de pagina niet van een onbereikbare node te onderscheiden is.
-    r = route(rep_row=rep(source_prefix="55d9a320a4e3"), relay=monitor(fw_meshstats="1.8.0"))
+    r = route(rep_row=rep(source_prefix="55d9a320a4e3"), relay=monitor(fw_meshmanager="1.8.0"))
     assert r["mqtt"] is False
     assert r["blocker"] == "old_fw"
     # De versie die de pagina toont, is die van de node die de opdracht krijgt.
-    assert r["fw_meshstats"] == "1.8.0"
+    assert r["fw_meshmanager"] == "1.8.0"
     assert r["min_fw"] == "1.9.0"
 
 
 def test_monitor_zonder_gemelde_versie_krijgt_niets():
-    r = route(rep_row=rep(source_prefix="55d9a320a4e3"), relay=monitor(fw_meshstats=None))
+    r = route(rep_row=rep(source_prefix="55d9a320a4e3"), relay=monitor(fw_meshmanager=None))
     assert r["mqtt"] is False
     assert r["blocker"] == "no_fw"
 
@@ -162,7 +162,7 @@ def test_broker_weg_blokkeert_maar_overschaduwt_niets():
     # Een wegvallende broker is tijdelijk; te oude firmware niet. Wie beide
     # heeft, hoort de blijvende reden te lezen, want die vraagt om actie.
     assert route(broker_connected=False)["blocker"] == "broker_down"
-    assert route(rep_row=rep(fw_meshstats="1.7.2"),
+    assert route(rep_row=rep(fw_meshmanager="1.7.2"),
                  broker_connected=False)["blocker"] == "old_fw"
 
 

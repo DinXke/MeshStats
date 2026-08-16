@@ -109,7 +109,7 @@ def test_een_klok_die_ver_achteruit_sprong_wordt_geweigerd(monkeypatch, tmp_path
 
 def _rep(**kw):
     row = {"pubkey_prefix": "e3d3f4d7edd0", "name": "Node", "source_prefix": "e3d3f4d7edd0",
-           "source_seen": "2026-08-16T12:00:00Z", "fw_meshstats": "1.10.0"}
+           "source_seen": "2026-08-16T12:00:00Z", "fw_meshmanager": "1.10.0"}
     row.update(kw)
     return row
 
@@ -125,14 +125,14 @@ def test_een_node_met_de_juiste_firmware_komt_in_aanmerking():
 def test_te_oude_firmware_krijgt_niets():
     # Een 1.9.1-node kent het topic wel maar weigert het woord en telt het als
     # geweigerd -- een teller op een dak die niemand leest. Hier stranden.
-    (t,) = clocksync.targets([_rep(fw_meshstats="1.9.1")], now=NOW)
+    (t,) = clocksync.targets([_rep(fw_meshmanager="1.9.1")], now=NOW)
     assert t["ok"] is False
     assert "1.10.0" in t["why"]
 
 
 def test_versies_worden_op_getal_vergeleken_en_niet_op_tekst():
     # "1.10.0" komt alfabetisch vóór "1.9.1"; net de firmware die het wél kan.
-    (t,) = clocksync.targets([_rep(fw_meshstats="1.10.1")], now=NOW)
+    (t,) = clocksync.targets([_rep(fw_meshmanager="1.10.1")], now=NOW)
     assert t["ok"] is True
 
 
@@ -160,7 +160,7 @@ def test_de_knop_op_een_doorgestuurde_repeater_mikt_op_zijn_monitor(monkeypatch)
     # De dakrepeater publiceert zelf niets. Zijn klok komt van de node die hem
     # monitort, en dus gaat het bericht daarheen -- niet naar een cmd-topic waar
     # niemand naar luistert.
-    monitor = _rep(pubkey_prefix="55d9a320a4e3", fw_meshstats="1.11.0")
+    monitor = _rep(pubkey_prefix="55d9a320a4e3", fw_meshmanager="1.11.0")
     monkeypatch.setattr(clocksync.db, "find_repeater", lambda p: monitor)
     r = clocksync.time_route(_rep(source_prefix="55d9a320a4e3"), now=NOW)
     assert r["ok"] is True
@@ -172,8 +172,8 @@ def test_bij_een_monitor_telt_de_firmware_van_de_monitor(monkeypatch):
     # Niet die van het onderwerp: een node die zelf niet publiceert meldt nergens
     # een versie, dus daarop gokken kost een opdracht die stil geweigerd wordt.
     monkeypatch.setattr(clocksync.db, "find_repeater",
-                        lambda p: _rep(pubkey_prefix="55d9a320a4e3", fw_meshstats="1.9.1"))
-    r = clocksync.time_route(_rep(source_prefix="55d9a320a4e3", fw_meshstats="1.11.0"),
+                        lambda p: _rep(pubkey_prefix="55d9a320a4e3", fw_meshmanager="1.9.1"))
+    r = clocksync.time_route(_rep(source_prefix="55d9a320a4e3", fw_meshmanager="1.11.0"),
                              now=NOW)
     assert r["ok"] is False
     assert r["blocker"] == "old_fw"
@@ -202,7 +202,7 @@ def knop(monkeypatch):
                         lambda rep, **kw: {"id": 1, "prefix": "e3", "name": "Dak",
                                            "node": "55d9a320a4e3", "via_monitor": True,
                                            "ok": True, "blocker": "", "why": "",
-                                           "fw_meshstats": "1.11.0"})
+                                           "fw_meshmanager": "1.11.0"})
     monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: True)
     monkeypatch.setattr(mqtt_ingest, "publish_command",
                         lambda node, cmd, subject=None, epoch=None:
@@ -303,7 +303,7 @@ def test_een_dichte_weg_publiceert_niet(monkeypatch, knop):
                         lambda rep, **kw: {"id": 1, "prefix": "e3", "name": "Dak",
                                            "node": None, "via_monitor": False, "ok": False,
                                            "blocker": "old_fw", "why": "te oude firmware",
-                                           "fw_meshstats": "1.9.1"})
+                                           "fw_meshmanager": "1.9.1"})
     out = clocksync.sync_now(_rep(), now=1_800_000_000.0)
     assert out["outcome"] == "no_route"
     assert out["blocker"] == "old_fw"

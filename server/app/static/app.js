@@ -1,4 +1,4 @@
-/* MeshStats front-end: relative times, gauges, charts, maps and the history
+/* MeshManager front-end: relative times, gauges, charts, maps and the history
  * modal. Loaded after i18n.js, so every string this file builds goes through
  * MCSI18N.t -- text baked in here would survive a language switch and leave the
  * page half translated. */
@@ -21,7 +21,7 @@
   // Nothing here changes behaviour -- the page still carries on -- it only
   // stops the failure from being invisible.
   function logFail(what, err) {
-    if (window.console && console.error) console.error("[meshstats] " + what, err);
+    if (window.console && console.error) console.error("[meshmanager] " + what, err);
   }
   // --- address-hash candidates ---------------------------------------------
   // A sender, a destination and a path hop are all named by one or two bytes of

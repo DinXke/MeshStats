@@ -32,6 +32,10 @@ splits a series in two::
 Metric names come from nodes, so only ``[A-Za-z0-9_]`` survives into a field
 name -- see ``safe_metric``.
 
+Ook de hernoeming naar MeshManager heeft die namen met rust gelaten: ze staan
+in de data en niet in de code. Zie ``MEASUREMENT`` hieronder voor de afweging
+en voor de weg terug voor wie het toch wil.
+
 Never at the cost of the site
 -----------------------------
 Two rules the rest of this module exists to keep:
@@ -50,7 +54,6 @@ this move can be rolled back without losing a day.
 """
 import json
 import logging
-import os
 import queue
 import re
 import threading
@@ -60,14 +63,31 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-log = logging.getLogger("meshstats.tsdb")
+from . import config
+
+log = logging.getLogger("meshmanager.tsdb")
 
 # Empty means "keep everything in SQLite" -- the pre-migration behaviour, which
 # stays a supported way to run the site.
-URL = os.environ.get("MCS_TSDB_URL", "").strip().rstrip("/")
+URL = config.env("TSDB_URL", "").strip().rstrip("/")
 
-MEASUREMENT = "meshstats"
-METRIC_PREFIX = "meshstats_"
+# Blijft "meshstats", ook na de hernoeming naar MeshManager, en dat is een
+# bewuste uitzondering op "werkelijk alles gaat om".
+#
+# Deze naam staat niet in code maar IN DE DATA: elk meetpunt dat sinds de
+# migratie naar VictoriaMetrics geschreven is, draagt hem. Hem hier zomaar
+# veranderen schrijft nieuwe punten onder een nieuwe reeks en laat de oude
+# staan waar ze staan -- de grafieken beginnen dan bij nul en de historiek is
+# alleen nog te vinden door met de hand een andere reeksnaam in te tikken.
+# Precies de "reeks stilletjes in tweeën gesplitst" waar de moduletekst
+# hierboven voor waarschuwt, alleen dan met opzet.
+#
+# Wie de naam tóch wil laten meeverhuizen kan dat, via MM_TSDB_MEASUREMENT:
+# hernoem eerst de bestaande reeksen in VictoriaMetrics zelf, zet daarna de
+# variabele. Standaard doen we het niet, want de winst is cosmetisch en de
+# kosten zijn de historiek.
+MEASUREMENT = config.env("TSDB_MEASUREMENT", "meshstats").strip() or "meshstats"
+METRIC_PREFIX = MEASUREMENT + "_"
 
 # Short: this runs inside a request for reads, and inside the writer thread for
 # writes. Waiting longer helps nobody; the fallback is right there.
@@ -304,7 +324,7 @@ def start() -> None:
     """Start the writer thread (a no-op when no database is configured)."""
     global _thread
     if not URL:
-        log.info("No MCS_TSDB_URL configured; measurements stay in SQLite")
+        log.info("No MM_TSDB_URL configured; measurements stay in SQLite")
         return
     if _thread is not None:
         return

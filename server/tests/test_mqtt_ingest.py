@@ -1,6 +1,6 @@
 """Tests voor wat er gebeurt met een bericht dat niet te lezen valt.
 
-De aanleiding staat in de 1.9.1-noot van MeshStatsNet.cpp: een nodenaam met een
+De aanleiding staat in de 1.9.1-noot van MeshManagerNet.cpp: een nodenaam met een
 aanhalingsteken erin maakte de payload ongeldige JSON, waarna dit bestand hem
 weggooide. De node verdween daarmee uit de statistieken terwijl aan de
 firmwarekant elke teller "gepubliceerd" bleef melden -- de broker had de bytes
@@ -34,7 +34,7 @@ KAPOTTE_NAAM = b'{"repeater":{"pubkey_prefix":"e3d3f4d7edd0","name":"Bob"s node"
 
 
 def test_onleesbaar_bericht_wordt_overgeslagen_en_geteld(caplog):
-    with caplog.at_level(logging.WARNING, logger="meshstats.mqtt"):
+    with caplog.at_level(logging.WARNING, logger="meshmanager.mqtt"):
         assert mqtt_ingest.handle_message("meshcore/e3d3f4d7edd0/stats", KAPOTTE_NAAM) is False
     assert mqtt_ingest._state["errors"] == 1
     assert "JSONDecodeError" in mqtt_ingest._state["last_error"]
@@ -43,7 +43,7 @@ def test_onleesbaar_bericht_wordt_overgeslagen_en_geteld(caplog):
 def test_de_payload_staat_in_het_logboek(caplog):
     # Het hele punt: de naam die de fout veroorzaakte moet leesbaar zijn in de
     # melding, want de foutmelding van json noemt enkel een kolomnummer.
-    with caplog.at_level(logging.WARNING, logger="meshstats.mqtt"):
+    with caplog.at_level(logging.WARNING, logger="meshmanager.mqtt"):
         mqtt_ingest.handle_message("meshcore/e3d3f4d7edd0/stats", KAPOTTE_NAAM)
     (regel,) = caplog.messages
     assert 'Bob"s node' in regel
@@ -55,7 +55,7 @@ def test_ongeldige_utf8_blijft_zichtbaar_als_bytes(caplog):
     # UTF-8-teken afgekapt is. Met vraagtekens in de logregel zou dat niet van
     # het geval hierboven te onderscheiden zijn.
     payload = b'{"repeater":{"name":"caf\xc3"},"metrics":{}}'
-    with caplog.at_level(logging.WARNING, logger="meshstats.mqtt"):
+    with caplog.at_level(logging.WARNING, logger="meshmanager.mqtt"):
         assert mqtt_ingest.handle_message("meshcore/aabbccddeeff/stats", payload) is False
     (regel,) = caplog.messages
     assert "\\xc3" in regel
@@ -64,7 +64,7 @@ def test_ongeldige_utf8_blijft_zichtbaar_als_bytes(caplog):
 def test_lange_payload_wordt_afgekapt(caplog):
     # Een node die in een lus onzin publiceert mag geen logbestand volschrijven.
     payload = b'{"rommel":"' + b"x" * 5000 + b'"'
-    with caplog.at_level(logging.WARNING, logger="meshstats.mqtt"):
+    with caplog.at_level(logging.WARNING, logger="meshmanager.mqtt"):
         mqtt_ingest.handle_message("meshcore/aabbccddeeff/stats", payload)
     (regel,) = caplog.messages
     assert len(regel) < mqtt_ingest.MAX_LOG_EXCERPT + 300
@@ -75,7 +75,7 @@ def test_payload_blijft_een_regel(caplog):
     # Tien van deze meldingen onder elkaar moeten nog als tien meldingen te
     # lezen zijn, niet als een berg fragmenten zonder herkenbaar begin.
     payload = b'{"a":\n"b"\n'
-    with caplog.at_level(logging.WARNING, logger="meshstats.mqtt"):
+    with caplog.at_level(logging.WARNING, logger="meshmanager.mqtt"):
         mqtt_ingest.handle_message("meshcore/aabbccddeeff/stats", payload)
     (regel,) = caplog.messages
     assert "\n" not in regel
@@ -87,7 +87,7 @@ def test_een_goed_bericht_logt_niets(caplog, monkeypatch):
     gezien = []
     monkeypatch.setattr(mqtt_ingest, "_handle_payload",
                         lambda topic, raw: gezien.append(topic))
-    with caplog.at_level(logging.WARNING, logger="meshstats.mqtt"):
+    with caplog.at_level(logging.WARNING, logger="meshmanager.mqtt"):
         assert mqtt_ingest.handle_message("meshcore/e3d3f4d7edd0/stats", b"{}") is True
     assert gezien == ["meshcore/e3d3f4d7edd0/stats"]
     assert caplog.messages == []

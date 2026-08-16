@@ -4,7 +4,26 @@ A MeshCore node keeps a single MQTT connection open and publishes over it, which
 is far cheaper for an ESP32 than setting up an HTTP request every time. Two kinds
 of message arrive, on two topic patterns:
 
-``meshcore/<node_hex>/stats``
+Twee topicvoorvoegsels tegelijk
+-------------------------------
+Sinds de hernoeming naar MeshManager is het voorvoegsel ``meshmanager/``. Het
+oude ``meshcore/`` blijft gewoon meeluisteren, en dat is niet uit
+vriendelijkheid maar uit noodzaak: nodes en server worden nooit op hetzelfde
+moment bijgewerkt. Ging alleen de server om, dan zou hij doof zijn voor elke
+node die nog niet geflasht is; gingen alleen de nodes om, dan publiceerden ze
+in het niets. Dus luistert deze kant naar allebei en behandelt ze identiek --
+het voorvoegsel zegt niets over de inhoud.
+
+Waarom het voorvoegsel überhaupt mee omgaat: ``meshcore/`` is de naam van het
+protocol en van een ander project, niet van dit project. Op een broker die ook
+echte MeshCore-diensten bedient, is dat een botsing die wacht om te gebeuren,
+en een ACL die "van dit project" moet zeggen kan dat niet zeggen. Vandaar een
+voorvoegsel dat we zelf bezitten.
+
+Welke kant een opdracht op gaat, hangt af van waar de node zich meldt: zie
+``command_prefix``. Wanneer ``LEGACY_PREFIX`` weg mag staat daar.
+
+``<prefix>/<node_hex>/stats``
     Periodic statistics, same JSON as POST /api/v1/ingest::
 
         {"repeater": {"pubkey_prefix": "...", "name": "..."},
@@ -18,7 +37,7 @@ of message arrive, on two topic patterns:
     the monitored repeaters went missing once before. See ``_handle_settings``
     for why only a node's own settings are taken.
 
-``meshcore/<node_hex>/rx``
+``<prefix>/<node_hex>/rx``
     One message per LoRa packet the node overheard::
 
         {"t": 123456, "snr": 5.25, "rssi": -92, "len": 57, "raw": "<hex frame>"}
@@ -32,7 +51,7 @@ here.
 
 One topic goes the other way::
 
-    meshcore/<node_hex>/cmd
+    <prefix>/<node_hex>/cmd
 
 A single word -- ``settings``, ``status`` or ``time`` -- asking that node to read
 its CLI parameters now, to publish a statistics message now, or to set its clock.
@@ -43,13 +62,13 @@ chain left a button that did nothing while the page kept showing values from the
 node's last daily sweep. The node answers on the ordinary ``stats`` topic, so
 nothing else in this file changes.
 
-Since MeshStats 1.9.0 ``settings`` may carry one argument: the public key of a
+Since firmware 1.9.0 ``settings`` may carry one argument: the public key of a
 repeater that node *monitors*. It then fetches that repeater's CLI settings
 over LoRa and publishes them under that repeater's name -- the only path there
 is to a repeater which does not publish to MQTT itself, which is exactly the
 one on the roof this whole project was built to watch.
 
-Since MeshStats 1.10.0 there is ``time <epoch>``: UNIX seconds in UTC, the format
+Since firmware 1.10.0 there is ``time <epoch>``: UNIX seconds in UTC, the format
 MeshCore's own CLI parses. The node sets its own clock from it and then checks
 the clocks of the repeaters it monitors over LoRa -- again the only path to a
 repeater that does not publish here itself. Which node is asked, and what has to
@@ -65,7 +84,7 @@ here and again on the node, and it can only ever move a clock forward. That last
 part is not a nicety: a node's adverts carry its clock, and a clock moved
 backwards makes it invisible to everyone who already knows it for exactly as
 long as the step. See ``publish_command`` for why nothing is retained here, and
-``MeshStatsNet.cpp`` for why nothing else is accepted there.
+``MeshManagerNet.cpp`` for why nothing else is accepted there.
 
 Identity: topic versus payload
 ------------------------------
@@ -94,28 +113,75 @@ prefix, which turns the topic into something the broker enforces. See
 """
 import json
 import logging
-import os
 import re
 import threading
 
-from . import db, packets
+from . import config, db, packets
 
-log = logging.getLogger("meshstats.mqtt")
+log = logging.getLogger("meshmanager.mqtt")
 
-MQTT_HOST = os.environ.get("MCS_MQTT_HOST", "")
-MQTT_PORT = int(os.environ.get("MCS_MQTT_PORT", "1883"))
-MQTT_USER = os.environ.get("MCS_MQTT_USER", "")
-MQTT_PASS = os.environ.get("MCS_MQTT_PASS", "")
-MQTT_TOPIC = os.environ.get("MCS_MQTT_TOPIC", "meshcore/+/stats")
-MQTT_RX_TOPIC = os.environ.get("MCS_MQTT_RX_TOPIC", "meshcore/+/rx")
+MQTT_HOST = config.env("MQTT_HOST", "")
+MQTT_PORT = int(config.env("MQTT_PORT", "1883"))
+MQTT_USER = config.env("MQTT_USER", "")
+MQTT_PASS = config.env("MQTT_PASS", "")
+
+# Het voorvoegsel dat dit project bezit, en het voorvoegsel van vroeger.
+#
+# Wanneer LEGACY_PREFIX weg mag: als elke node die naar deze broker publiceert
+# geflasht is met MeshManager-firmware 2.0.0 of hoger én ``wifi mqtt prefix``
+# op de nieuwe waarde staat. De beheerpagina toont per node op welk voorvoegsel
+# hij binnenkomt, dus dat is af te lezen en niet te gokken. Verwijder dan deze
+# constante, de regel uit PREFIXES hieronder, en de ``meshcore``-regels uit
+# mosquitto/acl.
+PREFIX = config.env("MQTT_PREFIX", "meshmanager").strip().strip("/") or "meshmanager"
+LEGACY_PREFIX = "meshcore"
+
+
+def _prefixes() -> tuple:
+    """Voorvoegsels waar we naar luisteren, het eigene eerst.
+
+    Een lijst en geen enkele waarde, omdat een migratie nu eenmaal een periode
+    is waarin beide waar zijn. Dubbele eruit, want luisteren op hetzelfde
+    patroon zou elk bericht twee keer laten binnenkomen -- en dat zou pas
+    opvallen als de teller op de beheerpagina verdubbelt.
+    """
+    out = []
+    for p in (PREFIX, LEGACY_PREFIX):
+        if p and p not in out:
+            out.append(p)
+    return tuple(out)
+
+
+PREFIXES = _prefixes()
+
+
+def _patterns(leaf: str) -> tuple:
+    """``<prefix>/+/<leaf>`` voor elk voorvoegsel."""
+    return tuple(f"{p}/+/{leaf}" for p in PREFIXES)
+
+
+# Wie een eigen patroon in de omgeving zet, houdt dat. Zo'n waarde staat er niet
+# per ongeluk -- het is de enige manier om op een gedeelde broker onder een
+# eigen tak te draaien -- en die stilzwijgend vervangen door onze standaard zou
+# zo'n installatie doof maken op precies het moment dat ze bijwerkt. Ze komt er
+# dus BOVENOP de voorvoegsels hierboven, niet in de plaats ervan.
+MQTT_TOPICS = tuple(dict.fromkeys(_patterns("stats") + tuple(
+    t for t in (config.env("MQTT_TOPIC", "").strip(),) if t)))
+MQTT_RX_TOPICS = tuple(dict.fromkeys(_patterns("rx") + tuple(
+    t for t in (config.env("MQTT_RX_TOPIC", "").strip(),) if t)))
+
 # The one topic this side publishes on. ``{node}`` is the publishing node's own
 # pubkey prefix, exactly as it appears in the two topics above, so a broker ACL
 # can bind a node's read permission to the same prefix as its write permission.
-MQTT_CMD_TOPIC = os.environ.get("MCS_MQTT_CMD_TOPIC", "meshcore/{node}/cmd")
+# ``{prefix}`` wordt ingevuld met het voorvoegsel waarop die ene node zich
+# meldt -- zie ``command_prefix``. Een patroon uit de omgeving zonder
+# ``{prefix}`` erin wordt gerespecteerd zoals het er staat: wie een vast topic
+# opgeeft, bedoelt dat.
+MQTT_CMD_TOPIC = config.env("MQTT_CMD_TOPIC", "{prefix}/{node}/cmd")
 
 # Everything the firmware accepts, and nothing more. Kept here as well so a
 # typo on this side is refused before it costs a round trip, and so the list is
-# readable next to the code that sends it -- MeshStatsNet.cpp, mqttRunCommand().
+# readable next to the code that sends it -- MeshManagerNet.cpp, mqttRunCommand().
 COMMANDS = ("settings", "status", "time")
 
 # Alleen deze mag een onderwerp meekrijgen, want alleen deze betekent iets voor
@@ -133,7 +199,7 @@ COMMANDS_WITH_EPOCH = ("time",)
 
 # Het venster waarbinnen een tijd geloofwaardig is, in UNIX-epochseconden UTC:
 # 2025-01-01 tot 2100-01-01. Dezelfde grenzen als CLOCK_MIN_EPOCH/CLOCK_MAX_EPOCH
-# in MeshStatsNet.cpp, en met opzet aan beide kanten gecontroleerd.
+# in MeshManagerNet.cpp, en met opzet aan beide kanten gecontroleerd.
 #
 # Dat is hier geen dubbel werk maar de goedkoopste plaats van de twee: een node
 # zet zijn klok alleen VOORUIT (zijn adverts worden geweigerd als de tijdstempel
@@ -175,9 +241,15 @@ def status() -> dict:
     return {
         "enabled": bool(MQTT_HOST),
         "broker": f"{MQTT_HOST}:{MQTT_PORT}" if MQTT_HOST else None,
-        "topic": MQTT_TOPIC,
-        "rx_topic": MQTT_RX_TOPIC,
+        # Meervoud sinds de hernoeming, en als tekst met komma's zodat de
+        # beheerpagina in één oogopslag laat zien dat er nog een oud
+        # voorvoegsel meeluistert. Dat is namelijk precies wat je wilt zien om
+        # te beslissen of je het mag weghalen.
+        "topic": ", ".join(MQTT_TOPICS),
+        "rx_topic": ", ".join(MQTT_RX_TOPICS),
         "cmd_topic": MQTT_CMD_TOPIC,
+        "prefix": PREFIX,
+        "legacy_prefix": LEGACY_PREFIX,
         **_state,
     }
 
@@ -263,27 +335,94 @@ def publish_command(node: str, command: str, subject: str | None = None,
 
     if not can_publish():
         return False
-    topic = MQTT_CMD_TOPIC.format(node=node)
-    try:
-        info = _client.publish(topic, payload.encode(), qos=0, retain=False)
-    except Exception as err:  # noqa: BLE001 - a dead socket must not 500 the page
-        log.warning("Opdracht %s naar %s niet verstuurd: %s", payload, node, err)
-        return False
-    if info.rc != 0:
-        log.warning("Opdracht %s naar %s geweigerd door de client (rc %s)",
-                    payload, node, info.rc)
-        return False
-    _state["commands"] += 1
-    log.info("Opdracht '%s' gepubliceerd voor node %s", payload, node)
-    return True
+
+    sent = False
+    for topic in command_topics(node):
+        try:
+            info = _client.publish(topic, payload.encode(), qos=0, retain=False)
+        except Exception as err:  # noqa: BLE001 - a dead socket must not 500 the page
+            log.warning("Opdracht %s naar %s niet verstuurd: %s", payload, node, err)
+            continue
+        if info.rc != 0:
+            log.warning("Opdracht %s naar %s geweigerd door de client (rc %s)",
+                        payload, node, info.rc)
+            continue
+        sent = True
+        log.info("Opdracht '%s' gepubliceerd op %s", payload, topic)
+    if sent:
+        _state["commands"] += 1
+    return sent
 
 
-def _topic_node(topic: str) -> str:
-    """Publishing node from ``meshcore/<node_hex>/<kind>``."""
+# Waar we een node voor het laatst hoorden publiceren, per node. Alleen een
+# cache: de waarheid staat in de kolom ``topic_prefix`` op de repeaterrij, want
+# na een herstart van de site is dit leeg terwijl de node nog steeds daar
+# luistert waar hij gisteren luisterde.
+_seen_prefix = {}
+
+
+def command_prefix(node: str) -> str | None:
+    """Het voorvoegsel waarop deze node zich meldt, of None als we het niet weten.
+
+    Een opdracht gaat naar het topic waar de node werkelijk luistert, en dat is
+    tijdens een migratie niet af te leiden uit een instelling: een node die nog
+    niet geflasht is, luistert op het oude voorvoegsel, en de site heeft geen
+    andere manier om dat te weten dan te kijken waar zijn berichten vandaan
+    komen. Vandaar dat we het onthouden bij binnenkomst in plaats van het te
+    kiezen bij vertrek.
+    """
+    node = re.sub(r"[^0-9a-f]", "", str(node or "").lower())
+    if not node:
+        return None
+    if node in _seen_prefix:
+        return _seen_prefix[node]
+    stored = db.topic_prefix_for(node)
+    if stored:
+        _seen_prefix[node] = stored
+    return stored
+
+
+def command_topics(node: str) -> tuple:
+    """Topic(s) waarop een opdracht voor deze node vertrekt.
+
+    Meestal precies één: dat waarop hij zich meldt. Voor een node die we nog
+    nooit gehoord hebben zijn het er twee -- op allebei de voorvoegsels -- want
+    dan is er niets om uit te kiezen en is één klein bericht extra goedkoper
+    dan een knop die niets doet zonder te zeggen waarom. Zo'n node kan dat
+    trouwens nauwelijks zijn: de knoppen die dit gebruiken staan op de pagina
+    van een repeater die hier al binnenkomt.
+    """
+    if "{prefix}" not in MQTT_CMD_TOPIC:
+        # Vast patroon uit de omgeving: respecteren zoals opgegeven.
+        return (MQTT_CMD_TOPIC.format(node=node),)
+    prefix = command_prefix(node)
+    prefixes = (prefix,) if prefix else PREFIXES
+    return tuple(MQTT_CMD_TOPIC.format(prefix=p, node=node) for p in prefixes)
+
+
+def _topic_parts(topic: str) -> tuple:
+    """``(voorvoegsel, node)`` uit ``<prefix>/<node_hex>/<kind>``."""
     parts = topic.split("/")
     node = parts[1].lower().strip() if len(parts) >= 3 else ""
     if not node:
         raise ValueError(f"no node prefix in topic {topic!r}")
+    return parts[0].strip(), node
+
+
+def _topic_node(topic: str) -> str:
+    """Publishing node from ``<prefix>/<node_hex>/<kind>``.
+
+    Legt meteen vast op welk voorvoegsel deze node zich meldt, want dit is de
+    enige plaats waar dat langskomt -- en het is wat ``command_topics`` straks
+    nodig heeft om een opdracht de goede kant op te sturen.
+
+    Alleen in het geheugen, met opzet. Ook ``rx`` komt hier langs, en dat is de
+    snelste stroom die deze server kent; naar de databank schrijven gebeurt op
+    de statistiekenkant, waar het om enkele berichten per minuut gaat.
+    """
+    prefix, node = _topic_parts(topic)
+    if prefix:
+        _seen_prefix[node] = prefix
     return node
 
 
@@ -307,7 +446,14 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     ts = body.get("ts") or db.utcnow()
     db.ingest(row["id"], ts, metrics, body.get("neighbors"), force=bool(body.get("force")))
     db.record_source(row["id"], publisher)
-    db.record_firmware(row["id"], rep.get("fw"), rep.get("fw_meshstats"))
+    # Op de statistiekenkant wél naar de databank, want dit moet een herstart
+    # van de site overleven: een opdracht aan een node die vandaag nog niets
+    # publiceerde, hoort na een herstart nog steeds op het goede topic te
+    # vertrekken. Eén UPDATE per bericht, en die komen per minuut in plaats van
+    # per seconde. Hier en niet bovenaan, want pas na get_or_create_repeater
+    # bestaat de rij van een node die zich voor het eerst meldt.
+    db.record_topic_prefix(publisher, _seen_prefix.get(publisher, ""))
+    db.record_firmware(row["id"], rep.get("fw"), db.payload_module_version(rep))
     if subject != publisher:
         log.info("stats for %s relayed by node %s", subject, publisher)
     settings = body.get("settings")
@@ -340,7 +486,7 @@ def _clean_settings(values: dict) -> dict:
     is given -- so this only has to catch the empty ones.
 
     ``None`` is deliberately kept, and that is not the same thing. Since
-    MeshStats 1.9.0 a node also sweeps the CLI of a repeater it *monitors*, over
+    firmware 1.9.0 a node also sweeps the CLI of a repeater it *monitors*, over
     LoRa, and there a parameter can be asked and stay silent. It sends null for
     those, the column stores NULL, and the page renders "(geen antwoord)" -- the
     same phrase, from the same column, that a Home Assistant sweep has always
@@ -376,7 +522,7 @@ def _handle_settings(row, publisher: str, values: dict, prior_source=None) -> No
 
     - the repeater **itself**, which is the ordinary case;
     - the node that **already relays this repeater's statistics**, which is new
-      in MeshStats 1.9.0. Such a monitor logs in over LoRa, walks the far side's
+      in firmware 1.9.0. Such a monitor logs in over LoRa, walks the far side's
       CLI and publishes the answers under that repeater's name, because a node
       that does not publish to MQTT itself has no other path at all.
 
@@ -481,7 +627,7 @@ def handle_message(topic: str, payload: bytes) -> bool:
     niet in wat er op kolom 87 stond, dus je weet dat een bericht van deze node
     onleesbaar was en verder niets. De aanleiding is een stuk tekst dat iemand
     ooit gekozen heeft -- een nodenaam met een aanhalingsteken erin, zie de
-    1.9.1-noot in MeshStatsNet.cpp -- en die staat in de payload. Zonder dat
+    1.9.1-noot in MeshManagerNet.cpp -- en die staat in de payload. Zonder dat
     fragment is de enige weg naar de oorzaak een sniffer op de broker, en
     daarmee blijft zo'n fout jaren liggen.
 
@@ -515,10 +661,11 @@ def _run() -> None:
         if rc == 0:
             _state["connected"] = True
             _state["last_error"] = ""
-            client.subscribe(MQTT_TOPIC, qos=0)
-            client.subscribe(MQTT_RX_TOPIC, qos=0)
-            log.info("MQTT connected to %s:%s, subscribed to %s and %s",
-                     MQTT_HOST, MQTT_PORT, MQTT_TOPIC, MQTT_RX_TOPIC)
+            topics = MQTT_TOPICS + MQTT_RX_TOPICS
+            for topic in topics:
+                client.subscribe(topic, qos=0)
+            log.info("MQTT connected to %s:%s, subscribed to %s",
+                     MQTT_HOST, MQTT_PORT, ", ".join(topics))
         else:
             _state["connected"] = False
             _state["last_error"] = f"connection refused (code {rc})"
@@ -531,7 +678,7 @@ def _run() -> None:
     def on_message(client, userdata, msg):
         handle_message(msg.topic, msg.payload)
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="meshstats-ingest")
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="meshmanager-ingest")
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.on_connect = on_connect
@@ -560,7 +707,7 @@ def _run() -> None:
 def start() -> None:
     """Start the subscriber in a background thread (a no-op without a broker)."""
     if not MQTT_HOST:
-        log.info("No MCS_MQTT_HOST configured; MQTT ingest is off")
+        log.info("No MM_MQTT_HOST configured; MQTT ingest is off")
         return
     t = threading.Thread(target=_run, name="mqtt-ingest", daemon=True)
     t.start()

@@ -66,9 +66,9 @@ def bootstrap():
             "INSERT INTO admins(username, pw_hash) VALUES(?,?)",
             ("admin", auth.hash_password(password)),
         )
-        print(f"[mc-repeater-stats] Eerste start: admin-account aangemaakt.", flush=True)
-        print(f"[mc-repeater-stats] Gebruikersnaam: admin  Wachtwoord: {password}", flush=True)
-        print(f"[mc-repeater-stats] Wijzig dit meteen via /admin.", flush=True)
+        print(f"[meshmanager] Eerste start: admin-account aangemaakt.", flush=True)
+        print(f"[meshmanager] Gebruikersnaam: admin  Wachtwoord: {password}", flush=True)
+        print(f"[meshmanager] Wijzig dit meteen via /admin.", flush=True)
     db.prune()
     # ... and again every hour after this one. Pruning only here made the
     # retention an act that happened at startup rather than a rule that holds:
@@ -80,7 +80,7 @@ def bootstrap():
     # position when it changes, and most nodes never move.
     filled = db.classify_countries()
     if filled:
-        print(f"[mc-repeater-stats] Land bepaald voor {filled} contact(en).", flush=True)
+        print(f"[meshmanager] Land bepaald voor {filled} contact(en).", flush=True)
     # Started before the ingest paths open: the writer thread has to exist by the
     # time the first measurement arrives, or those points take the spill route
     # for no reason.
