@@ -163,6 +163,22 @@ COLUMN_MIGRATIONS = [
     # on, an upgrade first asks for the node's name -- upgrading the wrong node
     # is the most expensive mistake available on this page.
     ("repeaters", "is_critical", "INTEGER NOT NULL DEFAULT 0"),
+    # Wat een bezoeker van deze node te zien krijgt, fijnmaziger dan is_public.
+    # Een positie is gevoeliger dan een batterijstand, en tot deze twee kolommen
+    # er waren kon deze site dat verschil niet uitdrukken: publiek was alles of
+    # niets.
+    #
+    # Allebei DEFAULT 1, en die standaard is het halve ontwerp. ALTER TABLE ADD
+    # COLUMN vult bestaande rijen met de standaard, dus elke repeater die er al
+    # stond blijft precies zo zichtbaar als hij gisteren was. Een privacykolom
+    # die bij het toevoegen stilzwijgend iets van de kaart haalt, is een
+    # slechtere fout dan de kolom die ontbrak -- wie morgenochtend zijn kaart
+    # opent, hoort daar niets van te merken.
+    #
+    # De handhaving zit niet hier maar in ``visible_contacts`` en in de
+    # naam-uitdrukkingen verderop; zie de toelichting bij VIEWS.
+    ("repeaters", "show_position", "INTEGER NOT NULL DEFAULT 1"),
+    ("repeaters", "show_name", "INTEGER NOT NULL DEFAULT 1"),
     # The hop hashes of the packet's path, comma-separated. Denormalised out of
     # ``raw`` on purpose: the packet detail view resolves every hop against the
     # contacts table, and re-decoding frames for that is work the ingest path has
@@ -216,6 +232,81 @@ COLUMN_RENAMES = [
 ]
 
 
+# Eén rij per node-sleutelprefix met de zichtbaarheidskeuzes van de gevolgde
+# repeater die erachter zit. Als losse subquery en niet als LEFT JOIN op
+# ``repeaters`` zelf: ``pubkey_prefix`` is uniek, maar twee sleutels kunnen in
+# hun eerste zes hextekens samenvallen, en dan zou een rechtstreekse join elke
+# contactrij verdubbelen -- in located_nodes() zou dezelfde node twee bolletjes
+# krijgen. MIN() kiest bij zo'n botsing de striktste keuze, wat de enige
+# richting is waarin fout gaan mag.
+VISIBILITY_SQL = (
+    "(SELECT substr(pubkey_prefix, 1, 6) AS p6, "
+    " MIN(show_position) AS show_position, MIN(show_name) AS show_name "
+    " FROM repeaters GROUP BY substr(pubkey_prefix, 1, 6))"
+)
+
+# De handhaving van "positie tonen" en "naam tonen", op één plek.
+#
+# Waarom een view en niet een filter per endpoint: de positie van een node komt
+# langs zes endpoints naar buiten en de naam langs nog meer, allemaal doordat ze
+# ``contacts`` aanjoinen. Een schakelaar die belooft een positie te verbergen
+# terwijl één endpoint haar nog uitlevert, is erger dan geen schakelaar -- en
+# zes losse filters zijn zes plaatsen waar de zevende endpoint vergeten wordt.
+# Elke publieke leesweg leest daarom uit ``visible_contacts`` en de
+# ingestwegen (upsert_advert, upsert_contacts, set_country) uit ``contacts``:
+# wat de site weet verandert niet, alleen wat ze vertelt.
+#
+# Verborgen positie wordt NULL, en dat is met opzet dezelfde waarde als "van
+# deze node nooit een advert met locatie gehoord". Die toestand is overal al
+# afgehandeld -- de kaart telt hem als niet-geplaatst, een hop zonder positie
+# breekt de keten van de heatmap, en een pakket valt terug op de waarnemer --
+# dus er komt geen tweede mechanisme naast dat eerste. De endpoints tellen wél
+# apart hoeveel nodes om die reden wegvallen, want stil weglaten is nog steeds
+# liegen.
+#
+# Een verborgen naam wordt niet NULL maar de adreshash: '0x' plus de eerste
+# sleutelbyte in hoofdletters, precies wat de pakkettenlijst al print voor een
+# afzender die ze niet kan noemen. NULL zou de bestaande terugval op
+# prefix.upper() in gang zetten, en dan stond er alsnog een identiteit.
+#
+# Het land hangt mee aan de positie: het is uit de coördinaten berekend
+# (set_country) en dus niets anders dan een grove vorm ervan. Het achterlaten
+# terwijl de positie weg is, zou de belofte half maken.
+VIEWS = """
+DROP VIEW IF EXISTS visible_contacts;
+CREATE VIEW visible_contacts AS
+SELECT c.prefix, c.prefix6, c.node_type, c.updated,
+       CASE WHEN v.show_name = 0
+            THEN '0x' || upper(substr(c.prefix6, 1, 2)) ELSE c.name END AS name,
+       CASE WHEN v.show_position = 0 THEN NULL ELSE c.lat END AS lat,
+       CASE WHEN v.show_position = 0 THEN NULL ELSE c.lon END AS lon,
+       CASE WHEN v.show_position = 0 THEN NULL ELSE c.country END AS country
+FROM contacts c
+LEFT JOIN %s v ON v.p6 = c.prefix6;
+""" % VISIBILITY_SQL
+
+# De naam van een buur, met dezelfde handhaving erop.
+#
+# Buren hebben een eigen naamkolom: de repeater stuurt zijn burenlijst mét
+# namen mee, en die wint normaal van wat wij uit adverts weten. Dat is precies
+# waarom deze uitdrukking niet aan ``visible_contacts`` alleen genoeg heeft --
+# een gevolgde repeater met verborgen naam die als buur van een ándere repeater
+# in de lijst staat, zou anders langs ``neighbors.name`` alsnog naar buiten
+# komen. En een gevolgde node hoeft niet in ``contacts`` te staan (hij kan
+# gevolgd worden zonder ooit geadverteerd te hebben), dus de keuze moet uit
+# ``repeaters`` komen en niet uit de view.
+NEIGHBOR_NAME_SQL = (
+    "CASE WHEN v.show_name = 0 THEN '0x' || upper(substr(n.prefix, 1, 2)) "
+    "     WHEN n.name IS NULL OR lower(n.name) = n.prefix "
+    "     THEN COALESCE(c.name, n.name) ELSE n.name END AS name"
+)
+NEIGHBOR_FROM = (
+    "FROM neighbors n "
+    "LEFT JOIN visible_contacts c ON c.prefix6 = n.prefix "
+    f"LEFT JOIN {VISIBILITY_SQL} v ON v.p6 = n.prefix "
+)
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     # Eerst hernoemen, dan pas toevoegen: andersom maakt de regel hieronder
     # eerst een lege nieuwe kolom aan, en dan zou de hernoeming stuiten op een
@@ -228,6 +319,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in names:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    # Ná de kolommen, want de view leest ze. En met een DROP ervoor in plaats
+    # van CREATE IF NOT EXISTS: een view bewaart de tekst waarmee ze gemaakt is,
+    # dus een database die de vorige versie al draaide zou anders voor altijd de
+    # oude definitie houden. Opnieuw aanmaken kost niets -- er zitten geen
+    # gegevens in.
+    conn.executescript(VIEWS)
 
 
 def _backfill_from_raw(conn: sqlite3.Connection) -> None:
@@ -511,11 +608,55 @@ def upsert_contacts(contacts: list[dict]) -> int:
 def contact_location(prefix6: str):
     """Position of a contact, or None. Adverts may register a node by name
     before it ever reports coordinates, so rows without a position exist and
-    must not be handed to callers that are about to plot them."""
+    must not be handed to callers that are about to plot them.
+
+    Uit ``visible_contacts``, dus een gevolgde node met "positie tonen" uit
+    komt hier als None terug -- dezelfde uitkomst als een node waarvan we nooit
+    coördinaten hoorden, en daarmee dezelfde afhandeling bij elke aanroeper.
+    """
     return qone(
-        "SELECT * FROM contacts WHERE prefix6=? AND lat IS NOT NULL AND lon IS NOT NULL",
+        "SELECT * FROM visible_contacts "
+        "WHERE prefix6=? AND lat IS NOT NULL AND lon IS NOT NULL",
         (prefix6.lower(),),
     )
+
+
+def withheld_position_prefixes() -> set[str]:
+    """De sleutelprefixen van gevolgde nodes die hun positie niet tonen.
+
+    Niet voor de handhaving -- die zit in ``visible_contacts`` en werkt zonder
+    dat een aanroeper eraan hoeft te denken -- maar om er eerlijk over te
+    kunnen zijn. Een kaart die een node weglaat hoort te kunnen zeggen dat er
+    iets weggelaten is, en het verschil tussen "nooit een positie gehoord" en
+    "deze node toont zijn positie niet" is precies wat een bezoeker anders zelf
+    zit te raden.
+    """
+    return {r["p6"] for r in q(
+        "SELECT substr(pubkey_prefix, 1, 6) AS p6 FROM repeaters WHERE show_position = 0"
+    )}
+
+
+def address_hash_name(pubkey_prefix: str) -> str:
+    """De adreshash zoals de site die al print voor een afzender zonder naam.
+
+    Eén byte, in de vorm 0x92: zie static/app.js, waar een hop die op geen
+    enkele bekende node past precies zo op het scherm komt. Een verborgen naam
+    krijgt dezelfde weergave in plaats van een eigen vondst, want een bezoeker
+    hoort niet te hoeven leren dat er twee soorten naamloos zijn.
+    """
+    return "0x" + (pubkey_prefix or "")[:2].upper()
+
+
+def public_name(row) -> str:
+    """De naam van een gevolgde repeater zoals een bezoeker die te zien krijgt.
+
+    Voor elke plek waar ``repeaters.name`` rechtstreeks naar buiten gaat --
+    ``visible_contacts`` kan daar niets aan doen, want die naam komt niet uit
+    de contactentabel maar uit de repeaterrij zelf.
+    """
+    if _field(row, "show_name") == 0:
+        return address_hash_name(_field(row, "pubkey_prefix") or "")
+    return row["name"]
 
 
 def upsert_advert(pubkey: str, name: str | None = None, lat: float | None = None,
@@ -629,8 +770,8 @@ def recent_packets(since_id: int = 0, limit: int = 200) -> list[sqlite3.Row]:
         "o.name AS observer_name, o.lat AS observer_lat, o.lon AS observer_lon, "
         "o.country AS observer_country "
         "FROM packets p "
-        "LEFT JOIN contacts c ON c.prefix6 = p.sender "
-        "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
+        "LEFT JOIN visible_contacts c ON c.prefix6 = p.sender "
+        "LEFT JOIN visible_contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
     )
     if since_id > 0:
         return q(select + "WHERE p.id > ? GROUP BY p.id ORDER BY p.id LIMIT ?",
@@ -660,8 +801,8 @@ def packets_with_paths(since: str, limit: int = 20000) -> list[sqlite3.Row]:
         "substr(p.observer, 1, 6) AS observer6, o.name AS observer_name, "
         "o.lat AS observer_lat, o.lon AS observer_lon "
         "FROM packets p "
-        "LEFT JOIN contacts c ON c.prefix6 = p.sender "
-        "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
+        "LEFT JOIN visible_contacts c ON c.prefix6 = p.sender "
+        "LEFT JOIN visible_contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
         "WHERE p.ts >= ? GROUP BY p.id ORDER BY p.id DESC LIMIT ?",
         (since, limit),
     )
@@ -680,8 +821,8 @@ def packet_by_id(packet_id: int) -> sqlite3.Row | None:
         "o.name AS observer_name, o.lat AS observer_lat, o.lon AS observer_lon, "
         "o.country AS observer_country "
         "FROM packets p "
-        "LEFT JOIN contacts c ON c.prefix6 = p.sender "
-        "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
+        "LEFT JOIN visible_contacts c ON c.prefix6 = p.sender "
+        "LEFT JOIN visible_contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
         "WHERE p.id = ? GROUP BY p.id",
         (packet_id,),
     )
@@ -704,7 +845,7 @@ def contacts_by_key_prefix(key_prefix: str) -> list[sqlite3.Row]:
         return []
     return q(
         "SELECT prefix6, name, lat, lon, node_type, MAX(updated) AS updated "
-        "FROM contacts "
+        "FROM visible_contacts "
         "WHERE substr(prefix6, 1, ?) = ? GROUP BY prefix6 ORDER BY prefix6",
         (len(h), h),
     )
@@ -748,8 +889,8 @@ def observer_receptions(observer: str) -> dict[str, dict]:
 # search.FIELDS refers to these aliases by name; keep the two in step.
 _SEARCH_FROM = (
     "FROM packets p "
-    "LEFT JOIN contacts c ON c.prefix6 = p.sender "
-    "LEFT JOIN contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
+    "LEFT JOIN visible_contacts c ON c.prefix6 = p.sender "
+    "LEFT JOIN visible_contacts o ON o.prefix6 = substr(p.observer, 1, 6) "
 )
 
 
@@ -867,7 +1008,7 @@ def last_packet_id() -> int:
 def located_nodes() -> list[sqlite3.Row]:
     """Every node we know a position for; the base layer of the live map."""
     return q(
-        "SELECT prefix6, name, lat, lon, node_type, country FROM contacts "
+        "SELECT prefix6, name, lat, lon, node_type, country FROM visible_contacts "
         "WHERE lat IS NOT NULL AND lon IS NOT NULL GROUP BY prefix6"
     )
 
@@ -899,7 +1040,7 @@ def node_contacts(prefix6: str) -> list[sqlite3.Row]:
     """
     return q(
         "SELECT prefix, prefix6, name, lat, lon, node_type, country, updated "
-        "FROM contacts WHERE prefix6=? ORDER BY length(prefix) DESC, updated DESC",
+        "FROM visible_contacts WHERE prefix6=? ORDER BY length(prefix) DESC, updated DESC",
         (prefix6.lower(),),
     )
 
@@ -927,7 +1068,7 @@ def node_sent_by_observer(prefix6: str) -> list[sqlite3.Row]:
     """
     return q(
         "SELECT p.observer, substr(p.observer, 1, 6) AS observer6, "
-        "(SELECT c.name FROM contacts c "
+        "(SELECT c.name FROM visible_contacts c "
         " WHERE c.prefix6 = substr(p.observer, 1, 6) AND c.name IS NOT NULL "
         " LIMIT 1) AS observer_name, "
         "COUNT(*) AS n, MIN(p.ts) AS first_ts, MAX(p.ts) AS last_ts, "
@@ -1013,6 +1154,13 @@ def node_hash_siblings(prefix6: str) -> int:
     rather than guessed from 256: what matters is how many nodes this site could
     actually confuse with each other, not how many the byte could theoretically
     address.
+
+    Bewust over ``contacts`` en niet over ``visible_contacts``: dit getal is een
+    maat voor onzekerheid, geen identiteit. Een node die zijn positie of naam
+    verbergt bezet nog steeds zijn sleutelbyte, en hem hier niet meetellen zou
+    de dubbelzinnigheid kleiner laten lijken dan ze is -- het enige antwoord dat
+    hier gevaarlijk zou zijn. Er komt geen naam en geen coördinaat uit; alleen
+    een aantal.
     """
     row = qone(
         "SELECT COUNT(DISTINCT prefix6) AS n FROM contacts "
@@ -1030,7 +1178,11 @@ def node_heard_by_repeaters(prefix6: str) -> list[sqlite3.Row]:
     neighbour table, key and SNR included.
     """
     return q(
-        "SELECT r.slug, r.name, n.snr, n.last_seen FROM neighbors n "
+        # show_name en pubkey_prefix rijden mee zodat public_name() de naam van
+        # een repeater met verborgen naam kan vervangen; de rij gaat verder
+        # ongewijzigd naar de aanroeper.
+        "SELECT r.slug, r.name, r.show_name, r.pubkey_prefix, n.snr, n.last_seen "
+        "FROM neighbors n "
         "JOIN repeaters r ON r.id = n.repeater_id "
         "WHERE n.prefix = ? AND r.is_public = 1 "
         "ORDER BY n.snr DESC",
@@ -1046,12 +1198,28 @@ def node_neighbors(repeater_id: int, limit: int) -> list[sqlite3.Row]:
     link, and is one click away.
     """
     return q(
-        "SELECT n.prefix, n.snr, n.last_seen, "
-        "CASE WHEN n.name IS NULL OR lower(n.name) = n.prefix "
-        "THEN COALESCE(c.name, n.name) ELSE n.name END AS name "
-        "FROM neighbors n LEFT JOIN contacts c ON c.prefix6 = n.prefix "
+        f"SELECT n.prefix, n.snr, n.last_seen, {NEIGHBOR_NAME_SQL} "
+        f"{NEIGHBOR_FROM}"
         "WHERE n.repeater_id = ? GROUP BY n.prefix ORDER BY n.snr DESC LIMIT ?",
         (repeater_id, limit),
+    )
+
+
+def neighbor_rows(repeater_id: int) -> list[sqlite3.Row]:
+    """De volledige burenlijst van één gevolgde repeater, sterkste link eerst.
+
+    Eén functie voor de drie plaatsen die deze lijst opvroegen -- de publieke
+    repeaterpagina, ``/repeaters/{slug}`` en ``/repeaters/{slug}/map`` -- want ze
+    deelden ook dezelfde valkuil: de naam van een buur staat in twee tabellen
+    (``neighbors.name`` wint van ``contacts.name``) en de zichtbaarheidskeuze in
+    een derde. Drie kopieën van die uitdrukking is er één te veel om gelijk te
+    houden, en gelijk houden is hier het hele punt.
+    """
+    return q(
+        f"SELECT n.prefix, n.snr, n.last_seen, {NEIGHBOR_NAME_SQL} "
+        f"{NEIGHBOR_FROM}"
+        "WHERE n.repeater_id = ? GROUP BY n.prefix ORDER BY n.snr DESC",
+        (repeater_id,),
     )
 
 
@@ -1091,7 +1259,7 @@ def known_countries() -> list[str]:
     only ever return nothing is worse than not offering it.
     """
     return [r["country"] for r in q(
-        "SELECT country FROM contacts WHERE country IS NOT NULL "
+        "SELECT country FROM visible_contacts WHERE country IS NOT NULL "
         "AND lat IS NOT NULL AND lon IS NOT NULL "
         "GROUP BY country ORDER BY country"
     )]

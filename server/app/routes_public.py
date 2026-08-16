@@ -18,7 +18,10 @@ def index(request: Request):
             row = latest.get(m)
             return None if row is None or row["value"] is None else row["value"]
         cards.append({
-            "slug": r["slug"], "name": r["name"], "prefix": r["pubkey_prefix"],
+            # Dezelfde naam als /api/v1/repeaters teruggeeft. De startpagina en
+            # die endpoint tonen dezelfde lijst; twee verschillende namen voor
+            # één node zou de schakelaar meteen weer waardeloos maken.
+            "slug": r["slug"], "name": db.public_name(r), "prefix": r["pubkey_prefix"],
             "last_seen": r["last_seen"],
             "online": val("online") == 1.0,
             "battery": val("battery_percentage"),
@@ -103,15 +106,9 @@ def repeater_page(request: Request, slug: str):
         if tiles:
             sections[key] = {"key": key, "title": title, "tiles": tiles}
 
-    # name from the neighbour sensor, falling back to the contacts table (adverts)
-    neighbors = db.q(
-        "SELECT n.prefix, n.snr, n.last_seen, "
-        "CASE WHEN n.name IS NULL OR lower(n.name) = n.prefix "
-        "THEN COALESCE(c.name, n.name) ELSE n.name END AS name "
-        "FROM neighbors n LEFT JOIN contacts c ON c.prefix6 = n.prefix "
-        "WHERE n.repeater_id=? ORDER BY n.snr DESC",
-        (r["id"],),
-    )
+    # name from the neighbour sensor, falling back to the contacts table
+    # (adverts) -- en met de zichtbaarheidskeuze erboven; zie db.neighbor_rows.
+    neighbors = db.neighbor_rows(r["id"])
     charts = [
         {"key": key, "title": title, "metrics": mets, "hours": hours,
          "labels": [metrics.metric_info(m)[1] for m in mets],
@@ -142,6 +139,11 @@ def repeater_page(request: Request, slug: str):
     is_admin = auth.read_session(session_cookie) is not None
     return templates.TemplateResponse(request, "repeater.html", {
         "site_name": config.SITE_NAME, "r": r, "blocks": blocks,
+        # De naam apart naast de rij, en de template gebruikt uitsluitend deze.
+        # ``r`` blijft er ongeschonden in staan omdat er nog een dozijn kolommen
+        # uit gelezen worden; er één van vervangen zou een rij opleveren die
+        # half waar is, en dat is een val voor de volgende lezer.
+        "display_name": db.public_name(r),
         "neighbors": neighbors, "gauges": metrics.GAUGES, "thermos": metrics.THERMOMETERS,
         "ranges": [{"hours": h, "label": metrics.range_label(h)} for h in ranges],
         "default_hours": 24 if 24 in ranges else ranges[0],

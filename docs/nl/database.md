@@ -45,6 +45,8 @@ volgorde, zonder versienummer om bij te houden.
 | `repeaters` | `fw` | TEXT | MeshCore-versie van het laatste bericht |
 | `repeaters` | `fw_meshmanager` | TEXT | De versie van onze eigen module op die node |
 | `repeaters` | `topic_prefix` | TEXT | Op welk MQTT-topicvoorvoegsel deze node zich meldt |
+| `repeaters` | `show_position` | INTEGER NOT NULL DEFAULT 1 | Of bezoekers de positie van deze node zien |
+| `repeaters` | `show_name` | INTEGER NOT NULL DEFAULT 1 | Of bezoekers de naam van deze node zien |
 | `packets` | `path` | TEXT | Hophashes, komma-gescheiden |
 | `packets` | `raw` | TEXT | Het frame zoals het van de radio kwam, hex |
 | `contacts` | `country` | TEXT | ISO 3166-1 alpha-2, of NULL |
@@ -52,6 +54,15 @@ volgorde, zonder versienummer om bij te houden.
 | `packets` | `scope_codes` | TEXT | De twee transportcodes, komma-gescheiden |
 | `packets` | `src_hash` | TEXT | Afzenderhash van 1 byte, twee hextekens |
 | `packets` | `dest_hash` | TEXT | Bestemmingshash van 1 byte, twee hextekens |
+
+**De twee zichtbaarheidskolommen staan standaard op 1, en die standaard is het
+ontwerp.** `ALTER TABLE ADD COLUMN` geeft bestaande rijen de opgegeven
+standaardwaarde, dus een databank die deze kolommen er bij een upgrade bij
+krijgt, toont precies wat ze de dag ervoor toonde. Een privacykolom die een
+repeater 's nachts stilzwijgend van de kaart haalt, is een ergere fout dan de
+ontbrekende kolom die ze oploste. `is_public` blijft ongemoeid: die beantwoordt
+een andere vraag ("staat deze node überhaupt op de site") en de drie samen zijn
+één keuze met drie antwoorden. Zie [`privacy.md`](privacy.md).
 
 `fw` en `fw_meshmanager` worden bewaard en niet alleen getoond, want ze bepalen
 of de site een node überhaupt iets mag vragen: opdrachten aannemen op het
@@ -78,6 +89,53 @@ bestaat, en blijven de oude waarden liggen.
 De payloadsleutel wordt in beide spellingen aanvaard
 (`db.payload_module_version()`), om dezelfde reden als de omgevingsvariabelen:
 de server en de nodes gaan nooit op dezelfde dag om.
+
+### De ene view
+
+`db.VIEWS` bevat één view, `visible_contacts`, aangemaakt door `_migrate()`
+**nadat** de kolommen bestaan:
+
+```sql
+CREATE VIEW visible_contacts AS
+SELECT c.prefix, c.prefix6, c.node_type, c.updated,
+       CASE WHEN v.show_name = 0
+            THEN '0x' || upper(substr(c.prefix6, 1, 2)) ELSE c.name END AS name,
+       CASE WHEN v.show_position = 0 THEN NULL ELSE c.lat END AS lat,
+       …
+FROM contacts c LEFT JOIN <zichtbaarheid per sleutelprefix> v ON v.p6 = c.prefix6;
+```
+
+Het is `contacts` met de naam, de positie en het land door de zichtbaarheid van
+de gevolgde repeater achter die sleutelprefix. **Elke publieke leesweg
+selecteert uit de view; elke ingestweg (`upsert_advert()`, `upsert_contacts()`,
+`set_country()`) schrijft nog steeds naar de tabel.** Wat de site weet verandert
+niet — alleen wat ze vertelt.
+
+Een verborgen positie wordt NULL, en dat is met opzet dezelfde waarde als "nooit
+een positie van deze node gehoord". Die toestand was overal al afgehandeld, dus
+er staat geen tweede mechanisme naast het eerste dat ermee gelijk moet blijven.
+Een verborgen naam wordt de adreshash en geen NULL, want NULL zou de bestaande
+terugval op `prefix.upper()` in gang zetten en dan stond er alsnog een
+identiteit.
+
+De zichtbaarheidskant is een gegroepeerde subquery en geen rechtstreekse join op
+`repeaters`: `pubkey_prefix` is uniek, maar twee sleutels kunnen in hun eerste
+zes hextekens samenvallen, en dan zou een rechtstreekse join elke contactrij
+verdubbelen — dezelfde node kreeg twee bolletjes in `located_nodes()`. `MIN()`
+kiest bij zo'n botsing de striktste keuze, en dat is de enige richting waarin
+het fout mag gaan.
+
+De view wordt bij elke migratie weggegooid en opnieuw gemaakt in plaats van
+afgeschermd met `IF NOT EXISTS`: SQLite bewaart de tekst waarmee een view
+gemaakt is, dus een databank die al een oudere versie draaide zou anders voor
+altijd de oude definitie houden. Er zitten geen gegevens in, dus opnieuw
+aanmaken kost niets.
+
+De twee wegen die een view niet kan bereiken, zijn `repeaters.name` (staat
+helemaal niet in `contacts`) en `neighbors.name` (die er normaal van wint). Ze
+worden afgehandeld door respectievelijk `db.public_name()` en
+`db.NEIGHBOR_NAME_SQL`. Zie [`privacy.md`](privacy.md).
+
 
 ## `packets.raw` is de grondwaarheid
 
@@ -126,6 +184,8 @@ De gevolgde repeaters — die met een pagina op `/r/<slug>`.
 | `pubkey_prefix` | TEXT UNIQUE | Publieke-sleutelprefix, kleine hex. Groeit mee naar de langste ooit geziene lengte |
 | `name` | TEXT | Weergavenaam. Overgenomen uit een binnenkomend bericht als hij verandert |
 | `is_public` | INTEGER | 1 = zichtbaar op de site en in de publieke API. Om te zetten in `/admin`. Wie vanzelf ontstaat krijgt 0; de kolomstandaard blijft 1 voor rijen die anders ontstaan |
+| `show_position` | INTEGER | 1 = bezoekers zien de positie van deze node. 0 laat de site zich gedragen alsof ze er nooit een gehoord heeft |
+| `show_name` | INTEGER | 1 = bezoekers zien `name`. 0 vervangt hem overal publiek door de adreshash `0xNN` |
 | `sort_order` | INTEGER | Volgorde op de startpagina en in `/admin` |
 | `last_seen` | TEXT | Tijdstip van de laatste momentopname, geschreven door `db.ingest()` |
 | `created_at` | TEXT | Wanneer de rij is aangemaakt |

@@ -61,6 +61,11 @@
       "live.outside": "{n} nodes buiten beeld · toon alles",
       "live.outside_one": "1 node buiten beeld · toon alles",
       "live.outside_title": "De kaart opent op de nodes die verkeer dragen, niet op elk ooit doorgegeven contact — anders bepaalt één ver contact de schaal. Niets is weggelaten: klik om alle nodes in beeld te brengen, of zoom zelf uit.",
+      // Buiten beeld en niet op de kaart zijn twee verschillende dingen: het
+      // eerste lost een klik op, het tweede niet. Vandaar een eigen tekst.
+      "live.hidden": "{n} nodes tonen hun positie niet",
+      "live.hidden_one": "1 node toont zijn positie niet",
+      "live.hidden_title": "Deze site kent deze nodes wel, maar hun beheerder heeft gekozen hun positie niet publiek te tonen. Ze staan op geen enkele kaart hier, ook niet als je uitzoomt, en verbindingen naar hen tellen niet mee in de drukte-laag. Hun cijfers en hun naam kunnen er gewoon staan.",
       "live.motion": "Pakketten laten bewegen",
       "live.motion_title": "Toon elk pakket als een stipje dat van de afzender via elke hop naar de waarnemende node reist. Een stuk pad dat we niet kennen, staat gestippeld.",
       "live.motion_reduced": "Uitgeschakeld: je systeem vraagt om minder beweging. Pakketten flitsen in plaats daarvan op.",
@@ -68,6 +73,9 @@
       "live.heat_title": "Tekent elke verbinding waarover in de hele bewaarde periode pakketten reisden; hoe drukker bereisd ten opzichte van de rest, hoe warmer en dikker de lijn. Alleen stukken tussen twee eenduidig geplaatste nodes tellen mee.",
       "live.heat_tip": "{a} ↔ {b} · {n}× bereisd in {days} d",
       "live.heat_capped": "Let op: er waren meer pakketten dan de kaart in één keer aankan; de oudste tellen nu niet mee.",
+      // Verzwijgen zou een ontbrekende drukke lijn laten lezen als een stil
+      // stuk mesh; het is precies andersom.
+      "live.heat_hidden": "Let op: {n} node(s) tonen hun positie niet, dus verbindingen van en naar hen staan hier niet.",
       "live.heat_min_aria": "Minimaal aantal ritten om een verbinding te tonen",
       "live.heat_min_title": "Verbergt verbindingen waarover minder vaak een pakket reisde dan de drempel. Helemaal links staat de drempel op 1 en zie je alles.",
       "live.heat_min_value": "drempel {n} ritten",
@@ -353,6 +361,11 @@
       "map.legend_bad": "zwak (<-10 dB)",
       "map.unlocated": "{n} buur/buren zonder bekende locatie niet op de kaart",
       "map.unlocated_intro": "Nog geen advert met locatie ontvangen van: ",
+      // Een tweede reden om niet op deze kaart te staan, en een heel andere:
+      // geen gebrek aan gegevens maar een keuze. De twee op één hoop gooien zou
+      // de regel hierboven tot een leugen maken.
+      "map.hidden": "{n} buur/buren tonen hun positie niet",
+      "map.hidden_intro": "Wel bekend, maar hun positie wordt niet publiek getoond: ",
 
       // --- historiekvenster ---
       "modal.close": "Sluiten",
@@ -462,6 +475,9 @@
       "live.outside": "{n} nodes outside the view · show all",
       "live.outside_one": "1 node outside the view · show all",
       "live.outside_title": "The map opens on the nodes that carry traffic, not on every contact ever advertised — otherwise one distant contact sets the scale. Nothing is left out: click to bring every node into view, or zoom out yourself.",
+      "live.hidden": "{n} nodes do not show their position",
+      "live.hidden_one": "1 node does not show its position",
+      "live.hidden_title": "This site does know these nodes, but their operator chose not to show their position publicly. They are on no map here, however far you zoom out, and links to them do not count towards the usage layer. Their figures and their name may well be there.",
       "live.motion": "Animate packets",
       "live.motion_title": "Show every packet as a dot travelling from the sender via each hop to the observing node. A stretch of path we do not know is dashed.",
       "live.motion_reduced": "Off: your system asks for reduced motion. Packets flash instead.",
@@ -469,6 +485,7 @@
       "live.heat_title": "Draws every link packets travelled over the whole retained period; the busier a link compared to the rest, the warmer and thicker the line. Only stretches between two unambiguously placed nodes count.",
       "live.heat_tip": "{a} ↔ {b} · travelled {n}× in {days} d",
       "live.heat_capped": "Note: there were more packets than the map can take in at once; the oldest are left out for now.",
+      "live.heat_hidden": "Note: {n} node(s) do not show their position, so links to and from them are not drawn here.",
       "live.heat_min_aria": "Minimum number of traversals for a link to be shown",
       "live.heat_min_title": "Hides links that packets travelled over less often than the threshold. All the way left the threshold is 1 and you see everything.",
       "live.heat_min_value": "threshold {n} traversals",
@@ -723,6 +740,8 @@
       "map.legend_bad": "weak (<-10 dB)",
       "map.unlocated": "{n} neighbour(s) without a known location are not on the map",
       "map.unlocated_intro": "No advert with a location received yet from: ",
+      "map.hidden": "{n} neighbour(s) do not show their position",
+      "map.hidden_intro": "Known, but their position is not shown publicly: ",
 
       "modal.close": "Close",
       "modal.empty": "No history for this period yet.",

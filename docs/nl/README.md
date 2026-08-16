@@ -90,6 +90,7 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | [`admin.md`](admin.md) | Het beheerdersperspectief op `/admin`: accounts, API-tokens, sessies, en elk formulier achter de inlog |
 | [`retention.md`](retention.md) | Hoelang de site dingen bewaart, wat verhindert dat de schijf volloopt, en waarom de beheerpagina het hardop zegt als de ingestelde termijn niet gehaald wordt |
 | [`security.md`](security.md) | Het dreigingsmodel, wat er hoe beschermd wordt, en — minstens zo belangrijk — wat niet |
+| [`privacy.md`](privacy.md) | Wat de site toont over nodes van anderen en waarom dat mag, de drie zichtbaarheidsschakelaars per node, en wat geen enkele schakelaar verbergt |
 
 ---
 
@@ -120,6 +121,7 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | Hoe upgrade ik een node vanaf de site? | [`firmware-upgrade.md`](firmware-upgrade.md) |
 | Waarom is deze knop grijs bij deze node? | [`node-management.md`](node-management.md), [`commanding.md`](commanding.md) |
 | Is het veilig dit op het internet te zetten? | [`security.md`](security.md) |
+| Kan ik de positie van een node verbergen maar zijn cijfers houden? | [`privacy.md`](privacy.md) |
 | Mijn data komt uit Home Assistant | [`homeassistant.md`](homeassistant.md) |
 | Ik kan geen firmware flashen | [`proxy.md`](proxy.md) |
 | Hoe draag ik een wijziging bij? | [`contributing.md`](contributing.md) |

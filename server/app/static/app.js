@@ -1019,17 +1019,22 @@
       };
       legend.addTo(map);
 
+      // Twee redenen waarom een buur niet op de kaart staat, en de bezoeker
+      // hoort te weten welke. "Nog geen advert met locatie ontvangen" is een
+      // uitspraak over het mesh; "deze node toont zijn positie niet" is een
+      // keuze van een beheerder. Op één hoop gooien zou de uitklaptekst tot een
+      // leugen maken, dus het zijn twee regels met elk hun eigen lijstje.
       var note = document.getElementById("map-note");
-      if (note && d.unlocated > 0) {
+      function missingLine(count, names, labelKey, introKey) {
+        if (!note || !count) return;
         var link = document.createElement("a");
         link.href = "#";
-        link.textContent = t("map.unlocated", { n: d.unlocated }) + " ▸";
+        link.textContent = t(labelKey, { n: count }) + " ▸";
         note.appendChild(link);
         var list = document.createElement("div");
         list.className = "map-missing";
         list.hidden = true;
-        list.textContent = t("map.unlocated_intro") +
-                           (d.unlocated_names || []).join(" · ");
+        list.textContent = t(introKey) + (names || []).join(" · ");
         note.parentElement.parentElement.insertBefore(list, note.parentElement.nextSibling);
         link.addEventListener("click", function (e) {
           e.preventDefault();
@@ -1037,6 +1042,8 @@
           link.textContent = link.textContent.slice(0, -1) + (list.hidden ? "▸" : "▾");
         });
       }
+      missingLine(d.unlocated, d.unlocated_names, "map.unlocated", "map.unlocated_intro");
+      missingLine(d.hidden, d.hidden_names, "map.hidden", "map.hidden_intro");
       // toggleable SNR labels on the nodes
       var toggle = document.getElementById("map-labels");
       if (toggle) {
@@ -1784,7 +1791,12 @@
       var lbl = heatEl && heatEl.closest ? heatEl.closest("label") : null;
       if (lbl) {
         lbl.title = t("live.heat_title") +
-          (d.capped ? " " + t("live.heat_capped") : "");
+          (d.capped ? " " + t("live.heat_capped") : "") +
+          // Dezelfde voetnoot, andere reden: een node die zijn positie niet
+          // toont kan geen eindpunt van een lijn zijn, dus de keten breekt daar
+          // en verkeer dat wél over hem liep telt niet mee. Verzwijgen zou een
+          // ontbrekende drukke lijn laten lezen als een stil stuk mesh.
+          (d.hidden_nodes ? " " + t("live.heat_hidden", { n: d.hidden_nodes }) : "");
       }
       // The heat map is an overlay on top of the map, never a precondition for
       // it. If Leaflet refuses this layer, that is this layer's problem: say so
@@ -2556,6 +2568,19 @@
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (first) buildCountryFilter(d.countries);
+          // Wat de kaart niet toont omdat een beheerder daarvoor koos. Alleen
+          // op de eerste ronde, want alleen die draagt de nodelaag, en alleen
+          // als de server een getal meestuurde -- een kaart zonder verborgen
+          // nodes hoort er ook niets over te zeggen.
+          if (first && d.hidden_nodes) {
+            var hiddenEl = document.getElementById("map-hidden");
+            if (hiddenEl) {
+              hiddenEl.textContent = t(d.hidden_nodes === 1
+                ? "live.hidden_one" : "live.hidden", { n: d.hidden_nodes });
+              hiddenEl.title = t("live.hidden_title");
+              hiddenEl.hidden = false;
+            }
+          }
           // The map and the feed are two readings of the same response and
           // neither is worth more than the other. Building the map used to be
           // able to throw straight past the render() below, so a map that

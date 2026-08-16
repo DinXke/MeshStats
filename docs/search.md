@@ -70,7 +70,11 @@ values" breakdown; sort fields may order the result list.
 | `hash` | `p.phash` | text | Payload hash | | no | yes |
 
 The joins those expressions assume live in `db._SEARCH_FROM`; keep the two in
-step.
+step. Those joins read `visible_contacts`, not `contacts`, so `name` and
+`country` search the *published* values: a repeater with `show_name = 0` does
+not match on its real name and does match on its address hash. Confirming a name
+to somebody who already suspected it is still telling them. See
+[`privacy.md`](privacy.md).
 
 ### The ones that behave differently
 

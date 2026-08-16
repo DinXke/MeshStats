@@ -284,11 +284,30 @@ showing the same number are two places that eventually disagree. Whether an
 upgrade is possible does **not** follow from `route["level"]`: that verdict is
 `firmware.ota_route()`.
 
-One block is deliberately empty rather than filled with a promise: the
-finer-grained visibility choice (show position, show name). It carries a comment
-saying what belongs there — including the six endpoints in `routes_api.py` that
-expose a tracked repeater's position, since a switch that claims to hide a
-position while the heat map still serves it is worse than no switch at all.
+### Visibility on the site — `#zichtbaarheid`
+
+Three switches in one block, in decreasing severity: `is_public` takes the whole
+node off the site, `show_position` takes one thing off it, `show_name` another.
+One block and not three sections, because it is one question — what does a
+visitor see of this node — with three answers.
+
+All three post to `/admin/repeaters/{rid}/toggle` with `what=public` (the
+default, so a page still open in a tab keeps working), `position` or `name`. The
+column is looked up in a fixed table rather than taken from the request; a column
+name arriving from outside and going straight into an `UPDATE` is an open door to
+every other column of the table.
+
+Each switch stands next to what it actually does, and the paragraph that says
+what **no** switch hides is part of the block rather than a footnote: the key
+prefix is in every advert the node transmits, and the slug in `/r/<slug>` was
+derived from the name when the row was created and does not follow a rename. The
+full account — what disappears, what stays, and how it is enforced across the
+seven public routes that could otherwise leak it — is in
+[`privacy.md`](privacy.md).
+
+The node list at `/admin` shows a second, click-through pill on a node that is
+public but not fully so, because "publiek" alone would promise more than it
+delivers there.
 
 ## Server and site — `GET /admin/server`
 
@@ -350,9 +369,15 @@ having no data for it look the same to a visitor.
 
 ## Making a repeater public
 
-`is_public` governs everything: the home page, `/r/<slug>`, and every public API
-route. `_public_repeater()` in `routes_api.py` answers 404 for a non-public slug,
-so a repeater that is switched off is invisible rather than merely unlinked.
+`is_public` governs whether the node is on the site at all: the home page,
+`/r/<slug>`, and every public API route. `_public_repeater()` in `routes_api.py`
+answers 404 for a non-public slug, so a repeater that is switched off is
+invisible rather than merely unlinked.
+
+`show_position` and `show_name` are the finer-grained pair beside it, for the
+node that may be on the site but not with everything. They default to 1, so a
+database that gains the columns on upgrade shows exactly what it showed the day
+before. See [`privacy.md`](privacy.md).
 
 **A repeater that appears by itself arrives hidden.** Anything created out of an
 incoming MQTT or HTTP message gets `is_public = 0`: this is a public site, and

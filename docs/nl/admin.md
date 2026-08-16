@@ -296,12 +296,30 @@ versies*, en twee plaatsen die hetzelfde getal tonen zijn twee plaatsen die het
 een keer oneens worden. Of een upgrade mogelijk is volgt **niet** uit
 `route["level"]`: dat oordeel is `firmware.ota_route()`.
 
-Eén blok is bewust leeg gelaten in plaats van gevuld met een belofte: de
-fijnmazige zichtbaarheidskeuze (positie tonen, naam tonen). Daar staat in
-commentaar wat er hoort te komen — inclusief de zes endpoints in `routes_api.py`
-waar de positie van een gevolgde repeater naar buiten komt, want een schakelaar
-die belooft een positie te verbergen terwijl de heatmap hem nog uitlevert, is
-erger dan geen schakelaar.
+### Zichtbaarheid op de site — `#zichtbaarheid`
+
+Drie schakelaars in één blok, in afnemende zwaarte: `is_public` haalt de hele
+node van de site, `show_position` haalt er één ding uit, `show_name` een ander.
+Eén blok en geen drie secties, want het is één vraag — wat ziet een bezoeker van
+deze node — met drie antwoorden.
+
+Alle drie posten naar `/admin/repeaters/{rid}/toggle` met `what=public` (de
+standaard, zodat een pagina die nog in een tabblad openstaat blijft werken),
+`position` of `name`. De kolom wordt in een vaste tabel opgezocht en niet uit het
+verzoek overgenomen; een kolomnaam die van buiten komt en rechtstreeks in een
+`UPDATE` belandt, is een openstaande deur naar elke andere kolom van die tabel.
+
+Elke schakelaar staat naast wat hij werkelijk doet, en de alinea die zegt wat
+**geen** enkele schakelaar verbergt hoort bij het blok en niet bij de voetnoten:
+de sleutelprefix zit in elke advert die de node uitzendt, en de slug in
+`/r/<slug>` is uit de naam gemaakt toen de rij ontstond en verandert niet mee bij
+een hernoeming. Het volledige verhaal — wat verdwijnt, wat blijft, en hoe het
+gehandhaafd wordt over de zeven publieke routes die het anders zouden lekken —
+staat in [`privacy.md`](privacy.md).
+
+De nodelijst op `/admin` toont bij een node die publiek is maar niet helemaal,
+een tweede pil die doorklikt, want "publiek" alleen belooft daar meer dan het
+waarmaakt.
 
 ## Server en site — `GET /admin/server`
 
@@ -366,10 +384,15 @@ zien er voor een bezoeker hetzelfde uit.
 
 ## Een repeater publiek maken
 
-`is_public` bepaalt alles: de startpagina, `/r/<slug>`, en elke publieke
-API-route. `_public_repeater()` in `routes_api.py` antwoordt 404 voor een
-niet-publieke slug, zodat een repeater die uitgezet is onzichtbaar is en niet
-alleen niet-gelinkt.
+`is_public` bepaalt of de node überhaupt op de site staat: de startpagina,
+`/r/<slug>`, en elke publieke API-route. `_public_repeater()` in `routes_api.py`
+antwoordt 404 voor een niet-publieke slug, zodat een repeater die uitgezet is
+onzichtbaar is en niet alleen niet-gelinkt.
+
+`show_position` en `show_name` zijn het fijnmazige paar ernaast, voor de node die
+wel op de site mag staan maar niet met alles erop. Ze staan standaard op 1, dus
+een databank die de kolommen er bij een upgrade bij krijgt, toont precies wat ze
+de dag ervoor toonde. Zie [`privacy.md`](privacy.md).
 
 **Een repeater die vanzelf verschijnt komt verborgen binnen.** Alles wat uit een
 binnengekomen MQTT- of HTTP-bericht ontstaat, krijgt `is_public = 0`: dit is een

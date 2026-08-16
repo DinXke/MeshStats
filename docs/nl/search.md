@@ -72,7 +72,11 @@ resultatenlijst ordenen.
 | `hash` | `p.phash` | text | Payloadhash | | nee | ja |
 
 De joins die die expressies veronderstellen, staan in `db._SEARCH_FROM`; houd de
-twee gelijk.
+twee gelijk. Die joins lezen `visible_contacts` en niet `contacts`, dus `name` en
+`country` zoeken in de *gepubliceerde* waarden: een repeater met `show_name = 0`
+matcht niet op zijn echte naam en wél op zijn adreshash. Een naam bevestigen aan
+wie hem al vermoedde, is nog steeds vertellen. Zie
+[`privacy.md`](privacy.md).
 
 ### De velden die zich anders gedragen
 

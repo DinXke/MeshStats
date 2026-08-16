@@ -67,6 +67,18 @@
                   title="{{ 'Deze repeater staat op de publieke site — klik om te verbergen' if rep.is_public else 'Deze repeater is verborgen — klik om hem publiek te maken' }}">
             {{ 'publiek' if rep.is_public else 'verborgen' }}</button>
         </form>
+        {#- Alleen zichtbaar als er iets áf staat, en zonder knop: omklappen doe
+            je op de pagina van de node, waar de uitleg bij staat. Hier staat het
+            enkel zodat "publiek" niet meer belooft dan het waarmaakt -- een
+            repeater die publiek is maar zijn positie niet toont, zag er op deze
+            lijst anders precies zo uit als een die alles toont. -#}
+        {% if rep.is_public and not (rep.show_position and rep.show_name) %}
+        <a class="pill off" href="/admin/repeaters/{{ rep.id }}#zichtbaarheid"
+           title="Publiek, maar niet volledig — klik voor de schakelaars en wat ze betekenen">
+          {%- if not rep.show_position and not rep.show_name %}positie en naam verborgen
+          {%- elif not rep.show_position %}positie verborgen
+          {%- else %}naam verborgen{% endif %}</a>
+        {% endif %}
       </div>
 
       <p class="noderow-why muted small">{{ route.level_why }}</p>

@@ -91,6 +91,7 @@ cover.
 | [`admin.md`](admin.md) | The operator's view of `/admin`: accounts, API tokens, sessions, and every form behind the login |
 | [`retention.md`](retention.md) | How long the site keeps things, what stops the disk filling up, and why the admin page says so out loud when the configured period is not being met |
 | [`security.md`](security.md) | The threat model, what is protected and how, and — as importantly — what is not |
+| [`privacy.md`](privacy.md) | What the site shows about other people's nodes and why it may, the three per-node visibility switches, and what no switch hides |
 
 ---
 
@@ -121,6 +122,7 @@ cover.
 | How do I upgrade a node from the site? | [`firmware-upgrade.md`](firmware-upgrade.md) |
 | Why is this button greyed out for this node? | [`node-management.md`](node-management.md), [`commanding.md`](commanding.md) |
 | Is it safe to put this on the internet? | [`security.md`](security.md) |
+| Can I hide a node's position but keep its figures? | [`privacy.md`](privacy.md) |
 | My data comes from Home Assistant | [`homeassistant.md`](homeassistant.md) |
 | I cannot flash firmware | [`proxy.md`](proxy.md) |
 | How do I contribute a change? | [`contributing.md`](contributing.md) |

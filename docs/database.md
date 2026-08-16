@@ -43,6 +43,8 @@ track.
 | `repeaters` | `fw` | TEXT | MeshCore version of the last message |
 | `repeaters` | `fw_meshmanager` | TEXT | Our own module's version on that node |
 | `repeaters` | `topic_prefix` | TEXT | Which MQTT topic prefix this node reports on |
+| `repeaters` | `show_position` | INTEGER NOT NULL DEFAULT 1 | Whether visitors see this node's position |
+| `repeaters` | `show_name` | INTEGER NOT NULL DEFAULT 1 | Whether visitors see this node's name |
 | `packets` | `path` | TEXT | Hop hashes, comma-separated |
 | `packets` | `raw` | TEXT | The frame as it came off the radio, hex |
 | `contacts` | `country` | TEXT | ISO 3166-1 alpha-2, or NULL |
@@ -50,6 +52,14 @@ track.
 | `packets` | `scope_codes` | TEXT | The two transport codes, comma-separated |
 | `packets` | `src_hash` | TEXT | 1-byte source hash, two hex characters |
 | `packets` | `dest_hash` | TEXT | 1-byte destination hash, two hex characters |
+
+**The two visibility columns default to 1, and that default is the design.**
+`ALTER TABLE ADD COLUMN` gives existing rows the declared default, so a database
+that gains these columns on upgrade shows exactly what it showed the day before.
+A privacy column that quietly took a repeater off the map overnight would be a
+worse fault than the missing column it fixed. `is_public` is left alone: it
+answers a different question ("is this node on the site at all") and the three
+together are one choice with three answers. See [`privacy.md`](privacy.md).
 
 `fw` and `fw_meshmanager` are stored rather than merely shown, because they
 decide whether the site may ask a node anything at all: accepting commands on
@@ -76,6 +86,50 @@ that already exists, and the old values would be left behind.
 The payload key is accepted in both spellings (`db.payload_module_version()`), for
 the same reason the environment variables are: the server and the nodes never
 change name on the same day.
+
+### The one view
+
+`db.VIEWS` holds a single view, `visible_contacts`, created by `_migrate()`
+**after** the columns exist:
+
+```sql
+CREATE VIEW visible_contacts AS
+SELECT c.prefix, c.prefix6, c.node_type, c.updated,
+       CASE WHEN v.show_name = 0
+            THEN '0x' || upper(substr(c.prefix6, 1, 2)) ELSE c.name END AS name,
+       CASE WHEN v.show_position = 0 THEN NULL ELSE c.lat END AS lat,
+       …
+FROM contacts c LEFT JOIN <visibility per key prefix> v ON v.p6 = c.prefix6;
+```
+
+It is `contacts` with the name, position and country passed through the
+visibility of the tracked repeater behind that key prefix. **Every public read
+path selects from the view; every ingest path (`upsert_advert()`,
+`upsert_contacts()`, `set_country()`) still writes to the table.** What the site
+knows does not change — only what it tells.
+
+A hidden position becomes NULL, which is deliberately the same value as "never
+heard a position for this node". That state was already handled everywhere, so
+there is no second mechanism to keep in step with the first. A hidden name
+becomes the address hash rather than NULL, because NULL would trip the existing
+fallback to `prefix.upper()` and an identity would be printed anyway.
+
+The visibility side is a grouped subquery, not a direct join on `repeaters`:
+`pubkey_prefix` is unique, but two keys can agree in their first six hex
+characters, and a direct join would then duplicate every contact row — the same
+node would get two dots in `located_nodes()`. `MIN()` picks the stricter choice
+on such a collision, which is the only direction it may fail in.
+
+The view is dropped and recreated on every migration rather than guarded with
+`IF NOT EXISTS`: SQLite stores the text a view was created with, so a database
+that already ran an older version would otherwise keep the old definition
+forever. There is no data in it, so recreating costs nothing.
+
+The two paths a view cannot reach are `repeaters.name` (not in `contacts` at
+all) and `neighbors.name` (which normally beats it). They are handled by
+`db.public_name()` and `db.NEIGHBOR_NAME_SQL` respectively. See
+[`privacy.md`](privacy.md).
+
 
 ## `packets.raw` is the ground truth
 
@@ -122,6 +176,8 @@ The tracked repeaters — the ones with a page at `/r/<slug>`.
 | `pubkey_prefix` | TEXT UNIQUE | Public-key prefix, lower-case hex. Grows to the longest length ever seen |
 | `name` | TEXT | Display name. Adopted from an incoming message when it changes |
 | `is_public` | INTEGER | 1 = visible on the site and in the public API. Toggled in `/admin`. Auto-created repeaters get 0; the column default stays 1 for rows made any other way |
+| `show_position` | INTEGER | 1 = visitors see this node's position. 0 makes the site behave as though it had never heard one |
+| `show_name` | INTEGER | 1 = visitors see `name`. 0 replaces it with the address hash `0xNN` everywhere public |
 | `sort_order` | INTEGER | Ordering on the home page and in `/admin` |
 | `last_seen` | TEXT | Timestamp of the last snapshot, written by `db.ingest()` |
 | `created_at` | TEXT | When the row was created |

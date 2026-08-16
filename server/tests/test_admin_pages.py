@@ -234,7 +234,10 @@ def test_back_veld_kan_alleen_de_twee_eigen_bestemmingen_aanwijzen(db, monkeypat
     rid = db.qone("SELECT id FROM repeaters")["id"]
 
     naar_node = routes_admin.toggle_repeater(scope_request("/x"), rid, csrf="x", back="node")
-    assert naar_node.headers["location"] == f"/admin/repeaters/{rid}"
+    # Met anker sinds er drie schakelaars in dat blok staan: op een lange pagina
+    # land je terug bij de knop die je net omklapte. Het pad ervóór is wat deze
+    # test bewaakt.
+    assert naar_node.headers["location"] == f"/admin/repeaters/{rid}#zichtbaarheid"
 
     kwaadaardig = routes_admin.toggle_repeater(scope_request("/x"), rid, csrf="x",
                                                back="https://elders.example/")

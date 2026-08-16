@@ -176,45 +176,68 @@
   </div>
 </section>
 
-<section>
+<section id="zichtbaarheid">
   <h2>Zichtbaarheid op de site</h2>
   <div class="card">
+
+  {#- Drie knoppen in één blok en niet in drie secties: het is één vraag -- wat
+      ziet een bezoeker van deze node -- met drie antwoorden. Ze staan in
+      afnemende zwaarte: de eerste haalt de hele node weg, de andere twee halen
+      er één ding uit.
+
+      Elke knop staat naast wat hij werkelijk doet, en dat is hier het hele
+      punt. De handhaving zelf zit in db.visible_contacts en db.public_name;
+      als je die tekst wijzigt, controleer dan eerst of de code nog doet wat er
+      komt te staan. Een schakelaar die belooft iets te verbergen terwijl één
+      endpoint het nog uitlevert, is erger dan geen schakelaar. -#}
+
   <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="back" value="node">
+    <input type="hidden" name="what" value="public">
     <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}">
       {{ 'publiek — klik om te verbergen' if rep.is_public else 'verborgen — klik om publiek te maken' }}</button>
   </form>
   <p class="muted small">Verborgen betekent: niet op de startpagina, en <code>/r/{{ rep.slug }}</code>
      geeft 404 voor bezoekers. De gegevens blijven staan en de node blijft gewoon binnenkomen.
      Omkeerbaar met dezelfde klik &mdash; vandaar geen bevestigingsvraag.</p>
-  <p class="muted small"><strong>Publiek is nu alles of niets.</strong> Staat deze repeater aan, dan
-     ziet een bezoeker zijn naam, zijn cijfers én zijn positie op de kaart. Een positie is
-     gevoeliger dan een batterijstand, en dat verschil kan deze site vandaag niet uitdrukken.
-     Er is dus geen &ldquo;wel de cijfers, niet de plek&rdquo;.</p>
 
-  {#- ── Landingsplek voor een fijnmaziger zichtbaarheidskeuze ─────────────────
-      Hier horen de extra schakelaars: positie tonen ja/nee, naam tonen ja/nee,
-      naast de bestaande publiek ja/nee. In dit blok, niet in een eigen sectie:
-      het is één vraag -- wat ziet een bezoeker van deze node -- en drie
-      antwoorden.
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="back" value="node">
+    <input type="hidden" name="what" value="position">
+    <button type="submit" class="pill {{ 'on' if rep.show_position else 'off' }}">
+      {{ 'positie zichtbaar — klik om te verbergen' if rep.show_position else 'positie verborgen — klik om te tonen' }}</button>
+  </form>
+  <p class="muted small">Staat dit uit, dan gedraagt de site zich alsof ze van deze node
+     nooit een locatie gehoord heeft. Geen bolletje op de live kaart, geen plek in de
+     kaart van een repeater die hem als buur ziet, geen coördinaat in een pakket of in
+     de zoekresultaten, en geen eindpunt van een lijn in de drukte-heatmap &mdash; die
+     lijn breekt daar, net zoals bij een hop die op meer dan één node past. Het land
+     gaat mee weg: dat is uit de coördinaten berekend en dus niets anders dan een grove
+     vorm ervan. Wat blijft: de naam, alle cijfers, de burenlijst en de SNR&rsquo;s.</p>
 
-      Wat er in de databank bij hoort: twee kolommen op ``repeaters``, via
-      db.COLUMN_MIGRATIONS, allebei ``INTEGER NOT NULL DEFAULT 1``. De standaard
-      móét 1 zijn: bestaande rijen krijgen die waarde bij het toevoegen, en zo
-      verandert er morgenochtend niets aan wat er nu op de kaart staat. Een
-      nieuwe instelling die stilzwijgend iets van een kaart haalt, is een
-      slechtere fout dan de instelling die ontbrak.
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="back" value="node">
+    <input type="hidden" name="what" value="name">
+    <button type="submit" class="pill {{ 'on' if rep.show_name else 'off' }}">
+      {{ 'naam zichtbaar — klik om te verbergen' if rep.show_name else 'naam verborgen — klik om te tonen' }}</button>
+  </form>
+  <p class="muted small">Staat dit uit, dan heet deze node overal op de publieke site
+     <code>{{ '0x' ~ rep.pubkey_prefix[:2]|upper }}</code> &mdash; de adreshash, precies wat de
+     pakkettenlijst al toont voor een afzender die ze niet kan noemen. Ook in de burenlijst
+     van een ándere repeater, en de zoekfunctie vindt hem niet meer op zijn echte naam.
+     De naam hierboven blijft staan: die is voor jou, en voor de opdrachten die deze site
+     naar de node stuurt.</p>
 
-      En het echte werk zit niet hier maar in de handhaving. Een schakelaar die
-      belooft een positie te verbergen terwijl ze elders nog uitgeleverd wordt,
-      is erger dan geen schakelaar -- dit is de plek waar deze site geen halve
-      beloftes doet. Een positie van een gevolgde repeater komt langs
-      routes_api.py naar buiten op: /repeaters/{slug}/map, /packets (zowel
-      sender_lat/observer_lat als de contacts-lijst), /packets/search,
-      /packets/heatmap, /packets/{id} en /nodes/{prefix}. Alle zes, of geen.
-      De naam loopt daarnaast ook nog over /repeaters en de zoekfunctie.
-   ─────────────────────────────────────────────────────────────────────────── -#}
+  <p class="muted small"><strong>Wat geen van deze drie knoppen verbergt:</strong> de
+     sleutelprefix <code>{{ rep.pubkey_prefix }}</code>. Die zit in elke advert die deze node
+     uitzendt en is voor iedereen met een radio te horen; doen alsof deze site hem geheim
+     kan houden zou een belofte zijn die het apparaat zelf tegenspreekt. Hetzelfde geldt
+     voor <code>/r/{{ rep.slug }}</code>: de slug is ooit uit de naam gemaakt en verandert niet
+     mee. Wil je die ook kwijt, verwijder de node dan hieronder en laat hem opnieuw
+     aanmelden onder de naam die je wél kwijt kunt.</p>
   </div>
 </section>
 

@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ r.name }} — {{ site_name }}{% endblock %}
+{% block title %}{{ display_name }} — {{ site_name }}{% endblock %}
 {% block content %}
 <div class="pagehead">
   <div class="pagehead-top">
-    <h1>{{ r.name }}</h1>
+    <h1>{{ display_name }}</h1>
     <span class="badge {{ 'on' if is_online else 'off' }}" data-i18n="{{ 'status.online' if is_online else 'status.offline' }}">{{ 'ONLINE' if is_online else 'OFFLINE' }}</span>
     {% if is_admin %}
     <form method="post" action="/admin/repeaters/{{ r.id }}/refresh" class="inline">

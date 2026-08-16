@@ -621,13 +621,22 @@ not provide it. Worth stating in the threat model before that path ships.
   placeholder `verander-dit-wachtwoord`, `platformio.local.ini.example` only
   `JOUW_WIFI`/`password`, and no `passwd`, `*.key`, `acl` or `.env` file was ever
   committed. History is clean.
-- **Privacy**: the public map and pages show other operators' node names and
-  positions (`routes_api.py::repeater_map`), which come from adverts anyone with a
-  radio can hear, but the only owner control is the per-repeater `is_public`
-  toggle — all or nothing, though a new repeater now arrives hidden rather than
-  public. A per-node "hide position but
-  keep statistics" choice does not exist; worth considering, since a position is
-  more sensitive than a battery reading.
+- **Privacy** *(addressed after the review)*: the public map and pages show other
+  operators' node names and positions, which come from adverts anyone with a
+  radio can hear. At the time of the review the only owner control was the
+  per-repeater `is_public` toggle — all or nothing, and public by default, so
+  there was no way to express that a position is more sensitive than a battery
+  reading. Two things changed since. A new repeater now arrives hidden rather
+  than public; and the choice is no longer all or nothing:
+  `repeaters.show_position` and `repeaters.show_name`, both `INTEGER NOT NULL
+  DEFAULT 1` so an upgrade changes nothing that was visible before. Enforcement
+  is a single SQL view (`visible_contacts`) that every public read path selects
+  from, plus `db.public_name()` and `db.NEIGHBOR_NAME_SQL` for the two name
+  sources a view cannot reach, and `tests/test_zichtbaarheid.py` carries one test
+  per endpoint. What remains unchanged, and deliberately so: nothing can be
+  switched off for a third-party node, because there is no owner here to grant
+  that switch to and a form that let any visitor hide any node would be a way to
+  blank out somebody else's repeater. See [`privacy.md`](privacy.md).
 
 ### Firmware cross-check
 

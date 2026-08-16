@@ -15,7 +15,7 @@ plausible and completely wrong reading.
 | Group | How |
 |---|---|
 | `/api/v1/ping`, `/contacts`, `/commands`, `/repeater_settings`, `/ingest` | `Authorization: Bearer <token>`, checked by `routes_api.require_token()` |
-| Every other `/api/v1/*` route | None. Public, read-only, and limited to repeaters with `is_public=1` |
+| Every other `/api/v1/*` route | None. Public, read-only, limited to repeaters with `is_public=1`, and further shaped by `show_position` / `show_name` — see [`privacy.md`](privacy.md) |
 | `/admin/*` | Signed session cookie, plus a CSRF token on every POST |
 
 `require_token()` answers **401** without a bearer header and **403** for an
@@ -120,6 +120,14 @@ anywhere else.
 
 ## Public data endpoints
 
+Everything below is limited to repeaters with `is_public=1`, and additionally
+shaped by two per-node visibility switches. With `show_position = 0` no route
+below hands out that node's coordinates, its country, or a distance derived from
+them; with `show_name = 0` its name is replaced everywhere by the address hash
+`0xNN`. The enforcement is one SQL view plus two named expressions rather than a
+filter per endpoint, and the reasoning, the exact list of what disappears and
+what stays, and what no switch hides are in [`privacy.md`](privacy.md).
+
 ### `GET /api/v1/repeaters`
 
 Every public repeater, ordered by `sort_order, name`.
@@ -159,12 +167,22 @@ Map data for the link map on a repeater page.
 {"repeater": {"name": "…", "lat": 50.9, "lon": 5.3},
  "links": [{"prefix": "2ae7af", "name": "…", "snr": -4.25, "last_seen": "…",
             "lat": 50.8, "lon": 5.4, "node_type": "repeater"}],
- "unlocated": 3, "unlocated_names": ["…"]}
+ "unlocated": 3, "unlocated_names": ["…"],
+ "hidden": 1, "hidden_names": ["…"]}
 ```
 
-`repeater` is `null` when the repeater's own position is unknown. Neighbours
-without a position are **counted and named** rather than dropped, so the map
-never quietly claims to show the whole neighbourhood.
+`repeater` is `null` when the repeater's own position is unknown — including
+when it is known but withheld. Neighbours without a position are **counted and
+named** rather than dropped, so the map never quietly claims to show the whole
+neighbourhood.
+
+`hidden` counts the neighbours left off for a different reason: their operator
+chose not to show their position. It is deliberately **not** merged into
+`unlocated`. "No advert with a location received yet" is a statement about the
+mesh; "this node does not show its position" is a decision by a person, and one
+number covering both would make the first sentence untrue. Names still travel
+with it: the two switches are independent, so a neighbour who hides only their
+place is still named.
 
 ### `GET /api/v1/repeaters/{slug}/history`
 
@@ -219,13 +237,19 @@ stored ones, so a freshly loaded page opens on the present.
  }],
  "nodes": [{"prefix": "2ae7c1", "name": "…", "lat": 50.9, "lon": 5.3,
             "node_type": "repeater", "country": "BE"}],
- "countries": ["BE", "NL"]}
+ "countries": ["BE", "NL"],
+ "hidden_nodes": 2}
 ```
 
-`nodes` and `countries` are present **only on the first call**, so the map can
-draw its base layer from the same request. `countries` is absent entirely when
-`borders.json` is missing, which is the client's cue to leave the country filter
-out of the page.
+`nodes`, `countries` and `hidden_nodes` are present **only on the first call**,
+so the map can draw its base layer from the same request. `countries` is absent
+entirely when `borders.json` is missing, which is the client's cue to leave the
+country filter out of the page.
+
+`hidden_nodes` says how many nodes are **not** in `nodes` because their operator
+chose not to show their position. Absent when there are none — reporting a zero
+is noise. It is a different thing from the map's own "N nodes outside the view":
+that one a click solves, this one does not.
 
 `lat`/`lon`/`origin` are the position the reception is drawn at: the sender's
 when an advert named it, the observer's otherwise, and `origin` says which.
@@ -334,7 +358,7 @@ Link usage over the **full packet retention window**, aggregated for the
 heat-map overlay. No parameters.
 
 ```json
-{"window_h": 168, "packets": 23117, "capped": false, "max": 812,
+{"window_h": 168, "packets": 23117, "capped": false, "hidden_nodes": 0, "max": 812,
  "segments": [{"a": {"prefix": "2ae7c1", "name": "…", "lat": 50.9, "lon": 5.3},
                "b": {"prefix": "e3d3f4", "name": "…", "lat": 50.8, "lon": 5.4},
                "n": 41}]}
@@ -387,6 +411,12 @@ seconds.
 (200 000) rows, meaning older packets in the window went uncounted. A result of
 exactly the cap without truncation is possible but indistinguishable, and
 warning one time too often is the honest side to err on.
+
+`hidden_nodes` is the same kind of footnote for a different reason. A node whose
+position is withheld cannot be an endpoint of a segment, so it **breaks the
+chain** exactly as an ambiguous hop does — traffic that really travelled over it
+is not counted into a line. The count is what lets the overlay say so; without
+it a missing busy link would read as a quiet stretch of mesh.
 
 ### `GET /api/v1/packets/{packet_id}`
 
@@ -582,7 +612,7 @@ are in [`admin.md`](admin.md).
 | `/admin/repeaters/{rid}/settings` | GET | Redirect to `/admin/repeaters/{rid}`, query string included. Kept for bookmarks |
 | `/admin/repeaters/{rid}/settings/refresh` | POST | Ask for a CLI settings sweep now |
 | `/admin/repeaters/{rid}/clocksync` | POST | Set this repeater's clock now. See [`clocksync.md`](clocksync.md) |
-| `/admin/repeaters/{rid}/toggle` | POST | Flip `is_public`. `back=node` returns to the node page |
+| `/admin/repeaters/{rid}/toggle` | POST | Flip one visibility switch: `what=public` (default), `position` or `name`. `back=node` returns to the node page |
 | `/admin/repeaters/{rid}/rename` | POST | Change the display name |
 | `/admin/repeaters/{rid}/delete` | POST | Delete the repeater and its samples, latest and neighbours |
 | `/admin/tokens` | POST | Create an API token; shown once through a 60-second cookie |

@@ -32,6 +32,11 @@
     <div class="card mapcard" id="livecard">
       <div class="mapbar">
         <span class="muted small" data-i18n="live.hint">Elk pakket dat een node opvangt, flitst op de plek van de afzender &middot; klik op een pakket of op een bolletje voor alle details</span>
+        <!-- Nodes die deze site kent maar die hun positie niet tonen. Een kaart
+             die ze weglaat zonder ze te tellen, beweert alles te tonen wat ze
+             weet. Blijft leeg als niemand die keuze gemaakt heeft: een nul
+             melden is ook ruis. Gevuld door app.js uit hidden_nodes. -->
+        <span class="muted small" id="map-hidden" hidden></span>
         <span class="mapbar-right">
           <label class="maptoggle" data-i18n-title="live.motion_title" title="Toon elk pakket als een stipje dat van de afzender via elke hop naar de waarnemende node reist">
             <input type="checkbox" id="pkt-motion"> <span data-i18n="live.motion">Pakketten laten bewegen</span>

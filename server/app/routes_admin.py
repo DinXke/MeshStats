@@ -499,19 +499,39 @@ def save_cli_params(request: Request, cli_params: str = Form(...),
     return RedirectResponse("/admin/server#cli-params", status_code=303)
 
 
+# Welke zichtbaarheidsknop een formulier omklapt. Een vaste tabel en geen
+# kolomnaam uit het verzoek: ``what`` komt van buiten, en een naam die
+# rechtstreeks in een UPDATE terechtkomt is een openstaande deur naar elke
+# andere kolom van deze tabel. Dezelfde verdediging als search.Sort.
+_VISIBILITY_COLUMNS = {
+    "public": "is_public",
+    "position": "show_position",
+    "name": "show_name",
+}
+
+
 @router.post("/repeaters/{rid}/toggle")
 def toggle_repeater(request: Request, rid: int, csrf: str = Form(...),
-                    back: str = Form(default="")):
-    """Zichtbaarheid omklappen. Staat op twee pagina's, dus ``back`` zegt welke.
+                    back: str = Form(default=""), what: str = Form(default="public")):
+    """Eén zichtbaarheidsknop omklappen. Staat op twee pagina's, dus ``back``
+    zegt welke.
 
-    Zie refresh_repeater voor waarom dit geen URL is maar een woord dat deze
+    ``what`` is nieuw en heeft daarom "public" als standaard: dat is precies wat
+    dit formulier deed toen het nog maar één knop was, en een pagina die nog in
+    een tabblad openstaat mag daar niet op stukvallen. Een onbekende waarde
+    klapt niets om en gaat gewoon terug -- er valt hier niets te melden wat een
+    bezoeker van deze pagina zelf niet ziet staan.
+
+    Zie refresh_repeater voor waarom ``back`` geen URL is maar een woord dat deze
     functie zelf vertaalt.
     """
     require_login(request)
     check_csrf(request, csrf)
-    db.execute("UPDATE repeaters SET is_public = 1 - is_public WHERE id=?", (rid,))
+    column = _VISIBILITY_COLUMNS.get(what)
+    if column:
+        db.execute(f"UPDATE repeaters SET {column} = 1 - {column} WHERE id=?", (rid,))
     if back == "node":
-        return RedirectResponse(f"/admin/repeaters/{rid}", status_code=303)
+        return RedirectResponse(f"/admin/repeaters/{rid}#zichtbaarheid", status_code=303)
     return RedirectResponse("/admin", status_code=303)
 
 

@@ -667,14 +667,23 @@ voor die weg uitkomt.
   de plaatshouder `verander-dit-wachtwoord`, `platformio.local.ini.example` enkel
   `JOUW_WIFI`/`password`, en er is nooit een `passwd`-, `*.key`-, `acl`- of
   `.env`-bestand gecommit. De historiek is schoon.
-- **Privacy**: de publieke kaart en pagina's tonen nodenamen en posities van
-  andere operatoren (`routes_api.py::repeater_map`), die uit adverts komen die
-  iedereen met een radio kan horen, maar de enige knop die de eigenaar heeft is
-  de schakelaar `is_public` per repeater — alles of niets, al komt een nieuwe
-  repeater tegenwoordig verborgen binnen in plaats van publiek. Een keuze per
-  node in de trant van "positie verbergen maar statistieken
-  behouden" bestaat niet; het overwegen waard, want een positie is gevoeliger dan
-  een batterijmeting.
+- **Privacy** *(na de beoordeling opgelost)*: de publieke kaart en pagina's tonen
+  nodenamen en posities van andere operatoren, die uit adverts komen die iedereen
+  met een radio kan horen. Ten tijde van de beoordeling was de schakelaar
+  `is_public` per repeater de enige knop die de eigenaar had — alles of niets, en
+  standaard publiek, dus er viel niet uit te drukken dat een positie gevoeliger
+  is dan een batterijmeting. Sindsdien zijn er twee dingen veranderd. Een nieuwe
+  repeater komt nu verborgen binnen in plaats van publiek; en de keuze is niet
+  langer alles of niets: `repeaters.show_position` en `repeaters.show_name`,
+  allebei `INTEGER NOT NULL DEFAULT 1` zodat een upgrade niets verandert aan wat
+  er eerder zichtbaar was. De handhaving is één SQL-view (`visible_contacts`)
+  waaruit elke publieke leesweg selecteert, plus `db.public_name()` en
+  `db.NEIGHBOR_NAME_SQL` voor de twee naambronnen die een view niet kan bereiken,
+  en `tests/test_zichtbaarheid.py` draagt één test per endpoint. Wat ongewijzigd
+  blijft, en met opzet: voor een node van derden valt er niets uit te zetten,
+  want er is hier geen eigenaar om die schakelaar aan te geven en een formulier
+  waarmee elke bezoeker elke node kon verbergen, zou een manier zijn om andermans
+  repeater weg te poetsen. Zie [`privacy.md`](privacy.md).
 
 ### Kruiscontrole met de firmware
 

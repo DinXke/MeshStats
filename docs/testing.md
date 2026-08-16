@@ -175,6 +175,7 @@ the area under test.
 | `test_nodes.py` | 16 | `/api/v1/nodes/{prefix}` | A panel assembled almost entirely from things no column holds |
 | `test_retention.py` | 15 | Pruning | Not "something is deleted" but the **order** in which it is |
 | `test_settings_chain.py` | 25 | button → queue → poller → storage | The clear-on-read queue, which fails without producing any error |
+| `test_zichtbaarheid.py` | 18 | `show_position` / `show_name` across every public route | Not "the switch flips" but **that no route leaks past it**, plus that the defaults change nothing |
 
 ### Why several of these have a file to themselves
 

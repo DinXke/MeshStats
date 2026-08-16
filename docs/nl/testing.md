@@ -178,6 +178,7 @@ ontwerpnotities bij het gebied dat getest wordt.
 | `test_nodes.py` | 16 | `/api/v1/nodes/{prefix}` | Een paneel dat bijna helemaal samengesteld is uit dingen die in geen enkele kolom staan |
 | `test_retention.py` | 15 | Opruimen | Niet "er wordt iets verwijderd" maar de **volgorde** waarin dat gebeurt |
 | `test_settings_chain.py` | 25 | knop → wachtrij → poller → opslag | De clear-on-read-wachtrij, die faalt zonder ook maar één foutmelding op te leveren |
+| `test_zichtbaarheid.py` | 18 | `show_position` / `show_name` over elke publieke route | Niet "de schakelaar klapt om" maar **dat geen enkele route eraan voorbij lekt**, plus dat de standaardwaarden niets veranderen |
 
 ### Waarom een aantal hiervan een eigen bestand heeft
 

@@ -175,7 +175,12 @@ def list_repeaters():
             row = latest.get(m)
             return None if row is None else (row["value"] if row["value"] is not None else row["value_str"])
         out.append({
-            "slug": r["slug"], "name": r["name"], "pubkey_prefix": r["pubkey_prefix"],
+            # De naam via db.public_name: staat "naam tonen" uit, dan komt hier
+            # de adreshash te staan in plaats van de naam die de beheerder ziet.
+            # De sleutelprefix blijft er wél staan -- die zit in elke advert die
+            # deze node uitzendt en is voor niemand met een radio geheim.
+            "slug": r["slug"], "name": db.public_name(r),
+            "pubkey_prefix": r["pubkey_prefix"],
             "last_seen": r["last_seen"],
             "online": val("online") == 1.0,
             "battery_percentage": val("battery_percentage"),
@@ -198,17 +203,10 @@ def repeater_detail(slug: str):
         }
     neighbors = [
         {"prefix": n["prefix"], "name": n["name"], "snr": n["snr"], "last_seen": n["last_seen"]}
-        for n in db.q(
-            "SELECT n.prefix, n.snr, n.last_seen, "
-            "CASE WHEN n.name IS NULL OR lower(n.name) = n.prefix "
-            "THEN COALESCE(c.name, n.name) ELSE n.name END AS name "
-            "FROM neighbors n LEFT JOIN contacts c ON c.prefix6 = n.prefix "
-            "WHERE n.repeater_id=? ORDER BY n.snr DESC",
-            (r["id"],),
-        )
+        for n in db.neighbor_rows(r["id"])
     ]
     return {
-        "slug": r["slug"], "name": r["name"], "pubkey_prefix": r["pubkey_prefix"],
+        "slug": r["slug"], "name": db.public_name(r), "pubkey_prefix": r["pubkey_prefix"],
         "last_seen": r["last_seen"], "metrics": mets, "neighbors": neighbors,
     }
 
@@ -218,16 +216,19 @@ def repeater_map(slug: str):
     """Map data: the repeater's position plus every neighbour we can place."""
     r = _public_repeater(slug)
     home = db.contact_location(r["pubkey_prefix"][:6])
+    withheld = db.withheld_position_prefixes()
     links = []
     unlocated = []
-    for n in db.q(
-        "SELECT n.prefix, n.snr, n.last_seen, "
-        "CASE WHEN n.name IS NULL OR lower(n.name) = n.prefix "
-        "THEN COALESCE(c.name, n.name) ELSE n.name END AS name "
-        "FROM neighbors n LEFT JOIN contacts c ON c.prefix6 = n.prefix "
-        "WHERE n.repeater_id=?",
-        (r["id"],),
-    ):
+    hidden = []
+    for n in db.neighbor_rows(r["id"]):
+        # Twee redenen om niet op de kaart te staan, en de bezoeker hoort te
+        # weten welke van de twee het is. "Nog geen advert met locatie
+        # ontvangen" is een uitspraak over het mesh; "deze node toont zijn
+        # positie niet" is een keuze van een beheerder, en die op de eerste
+        # hoop gooien zou de tekst eronder tot een leugen maken.
+        if n["prefix"] in withheld:
+            hidden.append(n["name"] or n["prefix"].upper())
+            continue
         loc = db.contact_location(n["prefix"])
         if loc is None:
             unlocated.append(n["name"] or n["prefix"].upper())
@@ -239,10 +240,17 @@ def repeater_map(slug: str):
         })
     return {
         "repeater": None if home is None else
-            {"name": r["name"], "lat": home["lat"], "lon": home["lon"]},
+            {"name": db.public_name(r), "lat": home["lat"], "lon": home["lon"]},
         "links": links,
         "unlocated": len(unlocated),
         "unlocated_names": sorted(unlocated, key=str.lower),
+        # Apart geteld van ``unlocated``, met dezelfde vorm: de kaart zet er een
+        # eigen regel bij. Namen rijden mee omdat een verborgen positie niets
+        # zegt over de naam -- de twee schakelaars staan los van elkaar, en een
+        # buur die alleen zijn plek verbergt hoort gewoon bij naam genoemd te
+        # worden in dat lijstje.
+        "hidden": len(hidden),
+        "hidden_names": sorted(hidden, key=str.lower),
     }
 
 
@@ -527,6 +535,14 @@ def packet_feed(
              "lon": n["lon"], "node_type": n["node_type"], "country": n["country"]}
             for n in db.located_nodes()
         ]
+        # Hoeveel nodes er níet in die lijst staan omdat ze hun positie niet
+        # tonen. De kaart telt al wat er buiten beeld valt ("N nodes buiten
+        # beeld"); dit is dezelfde regel voor de nodes die ook bij het verste
+        # uitzoomen niet zouden verschijnen. Weglaten zonder tellen zou de
+        # kaart laten beweren dat ze alles toont wat ze weet.
+        hidden = len(db.withheld_position_prefixes())
+        if hidden:
+            out["hidden_nodes"] = hidden
         # Absent when there are no borders to classify against, which is the
         # client's cue to leave the country filter out of the page entirely.
         if countries.available():
@@ -670,8 +686,21 @@ _HEATMAP_MAX_PACKETS = 200000
 _heatmap_cache: dict = {"at": 0.0, "data": None}
 
 
-def _heat_stop(prefix, name, lat, lon) -> dict | None:
-    """A placeable stop along a packet's path, or None where honesty forbids one."""
+def _heat_stop(prefix, name, lat, lon, withheld: set, hidden: set) -> dict | None:
+    """A placeable stop along a packet's path, or None where honesty forbids one.
+
+    Een node die zijn positie niet toont, kan geen eindpunt van een segment zijn
+    -- hij breekt de keten, net zoals een dubbelzinnige hop dat al doet. Dat is
+    hier geen tweede mechanisme maar hetzelfde: ``visible_contacts`` levert zijn
+    lat/lon al als NULL, dus de regel hieronder zou hem hoe dan ook overslaan.
+    De expliciete controle staat er om twee redenen. Ze telt hem, zodat de
+    overlay kan zeggen dat er iets ontbreekt in plaats van het te verzwijgen; en
+    ze houdt stand als er ooit een tweede weg naar een positie bij komt die de
+    view niet passeert.
+    """
+    if prefix and prefix in withheld:
+        hidden.add(prefix)
+        return None
     if not prefix or lat is None or lon is None:
         return None
     return {"prefix": prefix, "name": name, "lat": lat, "lon": lon}
@@ -714,10 +743,14 @@ def packet_heatmap():
     counts: dict[tuple[str, str], int] = {}
     nodes: dict[str, dict] = {}
     counted = 0
+    # Eén keer opgehaald voor de hele pas: een handvol prefixen, tegenover
+    # honderdduizenden haltes die ertegen gehouden worden.
+    withheld = db.withheld_position_prefixes()
+    hidden: set[str] = set()
     rows = db.packets_with_paths(since, _HEATMAP_MAX_PACKETS)
     for p in rows:
         stops = [_heat_stop(p["sender"], p["sender_name"],
-                            p["sender_lat"], p["sender_lon"])]
+                            p["sender_lat"], p["sender_lon"], withheld, hidden)]
         for h in (p["path"] or "").split(","):
             if not h:
                 continue
@@ -728,10 +761,11 @@ def packet_heatmap():
             # ambiguous before still stays out of the aggregation now.
             hop = _resolve_hop(h)
             one = hop["matches"][0] if hop["state"] == "known" else None
-            stops.append(_heat_stop(one["prefix"], one["name"],
-                                    one["lat"], one["lon"]) if one else None)
+            stops.append(_heat_stop(one["prefix"], one["name"], one["lat"],
+                                    one["lon"], withheld, hidden) if one else None)
         stops.append(_heat_stop(p["observer6"], p["observer_name"],
-                                p["observer_lat"], p["observer_lon"]))
+                                p["observer_lat"], p["observer_lon"],
+                                withheld, hidden))
 
         contributed = False
         for a, b in zip(stops, stops[1:]):
@@ -762,6 +796,12 @@ def packet_heatmap():
         # possible but indistinguishable, and warning one time too often is
         # the honest side to err on.)
         "capped": len(rows) >= _HEATMAP_MAX_PACKETS,
+        # Hoeveel nodes in deze pas als halte zijn overgeslagen omdat ze hun
+        # positie niet tonen. Zelfde soort voetnoot als ``capped``: de overlay
+        # belooft "elke verbinding waarover pakketten reisden", en zonder dit
+        # getal zou een ontbrekende drukke lijn eruitzien als een mesh waar niets
+        # gebeurt in plaats van als een node die niet op de kaart wil.
+        "hidden_nodes": len(hidden),
         "max": segments[-1]["n"] if segments else 0,
         "segments": segments,
     }
@@ -1024,7 +1064,7 @@ def _node_repeater(prefix6: str) -> dict | None:
         for n in db.node_neighbors(rep["id"], _NODE_NEIGHBOR_LIMIT)
     ]
     return {
-        "slug": rep["slug"], "name": rep["name"],
+        "slug": rep["slug"], "name": db.public_name(rep),
         "pubkey_prefix": rep["pubkey_prefix"], "last_seen": rep["last_seen"],
         "url": f"/r/{rep['slug']}",
         "online": val("online") == 1.0,
@@ -1095,7 +1135,7 @@ def node_detail(prefix: str):
             "siblings": db.node_hash_siblings(p6),
         },
         "neighbor_of": [
-            {"slug": r["slug"], "name": r["name"], "snr": r["snr"],
+            {"slug": r["slug"], "name": db.public_name(r), "snr": r["snr"],
              "last_seen": r["last_seen"], "url": f"/r/{r['slug']}"}
             for r in db.node_heard_by_repeaters(p6)
         ],

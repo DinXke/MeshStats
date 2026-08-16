@@ -17,7 +17,7 @@ is.
 | Groep | Hoe |
 |---|---|
 | `/api/v1/ping`, `/contacts`, `/commands`, `/repeater_settings`, `/ingest` | `Authorization: Bearer <token>`, gecontroleerd door `routes_api.require_token()` |
-| Elke andere `/api/v1/*`-route | Geen. Publiek, alleen-lezen, en beperkt tot repeaters met `is_public=1` |
+| Elke andere `/api/v1/*`-route | Geen. Publiek, alleen-lezen, beperkt tot repeaters met `is_public=1`, en verder gevormd door `show_position` / `show_name` — zie [`privacy.md`](privacy.md) |
 | `/admin/*` | Ondertekende sessiecookie, plus een CSRF-token bij elke POST |
 
 `require_token()` antwoordt **401** zonder bearerheader en **403** bij een
@@ -124,6 +124,15 @@ verzoek nergens anders meer.
 
 ## Publieke data-endpoints
 
+Alles hieronder is beperkt tot repeaters met `is_public=1`, en wordt daarnaast
+gevormd door twee zichtbaarheidsschakelaars per node. Met `show_position = 0`
+levert geen enkele route hieronder de coördinaten van die node uit, noch zijn
+land, noch een afstand die eruit berekend is; met `show_name = 0` wordt zijn
+naam overal vervangen door de adreshash `0xNN`. De handhaving is één SQL-view
+plus twee benoemde uitdrukkingen in plaats van een filter per endpoint, en de
+redenering, de precieze lijst van wat verdwijnt en wat blijft, en wat geen
+enkele schakelaar verbergt staan in [`privacy.md`](privacy.md).
+
 ### `GET /api/v1/repeaters`
 
 Elke publieke repeater, geordend op `sort_order, name`.
@@ -163,12 +172,22 @@ Kaartgegevens voor de linkkaart op een repeaterpagina.
 {"repeater": {"name": "…", "lat": 50.9, "lon": 5.3},
  "links": [{"prefix": "2ae7af", "name": "…", "snr": -4.25, "last_seen": "…",
             "lat": 50.8, "lon": 5.4, "node_type": "repeater"}],
- "unlocated": 3, "unlocated_names": ["…"]}
+ "unlocated": 3, "unlocated_names": ["…"],
+ "hidden": 1, "hidden_names": ["…"]}
 ```
 
-`repeater` is `null` als de eigen positie van de repeater onbekend is. Buren
-zonder positie worden **geteld en benoemd** in plaats van weggelaten, zodat de
-kaart nooit stilletjes beweert de hele buurt te tonen.
+`repeater` is `null` als de eigen positie van de repeater onbekend is — ook als
+ze bekend is maar niet getoond wordt. Buren zonder positie worden **geteld en
+benoemd** in plaats van weggelaten, zodat de kaart nooit stilletjes beweert de
+hele buurt te tonen.
+
+`hidden` telt de buren die om een andere reden ontbreken: hun beheerder heeft
+gekozen hun positie niet te tonen. Dat wordt met opzet **niet** bij `unlocated`
+opgeteld. "Nog geen advert met locatie ontvangen" is een uitspraak over het
+mesh; "deze node toont zijn positie niet" is een beslissing van een mens, en één
+getal dat allebei dekt zou de eerste zin onwaar maken. De namen rijden wel mee:
+de twee schakelaars staan los van elkaar, dus een buur die alleen zijn plek
+verbergt, wordt gewoon bij naam genoemd.
 
 ### `GET /api/v1/repeaters/{slug}/history`
 
@@ -223,13 +242,19 @@ de oudste bewaarde, zodat een vers geladen pagina op het heden opent.
  }],
  "nodes": [{"prefix": "2ae7c1", "name": "…", "lat": 50.9, "lon": 5.3,
             "node_type": "repeater", "country": "BE"}],
- "countries": ["BE", "NL"]}
+ "countries": ["BE", "NL"],
+ "hidden_nodes": 2}
 ```
 
-`nodes` en `countries` staan er **alleen bij de eerste aanroep**, zodat de kaart
-zijn basislaag uit hetzelfde verzoek kan tekenen. `countries` ontbreekt helemaal
-als `borders.json` er niet is, wat voor de client het teken is om het landfilter
-uit de pagina te laten.
+`nodes`, `countries` en `hidden_nodes` staan er **alleen bij de eerste
+aanroep**, zodat de kaart zijn basislaag uit hetzelfde verzoek kan tekenen.
+`countries` ontbreekt helemaal als `borders.json` er niet is, wat voor de client
+het teken is om het landfilter uit de pagina te laten.
+
+`hidden_nodes` zegt hoeveel nodes er **niet** in `nodes` staan omdat hun
+beheerder gekozen heeft hun positie niet te tonen. Ontbreekt als het er geen
+zijn — een nul melden is ruis. Iets anders dan de eigen telling "N nodes buiten
+beeld" van de kaart: die lost een klik op, deze niet.
 
 `lat`/`lon`/`origin` is de positie waar de ontvangst getekend wordt: die van de
 afzender als een advert hem noemde, anders die van de waarnemer, en `origin` zegt
@@ -340,7 +365,7 @@ Linkgebruik over het **volledige bewaarvenster van pakketten**, samengevat voor
 de heatmap-laag. Geen parameters.
 
 ```json
-{"window_h": 168, "packets": 23117, "capped": false, "max": 812,
+{"window_h": 168, "packets": 23117, "capped": false, "hidden_nodes": 0, "max": 812,
  "segments": [{"a": {"prefix": "2ae7c1", "name": "…", "lat": 50.9, "lon": 5.3},
                "b": {"prefix": "e3d3f4", "name": "…", "lat": 50.8, "lon": 5.4},
                "n": 41}]}
@@ -395,6 +420,13 @@ ronde doen die in seconden klaar is.
 teruggaf, wat betekent dat oudere pakketten in het venster niet meegeteld zijn.
 Precies de bovengrens zonder afkapping is mogelijk maar niet te onderscheiden, en
 één keer te vaak waarschuwen is de eerlijke kant om aan te zitten.
+
+`hidden_nodes` is dezelfde soort voetnoot om een andere reden. Een node wiens
+positie niet getoond wordt, kan geen eindpunt van een segment zijn en **breekt
+dus de keten**, precies zoals een dubbelzinnige hop dat doet — verkeer dat
+werkelijk over hem liep, wordt niet tot een lijn geteld. Het getal is wat de
+laag in staat stelt dat te zeggen; zonder dat zou een ontbrekende drukke lijn
+lezen als een stil stuk mesh.
 
 ### `GET /api/v1/packets/{packet_id}`
 
@@ -595,7 +627,7 @@ in [`admin.md`](admin.md).
 | `/admin/repeaters/{rid}/settings` | GET | Omleiding naar `/admin/repeaters/{rid}`, querystring inbegrepen. Blijft bestaan voor bladwijzers |
 | `/admin/repeaters/{rid}/settings/refresh` | POST | Nu om een CLI-instellingenronde vragen |
 | `/admin/repeaters/{rid}/clocksync` | POST | De klok van deze repeater nu zetten. Zie [`clocksync.md`](clocksync.md) |
-| `/admin/repeaters/{rid}/toggle` | POST | `is_public` omzetten. Met `back=node` terug naar de nodepagina |
+| `/admin/repeaters/{rid}/toggle` | POST | Eén zichtbaarheidsknop omzetten: `what=public` (standaard), `position` of `name`. Met `back=node` terug naar de nodepagina |
 | `/admin/repeaters/{rid}/rename` | POST | De weergavenaam wijzigen |
 | `/admin/repeaters/{rid}/delete` | POST | De repeater en zijn metingen, actuele waarden en buren verwijderen |
 | `/admin/tokens` | POST | Een API-token aanmaken; eenmalig getoond via een cookie van 60 seconden |
