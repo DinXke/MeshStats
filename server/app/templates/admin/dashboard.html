@@ -113,6 +113,64 @@
   </div>
 </section>
 
+{# Zichtbaarheid is hier de helft van de feature. Een kloksynchronisatie die
+   weigert te draaien mag er niet uitzien als een die nooit is ingesteld, en een
+   die draait hoort te zeggen wanneer en met welke afloop -- anders is de enige
+   manier om te weten of het werkt: gaan kijken op een dak. #}
+<section>
+  <h2>Kloksynchronisatie</h2>
+  <div class="card">
+  <table>
+    <tr><td>Staat aan</td><td>
+      {%- if clocksync.enabled %}<span class="pill on" style="padding:.15rem .6rem;border-radius:99px;background:rgba(53,224,140,.12);color:var(--accent)">ja</span>, elke {{ clocksync.interval_hours }} uur
+      {%- else %}<span class="muted">nee &mdash; <code>MCS_CLOCKSYNC_ENABLED=0</code></span>{% endif %}</td></tr>
+    <tr><td>Klok van deze server</td><td>
+      {%- if not clocksync.clock %}<span class="muted">nog niet gemeten</span>
+      {%- elif clocksync.clock.ok %}<span class="pill on" style="padding:.15rem .6rem;border-radius:99px;background:rgba(53,224,140,.12);color:var(--accent)">bruikbaar</span>
+        <span class="muted">&middot; {{ clocksync.clock.kernel.detail }}</span>
+      {%- else %}<span class="pill" style="padding:.15rem .6rem;border-radius:99px;background:rgba(255,92,92,.12);color:var(--red)">niet vertrouwd</span>
+        <span class="muted">&middot; {{ clocksync.clock.reason }}</span>{% endif %}</td></tr>
+    <tr><td>Laatste ronde</td><td>
+      {%- if clocksync.last_run %}<time class="reltime" datetime="{{ clocksync.last_run }}">{{ clocksync.last_run }}</time>
+        &middot; {{ clocksync.last_result }}
+        {%- if clocksync.last_reason %} <span class="muted">({{ clocksync.last_reason }})</span>{% endif %}
+      {%- else %}<span class="muted">nog niet gedraaid</span>{% endif %}</td></tr>
+    <tr><td>Laatst geslaagd</td><td>
+      {%- if clocksync.last_ok %}<time class="reltime" datetime="{{ clocksync.last_ok }}">{{ clocksync.last_ok }}</time>
+      {%- else %}<span class="muted">nog nooit</span>{% endif %}</td></tr>
+    <tr><td>Rondes / geweigerd</td><td class="mono">{{ clocksync.runs }} / {{ clocksync.refusals }}</td></tr>
+  </table>
+
+  {% if clock_targets %}
+  <table>
+    <tr><th>Repeater</th><th>Krijgt de tijd?</th></tr>
+    {% for t in clock_targets %}
+    <tr>
+      <td>{{ t.name }} <span class="muted mono">{{ t.prefix[:6] }}</span></td>
+      <td>{% if t.ok %}<span style="color:var(--accent)">ja</span>{% else %}<span class="muted">nee</span>{% endif %}
+          <span class="muted">&middot; {{ t.why }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  <p class="muted small">Een MeshCore-node zet zijn klok nooit uit zichzelf goed: na een herstart staat
+     hij op de datum die in de firmware zit. De site stuurt daarom periodiek
+     <code>time &lt;epoch&gt;</code> naar elke node die rechtstreeks publiceert; die zet zijn eigen klok
+     en controleert daarna over LoRa de klokken van de repeaters die hij monitort &mdash; de enige weg
+     naar een repeater die hier zelf niets publiceert. Vereist MeshStats 1.10.0 op de node.</p>
+  <p class="muted small"><strong>Wat &quot;bruikbaar&quot; hier wel en niet betekent.</strong> Deze app
+     draait in een container en leest de tijddiscipline van de kernel (<code>adjtimex</code>, dezelfde
+     bron als <code>NTPSynchronized</code> van <code>timedatectl</code>). In een LXC is dat het oordeel
+     van de <em>host</em>, doorgegeven: &quot;de host meldt dat hij gelijkloopt&quot; is iets anders dan
+     &quot;de tijd is aantoonbaar juist&quot;. De juistheid van elke klok in dit mesh hangt dus
+     uiteindelijk aan de NTP-instelling van die host. Daarnaast wordt gecontroleerd of de wandklok niet
+     springt ten opzichte van de monotone klok en of hij niet achteruitloopt. Bij twijfel vertrekt er
+     niets: een klok kan alleen vooruit gezet worden, dus een fout hier is op een dak niet meer terug
+     te draaien.</p>
+  </div>
+</section>
+
 <section>
   <h2>Metingen (tijdreeksen)</h2>
   <div class="card">

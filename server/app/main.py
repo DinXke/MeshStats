@@ -10,8 +10,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, db, limits, mqtt_ingest, routes_admin, routes_api,
-               routes_public, tsdb)
+from . import (auth, clocksync, db, limits, mqtt_ingest, routes_admin,
+               routes_api, routes_public, tsdb)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -81,6 +81,10 @@ def bootstrap():
     # for no reason.
     tsdb.start()
     mqtt_ingest.start()   # nodes publiceren hun statistieken via MQTT
+    # Als laatste, want deze publiceert en heeft de client hierboven nodig. Hij
+    # wacht sowieso vijf minuten voor zijn eerste ronde -- zie FIRST_RUN_DELAY_S
+    # -- maar de volgorde hier maakt dat niet toevallig goed.
+    clocksync.start()     # en krijgen van ons periodiek de juiste tijd terug
 
 
 def set_password():

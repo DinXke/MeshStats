@@ -30,18 +30,34 @@
  *                           publish those under that repeater's name. That
  *                           last one is the only path to a repeater which does
  *                           not publish to MQTT itself.
+ *                           Since 1.10.0 also 'time <epoch>': set our own clock
+ *                           to that UNIX time in UTC seconds, and then check
+ *                           the clocks of the repeaters we monitor over LoRa.
  *
  * Deliberately NOT a remote CLI. The word is still matched against a list of
- * exactly two, so a broker account -- shared, leaked or simply mistyped --
- * cannot reach 'reboot', 'set', or the wifi commands. The one argument that
- * exists does not change that: it is never text that reaches a CLI, it only
- * selects one entry from the monitor list, and that list is writable solely
- * from the admin page and the mesh CLI, both of which ask for a password. The
- * commands actually sent are the compiled-in parameter table. This node hangs
- * on a roof; the most an attacker on the broker can make it do is publish what
- * it already publishes by itself, or read out a repeater its operator already
- * chose to monitor -- at most once every 30 seconds, and for that last one at
- * most once every ten minutes.
+ * exactly three, so a broker account -- shared, leaked or simply mistyped --
+ * cannot reach 'reboot', 'set', or the wifi commands. The two arguments that
+ * exist do not change that. The one on 'settings' is never text that reaches a
+ * CLI, it only selects one entry from the monitor list, and that list is
+ * writable solely from the admin page and the mesh CLI, both of which ask for a
+ * password. The commands actually sent are the compiled-in parameter table. The
+ * one on 'time' is parsed here as a number, checked against a window of years,
+ * and never reaches a CLI either. This node hangs on a roof; the most an
+ * attacker on the broker can make it do is publish what it already publishes by
+ * itself, read out a repeater its operator already chose to monitor, or move
+ * this node's clock forward inside that window -- at most once every 30
+ * seconds, and for the two that cost airtime at most once every ten minutes
+ * resp. once an hour.
+ *
+ * On 'time' and why it only ever moves clocks FORWARD, here and on the far
+ * side: an advert carries the emitting node's clock, and every node that
+ * already knows us refuses an advert whose timestamp is not higher than the one
+ * it stored (onAdvertRecv in MyMesh.cpp). Step this node's clock back by an
+ * hour and its adverts are ignored by the whole mesh for an hour -- a roof
+ * repeater made invisible by a maintenance command, which is the one thing this
+ * firmware may not do. MeshCore's own 'time' and 'clock sync' refuse to go
+ * backwards for what is probably the same reason; this module refuses for that
+ * one.
  *
  * About monitoring other repeaters. You can log in with that repeater's admin
  * or read/write password, but there is a tidier way that needs no password at
@@ -119,7 +135,7 @@
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
 #define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.9.1"
+#define MESHSTATS_VERSION  "1.10.0"
 
 class MyMesh;
 
@@ -194,6 +210,13 @@ int meshstats_batt_percent(uint16_t milli_volts);
  *                        mon trace' that is how a sweep which fails silently
  *                        (see the admin-rights note above) gets diagnosed
  *                        without a serial cable.
+ *   wifi clock           our own clock, when the site last set it, and what the
+ *                        last check of the monitored nodes' clocks found.
+ *                        Read-only on purpose: there is no way to type a time
+ *                        in here, because the whole point of the feature is
+ *                        that the time comes from a machine which has a reason
+ *                        to know what time it is. A person at a serial cable
+ *                        does not, and neither does this node.
  */
 bool msnet_handle_command(const char *command, char *reply);
 

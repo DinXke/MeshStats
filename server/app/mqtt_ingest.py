@@ -34,8 +34,9 @@ One topic goes the other way::
 
     meshcore/<node_hex>/cmd
 
-A single word -- ``settings`` or ``status`` -- asking that node to read its CLI
-parameters now, or to publish a statistics message now. It exists because the
+A single word -- ``settings``, ``status`` or ``time`` -- asking that node to read
+its CLI parameters now, to publish a statistics message now, or to set its clock.
+It exists because the
 admin page's "fetch settings" button used to write into a queue that only the
 Home Assistant integration ever emptied, so pulling Home Assistant out of the
 chain left a button that did nothing while the page kept showing values from the
@@ -48,12 +49,23 @@ over LoRa and publishes them under that repeater's name -- the only path there
 is to a repeater which does not publish to MQTT itself, which is exactly the
 one on the roof this whole project was built to watch.
 
-That the firmware accepts only those two words is not a detail: this topic is
+Since MeshStats 1.10.0 there is ``time <epoch>``: UNIX seconds in UTC, the format
+MeshCore's own CLI parses. The node sets its own clock from it and then checks
+the clocks of the repeaters it monitors over LoRa -- again the only path to a
+repeater that does not publish here itself. Which node is asked, and what has to
+be true about this machine's clock first, lives in ``clocksync.py``; this file
+only knows how to put the message on the wire.
+
+That the firmware accepts only those three words is not a detail: this topic is
 reachable by anyone holding broker credentials, and the repeaters this serves
-hang on roofs. The argument does not widen that, because it is never text that
-reaches a CLI -- it selects one entry from a monitor list only the node's
-operator can write. See ``publish_command`` for why nothing is retained here,
-and ``MeshStatsNet.cpp`` for why nothing else is accepted there.
+hang on roofs. The arguments do not widen that. The one on ``settings`` is never
+text that reaches a CLI -- it selects one entry from a monitor list only the
+node's operator can write. The one on ``time`` is a number, bounded at both ends
+here and again on the node, and it can only ever move a clock forward. That last
+part is not a nicety: a node's adverts carry its clock, and a clock moved
+backwards makes it invisible to everyone who already knows it for exactly as
+long as the step. See ``publish_command`` for why nothing is retained here, and
+``MeshStatsNet.cpp`` for why nothing else is accepted there.
 
 Identity: topic versus payload
 ------------------------------
@@ -104,12 +116,32 @@ MQTT_CMD_TOPIC = os.environ.get("MCS_MQTT_CMD_TOPIC", "meshcore/{node}/cmd")
 # Everything the firmware accepts, and nothing more. Kept here as well so a
 # typo on this side is refused before it costs a round trip, and so the list is
 # readable next to the code that sends it -- MeshStatsNet.cpp, mqttRunCommand().
-COMMANDS = ("settings", "status")
+COMMANDS = ("settings", "status", "time")
 
 # Alleen deze mag een onderwerp meekrijgen, want alleen deze betekent iets voor
 # een ander dan de node zelf. 'status' met een sleutel erbij zou vragen om
 # cijfers die de monitor toch al uit zichzelf doorstuurt.
 COMMANDS_WITH_SUBJECT = ("settings",)
+
+# En alleen deze krijgt een tijd mee, die hij ook nodig HEEFT: 'time' zonder
+# getal wordt aan de overkant geweigerd en geteld. Apart gehouden van
+# COMMANDS_WITH_SUBJECT omdat het een ander soort argument is met een andere
+# controle -- een sleutel is hex en selecteert iets, een epoch is een getal en
+# verandert iets. Ze door één parameter laten lopen zou betekenen dat één
+# vergissing in de aanroep een sleutel als tijd laat vertrekken.
+COMMANDS_WITH_EPOCH = ("time",)
+
+# Het venster waarbinnen een tijd geloofwaardig is, in UNIX-epochseconden UTC:
+# 2025-01-01 tot 2100-01-01. Dezelfde grenzen als CLOCK_MIN_EPOCH/CLOCK_MAX_EPOCH
+# in MeshStatsNet.cpp, en met opzet aan beide kanten gecontroleerd.
+#
+# Dat is hier geen dubbel werk maar de goedkoopste plaats van de twee: een node
+# zet zijn klok alleen VOORUIT (zijn adverts worden geweigerd als de tijdstempel
+# niet stijgt), dus een tijd die te ver in de toekomst ligt is aan de overkant
+# niet meer terug te draaien zonder er met een kabel bij te gaan staan. Een
+# vergissing hier hoort hier te stranden.
+MIN_EPOCH = 1_735_689_600
+MAX_EPOCH = 4_102_444_800
 
 # Kortste sleutel die we als onderwerp durven meesturen. Zelfde grens als
 # MIN_PREFIX_MATCH hier en als monKeyArg() in de firmware: korter dan dit kan
@@ -155,7 +187,8 @@ def can_publish() -> bool:
     return bool(MQTT_HOST) and _client is not None and bool(_state["connected"])
 
 
-def publish_command(node: str, command: str, subject: str | None = None) -> bool:
+def publish_command(node: str, command: str, subject: str | None = None,
+                    epoch: int | None = None) -> bool:
     """Ask one node to do something now. False when nothing was sent.
 
     ``subject`` is the public key of a repeater that ``node`` monitors, and
@@ -164,6 +197,14 @@ def publish_command(node: str, command: str, subject: str | None = None) -> bool
     ``command`` so the word itself keeps being checked against COMMANDS as an
     exact string -- the same discipline the firmware applies at the far end, and
     for the same reason.
+
+    ``epoch`` is UNIX time in UTC seconds and turns ``time`` into
+    ``time <epoch>``: set your clock to this, and then check the clocks of the
+    repeaters you monitor. Which format that is was not a choice -- it is what
+    MeshCore's CLI parses in the ``time `` branch of ``CommonCLI::handleCommand``
+    (``_atoi`` of the rest of the line, straight into ``setCurrentTime``). See
+    ``clocksync.py`` for what has to be true about this machine's own clock
+    before anything is allowed to leave over this route.
 
     Returns whether the message left, never whether it arrived. Deliberately
     QoS 0 and ``retain=False``:
@@ -197,6 +238,28 @@ def publish_command(node: str, command: str, subject: str | None = None) -> bool
             log.warning("Onderwerp %r te kort voor een opdracht aan %s", subject, node)
             return False
         payload = f"{command} {subject}"
+
+    if command in COMMANDS_WITH_EPOCH:
+        # Ontbreken is een programmeerfout en geen bedrijfsongeval: 'time'
+        # zonder tijd betekent niets. Een uitzondering, zoals bij een onbekend
+        # commando, zodat het bij het schrijven stukgaat en niet in productie.
+        if epoch is None:
+            raise ValueError(f"command {command!r} needs an epoch")
+        try:
+            epoch = int(epoch)
+        except (TypeError, ValueError):
+            raise ValueError(f"epoch {epoch!r} is not a number") from None
+        if not (MIN_EPOCH <= epoch < MAX_EPOCH):
+            # Wél teruggeven in plaats van opwerpen: dit is de weg waarlangs een
+            # kapotte serverklok binnenkomt, en dat is een toestand van de
+            # machine en geen fout in de aanroep. De beller ziet "niets
+            # vertrokken" en kan dat melden.
+            log.error("Tijd %s valt buiten het toegestane venster; niets verstuurd "
+                      "naar %s", epoch, node)
+            return False
+        payload = f"{command} {epoch}"
+    elif epoch is not None:
+        raise ValueError(f"command {command!r} takes no epoch")
 
     if not can_publish():
         return False

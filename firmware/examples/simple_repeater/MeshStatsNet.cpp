@@ -1,5 +1,51 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.10.0 The site can set this node's clock, and this node then checks the
+ *        clocks of the repeaters it monitors: 'time <epoch>' on the cmd topic,
+ *        'wifi clock' to read back what happened.
+ *        Why the mesh needs this at all: a MeshCore node timestamps the
+ *        messages it sends and the adverts it emits from its own clock, and an
+ *        ESP32 without a battery-backed RTC starts at whatever it was compiled
+ *        or 'clkreboot'-ed with. A repeater on a roof reboots on its own -- flat
+ *        battery, watchdog, a lightning-season power cut -- and comes back with
+ *        a clock reading May 2024. Everything it says afterwards is stamped
+ *        wrong, and nothing on the mesh corrects it, because nothing on the mesh
+ *        knows better either. The site does: it runs on a machine whose clock is
+ *        disciplined against real time.
+ *        The exact command, because guessing it would have been the whole bug:
+ *        MeshCore's CLI takes 'time <secs>' with UNIX epoch seconds in UTC
+ *        (CommonCLI.cpp, the 'time ' branch -- _atoi of the rest, then
+ *        setCurrentTime), answers 'clock' with "HH:MM - D/M/YYYY UTC" (the
+ *        'clock' branch), and has a third form, 'clock sync', which sets the
+ *        clock from the TIMESTAMP OF THE REQUEST PACKET rather than from text.
+ *        All three refuse to go backwards.
+ *        Why forward only, and why that refusal is not an upstream quirk to
+ *        work around: an advert carries the emitter's clock, and a node that
+ *        already knows us drops an advert whose timestamp is not higher than the
+ *        one it has (onAdvertRecv in MyMesh.cpp). Move a clock back an hour and
+ *        that node is invisible to everyone who knows it for an hour. On a roof
+ *        repeater that is worse than any wrong timestamp, so a node that runs
+ *        FAST is reported and left alone rather than corrected.
+ *        Why the far side gets 'clock sync' and not 'time <epoch>': it is ten
+ *        characters against fifteen, and with five bytes of header that is one
+ *        16-byte cipher block against two -- a third of the airtime of the
+ *        packet, for a value we would have taken from our own clock anyway.
+ *        There is also no number to format wrongly.
+ *        Why the clock is READ first (one round trip) instead of just synced
+ *        (also one round trip): the two cost the same when a node is fine, and
+ *        reading is what makes 'this node was four minutes behind' a fact the
+ *        site can show instead of a correction nobody can see. It also means
+ *        this node never transmits a command that changes somebody's clock on a
+ *        guess. The second round trip is spent only when the first one proved it
+ *        was needed.
+ *        Why a threshold of two minutes: 'clock' answers to the minute, so
+ *        anything finer is not measurable over this interface, and the reply
+ *        arrives seconds after the far side read it. Two minutes is the smallest
+ *        drift this can honestly claim to have seen.
+ *        Why this may run on a schedule when the settings sweep may not: one
+ *        command and one reply per monitored node per day, against eighteen and
+ *        eighteen. That is roughly the cost of a single poll round, which this
+ *        node already pays every fifteen minutes.
  * 1.9.1  The name of a monitored repeater is escaped before it goes into a
  *        published message, and so are the six pieces of typed text in
  *        /api/status. Both places printed them between two quotes as they came.
@@ -381,6 +427,19 @@ static uint32_t _cmd_refused = 0;            // unknown word, too long, too soon
 static bool _cmd_push = false;               // publish statistics at the first chance
 static bool _cmd_after_sweep = false;        // ...but wait for the running sweep first
 
+/* What 'time <epoch>' did to our own clock, kept so 'wifi clock' can answer the
+ * only question anybody has about this feature: is anything actually happening?
+ * A node that is never told the time and a node that is told a time it refuses
+ * look identical from the outside, and the second one is a configuration
+ * mistake somebody could fix. */
+static uint32_t _clk_sets = 0;               // times we moved our own clock
+static uint32_t _clk_noops = 0;              // told a time we already had
+static uint32_t _clk_back = 0;               // told a time BEHIND ours; refused
+static uint32_t _clk_bad = 0;                // told a time outside the window
+static unsigned long _clk_last_ms = 0;       // when the last 'time' arrived
+static uint32_t _clk_last_epoch = 0;         // what we were told then
+static long _clk_last_delta = 0;             // how far it moved us, in seconds
+
 struct RxItem {
   uint32_t ms;
   int16_t snr4;      // SNR times 4, the way the radio reports it
@@ -426,6 +485,52 @@ static bool passed(unsigned long deadline) {
 static uint32_t secsLeft(unsigned long deadline) {
   if (deadline == 0 || passed(deadline)) return 0;
   return (uint32_t)((deadline - millis()) / 1000UL);
+}
+
+// --------------------------------------------------------------------- clocks
+
+/* The window a time has to fall in before this node will believe it, whether it
+ * arrives from the site or is read back off another repeater.
+ *
+ * The floor is not decoration. MeshCore's own 'clkreboot' sets the clock to
+ * 1715770351 -- 15 May 2024 -- and a board that has never been told the time at
+ * all starts somewhere near its build date. Both are in the past by more than a
+ * year, so one comparison separates 'this clock was never set' from 'this clock
+ * has drifted', and those two deserve different words on a page.
+ *
+ * The ceiling only has to catch nonsense: a millisecond value truncated into 32
+ * bits, a parse that read a field it should not have, a typo with an extra
+ * digit. Anything past 2100 is not a time anybody meant. */
+#define CLOCK_MIN_EPOCH  1735689600UL   // 2025-01-01 00:00:00 UTC
+#define CLOCK_MAX_EPOCH  4102444800UL   // 2100-01-01 00:00:00 UTC
+
+/* Smallest difference that makes us touch our own clock. The site publishes
+ * daily and the message takes a moment to arrive, so a second or two is the
+ * measurement rather than the drift; stepping for that would turn a healthy
+ * clock into a stream of pointless corrections in the log. */
+#define CLOCK_OWN_MIN_STEP_S  5
+
+static bool clockPlausible(uint32_t epoch) {
+  return epoch >= CLOCK_MIN_EPOCH && epoch < CLOCK_MAX_EPOCH;
+}
+
+/* Civil date -> UNIX epoch seconds, UTC. Howard Hinnant's days_from_civil, in
+ * the shape everybody ends up writing: March-based years, so the leap day is
+ * the last day of the year and needs no special case.
+ *
+ * Written out here rather than pulled from a time library because this file
+ * needs exactly one direction of exactly one conversion -- turning the
+ * "HH:MM - D/M/YYYY UTC" that a monitored repeater answers back into a number we
+ * can subtract. mktime() would have meant dragging in the local-time machinery
+ * and its timezone assumptions for that. */
+static uint32_t civilToEpoch(int y, int m, int d, int hh, int mm, int ss) {
+  y -= (m <= 2) ? 1 : 0;
+  int era = (y >= 0 ? y : y - 399) / 400;
+  unsigned yoe = (unsigned)(y - era * 400);                       // [0, 399]
+  unsigned doy = (unsigned)((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1);
+  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;           // [0, 146096]
+  long days = (long)era * 146097 + (long)doe - 719468;            // since 1970-01-01
+  return (uint32_t)(days * 86400L + hh * 3600L + mm * 60L + ss);
 }
 
 // ------------------------------------------------------------------ watchdog
@@ -1366,11 +1471,67 @@ static void mqttOnMessage(char *topic, uint8_t *payload, unsigned int len) {
  * 'geweigerd' on its own is the kind of answer that costs an afternoon. */
 static bool monSettingsRequest(const char *key_hex, const char **why);
 
+/* Stages a check of the clocks of the repeaters we monitor. Same arrangement
+ * and same reason as the line above. Never fails the command: a node that
+ * cannot do the LoRa half has still had its own clock set, which is the half
+ * that matters and the half that costs nothing. *why then says why the rest did
+ * not happen, for the log. */
+static bool monClockRequest(const char **why);
+
+/* Sets our own clock from a time the site gave us. Returns what happened, in
+ * words, and never anything that is not one of the four counters above.
+ *
+ * Three things are refused here and it is worth being explicit about which,
+ * because each one protects against a different accident:
+ *
+ *  - a time outside CLOCK_MIN_EPOCH..CLOCK_MAX_EPOCH. Somebody published
+ *    milliseconds, or an empty string that parsed as zero. A node with a clock
+ *    reading 1970 is worse off than one with a clock reading last week: the
+ *    second is merely stale, the first makes every timestamp it emits absurd
+ *    and, being far in the past, cannot be corrected forward past a mesh that
+ *    has already seen higher advert timestamps from us.
+ *  - a time BEHIND our own. See the header: our adverts carry this clock, and
+ *    every node that knows us drops an advert that does not step forward. A
+ *    backwards correction of an hour is an hour of invisibility for a repeater
+ *    on a roof. So the node that runs fast keeps running fast and gets
+ *    reported; it is the lesser of the two faults and the only reversible one.
+ *  - a difference too small to be worth a step. Not a safety rule, a noise
+ *    rule: the site publishes this daily and the trip from there to here takes
+ *    a moment, so a second or two of difference is the measurement, not drift.
+ */
+static const char *clockApplyOwn(uint32_t epoch, long *delta_out) {
+  uint32_t now = _mesh ? _mesh->getRTCClock()->getCurrentTime() : 0;
+  *delta_out = 0;
+
+  if (!clockPlausible(epoch)) { _clk_bad++; return "buiten het toegestane venster"; }
+  if (!_mesh)                 { _clk_bad++; return "mesh nog niet gestart"; }
+
+  long delta = (long)(epoch - now);          // both uint32; the cast is the diff
+  *delta_out = delta;
+  _clk_last_ms = millis();
+  _clk_last_epoch = epoch;
+  _clk_last_delta = delta;
+
+  /* An unset clock is the case this exists for, so it is not held to the noise
+   * rule below: a jump of a year and a half is exactly what should happen. */
+  if (!clockPlausible(now)) {
+    _mesh->getRTCClock()->setCurrentTime(epoch);
+    _clk_sets++;
+    return "klok stond niet, nu gezet";
+  }
+  if (delta < 0) { _clk_back++; return "onze klok loopt voor; niet teruggezet"; }
+  if (delta < CLOCK_OWN_MIN_STEP_S) { _clk_noops++; return "stond al gelijk"; }
+
+  _mesh->getRTCClock()->setCurrentTime(epoch);
+  _clk_sets++;
+  return "klok bijgezet";
+}
+
 /* Runs what the callback left behind, from the ordinary loop.
  *
- * The allowlist is the whole security model: two exact words, 'settings' and
- * 'status', no passthrough to handleCommand(). See the 1.8.0 changelog entry
- * for why the console's route is not good enough here.
+ * The allowlist is the whole security model: three exact words, 'settings',
+ * 'status' and 'time', no passthrough to handleCommand(). See the 1.8.0
+ * changelog entry for why the console's route is not good enough here.
  *
  * Since 1.9.0 'settings' may carry one argument: the public key of a repeater
  * we monitor, which asks for a sweep of THEIR CLI instead of our own. That
@@ -1382,6 +1543,23 @@ static bool monSettingsRequest(const char *key_hex, const char **why);
  * ask for a password over a link the operator controls -- so a broker account
  * can aim this at a node the operator already chose to monitor, and at nothing
  * else. A key that matches no entry, or more than one, is refused and counted.
+ *
+ * Since 1.10.0 there is a third word, 'time <epoch>', and this one really is a
+ * word of its own rather than an argument on an existing one -- because unlike
+ * the other two it does not ask the node to say something it would have said
+ * anyway, it changes state. Naming it separately is what lets the site, the
+ * broker ACL and this list all talk about the same thing.
+ *
+ * Its argument is a number and is treated as one: parsed here, bounded by a
+ * window of years, and applied by clockApplyOwn() which will only ever move the
+ * clock forward. So the worst an attacker on the broker can do with it is set
+ * this node's clock to a time between 2025 and 2100, once every thirty seconds,
+ * and only ever later than it already was. That is a real capability and worth
+ * naming: a clock pushed far into the future cannot be walked back (see
+ * clockApplyOwn for why nothing may step a clock backwards), so recovering from
+ * it needs 'clkreboot' and a resync. It is still a far smaller capability than
+ * the 'reboot' a CLI passthrough would have handed over, and the feature is
+ * pointless without it.
  *
  * Rejected alternative: a third word, 'monsettings <key>'. It buys nothing over
  * an argument -- the same parse, the same list -- and it would have meant a
@@ -1409,10 +1587,17 @@ static void mqttRunCommand() {
   }
   if (arg && *arg == 0) arg = NULL;
 
-  bool known = (strcmp(w, "settings") == 0 || strcmp(w, "status") == 0);
-  if (!known || (arg && strcmp(w, "settings") != 0)) {
+  /* Which of the three words takes an argument is checked here and not further
+   * down, so 'status <anything>' is refused rather than quietly run as 'status'.
+   * A publisher sending an argument to a command that has none has misunderstood
+   * something, and running the command anyway hides that from both ends. */
+  bool wants_arg = (strcmp(w, "time") == 0);          // must have one
+  bool takes_arg = wants_arg || (strcmp(w, "settings") == 0);
+  bool known = takes_arg || (strcmp(w, "status") == 0);
+  if (!known || (arg && !takes_arg) || (!arg && wants_arg)) {
     _cmd_refused++;
-    Serial.printf("MeshStatsNet: opdracht '%.16s' geweigerd, alleen settings [sleutel]|status\n", w);
+    Serial.printf("MeshStatsNet: opdracht '%.16s' geweigerd, alleen "
+                  "settings [sleutel]|status|time <epoch>\n", w);
     return;
   }
   if (_cmd_last_ms != 0 && millis() - _cmd_last_ms < MQTT_CMD_MIN_GAP_MS) {
@@ -1423,7 +1608,32 @@ static void mqttRunCommand() {
   _cmd_last_ms = millis();
   _cmd_count++;
 
-  if (arg) {
+  if (strcmp(w, "time") == 0) {
+    /* strtoul and not atol: the epoch passes 2^31 in 2038 and this node may
+     * well still be on that roof. A trailing character that is not a digit
+     * means the argument was not a bare number, and a number with something
+     * stuck to it is a mistake somewhere upstream, not a time. */
+    char *end = NULL;
+    unsigned long secs = strtoul(arg, &end, 10);
+    if (end == arg || (end && *end != 0)) {
+      _clk_bad++;
+      _cmd_refused++;
+      Serial.printf("MeshStatsNet: 'time %.20s' is geen getal, genegeerd\n", arg);
+      return;
+    }
+    long delta = 0;
+    const char *res = clockApplyOwn((uint32_t)secs, &delta);
+    Serial.printf("MeshStatsNet: tijd %lu ontvangen (%+ld s): %s\n", secs, delta, res);
+
+    /* The LoRa half is a separate decision and a separate budget. Our own clock
+     * has just been set whatever happens below -- that part is free, it is the
+     * reason the message was sent, and a node whose own clock is right is
+     * already the larger share of the value. */
+    const char *why = "";
+    if (!monClockRequest(&why)) {
+      Serial.printf("MeshStatsNet: klokronde langs gemonitorde nodes niet gestart: %s\n", why);
+    }
+  } else if (arg) {
     /* Nothing is armed for publication here. This sweep talks to another node
      * over the radio and takes minutes, not one pass of the loop, so it ships
      * its own message when it is done -- see monSettingsFinish(). */
@@ -1796,8 +2006,12 @@ static uint16_t _mon_interval = 900;
  * (_mon_got_reply), one login session per peer, and one radio. Two machines
  * would have had to agree about all three anyway, and the version where they
  * disagree is a poll answer parsed as a CLI answer. */
+/* MST_CLK_WAIT is appended rather than slotted in next to MST_CLI_WAIT where it
+ * belongs by meaning: this enum is printed as a number by /api/mon and by 'wifi
+ * mon', so renumbering the existing states would silently change what those two
+ * report on a node somebody is already watching. */
 enum MonState { MST_IDLE, MST_LOGIN_WAIT, MST_REQ_WAIT, MST_TELEM_WAIT, MST_NBR_WAIT,
-                MST_CLI_WAIT, MST_GAP };
+                MST_CLI_WAIT, MST_GAP, MST_CLK_WAIT };
 static MonState _mon_state = MST_IDLE;
 static int _mon_cur = -1;
 static uint8_t _mon_retry = 0;      // one flood retry per step, then give up
@@ -2670,6 +2884,331 @@ static void monSettingsBegin() {
   monSettingsFinish("login niet verstuurd");
 }
 
+/* ---- the clocks of the repeaters we monitor -----------------------------
+ *
+ * The other half of 'time <epoch>'. Our own clock was set the moment the
+ * message arrived, for free; this is what it costs to pass that on to the
+ * repeaters that have no other way to hear it -- the ones which do not publish
+ * to MQTT themselves, which is exactly the set this project exists for.
+ *
+ * Two commands per node, and usually only the first:
+ *
+ *   clock         -> "HH:MM - D/M/YYYY UTC"          (CommonCLI.cpp)
+ *   clock sync    -> "OK - clock set: HH:MM - D/M/YYYY UTC", or an ERR line
+ *
+ * 'clock sync' takes no argument: the far side sets its clock from the
+ * timestamp of the packet that carried the command, which sendMonitorCliCmd()
+ * fills from OUR clock -- the one the site just corrected. So the value that
+ * propagates is the site's, and there is no number to format wrongly. It is
+ * also ten characters against the fifteen of 'time <epoch>', which with five
+ * bytes of message header is one 16-byte cipher block instead of two.
+ *
+ * ---- what this costs ----------------------------------------------------
+ *
+ * Far less than the settings sweep above, which is why this one is allowed to
+ * run on a schedule and that one is not. One command and one reply per
+ * monitored node, once a day. A node needing a correction pays a second pair.
+ * For comparison: an ordinary poll round is three requests and three replies
+ * per node, and runs every fifteen minutes. So a daily clock check is worth
+ * about a fifth of one poll round -- somewhere under half a percent of what
+ * this node already spends on monitoring, and a rounding error against what it
+ * spends relaying other people's packets.
+ *
+ * The limits that keep it there:
+ *
+ *  - MON_CLK_MIN_GAP_MS between two runs. The site asks once a day; this caps
+ *    what a broker account can do with that to once an hour, which is still 24
+ *    times the intended rate and still cheaper than one poll round.
+ *  - MON_CLK_SKEW_S before anything is corrected. Below it, one round trip and
+ *    we are done.
+ *  - No retries anywhere. A node that does not answer 'clock' is skipped until
+ *    tomorrow; a clock is not urgent enough to flood for, and tomorrow is one
+ *    day of drift away.
+ *  - MON_CLK_SILENT_MAX silent nodes in a row ends the run, on the same
+ *    reasoning as the settings sweep: after three, the thing that is wrong is
+ *    not the fourth node.
+ *  - MON_CLK_TOTAL_MS caps the run whatever happens. While it runs the poll
+ *    rounds wait, because they share this state machine.
+ *
+ * ---- why the clock is read before it is set -----------------------------
+ *
+ * Sending 'clock sync' blind would cost exactly the same as reading 'clock':
+ * one command, one reply, every node, every day. So thrift is NOT the argument
+ * here, and pretending otherwise would be the kind of reasoning that survives
+ * in a comment long after it stopped being true. The argument is that a read
+ * produces a measurement -- 'this repeater was four minutes behind' -- where a
+ * blind sync produces nothing anybody can see, and that a node which is fine is
+ * then never sent a command that changes its clock at all. The second round
+ * trip is spent only where the first one proved it was needed.
+ *
+ * ---- why nothing here ever moves a clock backwards ----------------------
+ *
+ * The far side refuses it ('clock cannot go backwards'), so a correction to a
+ * node running fast would be pure wasted airtime -- but that is the small
+ * reason. The large one is in clockApplyOwn(): a node's adverts carry its
+ * clock, and a node that already knows the sender drops an advert whose
+ * timestamp did not increase. Moving a repeater's clock back by an hour hides
+ * it from everyone who knows it for an hour. So a node found running fast is
+ * counted and reported, and left exactly as it is.
+ */
+
+/* Room for the first command after a login: the packet that depends on a path
+ * we have just learned, same allowance the settings sweep gives the equivalent
+ * step and for the same measured reason. */
+#define MON_CLK_FIRST_MS    20000UL
+#define MON_CLK_STEP_MS     12000UL   // per command after that
+#define MON_CLK_GAP_MS       3000UL   // between two commands, and between nodes
+#define MON_CLK_SILENT_MAX       3    // silent nodes in a row that end a run
+#define MON_CLK_TOTAL_MS   300000UL   // hard cap on one run
+#define MON_CLK_MIN_GAP_MS 3600000UL  // between two runs
+
+/* Smallest deviation we will act on.
+ *
+ * Not a taste: it is the resolution of the interface. 'clock' answers to the
+ * minute, so a reading of "09:05" means the far side is somewhere in a sixty
+ * second window, and the reply reaches us seconds after it read. Everything
+ * below is therefore computed as a RANGE -- the drift is known to lie between
+ * two bounds -- and a correction goes out only when the whole range sits beyond
+ * this threshold. Two minutes is the smallest number for which that can be true
+ * at all; anything smaller would mean claiming a precision this interface does
+ * not have, and would have this node transmitting daily to chase measurement
+ * noise on somebody else's roof. */
+#define MON_CLK_SKEW_S          120
+
+static bool _mclk_run = false;        // a run is walking the monitor list
+static int  _mclk_next = 0;           // entry to visit next
+static int  _mclk_cur = -1;           // entry we are talking to, -1 = none
+static uint8_t _mclk_step = 0;        // 0 = asked 'clock', 1 = asked 'clock sync'
+static uint8_t _mclk_silent = 0;      // consecutive nodes that said nothing
+static uint32_t _mclk_ref = 0;        // our clock when the command went out
+static unsigned long _mclk_until = 0; // whole-run budget
+static unsigned long _mclk_gap_at = 0;// next node may start
+static unsigned long _mclk_done_at = 0;   // last finished run, for the min gap
+
+// This run, and then kept as the last run's summary for 'wifi clock'.
+static uint8_t _mclk_asked = 0, _mclk_answered = 0, _mclk_synced = 0, _mclk_ahead = 0;
+static long _mclk_worst = 0;          // largest deviation seen, signed seconds
+static unsigned long _mclk_last_at = 0;   // when the last run ended, 0 = never
+
+/* Arms a run. Never refuses because of the state machine: a run that cannot
+ * start now would be pointless to queue -- the site asks again tomorrow, and a
+ * queued clock is a stale clock by definition. Hence a plain refusal with a
+ * reason rather than the request slot the settings sweep keeps. */
+static bool monClockRequest(const char **why) {
+  if (!_mesh)                     { *why = "mesh nog niet gestart"; return false; }
+  if (_mon_count == 0)            { *why = "deze node monitort niemand"; return false; }
+  if (!clockPlausible(_mesh->getRTCClock()->getCurrentTime())) {
+    /* The one refusal that matters most. Passing on a clock we do not believe
+     * ourselves would put OUR fault on somebody else's roof, forward only and
+     * therefore unrecoverable without a visit. Nothing beats a wrong time here
+     * except no time. */
+    *why = "onze eigen klok is niet betrouwbaar; niets doorgegeven"; return false;
+  }
+  if (_batt_known && _batt_pct < _cfg.bat_mon) {
+    *why = "batterij te laag om andere repeaters aan te spreken"; return false;
+  }
+  /* A run whose budget has expired is dead whatever the flag says. monitorLoop()
+   * has several early returns -- safe mode, MQTT switched off, an empty monitor
+   * list, a flat battery -- and a run abandoned behind one of them never reaches
+   * MST_IDLE to end itself. Without this line _mclk_run would stay true and
+   * refuse every later request with 'er loopt er al een' until a reboot, which
+   * is exactly the kind of fault this node cannot afford: invisible, permanent,
+   * and only fixable by climbing onto a roof. */
+  if (_mclk_run && passed(_mclk_until)) {
+    monTrace("klok: vorige ronde bleef hangen, opgeruimd");
+    _mclk_run = false;
+    _mclk_cur = -1;
+    _mclk_step = 0;
+  }
+  if (_mclk_run)                  { *why = "er loopt er al een"; return false; }
+  if (_mclk_done_at != 0 && millis() - _mclk_done_at < MON_CLK_MIN_GAP_MS) {
+    *why = "te kort na de vorige klokronde"; return false;
+  }
+  _mclk_run = true;
+  _mclk_next = 0;
+  _mclk_cur = -1;
+  _mclk_silent = 0;
+  _mclk_asked = _mclk_answered = _mclk_synced = _mclk_ahead = 0;
+  _mclk_worst = 0;
+  _mclk_until = millis() + MON_CLK_TOTAL_MS;
+  _mclk_gap_at = 0;                    // the first node may start immediately
+  return true;
+}
+
+/* Ends the run and hands the machine back. Straight to MST_IDLE and without
+ * touching _mon_next_round, exactly like monSettingsFinish(): the poll rounds
+ * resume on the schedule they already had, as though this had not happened. */
+static void monClockFinish(const char *why) {
+  monTrace("klok klaar: %u gevraagd, %u geantwoord, %u gezet, %u loopt voor (%s)",
+           (unsigned)_mclk_asked, (unsigned)_mclk_answered,
+           (unsigned)_mclk_synced, (unsigned)_mclk_ahead, why);
+  Serial.printf("MeshStatsNet: klokronde klaar: %u gevraagd, %u geantwoord, "
+                "%u bijgezet, %u loopt voor (%s)\n",
+                (unsigned)_mclk_asked, (unsigned)_mclk_answered,
+                (unsigned)_mclk_synced, (unsigned)_mclk_ahead, why);
+  _mclk_run = false;
+  _mclk_cur = -1;
+  _mclk_step = 0;
+  _mclk_done_at = millis();
+  _mclk_last_at = millis();
+  _mon_cur = -1;
+  _mon_retry = 0;
+  _mon_state = MST_IDLE;
+}
+
+// Done with this node, whatever the outcome. The next one waits out a gap.
+static void monClockNodeDone() {
+  _mclk_cur = -1;
+  _mclk_step = 0;
+  _mon_cur = -1;
+  _mon_retry = 0;
+  _mclk_gap_at = millis() + MON_CLK_GAP_MS;
+  _mon_state = MST_IDLE;
+}
+
+// Puts 'clock' or 'clock sync' on the air, depending on _mclk_step.
+static void monClockSend(bool after_login) {
+  if (_mclk_cur < 0) { monClockNodeDone(); return; }
+  MonEntry &m = _mon[_mclk_cur];
+  const char *cmd = (_mclk_step == 0) ? "clock" : "clock sync";
+
+  /* Read our own clock at the moment the command LEAVES, not when the answer
+   * arrives. It is one end of the interval the far side's reading has to be
+   * compared against; the other end is read when the reply comes in. */
+  _mclk_ref = _mesh->getRTCClock()->getCurrentTime();
+
+  if (!_mesh->sendMonitorCliCmd(m.mesh_idx, cmd)) {
+    // Packet pool empty, which is normal under load. Not a silence from them.
+    monTrace("klok %s NIET VERSTUURD (pool vol) %.6s", cmd, m.key);
+    monClockNodeDone();
+    return;
+  }
+  if (_mclk_step == 0) _mclk_asked++;
+  _mon_state = MST_CLK_WAIT;
+  _mon_deadline = millis() + (after_login ? MON_CLK_FIRST_MS : MON_CLK_STEP_MS);
+}
+
+/* One text answer from a monitored node.
+ *
+ * Same layout as monSettingsReply(): four bytes of timestamp, one of flags,
+ * then the text, zero-padded out to the cipher block -- hence the copy. */
+static void monClockReply(const uint8_t *data, int len) {
+  if (_mclk_cur < 0) return;
+  MonEntry &m = _mon[_mclk_cur];
+
+  char text[96];
+  int n = len - 5;
+  if (n > (int)sizeof(text) - 1) n = (int)sizeof(text) - 1;
+  if (n < 0) n = 0;
+  memcpy(text, data + 5, n);
+  text[n] = 0;
+
+  if (_mclk_step == 1) {
+    /* The answer to 'clock sync'. Both outcomes are useful and neither is a
+     * surprise: OK means we corrected it, ERR means it decided it was ahead of
+     * us after all -- which can happen honestly, because between our reading
+     * and this command a minute of rounding stands. */
+    bool ok = (strstr(text, "OK") != NULL);
+    if (ok) _mclk_synced++; else _mclk_ahead++;
+    monTrace("klok %.6s zetten: %.24s", m.key, text);
+    Serial.printf("MeshStatsNet: klok %.12s %s (%.40s)\n",
+                  m.key, ok ? "bijgezet" : "NIET gezet", text);
+    monClockNodeDone();
+    return;
+  }
+
+  _mclk_answered++;
+  _mclk_silent = 0;
+
+  /* "HH:MM - D/M/YYYY UTC". Day and month are printed with %d and not %02d on
+   * the far side, so they may be one digit or two -- which is why this is a
+   * scan and not a fixed-offset parse. */
+  int hh = -1, mm = -1, dd = 0, mo = 0, yy = 0;
+  if (sscanf(text, "%d:%d - %d/%d/%d", &hh, &mm, &dd, &mo, &yy) != 5 ||
+      hh < 0 || hh > 23 || mm < 0 || mm > 59 ||
+      dd < 1 || dd > 31 || mo < 1 || mo > 12 || yy < 1970 || yy > 2100) {
+    monTrace("klok %.6s onleesbaar: %.24s", m.key, text);
+    monClockNodeDone();
+    return;
+  }
+
+  uint32_t theirs = civilToEpoch(yy, mo, dd, hh, mm, 0);
+  uint32_t now = _mesh->getRTCClock()->getCurrentTime();
+
+  /* Interval arithmetic, because that is what the data supports. Their clock
+   * read somewhere in [theirs, theirs+59] -- the seconds were never sent -- at
+   * some instant in [_mclk_ref, now], the window between our command leaving
+   * and their answer arriving. So their deviation from us is bounded by:
+   *
+   *   lo = theirs      - now          (most flattering to us)
+   *   hi = theirs + 59 - _mclk_ref    (most flattering to them)
+   *
+   * Negative is behind. A correction goes out only when the whole interval is
+   * past the threshold, so a node that MIGHT be fine is always left alone. */
+  long lo = (long)theirs - (long)now;
+  long hi = (long)theirs + 59 - (long)_mclk_ref;
+  long est = (lo + hi) / 2;
+  // Largest deviation of the run, sign kept: 'four minutes behind' and 'four
+  // minutes ahead' are the same size and completely different problems.
+  long mag = est < 0 ? -est : est;
+  long worst = _mclk_worst < 0 ? -_mclk_worst : _mclk_worst;
+  if (mag > worst) _mclk_worst = est;
+  monTrace("klok %.6s %+lds (%ld..%ld)", m.key, est, lo, hi);
+
+  if (hi <= -(long)MON_CLK_SKEW_S) {
+    Serial.printf("MeshStatsNet: klok %.12s loopt %ld s achter, bijzetten\n", m.key, -est);
+    _mclk_step = 1;
+    monClockSend(false);
+    return;
+  }
+  if (lo >= (long)MON_CLK_SKEW_S) {
+    /* Nothing to send: 'clock sync' would be refused, and even if it were not,
+     * see the block comment above for why a clock is never walked back. This is
+     * reported and left alone -- an operator with a serial cable can decide
+     * whether a reboot is worth it, and this node cannot. */
+    _mclk_ahead++;
+    Serial.printf("MeshStatsNet: klok %.12s loopt %ld s VOOR; niet corrigeerbaar "
+                  "over de lucht, alleen 'clkreboot' op die node helpt\n", m.key, est);
+    monClockNodeDone();
+    return;
+  }
+  monClockNodeDone();                 // within the threshold; one round trip, done
+}
+
+/* Picks the next monitored node worth asking, or ends the run. Called from
+ * MST_IDLE only, so no poll round is in progress and _mon_cur is free -- the
+ * same contract monSettingsBegin() relies on. */
+static void monClockAdvance() {
+  if (passed(_mclk_until)) { monClockFinish("tijdsbudget op"); return; }
+  if (_mclk_silent >= MON_CLK_SILENT_MAX) { monClockFinish("te veel stilte op rij"); return; }
+
+  while (_mclk_next < _mon_count) {
+    int i = _mclk_next++;
+    if (!_mon[i].enabled || _mon[i].mesh_idx < 0) continue;
+
+    _mclk_cur = i;
+    _mclk_step = 0;
+    _mon_cur = i;
+    _mon_retry = 0;
+    MonEntry &m = _mon[i];
+
+    /* Reuse a session from an earlier poll when we have one, for the reason
+     * monSettingsBegin() gives: a login is a flooded packet, and spending one
+     * to learn what we already know is the most expensive kind of tidiness. */
+    if (m.logged_in) { monClockSend(false); return; }
+    if (_mesh->sendMonitorLogin(m.mesh_idx, m.pass)) {
+      monTrace("klok login %.6s", m.key);
+      _mon_state = MST_LOGIN_WAIT;
+      _mon_deadline = millis() + MON_STEP_MS;
+      return;
+    }
+    monTrace("klok login NIET VERSTUURD (pool vol) %.6s", m.key);
+    monClockNodeDone();
+    return;
+  }
+  monClockFinish("alle nodes gehad");
+}
+
 /* Config changes arrive on the web server's task; the list is only ever
  * mutated in loop(). Same hand-over the wifi/mqtt/power forms already use. */
 enum MonAction { MA_NONE = 0, MA_ADD, MA_DEL, MA_PASS, MA_ENABLE, MA_INTERVAL, MA_POLL };
@@ -2832,7 +3371,16 @@ static void monitorLoop() {
    * mesh airtime. Same for a tired battery: monitoring is a luxury, staying
    * reachable is not. */
   if (!_cfg.mqtt_enabled || _cfg.mqtt_host[0] == 0) return;
-  if (_batt_known && _batt_pct < _cfg.bat_mon) return;
+  if (_batt_known && _batt_pct < _cfg.bat_mon) {
+    /* A clock check that was running when the battery gave out has to be let
+     * go here rather than left standing. These three early returns are the only
+     * way out of this function, so a run abandoned mid-list would never reach
+     * MST_IDLE again -- and _mclk_run being stuck true refuses every later
+     * request with 'er loopt er al een', for good, on a node nobody can reach
+     * to reboot. Sunrise brings the next one; the site asks daily anyway. */
+    if (_mclk_run) monClockFinish("batterij te laag");
+    return;
+  }
 
   if (_mon_got_reply) {
     int idx = _mon_reply_idx;
@@ -2861,6 +3409,18 @@ static void monitorLoop() {
       monSettingsReply(_mon_reply, _mon_reply_len);
       return;
     }
+    /* The clock check's own answer. It needs no equivalent of the
+     * _mset_send_at guard above, because there is no pause between two
+     * commands here that a late duplicate could be misfiled into: 'clock sync'
+     * goes out from inside the handler for the 'clock' answer, so the only
+     * moment this node is in MST_CLK_WAIT with nothing outstanding does not
+     * exist. And the two commands have answers that cannot be confused -- one
+     * is a bare time, the other starts with OK or ERR. */
+    if (rtype == PAYLOAD_TYPE_TXT_MSG && _mon_state == MST_CLK_WAIT &&
+        _mclk_cur >= 0 && _mon[_mclk_cur].mesh_idx == idx) {
+      monClockReply(_mon_reply, _mon_reply_len);
+      return;
+    }
     // Every state below expects a RESPONSE; a stray CLI answer is not one.
     if (rtype != PAYLOAD_TYPE_RESPONSE) {
       monTrace("reply type %u genegeerd", (unsigned)rtype);
@@ -2874,6 +3434,9 @@ static void monitorLoop() {
                  hops < 0 ? "FLOOD" : "direct", hops);
         // A login staged by a settings sweep continues into that, not a poll.
         if (_mset_cur >= 0) { monSettingsSend(); return; }
+        // ... and one staged by the clock check into that. Only ever one of the
+        // two is armed: both are started from MST_IDLE, which the other holds.
+        if (_mclk_cur >= 0) { monClockSend(true); return; }
         monStep(MST_REQ_WAIT);
         return;
       }
@@ -2929,6 +3492,18 @@ static void monitorLoop() {
        * cost the airtime already spent on it for nothing. */
       if (_mset_req_key[0]) { monSettingsBegin(); break; }
 
+      /* A running clock check comes next, and holds the machine here between
+       * two nodes rather than taking a state of its own -- which is exactly
+       * what MST_GAP does for a poll round, for the same three seconds. It goes
+       * after the settings sweep because a sweep is somebody waiting in front
+       * of a page, and this is a schedule that can wait five minutes. */
+      if (_mclk_run) {
+        if (!passed(_mclk_gap_at) && _mclk_gap_at != 0) return;
+        _mclk_gap_at = 0;
+        monClockAdvance();
+        break;
+      }
+
       /* passed() reads 0 as 'not scheduled', and this starts at 0 -- so until
        * something set it, the first automatic round never came. Only 'wifi mon
        * poll' did, and because the end of a round then sets a real deadline,
@@ -2972,6 +3547,10 @@ static void monitorLoop() {
        * touch the backoff either: the backoff exists so dead entries stop
        * costing every poll round, and this was not a poll round. */
       if (_mset_cur >= 0) { monSettingsFinish("login onbeantwoord"); break; }
+      /* Same for the clock check, and for the same reason: this was not a poll
+       * round, so it does not feed the backoff either. One silent node, on to
+       * the next; three in a row and the run ends in monClockAdvance(). */
+      if (_mclk_cur >= 0) { _mclk_silent++; monClockNodeDone(); break; }
       monRoundFailed(_mon[_mon_cur]);
       _mon_state = MST_GAP;
       _mon_deadline = millis() + MON_GAP_MS;
@@ -3062,6 +3641,35 @@ static void monitorLoop() {
         break;
       }
       monSettingsAdvance();
+      break;
+
+    /* One command outstanding, always. Unlike MST_CLI_WAIT there is no second
+     * timer here: the pause between two nodes is waited out in MST_IDLE, and
+     * the second command of a node goes out from inside the first one's reply. */
+    case MST_CLK_WAIT:
+      if (_mclk_cur < 0) { _mon_state = MST_IDLE; break; }   // cannot happen
+      /* The backstop, for the same reason the settings sweep has one: this
+       * machine holds up the poll rounds while it runs, on a node nobody can
+       * walk over to and reboot. */
+      if (passed(_mclk_until)) { monClockFinish("tijdsbudget op"); break; }
+      if (!passed(_mon_deadline)) return;
+
+      /* Silence. No retry and no flood: yesterday's clock is not worth a second
+       * transmission today, and the site will ask again tomorrow. Only the
+       * unanswered READ counts as a silent node -- an unanswered 'clock sync'
+       * means they did answer the read, so the link is fine and the run should
+       * keep going. */
+      if (_mclk_step == 0) {
+        _mclk_silent++;
+        monTrace("klok %.6s stil (%u op rij)", _mon[_mclk_cur].key, (unsigned)_mclk_silent);
+        /* Same conclusion the settings sweep draws from repeated silence: either
+         * they forgot us or they never let us run commands at all. Both are
+         * worth one fresh login next time rather than more silence now. */
+        if (_mclk_silent >= MON_CLK_SILENT_MAX) _mon[_mclk_cur].logged_in = false;
+      } else {
+        monTrace("klok %.6s antwoordde niet op zetten", _mon[_mclk_cur].key);
+      }
+      monClockNodeDone();
       break;
 
     case MST_GAP:
@@ -4256,6 +4864,51 @@ static void handlePowerCommand(const char *arg, char *reply) {
   strcpy(reply, "Err - wifi power [altijd|zuinig|rules [spec]|set <naam> <waarde>]");
 }
 
+/* 'wifi clock'. Read-only, and that is the design rather than an omission: the
+ * whole point of the feature is that the time comes from a machine which has a
+ * reason to know it. A hand typing one at a serial cable does not, and a wrong
+ * time typed here would be forwarded to every monitored repeater and could not
+ * be walked back afterwards -- see the block comment above MON_CLK_FIRST_MS.
+ *
+ * What it answers is the question this feature is hard to see from the outside:
+ * a node nobody ever sets the time on, and a node that is being told a time it
+ * refuses, look identical from the mesh. The counters tell them apart. */
+static void handleClockCommand(char *reply) {
+  uint32_t now = _mesh ? _mesh->getRTCClock()->getCurrentTime() : 0;
+  char stamp[32] = "onbekend";
+  if (_mesh && clockPlausible(now)) {
+    DateTime dt = DateTime(now);
+    snprintf(stamp, sizeof(stamp), "%02d:%02d - %d/%d/%d UTC",
+             dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+  } else if (_mesh) {
+    strcpy(stamp, "NIET GEZET");
+  }
+
+  if (_clk_last_ms == 0) {
+    snprintf(reply, 155, "klok %s; nooit gezet door de site (%ug/%uw/%uf); "
+             "gemonitord: nog geen ronde",
+             stamp, (unsigned)_clk_sets, (unsigned)_clk_back, (unsigned)_clk_bad);
+    return;
+  }
+  if (_mclk_last_at == 0) {
+    snprintf(reply, 155, "klok %s; site %us geleden (%+lds, %ug/%un/%uw/%uf); "
+             "gemonitord: nog geen ronde",
+             stamp, (unsigned)((millis() - _clk_last_ms) / 1000UL), _clk_last_delta,
+             (unsigned)_clk_sets, (unsigned)_clk_noops, (unsigned)_clk_back,
+             (unsigned)_clk_bad);
+    return;
+  }
+  snprintf(reply, 155, "klok %s; site %us geleden (%+lds, %ug/%un/%uw/%uf); "
+           "ronde %us geleden: %u gevraagd, %u geantwoord, %u gezet, %u voor, "
+           "grootste %+lds",
+           stamp, (unsigned)((millis() - _clk_last_ms) / 1000UL), _clk_last_delta,
+           (unsigned)_clk_sets, (unsigned)_clk_noops, (unsigned)_clk_back,
+           (unsigned)_clk_bad,
+           (unsigned)((millis() - _mclk_last_at) / 1000UL),
+           (unsigned)_mclk_asked, (unsigned)_mclk_answered,
+           (unsigned)_mclk_synced, (unsigned)_mclk_ahead, _mclk_worst);
+}
+
 static const char *LOGIN_NL[] = { "nooit geprobeerd", "gelukt", "geen antwoord" };
 
 static void handleMonCommand(const char *arg, char *reply) {
@@ -4593,6 +5246,8 @@ bool msnet_handle_command(const char *command, char *reply) {
     handleSettingsCommand(v, reply);
   } else if ((v = subArg(arg, "power")) != NULL) {
     handlePowerCommand(v, reply);
+  } else if (memcmp(arg, "clock", 5) == 0) {
+    handleClockCommand(reply);
   } else if ((v = subArg(arg, "console")) != NULL) {
     char u[USER_MAX], p[PASS_MAX];
     if (sscanf(v, "%16s %64s", u, p) == 2) {
@@ -4614,7 +5269,7 @@ bool msnet_handle_command(const char *command, char *reply) {
     while (!passed(einde)) { }      // bewust niets aankloppen
     strcpy(reply, "Watchdog sloeg NIET toe - het vangnet werkt niet");
   } else {
-    strcpy(reply, "Err - wifi [ssid|pass|connect|ap|on|off|console|mqtt|power|mon|settings|wdt]");
+    strcpy(reply, "Err - wifi [ssid|pass|connect|ap|on|off|console|mqtt|power|mon|settings|clock|wdt]");
   }
   return true;
 }

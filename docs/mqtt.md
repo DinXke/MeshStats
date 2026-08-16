@@ -45,6 +45,18 @@ Both are subscribed at **QoS 0**.
 bind a node's *read* permission to the same prefix as its *write* permission.
 See [Asking a node for something](#asking-a-node-for-something).
 
+The clock synchronisation publishes on this same topic and has its own settings,
+because the question it answers is not "which topic" but "may we speak at all":
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MCS_CLOCKSYNC_ENABLED` | `1` | Send the time to the nodes at all |
+| `MCS_CLOCKSYNC_HOURS` | `24` | Hours between two rounds |
+| `MCS_CLOCKSYNC_MAX_ERROR_S` | `10` | Uncertainty the kernel may have about its own clock before we stop believing it |
+| `MCS_CLOCKSYNC_MAX_JUMP_S` | `30` | Wall-clock jump against the monotonic clock that counts as a jump rather than a correction |
+
+See [Setting the clock](#setting-the-clock).
+
 ### Who is speaking, and who they are speaking about
 
 Both topics are parsed for the `+` segment. It answers a different question from
@@ -218,26 +230,126 @@ So the server publishes one word on `meshcore/<node>/cmd`:
 | `settings` | reads its CLI parameters now, and publishes them with the statistics message it sends as soon as the sweep finishes |
 | `settings <key>` | logs in to a repeater it *monitors*, reads **that** repeater's CLI parameters over LoRa, and publishes them under that repeater's name (MeshStats 1.9.0) |
 | `status` | publishes a statistics message immediately |
+| `time <epoch>` | sets its own clock to that UNIX time in UTC seconds, then checks the clocks of the repeaters it monitors over LoRa (MeshStats 1.10.0) |
 
 The answer comes back on the ordinary `stats` topic. Nothing else in the ingest
-path changes, and a receiver that knows nothing about `cmd` still works.
+path changes, and a receiver that knows nothing about `cmd` still works. `time`
+is the exception: it produces no message at all, only a change on the node. What
+happened is readable with `wifi clock` on the node and on the site's admin page.
 
-**The firmware accepts those two words and nothing else.** Not a prefix test, not
-a fallthrough to `handleCommand()` — an exact match against a list of two. The
-telnet console on the node does hand its input to the CLI, but that console asks
-for a password over a link the operator controls, while this topic is reachable
-by anyone holding broker credentials. These repeaters hang on roofs and run off
-solar panels; one `reboot` in a loop is enough to lose one. Both words only make
-the node say what it would have said by itself, so the worst an attacker on the
-broker achieves is a statistics message, at most one every 30 seconds
-(`MQTT_CMD_MIN_GAP_MS`).
+**The firmware accepts those three words and nothing else.** Not a prefix test,
+not a fallthrough to `handleCommand()` — an exact match against a list of three.
+The telnet console on the node does hand its input to the CLI, but that console
+asks for a password over a link the operator controls, while this topic is
+reachable by anyone holding broker credentials. These repeaters hang on roofs and
+run off solar panels; one `reboot` in a loop is enough to lose one. The first two
+words only make the node say what it would have said by itself, so the worst an
+attacker on the broker achieves with them is a statistics message, at most one
+every 30 seconds (`MQTT_CMD_MIN_GAP_MS`).
 
-The one argument that exists does not widen that. It never becomes text that
-reaches a CLI: it selects a single entry from the node's monitor list, and the
-commands then sent are the compiled-in parameter table. That list is writable
-only from the admin page and the mesh CLI, both password-protected, so the most
-a broker account can do with it is read out a repeater the operator already
-chose to monitor — at most once every ten minutes.
+The arguments do not widen that, and the two are worth separating because they
+are different kinds of thing.
+
+The one on `settings` never becomes text that reaches a CLI: it selects a single
+entry from the node's monitor list, and the commands then sent are the
+compiled-in parameter table. That list is writable only from the admin page and
+the mesh CLI, both password-protected, so the most a broker account can do with
+it is read out a repeater the operator already chose to monitor — at most once
+every ten minutes.
+
+The one on `time` is a number, checked against a window of years at both ends
+(2025–2100, in `mqtt_ingest.py` and again in `MeshStatsNet.cpp`) and applied by
+code that only ever moves a clock **forward**. So this word does grant a real
+capability that the other two do not: it changes state. Named plainly, because
+it is the one that deserves an ACL: an attacker on the broker can push a node's
+clock to any time between now and 2100, and that cannot be walked back over the
+air. The reason is in the next section.
+
+### Why a clock only ever goes forward
+
+This governs the whole feature and it is not a MeshCore quirk to route around.
+
+An advert carries the clock of the node that emitted it, and every node that
+already knows the sender **drops an advert whose timestamp did not increase**
+(`onAdvertRecv` in `MyMesh.cpp`, the `timestamp > client->last_timestamp` test).
+Move a repeater's clock back by an hour and it is invisible to everyone who
+knows it for an hour — a maintenance command that takes a roof repeater off the
+mesh. MeshCore's own `time` and `clock sync` refuse to go backwards; this
+firmware refuses for that reason specifically, and so does the server.
+
+Two consequences follow, and both are visible rather than hidden:
+
+- A node found running **fast** is reported and left alone. There is no way to
+  correct it over the air; only `clkreboot` on that node helps, and that reboots
+  it.
+- A time published in error cannot be undone. Hence `clocksync.py`, which
+  refuses to publish at all unless this machine's own clock can be established
+  as trustworthy — see [Setting the clock](#setting-the-clock) below.
+
+### Setting the clock
+
+A MeshCore node never gets its clock right on its own. An ESP32 without a
+battery-backed RTC starts at whatever the firmware carries — `clkreboot` sets it
+literally to 15 May 2024 — and drifts from there. A roof repeater reboots by
+itself: flat battery, watchdog, a power cut in thunderstorm season. Each time it
+comes back stamping everything it says with a date that has nothing to do with
+today, and nothing on the mesh corrects it, because nothing on the mesh knows
+better either.
+
+The server does, so it publishes `time <epoch>` on a schedule
+(`MCS_CLOCKSYNC_HOURS`, default 24). The format was not chosen: it is what
+`CommonCLI::handleCommand` parses in its `time ` branch — `_atoi` of the rest of
+the line, straight into `setCurrentTime`, UNIX seconds in UTC.
+
+Only nodes that **publish here directly** are addressed. A relayed repeater gets
+its time from its monitor over LoRa, which is exactly what the command makes
+that monitor do, and is the only path there is to it.
+
+Before anything leaves, `clocksync.py` has to establish that this machine's own
+clock is trustworthy, and refuses loudly — logs and admin page — when it cannot:
+
+- **Kernel clock discipline** via `adjtimex(2)`: the `STA_UNSYNC` flag and the
+  kernel's own `maxerror`. Same source `timedatectl` reports as
+  `NTPSynchronized`, and it needs no package, no privileges and no
+  `timedatectl` inside the container — which a slim Python image does not have.
+- **Wall clock against monotonic clock** between rounds, so a clock that was
+  *set* rather than *elapsed* is caught however satisfied the kernel is.
+- **Never backwards**, across restarts, via a high-water mark in the settings
+  table. This catches a host that booted without a network and fell back to an
+  RTC value or a build date, which `adjtimex` can be perfectly happy about.
+
+> **Scope, honestly.** In an LXC the container shares the host's clock and may
+> not set it: `timedatectl` there reports `NTP=no` alongside
+> `NTPSynchronized=yes`. What we read is therefore the **host kernel's** claim,
+> passed through. "The host says it is synchronised" is not the same as "the
+> time is demonstrably correct". **The correctness of every clock in this mesh
+> ultimately rests on the NTP configuration of the Proxmox host** — if that is
+> wrong, all of this runs neatly, measurably and completely wrong along with it.
+
+Two checks were considered and rejected. Cross-checking against timestamps from
+the mesh is circular: the nodes we would check against are the nodes we set, so
+agreement only proves our own message arrived — and the `rx` message carries `t`
+as an uptime counter, not a wall clock, so the usable source is not even there.
+Querying an external time source does not work either: this server sits behind
+VPN/LAN with no outbound reference, so that check would pass in development and
+report "unreachable" forever on the real machine, which is a check that gets
+switched off within a week.
+
+What the node does with it is in `MeshStatsNet.cpp` above `MON_CLK_FIRST_MS`: it
+sets its own clock, then walks its monitor list asking each repeater `clock` (one
+round trip), and only sends `clock sync` to one whose reading is more than two
+minutes behind. Reading first costs the same as syncing blind — one command, one
+reply — so the argument for it is not thrift but evidence: it turns "this
+repeater was four minutes behind" into something the site can show, and it means
+the node never transmits a clock-changing command on a guess. The threshold is
+two minutes because `clock` answers to the minute and the reply arrives seconds
+after the far side read it; the firmware computes the drift as a *range* and acts
+only when the whole range lies beyond the threshold.
+
+Airtime: one command and one reply per monitored node per day, against the three
+of each that an ordinary poll round already spends every fifteen minutes. That is
+why this may run on a schedule where the settings sweep may not. The node caps
+its own LoRa half at once an hour whatever arrives on the topic.
 
 ### Reaching a repeater that does not publish
 

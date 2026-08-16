@@ -129,6 +129,54 @@ def test_onderwerp_reist_mee_in_de_opdracht(broker):
     assert msg["payload"] == b"settings e3d3f4d7edd0"
 
 
+# --- de tijd zetten ---------------------------------------------------------
+
+def test_de_tijd_gaat_als_epoch_in_seconden_mee(broker):
+    # Het formaat is niet gekozen maar overgenomen: CommonCLI::handleCommand
+    # doet _atoi() op de rest van de regel en zet dat rechtstreeks in
+    # setCurrentTime(). UNIX-seconden in UTC, geen datumtekst, geen
+    # milliseconden.
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "time", epoch=1_800_000_000) is True
+    (msg,) = broker.published
+    assert msg["topic"] == "meshcore/e3d3f4d7edd0/cmd"
+    assert msg["payload"] == b"time 1800000000"
+    assert msg["retain"] is False
+
+
+def test_time_zonder_tijd_is_een_programmeerfout(broker):
+    # 'time' zonder getal betekent niets en wordt aan de overkant geweigerd en
+    # geteld. Hier stukgaan, bij het schrijven, en niet daar.
+    with pytest.raises(ValueError):
+        mqtt_ingest.publish_command("e3d3f4d7edd0", "time")
+    assert broker.published == []
+
+
+def test_een_commando_zonder_tijd_neemt_er_ook_geen_aan(broker):
+    with pytest.raises(ValueError):
+        mqtt_ingest.publish_command("e3d3f4d7edd0", "status", epoch=1_800_000_000)
+    assert broker.published == []
+
+
+@pytest.mark.parametrize("epoch", [0, 1, 1_600_000_000, 5_000_000_000])
+def test_een_tijd_buiten_het_venster_vertrekt_niet(broker, epoch):
+    # Belangrijker dan het lijkt, en de reden dat deze grens twee keer bestaat
+    # (hier én in MeshStatsNet.cpp). Een node zet zijn klok alleen VOORUIT --
+    # zijn adverts worden geweigerd als de tijdstempel niet stijgt -- dus een
+    # tijd in 2128 is aan de overkant niet meer terug te draaien zonder er met
+    # een kabel bij te gaan staan. En die overkant hangt op een dak.
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "time", epoch=epoch) is False
+    assert broker.published == []
+
+
+def test_een_tijd_buiten_het_venster_werpt_niet_op(broker):
+    # Bewust False en geen uitzondering, in tegenstelling tot een onbekend
+    # commando: dit is de weg waarlangs een kapotte SERVERKLOK binnenkomt. Dat
+    # is een toestand van de machine en geen fout in de aanroep, en de beller
+    # hoort hem te kunnen melden in plaats van eraan te sterven. De echte
+    # bewaking staat in clocksync.py; dit is het vangnet eronder.
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "time", epoch=0) is False
+
+
 def test_status_neemt_geen_onderwerp_aan(broker):
     # Een monitor kan geen statusbericht namens een ander sturen. Hier
     # stranden in plaats van aan de overkant, waar het een teller wordt die

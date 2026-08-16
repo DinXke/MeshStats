@@ -21,6 +21,12 @@ services:
       MCS_MQTT_PASS: "${MCS_MQTT_PASS:-}"
       MCS_MQTT_TOPIC: "${MCS_MQTT_TOPIC:-meshcore/+/stats}"
       MCS_MQTT_RX_TOPIC: "${MCS_MQTT_RX_TOPIC:-meshcore/+/rx}"
+      # Kloksynchronisatie naar de nodes: de site is de enige in deze keten die
+      # weet hoe laat het is (zie .env.example en server/app/clocksync.py)
+      MCS_CLOCKSYNC_ENABLED: "${MCS_CLOCKSYNC_ENABLED:-1}"
+      MCS_CLOCKSYNC_HOURS: "${MCS_CLOCKSYNC_HOURS:-24}"
+      MCS_CLOCKSYNC_MAX_ERROR_S: "${MCS_CLOCKSYNC_MAX_ERROR_S:-10}"
+      MCS_CLOCKSYNC_MAX_JUMP_S: "${MCS_CLOCKSYNC_MAX_JUMP_S:-30}"
       # Tijdreeksen: leeg laten om alles in SQLite te houden
       MCS_TSDB_URL: "${MCS_TSDB_URL:-http://victoria:8428}"
     volumes:
