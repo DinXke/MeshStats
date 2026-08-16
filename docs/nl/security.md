@@ -16,7 +16,8 @@ het beschermen waard zijn, zijn dus niet de metingen.
 |---|---|---|
 | **De privésleutel van een node** | SPIFFS op de node; in elke back-up van het bestandssysteem | Wie hem heeft, *ís* die node. Adverts zijn Ed25519-ondertekend, dus identiteit is de sleutel. |
 | Nodebeheer | Beheerpagina van de node, telnetconsole | Firmware uploaden, WiFi-instellingen, sleutelexport |
-| Sitebeheer | `/admin` | Repeaters verbergen/hernoemen, API-tokens aanmaken, bewaartermijn wijzigen |
+| Sitebeheer | `/admin` | Repeaters verbergen/hernoemen, API-tokens aanmaken, bewaartermijn wijzigen, klokken zetten, firmware schrijven |
+| De toekenningen zelf | `admins.is_superuser`, `grants` | Sinds toegang niet meer alles-of-niets is, *zijn* deze rijen de bevoegdheid — wie ze mag wijzigen, kan zichzelf al de rest geven |
 | API-tokens | Serverdatabank, HA-configuratie, nodeconfiguratie | Schrijftoegang tot de ingest-API |
 | Gegevensintegriteit | De ingestwegen | Iemand die valse metingen injecteert |
 
@@ -121,6 +122,65 @@ Twee beperkingen:
   vergelijking in constante tijd.** Het timen van een hashtabelopzoeking om 256
   bit te achterhalen is geen praktische aanval, maar constante tijd is het niet.
 - **Tokens verlopen niet.** Trek ze met de hand in.
+
+Een token is **geen** account en draagt geen rol. Het opent de invoerwegen van de
+HTTP-API en niets onder `/admin`, dus het rechtenmodel uit
+[`admin.md`](admin.md#gebruikers-rollen-en-groepen) is er niet op van toepassing
+— er is geen handeling waar het over zou gaan. Tokens rollen geven zou een tweede
+weg naar dezelfde bevoegdheden maken, met een eigen intrekking en een eigen
+audittrail, en twee wegen naar "mag deze firmware schrijven" is er één te veel.
+`tokens.created_by` legt vast wie er een aanmaakte, want een token zonder
+eigenaar is een sleutel die niemand durft in te trekken.
+
+### Autorisatie
+
+Authenticatie beantwoordt *wie*; dit beantwoordt *wat diegene mag*. Allebei doen
+ze ertoe nu de site een klok kan zetten en firmware kan schrijven.
+
+`rbac.decide(user, action, rep)` is het enige beslispunt, en elke schrijvende
+beheerroute komt er via `routes_admin.require_perm()` uit. Een test loopt de
+router af en faalt zodra een `POST`-route dat niet doet, want een rechtencontrole
+die per route overgeschreven wordt, is er een die bij de volgende route vergeten
+wordt. Het volledige model — risicoklassen, rollen als plafonds, toekenningen, en
+de conflictregel (weigeren wint van toestaan; onder de toestemmingen wint de
+ruimste; geen toekenning is geen toegang) — staat in
+[`admin.md`](admin.md#gebruikers-rollen-en-groepen).
+
+Drie eigenschappen die hier genoemd horen te worden:
+
+- **Het faalt gesloten.** Een onbekende handelingsnaam, een onbekende gebruiker,
+  een uitgezet account en een node zonder toekenning weigeren allemaal. Een
+  tikfout in een route is een dichte deur en geen open.
+- **Serverhandelingen vragen `is_superuser` en zijn niet te delegeren.** Tokens,
+  gebruikers en instellingen zijn elk genoeg om jezelf de rest te geven, dus ze
+  opsplitsen zou een scheiding suggereren die er niet is.
+- **Een weigering wordt vastgelegd.** `require_perm()` schrijft een `audit`-rij
+  met `outcome='geweigerd'` vóór de 403, zodat een poging tot iets wat niet mocht
+  zichtbaar is in plaats van stil.
+
+De interface is niet de grendel. Knoppen die een gebruiker niet mag indrukken
+worden uitgeschakeld getekend met de reden erbij, maar de toekenning wordt in de
+route afgedwongen; het sjabloon is de beleefdheid.
+
+### Het audittrail
+
+`audit` legt vast wie wat deed, met welke node, wanneer en hoe het afliep —
+weigeringen inbegrepen. Vanuit de applicatie is het append-only: niets in de site
+verwijdert een rij, en snoeien gebeurt alleen op `audit_retention_days`
+(standaard 730).
+
+Er staan met opzet **geen** wachtwoorden, tokens, beheeradressen of
+instellingswaarden in. Deze repository is publiek en het trail is exporteerbaar;
+wat het moet beantwoorden is wie iets aanraakte, niet wat het geheim was.
+
+`audit.log()` slikt zijn eigen schrijffouten, zodat een falend trail een
+firmware-upgrade die al onderweg is niet kan afbreken. Dat is een bewuste
+afweging — de beschikbaarheid van de handeling boven de volledigheid van het
+verslag — en er gaat een waarschuwing naar het gewone logboek, zodat een trail
+dat niets meer bijhoudt niet stil blijft. Wie een manipulatiebestendig trail
+nodig heeft, stuurt de rijen van de machine af: een tabel in hetzelfde
+SQLite-bestand als de gegevens die ze beschrijft is niet betrouwbaarder dan het
+proces dat erin schrijft.
 
 ### Sessies
 
@@ -758,3 +818,10 @@ beveiliging; verscheidene blijken in orde te zijn, en dat zeggen hoort erbij.
       blijven van de publieke site tot je ze vrijgeeft; de pagina zegt hoeveel
       er wachten
 - [ ] Trek API-tokens in die je niet meer gebruikt; ze verlopen nooit
+- [ ] Houd minstens **twee** serverbeheerders, zodat één kwijtgeraakt wachtwoord
+      geen ritje naar de opdrachtregel is
+- [ ] Geef mensen de smalste rol waarmee ze kunnen werken — `technicus` dekt de
+      klok en de zichtbaarheid zonder firmware open te zetten
+- [ ] Kijk af en toe in `/admin/audit` naar regels met `geweigerd`; dat zijn
+      pogingen tot iets wat niet mocht
+- [ ] Stuur de auditregels van de machine af als je ze manipulatiebestendig wilt

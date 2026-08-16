@@ -176,10 +176,28 @@ the area under test.
 | `test_retention.py` | 15 | Pruning | Not "something is deleted" but the **order** in which it is |
 | `test_settings_chain.py` | 25 | button → queue → poller → storage | The clear-on-read queue, which fails without producing any error |
 | `test_zichtbaarheid.py` | 18 | `show_position` / `show_name` across every public route | Not "the switch flips" but **that no route leaks past it**, plus that the defaults change nothing |
+| `test_rechten.py` | 29 | `app/rbac.py`, `app/audit.py`, the migration | Three ways a permission model breaks without raising anything: too wide, too narrow (the owner locked out), and forgotten on a route |
+| `test_beheerpaginas_renderen.py` | 9 | The admin templates, end to end | That the branches saying *why* a button is off actually render — a typo there is a blank admin page, not a test failure |
 
 ### Why several of these have a file to themselves
 
 The choices are not arbitrary, and the docstrings explain them:
+
+- **`test_rechten.py`** — a permission model can break in three ways that raise
+  nothing. *Too wide*: someone may do something they should not, which you notice
+  only after it happened — and with firmware, "it happened" is a node off a roof.
+  *Too narrow*: the migration runs on a database where one administrator could do
+  everything, and getting one column wrong locks out the only person who can fix
+  it. *Forgotten*: a route without a check works — it just works for everybody.
+  The last section therefore walks the router itself rather than testing
+  behaviour.
+
+- **`test_beheerpaginas_renderen.py`** — the rest of the suite calls route
+  functions and inspects what they return, which for a template is not enough.
+  Nearly everything that can go wrong on these pages sits in the branches that
+  say *why* something is absent, and those only run when the page renders. Same
+  reason `test_firmware.py` puts the firmware page through the real Jinja
+  environment.
 
 - **`test_commanding.py`** — the answer to "can this button do anything?" comes
   from four separate sources: who publishes for this repeater, which firmware it

@@ -16,7 +16,8 @@ protecting are not the readings.
 |---|---|---|
 | **A node's private key** | SPIFFS on the node; inside any filesystem backup | Holding it means *being* that node. Adverts are Ed25519-signed, so identity is the key. |
 | Node administration | Node management page, telnet console | Firmware upload, WiFi settings, key export |
-| Site administration | `/admin` | Hide/rename repeaters, mint API tokens, change retention |
+| Site administration | `/admin` | Hide/rename repeaters, mint API tokens, change retention, set clocks, write firmware |
+| The grant rows themselves | `admins.is_superuser`, `grants` | Since access stopped being all-or-nothing, these rows *are* the authority — whoever may edit them can grant themselves everything else |
 | API tokens | Server database, HA config, node config | Write access to the ingest API |
 | Data integrity | Ingest paths | Someone injecting fake readings |
 
@@ -114,6 +115,60 @@ Two limitations:
   comparison.** Timing a hash-table lookup to recover 256 bits is not a practical
   attack, but it is not constant time.
 - **Tokens do not expire.** Revoke them by hand.
+
+A token is **not** an account and carries no role. It opens the HTTP API's intake
+paths and nothing under `/admin`, so the permission model in
+[`admin.md`](admin.md#users-roles-and-groups) does not apply to it — there is no
+action it could be about. Giving tokens roles would create a second path to the
+same powers, with its own revocation and its own audit trail, and two paths to
+"may write this firmware" is one too many. `tokens.created_by` records who minted
+one, because a token without an owner is a key nobody dares revoke.
+
+### Authorisation
+
+Authentication answers *who*; this answers *what they may do*. Both matter now
+that the site can set a clock and write firmware.
+
+`rbac.decide(user, action, rep)` is the single decision point, and every writing
+admin route reaches it through `routes_admin.require_perm()`. A test walks the
+router and fails when a `POST` route does not, because a permission check that is
+copied out per route is one that gets forgotten at the next route. The full model
+— risk classes, roles as ceilings, grants, and the conflict rule (deny beats
+allow; among allows the widest wins; no grant is no access) — is in
+[`admin.md`](admin.md#users-roles-and-groups).
+
+Three properties worth naming here:
+
+- **It fails closed.** An unknown action name, an unknown user, a disabled
+  account and a node with no grant all deny. A typo in a route is a shut door,
+  not an open one.
+- **Server-scoped actions require `is_superuser` and cannot be delegated.**
+  Tokens, users and settings are each enough to grant yourself the rest, so
+  splitting them would suggest a separation that does not exist.
+- **A refusal is recorded.** `require_perm()` writes an `audit` row with
+  `outcome='geweigerd'` before raising 403, so an attempt at something that was
+  not allowed is visible rather than silent.
+
+The UI is not the control. Buttons a user may not press are rendered disabled
+with the reason, but the grant is enforced in the route; the template is the
+courtesy.
+
+### The audit trail
+
+`audit` records who did what, to which node, when, and how it ended — refusals
+included. It is append-only from the application's side: nothing in the site
+deletes a row, and pruning happens only on `audit_retention_days` (default 730).
+
+It deliberately holds **no** passwords, tokens, management addresses or setting
+values. This repository is public and the trail is exportable; what it must
+answer is who touched something, not what the secret was.
+
+`audit.log()` swallows its own write errors so a failing trail cannot abort a
+firmware upgrade in flight. That is a deliberate trade — availability of the
+action over completeness of the record — and it logs a warning to the ordinary
+log so a trail that has stopped recording does not stay quiet. If you need a
+tamper-evident trail, ship the rows off the box; a table in the same SQLite file
+as the data it describes is only as trustworthy as the process writing it.
 
 ### Sessions
 
@@ -703,3 +758,10 @@ saying so is part of the point.
 - [ ] Review new repeaters in `/admin` — they now arrive **hidden** and stay off
       the public site until you approve them; the page says how many are waiting
 - [ ] Revoke API tokens you are no longer using; they never expire
+- [ ] Keep at least **two** server administrators, so losing one password is not
+      a trip to the command line
+- [ ] Give people the narrowest role that lets them work — `technicus` covers the
+      clock and visibility without opening firmware
+- [ ] Check `/admin/audit` for `geweigerd` lines now and then; they are attempts
+      at something that was not allowed
+- [ ] Ship the audit rows off the box if you need them to be tamper-evident

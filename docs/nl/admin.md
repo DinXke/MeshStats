@@ -8,9 +8,9 @@ achter de mechanismen; dit document is het beheerdersperspectief erop.
 
 ## Het eerste account
 
-Bij de eerste start maakt `main.bootstrap()` een `admin`-account aan met een
-wachtwoord uit `secrets.token_urlsafe(12)` en schrijft dat **één keer** naar
-stdout:
+Bij de eerste start maakt `main.bootstrap()` een `admin`-account aan **als
+serverbeheerder**, met een wachtwoord uit `secrets.token_urlsafe(12)`, en
+schrijft dat **één keer** naar stdout:
 
 ```
 [meshmanager] Eerste start: admin-account aangemaakt.
@@ -32,8 +32,19 @@ terug nadat je het account verwijderd of hernoemd hebt.
 docker compose exec meshmanager python -m app.main set-password admin
 ```
 
-Leest het wachtwoord van stdin, minstens 8 tekens, en maakt het account aan als
-het niet bestaat. Dat is de weg terug naar binnen als het wachtwoord kwijt is.
+Leest het wachtwoord van stdin, minstens 8 tekens. Een account dat hij zelf moet
+*aanmaken* wordt meteen serverbeheerder — een herstelweg die een account zonder
+rechten oplevert is geen herstelweg. Een account dat al bestaat houdt de rechten
+die het had: een wachtwoord zetten is geen reden om iemand te promoveren.
+
+```bash
+docker compose exec meshstats python -m app.main promote admin
+```
+
+De tweede weg terug, voor het geval er wél accounts zijn maar geen enkele meer
+serverbeheerder is. Dan is de gebruikerspagina onbereikbaar en helpt een
+wachtwoord zetten niet. `promote` maakt het genoemde account serverbeheerder en
+zet het weer aan.
 
 ## Wachtwoorden
 
@@ -171,6 +182,236 @@ heeft geen raadbare structuur, dus de trage hash die een door mensen gekozen
 wachtwoord beschermt levert niets op en zou 200 000 rondes kosten bij elk
 ingestverzoek.
 
+## Gebruikers, rollen en groepen
+
+Toegang was alles-of-niets: wie kon inloggen, kon alles. Dat viel te verdedigen
+zolang deze site alleen *toonde*. Ze doet inmiddels dingen — ze vraagt nodes uit
+over LoRa (wat zendtijd kost), zet klokken, schrijft firmware en bepaalt wat de
+wereld van een node te zien krijgt. Bij die handelingen hoort de vraag wie ze mag
+doen.
+
+Het model gaat over **handelingen** en niet over tabellen. `rbac.py` is de ene
+plek die antwoordt op "mag deze gebruiker dit met déze node".
+
+### De risicoklassen
+
+Elke handeling draagt een risicoklasse. Die indeling is niet voor het
+rechtenmodel verzonnen: de instellingenschrijver deelt zijn parameters al in
+*gewoon*, *schrijft merkbaar* en *kan de bereikbaarheid afsnijden*, en dat is
+precies de grens waarop je rechten wil knippen — wel de klok mogen zetten, geen
+firmware mogen flashen. Er is er één vóórgezet, omdat "mag hier rondkijken" een
+echte rol is die niets in gang zet.
+
+| Klasse | Betekenis | Handelingen |
+|---|---|---|
+| `kijken` | Verandert niets | Een nodepagina openen, de opgeslagen instellingen lezen |
+| `gewoon` | Gevolgen die vanzelf overgaan | Uitvragen (zendtijd), hernoemen, gewone instellingen schrijven |
+| `merkbaar` | Verandert iets blijvends | Klok, zichtbaarheid en privacy, beheeradres, merkbare instellingen |
+| `ingrijpend` | Kan de node onbereikbaar maken, of vernietigt gegevens | Firmware, risicovolle instellingen, verwijderen |
+
+### Rollen zijn plafonds
+
+Een rol is niets anders dan een plafond op die klasse. Vier rollen, vier klassen,
+één op één — zo is "mag deze rol dit?" een vergelijking van twee getallen in
+plaats van een lijst die per rol onderhouden moet worden, en dus onmogelijk om
+half bij te werken wanneer er een handeling bij komt.
+
+| Rol | Mag alles tot en met |
+|---|---|
+| `lezer` | `kijken` |
+| `bediener` | `gewoon` |
+| `technicus` | `merkbaar` |
+| `beheerder` | `ingrijpend` |
+
+Verworpen alternatief: losse rechten per handeling, aan te vinken. Flexibeler, en
+in de praktijk onleesbaar — een matrix van veertien vinkjes maal elke node maal
+elke groep is een matrix waarin niemand nog ziet wie wat mag, en "wie mocht deze
+node flashen" is nu juist de vraag die beantwoordbaar moet blijven.
+
+### Serverbeheerders
+
+Naast die rollen staat één vlag, `admins.is_superuser`. Een serverbeheerder mag
+alles op elke node, plus alles op **Server en site**: instellingen, bewaartermijn,
+tokens, gebruikers, het volledige audittrail.
+
+Serverhandelingen zijn niet per groep toe te kennen, en dat is een keuze en geen
+gat. Ze zijn met z'n vijven, en drie ervan (tokens, gebruikers, instellingen)
+zijn genoeg om zichzelf al het andere te geven. Ze opsplitsen zou een scheiding
+suggereren die er niet is.
+
+**De laatste actieve serverbeheerder kan zichzelf niet degraderen, uitzetten of
+verwijderen.** Zonder die grendel is één verkeerd vinkje een installatie die
+niemand meer kan beheren, en loopt de weg terug langs de opdrachtregel op de
+server zelf.
+
+### Toekenningen
+
+Een toekenning bindt een **onderwerp** (een gebruiker of een gebruikersgroep) aan
+een **voorwerp** (één node, een nodegroep, of alle nodes), met een rol en een
+effect `allow` of `deny`.
+
+| Kolom | Waarden |
+|---|---|
+| `subject_type` | `user`, `group` |
+| `object_type` | `node`, `nodegroup`, `all` |
+| `role` | `lezer`, `bediener`, `technicus`, `beheerder` (NULL bij een weigering) |
+| `effect` | `allow`, `deny` |
+
+### Botsende toekenningen
+
+Eén regel, op één plek (`rbac.resolve()`), want twee regels op twee plaatsen
+geven vroeg of laat een ander antwoord.
+
+**Weigeren wint van toestaan.** Altijd, en ongeacht hoe specifiek de toestemming
+was. Een weigering op "alle nodes" verslaat dus ook een toestemming die
+rechtstreeks op één node gegeven is. Dat is de minst verrassende kant om fout te
+gaan: wie een uitzondering intrekt, wil dat die intrekking het laatste woord
+heeft, en niet dat er ergens nog een oudere, specifiekere rij ligt die hem
+overstemt.
+
+**Onder de toestemmingen wint de ruimste.** Wie via zijn groep lezer is en
+rechtstreeks technicus, is technicus. Anders zou iemand aan een groep toevoegen
+zijn rechten kunnen *verkleinen*, en dat is precies het soort verrassing waar dit
+model vanaf moet.
+
+**Geen toekenning is geen toegang.** Er is geen impliciete rol voor nodes waar
+niemand iets over gezegd heeft. Zo'n node is voor een gewone gebruiker
+onzichtbaar tot een serverbeheerder er iets over zegt.
+
+Een weigering draagt geen rol: ze weigert alles op dat voorwerp. Een weigering
+die zelf weer graduaties heeft ("mag hier hooguit lezer zijn") is niet te
+overzien op een pagina, en het geval waarvoor je een weigering nodig hebt — deze
+ene node niet, hoe dan ook — is een geval zonder graduaties.
+
+### Nodes in geen enkele groep
+
+Een repeater verschijnt vanzelf in de databank zodra er een bericht over hem
+binnenkomt (`db.get_or_create_repeater`), en zit dan in geen enkele nodegroep.
+Voor een gewone gebruiker is hij onzichtbaar tot een toekenning hem dekt —
+rechtstreeks, of via een toekenning op *alle nodes*, wat de bedoelde ontsnapping
+is zodat je niet elke nieuwe node in een groep hoeft te stoppen.
+
+Stil onzichtbaar is hetzelfde probleem als stil verborgen, dus beide pagina's
+tellen ze: **Nodes en repeaters** zegt hoeveel nodes er níét getoond worden, en
+**Server en site** noemt de nodes die in geen enkele nodegroep zitten.
+
+### Waar de controle gebeurt
+
+`rbac.decide(user, action, rep)` is de enige functie die ja of nee zegt. Elke
+schrijvende beheerroute komt erlangs via `routes_admin.require_perm()`, en
+`test_rechten.py` loopt de router af om dat af te dwingen: een controle die je
+per route overschrijft, is een controle die bij de volgende route vergeten wordt.
+Routes die er terecht geen hebben, staan met hun reden in
+`routes_admin.ROUTES_ZONDER_RECHTENCONTROLE`.
+
+Dit is de tegenhanger van `commanding.route_for()`, dat zegt wat een node *kan*.
+**Een knop werkt pas als ze allebei ja zeggen.** Zegt er één nee, dan verdwijnt de
+knop niet — hij staat uitgeschakeld met de reden in zijn tooltip, en dat is de
+lijn die deze site overal aanhoudt.
+
+Sjablonen redeneren hier nooit zelf over. De route geeft `rechten` mee, een
+woordenboek van handeling naar besluit, en het sjabloon vraagt
+`rechten['node.firmware']`. Een sjabloon dat zelf redeneert is een tweede plek
+waar het antwoord vandaan komt, en de eerste keer dat die twee het oneens zijn
+belooft een knop iets wat de route weigert.
+
+### API-tokens en dit model
+
+**Een token is geen gebruiker.** Het geeft toegang tot de invoerwegen van de
+HTTP-API (statistieken binnenbrengen, de opdrachtwachtrij ophalen, contacten
+doorgeven) en tot niets onder `/admin`. Er is dus geen rol op te zetten en geen
+node aan te koppelen, want er is geen handeling waar dat over zou gaan.
+
+Waarom niet alsnog: een token dat rollen kan dragen is een tweede weg naar
+dezelfde bevoegdheden, met een eigen intrekking en een eigen audittrail. Twee
+wegen naar "mag deze firmware schrijven" is er één te veel — dat was het hele
+punt van `rbac.py`. Tokens leggen wél vast wie ze aanmaakte
+(`tokens.created_by`), want een token zonder eigenaar is een sleutel die niemand
+durft in te trekken.
+
+## Het audittrail
+
+Zolang er één beheerder was, was "wie heeft deze node geflasht" geen vraag. Met
+meerdere gebruikers is het er een, gesteld op een avond waarop iemand op een dak
+moet klimmen.
+
+Het past ook bij de lijn die de rest van dit project aanhoudt: een knop die
+belooft wat hij niet waarmaakt is oneerlijk, en een handeling op afstand die geen
+spoor achterlaat is dezelfde oneerlijkheid één stap later.
+
+| Kolom | Inhoud |
+|---|---|
+| `ts` | UTC, ISO |
+| `actor` | Gebruikersnaam, als tekst — zo overleeft hij het verwijderen van het account |
+| `action` | De handelingsnaam uit `rbac.ACTIONS`, of `login` / `eigen.wachtwoord` |
+| `object_type`, `object_id`, `object_name` | De node, mét naam — zo overleeft hij het verwijderen van de node |
+| `outcome` | `ok`, `geweigerd`, `mislukt`, `deels` |
+| `detail` | Een leesbare samenvatting van wat er gebeurde |
+| `ip` | `ratelimit.client_ip()`, of leeg |
+
+**Geweigerde pogingen staan er ook in**, met `outcome='geweigerd'`, en naast de
+geslaagde in plaats van in een apart logboek: twee logboeken zijn twee plaatsen
+om te kijken, en de tweede wordt vergeten. De weigering wordt door
+`require_perm()` zelf geschreven, dus ze hangt niet af van wie eraan dacht.
+
+`deels` is voor de opdrachten die langs twee wegen tegelijk vertrekken en er één
+halen (`routes_admin._dispatch`); `mislukt` dekt "mocht wel, ging mis",
+opvragingen zonder enige weg inbegrepen.
+
+**Wat er nooit in gaat:** wachtwoorden, tokens, beheeradressen en de inhoud van
+instellingen die een geheim kunnen zijn. `detail` vat samen *wát* er gebeurde
+("naar 1.10.0", "via de monitor"), niet de nuttige lading. Deze repository is
+publiek en het trail is exporteerbaar.
+
+`audit.log()` slikt zijn eigen fouten: een volle schijf of een gelockte databank
+mag een firmware-upgrade die al onderweg is niet doen ontploffen. Er gaat wel een
+regel naar het gewone logboek, zodat een trail dat stiekem niets meer bijhoudt
+niet stil blijft.
+
+Regels blijven `audit_retention_days` staan, standaard **730 dagen** — veel
+langer dan pakketten (7) of metingen (180), want dit is de enige tabel waarvan de
+waarde juist in de ouderdom zit. Het snoeien gebeurt in `retention.run_once()` en
+niet in `db.prune()`: die functie gaat over meetgegevens, en het trail is geen
+meetgegeven maar het geheugen van wie wat deed.
+
+Waar je het ziet:
+
+| Pagina | Toont |
+|---|---|
+| `GET /admin/repeaters/{rid}` | De laatste 15 regels voor **deze node** — de vraag wordt gesteld terwijl je naar de node kijkt |
+| `GET /admin/server` `#trail` | De laatste 40 regels van de hele installatie |
+| `GET /admin/audit` | Het volledige trail, alleen voor serverbeheerders |
+| `GET /admin/account` | Je eigen laatste 20 regels |
+
+## Een bestaande installatie migreren
+
+De upgrade is additief en gebouwd rond één harde eis: **hij mag de eigenaar niet
+buitensluiten.**
+
+`is_superuser` komt erbij met `DEFAULT 0`, met opzet, want een kolom die standaard
+"volledige rechten" zegt faalt de verkeerde kant op — een `INSERT` die de kolom
+vergeet levert dan stilzwijgend een serverbeheerder op. `ALTER TABLE ADD COLUMN`
+vult bestaande rijen met die standaard, wat op zichzelf elke bestaande beheerder
+van al zijn rechten zou ontdoen. `db.POST_MIGRATIONS` zet dat recht op het moment
+dat de kolom aangemaakt wordt, en alleen dan:
+
+```sql
+UPDATE admins SET is_superuser=1
+```
+
+Gebonden aan het aanmaken van de kolom en niet aan "is er al een
+serverbeheerder", want dat laatste zou bij elke start opnieuw kijken — en dan
+zet een beheerder die zichzelf bewust degradeert zichzelf bij de volgende
+herstart weer terug.
+
+Dus: wie gisteren alles mocht, mag dat vandaag nog, met hetzelfde wachtwoord en
+dezelfde sessie. Twee tests bewaken dat, waarvan er één de hele keten aflegt op
+een databank die alleen de oude `admins`-tabel met twee kolommen kent.
+
+Verder verandert er bij de upgrade niets. Er zijn nog geen groepen en geen
+toekenningen, wat betekent dat een gewone gebruiker — en die zijn er ook nog niet
+— niets zou zien. Dat is precies de toestand van vóór dit model.
+
 ## Twee werelden
 
 De beheerpagina was één lange lijst secties geworden, in de volgorde waarin ze
@@ -187,6 +428,18 @@ Sinds de splitsing zijn er twee werelden, met een tabbalk ertussen:
 | `GET /admin/repeaters/{rid}` | Eén node: identiteit en versies, zichtbaarheid, uitvragen, klok, firmware, verwijderen |
 | `GET /admin/firmware` | **Firmware** — welke release waar draait, welke er zijn, en wie er een image kan krijgen |
 | `GET /admin/server` | **Server en site** — alles wat deze installatie configureert en geen apparaat raakt |
+| `GET /admin/account` | **Mijn account** — je eigen wachtwoord, je rollen, en je eigen auditregels |
+| `GET /admin/audit` | Het volledige audittrail (alleen serverbeheerders) |
+
+**Server en site** is de ene tab die deze site *verbergt* in plaats van
+uitschakelt. Erachter zit geen enkele handeling die een gewone gebruiker mag, en
+een tab die altijd 403 geeft is een gesloten deur met een bordje erop in plaats
+van een uitleg. Binnen een pagina waar je wél iets mag, geldt de regel omgekeerd:
+knoppen blijven staan, uit, met de reden erbij.
+
+`GET /admin/account` bestaat omdat het wachtwoordformulier op **Server en site**
+stond. Omdat die pagina alleen voor serverbeheerders is, zou een gebruiker met
+rechten op twee nodes anders zijn eigen wachtwoord niet meer kunnen wijzigen.
 
 De POST-routes zijn gebleven waar ze stonden, zodat een beheerpagina die al in
 een tabblad openstond bij de volgende klik geen 404 oplevert.
@@ -325,8 +578,12 @@ waarmaakt.
 
 | Anker | Blok | Inhoud |
 |---|---|---|
-| `#toegang` | Toegang | Als wie je bent ingelogd, en het wachtwoord wijzigen |
-| `#tokens` | API-tokens | Actieve tokens met `created_at` en `last_used`; aanmaken en intrekken |
+| `#toegang` | Toegang | Als wie je bent ingelogd, en een link naar **Mijn account** voor het wachtwoord |
+| `#gebruikers` | Gebruikers | Accounts, de vlaggen serverbeheerder en uit, een wachtwoord zetten voor iemand anders, verwijderen |
+| `#groepen` | Groepen | Gebruikersgroepen en nodegroepen, hun leden, en het aantal nodes in geen enkele groep |
+| `#toekenningen` | Toekenningen | Wie wat mag op welke nodes, met de conflictregel erbij |
+| `#trail` | Audittrail | De laatste 40 regels, met een link naar het volledige trail |
+| `#tokens` | API-tokens | Actieve tokens met `created_at`, `created_by` en `last_used`; aanmaken en intrekken |
 | `#opslag` | Bewaartermijn en opslag | De bewaartermijn- en FIFO-velden samen met `retention.overview()`: bestandsgrootte tegenover de bovengrens, aantal pakketten, de werkelijk gedekte periode, en de laatste opruimronde |
 | `#weergave` | Weergave | `heartbeat_min`, `history_ranges`, en de blokvolgorde van de publieke pagina |
 | `#cli-params` | Op te vragen parameters | `cli_params` — één lijst voor alle repeaters |
@@ -409,9 +666,16 @@ een feit over het mesh en niet over de rij die net verwijderd is.
 
 ## Wat het beheerdeel *niet* doet
 
-- **Geen gebruikersbeheer.** Een of enkele accounts, aangemaakt vanaf de
-  opdrachtregel.
-- **Geen auditlogboek.** Handelingen belanden in het gewone applicatielogboek.
+- **Geen zelfbediening.** Geen registratie, geen wachtwoordherstel per e-mail en
+  geen "wachtwoord vergeten"-link. Een serverbeheerder zet een wachtwoord voor
+  iemand anders zonder het te kunnen teruglezen; de weg naar binnen als *niemand*
+  meer kan inloggen is de opdrachtregel.
+- **Geen rechten per handeling.** Rollen zijn plafonds op een risicoklasse en
+  geen matrix van vinkjes. Zie [Rollen zijn plafonds](#rollen-zijn-plafonds).
+- **Geen API-tokens per node.** Een token is geen gebruiker; zie [API-tokens en
+  dit model](#api-tokens-en-dit-model).
+- **Geen auditregels verwijderen.** Niet vanaf de site. Ze verdwijnen op hun
+  eigen bewaartermijn.
 - **Geen `/health`-endpoint.** De containercontrole haalt `/` op.
 
 ## Een publieke installatie harden

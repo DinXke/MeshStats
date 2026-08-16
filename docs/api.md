@@ -595,8 +595,11 @@ anything should be disabled and say why. See [`commanding.md`](commanding.md).
 
 ## Admin routes
 
-All of them require a session and check a CSRF token. Details of the mechanisms
-are in [`admin.md`](admin.md).
+All of them require a session and check a CSRF token. Every writing route also
+goes through `routes_admin.require_perm()`, which answers 403 with a Dutch reason
+and records the refusal in the audit trail. Details of the mechanisms are in
+[`admin.md`](admin.md); the permission each route asks for is the `action` in its
+`require_perm()` call.
 
 | Route | Method | What it does |
 |---|---|---|
@@ -617,7 +620,18 @@ are in [`admin.md`](admin.md).
 | `/admin/repeaters/{rid}/delete` | POST | Delete the repeater and its samples, latest and neighbours |
 | `/admin/tokens` | POST | Create an API token; shown once through a 60-second cookie |
 | `/admin/tokens/{tid}/revoke` | POST | Revoke a token |
-| `/admin/password` | POST | Change the password. Re-issues this browser's cookie |
+| `/admin/password` | POST | Change your own password. Re-issues this browser's cookie |
+| `/admin/account` | GET | My account: own password, the roles you hold, your own audit lines |
+| `/admin/audit` | GET | The full audit trail. `?n=` sets the number of rows |
+| `/admin/users` | POST | Create an account. The password is hashed on arrival and never readable again |
+| `/admin/users/{uid}/password` | POST | Set someone else's password, without knowing the old one |
+| `/admin/users/{uid}/flags` | POST | Server administrator yes/no, disabled yes/no. Refuses on the last active server administrator |
+| `/admin/users/{uid}/delete` | POST | Delete an account. Its audit rows stay |
+| `/admin/groups` | POST | Create a user group (`soort=user`) or node group (`soort=node`) |
+| `/admin/groups/{soort}/{gid}/delete` | POST | Delete a group, and the grants that stood on it |
+| `/admin/groups/{soort}/{gid}/members` | POST | Add or remove one member |
+| `/admin/grants` | POST | Grant a role, or deny. Refuses a combination that does not fit the model |
+| `/admin/grants/{grant_id}/delete` | POST | Withdraw a grant |
 
 The two "ask for something now" routes both go through
 `routes_admin._dispatch()`, which walks **every open route rather than the first

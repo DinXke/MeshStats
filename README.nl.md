@@ -102,8 +102,11 @@ docker compose logs meshmanager | grep -i password
 ```
 
 Log in op `/admin`, wijzig het wachtwoord, en maak een API-token aan als je ook
-over HTTP wilt pushen. Wijs daarna een node naar de broker — zie
-[`docs/mqtt.md`](docs/nl/mqtt.md) — of flash de MeshManager-firmware uit
+over HTTP wilt pushen. Dat eerste account is **serverbeheerder**; extra
+gebruikers, groepen en rollen per node staan onder *Server en site* — zie
+[`docs/admin.md`](docs/nl/admin.md#gebruikers-rollen-en-groepen). Wijs daarna een
+node naar de broker — zie [`docs/mqtt.md`](docs/nl/mqtt.md) — of flash de
+MeshManager-firmware uit
 [`docs/firmware.md`](docs/nl/firmware.md).
 
 Zonder Docker: `sudo bash deploy/install.sh` (Debian/Ubuntu, systemd, poort

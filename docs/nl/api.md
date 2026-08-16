@@ -610,8 +610,11 @@ hoort uitgeschakeld te zijn en te zeggen waarom. Zie
 
 ## Beheerroutes
 
-Alle vragen ze een sessie en controleren ze een CSRF-token. De mechanismen staan
-in [`admin.md`](admin.md).
+Alle vragen ze een sessie en controleren ze een CSRF-token. Elke schrijvende
+route komt bovendien langs `routes_admin.require_perm()`, dat bij een weigering
+403 geeft met de reden in het Nederlands en de poging in het audittrail zet. De
+mechanismen staan in [`admin.md`](admin.md); welk recht een route vraagt is de
+`action` in zijn `require_perm()`-aanroep.
 
 | Route | Methode | Wat het doet |
 |---|---|---|
@@ -632,7 +635,18 @@ in [`admin.md`](admin.md).
 | `/admin/repeaters/{rid}/delete` | POST | De repeater en zijn metingen, actuele waarden en buren verwijderen |
 | `/admin/tokens` | POST | Een API-token aanmaken; eenmalig getoond via een cookie van 60 seconden |
 | `/admin/tokens/{tid}/revoke` | POST | Een token intrekken |
-| `/admin/password` | POST | Het wachtwoord wijzigen. Geeft deze browser een nieuwe cookie |
+| `/admin/password` | POST | Je eigen wachtwoord wijzigen. Geeft deze browser een nieuwe cookie |
+| `/admin/account` | GET | Mijn account: eigen wachtwoord, je rollen, je eigen auditregels |
+| `/admin/audit` | GET | Het volledige audittrail. `?n=` zet het aantal regels |
+| `/admin/users` | POST | Een account aanmaken. Het wachtwoord gaat gehasht binnen en is nooit terug te lezen |
+| `/admin/users/{uid}/password` | POST | Een wachtwoord zetten voor iemand anders, zonder het oude te kennen |
+| `/admin/users/{uid}/flags` | POST | Serverbeheerder ja/nee, uit ja/nee. Weigert bij de laatste actieve serverbeheerder |
+| `/admin/users/{uid}/delete` | POST | Een account verwijderen. Zijn auditregels blijven |
+| `/admin/groups` | POST | Een gebruikersgroep (`soort=user`) of nodegroep (`soort=node`) aanmaken |
+| `/admin/groups/{soort}/{gid}/delete` | POST | Een groep verwijderen, met de toekenningen die erop stonden |
+| `/admin/groups/{soort}/{gid}/members` | POST | Eén lid toevoegen of weghalen |
+| `/admin/grants` | POST | Een rol toekennen, of weigeren. Weigert een combinatie die niet in het model past |
+| `/admin/grants/{grant_id}/delete` | POST | Een toekenning intrekken |
 
 De twee "vraag nu iets"-routes lopen allebei via
 `routes_admin._dispatch()`, die **elke openstaande weg bewandelt in plaats van de

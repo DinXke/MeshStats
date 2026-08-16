@@ -8,8 +8,9 @@ mechanisms; this document is the operator's view of them.
 
 ## The first account
 
-On first start, `main.bootstrap()` creates an `admin` account with a
-`secrets.token_urlsafe(12)` password and prints it to stdout **once**:
+On first start, `main.bootstrap()` creates an `admin` account **as a server
+administrator**, with a `secrets.token_urlsafe(12)` password printed to stdout
+**once**:
 
 ```
 [meshmanager] Eerste start: admin-account aangemaakt.
@@ -31,8 +32,20 @@ after you have deleted or renamed the account.
 docker compose exec meshmanager python -m app.main set-password admin
 ```
 
-Reads the password from stdin, minimum 8 characters, and creates the account if
-it does not exist. That is the way back in when the password is lost.
+Reads the password from stdin, minimum 8 characters. An account it has to
+*create* is made a server administrator — a recovery path that leaves you with an
+account that may do nothing is not a recovery path. An account that already
+exists keeps the rights it had: setting a password is no reason to promote
+someone.
+
+```bash
+docker compose exec meshstats python -m app.main promote admin
+```
+
+The second way back in, for the case where accounts exist but none of them is a
+server administrator any more. Then the users page is unreachable and setting a
+password does not help. `promote` makes the named account a server administrator
+and clears its disabled flag.
 
 ## Passwords
 
@@ -164,6 +177,232 @@ Plain SHA-256 rather than PBKDF2 is deliberate: a 32-byte random token has no
 guessable structure, so the slow hash that protects a human-chosen password buys
 nothing and would cost 200 000 rounds on every ingest request.
 
+## Users, roles and groups
+
+Access used to be all-or-nothing: whoever could log in could do everything. That
+was defensible while this site only *showed* things. It now does things — it asks
+nodes over LoRa (which costs airtime), sets clocks, writes firmware, and decides
+what the world sees of a node. Those actions deserve the question of who may
+perform them.
+
+The model is built on **actions**, not on tables. `rbac.py` is the one place that
+answers "may this user do this to this node".
+
+### Risk classes
+
+Every action carries a risk class. The classification is not invented for the
+permission model — the settings writer already sorts its parameters into
+*ordinary*, *writes noticeably* and *can cut off reachability*, and that is
+exactly where an operator wants to cut: someone who may set a clock but may not
+flash firmware. One class was prepended, because "may look around" is a real role
+that starts nothing.
+
+| Class | Meaning | Actions |
+|---|---|---|
+| `kijken` | Changes nothing | Open a node page, read its stored settings |
+| `gewoon` | Consequences that pass by themselves | Look-ups (airtime), rename, ordinary setting writes |
+| `merkbaar` | Changes something lasting | Clock, visibility and privacy, management address, noticeable setting writes |
+| `ingrijpend` | Can make the node unreachable, or destroys data | Firmware, risky setting writes, delete |
+
+### Roles are ceilings
+
+A role is nothing but a ceiling on that class. Four roles, four classes, one to
+one — so "may this role do this?" is a comparison of two numbers rather than a
+list that has to be maintained per role, and therefore impossible to half-update
+when an action is added.
+
+| Role | May do everything up to |
+|---|---|
+| `lezer` | `kijken` |
+| `bediener` | `gewoon` |
+| `technicus` | `merkbaar` |
+| `beheerder` | `ingrijpend` |
+
+Rejected alternative: individual permissions per action, ticked off. More
+flexible, and unreadable in practice — a matrix of fourteen checkboxes times
+every node times every group is a matrix in which nobody can still see who may do
+what, and "who was allowed to flash this node" is precisely the question that has
+to stay answerable.
+
+### Server administrators
+
+Beside those roles sits one flag, `admins.is_superuser`. A server administrator
+may do everything on every node, plus everything on **Server and site**:
+settings, retention, tokens, users, the full audit trail.
+
+Server-scoped actions cannot be granted per group, and that is a choice rather
+than a gap. There are five of them, and three (tokens, users, settings) are
+enough to grant yourself all the rest. Splitting them would suggest a separation
+that is not there.
+
+**The last active server administrator cannot demote, disable or delete
+themselves.** Without that latch one wrong checkbox is an installation nobody can
+administer any more, and the way back runs over the command line on the server
+itself.
+
+### Grants
+
+A grant binds a **subject** (a user or a user group) to an **object** (one node,
+a node group, or all nodes) with a role, and an effect of `allow` or `deny`.
+
+| Column | Values |
+|---|---|
+| `subject_type` | `user`, `group` |
+| `object_type` | `node`, `nodegroup`, `all` |
+| `role` | `lezer`, `bediener`, `technicus`, `beheerder` (NULL on a deny) |
+| `effect` | `allow`, `deny` |
+
+### Conflicting grants
+
+One rule, in one place (`rbac.resolve()`), because two rules in two places
+eventually give different answers.
+
+**Deny beats allow.** Always, and regardless of how specific the allow was. A
+deny on "all nodes" therefore beats an allow granted directly on one node. That
+is the least surprising direction to be wrong in: whoever revokes an exception
+wants that revocation to have the last word, not to find an older, more specific
+row that overrules it.
+
+**Among allows, the widest wins.** A user who is `lezer` through their group and
+`technicus` directly is `technicus`. Otherwise adding someone to a group could
+*shrink* their rights, which is exactly the kind of surprise this model has to be
+free of.
+
+**No grant is no access.** There is no implicit role for nodes nobody has said
+anything about. Such a node is invisible to an ordinary user until a server
+administrator says something about it.
+
+A deny carries no role: it denies everything on that object. A deny that itself
+has gradations ("may be at most `lezer` here") cannot be surveyed on a page, and
+the case you need a deny for — not this one node, whatever else is true — has no
+gradations.
+
+### Nodes in no group
+
+A repeater appears in the database by itself as soon as a message about it comes
+in (`db.get_or_create_repeater`), and it is then in no node group. For an
+ordinary user it is invisible until a grant covers it — directly, or through a
+grant on *all nodes*, which is the intended escape hatch so you do not have to
+put every new node in a group.
+
+Silently invisible is the same problem as silently hidden, so both pages count
+them: **Nodes and repeaters** says how many nodes are not shown to you, and
+**Server and site** lists the nodes that are in no node group at all.
+
+### Where the check happens
+
+`rbac.decide(user, action, rep)` is the only function that says yes or no. Every
+writing admin route goes through `routes_admin.require_perm()`, and
+`test_rechten.py` walks the router to require it: a check copied out per route is
+a check that gets forgotten at the next route. Routes that legitimately have none
+are listed with their reason in `routes_admin.ROUTES_ZONDER_RECHTENCONTROLE`.
+
+This is the counterpart of `commanding.route_for()`, which says what a node
+*can* do. **A button works only when both say yes.** When either says no the
+button does not disappear — it is disabled with the reason in its tooltip, which
+is the line this site holds everywhere. The reasons are Dutch sentences, because
+they end up on the screen.
+
+Templates never reason about this themselves. The route passes `rechten`, a dict
+of action to decision, and the template asks `rechten['node.firmware']`. A
+template that reasons is a second place the answer comes from, and the first time
+those two disagree there is a button promising something the route refuses.
+
+### API tokens and this model
+
+**A token is not a user.** It gives access to the HTTP API's intake paths
+(bringing in statistics, fetching the command queue, submitting contacts) and to
+nothing under `/admin`. There is therefore no role to set on it and no node to
+attach it to, because there is no action that would be about.
+
+Why not anyway: a token that can carry roles is a second path to the same powers,
+with its own revocation and its own audit trail. Two paths to "may write this
+firmware" is one too many — which was the whole point of `rbac.py`. Tokens do
+record who minted them (`tokens.created_by`), because a token without an owner is
+a key nobody dares revoke.
+
+## The audit trail
+
+While there was one administrator, "who flashed this node" was not a question.
+With several users it is one, asked on an evening when somebody has to climb onto
+a roof.
+
+It also fits the line the rest of this project holds: a button that promises what
+it cannot deliver is dishonest, and a remote action that leaves no trace is the
+same dishonesty one step later.
+
+| Column | Contents |
+|---|---|
+| `ts` | UTC, ISO |
+| `actor` | Username, as text — so it survives the account being deleted |
+| `action` | The action name from `rbac.ACTIONS`, or `login` / `eigen.wachtwoord` |
+| `object_type`, `object_id`, `object_name` | The node, name included — so it survives the node being deleted |
+| `outcome` | `ok`, `geweigerd`, `mislukt`, `deels` |
+| `detail` | A readable summary of what happened |
+| `ip` | `ratelimit.client_ip()`, or empty |
+
+**Refused attempts are recorded too**, with `outcome='geweigerd'`, and beside the
+successful ones rather than in a separate log: two logs are two places to look,
+and the second one gets forgotten. The refusal is written by `require_perm()`
+itself, so it does not depend on anyone remembering to log it.
+
+`deels` is for the commands that leave along two routes at once and reach one of
+them (`routes_admin._dispatch`); `mislukt` covers "was allowed, went wrong",
+including a look-up that found no route at all.
+
+**What never goes in:** passwords, tokens, management addresses, and the contents
+of settings that could be a secret. `detail` summarises *what* happened ("to
+1.10.0", "via the monitor"), not the useful payload. This repository is public
+and the trail is exportable.
+
+`audit.log()` swallows its own errors: a full disk or a locked database must not
+blow up a firmware upgrade that is already under way. It does write a line to the
+ordinary log, so a trail that has quietly stopped recording does not stay quiet.
+
+Rows are kept for `audit_retention_days`, default **730 days** — far longer than
+packets (7) or measurements (180), because this is the one table whose value is
+in its age. Pruning happens in `retention.run_once()` rather than in `db.prune()`:
+that function is about measurements, and the trail is not a measurement but the
+memory of who did what.
+
+Where you see it:
+
+| Page | Shows |
+|---|---|
+| `GET /admin/repeaters/{rid}` | The last 15 lines for **this node** — the question is asked while you are looking at the node |
+| `GET /admin/server` `#trail` | The last 40 lines for the whole installation |
+| `GET /admin/audit` | The full trail, server administrators only |
+| `GET /admin/account` | Your own last 20 lines |
+
+## Migrating an existing installation
+
+The upgrade is additive and designed around one hard requirement: **it must not
+lock the owner out.**
+
+`is_superuser` is added with `DEFAULT 0`, deliberately, because a column that
+defaults to "full rights" fails the wrong way — an `INSERT` that forgets the
+column would silently produce a server administrator. `ALTER TABLE ADD COLUMN`
+fills existing rows with that default, which on its own would strip every
+existing administrator of everything. `db.POST_MIGRATIONS` corrects that at the
+moment the column is created, and only then:
+
+```sql
+UPDATE admins SET is_superuser=1
+```
+
+Bound to the creation of the column rather than to "is there a server
+administrator yet", because the latter would look again on every start — and then
+an administrator who deliberately demotes themselves is promoted back on the next
+restart.
+
+So: whoever could do everything yesterday can do everything today, with the same
+password and the same session. Two tests guard it, one of which walks the whole
+chain on a database that knows only the old two-column `admins` table.
+
+Nothing else changes on upgrade. There are no groups and no grants yet, which
+means an ordinary user — and there are none yet either — would see nothing. That
+is exactly the state before this model.
+
 ## Two worlds
 
 The admin area had become one long list of sections, in the order they happened
@@ -180,6 +419,18 @@ Since the split there are two worlds, with a tab bar between them:
 | `GET /admin/repeaters/{rid}` | One node: identity and versions, visibility, look-ups, clock, firmware, delete |
 | `GET /admin/firmware` | **Firmware** — which release runs where, which are available, and who can be written to |
 | `GET /admin/server` | **Server and site** — everything that configures this installation and touches no device |
+| `GET /admin/account` | **My account** — your own password, the roles you hold, and your own audit lines |
+| `GET /admin/audit` | The full audit trail (server administrators only) |
+
+**Server and site** is the one tab this site *hides* rather than disabling.
+Behind it there is not a single action an ordinary user may perform, and a tab
+that always answers 403 is a closed door with a sign on it rather than an
+explanation. Inside a page where you *may* do something the rule is the other way
+round: buttons stay, disabled, with the reason.
+
+`GET /admin/account` exists because the password form used to live on **Server
+and site**. Since that page is for server administrators only, a user with rights
+on two nodes could otherwise no longer change their own password.
 
 The POST routes stayed where they were, so an admin page already open in a tab
 does not answer 404 on the next click. `GET /admin/repeaters/{rid}/settings` is
@@ -313,8 +564,12 @@ delivers there.
 
 | Anchor | Block | Contents |
 |---|---|---|
-| `#toegang` | Access | Who you are signed in as, and the password change |
-| `#tokens` | API tokens | Active tokens with `created_at` and `last_used`; create and revoke |
+| `#toegang` | Access | Who you are signed in as, and a link to **My account** for the password |
+| `#gebruikers` | Users | Accounts, the server-administrator and disabled flags, setting a password for someone else, deleting |
+| `#groepen` | Groups | User groups and node groups, their members, and the count of nodes in no group |
+| `#toekenningen` | Grants | Who may do what on which nodes, and the conflict rule spelled out |
+| `#trail` | Audit trail | The last 40 lines, with a link to the full trail |
+| `#tokens` | API tokens | Active tokens with `created_at`, `created_by` and `last_used`; create and revoke |
 | `#opslag` | Retention and storage | The retention and FIFO fields together with `retention.overview()`: file size against the ceiling, packets held, the period actually covered, and the last pruning pass |
 | `#weergave` | Display | `heartbeat_min`, `history_ranges`, and the block order for the public page |
 | `#cli-params` | Parameters to fetch | `cli_params` — one list for all repeaters |
@@ -394,8 +649,16 @@ about the row that has just been deleted.
 
 ## What the admin area does *not* do
 
-- **No user management.** One or a few accounts, created from the command line.
-- **No audit log.** Actions land in the ordinary application log.
+- **No self-service.** There is no sign-up, no password reset by e-mail and no
+  "forgot my password" link. A server administrator sets a password for someone
+  else without being able to read it back; the way in when *nobody* can log in is
+  the command line.
+- **No per-action permissions.** Roles are ceilings on a risk class, not a matrix
+  of checkboxes. See [Roles are ceilings](#roles-are-ceilings).
+- **No node-scoped API tokens.** A token is not a user; see [API tokens and this
+  model](#api-tokens-and-this-model).
+- **No deleting audit lines.** Not from the site. They age out on their own
+  retention.
 - **No `/health` endpoint.** The container healthcheck fetches `/`.
 
 ## Hardening a public deployment
