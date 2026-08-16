@@ -358,3 +358,95 @@ def test_de_eigen_stand_wordt_wel_bewaard(db):
     assert bewaard["on"] is True
     assert bewaard["hash"] == 2
     assert bewaard["drop"]["hops"] == 9
+
+
+# --- de pagina ----------------------------------------------------------------
+
+def _render(**over):
+    """De nodepagina renderen met een filter dat wél leeft.
+
+    Deze tak -- schrijfweg open én de node antwoordde -- is de enige die de
+    regeltabellen tekent, en hij is in geen enkele andere test te zien. Een
+    sjabloonfout daarin zou dus pas op de echte beheerpagina opduiken.
+    """
+    from app.templating import templates
+
+    class _AllesMag(dict):
+        def __getitem__(self, key):
+            return type("B", (), {"allowed": True, "reason": ""})()
+
+        def get(self, key, default=None):
+            return self[key]
+
+    ctx = {
+        "site_name": "MeshManager", "user": "u", "world": "nodes",
+        "rep": {"id": 1, "name": "DinX-Home", "pubkey_prefix": "55d9",
+                "source_prefix": "55d9", "fw": "v1.17.0", "fw_meshmanager": "2.3.0",
+                "ota_host": "http://x", "is_critical": 0, "slug": "dinx",
+                "is_public": 1, "show_position": 1, "show_name": 1, "last_seen": None,
+                "created_at": "2026-01-01", "topic_prefix": "", "pio_env": "",
+                "sort_order": 0},
+        "settings_rows": [], "status": "", "delivered_since": None,
+        "delivery_unanswered": False, "csrf": "x", "requested": "",
+        "queued_since": None,
+        "clock_route": {"ok": False, "blocker": "", "node": None,
+                        "via_monitor": False, "fw_meshmanager": ""},
+        "clock_sent": None, "clock_gap_min": 10, "clock_min_fw": "1.10.0",
+        "clock": "", "clocksync_reason": "", "clock_wait": "",
+        "clock_enabled": True, "broker": True,
+        "route": {"mqtt": True, "level": "full_managed", "level_why": "publiceert zelf",
+                  "commands": ("settings", "status"), "via_monitor": False,
+                  "blocker": "", "node": "55d9", "subject": "55d9",
+                  "fw_meshmanager": "2.3.0", "min_fw": "1.8.0", "node_seen": None,
+                  "node_stale": False, "ha": False, "poller_seen": None},
+        "cfg_route": {"can": False, "blocker": "no_host", "host": "",
+                      "fw": "2.3.0", "min_fw": "2.1.0", "relayed": False},
+        "cfg_params": {"ok": False, "error": "", "params": []},
+        "cfg_groups": [], "cfg_now": {}, "cfg_result": None,
+        "rights": None, "relay": None,
+        "sweep_hours": 0, "sweep_next": None, "sweep_last": None,
+        "sweep_status": {"enabled": True, "min_gap_min": 15,
+                         "max_per_day": 48, "today": 0},
+        "rechten": _AllesMag(), "mijn_rol": "beheerder",
+        "serverrechten": _AllesMag(), "audit": [],
+        "filter_route": {"can": True, "blocker": "", "host": "http://x",
+                         "fw": "2.3.0", "min_fw": "2.3.0", "relayed": False},
+        "filter_live": {"ok": True, "error": "", "filter": dict(
+            STAND, on=True,
+            channels=[{"label": "publiek", "hash": "a3"}])},
+        "filter_seen": pktfilter.summarise({"on": True, "passed": 10,
+                                            "drop": {"rate": 4}}),
+        "filter_types": pktfilter.TYPE_NAMES,
+        "filter_result": None,
+    }
+    ctx.update(over)
+    return templates.env.get_template("admin/node.html").render(ctx)
+
+
+def test_de_regeltabellen_worden_getekend_als_de_node_antwoordt():
+    html = _render()
+    assert 'action="/admin/repeaters/1/filter"' in html
+    # Alle twaalf types, met hun naam zoals de firmware ze noemt.
+    for naam in pktfilter.TYPE_NAMES:
+        assert naam in html
+    assert "publiek" in html
+
+
+def test_dichtzetten_vraagt_de_naam_van_de_node_in_het_formulier():
+    """De drempel staat ook op de server; dit gaat over of hij zichtbaar is.
+
+    Een formulier dat om 'ja' vraagt terwijl de server de nodenaam eist, is een
+    formulier dat je laat klikken en dan afwijst -- en dan typt de volgende
+    persoon 'ja' in het veld waar de naam hoort.
+    """
+    html = _render()
+    assert "DinX-Home" in html
+    assert "dichtzetten" in html
+
+
+def test_de_weg_terug_staat_er_ook_als_er_geen_schrijfweg_is():
+    html = _render(filter_route={"can": False, "blocker": "relayed_only",
+                                 "host": "", "fw": "", "min_fw": "2.3.0",
+                                 "relayed": True})
+    assert "filter off" in html
+    assert "mesh-CLI" in html
