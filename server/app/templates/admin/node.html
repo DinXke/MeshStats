@@ -514,9 +514,26 @@
 
   {% if cfg_result %}
   <div class="card notice">
-    {% if cfg_result.ok and cfg_result.exact %}
+    {% if cfg_result.busy %}
+    {#- Alleen de weg over LoRa kan hier komen. Twee pakketten over een gedeelde
+        band duren tientallen seconden, en de server wacht daar niet eindeloos
+        op. De uitslag ligt op de monitor, dus een herlading vindt hem alsnog. -#}
+    <strong>Loopt nog.</strong> {{ cfg_result.msg }}.
+    {% elif cfg_result.step == "geen_antwoord" %}
+    {#- De uitkomst die alleen over de radio bestaat, en de reden dat ze een
+        eigen tekst heeft: dit is géén mislukking. -#}
+    <strong>Verstuurd, maar onbevestigd.</strong> {{ cfg_result.msg }}.
+    {% elif cfg_result.step == "geen_teruglezing" %}
+    <strong>Gezet, niet nagekeken.</strong> {{ cfg_result.msg }}.
+    {% elif cfg_result.ok and cfg_result.exact %}
     <strong>Gezet.</strong> <span class="mono">{{ cfg_result.key }}</span> staat nu op
     <span class="mono">{{ cfg_result.applied }}</span>.
+    {% if cfg_result.transport == "mesh" and cfg_result.applied == cfg_result.asked
+          and cfg_result.asked == cfg_now.get(cfg_result.key) %}
+    <br>Dit was de waarde die er al stond, dus er is niets veranderd — en de hele weg is
+    wel afgelegd: versturen, ontvangen, antwoord verwerken en teruglezen. Precies wat een
+    eerste beproeving hoort te doen.
+    {% endif %}
     {% elif cfg_result.ok %}
     {#- Het geval waar het teruglezen voor bestaat: de node zei "OK" en er staat
         iets anders in dan er gevraagd is. -#}
@@ -537,64 +554,121 @@
   </div>
   {% endif %}
 
+  {#- De laatste schrijfactie zoals de monitor hem kent. Staat er ook zonder dat
+      er net iets verstuurd is: de uitslag wordt daar bewaard en niet hier, dus
+      dit is wat een herlading laat zien nadat de browser niet is blijven
+      wachten. -#}
+  {% if cfg_mesh.ok and cfg_mesh.job.seq and not cfg_result %}
+  <div class="card">
+    <h3>Laatste schrijfactie over LoRa</h3>
+    <p class="small">
+      {% if cfg_mesh.job.busy %}
+      <strong>Bezig.</strong> <span class="mono">{{ cfg_mesh.job.param }}</span> naar
+      <span class="mono">{{ cfg_mesh.job.asked }}</span> op
+      <span class="mono">{{ cfg_mesh.job.key[:12] }}</span>, {{ cfg_mesh.job.age }} seconden
+      onderweg. Herlaad deze pagina voor de uitslag.
+      {% else %}
+      <span class="mono">{{ cfg_mesh.job.param }}</span> gevraagd op
+      <span class="mono">{{ cfg_mesh.job.asked }}</span>, {{ cfg_mesh.job.age }} seconden
+      geleden.
+      {% if cfg_mesh.job.applied %}
+      Teruggelezen: <span class="mono">{{ cfg_mesh.job.applied }}</span>{% if not cfg_mesh.job.exact %}
+      — <strong>niet gelijk aan wat er gevraagd is</strong>{% endif %}.
+      {% else %}
+      Niet teruggelezen: {{ cfg_mesh_steps.get(cfg_mesh.job.step, cfg_mesh.job.end) }}.
+      {% endif %}
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  {#- Hoe de monitor bij deze node binnenkomt. Staat buiten de weigering hieronder
+      en niet erin, want het is de vraag die er juist toe doet als het schrijven
+      wél kan: een monitor die alleen mag lezen, logt keurig in en krijgt op elk
+      commando stilte — van een afstand niet te onderscheiden van een node die er
+      niet is. -#}
+  {% if rights %}
+  <div class="card">
+    <p class="small">
+      <strong>Hoe {{ relay.name if relay else "de monitor" }} bij deze node binnenkomt:</strong>
+      {%- if not rights.ok %} onbekend — {{ rights.error }}.
+      {%- elif not rights.known %} deze node staat niet in zijn monitorlijst.
+      {%- elif rights.mode == "acl" %} via de <strong>toegangslijst</strong> van deze node,
+      zonder wachtwoord. Dat is de aanbevolen manier: niemand geeft een geheim uit
+      handen en de eigenaar aan de overkant kan het alleen intrekken.
+      {%- else %} met een <strong>wachtwoord</strong> dat de monitor bewaart. Werkt, maar
+      de toegangslijst verdient de voorkeur: <code>setperm &lt;pubkey van de monitor&gt; 3</code>
+      aan de overkant maakt het wachtwoord overbodig.
+      {%- endif %}
+    </p>
+    {% if rights.ok and rights.known %}
+    <p class="small">
+      <strong>Werkt dat?</strong>
+      {%- if rights.diagnosis == "goed" %} Ja — {{ rights.oks }} van {{ rights.polls }}
+      opvragingen kwamen terug.
+      {%- elif rights.diagnosis == "alleen_lezen" %}
+      <strong>Ingelogd, maar alles zwijgt.</strong> Dat is bijna altijd hetzelfde: de
+      monitor is binnen als lézer en niet als beheerder, en een repeater voert een
+      CLI-commando alleen uit voor een client met adminrechten. Vraag de eigenaar om
+      <code>setperm &lt;pubkey van de monitor&gt; 3</code>, of geef de monitor het
+      adminwachtwoord. Van een afstand ziet dit eruit als een node die niet
+      bereikbaar is, en dat is het niet. Voor <em>schrijven</em> geldt hetzelfde en
+      zwaarder: een <span class="mono">set</span> die zo verdwijnt, laat geen spoor na.
+      {%- elif rights.diagnosis == "geen_toegang" %}
+      <strong>Nee, en het ligt niet aan het bereik.</strong> De login wordt niet
+      beantwoord, maar we horen zijn adverts wél — dus hij is er en hij laat ons niet
+      binnen. Onze sleutel staat niet in zijn toegangslijst, of het wachtwoord klopt
+      niet.
+      {%- elif rights.diagnosis == "buiten_bereik" %}
+      <strong>Nee, en we horen hem ook niet.</strong> De login wordt niet beantwoord en
+      er komen geen adverts binnen. Dat wijst op bereik en niet op rechten.
+      {%- else %} Nog niet geprobeerd sinds de laatste herstart van de monitor.
+      {%- endif %}
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if not cfg_route.can %}
   <div class="card">
   <p class="muted small">
     <strong>Niet mogelijk:</strong>
-    {%- if cfg_route.blocker == "no_credentials" %}
+    {%- if cfg_route.blocker == "no_credentials" and cfg_route.transport == "mesh" %}
+    de server heeft geen weblogin voor de beheerpagina van de <em>monitor</em>. Zet
+    <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in de omgeving van de
+    server. Het gaat nadrukkelijk om de login van
+    {{ relay.name if relay else "de monitor" }} en niet om een geheim van déze node:
+    die rechten horen bij de monitor, in zijn eigen monitorlijst, of ze bestaan niet
+    omdat de overkant ons in zijn toegangslijst heeft gezet.
+    {%- elif cfg_route.blocker == "no_credentials" %}
     de server heeft geen weblogin voor de beheerpagina van <em>deze</em> node. Zet
     <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in de omgeving van de
     server. Let op dat dit alleen gaat over nodes van jezelf die de server over IP
     bereikt: voor een node die alleen over LoRa te bereiken is, hoeft de server nooit
     inloggegevens te hebben — die rechten horen bij de monitor die de opvragingen doet.
-    {%- elif cfg_route.blocker == "relayed_only" %}
-    deze repeater draait onze firmware niet en heeft geen IP-pad; zijn cijfers komen
-    over LoRa binnen via <span class="mono">{{ rep.source_prefix }}</span>. De weg die
-    daarvoor ontworpen is loopt via die monitor over LoRa en is nog niet gebouwd
-    (zie <code>docs/nl/node-management.md</code>). Dit is dus geen ontbrekende
-    instelling maar een blijvende toestand — en er hoeft hier geen wachtwoord
-    ingesteld te worden: de rechten op deze node horen bij zijn monitor, niet bij
-    de server.
-  </p>
-  {% if rights %}
-  <p class="small">
-    <strong>Hoe {{ relay.name if relay else "de monitor" }} bij deze node binnenkomt:</strong>
-    {%- if not rights.ok %} onbekend — {{ rights.error }}.
-    {%- elif not rights.known %} deze node staat niet in zijn monitorlijst.
-    {%- elif rights.mode == "acl" %} via de <strong>toegangslijst</strong> van deze node,
-    zonder wachtwoord. Dat is de aanbevolen manier: niemand geeft een geheim uit
-    handen en de eigenaar aan de overkant kan het alleen intrekken.
-    {%- else %} met een <strong>wachtwoord</strong> dat de monitor bewaart. Werkt, maar
-    de toegangslijst verdient de voorkeur: <code>setperm &lt;pubkey van de monitor&gt; 3</code>
-    aan de overkant maakt het wachtwoord overbodig.
-    {%- endif %}
-  </p>
-  {% if rights.ok and rights.known %}
-  <p class="small">
-    <strong>Werkt dat?</strong>
-    {%- if rights.diagnosis == "goed" %} Ja — {{ rights.oks }} van {{ rights.polls }}
-    opvragingen kwamen terug.
-    {%- elif rights.diagnosis == "alleen_lezen" %}
-    <strong>Ingelogd, maar alles zwijgt.</strong> Dat is bijna altijd hetzelfde: de
-    monitor is binnen als lézer en niet als beheerder, en een repeater voert een
-    CLI-commando alleen uit voor een client met adminrechten. Vraag de eigenaar om
-    <code>setperm &lt;pubkey van de monitor&gt; 3</code>, of geef de monitor het
-    adminwachtwoord. Van een afstand ziet dit eruit als een node die niet
-    bereikbaar is, en dat is het niet.
-    {%- elif rights.diagnosis == "geen_toegang" %}
-    <strong>Nee, en het ligt niet aan het bereik.</strong> De login wordt niet
-    beantwoord, maar we horen zijn adverts wél — dus hij is er en hij laat ons niet
-    binnen. Onze sleutel staat niet in zijn toegangslijst, of het wachtwoord klopt
+    {%- elif cfg_route.blocker == "relay_unknown" %}
+    de cijfers van deze repeater komen binnen via
+    <span class="mono">{{ rep.source_prefix }}</span>, maar die node is hier zelf niet
+    bekend. Zonder zijn beheeradres en zijn firmwareversie valt er niets naartoe te
+    sturen.
+    {%- elif cfg_route.blocker == "no_relay_host" %}
+    deze repeater is alleen over LoRa te bereiken, dus het schrijven loopt via zijn
+    monitor {{ relay.name if relay else rep.source_prefix }} — en die heeft geen
+    beheeradres ingevuld. Dat doe je op het tabblad
+    <a href="/admin/firmware">Firmware</a>, op de rij van die monitor.
+    {%- elif cfg_route.blocker == "relay_no_fw" %}
+    het schrijven zou over LoRa lopen via {{ relay.name if relay else rep.source_prefix }},
+    maar die node meldt geen versie van onze firmware — dus draait hij hem waarschijnlijk
     niet.
-    {%- elif rights.diagnosis == "buiten_bereik" %}
-    <strong>Nee, en we horen hem ook niet.</strong> De login wordt niet beantwoord en
-    er komen geen adverts binnen. Dat wijst op bereik en niet op rechten.
-    {%- else %} Nog niet geprobeerd sinds de laatste herstart van de monitor.
-    {%- endif %}
-  </p>
-  {% endif %}
-  {% endif %}
-  <p class="muted small">
+    {%- elif cfg_route.blocker == "relay_old_fw" %}
+    het schrijven loopt over LoRa via {{ relay.name if relay else rep.source_prefix }},
+    en die draait <span class="mono">{{ cfg_route.fw }}</span>. Instellingen over LoRa
+    schrijven bestaat pas vanaf <span class="mono">{{ cfg_route.min_fw }}</span>.
+    <strong>Het is de monitor die die versie nodig heeft, niet deze repeater</strong> —
+    die draait stock MeshCore en hoeft niets te leren.
+    {%- elif cfg_route.blocker == "no_target" %}
+    van deze repeater is geen publieke sleutel bekend, en die is nodig om de monitor te
+    laten weten wie hij moet aanspreken.
     {%- elif cfg_route.blocker == "no_host" %}
     er is geen beheeradres ingevuld voor deze node. Dat doe je op het tabblad
     <a href="/admin/firmware">Firmware</a>; hetzelfde adres wordt voor beide gebruikt.
@@ -616,6 +690,39 @@
   </p>
   </div>
   {% else %}
+
+  {% if cfg_route.transport == "mesh" %}
+  <div class="card notice">
+    <h3>Dit gaat over de radio <span class="pill">kost zendtijd</span></h3>
+    <p class="small">
+      Deze repeater draait onze firmware niet en heeft geen IP-pad. Het schrijven gaat
+      daarom niet naar hem toe maar naar zijn monitor
+      <strong>{{ cfg_route.monitor }}</strong>: die staat op het lokale netwerk, krijgt de
+      opdracht over HTTP, en zet <span class="mono">set &lt;parameter&gt; &lt;waarde&gt;</span>
+      over LoRa. Daarna vraagt hij dezelfde parameter opnieuw op, en wat hieronder als
+      uitslag verschijnt is <em>die teruglezing</em> — nooit wat de node op het zetten
+      antwoordde. MeshCore zegt namelijk "OK" tegen dingen die het niet overgenomen heeft,
+      en over de radio duurt het lang genoeg dat niemand het uit zichzelf natrekt.
+    </p>
+    <p class="small">
+      Twee pakketten met een adempauze ertussen: reken op tien tot negentig seconden. Er
+      loopt er één tegelijk, en tussen twee schrijfacties zit een minuut — laag gehouden
+      met opzet, want de handeling die je na een misser meteen wilt doen is de omgekeerde.
+    </p>
+    <p class="small">
+      <strong>Beproef deze weg eerst zonder iets te veranderen.</strong> Zet een parameter
+      op de waarde die er al staat — de kolom “Nu” hiernaast is al ingevuld, dus dat is
+      één klik. De hele weg wordt dan afgelegd (versturen, ontvangen, antwoord verwerken,
+      teruglezen) en er verandert niets. Mislukt het, dan is er niets stuk. Dat is ook de
+      verstandige manier om een nieuwe monitorverbinding te toetsen.
+    </p>
+    <p class="muted small">
+      De nieuwe firmware zit op de <em>monitor</em> en niet op deze repeater. Die krijgt
+      twee doodgewone CLI-commando's binnen en hoeft niets te leren — dat is precies de
+      reden dat deze weg bestaat.
+    </p>
+  </div>
+  {% endif %}
 
   {% for risk, params in cfg_groups %}
   {% if params %}
@@ -651,37 +758,57 @@
             <input type="hidden" name="key" value="{{ p.key }}">
 
             {#- Type stuurt de bediening. Een invoerveld waarin je een ongeldige
-                waarde kúnt typen is een invoerveld dat een node kan breken. -#}
+                waarde kúnt typen is een invoerveld dat een node kan breken.
+
+                Voorgevuld met wat er nú in de node staat, en dat is meer dan
+                gemak. Het maakt "zet deze parameter op de waarde die hij al
+                heeft" één klik, en dat is de enige beproeving van de schrijfweg
+                die de hele weg aflegt zonder iets te veranderen — bij een node
+                die alleen over de radio te bereiken is, is dat het verschil
+                tussen toetsen en gokken. Een geheim wordt nooit voorgevuld: de
+                node geeft de gelezen waarde niet eens terug. -#}
+            {% set nu = cfg_now.get(p.key, "") %}
             {% if p.kind == "bool" %}
             <select name="value">
-              <option value="on">on</option>
-              <option value="off">off</option>
+              <option value="on" {% if nu == "on" %}selected{% endif %}>on</option>
+              <option value="off" {% if nu == "off" %}selected{% endif %}>off</option>
             </select>
             {% elif p.kind == "enum" %}
             <select name="value">
               {% for c in p.choices.split("|") if c %}
-              <option value="{{ c }}">{{ c }}</option>
+              <option value="{{ c }}" {% if nu == c %}selected{% endif %}>{{ c }}</option>
               {% endfor %}
             </select>
             {% elif p.kind == "radio" %}
+            {#- 'get radio' antwoordt met komma's, 'set radio' wil spaties. De
+                vier velden hier maken dat verschil onzichtbaar, en dat is precies
+                waarom het er vier zijn: één tekstvak waarin je "869.525 250 11 5"
+                moet typen is het vak waarin een tikfout een node kwijtmaakt. -#}
+            {% set r = nu.replace(",", " ").split() %}
             <input type="number" name="rf" step="0.001" min="150" max="2500"
+                   value="{{ r[0] if r|length == 4 else '' }}"
                    placeholder="freq" required title="frequentie in MHz, 150–2500">
             <input type="number" name="rb" step="0.001" min="7" max="500"
+                   value="{{ r[1] if r|length == 4 else '' }}"
                    placeholder="bw" required title="bandbreedte in kHz, 7–500">
             <input type="number" name="rs" step="1" min="5" max="12"
+                   value="{{ r[2] if r|length == 4 else '' }}"
                    placeholder="sf" required title="spreading factor, 5–12">
             <input type="number" name="rc" step="1" min="5" max="8"
+                   value="{{ r[3] if r|length == 4 else '' }}"
                    placeholder="cr" required title="coding rate, 5–8">
             {% elif p.kind == "int" %}
-            <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}" required>
+            <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}"
+                   value="{{ nu }}" required>
             {% elif p.kind == "float" %}
-            <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}" required>
+            <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}"
+                   value="{{ nu }}" required>
             {% elif p.secret %}
             {#- Een geheim: niet in beeld tijdens het typen, en de node stuurt de
                 gelezen waarde ook niet terug. Wel vergeleken, niet verklapt. -#}
             <input type="password" name="value" maxlength="39" autocomplete="new-password" required>
             {% else %}
-            <input name="value" maxlength="39" autocomplete="off" required>
+            <input name="value" maxlength="39" autocomplete="off" value="{{ nu }}" required>
             {% endif %}
 
             {#- De bevestiging. Ook op de server afgedwongen: een drempel die je

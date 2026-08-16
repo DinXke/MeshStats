@@ -400,9 +400,14 @@ def _render(**over):
                   "fw_meshmanager": "2.3.0", "min_fw": "1.8.0", "node_seen": None,
                   "node_stale": False, "ha": False, "poller_seen": None},
         "cfg_route": {"can": False, "blocker": "no_host", "host": "",
-                      "fw": "2.3.0", "min_fw": "2.1.0", "relayed": False},
+                      "fw": "2.3.0", "min_fw": "2.1.0", "relayed": False,
+                      "transport": "ip", "target": "", "monitor": ""},
         "cfg_params": {"ok": False, "error": "", "params": []},
         "cfg_groups": [], "cfg_now": {}, "cfg_result": None,
+        # De instellingenschrijver zit op dezelfde pagina en heeft zijn eigen
+        # tests (test_nodeconfig.py). Hier de toestand die niets toont.
+        "cfg_mesh": {"ok": False, "error": "", "job": {}},
+        "cfg_mesh_steps": nodeconfig.MESH_STEPS,
         "rights": None, "relay": None,
         "sweep_hours": 0, "sweep_next": None, "sweep_last": None,
         "sweep_status": {"enabled": True, "min_gap_min": 15,

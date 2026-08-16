@@ -693,6 +693,8 @@ hoofdlus op en daarmee de mesh, wat op de companion-node al was vastgesteld.
 | `/api/restore` | POST | basic | Een back-up uploaden, daarna herstarten |
 | `/api/cfg` | GET | basic | Welke CLI-parameters van afstand gezet mogen worden, met hun type, grenzen, toegestane woorden en risicoklasse (2.1.0+) |
 | `/api/cfg` | POST | basic | Er één zetten en meteen teruglezen — zie [`node-management.md`](node-management.md) (2.1.0+) |
+| `/api/moncfg` | GET | basic | De lopende of laatst afgeronde schrijfactie naar een **gemonitorde** repeater over LoRa: wat er gevraagd is, wat er teruggelezen is, en hoe het afliep (2.4.0+) |
+| `/api/moncfg` | POST | basic | Één parameter zetten op een repeater die deze node monitort, over LoRa, en hem daarna teruglezen. Antwoordt `202` — er is nog niets gebeurd; twee pakketten over een gedeelde band duren tientallen seconden (2.4.0+) |
 | `/api/fw` | GET | basic | Geïnstalleerde versie, bouwomgeving, welke partitie draait en wat er in de andere staat (1.12.0+) |
 | `/api/fw` | POST | basic | Firmware-image als kale body; de digest wordt gecontroleerd vóór de bootpartitie omgezet wordt — zie [`firmware-upgrade.md`](firmware-upgrade.md) (1.12.0+) |
 | `/api/fw/rollback` | POST | basic | De andere applicatiepartitie weer opstarten (1.12.0+) |
@@ -1282,6 +1284,22 @@ Startbaar vanaf elke CLI evengoed als vanaf MQTT: `wifi mon settings <hex>` star
 er een en rapporteert over de vorige, en `wifi mon trace` toont de volgorde. Dat
 telt hier zwaarder dan waar ook elders in deze module, omdat deze faalmodus van
 nature stil is.
+
+Dezelfde tabel loopt sinds 2.4.0 ook de andere kant op: `wifi mon set <hex>
+<param> <waarde>`, of `POST /api/moncfg`, schrijft **één** parameter naar een
+gemonitorde repeater over LoRa en leest die parameter daarna terug — en het is
+dat teruglezen dat gemeld wordt, nooit wat de node op de `set` antwoordde. Twee
+commando's met een pauze ertussen, één tegelijk, een minuut tussen twee
+schrijfacties, en een hard plafond van negentig seconden. De faalwijze die hier
+nieuw is, is stilte *nadat* de `set` vertrokken is: het commando is de lucht in
+gegaan en of het is aangekomen valt van deze kant niet te zien, wat dan ook
+precies zo gemeld wordt en niet als mislukking. De volledige redenering staat in
+[`node-management.md`](node-management.md#schrijven-over-lora-via-de-monitor).
+
+Let op welke node deze firmware nodig heeft: **de monitor**. De repeater waarnaar
+geschreven wordt, krijgt twee doodgewone CLI-commando's binnen en hoeft niets te
+weten — en dat is de hele reden dat deze weg bestaat voor een node die maandenlang
+niet opnieuw geflasht wordt.
 
 ### 4.12 Kloksynchronisatie
 

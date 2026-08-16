@@ -5,6 +5,65 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.4.0  De schrijfweg over LoRa. Deze node kan één CLI-instelling zetten op een
+ *        repeater die hij MONITORT, en leest die parameter daarna terug:
+ *        POST /api/moncfg om het te vragen, GET /api/moncfg voor de uitslag, en
+ *        'wifi mon set <hex> <param> <waarde>' voor hetzelfde vanaf een kabel of
+ *        over de mesh.
+ *        Waarvoor dit bestaat. Lezen over LoRa werkt sinds 1.9.0 en schrijven
+ *        kon alleen over IP, naar een node van onszelf. De repeater waar dit
+ *        project omheen gebouwd is heeft geen IP-pad en krijgt er ook nooit een:
+ *        stock MeshCore op een dak, alleen over de radio te bereiken. Die kon je
+ *        dus wel uitlezen en niet bijstellen, en de enige manier om er een
+ *        zendvermogen op te veranderen was een ladder.
+ *        Het aardige is welke node hiervoor nieuwe firmware nodig heeft: DEZE,
+ *        de monitor. Het doel hoeft niets te leren, niets te krijgen en niets te
+ *        weten -- het krijgt gewoon twee CLI-commando's binnen zoals altijd. Dat
+ *        is precies waarom deze weg de juiste is voor een node die maandenlang
+ *        geen nieuwe firmware krijgt.
+ *        Eén schrijfweg, twee vervoermiddelen, en dat is met opzet geen tweede
+ *        schrijfweg. Dezelfde tabel CFG_PARAMS, dezelfde grenzen, dezelfde
+ *        risicoklassen, dezelfde waardecontrole -- die laatste is hiervoor uit
+ *        handleCfgPost() gelicht tot cfgCheckValue(), zodat er niet twee zeven
+ *        zijn die uit elkaar kunnen lopen. Was dat wel gebeurd, dan zou de
+ *        soepelste van de twee uitgerekend de weg zijn zonder tweede ingang.
+ *        Waarom er teruggelezen wordt en waarom dat hier zwaarder weegt dan over
+ *        IP. MeshCore antwoordt "OK" op dingen die het niet overgenomen heeft:
+ *        'set lat abc' is een kale atof() die er 0.0 van maakt, en
+ *        'advert.interval 61' legt 30 vast (minuten/2 in één byte) en leest terug
+ *        als 60. Over IP zie je dat meteen en zet je het terug. Hier is het doel
+ *        een node zonder tweede weg naar binnen, en duurt een ronde lang genoeg
+ *        dat niemand het uit zichzelf natrekt. Dus is de uitslag niet wat de
+ *        'set' antwoordde maar wat de 'get' teruggeeft, met de vraag ernaast.
+ *        De vergelijking gebeurt niet in de toestandsmachine maar in
+ *        handleMonCfgGet(), met cfgSameValue() -- dezelfde functie die /api/cfg
+ *        gebruikt. Anders zouden er twee opvattingen bestaan over of
+ *        "869.525 250 11 5" en "869.525,250,11,5" dezelfde waarde zijn, en zou
+ *        er een waarschuwing staan bij een radio die goed staat. Een melding die
+ *        te vaak afgaat is even onbruikbaar als een die nooit afgaat.
+ *        Een nieuwe soort stilte, en die is eerlijk gemeld. Blijft het antwoord
+ *        op de 'set' uit, dan weten we NIET of het commando is aangekomen -- het
+ *        is de lucht in gegaan en het antwoord kan onderweg zijn gebleven. Dat
+ *        heet 'geen_antwoord' en nadrukkelijk niet 'mislukt', want dat laatste
+ *        zou iemand laten denken dat er niets gebeurd is. Een login die
+ *        onbeantwoord bleef is wél zeker: dan is er niets verstuurd.
+ *        Wat het kost, en waarom de minimumpauze hier LAGER ligt dan bij de
+ *        sweep. Twee commando's en twee antwoorden, ruwweg een tiende van een
+ *        uitleesronde, met de gemeten wachttijden van die ronde (20 s voor het
+ *        eerste commando na een login, 12 s daarna, 2 s ertussen, 90 s hard
+ *        plafond). Tussen twee schrijfacties zit een minuut waar de sweep er
+ *        tien heeft, en dat is de belangrijkste afweging van dit blok: de
+ *        handeling die je na een misser meteen wilt doen is de omgekeerde. Wie
+ *        'tx 5' zette waar 'tx 20' hoorde moet dat binnen een minuut kunnen
+ *        rechtzetten. Herstel mag nooit zwaarder afgeremd worden dan de fout die
+ *        het terugdraait -- dezelfde regel die 'filter off' lichter maakt dan
+ *        'filter on'.
+ *        En anders dan de sweep vraagt deze weg geen werkende broker. De sweep
+ *        publiceert zijn uitslag op MQTT en heeft zonder broker niets om voor te
+ *        doen; deze antwoordt over HTTP aan wie hem vroeg. monitorLoop() laat
+ *        een schrijfactie daarom door waar hij een pollronde tegenhoudt: een
+ *        installatie zonder internet hoort een radio-instelling nog te kunnen
+ *        rechtzetten.
  * 2.3.0  Een pakketfilter op de repeater, en beheer ervan vanaf de site.
  *        Wat het doet: in MyMesh::allowPacketForward() -- de enige plek waar
  *        deze node beslist over ANDERMANS pakket -- worden floodpakketten
@@ -2543,9 +2602,10 @@ static uint16_t _mon_interval = 900;
 /* MST_CLK_WAIT is appended rather than slotted in next to MST_CLI_WAIT where it
  * belongs by meaning: this enum is printed as a number by /api/mon and by 'wifi
  * mon', so renumbering the existing states would silently change what those two
- * report on a node somebody is already watching. */
+ * report on a node somebody is already watching. MST_WSET_WAIT -- writing one
+ * setting to a monitored node -- is appended for the same reason. */
 enum MonState { MST_IDLE, MST_LOGIN_WAIT, MST_REQ_WAIT, MST_TELEM_WAIT, MST_NBR_WAIT,
-                MST_CLI_WAIT, MST_GAP, MST_CLK_WAIT };
+                MST_CLI_WAIT, MST_GAP, MST_CLK_WAIT, MST_WSET_WAIT };
 static MonState _mon_state = MST_IDLE;
 static int _mon_cur = -1;
 static uint8_t _mon_retry = 0;      // one flood retry per step, then give up
@@ -3441,6 +3501,327 @@ static void monSettingsBegin() {
   monSettingsFinish("login niet verstuurd");
 }
 
+/* ---- EEN instelling schrijven naar een gemonitorde node -------------------
+ *
+ * De tegenhanger van de sweep hierboven, en de reden dat deze module bestaat
+ * voor een dakrepeater die geen IP-pad heeft en er ook nooit een krijgt. Lezen
+ * over LoRa werkt al lang; dit is dezelfde weg de andere kant op.
+ *
+ * Wat er over de lucht gaat is precies twee commando's, en die tweede is niet
+ * optioneel:
+ *
+ *     set <param> <waarde>
+ *     get <param>
+ *
+ * ---- waarom er teruggelezen wordt, en waarom dat HIER zwaarder weegt ------
+ *
+ * MeshCore antwoordt "OK" op dingen die het niet heeft overgenomen. 'set lat'
+ * is een kale atof(), en atof("noord") is 0.0; 'advert.interval' wordt bewaard
+ * als minuten/2 in een byte, dus 61 legt 30 vast en leest terug als 60. Over IP
+ * is dat hinderlijk -- je ziet het meteen, en je zet het terug. Hier is het
+ * erger, om twee redenen die elkaar versterken: het doel is een node waar geen
+ * tweede weg naartoe loopt, en een ronde duurt lang genoeg dat niemand het uit
+ * zichzelf natrekt. Een "OK" die niemand controleert is op zo'n node precies de
+ * halve waarheid waar dit project omheen gebouwd is.
+ *
+ * Dus wordt het antwoord van 'set' NIET als uitslag gerapporteerd. De uitslag
+ * is wat 'get' teruggeeft, met de vraag ernaast, en het verschil tussen die
+ * twee is een eigen toestand -- niet een vorm van geslaagd.
+ *
+ * ---- de vergelijking gebeurt bewust niet hier -----------------------------
+ *
+ * Deze machine bewaart de twee ANTWOORDEN als tekst en verder niets. Wat er
+ * uiteindelijk 'toegepast' en 'precies' heet, rekent handleMonCfgGet() uit met
+ * cfgSameValue() -- dezelfde functie die /api/cfg gebruikt. Een tweede
+ * vergelijking hier zou een tweede plek zijn waar "869.525 250 11 5" en
+ * "869.525,250,11,5" wel of niet dezelfde waarde heten, en de dag dat die twee
+ * het oneens worden is de dag dat er een waarschuwing staat bij een radio die
+ * gewoon goed staat. Een melding die te vaak afgaat is net zo onbruikbaar als
+ * een die nooit afgaat.
+ *
+ * ---- wat dit kost, en de grenzen eromheen ---------------------------------
+ *
+ * Twee commando's en twee antwoorden, dus ruwweg een tiende van een sweep. De
+ * getallen zijn desondanks die van de sweep, want ze zijn gemeten op dezelfde
+ * band over dezelfde hops en er is geen reden waarom een 'set' sneller zou
+ * terugkomen dan een 'get'.
+ *
+ *  - OP VERZOEK ALLEEN. Er is geen schema en er komt er geen. Een schrijfactie
+ *    hoort een besluit te zijn.
+ *  - Een tegelijk. De toestandsmachine is er een, en een tweede 'set' terwijl
+ *    de eerste nog niet teruggelezen is zou de uitslag van de eerste wissen.
+ *  - MON_WSET_MIN_GAP_MS tussen twee schrijfacties, en die staat met opzet
+ *    LAGER dan die van de sweep (een minuut tegen tien). Dat is geen slordigheid
+ *    maar de belangrijkste afweging in dit blok: de handeling die je na een
+ *    misser meteen wilt doen, is de omgekeerde. Wie 'tx 5' zette waar 'tx 20'
+ *    hoorde, moet dat binnen een minuut kunnen rechtzetten en niet binnen tien.
+ *    Herstel mag nooit zwaarder afgeremd worden dan de fout die het terugdraait.
+ *    Wat de grens wel tegenhoudt is een script dat de band vol zet, en daar is
+ *    een minuut ruim genoeg voor: hij ligt boven de duur van een hele ronde.
+ *  - MON_WSET_TOTAL_MS begrenst er een, wat er ook gebeurt. Terwijl dit loopt
+ *    wachten de gewone pollrondes, want ze delen deze machine.
+ *
+ * ---- de stilte die hier nieuw is ------------------------------------------
+ *
+ * Bij lezen betekent geen antwoord: we weten niets. Bij schrijven betekent geen
+ * antwoord op de 'set' iets anders en veel onaangenamers: het commando is de
+ * lucht in gegaan en we weten NIET of het is aangekomen. De node kan het
+ * uitgevoerd hebben en het antwoord kan onderweg verdwenen zijn.
+ *
+ * Dat wordt daarom als eigen einde gerapporteerd ("geen antwoord op set") en
+ * nadrukkelijk niet als mislukt. Wie het ziet, weet dat de enige manier om
+ * erachter te komen een nieuwe uitleesronde is -- en dat is precies wat de site
+ * erbij zet. Een mislukking melden waar onzekerheid hoort, zou iemand laten
+ * denken dat er niets gebeurd is. */
+
+/* Ruimte voor een sleutel en een waarde uit CFG_PARAMS. Die tabel staat verderop
+ * in dit bestand (ze hoort bij de webkant), dus haar maten kunnen hier nog niet
+ * gebruikt worden -- onderaan bij die tabel staat een static_assert die
+ * controleert dat deze twee niet krapper zijn geworden. */
+#define MON_WSET_PARAM_MAX   28
+#define MON_WSET_VALUE_MAX   40
+/* Een CLI-antwoord is 160 byte. Dat past hier niet en hoeft ook niet: wat we
+ * bewaren is een waarde of een foutregel, en een node die meer terugstuurt dan
+ * dit heeft geen waarde teruggestuurd. Afkappen is dan het juiste antwoord --
+ * de vergelijking mislukt en de pagina meldt 'niet precies' in plaats van een
+ * halve regel als waarde te presenteren. */
+#define MON_WSET_REPLY_MAX   96
+
+#define MON_WSET_FIRST_MS    20000UL   // eerste commando na een login
+#define MON_WSET_STEP_MS     12000UL   // per commando daarna
+#define MON_WSET_GAP_MS       2000UL   // adempauze tussen 'set' en 'get'
+#define MON_WSET_TOTAL_MS    90000UL   // harde begrenzing op een schrijfactie
+#define MON_WSET_MIN_GAP_MS  60000UL   // tussen twee schrijfacties; zie hierboven
+
+/* Het verzoek, als sleutel en niet als index -- om dezelfde reden als bij de
+ * sweep: monDelete() schuift de lijst op, en een index zou daarna stilletjes een
+ * andere repeater aanwijzen. Bij schrijven is dat geen ongemak maar de ene fout
+ * die deze weg niet mag hebben. */
+static char _mwr_req_key[MON_KEY_HEX_MAX] = {0};
+static char _mwr_req_param[MON_WSET_PARAM_MAX] = {0};
+static char _mwr_req_value[MON_WSET_VALUE_MAX] = {0};
+static unsigned long _mwr_req_until = 0;
+
+static int _mwr_cur = -1;            // regel waarvoor er nu geschreven wordt
+static uint8_t _mwr_step = 0;        // 0 = 'set' uitstaand, 1 = 'get' uitstaand
+static unsigned long _mwr_send_at = 0;   // pauze voor de 'get'; 0 = niets wacht
+static unsigned long _mwr_until = 0;     // budget voor deze schrijfactie
+static unsigned long _mwr_done_at = 0;   // laatste afronding, voor de minimumgap
+
+/* De opdracht zoals ze gerapporteerd wordt. Blijft na afloop staan: de site
+ * vraagt hem op over HTTP en de gebruiker mag de pagina intussen herladen. Een
+ * uitslag die verdwijnt zodra je wegklikt, is bij een handeling van een halve
+ * minuut hetzelfde als geen uitslag. */
+static uint32_t _mwr_seq = 0;        // 0 = er is er sinds de start nooit een geweest
+static char _mwr_key[MON_KEY_HEX_MAX] = {0};
+static char _mwr_param[MON_WSET_PARAM_MAX] = {0};
+static char _mwr_asked[MON_WSET_VALUE_MAX] = {0};
+static char _mwr_set_reply[MON_WSET_REPLY_MAX] = {0};   // leeg = geen antwoord
+static char _mwr_get_reply[MON_WSET_REPLY_MAX] = {0};   // leeg = geen antwoord
+/* Is de 'set' werkelijk de lucht in gegaan? Het verschil tussen deze vlag en een
+ * leeg _mwr_set_reply is het verschil tussen twee uitkomsten die je niet mag
+ * verwarren. Niet verstuurd (een login die onbeantwoord bleef, een volle
+ * pakketpool) betekent dat er met ZEKERHEID niets veranderd is. Wel verstuurd en
+ * geen antwoord betekent dat we het niet weten, en dat is de onaangename van de
+ * twee. Wie ze op één hoop gooit, laat iemand geruststellen door het verkeerde
+ * geval. */
+static bool _mwr_sent = false;
+static char _mwr_end[48] = {0};      // waarom het eindigde; leeg zolang het loopt
+static unsigned long _mwr_started = 0;
+
+/* Stelt een schrijfactie in de wachtrij. De waarde is hier al gecontroleerd:
+ * beide aanroepers (POST /api/moncfg en 'wifi mon set') doen dat tegen
+ * CFG_PARAMS, met dezelfde functies die /api/cfg gebruikt. Hier staat alleen wat
+ * over de MONITOR en het DOEL gaat -- of we die node kennen, of we hem mogen
+ * aanspreken, en of de band niet net bezet is. */
+static bool monWriteRequest(const char *key_hex, const char *param,
+                            const char *value, const char **why) {
+  char key[MON_KEY_HEX_MAX];
+  strncpy(key, key_hex ? key_hex : "", sizeof(key) - 1);
+  key[sizeof(key) - 1] = 0;
+
+  if (!monKeyArg(key))    { *why = "sleutel is geen hex of korter dan 8 tekens"; return false; }
+  if (!param || !*param)  { *why = "geen parameter opgegeven"; return false; }
+  if (_safe_mode)         { *why = "veilige modus: deze node spreekt niemand aan"; return false; }
+  if (!_mesh)             { *why = "mesh nog niet gestart"; return false; }
+  if (_mon_count == 0)    { *why = "deze node monitort niemand"; return false; }
+  /* Anders dan bij de sweep staat hier GEEN eis dat MQTT aanstaat. De sweep
+   * publiceert zijn uitslag op het stats-topic en heeft zonder broker dus
+   * niets om voor te doen; deze weg antwoordt aan wie hem vroeg, over HTTP, op
+   * hetzelfde netwerk. monitorLoop() laat een schrijfactie daarom door waar hij
+   * een pollronde tegenhoudt. Dat is meteen het geval waar het om gaat: een
+   * installatie zonder internet, of met een broker die er even niet is, hoort
+   * een radio-instelling nog te kunnen rechtzetten. */
+  if (_batt_known && _batt_pct < _cfg.bat_mon) {
+    *why = "batterij te laag om andere repeaters aan te spreken"; return false;
+  }
+  int i = monFindByPrefix(key);
+  if (i == -2)            { *why = "sleutel past op meer dan een gemonitorde node"; return false; }
+  if (i < 0)              { *why = "staat niet in de monitorlijst"; return false; }
+  if (!_mon[i].enabled)   { *why = "monitoren staat uit voor die node"; return false; }
+  /* Zonder de volledige 32-byte sleutel is er geen gedeeld geheim en dus niets
+   * om een commando mee te versleutelen. syncMonitorsToMesh() vult dit aan zodra
+   * we die repeater horen adverteren. */
+  if (_mon[i].mesh_idx < 0) { *why = "volledige sleutel nog niet gehoord"; return false; }
+  if (_mwr_req_key[0] && passed(_mwr_req_until)) _mwr_req_key[0] = 0;   // verlopen
+  if (_mwr_cur >= 0 || _mwr_req_key[0]) { *why = "er loopt er al een"; return false; }
+  if (_mwr_done_at != 0 && millis() - _mwr_done_at < MON_WSET_MIN_GAP_MS) {
+    *why = "te kort na de vorige schrijfactie"; return false;
+  }
+  /* Een sweep die loopt houdt de machine minutenlang vast. De schrijfactie zou
+   * daarna alsnog beginnen, maar wie op een pagina wacht heeft meer aan een
+   * weigering met een reden dan aan vijf minuten stilte. */
+  if (_mset_cur >= 0)     { *why = "er loopt een uitleesronde"; return false; }
+
+  strcpy(_mwr_req_key, key);
+  strncpy(_mwr_req_param, param, sizeof(_mwr_req_param) - 1);
+  _mwr_req_param[sizeof(_mwr_req_param) - 1] = 0;
+  strncpy(_mwr_req_value, value ? value : "", sizeof(_mwr_req_value) - 1);
+  _mwr_req_value[sizeof(_mwr_req_value) - 1] = 0;
+  _mwr_req_until = millis() + MON_WSET_TOTAL_MS;
+  return true;
+}
+
+/* Rondt af en geeft de machine terug aan de pollplanner. Rechtstreeks naar
+ * MST_IDLE en zonder _mon_next_round aan te raken, net als monSettingsFinish():
+ * de gewone rondes gaan door op het schema dat ze al hadden. */
+static void monWriteFinish(const char *why) {
+  if (_mwr_cur >= 0) {
+    monTrace("wset %.6s klaar: %s", _mon[_mwr_cur].key, why);
+    Serial.printf("MeshManagerNet: schrijven %.12s %s = %s klaar (%s); set:'%s' get:'%s'\n",
+                  _mon[_mwr_cur].key, _mwr_param, _mwr_asked, why,
+                  _mwr_set_reply, _mwr_get_reply);
+  }
+  strncpy(_mwr_end, why, sizeof(_mwr_end) - 1);
+  _mwr_end[sizeof(_mwr_end) - 1] = 0;
+  _mwr_done_at = millis();
+  _mwr_cur = -1;
+  _mwr_step = 0;
+  _mwr_send_at = 0;
+  _mon_cur = -1;
+  _mon_retry = 0;
+  _mon_state = MST_IDLE;
+}
+
+// Zet 'set <param> <waarde>' of 'get <param>' op de lucht, naar _mwr_step.
+static void monWriteSend(bool after_login) {
+  if (_mwr_cur < 0) { monWriteFinish("niets te doen"); return; }
+  MonEntry &m = _mon[_mwr_cur];
+
+  char cmd[MON_WSET_PARAM_MAX + MON_WSET_VALUE_MAX + 8];
+  /* De parameternaam komt uit CFG_PARAMS en nooit uit het verzoek, en de waarde
+   * is altijd het laatste woord -- er is dus geen scheider waarmee een tweede
+   * commando kan beginnen. Dezelfde afspraak als bij cfgCli() hiernaast, en om
+   * dezelfde reden: dit is de enige plek in dit bestand waar tekst van buiten
+   * een CLI van iemand anders bereikt. */
+  if (_mwr_step == 0) snprintf(cmd, sizeof(cmd), "set %s %s", _mwr_param, _mwr_asked);
+  else                snprintf(cmd, sizeof(cmd), "get %s", _mwr_param);
+
+  if (!_mesh->sendMonitorCliCmd(m.mesh_idx, cmd)) {
+    /* Pakketpool vol, wat onder belasting gewoon voorkomt. Bij stap 0 is er
+     * dan niets vertrokken en is dat het hele verhaal; bij stap 1 staat er wel
+     * een 'set' geschreven waarvan we de uitwerking niet meer nakijken, en dat
+     * hoort er anders te staan. */
+    monTrace("wset %s NIET VERSTUURD (pool vol)", cmd);
+    monWriteFinish(_mwr_step == 0 ? "niets verstuurd (pool vol)"
+                                  : "teruglezen niet verstuurd (pool vol)");
+    return;
+  }
+  if (_mwr_step == 0) _mwr_sent = true;   // vanaf hier weten we het niet meer zeker
+  _mon_state = MST_WSET_WAIT;
+  _mon_deadline = millis() + (after_login ? MON_WSET_FIRST_MS : MON_WSET_STEP_MS);
+}
+
+/* Een tekstantwoord van de gemonitorde node. Zelfde indeling als bij
+ * monSettingsReply(): vier byte tijdstempel, een byte vlaggen, dan de tekst,
+ * uitgevuld tot het cipherblok -- vandaar de kopie. */
+static void monWriteReply(const uint8_t *data, int len) {
+  if (_mwr_cur < 0) return;
+
+  char text[MON_WSET_REPLY_MAX];
+  int n = len - 5;
+  if (n > (int)sizeof(text) - 1) n = (int)sizeof(text) - 1;
+  if (n < 0) n = 0;
+  memcpy(text, data + 5, n);
+  text[n] = 0;
+  // Een regeleinde in een waarde maakt van het JSON-antwoord verderop rommel.
+  for (char *p = text; *p; p++) {
+    if (*p == '\r' || *p == '\n' || *p == '\t') *p = ' ';
+  }
+
+  if (_mwr_step == 0) {
+    strcpy(_mwr_set_reply, text);
+    monTrace("wset %s -> %.24s", _mwr_param, text);
+    /* En nu teruglezen, na een adempauze. Ook als de 'set' met een foutregel
+     * antwoordde: juist dan wil je weten wat er wel staat. Een weigering die
+     * de oude waarde intact laat, en een weigering die halverwege iets veranderd
+     * heeft, zien er van hieraf identiek uit -- en alleen de tweede is een
+     * probleem. */
+    _mwr_step = 1;
+    _mwr_send_at = millis() + MON_WSET_GAP_MS;
+    _mon_state = MST_WSET_WAIT;
+    _mon_deadline = 0;              // niets uitstaand; de pauze beslist
+    return;
+  }
+
+  strcpy(_mwr_get_reply, text);
+  monTrace("wset %s = %.24s", _mwr_param, text);
+  monWriteFinish("klaar");
+}
+
+/* Begint een schrijfactie. Alleen vanuit MST_IDLE, dus er loopt geen pollronde
+ * en _mon_cur staat vrij -- dezelfde afspraak waar monSettingsBegin() op leunt. */
+static void monWriteBegin() {
+  char key[MON_KEY_HEX_MAX];
+  strcpy(key, _mwr_req_key);
+  _mwr_req_key[0] = 0;                     // opgenomen, wat er hierna ook gebeurt
+
+  int i = monFindByPrefix(key);
+  if (!_mesh || i < 0 || !_mon[i].enabled || _mon[i].mesh_idx < 0) {
+    // De lijst is tussen het verzoek en dit moment gewijzigd.
+    monTrace("wset %.6s vervallen (lijst gewijzigd)", key);
+    return;
+  }
+
+  _mwr_cur = i;
+  _mwr_step = 0;
+  _mwr_sent = false;
+  _mwr_send_at = 0;
+  _mwr_until = millis() + MON_WSET_TOTAL_MS;
+  _mwr_started = millis();
+  _mwr_seq++;
+  _mwr_end[0] = 0;
+  _mwr_set_reply[0] = 0;
+  _mwr_get_reply[0] = 0;
+  strcpy(_mwr_key, _mon[i].key);
+  strcpy(_mwr_param, _mwr_req_param);
+  strcpy(_mwr_asked, _mwr_req_value);
+
+  MonEntry &m = _mon[_mwr_cur];
+  _mon_cur = _mwr_cur;
+  _mon_retry = 0;
+  int hops = _mesh->getMonitorPathLen(m.mesh_idx);
+
+  /* Een sessie van een eerdere ronde wordt hergebruikt als we er een hebben: een
+   * login is een geflood pakket, en er een uitgeven om te leren wat we al weten
+   * is de duurste vorm van netheid. Is de overkant ons vergeten, dan blijft het
+   * commando onbeantwoord en eindigt dit met 'geen antwoord op set' -- waarna
+   * logged_in gewist is en de volgende poging wel met een login begint. */
+  if (m.logged_in) {
+    monTrace("wset start %.6s %s hops=%d", m.key, hops < 0 ? "FLOOD" : "direct", hops);
+    monWriteSend(false);
+    return;
+  }
+  if (_mesh->sendMonitorLogin(m.mesh_idx, m.pass)) {
+    monTrace("wset login %.6s %s hops=%d", m.key, hops < 0 ? "FLOOD" : "direct", hops);
+    _mon_state = MST_LOGIN_WAIT;
+    _mon_deadline = millis() + MON_STEP_MS;
+    return;
+  }
+  monTrace("wset login NIET VERSTUURD (pool vol) %.6s", m.key);
+  monWriteFinish("login niet verstuurd");
+}
+
 /* ---- the clocks of the repeaters we monitor -----------------------------
  *
  * The other half of 'time <epoch>'. Our own clock was set the moment the
@@ -3927,7 +4308,16 @@ static void monitorLoop() {
   /* No broker means nowhere to put the answers, and every poll costs the whole
    * mesh airtime. Same for a tired battery: monitoring is a luxury, staying
    * reachable is not. */
-  if (!_cfg.mqtt_enabled || _cfg.mqtt_host[0] == 0) return;
+  /* Een schrijfactie is de uitzondering, en dat is geen gemak maar de kern van
+   * waar ze voor bestaat. Zij rapporteert over HTTP aan wie haar vroeg en heeft
+   * de broker dus nergens voor nodig, terwijl een pollronde zonder broker
+   * zendtijd uitgeeft aan cijfers die nergens heen kunnen. Een installatie
+   * zonder internet, of met een broker die er even niet is, hoort een
+   * radio-instelling nog te kunnen rechtzetten -- dat is precies het soort
+   * moment waarop iemand het nodig heeft. */
+  if (!_cfg.mqtt_enabled || _cfg.mqtt_host[0] == 0) {
+    if (!_mwr_req_key[0] && _mwr_cur < 0) return;
+  }
   if (_batt_known && _batt_pct < _cfg.bat_mon) {
     /* A clock check that was running when the battery gave out has to be let
      * go here rather than left standing. These three early returns are the only
@@ -3936,6 +4326,9 @@ static void monitorLoop() {
      * request with 'er loopt er al een', for good, on a node nobody can reach
      * to reboot. Sunrise brings the next one; the site asks daily anyway. */
     if (_mclk_run) monClockFinish("batterij te laag");
+    // Dezelfde reden, en hier weegt hij zwaarder: een schrijfactie die blijft
+    // staan, weigert elke volgende met 'er loopt er al een' tot een herstart.
+    if (_mwr_cur >= 0) monWriteFinish("batterij te laag");
     return;
   }
 
@@ -3966,6 +4359,22 @@ static void monitorLoop() {
       monSettingsReply(_mon_reply, _mon_reply_len);
       return;
     }
+    /* Het antwoord op een schrijfactie, met dezelfde bewaking als hierboven en
+     * om een reden die hier nog een maat erger is. Tussen de 'set' en de 'get'
+     * ligt een pauze, en een laat duplicaat van het set-antwoord dat daarin
+     * binnenvalt zou als teruggelezen WAARDE geboekt worden. Dan zou er "OK" in
+     * de kolom staan waar de instelling hoort, en zou de hele terugleescontrole
+     * -- de reden dat dit blok bestaat -- precies het tegenovergestelde doen van
+     * wat ze belooft. Zolang _mwr_send_at staat, staat er niets uit. */
+    if (rtype == PAYLOAD_TYPE_TXT_MSG && _mon_state == MST_WSET_WAIT &&
+        _mwr_cur >= 0 && _mon[_mwr_cur].mesh_idx == idx) {
+      if (_mwr_send_at != 0) {
+        monTrace("wset laat antwoord in de pauze, genegeerd");
+        return;
+      }
+      monWriteReply(_mon_reply, _mon_reply_len);
+      return;
+    }
     /* The clock check's own answer. It needs no equivalent of the
      * _mset_send_at guard above, because there is no pause between two
      * commands here that a late duplicate could be misfiled into: 'clock sync'
@@ -3989,6 +4398,10 @@ static void monitorLoop() {
         int hops = _mesh->getMonitorPathLen(m.mesh_idx);
         monTrace("login OK len=%d, req %s hops=%d", _mon_reply_len,
                  hops < 0 ? "FLOOD" : "direct", hops);
+        // Een login die door een schrijfactie gezet is, gaat daarin verder.
+        // Vóór de andere twee omdat er hoogstens één van de drie gewapend is en
+        // deze de kortste is: iemand staat ervoor te wachten.
+        if (_mwr_cur >= 0) { monWriteSend(true); return; }
         // A login staged by a settings sweep continues into that, not a poll.
         if (_mset_cur >= 0) { monSettingsSend(); return; }
         // ... and one staged by the clock check into that. Only ever one of the
@@ -4042,6 +4455,16 @@ static void monitorLoop() {
 
   switch (_mon_state) {
     case MST_IDLE:
+      /* Een schrijfactie gaat voor alles. Ze is de kortste van de drie (twee
+       * commando's tegen twintig), ze is uitdrukkelijk gevraagd door iemand die
+       * ervoor een bevestiging heeft moeten typen, en ze is de enige waarbij
+       * wachten iets verandert aan wat er op het apparaat staat. */
+      if (_mwr_req_key[0]) {
+        if (passed(_mwr_req_until)) { _mwr_req_key[0] = 0; break; }
+        monWriteBegin();
+        break;
+      }
+
       /* A requested settings sweep goes before the scheduled poll round, and
        * that is the point of it: somebody is sitting in front of a page that
        * says "reload this in a minute". A round that has already started is
@@ -4100,6 +4523,12 @@ static void monitorLoop() {
       }
       monTrace("login timeout, giving up (retry=%u)", _mon_retry);
       _mon[_mon_cur].login_res = LOGIN_NOANSWER;
+      /* Een schrijfactie die niet eens binnenkwam is de gunstigste manier
+       * waarop deze weg kan falen: er is niets verstuurd, dus er staat met
+       * zekerheid niets veranderd. Dat is een heel ander bericht dan een 'set'
+       * die wel vertrok en waarvan het antwoord uitbleef, en de twee horen dus
+       * uit elkaar gehouden te worden. */
+      if (_mwr_cur >= 0) { monWriteFinish("login onbeantwoord"); break; }
       /* A settings sweep that never got in has nothing to say and does not
        * touch the backoff either: the backoff exists so dead entries stop
        * costing every poll round, and this was not a poll round. */
@@ -4227,6 +4656,44 @@ static void monitorLoop() {
         monTrace("klok %.6s antwoordde niet op zetten", _mon[_mclk_cur].key);
       }
       monClockNodeDone();
+      break;
+
+    /* Twee wachttijden in één toestand, net als MST_CLI_WAIT en om dezelfde
+     * reden: _mwr_send_at is de pauze vóór het teruglezen, _mon_deadline is hoe
+     * lang we luisteren nadat er iets vertrok. Precies één van de twee staat
+     * gewapend. */
+    case MST_WSET_WAIT:
+      if (_mwr_cur < 0) { _mon_state = MST_IDLE; break; }   // kan niet; kost niets
+
+      /* De achtervang. Elke weg hierboven wapent precies één van de twee
+       * deadlines, dus hier komen zou onmogelijk moeten zijn -- en juist daarom
+       * staat hij er. Deze machine houdt de pollrondes tegen zolang ze loopt, op
+       * een node waar niemand naartoe kan lopen om hem te herstarten. */
+      if (passed(_mwr_until)) { monWriteFinish("tijdsbudget op"); break; }
+
+      if (_mwr_send_at != 0) {
+        if (!passed(_mwr_send_at)) return;
+        _mwr_send_at = 0;
+        monWriteSend(false);
+        return;
+      }
+      if (!passed(_mon_deadline)) return;
+
+      /* Stilte, en welke van de twee het is doet er hier meer toe dan waar ook
+       * in dit bestand.
+       *
+       * Op stap 0 zwijgt het antwoord op de 'set'. Dat is GEEN mislukking: het
+       * commando is de lucht in gegaan en of het is aangekomen weten we niet.
+       * Het staat er dus zo, en niet anders. Op stap 1 weten we wat de 'set'
+       * antwoordde maar niet wat er nu werkelijk staat -- en dat laatste is de
+       * hele reden dat er teruggelezen wordt, dus ook dat is een eigen einde.
+       *
+       * Geen herhaling en geen flood. Een tweede 'set' zou het commando voor de
+       * tweede keer uitvoeren op een node die het misschien al aannam, en dat is
+       * bij 'advert.interval' onschuldig en bij niets anders. */
+      _mon[_mwr_cur].logged_in = false;
+      monWriteFinish(_mwr_step == 0 ? "geen antwoord op set"
+                                    : "geen antwoord op teruglezen");
       break;
 
     case MST_GAP:
@@ -6009,6 +6476,54 @@ static void cfgCli(char *reply, size_t reply_max, const char *fmt, ...) {
   _mesh->handleCommand(1, cmd, reply);
 }
 
+/* De waardecontrole, eenmaal. Geeft NULL terug als de waarde mag, en anders de
+ * reden in het Nederlands.
+ *
+ * Een eigen functie sinds er twee schrijfwegen zijn: /api/cfg zet een instelling
+ * op DEZE node, /api/moncfg laat de monitor er een zetten op een node die alleen
+ * over LoRa te bereiken is. Dat zijn twee vervoermiddelen en niet twee
+ * schrijfwegen, en dus hoort de zeef er één te zijn. Een tweede kopie zou vroeg
+ * of laat net iets soepeler blijken -- en dan zou juist de weg zonder tweede
+ * ingang de losse zijn, wat de verkeerde kant op is. */
+static const char *cfgCheckValue(const CfgParam *p, const char *value) {
+  float num = 0;
+  switch (p->kind) {
+    case CFG_TEXT:
+      if (!cfgNameOk(value)) {
+        return "leeg of met een teken dat niet mag ([ ] \\\\ : , ? * of een stuurteken)";
+      }
+      return NULL;
+    case CFG_BOOL:
+      /* MeshCore vergelijkt hier met memcmp(&config[n], \"on\", 2), dus alles wat
+       * met 'on' begint telt als aan en de rest als uit -- \"onzin\" zet het aan.
+       * Hier alleen precies de twee woorden, want dit is de enige plek waar een
+       * tikfout nog geweigerd kan worden. */
+      if (strcmp(value, "on") != 0 && strcmp(value, "off") != 0) return "moet on of off zijn";
+      return NULL;
+    case CFG_ENUM:
+      if (!cfgEnumOk(p->choices, value)) return "staat niet in de lijst met toegestane waarden";
+      return NULL;
+    case CFG_RADIO:
+      if (!cfgRadioOk(value)) {
+        return "moet 'freq bw sf cr' zijn: 150-2500 MHz, 7-500 kHz, sf 5-12, cr 5-8";
+      }
+      return NULL;
+    default: {                            // CFG_INT en CFG_FLOAT
+      bool ok = cfgNumber(value, num);
+      if (ok && (num < p->lo || num > p->hi)) ok = false;
+      if (ok && p->kind == CFG_INT && num != (float)(long)num) ok = false;
+      if (!ok) {
+        static char range[80];
+        snprintf(range, sizeof(range), "moet een %s tussen %g en %g zijn",
+                 p->kind == CFG_INT ? "geheel getal" : "getal", p->lo, p->hi);
+        return range;
+      }
+      return NULL;
+    }
+  }
+  return NULL;    // onbereikbaar; de compiler ziet dat niet aan een switch
+}
+
 static void handleCfgPost(AsyncWebServerRequest *req) {
   if (!requireAuth(req)) return;
 
@@ -6030,42 +6545,7 @@ static void handleCfgPost(AsyncWebServerRequest *req) {
     return;
   }
 
-  float num = 0;
-  const char *bad = NULL;                 // NULL = waarde in orde
-  switch (p->kind) {
-    case CFG_TEXT:
-      if (!cfgNameOk(value)) {
-        bad = "leeg of met een teken dat niet mag ([ ] \\\\ : , ? * of een stuurteken)";
-      }
-      break;
-    case CFG_BOOL:
-      /* MeshCore vergelijkt hier met memcmp(&config[n], \"on\", 2), dus alles wat
-       * met 'on' begint telt als aan en de rest als uit -- \"onzin\" zet het aan.
-       * Hier alleen precies de twee woorden, want dit is de enige plek waar een
-       * tikfout nog geweigerd kan worden. */
-      if (strcmp(value, "on") != 0 && strcmp(value, "off") != 0) bad = "moet on of off zijn";
-      break;
-    case CFG_ENUM:
-      if (!cfgEnumOk(p->choices, value)) bad = "staat niet in de lijst met toegestane waarden";
-      break;
-    case CFG_RADIO:
-      if (!cfgRadioOk(value)) {
-        bad = "moet 'freq bw sf cr' zijn: 150-2500 MHz, 7-500 kHz, sf 5-12, cr 5-8";
-      }
-      break;
-    default: {                            // CFG_INT en CFG_FLOAT
-      bool ok = cfgNumber(value, num);
-      if (ok && (num < p->lo || num > p->hi)) ok = false;
-      if (ok && p->kind == CFG_INT && num != (float)(long)num) ok = false;
-      if (!ok) {
-        static char range[80];
-        snprintf(range, sizeof(range), "moet een %s tussen %g en %g zijn",
-                 p->kind == CFG_INT ? "geheel getal" : "getal", p->lo, p->hi);
-        bad = range;
-      }
-      break;
-    }
-  }
+  const char *bad = cfgCheckValue(p, value);
   if (bad) {
     snprintf(body, sizeof(body),
              "{\"ok\":0,\"step\":\"waarde\",\"msg\":\"%s %s\"}", p->key, bad);
@@ -6184,6 +6664,161 @@ static void handleCfgList(AsyncWebServerRequest *req) {
                   (unsigned)p.risk, (unsigned)p.reboot, (unsigned)p.secret);
   }
   snprintf(body + n, sizeof(body) - n, "]}");
+  req->send(200, "application/json", body);
+}
+
+// --------------------------------- instellingen schrijven over LoRa, voor een
+//                                    node die deze node MONITORT
+
+/* De buffers van de toestandsmachine hierboven staan lang voor deze tabel, dus
+ * ze kennen haar maten niet. Dit is wat er gebeurt als er iemand aan draait. */
+static_assert(CFG_KEY_MAX <= MON_WSET_PARAM_MAX,
+              "MON_WSET_PARAM_MAX moet minstens CFG_KEY_MAX zijn");
+static_assert(CFG_VALUE_MAX <= MON_WSET_VALUE_MAX,
+              "MON_WSET_VALUE_MAX moet minstens CFG_VALUE_MAX zijn");
+
+/* POST /api/moncfg met key=<hex van de doelnode>, param=<sleutel>, value=<waarde>.
+ *
+ * Dezelfde tabel, dezelfde grenzen, dezelfde risicoklassen als /api/cfg -- en dat
+ * is de hele opzet. Er is één schrijfweg met twee vervoermiddelen: over IP naar
+ * een node die de server bereikt, en over LoRa via deze node naar een repeater
+ * die zij monitort. De tweede bestaat omdat er een dakrepeater is die stock
+ * MeshCore draait, geen IP-pad heeft en er ook nooit een krijgt. Het aardige
+ * eraan is welke node er nieuwe firmware voor nodig heeft: deze, de monitor. Het
+ * DOEL hoeft niets te leren en niets te krijgen.
+ *
+ * Antwoordt 202 en niet 200, en dat is geen kosmetiek: er is nog niets gebeurd.
+ * Over IP is een schrijfactie een aanroep van tienden van seconden; hier zijn het
+ * twee pakketten over een gedeelde band met een adempauze ertussen, en dat duurt
+ * tientallen seconden. De uitslag haal je op met GET /api/moncfg, en die blijft
+ * na afloop staan zodat een pagina die intussen herladen is hem alsnog vindt. */
+static void handleMonCfgPost(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+
+  char key[MON_KEY_HEX_MAX] = "", param[CFG_KEY_MAX] = "", value[CFG_VALUE_MAX] = "";
+  copyParam(req, "key", key, sizeof(key));
+  copyParam(req, "param", param, sizeof(param));
+  copyParam(req, "value", value, sizeof(value));
+
+  static char body[400];
+  const CfgParam *p = cfgFind(param);
+  if (!p) {
+    // Dezelfde tekst voor "bestaat niet" en "mag niet", om dezelfde reden als
+    // bij /api/cfg: aftasten levert niets op en de lijst is geen geheim.
+    snprintf(body, sizeof(body),
+             "{\"ok\":0,\"step\":\"sleutel\",\"msg\":\"deze parameter staat niet op de "
+             "lijst van wat er van afstand gezet mag worden\"}");
+    req->send(400, "application/json", body);
+    return;
+  }
+  const char *bad = cfgCheckValue(p, value);
+  if (bad) {
+    static char e_bad[240];
+    jsonEsc(e_bad, sizeof(e_bad), bad);
+    snprintf(body, sizeof(body),
+             "{\"ok\":0,\"step\":\"waarde\",\"msg\":\"%s %s\"}", p->key, e_bad);
+    req->send(400, "application/json", body);
+    return;
+  }
+
+  /* De sleutel uit de tabel en niet die uit het verzoek. Dezelfde afspraak als
+   * bij cfgCli(): er staat dan geen tekst van buiten in het commando behalve de
+   * waarde, en die is altijd het laatste woord. */
+  const char *why = "";
+  if (!monWriteRequest(key, p->key, value, &why)) {
+    static char e_why[160];
+    jsonEsc(e_why, sizeof(e_why), why);
+    snprintf(body, sizeof(body), "{\"ok\":0,\"step\":\"monitor\",\"msg\":\"%s\"}", e_why);
+    req->send(409, "application/json", body);
+    return;
+  }
+  snprintf(body, sizeof(body),
+           "{\"ok\":1,\"step\":\"\",\"busy\":1,\"msg\":\"gevraagd; twee commando's over LoRa, "
+           "haal de uitslag op met GET /api/moncfg\"}");
+  req->send(202, "application/json", body);
+}
+
+/* GET /api/moncfg -- de lopende of laatst afgeronde schrijfactie.
+ *
+ * Hier, en niet in de toestandsmachine, wordt uitgerekend wat er 'toegepast' en
+ * 'precies' heet. Die machine bewaart twee antwoorden als tekst; de betekenis
+ * eraan geven gebeurt met cfgSameValue() en cfgStripMarker(), dezelfde functies
+ * die /api/cfg gebruikt. Zo bestaat er één opvatting over wanneer
+ * "869.525 250 11 5" en "869.525,250,11,5" dezelfde waarde zijn.
+ *
+ * De velden lopen bewust gelijk met die van POST /api/cfg -- asked, applied,
+ * exact, step -- zodat de server er één soort antwoord van maakt en de pagina
+ * niet hoeft te weten langs welke weg het gegaan is. Wat er bij komt is 'busy',
+ * 'end' en 'seq': dit duurt lang genoeg om ernaar te moeten kijken, en 'seq'
+ * zegt of dit nog dezelfde opdracht is als die je zag. */
+static void handleMonCfgGet(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+
+  /* Ruim bemeten met opzet. Elk van de zes tekstvelden kan bij het ontsnappen
+   * verdubbelen, en een JSON-antwoord dat halverwege afgekapt wordt is geen
+   * onvolledig antwoord maar een onleesbaar antwoord -- de server gooit het weg
+   * en de pagina meldt 'niet bereikbaar' over een node die keurig antwoordde. */
+  static char body[1200];
+  if (_mwr_seq == 0) {
+    snprintf(body, sizeof(body),
+             "{\"seq\":0,\"busy\":0,\"ok\":0,\"step\":\"\",\"msg\":\"sinds de start van "
+             "deze node is er niets geschreven\",\"key\":\"\",\"param\":\"\","
+             "\"asked\":\"\",\"applied\":\"\",\"exact\":0,\"reboot\":0,\"end\":\"\",\"age\":0}");
+    req->send(200, "application/json", body);
+    return;
+  }
+
+  bool busy = (_mwr_cur >= 0);
+  const CfgParam *p = cfgFind(_mwr_param);
+
+  /* Wat er ná afloop in de node staat, of leeg als er niet teruggelezen kon
+   * worden. Dat laatste is een eigen uitslag en geen waarde: een leeg veld met
+   * 'end' ernaast zegt "we weten het niet", en dat is hier de eerlijke tekst. */
+  const char *applied = _mwr_get_reply[0] ? cfgStripMarker(_mwr_get_reply) : "";
+  bool got = applied[0] != 0 && !cfgIsError(applied);
+  bool refused = _mwr_set_reply[0] && cfgIsError(_mwr_set_reply);
+  bool exact = got && p && cfgSameValue(p, _mwr_asked, applied);
+  /* Wel vergeleken, niet verklapt -- net als bij /api/cfg. Het teruglezen is de
+   * reden dat dit bestaat, dus dat blijft; alleen gaat de waarde niet mee terug
+   * de wereld in. Over LoRa des te meer: dit antwoord reist over het lokale net
+   * naar een server die het in een pagina zet. */
+  if (p && p->secret && got) applied = "(verborgen)";
+
+  /* 'ok' betekent hier precies één ding: er is teruggelezen en er staat iets.
+   * Nadrukkelijk niet "de node zei OK" -- dat is juist de bewering die deze hele
+   * weg niet vertrouwt. Een 'set' die met een foutregel antwoordde is niet ok;
+   * een 'set' die "OK" zei maar waarvan het teruglezen zweeg ook niet, want dan
+   * weten we niet wat er staat. */
+  bool ok = !busy && got && !refused;
+  const char *step = "";
+  if (busy) step = "bezig";
+  /* De volgorde is de volgorde van toenemende onzekerheid, en die is hier de
+   * hele boodschap. Niet verstuurd = met zekerheid niets veranderd. Verstuurd en
+   * stil = we weten het niet. Gezet maar niet gelezen = er staat misschien iets
+   * anders dan gevraagd en dat is niet vastgesteld. */
+  else if (!_mwr_sent) step = "niet_verstuurd";          // er is niets vertrokken
+  else if (!_mwr_set_reply[0]) step = "geen_antwoord";   // de 'set' bleef stil
+  else if (refused) step = "node";                       // de node weigerde
+  else if (!got) step = "geen_teruglezing";              // wel gezet, niet gelezen
+
+  static char e_key[MON_KEY_HEX_MAX], e_param[CFG_KEY_MAX * 2];
+  static char e_asked[CFG_VALUE_MAX * 2], e_applied[MON_WSET_REPLY_MAX * 2];
+  static char e_set[MON_WSET_REPLY_MAX * 2], e_end[128];
+  jsonEsc(e_key, sizeof(e_key), _mwr_key);
+  jsonEsc(e_param, sizeof(e_param), _mwr_param);
+  jsonEsc(e_asked, sizeof(e_asked), _mwr_asked);
+  jsonEsc(e_applied, sizeof(e_applied), applied);
+  jsonEsc(e_set, sizeof(e_set), _mwr_set_reply);
+  jsonEsc(e_end, sizeof(e_end), _mwr_end);
+
+  unsigned long since = busy ? (millis() - _mwr_started) : (millis() - _mwr_done_at);
+  snprintf(body, sizeof(body),
+           "{\"seq\":%lu,\"busy\":%d,\"ok\":%d,\"step\":\"%s\",\"msg\":\"\","
+           "\"key\":\"%s\",\"param\":\"%s\",\"asked\":\"%s\",\"applied\":\"%s\","
+           "\"exact\":%d,\"reboot\":%d,\"reply\":\"%s\",\"end\":\"%s\",\"age\":%lu}",
+           (unsigned long)_mwr_seq, busy ? 1 : 0, ok ? 1 : 0, step,
+           e_key, e_param, e_asked, e_applied, exact ? 1 : 0,
+           (p && p->reboot) ? 1 : 0, e_set, e_end, (unsigned long)(since / 1000UL));
   req->send(200, "application/json", body);
 }
 
@@ -6570,6 +7205,67 @@ static void handleMonCommand(const char *arg, char *reply) {
     snprintf(reply, 155, "OK - sweep gevraagd, %d parameters over LoRa", SET_PARAM_COUNT);
     return;
   }
+  /* De schrijfweg, vanaf een seriële kabel, de telnetconsole of de mesh-CLI.
+   *
+   * Niet alleen om te kunnen diagnosticeren, al is dat de reden dat 'settings'
+   * hierboven bestaat. Deze staat er ook omdat de mesh-CLI de weg is die als
+   * laatste wegvalt: WiFi kan weg zijn, de site kan plat liggen, de broker kan
+   * weg zijn -- en dan kan een instelling op de dakrepeater nog steeds gezet
+   * worden vanaf een telefoon met de companion-app. Dat is precies het geval
+   * waarvoor een node op een dak deze module draagt.
+   *
+   * 'wifi mon set' zonder meer meldt hoe de laatste afliep, en wat er staat is
+   * wat er is TERUGGELEZEN -- nooit wat de node op de 'set' antwoordde. */
+  if ((v = subArg(arg, "set")) != NULL) {
+    if (*v == 0) {
+      if (_mwr_cur >= 0) {
+        snprintf(reply, 155, "bezig voor %.12s: %s = %s, stap %s",
+                 _mon[_mwr_cur].key, _mwr_param, _mwr_asked,
+                 _mwr_step == 0 ? "zetten" : "teruglezen");
+      } else if (_mwr_seq == 0) {
+        snprintf(reply, 155, "nog niets geschreven; gebruik: wifi mon set <hex> <param> <waarde>");
+      } else {
+        snprintf(reply, 155, "laatste: %.12s %s gevraagd %s, staat nu %s (%s, %lu min geleden)",
+                 _mwr_key, _mwr_param, _mwr_asked,
+                 _mwr_get_reply[0] ? cfgStripMarker(_mwr_get_reply) : "(niet gelezen)",
+                 _mwr_end, (unsigned long)((millis() - _mwr_done_at) / 60000UL));
+      }
+      return;
+    }
+    /* <hex> <param> <waarde>. De waarde is alles na de parameter, spaties en al,
+     * want 'radio' bestaat uit vier getallen. */
+    char key[MON_KEY_HEX_MAX] = "", param[CFG_KEY_MAX] = "";
+    const char *p1 = strchr(v, ' ');
+    if (!p1) { strcpy(reply, "Err - wifi mon set <hex> <param> <waarde>"); return; }
+    size_t klen = (size_t)(p1 - v);
+    if (klen >= sizeof(key)) { strcpy(reply, "Err - sleutel te lang"); return; }
+    memcpy(key, v, klen); key[klen] = 0;
+    while (*p1 == ' ') p1++;
+    const char *p2 = strchr(p1, ' ');
+    if (!p2) { strcpy(reply, "Err - geen waarde opgegeven"); return; }
+    size_t plen = (size_t)(p2 - p1);
+    if (plen >= sizeof(param)) { strcpy(reply, "Err - onbekende parameter"); return; }
+    memcpy(param, p1, plen); param[plen] = 0;
+    while (*p2 == ' ') p2++;
+
+    const CfgParam *cp = cfgFind(param);
+    if (!cp) { strcpy(reply, "Err - die parameter staat niet op de lijst"); return; }
+    if (strlen(p2) >= CFG_VALUE_MAX) { strcpy(reply, "Err - waarde te lang"); return; }
+    const char *bad = cfgCheckValue(cp, p2);
+    if (bad) { snprintf(reply, 155, "Err - %s %s", cp->key, bad); return; }
+
+    const char *why = "";
+    if (!monWriteRequest(key, cp->key, p2, &why)) { snprintf(reply, 155, "Err - %s", why); return; }
+    /* Geen bevestiging hier, en dat is geen vergeetachtigheid. De risicoklassen
+     * bewaken een KNOP: die wordt aangeklikt, soms op de verkeerde regel, door
+     * iemand die de gevolgen niet overziet. Hier zit een mens die een
+     * wachtwoord heeft ingetypt en die de hele regel zelf uitschrijft, precies
+     * zoals bij 'set' op de node zelf. Dezelfde afweging als bij de
+     * telnetconsole hieronder. */
+    snprintf(reply, 155, "OK - %s %s gaat over LoRa naar %.12s; 'wifi mon set' voor de uitslag",
+             cp->key, p2, key);
+    return;
+  }
   if ((v = subArg(arg, "trace")) != NULL) {
     /* One line per call: a CLI reply is 160 bytes, and this has to be readable
      * over the mesh from wherever you happen to be. 0 = newest. */
@@ -6582,7 +7278,8 @@ static void handleMonCommand(const char *arg, char *reply) {
     return;
   }
   strcpy(reply, "Err - wifi mon [list <n>|add <hex> [naam]|del <hex>|pass <hex> [woord]|"
-                "on <hex>|off <hex>|iv <s>|poll|settings [hex]|trace <n>]");
+                "on <hex>|off <hex>|iv <s>|poll|settings [hex]|set [<hex> <param> <waarde>]|"
+                "trace <n>]");
 }
 
 static void handleSettingsCommand(const char *arg, char *reply) {
@@ -6936,6 +7633,13 @@ void mmnet_begin(FS &fs, MyMesh *mesh) {
   _server.on("/api/filter", HTTP_POST, handleFilterPost);
   _server.on("/api/cfg", HTTP_GET, handleCfgList);
   _server.on("/api/cfg", HTTP_POST, handleCfgPost);
+  /* Dezelfde schrijfweg, ander vervoermiddel: /api/cfg zet iets op DEZE node,
+   * /api/moncfg laat deze node iets zetten op een repeater die hij monitort,
+   * over LoRa. Bewust een tweede pad en niet een vlag op het eerste: het
+   * antwoord is van een andere soort (er is nog niets gebeurd) en het duurt
+   * tientallen seconden in plaats van tienden. */
+  _server.on("/api/moncfg", HTTP_GET, handleMonCfgGet);
+  _server.on("/api/moncfg", HTTP_POST, handleMonCfgPost);
   _server.on("/api/fw", HTTP_GET, fwState);
   _server.on("/api/fw", HTTP_POST, fwDone, NULL, fwBody);
   _server.on("/api/fw/rollback", HTTP_POST, fwRollbackPost);

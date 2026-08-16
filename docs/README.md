@@ -130,6 +130,7 @@ cover.
 | **What can I actually do with my nodes?** | **[`node-management.md`](node-management.md)** |
 | How do I bring a node under management? | [`node-management.md`](node-management.md) |
 | Which settings am I allowed to change remotely? | [`node-management.md`](node-management.md) |
+| How do I change a setting on a repeater I can only reach over LoRa? | [`node-management.md`](node-management.md) |
 | My node did not come back after an upgrade | [`node-management.md`](node-management.md) |
 | My commands get no answer at all | [`node-management.md`](node-management.md) |
 | What does this word mean? | [`glossary.md`](glossary.md) |

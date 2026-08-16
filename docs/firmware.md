@@ -668,6 +668,8 @@ companion node.
 | `/api/restore` | POST | basic | Upload a backup, then reboot |
 | `/api/cfg` | GET | basic | Which CLI parameters may be set remotely, with their type, bounds, allowed words and risk class (2.1.0+) |
 | `/api/cfg` | POST | basic | Set one of them and read it straight back — see [`node-management.md`](node-management.md) (2.1.0+) |
+| `/api/moncfg` | GET | basic | The running or last-finished write to a **monitored** repeater over LoRa: what was asked, what was read back, and how it ended (2.4.0+) |
+| `/api/moncfg` | POST | basic | Set one parameter on a repeater this node monitors, over LoRa, then read it back. Answers `202` — nothing has happened yet; two packets over a shared band take tens of seconds (2.4.0+) |
 | `/api/fw` | GET | basic | Installed version, build environment, which partition runs, what the other one holds (1.12.0+) |
 | `/api/fw` | POST | basic | Firmware image as the raw body, digest checked before the boot partition is switched — see [`firmware-upgrade.md`](firmware-upgrade.md) (1.12.0+) |
 | `/api/fw/rollback` | POST | basic | Boot the other application partition again (1.12.0+) |
@@ -1230,6 +1232,20 @@ Startable from any CLI as well as from MQTT: `wifi mon settings <hex>` starts on
 and reports on the previous one, and `wifi mon trace` shows the sequence. That
 matters more here than anywhere else in this module, because this failure mode is
 silent by nature.
+
+The same table runs the other way round since 2.4.0: `wifi mon set <hex> <param>
+<value>`, or `POST /api/moncfg`, writes **one** parameter to a monitored repeater
+over LoRa and then reads that parameter back — and it is the read-back that gets
+reported, never what the node answered to the `set`. Two commands with a pause
+between them, one at a time, a minute between two writes, and a hard ninety-second
+ceiling. The failure that is new here is silence *after* the `set` has left: the
+command went out and whether it landed cannot be seen from this side, which is
+reported as exactly that rather than as a failure. Full reasoning in
+[`node-management.md`](node-management.md#writing-over-lora-through-the-monitor).
+
+Note which node needs this firmware: **the monitor**. The repeater being written
+to receives two ordinary CLI commands and needs to know nothing — which is the
+whole reason this route exists for a node that will not be reflashed for months.
 
 ### 4.12 Clock synchronisation
 

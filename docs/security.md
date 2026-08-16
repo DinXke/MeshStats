@@ -43,6 +43,15 @@ and radio parameters. Both go over HTTP to the node's own management page, and
 both require the node's web login — which the server holds in
 `MM_FW_NODE_USER` / `MM_FW_NODE_PASS`, in the environment.
 
+Since firmware 2.4.0 that reach extends one hop further: `POST /api/moncfg` asks
+a node you own to set a CLI parameter on a repeater it **monitors**, over LoRa.
+It uses the same credentials — the monitor's web login — and no secret of the
+target, because the monitor holds whatever gets it in, or needs none because the
+far side put our key in its access list. The honest way to read this: those two
+variables now reach every node the server can talk to over IP *and* every
+repeater those nodes hold admin rights on. Both remain closed when the variables
+are unset.
+
 So the honest sentence is: **if you set those two variables, a full compromise of
 the website gives an attacker whatever those credentials allow — which is
 firmware write on every node the server can reach over IP.** If you do not set

@@ -155,7 +155,7 @@
  * Zo is de overgang na het flashen af te lezen in plaats van te moeten
  * geloven. */
 #define MESHMANAGER_NAME     "MeshManager (by DinX)"
-#define MESHMANAGER_VERSION  "2.3.0"
+#define MESHMANAGER_VERSION  "2.4.0"
 
 class MyMesh;
 
@@ -229,7 +229,13 @@ int meshmanager_batt_percent(uint16_t milli_volts);
  *                        and reports on the previous one; together with 'wifi
  *                        mon trace' that is how a sweep which fails silently
  *                        (see the admin-rights note above) gets diagnosed
- *                        without a serial cable.
+ *                        without a serial cable. Since 2.4.0 'wifi mon set
+ *                        <hex> <param> <waarde>' does the same thing the other
+ *                        way round: it writes ONE CLI setting to a monitored
+ *                        repeater over LoRa and then reads that parameter back,
+ *                        so what is reported is what stands in the node rather
+ *                        than what it answered. 'wifi mon set' on its own shows
+ *                        how the last one ended.
  *   wifi fw              which version runs from which application partition,
  *                        which build environment this image was compiled for,
  *                        what the other partition holds and how the last upload

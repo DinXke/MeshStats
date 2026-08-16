@@ -44,6 +44,15 @@ zendvermogen en radioparameters inbegrepen. Allebei lopen ze over HTTP naar de
 beheerpagina van de node zelf, en allebei vragen ze de weblogin van die node —
 die de server bijhoudt in `MM_FW_NODE_USER` / `MM_FW_NODE_PASS`, in de omgeving.
 
+Sinds firmware 2.4.0 reikt dat een hop verder: `POST /api/moncfg` vraagt een node
+van jezelf om een CLI-parameter te zetten op een repeater die hij **monitort**,
+over LoRa. Het gebruikt dezelfde gegevens — de weblogin van de monitor — en geen
+enkel geheim van het doel, want de monitor houdt zelf wat hem binnenlaat, of
+heeft niets nodig omdat de overkant onze sleutel in zijn toegangslijst zette. De
+eerlijke lezing: die twee variabelen reiken nu tot elke node die de server over
+IP kan aanspreken én tot elke repeater waarop die nodes adminrechten hebben.
+Allebei blijven ze dicht als de variabelen niet gezet zijn.
+
 De eerlijke zin luidt dus: **zet je die twee variabelen, dan geeft een volledige
 compromittering van de website een aanvaller alles wat die inloggegevens
 toelaten — en dat is firmware schrijven naar elke node die de server over IP

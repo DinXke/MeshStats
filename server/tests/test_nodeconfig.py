@@ -43,6 +43,42 @@ def rep(**overrides):
     return row
 
 
+def bestaande(db, **overrides):
+    """Dezelfde node, maar dan als rij die werkelijk in de databank staat.
+
+    Sinds ``write()`` de teruggelezen waarde ook hier vastlegt -- anders blijft de
+    kolom 'Nu' de oude waarde tonen naast een melding dat het gelukt is -- is een
+    verzonnen dict met een id dat nergens bestaat niet meer genoeg. De rij in
+    ``repeater_cli`` hangt aan een echte repeater.
+    """
+    row = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+    db.execute("UPDATE repeaters SET fw_meshmanager='2.1.0', "
+               "ota_host='http://node.invalid', source_prefix='55d9a320a4e3' "
+               "WHERE id=?", (row["id"],))
+    out = dict(db.qone("SELECT * FROM repeaters WHERE id=?", (row["id"],)))
+    out.update(overrides)
+    return out
+
+
+# De dakrepeater, zoals hij werkelijk in de databank staat: stock MeshCore, geen
+# beheeradres, en zijn cijfers komen binnen via DinX-Home. Twee rijen, want de
+# schrijfweg over LoRa is een uitspraak over de MONITOR en niet over het doel.
+DAK = "e3d3f4d7edd0"
+MONITOR = "55d9a320a4e3"
+
+
+def doorgestuurd(db, *, monitor_fw="2.4.0", monitor_host="http://monitor.invalid"):
+    """(doelrij, monitorrij). Beide echt, zodat cfg_route de monitor kan vinden."""
+    mon = db.get_or_create_repeater(MONITOR, "DinX-Home")
+    db.execute("UPDATE repeaters SET fw_meshmanager=?, ota_host=?, source_prefix=? "
+               "WHERE id=?", (monitor_fw, monitor_host, MONITOR, mon["id"]))
+    doel = db.get_or_create_repeater(DAK, "JessaZH")
+    db.execute("UPDATE repeaters SET fw_meshmanager='', ota_host='', source_prefix=? "
+               "WHERE id=?", (MONITOR, doel["id"]))
+    return (dict(db.qone("SELECT * FROM repeaters WHERE id=?", (doel["id"],))),
+            dict(db.qone("SELECT * FROM repeaters WHERE id=?", (mon["id"],))))
+
+
 LIJST = {"params": [
     {"key": "name", "kind": "text", "lo": 0, "hi": 0, "tier": 1},
     {"key": "lat", "kind": "float", "lo": -90, "hi": 90, "tier": 1},
@@ -63,12 +99,20 @@ def test_zonder_inloggegevens_geen_schrijfweg(monkeypatch):
     assert nodeconfig.cfg_route(rep())["blocker"] == "no_credentials"
 
 
-def test_doorgestuurde_node_krijgt_een_blijvende_reden(monkeypatch):
-    """De dakrepeater. Geen ontbrekende instelling maar een blijvende toestand:
-    stock MeshCore, geen IP-pad, en de weg via zijn monitor bestaat nog niet."""
-    route = nodeconfig.cfg_route(rep(pubkey_prefix="e3d3f4d7edd0",
-                                     source_prefix="55d9a320a4e3", ota_host=""))
-    assert route["blocker"] == "relayed_only" and route["can"] is False
+def test_doorgestuurde_node_gaat_over_de_monitor(db, monkeypatch):
+    """De dakrepeater. Hij heeft geen IP-pad en krijgt er nooit een, dus de weg
+    loopt over zijn monitor: dáár klopt de server aan, en die zet het over LoRa.
+
+    Wat deze test vooral vastlegt is welke node de eisen draagt. Het adres, de
+    firmwareversie en de weblogin gaan alle drie over de MONITOR. Het doel draait
+    stock MeshCore en hoeft niets -- dat is de hele reden dat deze weg bestaat."""
+    doel, mon = doorgestuurd(db)
+    route = nodeconfig.cfg_route(doel)
+    assert route["can"] is True
+    assert route["transport"] == "mesh"
+    assert route["host"] == mon["ota_host"]     # de monitor, niet het doel
+    assert route["target"] == DAK               # en het doel reist mee als sleutel
+    assert route["fw"] == "2.4.0"               # de versie van de monitor
 
 
 def test_eigen_node_zonder_adres(monkeypatch):
@@ -172,7 +216,7 @@ def test_gelukt_en_precies(db, monkeypatch):
                           "applied": "50.5", "exact": 1, "reply": "OK"})
 
     monkeypatch.setattr(nodeconfig, "_open", nep)
-    uit = nodeconfig.write(rep(), "lat", "50.5")
+    uit = nodeconfig.write(bestaande(db), "lat", "50.5")
     assert uit["ok"] is True and uit["exact"] is True and uit["applied"] == "50.5"
     assert b"key=lat" in verstuurd["data"]
 
@@ -186,7 +230,7 @@ def test_gelukt_maar_niet_precies_wordt_als_zodanig_gemeld(db, monkeypatch):
     monkeypatch.setattr(nodeconfig, "_open", lambda *a, **k: _Antwoord(
         {"ok": 1, "step": "", "key": "advert.interval", "asked": "61",
          "applied": "60", "exact": 0, "reply": "OK"}))
-    uit = nodeconfig.write(rep(), "advert.interval", "61")
+    uit = nodeconfig.write(bestaande(db), "advert.interval", "61")
     assert uit["ok"] is True
     assert uit["exact"] is False
     assert uit["asked"] == "61" and uit["applied"] == "60"
@@ -299,7 +343,7 @@ def test_gewone_waarde_heeft_geen_bevestiging_nodig(db, monkeypatch):
     monkeypatch.setattr(nodeconfig, "_open", lambda *a, **k: _Antwoord(
         {"ok": 1, "step": "", "key": "name", "asked": "X", "applied": "X",
          "exact": 1, "reply": "OK"}))
-    assert nodeconfig.write(rep(), "name", "X")["ok"] is True
+    assert nodeconfig.write(bestaande(db), "name", "X")["ok"] is True
 
 
 def test_merkbare_waarde_zonder_bevestiging_gaat_niet_de_deur_uit(db, monkeypatch):
@@ -318,7 +362,7 @@ def test_merkbare_waarde_met_bevestiging_mag(db, monkeypatch):
     monkeypatch.setattr(nodeconfig, "_open", lambda *a, **k: _Antwoord(
         {"ok": 1, "step": "", "key": "flood.max", "asked": "32", "applied": "32",
          "exact": 1, "reply": "OK"}))
-    assert nodeconfig.write(rep(), "flood.max", "32", confirm="ja")["ok"] is True
+    assert nodeconfig.write(bestaande(db), "flood.max", "32", confirm="ja")["ok"] is True
 
 
 def test_afsnijdende_waarde_eist_de_naam_van_de_node(db, monkeypatch):
@@ -338,7 +382,7 @@ def test_afsnijdende_waarde_met_de_juiste_naam_mag(db, monkeypatch):
     monkeypatch.setattr(nodeconfig, "_open", lambda *a, **k: _Antwoord(
         {"ok": 1, "step": "", "key": "tx", "asked": "10", "applied": "10",
          "exact": 1, "reply": "OK"}))
-    assert nodeconfig.write(rep(), "tx", "10", confirm="DinX-Home")["ok"] is True
+    assert nodeconfig.write(bestaande(db), "tx", "10", confirm="DinX-Home")["ok"] is True
 
 
 # --- de nieuwe soorten --------------------------------------------------------
@@ -452,7 +496,12 @@ def _render(**over):
                   "fw_meshmanager": "2.1.0", "min_fw": "1.8.0", "node_seen": None,
                   "node_stale": False, "ha": False, "poller_seen": None},
         "cfg_route": {"can": True, "blocker": "", "host": "http://x",
-                      "fw": "2.1.0", "min_fw": "2.1.0", "relayed": False},
+                      "fw": "2.1.0", "min_fw": "2.1.0", "relayed": False,
+                      "transport": "ip", "target": "", "monitor": ""},
+        # De vorige schrijfactie van de monitor. Hier: er is er nooit een geweest,
+        # want deze reeks gaat over de weg over IP.
+        "cfg_mesh": {"ok": False, "error": "", "job": {}},
+        "cfg_mesh_steps": nc.MESH_STEPS,
         "cfg_params": {"ok": True, "error": "", "params": params},
         "cfg_groups": [(r, [q for q in params if q["risk"] == r])
                        for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],
@@ -498,7 +547,9 @@ def test_een_opsomming_wordt_een_keuzelijst_en_geen_tekstveld():
     dat een node kan breken."""
     html = _render()
     for woord in ("off", "minimal", "moderate", "strict"):
-        assert f'<option value="{woord}">' in html
+        # Zonder het sluithaakje: een keuze kan sinds het voorvullen ook
+        # 'selected' dragen, en die vlag hoort deze test niet te toetsen.
+        assert f'<option value="{woord}"' in html
 
 
 def test_een_getal_krijgt_de_grenzen_van_de_node_mee():
@@ -528,16 +579,27 @@ def test_de_middelste_klasse_vraagt_een_uitdrukkelijke_bevestiging():
     assert 'name="confirm" value="ja"' in html
 
 
-@pytest.mark.parametrize("blocker,zin", [
-    ("no_credentials", "geen weblogin voor de beheerpagina"),
-    ("relayed_only", "blijvende toestand"),
-    ("no_host", "geen beheeradres"),
-    ("old_fw", "bestaat pas vanaf"),
-    ("no_fw", "meldt geen versie"),
+@pytest.mark.parametrize("blocker,transport,zin", [
+    ("no_credentials", "ip", "geen weblogin voor de beheerpagina van <em>deze</em>"),
+    ("no_host", "ip", "geen beheeradres"),
+    ("old_fw", "ip", "bestaat pas vanaf"),
+    ("no_fw", "ip", "meldt geen versie"),
+    # En de vier van de weg over LoRa. Ze gaan alle vier over de MONITOR, en dat
+    # verschil moet uit de zin blijken: wie leest dat "deze node" geen firmware
+    # heeft, gaat de verkeerde node flashen -- en dat is bij de dakrepeater een
+    # ladder.
+    ("no_credentials", "mesh", "beheerpagina van de <em>monitor</em>"),
+    ("relay_unknown", "mesh", "die node is hier zelf niet"),
+    ("no_relay_host", "mesh", "loopt via zijn"),
+    ("relay_no_fw", "mesh", "meldt geen versie van onze firmware"),
+    ("relay_old_fw", "mesh", "de monitor die die versie nodig heeft"),
 ])
-def test_elke_reden_om_niet_te_kunnen_schrijven_krijgt_zijn_eigen_zin(blocker, zin):
+def test_elke_reden_om_niet_te_kunnen_schrijven_krijgt_zijn_eigen_zin(blocker, transport, zin):
     html = _render(cfg_route={"can": False, "blocker": blocker, "host": "",
-                              "fw": "2.0.0", "min_fw": "2.1.0", "relayed": False})
+                              "fw": "2.0.0", "min_fw": "2.1.0",
+                              "relayed": transport == "mesh", "transport": transport,
+                              "target": DAK, "monitor": "DinX-Home"},
+                   relay={"name": "DinX-Home", "id": 2})
     assert zin in html
     assert 'action="/admin/repeaters/1/config"' not in html
 
@@ -709,15 +771,18 @@ def test_een_leeg_wachtwoord_zet_terug_op_de_acl_weg(db, monkeypatch):
     assert b"pass=" in gezien["data"]
 
 
-def test_een_doorgestuurde_node_klaagt_nooit_over_serverinloggegevens(monkeypatch):
-    """De ontwerpfout die dit vangt. 'De server heeft geen inloggegevens' stond
-    bovenaan in de volgorde en kreeg daardoor ook de doorgestuurde nodes te
-    pakken -- terwijl juist voor die nodes de server nooit inloggegevens hoeft te
-    hebben. Hun rechten horen bij de monitor."""
+def test_de_weblogin_van_een_doorgestuurde_node_is_die_van_de_monitor(db, monkeypatch):
+    """De ontwerpfout die dit vangt, in zijn huidige vorm.
+
+    Zonder weblogin ligt ook de LoRa-weg dicht, en dat lijkt op de oude fout maar
+    is het niet: het gaat om de login van de MONITOR, een node van onszelf. Wat de
+    server nooit hoeft te kennen is een geheim van het DOEL -- die rechten horen
+    bij de monitor, in zijn eigen monitorlijst, of ze bestaan niet omdat de
+    overkant onze sleutel in zijn toegangslijst zette. De pagina zegt dat er dan
+    ook bij; zie de sjabloontest verderop."""
+    doel, _ = doorgestuurd(db)
     monkeypatch.setattr(firmware, "NODE_USER", "")
-    route = nodeconfig.cfg_route(rep(pubkey_prefix="e3d3f4d7edd0",
-                                     source_prefix="55d9a320a4e3", ota_host=""))
-    assert route["blocker"] == "relayed_only"
+    assert nodeconfig.cfg_route(doel)["blocker"] == "no_credentials"
 
 
 def test_een_eigen_node_zonder_weblogin_klaagt_daar_wel_over(monkeypatch):
@@ -735,8 +800,9 @@ def test_elke_stilte_krijgt_zijn_eigen_diagnose_op_de_pagina(diagnose, zin):
     """De drie stiltes zien er van een afstand identiek uit, en dat is waar
     iemand een half uur op verliest."""
     html = _render(
-        cfg_route={"can": False, "blocker": "relayed_only", "host": "",
-                   "fw": "", "min_fw": "2.1.0", "relayed": True},
+        cfg_route={"can": False, "blocker": "no_relay_host", "host": "",
+                   "fw": "", "min_fw": "2.4.0", "relayed": True,
+                   "transport": "mesh", "target": DAK, "monitor": "DinX-Home"},
         relay={"name": "DinX-Home", "id": 2},
         rights={"ok": True, "known": True, "mode": "acl", "diagnosis": diagnose,
                 "polls": 4, "oks": 4 if diagnose == "goed" else 0,
@@ -746,8 +812,9 @@ def test_elke_stilte_krijgt_zijn_eigen_diagnose_op_de_pagina(diagnose, zin):
 
 def test_de_toegangslijst_wordt_als_de_betere_weg_gepresenteerd():
     html = _render(
-        cfg_route={"can": False, "blocker": "relayed_only", "host": "",
-                   "fw": "", "min_fw": "2.1.0", "relayed": True},
+        cfg_route={"can": False, "blocker": "no_relay_host", "host": "",
+                   "fw": "", "min_fw": "2.4.0", "relayed": True,
+                   "transport": "mesh", "target": DAK, "monitor": "DinX-Home"},
         relay={"name": "DinX-Home", "id": 2},
         rights={"ok": True, "known": True, "mode": "password", "diagnosis": "goed",
                 "polls": 2, "oks": 2, "heard": True, "error": ""})
@@ -758,8 +825,326 @@ def test_de_toegangslijst_wordt_als_de_betere_weg_gepresenteerd():
 def test_een_doorgestuurde_node_vraagt_niet_om_serverinloggegevens_op_de_pagina():
     """De ontwerpfout zoals Björn hem zag: 'de server heeft geen inloggegevens'
     onder een node waarvoor de server die nooit hoeft te hebben."""
-    html = _render(cfg_route={"can": False, "blocker": "relayed_only", "host": "",
-                              "fw": "", "min_fw": "2.1.0", "relayed": True},
+    html = _render(cfg_route={"can": False, "blocker": "no_relay_host", "host": "",
+                              "fw": "", "min_fw": "2.4.0", "relayed": True,
+                              "transport": "mesh", "target": DAK, "monitor": ""},
                    relay=None, rights=None)
     assert "MM_FW_NODE_USER" not in html
-    assert "horen bij zijn monitor" in html
+    assert "op de rij van die monitor" in html
+
+
+# --- schrijven over LoRa, via de monitor --------------------------------------
+#
+# De weg waarvoor dit project bestaat, en de enige die niet met de hand te
+# beproeven valt: het doel is een stock MeshCore-repeater op een dak waar
+# nadrukkelijk niets naartoe geschreven mag worden zolang dit in aanbouw is. Dus
+# staat hier een nagebootste monitor. Wat hij nabootst is precies wat de echte
+# doet: de opdracht aannemen, er even mee bezig zijn, en dan melden wat hij heeft
+# TERUGGELEZEN -- nooit wat de node op het zetten antwoordde.
+
+
+def klus(**over):
+    """Een antwoord van GET /api/moncfg, met de velden die de firmware stuurt."""
+    uit = {"seq": 1, "busy": 0, "ok": 1, "step": "", "msg": "", "key": DAK,
+           "param": "tx", "asked": "17", "applied": "17", "exact": 1,
+           "reboot": 0, "reply": "OK", "end": "klaar", "age": 12}
+    uit.update(over)
+    return uit
+
+
+class NepMonitor:
+    """Een monitor die doet alsof hij over LoRa schrijft.
+
+    De POST wordt aangenomen (of geweigerd, met de reden die de echte ook geeft),
+    en elke GET levert de volgende toestand uit ``toestanden``. De laatste blijft
+    staan, want zo gedraagt de echte zich ook: de uitslag blijft daar tot er een
+    volgende opdracht komt, en dat is waarom de server hem niet zelf hoeft te
+    bewaren.
+    """
+
+    def __init__(self, *toestanden, weiger=None):
+        self.toestanden = list(toestanden) or [klus()]
+        self.weiger = weiger
+        self.posts = []
+        self.gets = 0
+
+    def __call__(self, host, path, data=None, timeout=10):
+        if data is not None:
+            self.posts.append((host, path, data))
+            if self.weiger is not None:
+                raise urllib.error.HTTPError(
+                    "u", 409, "Conflict", {}, _Fake(json.dumps(self.weiger).encode()))
+            return _Antwoord({"ok": 1, "busy": 1, "step": ""})
+        self.gets += 1
+        return _Antwoord(self.toestanden[min(self.gets - 1, len(self.toestanden) - 1)])
+
+
+@pytest.fixture
+def geen_wachttijd(monkeypatch):
+    """De pauze tussen twee opvragingen weg. Die is er voor een echte radio."""
+    monkeypatch.setattr(nodeconfig, "MESH_POLL_S", 0)
+
+
+def _mesh(db, monkeypatch, monitor):
+    """De dakrepeater, met een nagebootste monitor ervoor.
+
+    De lijst is die van de MONITOR -- want die zendt -- en hij is hier de volle
+    lijst plus advert.interval, de parameter waarvan MeshCore 61 als 60 opslaat.
+    Juist die maakt zichtbaar waar het teruglezen voor bestaat.
+    """
+    lijst = VOLLE_LIJST + [{"key": "advert.interval", "kind": "int", "lo": 60,
+                            "hi": 240, "choices": "", "risk": 1, "reboot": 0}]
+    monkeypatch.setattr(nodeconfig, "params",
+                        lambda host, force=False: {"ok": True, "error": "",
+                                                   "params": lijst, "at": 0})
+    monkeypatch.setattr(nodeconfig, "_open", monitor)
+    doel, _ = doorgestuurd(db)
+    return doel
+
+
+def test_de_opdracht_gaat_naar_de_monitor_met_het_doel_erin(db, monkeypatch, geen_wachttijd):
+    """Het adres is dat van de monitor en het onderwerp is de sleutel van het
+    doel. Andersom -- aankloppen bij de dakrepeater -- is precies wat niet kan."""
+    nep = NepMonitor(klus())
+    doel = _mesh(db, monkeypatch, nep)
+    nodeconfig.write(doel, "tx", "17", confirm="JessaZH")
+
+    host, path, data = nep.posts[0]
+    assert host == "http://monitor.invalid"
+    assert path == "/api/moncfg"
+    assert f"key={DAK}".encode() in data
+    assert b"param=tx" in data and b"value=17" in data
+
+
+def test_de_uitslag_is_wat_er_teruggelezen_is_en_niet_wat_de_node_antwoordde(
+        db, monkeypatch, geen_wachttijd):
+    """De kern van deze weg. MeshCore antwoordt "OK" op dingen die het niet
+    overgenomen heeft, en over de radio duurt het lang genoeg dat niemand het uit
+    zichzelf natrekt. Dus telt alleen wat 'get' teruggeeft."""
+    nep = NepMonitor(klus(param="advert.interval", asked="61", applied="60",
+                          exact=0, reply="OK"))
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "advert.interval", "61")
+    assert uit["ok"] is True
+    assert uit["exact"] is False
+    assert uit["asked"] == "61" and uit["applied"] == "60"
+
+
+def test_de_beproeving_die_niets_verandert_legt_de_hele_weg_af(
+        db, monkeypatch, geen_wachttijd):
+    """De verstandige eerste proef, en de enige die op de dakrepeater mag.
+
+    Een parameter zetten op de waarde die hij al heeft oefent versturen,
+    ontvangen, antwoord verwerken en teruglezen -- en verandert niets. Mislukt
+    het, dan is er niets stuk. Wat deze test vastlegt is dat zo'n schrijfactie
+    werkelijk de lucht in gaat en niet ergens als 'geen wijziging' wordt
+    weggeoptimaliseerd; dan zou de proef niets bewijzen."""
+    nep = NepMonitor(klus(param="tx", asked="17", applied="17", exact=1))
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "tx", "17", confirm="JessaZH")
+    assert nep.posts, "een no-op hoort net zo goed verstuurd te worden"
+    assert uit["ok"] is True and uit["exact"] is True
+    assert uit["applied"] == uit["asked"] == "17"
+
+
+def test_een_set_zonder_antwoord_is_geen_mislukking(db, monkeypatch, geen_wachttijd):
+    """De uitkomst die alleen over de radio bestaat, en de reden dat ze een eigen
+    woord heeft. Het commando IS vertrokken; of het is aangekomen weten we niet.
+    'Mislukt' zou iemand laten denken dat er niets gebeurd is, en dat is precies
+    de conclusie die je op een node zonder tweede weg niet mag trekken."""
+    nep = NepMonitor(klus(ok=0, step="geen_antwoord", applied="", exact=0,
+                          reply="", end="geen antwoord op set"))
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "tx", "17", confirm="JessaZH")
+    assert uit["ok"] is False
+    assert uit["step"] == "geen_antwoord"
+    assert "niet te zien" in uit["msg"] and "uitleesronde" in uit["msg"]
+
+
+def test_niets_verstuurd_is_iets_anders_dan_geen_antwoord(db, monkeypatch, geen_wachttijd):
+    """De twee uitkomsten die je niet mag verwarren, en de reden dat de firmware
+    er een vlag voor bijhoudt.
+
+    Een login die onbeantwoord bleef of een volle pakketpool betekent dat er
+    niets vertrokken is, en dus dat er met zekerheid niets veranderd is. Dat is
+    de geruststellende van de twee, en hij hoort ook zo te klinken -- terwijl
+    'geen antwoord' juist zegt dat we het níét weten. Ze op één hoop gooien laat
+    iemand zich door het verkeerde geval gerust stellen."""
+    nep = NepMonitor(klus(ok=0, step="niet_verstuurd", applied="", exact=0,
+                          reply="", end="login onbeantwoord"))
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "tx", "17", confirm="JessaZH")
+    assert uit["ok"] is False and uit["step"] == "niet_verstuurd"
+    assert "met zekerheid niets veranderd" in uit["msg"]
+
+
+def test_zonder_teruglezing_heet_niets_geslaagd(db, monkeypatch, geen_wachttijd):
+    """De node antwoordde op het zetten en zweeg op het teruglezen. Dan is er
+    misschien iets gezet en is niet vastgesteld wat -- en dat is niet hetzelfde
+    als gelukt."""
+    nep = NepMonitor(klus(ok=0, step="geen_teruglezing", applied="", exact=0,
+                          reply="OK", end="geen antwoord op teruglezen"))
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "tx", "17", confirm="JessaZH")
+    assert uit["ok"] is False and uit["step"] == "geen_teruglezing"
+    assert "niet vastgesteld" in uit["msg"]
+
+
+def test_de_monitor_weigert_en_die_reden_blijft_staan(db, monkeypatch, geen_wachttijd):
+    """De monitor kent redenen die de server niet kan kennen: een uitleesronde
+    die loopt, een sleutel die hij niet monitort, te kort na de vorige. Die tekst
+    inslikken en 'HTTP 409' tonen zou de nuttigste zin weggooien die er is."""
+    nep = NepMonitor(weiger={"ok": 0, "step": "monitor",
+                             "msg": "te kort na de vorige schrijfactie"})
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "tx", "17", confirm="JessaZH")
+    assert uit["ok"] is False and uit["step"] == "monitor"
+    assert "te kort na de vorige" in uit["msg"]
+    assert nep.gets == 0, "een geweigerde opdracht hoeft niet nagekeken te worden"
+
+
+def test_een_schrijfactie_die_blijft_lopen_meldt_dat_en_liegt_niet(
+        db, monkeypatch, geen_wachttijd):
+    """De server wacht niet eindeloos -- een omgekeerde proxy kapt zoiets af --
+    en zegt dan dat het nog loopt in plaats van 'mislukt'. Dat kan omdat de
+    uitslag op de monitor blijft staan: een herlading vindt hem alsnog."""
+    monkeypatch.setattr(nodeconfig, "MESH_WAIT_S", 0)
+    nep = NepMonitor(klus(busy=1, ok=0, step="bezig", applied="", exact=0))
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "tx", "17", confirm="JessaZH")
+    assert uit["ok"] is False and uit["busy"] is True and uit["step"] == "bezig"
+    assert "herlaad" in uit["msg"].lower()
+
+
+def test_de_risicoklassen_gelden_onverkort_over_lora(db, monkeypatch, geen_wachttijd):
+    """Een schrijfweg met twee vervoermiddelen, en niet twee schrijfwegen. Alles
+    wat een schrijfactie tegenhoudt staat voor de splitsing, dus 'tx' vraagt hier
+    net zo goed om de naam van de node -- en op de node waar dit voor bedoeld is
+    weegt dat zwaarder dan waar ook."""
+    nep = NepMonitor(klus())
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "tx", "0")
+    assert uit["ok"] is False and uit["step"] == "bevestiging"
+    assert "JessaZH" in uit["msg"]
+    assert not nep.posts, "zonder bevestiging mag er niets de lucht in"
+
+
+def test_een_waarde_buiten_de_grenzen_gaat_ook_over_lora_niet_de_lucht_in(
+        db, monkeypatch, geen_wachttijd):
+    nep = NepMonitor(klus())
+    doel = _mesh(db, monkeypatch, nep)
+    uit = nodeconfig.write(doel, "tx", "99", confirm="JessaZH")
+    assert uit["ok"] is False and uit["step"] == "waarde"
+    assert not nep.posts
+
+
+def test_de_parameterlijst_komt_van_de_monitor(db, monkeypatch):
+    """Want die zendt, en zijn tabel is wat er tussen een klik en de radio staat.
+    De dakrepeater heeft geen /api/cfg en zou er ook nooit een kunnen hebben."""
+    gevraagd = []
+    monkeypatch.setattr(nodeconfig, "params",
+                        lambda host, force=False: gevraagd.append(host) or
+                        {"ok": True, "error": "", "params": VOLLE_LIJST, "at": 0})
+    monkeypatch.setattr(nodeconfig, "_open",
+                        lambda *a, **k: pytest.fail("mocht niet zover komen"))
+    doel, _ = doorgestuurd(db)
+    nodeconfig.write(doel, "tx", "99", confirm="JessaZH")     # strandt op de grenzen
+    assert gevraagd == ["http://monitor.invalid"]
+
+
+def test_de_teruggelezen_waarde_komt_in_onze_eigen_tabel(db, monkeypatch, geen_wachttijd):
+    """Zonder dit blijft de kolom 'Nu' de oude waarde tonen naast een melding dat
+    het gelukt is, tot de volgende uitleesronde -- en die kost over LoRa zendtijd
+    op andermans band. Wat er komt te staan is wat er TERUGGELEZEN is."""
+    nep = NepMonitor(klus(param="advert.interval", asked="61", applied="60", exact=0))
+    doel = _mesh(db, monkeypatch, nep)
+    nodeconfig.write(doel, "advert.interval", "61")
+    rij = db.qone("SELECT value FROM repeater_cli WHERE repeater_id=? AND param=?",
+                  (doel["id"], "advert.interval"))
+    assert rij["value"] == "60"
+
+
+def test_een_onbevestigde_schrijfactie_legt_niets_vast(db, monkeypatch, geen_wachttijd):
+    """De keerzijde van de test hierboven, en de belangrijkere van de twee: bij
+    'geen antwoord' weten we niet wat er staat, dus mag er hier niets komen te
+    staan. Een gok in de tabel is erger dan een leeg vakje."""
+    nep = NepMonitor(klus(param="tx", ok=0, step="geen_antwoord", applied="", exact=0))
+    doel = _mesh(db, monkeypatch, nep)
+    nodeconfig.write(doel, "tx", "17", confirm="JessaZH")
+    assert db.qone("SELECT value FROM repeater_cli WHERE repeater_id=? AND param=?",
+                   (doel["id"], "tx")) is None
+
+
+def test_de_uitslag_wordt_bij_de_monitor_opgehaald_en_niet_hier_bewaard(db, monkeypatch):
+    """``mesh_state`` bestaat zodat een herlading een handeling van een halve
+    minuut alsnog laat zien. Oude firmware op de monitor is daarbij een versie en
+    geen storing, net als bij /api/cfg."""
+    def oud(*a, **k):
+        raise urllib.error.HTTPError("u", 404, "Not Found", {}, _Fake(b""))
+
+    monkeypatch.setattr(nodeconfig, "_open", oud)
+    uit = nodeconfig.mesh_state("http://monitor.invalid")
+    assert uit["ok"] is False and "2.4.0" in uit["error"]
+
+
+# --- wat de pagina ervan toont ------------------------------------------------
+
+
+def _mesh_render(**over):
+    ctx = {
+        "cfg_route": {"can": True, "blocker": "", "host": "http://monitor.invalid",
+                      "fw": "2.4.0", "min_fw": "2.4.0", "relayed": True,
+                      "transport": "mesh", "target": DAK, "monitor": "DinX-Home"},
+        "relay": {"name": "DinX-Home", "id": 2},
+    }
+    ctx.update(over)
+    return _render(**ctx)
+
+
+def test_de_pagina_legt_de_beproeving_zonder_gevolgen_uit():
+    """Wie deze weg voor het eerst gebruikt op een node die hij niet kan
+    aanraken, hoort te lezen hoe hij hem toetst zonder iets te veranderen."""
+    html = _mesh_render()
+    assert "Beproef deze weg eerst zonder iets te veranderen" in html
+    assert "waarde die er al staat" in html
+
+
+def test_de_pagina_zegt_welke_node_de_nieuwe_firmware_draagt():
+    """De verwarring die dit voorkomt is duur: wie denkt dat de dakrepeater
+    geflasht moet worden, gaat een ladder halen voor niets."""
+    html = _mesh_render()
+    assert "niet op deze repeater" in html
+
+
+def test_een_onbevestigde_schrijfactie_heet_op_de_pagina_geen_mislukking():
+    html = _mesh_render(cfg_result={
+        "ok": False, "step": "geen_antwoord", "msg": "het commando is vertrokken",
+        "key": "tx", "asked": "17", "applied": "", "exact": False, "reboot": False,
+        "transport": "mesh", "busy": False})
+    assert "Verstuurd, maar onbevestigd" in html
+    assert "Niet gezet" not in html
+
+
+def test_een_lopende_schrijfactie_zegt_dat_hij_loopt():
+    html = _mesh_render(cfg_result={
+        "ok": False, "step": "bezig", "msg": "de monitor is er nog mee bezig",
+        "key": "tx", "asked": "17", "applied": "", "exact": False, "reboot": False,
+        "transport": "mesh", "busy": True})
+    assert "Loopt nog" in html
+
+
+def test_de_vorige_schrijfactie_van_de_monitor_staat_er_na_een_herlading():
+    """Het antwoord ligt op de monitor, niet hier. Dat is de reden dat de browser
+    niet hoeft te blijven wachten."""
+    html = _mesh_render(cfg_mesh={"ok": True, "error": "",
+                                  "job": klus(param="tx", asked="17", applied="17",
+                                              age=90)})
+    assert "Laatste schrijfactie over LoRa" in html
+    assert "90 seconden" in html
+
+
+def test_het_invoerveld_is_voorgevuld_met_wat_er_nu_staat():
+    """Zo is 'zet hem op de waarde die hij al heeft' een klik, en dat is de enige
+    beproeving die de hele weg aflegt zonder iets te veranderen."""
+    html = _render()                       # cfg_now zet tx op 22
+    assert 'value="22"' in html

@@ -89,7 +89,10 @@ from app import db, firmware, mqtt_ingest  # noqa: E402  (na de omgevingsvariabe
 #
 #   Voorbeeld-Thuisnode   full managed, IP-pad, kritiek -> upgrade mogelijk
 #   Voorbeeld-Zendmast    full managed, IP-pad          -> upgrade niet teruggekomen
-#   Voorbeeld-Dakrepeater semi-managed via de thuisnode -> blokkade 'relayed_only'
+#   Voorbeeld-Dakrepeater semi-managed via de thuisnode -> schrijven over LoRa,
+#                         want de thuisnode draait 1.10.0 en niet 2.4.0: blokkade
+#                         'relay_old_fw', met de zin die uitlegt dat het de
+#                         MONITOR is die nieuwe firmware nodig heeft
 #   Voorbeeld-Buurnode    unmanaged, alleen in het verkeer -> blokkade 'no_host'
 #   Voorbeeld-Veldpost    unmanaged, doorgestuurd door een onbekende node
 #

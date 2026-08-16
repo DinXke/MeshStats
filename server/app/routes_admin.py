@@ -702,6 +702,14 @@ def _node_page(request: Request, rid: int, **extra):
     cfg = nodeconfig.cfg_route(rep)
     cfg_params = (nodeconfig.params(cfg["host"]) if cfg["can"]
                   else {"ok": False, "error": "", "params": []})
+    # Gaat het schrijven over LoRa, dan blijft de uitslag op de MONITOR staan en
+    # niet hier. Dat is met opzet -- zie nodeconfig.mesh_state -- en het heeft dit
+    # gevolg: de pagina haalt hem op bij het tonen, zodat een herlading een
+    # handeling van een halve minuut alsnog laat zien in plaats van hem te
+    # verliezen omdat de browser niet is blijven wachten.
+    cfg_mesh = (nodeconfig.mesh_state(cfg["host"])
+                if cfg["can"] and cfg["transport"] == "mesh"
+                else {"ok": False, "error": "", "job": {}})
 
     # Voor een doorgestuurde node: hoe komt zijn monitor bij hem binnen, en werkt
     # dat. Alleen ophalen als er een monitor met een beheeradres is, anders staat
@@ -774,6 +782,9 @@ def _node_page(request: Request, rid: int, **extra):
         # Alleen ophalen als er ook echt een weg is, anders staat elke
         # paginaweergave tien seconden op een node te wachten die er niet is.
         "cfg_route": cfg,
+        # De vorige schrijfactie van de monitor, als die weg gebruikt wordt.
+        "cfg_mesh": cfg_mesh,
+        "cfg_mesh_steps": nodeconfig.MESH_STEPS,
         # Drie dingen over het filter, en ze beantwoorden drie vragen. 'Staat er
         # een filter aan en wat gooit het weg' (uit het laatste bericht, altijd
         # beschikbaar), 'wat zijn de regels precies' (van de node zelf, alleen

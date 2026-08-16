@@ -8,11 +8,13 @@ brengen, zijn instellingen lezen en wijzigen, zijn klok zetten, hem nieuwe
 firmware geven — en wat je doet op de dag dat hij niet terugkomt. En overal
 doorheen het deel dat de meeste woorden kost: wat de site met opzet níét doet.
 
-Een node uitlezen is uitgekristalliseerd en werkt al lang. Van het **schrijven**
-is een deel gebouwd en een deel ontworpen en uitdrukkelijk nog niet gebouwd; bij
-elke sectie staat welke van de twee. Dat onderscheid weegt hier zwaarder dan in
-de meeste documentatie, want de faalmodus is geen kapotte pagina. Het is een
-repeater op een dak die niemand nog kan bereiken.
+Een node uitlezen is uitgekristalliseerd en werkt al lang. **Schrijven** is nu
+langs beide wegen gebouwd — over IP naar een node die de server zelf bereikt, en
+over LoRa via een monitor naar een node die hij niet bereikt — en een handvol
+dingen eromheen is nog ontworpen en uitdrukkelijk niet gebouwd; bij elke sectie
+staat welke van de twee. Dat onderscheid weegt hier zwaarder dan in de meeste
+documentatie, want de faalmodus is geen kapotte pagina. Het is een repeater op
+een dak die niemand nog kan bereiken.
 
 De schermafbeeldingen komen van een wegwerpinstantie met verzonnen nodes, nooit
 van een draaiende installatie — zie
@@ -31,6 +33,7 @@ opnieuw maakt.
 **Instellingen** — [uitlezen](#instellingen-uitlezen) ·
 [over MQTT?](#kunnen-instellingen-over-diezelfde-mqtt-route-geschreven-worden) ·
 [welke geschreven mogen worden](#welke-instellingen-geschreven-mogen-worden) ·
+[schrijven over LoRa](#schrijven-over-lora-via-de-monitor) ·
 [bevestigen-of-terugdraaien](#bevestigen-of-terugdraaien-onderzocht-en-met-opzet-niet-gebouwd) ·
 [teruglezen](#lees-na-een-schrijfactie-terug)
 
@@ -140,7 +143,7 @@ die hij opmerkt.
 | Uitlezen uit het verkeer (adverts, SNR, pad, positie) | ja | ja | ja |
 | Eigen statistieken (uptime, zendtijd, tellers) | nee | nee | ja |
 | CLI-instellingen lezen | nee | ja, over LoRa | ja |
-| **CLI-instellingen schrijven** | nee | ontworpen, niet gebouwd | **gebouwd** — het hele oppervlak, met risicoklassen |
+| **CLI-instellingen schrijven** | nee | **gebouwd** — over LoRa via de monitor, hetzelfde oppervlak | **gebouwd** — het hele oppervlak, met risicoklassen |
 | De klok zetten | nee | ja, via de monitor | ja |
 | Firmware-upgrade | nee | **nee** | alleen met een IP-pad |
 | Telemetrie opvragen zonder inloggegevens | meestal **ja** — een eigenschap naast het niveau, geen onderdeel ervan | meestal ja | meestal ja |
@@ -291,7 +294,8 @@ de eigen login van die node.** Welke node dat is, hangt af van het niveau:
 Hier is het de moeite waard even bij stil te staan: het doorgegeven geval werkt.
 JessaZH wordt geschreven door met DinX-Home te praten, en DinX-Home hangt aan het
 LAN. **Het referentiegeval wordt gedekt door de route die MQTT helemaal niet
-aanraakt.**
+aanraakt.** Die regel is gebouwd sinds firmware 2.4.0 en heeft hieronder een
+eigen sectie, [Schrijven over LoRa](#schrijven-over-lora-via-de-monitor).
 
 Wat het oplevert:
 
@@ -508,9 +512,173 @@ toegestane waarde gezet mag worden; de grenzen gaan erover of een waarde
 überhaupt toegestaan is. Dat zijn verschillende vragen, en ze worden op
 verschillende plaatsen beantwoord.
 
-Bij een `semi_managed` doel — het pad dat ontworpen is maar niet gebouwd — zou de
-uitzendende node de monitor zijn, met onze firmware, zodat de tabel en de
-validatie ervan gelden voordat er iets de lucht in gaat.
+Bij een `semi_managed` doel is de uitzendende node de monitor, met onze firmware,
+zodat de tabel en de validatie ervan gelden voordat er iets de lucht in gaat. De
+volgende sectie gaat over die weg.
+
+---
+
+## Schrijven over LoRa, via de monitor
+
+Dit is de weg waarvoor het hele project bestaat, en tot firmware 2.4.0 was het
+het enige in dit document dat ontworpen was en niet gebouwd. De node waar het om
+gaat is JessaZH: stock MeshCore op een dak, geen IP-pad, en dat komt er ook niet.
+
+**Eén schrijfweg, twee vervoermiddelen.** Alles hierboven blijft zonder
+uitzondering gelden — dezelfde parameterlijst, dezelfde grenzen, dezelfde drie
+risicoklassen, dezelfde bevestigingen, dezelfde rechten, hetzelfde teruglezen.
+Alleen de laatste stap verschilt. `nodeconfig.write()` doorloopt eerst elke
+controle en kiest daarna pas een vervoermiddel; een tweede functie voor de
+radioweg zou een tweede plek zijn waar een drempel kan ontbreken, en dat is het
+soort fout dat je pas ontdekt als er een node stil is.
+
+| Doel | Waar de server aanklopt | Wat daar gebeurt |
+|---|---|---|
+| eigen IP-pad | de node, `POST /api/cfg` | één `handleCommand()`-aanroep, tienden van seconden |
+| alleen over LoRa | zijn **monitor**, `POST /api/moncfg` | twee pakketten over een gedeelde band, tientallen seconden |
+
+**De monitor heeft de nieuwe firmware nodig. Het doel niets.** Dat is het punt
+van dit ontwerp en geen bijkomstigheid. JessaZH leert niets, krijgt niets en
+merkt niets: er komen twee doodgewone CLI-commando's binnen, precies zoals sinds
+de instellingenronde gebouwd werd. Een node die maandenlang geen nieuwe firmware
+krijgt, hoeft er ook geen.
+
+### Wat er werkelijk de lucht in gaat
+
+Twee commando's, en het tweede is niet optioneel:
+
+```
+set <parameter> <waarde>
+get <parameter>
+```
+
+De gemelde uitslag is wat het **tweede** teruggeeft, met de vraag ernaast. Nooit
+wat de node op het eerste antwoordde.
+
+Dat is dezelfde discipline die de weg over IP volgt, en hier weegt ze zwaarder om
+twee redenen die elkaar versterken. Het doel heeft geen tweede weg naar binnen,
+dus een verkeerde waarde is niet vanuit een stoel te herstellen. En een ronde
+duurt lang genoeg dat niemand het achteraf met de hand natrekt — over IP zie je
+binnen seconden dat `advert.interval 61` een 60 werd, over LoRa zou je het een
+maand niet merken.
+
+De vergelijking — is wat er terugkwam dezelfde *waarde* als wat er gevraagd is,
+met `869.525 250 11 5` tegenover `869.525,250,11,5` en `50.0%` tegenover `50` —
+gebeurt op één plek in de firmware, gedeeld met `POST /api/cfg`. Twee kopieën
+zouden vroeg of laat van elkaar gaan verschillen, en dan staat er een
+waarschuwing bij een radio die volkomen in orde is. Een melding die te vaak
+afgaat is net zo onbruikbaar als een die nooit afgaat.
+
+### Beproef hem eerst zonder iets te veranderen
+
+Er is één toets van deze weg die het hele pad aflegt en niets verandert:
+**schrijf een parameter naar de waarde die hij al heeft.**
+
+`set tx 17` op een node die al op 17 staat oefent verzenden, ontvangen, het
+antwoord verwerken en het teruglezen. Mislukt het, dan is er niets stuk. De
+nodepagina vult elk invoerveld voor met wat de laatste uitleesronde vond, dus dit
+is één klik.
+
+Doe dat als eerste op een node die je niet kunt aanraken, en opnieuw telkens als
+een monitorverbinding nieuw is of opnieuw is opgezet. Het is het verschil tussen
+toetsen en hopen.
+
+Het is ook het enige wat dit project met JessaZH doet. Tot iemand daar een
+lege schrijfactie heeft zien slagen, gaat er geen echte waarde naar die repeater.
+
+### Een derde uitkomst die alleen over de radio bestaat
+
+Over IP is een schrijfactie geslaagd of niet. Over LoRa is er een derde toestand,
+en die tot "mislukt" platslaan zou een leugen zijn in de gevaarlijkste richting.
+
+| `step` | Wat vaststaat | Wat te doen |
+|---|---|---|
+| *(leeg)*, `ok` | de parameter is teruggelezen; `applied` is wat er in de node staat | niets, tenzij `exact` onwaar is |
+| `niet_verstuurd` | **er is niets de lucht in gegaan** — de login bleef onbeantwoord, of de pakketpool van de monitor zat vol. Er is met zekerheid niets veranderd | opnieuw proberen |
+| `geen_antwoord` | de `set` **is vertrokken** en er kwam geen antwoord. Of de node hem uitgevoerd heeft, is van hieraf niet te zien | een nieuwe uitleesronde is de enige manier om erachter te komen. Herhaal de schrijfactie niet zomaar |
+| `geen_teruglezing` | de `set` werd beantwoord, de `get` niet. Er is misschien iets opgeslagen en het is niet vastgesteld wat | lees terug met een uitleesronde |
+| `node` | de node weigerde het commando en zei waarom | verbeter de waarde |
+| `bezig` | loopt nog op de monitor | herlaad de pagina; de uitslag wordt daar bewaard |
+| `monitor` | de monitor wilde niet beginnen — niet in zijn lijst, er loopt een ronde, te kort na de vorige | de melding zegt welke |
+
+`geen_antwoord` verdient een eigen woord juist omdat "mislukt" iemand zou laten
+aannemen dat er niets gebeurd is, en op een node die je niet kunt nakijken is dat
+de aanname die je niet mag maken. De server legt zo'n schrijfactie ook niet vast
+in zijn eigen instellingentabel: een gok in de kolom is erger dan een leeg vakje.
+
+De faalwijze die je van tevoren wilt kennen is de alleen-lezende monitor —
+keurig ingelogd, en op elk commando stilte. Dat levert bij schrijven
+`geen_antwoord` op, en de oplossing is `setperm <pubkey van de monitor> 3` aan de
+overkant. De nodepagina toont die diagnose boven het formulier, uit de tellers
+van de monitor zelf, zodat het te beantwoorden is vóór de knop ingedrukt wordt in
+plaats van erna. Zie
+[De drie stiltes uit elkaar houden](#de-drie-stiltes-uit-elkaar-houden).
+
+### De endpoints op de monitor
+
+Allebei achter de eigen HTTP-login van de monitor — `MM_FW_NODE_USER` /
+`MM_FW_NODE_PASS`, dezelfde gegevens die `/api/fw` en `/api/cfg` gebruiken. Die
+login hoort bij een node van onszelf. **De server heeft nooit een geheim van het
+doel nodig**; wat de monitor binnenlaat staat op de monitor, of bestaat niet
+omdat de overkant onze publieke sleutel in zijn toegangslijst zette.
+
+**`POST /api/moncfg`** met `key` (de publieke sleutel van het doel), `param` en
+`value`. Antwoordt **202** en geen 200, want er is nog niets gebeurd:
+
+```json
+{"ok":1,"step":"","busy":1,"msg":"gevraagd; twee commando's over LoRa, …"}
+```
+
+**`GET /api/moncfg`** — de lopende of laatst afgeronde schrijfactie. De velden
+lopen met opzet gelijk met die van `POST /api/cfg`, zodat de server er één soort
+antwoord van maakt en de pagina niet hoeft te weten langs welke weg het ging:
+
+```json
+{"seq":3,"busy":0,"ok":1,"step":"","key":"e3d3f4d7edd0","param":"tx",
+ "asked":"17","applied":"17","exact":1,"reboot":0,"reply":"OK",
+ "end":"klaar","age":31}
+```
+
+**De uitslag staat op de monitor en niet op de server.** Daarom hoeft de browser
+niet te blijven wachten: de server geeft het na 40 seconden op en meldt dat de
+schrijfactie nog loopt, en een herlading vindt de uitslag alsnog. Het scheelt ook
+een opdrachtenlijst en een achtergronddraad in de server voor een handeling van
+een halve minuut — en het is de eerlijkere plaats, want de node die het werk deed
+is de enige die weet hoe het afliep.
+
+Hetzelfde vanaf een seriële kabel, de telnetconsole of de mesh-CLI:
+`wifi mon set <hex> <param> <waarde>`, en `wifi mon set` zonder meer voor hoe de
+laatste afliep. Niet alleen om te diagnosticeren: de mesh-CLI is de weg die als
+laatste wegvalt, dus een instelling op de dakrepeater is nog te corrigeren vanaf
+een telefoon terwijl de WiFi, de site en de broker alle drie weg zijn.
+
+### Wat het kost, en waarom de pauze hier korter is
+
+Twee commando's en twee antwoorden — ruwweg een tiende van een uitleesronde. De
+wachttijden zijn die van die ronde, want ze zijn gemeten op dezelfde band over
+dezelfde hops en er is geen reden waarom een `set` sneller terug zou komen dan
+een `get`: 20 s voor het eerste commando na een login, 12 s voor elk volgend, 2 s
+ertussen, en een hard plafond van 90 s op het geheel.
+
+Eén tegelijk, alleen op verzoek, en **nergens herhalingen**. Een `set` die stil
+bleef nog eens versturen, zou hem een tweede keer uitvoeren op een node die hem
+misschien al aangenomen heeft.
+
+Tussen twee schrijfacties zit **één minuut**, waar de uitleesronde er tien heeft.
+Die grens is met opzet de kleinste van de twee, en het is het meest doordachte
+getal van deze sectie: *de handeling die je na een misser meteen wilt doen, is de
+omgekeerde.* Wie `tx 5` zette waar `tx 20` hoorde, moet dat binnen een minuut
+kunnen rechtzetten en niet binnen tien. Herstel mag nooit zwaarder afgeremd
+worden dan de fout die het terugdraait — dezelfde regel die `filter off`
+goedkoper maakt dan `filter on`. Wat de grens wél tegenhoudt is een script dat de
+band vol zet, en daar is een minuut ruim genoeg voor: hij ligt boven de duur van
+een hele ronde.
+
+Anders dan de uitleesronde heeft deze weg **geen werkende broker nodig**. Die
+ronde publiceert haar uitslag over MQTT en heeft zonder broker niets te doen;
+deze antwoordt over HTTP aan wie het vroeg. Een installatie zonder internet, of
+met een broker die er even niet is, hoort een radio-instelling nog te kunnen
+rechtzetten.
 
 ## Bevestigen-of-terugdraaien: onderzocht, en met opzet niet gebouwd
 
@@ -660,8 +828,19 @@ is), en *niet gezet* met de reden van de node zelf. Alles wat de middelste tot
 "geslaagd" zou platslaan, zou dezelfde soort halve waarheid vertellen als het
 oude OTA-pad deed.
 
+Over LoRa komen er nog twee bij, want daar kan het teruglezen op zichzelf
+misgaan — zie
+[Een derde uitkomst die alleen over de radio bestaat](#een-derde-uitkomst-die-alleen-over-de-radio-bestaat).
+
 `get <key>` is dezelfde uitlezing die de dagelijkse instellingenronde gebruikt,
 zodat er geen tweede codepad is dat het met het eerste oneens zou kunnen zijn.
+
+Omdat die uitlezing is wat de pagina meldt, schrijft de server hem ook in zijn
+eigen instellingentabel. Zonder dat blijft de kolom 'nu' de oude waarde tonen
+naast een melding dat het gelukt is, tot de volgende uitleesronde — en die kost
+over LoRa zendtijd op andermans band en gebeurt hooguit dagelijks. Wat er
+vastgelegd wordt is wat er *terugkwam*, nooit wat er gevraagd is, en er wordt
+niets vastgelegd als het teruglezen niet gebeurd is.
 
 ---
 
@@ -1078,14 +1257,14 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | `ota_route()` als aparte sleutel voor wat er kan | **gebouwd** |
 | `niet_teruggekomen` als toestand die blijft tot ze gezien is | **gebouwd** |
 | Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 2.1.0 `POST /api/cfg`: het hele CLI-oppervlak op drie na, bediening per type, bevestiging per risicoklasse, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
-| Instellingen schrijven naar een `semi_managed` node over LoRa | **ontworpen, niet gebouwd.** Vraagt om een toestandsmachine naast de instellingenronde, en de node waarvoor het bestaat is de dakrepeater — dus het wordt eerst gebouwd tegen iets wat iemand kan aanraken |
+| Instellingen schrijven naar een `semi_managed` node over LoRa | **gebouwd** — firmware 2.4.0, `POST`/`GET /api/moncfg` op de **monitor**, plus `wifi mon set` vanaf elke CLI. `set` en dan `get`, één tegelijk, begrensd, met het teruglezen als gemelde uitslag. Dezelfde tabel, grenzen, risicoklassen en rechten als de weg over IP |
 | Schrijven naar de WiFi- en MQTT-instellingen van een node | **wordt hier niet aangeboden.** Dat zijn de onze en niet die van MeshCore, en ze hebben al hun eigen formulieren op de beheerpagina van de node zelf en in de `wifi`-CLI |
 | Bevestigen-of-terugdraaien | **onderzocht en verworpen**, met de redenering hierboven |
 | Automatisch rechten ontdekken | **verworpen**, in plaats daarvan aanwijzen-en-één-keer-proberen |
 | Vergelijkingstabel over repeaters heen | **gebouwd** — `/admin/compare`, gekozen kolommen, afwijkingen van de meerderheid gemarkeerd |
 | Bewerken vanuit die tabel | **niet gebouwd.** Het ontwerp is één bewerkveld dat door de tabel aangestuurd wordt, in plaats van een invoerveld in elke cel; zie hieronder |
 | Meerdere nodes tegelijk bewerken | **niet gebouwd, en in het ontwerp al ingeperkt**: alleen parameters uit de klasse Gewoon, nooit de twee zwaardere klassen. Tien nodes in één klik is ook tien nodes kwijt in één klik |
-| Mesh-transport forceren voor een node die een IP-pad heeft | **niet gebouwd.** Vraagt eerst om het LoRa-schrijfpad, en dat vraagt om een relais dat het doel monitort |
+| Mesh-transport forceren voor een node die een IP-pad heeft | **niet gebouwd.** Het LoRa-schrijfpad bestaat nu wel, dus wat ontbreekt is alleen de keuze: de weg volgt uit de node in plaats van gekozen te worden. Het blijft eruit tot er een node is die zowel gemonitord als over IP bereikbaar is om het op te beproeven |
 | Telemetrie opvragen zonder inloggegevens | **onderzocht, niet gebouwd.** Het werkt en levert meer op dan verwacht — zie hierboven |
 | MeshCore-versie van doorgestuurde nodes | **gebouwd** — `ver` gaat mee in de sweep, en één antwoord vult allebei de versiekolommen |
 | Een sweepschema per node | **gebouwd** — standaard uit, één ronde tegelijk met een globale minimale tussenruimte, en een plafond per dag over alle nodes heen |
@@ -1093,11 +1272,13 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | De drie stiltes uit elkaar houden | **gebouwd** — buiten bereik / niet binnengelaten / alleen lezen, uit de loginstatus plus de gehoorde lijst |
 | Het wachtwoord van een doelnode vanaf de site zetten | **gebouwd als doorgeefluik** — `nodeconfig.push_monitor_password()` stuurt het naar de monitor en bewaart niets. Nog niet op een pagina: het formulier is het resterende stuk |
 
-> Zolang hieraan gewerkt wordt, wordt er **helemaal niet naar JessaZH
-> geschreven** — geen test-`set`, niets. Hij wordt alleen over LoRa bereikt, dus
-> een vergissing daar is niet te herstellen, en hij is bovendien het
-> referentiegeval waarvoor dit ontwerp bestaat. Schrijfpaden worden getest tegen
-> een node die iemand fysiek kan aanraken.
+> **JessaZH krijgt alleen lege schrijfacties.** De weg is gebouwd en getest tegen
+> een nagebootste monitor in de testsuite; op de echte repeater is het eerste en
+> voorlopig enige wat er geschreven wordt een parameter die op zijn eigen waarde
+> gezet wordt. Hij wordt alleen over LoRa bereikt, dus een vergissing daar is niet
+> te herstellen, en hij is bovendien het referentiegeval waarvoor dit ontwerp
+> bestaat. Echte wijzigingen gaan er pas heen als iemand zo'n lege schrijfactie
+> heeft zien slagen.
 
 ## Het pakketfilter
 

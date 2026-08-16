@@ -8,11 +8,12 @@ changing its settings, setting its clock, giving it new firmware — and what to
 on the day it does not come back. Plus, throughout, the part that takes the most
 words: what the site deliberately will not do.
 
-Reading a node is settled and has worked for a long time. Of the **writing**
-side, some is built and some is designed and explicitly not built yet; each
-section says which. The distinction matters more here than in most
-documentation, because the failure mode is not a broken page. It is a repeater
-on a roof that nobody can reach any more.
+Reading a node is settled and has worked for a long time. **Writing** is now
+built along both routes — over IP to a node the server reaches itself, and over
+LoRa through a monitor to one it cannot — and a few things around it are still
+designed and explicitly not built; each section says which. The distinction
+matters more here than in most documentation, because the failure mode is not a
+broken page. It is a repeater on a roof that nobody can reach any more.
 
 The screenshots come from a throwaway instance filled with invented nodes, never
 from a running installation — see
@@ -32,6 +33,7 @@ Dutch even here; [`admin.md`](admin.md) explains that choice.
 **Settings** — [reading](#reading-settings) ·
 [over MQTT?](#can-settings-be-written-over-the-same-mqtt-route) ·
 [which may be written](#which-settings-may-be-written) ·
+[writing over LoRa](#writing-over-lora-through-the-monitor) ·
 [confirm-or-revert](#confirm-or-revert-examined-and-deliberately-not-built) ·
 [reading it back](#after-a-write-read-it-back)
 
@@ -136,7 +138,7 @@ both are things it notices.
 | Read from traffic (adverts, SNR, path, position) | yes | yes | yes |
 | Own statistics (uptime, airtime, counters) | no | no | yes |
 | Read CLI settings | no | yes, over LoRa | yes |
-| **Write CLI settings** | no | designed, not built | **built** — full surface, risk-classed |
+| **Write CLI settings** | no | **built** — over LoRa through the monitor, same surface | **built** — full surface, risk-classed |
 | Set the clock | no | yes, through the monitor | yes |
 | Firmware upgrade | no | **no** | only with an IP path |
 | Telemetry polling without credentials | usually **yes** — a property beside the level, not part of it | usually yes | usually yes |
@@ -281,7 +283,9 @@ login.** Which node that is depends on the level:
 
 This is worth dwelling on: the relayed case works. JessaZH is written by talking
 to DinX-Home, and DinX-Home is on the LAN. **The reference case is covered by the
-route that does not touch MQTT at all.**
+route that does not touch MQTT at all.** That row is built as of firmware 2.4.0
+and has its own section below,
+[Writing over LoRa](#writing-over-lora-through-the-monitor).
 
 What it buys:
 
@@ -484,9 +488,168 @@ confirmation governs whether a legal value may be set; the bounds govern whether
 a value is legal at all. They are different questions and they are answered in
 different places.
 
-For a `semi_managed` target — the path that is designed but not built — the
-transmitting node would be the monitor, running our firmware, so the table and
-its validation apply before anything is radiated.
+For a `semi_managed` target the transmitting node is the monitor, running our
+firmware, so the table and its validation apply before anything is radiated. The
+next section is about that route.
+
+---
+
+## Writing over LoRa, through the monitor
+
+This is the route the whole project exists for, and until firmware 2.4.0 it was
+the one thing in this document that was designed and not built. The node it
+serves is JessaZH: stock MeshCore on a roof, no IP path, and none coming.
+
+**One write path, two transports.** Everything above still applies without
+exception — the same parameter table, the same bounds, the same three risk
+classes, the same confirmations, the same permissions, the same read-back. Only
+the last step differs. `nodeconfig.write()` runs every check first and picks a
+transport afterwards; a second function for the radio route would have been a
+second place where a threshold can go missing, and that is the kind of fault you
+discover when a node has gone quiet.
+
+| Target | Where the server knocks | What happens there |
+|---|---|---|
+| IP path of its own | the node, `POST /api/cfg` | one `handleCommand()` call, tenths of a second |
+| LoRa only | its **monitor**, `POST /api/moncfg` | two packets over a shared band, tens of seconds |
+
+**The monitor needs the new firmware. The target needs nothing.** This is the
+point of the design rather than a detail of it. JessaZH learns nothing, receives
+nothing and notices nothing: two ordinary CLI commands arrive, exactly as they
+have since the settings sweep was built. A node that will not get new firmware
+for months does not need any.
+
+### What actually goes on the air
+
+Two commands, and the second is not optional:
+
+```
+set <parameter> <value>
+get <parameter>
+```
+
+The reported outcome is what the **second** one returns, with the request beside
+it. Never what the node answered to the first.
+
+That is the same discipline the IP route follows, and here it carries more
+weight for two reasons that compound. The target has no second way in, so a
+wrong value is not correctable from a chair. And a round takes long enough that
+nobody checks by hand afterwards — over IP you notice within seconds that
+`advert.interval 61` became 60, over LoRa you would not notice for a month.
+
+The comparison — is what came back the same *value* as what was asked, allowing
+for `869.525 250 11 5` versus `869.525,250,11,5` and for `50.0%` versus `50` —
+happens in one place in the firmware, shared with `POST /api/cfg`. Two copies
+would eventually disagree, and then a warning would appear beside a radio that is
+perfectly fine. An alarm that goes off too often is as useless as one that never
+goes off.
+
+### Test it first without changing anything
+
+There is one test of this route that walks the entire path and changes nothing:
+**write a parameter to the value it already has.**
+
+`set tx 17` on a node already at 17 exercises transmitting, receiving, parsing
+the reply and reading back. If it fails, nothing is broken. The node page
+pre-fills every input with what the last sweep read, so this is one click.
+
+Do that before anything else on a node you cannot physically reach, and do it
+again whenever a monitor link is new or has been rebuilt. It is the difference
+between testing and hoping.
+
+It is also the only thing this project does to JessaZH. Until somebody has
+watched a no-op complete there, no real value is written to that repeater.
+
+### A third outcome that only exists on radio
+
+Over IP a write succeeded or it did not. Over LoRa there is a third state, and
+flattening it into "failed" would be a lie in the more dangerous direction.
+
+| `step` | What is certain | What to do |
+|---|---|---|
+| *(empty)*, `ok` | the parameter was read back; `applied` is what stands in the node | nothing, unless `exact` is false |
+| `niet_verstuurd` | **nothing went on the air** — the login was unanswered, or the monitor's packet pool was full. Certainly nothing changed | try again |
+| `geen_antwoord` | the `set` **left**, and no answer came. Whether the node executed it cannot be seen from here | a fresh settings sweep is the only way to find out. Do not simply repeat the write |
+| `geen_teruglezing` | the `set` was answered, the `get` was not. Something may have been stored and it was not established what | read it back with a sweep |
+| `node` | the node refused the command and said so | fix the value |
+| `bezig` | still running on the monitor | reload the page; the outcome is kept there |
+| `monitor` | the monitor refused to start — not in its list, a sweep is running, too soon after the last | the message says which |
+
+`geen_antwoord` deserves its own word precisely because "failed" would make
+somebody assume nothing happened, and on a node you cannot inspect, that is the
+assumption you must not make. The server also refuses to record such a write in
+its own settings table: a guess in the column is worse than an empty cell.
+
+The failure worth knowing in advance is the read-only monitor — logged in
+perfectly, every command met with silence. That produces `geen_antwoord` for a
+write, and the fix is `setperm <monitor-pubkey> 3` on the far side. The node page
+shows that diagnosis above the form, from the monitor's own counters, so it is
+answerable before the button is pressed rather than after. See
+[Telling the three silences apart](#telling-the-three-silences-apart).
+
+### The endpoints on the monitor
+
+Both behind the monitor's own HTTP login — `MM_FW_NODE_USER` /
+`MM_FW_NODE_PASS`, the same credentials `/api/fw` and `/api/cfg` use. That login
+belongs to a node of ours. **The server never needs a secret of the target**;
+whatever gets the monitor in lives on the monitor, or does not exist because the
+far side put our public key in its access list.
+
+**`POST /api/moncfg`** with `key` (the target's public key), `param` and
+`value`. Answers **202**, not 200, because nothing has happened yet:
+
+```json
+{"ok":1,"step":"","busy":1,"msg":"gevraagd; twee commando's over LoRa, …"}
+```
+
+**`GET /api/moncfg`** — the running or last-finished write. The fields line up
+with `POST /api/cfg` on purpose, so the server produces one shape of answer and
+the page need not know which route it came by:
+
+```json
+{"seq":3,"busy":0,"ok":1,"step":"","key":"e3d3f4d7edd0","param":"tx",
+ "asked":"17","applied":"17","exact":1,"reboot":0,"reply":"OK",
+ "end":"klaar","age":31}
+```
+
+**The result lives on the monitor, not on the server.** That is why the browser
+does not have to keep waiting: the server gives up after 40 seconds and says the
+write is still running, and a reload finds the outcome. It also avoids a job list
+and a background thread in the server for an action of half a minute — and it is
+the more honest place, since the node that did the work is the only one that
+knows how it went.
+
+The same thing from a serial cable, the telnet console or the mesh CLI:
+`wifi mon set <hex> <param> <value>`, and `wifi mon set` on its own for how the
+last one ended. Not only for diagnosis: the mesh CLI is the route that fails
+last, so a setting on the roof repeater can still be corrected from a phone when
+the WiFi, the site and the broker are all gone.
+
+### What it costs, and why the pause is shorter here
+
+Two commands and two replies — roughly a tenth of a settings sweep. The waits
+are the sweep's, because they were measured on the same band over the same hops
+and there is no reason a `set` would come back faster than a `get`: 20 s for the
+first command after a login, 12 s for each one after that, 2 s between them, and
+a hard 90 s ceiling on the whole thing.
+
+One at a time, on request only, and **no retries anywhere**. Repeating a `set`
+that stayed silent would run it a second time on a node that may already have
+taken it.
+
+Between two writes there is **one minute**, where the sweep has ten. That gap is
+deliberately the smaller of the two, and it is the most considered number in this
+section: *the action you want to take right after a mistake is the opposite one.*
+Whoever set `tx 5` where `tx 20` belonged must be able to put it back within a
+minute, not within ten. Recovery must never be throttled harder than the mistake
+it undoes — the same rule that makes `filter off` cheaper than `filter on`. What
+the gap does stop is a script filling the band, and a minute is ample for that:
+it is longer than a whole round takes.
+
+Unlike the sweep, this route needs **no working broker**. The sweep publishes its
+result over MQTT and has nothing to do without one; this answers over HTTP to
+whoever asked. An installation with no internet, or with a broker that is
+momentarily gone, should still be able to put a radio setting right.
 
 ## Confirm-or-revert: examined, and deliberately not built
 
@@ -629,8 +792,18 @@ both numbers shown, and a note that this is not a fault), and *not set* with the
 node's own reason. Anything that collapsed the middle one into "success" would be
 telling the same kind of half-truth the old OTA path told.
 
+Over LoRa there are two more, because the read-back can fail on its own — see
+[A third outcome that only exists on radio](#a-third-outcome-that-only-exists-on-radio).
+
 `get <key>` is the same read the daily settings sweep uses, so there is no second
 code path that could disagree with the first.
+
+Because that read is what the page reports, the server also writes it into its
+own settings table. Without that the "now" column keeps showing the old value
+next to a message saying the write succeeded, until the next sweep — which over
+LoRa costs airtime on somebody else's band and happens at most daily. What is
+recorded is what came *back*, never what was asked, and nothing is recorded when
+the read-back did not happen.
 
 ---
 
@@ -1026,14 +1199,14 @@ against a node a human named.
 | `ota_route()` as a separate capability key | **built** |
 | `niet_teruggekomen` as a state that stays until acknowledged | **built** |
 | Writing settings to a `full_managed` node with an IP path | **built** — firmware 2.1.0 `POST /api/cfg`: the whole CLI surface bar three, typed controls, risk-driven confirmation, read-back. Requires the node's management address to be filled in |
-| Writing settings to a `semi_managed` node over LoRa | **designed, not built.** Needs a state machine beside the settings sweep, and the node it exists for is the roof repeater — so it gets built against something touchable first |
+| Writing settings to a `semi_managed` node over LoRa | **built** — firmware 2.4.0 `POST`/`GET /api/moncfg` on the **monitor**, plus `wifi mon set` on any CLI. `set` then `get`, one at a time, budgeted, with the read-back as the reported outcome. Same table, bounds, risk classes and permissions as the IP route |
 | Writing to a node's WiFi and MQTT settings | **not offered here.** Those are ours, not MeshCore's, and they already have their own forms on the node's own admin page and the `wifi` CLI |
 | Confirm-or-revert | **examined and rejected**, with the reasoning above |
 | Automatic rights discovery | **rejected**, point-and-test-once instead |
 | Cross-repeater comparison table | **built** — `/admin/compare`, chosen columns, deviations from the majority marked |
 | Editing from that table | **built** — a pencil per editable cell opens one editor below the table, pre-filled. One editor rather than an input in every cell: twenty nodes by six columns is a hundred and twenty forms each with its own confirmation, and the confirmation is exactly what becomes unreadable. It calls the same `nodeconfig.write()` as the node page, so the risk classes, the bounds and the read-back apply unchanged |
 | Bulk edit across several nodes | **not built, and gated by design**: plain-class parameters only, never the two heavier classes. Ten nodes in one click is also ten nodes lost in one click |
-| Forced mesh transport for a node that has an IP path | **not built.** Needs the LoRa write path first, and that needs a relay that monitors the target |
+| Forced mesh transport for a node that has an IP path | **not built.** The LoRa write path now exists, so what is missing is only the choice: the route is derived from the node rather than picked. It stays out until there is a node that is both monitored and IP-reachable to exercise it on |
 | Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |
 | MeshCore version for relayed nodes | **built** — `ver` joins the sweep, and one answer fills both version columns |
 | A sweep schedule per node | **built** — off by default, one round at a time with a global minimum gap, and a daily ceiling across all nodes |
@@ -1041,10 +1214,12 @@ against a node a human named.
 | Telling the three silences apart | **built** — out of range / not allowed in / read-only, from login state plus the heard list |
 | Setting a target's password from the site | **built as pass-through** — `nodeconfig.push_monitor_password()` sends it to the monitor and stores nothing. Not yet on a page: the form is the remaining piece |
 
-> While this is being developed, **JessaZH is not written to at all** — not a
-> test `set`, not anything. It is reached only over LoRa, so a mistake there is
-> not correctable, and it is also the reference case the design exists to serve.
-> Write paths are tested against a node somebody can physically touch.
+> **JessaZH gets no-ops only.** The path is built and tested against a simulated
+> monitor in the test suite; on the real repeater the first and for now the only
+> thing written is a parameter set to the value it already holds. It is reached
+> only over LoRa, so a mistake there is not correctable, and it is also the
+> reference case the design exists to serve. Real changes go there after a no-op
+> has been watched to complete.
 
 ## The packet filter
 

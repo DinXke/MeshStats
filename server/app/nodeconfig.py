@@ -18,11 +18,35 @@ en gebruikt die om het formulier te bouwen én om een tikfout alvast te weigeren
 Dat blijft "controleren aan beide kanten": hier voor een snelle, leesbare fout,
 daar omdat dat de controle is die telt.
 
-**Geen schrijfweg naar een node die alleen over LoRa bereikbaar is.** Die staat
-ontworpen in de documentatie en is bewust nog niet gebouwd: hij vraagt een
-toestandsmachine naast de bestaande sweep, en de node waarvoor hij bestaat is
-een stock MeshCore-repeater op een dak die op geen andere manier te bereiken is.
-Zoiets bouw je tegen een node die iemand fysiek kan aanraken, en niet eerder.
+**Geen tweede schrijfweg voor een node die alleen over LoRa bereikbaar is.** Die
+node bestaat -- het is een stock MeshCore-repeater op een dak, en het is de node
+waar dit hele project omheen gebouwd is -- en er wordt sinds firmware 2.4.0 ook
+naar geschreven. Maar niet langs een eigen stelsel: het is dezelfde weg met een
+ander VERVOERMIDDEL. Zelfde parameterlijst, zelfde grenzen, zelfde
+risicoklassen, zelfde bevestigingen, zelfde rechten, zelfde terugleescontrole.
+Wat verschilt is hoe het commando er komt.
+
+    doel met een IP-pad      HTTP naar de node zelf, POST /api/cfg. Tienden van
+                             seconden, want het is één CLI-aanroep.
+    doel alleen over LoRa    HTTP naar zijn MONITOR, POST /api/moncfg. Die node
+                             draait onze firmware en staat op het lokale net; hij
+                             zet `set <param> <waarde>` over LoRa en leest daarna
+                             `get <param>` terug. Tientallen seconden, want het
+                             zijn twee pakketten over een gedeelde band.
+
+Twee dingen die aan dat tweede geval anders zijn en die hieronder terugkomen.
+
+De MONITOR heeft de nieuwe firmware nodig, niet het doel. De dakrepeater leert
+niets, krijgt niets en merkt niets: hij ontvangt twee doodgewone CLI-commando's.
+Dat is de kracht van deze weg -- een node die maandenlang geen nieuwe firmware
+krijgt, hoeft er ook geen.
+
+En er is een derde uitkomst bij gekomen. Over IP is een schrijfactie gelukt of
+niet. Over LoRa kan het antwoord op de `set` uitblijven, en dan is het eerlijke
+antwoord dat we het NIET WETEN: het commando is de lucht in gegaan en of het is
+aangekomen valt van hieraf niet te zien. Dat heet hier ``geen_antwoord`` en het
+is met opzet geen mislukking, want "mislukt" laat iemand denken dat er niets
+gebeurd is.
 """
 
 from __future__ import annotations
@@ -40,6 +64,29 @@ from . import commanding, db, firmware
 # antwoordt de node met 404 en hoort de pagina dat te zeggen in plaats van een
 # knop aan te bieden die een foutmelding oplevert.
 MIN_CFG_VERSION = (2, 1, 0)
+
+# En de firmware die /api/moncfg kent: schrijven over LoRa naar een repeater die
+# deze node monitort. Die eis geldt voor de MONITOR en niet voor het doel -- het
+# doel draait stock MeshCore en krijgt gewoon twee CLI-commando's binnen. Dat is
+# precies waarom deze weg werkt voor een node die nooit nieuwe firmware krijgt.
+MIN_MESH_CFG_VERSION = (2, 4, 0)
+
+# Hoe lang de server op de monitor wacht voordat hij de pagina teruggeeft.
+#
+# De handeling zelf duurt op de node hoogstens 90 seconden (login, `set`,
+# adempauze, `get`), en dat is te lang om een browser op te laten wachten: een
+# omgekeerde proxy kapt zoiets af en dan staat er een foutpagina over een
+# schrijfactie die gewoon doorloopt. Dus wacht de server een stuk korter en zegt
+# eerlijk "loopt nog" als het niet klaar is.
+#
+# Dat kan omdat de uitslag niet hier bewaard wordt maar op de MONITOR: die houdt
+# de laatste opdracht vast tot de volgende. Wie de pagina herlaadt, ziet hem
+# alsnog. Er hoeft dus geen opdrachtenlijst en geen achtergronddraad in de server
+# te staan om een handeling van een halve minuut te overleven -- de node die het
+# werk doet, is ook de plek waar het antwoord ligt.
+MESH_WAIT_S = 40
+MESH_POLL_S = 2
+MESH_START_TIMEOUT_S = 10
 
 # Risicoklassen zoals de firmware ze meegeeft. Ze sturen hier één ding: hoeveel
 # moeite het kost om een waarde te zetten. Sluit aan bij wat de beheerpagina al
@@ -67,7 +114,7 @@ def _field(row, key, default=None):
 # --- kan er naar deze node geschreven worden ---------------------------------
 
 def cfg_route(rep, relay=None) -> dict:
-    """Mag en kan de site een instelling van deze repeater zetten?
+    """Mag en kan de site een instelling van deze repeater zetten, en waarlangs?
 
     Bewust een eigen sleutel naast ``commanding.route_for`` en naast
     ``firmware.ota_route``, om dezelfde reden als daar: de drie reizen over
@@ -75,35 +122,81 @@ def cfg_route(rep, relay=None) -> dict:
     IP-pad (dan geen schrijfweg), en een node kan een image aannemen terwijl zijn
     firmware nog geen /api/cfg kent (dan ook niet). Ze door elkaar halen levert
     precies één soort fout op, en dat is de knop die belooft wat hij niet kan.
+
+    ``transport`` zegt hoe het commando er komt, en dat is de enige vraag waarop
+    het antwoord voor een doorgestuurde node anders luidt:
+
+    ``ip``    HTTP naar de node zelf. Zijn eigen beheeradres, zijn eigen login.
+    ``mesh``  HTTP naar zijn MONITOR, die het over LoRa doorgeeft. ``host`` is
+              dan het adres van de monitor en ``target`` de sleutel van het doel.
+
+    Wat er in beide gevallen gelijk blijft is alles wat ertoe doet: de
+    parameterlijst, de grenzen, de risicoklassen en het teruglezen. Vandaar één
+    sleutel met een vervoermiddel erin en niet twee functies -- twee functies
+    zouden twee plekken zijn waar een drempel kan ontbreken.
+
+    ``relay`` is de repeaterrij van de node die voor deze repeater publiceert.
+    Als argument zodat deze functie te testen is zonder databank; wordt hij niet
+    meegegeven, dan zoekt hij hem zelf op.
     """
-    host = (_field(rep, "ota_host") or "").strip()
-    fw = _field(rep, "fw_meshmanager") or ""
-    version = commanding.parse_version(fw)
     relayed = commanding.is_relayed(rep)
+    if relayed and relay is None:
+        relay = db.find_repeater(_field(rep, "source_prefix"))
 
-    out = {"can": False, "blocker": "", "host": host, "fw": fw,
-           "min_fw": ".".join(str(n) for n in MIN_CFG_VERSION), "relayed": relayed}
+    out = {"can": False, "blocker": "", "host": "", "fw": "", "relayed": relayed,
+           "transport": "mesh" if relayed else "ip", "target": "", "monitor": ""}
 
-    # Volgorde omgedraaid ten opzichte van de eerste opzet, en dat is de correctie
-    # van een ontwerpfout. 'De server heeft geen inloggegevens' stond bovenaan en
-    # kreeg daardoor ook de doorgestuurde nodes te pakken -- terwijl juist voor
-    # die nodes de server nooit inloggegevens hoeft te hebben. Hun rechten horen
-    # bij de monitor. De blijvende toestand hoort dus eerst, en de ontbrekende
-    # weblogin geldt alleen voor de nodes waarvoor die weg überhaupt bestaat.
-    if relayed:
-        # Voor de dakrepeater is dit de blijvende toestand en geen ontbrekende
-        # instelling: hij draait geen firmware van ons en heeft geen IP-pad. De
-        # weg die voor hem ontworpen is loopt via zijn monitor en bestaat nog
-        # niet, en dat hoort er te staan in plaats van een leeg adresveld.
-        out["blocker"] = "relayed_only"
+    if not relayed:
+        host = (_field(rep, "ota_host") or "").strip()
+        fw = _field(rep, "fw_meshmanager") or ""
+        version = commanding.parse_version(fw)
+        out.update(host=host, fw=fw,
+                   min_fw=".".join(str(n) for n in MIN_CFG_VERSION))
+        if not firmware.NODE_USER:
+            out["blocker"] = "no_credentials"
+        elif not host:
+            out["blocker"] = "no_host"
+        elif version is None:
+            out["blocker"] = "no_fw"
+        elif version < MIN_CFG_VERSION:
+            out["blocker"] = "old_fw"
+        else:
+            out["can"] = True
+        return out
+
+    # De weg over LoRa. Elke eis hieronder gaat over de MONITOR en geen enkele
+    # over het doel -- dat is niet een bijzonderheid maar de kern van deze weg.
+    # De dakrepeater draait stock MeshCore, krijgt nooit iets van ons, en dat
+    # hoeft ook niet: hij ontvangt twee doodgewone CLI-commando's.
+    host = (_field(relay, "ota_host") or "").strip()
+    fw = _field(relay, "fw_meshmanager") or ""
+    version = commanding.parse_version(fw)
+    out.update(host=host, fw=fw,
+               min_fw=".".join(str(n) for n in MIN_MESH_CFG_VERSION),
+               target=(_field(rep, "pubkey_prefix") or "").lower().strip(),
+               monitor=str(_field(relay, "name") or
+                           _field(rep, "source_prefix") or "").strip())
+
+    if relay is None:
+        # De doorstuurder is hier zelf geen bekende repeater. Dan is er geen
+        # beheeradres om aan te kloppen en geen firmwareversie om op te toetsen,
+        # en gokken kost een verzoek dat nergens aankomt.
+        out["blocker"] = "relay_unknown"
     elif not firmware.NODE_USER:
+        # Hier geldt de weblogin wél, en het is een andere login dan waar de
+        # eerste opzet naar zocht: die van de MONITOR, een node van onszelf. Wat
+        # de server nooit hoeft te kennen is een geheim van het DOEL -- dat hoort
+        # bij de monitor, in zijn eigen monitorlijst, of het bestaat niet omdat
+        # de overkant ons in zijn toegangslijst zette.
         out["blocker"] = "no_credentials"
     elif not host:
-        out["blocker"] = "no_host"
+        out["blocker"] = "no_relay_host"
     elif version is None:
-        out["blocker"] = "no_fw"
-    elif version < MIN_CFG_VERSION:
-        out["blocker"] = "old_fw"
+        out["blocker"] = "relay_no_fw"
+    elif version < MIN_MESH_CFG_VERSION:
+        out["blocker"] = "relay_old_fw"
+    elif not out["target"]:
+        out["blocker"] = "no_target"
     else:
         out["can"] = True
     return out
@@ -276,16 +369,25 @@ def risk_of(rep, key: str) -> int:
 def write(rep, key: str, value: str, confirm: str = "") -> dict:
     """Eén parameter zetten en teruggeven wat er ná afloop in de node staat.
 
-    Het antwoord van de node draagt ``asked`` en ``applied`` apart, en dat is
-    geen omslachtigheid maar de kern van deze functie. MeshCore antwoordt "OK" op
+    Het antwoord draagt ``asked`` en ``applied`` apart, en dat is geen
+    omslachtigheid maar de kern van deze functie. MeshCore antwoordt "OK" op
     dingen die het niet werkelijk heeft overgenomen: ``set lat`` is een kale
     atof() die van een tikfout 0.0 maakt, en ``advert.interval`` wordt bewaard
     als minuten/2 in één byte, zodat 61 als 60 terugkomt. Wie hier "OK" zou
     teruggeven, zou dezelfde onwaarheid vertellen als de oude OTA-weg deed.
+
+    Eén ingang voor beide vervoermiddelen, en dat is met opzet. Alles wat een
+    schrijfactie tegenhoudt -- de route, de lijst van de node, de grenzen, de
+    bevestiging -- staat hierboven en gebeurt dus onverkort, of het commando nu
+    over een netwerkkabel of over de lucht verdergaat. Pas als er niets meer te
+    weigeren valt, gaan de twee wegen uiteen. Een tweede functie voor de
+    LoRa-weg zou een tweede plek zijn waar een drempel kan ontbreken, en dat is
+    precies het soort fout dat je pas ontdekt als er een node stil is.
     """
     route = cfg_route(rep)
-    out = {"ok": False, "step": "", "msg": "", "key": key,
-           "asked": value, "applied": "", "exact": False, "reboot": False}
+    out = {"ok": False, "step": "", "msg": "", "key": key, "asked": value,
+           "applied": "", "exact": False, "reboot": False,
+           "transport": route["transport"], "busy": False}
 
     if not route["can"]:
         out.update(step="route", msg=f"deze node kan geen instelling ontvangen "
@@ -313,7 +415,28 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
         out.update(step="bevestiging", msg=problem)
         return out
 
-    body = urllib.parse.urlencode({"key": key, "value": value}).encode()
+    # 'radio' wordt bewaard maar pas bij een herstart actief. Het teruglezen toont
+    # dus de nieuwe waarden terwijl de radio nog op de oude staat, en pas bij die
+    # herstart blijkt of ze kloppen -- precies het geval waarin een node niet
+    # terugkomt. De pagina hoort dat te zeggen, langs welke weg dan ook.
+    out["reboot"] = bool(spec.get("reboot"))
+
+    if route["transport"] == "mesh":
+        _write_mesh(route, out)
+    else:
+        _write_ip(route, out)
+
+    _remember(rep, spec, out)
+    return out
+
+
+def _write_ip(route: dict, out: dict) -> None:
+    """De weg naar een node die de server zelf over IP bereikt.
+
+    Synchroon, want aan de overkant is dit één aanroep van ``handleCommand()``
+    en die is in tienden van seconden klaar.
+    """
+    body = urllib.parse.urlencode({"key": out["key"], "value": out["asked"]}).encode()
     try:
         with _open(route["host"], "/api/cfg", data=body) as resp:
             answer = json.loads(resp.read())
@@ -325,11 +448,11 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
             answer = json.loads(exc.read())
         except (ValueError, OSError):
             out.update(step=f"http_{exc.code}", msg=f"node antwoordde HTTP {exc.code}")
-            return out
+            return
     except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
         out.update(step="verbinding",
                    msg=f"geen antwoord van de node ({type(exc).__name__})")
-        return out
+        return
 
     out.update(
         ok=bool(answer.get("ok")),
@@ -337,20 +460,153 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
         msg=str(answer.get("msg") or ""),
         applied=str(answer.get("applied") or ""),
         exact=bool(answer.get("exact")),
-        # 'radio' wordt bewaard maar pas bij een herstart actief. Het teruglezen
-        # toont dus de nieuwe waarden terwijl de radio nog op de oude staat, en
-        # pas bij die herstart blijkt of ze kloppen -- precies het geval waarin
-        # een node niet terugkomt. De pagina hoort dat te zeggen.
-        reboot=bool(spec.get("reboot")),
     )
 
-    # De naam staat ook in onze eigen tabel; die zou anders tot het volgende
-    # statistiekbericht de oude blijven tonen naast een melding dat het gelukt is.
-    if out["ok"] and key == "name" and out["applied"]:
-        rid = int(_field(rep, "id") or 0)
-        if rid:
-            db.execute("UPDATE repeaters SET name=? WHERE id=?", (out["applied"][:64], rid))
-    return out
+
+# Wat een afgeronde LoRa-schrijfactie kan opleveren, en wat die uitkomst betekent
+# voor iemand die ernaar kijkt. Ze staan hier en niet in het sjabloon omdat ze
+# ook in het serverlogboek en in een API-antwoord terechtkomen, en een zin die op
+# twee plaatsen anders luidt is een zin waar niemand meer op vertrouwt.
+MESH_STEPS = {
+    "": "",
+    "bezig": "de monitor is er nog mee bezig",
+    # De gunstigste manier waarop deze weg kan falen, en die verdient een eigen
+    # zin: er is niets vertrokken, dus er is met zekerheid niets veranderd. Dat
+    # op één hoop gooien met 'geen antwoord' zou de rustgevende uitkomst laten
+    # klinken als de verontrustende, of andersom.
+    "niet_verstuurd": ("er is niets de lucht in gegaan -- de login bleef "
+                       "onbeantwoord of de pakketpool van de monitor zat vol. "
+                       "Op de node is dus met zekerheid niets veranderd; "
+                       "probeer het opnieuw"),
+    # De nieuwe uitkomst, en de reden dat deze tabel bestaat. Niet 'mislukt':
+    # het commando IS verstuurd en of het is aangekomen weten we niet.
+    "geen_antwoord": ("het commando is over LoRa vertrokken, maar de node heeft er "
+                      "niet op geantwoord. Of hij het heeft uitgevoerd is van hieraf "
+                      "niet te zien; een nieuwe uitleesronde is de enige manier om "
+                      "erachter te komen"),
+    "geen_teruglezing": ("de node antwoordde op het zetten, maar op het teruglezen "
+                         "niet. Wat er nu werkelijk in staat is dus niet vastgesteld"),
+    "node": "de node weigerde het commando",
+}
+
+
+def mesh_state(monitor_host: str) -> dict:
+    """De lopende of laatst afgeronde schrijfactie van deze monitor.
+
+    Bestaat omdat de uitslag niet hier bewaard wordt maar op de monitor. Dat
+    scheelt niet alleen een opdrachtenlijst in de server -- het is ook de
+    eerlijkere plaats: de node die het werk deed is de enige die weet hoe het
+    afliep, en een kopie hier zou na een herstart van de site verdwenen zijn
+    terwijl de handeling wel degelijk plaatsvond.
+    """
+    uit = {"ok": False, "error": "", "job": {}}
+    if not (monitor_host or "").strip():
+        uit["error"] = "geen beheeradres voor de monitor"
+        return uit
+    try:
+        with _open(monitor_host, "/api/moncfg") as resp:
+            uit["job"] = json.loads(resp.read())
+        uit["ok"] = True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            uit["error"] = ("deze monitor draait firmware zonder /api/moncfg "
+                            "(ouder dan 2.4.0)")
+        elif exc.code == 401:
+            uit["error"] = "aanmelden geweigerd door de monitor"
+        else:
+            uit["error"] = f"monitor antwoordde HTTP {exc.code}"
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        uit["error"] = f"monitor niet bereikbaar ({type(exc).__name__})"
+    return uit
+
+
+def _write_mesh(route: dict, out: dict) -> None:
+    """De weg naar een node die alleen over LoRa te bereiken is.
+
+    Vragen aan de monitor, en dan wachten. Het wachten gebeurt hier en niet in de
+    browser met een verversende pagina, omdat een schrijfactie meestal binnen
+    tien seconden klaar is en het antwoord dan meteen op het scherm hoort te
+    staan. Duurt het langer dan ``MESH_WAIT_S``, dan zegt de pagina dat het nog
+    loopt in plaats van een halve minuut te blijven hangen -- en omdat de uitslag
+    op de monitor blijft staan, laat een herlading hem alsnog zien.
+
+    Wat er níét gebeurt: opnieuw proberen. Een schrijfactie die stil bleef, is
+    misschien wel uitgevoerd, en hem herhalen is dan de tweede keer hetzelfde
+    doen op een node die je niet kunt nakijken.
+    """
+    body = urllib.parse.urlencode({"key": route["target"], "param": out["key"],
+                                   "value": out["asked"]}).encode()
+    try:
+        with _open(route["host"], "/api/moncfg", data=body,
+                   timeout=MESH_START_TIMEOUT_S) as resp:
+            resp.read()
+    except urllib.error.HTTPError as exc:
+        # De monitor antwoordt ook bij een weigering met JSON, en juist dan staat
+        # erin waarom: een sleutel die hij niet monitort, een uitleesronde die
+        # loopt, te kort na de vorige schrijfactie. Dat is de nuttigste zin die
+        # er te geven valt, dus die blijft staan zoals hij is.
+        try:
+            answer = json.loads(exc.read())
+        except (ValueError, OSError):
+            out.update(step=f"http_{exc.code}", msg=f"monitor antwoordde HTTP {exc.code}")
+            return
+        out.update(step=str(answer.get("step") or "monitor"),
+                   msg=str(answer.get("msg") or f"monitor weigerde (HTTP {exc.code})"))
+        return
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        out.update(step="verbinding",
+                   msg=f"geen antwoord van de monitor ({type(exc).__name__})")
+        return
+
+    deadline = time.monotonic() + MESH_WAIT_S
+    job = {}
+    while True:
+        time.sleep(MESH_POLL_S)
+        state = mesh_state(route["host"])
+        if not state["ok"]:
+            out.update(step="verbinding", msg=state["error"])
+            return
+        job = state["job"] or {}
+        if not job.get("busy"):
+            break
+        if time.monotonic() >= deadline:
+            out.update(busy=True, step="bezig", msg=(
+                f"de monitor is er nog mee bezig. Twee commando's over LoRa duren "
+                f"tot anderhalve minuut; herlaad deze pagina voor de uitslag"))
+            return
+
+    step = str(job.get("step") or "")
+    out.update(
+        ok=bool(job.get("ok")),
+        step=step,
+        msg=MESH_STEPS.get(step, str(job.get("end") or "")),
+        applied=str(job.get("applied") or ""),
+        exact=bool(job.get("exact")),
+    )
+
+
+def _remember(rep, spec: dict, out: dict) -> None:
+    """Wat er nu in de node staat ook hier vastleggen.
+
+    Zonder dit blijft de kolom 'Nu' op de beheerpagina de oude waarde tonen
+    naast een melding dat het gelukt is, tot de volgende uitleesronde. Over IP is
+    dat hooguit verwarrend; over LoRa is het erger, want daar kost zo'n ronde
+    zendtijd op andermans band en gebeurt hij hooguit dagelijks.
+
+    Wat teruggelezen is en niet wat gevraagd is -- dat is het hele punt van deze
+    module. En een geheim wordt niet bewaard: de node geeft er '(verborgen)' voor
+    terug, en die tekst in de tabel zetten zou een waarde suggereren.
+    """
+    if not (out["ok"] and out["applied"]) or spec.get("secret"):
+        return
+    rid = int(_field(rep, "id") or 0)
+    if not rid:
+        return
+    db.upsert_cli_settings(rid, {out["key"]: out["applied"]}, prune=False)
+    # De naam staat ook in onze eigen repeatertabel; die zou anders tot het
+    # volgende statistiekbericht de oude blijven tonen.
+    if out["key"] == "name":
+        db.execute("UPDATE repeaters SET name=? WHERE id=?", (out["applied"][:64], rid))
 
 
 # --- rechten van de monitor op zijn doelnode ---------------------------------

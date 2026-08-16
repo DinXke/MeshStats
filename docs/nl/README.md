@@ -129,6 +129,7 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | **Wat kan ik eigenlijk met mijn nodes?** | **[`node-management.md`](node-management.md)** |
 | Hoe breng ik een node onder beheer? | [`node-management.md`](node-management.md) |
 | Welke instellingen mag ik op afstand wijzigen? | [`node-management.md`](node-management.md) |
+| Hoe wijzig ik een instelling op een repeater die ik alleen over LoRa bereik? | [`node-management.md`](node-management.md) |
 | Mijn node kwam niet terug na een upgrade | [`node-management.md`](node-management.md) |
 | Mijn opdrachten krijgen helemaal geen antwoord | [`node-management.md`](node-management.md) |
 | Wat betekent dit woord? | [`glossary.md`](glossary.md) |
