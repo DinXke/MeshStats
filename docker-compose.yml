@@ -59,6 +59,17 @@ services:
       # met die reden erbij. Dat is het juiste gedrag voor een fork, die zijn
       # eigen images hoort te halen en niet stilzwijgend die van een vreemde.
       MM_GITHUB_REPO: "${MM_GITHUB_REPO-${MCS_GITHUB_REPO-}}"
+      # Weblogin voor de beheerpagina van je eigen nodes, voor firmware schrijven
+      # en instellingen zetten over IP. Bewust leeg als standaard: leeg zet die
+      # wegen uit in plaats van ze half te laten werken.
+      #
+      # Wat je hiermee weggeeft staat in docs/security.md en is geen kleinigheid:
+      # met deze twee gezet betekent een inbraak op de site firmware schrijven op
+      # elke node die de server over IP bereikt. Voor een node die alleen over
+      # LoRa te bereiken is heeft de server ze nooit nodig -- die rechten horen
+      # bij de monitor die de opvragingen doet.
+      MM_FW_NODE_USER: "${MM_FW_NODE_USER-${MCS_FW_NODE_USER-}}"
+      MM_FW_NODE_PASS: "${MM_FW_NODE_PASS-${MCS_FW_NODE_PASS-}}"
       # Beveiliging: bodylimiet en het aantal proxies vóór de app (zie .env.example)
       MM_MAX_BODY_BYTES: "${MM_MAX_BODY_BYTES:-${MCS_MAX_BODY_BYTES:-2000000}}"
       MM_TRUSTED_PROXY_HOPS: "${MM_TRUSTED_PROXY_HOPS:-${MCS_TRUSTED_PROXY_HOPS:-1}}"
