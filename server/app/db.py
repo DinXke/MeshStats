@@ -1424,6 +1424,20 @@ def cli_settings_for(repeater_id: int) -> list:
     return q("SELECT * FROM repeater_cli WHERE repeater_id=? ORDER BY param", (repeater_id,))
 
 
+def cli_settings_all() -> list:
+    """Elke gelezen CLI-waarde van elke repeater, in één query.
+
+    Bestaat naast ``cli_settings_for`` omdat de vergelijkingstabel de waarden van
+    alle nodes naast elkaar zet en de per-node-versie in een lus roepen bij
+    twintig repeaters twintig queries is voor één scherm. De sortering ligt vast
+    zodat de tabel bij elke verversing dezelfde volgorde heeft: een rij die
+    verspringt tussen twee weergaven maakt vergelijken onmogelijk, wat nu net het
+    doel is.
+    """
+    return q("SELECT repeater_id, param, value, updated FROM repeater_cli "
+             "ORDER BY repeater_id, param")
+
+
 def request_refresh(prefix: str) -> None:
     """Queue a manual status request for a polling client (Home Assistant today)."""
     import json

@@ -24,8 +24,8 @@ klikken een 404 oplevert. Waar een GET-URL wél verhuisde staat een omleiding.
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import (auth, clocksync, commanding, config, db, firmware, metrics,
-               mqtt_ingest, nodeconfig, ratelimit, retention, tsdb)
+from . import (auth, clocksync, commanding, compare, config, db, firmware,
+               metrics, mqtt_ingest, nodeconfig, ratelimit, retention, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -177,6 +177,60 @@ def nodes_page(request: Request):
         "groups": [g for g in groups if g["reps"]],
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
     })
+
+
+@router.get("/compare", response_class=HTMLResponse)
+def compare_page(request: Request):
+    """Alle repeaters naast elkaar, met de afwijkers gemarkeerd.
+
+    Een eigen weergave naast /admin en niet een kolom erbij, omdat het een andere
+    vraag beantwoordt. /admin vraagt "hoe staat deze node ervoor" en groepeert
+    daarom op beheerniveau; hier is de vraag "welke node loopt uit de pas", en die
+    kun je alleen stellen als de waarden naast elkaar staan.
+
+    De kolomkeuze volgt de afspraak van het pakketarchief -- een URL-parameter
+    wint van wat er bewaard is -- maar bewaart serverzijdig in plaats van in
+    localStorage. Reden: beheer is een gedeelde taak. Wie een tabel inricht die
+    laat zien dat één node uit de pas loopt, wil dat de volgende die inlogt
+    hetzelfde ziet, en niet dat die keuze in één browser blijft hangen.
+    """
+    user = require_login(request)
+    repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    broker = mqtt_ingest.can_publish()
+
+    gekozen = request.query_params.get("cols", "")
+    if not gekozen:
+        gekozen = db.get_setting(compare.SETTING_KEY, "")
+
+    voorlopig = compare.build(repeaters, None, broker_connected=broker)
+    keys = [k for k, _ in voorlopig["keuzes"]]
+    kolommen = compare.parse_columns(gekozen, keys)
+    tabel = compare.build(repeaters, kolommen, broker_connected=broker)
+
+    return templates.TemplateResponse(request, "admin/compare.html", {
+        "site_name": config.SITE_NAME, "user": user, "world": "nodes",
+        "compare_tab": True,
+        "tabel": tabel,
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+        "cfg_result": None,
+    })
+
+
+@router.post("/compare/columns")
+def compare_columns(request: Request, csrf: str = Form(...),
+                    col: list[str] = Form(default=[])):
+    """De kolomkeuze bewaren.
+
+    Vinkjes, dus wat niet meekomt is uitgezet -- en een lege keuze is dan ook een
+    geldig verzoek, geen fout. ``compare.parse_columns`` maakt er bij het tonen
+    weer de standaardkolommen van, want een tabel zonder kolommen is geen tabel;
+    dat hoort daar en niet hier, zodat een handmatig leeggemaakte instelling
+    hetzelfde uitpakt als een instelling die nooit gezet is.
+    """
+    require_login(request)
+    check_csrf(request, csrf)
+    db.set_setting(compare.SETTING_KEY, ",".join(c.strip() for c in col if c.strip()))
+    return RedirectResponse("/admin/compare", status_code=303)
 
 
 @router.get("/server", response_class=HTMLResponse)
