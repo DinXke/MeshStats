@@ -1,6 +1,10 @@
 #include "PacketFilter.h"
 
-#include <MeshCore.h>
+/* Utils.h en niet alleen MeshCore.h: de constanten (CIPHER_BLOCK_SIZE,
+ * CIPHER_MAC_SIZE) komen uit MeshCore.h, maar mesh::Utils::sha256 -- waarmee
+ * de kanaalhash berekend wordt op precies de manier die de zender ook
+ * gebruikt -- staat in Utils.h, dat MeshCore.h zelf meebrengt. */
+#include <Utils.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -254,6 +258,25 @@ static bool eqNoCase(const char *a, const char *b) {
     if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
   }
   return *a == 0 && *b == 0;
+}
+
+/* Wat een label mag zijn, en waarom er uberhaupt een grens is.
+ *
+ * Dit label komt in drie dingen terecht: het prefsbestand (regelgebaseerd, dus
+ * een spatie erin zou een tweede argument worden), de JSON van /api/filter (een
+ * aanhalingsteken erin zou het antwoord onparseerbaar maken) en de commandoregel
+ * die de site terugstuurt om het kanaal weer vrij te geven. Ontsnappingsregels
+ * voor alle drie is drie plaatsen die het eens moeten blijven; een label
+ * beperken tot wat overal veilig is, is er een. Het label is toch alleen voor de
+ * mens -- de node vergelijkt op de hash. */
+static bool labelOk(const char *s) {
+  if (!s || !*s) return false;
+  for (const char *p = s; *p; p++) {
+    bool ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z')
+              || (*p >= '0' && *p <= '9') || *p == '-' || *p == '_' || *p == '.';
+    if (!ok) return false;
+  }
+  return true;
 }
 
 static int chanFind(const char *label_or_hash) {
@@ -621,6 +644,12 @@ bool pf_command(const char *rest, char *reply, size_t reply_max) {
       }
       if (_n_chans >= PF_CHAN_MAX) {
         snprintf(reply, reply_max, "Err - er passen er %d, niet meer", PF_CHAN_MAX);
+        return true;
+      }
+      if (!labelOk(label) || strlen(label) >= PF_LABEL_MAX) {
+        snprintf(reply, reply_max,
+                 "Err - een label is 1-%d tekens uit a-z A-Z 0-9 - _ .",
+                 PF_LABEL_MAX - 1);
         return true;
       }
       const char *why = "";
