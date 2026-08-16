@@ -42,7 +42,7 @@ python -m pytest -k backfill                    # by name
 python -m pytest -x -q                          # stop at the first failure
 ```
 
-Roughly 220 tests across a dozen modules; a full run takes seconds.
+Roughly 400 tests across a dozen modules; a full run takes seconds.
 
 ---
 

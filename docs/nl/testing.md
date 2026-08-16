@@ -43,7 +43,7 @@ python -m pytest -k backfill                    # op naam
 python -m pytest -x -q                          # stop bij de eerste fout
 ```
 
-Ruwweg 220 tests over een tiental modules; een volledige run duurt seconden.
+Ruwweg 400 tests over een tiental modules; een volledige run duurt seconden.
 
 ---
 

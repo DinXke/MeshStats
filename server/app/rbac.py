@@ -119,8 +119,10 @@ Handeling = namedtuple("Handeling", "scope klasse tekst")
 # repeater en heeft er dus een nodig; een server-handeling gaat over deze
 # installatie en is voorbehouden aan een serverbeheerder (zie decide).
 #
-# ``tekst`` is Nederlands en staat in de eerste persoon van de weigering: "u mag
-# <tekst> niet". Dat leest op het scherm als een zin en niet als een sleutel.
+# ``tekst`` is Nederlands en is de werkwoordzin die in de weigering komt te
+# staan: "<tekst> mag u niet". Dat leest op het scherm als een zin en niet als
+# een sleutel -- deze redenen belanden in de tooltip van een uitgeschakelde knop,
+# en daar is "node.firmware" geen antwoord.
 ACTIONS = {
     # -- kijken
     "node.bekijken": Handeling("node", KLASSE_KIJKEN,
@@ -362,7 +364,10 @@ def decide(user, action: str, rep=None) -> Besluit:
         return besluit
     plafond = ROL_PLAFOND[besluit.rol]
     if _rang(handeling.klasse) > _rang(plafond):
-        return Besluit(False, f"u mag {handeling.tekst} niet: dat is "
+        # "<handeling> mag u niet" en niet "u mag <handeling> niet": de tekst van
+        # een handeling is een werkwoordzin die op het werkwoord eindigt, en de
+        # ontkenning hoort er in het Nederlands vóór.
+        return Besluit(False, f"{handeling.tekst} mag u niet: dat is "
                               f"'{KLASSE_UITLEG[handeling.klasse]}', en uw rol "
                               f"{besluit.rol} gaat tot '{KLASSE_UITLEG[plafond]}'",
                        besluit.rol)
