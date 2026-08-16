@@ -451,6 +451,59 @@ MeshCore-firmware, citeer dan het bestand en de regel waar het vandaan komt.
 vermelden.** Een bestand zonder tegenhanger is een fout in de documentatie, net
 zoals een UI-string in maar één taal een fout in de site is.
 
+### Schermafbeeldingen
+
+Een schermafbeelding is documentatie die stilletjes veroudert. Ze blijft er
+gezaghebbend uitzien lang nadat de pagina die ze toont veranderd is, en niemand
+merkt het, want er gaat niets stuk. Vandaar drie regels, en de derde is degene
+die de andere twee leefbaar maakt.
+
+**Nooit van een echte installatie.** Deze repository is publiek. Een afbeelding
+van de draaiende site zou precies lekken wat de rest van dit project beschermt:
+nodenamen van derden, hun posities, hun sleutelprefixen, het IP-adres van een
+levende node, de beheerpagina van een server die iemand beheert. Elke afbeelding
+in `docs/images/` komt van een wegwerpinstantie met verzonnen data, en die
+instantie is meegecommit gereedschap in plaats van iets wat elke auteur zelf
+improviseert.
+
+**Alleen waar ze iets dragen wat tekst niet kan.** Een afbeelding van een
+tekstveld helpt niemand. Een afbeelding van de nodepagina met drie nodes op drie
+verschillende niveaus laat in één oogopslag zien wat vijf alinea's proberen te
+zeggen. Kies bij twijfel liever een stabiel scherm dan een dat er volgende week
+anders uitziet.
+
+**Elke afbeelding is met twee commando's opnieuw te maken.** Vanuit `server/`:
+
+```bash
+python tools/demo_data.py --port 8472 --no-login   # terminal 1, laten draaien
+python tools/screenshots.py                        # terminal 2, schrijft docs/images/
+```
+
+De bijzonderheden, zodat een latere lezer ze niet hoeft te reconstrueren:
+
+| | |
+|---|---|
+| Testdata | `server/tools/demo_data.py` — vijf verzonnen nodes over alle drie de beheerniveaus, namen met het voorvoegsel `Voorbeeld-`, sleutelprefixen van herhalende bytes, adressen uit `192.0.2.0/24` (RFC 5737, gereserveerd voor documentatie), en helemaal geen posities |
+| Pagina's | `/admin`, `/admin/repeaters/{1..5}`, `/admin/firmware` |
+| Venster | 1280 breed, standaardthema (donker), `--force-device-scale-factor=1` |
+| Welke opnamen | De tabel `SHOTS` bovenaan `server/tools/screenshots.py`, één rij per bestand in `docs/images/` |
+| Uitsneden | Pixelgrenzen in diezelfde tabel. **Dat is het brosse deel** — een sjabloonwijziging schuift ze. De docstring van het script bevat het consolefragment dat ze opnieuw uitleest, en het bewaart de ongesneden opnamen in een tijdelijke map zodat controleren niet betekent dat je opnieuw begint |
+
+`demo_data.py` en `screenshots.py` wenden met opzet twee dingen voor en zeggen
+dat in hun docstrings: de broker wordt als verbonden gemeld, en de releaselijst
+wordt ingevuld in plaats van opgehaald. Zonder die twee zou elke knop op elke
+afbeelding uitstaan en lieten de afbeeldingen niets zien. Geen van beide
+voorwendsels bestaat ergens in de toepassing zelf.
+
+**De alt-tekst is het bijschrift.** Hij is er voor wie de afbeelding niet ziet,
+en hij is het enige deel van de afbeelding dat een nalezer in een diff kan lezen.
+Beschrijf wat er werkelijk op het scherm staat — de nodenamen, de groepskoppen,
+de toestand van de knoppen en de reden ernaast — en niet "schermafbeelding van de
+beheerpagina". Beide taalversies krijgen hun eigen alt-tekst, in hun eigen taal,
+ook al wijzen ze naar hetzelfde bestand: de beheerpagina's zijn alleen
+Nederlands (zie `admin.md`), dus er is één reeks afbeeldingen en er zijn twee
+reeksen beschrijvingen.
+
 ---
 
 ## Een wijziging indienen

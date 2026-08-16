@@ -2,13 +2,78 @@
 
 *[Nederlands](nl/node-management.md)*
 
-What the site can do to a node, which nodes it can do it to, and — the part that
-takes the most words — what it deliberately will not do.
+A walkthrough of everything the site can do to a node, in the order you will
+need it: recognising what a node is, bringing it under management, reading and
+changing its settings, setting its clock, giving it new firmware — and what to do
+on the day it does not come back. Plus, throughout, the part that takes the most
+words: what the site deliberately will not do.
 
-Reading a node is settled and has worked for a long time. This page is mostly
-about **writing**: changing a setting from the site rather than from a serial
-cable. Some of it is built, some of it is designed and explicitly not built yet.
-Each section says which.
+Reading a node is settled and has worked for a long time. Of the **writing**
+side, some is built and some is designed and explicitly not built yet; each
+section says which. The distinction matters more here than in most
+documentation, because the failure mode is not a broken page. It is a repeater
+on a roof that nobody can reach any more.
+
+The screenshots come from a throwaway instance filled with invented nodes, never
+from a running installation — see
+[`contributing.md` §10](contributing.md#10-documentation-conventions) for how to
+remake them. The admin pages are Dutch only, deliberately, so the screenshots are
+Dutch even here; [`admin.md`](admin.md) explains that choice.
+
+---
+
+## Contents
+
+**Knowing what you have** — [the nodes page](#start-at-the-nodes-page) ·
+[the three levels](#the-three-levels) ·
+[what is possible per level](#what-is-possible-per-level) ·
+[bringing a node under management](#bringing-a-node-under-management)
+
+**Settings** — [reading](#reading-settings) ·
+[over MQTT?](#can-settings-be-written-over-the-same-mqtt-route) ·
+[which may be written](#which-settings-may-be-written) ·
+[confirm-or-revert](#confirm-or-revert-examined-and-deliberately-not-built) ·
+[reading it back](#after-a-write-read-it-back)
+
+**The device** — [the clock](#setting-the-clock) ·
+[firmware and rollback](#upgrading-firmware-and-going-back) ·
+[when a node does not come back](#when-a-node-does-not-come-back)
+
+**When it does not work** — [rights](#rights-are-the-hinge-and-their-failure-mode-is-confusing) ·
+[telemetry without credentials](#telemetry-without-credentials) ·
+[without internet](#working-without-internet) ·
+[discovery](#discovery-point-then-test-once) ·
+[built and not built](#what-is-built-and-what-is-not)
+
+---
+
+## Start at the nodes page
+
+`/admin` is the only page that answers "what have I got, and what can I do with
+it" in one screen. It does not sort by name or by last seen. It groups by
+**management level**, because what you can do with a node differs per group and
+nothing else on the page explains the buttons underneath.
+
+![The admin page 'Nodes en repeaters' with five invented nodes in three groups. Full managed — 2 holds Voorbeeld-Thuisnode and Voorbeeld-Zendmast, both with source 'zichzelf', firmware v1.16.0 + 1.10.0 and route 'MQTT'. Semi-managed — 1 holds Voorbeeld-Dakrepeater, source 'via bb11bb11bb11', route 'via monitor'. Unmanaged — 2 holds Voorbeeld-Buurnode and Voorbeeld-Veldpost, both with route 'geen'. Each group carries a paragraph explaining what that level means, and each node a sentence saying how its level was observed.](images/beheer-nodes-overzicht.png)
+
+Three things on that page are worth naming before anything else.
+
+**The sentence under each node is the evidence.** "publiceert zelf over MQTT met
+nodefirmware 1.10.0", "bereikbaar via Voorbeeld-Thuisnode over LoRa", "alleen
+waargenomen in het verkeer". That is `level_why`, and it names the node that
+makes the level possible. Without that name, "semi-managed" is a label nobody
+can act on.
+
+**"Weg nu" is not the level.** It says what can leave this machine at this
+instant. A full managed node behind a broker that just dropped is still full
+managed; there is only no route right now. The two are deliberately separate
+keys, and [`commanding.md`](commanding.md) explains why the level ignores the
+broker connection entirely.
+
+**A hidden node still counts.** A repeater that appears by itself out of an
+incoming message arrives hidden — publishing rights on a topic are not
+publishing rights on the front page — and the banner at the top says how many
+are waiting for that decision.
 
 ---
 
@@ -40,6 +105,18 @@ firmware are the variant that can do extra. It is worth reading the table that
 way round, because designing for "our nodes, plus some others" is how the roof
 repeater ends up as an edge case — and it is the node this whole project was
 built around.
+
+### Seeing the level of one node
+
+Open a node and the level is the first thing on the page, above the key prefix,
+because it answers the question you have before you scroll: what can I do here?
+
+![The admin page of Voorbeeld-Dakrepeater. Next to the title a badge reads SEMI-MANAGED, and under the heading 'Identiteit en versies' an amber-bordered card repeats the badge with 'waargenomen: bereikbaar via Voorbeeld-Thuisnode over LoRa' and a paragraph explaining what semi-managed allows. Below it a table lists key prefix aa00aa00aa00, slug, 'Bron van de cijfers: doorgestuurd door node bb11bb11bb11', last seen, MeshCore firmware v1.16.0, and an empty nodefirmware field noting that without that version the site sends this node nothing.](images/beheer-node-semi-managed.png)
+
+The empty **Nodefirmware (MeshManager)** row on that screenshot is not cosmetic.
+That field decides whether the buttons further down may send anything at all —
+commands from 1.8.0, sweeping a monitored repeater from 1.9.0, the clock from
+1.10.0. Whoever wonders why a button is off looks here first.
 
 ### Transitions
 
@@ -73,7 +150,101 @@ values are in [`firmware-upgrade.md`](firmware-upgrade.md).
 **A capability that does not apply is shown disabled with its reason, never
 hidden.** A button that vanishes leaves "why can I not do this here" unanswered,
 and that question is exactly what somebody has at the moment they need the
-button.
+button. On an `unmanaged` node every action is therefore still on the page, off,
+each with its own sentence:
+
+![The 'Uitvragen' and 'Klok' sections of the unmanaged node Voorbeeld-Buurnode. The settings table is empty. Three buttons are greyed out — 'Opvragen kan nu niet', 'Status opvragen kan nu niet' and 'Synchroniseren kan nu niet' — and each carries its reason: 'Geen van beide wegen staat open', 'de node meldt geen firmwareversie, dus valt niet vast te stellen of hij opdrachten aanneemt' and the same for the clock. A line notes that nobody has ever fetched /api/v1/commands.](images/beheer-node-unmanaged.png)
+
+Note that the reasons differ from each other. "No route is open" and "the node
+reports no firmware version" are different problems with different fixes, and a
+single greyed-out button saying nothing would have hidden both.
+
+---
+
+## Bringing a node under management
+
+You do not raise a level. You change the world, and the level follows at the next
+message. There are exactly two things to change.
+
+### To `semi_managed`: rights on its CLI
+
+A MeshCore repeater runs a CLI command only for a client it considers an
+**admin**. Whoever operates that repeater grants it, on their side:
+
+```
+setperm <our-public-key> 3
+```
+
+`1` is read-only and is not enough — see
+[Rights are the hinge](#rights-are-the-hinge-and-their-failure-mode-is-confusing)
+for why that particular half-measure is the most confusing state in this whole
+area. The alternative is handing over the repeater's admin password, which works
+and is worse: a password is shared, a permission is revocable by the other
+operator alone.
+
+On our side the monitoring node needs to know about it. The monitor list lives on
+the node, not on the site (`wifi mon add <key>`), and the monitor must run
+nodefirmware **1.9.0** or later, because that is where `settings <key>` — fetch
+*their* CLI over LoRa — was added. An older monitor knows the `cmd` topic but
+refuses the argument and counts the command as rejected, which is why the site
+refuses to guess and shows `old_fw` instead.
+
+### To `full_managed`: our firmware plus MQTT
+
+Two conditions, both necessary:
+
+1. The node runs the MeshManager firmware and publishes its own statistics —
+   see [`firmware.md`](firmware.md) for building and flashing, and
+   [`mqtt.md`](mqtt.md) for the topics and the per-node broker account.
+2. It reports a `fw_meshmanager` version in those messages. Without it the site
+   cannot establish that the `cmd` topic exists on that node, and a command
+   published into the void is exactly the dishonesty the level exists to prevent.
+
+Getting our firmware onto a node that is only reachable over LoRa is not possible
+from here and never will be — 1.3 MB against the duty cycle is days of airtime.
+Such a node is flashed over USB, in person. That is the whole reason
+`semi_managed` is a level and not a waiting room.
+
+### Checking that it worked
+
+Reload `/admin`. The node has moved to another group, and the sentence under it
+names the new evidence. That is the confirmation — not a success message, but the
+site's own reading of what is now true.
+
+If it has not moved, the sentence tells you what is still missing, and it is
+almost always one of three things: no firmware version reported, a monitor below
+1.9.0, or nothing published since the change.
+
+---
+
+## Reading settings
+
+Reading is settled, works today, and is the same mechanism at both managed
+levels. It differs only in who is asked.
+
+![The 'Uitvragen' section of Voorbeeld-Dakrepeater. A table lists fifteen CLI parameters with their values and how long ago each was fetched — advert.interval 240, af 1.0, allow.read.only off, cmd:region showing '(geen antwoord)' in grey, flood.max 3, freq 869.525, radio 869.525,250,11,5, repeat on, role repeater, tx 22 and more. Below it a blue-bordered block 'Instellingen nu opvragen' tagged 'kost zendtijd' explains that node bb11bb11bb11 monitors this repeater and can query it over LoRa, with an active button. A second block for a fresh status is greyed out because a relayed repeater cannot be asked to publish.](images/beheer-node-instellingen.png)
+
+Three things this screenshot is showing.
+
+**`cmd:region` reads "(geen antwoord)", not a stale value.** A sweep that gets no
+answer for one parameter says so. Showing the last known value would make an
+unanswered question look like a fresh fact, and on a radio link the difference is
+routine rather than exceptional.
+
+**The button is tagged "kost zendtijd".** A sweep is fifteen or so commands and
+fifteen answers over a shared band, one at a time with breathing room between
+them. It is a read — nothing on the device changes — but it is not free, and the
+page prices it accordingly. Expect **2 to 5 minutes** through a monitor, under
+half a minute direct.
+
+**"Status opvragen" is off, and for a reason that is not a fault.** A relayed
+repeater does not publish; its figures arrive on the monitor's own schedule.
+Asking it for a fresh status is not a thing that exists, so the button says so
+rather than pretending.
+
+Which parameters get swept is one list for all repeaters, on
+`/admin/server#cli-params` — not per node, because a per-node list invites the
+idea that you can ask one node something special.
 
 ---
 
@@ -371,6 +542,118 @@ code path that could disagree with the first.
 
 ---
 
+## Setting the clock
+
+The clock has its own section on the node page and its own confirmation naming
+the node, because it writes one number that cannot be corrected from here.
+
+![The 'Klok' section of Voorbeeld-Dakrepeater. A table shows 'Laatst tijd gestuurd: nog nooit door deze site' and 'Automatisch: ja, de site doet dit uit zichzelf'. An amber-bordered block 'Klok nu synchroniseren', tagged 'schrijft op het apparaat', explains that this repeater has no route of its own, that its clock comes from node bb11bb11bb11 which monitors it, and in bold that the button therefore does not target this repeater alone — the site sends the time to that node, which then checks the clocks of all repeaters it monitors. Below the active button a paragraph explains what the page does and does not know about whether the clock is actually right.](images/beheer-node-klok.png)
+
+Four things worth knowing before pressing it.
+
+**The button is wider than the node it sits under.** For a relayed repeater the
+time goes to its monitor, and that monitor then checks the clocks of *every*
+repeater it monitors. The firmware has no way to narrow that down, and that is
+not an omission — a clock round costs one question and one answer per monitored
+repeater, roughly a fifth of an ordinary poll round. The page says so instead of
+pretending the button points at one device.
+
+**`time` needs nodefirmware 1.10.0**, along both routes — unlike settings, where
+the boundary depends on the route (1.8.0 direct, 1.9.0 via a monitor). It is the
+same recipient having to know the same word.
+
+**A clock can only go forward.** An advert carries the clock of the node that
+sent it, and any node that already knows the sender throws away an advert whose
+timestamp has not increased. Setting a clock back an hour makes that repeater
+invisible for an hour, so the firmware never corrects backwards — which means a
+time set too far into the future is a mistake you repair in person.
+
+**The site refuses when it does not trust its own clock.** Three checks —
+`adjtimex(2)`, a wall-versus-monotonic jump check, and a persisted high-water
+mark — and if any of them is unhappy nothing goes out. The page says which.
+
+The site also does this by itself, once a day; the button exists so you do not
+have to wait. Full reasoning in [`clocksync.md`](clocksync.md).
+
+---
+
+## Upgrading firmware, and going back
+
+Firmware lives on its own page, because "which release runs where" is a question
+you ask across all nodes at once. [`firmware-upgrade.md`](firmware-upgrade.md)
+has the full mechanism — the checksum verified twice, why only success reboots,
+what a checksum does *not* prove. What belongs here is which nodes can receive an
+image at all, and what the page does when one does not come back.
+
+![The 'Nodes' part of the firmware page with three invented nodes. Voorbeeld-Thuisnode shows nodefirmware 1.10.0, MeshCore v1.16.0, build environment heltec_v3, management address http://192.0.2.11, a 'kritiek' pill, and an upgrade form with a version dropdown plus a field to confirm by typing the node name. Voorbeeld-Zendmast shows a notice in bold — 'Node niet teruggekomen na upgrade naar 1.10.0', with the step herstart beside it, explaining the image was written and verified, that this is about the restart, and that falling back is possible with 'wifi fw rollback' over the mesh CLI, with a 'Wegklikken' button. Voorbeeld-Dakrepeater has an empty address field, a disabled 'Node uitvragen' button and the note 'Geen upgrade mogelijk' because it is relayed over LoRa.](images/beheer-firmware.png)
+
+`firmware.ota_route()` decides, and returns a blocker the page turns into a
+sentence. In the order they are tested:
+
+| Blocker | Means | What to do |
+|---|---|---|
+| `no_credentials` | The server has no login for the nodes' own admin pages | Set `MM_FW_NODE_USER` and `MM_FW_NODE_PASS`. Until then every upgrade button stays off |
+| `relayed_only` | No management address, and this node's figures arrive through another node | Nothing. This is a **permanent state**, not a forgotten setting: 1.3 MB over LoRa against the duty cycle is days. Flash it over USB |
+| `no_host` | No management address, and the node is not relayed | Fill one in, if there is one |
+| `no_fw` | The node reports no MeshManager version | It is probably not running our firmware, and an image from this project does not belong on it |
+
+Two further refusals happen after `can` is true. A node that reports no **build
+environment** gets no upgrade button but a "Node uitvragen" button instead — the
+env comes from the node itself and from nowhere else, because a wrong image on a
+node you cannot touch is not repairable. And a node marked **kritiek** requires
+its name typed out in full, the same device the heaviest settings class uses, for
+the same reason: it catches a click on the wrong row, which a yes/no question
+does not.
+
+**Going back is one write and a restart**, because the partition table holds two
+application slots and an OTA never erases the one it is not writing. It is
+deliberately *not* automatic: a solar repeater browns out for reasons that have
+nothing to do with firmware, and "three failed boots, roll back" would quietly
+undo good upgrades forever. Three restarts already drop a node into safe mode,
+which keeps it reachable; rollback is then a decision somebody makes.
+
+---
+
+## When a node does not come back
+
+This is its own state, and that is the entire point. `niet_teruggekomen` is
+neither a failure nor a success: the image was written, the digest matched, the
+node restarted, and then it stopped answering. The job stays on the page until
+somebody clicks it away — deliberately the only way it disappears, because a node
+that quietly vanishes after an upgrade is the event this whole design exists for.
+
+The site waits **150 seconds**, polling every five, before it says so.
+
+| What the site knows | What it does not know |
+|---|---|
+| The image reached the node and its SHA-256 matched, twice | Whether the node booted |
+| `otadata` was written, so the node intended to start the new image | Whether it joined the network |
+| It has not answered on its management address since | Whether it is running, in safe mode, or dead |
+
+What to try, cheapest first:
+
+1. **Wait a little longer.** 150 seconds is a timeout, not a verdict. A node that
+   re-associates slowly can still turn up.
+2. **`wifi fw rollback` over the mesh CLI.** This is the important one: it works
+   even when the node is invisible on the network, because the mesh path and the
+   IP path are independent. If the node is on the air at all, this reaches it.
+3. **Safe mode.** Three failed restarts and the node raises its own access point
+   with its admin page. Reachable without the network it just lost.
+4. **`start ota` over the mesh CLI**, then the soft AP, if the module has
+   disabled itself after six restarts.
+5. **USB.** In person, and the reason a critical node is one you can physically
+   reach.
+
+If the node comes back on the **old** version instead, that is `mislukt` with
+step `terug_op_oud`, not this state — the rollback happened by itself and the
+node is fine.
+
+The same shape of problem exists one size down, after a `radio` change: that
+setting answers `OK - reboot to apply`, so a wrong value is only discovered at
+the restart. Steps 2 to 5 are the way back from that too.
+
+---
+
 ## Rights are the hinge, and their failure mode is confusing
 
 A MeshCore repeater runs a CLI command only for a client it considers an **admin**
@@ -582,9 +865,11 @@ against a node a human named.
 | | State |
 |---|---|
 | Reading CLI settings over LoRa through a monitor | **built**, and has been for a while (`wifi mon settings <key>`, `settings <key>` on the `cmd` topic) |
-| Levels as an explicit concept in code and UI | **being built** — `level` / `level_why` on `commanding.describe()` |
+| Levels as an explicit concept in code and UI | **built** — `level` / `level_why` on `commanding.describe()`, and `/admin` groups by them |
+| Setting the clock, manually and daily | **built**, see [`clocksync.md`](clocksync.md) |
 | Firmware upgrade over HTTP, with checksum and rollback | **built**, see [`firmware-upgrade.md`](firmware-upgrade.md) |
 | `ota_route()` as a separate capability key | **built** |
+| `niet_teruggekomen` as a state that stays until acknowledged | **built** |
 | Writing settings to a `full_managed` node with an IP path | **built** — firmware 2.1.0 `POST /api/cfg`: the whole CLI surface bar three, typed controls, risk-driven confirmation, read-back. Requires the node's management address to be filled in |
 | Writing settings to a `semi_managed` node over LoRa | **designed, not built.** Needs a state machine beside the settings sweep, and the node it exists for is the roof repeater — so it gets built against something touchable first |
 | Writing to a node's WiFi and MQTT settings | **not offered here.** Those are ours, not MeshCore's, and they already have their own forms on the node's own admin page and the `wifi` CLI |
@@ -600,3 +885,17 @@ against a node a human named.
 > test `set`, not anything. It is reached only over LoRa, so a mistake there is
 > not correctable, and it is also the reference case the design exists to serve.
 > Write paths are tested against a node somebody can physically touch.
+
+---
+
+## See also
+
+- [`admin.md`](admin.md) — the pages themselves: every field, every form, the
+  ordering by irreversibility
+- [`commanding.md`](commanding.md) — how the route and the level are computed,
+  and every blocker value
+- [`clocksync.md`](clocksync.md) — whether this machine may tell the mesh what
+  time it is
+- [`firmware-upgrade.md`](firmware-upgrade.md) — the upgrade mechanism end to end
+- [`mqtt.md`](mqtt.md) — the topics, and the three words the site may publish
+- [`firmware.md`](firmware.md) — building and flashing the node firmware

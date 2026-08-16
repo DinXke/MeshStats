@@ -2,13 +2,77 @@
 
 *[English](../node-management.md)*
 
-Wat de site met een node kan doen, met welke nodes dat kan, en — het deel dat de
-meeste woorden kost — wat hij met opzet níét doet.
+Een doorlopende handleiding bij alles wat de site met een node kan doen, in de
+volgorde waarin je het nodig hebt: herkennen wat een node is, hem onder beheer
+brengen, zijn instellingen lezen en wijzigen, zijn klok zetten, hem nieuwe
+firmware geven — en wat je doet op de dag dat hij niet terugkomt. En overal
+doorheen het deel dat de meeste woorden kost: wat de site met opzet níét doet.
 
-Een node uitlezen is uitgekristalliseerd en werkt al lang. Deze pagina gaat
-vooral over **schrijven**: een instelling wijzigen vanaf de site in plaats van
-via een seriële kabel. Een deel daarvan is gebouwd, een deel is ontworpen en
-uitdrukkelijk nog niet gebouwd. Bij elke sectie staat welke van de twee.
+Een node uitlezen is uitgekristalliseerd en werkt al lang. Van het **schrijven**
+is een deel gebouwd en een deel ontworpen en uitdrukkelijk nog niet gebouwd; bij
+elke sectie staat welke van de twee. Dat onderscheid weegt hier zwaarder dan in
+de meeste documentatie, want de faalmodus is geen kapotte pagina. Het is een
+repeater op een dak die niemand nog kan bereiken.
+
+De schermafbeeldingen komen van een wegwerpinstantie met verzonnen nodes, nooit
+van een draaiende installatie — zie
+[`contributing.md` §10](contributing.md#10-documentatieconventies) voor hoe je ze
+opnieuw maakt.
+
+---
+
+## Inhoud
+
+**Weten wat je hebt** — [de nodepagina](#begin-bij-de-nodepagina) ·
+[de drie niveaus](#de-drie-niveaus) ·
+[wat er per niveau mogelijk is](#wat-er-per-niveau-mogelijk-is) ·
+[een node onder beheer brengen](#een-node-onder-beheer-brengen)
+
+**Instellingen** — [uitlezen](#instellingen-uitlezen) ·
+[over MQTT?](#kunnen-instellingen-over-diezelfde-mqtt-route-geschreven-worden) ·
+[welke geschreven mogen worden](#welke-instellingen-geschreven-mogen-worden) ·
+[bevestigen-of-terugdraaien](#bevestigen-of-terugdraaien-onderzocht-en-met-opzet-niet-gebouwd) ·
+[teruglezen](#lees-na-een-schrijfactie-terug)
+
+**Het apparaat** — [de klok](#de-klok-zetten) ·
+[firmware en terugrollen](#firmware-upgraden-en-terugrollen) ·
+[als een node niet terugkomt](#als-een-node-niet-terugkomt)
+
+**Als het niet werkt** — [rechten](#rechten-zijn-het-scharnier-en-ze-falen-op-een-verwarrende-manier) ·
+[telemetrie zonder inloggegevens](#telemetrie-zonder-inloggegevens) ·
+[zonder internet](#werken-zonder-internet) ·
+[ontdekken](#ontdekken-eerst-aanwijzen-dan-één-keer-proberen) ·
+[gebouwd en niet gebouwd](#wat-gebouwd-is-en-wat-niet)
+
+---
+
+## Begin bij de nodepagina
+
+`/admin` is de enige pagina die in één scherm antwoordt op "wat heb ik, en wat
+kan ik ermee". Hij sorteert niet op naam of op laatst gezien. Hij groepeert op
+**beheerniveau**, omdat wat je met een node kúnt doen per groep verschilt en
+niets anders op die pagina de knoppen eronder verklaart.
+
+![De beheerpagina 'Nodes en repeaters' met vijf verzonnen nodes in drie groepen. Full managed — 2 bevat Voorbeeld-Thuisnode en Voorbeeld-Zendmast, allebei met bron 'zichzelf', firmware v1.16.0 + 1.10.0 en weg 'MQTT'. Semi-managed — 1 bevat Voorbeeld-Dakrepeater, bron 'via bb11bb11bb11', weg 'via monitor'. Unmanaged — 2 bevat Voorbeeld-Buurnode en Voorbeeld-Veldpost, allebei met weg 'geen'. Bij elke groep staat een alinea die uitlegt wat dat niveau betekent, en bij elke node een zin die zegt waaraan het niveau waargenomen is.](../images/beheer-nodes-overzicht.png)
+
+Drie dingen op die pagina verdienen het om vooraf benoemd te worden.
+
+**De zin onder elke node is het bewijs.** "publiceert zelf over MQTT met
+nodefirmware 1.10.0", "bereikbaar via Voorbeeld-Thuisnode over LoRa", "alleen
+waargenomen in het verkeer". Dat is `level_why`, en het noemt de node die het
+niveau mogelijk maakt. Zonder die naam is "semi-managed" een etiket waar niemand
+iets mee kan.
+
+**"Weg nu" is niet het niveau.** Dat zegt wat er op dit ogenblik van deze machine
+kan vertrekken. Een full managed node achter een net weggevallen broker blijft
+full managed; er is alleen nu geen weg. Het zijn met opzet twee losse sleutels,
+en [`commanding.md`](commanding.md) legt uit waarom het niveau de
+brokerverbinding volledig negeert.
+
+**Een verborgen node telt ook mee.** Een repeater die vanzelf uit een
+binnengekomen bericht ontstaat komt verborgen binnen — publiceerrechten op een
+topic zijn geen publiceerrechten op de voorpagina — en de melding bovenaan zegt
+hoeveel er op die beslissing staan te wachten.
 
 ---
 
@@ -42,6 +106,20 @@ onze firmware zijn de variant die extra dingen kan. Het is de moeite waard om de
 tabel zo om te draaien, want ontwerpen voor "onze nodes, plus wat anderen" is
 precies hoe de dakrepeater een randgeval wordt — en dat is de node waar dit hele
 project omheen gebouwd is.
+
+### Het niveau van één node zien
+
+Open een node en het niveau staat bovenaan, boven de sleutelprefix, omdat het de
+vraag beantwoordt die je hebt vóór je naar beneden scrolt: wat kan ik hier
+eigenlijk mee?
+
+![De beheerpagina van Voorbeeld-Dakrepeater. Naast de titel staat een label SEMI-MANAGED, en onder de kop 'Identiteit en versies' herhaalt een amberkleurig omrande kaart dat label met 'waargenomen: bereikbaar via Voorbeeld-Thuisnode over LoRa' en een alinea die uitlegt wat semi-managed toelaat. Daaronder een tabel met sleutelprefix aa00aa00aa00, slug, 'Bron van de cijfers: doorgestuurd door node bb11bb11bb11', laatst gezien, MeshCore-firmware v1.16.0, en een leeg veld voor de nodefirmware met de opmerking dat de site zonder die versie niets naar deze node stuurt.](../images/beheer-node-semi-managed.png)
+
+De lege rij **Nodefirmware (MeshManager)** op die afbeelding is geen
+schoonheidsfoutje. Dat veld beslist of de knoppen verderop überhaupt iets mogen
+versturen — opdrachten vanaf 1.8.0, een gemonitorde repeater uitvragen vanaf
+1.9.0, de klok vanaf 1.10.0. Wie zich afvraagt waarom een knop uit staat, kijkt
+hier eerst.
 
 ### Overgangen
 
@@ -77,7 +155,103 @@ redenering en de blocker-waarden staan in
 **Een mogelijkheid die niet van toepassing is, wordt uitgeschakeld getoond met
 de reden erbij, en nooit verborgen.** Een knop die verdwijnt laat "waarom kan ik
 dit hier niet" onbeantwoord, en dat is nou juist de vraag die iemand heeft op het
-moment dat hij die knop nodig heeft.
+moment dat hij die knop nodig heeft. Op een `unmanaged` node staat elke handeling
+dus nog op de pagina, uit, elk met een eigen zin:
+
+![De secties 'Uitvragen' en 'Klok' van de unmanaged node Voorbeeld-Buurnode. De instellingentabel is leeg. Drie knoppen staan grijs — 'Opvragen kan nu niet', 'Status opvragen kan nu niet' en 'Synchroniseren kan nu niet' — en bij elk staat de reden: 'Geen van beide wegen staat open', 'de node meldt geen firmwareversie, dus valt niet vast te stellen of hij opdrachten aanneemt' en hetzelfde voor de klok. Een regel meldt dat nog nooit iemand /api/v1/commands opgehaald heeft.](../images/beheer-node-unmanaged.png)
+
+Merk op dat de redenen van elkaar verschillen. "Geen van beide wegen staat open"
+en "de node meldt geen firmwareversie" zijn verschillende problemen met
+verschillende oplossingen, en één grijze knop die niets zegt had ze allebei
+verborgen.
+
+---
+
+## Een node onder beheer brengen
+
+Je verhoogt geen niveau. Je verandert de wereld, en het niveau volgt bij het
+volgende bericht. Er zijn precies twee dingen te veranderen.
+
+### Naar `semi_managed`: rechten op zijn CLI
+
+Een MeshCore-repeater voert een CLI-commando alleen uit voor een cliënt die hij
+als **admin** beschouwt. Wie die repeater beheert, geeft dat aan zijn kant:
+
+```
+setperm <onze-publieke-sleutel> 3
+```
+
+`1` is alleen-lezen en is niet genoeg — zie
+[Rechten zijn het scharnier](#rechten-zijn-het-scharnier-en-ze-falen-op-een-verwarrende-manier)
+waarom juist die halve maatregel de meest verwarrende toestand in dit hele gebied
+is. Het alternatief is het adminwachtwoord van de repeater overhandigen; dat
+werkt en is slechter: een wachtwoord wordt gedeeld, een recht kan de andere
+beheerder in zijn eentje intrekken.
+
+Aan onze kant moet de monitorende node ervan weten. De monitorlijst staat op de
+node en niet op de site (`wifi mon add <sleutel>`), en de monitor moet
+nodefirmware **1.9.0** of hoger draaien, want daar is `settings <sleutel>` — hún
+CLI over LoRa ophalen — bijgekomen. Een oudere monitor kent het `cmd`-topic wel
+maar weigert het argument en telt de opdracht als geweigerd, en daarom weigert de
+site te gokken en toont hij `old_fw`.
+
+### Naar `full_managed`: onze firmware plus MQTT
+
+Twee voorwaarden, allebei noodzakelijk:
+
+1. De node draait de MeshManager-firmware en publiceert zijn eigen statistieken —
+   zie [`firmware.md`](firmware.md) voor bouwen en flashen, en
+   [`mqtt.md`](mqtt.md) voor de topics en het brokeraccount per node.
+2. Hij meldt in die berichten een `fw_meshmanager`-versie. Zonder die versie kan
+   de site niet vaststellen dat het `cmd`-topic op die node bestaat, en een
+   opdracht die het luchtledige in gepubliceerd wordt is precies de oneerlijkheid
+   waar het niveau tegen bestaat.
+
+Onze firmware op een node krijgen die alleen over LoRa bereikbaar is, kan van
+hieruit niet en zal nooit kunnen — 1,3 MB tegen de duty-cycle-limiet is dágen
+zendtijd. Zo'n node wordt over USB geflasht, ter plaatse. Dat is de hele reden
+dat `semi_managed` een niveau is en geen wachtkamer.
+
+### Controleren of het gelukt is
+
+Herlaad `/admin`. De node staat in een andere groep, en de zin eronder noemt het
+nieuwe bewijs. Dát is de bevestiging — geen succesmelding, maar de eigen lezing
+van de site van wat er nu waar is.
+
+Staat hij er nog, dan zegt die zin wat er nog ontbreekt, en dat is bijna altijd
+één van drie dingen: geen gemelde firmwareversie, een monitor onder 1.9.0, of
+sinds de wijziging is er niets gepubliceerd.
+
+---
+
+## Instellingen uitlezen
+
+Lezen is uitgekristalliseerd, werkt vandaag, en is op beide beheerde niveaus
+hetzelfde mechanisme. Het verschilt alleen in wie er gevraagd wordt.
+
+![De sectie 'Uitvragen' van Voorbeeld-Dakrepeater. Een tabel toont vijftien CLI-parameters met hun waarde en hoelang geleden elk opgehaald is — advert.interval 240, af 1.0, allow.read.only off, cmd:region met '(geen antwoord)' in het grijs, flood.max 3, freq 869.525, radio 869.525,250,11,5, repeat on, role repeater, tx 22 en meer. Daaronder een blauw omrand blok 'Instellingen nu opvragen' met het label 'kost zendtijd', dat uitlegt dat node bb11bb11bb11 deze repeater monitort en hem over LoRa kan uitvragen, met een werkende knop. Een tweede blok voor een verse status staat grijs, omdat een doorgestuurde repeater niet gevraagd kan worden zelf te publiceren.](../images/beheer-node-instellingen.png)
+
+Drie dingen die deze afbeelding laat zien.
+
+**`cmd:region` toont "(geen antwoord)" en geen verouderde waarde.** Een sweep die
+voor één parameter geen antwoord krijgt, zegt dat. De laatst bekende waarde tonen
+zou een onbeantwoorde vraag op een vers feit laten lijken, en over een radiolink
+is dat verschil eerder regel dan uitzondering.
+
+**Bij de knop staat "kost zendtijd".** Een sweep is een stuk of vijftien
+commando's en vijftien antwoorden over een gedeelde band, één voor één met
+ademruimte ertussen. Het is een leesactie — er verandert niets op het apparaat —
+maar gratis is hij niet, en de pagina beprijst hem daarnaar. Reken op **2 à 5
+minuten** via een monitor, en op minder dan een halve minuut rechtstreeks.
+
+**"Status opvragen" staat uit, om een reden die geen storing is.** Een
+doorgestuurde repeater publiceert niet; zijn cijfers komen op de rondes van de
+monitor binnen. Hem om een verse status vragen is geen ding dat bestaat, dus zegt
+de knop dat in plaats van te doen alsof.
+
+Wélke parameters er opgehaald worden is één lijst voor alle repeaters, op
+`/admin/server#cli-params` — niet per node, want een lijst per node wekt de
+indruk dat je aan één node iets bijzonders kunt vragen.
 
 ---
 
@@ -396,6 +570,125 @@ zodat er geen tweede codepad is dat het met het eerste oneens zou kunnen zijn.
 
 ---
 
+## De klok zetten
+
+De klok heeft een eigen sectie op de nodepagina en een eigen bevestiging die de
+node bij naam noemt, want hij schrijft één getal dat van hier niet meer te
+corrigeren is.
+
+![De sectie 'Klok' van Voorbeeld-Dakrepeater. Een tabel toont 'Laatst tijd gestuurd: nog nooit door deze site' en 'Automatisch: ja, de site doet dit uit zichzelf'. Een amberkleurig omrand blok 'Klok nu synchroniseren', met het label 'schrijft op het apparaat', legt uit dat deze repeater geen eigen weg naar de site heeft, dat zijn klok van node bb11bb11bb11 komt die hem monitort, en vetgedrukt dat de knop zich daarom niet op deze repeater alleen richt — de site stuurt de tijd naar die node, en die kijkt de klokken na van alle repeaters die hij monitort. Onder de werkende knop staat een alinea over wat de pagina wel en niet weet over of de klok daarna echt goed stond.](../images/beheer-node-klok.png)
+
+Vier dingen om te weten voor je erop drukt.
+
+**De knop is breder dan de node waaronder hij staat.** Bij een doorgestuurde
+repeater gaat de tijd naar zijn monitor, en die kijkt daarna de klokken na van
+*elke* repeater die hij monitort. De firmware kent geen manier om dat toe te
+spitsen, en dat is geen omissie — een klokronde kost per gemonitorde repeater één
+vraag en één antwoord, ongeveer een vijfde van een gewone pollronde. De pagina
+zegt dat in plaats van te doen alsof de knop op één apparaat wijst.
+
+**`time` vereist nodefirmware 1.10.0**, langs beide wegen — anders dan bij
+instellingen, waar de grens van de weg afhangt (1.8.0 rechtstreeks, 1.9.0 via een
+monitor). Het is dezelfde ontvanger die hetzelfde woord moet kennen.
+
+**Een klok kan alleen vooruit.** Een advert draagt de klok van zijn afzender mee,
+en elke node die die afzender al kent gooit een advert weg waarvan de tijdstempel
+niet gestegen is. Een klok een uur terugzetten maakt die repeater een uur
+onzichtbaar, dus corrigeert de firmware nooit achteruit — wat betekent dat een
+tijd die te ver vooruit gezet is een fout is die je ter plaatse herstelt.
+
+**De site weigert als hij zijn eigen klok niet vertrouwt.** Drie controles —
+`adjtimex(2)`, een controle op wandklok tegenover monotone klok, en een bewaarde
+hoogwatermarkering — en als één daarvan ontevreden is vertrekt er niets. De
+pagina zegt welke.
+
+De site doet dit ook uit zichzelf, één keer per dag; de knop bestaat om niet te
+hoeven wachten. De volledige redenering staat in [`clocksync.md`](clocksync.md).
+
+---
+
+## Firmware upgraden, en terugrollen
+
+Firmware staat op een eigen pagina, want "welke release draait waar" is een vraag
+die je over alle nodes tegelijk stelt.
+[`firmware-upgrade.md`](firmware-upgrade.md) bevat het volledige mechanisme — de
+checksum die twee keer gecontroleerd wordt, waarom alleen succes herstart, wat
+een checksum *niet* bewijst. Wat hier hoort is welke nodes überhaupt een image
+kunnen ontvangen, en wat de pagina doet als er één niet terugkomt.
+
+![Het deel 'Nodes' van de firmwarepagina met drie verzonnen nodes. Voorbeeld-Thuisnode toont nodefirmware 1.10.0, MeshCore v1.16.0, bouwomgeving heltec_v3, beheeradres http://192.0.2.11, een pil 'kritiek', en een upgradeformulier met een versiekeuzelijst plus een veld om te bevestigen door de nodenaam over te typen. Voorbeeld-Zendmast toont vetgedrukt een melding — 'Node niet teruggekomen na upgrade naar 1.10.0', met de stap herstart ernaast, met de uitleg dat het image geschreven en gecontroleerd is, dat dit over de herstart gaat, en dat terugvallen kan met 'wifi fw rollback' over de mesh-CLI, met een knop 'Wegklikken'. Voorbeeld-Dakrepeater heeft een leeg adresveld, een uitgeschakelde knop 'Node uitvragen' en de melding 'Geen upgrade mogelijk' omdat hij over LoRa doorgestuurd wordt.](../images/beheer-firmware.png)
+
+`firmware.ota_route()` beslist, en geeft een blokkade terug die de pagina in een
+zin omzet. In de volgorde waarin ze getoetst worden:
+
+| Blokkade | Betekent | Wat je eraan doet |
+|---|---|---|
+| `no_credentials` | De server heeft geen login voor de beheerpagina's van de nodes | Zet `MM_FW_NODE_USER` en `MM_FW_NODE_PASS`. Tot dan blijft elke upgradeknop uit |
+| `relayed_only` | Geen beheeradres, en de cijfers van deze node komen via een andere node binnen | Niets. Dit is een **blijvende toestand**, geen vergeten instelling: 1,3 MB over LoRa tegen de duty-cycle-limiet is dágen. Flash hem over USB |
+| `no_host` | Geen beheeradres, en de node wordt niet doorgestuurd | Vul er een in, als die er is |
+| `no_fw` | De node meldt geen MeshManager-versie | Hij draait waarschijnlijk onze firmware niet, en een image van dit project hoort daar niet heen |
+
+Twee verdere weigeringen volgen nadat `can` waar is. Een node die geen
+**bouwomgeving** meldt krijgt geen upgradeknop maar een knop "Node uitvragen" —
+die omgeving komt van de node zelf en nergens anders vandaan, want een verkeerd
+image op een node die je niet kunt aanraken is niet meer recht te zetten. En een
+node die als **kritiek** gemarkeerd staat vraagt zijn naam voluit overgetypt,
+hetzelfde middel als de zwaarste risicoklasse hierboven, en om dezelfde reden:
+het vangt een klik op de verkeerde regel, en daar helpt een ja/nee-vraag niet
+tegen.
+
+**Teruggaan is één schrijfactie en een herstart**, want de partitietabel heeft
+twee applicatiesleuven en een OTA wist nooit die waar hij niet in schrijft. Het
+is met opzet *niet* automatisch: een zonnerepeater valt uit om redenen die niets
+met firmware te maken hebben, en "drie mislukte starts, dan terugrollen" zou
+goede upgrades eeuwig stilletjes ongedaan maken. Drie herstarts brengen een node
+al in veilige modus, waardoor hij bereikbaar blijft; terugrollen is dan een
+beslissing die iemand neemt.
+
+---
+
+## Als een node niet terugkomt
+
+Dit is een eigen toestand, en dat is de hele kern. `niet_teruggekomen` is geen
+mislukking en geen succes: het image is geschreven, de checksum klopte, de node
+herstartte, en daarna antwoordde hij niet meer. De opdracht blijft op de pagina
+staan tot iemand hem wegklikt — met opzet de enige manier waarop hij verdwijnt,
+want een node die na een upgrade stilletjes uit beeld verdwijnt is precies de
+gebeurtenis waar dit hele ontwerp voor bestaat.
+
+De site wacht **150 seconden**, om de vijf pollend, voor hij dat zegt.
+
+| Wat de site weet | Wat hij niet weet |
+|---|---|
+| Het image bereikte de node en zijn SHA-256 klopte, twee keer | Of de node opgestart is |
+| `otadata` is geschreven, dus de node wílde het nieuwe image starten | Of hij op het netwerk gekomen is |
+| Hij antwoordt sindsdien niet op zijn beheeradres | Of hij draait, in veilige modus staat, of dood is |
+
+Wat je probeert, van goedkoop naar duur:
+
+1. **Nog even wachten.** 150 seconden is een tijdslimiet, geen oordeel. Een node
+   die traag opnieuw associeert kan alsnog opduiken.
+2. **`wifi fw rollback` over de mesh-CLI.** Dit is de belangrijke: het werkt ook
+   als de node op het netwerk onzichtbaar is, want het meshpad en het IP-pad zijn
+   onafhankelijk. Is de node überhaupt in de lucht, dan bereikt dit hem.
+3. **Veilige modus.** Drie mislukte herstarts en de node zet zijn eigen
+   accesspoint met zijn beheerpagina op. Bereikbaar zonder het netwerk dat hij
+   net kwijtraakte.
+4. **`start ota` over de mesh-CLI**, en dan de soft-AP, als de module zichzelf na
+   zes herstarts uitgeschakeld heeft.
+5. **USB.** Ter plaatse, en de reden dat een kritieke node er een is die je
+   fysiek kunt bereiken.
+
+Komt de node terug op de **oude** versie, dan is dat `mislukt` met stap
+`terug_op_oud` en niet deze toestand — de terugval is vanzelf gebeurd en de node
+is in orde.
+
+Dezelfde soort probleem bestaat een maat kleiner, na een wijziging van `radio`:
+die instelling antwoordt `OK - reboot to apply`, dus een verkeerde waarde komt
+pas bij de herstart aan het licht. Stap 2 tot 5 zijn ook daar de weg terug.
+
+---
+
 ## Rechten zijn het scharnier, en ze falen op een verwarrende manier
 
 Een MeshCore-repeater voert een CLI-commando alleen uit voor een client die hij
@@ -619,9 +912,11 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | | Toestand |
 |---|---|
 | CLI-instellingen lezen over LoRa via een monitor | **gebouwd**, en dat al een tijd (`wifi mon settings <key>`, `settings <key>` op het `cmd`-topic) |
-| Niveaus als expliciet begrip in code en UI | **wordt gebouwd** — `level` / `level_why` op `commanding.describe()` |
+| Niveaus als expliciet begrip in code en UI | **gebouwd** — `level` / `level_why` op `commanding.describe()`, en `/admin` groepeert erop |
+| De klok zetten, met de hand en dagelijks | **gebouwd**, zie [`clocksync.md`](clocksync.md) |
 | Firmware-upgrade over HTTP, met checksum en rollback | **gebouwd**, zie [`firmware-upgrade.md`](firmware-upgrade.md) |
 | `ota_route()` als aparte sleutel voor wat er kan | **gebouwd** |
+| `niet_teruggekomen` als toestand die blijft tot ze gezien is | **gebouwd** |
 | Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 2.1.0 `POST /api/cfg`: het hele CLI-oppervlak op drie na, bediening per type, bevestiging per risicoklasse, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
 | Instellingen schrijven naar een `semi_managed` node over LoRa | **ontworpen, niet gebouwd.** Vraagt om een toestandsmachine naast de instellingenronde, en de node waarvoor het bestaat is de dakrepeater — dus het wordt eerst gebouwd tegen iets wat iemand kan aanraken |
 | Schrijven naar de WiFi- en MQTT-instellingen van een node | **wordt hier niet aangeboden.** Dat zijn de onze en niet die van MeshCore, en ze hebben al hun eigen formulieren op de beheerpagina van de node zelf en in de `wifi`-CLI |
@@ -638,3 +933,18 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 > een vergissing daar is niet te herstellen, en hij is bovendien het
 > referentiegeval waarvoor dit ontwerp bestaat. Schrijfpaden worden getest tegen
 > een node die iemand fysiek kan aanraken.
+
+---
+
+## Zie ook
+
+- [`admin.md`](admin.md) — de pagina's zelf: elk veld, elk formulier, de ordening
+  op onomkeerbaarheid
+- [`commanding.md`](commanding.md) — hoe de weg en het niveau berekend worden, en
+  elke blokkadewaarde
+- [`clocksync.md`](clocksync.md) — of deze machine de mesh mag vertellen hoe laat
+  het is
+- [`firmware-upgrade.md`](firmware-upgrade.md) — het upgrademechanisme van begin
+  tot eind
+- [`mqtt.md`](mqtt.md) — de topics, en de drie woorden die de site mag publiceren
+- [`firmware.md`](firmware.md) — de nodefirmware bouwen en flashen

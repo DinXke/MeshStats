@@ -28,6 +28,24 @@ Nieuw in MeshCore zelf? Lees eerst de [woordenlijst](glossary.md), daarna
 
 ---
 
+## Nodes beheren
+
+Het hart van deze documentatie. De rest beschrijft een onderdeel; dit beschrijft
+het werk.
+
+| Document | Wat je er vindt |
+|---|---|
+| **[`node-management.md`](node-management.md)** | **De handleiding.** De drie beheerniveaus en hoe je ziet welk niveau een node heeft, een node onder beheer brengen, zijn instellingen lezen en schrijven met de drie risicocategorieën, de klok zetten, firmware upgraden en terugrollen, en wat je doet als een node niet terugkomt — met schermafbeeldingen van de beheerpagina's |
+
+Lees die eerst. Hij verwijst door naar de pagina's die op één stap dieper ingaan:
+[`admin.md`](admin.md) voor elk veld en elk formulier,
+[`commanding.md`](commanding.md) voor hoe een weg berekend wordt,
+[`clocksync.md`](clocksync.md) voor de klok, en
+[`firmware-upgrade.md`](firmware-upgrade.md) voor het upgrademechanisme van begin
+tot eind.
+
+---
+
 ## De site en zijn API
 
 | Document | Wat je er vindt |
@@ -68,7 +86,6 @@ draait. Het MeshCore-wireformaat staat nergens anders beschreven.
 |---|---|
 | [`firmware.md`](firmware.md) | Elke wijziging die MeshManager in MeshCore aanbrengt — meerdere companions tegelijk, de statspublisher, de netwerkmodule van de repeater — en hoe je het bouwt en flasht |
 | [`firmware-upgrade.md`](firmware-upgrade.md) | Hoe een node aan een nieuw image komt: GitHub-releases, de checksum die twee keer gecontroleerd wordt, waarom alleen succes herstart, hoe je teruggaat, en wat een checksum **niet** bewijst |
-| [`node-management.md`](node-management.md) | Wat de site met een node mag doen en wat hij met opzet niet doet: de drie beheerniveaus, welke instellingen geschreven mogen worden en welke nooit op afstand |
 
 ---
 
@@ -108,6 +125,11 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 
 | Vraag | Ga naar |
 |---|---|
+| **Wat kan ik eigenlijk met mijn nodes?** | **[`node-management.md`](node-management.md)** |
+| Hoe breng ik een node onder beheer? | [`node-management.md`](node-management.md) |
+| Welke instellingen mag ik op afstand wijzigen? | [`node-management.md`](node-management.md) |
+| Mijn node kwam niet terug na een upgrade | [`node-management.md`](node-management.md) |
+| Mijn opdrachten krijgen helemaal geen antwoord | [`node-management.md`](node-management.md) |
 | Wat betekent dit woord? | [`glossary.md`](glossary.md) |
 | Hoe krijg ik dit draaiend? | [`deployment.md`](deployment.md) |
 | Wat geeft dit API-endpoint terug? | [`api.md`](api.md) |

@@ -437,6 +437,56 @@ firmware, cite the file and line it came from.
 it.** A file with no counterpart is a bug in the documentation, the same way a
 UI string in only one language is a bug in the site.
 
+### Screenshots
+
+A screenshot is documentation that ages silently. It keeps looking authoritative
+long after the page it shows has changed, and nobody notices because nothing
+breaks. So there are three rules, and the third is the one that makes the other
+two survivable.
+
+**Never from a real installation.** This repository is public. A screenshot of
+the running site would leak exactly what the rest of this project protects:
+other people's node names, their positions, their key prefixes, an IP address of
+a live node, the admin page of a server somebody operates. Every image in
+`docs/images/` comes from a throwaway instance filled with invented data, and
+that instance is a committed tool rather than something each author improvises.
+
+**Only where they carry something prose cannot.** A picture of a text field
+helps nobody. A picture of the nodes page with three nodes at three different
+levels shows in one glance what five paragraphs are trying to say. When in
+doubt, prefer a stable screen over one that will look different next week.
+
+**Every image is remakeable in two commands.** From `server/`:
+
+```bash
+python tools/demo_data.py --port 8472 --no-login   # terminal 1, leave running
+python tools/screenshots.py                        # terminal 2, writes docs/images/
+```
+
+The particulars, so a later reader does not have to reverse-engineer them:
+
+| | |
+|---|---|
+| Test data | `server/tools/demo_data.py` — five invented nodes covering all three management levels, names prefixed `Voorbeeld-`, key prefixes of repeating bytes, addresses from `192.0.2.0/24` (RFC 5737, reserved for documentation), no positions at all |
+| Pages | `/admin`, `/admin/repeaters/{1..5}`, `/admin/firmware` |
+| Window | 1280 wide, default (dark) theme, `--force-device-scale-factor=1` |
+| Which shots | The `SHOTS` table at the top of `server/tools/screenshots.py`, one row per file in `docs/images/` |
+| Section crops | Pixel bounds in that same table. **These are the brittle part** — a template change shifts them. The script's docstring carries the console snippet that re-reads them, and it keeps the uncropped captures in a temp directory so checking does not mean starting over |
+
+Both `demo_data.py` and `screenshots.py` pretend two things on purpose and say so
+in their docstrings: the broker is reported as connected, and the release list is
+filled in rather than fetched. Without those, every button on every image would
+be disabled and the images would show nothing. Neither pretence exists anywhere
+in the application.
+
+**Alt text is the caption.** It is there for whoever cannot see the image, and it
+is the only part of the image that a reviewer can read in a diff. Describe what
+is actually on the screen — the node names, the group headings, the state of the
+buttons and the reason next to them — not "screenshot of the admin page". Both
+language versions get their own alt text, in their own language, even though they
+point at the same file: the admin pages are Dutch only (see `admin.md`), so there
+is one set of images and two sets of descriptions.
+
 ---
 
 ## Submitting a change

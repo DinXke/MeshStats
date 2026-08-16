@@ -28,6 +28,24 @@ New to MeshCore itself? Read the [glossary](glossary.md) first, then
 
 ---
 
+## Managing nodes
+
+The heart of this documentation. Everything else describes a part; this
+describes the job.
+
+| Document | What you will find |
+|---|---|
+| **[`node-management.md`](node-management.md)** | **The walkthrough.** The three management levels and how to see which one a node has, bringing a node under management, reading and writing its settings with the three risk tiers, setting the clock, upgrading and rolling back firmware, and what to do when a node does not come back — with screenshots of the admin pages |
+
+Read that one first. It links onward to the pages that go deeper on a single
+step: [`admin.md`](admin.md) for every field and form,
+[`commanding.md`](commanding.md) for how a route is computed,
+[`clocksync.md`](clocksync.md) for the clock, and
+[`firmware-upgrade.md`](firmware-upgrade.md) for the upgrade mechanism end to
+end.
+
+---
+
 ## The site and its API
 
 | Document | What you will find |
@@ -68,7 +86,6 @@ The MeshCore wire format is documented nowhere else.
 |---|---|
 | [`firmware.md`](firmware.md) | Every change MeshManager makes to MeshCore — multiple simultaneous companions, the stats publisher, the repeater's network module — and how to build and flash it |
 | [`firmware-upgrade.md`](firmware-upgrade.md) | How a node gets a new image: GitHub releases, the checksum that is verified twice, why only success reboots, how to roll back, and what a checksum does **not** prove |
-| [`node-management.md`](node-management.md) | What the site may do to a node and what it deliberately will not: the three management levels, which settings may be written and which must never be written remotely |
 
 ---
 
@@ -109,6 +126,11 @@ cover.
 
 | Question | Go to |
 |---|---|
+| **What can I actually do with my nodes?** | **[`node-management.md`](node-management.md)** |
+| How do I bring a node under management? | [`node-management.md`](node-management.md) |
+| Which settings am I allowed to change remotely? | [`node-management.md`](node-management.md) |
+| My node did not come back after an upgrade | [`node-management.md`](node-management.md) |
+| My commands get no answer at all | [`node-management.md`](node-management.md) |
 | What does this word mean? | [`glossary.md`](glossary.md) |
 | How do I get this running? | [`deployment.md`](deployment.md) |
 | I am upgrading from MeshStats | [`migration.md`](migration.md) |
