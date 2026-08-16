@@ -275,7 +275,126 @@ def test_de_lijst_wordt_gecachet(monkeypatch):
     assert len(keer) == 2
 
 
+# --- de bevestiging, en dat die op de server staat ---------------------------
+
+VOLLE_LIJST = [
+    {"key": "name", "kind": "text", "lo": 0, "hi": 0, "choices": "", "risk": 1, "reboot": 0},
+    {"key": "flood.max", "kind": "int", "lo": 0, "hi": 64, "choices": "", "risk": 2, "reboot": 0},
+    {"key": "loop.detect", "kind": "enum", "lo": 0, "hi": 0,
+     "choices": "off|minimal|moderate|strict", "risk": 2, "reboot": 0},
+    {"key": "cad", "kind": "bool", "lo": 0, "hi": 0, "choices": "", "risk": 2, "reboot": 0},
+    {"key": "tx", "kind": "int", "lo": 0, "hi": 30, "choices": "", "risk": 3, "reboot": 0},
+    {"key": "radio", "kind": "radio", "lo": 0, "hi": 0, "choices": "", "risk": 3, "reboot": 1},
+]
+
+
+def _volle_lijst(monkeypatch):
+    monkeypatch.setattr(nodeconfig, "params",
+                        lambda host, force=False: {"ok": True, "error": "",
+                                                   "params": VOLLE_LIJST, "at": 0})
+
+
+def test_gewone_waarde_heeft_geen_bevestiging_nodig(db, monkeypatch):
+    _volle_lijst(monkeypatch)
+    monkeypatch.setattr(nodeconfig, "_open", lambda *a, **k: _Antwoord(
+        {"ok": 1, "step": "", "key": "name", "asked": "X", "applied": "X",
+         "exact": 1, "reply": "OK"}))
+    assert nodeconfig.write(rep(), "name", "X")["ok"] is True
+
+
+def test_merkbare_waarde_zonder_bevestiging_gaat_niet_de_deur_uit(db, monkeypatch):
+    """De drempel staat op de server en niet alleen in het sjabloon: een
+    bevestiging die je met een aangepast formulier kunt overslaan is geen
+    bevestiging maar een opmaakkeuze."""
+    _volle_lijst(monkeypatch)
+    monkeypatch.setattr(nodeconfig, "_open",
+                        lambda *a, **k: pytest.fail("mocht de node niet benaderen"))
+    uit = nodeconfig.write(rep(), "flood.max", "32")
+    assert uit["ok"] is False and uit["step"] == "bevestiging"
+
+
+def test_merkbare_waarde_met_bevestiging_mag(db, monkeypatch):
+    _volle_lijst(monkeypatch)
+    monkeypatch.setattr(nodeconfig, "_open", lambda *a, **k: _Antwoord(
+        {"ok": 1, "step": "", "key": "flood.max", "asked": "32", "applied": "32",
+         "exact": 1, "reply": "OK"}))
+    assert nodeconfig.write(rep(), "flood.max", "32", confirm="ja")["ok"] is True
+
+
+def test_afsnijdende_waarde_eist_de_naam_van_de_node(db, monkeypatch):
+    """De fout die dit vangt is niet twijfel maar de klik op de verkeerde node,
+    en daar helpt een ja/nee-vraag niet tegen."""
+    _volle_lijst(monkeypatch)
+    monkeypatch.setattr(nodeconfig, "_open",
+                        lambda *a, **k: pytest.fail("mocht de node niet benaderen"))
+    for poging in ("", "ja", "DinX-Thuis"):
+        uit = nodeconfig.write(rep(), "tx", "10", confirm=poging)
+        assert uit["ok"] is False and uit["step"] == "bevestiging"
+        assert "DinX-Home" in uit["msg"]
+
+
+def test_afsnijdende_waarde_met_de_juiste_naam_mag(db, monkeypatch):
+    _volle_lijst(monkeypatch)
+    monkeypatch.setattr(nodeconfig, "_open", lambda *a, **k: _Antwoord(
+        {"ok": 1, "step": "", "key": "tx", "asked": "10", "applied": "10",
+         "exact": 1, "reply": "OK"}))
+    assert nodeconfig.write(rep(), "tx", "10", confirm="DinX-Home")["ok"] is True
+
+
+# --- de nieuwe soorten --------------------------------------------------------
+
+@pytest.mark.parametrize("waarde,goed", [
+    ("on", True), ("off", True), ("onzin", False), ("aan", False), ("", False),
+])
+def test_booleaanse_waarde_alleen_precies_on_of_off(waarde, goed):
+    """MeshCore vergelijkt met memcmp(..., "on", 2), dus "onzin" zet het daar aan.
+    Dit is de enige plek waar die tikfout nog geweigerd kan worden."""
+    spec = {"key": "cad", "kind": "bool"}
+    assert (nodeconfig._check(spec, waarde) == "") is goed
+
+
+@pytest.mark.parametrize("waarde,goed", [
+    ("off", True), ("strict", True), ("Strict", False), ("uit", False), ("", False),
+])
+def test_opsomming_alleen_uit_de_lijst(waarde, goed):
+    spec = {"key": "loop.detect", "kind": "enum", "choices": "off|minimal|moderate|strict"}
+    assert (nodeconfig._check(spec, waarde) == "") is goed
+
+
+@pytest.mark.parametrize("waarde,fout", [
+    ("869.525 250 11 5", ""),
+    ("869.525,250,11,5", ""),            # komma's mogen ook: 'get radio' geeft die vorm
+    ("869.525 250 11", "vier waarden"),
+    ("50 250 11 5", "buiten 150-2500"),
+    ("869.525 900 11 5", "buiten 7-500"),
+    ("869.525 250 13 5", "spreading factor"),
+    ("869.525 250 11 9", "coding rate"),
+    ("abc def ghi jkl", "getallen"),
+])
+def test_radiowaarden_worden_stuk_voor_stuk_gecontroleerd(waarde, fout):
+    spec = {"key": "radio", "kind": "radio"}
+    uit = nodeconfig._check(spec, waarde)
+    assert (fout in uit) if fout else (uit == "")
+
+
+def test_keuzes_worden_uitgesplitst():
+    assert nodeconfig.choices({"choices": "off|minimal"}) == ["off", "minimal"]
+    assert nodeconfig.choices({"choices": ""}) == []
+    assert nodeconfig.choices({}) == []
+
+
 # --- de pagina ----------------------------------------------------------------
+
+PARAMS = [
+    {"key": "name", "kind": "text", "lo": 0, "hi": 0, "choices": "", "risk": 1, "reboot": 0},
+    {"key": "flood.max", "kind": "int", "lo": 0, "hi": 64, "choices": "", "risk": 2, "reboot": 0},
+    {"key": "loop.detect", "kind": "enum", "lo": 0, "hi": 0,
+     "choices": "off|minimal|moderate|strict", "risk": 2, "reboot": 0},
+    {"key": "cad", "kind": "bool", "lo": 0, "hi": 0, "choices": "", "risk": 2, "reboot": 0},
+    {"key": "tx", "kind": "int", "lo": 0, "hi": 30, "choices": "", "risk": 3, "reboot": 0},
+    {"key": "radio", "kind": "radio", "lo": 0, "hi": 0, "choices": "", "risk": 3, "reboot": 1},
+]
+
 
 def _render(**over):
     """De echte nodepagina door de echte Jinja-omgeving.
@@ -285,11 +404,13 @@ def _render(**over):
     branden pas bij het renderen. Een tikfout daar is geen testfout maar een lege
     beheerpagina.
     """
+    from app import nodeconfig as nc
     from app.templating import templates
+    params = over.pop("params", PARAMS)
     ctx = {
         "site_name": "MeshManager", "user": "u", "world": "nodes",
         "rep": {"id": 1, "name": "DinX-Home", "pubkey_prefix": "55d9",
-                "source_prefix": "55d9", "fw": "v1.17.0", "fw_meshmanager": "1.13.0",
+                "source_prefix": "55d9", "fw": "v1.17.0", "fw_meshmanager": "1.14.0",
                 "ota_host": "http://x", "is_critical": 0, "slug": "dinx",
                 "is_public": 1, "show_position": 1, "show_name": 1, "last_seen": None,
                 "created_at": "2026-01-01", "topic_prefix": "", "pio_env": "",
@@ -305,24 +426,61 @@ def _render(**over):
         "route": {"mqtt": True, "level": "full_managed", "level_why": "publiceert zelf",
                   "commands": ("settings", "status"), "via_monitor": False,
                   "blocker": "", "node": "55d9", "subject": "55d9",
-                  "fw_meshmanager": "1.13.0", "min_fw": "1.8.0", "node_seen": None,
+                  "fw_meshmanager": "1.14.0", "min_fw": "1.8.0", "node_seen": None,
                   "node_stale": False, "ha": False, "poller_seen": None},
         "cfg_route": {"can": True, "blocker": "", "host": "http://x",
-                      "fw": "1.13.0", "min_fw": "1.13.0", "relayed": False},
-        "cfg_params": {"ok": True, "error": "", "params": [
-            {"key": "name", "kind": "text", "lo": 0, "hi": 0, "tier": 1},
-            {"key": "lat", "kind": "float", "lo": -90, "hi": 90, "tier": 1}]},
+                      "fw": "1.14.0", "min_fw": "1.13.0", "relayed": False},
+        "cfg_params": {"ok": True, "error": "", "params": params},
+        "cfg_groups": [(r, [q for q in params if q["risk"] == r])
+                       for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],
+        "cfg_now": {"name": "DinX-Home", "tx": "22"},
         "cfg_result": None,
     }
     ctx.update(over)
     return templates.env.get_template("admin/node.html").render(ctx)
 
 
-def test_pagina_toont_het_schrijfformulier():
+def test_pagina_toont_alle_drie_de_risicoklassen():
     html = _render()
-    assert "Instellingen schrijven" in html
+    assert "Gewoon" in html
+    assert "Schrijft merkbaar" in html
+    assert "Kan de bereikbaarheid afsnijden" in html
     assert 'action="/admin/repeaters/1/config"' in html
-    assert "advert.interval" not in html      # niet aangeboden door deze node
+
+
+def test_een_opsomming_wordt_een_keuzelijst_en_geen_tekstveld():
+    """Een invoerveld waarin je een ongeldige waarde kúnt typen is een invoerveld
+    dat een node kan breken."""
+    html = _render()
+    for woord in ("off", "minimal", "moderate", "strict"):
+        assert f'<option value="{woord}">' in html
+
+
+def test_een_getal_krijgt_de_grenzen_van_de_node_mee():
+    html = _render()
+    assert 'min="0" max="64"' in html      # flood.max
+    assert 'min="0" max="30"' in html      # tx
+
+
+def test_radio_krijgt_vier_velden_met_elk_eigen_grenzen():
+    """Eén tekstveld waarin je "869.525 250 11 5" moet typen is precies het soort
+    veld waarin een tikfout een node van de lucht haalt."""
+    html = _render()
+    for naam in ("rf", "rb", "rs", "rc"):
+        assert f'name="{naam}"' in html
+    assert 'min="150" max="2500"' in html
+    assert 'min="5" max="12"' in html
+
+
+def test_de_zwaarste_klasse_vraagt_om_de_naam_van_de_node():
+    html = _render()
+    assert 'placeholder="DinX-Home"' in html
+    assert "de naam van de node overtypen" in html
+
+
+def test_de_middelste_klasse_vraagt_een_uitdrukkelijke_bevestiging():
+    html = _render()
+    assert 'name="confirm" value="ja"' in html
 
 
 @pytest.mark.parametrize("blocker,zin", [
@@ -340,27 +498,34 @@ def test_elke_reden_om_niet_te_kunnen_schrijven_krijgt_zijn_eigen_zin(blocker, z
 
 
 def test_afgeronde_waarde_wordt_niet_als_gewoon_gelukt_getoond():
-    """De hele reden dat er teruggelezen wordt. 'Gezet' naast een waarde die
-    afwijkt van wat er gevraagd is, zou hetzelfde soort halve waarheid zijn als
-    de oude OTA-weg vertelde."""
+    """De hele reden dat er teruggelezen wordt."""
     html = _render(cfg_result={"ok": True, "exact": False, "key": "advert.interval",
-                               "asked": "61", "applied": "60", "step": "", "msg": ""})
+                               "asked": "61", "applied": "60", "step": "", "msg": "",
+                               "reboot": False})
     assert "niet precies" in html
     assert "61" in html and "60" in html
+
+
+def test_een_wijziging_die_pas_na_herstart_geldt_zegt_dat():
+    """'radio' wordt bewaard maar pas bij een herstart actief -- en pas dan blijkt
+    of de nieuwe waarden kloppen. Dat is het geval waarin een node wegblijft."""
+    html = _render(cfg_result={"ok": True, "exact": True, "key": "radio",
+                               "asked": "869.525 250 11 5", "applied": "869.525,250,11,5",
+                               "step": "", "msg": "", "reboot": True})
+    assert "Nog niet actief" in html
 
 
 def test_een_weigering_toont_de_reden_van_de_node():
     html = _render(cfg_result={"ok": False, "exact": False, "key": "lat",
                                "asked": "999", "applied": "", "step": "waarde",
-                               "msg": "lat moet een getal tussen -90 en 90 zijn"})
+                               "msg": "lat moet een getal tussen -90 en 90 zijn",
+                               "reboot": False})
     assert "Niet gezet" in html
     assert "tussen -90 en 90" in html
 
 
 def test_zonder_lijst_van_de_node_geen_formulier():
-    """Een formulier uit een tabel op de server zou een parameter kunnen tonen
-    die deze node weigert. Dan liever geen formulier."""
     html = _render(cfg_params={"ok": False, "error": "niet bereikbaar (URLError)",
-                               "params": []})
+                               "params": []}, cfg_groups=[], params=[])
     assert "niet bereikbaar" in html
     assert 'action="/admin/repeaters/1/config"' not in html

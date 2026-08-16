@@ -396,35 +396,39 @@
     reden als bij de opvraagknop hierboven: dit loopt over een radio en kan op
     meer dan één plaats doodlopen zonder ergens een fout op te leveren. -#}
 {#- Instellingen schrijven. Bewust ná "Uitvragen" en vóór "Klok": lezen is
-    gratis en onschuldig, dit niet. De lijst met parameters komt van de node
-    zelf, want de firmware is er de baas over; een tweede lijst hier zou vroeg
-    of laat iets aanbieden dat de node weigert. -#}
+    gratis en onschuldig, dit niet. De parameterlijst, hun types, grenzen en
+    risicoklasse komen van de node zelf, want de firmware is er de baas over.
+    Een tweede lijst hier zou vroeg of laat iets aanbieden dat de node weigert. -#}
 <section>
   <h2>Instellingen schrijven</h2>
-  <div class="card">
 
   {% if cfg_result %}
-  <div class="notice small">
+  <div class="card notice">
     {% if cfg_result.ok and cfg_result.exact %}
     <strong>Gezet.</strong> <span class="mono">{{ cfg_result.key }}</span> staat nu op
     <span class="mono">{{ cfg_result.applied }}</span>.
     {% elif cfg_result.ok %}
     {#- Het geval waar het teruglezen voor bestaat: de node zei "OK" en er staat
-        iets anders in dan er gevraagd is. advert.interval doet dit altijd, want
-        die wordt bewaard als minuten/2. -#}
+        iets anders in dan er gevraagd is. -#}
     <strong>Gezet, maar niet precies.</strong> Gevraagd
     <span class="mono">{{ cfg_result.asked }}</span>, in de node staat nu
-    <span class="mono">{{ cfg_result.applied }}</span>. Dat is geen fout: de node
-    legt sommige waarden afgerond vast. De waarde hierboven is wat er werkelijk staat.
+    <span class="mono">{{ cfg_result.applied }}</span>. De waarde hierboven is wat er
+    werkelijk staat.
     {% else %}
     <strong>Niet gezet.</strong>
     {% if cfg_result.step %}<span class="mono">[{{ cfg_result.step }}]</span>{% endif %}
     {{ cfg_result.msg }}
     {% endif %}
+    {% if cfg_result.ok and cfg_result.reboot %}
+    <br><strong>Nog niet actief.</strong> De node heeft dit bewaard maar past het pas toe
+    bij een herstart. Tot dan draait de radio op de oude waarden, en pas bij die herstart
+    blijkt of de nieuwe kloppen.
+    {% endif %}
   </div>
   {% endif %}
 
   {% if not cfg_route.can %}
+  <div class="card">
   <p class="muted small">
     <strong>Niet mogelijk:</strong>
     {%- if cfg_route.blocker == "no_credentials" %}
@@ -448,41 +452,102 @@
     {%- else %}{{ cfg_route.blocker }}.
     {%- endif %}
   </p>
+  </div>
   {% elif not cfg_params.ok %}
+  <div class="card">
   <p class="muted small">
     <strong>Lijst niet op te halen:</strong> {{ cfg_params.error }}.
     Zonder de lijst van de node zelf wordt hier niets aangeboden — een formulier uit
     een tabel op de server zou een parameter kunnen tonen die deze node weigert.
   </p>
-  {% else %}
-  <p class="muted small">
-    Alleen parameters die de bereikbaarheid van deze node langs geen enkele weg kunnen
-    afsnijden. Frequentie, radio-instellingen, zendvermogen en rol staan er met opzet
-    niet bij: die worden van kracht en nemen in dezelfde tel de weg terug mee. Na het
-    schrijven wordt de waarde teruggelezen, want de node antwoordt ook "OK" op dingen
-    die hij anders opslaat dan gevraagd.
-  </p>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/config" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>Parameter
-      <select name="key" id="cfgkey">
-        {% for p in cfg_params.params %}
-        <option value="{{ p.key }}"
-                data-kind="{{ p.kind }}" data-lo="{{ p.lo }}" data-hi="{{ p.hi }}">
-          {{ p.key }}{% if p.kind != "text" %} ({{ p.lo }}–{{ p.hi }}){% endif %}
-        </option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Waarde
-      <input name="value" id="cfgvalue" autocomplete="off" required>
-    </label>
-    <button type="submit">Schrijven</button>
-  </form>
-  <p class="muted small" id="cfghint"></p>
-  {% endif %}
-
   </div>
+  {% else %}
+
+  {% for risk, params in cfg_groups %}
+  {% if params %}
+  <div class="card">
+    <h3>
+      {%- if risk == 1 %}Gewoon
+      {%- elif risk == 2 %}Schrijft merkbaar
+      {%- else %}Kan de bereikbaarheid afsnijden{% endif %}
+    </h3>
+    <p class="muted small">
+      {%- if risk == 1 %}
+      Waarden die je zo weer terugzet. Opslaan volstaat.
+      {%- elif risk == 2 %}
+      Deze veranderen merkbaar hoe de node zich gedraagt op het mesh. Ze vragen een
+      bevestiging, maar ze kunnen de node niet buiten bereik brengen.
+      {%- else %}
+      Deze raken de radio of wie er mag inloggen. Gaat er iets mis op een node die je
+      alleen over de radio bereikt, dan is er geen tweede weg om het mee terug te
+      draaien — bij de dakrepeater is een verkeerde frequentie het einde. Daarom moet
+      je hier de naam van de node overtypen.
+      {%- endif %}
+    </p>
+    <table class="cfgtable">
+      <thead><tr><th>Parameter</th><th>Nu</th><th>Nieuwe waarde</th></tr></thead>
+      <tbody>
+      {% for p in params %}
+      <tr>
+        <td class="mono">{{ p.key }}</td>
+        <td class="mono muted">{{ cfg_now.get(p.key, "—") }}</td>
+        <td>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/config" class="rowform">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="key" value="{{ p.key }}">
+
+            {#- Type stuurt de bediening. Een invoerveld waarin je een ongeldige
+                waarde kúnt typen is een invoerveld dat een node kan breken. -#}
+            {% if p.kind == "bool" %}
+            <select name="value">
+              <option value="on">on</option>
+              <option value="off">off</option>
+            </select>
+            {% elif p.kind == "enum" %}
+            <select name="value">
+              {% for c in p.choices.split("|") if c %}
+              <option value="{{ c }}">{{ c }}</option>
+              {% endfor %}
+            </select>
+            {% elif p.kind == "radio" %}
+            <input type="number" name="rf" step="0.001" min="150" max="2500"
+                   placeholder="freq" required title="frequentie in MHz, 150–2500">
+            <input type="number" name="rb" step="0.001" min="7" max="500"
+                   placeholder="bw" required title="bandbreedte in kHz, 7–500">
+            <input type="number" name="rs" step="1" min="5" max="12"
+                   placeholder="sf" required title="spreading factor, 5–12">
+            <input type="number" name="rc" step="1" min="5" max="8"
+                   placeholder="cr" required title="coding rate, 5–8">
+            {% elif p.kind == "int" %}
+            <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}" required>
+            {% elif p.kind == "float" %}
+            <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}" required>
+            {% else %}
+            <input name="value" maxlength="39" autocomplete="off" required>
+            {% endif %}
+
+            {#- De bevestiging. Ook op de server afgedwongen: een drempel die je
+                met een aangepast formulier kunt overslaan is geen drempel. -#}
+            {% if risk == 2 %}
+            <label class="cfgconfirm"><input type="checkbox" name="confirm" value="ja" required>
+              bevestig</label>
+            {% elif risk == 3 %}
+            <input name="confirm" placeholder="{{ rep.name }}" autocomplete="off" required
+                   title="Typ de naam van deze node over om te bevestigen">
+            {% endif %}
+
+            <button type="submit" {% if risk == 3 %}class="danger"{% endif %}>Zet</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endfor %}
+
+  {% endif %}
 </section>
 
 <section>

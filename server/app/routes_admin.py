@@ -409,6 +409,8 @@ def _node_page(request: Request, rid: int, **extra):
     # tevoren zeggen in plaats van achteraf.
     broker = mqtt_ingest.can_publish()
     cfg = nodeconfig.cfg_route(rep)
+    cfg_params = (nodeconfig.params(cfg["host"]) if cfg["can"]
+                  else {"ok": False, "error": "", "params": []})
     return templates.TemplateResponse(request, "admin/node.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
         "settings_rows": rows,
@@ -462,15 +464,29 @@ def _node_page(request: Request, rid: int, **extra):
         # Alleen ophalen als er ook echt een weg is, anders staat elke
         # paginaweergave tien seconden op een node te wachten die er niet is.
         "cfg_route": cfg,
-        "cfg_params": (nodeconfig.params(cfg["host"]) if cfg["can"]
-                       else {"ok": False, "error": "", "params": []}),
+        "cfg_params": cfg_params,
+        # Gegroepeerd op risicoklasse, want dat is waar de bediening op stuurt:
+        # gewoon opslaan, bevestigen, of de naam overtypen. De groepen komen uit
+        # de firmware mee zodat de indeling niet op twee plaatsen bestaat.
+        "cfg_groups": [
+            (risk, [q for q in cfg_params.get("params") or []
+                    if int(q.get("risk") or 1) == risk])
+            for risk in (nodeconfig.RISK_PLAIN, nodeconfig.RISK_WRITES,
+                         nodeconfig.RISK_CUTOFF)
+        ],
+        # Wat de laatste uitleesronde vond, zodat elk veld zijn huidige waarde
+        # kan tonen in plaats van leeg te beginnen. Een leeg veld naast een
+        # parameter nodigt uit tot gokken.
+        "cfg_now": {r["param"]: r["value"] for r in rows if r["value"] is not None},
         **extra,
     })
 
 
 @router.post("/repeaters/{rid}/config")
 def write_config(request: Request, rid: int, key: str = Form(...),
-                 value: str = Form(""), csrf: str = Form(...)):
+                 value: str = Form(""), confirm: str = Form(""),
+                 rf: str = Form(""), rb: str = Form(""), rs: str = Form(""),
+                 rc: str = Form(""), csrf: str = Form(...)):
     """Eén instelling van deze node zetten en meteen teruglezen.
 
     Synchroon, anders dan de firmware-upgrade: dit is één CLI-aanroep over het
@@ -486,7 +502,13 @@ def write_config(request: Request, rid: int, key: str = Form(...),
     rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not rep:
         raise HTTPException(404, "Onbekende repeater")
-    result = nodeconfig.write(rep, key.strip(), value.strip())
+    # 'radio' is de enige parameter die uit vier getallen bestaat, en die vier
+    # krijgen elk hun eigen invoerveld met hun eigen minimum en maximum. Eén
+    # tekstveld waarin je "869.525 250 11 5" moet typen is precies het soort veld
+    # waarin een tikfout een node van de lucht haalt.
+    if key.strip() == "radio" and (rf or rb or rs or rc):
+        value = " ".join(v.strip() for v in (rf, rb, rs, rc))
+    result = nodeconfig.write(rep, key.strip(), value.strip(), confirm)
     return _node_page(request, rid, cfg_result=result)
 
 

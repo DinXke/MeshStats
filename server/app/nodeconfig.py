@@ -41,6 +41,16 @@ from . import commanding, db, firmware
 # knop aan te bieden die een foutmelding oplevert.
 MIN_CFG_VERSION = (1, 13, 0)
 
+# Risicoklassen zoals de firmware ze meegeeft. Ze sturen hier één ding: hoeveel
+# moeite het kost om een waarde te zetten. Sluit aan bij wat de beheerpagina al
+# doet met kleur en gewicht -- blauw kost zendtijd, oranje schrijft op het
+# apparaat, rood is onomkeerbaar.
+RISK_PLAIN = 1      # zo weer terug te zetten; opslaan volstaat
+RISK_WRITES = 2     # bevestiging die node en sleutel noemt
+RISK_CUTOFF = 3     # naam van de node overtypen
+
+RISK_NAMES = {RISK_PLAIN: "gewoon", RISK_WRITES: "schrijft", RISK_CUTOFF: "afsnijden"}
+
 # De lijst van een node verandert alleen als er andere firmware op gaat, dus een
 # korte cache is ruim voldoende en scheelt een netwerkronde per paginaweergave.
 PARAMS_TTL_S = 300
@@ -144,6 +154,18 @@ def params(host: str, force: bool = False) -> dict:
     return out
 
 
+def choices(spec: dict) -> list[str]:
+    """De toegestane woorden van een enum, of een lege lijst.
+
+    Zodat het sjabloon een keuzelijst kan tekenen met precies die woorden. Een
+    invoerveld waarin je een ongeldige waarde kúnt typen is een invoerveld dat
+    een node kan breken, dus waar de firmware een lijst geeft hoort er ook een
+    lijst te staan.
+    """
+    raw = str(spec.get("choices") or "")
+    return [c for c in raw.split("|") if c]
+
+
 def _check(spec: dict, value: str) -> str:
     """De grenzen van de node hier alvast toepassen. Lege string = in orde.
 
@@ -152,6 +174,28 @@ def _check(spec: dict, value: str) -> str:
     in de firmware, en die draait hoe dan ook.
     """
     kind = str(spec.get("kind") or "")
+    if kind == "bool":
+        return "" if value in ("on", "off") else "moet on of off zijn"
+    if kind == "enum":
+        allowed = choices(spec)
+        return "" if value in allowed else f"moet een van deze zijn: {', '.join(allowed)}"
+    if kind == "radio":
+        parts = value.replace(",", " ").split()
+        if len(parts) != 4:
+            return "moet vier waarden zijn: freq bw sf cr"
+        try:
+            freq, bw, sf, cr = (float(p) for p in parts)
+        except ValueError:
+            return "alle vier de waarden moeten getallen zijn"
+        if not 150 <= freq <= 2500:
+            return f"frequentie {freq:g} ligt buiten 150-2500 MHz"
+        if not 7 <= bw <= 500:
+            return f"bandbreedte {bw:g} ligt buiten 7-500 kHz"
+        if not (5 <= sf <= 12 and sf == int(sf)):
+            return "spreading factor moet een geheel getal 5-12 zijn"
+        if not (5 <= cr <= 8 and cr == int(cr)):
+            return "coding rate moet een geheel getal 5-8 zijn"
+        return ""
     if kind == "text":
         if not value:
             return "mag niet leeg zijn"
@@ -174,7 +218,32 @@ def _check(spec: dict, value: str) -> str:
     return ""
 
 
-def write(rep, key: str, value: str) -> dict:
+def confirmation_for(spec: dict, rep, confirm: str) -> str:
+    """Is de bevestiging die erbij zit zwaar genoeg? Lege string = ja.
+
+    Hier en niet alleen in het sjabloon, want een bevestiging die je met een
+    aangepast formulier kunt overslaan is geen bevestiging maar een opmaakkeuze.
+    De drempel hoort te staan op de plek die het verzoek werkelijk uitvoert.
+
+    Drie zwaartes, oplopend met wat er misgaat als je de verkeerde regel raakt:
+    niets, een uitdrukkelijk 'ja', en de naam van de node overtypen. Die laatste
+    vangt een andere fout dan twijfel -- hij vangt de klik op de verkeerde node,
+    en daar helpt een ja/nee-vraag niet tegen. Dezelfde afweging als bij de
+    firmwarepagina, en om dezelfde reden.
+    """
+    risk = int(spec.get("risk") or RISK_PLAIN)
+    if risk <= RISK_PLAIN:
+        return ""
+    if risk == RISK_WRITES:
+        return "" if confirm.strip() == "ja" else "deze wijziging moet bevestigd worden"
+    naam = str(_field(rep, "name") or "")
+    if confirm.strip() == naam:
+        return ""
+    return (f"deze instelling kan de node onbereikbaar maken; typ de naam "
+            f"({naam}) precies over om te bevestigen")
+
+
+def write(rep, key: str, value: str, confirm: str = "") -> dict:
     """Eén parameter zetten en teruggeven wat er ná afloop in de node staat.
 
     Het antwoord van de node draagt ``asked`` en ``applied`` apart, en dat is
@@ -186,7 +255,7 @@ def write(rep, key: str, value: str) -> dict:
     """
     route = cfg_route(rep)
     out = {"ok": False, "step": "", "msg": "", "key": key,
-           "asked": value, "applied": "", "exact": False}
+           "asked": value, "applied": "", "exact": False, "reboot": False}
 
     if not route["can"]:
         out.update(step="route", msg=f"deze node kan geen instelling ontvangen "
@@ -207,6 +276,11 @@ def write(rep, key: str, value: str) -> dict:
     problem = _check(spec, value)
     if problem:
         out.update(step="waarde", msg=f"{key} {problem}")
+        return out
+
+    problem = confirmation_for(spec, rep, confirm)
+    if problem:
+        out.update(step="bevestiging", msg=problem)
         return out
 
     body = urllib.parse.urlencode({"key": key, "value": value}).encode()
@@ -233,6 +307,11 @@ def write(rep, key: str, value: str) -> dict:
         msg=str(answer.get("msg") or ""),
         applied=str(answer.get("applied") or ""),
         exact=bool(answer.get("exact")),
+        # 'radio' wordt bewaard maar pas bij een herstart actief. Het teruglezen
+        # toont dus de nieuwe waarden terwijl de radio nog op de oude staat, en
+        # pas bij die herstart blijkt of ze kloppen -- precies het geval waarin
+        # een node niet terugkomt. De pagina hoort dat te zeggen.
+        reboot=bool(spec.get("reboot")),
     )
 
     # De naam staat ook in onze eigen tabel; die zou anders tot het volgende
