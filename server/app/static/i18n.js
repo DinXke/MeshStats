@@ -100,6 +100,11 @@
       // --- pakketarchief ---
       "arch.title": "Pakketarchief",
       "arch.hint": "Doorzoek alle bewaarde pakketten · pakketten blijven {days} dagen bewaard",
+      // Alleen zichtbaar wanneer een opslaggrens eerder snijdt dan de termijn.
+      // De belofte hierboven is dan niet meer waar, en wie een gat in het
+      // archief ziet hoort te weten dat het aan die grens ligt en niet aan het
+      // mesh.
+      "arch.hint_short": "Doorzoek alle bewaarde pakketten · er staat nu {days} dagen aan pakketten van de ingestelde {set}: de opslaggrens snijdt eerder",
       "arch.link": "Zoeken in het archief",
       "arch.query_ph": "bv. type:ADVERT scope:scoped snr:>5 · leeg = alles",
       "arch.query_aria": "Zoekopdracht",
@@ -494,6 +499,7 @@
       // --- packet archive ---
       "arch.title": "Packet archive",
       "arch.hint": "Search every retained packet · packets are kept for {days} days",
+      "arch.hint_short": "Search every retained packet · {days} days of packets are held out of the {set} configured: the storage limit cuts in first",
       "arch.link": "Search the archive",
       "arch.query_ph": "e.g. type:ADVERT scope:scoped snr:>5 · empty = everything",
       "arch.query_aria": "Search query",

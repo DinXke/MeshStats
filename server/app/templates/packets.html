@@ -3,7 +3,14 @@
 {% block content %}
 <div class="pagehead">
   <div class="pagehead-top"><h1 data-i18n="arch.title">Pakketarchief</h1></div>
+  {# Twee varianten van dezelfde zin. De tweede geldt zodra een opslaggrens
+     eerder snijdt dan de bewaartermijn: dan is de ingestelde termijn een wens,
+     en het getal ernaast is wat er werkelijk staat. #}
+  {%- if retention_effective is not none %}
+  <p class="hint" data-i18n="arch.hint_short" data-i18n-vars='{"days": {{ retention_effective }}, "set": {{ retention_days }}}'>Doorzoek alle bewaarde pakketten &middot; er staat nu {{ retention_effective }} dagen aan pakketten van de ingestelde {{ retention_days }}: de opslaggrens snijdt eerder</p>
+  {%- else %}
   <p class="hint" data-i18n="arch.hint" data-i18n-vars='{"days": {{ retention_days }}}'>Doorzoek alle bewaarde pakketten &middot; pakketten blijven {{ retention_days }} dagen bewaard</p>
+  {%- endif %}
 </div>
 
 <!-- The whole page hangs off this id: app.js only wires the archive when it is

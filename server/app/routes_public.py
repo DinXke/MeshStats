@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from . import auth, commanding, config, db, metrics, search
+from . import auth, commanding, config, db, metrics, retention, search
 from .templating import templates
 
 router = APIRouter()
@@ -37,14 +37,21 @@ def index(request: Request):
 @router.get("/pakketten", response_class=HTMLResponse)
 def packets_page(request: Request):
     """The packet archive: query-bar search over everything still retained."""
+    store = retention.overview()
     return templates.TemplateResponse(request, "packets.html", {
         "site_name": config.SITE_NAME,
         "span": db.packet_span(),
         "fields": search.describe_fields(),
         "sorts": search.describe_sorts(),
         "columns": search.describe_columns(),
-        "retention_days": db.setting_int("packet_retention_days",
-                                         config.PACKET_RETENTION_DAYS),
+        "retention_days": store["days"],
+        # Only filled when a size ceiling cuts in before the period does. The
+        # hint above this archive promises "packets are kept for N days", and
+        # that promise stops being true the moment the FIFO bites: 12 days held
+        # where 30 were configured. A page that leaves that out invites the
+        # reader to conclude that nothing happened during a period that is
+        # simply no longer in the database.
+        "retention_effective": store["effective_days"] if store["falls_short"] else None,
     })
 
 

@@ -640,7 +640,20 @@ _HEATMAP_TTL_S = 300
 # it. The earlier day-long window systematically hid exactly those slower
 # links. Anything older than the retention is gone from the table regardless,
 # so this is the widest honest window there is.
-_HEATMAP_WINDOW_H = config.PACKET_RETENTION_DAYS * 24
+#
+# A function and not a constant, and that is the point of it. The retention is
+# an admin-page setting now (db.retention_settings()), so a reader who raises it
+# to 30 days expects the heat map to start covering 30 days -- not after a
+# container restart, but on the next pass. A module-level constant reads .env
+# once at import and would keep answering with the value the process started
+# with, which is exactly the kind of quiet disagreement between a setting and a
+# graph that costs an evening to find.
+
+
+def _heatmap_window_h() -> int:
+    return db.retention_settings()["days"] * 24
+
+
 # The row cap is a guard against a mesh that mirrors every frame it hears, not
 # a number a healthy week gets near: the old day-window used 20 000, so a week
 # gets ten times that, with headroom. When the cap does bite the response says
@@ -678,11 +691,19 @@ def packet_heatmap():
     list as its rank, which is what makes that scale free to compute.
     """
     now = time.monotonic()
-    if _heatmap_cache["data"] is not None and now - _heatmap_cache["at"] < _HEATMAP_TTL_S:
-        return _heatmap_cache["data"]
+    window_h = _heatmap_window_h()
+    # The window is part of the cache key, not just of the answer. Without that,
+    # changing the retention on the admin page would leave up to five minutes of
+    # a cached overlay that quietly still covers the old period -- and the
+    # response says which window it is for, so it would be five minutes of the
+    # page stating a number that no longer matches the setting.
+    cached = _heatmap_cache["data"]
+    if (cached is not None and cached.get("window_h") == window_h
+            and now - _heatmap_cache["at"] < _HEATMAP_TTL_S):
+        return cached
 
     since = (datetime.now(timezone.utc)
-             - timedelta(hours=_HEATMAP_WINDOW_H)).strftime("%Y-%m-%dT%H:%M:%SZ")
+             - timedelta(hours=window_h)).strftime("%Y-%m-%dT%H:%M:%SZ")
     counts: dict[tuple[str, str], int] = {}
     nodes: dict[str, dict] = {}
     counted = 0
@@ -725,7 +746,7 @@ def packet_heatmap():
                 for k, n in counts.items()]
     segments.sort(key=lambda s: s["n"])
     data = {
-        "window_h": _HEATMAP_WINDOW_H,
+        "window_h": window_h,
         "packets": counted,
         # An exactly-full result means the query stopped at the cap, so older
         # packets in the window went uncounted. The client is told, so it can

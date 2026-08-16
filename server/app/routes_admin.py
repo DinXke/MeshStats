@@ -3,7 +3,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (auth, clocksync, commanding, config, db, metrics, mqtt_ingest,
-               ratelimit, tsdb)
+               ratelimit, retention, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -129,8 +129,17 @@ def dashboard(request: Request):
         "settings": {
             "heartbeat_min": db.setting_int("heartbeat_min", config.HEARTBEAT_MIN),
             "retention_days": db.setting_int("retention_days", config.RETENTION_DAYS),
+            "packet_retention_days": db.setting_int("packet_retention_days",
+                                                    config.PACKET_RETENTION_DAYS),
+            "packet_max_rows": db.setting_int("packet_max_rows", config.PACKET_MAX_ROWS),
+            "db_max_mb": db.setting_int("db_max_mb", config.DB_MAX_MB),
             "history_ranges": ",".join(str(h) for h in metrics.parse_ranges(db.get_setting("history_ranges"))),
         },
+        # Wat de opslag op dit ogenblik doet, plus wat de laatste ronde opruimde.
+        # Zichtbaarheid is hier de helft van de feature: een bewaartermijn die
+        # door een bovengrens niet gehaald wordt, hoort op het scherm te staan en
+        # niet pas op te vallen als er een gat in een grafiek zit.
+        "storage": retention.overview(),
         "layout": layout,
         "block_names": metrics.BLOCK_NAMES,
     })
@@ -142,13 +151,41 @@ def dashboard(request: Request):
 @router.post("/settings")
 def save_settings(request: Request, heartbeat_min: int = Form(...),
                   retention_days: int = Form(...), history_ranges: str = Form(...),
-                  csrf: str = Form(...)):
+                  csrf: str = Form(...),
+                  packet_retention_days: int = Form(default=0),
+                  packet_max_rows: int = Form(default=0),
+                  db_max_mb: int = Form(default=0)):
+    """Bewaartermijnen en bovengrenzen opslaan, en meteen toepassen.
+
+    De drie pakketvelden hebben een standaard van 0 in plaats van ``Form(...)``,
+    en dat is geen slordigheid: 0 betekent "dit formulier ging er niet over" en
+    laat de bestaande waarde staan. Zonder dat zou een oudere pagina die nog in
+    een tabblad openstond, of een script dat alleen het punt-interval wil zetten,
+    de bewaargrenzen op nul zetten -- en dat is precies de instelling waarvan
+    het verkeerd zetten data kost.
+
+    Grenzen: de termijn tot een jaar (langer is een tijdreeksdatabank en geen
+    pakkettenlog), het rijmaximum vanaf ``db.PACKET_FIFO_FLOOR`` (lager kan de
+    FIFO toch niet honoreren) en het bytemaximum vanaf 16 MB.
+    """
     require_login(request)
     check_csrf(request, csrf)
     db.set_setting("heartbeat_min", str(max(1, min(1440, heartbeat_min))))
     db.set_setting("retention_days", str(max(1, min(3650, retention_days))))
+    if packet_retention_days > 0:
+        db.set_setting("packet_retention_days", str(max(1, min(365, packet_retention_days))))
+    if packet_max_rows > 0:
+        db.set_setting("packet_max_rows",
+                       str(max(db.PACKET_FIFO_FLOOR, min(50_000_000, packet_max_rows))))
+    if db_max_mb > 0:
+        db.set_setting("db_max_mb", str(max(16, min(1_000_000, db_max_mb))))
     db.set_setting("history_ranges", ",".join(str(h) for h in metrics.parse_ranges(history_ranges)))
-    db.prune()  # nieuwe bewaartermijn meteen toepassen
+    # Via de opruimlus en niet via db.prune() rechtstreeks: zo doorloopt een
+    # verlaagde termijn hetzelfde pad als de uurlijkse ronde -- inclusief de
+    # afweging over VACUUM, want juist het verlagen van een termijn is het geval
+    # waarin het bestand anders groot blijft terwijl de inhoud gesnoeid is -- en
+    # staat het resultaat meteen op de pagina waar de gebruiker net op klikte.
+    retention.run_once()
     return RedirectResponse("/admin", status_code=303)
 
 

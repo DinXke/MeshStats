@@ -317,6 +317,57 @@ against 180 for samples. Both columns were added through `COLUMN_MIGRATIONS`, so
 an existing database keeps its rows and simply has them empty — which the UI
 reports as "not stored" instead of as "no hops".
 
+### Retention: one aim, two promises
+
+The retention lives in the `settings` table, with the environment variable as
+the default for a fresh install only. That is deliberate: raising it is a
+decision someone makes while looking at the admin page, and needing a container
+restart to apply it is how a setting ends up never being touched. `routes_api`
+reads it per request for the same reason — the heat map's window *is* the
+retention, so raising one raises the other on the next pass, and the window is
+part of that endpoint's cache key so a change cannot linger for a TTL.
+
+A period on its own is not a guarantee, though. "Keep 30 days" says nothing
+about how much disk that is; one node that starts mirroring every frame it hears
+turns it into gigabytes. So `app/retention.py` applies three limits, in order:
+
+1. **Age** — everything past `packet_retention_days` goes. The aim.
+2. **Rows** — above `packet_max_rows`, the oldest packets go until it fits.
+3. **Bytes** — above `db_max_mb` on disk, more of the oldest go, sized with a
+   `dbstat` measurement of what a packet row really costs (with a measured
+   constant as the fallback, since `dbstat` is a compile-time option).
+
+2 and 3 are the promise, and they are FIFO on `id` rather than on `ts` — `id` is
+the insertion order, which is what "first in, first out" means, and a node with
+a broken clock would otherwise have its packets deleted first for being dated
+last year. Whenever 2 or 3 does the cutting, the configured period was *not*
+achieved, and both the admin page and the archive's own hint say so with the
+real number next to the configured one. A retention that quietly under-delivers
+is how a gap in a graph becomes an evening of debugging.
+
+The pass runs at startup **and** every `MCS_PRUNE_MINUTES`, in a thread of its
+own, the same shape as `clocksync.py`. Pruning only at startup made the
+retention an act rather than a rule: a container that ran for months never threw
+anything away, and the first sign of that is a full disk.
+
+SQLite does not shrink a file on DELETE — the pages go on a free list and get
+reused, which is fine at a steady intake and stops being fine the moment someone
+lowers a retention or a ceiling bites. So the same pass runs a `VACUUM` when at
+least 16 MB *and* a fifth of the file is free list, and only when the disk has
+room for the temporary second copy it builds. `auto_vacuum=INCREMENTAL` was
+rejected: turning it on for an existing database needs exactly the full `VACUUM`
+it was meant to avoid, and then charges every write forever to save an operation
+that takes seconds a handful of times a year.
+
+`samples` falls under the same sweep, on the much longer `retention_days`. It
+does not grow structurally any more — with a time-series database configured,
+`db.ingest` writes measurements straight to it and only `db.spill_samples` still
+lands rows in SQLite, which by definition only happens while something is
+broken. It has no FIFO ceiling of its own on purpose: measurements are this
+site's product and packets are working material, so if the byte ceiling cannot
+be met with packets already at their floor, the admin page says so rather than
+silently deleting history.
+
 Hop resolution is a lookup of contacts by key prefix, and its answers are
 memoised for a minute: the live feed resolves the path of every packet it hands
 out, and those answers only change when a new node advertises itself. What the

@@ -115,7 +115,10 @@ you added under `/opt/mc-repeater-stats/server` is removed.
 | `MCS_SITE_NAME` | `MeshCore Repeater Stats` | Title in the header |
 | `MCS_RETENTION_DAYS` | `180` | Sample retention. Overridden by the DB setting if changed in `/admin`. |
 | `MCS_HEARTBEAT_MIN` | `5` | Minutes; force a graph point even when the value has not changed. Also overridable in `/admin`. |
-| `MCS_PACKET_RETENTION_DAYS` | `7` | Raw packet retention; they arrive far faster than samples. |
+| `MCS_PACKET_RETENTION_DAYS` | `7` | Raw packet retention; they arrive far faster than samples. Overridable in `/admin`, and it is also the heat map's window. |
+| `MCS_PACKET_MAX_ROWS` | `200000` | FIFO ceiling on the packets table: above it the oldest packets go, whatever the retention says. Overridable in `/admin`. |
+| `MCS_DB_MAX_MB` | `512` | FIFO ceiling on the database file, WAL included. Above it, more of the oldest packets go. Overridable in `/admin`. |
+| `MCS_PRUNE_MINUTES` | `60` | Minutes between retention passes. Pruning also happens at startup, but a server that runs for months has to prune in between. |
 | `MCS_MAX_BODY_BYTES` | `2000000` | Largest request body accepted, on every route and method. Enforced while reading, so a chunked request cannot skip it. |
 | `MCS_TRUSTED_PROXY_HOPS` | `1` | How many proxies sit in front of the app. The login throttle counts this many `X-Forwarded-For` entries in from the right to find the client address. Raise it only when you really add a hop — see [`security.md`](security.md#which-address-gets-counted). |
 

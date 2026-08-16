@@ -10,8 +10,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, clocksync, db, limits, mqtt_ingest, routes_admin,
-               routes_api, routes_public, tsdb)
+from . import (auth, clocksync, db, limits, mqtt_ingest, retention,
+               routes_admin, routes_api, routes_public, tsdb)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -70,6 +70,11 @@ def bootstrap():
         print(f"[mc-repeater-stats] Gebruikersnaam: admin  Wachtwoord: {password}", flush=True)
         print(f"[mc-repeater-stats] Wijzig dit meteen via /admin.", flush=True)
     db.prune()
+    # ... and again every hour after this one. Pruning only here made the
+    # retention an act that happened at startup rather than a rule that holds:
+    # a container that runs for months never threw anything away, and the first
+    # sign of that is a full disk. See retention.py.
+    retention.start()
     # Contacts stored before this column existed, or while borders.json was
     # missing, are classified here rather than never: ingest only classifies a
     # position when it changes, and most nodes never move.

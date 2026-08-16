@@ -6,7 +6,9 @@ an ORM would only add a dependency and a migration story we do not need. The
 schema is applied with CREATE TABLE IF NOT EXISTS on every connect, which
 doubles as the migration mechanism for additive changes.
 """
+import os
 import re
+import shutil
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -256,6 +258,21 @@ def execute(sql: str, params=()) -> int:
         cur = conn.execute(sql, params)
         conn.commit()
         return cur.lastrowid
+
+
+def execute_rowcount(sql: str, params=()) -> int:
+    """Like execute(), but answers how many rows it touched.
+
+    Its own function rather than a changed return value on execute(): every
+    INSERT in this module relies on getting a lastrowid back. The retention
+    sweep is the caller that needs the other number, because "we pruned" and
+    "we pruned 40 000 packets" are different things to put on the admin page.
+    """
+    with _lock:
+        conn = get_conn()
+        cur = conn.execute(sql, params)
+        conn.commit()
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
 
 def get_setting(key: str, default: str | None = None) -> str | None:
@@ -1458,15 +1475,339 @@ def latest_for(repeater_id: int) -> dict[str, sqlite3.Row]:
     return {r["metric"]: r for r in q("SELECT * FROM latest WHERE repeater_id=?", (repeater_id,))}
 
 
-def prune():
-    retention = setting_int("retention_days", config.RETENTION_DAYS)
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    execute("DELETE FROM samples WHERE ts<?", (cutoff,))
-    # Neighbours unheard for 7 days drop off the list
-    nb_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    execute("DELETE FROM neighbors WHERE last_seen<?", (nb_cutoff,))
-    # Packets arrive orders of magnitude faster than metric samples and are only
-    # interesting while recent, hence their own much shorter retention.
-    pkt_days = setting_int("packet_retention_days", config.PACKET_RETENTION_DAYS)
-    pkt_cutoff = (datetime.now(timezone.utc) - timedelta(days=pkt_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    execute("DELETE FROM packets WHERE ts<?", (pkt_cutoff,))
+# --- retention ---------------------------------------------------------------
+#
+# Three limits, and the order they are applied in is the whole design.
+#
+# 1. AGE. Everything older than its retention goes. This is the setting a reader
+#    of this site would recognise: "we keep a month of packets".
+# 2. ROWS. Above ``packet_max_rows`` the oldest packets go until the count fits,
+#    whatever their age. First in, first out.
+# 3. BYTES. Above ``db_max_mb`` on disk, more of the oldest packets go until the
+#    estimated saving covers the excess.
+#
+# Age is the aim; rows and bytes are the promise. The difference matters on the
+# admin page: whenever 2 or 3 does the cutting, the configured period was NOT
+# achieved, and a reader who set 30 days is actually looking at 12. That is
+# reported rather than absorbed -- a gap in a graph with no explanation is
+# exactly the failure mode this project keeps trying to avoid.
+#
+# FIFO is on ``id``, not on ``ts``. The id is the insertion order, which is what
+# "first in, first out" means, and it is the primary key -- so the sweep is an
+# index seek plus a ranged delete instead of a scan. A timestamp would also be
+# wrong in the one case where the two disagree: a node whose clock is off sends
+# packets that are stored now but dated last year, and deleting on ts would
+# throw those away first even though they are the freshest thing we have.
+
+# Never trim the packets table below this, whatever the byte ceiling says. A
+# ceiling that has to be met by emptying the table entirely is a misconfigured
+# ceiling, and the honest answer is to say so on the admin page rather than to
+# leave a site with no packets on it at all.
+PACKET_FIFO_FLOOR = 1000
+
+# What one packet row costs when we cannot measure it. Measured on the live
+# server (7 477 rows, table plus its three indexes) at roughly 335 bytes;
+# rounded up, because underestimating means a byte-ceiling pass that deletes too
+# little and has to run again, while overestimating deletes packets nobody asked
+# to lose.
+PACKET_BYTES_FALLBACK = 400
+
+# When a VACUUM is worth its cost. Both must be true: enough absolute waste to
+# be worth a rewrite, and enough relative waste that the file is meaningfully
+# bigger than its contents.
+VACUUM_MIN_FREE_BYTES = 16 * 1024 * 1024
+VACUUM_MIN_FREE_RATIO = 0.20
+# VACUUM writes a complete second copy before swapping it in, so the disk needs
+# room for both. The multiplier is over the database size and deliberately
+# generous: refusing a cleanup is free, running out of disk halfway through one
+# is not.
+VACUUM_MIN_DISK_FACTOR = 3.0
+
+
+def retention_settings() -> dict:
+    """The limits actually in force, settings table first, .env as the default.
+
+    Read on every pass rather than captured at import: the whole point of moving
+    these into ``settings`` is that raising a retention takes effect without a
+    container restart. Anything that caches these values reintroduces exactly
+    the restart this replaces -- see routes_api's heat-map window.
+    """
+    return {
+        "days": max(1, setting_int("packet_retention_days", config.PACKET_RETENTION_DAYS)),
+        "sample_days": max(1, setting_int("retention_days", config.RETENTION_DAYS)),
+        "max_rows": max(PACKET_FIFO_FLOOR,
+                        setting_int("packet_max_rows", config.PACKET_MAX_ROWS)),
+        "max_mb": max(1, setting_int("db_max_mb", config.DB_MAX_MB)),
+    }
+
+
+def db_bytes() -> int:
+    """What this database occupies on disk, WAL and shared memory included.
+
+    The WAL counts because it is real disk: in WAL mode a busy database carries
+    megabytes there that the main file does not show yet, and a ceiling that
+    ignores it is a ceiling that is quietly exceeded.
+    """
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            total += os.path.getsize(str(config.DB_PATH) + suffix)
+        except OSError:
+            pass
+    return total
+
+
+def _packet_bytes_per_row(conn: sqlite3.Connection, rows: int) -> float:
+    """How many bytes one packet row really costs, indexes included.
+
+    Measured through ``dbstat`` when the SQLite build has it, because a guess
+    that is wrong by a factor of two means a byte ceiling that either bites far
+    too hard or never converges. dbstat is a compile-time option
+    (SQLITE_ENABLE_DBSTAT_VTAB) and is genuinely absent on some builds, so the
+    measured constant above stands in -- a slightly-off estimate that runs again
+    in an hour beats a sweep that refuses to work at all.
+    """
+    if rows <= 0:
+        return float(PACKET_BYTES_FALLBACK)
+    try:
+        row = conn.execute(
+            "SELECT SUM(pgsize) AS b FROM dbstat WHERE name IN "
+            "('packets', 'idx_packets_ts', 'idx_packets_dup', 'idx_packets_sender')"
+        ).fetchone()
+    except sqlite3.Error:
+        return float(PACKET_BYTES_FALLBACK)
+    if row and row["b"]:
+        return max(1.0, float(row["b"]) / rows)
+    return float(PACKET_BYTES_FALLBACK)
+
+
+def packet_row_count() -> int:
+    row = qone("SELECT COUNT(*) AS n FROM packets")
+    return (row["n"] or 0) if row else 0
+
+
+def _trim_oldest_packets(keep: int) -> int:
+    """Cut the packets table back to ``keep`` rows, oldest first. Returns how many went.
+
+    One OFFSET seek to find the id of the ``keep``-th newest packet, then a
+    single ranged DELETE below it. Both ride the primary key, so the cost is
+    independent of how far over the limit we were -- which matters, because the
+    pass that has the most to delete is the pass that runs while the machine is
+    already under pressure.
+    """
+    keep = max(PACKET_FIFO_FLOOR, int(keep))
+    row = qone("SELECT id FROM packets ORDER BY id DESC LIMIT 1 OFFSET ?", (keep,))
+    if row is None:
+        return 0            # fewer rows than the cap: nothing to do
+    return execute_rowcount("DELETE FROM packets WHERE id <= ?", (row["id"],))
+
+
+def _span_days(oldest: str | None, newest: str | None) -> float | None:
+    """How many days of packets the table actually holds, or None if we cannot tell."""
+    if not oldest or not newest:
+        return None
+    try:
+        lo = datetime.strptime(oldest, "%Y-%m-%dT%H:%M:%SZ")
+        hi = datetime.strptime(newest, "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return None
+    return round(max(0.0, (hi - lo).total_seconds()) / 86400.0, 2)
+
+
+def prune() -> dict:
+    """One retention pass over the whole database. Returns what it did.
+
+    A report rather than nothing, because the admin page has to be able to say
+    when the last sweep ran and how much it threw away. A prune that happens
+    silently is the reason a hole in a graph turns into an evening of
+    debugging.
+
+    Safe to call from anywhere and at any time: every delete goes through the
+    module lock like every other write, and a pass that finds nothing to do
+    costs three index lookups.
+    """
+    cfg = retention_settings()
+    now = datetime.now(timezone.utc)
+
+    def cutoff(days) -> str:
+        return (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    report = {
+        "at": utcnow(), "samples": 0, "neighbors": 0, "packets_age": 0,
+        "packets_rows": 0, "packets_bytes": 0, "limit_hit": "",
+        "over_by_bytes": 0, **cfg,
+    }
+
+    # Measurements: they are pruned by their own, much longer retention, and
+    # they mostly do not grow any more -- see the note in retention.py about
+    # where the history actually lives now.
+    report["samples"] = execute_rowcount("DELETE FROM samples WHERE ts<?",
+                                         (cutoff(cfg["sample_days"]),))
+    # Neighbours unheard for 7 days drop off the list.
+    report["neighbors"] = execute_rowcount("DELETE FROM neighbors WHERE last_seen<?",
+                                           (cutoff(7),))
+    # 1. Age. The retention as the reader understands it.
+    report["packets_age"] = execute_rowcount("DELETE FROM packets WHERE ts<?",
+                                             (cutoff(cfg["days"]),))
+
+    # 2. Rows. The cheap ceiling, and the one that normally bites first.
+    left = packet_row_count()
+    if left > cfg["max_rows"]:
+        report["packets_rows"] = _trim_oldest_packets(cfg["max_rows"])
+        if report["packets_rows"]:
+            report["limit_hit"] = "rows"
+        left = packet_row_count()
+
+    # 3. Bytes. The ceiling that cannot be argued away, checked against the file
+    #    itself rather than against a model of it.
+    total = db_bytes()
+    ceiling = cfg["max_mb"] * 1024 * 1024
+    if total > ceiling and left > PACKET_FIFO_FLOOR:
+        excess = total - ceiling
+        with _lock:
+            per_row = _packet_bytes_per_row(get_conn(), left)
+        # +1 so an excess smaller than one row still removes one; without it a
+        # database a few bytes over the ceiling would loop forever doing nothing.
+        keep = max(PACKET_FIFO_FLOOR, left - int(excess / per_row) - 1)
+        report["packets_bytes"] = _trim_oldest_packets(keep)
+        if report["packets_bytes"]:
+            report["limit_hit"] = "bytes"
+        left = packet_row_count()
+        # Deletes free pages inside the file; they do not shrink it. Whether the
+        # ceiling is now met is a question for after the VACUUM, so what is
+        # recorded here is the excess as it stood -- see maybe_vacuum().
+        report["over_by_bytes"] = max(0, db_bytes() - ceiling)
+
+    span = qone("SELECT MIN(ts) AS lo, MAX(ts) AS hi FROM packets")
+    report["packets_left"] = left
+    report["oldest"] = span["lo"] if span else None
+    report["newest"] = span["hi"] if span else None
+    report["effective_days"] = _span_days(report["oldest"], report["newest"])
+    report["db_bytes"] = db_bytes()
+    return report
+
+
+def free_pages() -> tuple[int, int, int]:
+    """(free bytes, file bytes according to SQLite, page size).
+
+    Read from the database's own bookkeeping rather than from the file size: a
+    file that is 200 MB of which 150 MB is free list is a very different case
+    from one that is 200 MB of packets, and only the first is worth a VACUUM.
+    """
+    with _lock:
+        conn = get_conn()
+        page = conn.execute("PRAGMA page_size").fetchone()[0]
+        pages = conn.execute("PRAGMA page_count").fetchone()[0]
+        free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    return free * page, pages * page, page
+
+
+def _checkpoint() -> None:
+    """Write the WAL back into the main file and shrink it to nothing.
+
+    Best effort: a checkpoint that cannot get exclusive access simply does less,
+    which is a delay and never a loss -- the WAL keeps the data either way.
+    """
+    try:
+        with _lock:
+            conn = get_conn()
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error:
+        pass
+
+
+def maybe_vacuum(force: bool = False) -> dict:
+    """Rewrite the database if enough of it has become empty space. Returns why or why not.
+
+    Why a full VACUUM and not auto_vacuum
+    -------------------------------------
+    SQLite never shrinks a file on DELETE; the pages go on a free list and get
+    reused. On its own that is fine -- a table that is pruned and refilled at a
+    steady rate reaches an equilibrium and stops growing. It stops being fine
+    the moment someone LOWERS a retention or the byte ceiling bites: then a big
+    slice of the file is free list forever, and the user who set out to reclaim
+    disk watches the file not move at all.
+
+    ``PRAGMA auto_vacuum=INCREMENTAL`` was considered and rejected, twice over.
+    Turning it on for an existing database requires a full VACUUM anyway -- the
+    very operation it was supposed to avoid -- and once on, every page write
+    carries pointer-map maintenance forever, on the ingest path, to save an
+    operation that at this size takes seconds and runs a handful of times a
+    year. A threshold is the cheaper trade.
+
+    The costs are real and both are guarded. VACUUM takes a write lock for its
+    duration: here that is the module lock every other query already goes
+    through, so nothing sees a half-rewritten database, and on a file of tens of
+    megabytes it is under a second. And it builds a full second copy before
+    swapping, so the disk must have room for both -- hence the free-space check,
+    which refuses rather than risks filling the very disk this feature exists to
+    protect.
+    """
+    out = {"ran": False, "reason": "", "before": 0, "after": 0, "freed": 0,
+           "at": None}
+    # Fold the WAL back into the main file before measuring anything. In WAL
+    # mode the write-ahead log is real disk that db_bytes() counts, and a VACUUM
+    # leaves a big one behind -- so without this the honest answer "we gave 40 MB
+    # back" comes out as "the database grew", which is the sort of number that
+    # makes a user distrust the whole panel.
+    _checkpoint()
+    free, sized, _page = free_pages()
+    out["before"] = db_bytes()
+    if not force:
+        if free < VACUUM_MIN_FREE_BYTES or not sized or free / sized < VACUUM_MIN_FREE_RATIO:
+            out["reason"] = (f"niet nodig: {free // (1024 * 1024)} MB vrije ruimte "
+                             f"in een bestand van {sized // (1024 * 1024)} MB")
+            return out
+    try:
+        room = shutil.disk_usage(str(config.DB_PATH.parent)).free
+    except OSError:
+        room = 0
+    if room and room < out["before"] * VACUUM_MIN_DISK_FACTOR:
+        out["reason"] = ("geweigerd: te weinig vrije schijfruimte om veilig te "
+                         "herschrijven")
+        return out
+    try:
+        with _lock:
+            conn = get_conn()
+            conn.commit()           # VACUUM cannot run inside a transaction
+            conn.execute("VACUUM")
+            conn.commit()
+    except sqlite3.Error as err:
+        out["reason"] = f"mislukt: {err}"
+        return out
+    _checkpoint()
+    out["ran"] = True
+    out["at"] = utcnow()
+    out["after"] = db_bytes()
+    out["freed"] = max(0, out["before"] - out["after"])
+    out["reason"] = f"{out['freed'] // (1024 * 1024)} MB teruggegeven aan de schijf"
+    return out
+
+
+def storage_overview() -> dict:
+    """Everything the admin page needs to say what this database is doing.
+
+    One query set rather than a dozen template calls, so the page cannot end up
+    quoting a packet count and a time span that were measured a second apart.
+    """
+    cfg = retention_settings()
+    span = qone("SELECT MIN(ts) AS lo, MAX(ts) AS hi, COUNT(*) AS n FROM packets")
+    samples = qone("SELECT COUNT(*) AS n, MIN(ts) AS lo, MAX(ts) AS hi FROM samples")
+    free, sized, _page = free_pages()
+    oldest = span["lo"] if span else None
+    newest = span["hi"] if span else None
+    return {
+        **cfg,
+        "db_bytes": db_bytes(),
+        "sqlite_bytes": sized,
+        "free_bytes": free,
+        "ceiling_bytes": cfg["max_mb"] * 1024 * 1024,
+        "packets": (span["n"] or 0) if span else 0,
+        "oldest": oldest,
+        "newest": newest,
+        "effective_days": _span_days(oldest, newest),
+        "samples": (samples["n"] or 0) if samples else 0,
+        "samples_oldest": samples["lo"] if samples else None,
+        "samples_newest": samples["hi"] if samples else None,
+    }

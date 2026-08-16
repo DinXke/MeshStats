@@ -201,6 +201,79 @@
   </div>
 </section>
 
+{# Snoeien dat stil gebeurt is precies wat je niet wilt als je later een gat in
+   je grafiek ziet. Daarom staat hier niet alleen wat er ingesteld is, maar ook
+   wat dat feitelijk oplevert: hoe groot de databank is, hoeveel pakketten er
+   staan, welk tijdvenster dat beslaat en wat de laatste ronde weggooide. #}
+<section>
+  <h2>Opslag &amp; bewaring</h2>
+  <div class="card">
+
+  {% if storage.falls_short %}
+  <p class="error"><strong>De ingestelde bewaartermijn wordt niet gehaald.</strong>
+     Er is <strong>{{ storage.days }} dagen</strong> ingesteld, maar er staat feitelijk
+     <strong>{{ storage.effective_days }} dagen</strong> aan pakketten in de databank: de
+     {% if storage.limit_hit == 'rows' %}grens van {{ '{:,}'.format(storage.max_rows).replace(',', '.') }} rijen{% else %}grens van {{ storage.max_mb }} MB{% endif %}
+     snijdt eerder. De oudste pakketten gaan als eerste weg (FIFO). Wil je de volle termijn,
+     verhoog dan die bovengrens &mdash; en kijk eerst of daar schijfruimte voor is.</p>
+  {% endif %}
+  {% if storage.over_ceiling %}
+  <p class="error"><strong>De databank staat boven de bovengrens van {{ storage.max_mb }} MB.</strong>
+     De pakketten zijn al tot hun ondergrens teruggesnoeid; wat er nu nog staat zijn metingen en
+     contacten, en die gooit deze site niet uit zichzelf weg. Verhoog de bovengrens of verlaag de
+     bewaartermijn van de historiek.</p>
+  {% endif %}
+
+  <table>
+    <tr><td>Databestand</td><td class="mono">{{ storage.db_bytes | filesizeformat(true) }}
+      <span class="muted">&middot; bovengrens {{ storage.max_mb }} MB
+      {%- if storage.free_bytes %} &middot; {{ storage.free_bytes | filesizeformat(true) }} vrije ruimte binnenin{% endif %}</span></td></tr>
+    <tr><td>Pakketten</td><td class="mono">{{ storage.packets }}
+      <span class="muted">&middot; maximaal {{ storage.max_rows }} rijen</span></td></tr>
+    <tr><td>Tijdvenster pakketten</td><td>
+      {%- if storage.oldest %}<time class="reltime" datetime="{{ storage.oldest }}">{{ storage.oldest }}</time>
+        &rarr; <time class="reltime" datetime="{{ storage.newest }}">{{ storage.newest }}</time>
+        <span class="muted">&middot; {{ storage.effective_days }} van {{ storage.days }} ingestelde dagen</span>
+      {%- else %}<span class="muted">nog geen pakketten</span>{% endif %}</td></tr>
+    <tr><td>Metingen in SQLite</td><td class="mono">{{ storage.samples }}
+      <span class="muted">&middot; bewaartermijn {{ storage.sample_days }} dagen
+      {%- if storage.samples_oldest %} &middot; oudste <time class="reltime" datetime="{{ storage.samples_oldest }}">{{ storage.samples_oldest }}</time>{% endif %}</span></td></tr>
+    <tr><td>Laatste opruiming</td><td>
+      {%- if storage.last %}<time class="reltime" datetime="{{ storage.last.at }}">{{ storage.last.at }}</time>
+        &middot; <span class="mono">{{ storage.last.packets_age + storage.last.packets_rows + storage.last.packets_bytes }}</span> pakketten weg
+        {%- if storage.last.packets_rows or storage.last.packets_bytes %}
+          <span class="muted">(waarvan {{ storage.last.packets_rows + storage.last.packets_bytes }} op de bovengrens)</span>
+        {%- endif %}
+        {%- if storage.last.samples %} &middot; <span class="mono">{{ storage.last.samples }}</span> metingen{% endif %}
+        {%- if storage.last.neighbors %} &middot; <span class="mono">{{ storage.last.neighbors }}</span> burenrijen{% endif %}
+      {%- else %}<span class="muted">nog niet gedraaid sinds deze versie</span>{% endif %}</td></tr>
+    <tr><td>Bestand herschreven</td><td>
+      {%- if storage.last and storage.last.vacuum and storage.last.vacuum.ran %}
+        <time class="reltime" datetime="{{ storage.last.vacuum.at }}">{{ storage.last.vacuum.at }}</time>
+        <span class="muted">&middot; {{ storage.last.vacuum.reason }}</span>
+      {%- elif storage.last and storage.last.vacuum %}<span class="muted">{{ storage.last.vacuum.reason }}</span>
+      {%- else %}<span class="muted">nog niet beoordeeld</span>{% endif %}</td></tr>
+    <tr><td>Opruimronde</td><td class="mono">elke {{ storage.state.interval_min }} min
+      <span class="muted">&middot; {{ storage.state.runs }} ronde(n) sinds deze start
+      {%- if storage.state.last_error %} &middot; laatste fout: {{ storage.state.last_error }}{% endif %}</span></td></tr>
+  </table>
+
+  <p class="muted small"><strong>Twee grenzen, niet één.</strong> Een termijn in dagen zegt niets over
+     schijfruimte: bij een verkeersexplosie loopt de schijf alsnog vol terwijl de instelling keurig
+     gerespecteerd wordt. Daarom is de termijn wat we <em>willen</em>, en zijn het rijmaximum en de
+     maximale bestandsgrootte wat we <em>beloven</em>. Botsen ze, dan gaat de oudste eruit &mdash; wie het
+     eerst binnenkwam gaat het eerst weg &mdash; en zegt deze pagina dat hierboven met zoveel woorden.
+     Er wordt elk uur opgeruimd en niet alleen bij het opstarten, want een server die maanden draait
+     hoort tussendoor op te ruimen.</p>
+  <p class="muted small"><strong>Waarom het bestand niet altijd krimpt.</strong> SQLite geeft ruimte na een
+     verwijdering niet terug aan de schijf: de pagina's komen op een vrije lijst en worden hergebruikt.
+     Bij een gelijkmatige instroom is dat prima. Verlaag je een termijn of snijdt de bovengrens, dan
+     blijft er een groot gat achter, en pas dan wordt het bestand herschreven (<code>VACUUM</code>).
+     Dat gebeurt alleen als er minstens 16 MB én een vijfde van het bestand vrij staat, en alleen als er
+     ruim genoeg schijfruimte is voor de tijdelijke tweede kopie.</p>
+  </div>
+</section>
+
 <section>
   <h2>Weergave &amp; data</h2>
   <div class="card">
@@ -212,13 +285,25 @@
     <label>Bewaartermijn historiek (dagen)
       <input type="number" name="retention_days" value="{{ settings.retention_days }}" min="1" max="3650" required>
     </label>
+    <label>Bewaartermijn pakketten (dagen)
+      <input type="number" name="packet_retention_days" value="{{ settings.packet_retention_days }}" min="1" max="365" required>
+    </label>
+    <label>Maximum aantal pakketrijen (FIFO)
+      <input type="number" name="packet_max_rows" value="{{ settings.packet_max_rows }}" min="1000" max="50000000" required>
+    </label>
+    <label>Maximale bestandsgrootte (MB)
+      <input type="number" name="db_max_mb" value="{{ settings.db_max_mb }}" min="16" max="1000000" required>
+    </label>
     <label>Historiekperiodes (uren, kommagescheiden)
       <input name="history_ranges" value="{{ settings.history_ranges }}" placeholder="4,24,48,168,744,2160" required>
     </label>
     <div class="settingsactions"><button type="submit">Opslaan</button></div>
   </form>
   <p class="muted small">Punt-interval: hoe vaak er minstens een grafiekpunt wordt opgeslagen, ook als de waarde niet wijzigt.
-     Oudere data dan de bewaartermijn wordt bij het opslaan meteen opgeruimd. Periodes: 24 = 24 u, 168 = 7 d, 744 = 31 d.</p>
+     Oudere data dan de bewaartermijn wordt bij het opslaan meteen opgeruimd. Periodes: 24 = 24 u, 168 = 7 d, 744 = 31 d.
+     De bewaartermijn voor pakketten bepaalt meteen het venster van de heatmap op de kaart: verhoog je hem, dan groeit die mee,
+     zonder herstart. De twee maxima eronder zijn de harde bovengrens die de schijf beschermt; ze snoeien de oudste pakketten weg
+     zodra ze geraakt worden, ook als de termijn dan niet gehaald wordt.</p>
   </div>
 </section>
 
