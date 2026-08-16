@@ -25,6 +25,7 @@ and each rule is here because its absence cost something.
 - [8. Tests pin down the refusals](#8-tests-pin-down-the-refusals)
 - [9. Tooling, or the lack of it](#9-tooling-or-the-lack-of-it)
 - [10. Documentation conventions](#10-documentation-conventions)
+- [Third-party code](#third-party-code)
 - [Submitting a change](#submitting-a-change)
 
 ---
@@ -486,6 +487,48 @@ buttons and the reason next to them — not "screenshot of the admin page". Both
 language versions get their own alt text, in their own language, even though they
 point at the same file: the admin pages are Dutch only (see `admin.md`), so there
 is one set of images and two sets of descriptions.
+
+---
+
+## Third-party code
+
+This repository is [MIT](../LICENSE), one copyright line, one file. That is worth
+keeping, and it is exactly the kind of thing you lose by accident: a useful
+function pasted in from somewhere else drags its licence along with it, and by
+the time anybody notices it has been shipped.
+
+So the rule is: **taking code from another project is a decision, never a side
+effect of a feature.** Before any of it lands here:
+
+1. **Find the licence and read it.** Not the badge on the README — the file. A
+   fork inherits its parent's licence file, and the parent's copyright holder is
+   usually the name in it.
+2. **Write down what you found**, in the pull request or the commit body, with
+   the licence name and the copyright holder.
+3. **Prefer reimplementing from a description.** Where a project documents what
+   its feature *does*, that documentation is not code and reading it carries no
+   licence obligation. Build it yourself against the description, credit the
+   origin of the idea in the code and in the documentation, and the licence
+   question stays where it was.
+4. **If code really has to come across**, it comes with its licence: attribution
+   in the file, the licence text in the tree, and — where the licence requires it
+   — a change of licence for this whole repository. That last one is not a
+   developer's call to make alone.
+
+Standing decisions taken under this rule, so nobody has to rediscover them:
+
+| Project | Licence found | What we did |
+|---|---|---|
+| [Kpa-clawbot/CoreScope](https://github.com/Kpa-clawbot/CoreScope) | GPL-3.0 | Nothing taken. The idea — every received packet to the site over MQTT, live map — was rebuilt from a description. Taking any of their code means this repository goes GPL-3.0. |
+| [Dutch-MeshCore/MeshCore](https://github.com/Dutch-MeshCore/MeshCore) | MIT (`license.txt`, "Copyright (c) 2025 Scott Powell / rippleradios.com" — inherited from its parent `meshcore-dev/MeshCore`) | Nothing taken. The packet filter was written against their published [`packet_filter_reference.md`](https://github.com/Dutch-MeshCore/MeshCore/blob/dmc-dev/docs/packet_filter_reference.md); see [`packet-filter.md`](packet-filter.md). |
+
+The MeshCore entry is worth a note, because MIT-to-MIT would have been the easy
+case: copying would have been permitted, and the only obligation would have been
+to carry their copyright notice along. It was still not done. Reimplementing cost
+a day and bought three things — one copyright line instead of two, a filter that
+fits this firmware's own storage, CLI and MQTT plumbing instead of being bolted
+next to it, and the freedom to deviate where the description assumed something a
+repeater cannot do. Two of those deviations turned out to be necessary.
 
 ---
 

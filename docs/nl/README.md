@@ -86,6 +86,7 @@ draait. Het MeshCore-wireformaat staat nergens anders beschreven.
 |---|---|
 | [`firmware.md`](firmware.md) | Elke wijziging die MeshManager in MeshCore aanbrengt — meerdere companions tegelijk, de statspublisher, de netwerkmodule van de repeater — en hoe je het bouwt en flasht |
 | [`firmware-upgrade.md`](firmware-upgrade.md) | Hoe een node aan een nieuw image komt: GitHub-releases, de checksum die twee keer gecontroleerd wordt, waarom alleen succes herstart, hoe je teruggaat, en wat een checksum **niet** bewijst |
+| [`packet-filter.md`](packet-filter.md) | Het pakketfilter van de repeater: welke doorgestuurde pakketten het mag weggooien en op welke grond, wat het nooit aanraakt, waarom een kanaal blokkeren een sleutel vraagt in plaats van een naam, en de weg terug als een filter verkeerd gezet is |
 
 ---
 
@@ -142,6 +143,7 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | Hoe beheer ik accounts en tokens? | [`admin.md`](admin.md) |
 | Hoe krijg ik mijn node aan het publiceren? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
 | Hoe upgrade ik een node vanaf de site? | [`firmware-upgrade.md`](firmware-upgrade.md) |
+| Waarom stuurt deze repeater niets meer door? | [`packet-filter.md`](packet-filter.md) |
 | Waarom is deze knop grijs bij deze node? | [`node-management.md`](node-management.md), [`commanding.md`](commanding.md) |
 | Is het veilig dit op het internet te zetten? | [`security.md`](security.md) |
 | Kan ik de positie van een node verbergen maar zijn cijfers houden? | [`privacy.md`](privacy.md) |

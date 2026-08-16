@@ -25,6 +25,7 @@ elke regel staat er omdat zijn afwezigheid iets gekost heeft.
 - [8. Tests leggen de weigeringen vast](#8-tests-leggen-de-weigeringen-vast)
 - [9. Gereedschap, of het gebrek eraan](#9-gereedschap-of-het-gebrek-eraan)
 - [10. Documentatieconventies](#10-documentatieconventies)
+- [Code van derden](#code-van-derden)
 - [Een wijziging indienen](#een-wijziging-indienen)
 
 ---
@@ -503,6 +504,50 @@ beheerpagina". Beide taalversies krijgen hun eigen alt-tekst, in hun eigen taal,
 ook al wijzen ze naar hetzelfde bestand: de beheerpagina's zijn alleen
 Nederlands (zie `admin.md`), dus er is één reeks afbeeldingen en er zijn twee
 reeksen beschrijvingen.
+
+---
+
+## Code van derden
+
+Deze repo staat onder [MIT](../../LICENSE), één copyrightregel, één bestand. Dat
+is het waard om zo te houden, en het is precies het soort ding dat je per ongeluk
+kwijtraakt: een handige functie die je ergens vandaan plakt sleept zijn licentie
+mee, en tegen de tijd dat iemand het merkt is hij al uitgeleverd.
+
+De regel luidt dus: **code overnemen uit een ander project is een besluit, nooit
+een bijverschijnsel van een feature.** Voor er iets van landt:
+
+1. **Zoek de licentie op en lees hem.** Niet de badge op de README — het bestand.
+   Een fork erft het licentiebestand van zijn ouder, en de copyrighthouder in dat
+   bestand is meestal de naam van die ouder.
+2. **Schrijf op wat je gevonden hebt**, in de pull request of de commitbody, met
+   de naam van de licentie en de copyrighthouder erbij.
+3. **Bouw liever na op basis van een beschrijving.** Waar een project
+   documenteert wát zijn feature doet, is die documentatie geen code en levert
+   het lezen ervan geen licentieverplichting op. Bouw het zelf tegen die
+   beschrijving, vermeld de herkomst van het idee in de code en in de
+   documentatie, en de licentievraag blijft waar hij stond.
+4. **Moet er echt code over**, dan komt die met zijn licentie mee: bronvermelding
+   in het bestand, de licentietekst in de repo, en — waar de licentie dat eist —
+   een licentiewissel voor deze hele repo. Dat laatste is geen besluit dat een
+   ontwikkelaar alleen neemt.
+
+Besluiten die onder deze regel al genomen zijn, zodat niemand ze opnieuw hoeft
+uit te zoeken:
+
+| Project | Gevonden licentie | Wat we gedaan hebben |
+|---|---|---|
+| [Kpa-clawbot/CoreScope](https://github.com/Kpa-clawbot/CoreScope) | GPL-3.0 | Niets overgenomen. Het idee — elk ontvangen pakket via MQTT naar de site, live kaart — is nagebouwd op basis van een beschrijving. Komt er alsnog code van hen in, dan moet deze repo naar GPL-3.0. |
+| [Dutch-MeshCore/MeshCore](https://github.com/Dutch-MeshCore/MeshCore) | MIT (`license.txt`, "Copyright (c) 2025 Scott Powell / rippleradios.com" — geërfd van de ouder `meshcore-dev/MeshCore`) | Niets overgenomen. Het pakketfilter is geschreven tegen hun gepubliceerde [`packet_filter_reference.md`](https://github.com/Dutch-MeshCore/MeshCore/blob/dmc-dev/docs/packet_filter_reference.md); zie [`packet-filter.md`](packet-filter.md). |
+
+Die MeshCore-regel verdient een voetnoot, want MIT-naar-MIT was het makkelijke
+geval geweest: kopiëren had gemogen, en de enige verplichting was hun
+copyrightvermelding meedragen. Het is toch niet gedaan. Nabouwen kostte een dag
+en leverde drie dingen op — één copyrightregel in plaats van twee, een filter dat
+in de eigen opslag, CLI en MQTT-leidingen van deze firmware past in plaats van
+ernaast geschroefd te zitten, en de vrijheid om af te wijken waar de beschrijving
+iets veronderstelt wat een repeater niet kan. Twee van die afwijkingen bleken
+nodig.
 
 ---
 

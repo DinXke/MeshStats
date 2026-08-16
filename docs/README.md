@@ -86,6 +86,7 @@ The MeshCore wire format is documented nowhere else.
 |---|---|
 | [`firmware.md`](firmware.md) | Every change MeshManager makes to MeshCore — multiple simultaneous companions, the stats publisher, the repeater's network module — and how to build and flash it |
 | [`firmware-upgrade.md`](firmware-upgrade.md) | How a node gets a new image: GitHub releases, the checksum that is verified twice, why only success reboots, how to roll back, and what a checksum does **not** prove |
+| [`packet-filter.md`](packet-filter.md) | The repeater's packet filter: which forwarded packets it can drop and on what grounds, what it never touches, why blocking a channel needs a key rather than a name, and the way back when a filter was set wrong |
 
 ---
 
@@ -144,6 +145,7 @@ cover.
 | How do I manage accounts and tokens? | [`admin.md`](admin.md) |
 | How do I get my node publishing? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
 | How do I upgrade a node from the site? | [`firmware-upgrade.md`](firmware-upgrade.md) |
+| Why is this repeater not forwarding anything? | [`packet-filter.md`](packet-filter.md) |
 | Why is this button greyed out for this node? | [`node-management.md`](node-management.md), [`commanding.md`](commanding.md) |
 | Is it safe to put this on the internet? | [`security.md`](security.md) |
 | Can I hide a node's position but keep its figures? | [`privacy.md`](privacy.md) |
