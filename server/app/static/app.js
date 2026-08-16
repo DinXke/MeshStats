@@ -1286,7 +1286,33 @@
 
   var livemapEl = document.getElementById("livemap");
   if (livemapEl && typeof L !== "undefined") {
-    var lmap = L.map(livemapEl, { scrollWheelZoom: false });
+    // A view before a single layer is added. Leaflet refuses every addTo()
+    // with "Set map center and zoom first" until a map has one, and this map
+    // used to get its first view only from the fitBounds in the opening packet
+    // poll -- a response carrying ~300 nodes, and so regularly slower than the
+    // server-cached heat map fetch racing beside it. Whichever layer arrived
+    // first threw; for the heat map it threw into a swallowed catch, leaving a
+    // correctly filled counter, a legend, and not one line on the map, with
+    // nothing in the console to say why. Observed on the live site right after
+    // a theme switch, which reloads twice.
+    //
+    // The opening position is wherever the previous visit ended up framed, so
+    // the tiles fetched first are the ones that will still be on screen a
+    // moment later; fitBounds below only sharpens it. Never visited before, or
+    // storage blocked: the whole world, the one honest guess when the mesh's
+    // whereabouts are genuinely unknown.
+    var VIEW_KEY = "mcs-livemap-view";
+    var startView = [20, 0, 1];
+    try {
+      var stored = (localStorage.getItem(VIEW_KEY) || "").split(",").map(Number);
+      // NaN fails every comparison, so this rejects a corrupted value too.
+      if (stored.length === 3 && Math.abs(stored[0]) <= 90 &&
+          Math.abs(stored[1]) <= 180 && stored[2] >= 0 && stored[2] <= 19) {
+        startView = stored;
+      }
+    } catch (e) { /* blocked */ }
+    var lmap = L.map(livemapEl, { scrollWheelZoom: false })
+      .setView([startView[0], startView[1]], startView[2]);
     L.tileLayer(TILE_URL, { attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19 })
       .addTo(lmap);
     var feedEl = document.getElementById("livefeed");
@@ -1769,11 +1795,17 @@
       heatLegendEl.hidden = false;
     }
 
+    // The catch sits on the fetch, not on the whole chain. A dropped request or
+    // a truncated body is nothing to shout about -- the next toggle or refresh
+    // tries again -- but a catch trailing the draw call swallows drawing bugs
+    // in exactly the same silence, and that is how a heat layer that never
+    // reached the map went unnoticed. Anything drawHeat throws now surfaces as
+    // an unhandled rejection, which is where a bug belongs.
     function loadHeat() {
       fetch("/api/v1/packets/heatmap")
         .then(function (r) { return r.json(); })
-        .then(function (d) { if (heatOn) drawHeat(d); })
-        .catch(function () { /* the next toggle or refresh tries again */ });
+        .catch(function () { return null; })
+        .then(function (d) { if (d && heatOn) drawHeat(d); });
     }
 
     if (heatMinEl) {
@@ -2225,6 +2257,19 @@
       countEl.textContent = n ? t("live.count", { n: n }) : t("live.waiting");
     }
 
+    // Written once, right after the nodes have framed the map, and never again:
+    // what the next visit should open on is the mesh, not whatever corner the
+    // reader happened to be panned to when they closed the tab. The saved view
+    // is a hint about which tiles to fetch first, so four decimals -- around ten
+    // metres -- is far more precision than it needs.
+    function rememberView() {
+      try {
+        var c = lmap.getCenter();
+        localStorage.setItem(VIEW_KEY,
+          c.lat.toFixed(4) + "," + c.lng.toFixed(4) + "," + lmap.getZoom());
+      } catch (e) { /* blocked */ }
+    }
+
     function poll(first) {
       if (polling) return;
       polling = true;
@@ -2253,14 +2298,23 @@
               nodeMarkers.push(entry);
               bounds.push([n.lat, n.lon]);
             });
-            if (bounds.length) lmap.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
-            // Only now, and deliberately in a second pass: this map is created
-            // without a view and gets its first one from the fitBounds above,
-            // and Leaflet defers a layer's onAdd -- and with it the SVG element
-            // the marker is drawn as -- until the map has one. Asking for that
-            // element inside the loop above returns nothing at all, without an
-            // error, and the dots end up unreachable by keyboard for no visible
-            // reason. Found exactly that way.
+            if (bounds.length) {
+              // Not animated: this is the map's first framing of the real mesh,
+              // not a move away from somewhere the reader chose, and it has to
+              // be settled before rememberView reads it back.
+              lmap.fitBounds(bounds, {
+                padding: [40, 40], maxZoom: 12, animate: false,
+              });
+              rememberView();
+            }
+            // Leaflet defers a layer's onAdd -- and with it the SVG element the
+            // marker is drawn as -- until the map has a view, so getElement()
+            // returns nothing at all, without an error, on a view-less map, and
+            // the dots end up unreachable by keyboard for no visible reason.
+            // Found exactly that way. The map now carries a view from the line
+            // it was created on, but this stays a second pass all the same: it
+            // costs one walk over the markers, and the failure it guards
+            // against is silent.
             nodeMarkers.forEach(focusableNode);
             // A filter restored from localStorage has to reach the layer that
             // was only just built, and the view should start where the matches
