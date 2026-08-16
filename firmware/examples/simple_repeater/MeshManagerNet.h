@@ -138,6 +138,13 @@
 #include <Arduino.h>
 #include <FS.h>
 
+/* Included from here rather than from MyMesh.cpp on purpose. The packet filter
+ * is part of this module's surface, and MyMesh.cpp already includes this header
+ * behind the same MESHMANAGER_NET guard -- so the forwarding hook reaches
+ * pf_allow() without repeater-hooks.patch having to touch the include block.
+ * One less hunk in a patch that has to keep applying to somebody else's tree. */
+#include "PacketFilter.h"
+
 /* Version of THIS module, not of MeshCore. The two move independently: this
  * firmware tracks upstream MeshCore releases, while everything in MeshManagerNet
  * has its own semantic version. 'ver' prints both, because when something is
@@ -148,7 +155,7 @@
  * Zo is de overgang na het flashen af te lezen in plaats van te moeten
  * geloven. */
 #define MESHMANAGER_NAME     "MeshManager (by DinX)"
-#define MESHMANAGER_VERSION  "2.2.0"
+#define MESHMANAGER_VERSION  "2.3.0"
 
 class MyMesh;
 
@@ -233,6 +240,11 @@ int meshmanager_batt_percent(uint16_t milli_volts);
  *                        on purpose: an upgrade whose only fault is that it
  *                        cannot join the WiFi takes every IP route into this
  *                        node with it, and LoRa is up before any of them.
+ *   filter ...           the packet filter: which forwarded packets this node
+ *                        still relays. Off by default. 'filter' alone reports
+ *                        the state and what has been dropped; 'filter off' and
+ *                        'filter reset' are the way back. The rules and their
+ *                        limits are documented in PacketFilter.h.
  *   wifi clock           our own clock, when the site last set it, and what the
  *                        last check of the monitored nodes' clocks found.
  *                        Read-only on purpose: there is no way to type a time
@@ -242,6 +254,17 @@ int meshmanager_batt_percent(uint16_t milli_volts);
  *                        does not, and neither does this node.
  */
 bool mmnet_handle_command(const char *command, char *reply);
+
+/* The 'filter ...' commands are intercepted by the same function -- the packet
+ * filter that decides which of OTHER people's packets this repeater still
+ * forwards. It lives in PacketFilter.{h,cpp}; this note is here because the CLI
+ * list above is where you go looking for it.
+ *
+ * Reachable over the mesh CLI like everything else here, and that is the whole
+ * safety story: a filter makes a node useless without making it unreachable, so
+ * 'filter off' and 'filter reset' must survive the loss of WiFi, of the admin
+ * page and of the server. LoRa is up before any of those.
+ */
 
 // True when the node runs in safe mode (after repeated restarts).
 bool mmnet_is_safe_mode();

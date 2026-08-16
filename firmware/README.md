@@ -34,6 +34,7 @@ there.
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet hook |
 | `examples/companion_radio/main.cpp` | Wires the module in |
 | `examples/simple_repeater/MeshManagerNet.{h,cpp}` | Repeater: WiFi, management page, OTA, console, backup |
+| `examples/simple_repeater/PacketFilter.{h,cpp}` | Repeater: the packet filter (`filter ...`, `/api/filter`) |
 | `repeater-hooks.patch` | The edits in `simple_repeater`, **required** — see *Applying* |
 | `meshmanager.patch` | The in-place edits of both examples, as one patch |
 | `tools/verify_image.py` | Proves a built `.bin` really contains the module |

@@ -5,6 +5,52 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.3.0  Een pakketfilter op de repeater, en beheer ervan vanaf de site.
+ *        Wat het doet: in MyMesh::allowPacketForward() -- de enige plek waar
+ *        deze node beslist over ANDERMANS pakket -- worden floodpakketten
+ *        getoetst aan zes soorten regel: hoplimiet per type, snelheidslimiet
+ *        per type, minimale padhashgrootte, geblokkeerde kanalen, een
+ *        structurele controle op groepstekst, en een type dat helemaal niet
+ *        meer doorgaat. Standaard staat alles uit. Zie PacketFilter.h.
+ *        Wat het NIET raakt, en dat is het ontwerp: pakketten aan deze node
+ *        zelf (die komen nooit langs allowPacketForward), direct gerouteerde
+ *        pakketten (die horen bij een gevestigde route), en pakketten waarvan
+ *        de bestemmings- of afzenderhash een client uit de ACL is. Wie deze
+ *        node mag beheren blijft dus werken terwijl er een filter aan staat, en
+ *        je kunt jezelf er niet mee buitensluiten.
+ *        Waarom dit gevaarlijker is dan het lijkt, en wat daartegen staat. Een
+ *        filter is de zeldzame instelling die een node nutteloos maakt zonder
+ *        hem onbereikbaar te maken: hij antwoordt, hij adverteert, hij staat op
+ *        elke pagina groen, en hij stuurt niets meer door. Je merkt het pas als
+ *        iemand klaagt. Daarom drie dingen. 'filter off' en 'filter reset'
+ *        werken over de mesh-CLI, de weg die als laatste wegvalt. De
+ *        filterstand reist mee met ELK statistiekenbericht (de korte vorm, ~160
+ *        byte) in plaats van met de dagelijkse instellingenronde, zodat de site
+ *        het dezelfde minuut ziet. En in veilige modus worden de regels wel
+ *        gelezen maar niet gehandhaafd -- een node die drie keer opnieuw
+ *        opstartte is een node waarvan je de configuratie niet vertrouwt, en
+ *        dit is de enige instelling daarop die hem gezond laat lijken terwijl
+ *        hij niets doet. Het bestand wordt daarbij niet herschreven, dus een
+ *        schone start handhaaft weer wat de beheerder koos.
+ *        Waarom /api/filter een commandoregel aanneemt en geen sleutel met een
+ *        waarde, zoals /api/cfg wel doet: een filter is drie tabellen en een
+ *        lijst, geen sleutel/waardepaar. Dat door een sleutel/waarde-endpoint
+ *        persen levert sleutels op als 'rate.05.limit' en verspreidt de
+ *        grammatica van het filter over de server, dit bestand en de parser --
+ *        drie plaatsen die op de dag dat het misgaat niet meer hetzelfde
+ *        denken. Nu is er een parser, en wat je op de beheerpagina aanklikt is
+ *        te lezen als het commando dat je over de mesh had kunnen typen. Dat is
+ *        precies wat je nodig hebt als je het vanaf een seriele kabel moet
+ *        terugdraaien.
+ *        Waar dit afwijkt van de beschrijving die het volgt (Dutch-MeshCore,
+ *        docs/packet_filter_reference.md; hun code is NIET overgenomen, zie
+ *        docs/contributing.md): een kanaal blokkeren gaat op sleutel of hash en
+ *        niet op naam, want een repeater ziet alleen sha256(sleutel)[0] -- een
+ *        byte, die ongeveer een kanaal op 256 deelt met een ander. En
+ *        'misvormd' toetst alleen wat zonder sleutel te toetsen valt: lengte en
+ *        blokuitlijning. De tijdstempel- en UTF-8-controles uit de beschrijving
+ *        vragen de leesbare tekst, en die vraagt een kanaalsleutel die een
+ *        repeater niet heeft.
  * 2.2.0  De sweep vraagt ook 'ver', zodat de site van elke gemonitorde node de
  *        MeshCore-versie kent en niet alleen van de nodes die zelf publiceren.
  *        Het commando is 'ver' en niet 'show version': CommonCLI.cpp regel 271,
@@ -440,6 +486,7 @@
 
 #include "MeshManagerNet.h"
 #include "MyMesh.h"
+#include "PacketFilter.h"
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -2120,6 +2167,33 @@ static bool mqttPublishStats() {
   static char body[MQTT_PUB_MAX];
   size_t n = _mesh->fillStatsJson(body, sizeof(body));
   if (n == 0) return false;
+
+  /* De filterstand reist mee met elk statistiekenbericht, niet met de sweep.
+   *
+   * Dat verschil is het halve punt van deze feature. Een filter is de instelling
+   * die een node stilletjes nutteloos maakt: hij blijft antwoorden, hij blijft
+   * adverteren, en hij stuurt niets meer door. Wie dat pas ziet in de dagelijkse
+   * instellingenronde, ziet het een dag te laat. De korte vorm kost ongeveer 160
+   * byte -- op een bericht van een paar kilobyte is dat de prijs niet waard om
+   * over na te denken, en de rekening staat er dan bij elke meting naast.
+   *
+   * De regeltabellen zitten er NIET in. Twaalf hoplimieten met hun
+   * snelheidsvensters zijn twee kilobyte die eens per maand veranderen; die
+   * horen achter een verzoek van iemand die ze gaat wijzigen (GET /api/filter)
+   * en niet in een bericht dat elke paar minuten vertrekt. */
+  {
+    char fjson[320];
+    size_t fn = pf_summary_json(fjson, sizeof(fjson));
+    if (fn > 0 && n + fn + 12 < sizeof(body)) {
+      size_t start = n - 1;                 // over de sluitaccolade heen terug
+      int w = snprintf(body + start, sizeof(body) - start, ",\"filter\":%s}", fjson);
+      if (w > 0 && start + (size_t)w < sizeof(body)) {
+        n = start + w;
+      } else {
+        body[n - 1] = '}';                  // paste niet: laat het bericht heel
+      }
+    }
+  }
 
   /* A finished settings sweep rides along with this message. Appended here
    * rather than built into fillStatsJson because it is this module's data, not
@@ -6033,6 +6107,66 @@ static void handleCfgPost(AsyncWebServerRequest *req) {
  * pagina de lijst niet hoeft te kennen om hem te tonen, en -- belangrijker --
  * zodat een server die een parameter aanbiedt die deze firmware niet kent dat
  * merkt vóórdat iemand erop drukt in plaats van erna. */
+/* GET /api/filter -- de volledige stand, regels en tellers.
+ *
+ * Eén endpoint voor lezen en één voor schrijven, en het schrijvende neemt een
+ * commandoregel in plaats van een veld met een waarde. Dat is met opzet anders
+ * dan /api/cfg, en het verschil zit in wat er beheerd wordt: een CLI-instelling
+ * is een sleutel met een waarde, een filter is drie tabellen en een lijst.
+ * Diezelfde vorm door een sleutel/waarde-endpoint persen levert sleutels op als
+ * 'rate.05.limit', en dan staat de grammatica van het filter verspreid over de
+ * server, dit bestand en de parser -- drie plaatsen die op de dag dat het
+ * misgaat niet meer hetzelfde denken.
+ *
+ * Nu is er één parser (pf_command), en de CLI, de telnetconsole en de site
+ * voeren letterlijk dezelfde regels erdoorheen. Wat je op de beheerpagina
+ * aanklikt is te lezen als het commando dat je over de mesh had kunnen typen,
+ * en dat is precies wat je nodig hebt als je het achteraf moet terugdraaien
+ * vanaf een seriële kabel. */
+static void handleFilterGet(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+  static char body[2200];
+  size_t n = pf_json(body, sizeof(body));
+  if (n == 0) {
+    req->send(500, "application/json",
+              "{\"ok\":0,\"msg\":\"filterstand past niet in de buffer\"}");
+    return;
+  }
+  req->send(200, "application/json", body);
+}
+
+/* POST /api/filter met cmd=<alles na het woord 'filter'>.
+ *
+ * Het antwoord draagt de stand ná afloop mee, en dat is dezelfde afweging als
+ * bij /api/cfg: "OK" is geen bewijs dat er staat wat je vroeg. Hier is dat geen
+ * theoretisch punt -- 'filter hops 05 0' wordt keurig aangenomen en betekent
+ * "stuur geen groepstekst meer door", en dat wil je op het scherm zien in de
+ * vorm waarin het gehandhaafd wordt, niet in de vorm waarin je het intypte. */
+static void handleFilterPost(AsyncWebServerRequest *req) {
+  if (!requireAuth(req)) return;
+
+  char cmd[160] = "";
+  copyParam(req, "cmd", cmd, sizeof(cmd));
+
+  char reply[192] = "";
+  bool known = pf_command(cmd, reply, sizeof(reply));
+  bool ok = known && strncmp(reply, "Err", 3) != 0;
+
+  static char body[2600];
+  char esc[sizeof(reply) * 2];
+  jsonEsc(esc, sizeof(esc), known ? reply : "onbekend filtercommando");
+  int n = snprintf(body, sizeof(body), "{\"ok\":%d,\"msg\":\"%s\",\"state\":", ok ? 1 : 0, esc);
+  size_t m = (n > 0 && n + 4 < (int)sizeof(body)) ? pf_json(body + n, sizeof(body) - n - 2) : 0;
+  if (m == 0) {
+    req->send(500, "application/json",
+              "{\"ok\":0,\"msg\":\"filterstand past niet in de buffer\"}");
+    return;
+  }
+  n += (int)m;
+  snprintf(body + n, sizeof(body) - n, "}");
+  req->send(ok ? 200 : 400, "application/json", body);
+}
+
 static void handleCfgList(AsyncWebServerRequest *req) {
   if (!requireAuth(req)) return;
   /* Groter dan het lijkt te hoeven: achtentwintig parameters met hun grenzen,
@@ -6581,6 +6715,20 @@ bool mmnet_handle_command(const char *command, char *reply) {
      * Both servers want port 80, so ours has to go first. After this the node
      * only serves the update page until it reboots -- which is precisely what
      * you want from a command whose whole purpose is reflashing. */
+    /* 'filter ...' -- het pakketfilter. Hier en niet achter 'wifi', want dit
+     * heeft niets met het netwerk te maken: het gaat over wat deze node van
+     * andermans verkeer doorstuurt, en het moet werken op een node zonder WiFi.
+     *
+     * Dat het over de mesh-CLI loopt is de kern van het ontwerp en geen
+     * bijvangst. Een filter is de zeldzame instelling die een node nutteloos
+     * maakt zonder hem onbereikbaar te maken -- hij antwoordt nog, hij
+     * adverteert nog, en hij stuurt niets meer door. 'filter off' en 'filter
+     * reset' moeten daarom bereikbaar zijn langs de weg die als laatste
+     * wegvalt, en dat is LoRa: die staat al voordat WiFi, de beheerpagina of de
+     * server er zijn. Zelfde regel als 'wifi fw rollback'. */
+    if (memcmp(command, "filter", 6) == 0 && (command[6] == 0 || command[6] == ' ')) {
+      return pf_command(command + 6, reply, 155);
+    }
     if (memcmp(command, "start ota", 9) == 0) {
       if (_asleep) {
         strcpy(reply, "WiFi staat uit (zuinig). Eerst 'wifi on 30'.");
@@ -6705,6 +6853,14 @@ void mmnet_begin(FS &fs, MyMesh *mesh) {
   loadConfig();
   if (_cfg_dirty) { saveConfig(); _cfg_dirty = false; }
   pwrLoad();          // after loadConfig: it migrates from those fields
+  /* Not armed in safe mode. A node that restarted three times in a row is a
+   * node whose configuration is suspect, and of everything on it the packet
+   * filter is the one setting that can leave it looking perfectly healthy while
+   * forwarding nothing. The rules stay readable so you can see what it would
+   * have done; the file is not rewritten, so a clean boot enforces them again.
+   * Same reasoning as safe mode itself, applied to the one thing safe mode did
+   * not yet cover. */
+  pf_begin(fs, !_safe_mode);
   advLoad();          // before the monitors: they borrow names from it
   loadMonitors();
   syncMonitorsToMesh();
@@ -6776,6 +6932,8 @@ void mmnet_begin(FS &fs, MyMesh *mesh) {
    * version of that library claiming /api/* cannot shadow it, and registered
    * unconditionally -- including in safe mode, which is exactly the state in
    * which somebody needs to put a working image back on this node. */
+  _server.on("/api/filter", HTTP_GET, handleFilterGet);
+  _server.on("/api/filter", HTTP_POST, handleFilterPost);
   _server.on("/api/cfg", HTTP_GET, handleCfgList);
   _server.on("/api/cfg", HTTP_POST, handleCfgPost);
   _server.on("/api/fw", HTTP_GET, fwState);
@@ -6810,6 +6968,9 @@ void mmnet_loop() {
 
   // Advert cache: one write once the burst has settled, not one per advert.
   if (_adv_dirty_at != 0 && passed(_adv_dirty_at)) advSave();
+
+  // Same lazy write for the filter rules, and for the same reason: SPIFFS wears.
+  pf_loop();
 
   if (_apply_wifi) {
     _apply_wifi = false;

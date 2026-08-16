@@ -24,6 +24,7 @@ Everything is opt-in at build time. Without the flags, you get stock MeshCore.
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet hook |
 | `examples/companion_radio/main.cpp` | Wires the publisher in |
 | `examples/simple_repeater/MeshManagerNet.{h,cpp}` | The repeater network module |
+| `examples/simple_repeater/PacketFilter.{h,cpp}` | The packet filter — which forwarded packets the repeater still relays. See [`packet-filter.md`](packet-filter.md) |
 | `repeater-hooks.patch` | The edits in `simple_repeater` (including its `fillStatsJson()`) — **required**, they are what links the module in |
 | `meshmanager.patch` | The in-place edits of both examples, as one patch |
 | `tools/verify_image.py` | Proves a built `.bin` really contains the module |

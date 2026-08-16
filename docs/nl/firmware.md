@@ -24,6 +24,7 @@ Alles is opt-in bij het bouwen. Zonder de vlaggen krijgt u standaard MeshCore.
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet-hook |
 | `examples/companion_radio/main.cpp` | Koppelt de publisher in |
 | `examples/simple_repeater/MeshManagerNet.{h,cpp}` | De netwerkmodule van de repeater |
+| `examples/simple_repeater/PacketFilter.{h,cpp}` | Het pakketfilter — welke doorgestuurde pakketten de repeater nog doorlaat. Zie [`packet-filter.md`](packet-filter.md) |
 | `repeater-hooks.patch` | De aanpassingen in `simple_repeater` (inclusief zijn `fillStatsJson()`) — **verplicht**, ze zijn wat de module inkoppelt |
 | `meshmanager.patch` | De aanpassingen in beide voorbeelden, als één patch |
 | `tools/verify_image.py` | Bewijst dat een gebouwd `.bin` de module werkelijk bevat |
