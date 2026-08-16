@@ -389,3 +389,19 @@ def test_een_onleesbaar_ver_antwoord_wist_de_kolom_niet(db):
                                  prior_source=baas["pubkey_prefix"])
     na = db.qone("SELECT * FROM repeaters WHERE id=?", (baas["id"],))
     assert na["fw"] == "v1.17.0"
+
+
+def test_het_uitvraagschema_staat_in_de_tabel(db):
+    """Bij twintig nodes is 'welke staan er eigenlijk op nooit' een vraag over de
+    verzameling. Een node die als enige geen schema heeft is precies de node
+    waarvan de waarden stilletjes verouderen."""
+    reps = _nodes(db, 4)
+    db.execute("UPDATE repeaters SET sweep_hours=24")
+    db.execute("UPDATE repeaters SET sweep_hours=NULL WHERE id=?", (reps[3]["id"],))
+    reps = [db.qone("SELECT * FROM repeaters WHERE id=?", (r["id"],)) for r in reps]
+
+    t = compare.build(reps, ["sweep_hours"])
+    assert [r["waarden"]["sweep_hours"] for r in t["rijen"]] == ["24u", "24u", "24u", "uit"]
+    # 'uit' is een antwoord en geen leegte, dus het telt mee en wijkt af.
+    assert t["rijen"][3]["afwijkend"]["sweep_hours"] is True
+    assert t["rijen"][3]["onbekend"]["sweep_hours"] is False

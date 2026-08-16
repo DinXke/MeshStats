@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
                firmware, metrics, mqtt_ingest, nodeconfig, ratelimit, rbac,
-               retention, tsdb)
+               retention, sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -769,6 +769,14 @@ def _node_page(request: Request, rid: int, **extra):
         # verliest.
         "rights": rights,
         "relay": relay,
+        # Het schema, en wat de vorige ronde opleverde. Zonder dat tweede is een
+        # schema een belofte die je niet kunt narekenen -- en met de drie
+        # celtoestanden erbij is "nooit gevraagd" straks iets anders dan "het
+        # schema staat uit".
+        "sweep_hours": sweepsched.interval_hours(rep),
+        "sweep_next": sweepsched.next_due_secs(rep),
+        "sweep_last": sweepsched.entry(rep["pubkey_prefix"]),
+        "sweep_status": sweepsched.status(),
         "cfg_params": cfg_params,
         # Gegroepeerd op risicoklasse, want dat is waar de bediening op stuurt:
         # gewoon opslaan, bevestigen, of de naam overtypen. De groepen komen uit
@@ -835,6 +843,34 @@ def write_config(request: Request, rid: int, key: str = Form(...),
         value = " ".join(v.strip() for v in (rf, rb, rs, rc))
     result = nodeconfig.write(rep, key.strip(), value.strip(), confirm)
     return _node_page(request, rid, cfg_result=result)
+
+
+@router.post("/repeaters/{rid}/schedule")
+def set_schedule(request: Request, rid: int, sweep_hours: int = Form(0),
+                 csrf: str = Form(...)):
+    """Het uitvraagschema van één node zetten. 0 is uit.
+
+    Een klasse zwaarder dan de knop die één ronde start, en dat is geen
+    strengheid om de strengheid: die knop kost één keer zendtijd, dit kost hem
+    elke dag opnieuw op een band die van iedereen is. Wie het aanzet legt een
+    terugkerende last op andermans mesh.
+    """
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+    user = require_perm(request, "node.schema", rep)
+    check_csrf(request, csrf)
+
+    # Eén uur is de ondergrens en een maand de bovengrens. Korter dan een uur
+    # heeft geen betekenis naast een minimumafstand van kwartieren, en langer dan
+    # een maand is hetzelfde als uit -- met het verschil dat 'uit' eerlijk is over
+    # wat het is. Klemmen en niet weigeren: dit veld komt uit een keuzelijst, en
+    # een 422 op een waarde die niemand kan typen is een foutmelding voor niemand.
+    uren = max(0, min(24 * 30, int(sweep_hours or 0)))
+    db.execute("UPDATE repeaters SET sweep_hours=? WHERE id=?", (uren or None, rid))
+    audit.log(user, "node.schema", rep=rep,
+              detail=f"uitvraagschema op {uren} uur" if uren else "uitvraagschema uit")
+    return RedirectResponse(f"/admin/repeaters/{rid}", status_code=303)
 
 
 @router.post("/repeaters/{rid}/settings/refresh")

@@ -457,6 +457,9 @@ def _render(**over):
                        for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],
         "cfg_now": {"name": "DinX-Home", "tx": "22"},
         "cfg_result": None, "rights": None, "relay": None,
+        "sweep_hours": 0, "sweep_next": None, "sweep_last": None,
+        "sweep_status": {"enabled": True, "min_gap_min": 15,
+                         "max_per_day": 48, "today": 0},
         # Sinds het rechtenmodel vraagt de sjabloon wat er mág. Hier alles
         # toegestaan: deze tests gaan over de bediening van instellingen, niet
         # over de rechten -- die hebben hun eigen tests in test_rechten.py. Zou

@@ -430,6 +430,86 @@
     risicoklasse komen van de node zelf, want de firmware is er de baas over.
     Een tweede lijst hier zou vroeg of laat iets aanbieden dat de node weigert. -#}
 <section>
+  <h2>Uitvraagschema</h2>
+  <div class="card">
+    <p class="muted small">
+      Hoe vaak deze node zijn CLI-instellingen opnieuw laat uitvragen. Standaard
+      <strong>uit</strong>: een node die erbij komt hoort niet ongevraagd zendtijd te
+      gaan kosten. Eén ronde is twintig vragen en twintig antwoorden over LoRa, en bij
+      een gemonitorde node betaalt een repeater op een dak dat.
+    </p>
+
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/schedule" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Elke
+        <select name="sweep_hours">
+          <option value="0"{% if not sweep_hours %} selected{% endif %}>— uit —</option>
+          <option value="6"{% if sweep_hours == 6 %} selected{% endif %}>6 uur</option>
+          <option value="12"{% if sweep_hours == 12 %} selected{% endif %}>12 uur</option>
+          <option value="24"{% if sweep_hours == 24 %} selected{% endif %}>dag</option>
+          <option value="72"{% if sweep_hours == 72 %} selected{% endif %}>3 dagen</option>
+          <option value="168"{% if sweep_hours == 168 %} selected{% endif %}>week</option>
+          <option value="720"{% if sweep_hours == 720 %} selected{% endif %}>maand</option>
+        </select>
+      </label>
+      <button type="submit">Opslaan</button>
+    </form>
+
+    <p class="small">
+      {%- if not sweep_hours %}
+      <strong>Uit.</strong> Deze node wordt alleen uitgevraagd als iemand op de knop
+      hierboven drukt. Dat is geen storing — maar het betekent wel dat de waarden
+      blijven staan zoals ze waren, hoe oud ze ook worden.
+      {%- elif sweep_next is none %}
+      <strong>Ingesteld op elke {{ sweep_hours }} uur.</strong>
+      {%- elif sweep_next == 0 %}
+      <strong>Elke {{ sweep_hours }} uur.</strong> Deze node is nu aan de beurt; de
+      planner pakt hem zodra de minimumafstand van {{ sweep_status.min_gap_min }} minuten
+      sinds de vorige ronde verstreken is.
+      {%- else %}
+      <strong>Elke {{ sweep_hours }} uur.</strong> Volgende ronde over ongeveer
+      {% if sweep_next >= 3600 %}{{ (sweep_next // 3600) }} uur{% else %}{{ (sweep_next // 60) }} minuten{% endif %}.
+      {%- endif %}
+    </p>
+
+    {% if sweep_last %}
+    <p class="small">
+      <strong>Laatst gevraagd:</strong> {{ sweep_last.result }} —
+      <time class="reltime" datetime="{{ sweep_last.asked }}">{{ sweep_last.asked }}</time>.
+      {%- if sweep_last.result.startswith("geen weg") %}
+      Er was toen geen weg naar deze node. De planner heeft dat opgeschreven in plaats
+      van het elke minuut opnieuw te proberen, anders zou hij de wachtrij blokkeren.
+      {%- else %}
+      {#- 'Gevraagd' is precies wat het zegt: het bericht is verstuurd. Of de
+          monitor de ronde ook gelopen heeft, weet deze kant niet -- hij kan hem
+          weigeren omdat er net een andere liep. Dat is af te lezen aan de
+          ouderdom van de waarden hierboven, en niet aan deze regel. -#}
+      Dat betekent dat het verzoek verstuurd is; of de ronde ook gelopen heeft, lees
+      je aan de ouderdom van de waarden hierboven.
+      {%- endif %}
+    </p>
+    {% endif %}
+
+    {% if not sweep_status.enabled %}
+    <p class="muted small"><strong>De planner staat uit</strong> op deze server
+      (<code>MM_SWEEP_ENABLED</code>), dus dit schema doet voorlopig niets.</p>
+    {% elif sweep_status.today >= sweep_status.max_per_day %}
+    <p class="muted small"><strong>Het dagbudget is op.</strong> Er zijn vandaag al
+      {{ sweep_status.today }} rondes gestart en de bovengrens staat op
+      {{ sweep_status.max_per_day }}. Schema's schuiven dan op — het interval is een
+      wens, dit is wat er werkelijk gebeurt.</p>
+    {% else %}
+    <p class="muted small">
+      Vandaag {{ sweep_status.today }} van hoogstens {{ sweep_status.max_per_day }} rondes
+      gestart, met minstens {{ sweep_status.min_gap_min }} minuten ertussen — over alle
+      nodes samen, zodat tien schema's die op hetzelfde uur vallen de band niet een uur
+      bezet houden.
+    </p>
+    {% endif %}
+  </div>
+</section>
+
+<section>
   <h2>Instellingen schrijven</h2>
 
   {% if cfg_result %}

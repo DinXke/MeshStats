@@ -143,6 +143,12 @@ ACTIONS = {
                                   "het beheeradres van deze node wijzigen"),
     "node.instelling.merkbaar": Handeling("node", KLASSE_MERKBAAR,
                                           "een merkbare instelling van deze node schrijven"),
+    # Een schema is geen gewone instelling: het kost niet één keer zendtijd maar
+    # elke dag opnieuw, op een band die van iedereen is. Wie het aanzet legt dus
+    # een terugkerende last op andermans mesh, en dat hoort een klasse zwaarder
+    # te wegen dan de knop die één ronde start ("node.uitvragen").
+    "node.schema": Handeling("node", KLASSE_MERKBAAR,
+                             "het uitvraagschema van deze node wijzigen"),
     # -- ingrijpend
     "node.firmware": Handeling("node", KLASSE_INGRIJPEND,
                                "de firmware van deze node schrijven"),

@@ -515,6 +515,97 @@ here can promise that.
 
 ---
 
+## Scheduling the settings sweep
+
+A node that publishes to MQTT reads its own CLI settings once a day. That costs
+nothing — it is a function call inside its own firmware. A node reachable only
+over LoRa is read out by its monitor, and then one round is twenty questions and
+twenty answers over a shared band, paid for by a repeater on a roof.
+
+So the original design gave monitored nodes **no schedule at all**: on request
+only. That was defensible on airtime grounds and wrong in practice. What it
+produced was measured: settings twelve hours old, and a region tree seven days
+old, on a node that answered perfectly the moment somebody asked. A page that
+presents silent staleness as fact is exactly the half-truth the rest of this
+project tries to avoid.
+
+There is now a schedule, and airtime remains the constraint rather than
+disappearing.
+
+### Three limits, and they stack
+
+**1. An interval per node, off by default.** Not one global figure, because the
+cost differs per node: a repeater at the edge of your range pays each round with
+power from a solar panel and with packets that may not arrive, while a node two
+streets away is nearly free. One interval for all of them means either setting it
+by the most expensive node or neglecting the cheapest. Adding a node grants no
+recurring cost.
+
+**2. One round at a time, with a minimum gap between them.** Not ten timers that
+happen to coincide: one queue, and the most overdue node wins. Ten rounds in the
+same hour would occupy the band for an hour. The gap is global — across all
+nodes, not per node — because the band is shared whether or not two monitors are.
+
+**3. A ceiling per day across all nodes.** This catches what neither of the
+others catches: somebody setting twenty nodes to daily without doing the
+arithmetic. When it bites, schedules slip, and the page says so. **The per-node
+interval is a wish; this is what actually happens.**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| per node, on the node's page | off | hours between rounds for this node |
+| `MM_SWEEP_ENABLED` | `1` | the scheduler as a whole |
+| `MM_SWEEP_MIN_GAP_MIN` | `15` | minutes between any two rounds; never below 10 |
+| `MM_SWEEP_MAX_PER_DAY` | `48` | rounds per 24 hours across everything |
+
+The minimum gap cannot go below 10 minutes, and that floor is not arbitrary: it
+is `MON_SET_MIN_GAP_MS` in the firmware. Asking more often is pointless because
+the monitor refuses anyway, and it would let the site promise something that does
+not happen.
+
+### It is not a back door around the firmware's own limits
+
+The sweep itself does not run here. It runs in the monitor's firmware, with its
+own budget: a minimum gap between rounds, a cap per round, a stop after three
+consecutive silences. This scheduler decides only *when to ask*, and it goes out
+through the same `publish_command` as the manual button — no separate path to the
+broker.
+
+That is the same rule the manual clock-sync button follows, and for the same
+reason: a second route to the broker would be a back door around the checks on
+the first, and the only visible symptom would be too much traffic on somebody
+else's band.
+
+### A node that has no route does not block the queue
+
+If the scheduler picks a node it cannot currently reach, it **writes that down**
+rather than retrying every minute. Without that, the unreachable node stays the
+most overdue for ever and nobody else gets a turn — and the page would keep
+promising a round that never comes.
+
+### What the page shows
+
+Per node: the interval, when the next round falls, and what the previous one
+produced. Without that last part a schedule is a promise you cannot check.
+
+It also completes the three cell states in the comparison table. Until now an
+empty cell meant "never asked" or "asked, no answer"; **"the schedule is off"** is
+a third thing, and it is the one that explains why a value has been sitting there
+for a week. The comparison table therefore carries the schedule as a column of
+its own — with twenty nodes, "which ones are set to never" is a question about the
+set, and a node that is the only one without a schedule is precisely the node
+whose values quietly go stale.
+
+### Rights
+
+Changing a schedule is `node.schema`, one class heavier than the button that
+starts a single round (`node.uitvragen`). That is not strictness for its own
+sake: the button costs airtime once, this costs it every day, on a band that
+belongs to everybody. Whoever switches it on imposes a recurring load on somebody
+else's mesh.
+
+---
+
 ## After a write, read it back
 
 A write is never reported as a success on the strength of having been sent. The
@@ -944,6 +1035,7 @@ against a node a human named.
 | Forced mesh transport for a node that has an IP path | **not built.** Needs the LoRa write path first, and that needs a relay that monitors the target |
 | Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |
 | MeshCore version for relayed nodes | **built** — `ver` joins the sweep, and one answer fills both version columns |
+| A sweep schedule per node | **built** — off by default, one round at a time with a global minimum gap, and a daily ceiling across all nodes |
 | Showing which right a monitor uses per target | **built** — access list or password, read from the monitor's own list, which reports *that* a password is set and never *which* |
 | Telling the three silences apart | **built** — out of range / not allowed in / read-only, from login state plus the heard list |
 | Setting a target's password from the site | **built as pass-through** — `nodeconfig.push_monitor_password()` sends it to the monitor and stores nothing. Not yet on a page: the form is the remaining piece |

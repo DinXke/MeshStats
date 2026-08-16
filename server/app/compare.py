@@ -32,6 +32,11 @@ BUILTIN = [
     ("fw", "MeshCore"),
     ("level", "Beheerniveau"),
     ("pio_env", "Bouwomgeving"),
+    # Het uitvraagschema hoort hier thuis om dezelfde reden als de rest: bij
+    # twintig nodes is "welke staan er eigenlijk op nooit" een vraag die je over
+    # de verzameling stelt, niet over één node. Een node die als enige geen
+    # schema heeft is precies de node waarvan de waarden stilletjes verouderen.
+    ("sweep_hours", "Uitvraagschema"),
 ]
 BUILTIN_KEYS = [k for k, _ in BUILTIN]
 
@@ -159,6 +164,13 @@ def build(repeaters, columns: list[str] | None = None, broker_connected: bool = 
             if k == "level":
                 waarden[k] = route.get("level", "")
             elif k in BUILTIN_KEYS:
+                if k == "sweep_hours":
+                    # 0 en NULL betekenen allebei 'uit', en dat is een antwoord
+                    # en geen leegte -- anders zou een node zonder schema er
+                    # uitzien als een node waarover we niets weten.
+                    uren = int(firmware._field(rep, k) or 0)
+                    waarden[k] = f"{uren}u" if uren else "uit"
+                    continue
                 waarde = str(firmware._field(rep, k) or "")
                 # De MeshCore-kolom is de enige vaste kolom die ook uit de sweep
                 # gevuld kan worden: een repeater die zelf publiceert stuurt zijn

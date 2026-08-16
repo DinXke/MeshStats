@@ -542,6 +542,100 @@ plaats van te beloven dat het teruggezet wordt: dat kan hier niets beloven.
 
 ---
 
+## De instellingensweep inplannen
+
+Een node die naar MQTT publiceert leest zijn eigen CLI-instellingen één keer per
+dag uit. Dat kost niets — het is een functieaanroep binnen zijn eigen firmware.
+Een node die alleen over LoRa bereikbaar is wordt door zijn monitor uitgelezen,
+en dan is één ronde twintig vragen en twintig antwoorden over een gedeelde band,
+betaald door een repeater op een dak.
+
+Het oorspronkelijke ontwerp gaf gemonitorde nodes daarom **helemaal geen
+schema**: alleen op verzoek. Dat was te verdedigen op grond van zendtijd, en in
+de praktijk verkeerd. Wat het opleverde is gemeten: instellingen van twaalf uur
+oud, en een regioboom van zeven dagen oud, op een node die perfect antwoordde
+zodra iemand het vroeg. Een pagina die stille veroudering als feit presenteert is
+precies de halve waarheid die de rest van dit project probeert te vermijden.
+
+Er is nu een schema, en zendtijd blijft de beperking in plaats van te verdwijnen.
+
+### Drie grenzen, en ze stapelen
+
+**1. Een interval per node, standaard uit.** Niet één globaal getal, want de
+kosten verschillen per node: een repeater aan de rand van je bereik betaalt elke
+ronde met stroom uit een zonnepaneel en met pakketten die misschien niet
+aankomen, terwijl een node twee straten verderop bijna gratis is. Eén interval
+voor allemaal betekent ofwel instellen op de duurste node, ofwel de goedkoopste
+verwaarlozen. Een node toevoegen levert geen terugkerende kosten op.
+
+**2. Eén ronde tegelijk, met een minimale tussenruimte.** Niet tien timers die
+toevallig samenvallen: één wachtrij, en de node die het langst over tijd is wint.
+Tien rondes in hetzelfde uur zouden de band een uur lang bezetten. De
+tussenruimte geldt globaal — over alle nodes heen, niet per node — want de band
+is gedeeld, of twee monitors dat nu zijn of niet.
+
+**3. Een plafond per dag over alle nodes heen.** Dit vangt wat geen van de andere
+twee vangt: iemand die twintig nodes op dagelijks zet zonder het rekenwerk te
+doen. Als het knelt, schuiven schema's op, en de pagina zegt dat. **Het interval
+per node is een wens; dit is wat er werkelijk gebeurt.**
+
+| Instelling | Standaard | Betekenis |
+|---|---|---|
+| per node, op de pagina van de node | uit | uren tussen rondes voor deze node |
+| `MM_SWEEP_ENABLED` | `1` | de planner als geheel |
+| `MM_SWEEP_MIN_GAP_MIN` | `15` | minuten tussen twee rondes; nooit onder 10 |
+| `MM_SWEEP_MAX_PER_DAY` | `48` | rondes per 24 uur over alles heen |
+
+De minimale tussenruimte kan niet onder 10 minuten, en die ondergrens is niet
+willekeurig: het is `MON_SET_MIN_GAP_MS` in de firmware. Vaker vragen heeft geen
+zin omdat de monitor het toch weigert, en het zou de site iets laten beloven wat
+niet gebeurt.
+
+### Het is geen achterdeur om de grenzen van de firmware heen
+
+De sweep zelf draait hier niet. Hij draait in de firmware van de monitor, met een
+eigen budget: een minimale tussenruimte tussen rondes, een maximum per ronde, en
+stoppen na drie stiltes op rij. Deze planner bepaalt alleen *wanneer er gevraagd
+wordt*, en hij gaat naar buiten via dezelfde `publish_command` als de handmatige
+knop — geen apart pad naar de broker.
+
+Dat is dezelfde regel die de handmatige knop voor het zetten van de klok volgt,
+en om dezelfde reden: een tweede route naar de broker zou een achterdeur zijn om
+de controles op de eerste heen, en het enige zichtbare symptoom zou te veel
+verkeer op de band van iemand anders zijn.
+
+### Een node zonder route blokkeert de wachtrij niet
+
+Kiest de planner een node die hij op dat moment niet kan bereiken, dan **schrijft
+hij dat op** in plaats van het elke minuut opnieuw te proberen. Zonder dat blijft
+de onbereikbare node voor altijd degene die het langst over tijd is en komt
+niemand anders aan de beurt — en zou de pagina een ronde blijven beloven die er
+nooit komt.
+
+### Wat de pagina toont
+
+Per node: het interval, wanneer de volgende ronde valt, en wat de vorige
+opleverde. Zonder dat laatste is een schema een belofte die je niet kunt
+nakijken.
+
+Het maakt ook de drie celtoestanden in de vergelijkingstabel compleet. Tot nu toe
+betekende een lege cel "nooit gevraagd" of "gevraagd, geen antwoord"; **"het
+schema staat uit"** is een derde ding, en het is degene die verklaart waarom een
+waarde daar al een week staat. De vergelijkingstabel draagt het schema daarom als
+een eigen kolom — bij twintig nodes is "welke staan er op nooit" een vraag over
+de verzameling, en een node die als enige geen schema heeft is precies de node
+waarvan de waarden stilletjes verouderen.
+
+### Rechten
+
+Een schema wijzigen is `node.schema`, één klasse zwaarder dan de knop die één
+losse ronde start (`node.uitvragen`). Dat is geen strengheid om de strengheid:
+de knop kost eenmalig zendtijd, dit kost het elke dag, op een band die van
+iedereen is. Wie hem aanzet legt een terugkerende belasting op het mesh van
+iemand anders.
+
+---
+
 ## Lees na een schrijfactie terug
 
 Een schrijfactie wordt nooit als geslaagd gemeld op grond van het feit dat hij
@@ -993,6 +1087,7 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Mesh-transport forceren voor een node die een IP-pad heeft | **niet gebouwd.** Vraagt eerst om het LoRa-schrijfpad, en dat vraagt om een relais dat het doel monitort |
 | Telemetrie opvragen zonder inloggegevens | **onderzocht, niet gebouwd.** Het werkt en levert meer op dan verwacht — zie hierboven |
 | MeshCore-versie van doorgestuurde nodes | **gebouwd** — `ver` gaat mee in de sweep, en één antwoord vult allebei de versiekolommen |
+| Een sweepschema per node | **gebouwd** — standaard uit, één ronde tegelijk met een globale minimale tussenruimte, en een plafond per dag over alle nodes heen |
 | Tonen welk recht een monitor per doelnode gebruikt | **gebouwd** — toegangslijst of wachtwoord, gelezen uit de monitorlijst van de monitor zelf, die meldt *dát* er een wachtwoord staat en nooit *welk* |
 | De drie stiltes uit elkaar houden | **gebouwd** — buiten bereik / niet binnengelaten / alleen lezen, uit de loginstatus plus de gehoorde lijst |
 | Het wachtwoord van een doelnode vanaf de site zetten | **gebouwd als doorgeefluik** — `nodeconfig.push_monitor_password()` stuurt het naar de monitor en bewaart niets. Nog niet op een pagina: het formulier is het resterende stuk |

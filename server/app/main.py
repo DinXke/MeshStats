@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import (auth, clocksync, db, limits, mqtt_ingest, rbac, retention,
-               routes_admin, routes_api, routes_public, tsdb)
+               routes_admin, routes_api, routes_public, sweepsched, tsdb)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -90,6 +90,7 @@ def bootstrap():
     # wacht sowieso vijf minuten voor zijn eerste ronde -- zie FIRST_RUN_DELAY_S
     # -- maar de volgorde hier maakt dat niet toevallig goed.
     clocksync.start()     # en krijgen van ons periodiek de juiste tijd terug
+    sweepsched.start()    # en worden volgens hun eigen schema uitgevraagd
 
 
 def set_password():

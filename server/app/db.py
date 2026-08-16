@@ -221,6 +221,16 @@ COLUMN_MIGRATIONS = [
     # on, an upgrade first asks for the node's name -- upgrading the wrong node
     # is the most expensive mistake available on this page.
     ("repeaters", "is_critical", "INTEGER NOT NULL DEFAULT 0"),
+    # Om de hoeveel uur deze repeater zijn CLI-instellingen opnieuw laat
+    # uitvragen. NULL of 0 is uit, en dat is de standaard -- een node die erbij
+    # komt hoort niet ongevraagd zendtijd te gaan kosten.
+    #
+    # Per node en niet één globaal getal, omdat de kosten per node verschillen:
+    # een repeater aan de rand van je bereik betaalt elke ronde met stroom uit
+    # een zonnepaneel en met pakketten die het misschien niet halen, terwijl een
+    # node twee straten verderop bijna gratis is. Eén interval voor allemaal
+    # betekent dat je de duurste node bepaalt of de goedkoopste verwaarloost.
+    ("repeaters", "sweep_hours", "INTEGER"),
     # Wat een bezoeker van deze node te zien krijgt, fijnmaziger dan is_public.
     # Een positie is gevoeliger dan een batterijstand, en tot deze twee kolommen
     # er waren kon deze site dat verschil niet uitdrukken: publiek was alles of
