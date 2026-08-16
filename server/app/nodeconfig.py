@@ -39,7 +39,7 @@ from . import commanding, db, firmware
 # De firmware die POST /api/cfg kent. Lager en het endpoint bestaat niet: dan
 # antwoordt de node met 404 en hoort de pagina dat te zeggen in plaats van een
 # knop aan te bieden die een foutmelding oplevert.
-MIN_CFG_VERSION = (1, 13, 0)
+MIN_CFG_VERSION = (2, 1, 0)
 
 # Risicoklassen zoals de firmware ze meegeeft. Ze sturen hier één ding: hoeveel
 # moeite het kost om een waarde te zetten. Sluit aan bij wat de beheerpagina al
@@ -119,7 +119,7 @@ def params(host: str, force: bool = False) -> dict:
     """Welke parameters deze node laat zetten, met hun grenzen.
 
     Rechtstreeks van de node, want de firmware is de baas over die lijst. Bij een
-    404 draait er firmware van voor 1.13.0; dat is een versie en geen storing, en
+    404 draait er firmware van voor 2.1.0; dat is een versie en geen storing, en
     de pagina hoort dat anders te zeggen dan "onbereikbaar".
     """
     key = (host or "").strip()
@@ -140,7 +140,7 @@ def params(host: str, force: bool = False) -> dict:
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             out["error"] = ("deze node draait firmware zonder /api/cfg "
-                            "(ouder dan 1.13.0)")
+                            "(ouder dan 2.1.0)")
         elif exc.code == 401:
             out["error"] = "aanmelden geweigerd door de node"
         else:

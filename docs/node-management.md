@@ -426,7 +426,7 @@ against a node a human named.
 | Levels as an explicit concept in code and UI | **being built** — `level` / `level_why` on `commanding.describe()` |
 | Firmware upgrade over HTTP, with checksum and rollback | **built**, see [`firmware-upgrade.md`](firmware-upgrade.md) |
 | `ota_route()` as a separate capability key | **built** |
-| Writing settings to a `full_managed` node with an IP path | **built** — firmware 1.14.0 `POST /api/cfg`: the whole CLI surface bar three, typed controls, risk-driven confirmation, read-back. Requires the node's management address to be filled in |
+| Writing settings to a `full_managed` node with an IP path | **built** — firmware 2.1.0 `POST /api/cfg`: the whole CLI surface bar three, typed controls, risk-driven confirmation, read-back. Requires the node's management address to be filled in |
 | Writing settings to a `semi_managed` node over LoRa | **designed, not built.** Needs a state machine beside the settings sweep, and the node it exists for is the roof repeater — so it gets built against something touchable first |
 | Writing to a node's WiFi and MQTT settings | **not offered here.** Those are ours, not MeshCore's, and they already have their own forms on the node's own admin page and the `wifi` CLI |
 | Confirm-or-revert | **examined and rejected**, with the reasoning above |

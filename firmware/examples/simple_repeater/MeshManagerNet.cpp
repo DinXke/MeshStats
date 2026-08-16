@@ -5,6 +5,58 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.1.0  De site kan een instelling schrijven in plaats van alleen lezen: POST
+ *        /api/cfg met een sleutel en een waarde, GET /api/cfg voor welke
+ *        sleutels dit image toelaat, van welk type, tussen welke grenzen en in
+ *        welke risicoklasse.
+ *        Het is het hele oppervlak van handleSetCmd() in CommonCLI.cpp --
+ *        achtentwintig parameters -- en met opzet geen met de hand gekozen
+ *        veilig hoekje. Die eerste opzet liet alleen toe wat de bereikbaarheid
+ *        niet kon afsnijden, en dat was veilig en naast de kwestie: juist de
+ *        instellingen die je op afstand nodig hebt -- zendvermogen,
+ *        radioparameters -- zijn de gevaarlijke, en ze weglaten haalt het risico
+ *        er niet uit maar zorgt dat iemand een ladder haalt en hetzelfde doet met
+ *        minder zorg en zonder dat het ergens vastligt. Het risico verhuist dus
+ *        van weglaten naar afvangen: elke parameter draagt een risicoklasse, en
+ *        de bedieningskant hangt daar de zwaarte van de bevestiging aan op.
+ *        Waarom een tabel in de firmware en niet gewoon de CLI doorgeven. De
+ *        telnetconsole doet dat laatste, en daar mag het: er zit een mens achter
+ *        die een wachtwoord intypte. Een knop op een webpagina wordt aangeklikt,
+ *        soms op de verkeerde regel. De tabel staat hier en niet in de server,
+ *        want de server is te bewerken door wie de site draait en dit is wat er
+ *        werkelijk tussen een klik en de radio staat. De server houdt dan ook
+ *        geen tweede lijst maar haalt deze op: één waarheid, en een parameter
+ *        die deze firmware niet kent kan niet worden aangeboden.
+ *        Drie dingen ontbreken, en niet per ongeluk. 'prv.key' vervangt de
+ *        identiteit van de node -- geen instelling maar een andere node, waarna
+ *        elke contactlijst, ACL en monitorregel elders in het mesh naar iemand
+ *        wijst die niet meer bestaat. 'bridge.secret' komt bij het teruglezen
+ *        gewoon weer tevoorschijn, en een wachtwoord dat in een logregel geweest
+ *        is, is weg. En 'set freq' laat MeshCore alleen toe vanaf de seriële
+ *        kabel (sender_timestamp == 0), wat deze weg met opzet niet is;
+ *        frequentie hoort bij de andere drie radiowaarden en gaat via 'radio',
+ *        dat wél gecontroleerd wordt.
+ *        Er wordt teruggelezen in plaats van "OK" te geloven, en dat is niet
+ *        theoretisch. MeshCore's 'set lat' is een kale atof(), dus atof("noord")
+ *        is 0.0 -- een node die OK antwoordt en daarna beweert in de Golf van
+ *        Guinee te staan. En 'set advert.interval' bewaart minuten/2 in één byte
+ *        terwijl 'get' weer verdubbelt, dus 61 komt terug als 60, ook met "OK".
+ *        Het antwoord draagt daarom 'asked' en 'applied' apart, plus een vlag of
+ *        ze gelijk zijn.
+ *        Vergelijken gebeurt op waarde en niet op tekst, wat pietluttig klinkt
+ *        en het verschil is tussen een waarschuwing die iets betekent en een die
+ *        niemand leest: 'set radio' neemt spaties en 'get radio' geeft komma's
+ *        terug, en 'set dutycycle 50' leest terug als "50.0%". Een strcmp() zou
+ *        beide als "niet toegepast" melden.
+ *        Eén parameter is gemarkeerd als geheim: 'guest.password'. Die wordt
+ *        teruggelezen en vergeleken zoals al het andere -- dat is de hele reden
+ *        dat dit endpoint bestaat -- maar de gelezen waarde gaat niet mee terug.
+ *        Anders staat het wachtwoord dat je net zette in de HTML van de
+ *        beheerpagina, in de browsergeschiedenis en in elke schermafdruk ervan.
+ *        De CLI-aanroep geeft een tijdstempel ongelijk aan nul mee. Nul betekent
+ *        in MeshCore "van de seriële kabel" en ontgrendelt 'erase', 'get prv.key'
+ *        en 'set freq'. Deze weg heeft die niet nodig, dus blijkt de tabel ooit
+ *        een gat te hebben, dan is dat gat kleiner.
  * 2.0.0  Alles heet MeshManager: de module, de bestanden, de defines, het
  *        MQTT-topicvoorvoegsel, de sleutel waaronder de versie gepubliceerd
  *        wordt, de kopregel van een backup, de client-id op de broker, het
@@ -57,81 +109,6 @@
  *        node: die leest zijn wachtwoorden uit /msnet.json, dat blijft
  *        staan.
  *
- * 1.14.0 The whole repeater CLI surface instead of a hand-picked safe corner:
- *        twenty-eight parameters, each carrying its type, its bounds, its list
- *        of allowed words where it has one, and a risk class -- all readable
- *        from GET /api/cfg so the page can build the right control and the right
- *        confirmation instead of guessing at either.
- *        Why the earlier list was too small. 1.13.0 admitted only parameters
- *        that could not cut off reachability, which was safe and beside the
- *        point: the settings you most need at a distance ARE the dangerous ones
- *        -- transmit power, radio parameters -- and leaving them out does not
- *        remove the risk, it only means somebody fetches a ladder. So the risk
- *        moved from omission to handling: 'risk' travels in the listing and the
- *        far side decides how much friction a change costs. What stays here is
- *        the bound on what a value may BE, and for the dangerous class that is
- *        the last sieve -- a frequency outside the band is not risky, it is
- *        simply wrong, and no number of confirmations should let it reach the
- *        radio.
- *        Three things are still absent, and not by oversight. 'prv.key' replaces
- *        the node's identity, which is not a setting but a different node: every
- *        contact list, ACL and monitor entry elsewhere in the mesh would point at
- *        somebody who no longer exists. 'bridge.secret' is a shared secret that
- *        comes straight back out on the read-back, and a password that has been
- *        in a log line is gone. And 'freq' MeshCore only accepts from the serial
- *        cable (sender_timestamp == 0), which this path deliberately is not --
- *        frequency belongs with the other three radio values and goes through
- *        'radio', which is validated.
- *        One parameter is marked secret: 'guest.password'. It is read back and
- *        compared like everything else -- the verification is the whole point of
- *        this endpoint -- but the value read is not returned. Otherwise the
- *        password you just set sits in the admin page's HTML, in the browser
- *        history and in every screenshot of it, and a password that has been
- *        there is gone. That is the same reason 'bridge.secret' is absent
- *        altogether; the difference is that guest.password is a setting you
- *        genuinely want to change from a distance.
- *        Comparison is by value and not by text, which sounds pedantic and is
- *        the difference between a warning that means something and one nobody
- *        reads. 'set radio' takes four numbers separated by spaces and 'get
- *        radio' returns them separated by commas; 'set dutycycle 50' reads back
- *        as "50.0%". A strcmp() would flag both as "not applied", and a warning
- *        that fires on every radio change is as useless as one that never fires.
- * 1.13.0 The site can write a setting instead of only reading one: POST
- *        /api/cfg with a key and a value, GET /api/cfg for which keys this
- *        image allows and between which bounds.
- *        Why a compiled-in list and not simply the CLI. The telnet console
- *        already hands every line straight to handleCommand(), and there that is
- *        right: a person typed a password and knows what they are doing. A
- *        button on a web page is a different thing -- it gets clicked, sometimes
- *        on the wrong row -- and the consequences are not symmetrical. A wrong
- *        'set name' is an ugly name; a wrong 'set radio' is a node listening on
- *        another frequency that nobody ever sees again. So this release ships
- *        seven parameters that cannot cut off reachability by any route: name,
- *        lat, lon, advert.interval, flood.advert.interval, rxdelay, txdelay.
- *        The list lives in the firmware rather than in the server, because the
- *        server is editable by whoever runs the site and this is what actually
- *        stands between a click and the radio. The server keeps its own copy to
- *        refuse a typo on the page; that copy is the courtesy, this one is the
- *        protection.
- *        Why the value is read back rather than trusting "OK", with the two
- *        measurements that settled it. MeshCore's 'set lat' is a bare atof(),
- *        and atof("noord") is 0.0 -- a node that answers OK and then claims to
- *        stand in the Gulf of Guinea. And 'set advert.interval' stores minutes/2
- *        in one byte while 'get' multiplies by two again, so 61 becomes 60. Both
- *        answer "OK", and in both cases something other than what was asked is
- *        now in the node. This endpoint therefore returns what is in the node
- *        AFTER the write, next to what was asked, plus an 'exact' flag -- and
- *        leaves it to the page to say the two differ.
- *        The CLI call deliberately passes a non-zero sender timestamp. The
- *        console passes 0, which MeshCore reads as "this came from the serial
- *        cable" and which unlocks commands that belong only there ('erase', 'get
- *        prv.key'). This path needs none of them, so it does not get them: if
- *        the table ever turns out to have a hole, the hole is at least smaller.
- *        Not in this release, and named so nobody assumes otherwise: writing to
- *        a MONITORED node over LoRa. That needs a state machine beside the
- *        settings sweep, and the node it exists for is a stock MeshCore repeater
- *        on a roof reachable no other way -- so it gets built against a node
- *        somebody can physically touch, and not before.
  * 1.12.0 An upgrade path that tells the truth: POST /api/fw with the image as
  *        the raw body and its SHA-256 as a query parameter, GET /api/fw for
  *        what is installed and what can be gone back to, POST /api/fw/rollback

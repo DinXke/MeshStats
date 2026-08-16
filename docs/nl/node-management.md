@@ -454,7 +454,7 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Niveaus als expliciet begrip in code en UI | **wordt gebouwd** — `level` / `level_why` op `commanding.describe()` |
 | Firmware-upgrade over HTTP, met checksum en rollback | **gebouwd**, zie [`firmware-upgrade.md`](firmware-upgrade.md) |
 | `ota_route()` als aparte sleutel voor wat er kan | **gebouwd** |
-| Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 1.14.0 `POST /api/cfg`: het hele CLI-oppervlak op drie na, bediening per type, bevestiging per risicoklasse, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
+| Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 2.1.0 `POST /api/cfg`: het hele CLI-oppervlak op drie na, bediening per type, bevestiging per risicoklasse, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
 | Instellingen schrijven naar een `semi_managed` node over LoRa | **ontworpen, niet gebouwd.** Vraagt om een toestandsmachine naast de instellingenronde, en de node waarvoor het bestaat is de dakrepeater — dus het wordt eerst gebouwd tegen iets wat iemand kan aanraken |
 | Schrijven naar de WiFi- en MQTT-instellingen van een node | **wordt hier niet aangeboden.** Dat zijn de onze en niet die van MeshCore, en ze hebben al hun eigen formulieren op de beheerpagina van de node zelf en in de `wifi`-CLI |
 | Bevestigen-of-terugdraaien | **onderzocht en verworpen**, met de redenering hierboven |

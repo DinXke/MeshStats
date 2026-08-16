@@ -689,8 +689,8 @@ hoofdlus op en daarmee de mesh, wat op de companion-node al was vastgesteld.
 | `/api/mon` | POST | basic | `add`, `del`, `pass`, `en`, `iv`, `poll` |
 | `/api/backup` | GET | basic | Het volledige bestandssysteem downloaden |
 | `/api/restore` | POST | basic | Een back-up uploaden, daarna herstarten |
-| `/api/cfg` | GET | basic | Welke CLI-parameters van afstand gezet mogen worden, met hun type, grenzen, toegestane woorden en risicoklasse (1.13.0, het hele CLI-oppervlak sinds 1.14.0) |
-| `/api/cfg` | POST | basic | Er één zetten en meteen teruglezen — zie [`node-management.md`](node-management.md) (1.13.0+) |
+| `/api/cfg` | GET | basic | Welke CLI-parameters van afstand gezet mogen worden, met hun type, grenzen, toegestane woorden en risicoklasse (2.1.0+) |
+| `/api/cfg` | POST | basic | Er één zetten en meteen teruglezen — zie [`node-management.md`](node-management.md) (2.1.0+) |
 | `/api/fw` | GET | basic | Geïnstalleerde versie, bouwomgeving, welke partitie draait en wat er in de andere staat (1.12.0+) |
 | `/api/fw` | POST | basic | Firmware-image als kale body; de digest wordt gecontroleerd vóór de bootpartitie omgezet wordt — zie [`firmware-upgrade.md`](firmware-upgrade.md) (1.12.0+) |
 | `/api/fw/rollback` | POST | basic | De andere applicatiepartitie weer opstarten (1.12.0+) |

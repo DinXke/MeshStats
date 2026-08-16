@@ -36,7 +36,7 @@ def _schoon(monkeypatch):
 def rep(**overrides):
     row = {
         "id": 1, "name": "DinX-Home", "pubkey_prefix": "55d9a320a4e3",
-        "fw": "v1.17.0", "fw_meshmanager": "1.13.0",
+        "fw": "v1.17.0", "fw_meshmanager": "2.1.0",
         "source_prefix": "55d9a320a4e3", "ota_host": "http://node.invalid",
     }
     row.update(overrides)
@@ -76,8 +76,8 @@ def test_eigen_node_zonder_adres(monkeypatch):
 
 
 def test_firmware_van_voor_1_13_kan_het_endpoint_niet(monkeypatch):
-    route = nodeconfig.cfg_route(rep(fw_meshmanager="1.12.0"))
-    assert route["blocker"] == "old_fw" and route["min_fw"] == "1.13.0"
+    route = nodeconfig.cfg_route(rep(fw_meshmanager="2.0.0"))
+    assert route["blocker"] == "old_fw" and route["min_fw"] == "2.1.0"
 
 
 def test_node_zonder_onze_firmware(monkeypatch):
@@ -243,7 +243,7 @@ def test_een_nieuwe_naam_komt_ook_in_onze_eigen_tabel(db, monkeypatch):
         {"ok": 1, "step": "", "key": "name", "asked": "Dak-Noord",
          "applied": "Dak-Noord", "exact": 1, "reply": "OK"}))
     row = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
-    db.execute("UPDATE repeaters SET fw_meshmanager='1.13.0', ota_host='http://x', "
+    db.execute("UPDATE repeaters SET fw_meshmanager='2.1.0', ota_host='http://x', "
                "source_prefix='55d9a320a4e3' WHERE id=?", (row["id"],))
     row = db.qone("SELECT * FROM repeaters WHERE id=?", (row["id"],))
     nodeconfig.write(dict(row), "name", "Dak-Noord")
@@ -254,14 +254,14 @@ def test_een_nieuwe_naam_komt_ook_in_onze_eigen_tabel(db, monkeypatch):
 
 def test_oude_firmware_geeft_een_versie_en_geen_storing(monkeypatch):
     """404 op /api/cfg betekent iets heel bepaalds: de node leeft en praat HTTP,
-    maar draait firmware van voor 1.13.0. Dat is een versie, geen storing, en de
+    maar draait firmware van voor 2.1.0. Dat is een versie, geen storing, en de
     pagina hoort dat anders te zeggen dan 'onbereikbaar'."""
     def oud(*a, **k):
         raise urllib.error.HTTPError("u", 404, "Not Found", {}, _Fake(b""))
 
     monkeypatch.setattr(nodeconfig, "_open", oud)
     uit = nodeconfig.params("http://node.invalid")
-    assert uit["ok"] is False and "1.13.0" in uit["error"]
+    assert uit["ok"] is False and "2.1.0" in uit["error"]
 
 
 def test_de_lijst_wordt_gecachet(monkeypatch):
@@ -412,7 +412,7 @@ def _render(**over):
     ctx = {
         "site_name": "MeshManager", "user": "u", "world": "nodes",
         "rep": {"id": 1, "name": "DinX-Home", "pubkey_prefix": "55d9",
-                "source_prefix": "55d9", "fw": "v1.17.0", "fw_meshmanager": "1.14.0",
+                "source_prefix": "55d9", "fw": "v1.17.0", "fw_meshmanager": "2.1.0",
                 "ota_host": "http://x", "is_critical": 0, "slug": "dinx",
                 "is_public": 1, "show_position": 1, "show_name": 1, "last_seen": None,
                 "created_at": "2026-01-01", "topic_prefix": "", "pio_env": "",
@@ -428,10 +428,10 @@ def _render(**over):
         "route": {"mqtt": True, "level": "full_managed", "level_why": "publiceert zelf",
                   "commands": ("settings", "status"), "via_monitor": False,
                   "blocker": "", "node": "55d9", "subject": "55d9",
-                  "fw_meshmanager": "1.14.0", "min_fw": "1.8.0", "node_seen": None,
+                  "fw_meshmanager": "2.1.0", "min_fw": "1.8.0", "node_seen": None,
                   "node_stale": False, "ha": False, "poller_seen": None},
         "cfg_route": {"can": True, "blocker": "", "host": "http://x",
-                      "fw": "1.14.0", "min_fw": "1.13.0", "relayed": False},
+                      "fw": "2.1.0", "min_fw": "2.1.0", "relayed": False},
         "cfg_params": {"ok": True, "error": "", "params": params},
         "cfg_groups": [(r, [q for q in params if q["risk"] == r])
                        for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],
@@ -494,7 +494,7 @@ def test_de_middelste_klasse_vraagt_een_uitdrukkelijke_bevestiging():
 ])
 def test_elke_reden_om_niet_te_kunnen_schrijven_krijgt_zijn_eigen_zin(blocker, zin):
     html = _render(cfg_route={"can": False, "blocker": blocker, "host": "",
-                              "fw": "1.12.0", "min_fw": "1.13.0", "relayed": False})
+                              "fw": "2.0.0", "min_fw": "2.1.0", "relayed": False})
     assert zin in html
     assert 'action="/admin/repeaters/1/config"' not in html
 
