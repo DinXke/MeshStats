@@ -36,7 +36,7 @@ Een node die aan een app of computer gekoppeld is, via USB-serieel, BLE of
 TCP/WiFi. Firmware `examples/companion_radio`. Dit is de node die het mesh
 *hoort* én een weg naar het internet heeft, en dus in MeshStats de node die
 publiceert. Het protocol dat hij met zijn app spreekt staat in
-[`protocol.md` §2](protocol.md#2-the-companion-protocol-tcp-and-serial).
+[`protocol.md` §2](protocol.md#2-het-companion-protocol-tcp-en-serieel).
 
 Standaard companion-firmware accepteert **één** TCP-client tegelijk. Precies die
 beperking is de reden dat zowel [`proxy.md`](proxy.md) als de
@@ -118,7 +118,7 @@ dus geen eigenschap van het mesh of van een firmwareversie: grootte 1, 2 en 3
 reizen naast elkaar door dezelfde ether.
 
 MeshStats leest het van het frame af en rapporteert het als `path_hash_size`.
-Details en de bitindeling: [`protocol.md` §1.4](protocol.md#14-the-path-field).
+Details en de bitindeling: [`protocol.md` §1.4](protocol.md#14-het-path-veld).
 
 ### Adreshash
 

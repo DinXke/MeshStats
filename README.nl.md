@@ -103,12 +103,12 @@ docker compose logs meshstats | grep -i password
 
 Log in op `/admin`, wijzig het wachtwoord, en maak een API-token aan als je ook
 over HTTP wilt pushen. Wijs daarna een node naar de broker — zie
-[`docs/mqtt.md`](docs/mqtt.md) — of flash de MeshStats-firmware uit
-[`docs/firmware.md`](docs/firmware.md).
+[`docs/mqtt.md`](docs/nl/mqtt.md) — of flash de MeshStats-firmware uit
+[`docs/firmware.md`](docs/nl/firmware.md).
 
 Zonder Docker: `sudo bash deploy/install.sh` (Debian/Ubuntu, systemd, poort
 8080). Volledige instructies, reverse proxies, back-ups en automatische upgrades:
-[`docs/deployment.md`](docs/deployment.md).
+[`docs/deployment.md`](docs/nl/deployment.md).
 
 ---
 
@@ -139,15 +139,16 @@ gereconstrueerd uit de firmwarebroncode en regel voor regel geciteerd.
 ## Hoe data binnenkomt
 
 **MQTT (aanbevolen).** De node houdt één verbinding open en publiceert naar
-`meshcore/<node>/stats`. Veel lichter dan HTTP: geen TLS-stack en geen nieuwe
+`meshmanager/<node>/stats`. Veel lichter dan HTTP: geen TLS-stack en geen nieuwe
 sessie per meting — en dat is wat een ESP32 die mesh, WiFi en BLE tegelijk
 draait daadwerkelijk volhoudt. Ruwe pakketten gaan over
-`meshcore/<node>/rx`, en dat is wat de live kaart en het archief voedt.
+`meshmanager/<node>/rx`, en dat is wat de live kaart en het archief voedt. Er
+wordt ook nog naar het oudere voorvoegsel `meshcore/` geluisterd, zodat nodes en
+server nooit op dezelfde dag om hoeven.
 
-Over diezelfde verbinding kan de site een node vragen zijn CLI-instellingen te
-lezen of nu meteen een statusbericht te publiceren — twee woorden op
-`meshcore/<node>/cmd`, en verder wordt daar niets geaccepteerd. Zie
-[`docs/mqtt.md`](docs/mqtt.md).
+Over diezelfde verbinding kan de site een node om iets vragen — drie korte
+opdrachten op `meshmanager/<node>/cmd` (`settings`, `status`, `time <epoch>`), en
+verder wordt daar niets geaccepteerd. Zie [`docs/mqtt.md`](docs/nl/mqtt.md).
 
 **HTTP.** `POST /api/v1/ingest` met `Authorization: Bearer <token>`:
 
@@ -163,7 +164,7 @@ Beide wegen delen dezelfde afhandeling. Onbekende repeaters verschijnen vanzelf 
 standaard publiek, verberg ze in `/admin` — en onbekende metrics belanden in de
 sectie "overig" in plaats van geweigerd te worden.
 
-Volledig routeoverzicht: [`docs/api.md`](docs/api.md).
+Volledig routeoverzicht: [`docs/api.md`](docs/nl/api.md).
 
 ---
 
@@ -171,22 +172,24 @@ Volledig routeoverzicht: [`docs/api.md`](docs/api.md).
 
 | Variabele | Standaard | Betekenis |
 |---|---|---|
-| `MCS_DATA_DIR` | `/data` | Waar SQLite en de geheime sleutel staan |
-| `MCS_SITE_NAME` | MeshCore Repeater Stats | Naam in de kop |
-| `MCS_RETENTION_DAYS` | 180 | Bewaartermijn van de historiek |
-| `MCS_PACKET_RETENTION_DAYS` | 7 | Bewaartermijn van het pakketarchief |
-| `MCS_PACKET_MAX_ROWS` | 200000 | Bovengrens aan rijen in het archief; de oudste gaan eerst |
-| `MCS_DB_MAX_MB` | 512 | Bovengrens aan de omvang van de database |
-| `MCS_HEARTBEAT_MIN` | 5 | Dwing minstens elke X minuten een grafiekpunt af |
-| `MCS_MAX_BODY_BYTES` | 2000000 | Grootste verzoekbody die geaccepteerd wordt |
-| `MCS_TRUSTED_PROXY_HOPS` | 1 | Aantal proxies vóór de app; de inlogrem gebruikt het om het clientadres te vinden |
-| `MCS_MQTT_HOST` | *(leeg)* | Broker; leeg schakelt MQTT uit |
-| `MCS_MQTT_TOPIC` | `meshcore/+/stats` | Waar de site naar luistert |
-| `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | Het enige topic waarop de site publiceert |
+| `MM_DATA_DIR` | `server/data` | Waar SQLite en de geheime sleutel staan. Docker zet `/data` |
+| `MM_MQTT_PREFIX` | `meshmanager` | Het MQTT-topicvoorvoegsel dat deze installatie in eigendom heeft |
+| `MM_SITE_NAME` | MeshCore Repeater Stats | Naam in de kop |
+| `MM_RETENTION_DAYS` | 180 | Bewaartermijn van de historiek |
+| `MM_PACKET_RETENTION_DAYS` | 7 | Bewaartermijn van het pakketarchief, en tevens het venster van de heatmap |
+| `MM_PACKET_MAX_ROWS` | 200000 | Bovengrens aan rijen in het archief; de oudste gaan eerst |
+| `MM_DB_MAX_MB` | 512 | Bovengrens aan de omvang van de database, WAL inbegrepen |
+| `MM_HEARTBEAT_MIN` | 5 | Dwing minstens elke X minuten een grafiekpunt af |
+| `MM_MAX_BODY_BYTES` | 2000000 | Grootste verzoekbody die geaccepteerd wordt |
+| `MM_TRUSTED_PROXY_HOPS` | 1 | Aantal proxies vóór de app; de inlogrem gebruikt het om het clientadres te vinden |
+| `MM_MQTT_HOST` | *(leeg)* | Broker; leeg schakelt MQTT uit |
+| `MM_MQTT_CMD_TOPIC` | `{prefix}/{node}/cmd` | Het enige topic waarop de site publiceert |
 
-De meeste hiervan zijn ook in `/admin` te bewerken, waar de databasewaarde wint.
+Elke variabele heet `MM_<NAAM>`. De oude schrijfwijze `MCS_<NAAM>` wordt **nog
+steeds gelezen** als terugval, dus een bestaande `.env` blijft gewoon werken. De
+meeste hiervan zijn ook in `/admin` te bewerken, waar de databasewaarde wint.
 Volledige lijst:
-[`docs/deployment.md`](docs/deployment.md#environment-variables).
+[`docs/deployment.md`](docs/nl/deployment.md#omgevingsvariabelen).
 
 ---
 
@@ -198,13 +201,15 @@ achter een proxy, en een wachtwoordwijziging maakt ze allemaal ongeldig; de
 inlog is CSRF-gecontroleerd en afgeremd per adres en per gebruikersnaam;
 verzoekbodies worden al tijdens het lezen begrensd; CSP en de gebruikelijke
 headers staan aan. **De site kent geen enkel wachtwoord van jouw mesh** — het
-enige dat hij naar een node kan sturen is één van twee woorden, `settings` of
-`status`, die allebei alleen maar maken dat de node publiceert wat hij toch al
-publiceert, dus zelfs een volledig gecompromitteerde site kan geen radio
-instellen. Twee dingen verdienen nog aandacht vóór je publiek gaat: de inlogrem
-leeft in één proces en vergeet bij een herstart, dus een toegangspoort bij de
-proxy is de moeite waard, en een filesystem-back-up van een node bevat de
-**privésleutel** van die node. Lees [`docs/security.md`](docs/security.md).
+enige dat hij naar een node kan sturen is één van drie korte opdrachten,
+`settings`, `status` en `time <epoch>`: twee ervan maken alleen maar dat de node
+publiceert wat hij toch al publiceert, en de derde zet een klok. Geen van drie
+stelt een radio in, dus zelfs een volledig gecompromitteerde site kan jouw mesh
+niet herconfigureren. Twee dingen verdienen nog aandacht vóór je publiek gaat:
+de inlogrem leeft in één proces en vergeet bij een herstart, dus een
+toegangspoort bij de proxy is de moeite waard, en een filesystem-back-up van een
+node bevat de
+**privésleutel** van die node. Lees [`docs/security.md`](docs/nl/security.md).
 
 ---
 

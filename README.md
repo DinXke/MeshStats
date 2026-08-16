@@ -135,13 +135,15 @@ firmware source and cited line by line.
 ## How data gets in
 
 **MQTT (recommended).** The node keeps one connection open and publishes to
-`meshcore/<node>/stats`. Much lighter than HTTP: no TLS stack and no new session
-per measurement — which is what an ESP32 running mesh, WiFi and BLE can actually
-sustain. Raw packets are forwarded on `meshcore/<node>/rx`, which is what feeds
-the live map and the archive.
+`meshmanager/<node>/stats`. Much lighter than HTTP: no TLS stack and no new
+session per measurement — which is what an ESP32 running mesh, WiFi and BLE can
+actually sustain. Raw packets are forwarded on `meshmanager/<node>/rx`, which is
+what feeds the live map and the archive. The older `meshcore/` prefix is
+subscribed to as well, so nodes and server never have to be upgraded on the same
+day.
 
-Over that same connection the site can ask a node to read its CLI settings or
-publish a status message right now — two words on `meshcore/<node>/cmd`, and
+Over that same connection the site can ask a node for something — three short
+commands on `meshmanager/<node>/cmd` (`settings`, `status`, `time <epoch>`), and
 nothing else is accepted there. See [`docs/mqtt.md`](docs/mqtt.md).
 
 **HTTP.** `POST /api/v1/ingest` with `Authorization: Bearer <token>`:
@@ -166,21 +168,23 @@ Full route reference: [`docs/api.md`](docs/api.md).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MCS_DATA_DIR` | `/data` | Where SQLite and the secret key live |
-| `MCS_SITE_NAME` | MeshCore Repeater Stats | Name in the header |
-| `MCS_RETENTION_DAYS` | 180 | History retention |
-| `MCS_PACKET_RETENTION_DAYS` | 7 | Packet archive retention |
-| `MCS_PACKET_MAX_ROWS` | 200000 | Row ceiling for the archive; oldest go first |
-| `MCS_DB_MAX_MB` | 512 | Size ceiling for the database |
-| `MCS_HEARTBEAT_MIN` | 5 | Force a graph point at least every X minutes |
-| `MCS_MAX_BODY_BYTES` | 2000000 | Largest request body accepted |
-| `MCS_TRUSTED_PROXY_HOPS` | 1 | Proxies in front of the app; the login throttle uses it to find the client address |
-| `MCS_MQTT_HOST` | *(empty)* | Broker; empty disables MQTT |
-| `MCS_MQTT_TOPIC` | `meshcore/+/stats` | What the site listens to |
-| `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | The only topic the site publishes on |
+| `MM_DATA_DIR` | `server/data` | Where SQLite and the secret key live. Docker sets `/data` |
+| `MM_MQTT_PREFIX` | `meshmanager` | The MQTT topic prefix this installation owns |
+| `MM_SITE_NAME` | MeshCore Repeater Stats | Name in the header |
+| `MM_RETENTION_DAYS` | 180 | History retention |
+| `MM_PACKET_RETENTION_DAYS` | 7 | Packet archive retention, and the heatmap's window |
+| `MM_PACKET_MAX_ROWS` | 200000 | Row ceiling for the archive; oldest go first |
+| `MM_DB_MAX_MB` | 512 | Size ceiling for the database, WAL included |
+| `MM_HEARTBEAT_MIN` | 5 | Force a graph point at least every X minutes |
+| `MM_MAX_BODY_BYTES` | 2000000 | Largest request body accepted |
+| `MM_TRUSTED_PROXY_HOPS` | 1 | Proxies in front of the app; the login throttle uses it to find the client address |
+| `MM_MQTT_HOST` | *(empty)* | Broker; empty disables MQTT |
+| `MM_MQTT_CMD_TOPIC` | `{prefix}/{node}/cmd` | The only topic the site publishes on |
 
-Most of these are also editable in `/admin`, where the database value wins. Full
-list: [`docs/deployment.md`](docs/deployment.md#environment-variables).
+Every variable is `MM_<NAME>`. The old `MCS_<NAME>` spelling is **still read** as
+a fallback, so an existing `.env` keeps working. Most of these are also editable
+in `/admin`, where the database value wins. Full list:
+[`docs/deployment.md`](docs/deployment.md#environment-variables).
 
 ---
 
@@ -191,9 +195,10 @@ SHA-256 hashes; sessions are HMAC-signed, `HttpOnly` and `Secure` behind a proxy
 and a password change invalidates every one of them; the login is CSRF-checked
 and throttled per address and per username; request bodies are capped while
 being read; CSP and the usual headers are set. **The site knows no password of
-your mesh** — the only thing it can send a node is one of two words, `settings`
-or `status`, both of which merely make the node publish what it publishes
-anyway, so even a fully compromised site cannot configure a radio. Two things
+your mesh** — the only thing it can send a node is one of three short commands,
+`settings`, `status` and `time <epoch>`: two of them merely make the node publish
+what it publishes anyway, and the third sets a clock. None of them configures a
+radio, so even a fully compromised site cannot reconfigure your mesh. Two things
 still deserve attention before going public: the login throttle lives in one
 process and forgets on restart, so an access gate at the proxy is worth having,
 and a node filesystem backup contains that node's **private key**. Read

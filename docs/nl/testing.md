@@ -94,7 +94,7 @@ Een testrun is veilig te draaien op de machine waar ook de site op staat.
 ### 2. Geen opgevangen pakketten
 
 Elke testvector is **met de hand gebouwd uit
-[`protocol.md` §1](protocol.md#1-the-over-the-air-packet-format)** door
+[`protocol.md` §1](protocol.md#1-het-over-the-air-pakketformaat)** door
 `tests/frames.py`. Er staat geen enkel echt, opgevangen pakket in de map.
 
 Dat is geen preutsheid over binaire fixtures. Het betekent dat een falende

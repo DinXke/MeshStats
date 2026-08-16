@@ -1,5 +1,7 @@
 # Security
 
+*[Nederlands](nl/security.md)*
+
 What this system protects, how, and — as importantly — what it does not protect.
 Everything here was read out of the code. Where a control is weaker than it looks,
 it says so.

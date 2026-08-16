@@ -410,6 +410,6 @@ logger:
 |---|---|
 | De aanbevolen weg in plaats van deze | [`mqtt.md`](mqtt.md) |
 | Waar dit in het geheel past | [`architecture.md`](architecture.md) |
-| Hem naast de site installeren | [`deployment.md`](deployment.md#home-assistant-components) |
+| Hem naast de site installeren | [`deployment.md`](deployment.md#home-assistant-onderdelen) |
 | De TCP-proxy, een ander HA-onderdeel | [`proxy.md`](proxy.md) |
 | Omgaan met tokens, en wat een wachtwoord een aanvaller oplevert | [`security.md`](security.md) |

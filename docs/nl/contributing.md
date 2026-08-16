@@ -389,7 +389,7 @@ dat zeggen".
 Twee harde regels:
 
 - **Geen opgevangen pakketten.** Elke testvector is met de hand gebouwd uit
-  [`protocol.md` §1](protocol.md#1-the-over-the-air-packet-format) door
+  [`protocol.md` §1](protocol.md#1-het-over-the-air-pakketformaat) door
   `server/tests/frames.py`. Een falende test hoort je naar de specificatie te
   sturen, niet naar een binair bestand dat niemand kan lezen.
 - **Geen netwerk, geen MQTT, geen echte database.** `conftest.py` wijst de

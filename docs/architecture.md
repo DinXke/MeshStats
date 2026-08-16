@@ -1,5 +1,7 @@
 # Architecture
 
+*[Nederlands](nl/architecture.md)*
+
 MeshStats turns a MeshCore node's own view of the mesh into a public statistics
 site. This document explains what the pieces are, how data moves between them,
 and why the transport is MQTT rather than HTTP.

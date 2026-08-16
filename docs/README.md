@@ -34,6 +34,8 @@ New to MeshCore itself? Read the [glossary](glossary.md) first, then
 | [`server.md`](server.md) | What runs inside `server/`: the FastAPI application, its modules, background tasks, and how the parts hold together |
 | [`api.md`](api.md) | Every route the server serves — the JSON API, the public pages, the admin forms — with parameters, responses and authentication |
 | [`search.md`](search.md) | The Kibana-style query language of the packet archive: syntax, fields, sorting, and the promise that nothing is silently dropped |
+| [`commanding.md`](commanding.md) | How the server decides what can be asked of a repeater right now, and what a button on the page is therefore allowed to promise |
+| [`clocksync.md`](clocksync.md) | Whether this machine may tell the mesh what time it is, and by which route the answer travels |
 
 ---
 
@@ -86,6 +88,8 @@ cover.
 | Document | What you will find |
 |---|---|
 | [`deployment.md`](deployment.md) | Environment variables, reverse proxies, automatic upgrades, backups, disk usage, logs, and the time-series database |
+| [`admin.md`](admin.md) | The operator's view of `/admin`: accounts, API tokens, sessions, and every form behind the login |
+| [`retention.md`](retention.md) | How long the site keeps things, what stops the disk filling up, and why the admin page says so out loud when the configured period is not being met |
 | [`security.md`](security.md) | The threat model, what is protected and how, and — as importantly — what is not |
 
 ---
@@ -110,6 +114,9 @@ cover.
 | What is in this database column? | [`database.md`](database.md) |
 | What do these bytes mean? | [`protocol.md`](protocol.md) |
 | Why does the site say "unknown" here? | [`candidates.md`](candidates.md), [`decoder.md`](decoder.md) |
+| Why is this button greyed out? | [`commanding.md`](commanding.md) |
+| Where did my old packets go? | [`retention.md`](retention.md) |
+| How do I manage accounts and tokens? | [`admin.md`](admin.md) |
 | How do I get my node publishing? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
 | How do I upgrade a node from the site? | [`firmware-upgrade.md`](firmware-upgrade.md) |
 | Why is this button greyed out for this node? | [`node-management.md`](node-management.md), [`commanding.md`](commanding.md) |

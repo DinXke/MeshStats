@@ -55,14 +55,14 @@ De proxy houdt die ene verbinding zelf vast en deelt hem:
 
 | Situatie | Antwoord |
 |---|---|
-| Je kunt de MeshStats-firmware flashen | **Nee.** `SerialWifiInterface` bedient vier clients tegelijk op de node zelf, met gerichte antwoordroutering. Zie [`firmware.md`](firmware.md#1-multiple-companions-on-one-node) |
+| Je kunt de MeshStats-firmware flashen | **Nee.** `SerialWifiInterface` bedient vier clients tegelijk op de node zelf, met gerichte antwoordroutering. Zie [`firmware.md`](firmware.md#1-meerdere-companions-op-één-node) |
 | Je kunt geen firmware flashen en wilt meer dan één client | **Ja** |
 | Je hebt precies één client en houdt dat zo | Nee |
 
 De twee oplossingen verschillen in meer dan plaats. De firmware weet welke client
 wat vroeg en stuurt antwoorden naar de vrager; de proxy zendt elk nodeframe naar
 elke client en laat de clients het uitzoeken. Allebei werkt, om redenen die in
-[`protocol.md` §2.3](protocol.md#23-the-single-client-problem) staan.
+[`protocol.md` §2.3](protocol.md#23-het-probleem-van-de-enkele-client) staan.
 
 ---
 
@@ -349,8 +349,8 @@ in het veld alle drie erger.
 
 | | |
 |---|---|
-| Het frameformaat dat hij parseert | [`protocol.md` §2](protocol.md#2-the-companion-protocol-tcp-and-serial) |
-| Het firmware-alternatief | [`firmware.md`](firmware.md#1-multiple-companions-on-one-node) |
+| Het frameformaat dat hij parseert | [`protocol.md` §2](protocol.md#2-het-companion-protocol-tcp-en-serieel) |
+| Het firmware-alternatief | [`firmware.md`](firmware.md#1-meerdere-companions-op-één-node) |
 | Waarom een open TCP-poort ertoe doet | [`security.md`](security.md) |
-| Hem naast de site installeren | [`deployment.md`](deployment.md#home-assistant-components) |
+| Hem naast de site installeren | [`deployment.md`](deployment.md#home-assistant-onderdelen) |
 | Het andere Home Assistant-onderdeel | [`homeassistant.md`](homeassistant.md) |

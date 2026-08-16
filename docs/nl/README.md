@@ -34,6 +34,8 @@ Nieuw in MeshCore zelf? Lees eerst de [woordenlijst](glossary.md), daarna
 | [`server.md`](server.md) | Wat er binnen `server/` draait: de FastAPI-applicatie, haar modules, achtergrondtaken, en hoe de delen samenhangen |
 | [`api.md`](api.md) | Elke route die de server bedient — de JSON-API, de publieke pagina's, de beheerformulieren — met parameters, antwoorden en authenticatie |
 | [`search.md`](search.md) | De Kibana-achtige zoektaal van het pakketarchief: syntaxis, velden, sorteren, en de belofte dat er nooit stilletjes iets wegvalt |
+| [`commanding.md`](commanding.md) | Hoe de server bepaalt wat er op dit moment aan een repeater gevraagd kan worden, en wat een knop op de pagina dus mag beloven |
+| [`clocksync.md`](clocksync.md) | Of deze machine het mesh mag vertellen hoe laat het is, en langs welke weg dat antwoord reist |
 
 ---
 
@@ -85,6 +87,8 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | Document | Wat je er vindt |
 |---|---|
 | [`deployment.md`](deployment.md) | Omgevingsvariabelen, reverse proxies, automatische upgrades, back-ups, schijfgebruik, logs, en de tijdreeksdatabase |
+| [`admin.md`](admin.md) | Het beheerdersperspectief op `/admin`: accounts, API-tokens, sessies, en elk formulier achter de inlog |
+| [`retention.md`](retention.md) | Hoelang de site dingen bewaart, wat verhindert dat de schijf volloopt, en waarom de beheerpagina het hardop zegt als de ingestelde termijn niet gehaald wordt |
 | [`security.md`](security.md) | Het dreigingsmodel, wat er hoe beschermd wordt, en — minstens zo belangrijk — wat niet |
 
 ---
@@ -109,6 +113,9 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | Wat staat er in deze databasekolom? | [`database.md`](database.md) |
 | Wat betekenen deze bytes? | [`protocol.md`](protocol.md) |
 | Waarom zegt de site hier "onbekend"? | [`candidates.md`](candidates.md), [`decoder.md`](decoder.md) |
+| Waarom staat deze knop uit? | [`commanding.md`](commanding.md) |
+| Waar zijn mijn oude pakketten gebleven? | [`retention.md`](retention.md) |
+| Hoe beheer ik accounts en tokens? | [`admin.md`](admin.md) |
 | Hoe krijg ik mijn node aan het publiceren? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
 | Hoe upgrade ik een node vanaf de site? | [`firmware-upgrade.md`](firmware-upgrade.md) |
 | Waarom is deze knop grijs bij deze node? | [`node-management.md`](node-management.md), [`commanding.md`](commanding.md) |
