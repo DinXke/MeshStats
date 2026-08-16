@@ -76,6 +76,13 @@ otherwise would be a lie in a status line. `0` disables the limit for that type.
 Defaults: 5/60s for most, 20/60s for `TXT_MSG` and `GRP_TXT`, 10/60s for
 `ADVERT`.
 
+The window is **fixed, not sliding**: the counter resets whole rather than
+ageing out packet by packet. A burst straddling a boundary can therefore push up
+to twice the limit through in a short span. That is a real inaccuracy and it is
+the right trade on a node whose first duty is relaying: a sliding window needs a
+timestamp per packet per type, which is memory spent on precision nobody is
+using. Set the limit for the traffic you want, not for the ceiling you fear.
+
 **Minimum path hash size.** `filter hash <1|2|3>` — packets whose path hashes
 are smaller than this are dropped. Default `1`, which passes everything.
 Raising it to `2` is a blunt instrument: it blocks every packet from a node that

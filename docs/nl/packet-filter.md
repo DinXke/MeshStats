@@ -79,6 +79,14 @@ houden zonder te ontsleutelen, en anders beweren zou een leugen in een
 statusregel zijn. `0` zet de limiet voor dat type uit. Standaard: 5/60s voor de
 meeste, 20/60s voor `TXT_MSG` en `GRP_TXT`, 10/60s voor `ADVERT`.
 
+Het venster is **vast en niet schuivend**: de teller gaat in één keer terug op
+nul in plaats van pakket voor pakket te verouderen. Een uitbarsting die precies
+op een grens valt kan er dus tot tweemaal de limiet doorheen duwen. Dat is een
+echte onnauwkeurigheid en het is de goede afweging op een node wiens eerste taak
+doorsturen is: een schuivend venster vraagt een tijdstempel per pakket per type,
+en dat is geheugen uitgegeven aan precisie die niemand gebruikt. Stel de limiet
+in op het verkeer dat je wilt, niet op het plafond waar je bang voor bent.
+
 **Minimale padhashgrootte.** `filter hash <1|2|3>` — pakketten met kleinere
 padhashes worden weggegooid. Standaard `1`, wat alles doorlaat. Naar `2` gaan is
 een botte bijl: het blokkeert elk pakket van een node die nog niet op meerbyte
