@@ -82,6 +82,14 @@
  *        cable (sender_timestamp == 0), which this path deliberately is not --
  *        frequency belongs with the other three radio values and goes through
  *        'radio', which is validated.
+ *        One parameter is marked secret: 'guest.password'. It is read back and
+ *        compared like everything else -- the verification is the whole point of
+ *        this endpoint -- but the value read is not returned. Otherwise the
+ *        password you just set sits in the admin page's HTML, in the browser
+ *        history and in every screenshot of it, and a password that has been
+ *        there is gone. That is the same reason 'bridge.secret' is absent
+ *        altogether; the difference is that guest.password is a setting you
+ *        genuinely want to change from a distance.
  *        Comparison is by value and not by text, which sounds pedantic and is
  *        the difference between a warning that means something and one nobody
  *        reads. 'set radio' takes four numbers separated by spaces and 'get
@@ -5621,6 +5629,15 @@ struct CfgParam {
   const char *choices;  // alleen bij CFG_ENUM: de toegestane woorden, met |
   uint8_t     risk;
   uint8_t     reboot;   // 1 = wordt nu bewaard, pas actief na een herstart
+  /* 1 = de waarde is een geheim. Er wordt nog steeds teruggelezen en vergeleken
+   * -- de controle blijft dus overeind -- maar de gelezen waarde gaat niet mee
+   * in het antwoord. Anders staat het wachtwoord dat je net zette in het
+   * HTML van de beheerpagina, in de browsergeschiedenis en in elke
+   * schermafdruk ervan, en een wachtwoord dat daar geweest is, is weg. Dat is
+   * dezelfde reden waarom bridge.secret helemaal niet aangeboden wordt; het
+   * verschil is dat guest.password een instelling is die je werkelijk van
+   * afstand wilt kunnen zetten. */
+  uint8_t     secret;
 };
 
 /* Het volledige oppervlak van handleSetCmd() in CommonCLI.cpp, op drie soorten
@@ -5648,46 +5665,46 @@ struct CfgParam {
  * zonder één controle. */
 static const CfgParam CFG_PARAMS[] = {
   // --- zo weer terug te zetten ---------------------------------------------
-  { "name",                  CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0 },
-  { "lat",                   CFG_FLOAT,  -90,     90, NULL,                          RISK_PLAIN,  0 },
-  { "lon",                   CFG_FLOAT, -180,    180, NULL,                          RISK_PLAIN,  0 },
-  { "owner.info",            CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0 },
-  { "advert.interval",       CFG_INT,     60,    240, NULL,                          RISK_PLAIN,  0 },  // minuten, stappen van 2
-  { "flood.advert.interval", CFG_INT,      3,    168, NULL,                          RISK_PLAIN,  0 },  // uren
-  { "rxdelay",               CFG_FLOAT,    0,     20, NULL,                          RISK_PLAIN,  0 },
-  { "txdelay",               CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0 },
-  { "direct.txdelay",        CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0 },
+  { "name",                  CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0 },
+  { "lat",                   CFG_FLOAT,  -90,     90, NULL,                          RISK_PLAIN,  0, 0 },
+  { "lon",                   CFG_FLOAT, -180,    180, NULL,                          RISK_PLAIN,  0, 0 },
+  { "owner.info",            CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0 },
+  { "advert.interval",       CFG_INT,     60,    240, NULL,                          RISK_PLAIN,  0, 0 },  // minuten, stappen van 2
+  { "flood.advert.interval", CFG_INT,      3,    168, NULL,                          RISK_PLAIN,  0, 0 },  // uren
+  { "rxdelay",               CFG_FLOAT,    0,     20, NULL,                          RISK_PLAIN,  0, 0 },
+  { "txdelay",               CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0 },
+  { "direct.txdelay",        CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0 },
 
   // --- verandert merkbaar hoe de node zich gedraagt -------------------------
-  { "dutycycle",             CFG_FLOAT,    1,    100, NULL,                          RISK_WRITES, 0 },
-  { "af",                    CFG_FLOAT,    0,    100, NULL,                          RISK_WRITES, 0 },
-  { "flood.max",             CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0 },
-  { "flood.max.unscoped",    CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0 },
-  { "flood.max.advert",      CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0 },
-  { "int.thresh",            CFG_INT,      0,    255, NULL,                          RISK_WRITES, 0 },
-  { "agc.reset.interval",    CFG_INT,      0,   1020, NULL,                          RISK_WRITES, 0 },  // bewaard als /4
-  { "multi.acks",            CFG_INT,      0,      3, NULL,                          RISK_WRITES, 0 },
-  { "path.hash.mode",        CFG_INT,      0,      2, NULL,                          RISK_WRITES, 0 },
-  { "loop.detect",           CFG_ENUM,     0,      0, "off|minimal|moderate|strict", RISK_WRITES, 0 },
-  { "cad",                   CFG_BOOL,     0,      0, NULL,                          RISK_WRITES, 0 },
-  { "adc.multiplier",        CFG_FLOAT,    0,     10, NULL,                          RISK_WRITES, 0 },
+  { "dutycycle",             CFG_FLOAT,    1,    100, NULL,                          RISK_WRITES, 0, 0 },
+  { "af",                    CFG_FLOAT,    0,    100, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max",             CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max.unscoped",    CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "flood.max.advert",      CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
+  { "int.thresh",            CFG_INT,      0,    255, NULL,                          RISK_WRITES, 0, 0 },
+  { "agc.reset.interval",    CFG_INT,      0,   1020, NULL,                          RISK_WRITES, 0, 0 },  // bewaard als /4
+  { "multi.acks",            CFG_INT,      0,      3, NULL,                          RISK_WRITES, 0, 0 },
+  { "path.hash.mode",        CFG_INT,      0,      2, NULL,                          RISK_WRITES, 0, 0 },
+  { "loop.detect",           CFG_ENUM,     0,      0, "off|minimal|moderate|strict", RISK_WRITES, 0, 0 },
+  { "cad",                   CFG_BOOL,     0,      0, NULL,                          RISK_WRITES, 0, 0 },
+  { "adc.multiplier",        CFG_FLOAT,    0,     10, NULL,                          RISK_WRITES, 0, 0 },
 
   // --- kan de bereikbaarheid afsnijden --------------------------------------
   /* Alle vijf hieronder raken de radio of wie er mag inloggen. Op een node met
    * twee onafhankelijke wegen naar binnen (de onze: mesh én IP) is een fout hier
    * hinderlijk; op een stock repeater die alleen over LoRa te bereiken is, is
    * hij blijvend. Vandaar de zwaarste drempel aan de bedieningskant. */
-  { "tx",                    CFG_INT,      0,     30, NULL,                          RISK_CUTOFF, 0 },
-  { "repeat",                CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0 },
-  { "allow.read.only",       CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0 },
-  { "radio.rxgain",          CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0 },
-  { "radio.fem.rxgain",      CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0 },
-  { "guest.password",        CFG_TEXT,     0,      0, NULL,                          RISK_CUTOFF, 0 },
+  { "tx",                    CFG_INT,      0,     30, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "repeat",                CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "allow.read.only",       CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "radio.rxgain",          CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "radio.fem.rxgain",      CFG_BOOL,     0,      0, NULL,                          RISK_CUTOFF, 0, 0 },
+  { "guest.password",        CFG_TEXT,     0,      0, NULL,                          RISK_CUTOFF, 0, 1 },
   /* Vier getallen tegelijk, en de enige met reboot=1: MeshCore antwoordt hier
    * "OK - reboot to apply". Het teruglezen laat dus de nieuwe waarden zien
    * terwijl de radio nog op de oude staat, en pas bij de herstart blijkt of ze
    * kloppen. Dat is precies het scenario waarin een node niet terugkomt. */
-  { "radio",                 CFG_RADIO,    0,      0, NULL,                          RISK_CUTOFF, 1 },
+  { "radio",                 CFG_RADIO,    0,      0, NULL,                          RISK_CUTOFF, 1, 0 },
 };
 #define CFG_PARAM_COUNT ((int)(sizeof(CFG_PARAMS) / sizeof(CFG_PARAMS[0])))
 
@@ -5917,6 +5934,10 @@ static void handleCfgPost(AsyncWebServerRequest *req) {
    * verschil hoort de aanroeper te zien in plaats van te moeten raden. Bij
    * advert.interval is het zelfs het gewone geval: 61 wordt 60. */
   bool exact = !refused && cfgSameValue(p, value, applied);
+  /* Wel vergeleken, niet verklapt. Het teruglezen is de hele reden dat dit
+   * endpoint bestaat, dus dat blijft; alleen de waarde zelf gaat niet mee terug
+   * de wereld in. */
+  if (p->secret) applied = "(verborgen)";
 
   static char e_set[320], e_applied[320], e_asked[CFG_VALUE_MAX * 2];
   jsonEsc(e_set, sizeof(e_set), set_reply);
@@ -5946,10 +5967,10 @@ static void handleCfgList(AsyncWebServerRequest *req) {
     const CfgParam &p = CFG_PARAMS[i];
     n += snprintf(body + n, sizeof(body) - n,
                   "%s{\"key\":\"%s\",\"kind\":\"%s\",\"lo\":%g,\"hi\":%g,"
-                  "\"choices\":\"%s\",\"risk\":%u,\"reboot\":%u}",
+                  "\"choices\":\"%s\",\"risk\":%u,\"reboot\":%u,\"secret\":%u}",
                   i ? "," : "", p.key, cfgKindName(p.kind),
                   p.lo, p.hi, p.choices ? p.choices : "",
-                  (unsigned)p.risk, (unsigned)p.reboot);
+                  (unsigned)p.risk, (unsigned)p.reboot, (unsigned)p.secret);
   }
   snprintf(body + n, sizeof(body) - n, "]}");
   req->send(200, "application/json", body);

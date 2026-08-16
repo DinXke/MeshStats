@@ -393,6 +393,8 @@ PARAMS = [
     {"key": "cad", "kind": "bool", "lo": 0, "hi": 0, "choices": "", "risk": 2, "reboot": 0},
     {"key": "tx", "kind": "int", "lo": 0, "hi": 30, "choices": "", "risk": 3, "reboot": 0},
     {"key": "radio", "kind": "radio", "lo": 0, "hi": 0, "choices": "", "risk": 3, "reboot": 1},
+    {"key": "guest.password", "kind": "text", "lo": 0, "hi": 0, "choices": "",
+     "risk": 3, "reboot": 0, "secret": 1},
 ]
 
 
@@ -529,3 +531,30 @@ def test_zonder_lijst_van_de_node_geen_formulier():
                                "params": []}, cfg_groups=[], params=[])
     assert "niet bereikbaar" in html
     assert 'action="/admin/repeaters/1/config"' not in html
+
+
+def test_een_geheim_wordt_niet_getoond_en_niet_voorgevuld():
+    """Wel vergeleken, niet verklapt. Een wachtwoord dat in de HTML van de
+    beheerpagina, de browsergeschiedenis of een schermafdruk beland is, is weg --
+    dezelfde reden waarom bridge.secret helemaal niet aangeboden wordt."""
+    html = _render()
+    assert 'type="password" name="value"' in html
+    assert "•••" in html
+
+
+def test_een_geheim_krijgt_zijn_waarde_niet_terug(db, monkeypatch):
+    _volle_lijst_met_geheim(monkeypatch)
+    monkeypatch.setattr(nodeconfig, "_open", lambda *a, **k: _Antwoord(
+        {"ok": 1, "step": "", "key": "guest.password", "asked": "hunter2",
+         "applied": "(verborgen)", "exact": 1, "reply": "OK"}))
+    uit = nodeconfig.write(rep(), "guest.password", "hunter2", confirm="DinX-Home")
+    assert uit["ok"] is True and uit["exact"] is True
+    assert uit["applied"] == "(verborgen)"
+
+
+def _volle_lijst_met_geheim(monkeypatch):
+    lijst = VOLLE_LIJST + [{"key": "guest.password", "kind": "text", "lo": 0, "hi": 0,
+                            "choices": "", "risk": 3, "reboot": 0, "secret": 1}]
+    monkeypatch.setattr(nodeconfig, "params",
+                        lambda host, force=False: {"ok": True, "error": "",
+                                                   "params": lijst, "at": 0})

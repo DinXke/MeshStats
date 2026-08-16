@@ -664,7 +664,7 @@ companion node.
 | `/api/mon` | POST | basic | `add`, `del`, `pass`, `en`, `iv`, `poll` |
 | `/api/backup` | GET | basic | Download the whole filesystem |
 | `/api/restore` | POST | basic | Upload a backup, then reboot |
-| `/api/cfg` | GET | basic | Which CLI parameters may be set remotely, with their bounds (1.13.0+) |
+| `/api/cfg` | GET | basic | Which CLI parameters may be set remotely, with their type, bounds, allowed words and risk class (1.13.0, whole CLI surface since 1.14.0) |
 | `/api/cfg` | POST | basic | Set one of them and read it straight back — see [`node-management.md`](node-management.md) (1.13.0+) |
 | `/api/fw` | GET | basic | Installed version, build environment, which partition runs, what the other one holds (1.12.0+) |
 | `/api/fw` | POST | basic | Firmware image as the raw body, digest checked before the boot partition is switched — see [`firmware-upgrade.md`](firmware-upgrade.md) (1.12.0+) |

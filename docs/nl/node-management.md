@@ -61,7 +61,7 @@ die hij opmerkt.
 | Uitlezen uit het verkeer (adverts, SNR, pad, positie) | ja | ja | ja |
 | Eigen statistieken (uptime, zendtijd, tellers) | nee | nee | ja |
 | CLI-instellingen lezen | nee | ja, over LoRa | ja |
-| **CLI-instellingen schrijven** | nee | ontworpen, begrensd | ontworpen, begrensd |
+| **CLI-instellingen schrijven** | nee | ontworpen, niet gebouwd | **gebouwd** — het hele oppervlak, met risicoklassen |
 | De klok zetten | nee | ja, via de monitor | ja |
 | Firmware-upgrade | nee | **nee** | alleen met een IP-pad |
 
@@ -132,7 +132,7 @@ Wat het kost: een `full_managed` node zonder IP-pad kan helemaal niet geschreven
 worden, ook al werkt zijn `cmd`-topic. Dat geval bestaat vandaag niet in deze
 installatie. Duikt het op, dan is het antwoord niet om de MQTT-toelatingslijst
 stilletjes te verbreden — het is om deze beslissing bewust opnieuw te openen, met
-de categorietabel hieronder als datgene wat overeind moet blijven.
+de risicoklassen hieronder als datgene wat overeind moet blijven.
 
 ### Als het ooit tóch over MQTT zou gebeuren
 
@@ -157,44 +157,77 @@ Vandaar HTTP.
 
 ## Welke instellingen geschreven mogen worden
 
-Geen toelatingslijst omdat toelatingslijsten in de mode zijn, maar omdat de
-manier waarop het hier misgaat is dat je een node blijvend kwijtraakt. Drie
-categorieën.
+**Allemaal, op drie na.** De lijst is het volledige `handleSetCmd()`-oppervlak
+van `src/helpers/CommonCLI.cpp` — achtentwintig parameters — en niet een
+zorgvuldig uitgekozen veilig hoekje.
 
-### Categorie 1 — veilig. **Gebouwd, en dit is wat er uitgeleverd wordt.**
+Dat is een bewuste omkering van het eerste ontwerp, dat alleen parameters toeliet
+die de bereikbaarheid niet konden afsnijden. Veilig, en naast de kwestie: de
+instellingen die je op afstand het hardst nodig hebt *zijn* juist de gevaarlijke
+— zendvermogen, radioparameters — en ze weglaten neemt het risico niet weg. Het
+betekent alleen dat iemand een ladder haalt, of een seriële kabel, en hetzelfde
+doet met minder zorg en zonder dat het ergens vastligt.
 
-Kan langs geen enkele route de bereikbaarheid afsnijden. Wordt aangeboden op elke
-node waarnaar de site kan schrijven, zonder extra bevestiging.
+Het risico verschoof dus van **weglaten** naar **omgaan ermee**. Elke parameter
+draagt een risicoklasse, en die klasse bepaalt hoeveel wrijving een wijziging
+kost.
 
-| Sleutel | Type | Onze grenzen | MeshCore's eigen validatie |
-|---|---|---|---|
-| `name` | tekst | niet leeg, geen `[ ] \ : , ? *`, geen stuurtekens | weigert dezelfde leestekens (`isValidName`), staat stuurtekens toe |
-| `lat` | float | −90 … 90 | **helemaal geen** — kale `atof()` |
-| `lon` | float | −180 … 180 | **helemaal geen** — kale `atof()` |
-| `advert.interval` | int | 60 … 240 minuten | 0, of 60 … 240 |
-| `flood.advert.interval` | int | 3 … 168 uur | 0, of 3 … 168 |
-| `rxdelay` | float | 0 … 20 | 0 … 20 |
-| `txdelay` | float | 0 … 2 | 0 … 2 |
+### De drie die er nog steeds niet bij zitten
 
-De slechtste afloop in deze categorie is een node die minder vaak adverteert of
-anders vertraagt. Allebei zichtbaar in de statistieken, en allebei te corrigeren
-via dezelfde route die ze gezet heeft.
+| Wordt niet aangeboden | Waarom |
+|---|---|
+| `prv.key` | Vervangt de identiteit van de node. Dat is geen instelling, dat is een andere node: elke contactenlijst, ACL en monitorregel elders in het mesh wijst dan naar iemand die niet meer bestaat. Er is geen bevestiging die dit vanaf een webpagina een goed idee maakt |
+| `bridge.secret` | Een gedeeld geheim dat bij het teruglezen meteen weer naar buiten komt. Een wachtwoord dat in een logregel of een schermafbeelding heeft gestaan, is weg |
+| `freq` | MeshCore accepteert `set freq` **alleen vanaf de seriële kabel** (`sender_timestamp == 0`), en dit pad geeft met opzet iets anders mee. Frequentie hoort bij de andere drie radiowaarden en gaat via `radio`, dat *wel* gevalideerd wordt — `set freq` niet |
 
-Twee van onze grenzen zijn met opzet strenger dan die van MeshCore. Dat
-accepteert `0` voor allebei de advert-intervallen, wat "stop met adverteren"
-betekent — daarmee wordt een node niet onbereikbaar, maar hij zakt er wel mee uit
-ieders lijst weg, en op een dak voelt dat hetzelfde. En `af` (airtime factor) is
-tijdens het bouwen uit deze categorie geschrapt: MeshCore valideert die ook niet,
-en een hoge waarde knijpt het zenden zo ver af dat een repeater stilvalt zonder
-ooit onbereikbaar te worden — precies het soort halfkapot dat deze categorie
-hoort uit te sluiten.
+### Risicoklassen
 
-Bij `lat` en `lon` is het de moeite waard even stil te staan, want zij laten het
-duidelijkst zien waarom die grenzen hier überhaupt bestaan. De handler van
-MeshCore is `_prefs->node_lat = atof(&config[4]);` — geen bereikcontrole, geen
-parsecontrole. `atof("noord")` is `0.0`, dus een typfout zet de node in de Golf
-van Guinee en de CLI antwoordt `OK`. **Een node die een onzinnige waarde aanneemt
-is gevaarlijker dan een die weigert**, en MeshCore is van het aannemende soort.
+| Klasse | Wat het betekent | Bevestiging |
+|---|---|---|
+| **Gewoon** | Een waarde die je zo weer terug kunt zetten | Opslaan is genoeg |
+| **Schrijft merkbaar** | Verandert hoe de node zich op het mesh gedraagt, maar kan hem niet buiten bereik brengen | Een expliciet vinkje |
+| **Kan de bereikbaarheid afsnijden** | Raakt de radio, of wie er mag inloggen | Typ de naam van de node |
+
+**Gewoon** (9) — `name`, `lat`, `lon`, `owner.info`, `advert.interval`,
+`flood.advert.interval`, `rxdelay`, `txdelay`, `direct.txdelay`
+
+**Schrijft merkbaar** (12) — `dutycycle`, `af`, `flood.max`,
+`flood.max.unscoped`, `flood.max.advert`, `int.thresh`, `agc.reset.interval`,
+`multi.acks`, `path.hash.mode`, `loop.detect`, `cad`, `adc.multiplier`
+
+**Kan de bereikbaarheid afsnijden** (7) — `tx`, `repeat`, `allow.read.only`,
+`radio.rxgain`, `radio.fem.rxgain`, `guest.password`, `radio`
+
+De grens die ertoe doet is die tussen de tweede en de derde klasse, en het is één
+enkele vraag: *als dit misgaat, is de node dan nog te bereiken via de route
+waarmee je hem aanstuurt?* Op een node van ons zijn er twee onafhankelijke wegen
+naar binnen — sloop de WiFi en de mesh-CLI antwoordt, sloop de radio-instellingen
+en de beheerpagina antwoordt — dus een vergissing is vervelend. Op een
+standaardrepeater die je alleen over LoRa bereikt is er één weg naar binnen, en
+een verkeerde frequentie is het einde ervan.
+
+De naam van de node typen is hetzelfde middel dat de firmwarepagina voor kritieke
+nodes gebruikt, en het staat er om dezelfde reden: de fout die het opvangt is
+geen twijfel, het is een klik op de verkeerde regel, en daar helpt een
+ja/nee-vraag niet tegen.
+
+**De bevestiging wordt op de server afgedwongen, niet alleen in de pagina.** Een
+drempel die je met een met de hand aangepast formulier kunt overslaan is een
+opmaakkeuze, geen drempel.
+
+### Het type bepaalt de invoer
+
+Een veld waarin je een ongeldige waarde *kunt* typen is een veld dat een node
+kapot kan maken, dus de invoer volgt het opgegeven type:
+
+| Type | Invoer |
+|---|---|
+| `enum` | Keuzelijst met precies de toegestane woorden (`loop.detect` → off / minimal / moderate / strict) |
+| `bool` | Keuzelijst met `on` / `off` — geen vrij veld, want MeshCore vergelijkt met `memcmp(…, "on", 2)`, zodat `onzin` daar *on* betekent |
+| `int` / `float` | Getalveld met de eigen `min` en `max` van die parameter |
+| `radio` | **Vier** getalvelden — frequentie, bandbreedte, spreading factor, coding rate — elk met een eigen bereik. Eén tekstvak waarin je `869.525 250 11 5` moet typen is precies het vak waar een typfout een verloren node van maakt |
+| `text` | Vrije tekst, alleen daar waar het ook echt vrije tekst is |
+| `text` + geheim | Wachtwoordveld, nooit voorgevuld — zie hieronder |
 
 ### Waar de lijst werkelijk staat
 
@@ -203,35 +236,48 @@ de server, want de server is aan te passen door wie de site draait, en deze lijs
 is wat er tussen een klik en de radio staat.
 
 De server houdt er **geen tweede kopie** van bij. Hij vraagt aan de node
-(`GET /api/cfg`) welke sleutels die toestaat en tussen welke grenzen, bouwt het
-formulier op uit dat antwoord, en valideert daartegen voordat er iets vertrekt.
-Dat voldoet nog steeds aan "valideer aan beide kanten" — de controle van de
-server geeft snel een fout naast het invoerveld, de controle van de node is
-degene die telt — maar er is altijd maar één lijst, zodat de twee niet uit elkaar
-kunnen groeien en een parameter gaan aanbieden die de node weigert.
+(`GET /api/cfg`) welke sleutels die toestaat, van welk type, tussen welke grenzen
+en in welke risicoklasse, bouwt het formulier op uit dat antwoord, en valideert
+daartegen voordat er iets vertrekt. Dat voldoet nog steeds aan "valideer aan
+beide kanten" — de controle van de server geeft snel een fout naast het
+invoerveld, de controle van de node is degene die telt — maar er is altijd maar
+één lijst, zodat de twee niet uit elkaar kunnen groeien en een parameter gaan
+aanbieden die de node weigert.
 
-### Categorie 2 — riskant, achter een expliciete bevestiging die het risico benoemt
+De grenzen zijn van ons, en op verschillende plekken zijn het de **enige** die er
+zijn: `lat`, `lon`, `af`, `tx`, `int.thresh`, `multi.acks` en `adc.multiplier`
+worden bij MeshCore zelf ingelezen met een kale `atof()`/`atoi()` en zonder ook
+maar enige controle. `atof("noord")` is `0.0`, dus een typfout zet de node in de
+Golf van Guinee en de CLI antwoordt `OK`. **Een node die een onzinnige waarde
+aanneemt is gevaarlijker dan een die weigert**, en standaard MeshCore is van het
+aannemende soort.
 
-`flood.max`, `flood.max.unscoped`, `repeat`, `allow.read.only`
+Elders zijn die van ons met opzet strenger: MeshCore accepteert `0` voor allebei
+de advert-intervallen, wat "stop met adverteren" betekent — daarmee wordt een
+node niet onbereikbaar, maar hij zakt er wel mee uit ieders lijst weg, en op een
+dak voelt dat hetzelfde.
 
-Deze veranderen hoe de node aan het mesh deelneemt. Ze verbreken de beheerroute
-niet uit zichzelf, maar ze kunnen het beeld van het mesh genoeg veranderen dat
-het volgende probleem lastiger te diagnosticeren wordt. `allow.read.only`
-verandert daarbij wie er mag inloggen — mogelijk ook wij.
+### Eén instelling is een geheim
 
-### Categorie 3 — nooit op afstand op een node die alleen over LoRa bereikt wordt
+`guest.password` staat gemarkeerd als geheim. Hij wordt teruggelezen en
+vergeleken zoals al het andere — dat teruglezen is de hele reden dat dit endpoint
+bestaat — maar **de gelezen waarde gaat niet mee terug**, en de pagina toont
+`(verborgen)`. Het invoerveld is een wachtwoordveld en de huidige waarde wordt
+nooit voorgevuld.
 
-`freq`, `radio` (bandbreedte / spreading factor / coding rate), `tx`, `role`,
-`region.*`, en alles wat met WiFi te maken heeft.
+Anders zou het wachtwoord dat je net zette in de HTML van de beheerpagina staan,
+in de browsergeschiedenis en in elke schermafdruk daarvan — en een wachtwoord dat
+daar geweest is, is weg. Dat is dezelfde reden waarom `bridge.secret` helemaal
+niet aangeboden wordt; het verschil is dat `guest.password` een instelling is die
+je werkelijk van afstand wilt kunnen zetten, dus die wordt afgevangen in plaats
+van geschrapt.
 
-Elk van deze kan van kracht worden en op datzelfde moment de enige weg terug
-wegnemen. Er is geen bevestiging die daarbij helpt: die bevestiging zou moeten
-reizen over de verbinding die de wijziging net kapotmaakte.
+### Eén instelling wordt pas na een herstart van kracht
 
-Ze mogen aangeboden worden op een node met **twee onafhankelijke paden** — onze
-firmware met zowel een IP-route als een mesh-route, waar het breken van de ene de
-andere overlaat — en zelfs dan achter dezelfde bevestiging als categorie 2. Op
-een `semi_managed` node worden ze helemaal niet aangeboden.
+`radio` antwoordt `OK - reboot to apply`. Het teruglezen laat dus de nieuwe
+waarden zien terwijl de radio nog op de oude draait, en of die nieuwe werken
+blijkt pas bij de herstart. Dat is precies de situatie waarin een node niet
+terugkomt, en de pagina zegt dat erbij in plaats van gewoon succes te melden.
 
 ### De endpoints
 
@@ -242,8 +288,10 @@ Allebei achter de eigen HTTP-login van de node, dezelfde die `/api/fw` en
 aanbiedt die de firmware niet heeft:
 
 ```json
-{"params":[{"key":"name","kind":"text","lo":0,"hi":0,"tier":1},
-           {"key":"lat","kind":"float","lo":-90,"hi":90,"tier":1}]}
+{"params":[{"key":"loop.detect","kind":"enum","lo":0,"hi":0,
+            "choices":"off|minimal|moderate|strict","risk":2,"reboot":0},
+           {"key":"radio","kind":"radio","lo":0,"hi":0,
+            "choices":"","risk":3,"reboot":1}]}
 ```
 
 **`POST /api/cfg`** met formuliervelden `key` en `value`:
@@ -254,7 +302,8 @@ aanbiedt die de firmware niet heeft:
 ```
 
 `step` is bij een mislukking `sleutel` (staat niet op de lijst), `waarde` (buiten
-de grenzen) of `node` (de CLI weigerde), en nooit alleen maar `error`.
+de grenzen), `bevestiging` (de bevestiging was te licht) of `node` (de CLI
+weigerde), en nooit alleen maar `error`.
 
 De sleutel wordt bij het opbouwen van het commando nooit uit het verzoek
 overgenomen — hij wordt opgezocht in de meegecompileerde tabel en de spelling van
@@ -262,8 +311,9 @@ die tabel wordt gebruikt — zodat er behalve de waarde geen enkele tekst van de
 aanroeper in het commando zit, en die waarde is altijd het laatste woord. De
 CLI-aanroep geeft ook een **sender-timestamp ongelijk aan nul** mee: `0` betekent
 in MeshCore "dit kwam van de seriële kabel" en ontgrendelt commando's die alleen
-daar thuishoren (`erase`, `get prv.key`). Dit pad heeft er geen enkele van nodig,
-dus mocht de tabel ooit een gat blijken te hebben, dan is dat gat kleiner.
+daar thuishoren (`erase`, `get prv.key` en `set freq`). Dit pad heeft er geen
+enkele van nodig, dus mocht de tabel ooit een gat blijken te hebben, dan is dat
+gat kleiner.
 
 ### Validatie gebeurt aan beide kanten, en het is niet dezelfde controle
 
@@ -274,16 +324,17 @@ dus mocht de tabel ooit een gat blijken te hebben, dan is dat gat kleiner.
   controle die het mesh werkelijk beschermt, want de server is aan te passen door
   wie de site draait, en de tabel van de firmware zit meegecompileerd.
 
+Die tweede controle telt het zwaarst voor de gevaarlijke klasse, en om een reden
+die het waard is om precies te benoemen: een frequentie buiten de band is niet
+*riskant*, die is gewoon **fout**, en geen enkel aantal bevestigingen hoort hem
+tot bij de radio te laten komen. De bevestiging gaat erover of een toegestane
+waarde gezet mag worden; de grenzen gaan erover of een waarde überhaupt
+toegestaan is. Dat zijn verschillende vragen, en ze worden op verschillende
+plaatsen beantwoord.
+
 Bij een `semi_managed` doel — het pad dat ontworpen is maar niet gebouwd — zou de
 uitzendende node de monitor zijn, met onze firmware, zodat de tabel en de
-validatie ervan gelden voordat er iets de lucht in gaat. Het doel is daar
-standaard MeshCore en valideert bijna niets: `set` parseert met `atof`/`atoi` en
-neemt wat het krijgt. **Een node die een onzinnige waarde aanneemt is gevaarlijker
-dan een die weigert**, en de standaardfirmware is van het aannemende soort.
-Precies daarom moet de weigering vóór het uitzenden gebeuren en niet aan de
-overkant.
-
----
+validatie ervan gelden voordat er iets de lucht in gaat.
 
 ## Bevestigen-of-terugdraaien: onderzocht, en met opzet niet gebouwd
 
@@ -308,9 +359,11 @@ kunnen hebben, hebben het niet nodig.**
   antwoordt nog. De node die een terugdraaitimer zou kunnen bijhouden is de node
   die al een tweede deur heeft.
 
-De moeite gaat dus naar de categorietabel, die de wijziging voorkómt in plaats
-van hem terug te draaien. Een preventie die op standaardfirmware werkt is beter
-dan een rollback die alleen werkt waar hij niet nodig is.
+De moeite gaat dus naar de risicoklassen en de grenzen, die de wijziging
+tegenhouden in plaats van hem terug te draaien. Een preventie die op
+standaardfirmware werkt is beter dan een rollback die alleen werkt waar hij niet
+nodig is. Het is ook waarom de zwaarste klasse om de naam van de node vraagt in
+plaats van te beloven dat het teruggezet wordt: dat kan hier niets beloven.
 
 ---
 
@@ -401,9 +454,9 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Niveaus als expliciet begrip in code en UI | **wordt gebouwd** — `level` / `level_why` op `commanding.describe()` |
 | Firmware-upgrade over HTTP, met checksum en rollback | **gebouwd**, zie [`firmware-upgrade.md`](firmware-upgrade.md) |
 | `ota_route()` als aparte sleutel voor wat er kan | **gebouwd** |
-| Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 1.13.0 `POST /api/cfg`, alleen categorie 1, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
+| Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 1.14.0 `POST /api/cfg`: het hele CLI-oppervlak op drie na, bediening per type, bevestiging per risicoklasse, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
 | Instellingen schrijven naar een `semi_managed` node over LoRa | **ontworpen, niet gebouwd.** Vraagt om een toestandsmachine naast de instellingenronde, en de node waarvoor het bestaat is de dakrepeater — dus het wordt eerst gebouwd tegen iets wat iemand kan aanraken |
-| Parameters uit categorie 2 (`flood.max`, `repeat`, `allow.read.only`, …) | **niet gebouwd.** Het `tier`-veld staat in de firmwaretabel, dus ze toevoegen is een tabelregel plus een bevestigingsstap, geen verbouwing |
+| Schrijven naar de wifi- en MQTT-instellingen van een node | **wordt hier niet aangeboden.** Dat zijn de onze en niet die van MeshCore, en ze hebben al hun eigen formulieren op de beheerpagina van de node zelf en in de `wifi`-CLI |
 | Bevestigen-of-terugdraaien | **onderzocht en verworpen**, met de redenering hierboven |
 | Automatisch rechten ontdekken | **verworpen**, in plaats daarvan aanwijzen-en-één-keer-proberen |
 

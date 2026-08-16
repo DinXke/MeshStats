@@ -490,7 +490,7 @@
       {% for p in params %}
       <tr>
         <td class="mono">{{ p.key }}</td>
-        <td class="mono muted">{{ cfg_now.get(p.key, "—") }}</td>
+        <td class="mono muted">{% if p.secret %}<span title="Een geheim wordt hier niet getoond">•••</span>{% else %}{{ cfg_now.get(p.key, "—") }}{% endif %}</td>
         <td>
           <form method="post" action="/admin/repeaters/{{ rep.id }}/config" class="rowform">
             <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -522,6 +522,10 @@
             <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}" required>
             {% elif p.kind == "float" %}
             <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}" required>
+            {% elif p.secret %}
+            {#- Een geheim: niet in beeld tijdens het typen, en de node stuurt de
+                gelezen waarde ook niet terug. Wel vergeleken, niet verklapt. -#}
+            <input type="password" name="value" maxlength="39" autocomplete="new-password" required>
             {% else %}
             <input name="value" maxlength="39" autocomplete="off" required>
             {% endif %}
