@@ -56,6 +56,11 @@
       "live.nomatch": "Geen pakketten die aan het filter voldoen.",
       "live.map_nomatch": "Geen nodes op de kaart die aan het filter voldoen.",
       "live.filtered": "{n} van {total} komen overeen",
+      // De kaart opent op waar het verkeer zit; wat daarbuiten valt wordt
+      // geteld in plaats van verzwegen, en de tekst is meteen de weg terug.
+      "live.outside": "{n} nodes buiten beeld · toon alles",
+      "live.outside_one": "1 node buiten beeld · toon alles",
+      "live.outside_title": "De kaart opent op de nodes die verkeer dragen, niet op elk ooit doorgegeven contact — anders bepaalt één ver contact de schaal. Niets is weggelaten: klik om alle nodes in beeld te brengen, of zoom zelf uit.",
       "live.motion": "Pakketten laten bewegen",
       "live.motion_title": "Toon elk pakket als een stipje dat van de afzender via elke hop naar de waarnemende node reist. Een stuk pad dat we niet kennen, staat gestippeld.",
       "live.motion_reduced": "Uitgeschakeld: je systeem vraagt om minder beweging. Pakketten flitsen in plaats daarvan op.",
@@ -434,6 +439,9 @@
       "live.nomatch": "No packets match the filter.",
       "live.map_nomatch": "No nodes on the map match the filter.",
       "live.filtered": "{n} of {total} match",
+      "live.outside": "{n} nodes outside the view · show all",
+      "live.outside_one": "1 node outside the view · show all",
+      "live.outside_title": "The map opens on the nodes that carry traffic, not on every contact ever advertised — otherwise one distant contact sets the scale. Nothing is left out: click to bring every node into view, or zoom out yourself.",
       "live.motion": "Animate packets",
       "live.motion_title": "Show every packet as a dot travelling from the sender via each hop to the observing node. A stretch of path we do not know is dashed.",
       "live.motion_reduced": "Off: your system asks for reduced motion. Packets flash instead.",

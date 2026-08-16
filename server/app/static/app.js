@@ -1343,8 +1343,10 @@
     // through fitBounds into the packet poll's catch it took the node markers
     // and the packet feed down with it. Nothing is ever queued if the map has a
     // view from the start. The world view lasts only until the first packet
-    // response calls fitBounds on the real nodes, and it deliberately hard
-    // codes no location of its own.
+    // response frames the map on the real mesh (openingView), and it
+    // deliberately hard codes no location of its own. Because it is a
+    // placeholder and not an answer, everything that reads the current view
+    // waits for that framing rather than acting on this -- see viewSet.
     lmap.setView([0, 0], 2);
     L.tileLayer(TILE_URL, { attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19 })
       .addTo(lmap);
@@ -2154,6 +2156,7 @@
         e.m.setStyle(want === "on" ? NODE_ON : NODE_DIM);
       });
       if (mapEmptyEl) mapEmptyEl.hidden = shown > 0;
+      updateOutside();
       return shown;
     }
 
@@ -2171,7 +2174,9 @@
     // so the route has to be framed into the strip that is left. Filtering while
     // a packet is open would only fight the framing that packet just asked for.
     function fitToMatches() {
-      if (panelOpen()) return;
+      // Nothing to compare against before the map has been framed at all; the
+      // opening view waits for a size, so this can genuinely run first.
+      if (!viewSet || panelOpen()) return;
       var view = lmap.getBounds();
       var pts = [];
       var visible = false;
@@ -2184,6 +2189,252 @@
       });
       if (!pts.length || visible) return;
       lmap.fitBounds(pts, { padding: [40, 40], maxZoom: 12 });
+    }
+
+    // --- where the map opens ---------------------------------------------------
+    // It used to open on a fitBounds over every contact the site knows. That
+    // list is fed by adverts, and an advert can be relayed across the mesh or
+    // imported through the app's Share function from anywhere at all: by August
+    // it ran from London (lon -0.33) to Berlin (lon 13.14). The opening view was
+    // therefore the North Sea, with the Belgian cluster that carries all the
+    // actual traffic as a speck -- which reads as "the map shows no nodes". And
+    // it got worse by itself: every distant contact that ever arrives widens the
+    // opening view, permanently. maxZoom cannot help, it bounds the other
+    // direction.
+    //
+    // Three things replace it, in this order of authority:
+    //   1. the view the visitor last left the map at,
+    //   2. otherwise the nodes that carry traffic, with outliers trimmed,
+    //   3. and whatever ends up outside is counted on the map, with one click
+    //      to bring it all into view.
+    //
+    // What this does *not* do is drop anything. Every located node is still a
+    // marker, still hoverable, still clickable, still reachable by zooming out.
+    // This decides where the map starts, never what it contains -- hiding the
+    // far nodes would trade one silent lie for another.
+    var VIEW_KEY = "mcs-mapview";
+    // Trim 5% off each end per axis. Deliberately a fraction and not a fixed
+    // count, so it scales with the mesh: it is what keeps this fix from wearing
+    // out the way the old fitBounds did.
+    var OUTLIER_FRAC = 0.05;
+    // A floor under the opening zoom, as a backstop and nothing more. The trim
+    // handles the ordinary case; this catches the pathological one, where there
+    // are too few positions for a distribution to exist at all -- four nodes,
+    // one of them in Berlin, is not an outlier, it is the mesh, and without a
+    // floor the map would still open on half of Europe. Roughly 500 km across,
+    // so a genuinely regional mesh is never clipped by it.
+    var MIN_OPEN_ZOOM = 7;
+    var outsideEl = document.getElementById("map-outside");
+
+    // Whether the map is on screen at a usable size at all. The "Live pakketten"
+    // block is collapsible and the choice is remembered per visitor, so a
+    // returning reader who folded it away loads this page with a map element of
+    // zero width. Leaflet answers a zero-size viewport with maxZoom out of
+    // getBoundsZoom and a degenerate rectangle out of getBounds, so every
+    // decision below would be made on nonsense -- and, now that the view is
+    // remembered, nonsense that would be stored and then restored on every later
+    // visit.
+    //
+    // Measured on the element, deliberately not through lmap.getSize(): Leaflet
+    // caches that and only recomputes it when invalidateSize() says so. Asking
+    // Leaflet therefore keeps answering 0 forever after a single zero-width
+    // read -- including inside the very observer whose job is to call
+    // invalidateSize, which deadlocks it and leaves the map permanently blank
+    // instead of merely mis-framed. Found exactly that way.
+    function mapSized() {
+      return livemapEl.clientWidth > 0 && livemapEl.clientHeight > 0;
+    }
+
+    // Whether the map has been framed on the mesh yet, as opposed to merely
+    // having the placeholder world view it is created with. The framing is
+    // allowed to wait for the element to have a size, so there is a real
+    // window in which the map shows [0,0] at zoom 2 -- and everything that
+    // reads the current view has to be able to answer "not yet" during it.
+    // Counting how many nodes fall outside a view of the whole planet would
+    // answer zero, and remembering that view would hand the next visit an
+    // opening shot of the Atlantic. Leaflet knows only whether a view exists,
+    // never whether it means anything, so this flag is ours.
+    var viewSet = false;
+
+    function storedView() {
+      try {
+        var v = JSON.parse(localStorage.getItem(VIEW_KEY) || "null");
+        // Validated rather than trusted. localStorage outlives deploys, so a
+        // value from an older format -- or one a visitor edited -- would
+        // otherwise reach Leaflet, which answers a NaN centre with a blank grey
+        // map and no error. Exactly the symptom being fixed here.
+        if (!v || typeof v.lat !== "number" || typeof v.lon !== "number" ||
+            typeof v.z !== "number") return null;
+        if (!isFinite(v.lat) || !isFinite(v.lon) || !isFinite(v.z)) return null;
+        if (Math.abs(v.lat) > 90 || Math.abs(v.lon) > 180) return null;
+        if (v.z < 1 || v.z > 19) return null;
+        return v;
+      } catch (e) { return null; }        // blocked storage, or not JSON
+    }
+
+    // Saved on every settled move, debounced. It stores programmatic framings
+    // too -- the one an opened packet's route asks for, say -- and that is
+    // meant: the promise is "the map is where you left it", and a route you
+    // went to look at is somewhere you went. The alternative, telling apart
+    // user gestures from code-driven moves, needs a flag around every fitBounds
+    // in this file and gets forgotten at the first new one.
+    var viewSaveTimer = null;
+    function saveView() {
+      if (!viewSet || !mapSized()) return;   // nothing meaningful to remember yet
+      clearTimeout(viewSaveTimer);
+      viewSaveTimer = setTimeout(function () {
+        var c = lmap.getCenter();
+        try {
+          localStorage.setItem(VIEW_KEY, JSON.stringify({
+            lat: +c.lat.toFixed(5), lon: +c.lng.toFixed(5), z: lmap.getZoom(),
+          }));
+        } catch (e) { /* blocked: the next visit simply reframes */ }
+      }, 400);
+    }
+
+    // The 5th-to-95th percentile box of a set of positions, taken per axis.
+    //
+    // Self-limiting by construction, which is why it needs no size check.
+    // Flooring the low index and ceiling the high one means it never trims more
+    // than the fraction implies: twenty points lose nothing at all, three
+    // hundred lose fifteen a side. That is the right behaviour at both ends --
+    // there is nothing to call an outlier when there is no distribution to be
+    // an outlier in.
+    //
+    // Per axis rather than by distance from a centre, because a centre is the
+    // very thing one far node moves, so a radial measure would be computed from
+    // the damage it is meant to undo. Leaflet wants a rectangle either way.
+    function quantileBox(pts, frac) {
+      function axis(index) {
+        var v = pts.map(function (p) { return p[index]; })
+                   .sort(function (a, b) { return a - b; });
+        var last = v.length - 1;
+        return [v[Math.floor(last * frac)], v[Math.ceil(last * (1 - frac))]];
+      }
+      var la = axis(0), lo = axis(1);
+      return [[la[0], lo[0]], [la[1], lo[1]]];
+    }
+
+    // The positions this mesh is demonstrably using, read off the batch of
+    // packets the first poll returns. Every point here comes from a real
+    // reception: a sender an advert named in full, an observer that heard
+    // something, or a hop that resolved to exactly one placeable node -- the
+    // same rule the drawn route follows, so the opening view never leans on a
+    // guess the map itself refuses to draw.
+    //
+    // One vote per position, not one per reception. Weighting the percentiles by
+    // how chatty a node is was tried first and is wrong twice over: the busiest
+    // node's forty copies eat the whole trim budget, so the box closes around
+    // it and the trim stops protecting anything; and "the outermost 5%" is a
+    // statement about nodes, not about packets. Measured on the live feed it
+    // was the difference between a 60 km box with 88 nodes in view and a 120 km
+    // one with 195 -- the second is both the wider picture and the better
+    // guarded one.
+    //
+    // Keyed on the rounded coordinates rather than on a node key, because the
+    // three sources name their node differently (a sender by key prefix, an
+    // observer by a longer one, a hop by an address hash) and the position is
+    // the only thing this function actually wants. Two nodes on one rooftop
+    // collapsing into one vote costs nothing here.
+    function trafficPoints(list) {
+      var seen = {}, pts = [];
+      function add(lat, lon) {
+        if (lat == null || lon == null) return;
+        var key = lat.toFixed(5) + "," + lon.toFixed(5);
+        if (seen[key]) return;
+        seen[key] = true;
+        pts.push([lat, lon]);
+      }
+      (list || []).forEach(function (p) {
+        add(p.sender_lat, p.sender_lon);
+        add(p.observer_lat, p.observer_lon);
+        (p.path || []).forEach(function (h) { add(h.lat, h.lon); });
+      });
+      return pts;
+    }
+
+    // Held until the map has a size to be framed into; see mapSized.
+    var pendingOpening = null;
+
+    function openingView(packets) {
+      if (!mapSized()) { pendingOpening = packets || []; return; }
+      // Cleared here rather than by the callers, so that whichever of them
+      // gets there first -- the observer or the poll -- frames the map once
+      // and the other finds nothing left to do. Without this the poll would
+      // re-frame every four seconds, yanking the map back from wherever the
+      // reader had just panned it.
+      pendingOpening = null;
+      var stored = storedView();
+      if (stored) {
+        lmap.setView([stored.lat, stored.lon], stored.z);
+        viewSet = true;
+        return;
+      }
+      var pts = trafficPoints(packets);
+      if (pts.length < 2) {
+        // A mesh that has been quiet, or a first poll that happened to land in
+        // a gap, has no traffic to point at. Fall back to the nodes themselves
+        // -- through the same trim, which is what stops a single imported
+        // contact from setting the scale even here.
+        pts = nodeMarkers.map(function (e) { return [e.n.lat, e.n.lon]; });
+      }
+      if (!pts.length) return;
+      lmap.fitBounds(quantileBox(pts, OUTLIER_FRAC), { padding: [40, 40], maxZoom: 12 });
+      viewSet = true;
+      // Pulled back to the floor around the same centre. The centre is the
+      // trimmed box's, so it is already outlier-proof; only the span can still
+      // be absurd, and only in the small-set case the floor exists for.
+      if (lmap.getZoom() < MIN_OPEN_ZOOM) lmap.setZoom(MIN_OPEN_ZOOM);
+    }
+
+    // What the framing left out, said out loud. A map that quietly shows part of
+    // a mesh is the same silent omission this site refuses everywhere else, and
+    // the count doubles as the answer to "where did my node go": off screen, one
+    // click away. Counted over the nodes the filter is showing rather than over
+    // all of them, so the number always matches the dots being looked for.
+    function updateOutside() {
+      if (!outsideEl) return;
+      if (!viewSet || !mapSized()) { outsideEl.hidden = true; return; }
+      var view = lmap.getBounds();
+      var n = 0;
+      nodeMarkers.forEach(function (e) {
+        if (e.style === "on" && !view.contains(e.m.getLatLng())) n++;
+      });
+      outsideEl.hidden = !n;
+      outsideEl.textContent = t(n === 1 ? "live.outside_one" : "live.outside", { n: n });
+      outsideEl.title = t("live.outside_title");
+    }
+
+    if (outsideEl) {
+      outsideEl.addEventListener("click", function () {
+        var pts = nodeMarkers.filter(function (e) { return e.style === "on"; })
+                             .map(function (e) { return e.m.getLatLng(); });
+        // maxZoom because "show everything" on a mesh of one node would
+        // otherwise drop the reader onto a rooftop.
+        if (pts.length) lmap.fitBounds(pts, { padding: [40, 40], maxZoom: 12 });
+      });
+    }
+
+    lmap.on("moveend", function () {
+      updateOutside();
+      saveView();
+    });
+
+    // Expanding a folded-away live map fires no window resize, so nothing told
+    // Leaflet the element had grown from nothing to 420 px: it kept drawing
+    // against the viewport it was built with, and the reader got a grey box with
+    // no nodes in it -- the same complaint that started all of this, by a second
+    // route. Watching the element itself catches that, and rotating a phone, and
+    // anything else that changes the box, in one place. Deliberately never
+    // disconnected: it only fires on a real size change, and the count of what
+    // is off screen has to follow the box it is counted against.
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(function () {
+        if (!mapSized()) return;
+        lmap.invalidateSize();
+        if (pendingOpening) openingView(pendingOpening);
+        updateOutside();
+      }).observe(livemapEl);
     }
 
     function updateFeedState() {
@@ -2313,7 +2564,6 @@
           // cause. They fail separately now.
           if (first && d.nodes) {
             try {
-              var bounds = [];
               d.nodes.forEach(function (n) {
                 var marker = L.circleMarker([n.lat, n.lon], NODE_ON)
                   .addTo(lmap)
@@ -2331,9 +2581,10 @@
                   openNode(entry);
                 });
                 nodeMarkers.push(entry);
-                bounds.push([n.lat, n.lon]);
               });
-              if (bounds.length) lmap.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+              // Where the map starts. Not a fitBounds over every marker just
+              // created -- see openingView for what that produced and why.
+              openingView(d.packets);
               // Still deliberately a second pass. The map is given a view the
               // moment it is created now, so a marker's SVG element does exist
               // by the time the loop adds it -- but this pass costs nothing and
@@ -2349,6 +2600,13 @@
               logFail("nodes op de kaart zetten", e);
             }
           }
+          // The opening framing waits for the map to have a size, which a
+          // folded-away section does not give it. The observer above normally
+          // delivers that the instant it unfolds; this is the second chance,
+          // so a browser that never delivers a resize still ends up with a
+          // framed map within one poll rather than never. Costs one null check
+          // on every other poll there will ever be.
+          if (pendingOpening) openingView(pendingOpening);
           lastId = d.last_id || lastId;
           // The first response is history (the newest stored packets), not
           // traffic heard while this page was open: list it, but do not set off

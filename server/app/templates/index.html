@@ -58,6 +58,14 @@
       <div class="mapwrap">
         <div id="livemap"></div>
         <p class="mapempty" id="map-empty" hidden data-i18n="live.map_nomatch">Geen nodes op de kaart die aan het filter voldoen.</p>
+        <!-- De kaart opent op waar het verkeer zit, niet op elk ooit
+             doorgegeven contact, dus een deel van het mesh valt normaal buiten
+             beeld. Dat is een kaderkeuze en die hoort als keuze zichtbaar te
+             zijn -- vandaar een telling, en een knop in plaats van een label:
+             de eerlijke manier om te zeggen "er is meer" is de weg ernaartoe
+             erbij geven. Gevuld door app.js (updateOutside), dat hem bij elke
+             verschuiving en zoom bijwerkt. -->
+        <button type="button" class="mapoutside" id="map-outside" hidden></button>
         <!-- Zonder legende is een kleurschaal niet te lezen; de stalen en de twee
              getallen eromheen worden door app.js gevuld met de werkelijke
              aantallen ritten van de laag die op dat moment getekend staat. -->
