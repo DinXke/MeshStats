@@ -31,16 +31,23 @@ narrow return paths exist, and both are worth understanding before trusting the
 sentence above.
 
 **1. The MQTT command topic.** The server publishes on `meshcore/<node>/cmd`, and
-the firmware accepts exactly two words there: `settings` (read my own CLI
-parameters now) and `status` (publish a statistics message now). It is an exact
-match against a list of two — not a prefix test, and explicitly *not* a
+the firmware accepts exactly three words there: `settings` (read my own CLI
+parameters now), `status` (publish a statistics message now) and `time <epoch>`
+(set my clock). It is an exact match against that list — not a prefix test, and
+explicitly *not* a
 fallthrough to the node's CLI, even though the node's telnet console does exactly
 that. That console sits behind a password on a link you control; this topic is
 reachable by anyone holding broker credentials, and these repeaters hang on roofs
-where one `reboot` in a loop is a lost node. Both words only make the node say
-what it would have said by itself, so the ceiling on this path is: someone who
-owns the broker can make a node publish a statistics message, at most one every
-30 seconds. Bound it further with an ACL that gives each node read permission on
+where one `reboot` in a loop is a lost node.
+
+Two of the three only make the node say what it would have said by itself. The
+third does not: `time` writes to the device. It is bounded by the firmware's own
+rules rather than by the topic — a clock may only move forward, and a node that
+already runs ahead is left alone — so the worst an attacker with broker
+credentials can do is push a node's clock into the future, which is not
+recoverable over the air and needs a reboot to undo. That is the real ceiling on
+this path, and it is higher than "make a node publish a statistics message".
+Bound it further with an ACL that gives each node read permission on
 its own `cmd` topic only, and the server write permission on `meshcore/+/cmd`
 only — see `mosquitto/acl.example`.
 

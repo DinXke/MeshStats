@@ -32,16 +32,23 @@ waar. Er bestaan twee smalle terugwegen, en beide zijn het waard te begrijpen
 voor je op de zin hierboven vertrouwt.
 
 **1. Het MQTT-commandotopic.** De server publiceert op `meshcore/<node>/cmd`, en
-de firmware aanvaardt daar precies twee woorden: `settings` (lees nu mijn eigen
-CLI-parameters) en `status` (publiceer nu een statistiekbericht). Het is een
-exacte vergelijking met een lijst van twee — geen prefixtest, en uitdrukkelijk
+de firmware aanvaardt daar precies drie woorden: `settings` (lees nu mijn eigen
+CLI-parameters), `status` (publiceer nu een statistiekbericht) en `time <epoch>`
+(zet mijn klok). Het is een
+exacte vergelijking met die lijst — geen prefixtest, en uitdrukkelijk
 *geen* doorval naar de CLI van de node, ook al doet de telnetconsole van de node
 precies dat. Die console zit achter een wachtwoord op een verbinding die jij
 beheert; dit topic is bereikbaar voor iedereen met brokerinloggegevens, en deze
 repeaters hangen op daken waar één `reboot` in een lus een verloren node is.
-Beide woorden laten de node alleen zeggen wat hij uit zichzelf ook gezegd zou
-hebben, dus het plafond van deze weg is: wie de broker bezit, kan een node een
-statistiekbericht laten publiceren, hoogstens één per 30 seconden. Begrens het
+
+Twee van de drie laten de node alleen zeggen wat hij uit zichzelf ook gezegd zou
+hebben. De derde niet: `time` schrijft op het apparaat. Wat hem begrenst zijn de
+regels van de firmware zelf en niet het topic — een klok mag alleen vooruit, en
+een node die al voorloopt wordt met rust gelaten — dus het ergste dat iemand met
+brokerinloggegevens kan doen is de klok van een node de toekomst in duwen. Dat is
+over de lucht niet terug te draaien en vergt een herstart om te herstellen. Dát
+is het werkelijke plafond van deze weg, en het ligt hoger dan "een node een
+statistiekbericht laten publiceren". Begrens het
 verder met een ACL die elke node enkel leesrecht geeft op zijn eigen
 `cmd`-topic, en de server enkel schrijfrecht op `meshcore/+/cmd` — zie
 `mosquitto/acl.example`.
