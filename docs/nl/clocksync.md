@@ -159,8 +159,8 @@ stilletjes weg te laten:
 | `no_source` | Publiceert helemaal niet over MQTT |
 | `http_source` | Komt binnen via de HTTP-API, niet over MQTT |
 | `relay_unknown` | De doorstuurder is hier zelf geen bekende repeater |
-| `no_fw` | MeshStats-versie onbekend |
-| `old_fw` | Vraagt MeshStats `MIN_TIME_VERSION` (1.10.0) of nieuwer |
+| `no_fw` | Moduleversie onbekend |
+| `old_fw` | Vraagt nodefirmware `MIN_TIME_VERSION` (1.10.0) of nieuwer |
 | `stale` | Al langer dan `NODE_STALE_SECS` (6 u) niets van die node gehoord |
 | `broker_down` | De site hangt op dit ogenblik niet aan de broker |
 
@@ -245,7 +245,7 @@ ervan kan de gebruiker zelf verhelpen:
 
 | `outcome` | Betekenis |
 |---|---|
-| `disabled` | `MCS_CLOCKSYNC_ENABLED=0` |
+| `disabled` | `MM_CLOCKSYNC_ENABLED=0` |
 | `no_route` | Geen weg naar deze repeater; `blocker` en `reason` zeggen welke |
 | `no_clock` | Deze machine zakte voor haar eigen klokcontrole; `reason` is de formulering van de controle zelf |
 | `too_soon` | Binnen `MANUAL_MIN_GAP_S`; `wait_min` zegt hoe lang |
@@ -322,13 +322,13 @@ dagelijkse ronde nog draait.
 ## Het bericht op de draad
 
 `mqtt_ingest.publish_command(node, "time", epoch=...)` publiceert
-`time <epoch>` op `meshcore/<node>/cmd`: UNIX-seconden in UTC, wat MeshCore's
+`time <epoch>` op het `cmd`-topic van die node: UNIX-seconden in UTC, wat MeshCore's
 eigen CLI parseert in de `time `-tak van `CommonCLI::handleCommand` (`_atoi` van
 de rest van de regel, rechtstreeks naar `setCurrentTime`).
 
 De epoch is aan beide kanten begrensd, met `MIN_EPOCH` (2025-01-01) en
 `MAX_EPOCH` (2100-01-01), dezelfde grenzen als
-`CLOCK_MIN_EPOCH`/`CLOCK_MAX_EPOCH` in `MeshStatsNet.cpp`. Aan beide kanten
+`CLOCK_MIN_EPOCH`/`CLOCK_MAX_EPOCH` in `MeshManagerNet.cpp`. Aan beide kanten
 controleren is geen dubbel werk maar de goedkoopste plaats van de twee: een node
 zet zijn klok alleen **vooruit**, dus een tijd die te ver in de toekomst ligt is
 aan de overkant niet meer terug te draaien zonder er met een kabel bij te gaan
@@ -347,10 +347,10 @@ Er wordt niets bewaard en QoS is 0 — zie
 
 | Variabele | Standaard | Betekenis |
 |---|---|---|
-| `MCS_CLOCKSYNC_ENABLED` | `1` | `0`, `false`, `no`, `nee`, `off` of leeg zet het uit |
-| `MCS_CLOCKSYNC_HOURS` | `24` | Uren tussen twee rondes, minimaal 1 |
-| `MCS_CLOCKSYNC_MAX_ERROR_S` | `10` | Onzekerheid van de kernel die nog geloofd wordt |
-| `MCS_CLOCKSYNC_MAX_JUMP_S` | `30` | Wandklok tegenover monotone klok, en de marge voor achteruitlopen |
+| `MM_CLOCKSYNC_ENABLED` | `1` | `0`, `false`, `no`, `nee`, `off` of leeg zet het uit |
+| `MM_CLOCKSYNC_HOURS` | `24` | Uren tussen twee rondes, minimaal 1 |
+| `MM_CLOCKSYNC_MAX_ERROR_S` | `10` | Onzekerheid van de kernel die nog geloofd wordt |
+| `MM_CLOCKSYNC_MAX_JUMP_S` | `30` | Wandklok tegenover monotone klok, en de marge voor achteruitlopen |
 
 Uit zetten is een geldige keuze: wie zijn nodes met de hand bijzet, of wie deze
 server niet genoeg vertrouwt om er een mesh op te ijken, hoort dat te kunnen

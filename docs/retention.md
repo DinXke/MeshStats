@@ -266,11 +266,11 @@ beats quietly throwing away the history everybody is looking at.
 
 | Variable | Default | Setting key | Meaning |
 |---|---|---|---|
-| `MCS_RETENTION_DAYS` | 180 | `retention_days` | Sample retention |
-| `MCS_PACKET_RETENTION_DAYS` | 7 | `packet_retention_days` | Packet retention, and the heat map's window |
-| `MCS_PACKET_MAX_ROWS` | 200000 | `packet_max_rows` | FIFO ceiling on rows |
-| `MCS_DB_MAX_MB` | 512 | `db_max_mb` | FIFO ceiling on the file, WAL included |
-| `MCS_PRUNE_MINUTES` | 60 | *(none)* | Minutes between passes; read at import |
+| `MM_RETENTION_DAYS` | 180 | `retention_days` | Sample retention |
+| `MM_PACKET_RETENTION_DAYS` | 7 | `packet_retention_days` | Packet retention, and the heat map's window |
+| `MM_PACKET_MAX_ROWS` | 200000 | `packet_max_rows` | FIFO ceiling on rows |
+| `MM_DB_MAX_MB` | 512 | `db_max_mb` | FIFO ceiling on the file, WAL included |
+| `MM_PRUNE_MINUTES` | 60 | *(none)* | Minutes between passes; read at import |
 
 Each of the first four is only the **default for a fresh install**; the stored
 setting wins.

@@ -33,17 +33,18 @@ bestaande tabel vraagt de expliciete controle in `db._migrate()`: lees
 weggooien is hier geen optie.
 
 `COLUMN_MIGRATIONS` is een lijst van `(tabel, kolom, declaratie)` en is
-**uitsluitend aanvullend**. Er wordt niets hernoemd, van type veranderd of
-verwijderd; een kolom die verkeerd bleek, wordt vervangen door een nieuwe in
-plaats van gewijzigd. Zo blijft de lijst afspeelbaar vanaf elke ouderdom van
-databank, op volgorde, zonder versienummer om bij te houden.
+**uitsluitend aanvullend**. Er wordt niets van type veranderd of verwijderd;
+een kolom die verkeerd bleek, wordt vervangen door een nieuwe in plaats van
+gewijzigd. Zo blijft de lijst afspeelbaar vanaf elke ouderdom van databank, op
+volgorde, zonder versienummer om bij te houden.
 
 | Tabel | Kolom | Type | Toegevoegd voor |
 |---|---|---|---|
 | `repeaters` | `source_prefix` | TEXT | Welke node deze statistieken publiceerde |
 | `repeaters` | `source_seen` | TEXT | Wanneer die dat het laatst deed |
 | `repeaters` | `fw` | TEXT | MeshCore-versie van het laatste bericht |
-| `repeaters` | `fw_meshstats` | TEXT | MeshStats-moduleversie van het laatste bericht |
+| `repeaters` | `fw_meshmanager` | TEXT | De versie van onze eigen module op die node |
+| `repeaters` | `topic_prefix` | TEXT | Op welk MQTT-topicvoorvoegsel deze node zich meldt |
 | `packets` | `path` | TEXT | Hophashes, komma-gescheiden |
 | `packets` | `raw` | TEXT | Het frame zoals het van de radio kwam, hex |
 | `contacts` | `country` | TEXT | ISO 3166-1 alpha-2, of NULL |
@@ -52,11 +53,31 @@ databank, op volgorde, zonder versienummer om bij te houden.
 | `packets` | `src_hash` | TEXT | Afzenderhash van 1 byte, twee hextekens |
 | `packets` | `dest_hash` | TEXT | Bestemmingshash van 1 byte, twee hextekens |
 
-`fw` en `fw_meshstats` worden bewaard en niet alleen getoond, want ze bepalen of
-de site een node überhaupt iets mag vragen: opdrachten aannemen op het
-MQTT-`cmd`-topic begint bij MeshStats 1.8.0, en een knop die op iets ouders in
-het niets publiceert is precies de oneerlijkheid waarvoor die kolommen bestaan.
-Zie [`commanding.md`](commanding.md).
+`fw` en `fw_meshmanager` worden bewaard en niet alleen getoond, want ze bepalen
+of de site een node überhaupt iets mag vragen: opdrachten aannemen op het
+MQTT-`cmd`-topic begint bij nodefirmware 1.8.0, en een knop die op iets ouders
+in het niets publiceert is precies de oneerlijkheid waarvoor die kolommen
+bestaan. Zie [`commanding.md`](commanding.md).
+
+### De ene hernoeming
+
+`COLUMN_RENAMES` is de uitzondering op "uitsluitend aanvullend", en er staat
+precies één regel in: `repeaters.fw_meshstats` werd `fw_meshmanager`, met een
+echte `ALTER TABLE ... RENAME COLUMN`. Hernoemen en niet twee kolommen met
+dezelfde betekenis naast elkaar laten bestaan, want die worden vroeg of laat
+allebei half gevuld — en het kan *hier* veilig omdat deze kolom bij **elk**
+statistiekbericht opnieuw geschreven wordt (`record_firmware()`). Zelfs wie na
+deze migratie terugrolt naar de vorige versie van de site, krijgt de oude kolom
+weer aangemaakt en bij de eerstvolgende publicatie van elke node weer gevuld.
+Voor een kolom met geschiedenis erin zou het niet mogen.
+
+`_migrate()` hernoemt **vóór** het toevoegt. Andersom maakt de aanvullende ronde
+eerst een lege `fw_meshmanager` aan, stuit de hernoeming dan op een naam die al
+bestaat, en blijven de oude waarden liggen.
+
+De payloadsleutel wordt in beide spellingen aanvaard
+(`db.payload_module_version()`), om dezelfde reden als de omgevingsvariabelen:
+de server en de nodes gaan nooit op dezelfde dag om.
 
 ## `packets.raw` is de grondwaarheid
 
@@ -111,7 +132,7 @@ De gevolgde repeaters — die met een pagina op `/r/<slug>`.
 | `source_prefix` | TEXT | Sleutel van de node die de laatste statistieken publiceerde, of letterlijk `api` voor de HTTP-weg |
 | `source_seen` | TEXT | Wanneer die node het laatst publiceerde |
 | `fw` | TEXT | MeshCore-firmwareversie |
-| `fw_meshstats` | TEXT | MeshStats-moduleversie |
+| `fw_meshmanager` | TEXT | De versie van onze eigen firmwaremodule |
 
 **Sleutels vergelijken is geen stringgelijkheid.** Bronnen zijn het oneens over
 hoeveel van de sleutel ze sturen — Home Assistant 5 bytes, de eigen firmware van
@@ -129,7 +150,7 @@ vragen "zijn deze twee sleutels dezelfde node?" in plaats van "geef me een rij".
 **`record_source()` en `record_firmware()`** zijn met opzet aparte schrijfacties.
 `record_firmware()` overschrijft alleen wat het bericht werkelijk noemde: Home
 Assistant leest de MeshCore-versie van een repeater van het mesh af en weet niet
-of de MeshStats-module erop staat, dus het mag de andere niet kunnen wissen door
+of onze eigen module erop staat, dus het mag de andere niet kunnen wissen door
 erover te zwijgen.
 
 ### `latest`

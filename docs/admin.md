@@ -137,7 +137,7 @@ attacker.
 ### Which address gets counted
 
 `ratelimit.client_ip()` reads `X-Forwarded-For` itself and counts
-`MCS_TRUSTED_PROXY_HOPS` entries **in from the right**. `request.client.host`
+`MM_TRUSTED_PROXY_HOPS` entries **in from the right**. `request.client.host`
 cannot be used: uvicorn runs with `--forwarded-allow-ips "*"` and then takes the
 *first* entry, which any client can write itself. Proxies append the address they
 saw, so entries are trustworthy from the right, and only as far back as there are

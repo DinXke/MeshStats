@@ -24,7 +24,7 @@ is.
 onbekend of ingetrokken token, zodat een client "je stuurde niets" kan
 onderscheiden van "wat je stuurde deugt niet".
 
-Elke methode en route wordt bovendien begrensd op `MCS_MAX_BODY_BYTES` (2 MB)
+Elke methode en route wordt bovendien begrensd op `MM_MAX_BODY_BYTES` (2 MB)
 door `limits.BodySizeLimitMiddleware`, geteld tijdens het lezen.
 
 ## Ingest-endpoints
@@ -45,7 +45,7 @@ draagt.
 ```json
 {
   "repeater": {"pubkey_prefix": "e3d3f4d7ed", "name": "BE-XXX-Example.VIR",
-               "fw": "v1.7.2", "fw_meshstats": "1.10.0"},
+               "fw": "v1.7.2", "fw_meshmanager": "1.10.0"},
   "ts": "2026-08-15T12:00:00Z",
   "metrics": {"bat": 4.15, "online": true, "uptime": 3.5},
   "neighbors": [{"prefix": "2ae7af", "name": "…", "snr": -4.25, "seen_min": 12}],
@@ -57,7 +57,7 @@ draagt.
 |---|---|---|
 | `repeater.pubkey_prefix` | ja | 422 zonder |
 | `repeater.name` | nee | Overgenomen als hij van de bewaarde naam verschilt |
-| `repeater.fw`, `repeater.fw_meshstats` | nee | Alleen wat aanwezig is, wordt geschreven |
+| `repeater.fw`, `repeater.fw_meshmanager` | nee | Alleen wat aanwezig is, wordt geschreven |
 | `ts` | nee | Servertijd als het ontbreekt |
 | `metrics` | ja | Moet een object zijn; anders 422 |
 | `neighbors` | nee | `seen_min` wordt omgerekend naar een absoluut tijdstip |

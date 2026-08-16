@@ -140,7 +140,7 @@ aanvaller.
 ### Welk adres geteld wordt
 
 `ratelimit.client_ip()` leest `X-Forwarded-For` zelf en telt
-`MCS_TRUSTED_PROXY_HOPS` vermeldingen **van rechts naar binnen**.
+`MM_TRUSTED_PROXY_HOPS` vermeldingen **van rechts naar binnen**.
 `request.client.host` kan niet gebruikt worden: uvicorn draait met
 `--forwarded-allow-ips "*"` en neemt dan de *eerste* vermelding, die elke client
 er zelf in kan zetten. Proxy's voegen het adres toe dat ze zagen, dus

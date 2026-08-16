@@ -31,9 +31,9 @@ needs the explicit check in `db._migrate()`: read `PRAGMA table_info(<table>)`
 and add what is missing. Dropping a live database is not an option here.
 
 `COLUMN_MIGRATIONS` is a list of `(table, column, declaration)` and is
-**additive only**. Nothing in it renames, retypes or removes; a column that
-turned out wrong is superseded by a new one rather than altered. That keeps the
-list replayable from any age of database, in order, with no version number to
+**additive only**. Nothing in it retypes or removes; a column that turned out
+wrong is superseded by a new one rather than altered. That keeps the list
+replayable from any age of database, in order, with no version number to
 track.
 
 | Table | Column | Type | Added for |
@@ -41,7 +41,8 @@ track.
 | `repeaters` | `source_prefix` | TEXT | Which node published these statistics |
 | `repeaters` | `source_seen` | TEXT | When it last did |
 | `repeaters` | `fw` | TEXT | MeshCore version of the last message |
-| `repeaters` | `fw_meshstats` | TEXT | MeshStats module version of the last message |
+| `repeaters` | `fw_meshmanager` | TEXT | Our own module's version on that node |
+| `repeaters` | `topic_prefix` | TEXT | Which MQTT topic prefix this node reports on |
 | `packets` | `path` | TEXT | Hop hashes, comma-separated |
 | `packets` | `raw` | TEXT | The frame as it came off the radio, hex |
 | `contacts` | `country` | TEXT | ISO 3166-1 alpha-2, or NULL |
@@ -50,11 +51,31 @@ track.
 | `packets` | `src_hash` | TEXT | 1-byte source hash, two hex characters |
 | `packets` | `dest_hash` | TEXT | 1-byte destination hash, two hex characters |
 
-`fw` and `fw_meshstats` are stored rather than merely shown, because they decide
-whether the site may ask a node anything at all: accepting commands on the MQTT
-`cmd` topic starts at MeshStats 1.8.0, and a button that publishes into the void
-on anything older is precisely the dishonesty those columns exist to prevent.
-See [`commanding.md`](commanding.md).
+`fw` and `fw_meshmanager` are stored rather than merely shown, because they
+decide whether the site may ask a node anything at all: accepting commands on
+the MQTT `cmd` topic starts at node firmware 1.8.0, and a button that publishes
+into the void on anything older is precisely the dishonesty those columns exist
+to prevent. See [`commanding.md`](commanding.md).
+
+### The one rename
+
+`COLUMN_RENAMES` is the exception to "additive only", and it holds exactly one
+entry: `repeaters.fw_meshstats` became `fw_meshmanager` with a real
+`ALTER TABLE ... RENAME COLUMN`. Renaming rather than letting two columns
+meaning the same thing coexist, because two such columns end up half-filled
+each — and it is safe *here* specifically because this column is rewritten on
+**every** statistics message (`record_firmware()`). Even somebody who rolls back
+to the previous version of the site after this migration gets the old column
+recreated and refilled on the next publication from every node. For a column
+holding history it would not be allowed.
+
+`_migrate()` renames **before** it adds. The other way round, the additive pass
+would create an empty `fw_meshmanager` first, the rename would then hit a name
+that already exists, and the old values would be left behind.
+
+The payload key is accepted in both spellings (`db.payload_module_version()`), for
+the same reason the environment variables are: the server and the nodes never
+change name on the same day.
 
 ## `packets.raw` is the ground truth
 
@@ -107,7 +128,7 @@ The tracked repeaters — the ones with a page at `/r/<slug>`.
 | `source_prefix` | TEXT | Key of the node that published the last statistics, or the literal `api` for the HTTP path |
 | `source_seen` | TEXT | When that node last published |
 | `fw` | TEXT | MeshCore firmware version |
-| `fw_meshstats` | TEXT | MeshStats module version |
+| `fw_meshmanager` | TEXT | Our own firmware module's version |
 
 **Prefix matching is not string equality.** Sources disagree on how much of the
 key they send — Home Assistant 5 bytes, a node's own firmware 6 — and matching on
@@ -124,7 +145,7 @@ ask "are these two keys the same node?" rather than "give me a row".
 **`record_source()` and `record_firmware()`** are separate writes on purpose.
 `record_firmware()` only overwrites what the message actually named: Home
 Assistant reads a repeater's MeshCore version off the mesh and has no idea
-whether the MeshStats module is on it, so it must not be able to erase the other
+whether our own module is on it, so it must not be able to erase the other
 by staying silent about it.
 
 ### `latest`

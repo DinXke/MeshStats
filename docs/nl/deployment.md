@@ -54,7 +54,7 @@ Alles wat de server nodig heeft staat in `/data`:
 
 | Pad | Wat |
 |---|---|
-| `/data/mcs.sqlite3` | De databank (plus WAL-bestanden) |
+| `/data/meshmanager.sqlite3` | De databank (plus WAL-bestanden). Een bestaand `mcs.sqlite3` wordt gebruikt **waar het staat** en nooit hernoemd — hernoemen is eenrichtingsverkeer, en wie terugrolt naar de vorige versie zou geen databank meer vinden en een lege site zien |
 | `/data/secret.key` | 32 willekeurige bytes, aangemaakt bij de eerste start, `chmod 0600` |
 
 Maak van beide een back-up. **`secret.key` kwijtraken maakt elke sessiecookie en
@@ -88,7 +88,7 @@ Het wachtwoord van de eerste start gaat naar het journal:
 journalctl -u mc-repeater-stats | grep -i wachtwoord
 ```
 
-> **De systemd-unit zet geen `MCS_MQTT_*`-variabelen, dus MQTT-ingest staat uit
+> **De systemd-unit zet geen `MM_MQTT_*`-variabelen, dus MQTT-ingest staat uit
 > in deze installatie.** Voeg ze toe met een drop-in en breng je eigen broker
 > mee:
 >
@@ -97,9 +97,9 @@ journalctl -u mc-repeater-stats | grep -i wachtwoord
 > ```
 > ```ini
 > [Service]
-> Environment=MCS_MQTT_HOST=127.0.0.1
-> Environment=MCS_MQTT_USER=meshstats
-> Environment=MCS_MQTT_PASS=...
+> Environment=MM_MQTT_HOST=127.0.0.1
+> Environment=MM_MQTT_USER=meshstats
+> Environment=MM_MQTT_PASS=...
 > ```
 >
 > Gebruik liever een `EnvironmentFile=` met modus `0600` dan `Environment=`-regels,
@@ -111,34 +111,59 @@ toevoegde, wordt verwijderd.
 
 ## Omgevingsvariabelen
 
+Elke variabele heet `MM_<NAAM>`. De oude schrijfwijze `MCS_<NAAM>` wordt **nog
+steeds gelezen** als terugval (`config.env()`), zodat een bestaande `.env` de
+hernoeming gewoon overleeft: wie zijn installatie draaiend heeft, hoort niet
+eerst een configuratiebestand te moeten herschrijven voor de site weer opstart.
+Staan ze allebei, dan wint de nieuwe naam, en een variabele die met opzet leeg
+gezet is telt als antwoord en niet als stilte — `MM_TSDB_URL=` betekent "geen
+tijdreeksdatabank", en de oude naam mag dat niet stilletjes overrulen.
+
+`MM_` en niet `MESHMANAGER_` omdat het oude voorvoegsel ook een initialenreeks
+was (MCS = MeshCore Stats), en een voorvoegsel van elf tekens de regels in
+`.env` over de tachtig kolommen duwt waar de rest van dit project zich aan
+houdt.
+
+De terugval mag weg zodra elke installatie die deze repository gebruikt minstens
+één keer met de nieuwe namen herstart is — praktisch: laat hem staan tot de
+volgende hoofdversie.
+
 ### Toepassing
 
 | Variabele | Standaard | Betekenis |
 |---|---|---|
-| `MCS_DATA_DIR` | `server/data` | Waar de databank en de geheime sleutel staan. Docker zet `/data`; systemd zet `/var/lib/mc-repeater-stats`. |
-| `MCS_SITE_NAME` | `MeshCore Repeater Stats` | Titel in de kop |
-| `MCS_RETENTION_DAYS` | `180` | Bewaartermijn voor metingen. Wordt overruled door de instelling in de databank als je hem in `/admin` wijzigt. |
-| `MCS_HEARTBEAT_MIN` | `5` | Minuten; forceert een grafiekpunt ook als de waarde niet veranderde. Ook aanpasbaar in `/admin`. |
-| `MCS_PACKET_RETENTION_DAYS` | `7` | Bewaartermijn voor ruwe pakketten; die komen veel sneller binnen dan metingen. Aanpasbaar in `/admin`, en het is meteen het venster van de heatmap. |
-| `MCS_PACKET_MAX_ROWS` | `200000` | FIFO-bovengrens op de pakkettentabel: erboven gaan de oudste pakketten, wat de bewaartermijn ook zegt. Aanpasbaar in `/admin`. |
-| `MCS_DB_MAX_MB` | `512` | FIFO-bovengrens op het databankbestand, WAL inbegrepen. Erboven gaan er nog meer van de oudste pakketten. Aanpasbaar in `/admin`. |
-| `MCS_PRUNE_MINUTES` | `60` | Minuten tussen twee opruimrondes. Er wordt ook bij het opstarten gesnoeid, maar een server die maanden draait moet er tussenin snoeien. |
-| `MCS_MAX_BODY_BYTES` | `2000000` | Grootste request-body die aanvaard wordt, op elke route en methode. Afgedwongen tijdens het lezen, dus een chunked request kan er niet omheen. |
-| `MCS_TRUSTED_PROXY_HOPS` | `1` | Hoeveel proxy's er vóór de app staan. De inlogbegrenzing telt zoveel `X-Forwarded-For`-vermeldingen van rechts naar binnen om het clientadres te vinden. Alleen verhogen als je er echt een hop bij zet — zie [`security.md`](../security.md#which-address-gets-counted). |
+| `MM_DATA_DIR` | `server/data` | Waar de databank en de geheime sleutel staan. Docker zet `/data`; systemd zet `/var/lib/mc-repeater-stats`. |
+| `MM_MQTT_PREFIX` | `meshmanager` | Het MQTT-topicvoorvoegsel dat deze installatie bezit. Er wordt daarnaast naar het oude `meshcore` geluisterd, zolang er nog niet-geflashte nodes onder publiceren. |
+| `MM_SITE_NAME` | `MeshCore Repeater Stats` | Titel in de kop |
+| `MM_RETENTION_DAYS` | `180` | Bewaartermijn voor metingen. Wordt overruled door de instelling in de databank als je hem in `/admin` wijzigt. |
+| `MM_HEARTBEAT_MIN` | `5` | Minuten; forceert een grafiekpunt ook als de waarde niet veranderde. Ook aanpasbaar in `/admin`. |
+| `MM_PACKET_RETENTION_DAYS` | `7` | Bewaartermijn voor ruwe pakketten; die komen veel sneller binnen dan metingen. Aanpasbaar in `/admin`, en het is meteen het venster van de heatmap. |
+| `MM_PACKET_MAX_ROWS` | `200000` | FIFO-bovengrens op de pakkettentabel: erboven gaan de oudste pakketten, wat de bewaartermijn ook zegt. Aanpasbaar in `/admin`. |
+| `MM_DB_MAX_MB` | `512` | FIFO-bovengrens op het databankbestand, WAL inbegrepen. Erboven gaan er nog meer van de oudste pakketten. Aanpasbaar in `/admin`. |
+| `MM_PRUNE_MINUTES` | `60` | Minuten tussen twee opruimrondes. Er wordt ook bij het opstarten gesnoeid, maar een server die maanden draait moet er tussenin snoeien. |
+| `MM_MAX_BODY_BYTES` | `2000000` | Grootste request-body die aanvaard wordt, op elke route en methode. Afgedwongen tijdens het lezen, dus een chunked request kan er niet omheen. |
+| `MM_TRUSTED_PROXY_HOPS` | `1` | Hoeveel proxy's er vóór de app staan. De inlogbegrenzing telt zoveel `X-Forwarded-For`-vermeldingen van rechts naar binnen om het clientadres te vinden. Alleen verhogen als je er echt een hop bij zet — zie [`security.md`](../security.md#which-address-gets-counted). |
 
 ### MQTT
 
 | Variabele | Standaard (code) | Standaard (compose) |
 |---|---|---|
-| `MCS_MQTT_HOST` | *(leeg — MQTT uit)* | `mosquitto` |
-| `MCS_MQTT_PORT` | `1883` | `1883` |
-| `MCS_MQTT_USER` | *(leeg)* | `meshstats` |
-| `MCS_MQTT_PASS` | *(leeg)* | uit `.env` |
-| `MCS_MQTT_TOPIC` | `meshcore/+/stats` | idem |
-| `MCS_MQTT_RX_TOPIC` | `meshcore/+/rx` | idem |
-| `MCS_MQTT_CMD_TOPIC` | `meshcore/{node}/cmd` | idem |
+| `MM_MQTT_HOST` | *(leeg — MQTT uit)* | `mosquitto` |
+| `MM_MQTT_PORT` | `1883` | `1883` |
+| `MM_MQTT_USER` | *(leeg)* | `meshstats` |
+| `MM_MQTT_PASS` | *(leeg)* | uit `.env` |
+| `MM_MQTT_TOPIC` | *(leeg — `<voorvoegsel>/+/stats` voor elk voorvoegsel)* | idem |
+| `MM_MQTT_RX_TOPIC` | *(leeg — `<voorvoegsel>/+/rx` voor elk voorvoegsel)* | idem |
+| `MM_MQTT_CMD_TOPIC` | `{prefix}/{node}/cmd` | idem |
 
-`MCS_MQTT_CMD_TOPIC` is het enige topic waarop de site zelf publiceert. Het
+De site schrijft zich in op `meshmanager/+/stats` en `meshmanager/+/rx`, en op
+diezelfde twee patronen onder het oude voorvoegsel `meshcore`. Een patroon in
+`MM_MQTT_TOPIC` of `MM_MQTT_RX_TOPIC` komt daar **bovenop** in plaats van in de
+plaats — dat is de manier om op een gedeelde broker onder een eigen tak te
+draaien, en de standaardwaarden stilzwijgend laten vallen zou een installatie
+doof maken die net bijgewerkt heeft.
+
+`MM_MQTT_CMD_TOPIC` is het enige topic waarop de site zelf publiceert. Het
 draagt precies drie woorden — `settings`, `status` en `time <epoch>` — die een
 node vragen nu zijn CLI-instellingen te lezen, nu een statusbericht te sturen, of
 zijn klok te zetten. Het vraagt een broker-ACL die elke node zijn eigen
@@ -148,7 +173,7 @@ meldt niets dat ergens. Zie
 [`commanding.md`](commanding.md).
 
 De standaardwaarden in de code en die in compose verschillen. Draai je de
-container buiten compose, zet dan `MCS_MQTT_HOST` expliciet, anders blijft de
+container buiten compose, zet dan `MM_MQTT_HOST` expliciet, anders blijft de
 ingest uit.
 
 Details in [`mqtt.md`](../mqtt.md).
@@ -162,12 +187,12 @@ iets vertrekt, staan in [`clocksync.md`](clocksync.md#configuratie).
 
 | Variabele | Standaard | Betekenis |
 |---|---|---|
-| `MCS_CLOCKSYNC_ENABLED` | `1` | `0`, `false`, `no`, `nee`, `off` of leeg zet het uit |
-| `MCS_CLOCKSYNC_HOURS` | `24` | Uren tussen twee rondes, minimaal 1 |
-| `MCS_CLOCKSYNC_MAX_ERROR_S` | `10` | Hoeveel onzekerheid de kernel over zijn eigen klok mag hebben en toch geloofd worden |
-| `MCS_CLOCKSYNC_MAX_JUMP_S` | `30` | Hoever de wandklok tegenover de monotone klok mag verschuiven voor het een sprong heet |
+| `MM_CLOCKSYNC_ENABLED` | `1` | `0`, `false`, `no`, `nee`, `off` of leeg zet het uit |
+| `MM_CLOCKSYNC_HOURS` | `24` | Uren tussen twee rondes, minimaal 1 |
+| `MM_CLOCKSYNC_MAX_ERROR_S` | `10` | Hoeveel onzekerheid de kernel over zijn eigen klok mag hebben en toch geloofd worden |
+| `MM_CLOCKSYNC_MAX_JUMP_S` | `30` | Hoever de wandklok tegenover de monotone klok mag verschuiven voor het een sprong heet |
 
-Vereist MeshStats-firmware 1.10.0 op de node. In een LXC leest de klokcontrole
+Vereist nodefirmware 1.10.0 (de module die deze repository meelevert). In een LXC leest de klokcontrole
 de discipline van de **host**-kernel, dus de juistheid van elke klok in het mesh
 hangt uiteindelijk aan de NTP-instelling van die host.
 
@@ -175,11 +200,11 @@ hangt uiteindelijk aan de NTP-instelling van die host.
 
 | Variabele | Standaard (code) | Standaard (compose) | Betekenis |
 |---|---|---|---|
-| `MCS_TSDB_URL` | *(leeg — alles blijft in SQLite)* | `http://victoria:8428` | Basis-URL van VictoriaMetrics |
-| `MCS_TSDB_RETENTION` | — | `180d` | Alleen compose; gaat als `-retentionPeriod` naar de container |
+| `MM_TSDB_URL` | *(leeg — alles blijft in SQLite)* | `http://victoria:8428` | Basis-URL van VictoriaMetrics |
+| `MM_TSDB_RETENTION` | — | `180d` | Alleen compose; gaat als `-retentionPeriod` naar de container |
 
 Dezelfde valkuil als bij MQTT: **leeg is een ondersteunde configuratie**, geen
-kapotte. Draai de container buiten compose zonder `MCS_TSDB_URL` en de site houdt
+kapotte. Draai de container buiten compose zonder `MM_TSDB_URL` en de site houdt
 elke meting in SQLite precies zoals vroeger — uitgedund door de hartslagregel,
 maar werkend.
 
@@ -263,7 +288,7 @@ lijst, of een snelheidsbegrenzing op de proxy. De rest van de site en
 `/api/v1/*` mogen open blijven.
 
 De begrenzing moet weten welk adres van de client is. Zet
-`MCS_TRUSTED_PROXY_HOPS` op het aantal proxy's dat je werkelijk vóór de app zet
+`MM_TRUSTED_PROXY_HOPS` op het aantal proxy's dat je werkelijk vóór de app zet
 (standaard `1`); de redenering staat in
 [`security.md`](../security.md#which-address-gets-counted).
 
@@ -337,7 +362,7 @@ om te herbouwen, dus daar is de timer niet van toepassing.
 
 ```bash
 docker compose exec meshstats \
-  sqlite3 /data/mcs.sqlite3 ".backup '/data/backup.sqlite3'"
+  sqlite3 /data/meshmanager.sqlite3 ".backup '/data/backup.sqlite3'"
 docker compose cp meshstats:/data/backup.sqlite3 ./backup.sqlite3
 docker compose cp meshstats:/data/secret.key ./secret.key
 ```
@@ -370,7 +395,7 @@ inbegrepen. Achtergrond en redenering staan in
 
 **Bekijk de toestand** in `/admin` → *Metingen (tijdreeksen)*: bereikbaar ja/nee,
 geschreven punten, wachtrijdiepte, hoeveel er naar SQLite moesten uitwijken, en
-de laatste fout. Dezelfde informatie in het logboek onder `meshstats.tsdb`.
+de laatste fout. Dezelfde informatie in het logboek onder `meshmanager.tsdb`.
 
 **Met de hand**, vanuit de applicatiecontainer (de databank heeft geen
 hostpoort):
@@ -409,7 +434,7 @@ docker compose start victoria
 Voor een live back-up zonder te stoppen gebruik je het eigen
 `/snapshot/create`-endpoint van VictoriaMetrics en kopieer je de snapshotmap.
 
-**Terugvallen op alleen SQLite** kost één variabele: zet `MCS_TSDB_URL=` (leeg)
+**Terugvallen op alleen SQLite** kost één variabele: zet `MM_TSDB_URL=` (leeg)
 en herstart. De site leest en schrijft weer `samples`. Historiek die ondertussen
 naar VictoriaMetrics geschreven is, wordt niet teruggevoegd, dus grafieken tonen
 voor die periode een gat tot het weer aangezet wordt.
@@ -422,10 +447,10 @@ dus hij slinkt naarmate zijn bewaartermijn van 180 dagen verstrijkt, en wordt
 `packets` de tabel die werkelijk groeit.
 
 Drie grenzen houden de pakkettentabel klein, in deze volgorde toegepast: de
-bewaartermijn, een rijmaximum (`MCS_PACKET_MAX_ROWS`), en een maximum op het hele
-databankbestand inclusief zijn WAL (`MCS_DB_MAX_MB`). Leeftijd is wat we willen,
+bewaartermijn, een rijmaximum (`MM_PACKET_MAX_ROWS`), en een maximum op het hele
+databankbestand inclusief zijn WAL (`MM_DB_MAX_MB`). Leeftijd is wat we willen,
 de twee bovengrenzen zijn wat we beloven, en botsen ze, dan gaan de oudste
-pakketten het eerst. Er draait elk uur een opruimronde (`MCS_PRUNE_MINUTES`),
+pakketten het eerst. Er draait elk uur een opruimronde (`MM_PRUNE_MINUTES`),
 plus bij het opstarten, bij het opslaan van de instellingen, bij ongeveer elke
 500e HTTP-ingest en per 2000 ontvangen MQTT-pakketten. De volledige redenering,
 en wanneer het bestand met `VACUUM` herschreven wordt om de ruimte werkelijk terug
@@ -436,7 +461,7 @@ Zodra een van de twee bovengrenzen snijdt, is de ingestelde termijn niet gehaald
 stilzwijgend niet nagekomen wordt, ontdek je pas als iemand zich afvraagt waar
 een week grafiek gebleven is.
 
-VictoriaMetrics houdt zijn eigen bewaartermijn (`MCS_TSDB_RETENTION`, 180 d) en
+VictoriaMetrics houdt zijn eigen bewaartermijn (`MM_TSDB_RETENTION`, 180 d) en
 comprimeert tot ruwweg een byte per punt. Een node die om de 10 s met 100
 metrieken publiceert is ongeveer 315 miljoen punten per jaar, in de orde van een
 paar honderd MB — en dat is waarom volledige resolutie daar betaalbaar is en in
@@ -453,10 +478,10 @@ docker compose logs -f mosquitto
 journalctl -u mc-repeater-stats -f     # systemd
 ```
 
-Loggernamen, zodat een filter er een uit kan pikken: `meshstats.mqtt` (ingest en
-het ene publicatietopic), `meshstats.tsdb` (de tijdreeksschrijver),
-`meshstats.clocksync` (de klokrondes en hun weigeringen), `meshstats.retention`
-(snoeien en VACUUM) en `meshstats.countries` (het grenzenbestand bij het
+Loggernamen, zodat een filter er een uit kan pikken: `meshmanager.mqtt` (ingest en
+het ene publicatietopic), `meshmanager.tsdb` (de tijdreeksschrijver),
+`meshmanager.clocksync` (de klokrondes en hun weigeringen), `meshmanager.retention`
+(snoeien en VACUUM) en `meshmanager.countries` (het grenzenbestand bij het
 opstarten). Verbindingstoestand, tellers en laatste fout van elk staan ook in
 `/admin`.
 

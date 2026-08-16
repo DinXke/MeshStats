@@ -9,7 +9,7 @@ firmware included; this document stays on the server side and goes deeper.
 ## In one paragraph
 
 `server/app/main.py` builds a **FastAPI** application on top of a single
-**SQLite** file. Nodes running the MeshStats firmware publish over **MQTT**;
+**SQLite** file. Nodes running this project's firmware module publish over **MQTT**;
 `mqtt_ingest.py` subscribes and writes what arrives. Numeric history is handed to
 **VictoriaMetrics**, with the SQLite `samples` table as the safety net that
 catches everything the time-series database cannot take. Home Assistant may
@@ -57,12 +57,24 @@ server subscribes with a wildcard. Two topic patterns arrive:
 
 | Topic | Handler | What it carries |
 |---|---|---|
-| `meshcore/<node>/stats` | `mqtt_ingest._handle_payload()` | A JSON snapshot: `repeater`, `metrics`, optional `neighbors`, optional `settings` |
-| `meshcore/<node>/rx` | `mqtt_ingest._handle_rx()` | One overheard LoRa frame as hex, plus `snr`, `rssi`, `len` |
+| `meshmanager/<node>/stats` | `mqtt_ingest._handle_payload()` | A JSON snapshot: `repeater`, `metrics`, optional `neighbors`, optional `settings` |
+| `meshmanager/<node>/rx` | `mqtt_ingest._handle_rx()` | One overheard LoRa frame as hex, plus `snr`, `rssi`, `len` |
 
 `<node>` is the publishing node's public-key prefix. The firmware sends it in
 upper case; `_topic_node()` lower-cases it, because every table downstream keys
 on lower-case hex.
+
+**Two prefixes during the rename.** `meshmanager` is the prefix this project
+owns (`PREFIX`, overridable with `MM_MQTT_PREFIX`); `meshcore` is the one it
+used to publish under (`LEGACY_PREFIX`) and is still subscribed to. That the old
+one had to go is not cosmetics: `meshcore` is the name of the protocol and of a
+different project, so on a shared broker it is a collision waiting to happen and
+an ACL cannot use it to say "this is ours". `_prefixes()` de-duplicates, because
+subscribing to the same pattern twice would deliver every message twice — and
+that would only show up as a doubled counter on the admin page. A pattern set
+explicitly in the environment is added **on top of** these rather than replacing
+them: such a value is never there by accident, and silently overriding it would
+deafen exactly the installation that just upgraded.
 
 **The topic names the publisher, the payload names the subject.** They are
 usually the same node reporting on itself, and they are allowed to differ,
@@ -73,6 +85,14 @@ how the roof repeater this project was built for reaches the site at all. So:
   itself and the topic supplies the subject;
 - when both are present the payload picks the subject, and the topic prefix is
   stored on the repeater row as `source_prefix` (`db.record_source()`).
+
+Which of the two *topic* prefixes a node arrives on is remembered too, in
+`repeaters.topic_prefix` (`db.record_topic_prefix()`), because a command has to
+go to the topic the node actually listens on. During a migration that cannot be
+derived from a setting — a node that has not been reflashed listens on the old
+prefix, and the only way to know is to look at where its messages come from. A
+node we have never heard gets the command on **both** prefixes: two eight-byte
+messages are cheaper than a button that does nothing.
 
 That bounds the damage of a shared broker account without ending it. The real
 fix belongs on the broker: one MQTT user per node, each restricted by ACL to its
@@ -132,8 +152,8 @@ The process is one uvicorn worker plus four daemon threads.
 | `retention` | `retention.start()` | Sleeps 600 s, then prunes and considers a VACUUM every `INTERVAL_MIN` | `_run()` catches per round and records the failure in `_state` |
 
 Three of them are not started when their feature is not configured: no
-`MCS_MQTT_HOST`, no subscriber; no `MCS_TSDB_URL`, no writer;
-`MCS_CLOCKSYNC_ENABLED=0`, no scheduler. Each says so in the log rather than
+`MM_MQTT_HOST`, no subscriber; no `MM_TSDB_URL`, no writer;
+`MM_CLOCKSYNC_ENABLED=0`, no scheduler. Each says so in the log rather than
 being silently absent.
 
 SQLite is reached through one module-level connection guarded by a
@@ -224,7 +244,7 @@ Three ways to end up in `samples`, all with the same result:
 
 | Situation | What happens |
 |---|---|
-| `MCS_TSDB_URL` empty | `tsdb.record()` spills every point directly |
+| `MM_TSDB_URL` empty | `tsdb.record()` spills every point directly |
 | Write fails twice | `_flush()` spills the whole batch |
 | Queue full | `record()` spills that point |
 
@@ -237,7 +257,7 @@ cannot act on which database served a chart, and the admin page reports the
 health.
 
 `samples` is therefore **not dead weight and must not be dropped**. It is what
-makes the move reversible: empty `MCS_TSDB_URL`, restart, and the site is back
+makes the move reversible: empty `MM_TSDB_URL`, restart, and the site is back
 to its old behaviour without losing a day.
 
 ### Choosing a step
@@ -320,11 +340,11 @@ Logger names, so a filter can pick one out:
 
 | Name | Module |
 |---|---|
-| `meshstats.mqtt` | `mqtt_ingest.py` |
-| `meshstats.tsdb` | `tsdb.py` |
-| `meshstats.clocksync` | `clocksync.py` |
-| `meshstats.retention` | `retention.py` |
-| `meshstats.countries` | `countries.py` |
+| `meshmanager.mqtt` | `mqtt_ingest.py` |
+| `meshmanager.tsdb` | `tsdb.py` |
+| `meshmanager.clocksync` | `clocksync.py` |
+| `meshmanager.retention` | `retention.py` |
+| `meshmanager.countries` | `countries.py` |
 | `app.routes_api` | `routes_api.py` (module `__name__`) |
 
 Two rules worth keeping. A **clear-on-read queue is always logged when it is

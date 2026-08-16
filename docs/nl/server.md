@@ -10,7 +10,7 @@ dieper.
 ## In één alinea
 
 `server/app/main.py` bouwt een **FastAPI**-toepassing bovenop één
-**SQLite**-bestand. Nodes met de MeshStats-firmware publiceren over **MQTT**;
+**SQLite**-bestand. Nodes met de firmwaremodule van dit project publiceren over **MQTT**;
 `mqtt_ingest.py` schrijft zich daarop in en noteert wat binnenkomt. Numerieke
 historiek gaat naar **VictoriaMetrics**, met de SQLite-tabel `samples` als
 vangnet dat alles opvangt wat de tijdreeksdatabank niet aankan. Home Assistant
@@ -58,12 +58,25 @@ schrijft zich met een jokerteken in. Twee topicpatronen komen binnen:
 
 | Topic | Afhandeling | Wat het draagt |
 |---|---|---|
-| `meshcore/<node>/stats` | `mqtt_ingest._handle_payload()` | Een JSON-momentopname: `repeater`, `metrics`, optioneel `neighbors`, optioneel `settings` |
-| `meshcore/<node>/rx` | `mqtt_ingest._handle_rx()` | Eén opgevangen LoRa-frame als hex, plus `snr`, `rssi`, `len` |
+| `meshmanager/<node>/stats` | `mqtt_ingest._handle_payload()` | Een JSON-momentopname: `repeater`, `metrics`, optioneel `neighbors`, optioneel `settings` |
+| `meshmanager/<node>/rx` | `mqtt_ingest._handle_rx()` | Eén opgevangen LoRa-frame als hex, plus `snr`, `rssi`, `len` |
 
 `<node>` is de sleutelprefix van de publicerende node. De firmware stuurt hem in
 hoofdletters; `_topic_node()` zet hem om, want elke tabel verderop is gesleuteld
 op kleine letters.
+
+**Twee voorvoegsels tijdens de hernoeming.** `meshmanager` is het voorvoegsel
+dat dit project bezit (`PREFIX`, te overschrijven met `MM_MQTT_PREFIX`);
+`meshcore` is dat van vroeger (`LEGACY_PREFIX`), en daar wordt nog steeds naar
+geluisterd. Dat het oude weg moest is geen cosmetica: `meshcore` is de naam van
+het protocol en van een ander project, dus op een gedeelde broker is het een
+botsing die staat te wachten, en een ACL kan er niet mee zeggen "dit is van
+ons". `_prefixes()` haalt dubbele eruit, want luisteren op hetzelfde patroon zou
+elk bericht twee keer laten binnenkomen — en dat zou pas opvallen als de teller
+op de beheerpagina verdubbelt. Een patroon dat expliciet in de omgeving staat,
+komt er **bovenop** in plaats van in de plaats: zo'n waarde staat er niet per
+ongeluk, en die stilzwijgend vervangen zou precies de installatie doof maken die
+net bijgewerkt heeft.
 
 **Het topic noemt de publicist, de payload noemt het onderwerp.** Meestal is dat
 dezelfde node die over zichzelf rapporteert, en ze mógen verschillen, want een
@@ -75,6 +88,15 @@ bereikt. Dus:
   praat en het topic het onderwerp levert;
 - staan beide er, dan kiest de payload het onderwerp en wordt de topicprefix op
   de repeaterrij bewaard als `source_prefix` (`db.record_source()`).
+
+Op welk van de twee *topic*voorvoegsels een node binnenkomt, wordt eveneens
+onthouden, in `repeaters.topic_prefix` (`db.record_topic_prefix()`), want een
+opdracht moet naar het topic waar de node werkelijk meeleest. Tijdens een
+migratie is dat niet uit een instelling af te leiden — een node die nog niet
+geflasht is, luistert op het oude voorvoegsel, en de enige manier om dat te
+weten is kijken waar zijn berichten vandaan komen. Een node die we nog nooit
+hoorden, krijgt de opdracht op **allebei**: twee berichtjes van acht bytes zijn
+goedkoper dan een knop die niets doet.
 
 Dat begrenst de schade van één gedeeld brokeraccount maar heft ze niet op. De
 echte oplossing hoort op de broker: één MQTT-gebruiker per node, elk met een ACL
@@ -136,8 +158,8 @@ Het proces is één uvicorn-worker plus vier daemonthreads.
 | `retention` | `retention.start()` | Slaapt 600 s, snoeit daarna elke `INTERVAL_MIN` en overweegt een VACUUM | `_run()` vangt per ronde en noteert de fout in `_state` |
 
 Drie ervan starten niet als hun functie niet ingesteld is: geen
-`MCS_MQTT_HOST`, geen abonnee; geen `MCS_TSDB_URL`, geen schrijver;
-`MCS_CLOCKSYNC_ENABLED=0`, geen planner. Elk zegt dat in het logboek in plaats
+`MM_MQTT_HOST`, geen abonnee; geen `MM_TSDB_URL`, geen schrijver;
+`MM_CLOCKSYNC_ENABLED=0`, geen planner. Elk zegt dat in het logboek in plaats
 van er stilzwijgend niet te zijn.
 
 SQLite wordt bereikt via één verbinding op moduleniveau, bewaakt door een
@@ -232,7 +254,7 @@ Drie manieren om in `samples` te belanden, alle met hetzelfde gevolg:
 
 | Situatie | Wat er gebeurt |
 |---|---|
-| `MCS_TSDB_URL` leeg | `tsdb.record()` wijkt meteen per punt uit |
+| `MM_TSDB_URL` leeg | `tsdb.record()` wijkt meteen per punt uit |
 | Schrijven mislukt twee keer | `_flush()` wijkt met de hele batch uit |
 | Wachtrij vol | `record()` wijkt met dat punt uit |
 
@@ -245,7 +267,7 @@ voor de bezoeker: die kan niets met de vraag welke databank een grafiek leverde,
 en de beheerpagina meldt de gezondheid.
 
 `samples` is dus **geen dood gewicht en mag niet weg**. Het is wat de overstap
-omkeerbaar maakt: `MCS_TSDB_URL` leegmaken, herstarten, en de site doet weer wat
+omkeerbaar maakt: `MM_TSDB_URL` leegmaken, herstarten, en de site doet weer wat
 ze deed zonder één dag te verliezen.
 
 ### Een stap kiezen
@@ -330,11 +352,11 @@ Loggernamen, zodat een filter er een uit kan pikken:
 
 | Naam | Module |
 |---|---|
-| `meshstats.mqtt` | `mqtt_ingest.py` |
-| `meshstats.tsdb` | `tsdb.py` |
-| `meshstats.clocksync` | `clocksync.py` |
-| `meshstats.retention` | `retention.py` |
-| `meshstats.countries` | `countries.py` |
+| `meshmanager.mqtt` | `mqtt_ingest.py` |
+| `meshmanager.tsdb` | `tsdb.py` |
+| `meshmanager.clocksync` | `clocksync.py` |
+| `meshmanager.retention` | `retention.py` |
+| `meshmanager.countries` | `countries.py` |
 | `app.routes_api` | `routes_api.py` (module-`__name__`) |
 
 Twee regels die het waard zijn te behouden. Een **wachtrij die bij het lezen

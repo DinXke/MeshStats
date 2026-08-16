@@ -31,16 +31,16 @@ the route is determined *before* the button is drawn and not after it is clicked
 
 ### Directly over MQTT
 
-The site publishes one word on `meshcore/<node>/cmd` and the node reads its own
+The site publishes one word on `<prefix>/<node>/cmd` and the node reads its own
 CLI or sends a status message immediately. Works only if the node publishes
-itself, if its firmware knows that topic (**MeshStats 1.8.0** and up,
+itself, if its firmware knows that topic (**node firmware 1.8.0** and up,
 `MIN_CMD_VERSION`) and if the broker is connected right now.
 
 ### Over MQTT to the node that monitors it
 
 A repeater that does not publish itself, but whose figures are relayed by a node
 that reads it out, is not unreachable — it is only not *directly* reachable. The
-monitor already logs in to it and polls it; since **MeshStats 1.9.0**
+monitor already logs in to it and polls it; since **node firmware 1.9.0**
 (`MIN_MON_CMD_VERSION`) it can also fetch that repeater's CLI settings over LoRa
 on request and publish them. The command then goes to the monitor
 (`settings <key>`) and not to the subject.
@@ -74,7 +74,7 @@ without an MQTT client or a database anywhere near.
 | `blocker` | Why the MQTT route is closed; empty means open |
 | `node` | The node that receives the command |
 | `subject` | The key travelling inside the command, or `None` |
-| `fw_meshstats` | Firmware of the node receiving the command |
+| `fw_meshmanager` | Firmware of the node receiving the command |
 | `min_fw` | The version this route requires |
 | `node_seen`, `node_stale` | When that node last published, and whether that is too long ago |
 | `ha`, `poller_seen` | Whether a poller has been seen within `POLLER_STALE_SECS` |
@@ -95,7 +95,7 @@ not know it is exactly the kind of promise this module had to clear away:
 | `no_source` | Nothing has ever published for this repeater |
 | `http_source` | It arrives through the HTTP API (`source_prefix == "api"`), not over MQTT |
 | `relay_unknown` | It is relayed, but the relaying node is not itself a known repeater here — so we know nothing of its firmware, and guessing costs a command that is silently refused at the far end |
-| `no_fw` | No MeshStats version known |
+| `no_fw` | No module version known |
 | `old_fw` | Version below `min_fw` |
 | `broker_down` | Not connected to the broker |
 
@@ -106,7 +106,7 @@ not overshadow the permanent reason: "firmware too old" does not fix itself.
 
 For a relayed repeater, the **relaying** node's version. That node receives the
 command and has to know it. The subject's version says nothing here — often there
-is not even one, because a node that does not publish reports its MeshStats
+is not even one, because a node that does not publish reports its module
 version nowhere.
 
 ## `is_relayed()` and `same_key()`
@@ -161,6 +161,16 @@ what it says.
 
 `mqtt_ingest.publish_command(node, command, subject=None, epoch=None)` returns
 whether the message **left**, never whether it arrived.
+
+The topic is `MM_MQTT_CMD_TOPIC`, `{prefix}/{node}/cmd` by default.
+`command_prefix()` fills `{prefix}` with the prefix this particular node was
+last heard reporting on — remembered on arrival in `repeaters.topic_prefix`
+rather than chosen at departure, because during the rename a node that has not
+been reflashed still listens on the old one and no setting can say which. A node
+never heard from gets the command on **every** prefix (`command_topics()`): two
+eight-byte messages are cheaper than a button that does nothing. A pattern
+configured without `{prefix}` in it is respected exactly as written — whoever
+pins a fixed topic means it.
 
 ```python
 COMMANDS = ("settings", "status", "time")
@@ -244,15 +254,15 @@ collected.
 
 | Route | Command | Minimum | Constant |
 |---|---|---|---|
-| Direct | `settings`, `status` | MeshStats 1.8.0 | `commanding.MIN_CMD_VERSION` |
-| Via a monitor | `settings <key>` | MeshStats 1.9.0 | `commanding.MIN_MON_CMD_VERSION` |
-| Either | `time <epoch>` | MeshStats 1.10.0 | `clocksync.MIN_TIME_VERSION` |
+| Direct | `settings`, `status` | node firmware 1.8.0 | `commanding.MIN_CMD_VERSION` |
+| Via a monitor | `settings <key>` | node firmware 1.9.0 | `commanding.MIN_MON_CMD_VERSION` |
+| Either | `time <epoch>` | node firmware 1.10.0 | `clocksync.MIN_TIME_VERSION` |
 
 "Older" does not mean "maybe". A node below 1.8.0 does not subscribe to the topic
 at all, so the broker throws the message away without anybody noticing; a 1.8.0
 node does know the topic but refuses the argument and counts the command as
 refused. Which is why the version is stored on the repeater row
-(`fw_meshstats`) and why a button that cannot work is disabled rather than
+(`fw_meshmanager`) and why a button that cannot work is disabled rather than
 hopeful.
 
 ## Timeouts

@@ -158,8 +158,8 @@ page can explain why a repeater is missing instead of quietly leaving it out:
 | `no_source` | Does not publish over MQTT at all |
 | `http_source` | Arrives through the HTTP API, not over MQTT |
 | `relay_unknown` | The relaying node is not itself a known repeater here |
-| `no_fw` | MeshStats version unknown |
-| `old_fw` | Needs MeshStats `MIN_TIME_VERSION` (1.10.0) or newer |
+| `no_fw` | Module version unknown |
+| `old_fw` | Needs node firmware `MIN_TIME_VERSION` (1.10.0) or newer |
 | `stale` | Nothing heard from that node for more than `NODE_STALE_SECS` (6 h) |
 | `broker_down` | The site is not connected to the broker right now |
 
@@ -242,7 +242,7 @@ can fix five of them:
 
 | `outcome` | Meaning |
 |---|---|
-| `disabled` | `MCS_CLOCKSYNC_ENABLED=0` |
+| `disabled` | `MM_CLOCKSYNC_ENABLED=0` |
 | `no_route` | No route to this repeater; `blocker` and `reason` say which |
 | `no_clock` | This machine failed its own clock check; `reason` is the check's own wording |
 | `too_soon` | Within `MANUAL_MIN_GAP_S`; `wait_min` says how long |
@@ -317,13 +317,13 @@ round is still running.
 ## The message on the wire
 
 `mqtt_ingest.publish_command(node, "time", epoch=...)` publishes
-`time <epoch>` on `meshcore/<node>/cmd`: UNIX seconds in UTC, which is what
+`time <epoch>` on that node's `cmd` topic: UNIX seconds in UTC, which is what
 MeshCore's own CLI parses in the `time ` branch of `CommonCLI::handleCommand`
 (`_atoi` of the rest of the line, straight into `setCurrentTime`).
 
 The epoch is bounded at both ends, in `MIN_EPOCH` (2025-01-01) and `MAX_EPOCH`
 (2100-01-01), the same limits as `CLOCK_MIN_EPOCH`/`CLOCK_MAX_EPOCH` in
-`MeshStatsNet.cpp`. Checking on both sides is not duplicated work but the
+`MeshManagerNet.cpp`. Checking on both sides is not duplicated work but the
 cheaper of the two places: a node only ever moves its clock **forward**, so a
 time too far in the future cannot be undone at the far end without standing next
 to it with a cable. A mistake here should strand here.
@@ -341,10 +341,10 @@ Nothing is retained and QoS is 0 — see
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MCS_CLOCKSYNC_ENABLED` | `1` | `0`, `false`, `no`, `nee`, `off` or empty switches it off |
-| `MCS_CLOCKSYNC_HOURS` | `24` | Hours between two rounds, minimum 1 |
-| `MCS_CLOCKSYNC_MAX_ERROR_S` | `10` | Kernel uncertainty still believed |
-| `MCS_CLOCKSYNC_MAX_JUMP_S` | `30` | Wall clock versus monotonic, and the backwards margin |
+| `MM_CLOCKSYNC_ENABLED` | `1` | `0`, `false`, `no`, `nee`, `off` or empty switches it off |
+| `MM_CLOCKSYNC_HOURS` | `24` | Hours between two rounds, minimum 1 |
+| `MM_CLOCKSYNC_MAX_ERROR_S` | `10` | Kernel uncertainty still believed |
+| `MM_CLOCKSYNC_MAX_JUMP_S` | `30` | Wall clock versus monotonic, and the backwards margin |
 
 Switching it off is a valid choice: whoever sets their nodes by hand, or does not
 trust this server enough to calibrate a mesh on it, should be able to say so

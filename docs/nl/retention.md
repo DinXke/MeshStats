@@ -279,11 +279,11 @@ naar kijkt.
 
 | Variabele | Standaard | Instellingssleutel | Betekenis |
 |---|---|---|---|
-| `MCS_RETENTION_DAYS` | 180 | `retention_days` | Bewaartermijn voor metingen |
-| `MCS_PACKET_RETENTION_DAYS` | 7 | `packet_retention_days` | Bewaartermijn voor pakketten, en het venster van de heatmap |
-| `MCS_PACKET_MAX_ROWS` | 200000 | `packet_max_rows` | FIFO-bovengrens op de rijen |
-| `MCS_DB_MAX_MB` | 512 | `db_max_mb` | FIFO-bovengrens op het bestand, WAL inbegrepen |
-| `MCS_PRUNE_MINUTES` | 60 | *(geen)* | Minuten tussen twee rondes; gelezen bij het importeren |
+| `MM_RETENTION_DAYS` | 180 | `retention_days` | Bewaartermijn voor metingen |
+| `MM_PACKET_RETENTION_DAYS` | 7 | `packet_retention_days` | Bewaartermijn voor pakketten, en het venster van de heatmap |
+| `MM_PACKET_MAX_ROWS` | 200000 | `packet_max_rows` | FIFO-bovengrens op de rijen |
+| `MM_DB_MAX_MB` | 512 | `db_max_mb` | FIFO-bovengrens op het bestand, WAL inbegrepen |
+| `MM_PRUNE_MINUTES` | 60 | *(geen)* | Minuten tussen twee rondes; gelezen bij het importeren |
 
 De eerste vier zijn alleen de **standaard voor een verse installatie**; de
 bewaarde instelling wint.

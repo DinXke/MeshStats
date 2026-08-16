@@ -33,9 +33,9 @@ geklikt is.
 
 ### Rechtstreeks over MQTT
 
-De site publiceert één woord op `meshcore/<node>/cmd` en de node leest daarop
+De site publiceert één woord op `<voorvoegsel>/<node>/cmd` en de node leest daarop
 zijn eigen CLI uit of stuurt meteen een statusbericht. Dat werkt alleen als de
-node zelf publiceert, als zijn firmware dat topic kent (**MeshStats 1.8.0** en
+node zelf publiceert, als zijn firmware dat topic kent (**nodefirmware 1.8.0** en
 hoger, `MIN_CMD_VERSION`) en als de broker op dit ogenblik verbonden is.
 
 ### Over MQTT naar de node die hem monitort
@@ -43,7 +43,7 @@ hoger, `MIN_CMD_VERSION`) en als de broker op dit ogenblik verbonden is.
 Een repeater die zelf niet publiceert, maar wiens cijfers doorgestuurd worden
 door een node die hem uitleest, is niet onbereikbaar — hij is alleen niet
 *rechtstreeks* bereikbaar. De monitor logt al bij hem in en pollt hem al; sinds
-**MeshStats 1.9.0** (`MIN_MON_CMD_VERSION`) kan die monitor op verzoek ook zijn
+**nodefirmware 1.9.0** (`MIN_MON_CMD_VERSION`) kan die monitor op verzoek ook zijn
 CLI-instellingen over LoRa ophalen en publiceren. De opdracht gaat dan naar de
 monitor (`settings <sleutel>`) en niet naar het onderwerp.
 
@@ -76,7 +76,7 @@ die te testen blijft zonder een MQTT-client of een databank in de buurt.
 | `blocker` | Waarom de MQTT-weg dicht is; leeg betekent open |
 | `node` | De node die de opdracht krijgt |
 | `subject` | De sleutel die in die opdracht meegaat, of `None` |
-| `fw_meshstats` | Firmware van de node die de opdracht krijgt |
+| `fw_meshmanager` | Firmware van de node die de opdracht krijgt |
 | `min_fw` | De versie die deze weg vereist |
 | `node_seen`, `node_stale` | Wanneer die node het laatst publiceerde, en of dat te lang geleden is |
 | `ha`, `poller_seen` | Of er binnen `POLLER_STALE_SECS` een poller gezien is |
@@ -98,7 +98,7 @@ deze module moest wegwerken:
 | `no_source` | Er heeft nog nooit iets voor deze repeater gepubliceerd |
 | `http_source` | Hij komt binnen via de HTTP-API (`source_prefix == "api"`), niet over MQTT |
 | `relay_unknown` | Hij wordt doorgestuurd, maar de doorstuurder is hier zelf geen bekende repeater — dus van zijn firmware weten we niets, en gokken kost een opdracht die aan de overkant stilletjes geweigerd wordt |
-| `no_fw` | Geen MeshStats-versie bekend |
+| `no_fw` | Geen moduleversie bekend |
 | `old_fw` | Versie lager dan `min_fw` |
 | `broker_down` | Niet verbonden met de broker |
 
@@ -111,7 +111,7 @@ zichzelf niet op.
 Bij een doorgestuurde repeater die van de **doorsturende** node. Die node krijgt
 de opdracht en moet ze kennen. De versie van het onderwerp zegt hier niets — vaak
 staat er niet eens een, want een node die zelf niet publiceert meldt zijn
-MeshStats-versie nergens.
+moduleversie nergens.
 
 ## `is_relayed()` en `same_key()`
 
@@ -165,8 +165,19 @@ geïnstalleerde Home Assistant maanden later oppikt, en zou
 
 ## `publish_command()` — het enige dat de site publiceert
 
-`mqtt_ingest.publish_command(node, command, subject=None, epoch=None)` geeft terug
-of het bericht **vertrokken** is, nooit of het aangekomen is.
+`mqtt_ingest.publish_command(node, command, subject=None, epoch=None)` geeft
+terug of het bericht **vertrokken** is, nooit of het aangekomen is.
+
+Het topic is `MM_MQTT_CMD_TOPIC`, standaard `{prefix}/{node}/cmd`.
+`command_prefix()` vult `{prefix}` in met het voorvoegsel waarop deze ene node
+zich het laatst meldde — onthouden bij binnenkomst in `repeaters.topic_prefix` en
+niet gekozen bij vertrek, want tijdens de hernoeming luistert een node die nog
+niet geflasht is op het oude, en geen enkele instelling kan zeggen welke van de
+twee. Een node die we nog nooit hoorden, krijgt de opdracht op **elk**
+voorvoegsel (`command_topics()`): twee berichtjes van acht bytes zijn goedkoper
+dan een knop die niets doet. Een patroon dat zonder `{prefix}` ingesteld is,
+wordt gerespecteerd zoals het er staat — wie een vast topic opgeeft, bedoelt
+dat.
 
 ```python
 COMMANDS = ("settings", "status", "time")
@@ -253,15 +264,15 @@ een die nooit opgehaald is.
 
 | Weg | Commando | Minimum | Constante |
 |---|---|---|---|
-| Rechtstreeks | `settings`, `status` | MeshStats 1.8.0 | `commanding.MIN_CMD_VERSION` |
-| Via een monitor | `settings <sleutel>` | MeshStats 1.9.0 | `commanding.MIN_MON_CMD_VERSION` |
-| Beide | `time <epoch>` | MeshStats 1.10.0 | `clocksync.MIN_TIME_VERSION` |
+| Rechtstreeks | `settings`, `status` | nodefirmware 1.8.0 | `commanding.MIN_CMD_VERSION` |
+| Via een monitor | `settings <sleutel>` | nodefirmware 1.9.0 | `commanding.MIN_MON_CMD_VERSION` |
+| Beide | `time <epoch>` | nodefirmware 1.10.0 | `clocksync.MIN_TIME_VERSION` |
 
 "Ouder" betekent niet "misschien". Een node onder 1.8.0 schrijft zich helemaal
 niet in op het topic, dus de broker gooit het bericht weg zonder dat iemand het
 merkt; een 1.8.0-node kent het topic wél maar weigert het argument en telt de
 opdracht als geweigerd. Daarom staat de versie op de repeaterrij
-(`fw_meshstats`) en daarom is een knop die niet kan werken uitgeschakeld in
+(`fw_meshmanager`) en daarom is een knop die niet kan werken uitgeschakeld in
 plaats van hoopvol.
 
 ## Verlooptijden

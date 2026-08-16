@@ -22,7 +22,7 @@ plausible and completely wrong reading.
 unknown or revoked token, so a client can tell "you sent nothing" from "what you
 sent is no good".
 
-Every method and route is additionally capped at `MCS_MAX_BODY_BYTES` (2 MB) by
+Every method and route is additionally capped at `MM_MAX_BODY_BYTES` (2 MB) by
 `limits.BodySizeLimitMiddleware`, counted while reading.
 
 ## Ingest endpoints
@@ -42,7 +42,7 @@ One snapshot of one repeater. The same body the MQTT `stats` topic carries.
 ```json
 {
   "repeater": {"pubkey_prefix": "e3d3f4d7ed", "name": "BE-XXX-Example.VIR",
-               "fw": "v1.7.2", "fw_meshstats": "1.10.0"},
+               "fw": "v1.7.2", "fw_meshmanager": "1.10.0"},
   "ts": "2026-08-15T12:00:00Z",
   "metrics": {"bat": 4.15, "online": true, "uptime": 3.5},
   "neighbors": [{"prefix": "2ae7af", "name": "…", "snr": -4.25, "seen_min": 12}],
@@ -54,7 +54,7 @@ One snapshot of one repeater. The same body the MQTT `stats` topic carries.
 |---|---|---|
 | `repeater.pubkey_prefix` | yes | 422 without it |
 | `repeater.name` | no | Adopted when it differs from the stored name |
-| `repeater.fw`, `repeater.fw_meshstats` | no | Only the one that is present is written |
+| `repeater.fw`, `repeater.fw_meshmanager` | no | Only the one that is present is written |
 | `ts` | no | Server time when absent |
 | `metrics` | yes | Must be an object; 422 otherwise |
 | `neighbors` | no | `seen_min` is converted to an absolute timestamp |
