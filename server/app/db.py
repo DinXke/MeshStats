@@ -584,19 +584,42 @@ def _search_where(query, since: str, until: str) -> tuple[str, list]:
 
 
 def search_packets(query, since: str, until: str, limit: int = 100,
-                   offset: int = 0) -> list[sqlite3.Row]:
-    """One page of matching packets, newest first.
+                   offset: int = 0, sort=None) -> list[sqlite3.Row]:
+    """One page of matching packets, newest first unless asked otherwise.
 
     Newest first, unlike the live feed: the archive is read by someone looking
     for something that already happened, and the most recent match is the one
     they most often mean.
+
+    ``sort`` is a search.Sort, whose ``sql`` is built from that module's own
+    table of columns -- never from anything a visitor typed. It is interpolated
+    rather than bound because a placeholder cannot stand in for a column name;
+    see the Sort class for why the fixed table is the defence rather than an
+    escaping routine. Left out, the ORDER BY is the literal below, which is the
+    same thing search.parse_sort("") produces; the two are spelled out
+    separately only so that this module keeps working without the other one.
+
+    The ordering deliberately reaches no further than this query. The total, the
+    histogram and the facets answer questions about the whole result set, and
+    what a set contains does not change with the order it is listed in -- so they
+    are neither re-run nor re-sorted when the reader clicks a heading.
+
+    No index was added for the new orderings, and measurement is the reason. The
+    two LEFT JOINs and the GROUP BY already force this query onto a temporary
+    B-tree for its ORDER BY, even for the default order on the indexed ts column
+    -- so an index on path_len or snr could not be used here at all. Measured on
+    50 000 packets (about seven times a busy week) one page costs 43 to 70 ms
+    whichever column it is sorted by, against 52 ms for the order that was
+    already there. Indexes on four more columns would slow every insert on the
+    ingest path down for a difference that does not exist.
     """
     where, params = _search_where(query, since, until)
+    order = sort.sql if sort is not None else "p.ts DESC, p.id DESC"
     return q(
         "SELECT p.*, c.name AS sender_name, c.lat AS sender_lat, c.lon AS sender_lon, "
         "c.country AS sender_country, o.name AS observer_name, "
         "o.country AS observer_country "
-        f"{_SEARCH_FROM}{where} GROUP BY p.id ORDER BY p.ts DESC, p.id DESC "
+        f"{_SEARCH_FROM}{where} GROUP BY p.id ORDER BY {order} "
         "LIMIT ? OFFSET ?",
         (*params, limit, offset),
     )

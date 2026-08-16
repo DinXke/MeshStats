@@ -23,6 +23,16 @@ with spaces. OR exists only inside the parentheses of a single field, which
 covers "one of these types" without turning this into an expression parser whose
 precedence rules nobody would remember.
 
+Sorting
+-------
+``parse_sort`` is the second half of the same job: which rows match is one
+question, in what order they are shown is another. It deliberately does not live
+in the query string. A sort is not a filter -- it changes nothing about the
+result set, only about the page of it you are looking at -- and folding it into
+the text box would mean a clause that silently does something else than every
+other clause, plus a parser that has to keep a "sort:" out of a NOT and out of an
+OR list. It is a parameter of its own, with its own small table of columns.
+
 Design rules
 ------------
 Pure functions, no I/O, no database handle. ``parse`` returns a ``Query`` with
@@ -47,31 +57,45 @@ class Field:
     """One searchable column: how it is spelled, and what it accepts."""
 
     def __init__(self, sql: str, kind: str, label: str, hint: str = "",
-                 facet: bool = False):
+                 facet: bool = False, sort: bool = False):
         self.sql = sql          # SQL expression, from this module only
         self.kind = kind        # _TEXT, _NUM or _TS
         self.label = label      # heading in the field list
         self.hint = hint        # example value, shown in the help
         self.facet = facet      # worth offering a "top values" breakdown
+        self.sort = sort        # the result list may be ordered by this column
 
 
 # The joins these expressions assume are in db.search_packets; keep the two in
 # step. Sender and observer each get a name of their own as well as a key, since
 # a visitor knows nodes by one or the other depending on which they saw last.
+#
+# ``sort`` marks the columns the result list may be ordered by. It is a subset of
+# the searchable ones on purpose: a column is worth sorting on only when the
+# reader can see what the order is being made of, so it is set exactly for the
+# columns the archive table shows. Two kinds of field can never carry it. The
+# first is 'region', whose ``sql`` is a placeholder that _field_clause swaps for
+# REGION_SQL -- ordering by it would put a column name in the SQL that the
+# packets table does not have. The second is a haystack like 'name' or 'path',
+# where the expression is a concatenation and its alphabetical order means
+# nothing to anybody.
 FIELDS: dict[str, Field] = {
-    "type":     Field("p.payload_name", _TEXT, "Payloadtype", "ADVERT", facet=True),
+    "type":     Field("p.payload_name", _TEXT, "Payloadtype", "ADVERT", facet=True,
+                      sort=True),
     "route":    Field("p.route", _TEXT, "Routetype", "FLOOD", facet=True),
-    "scope":    Field("p.scope", _TEXT, "Bereik", "scoped", facet=True),
+    "scope":    Field("p.scope", _TEXT, "Bereik", "scoped", facet=True, sort=True),
     "region":   Field("p.scope_region", _NUM, "Regio", "7", facet=True),
-    "sender":   Field("p.sender", _TEXT, "Afzender (sleutel)", "2ae7c1", facet=True),
+    "sender":   Field("p.sender", _TEXT, "Afzender (sleutel)", "2ae7c1", facet=True,
+                      sort=True),
     "observer": Field("p.observer", _TEXT, "Waarnemer (sleutel)", "2ae7c1d40f93", facet=True),
     "name":     Field("COALESCE(c.name, '') || ' ' || COALESCE(o.name, '')", _TEXT,
                       "Naam van afzender of waarnemer", "BE-HSS"),
-    "country":  Field("COALESCE(c.country, o.country)", _TEXT, "Land", "BE", facet=True),
-    "snr":      Field("p.snr", _NUM, "SNR", ">5"),
-    "rssi":     Field("p.rssi", _NUM, "RSSI", "<-100"),
-    "len":      Field("p.len", _NUM, "Lengte in bytes", "20..40"),
-    "hops":     Field("p.path_len", _NUM, "Aantal hops", "0", facet=True),
+    "country":  Field("COALESCE(c.country, o.country)", _TEXT, "Land", "BE", facet=True,
+                      sort=True),
+    "snr":      Field("p.snr", _NUM, "SNR", ">5", sort=True),
+    "rssi":     Field("p.rssi", _NUM, "RSSI", "<-100", sort=True),
+    "len":      Field("p.len", _NUM, "Lengte in bytes", "20..40", sort=True),
+    "hops":     Field("p.path_len", _NUM, "Aantal hops", ">3", facet=True, sort=True),
     "path":     Field("p.path", _TEXT, "Hop in het pad", "2ae7"),
     "hash":     Field("p.phash", _TEXT, "Payloadhash", ""),
 }
@@ -87,6 +111,31 @@ FREE_TEXT_FIELDS = ("p.sender", "p.observer", "p.payload_name", "p.scope",
 # field table because the two have to agree on what "region" means.
 REGION_SQL = ("CAST(NULLIF(substr(p.scope_codes, instr(p.scope_codes, ',') + 1), '0') "
               "AS INTEGER)")
+
+
+class SortKey:
+    """One column the result list may be ordered by."""
+
+    def __init__(self, sql: str, kind: str, nullable: bool = True):
+        self.sql = sql              # SQL expression, from this module only
+        self.kind = kind            # _TEXT, _NUM or _TS; the page picks a first
+        self.nullable = nullable    # ... click direction from it
+
+
+# The sortable columns, derived from FIELDS so the two can never drift apart: a
+# field that is renamed or dropped in the query language takes its sort key with
+# it, rather than leaving a key that names a column nobody searches on any more.
+#
+# Time is the exception that is added by hand. It is not in FIELDS because the
+# archive filters on time through the window picker rather than through the query
+# language, but it is the column the list is ordered by by default, so it has to
+# be sortable -- and it is the one column the schema declares NOT NULL, which the
+# ORDER BY below uses.
+SORTS: dict[str, SortKey] = {"time": SortKey("p.ts", _TS, nullable=False)}
+SORTS.update({name: SortKey(f.sql, f.kind)
+              for name, f in FIELDS.items() if f.sort})
+
+DEFAULT_SORT = "time"
 
 _COMPARISONS = (("<=", "<="), (">=", ">="), ("<", "<"), (">", ">"))
 _RANGE = re.compile(r"^(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)$")
@@ -258,8 +307,88 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+class Sort:
+    """A validated ordering: which column, which direction, and its ORDER BY.
+
+    ``sql`` is assembled here rather than by the caller so that every character
+    of it comes out of this module's own tables. Nothing a visitor typed reaches
+    it: the key is looked up in SORTS, and a key that is not in there raises
+    instead of being interpolated. That is the whole defence against injection
+    through the sort parameter, and it is the reason the column is never passed
+    as a string from the API layer -- a parameter placeholder cannot be used for
+    a column name, so the only safe alternative to a fixed table would be an
+    escaping routine that has to be right every time.
+    """
+
+    def __init__(self, key: str, descending: bool):
+        column = SORTS[key].sql
+        direction = "DESC" if descending else "ASC"
+        parts = []
+        # Rows whose value is missing go last in *both* directions. SQLite sorts
+        # NULL first when ascending, so "sort by SNR, smallest first" would open
+        # on a full page of dashes -- the packets whose signal we never recorded,
+        # presented as if they were the weakest ones. Written as "x IS NULL"
+        # rather than the NULLS LAST clause because that clause needs SQLite
+        # 3.30, and this expression works on every version and costs the same.
+        if SORTS[key].nullable:
+            parts.append(f"{column} IS NULL")
+        parts.append(f"{column} {direction}")
+        # A tiebreaker that is unique, so the order is total. Without it two
+        # packets with the same hop count could swap places between the request
+        # for page 1 and the request for page 2, and a row would then appear
+        # twice, or not at all, for no reason the reader could see. The id runs
+        # with the sort direction so that equal values still read chronologically.
+        parts.append(f"p.id {direction}")
+
+        self.key = key
+        self.descending = descending
+        self.sql = ", ".join(parts)
+        # How this ordering is spelled in a URL, so the page and the API agree on
+        # one form and a shared link comes back with the order it was shared in.
+        self.token = f"{key}:{'desc' if descending else 'asc'}"
+
+
+def parse_sort(text: str) -> Sort:
+    """Turn a ``field`` or ``field:asc|desc`` parameter into a Sort.
+
+    An empty parameter is the archive's own default, newest first. A parameter
+    that is not empty but not understood is an error rather than a silent
+    fallback to that default: a link that promises "sorted by hops" and quietly
+    shows something else is the same class of lie as a search that drops half
+    its clauses.
+    """
+    text = (text or "").strip()
+    if not text:
+        return Sort(DEFAULT_SORT, True)
+
+    key, _, direction = text.partition(":")
+    key, direction = key.strip().lower(), direction.strip().lower()
+    if key not in SORTS:
+        known = ", ".join(sorted(SORTS))
+        raise QueryError(
+            f"Sorteren op '{key}' kan niet. Wel mogelijk: {known}.")
+    if direction not in ("", "asc", "desc"):
+        raise QueryError(
+            f"Sorteerrichting '{direction}' bestaat niet; kies asc of desc.")
+    # No direction means descending, the same way the archive's default order is
+    # newest first: the interesting end of a number of hops, a signal strength or
+    # a moment in time is nearly always the top one.
+    return Sort(key, direction != "asc")
+
+
 def describe_fields() -> list[dict]:
     """The field table, for the help panel on the search page."""
     return [{"name": name, "label": f.label, "kind": f.kind, "hint": f.hint,
              "facet": f.facet}
             for name, f in FIELDS.items()]
+
+
+def describe_sorts() -> list[dict]:
+    """The sortable columns, for the page that draws the clickable headings.
+
+    The page gates every heading on this list instead of on a copy of its own,
+    for the same reason the filter buttons are gated on describe_fields(): a
+    heading that offers an ordering the server refuses is a button that produces
+    an error message, and it would appear the moment somebody edits this table.
+    """
+    return [{"name": name, "kind": s.kind} for name, s in SORTS.items()]

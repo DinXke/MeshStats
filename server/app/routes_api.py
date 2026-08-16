@@ -518,6 +518,7 @@ def packet_search(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0, le=100_000),
     facets: str = Query("", max_length=200),
+    sort: str = Query("", max_length=40),
 ):
     """Search the packet archive: rows, total, histogram and facets in one call.
 
@@ -526,12 +527,23 @@ def packet_search(
     resolving at different moments -- a count that briefly disagrees with the
     bars above it reads as a broken search.
 
+    ``sort`` is ``field`` or ``field:asc|desc``, and it orders the rows only.
+    The total, the histogram and the facets describe the whole result set, and a
+    set does not change by being listed in another order, so they come back
+    exactly as they were -- clicking a heading must not make the bar chart
+    flicker or the counts move. Ordering does bear on ``offset``: page 5 of one
+    order has nothing to do with page 5 of another, so the page resets it.
+
     A query the parser refuses comes back as a 200 with ``error`` set: for this
     endpoint a typo in the query is a normal outcome to render next to the box,
-    not an exceptional one worth a 4xx that shows up as noise in proxy logs.
+    not an exceptional one worth a 4xx that shows up as noise in proxy logs. An
+    impossible sort travels the same road -- most often it is an old link naming
+    a column that has since been dropped, which belongs beside the query bar and
+    not in a proxy log.
     """
     try:
         parsed = search.parse(q)
+        order = search.parse_sort(sort)
     except search.QueryError as err:
         return {"error": str(err), "fields": search.describe_fields()}
 
@@ -539,7 +551,7 @@ def packet_search(
         datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     until_ts = _clean_ts(until) or "9999-12-31T23:59:59Z"
 
-    rows = db.search_packets(parsed, since_ts, until_ts, limit, offset)
+    rows = db.search_packets(parsed, since_ts, until_ts, limit, offset, order)
     total = db.count_packets(parsed, since_ts, until_ts)
 
     # Bucket size follows the window so the chart always has on the order of
@@ -559,6 +571,10 @@ def packet_search(
     return {
         "total": total,
         "offset": offset,
+        # The ordering actually used, normalised. The page reads it back rather
+        # than trusting what it asked for, so that the arrow in the heading and
+        # the rows underneath it can never disagree about the direction.
+        "sort": order.token,
         "bucket_s": bucket_s,
         "histogram": histogram,
         "facets": facet_out,

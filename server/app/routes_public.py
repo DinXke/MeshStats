@@ -41,6 +41,7 @@ def packets_page(request: Request):
         "site_name": config.SITE_NAME,
         "span": db.packet_span(),
         "fields": search.describe_fields(),
+        "sorts": search.describe_sorts(),
         "retention_days": db.setting_int("packet_retention_days",
                                          config.PACKET_RETENTION_DAYS),
     })

@@ -163,6 +163,80 @@ def test_onzin_is_altijd_een_fout_nooit_stilte():
             search.parse(tekst)
 
 
+def test_sorteren_zonder_parameter_is_nieuwste_eerst():
+    # De lege sorteerparameter moet exact de ORDER BY opleveren die db.py als
+    # standaard heeft staan; anders verandert het gedrag van het archief
+    # stilzwijgend zodra de API de sortering wél doorgeeft.
+    s = search.parse_sort("")
+    assert s.key == "time"
+    assert s.descending is True
+    assert s.sql == "p.ts DESC, p.id DESC"
+    assert s.token == "time:desc"
+    assert search.parse_sort(None).sql == s.sql
+
+
+def test_sorteren_op_hops_beide_richtingen():
+    aflopend = search.parse_sort("hops:desc")
+    assert aflopend.sql == "p.path_len IS NULL, p.path_len DESC, p.id DESC"
+    oplopend = search.parse_sort("hops:asc")
+    assert oplopend.sql == "p.path_len IS NULL, p.path_len ASC, p.id ASC"
+    # Zonder richting is aflopend bedoeld, net als de standaardvolgorde.
+    assert search.parse_sort("hops").sql == aflopend.sql
+
+
+def test_lege_waarden_belanden_in_beide_richtingen_achteraan():
+    # "x IS NULL" sorteert 0 vóór 1, dus rijen zonder waarde staan onderaan of
+    # de richting nu op of af is. Zonder dat zou "sorteer op SNR, kleinste
+    # eerst" openen op een pagina streepjes.
+    for tekst in ("snr:asc", "snr:desc"):
+        assert search.parse_sort(tekst).sql.startswith("p.snr IS NULL, ")
+    # De tijdkolom is NOT NULL in het schema en heeft die term dus niet nodig.
+    assert "IS NULL" not in search.parse_sort("time:asc").sql
+
+
+def test_sortering_heeft_altijd_een_unieke_laatste_sleutel():
+    # Zonder unieke tiebreaker kunnen twee rijen met dezelfde waarde tussen
+    # pagina 1 en pagina 2 van plaats wisselen, waarna een rij dubbel of
+    # helemaal niet verschijnt.
+    for naam in search.SORTS:
+        for richting in ("asc", "desc"):
+            sql = search.parse_sort(f"{naam}:{richting}").sql
+            assert sql.endswith(f"p.id {richting.upper()}"), sql
+
+
+def test_alleen_kolommen_uit_de_tabel_zijn_sorteerbaar():
+    # De verdediging tegen SQL-injectie via de sorteerparameter: de sleutel
+    # wordt opgezocht, nooit doorgegeven. Alles wat niet in SORTS staat is een
+    # QueryError, en geen enkele SQL bevat iets van wat er getypt is.
+    onzin = [
+        "veldje",                     # bestaat niet
+        "p.ts",                       # een kolomnaam is geen sleutel
+        "hops; DROP TABLE packets",   # de klassieker
+        "hops:desc--",                # richting die niet bestaat
+        "hops:willekeurig",
+        "name",                       # zoekbaar, maar geen kolom om op te sorteren
+        "path",
+        "region",                     # sql is een tijdelijke naam, geen kolom
+        "1",
+    ]
+    for tekst in onzin:
+        with pytest.raises(search.QueryError):
+            search.parse_sort(tekst)
+
+
+def test_sorteersleutels_verwijzen_naar_echte_kolommen():
+    # SORTS wordt uit FIELDS afgeleid; deze test bewaakt dat daar niets
+    # binnenglipt wat geen kolomexpressie is die SQLite kan sorteren.
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE p(id INTEGER, ts TEXT, payload_name TEXT, scope TEXT, "
+                "sender TEXT, snr REAL, rssi REAL, len INTEGER, path_len INTEGER)")
+    con.execute("CREATE TABLE c(country TEXT)")
+    con.execute("CREATE TABLE o(country TEXT)")
+    for naam in search.SORTS:
+        sql = search.parse_sort(naam).sql
+        con.execute(f"SELECT p.id FROM p, c, o ORDER BY {sql}").fetchall()
+
+
 def test_elke_clausule_komt_terug_in_de_sql():
     # Drie clausules in, drie clausules uit: nergens mag er onderweg een
     # verdwijnen.

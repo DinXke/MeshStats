@@ -715,6 +715,31 @@ label input { width: 100%; margin-top: .25rem; }
 .pkt-time-abs { flex: 0 0 7.6rem; color: var(--muted); white-space: nowrap; }
 .archresults .feedhead .pkt-time-abs { color: inherit; }
 
+/* --- sorting the results ------------------------------------------------------
+   The heading is the control. A button inside it, stripped back to the type the
+   header strip already uses, so the row still reads as a row of headings and not
+   as a toolbar of nine buttons. Only the active column is coloured and carries an
+   arrow: an arrow on every column would leave nothing pointing at the answer. */
+.feedhead .sortbtn {
+  display: block; width: 100%;
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+  background: none; border: 0; padding: 0; margin: 0;
+  text-align: inherit; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.feedhead .sortbtn:hover { color: var(--text); }
+.feedhead .sortbtn:focus-visible {
+  outline: 1px solid var(--accent-dim); outline-offset: 2px;
+}
+.feedhead .sorted { color: var(--accent); }
+.feedhead [aria-sort="ascending"] .sortbtn::after { content: " \2191"; }
+.feedhead [aria-sort="descending"] .sortbtn::after { content: " \2193"; }
+
+/* The same ordering as a pair of controls, for the widths where the header strip
+   is folded away. Hidden here, shown in the 700 px block below -- the opposite
+   of the headings, so exactly one of the two is ever on screen. */
+.archsort { display: none; }
+
 .archpager { display: flex; align-items: center; gap: .8rem; margin-top: .6rem; }
 .archpager button { font-size: .78rem; }
 .archpager button:disabled { opacity: .4; cursor: default; box-shadow: none; }
@@ -729,6 +754,15 @@ label input { width: 100%; margin-top: .25rem; }
   .archlist li { flex-wrap: wrap; }
   .pkt-time-abs { flex: 0 0 auto; order: 0; margin-left: auto; font-size: .74rem; }
   .archresults .feedhead { display: none; }
+  /* Wraps rather than shrinks: at 320 px the label, the column and the
+     direction do not fit on one line, and a picker squeezed to four characters
+     is worse than one on a line of its own. */
+  .archsort {
+    display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .5rem;
+    margin: .1rem 0 .5rem; font-size: .78rem; color: var(--muted);
+  }
+  .archsort select { flex: 1 1 7rem; min-width: 0; max-width: 12rem; }
+  .archsort button { font-size: .78rem; white-space: nowrap; }
 }
 
 /* A sender worked out from the 1-byte source hash rather than stated by an

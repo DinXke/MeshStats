@@ -2150,25 +2150,58 @@
     var prevEl = document.getElementById("arch-prev");
     var nextEl = document.getElementById("arch-next");
     var pktModalEl = document.getElementById("pkt-modal");
+    var headEl = archEl.querySelector(".feedhead");
+    var sortSelEl = document.getElementById("arch-sort");
+    var sortDirEl = document.getElementById("arch-sortdir");
     var archOffset = 0;
     var archTotal = 0;
     var archSeq = 0;      // stale responses from a slower earlier search are dropped
     var openPktId = null; // id of the packet whose modal is open, if any
+    // Which column the rows are ordered by, and which way. Held here rather than
+    // read back out of the DOM: the URL, the column headings and the phone's
+    // picker all have to say the same thing, and three readers of one variable
+    // are easier to keep honest than three readers of each other.
+    var archSort = "time";
+    var archDesc = true;
 
     // The field table of the query language, straight from search.py. Without
     // it the buttons would be gated on a hand-copied list that goes stale the
     // first time a field is renamed on the server.
     SEARCH_FIELDS = (archEl.dataset.fields || "").split(",").filter(Boolean);
 
-    // The query, the window and the open packet live in the URL, so a search or
-    // a single packet can be sent to someone as a link -- for a search page that
-    // is not a nicety, it is what makes results citable.
+    // The sortable columns and their kind, from search.SORTS. Same reasoning as
+    // SEARCH_FIELDS above: a heading that offers an order the server does not
+    // have would be a button whose only output is an error message.
+    var SORT_KINDS = {};
+    (archEl.dataset.sorts || "").split(",").forEach(function (pair) {
+      var bits = pair.split(":");
+      if (bits.length === 2 && bits[0]) SORT_KINDS[bits[0]] = bits[1];
+    });
+    function sortable(key) {
+      return Object.prototype.hasOwnProperty.call(SORT_KINDS, key);
+    }
+    function sortToken() { return archSort + (archDesc ? ":desc" : ":asc"); }
+
+    // The query, the window, the order and the open packet live in the URL, so a
+    // search or a single packet can be sent to someone as a link -- for a search
+    // page that is not a nicety, it is what makes results citable. The order
+    // belongs in there for the same reason the query does: "kijk, deze node zit
+    // altijd op zeven hops" is a claim about a list in a particular order, and a
+    // link that lands on another one does not show it.
     var initialPkt = 0;
     (function initFromUrl() {
       var sp = new URLSearchParams(location.search);
       if (sp.get("q")) qEl.value = sp.get("q");
       if (sp.get("w") !== null) windowEl.value = sp.get("w");
       if (!windowEl.value) windowEl.value = "24";
+      var s = (sp.get("sort") || "").split(":");
+      // An unknown column in the link is ignored rather than sent on: the
+      // server would refuse it, and answering an old bookmark with an error
+      // where the default order would do is unkind for no gain.
+      if (sortable(s[0])) {
+        archSort = s[0];
+        archDesc = s[1] !== "asc";
+      }
       if (/^\d+$/.test(sp.get("p") || "")) initialPkt = parseInt(sp.get("p"), 10);
     })();
 
@@ -2176,6 +2209,8 @@
       var sp = new URLSearchParams();
       if (qEl.value.trim()) sp.set("q", qEl.value.trim());
       if (windowEl.value !== "24") sp.set("w", windowEl.value);
+      // Left out while it is the default, so the plain archive link stays plain.
+      if (archSort !== "time" || !archDesc) sp.set("sort", sortToken());
       // replaceState, not pushState: opening and closing a detail is reading,
       // not navigating, and a back button that walked back through every packet
       // somebody glanced at would never reach the previous search.
@@ -2201,6 +2236,7 @@
       var url = "/api/v1/packets/search?q=" + encodeURIComponent(qEl.value.trim()) +
         "&since=" + encodeURIComponent(sinceParam()) +
         "&limit=" + PAGE_SIZE + "&offset=" + archOffset +
+        "&sort=" + encodeURIComponent(sortToken()) +
         "&facets=" + FACETS.join(",");
       fetch(url).then(function (r) { return r.json(); }).then(function (d) {
         if (seq !== archSeq) return;
@@ -2210,6 +2246,10 @@
           return;
         }
         errEl.hidden = true;
+        // The order the server actually used, read back rather than assumed, so
+        // the arrow in the heading can never point one way while the rows go the
+        // other -- the one thing a sorted table must never do.
+        if (d.sort) adoptSort(d.sort);
         archTotal = d.total;
         renderCount(d);
         renderHistogram(d);
@@ -2418,8 +2458,17 @@
       var li = document.createElement("li");
       li.dataset.id = p.id;
       li.tabIndex = 0;
+      // The roles that make the headings' aria-sort mean something: a table
+      // whose rows have cells. Set here rather than in the template because the
+      // rows are built here; the header row and the table itself carry theirs in
+      // packets.html.
+      li.setAttribute("role", "row");
       var dot = document.createElement("i");
       dot.style.background = PKT_COLORS[p.type] || "#7d8fa0";
+      // No cell of its own: the colour repeats what the Type column already
+      // says, so with roles in place it would be an empty extra column that a
+      // screen reader has to walk past on every row.
+      dot.setAttribute("aria-hidden", "true");
       li.appendChild(dot);
       // Absolute time, not relative: the archive exists to pin down when
       // something happened, and "3 uur geleden" defeats that. Compact 24-hour
@@ -2427,6 +2476,7 @@
       // 22 characters and squeezes the sender out of its own column.
       var when = document.createElement("time");
       when.className = "pkt-time-abs";
+      when.setAttribute("role", "cell");
       when.dateTime = p.ts;
       when.textContent = fmtTs(p.ts);
       li.appendChild(when);
@@ -2446,6 +2496,7 @@
       li.appendChild(cell2("pkt-type", p.type || "?", "type", p.type));
       var scope = document.createElement("span");
       scope.className = "pkt-scope";
+      scope.setAttribute("role", "cell");
       scope.textContent = p.scope ? t("scope." + p.scope) : "—";
       if (p.scope_region) scope.textContent += " · " + p.scope_region;
       filterBtns(scope, "scope", p.scope, setFilter);
@@ -2473,6 +2524,7 @@
     function cell2(cls, text, field, value) {
       var el = document.createElement("span");
       el.className = cls;
+      el.setAttribute("role", "cell");
       el.textContent = text;
       filterBtns(el, field, value, setFilter);
       return el;
@@ -2494,6 +2546,121 @@
         total: archTotal.toLocaleString() });
       prevEl.disabled = archOffset <= 0;
       nextEl.disabled = to >= archTotal;
+    }
+
+    // --- ordering the results ------------------------------------------------
+    // A heading becomes a real <button> instead of getting a click handler of
+    // its own. That is what buys focus, Enter and space without a keydown
+    // handler reimplementing all three, and what makes a screen reader announce
+    // something you can press; the aria-sort that says which way it points goes
+    // on the heading around it, because that is the element with the
+    // columnheader role.
+    function wireSortHeaders() {
+      if (!headEl) return;
+      Array.prototype.forEach.call(headEl.querySelectorAll("[data-sort]"),
+        function (cell) {
+          var key = cell.getAttribute("data-sort");
+          if (!sortable(key)) {
+            // The server does not order by this column. Drop the marker so the
+            // heading stays a heading rather than becoming a dead button.
+            cell.removeAttribute("data-sort");
+            return;
+          }
+          cell.setAttribute("role", "columnheader");
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "sortbtn";
+          btn.textContent = cell.textContent.trim();
+          // The translation key moves along with the text. Left on the heading
+          // it would set textContent there on the next apply() and throw the
+          // button out of the page with it.
+          var i18nKey = cell.getAttribute("data-i18n");
+          if (i18nKey) {
+            cell.removeAttribute("data-i18n");
+            btn.setAttribute("data-i18n", i18nKey);
+          }
+          btn.setAttribute("data-i18n-title", "arch.sort_by");
+          btn.title = t("arch.sort_by");
+          cell.textContent = "";
+          cell.appendChild(btn);
+          btn.addEventListener("click", function () { setSort(key); });
+        });
+    }
+
+    // The phone's picker is filled from the headings rather than from
+    // SORT_KINDS, so the two views offer the same columns in the same order --
+    // and so a column the server can sort but the table does not show can never
+    // turn up here alone.
+    function buildSortPicker() {
+      if (!sortSelEl || !headEl) return;
+      Array.prototype.forEach.call(headEl.querySelectorAll("[data-sort]"),
+        function (cell) {
+          var opt = document.createElement("option");
+          opt.value = cell.getAttribute("data-sort");
+          opt.textContent = cell.textContent.trim();
+          sortSelEl.appendChild(opt);
+        });
+      sortSelEl.addEventListener("change", function () {
+        setSort(sortSelEl.value, true);
+      });
+      if (sortDirEl) {
+        sortDirEl.addEventListener("click", function () { setSort(archSort); });
+      }
+    }
+
+    /* Order by this column, and search again from the first page.
+     *
+     * Clicking the column that is already active turns the order around, which
+     * is what a second click on a heading means everywhere; clicking another one
+     * starts from its own natural end -- a number or a moment from the high end,
+     * a word from its A. That first direction comes from the field kind the
+     * server sent, so it stays right when a column changes type.
+     *
+     * ``pick`` is set by the phone's picker, which chose a column and not a
+     * direction: turning the order around there because the same column happened
+     * to be selected already would answer a choice nobody made.
+     */
+    function setSort(key, pick) {
+      if (!sortable(key)) return;
+      if (key === archSort && !pick) archDesc = !archDesc;
+      else if (key !== archSort) archDesc = SORT_KINDS[key] !== "text";
+      archSort = key;
+      renderSort();
+      // Back to page one. Offset counts rows in an order that no longer exists,
+      // so keeping it would land the reader somewhere in the middle of a list
+      // they have not seen the top of.
+      runSearch(false);
+    }
+
+    // Take over an order the server reported ("hops:desc"), without searching.
+    function adoptSort(token) {
+      var bits = String(token).split(":");
+      if (!sortable(bits[0])) return;
+      archSort = bits[0];
+      archDesc = bits[1] !== "asc";
+      renderSort();
+    }
+
+    function renderSort() {
+      if (headEl) {
+        Array.prototype.forEach.call(headEl.querySelectorAll("[data-sort]"),
+          function (cell) {
+            var on = cell.getAttribute("data-sort") === archSort;
+            // aria-sort is the whole announcement for a screen reader; the
+            // arrow drawn by style.css is the same sentence for everyone else.
+            cell.setAttribute("aria-sort",
+              on ? (archDesc ? "descending" : "ascending") : "none");
+            cell.classList.toggle("sorted", on);
+          });
+      }
+      if (sortSelEl) sortSelEl.value = archSort;
+      if (sortDirEl) {
+        // The button says which way it points now, not what it would do: that
+        // reads as a state that can be changed, and it saves a second control
+        // for the direction that a phone has no room for.
+        sortDirEl.textContent = (archDesc ? "↓ " : "↑ ") +
+          t(archDesc ? "arch.sort_desc" : "arch.sort_asc");
+      }
     }
 
     // --- one packet, in full -------------------------------------------------
@@ -2567,6 +2734,9 @@
     });
     windowEl.addEventListener("change", function () { runSearch(false); });
 
+    wireSortHeaders();
+    buildSortPicker();
+    renderSort();
     runSearch(false);
     // A link that names a packet opens it straight away, without waiting for the
     // list around it: the detail comes from its own endpoint, and somebody who
