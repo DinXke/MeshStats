@@ -168,7 +168,7 @@ instellingen die je op afstand het hardst nodig hebt *zijn* juist de gevaarlijke
 betekent alleen dat iemand een ladder haalt, of een seriële kabel, en hetzelfde
 doet met minder zorg en zonder dat het ergens vastligt.
 
-Het risico verschoof dus van **weglaten** naar **omgaan ermee**. Elke parameter
+Het risico verschoof dus van **weglaten** naar **afhandelen**. Elke parameter
 draagt een risicoklasse, en die klasse bepaalt hoeveel wrijving een wijziging
 kost.
 
@@ -456,7 +456,7 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | `ota_route()` als aparte sleutel voor wat er kan | **gebouwd** |
 | Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 1.14.0 `POST /api/cfg`: het hele CLI-oppervlak op drie na, bediening per type, bevestiging per risicoklasse, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
 | Instellingen schrijven naar een `semi_managed` node over LoRa | **ontworpen, niet gebouwd.** Vraagt om een toestandsmachine naast de instellingenronde, en de node waarvoor het bestaat is de dakrepeater — dus het wordt eerst gebouwd tegen iets wat iemand kan aanraken |
-| Schrijven naar de wifi- en MQTT-instellingen van een node | **wordt hier niet aangeboden.** Dat zijn de onze en niet die van MeshCore, en ze hebben al hun eigen formulieren op de beheerpagina van de node zelf en in de `wifi`-CLI |
+| Schrijven naar de WiFi- en MQTT-instellingen van een node | **wordt hier niet aangeboden.** Dat zijn de onze en niet die van MeshCore, en ze hebben al hun eigen formulieren op de beheerpagina van de node zelf en in de `wifi`-CLI |
 | Bevestigen-of-terugdraaien | **onderzocht en verworpen**, met de redenering hierboven |
 | Automatisch rechten ontdekken | **verworpen**, in plaats daarvan aanwijzen-en-één-keer-proberen |
 
