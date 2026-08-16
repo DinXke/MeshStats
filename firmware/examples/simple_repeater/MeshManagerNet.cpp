@@ -5,6 +5,77 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.5.0  De beheerpagina van de node zelf kan nu alles wat de app en het filter
+ *        kennen: elke CLI-instelling en het volledige pakketfilter. Tot nu toe
+ *        toonde ze status, wifi, MQTT, voeding, monitorlijst en back-up -- en
+ *        precies de twee dingen niet die je op een slechte dag nodig hebt.
+ *        Waarom dit meer is dan gemak. Deze pagina is de weg die overblijft als
+ *        de server, het internet of de broker weg is, en dit project bestaat mede
+ *        voor noodcommunicatie. De site kan dit sinds 2.1.0 en 2.3.0 allemaal,
+ *        maar de site staat tussen jou en het apparaat in; de eigen pagina van de
+ *        node staat dat niet. Een repeater op een dak met een filter dat te streng
+ *        staat en een broker die eruit ligt, was tot nu toe alleen met een seriële
+ *        kabel of over de mesh-CLI recht te zetten.
+ *        Eén lijst, geen tweede. Beide schermen worden volledig getekend uit wat
+ *        de firmware zelf publiceert: GET /api/cfg voor de parameters met hun
+ *        type, grenzen, keuzelijst en risicoklasse, GET/POST /api/filter voor het
+ *        filter. Er staat dus geen tabel in de pagina die naast die van de
+ *        firmware kan gaan lopen -- dezelfde afspraak die de server al hanteert.
+ *        Wat /api/cfg erbij kreeg: ?values=1 zet achter elke parameter wat er NU
+ *        in de node staat, zodat de velden voorgevuld zijn en 'zet dit op wat het
+ *        al is' een proefrit is over de hele schrijfweg. Zonder die vlag is het
+ *        antwoord byte voor byte wat het was, want de server cachet die lijst en
+ *        een gecachte huidige waarde is een verkeerde huidige waarde. Ook nieuw
+ *        in dat antwoord: de vier deelgrenzen van 'radio' reizen mee in
+ *        'choices', uit dezelfde tabel als cfgRadioOk(), zodat de pagina vier
+ *        velden met elk hun eigen minimum en maximum kan tekenen in plaats van
+ *        één tekstvak waarin "869.525 250 11 5" overgetypt moet worden.
+ *        Ongeldige waarden zijn niet in te typen: opsommingen worden
+ *        keuzelijsten met de werkelijke woorden, getallen krijgen hun eigen
+ *        grenzen, booleans worden een keuze uit on en off. En na afloop staat er
+ *        wat de node ANTWOORDT en niet wat er gevraagd is -- met dezelfde
+ *        vergelijking (cfgSameValue) die /api/cfg al gebruikte, dus
+ *        'advert.interval 61' meldt eerlijk dat er 60 staat.
+ *        De risicoklassen zijn zichtbaar en niet alleen aanwezig. De parameters
+ *        staan gegroepeerd onder de drie klassen mét de uitleg erboven, dus vóór
+ *        de keuze; de zwaarste klasse vraagt de naam van de node over te typen,
+ *        met het gevolg erbij. Dat is een drempel in de browser en niet in de
+ *        node, en dat is een bewuste grens: POST /api/cfg kent geen
+ *        bevestigingsveld omdat de server langs dezelfde weg schrijft. Wat de
+ *        node wél doet -- toetsen en teruglezen -- blijft de controle die telt.
+ *        Bij het filter hangt de zwaarte aan de RICHTING en aan waar de handeling
+ *        bovenop komt: 'filter off' en 'filter reset' vragen niets, want herstel
+ *        mag nooit strakker afgeschermd zijn dan de fout die het terugdraait, en
+ *        'filter aan' vraagt de naam zodra er al een regel klaarstaat die een
+ *        hele categorie dichtzet. Er is met opzet geen tekstvak voor een
+ *        commandoregel: dat zou een CLI op een webpagina zijn, en dan hangt de
+ *        risicoweging af van hoe iemand toevallig spelt.
+ *        De pagina is ingedeeld in inklapbare secties, en dat zijn <details> en
+ *        geen tabbladen. Omklappen, het toetsenbord, de schermlezer en 'zoeken op
+ *        deze pagina' doet de browser dan zelf; tabbladen zijn dezelfde functie
+ *        voor een omschakelaar in JS, een toestand in CSS en aria-attributen
+ *        erbij. Alleen het onthouden kost JavaScript, en dat is vier regels met
+ *        dezelfde localStorage-sleutel als de publieke site. Toestand staat open,
+ *        de rest dicht.
+ *        Wat het kost: de pagina gaat van 25.839 naar 46.086 byte in het
+ *        flashgeheugen (+20.247). Daarvan is 980 byte de indeling zelf (714
+ *        markup en CSS, 266 het onthouden), 10.263 byte de woordenlijsten voor
+ *        twee talen, en 9.004 byte de twee formulieren. Er is op deze pagina geen
+ *        gzip-budget zoals bij de companion -- die zit klem tegen de 5760 byte van
+ *        CONFIG_LWIP_TCP_SND_BUF_DEFAULT -- want deze wordt ongecomprimeerd met
+ *        send_P rechtstreeks uit flash gestuurd en door AsyncWebServer in stukken
+ *        over de lijn gezet. De grens is dus de app-partitie en niet de
+ *        socketbuffer. De statische buffer van handleCfgList() gaat van 3000 naar
+ *        5600 byte, op het slechtste geval berekend in plaats van op het gewone:
+ *        de oude maat paste met 122 byte over, en één parameter erbij had de lus
+ *        stilletjes laten stoppen met een geldig en onvolledig antwoord.
+ *        Wat er NIET in zit. De weg terug blijft de mesh-CLI: 'filter off' en
+ *        'filter reset' hebben geen wifi, geen beheerpagina en geen server nodig,
+ *        en daar is niets aan veranderd. Er zijn geen nieuwe afhankelijkheden en
+ *        geen CDN's -- deze pagina moet het doen zonder internet, want dat is de
+ *        hele reden dat ze bestaat. 'prv.key', 'bridge.secret' en 'set freq'
+ *        blijven ontbreken om de redenen die bij 2.1.0 staan; die lijst is niet
+ *        ruimer geworden, alleen beter bedienbaar.
  * 2.4.0  De schrijfweg over LoRa. Deze node kan één CLI-instelling zetten op een
  *        repeater die hij MONITORT, en leest die parameter daarna terug:
  *        POST /api/moncfg om het te vragen, GET /api/moncfg voor de uitslag, en
@@ -4744,8 +4815,17 @@ static const char PAGE[] PROGMEM =
   "text-shadow:0 0 12px rgba(53,224,140,.35)}"
   "main{max-width:680px;margin:0 auto;padding:.5rem 1.2rem 3rem}"
   "h1{font-size:1.5rem;margin:1.2rem 0 .2rem;letter-spacing:-.01em}"
-  "h2{font-family:var(--mono);font-size:.82rem;margin:2rem 0 .7rem;text-transform:uppercase;"
-  "letter-spacing:.2em;color:var(--accent)}h2::before{content:'\\25B8  ';color:var(--dim)}"
+  /* De secties zijn <details>, en dat is een keuze tegen JavaScript in. Open en
+   * dicht klappen, het toetsenbord, de schermlezer en 'zoeken op deze pagina'
+   * doet de browser zelf; tabbladen zouden dezelfde functie zijn voor een
+   * omschakelaar in JS, een toestand in CSS en aria-attributen erbij. Op een
+   * pagina die in het flashgeheugen van de node staat is dat de duurste vorm van
+   * hetzelfde. Alleen het ONTHOUDEN kost hier JavaScript, en dat is vier regels. */
+  "details.sec>summary{font-family:var(--mono);font-size:.82rem;margin:2rem 0 .7rem;"
+  "text-transform:uppercase;letter-spacing:.2em;color:var(--accent);cursor:pointer;list-style:none}"
+  "details.sec>summary::-webkit-details-marker{display:none}"
+  "details.sec>summary::before{content:'\\25B8  ';color:var(--dim)}"
+  "details.sec[open]>summary::before{content:'\\25BE  ';color:var(--dim)}"
   "h3{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;"
   "color:var(--muted);margin:1.3rem 0 .4rem}"
   "a{color:var(--cyan);text-decoration:none}"
@@ -4775,20 +4855,37 @@ static const char PAGE[] PROGMEM =
   ".row{display:flex;gap:.6rem}.row label{flex:1}"
   "label input.ck{width:auto;margin:0 .45rem 0 0}"
   "code{font-family:var(--mono);font-size:.85em;color:var(--cyan)}"
+  /* Een knop die een categorie verkeer stilzet of de radio omgooit, hoort er
+   * anders uit te zien dan een knop die een naam verandert. De risicoklasse zelf
+   * staat in de kop waaronder de parameter valt, met de uitleg erbij -- dus vóór
+   * de keuze, en niet pas in het venster dat om een bevestiging vraagt. */
+  "button.dgr{background:transparent;color:var(--amber);border-color:var(--amber)}"
+  "button.dgr:hover{background:var(--amber);color:#2a1600;box-shadow:0 0 12px rgba(255,180,84,.4)}"
+  "table.cfg td{padding:.3rem .35rem;vertical-align:middle}"
+  "table.cfg input,table.cfg select{width:100%}"
+  "table.cfg td.k{white-space:normal;word-break:break-all;color:var(--text)}"
+  ".nw{white-space:nowrap}"
+  ".rw{display:flex;gap:.3rem;align-items:center}.rw>input{min-width:0}"
   "</style></head><body>"
   "<div class=topbar><span class=brand>MeshManager</span>"
   "<span><button class=pill id=lg></button> <button class=pill id=th></button></span></div>"
   "<main>"
   "<h1 id=nm>MeshCore</h1><p class=muted id=sub></p>"
   "<div id=safe></div>"
-  "<h2 data-i18n=t_state></h2><div class=card><table id=st></table></div>"
-  "<h2 data-i18n=t_wifi></h2><div class=card><form id=f>"
+  /* Welke sectie open begint is een keuze en geen standaardwaarde. De toestand
+   * staat open omdat dat de vraag is waarmee iemand deze pagina opent; de rest
+   * gaat dicht, want dat zijn de plekken waar je bewust naartoe gaat. Een pagina
+   * die alles openklapt is net zo onleesbaar als een pagina zonder secties -- en
+   * met de instellingen en het filter erbij is ze twee keer zo lang. */
+  "<details class=sec data-ck=state open><summary data-i18n=t_state></summary>"
+  "<div class=card><table id=st></table></div></details>"
+  "<details class=sec data-ck=wifi><summary data-i18n=t_wifi></summary><div class=card><form id=f>"
   "<label><span data-i18n=l_ssid></span><input name=ssid></label>"
   "<label><span data-i18n=l_pass></span><input name=pass type=password data-i18n-ph=ph_unch></label>"
   "<label><span data-i18n=l_appass></span><input name=ap_pass type=password data-i18n-ph=ph_unch></label>"
   "<button type=submit data-i18n=b_saveconn></button></form>"
-  "<p class=muted data-i18n=h_wifi></p></div>"
-  "<h2 data-i18n=t_power></h2><div class=card><form id=p>"
+  "<p class=muted data-i18n=h_wifi></p></div></details>"
+  "<details class=sec data-ck=power><summary data-i18n=t_power></summary><div class=card><form id=p>"
   "<div class=row><label><span data-i18n=l_mode></span><select name=mode>"
   "<option value=0 data-i18n=o_always></option><option value=1 data-i18n=o_save></option>"
   "</select></label>"
@@ -4799,8 +4896,8 @@ static const char PAGE[] PROGMEM =
   "<p><button type=button class=pill id=radd data-i18n=b_addrule></button> "
   "<button type=submit data-i18n=b_save></button></p></form>"
   "<p class=muted id=est></p>"
-  "<p class=muted data-i18n=h_power></p></div>"
-  "<h2 data-i18n=t_mqtt></h2><div class=card><form id=m>"
+  "<p class=muted data-i18n=h_power></p></div></details>"
+  "<details class=sec data-ck=mqtt><summary data-i18n=t_mqtt></summary><div class=card><form id=m>"
   "<div class=row><label><span data-i18n=l_broker></span><input name=host placeholder='10.0.0.5'></label>"
   "<label style='max-width:7rem'><span data-i18n=l_port></span>"
   "<input name=port type=number min=1 max=65535></label></div>"
@@ -4810,8 +4907,8 @@ static const char PAGE[] PROGMEM =
   "<label><input class=ck type=checkbox name=enabled><span data-i18n=l_enabled></span></label>"
   "<label><input class=ck type=checkbox name=rx><span data-i18n=l_rx></span></label>"
   "<button type=submit data-i18n=b_save></button></form><table id=mt></table>"
-  "<p class=muted><span data-i18n=h_topics></span> <code id=tp></code></p></div>"
-  "<h2 data-i18n=t_mon></h2><div class=card>"
+  "<p class=muted><span data-i18n=h_topics></span> <code id=tp></code></p></div></details>"
+  "<details class=sec data-ck=mon><summary data-i18n=t_mon></summary><div class=card>"
   "<p class=muted data-i18n=h_mon></p>"
   "<label><span data-i18n=l_filter></span><input id=fl></label>"
   "<h3 data-i18n=t_heard></h3><table id=hl></table>"
@@ -4826,23 +4923,34 @@ static const char PAGE[] PROGMEM =
   "<label style='max-width:10rem'><span data-i18n=l_moniv></span>"
   "<input id=miv type=number min=60 max=65535></label></div>"
   "<button id=mivb data-i18n=b_save></button> "
-  "<button id=mpb class=pill data-i18n=b_pollnow></button></div>"
-  "<h2 data-i18n=t_settings></h2><div class=card>"
+  "<button id=mpb class=pill data-i18n=b_pollnow></button></div></details>"
+  "<details class=sec data-ck=sweep><summary data-i18n=t_settings></summary><div class=card>"
   "<p class=muted data-i18n=h_settings></p>"
   "<table id=sv></table>"
   "<div class=row style='margin-top:.6rem'>"
   "<label style='max-width:12rem'><span data-i18n=l_setiv></span>"
   "<input id=siv type=number min=5 max=65535></label></div>"
   "<button id=sivb data-i18n=b_save></button> "
-  "<button id=snow class=pill data-i18n=b_sweep></button></div>"
-  "<h2 data-i18n=t_fw></h2><div class=card>"
-  "<p class=muted data-i18n=h_fw></p><p><a href=/update data-i18n=a_fw></a></p></div>"
-  "<h2 data-i18n=t_backup></h2><div class=card>"
+  "<button id=snow class=pill data-i18n=b_sweep></button></div></details>"
+  /* De twee secties hieronder zijn de reden dat deze pagina bestaat zoals ze
+   * bestaat. Alles wat de MeshCore-app over het mesh kan instellen, en alles wat
+   * het pakketfilter kent, hoort ook te kunnen als de server, het internet of de
+   * broker weg is -- dit is de weg die dan overblijft. Beide worden volledig door
+   * JavaScript getekend uit /api/cfg en /api/filter, zodat de lijst met
+   * parameters en de grammatica van het filter op één plek staan: in de firmware
+   * eronder. Wat hier in het HTML staat is niet meer dan waar het komt. */
+  "<details class=sec data-ck=cfg><summary data-i18n=t_cfg></summary><div class=card>"
+  "<p class=muted data-i18n=h_cfg></p><div id=cfgn></div><div id=cfgb></div></div></details>"
+  "<details class=sec data-ck=flt><summary data-i18n=t_flt></summary><div class=card>"
+  "<p class=muted data-i18n=h_flt></p><div id=fltn></div><div id=fltb></div></div></details>"
+  "<details class=sec data-ck=fw><summary data-i18n=t_fw></summary><div class=card>"
+  "<p class=muted data-i18n=h_fw></p><p><a href=/update data-i18n=a_fw></a></p></div></details>"
+  "<details class=sec data-ck=backup><summary data-i18n=t_backup></summary><div class=card>"
   "<p class=muted data-i18n=h_backup></p>"
   "<p><a href=/api/backup data-i18n=a_backup></a></p>"
   "<form id=r style='margin-top:.8rem'>"
   "<label><span data-i18n=l_restore></span><input type=file name=f accept='.mcb'></label>"
-  "<button type=submit data-i18n=b_restore></button></form></div>"
+  "<button type=submit data-i18n=b_restore></button></form></div></details>"
   "</main><script>"
   "var T={nl:{"
   "t_state:'Toestand',t_wifi:'WiFi',t_power:'Energie',t_mqtt:'MQTT',t_fw:'Firmware',"
@@ -4917,7 +5025,94 @@ static const char PAGE[] PROGMEM =
   "a_badkey:'Dat is geen geldige sleutel. Alleen hex, minstens % tekens.',"
   "a_saved:'Opgeslagen. De repeater verbindt opnieuw; ververs deze pagina zo dadelijk.',"
   "a_pick:'Kies eerst een back-upbestand.',"
-  "a_conf:'Alle instellingen en sleutels worden overschreven. Doorgaan?'},"
+  "a_conf:'Alle instellingen en sleutels worden overschreven. Doorgaan?',"
+  // ---- CLI-instellingen -------------------------------------------------
+  "t_cfg:'Instellingen wijzigen',"
+  "h_cfg:'Alles wat je met de MeshCore-app of over de CLI kunt zetten, staat hier ook. "
+  "De lijst, de grenzen en de risicoklassen komen uit deze firmware zelf, dus wat je hier "
+  "ziet is wat er werkelijk tussen een klik en de radio staat. Na het zetten wordt de "
+  "waarde teruggelezen: er staat wat de node ANTWOORDT, niet wat je vroeg.',"
+  "c_g1:'Gewoon',c_g2:'Schrijft merkbaar',c_g3:'Kan de bereikbaarheid afsnijden',"
+  "c_b1:'Waarden die je zo weer terugzet. Opslaan volstaat.',"
+  "c_b2:'Deze veranderen merkbaar hoe de node zich gedraagt op het mesh. Ze vragen een "
+  "bevestiging, maar ze kunnen de node niet buiten bereik brengen.',"
+  "c_b3:'Deze raken de radio of wie er mag inloggen. Een fout hier kan betekenen dat je "
+  "deze node alleen nog met een kabel in je hand terugkrijgt. Typ daarom de naam over.',"
+  "c_par:'Parameter',c_now:'Nu',c_new:'Nieuwe waarde',b_set:'Zet',"
+  "c_none:'\\u2014',c_secret:'\\u2022\\u2022\\u2022',"
+  "c_load:'De lijst met parameters is niet op te halen bij deze node.',"
+  "c_rb:'Bewaard, maar nog niet actief: dit gaat pas om bij een herstart. Tot dan draait "
+  "de radio op de oude waarden, en pas bij die herstart blijkt of de nieuwe kloppen.',"
+  "c_ok:'Gezet. %1 staat nu op %2.',"
+  "c_near:'Gezet, maar niet precies. Gevraagd %1, in de node staat nu %2 \\u2014 en dat "
+  "laatste is wat er werkelijk staat.',"
+  "c_bad:'Niet gezet. %1',"
+  "a_c2:'%1 op deze node zetten op: %2\\n\\nDit verandert merkbaar hoe de node zich "
+  "gedraagt op het mesh.\\n\\nDoorgaan?',"
+  "a_c3:'%1 op deze node zetten op: %2\\n\\nDIT KAN DE NODE ONBEREIKBAAR MAKEN. Gaat het "
+  "mis, dan is er geen tweede weg naar binnen behalve een kabel.\\n\\nTyp de naam van de "
+  "node over om door te gaan:',"
+  "a_cno:'De naam klopt niet. Er is niets veranderd.',"
+  // ---- pakketfilter -----------------------------------------------------
+  "t_flt:'Pakketfilter',"
+  "h_flt:'Bepaalt welk verkeer van ANDEREN deze repeater nog doorstuurt. Pakketten aan "
+  "deze node zelf gaan er nooit langs, en wie in de access list staat blijft werken: je "
+  "kunt jezelf hier niet mee buitensluiten. Je kunt de node er w\\u00e9l stilletjes "
+  "nutteloos mee maken \\u2014 hij blijft antwoorden en adverteren, en stuurt niets meer "
+  "door.',"
+  "f_back:'De weg terug werkt hoe dan ook over de mesh-CLI: filter off en filter reset "
+  "hebben geen WiFi, geen beheerpagina en geen server nodig.',"
+  "f_load:'De filterstand is niet op te halen bij deze node.',"
+  "f_onoff:'Aan of uit',"
+  "f_swblurb:'Uitzetten laat de regels staan; terugzetten wist ze \\u00e9n zet het filter "
+  "uit. Allebei lichter dan aanzetten, met opzet: herstel mag nooit strakker afgeschermd "
+  "zijn dan de fout die het terugdraait.',"
+  "f_bon:'Filter aan',f_boff:'Filter uit',f_brst:'Alles terug naar standaard',"
+  "f_now:'Nu volgens de node zelf: %1, minimale padhash %2, structuurcontrole op "
+  "groepstekst %3.',"
+  "f_on:'aan',f_off:'uit',f_yes:'ja',f_no:'nee',"
+  "f_disarm:'De node heeft het filter zelf uit gelaten na herhaalde herstarts (veilige "
+  "modus). De regels staan er nog en komen terug zodra hij weer normaal opstart.',"
+  "f_rules:'Losse regels',f_rule:'Regel',"
+  "f_hash:'Minimale padhash',"
+  "f_h1:'1 byte \\u2014 alles door',f_h2:'2 byte \\u2014 oudere nodes vallen af',"
+  "f_h3:'3 byte \\u2014 vrijwel alles valt af',"
+  "f_mal:'Structuurcontrole op groepstekst',"
+  "f_malb:'Misvormd betekent hier: structureel onmogelijk (lengte en blokuitlijning). De "
+  "inhoud kan een repeater niet lezen \\u2014 daarvoor zou hij de kanaalsleutel nodig hebben.',"
+  "f_types:'Per pakkettype',"
+  "f_tb:'Een hoplimiet van 0 of een type op niet-doorsturen zet een hele categorie verkeer "
+  "stil; daar vraagt deze pagina de naam van de node voor. Drie losse knoppen per regel, "
+  "want het zijn drie handelingen met drie verschillende gewichten.',"
+  "f_ty:'Type',f_thr:'Door',f_hops:'Max hops',f_rate:'Snelheid',f_drop:'Weg',"
+  "f_act:'Wijzigen',f_close:'dichtzetten',f_open:'openzetten',"
+  "f_chan:'Geblokkeerde kanalen',"
+  "f_cb:'Een repeater ziet geen kanaalnaam, alleen \\u00e9\\u00e9n byte: sha256(sleutel)[0]. "
+  "Blokkeren gaat dus op sleutel of op hash, en ongeveer 1 op de 256 kanalen deelt die byte "
+  "met een ander.',"
+  "f_clab:'Label',f_chash:'Hash',f_cadd:'blokkeer',f_crem:'weer doorlaten',"
+  "f_cnone:'geen enkel kanaal geblokkeerd',f_cpsk:'kanaalsleutel (base64) of #hh',"
+  "f_cnt:'Tellers',f_pass:'Doorgelaten',f_ex:'Vrijgesteld via de ACL',"
+  "f_dropped:'Weggegooid omdat',f_num:'aantal',f_nodrop:'nog niets weggegooid',"
+  "r_type:'type helemaal dicht',r_hops:'te veel hops',r_rate:'over de snelheidslimiet',"
+  "r_hash:'padhash te klein',r_kanaal:'geblokkeerd kanaal',r_misvormd:'misvormde groepstekst',"
+  "a_f2:'%1\\n\\nDoorgaan?',"
+  "a_f3:'%1\\n\\nDIT ZET EEN HELE CATEGORIE VERKEER STIL. De node blijft antwoorden en "
+  "adverteren alsof er niets aan de hand is.\\n\\nTyp de naam van de node over om door te "
+  "gaan:',"
+  /* q_ en niet d_: d_on en d_off zijn hierboven al de twee toestanden van de
+   * watchdog. Twee betekenissen achter dezelfde sleutel is een fout die pas
+   * opvalt als er ergens 'uit (upload bezig)' staat waar een filter bedoeld was. */
+  "q_on:'het pakketfilter AANZETTEN',q_off:'het pakketfilter uitzetten (de regels blijven "
+  "staan)',q_rst:'alle filterregels terugzetten op de standaard en het filter uitzetten',"
+  "q_hop0:'%1 helemaal niet meer doorsturen (0 hops)',q_hop:'%1 beperken tot %2 hops',"
+  "q_rt0:'%1 geen snelheidslimiet meer geven',q_rt:'%1 beperken tot %2 pakketten per %3 s',"
+  "q_tyof:'%1 helemaal niet meer doorsturen',q_tyon:'%1 weer doorsturen',"
+  "q_hsh:'de minimale padhash op %1 byte zetten',"
+  "q_mlon:'de structuurcontrole op groepstekst aanzetten',"
+  "q_mlof:'de structuurcontrole op groepstekst uitzetten',"
+  "q_cadd:'kanaal %1 blokkeren',q_crem:'kanaal %1 weer doorlaten',"
+  "f_okm:'Gedaan: %1.',f_badm:'Niet gedaan. %1'},"
   "en:{"
   "t_state:'Status',t_wifi:'WiFi',t_power:'Power',t_mqtt:'MQTT',t_fw:'Firmware',"
   "t_backup:'Backup',l_ssid:'Network (SSID)',l_pass:'Password',"
@@ -4990,7 +5185,89 @@ static const char PAGE[] PROGMEM =
   "a_badkey:'That is not a valid key. Hex only, at least % characters.',"
   "a_saved:'Saved. The repeater is reconnecting; refresh this page in a moment.',"
   "a_pick:'Pick a backup file first.',"
-  "a_conf:'All settings and keys will be overwritten. Continue?'}};"
+  "a_conf:'All settings and keys will be overwritten. Continue?',"
+  // ---- CLI settings -----------------------------------------------------
+  "t_cfg:'Change settings',"
+  "h_cfg:'Everything you can set from the MeshCore app or over the CLI is here too. The "
+  "list, the bounds and the risk classes come from this firmware itself, so what you see "
+  "is what actually sits between a click and the radio. After setting, the value is read "
+  "back: what you see is what the node ANSWERS, not what you asked for.',"
+  "c_g1:'Ordinary',c_g2:'Noticeably changes behaviour',c_g3:'Can cut off reachability',"
+  "c_b1:'Values you can put back just as easily. Saving is enough.',"
+  "c_b2:'These noticeably change how the node behaves on the mesh. They ask for a "
+  "confirmation, but they cannot put the node out of reach.',"
+  "c_b3:'These touch the radio or who may log in. A mistake here can mean you only get "
+  "this node back with a cable in your hand. So retype its name.',"
+  "c_par:'Parameter',c_now:'Now',c_new:'New value',b_set:'Set',"
+  "c_none:'\\u2014',c_secret:'\\u2022\\u2022\\u2022',"
+  "c_load:'The parameter list cannot be fetched from this node.',"
+  "c_rb:'Stored, but not active yet: this only takes effect on a restart. Until then the "
+  "radio runs on the old values, and only that restart will show whether the new ones are "
+  "right.',"
+  "c_ok:'Set. %1 is now %2.',"
+  "c_near:'Set, but not exactly. Asked for %1, the node now holds %2 \\u2014 and that last "
+  "one is what is really there.',"
+  "c_bad:'Not set. %1',"
+  "a_c2:'Set %1 on this node to: %2\\n\\nThis noticeably changes how the node behaves on "
+  "the mesh.\\n\\nContinue?',"
+  "a_c3:'Set %1 on this node to: %2\\n\\nTHIS CAN MAKE THE NODE UNREACHABLE. If it goes "
+  "wrong there is no second way in but a cable.\\n\\nRetype the node\\u2019s name to "
+  "continue:',"
+  "a_cno:'That name does not match. Nothing was changed.',"
+  // ---- packet filter ----------------------------------------------------
+  "t_flt:'Packet filter',"
+  "h_flt:'Decides which of OTHER people\\u2019s traffic this repeater still forwards. "
+  "Packets addressed to this node never pass through it, and whoever is in the access list "
+  "keeps working: you cannot lock yourself out with this. You can quietly make the node "
+  "useless \\u2014 it keeps answering and advertising, and forwards nothing.',"
+  "f_back:'The way back works regardless over the mesh CLI: filter off and filter reset "
+  "need no WiFi, no admin page and no server.',"
+  "f_load:'The filter state cannot be fetched from this node.',"
+  "f_onoff:'On or off',"
+  "f_swblurb:'Switching off keeps the rules; resetting wipes them and switches the filter "
+  "off. Both are lighter than switching on, deliberately: recovery must never be gated more "
+  "tightly than the mistake it undoes.',"
+  "f_bon:'Filter on',f_boff:'Filter off',f_brst:'Everything back to defaults',"
+  "f_now:'Now, according to the node itself: %1, minimum path hash %2, structural check on "
+  "group text %3.',"
+  "f_on:'on',f_off:'off',f_yes:'yes',f_no:'no',"
+  "f_disarm:'The node has left the filter off itself after repeated restarts (safe mode). "
+  "The rules are still there and come back once it starts normally again.',"
+  "f_rules:'Single rules',f_rule:'Rule',"
+  "f_hash:'Minimum path hash',"
+  "f_h1:'1 byte \\u2014 everything through',f_h2:'2 bytes \\u2014 older nodes drop out',"
+  "f_h3:'3 bytes \\u2014 nearly everything drops out',"
+  "f_mal:'Structural check on group text',"
+  "f_malb:'Malformed here means: structurally impossible (length and block alignment). A "
+  "repeater cannot read the content \\u2014 that would need the channel key.',"
+  "f_types:'Per packet type',"
+  "f_tb:'A hop limit of 0, or a type set to not-forwarded, silences a whole category of "
+  "traffic; this page asks for the node\\u2019s name for those. Three separate buttons per "
+  "row, because they are three actions with three different weights.',"
+  "f_ty:'Type',f_thr:'Through',f_hops:'Max hops',f_rate:'Rate',f_drop:'Dropped',"
+  "f_act:'Change',f_close:'close off',f_open:'open up',"
+  "f_chan:'Blocked channels',"
+  "f_cb:'A repeater sees no channel name, only one byte: sha256(key)[0]. So blocking takes "
+  "a key or a hash, and roughly 1 channel in 256 shares that byte with another.',"
+  "f_clab:'Label',f_chash:'Hash',f_cadd:'block',f_crem:'allow again',"
+  "f_cnone:'no channel blocked',f_cpsk:'channel key (base64) or #hh',"
+  "f_cnt:'Counters',f_pass:'Passed',f_ex:'Exempt via the ACL',"
+  "f_dropped:'Dropped because',f_num:'count',f_nodrop:'nothing dropped yet',"
+  "r_type:'type closed off entirely',r_hops:'too many hops',r_rate:'over the rate limit',"
+  "r_hash:'path hash too small',r_kanaal:'blocked channel',r_misvormd:'malformed group text',"
+  "a_f2:'%1\\n\\nContinue?',"
+  "a_f3:'%1\\n\\nTHIS SILENCES A WHOLE CATEGORY OF TRAFFIC. The node keeps answering and "
+  "advertising as if nothing were wrong.\\n\\nRetype the node\\u2019s name to continue:',"
+  "q_on:'switch the packet filter ON',q_off:'switch the packet filter off (the rules stay)',"
+  "q_rst:'put all filter rules back to their defaults and switch the filter off',"
+  "q_hop0:'stop forwarding %1 entirely (0 hops)',q_hop:'limit %1 to %2 hops',"
+  "q_rt0:'give %1 no rate limit',q_rt:'limit %1 to %2 packets per %3 s',"
+  "q_tyof:'stop forwarding %1 entirely',q_tyon:'forward %1 again',"
+  "q_hsh:'set the minimum path hash to %1 byte(s)',"
+  "q_mlon:'switch the structural check on group text on',"
+  "q_mlof:'switch the structural check on group text off',"
+  "q_cadd:'block channel %1',q_crem:'allow channel %1 again',"
+  "f_okm:'Done: %1.',f_badm:'Not done. %1'}};"
   "var $=function(s){return document.querySelector(s)},last=null;"
   "var L=localStorage.getItem('mslang')||((navigator.language||'').indexOf('nl')==0?'nl':'en');"
   "var TH=localStorage.getItem('mstheme')||"
@@ -5003,7 +5280,11 @@ static const char PAGE[] PROGMEM =
   "var v=d[e.getAttribute('data-i18n')];if(v)e.textContent=v});"
   "document.querySelectorAll('[data-i18n-ph]').forEach(function(e){"
   "var v=d[e.getAttribute('data-i18n-ph')];if(v)e.placeholder=v});"
-  "render()}"
+  /* Ook de twee tabellen die volledig door JavaScript getekend worden. Die
+   * dragen geen data-i18n, want hun teksten zitten in de rijen zelf -- de lus
+   * hierboven komt er dus niet aan, en zonder deze twee regels blijft de halve
+   * pagina in de vorige taal staan. Beide kunnen tegen 'nog niets geladen'. */
+  "render();renderCfg();renderFlt()}"
   "function rows(o){var h='';for(var k in o){h+='<tr><td>'+k+'</td><td>'+o[k]+'</td></tr>'}return h}"
   "function fill(f,c){for(var k in c){var e=f[k];if(!e)continue;"
   "if(e.type=='checkbox')e.checked=!!c[k];else e.value=c[k]}}"
@@ -5138,7 +5419,212 @@ static const char PAGE[] PROGMEM =
   "var b=new FormData();b.append('f',f);"
   "fetch('/api/restore',{method:'POST',body:b}).then(function(r){return r.json()})"
   ".then(function(j){alert(j.msg)})};"
-  "theme();lang();load();loadMon();setInterval(load,5000);setInterval(loadMon,20000);"
+  // ---- inklapbare secties -------------------------------------------------
+  /* Het openklappen doet de browser; dit onthoudt alleen de stand. Dezelfde
+   * sleutel als de publieke site (mcs-collapse:<naam>), zodat de twee pagina's
+   * er hetzelfde over denken. Het verschil: de site slaat alleen 'dicht' op en
+   * beschouwt afwezig als open, want daar staat alles standaard open. Hier
+   * verschilt de standaard per sectie -- toestand open, de rest dicht -- dus
+   * wordt de stand voluit bewaard en betekent 'niets bewaard' juist "gebruik
+   * wat de firmware koos". */
+  "document.querySelectorAll('details.sec').forEach(function(d){"
+  "var k='mcs-collapse:'+d.dataset.ck,v=null;"
+  "try{v=localStorage.getItem(k)}catch(e){}"
+  "if(v!==null)d.open=v=='0';"
+  "d.addEventListener('toggle',function(){"
+  "try{localStorage.setItem(k,d.open?'0':'1')}catch(e){}})});"
+  /* Vervangt %n door een waarde zonder dat de vervanging zelf nog betekenis
+   * heeft. String.replace() met tekst als tweede argument kent '$&' en '$1', dus
+   * een nodenaam of een kanaallabel met een dollarteken erin zou anders in de
+   * melding iets anders worden dan het is. */
+  "function rp(s,n,v){return s.replace('%'+n,function(){return v})}"
+  "function opt(v,s,tx){return '<option value=\"'+v+'\"'+(v==s?' selected':'')+'>'"
+  "+(tx||v)+'</option>'}"
+  "function pad(n){return (n<10?'0':'')+n}"
+  // ---- CLI-instellingen ---------------------------------------------------
+  /* De lijst, de grenzen, de keuzelijsten en de risicoklassen komen alle uit
+   * /api/cfg. Er staat hier met opzet geen tweede tabel: een parameter die deze
+   * firmware niet kent kan niet aangeboden worden, en een grens die hier
+   * afweek zou de losse van de twee zijn -- precies waar iemand op een knop
+   * drukt. */
+  "var cfg=null;"
+  "function cfgIn(p){var v=p.val||'',a='data-in=\"'+p.key+'\"',i;"
+  "if(p.kind=='bool')return '<select '+a+'>'+opt('on',v)+opt('off',v)+'</select>';"
+  "if(p.kind=='enum'){var h='<select '+a+'>',c=(p.choices||'').split('|');"
+  "for(i=0;i<c.length;i++)if(c[i])h+=opt(c[i],v);return h+'</select>'}"
+  /* Vier velden en niet één tekstvak. 'get radio' antwoordt met komma's en 'set
+   * radio' wil spaties, en één vak waarin je "869.525 250 11 5" moet overtypen
+   * is het vak waarin een tikfout een node kwijtmaakt. De grenzen per veld komen
+   * uit choices ("freq:150-2500|bw:7-500|..."), dus uit dezelfde tabel als de
+   * controle in de firmware. */
+  "if(p.kind=='radio'){var f=(p.choices||'').split('|'),"
+  "g=v.replace(/,/g,' ').split(/\\s+/),h='<div class=rw>';"
+  "for(i=0;i<f.length;i++){var nm=f[i].split(':')[0],b=(f[i].split(':')[1]||'0-0').split('-');"
+  "h+='<input type=number '+a+' data-f='+i+' min='+b[0]+' max='+b[1]"
+  "+(i>1?' step=1':' step=any')+' value=\"'+(g.length==4?esc(g[i]):'')+'\" title=\"'+nm"
+  "+'\" placeholder=\"'+nm+'\">'}return h+'</div>'}"
+  "if(p.kind=='int')return '<input type=number step=1 min='+p.lo+' max='+p.hi+' '+a"
+  "+' value=\"'+esc(v)+'\">';"
+  "if(p.kind=='float')return '<input type=number step=any min='+p.lo+' max='+p.hi+' '+a"
+  "+' value=\"'+esc(v)+'\">';"
+  /* Een geheim wordt nooit voorgevuld. De node stuurt het ook niet mee; wat er
+   * staat blijft staan tot iemand hier iets nieuws intypt. */
+  "if(p.secret)return '<input type=password maxlength=39 autocomplete=new-password '+a+'>';"
+  "return '<input maxlength=39 autocomplete=off '+a+' value=\"'+esc(v)+'\">'}"
+  /* Gegroepeerd op risicoklasse, want dat is wat de lezer moet zien vóórdat hij
+   * kiest -- niet pas in het venster dat om een bevestiging vraagt. De kopjes en
+   * de uitleg erboven zijn dezelfde drie als op de site. */
+  "function renderCfg(){var d=cfg,t=T[L],h='',r,i;if(!d)return;"
+  "if(!d.params){$('#cfgb').innerHTML='<p class=muted>'+t.c_load+'</p>';return}"
+  "for(r=1;r<=3;r++){var g=d.params.filter(function(p){return (p.risk||1)==r});"
+  "if(!g.length)continue;"
+  "h+='<h3>'+t['c_g'+r]+'</h3><p class=muted>'+t['c_b'+r]+'</p><table class=cfg>'"
+  "+'<tr><td>'+t.c_par+'</td><td>'+t.c_now+'</td><td>'+t.c_new+'</td><td></td></tr>';"
+  "for(i=0;i<g.length;i++){var p=g[i];"
+  "h+='<tr><td class=k>'+p.key+'</td><td class=muted>'"
+  "+(p.secret?t.c_secret:(p.val?esc(p.val):t.c_none))+'</td><td>'+cfgIn(p)+'</td>'"
+  "+'<td class=act><button class=\"mini cs'+(r==3?' dgr':'')+'\" data-k=\"'+p.key+'\">'"
+  "+t.b_set+'</button></td></tr>'}h+='</table>'}"
+  "$('#cfgb').innerHTML=h}"
+  /* ?values=1 haalt er de huidige waarden bij. Bewust niet in een setInterval:
+   * dit scherm heeft invoervelden, en een lijst die zichzelf ververst gooit weg
+   * wat iemand half heeft ingetypt. Hij wordt geladen bij het openen en opnieuw
+   * na elke schrijfactie -- dat zijn precies de twee momenten waarop hij kan
+   * veranderd zijn. */
+  "function loadCfg(){fetch('/api/cfg?values=1').then(function(r){return r.json()})"
+  ".then(function(d){cfg=d;renderCfg()}).catch(function(){cfg={};renderCfg()})}"
+  "function cfgVal(k,p){if(p.kind!='radio')return $('[data-in=\"'+k+'\"]').value;"
+  "var e=document.querySelectorAll('[data-in=\"'+k+'\"]'),a=[],i;"
+  "for(i=0;i<e.length;i++)a.push(e[i].value);return a.join(' ')}"
+  /* De drempel hangt aan de risicoklasse uit de firmware, en de zwaarste vraagt
+   * de naam van de node -- niet omdat het overtypen op zich iets bewijst, maar
+   * omdat het de enige handeling is die niet per ongeluk lukt. Dit is een
+   * drempel in de browser en niet in de node: POST /api/cfg kent geen
+   * bevestigingsveld, want de server schrijft langs dezelfde weg en zou erover
+   * struikelen. Wat de node wél doet is de waarde toetsen en teruglezen, en dat
+   * is de controle die telt. */
+  "function cfgSet(k){var t=T[L],p=null,i;if(!cfg||!cfg.params)return;"
+  "for(i=0;i<cfg.params.length;i++)if(cfg.params[i].key==k)p=cfg.params[i];"
+  "if(!p)return;var v=cfgVal(k,p),risk=p.risk||1,nm=last?last.name:'';"
+  "if(risk==2){if(!confirm(rp(rp(t.a_c2,1,k),2,v)))return}"
+  "else if(risk==3){var a=prompt(rp(rp(t.a_c3,1,k),2,v),'');"
+  "if(a===null)return;if(a.trim()!==nm){alert(t.a_cno);return}}"
+  "fetch('/api/cfg',{method:'POST',body:new URLSearchParams({key:k,value:v})})"
+  ".then(function(r){return r.json()}).then(function(j){var m;"
+  /* Wat er ná afloop in de node staat, en niet wat er gevraagd is. 'Niet
+   * precies' is geen mislukking en krijgt daarom geen foutmelding maar de twee
+   * waarden naast elkaar: MeshCore bewaart advert.interval als minuten/2, dus
+   * 61 wordt 60, en dat is het gewone geval en geen storing. */
+  "if(!j.ok)m='<span class=bad>'+rp(t.c_bad,1,esc(j.msg||j.reply||''))+'</span>';"
+  "else if(j.exact)m='<span class=ok>'+rp(rp(t.c_ok,1,esc(j.key)),2,esc(j.applied))+'</span>';"
+  "else m='<span class=bad>'+rp(rp(t.c_near,1,esc(j.asked)),2,esc(j.applied))+'</span>';"
+  "if(j.ok&&p.reboot)m+='<br><span class=bad>'+t.c_rb+'</span>';"
+  "$('#cfgn').innerHTML='<div class=\"card warn\">'+m+'</div>';loadCfg()})}"
+  "document.addEventListener('click',function(e){"
+  "if(e.target.classList.contains('cs'))cfgSet(e.target.dataset.k)});"
+  // ---- pakketfilter -------------------------------------------------------
+  /* Elke knop bewaart een functie in FA die pas bij het aanklikken zijn commando
+   * samenstelt. Zo staat er nergens een tekstvak waarin een hele commandoregel
+   * te typen valt -- dat zou een CLI op een webpagina zijn, en dan hangt de
+   * risicoweging af van hoe iemand toevallig spelt -- en lezen de getalvelden
+   * hun waarde op het moment dat het ertoe doet. */
+  "var flt=null,FA=[];"
+  "function fb(get,label,dgr){FA.push(get);"
+  "return '<button class=\"mini fx'+(dgr?' dgr':'')+'\" data-i='+(FA.length-1)+'>'"
+  "+label+'</button>'}"
+  /* Staat er al een regel die een hele categorie dichtzet, dan is 'filter aan'
+   * geen gewone handeling meer maar het scherpstellen ervan. De zwaarte van een
+   * handeling hangt af van waar hij bovenop komt. */
+  "function fltBlank(){var f=flt,i;if(!f||!f.types)return false;"
+  "if(f.hash>=3)return true;"
+  "for(i=0;i<f.types.length;i++)if(!f.types[i].on||f.types[i].hops==0)return true;"
+  "return false}"
+  "function fltRow(y,t){var id=pad(y.id),nm=y.name,w=nm+' ('+id+')';"
+  "return '<tr><td class=k>'+id+' '+nm+'</td><td class=nw>'"
+  "+(y.on?t.f_yes:'<b class=bad>'+t.f_no+'</b>')+' '"
+  "+fb(function(){return {c:'type '+id+(y.on?' off':' on'),"
+  "w:rp(y.on?t.q_tyof:t.q_tyon,1,w),r:y.on?3:1}},y.on?t.f_close:t.f_open,y.on)+'</td>'"
+  "+'<td><div class=rw><input type=number min=0 max=63 value='+y.hops+' data-h=\"'+id+'\">'"
+  "+fb(function(){var v=$('[data-h=\"'+id+'\"]').value;"
+  "return {c:'hops '+id+' '+v,w:v=='0'?rp(t.q_hop0,1,w):rp(rp(t.q_hop,1,w),2,v),"
+  "r:v=='0'?3:2}},t.f_hops,false)+'</div></td>'"
+  "+'<td><div class=rw><input type=number min=0 max=65535 value='+y.limit+' data-rl=\"'+id+'\">'"
+  "+'<input type=number min=1 max=3600 value='+y.window+' data-rw=\"'+id+'\">'"
+  "+fb(function(){var l=$('[data-rl=\"'+id+'\"]').value,q=$('[data-rw=\"'+id+'\"]').value;"
+  "return {c:'rate '+id+' '+l+' '+q,"
+  "w:l=='0'?rp(t.q_rt0,1,w):rp(rp(rp(t.q_rt,1,w),2,l),3,q),r:l=='0'?1:2}},"
+  "t.f_rate,false)+'</div></td>'"
+  "+'<td>'+y.drop+'</td></tr>'}"
+  "function renderFlt(){var f=flt,t=T[L],h='',i;if(!f)return;"
+  "if(!f.types){$('#fltb').innerHTML='<p class=muted>'+t.f_load+'</p>';return}"
+  "FA=[];"
+  /* Uit en terugzetten vragen niets, aanzetten wel. Dat is geen slordigheid in
+   * de indeling maar het punt ervan: herstel mag nooit strakker afgeschermd zijn
+   * dan de fout die het terugdraait. */
+  "h+='<h3>'+t.f_onoff+'</h3><p class=muted>'+t.f_swblurb+'</p><p>'"
+  "+fb(function(){return {c:'off',w:t.q_off,r:1}},t.f_boff,false)+' '"
+  "+fb(function(){return {c:'reset',w:t.q_rst,r:1}},t.f_brst,false)+' '"
+  "+fb(function(){return {c:'on',w:t.q_on,r:fltBlank()?3:2}},t.f_bon,true)+'</p>'"
+  "+'<p class=muted>'+rp(rp(rp(t.f_now,1,'<b>'+(f.on?t.f_on:t.f_off)+'</b>'),2,f.hash),"
+  "3,f.malformed?t.f_on:t.f_off)+'</p>'"
+  "+(f.disarmed?'<p class=bad>'+t.f_disarm+'</p>':'')"
+  "+'<p class=muted>'+t.f_back+'</p>';"
+  "h+='<h3>'+t.f_rules+'</h3><table class=cfg>'"
+  "+'<tr><td class=k>'+t.f_hash+'</td><td><select data-x=hash>'"
+  "+opt(1,f.hash,t.f_h1)+opt(2,f.hash,t.f_h2)+opt(3,f.hash,t.f_h3)+'</select></td>'"
+  "+'<td class=act>'+fb(function(){var v=$('[data-x=hash]').value;"
+  "return {c:'hash '+v,w:rp(t.q_hsh,1,v),r:v=='1'?1:(v=='3'?3:2)}},t.b_set,false)+'</td></tr>'"
+  "+'<tr><td class=k>'+t.f_mal+'</td><td><select data-x=mal>'"
+  "+opt('on',f.malformed?'on':'off',t.f_on)+opt('off',f.malformed?'on':'off',t.f_off)"
+  "+'</select></td><td class=act>'+fb(function(){var v=$('[data-x=mal]').value;"
+  "return {c:'malformed '+v,w:v=='on'?t.q_mlon:t.q_mlof,r:v=='on'?2:1}},t.b_set,false)"
+  "+'</td></tr></table><p class=muted>'+t.f_malb+'</p>';"
+  "h+='<h3>'+t.f_types+'</h3><p class=muted>'+t.f_tb+'</p><table class=cfg>'"
+  "+'<tr><td>'+t.f_ty+'</td><td>'+t.f_thr+'</td><td>'+t.f_hops+'</td><td>'+t.f_rate"
+  "+'</td><td>'+t.f_drop+'</td></tr>';"
+  "for(i=0;i<f.types.length;i++)h+=fltRow(f.types[i],t);"
+  "h+='</table>';"
+  "h+='<h3>'+t.f_chan+'</h3><p class=muted>'+t.f_cb+'</p><table class=cfg>';"
+  "if(!f.channels.length)h+='<tr><td class=muted>'+t.f_cnone+'</td></tr>';"
+  "for(i=0;i<f.channels.length;i++)h+=(function(c){"
+  "return '<tr><td class=k>'+esc(c.label)+'</td><td class=muted>#'+c.hash+'</td>'"
+  "+'<td class=act>'+fb(function(){return {c:'channel remove '+c.label,"
+  "w:rp(t.q_crem,1,c.label),r:1}},t.f_crem,false)+'</td></tr>'})(f.channels[i]);"
+  "h+='</table><div class=rw style=margin-top:.6rem>"
+  "<input data-x=clab maxlength=23 placeholder=\"'+t.f_clab+'\">"
+  "<input data-x=cpsk maxlength=64 placeholder=\"'+t.f_cpsk+'\">'"
+  "+fb(function(){var l=$('[data-x=clab]').value,k=$('[data-x=cpsk]').value;"
+  "if(!l||!k)return null;return {c:'channel add '+l+' '+k,w:rp(t.q_cadd,1,l),r:2}},"
+  "t.f_cadd,false)+'</div>';"
+  "h+='<h3>'+t.f_cnt+'</h3><table class=cfg><tr><td>'+t.f_pass+'</td><td>'+f.passed"
+  "+'</td></tr><tr><td>'+t.f_ex+'</td><td>'+f.exempt+'</td></tr></table>';"
+  "var any=false,dh='',kk;"
+  "for(kk in f.drop){if(!f.drop[kk])continue;any=true;"
+  "dh+='<tr><td>'+(t['r_'+kk]||kk)+'</td><td>'+f.drop[kk]+'</td></tr>'}"
+  "h+='<h3>'+t.f_dropped+'</h3>'+(any?'<table class=cfg>'+dh+'</table>'"
+  ":'<p class=muted>'+t.f_nodrop+'</p>');"
+  "$('#fltb').innerHTML=h}"
+  "function loadFlt(){fetch('/api/filter').then(function(r){return r.json()})"
+  ".then(function(d){flt=d;renderFlt()}).catch(function(){flt={};renderFlt()})}"
+  /* Het antwoord draagt de stand ná afloop mee, dus die wordt gebruikt in plaats
+   * van er nog eens om te vragen: 'filter hops 05 0' wordt keurig aangenomen en
+   * betekent "stuur geen groepstekst meer door", en dat hoort op het scherm te
+   * staan in de vorm waarin het gehandhaafd wordt. */
+  "function fltDo(cmd,what,risk){var t=T[L],nm=last?last.name:'';"
+  "if(risk==2){if(!confirm(rp(t.a_f2,1,what)))return}"
+  "else if(risk==3){var a=prompt(rp(t.a_f3,1,what),'');"
+  "if(a===null)return;if(a.trim()!==nm){alert(t.a_cno);return}}"
+  "fetch('/api/filter',{method:'POST',body:new URLSearchParams({cmd:cmd})})"
+  ".then(function(r){return r.json()}).then(function(j){"
+  "$('#fltn').innerHTML='<div class=\"card warn\">'"
+  "+(j.ok?rp(t.f_okm,1,what)+'<br><small>'+esc(j.msg||'')+'</small>'"
+  ":'<span class=bad>'+rp(t.f_badm,1,esc(j.msg||''))+'</span>')+'</div>';"
+  "if(j.state){flt=j.state;renderFlt()}else loadFlt()})}"
+  "document.addEventListener('click',function(e){var b=e.target;"
+  "if(!b.classList.contains('fx'))return;var g=FA[+b.dataset.i];if(!g)return;"
+  "var a=g();if(a)fltDo(a.c,a.w,a.r)});"
+  "theme();lang();load();loadMon();loadCfg();loadFlt();"
+  "setInterval(load,5000);setInterval(loadMon,20000);"
   "</script></body></html>";
 
 /* The admin page hands out your keys (backup) and can flash firmware. That may
@@ -6390,14 +6876,30 @@ static bool cfgEnumOk(const char *choices, const char *v) {
  * is waarbij een geweigerde waarde en een aanvaarde waarde allebei "OK" kunnen
  * opleveren aan de kant van de aanroeper: de radio gaat pas bij de herstart om,
  * dus wie hier iets doorlaat wat de node niet aankan, merkt dat pas als de node
- * wegblijft. */
+ * wegblijft.
+ *
+ * De grenzen staan in een tabel en niet in de vergelijking, omdat ze sinds 2.5.0
+ * twee lezers hebben: deze controle, en /api/cfg dat ze doorgeeft zodat de
+ * beheerpagina vier invoervelden kan tekenen die elk hun eigen minimum en
+ * maximum kennen. Zou de pagina ze zelf opschrijven, dan zijn er twee lijsten
+ * met radiogrenzen -- en de losse van de twee zou uitgerekend die zijn waar
+ * iemand op een knop drukt. Eén tabel, twee lezers. */
+static const char *CFG_RADIO_FIELD[4] = { "freq", "bw", "sf", "cr" };
+static const float CFG_RADIO_LO[4] = { 150.0f, 7.0f,  5.0f, 5.0f };
+static const float CFG_RADIO_HI[4] = { 2500.0f, 500.0f, 12.0f, 8.0f };
+
 static bool cfgRadioOk(const char *v) {
-  float freq = 0, bw = 0;
-  int sf = 0, cr = 0;
+  float f[4] = { 0, 0, 0, 0 };
   char extra = 0;
-  if (sscanf(v, "%f %f %d %d %c", &freq, &bw, &sf, &cr, &extra) != 4) return false;
-  return freq >= 150.0f && freq <= 2500.0f && bw >= 7.0f && bw <= 500.0f &&
-         sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8;
+  if (sscanf(v, "%f %f %f %f %c", &f[0], &f[1], &f[2], &f[3], &extra) != 4) return false;
+  for (int i = 0; i < 4; i++) {
+    if (f[i] < CFG_RADIO_LO[i] || f[i] > CFG_RADIO_HI[i]) return false;
+  }
+  // sf en cr zijn gehele getallen; 'sf 11.5' hoort niet door deze zeef te komen.
+  for (int i = 2; i < 4; i++) {
+    if (f[i] != (float)(long)f[i]) return false;
+  }
+  return true;
 }
 
 /* Is wat er nu in de node staat dezelfde waarde als wat er gevraagd is?
@@ -6505,7 +7007,15 @@ static const char *cfgCheckValue(const CfgParam *p, const char *value) {
       return NULL;
     case CFG_RADIO:
       if (!cfgRadioOk(value)) {
-        return "moet 'freq bw sf cr' zijn: 150-2500 MHz, 7-500 kHz, sf 5-12, cr 5-8";
+        /* Uit dezelfde tabel als de controle zelf. Een foutmelding die andere
+         * grenzen noemt dan de zeef hanteert, stuurt iemand net zo hard het
+         * verkeerde in als een zeef die te ruim staat. */
+        static char why[112];
+        snprintf(why, sizeof(why),
+                 "moet 'freq bw sf cr' zijn: %g-%g MHz, %g-%g kHz, sf %g-%g, cr %g-%g",
+                 CFG_RADIO_LO[0], CFG_RADIO_HI[0], CFG_RADIO_LO[1], CFG_RADIO_HI[1],
+                 CFG_RADIO_LO[2], CFG_RADIO_HI[2], CFG_RADIO_LO[3], CFG_RADIO_HI[3]);
+        return why;
       }
       return NULL;
     default: {                            // CFG_INT en CFG_FLOAT
@@ -6647,21 +7157,91 @@ static void handleFilterPost(AsyncWebServerRequest *req) {
   req->send(ok ? 200 : 400, "application/json", body);
 }
 
+/* GET /api/cfg -- welke parameters deze node van afstand laat zetten.
+ *
+ * Met ?values=1 komt er per parameter bij wat er NU in de node staat. Dat is een
+ * vraagteken en geen tweede endpoint, en dat is de hele bedoeling: er blijft één
+ * lijst met parameters, één stel grenzen en één stel risicoklassen. Een tweede
+ * endpoint zou een tweede tabel worden zodra iemand er haast heeft.
+ *
+ * Waarom het niet standaard meekomt. De server haalt deze lijst op en bewaart
+ * hem PARAMS_TTL_S lang (nodeconfig.py), want 'wat mag er gezet worden' verandert
+ * alleen bij een nieuwe firmware. 'Wat staat er nu' verandert elke keer dat
+ * iemand iets zet, en een gecachte huidige waarde is een verkeerde huidige
+ * waarde. Zonder de vlag is het antwoord byte voor byte wat het was, dus de
+ * server merkt van deze uitbreiding niets.
+ *
+ * Wat het kost aan de kant van de node: achtentwintig keer 'get <sleutel>' op de
+ * eigen CLI. Dat is een lokale aanroep en geen zendtijd -- de radio komt er niet
+ * aan te pas -- maar het is wel achtentwintig keer handleCommand() binnen één
+ * verzoek, en daarom hangt het aan een vlag die alleen de beheerpagina zet, en
+ * niet aan de lijst die de server elke paar minuten ophaalt. */
 static void handleCfgList(AsyncWebServerRequest *req) {
   if (!requireAuth(req)) return;
-  /* Groter dan het lijkt te hoeven: achtentwintig parameters met hun grenzen,
-   * keuzelijst en risicoklasse lopen tegen de 2,5 kB. Statisch, want de taak van
-   * de webserver heeft de krapste stack op deze node. */
-  static char body[3000];
+
+  // Zoals elders in dit bestand: geen pointer bewaren, want het type ervan is
+  // tussen versies van ESPAsyncWebServer van const-heid veranderd.
+  bool want_values = req->hasParam("values") && req->getParam("values")->value() != "0";
+
+  /* Achtentwintig parameters met hun grenzen, keuzelijst en risicoklasse zijn
+   * 2715 byte. Met ?values=1 komt daar per parameter een waarde bij die na het
+   * ontsnappen 80 byte kan worden (CFG_VALUE_MAX * 2), dus het slechtste geval is
+   * 2715 + 28 * 89 = 5207. Statisch, want de taak van de webserver heeft de
+   * krapste stack op deze node.
+   *
+   * De maat is op dat slechtste geval gekozen en niet op het gewone, en dat is
+   * geen overdaad maar de les van de vorige maat. Die was 3000 met 200 speling,
+   * en de lijst paste er met 122 byte over in: één parameter erbij en de lus was
+   * stilletjes gestopt met een antwoord dat geldig JSON is en onvolledig. Aan de
+   * overkant is dat niet te onderscheiden van 'die parameter kent deze firmware
+   * niet' -- de stilste soort fout die dit endpoint kan maken. De bewaking staat
+   * er nog steeds, maar hij hoort nu nooit meer aan te slaan. */
+  static char body[5600];
   int n = snprintf(body, sizeof(body), "{\"params\":[");
-  for (int i = 0; i < CFG_PARAM_COUNT && n < (int)sizeof(body) - 200; i++) {
+  for (int i = 0; i < CFG_PARAM_COUNT && n < (int)sizeof(body) - 300; i++) {
     const CfgParam &p = CFG_PARAMS[i];
+
+    /* De vier deelgrenzen van 'radio', uit dezelfde tabel als cfgRadioOk(). Ze
+     * reizen in 'choices' mee omdat dat het veld is dat al bestaat voor "welke
+     * waarden mag dit aannemen"; een eigen veld erbij zou hetzelfde zeggen op een
+     * tweede plek. Vorm: "freq:150-2500|bw:7-500|sf:5-12|cr:5-8". */
+    char rspec[64];
+    rspec[0] = 0;
+    if (p.kind == CFG_RADIO) {
+      int r = 0;
+      for (int f = 0; f < 4; f++) {
+        r += snprintf(rspec + r, sizeof(rspec) - r, "%s%s:%g-%g", f ? "|" : "",
+                      CFG_RADIO_FIELD[f], CFG_RADIO_LO[f], CFG_RADIO_HI[f]);
+      }
+    }
+    const char *choices = (p.kind == CFG_RADIO) ? rspec : (p.choices ? p.choices : "");
+
     n += snprintf(body + n, sizeof(body) - n,
                   "%s{\"key\":\"%s\",\"kind\":\"%s\",\"lo\":%g,\"hi\":%g,"
-                  "\"choices\":\"%s\",\"risk\":%u,\"reboot\":%u,\"secret\":%u}",
+                  "\"choices\":\"%s\",\"risk\":%u,\"reboot\":%u,\"secret\":%u",
                   i ? "," : "", p.key, cfgKindName(p.kind),
-                  p.lo, p.hi, p.choices ? p.choices : "",
+                  p.lo, p.hi, choices,
                   (unsigned)p.risk, (unsigned)p.reboot, (unsigned)p.secret);
+
+    if (want_values) {
+      /* Een geheim wordt gelezen noch getoond. Bij het schrijven wordt er wél
+       * teruggelezen en vergeleken -- de controle blijft dus overeind -- maar een
+       * wachtwoord dat in het HTML van een beheerpagina heeft gestaan, in de
+       * browsergeschiedenis of in een schermafdruk, is weg. */
+      char val[CFG_VALUE_MAX * 2] = "";
+      if (!p.secret) {
+        char reply[160];
+        cfgCli(reply, sizeof(reply), "get %s", p.key);
+        const char *v = cfgStripMarker(reply);
+        /* Een node die deze parameter niet kent antwoordt met een foutregel of
+         * met "??". Dat is geen waarde, en het als waarde tonen zou een leeg veld
+         * opleveren dat er ingevuld uitziet. Leeg laten en de pagina laat zien
+         * dat het onbekend is. */
+        if (!cfgIsError(v) && strcmp(v, "??") != 0) jsonEsc(val, sizeof(val), v);
+      }
+      n += snprintf(body + n, sizeof(body) - n, ",\"val\":\"%s\"", val);
+    }
+    n += snprintf(body + n, sizeof(body) - n, "}");
   }
   snprintf(body + n, sizeof(body) - n, "]}");
   req->send(200, "application/json", body);
@@ -7589,8 +8169,12 @@ void mmnet_begin(FS &fs, MyMesh *mesh) {
   }
 
   _server.on("/", HTTP_GET, [](AsyncWebServerRequest *req) {
-    // send_P streams straight from flash; send() would first copy all 14 kB
-    // into a heap String, on a node that also has to keep a mesh running.
+    /* send_P streams straight from flash; send() would first copy all 45 kB into
+     * a heap String, on a node that also has to keep a mesh running. Anders dan
+     * bij de companion is er hier geen gzip-budget: die pagina wordt in één keer
+     * in de socketbuffer gelegd en zit daarom klem tegen CONFIG_LWIP_TCP_SND_BUF_
+     * DEFAULT, terwijl AsyncWebServer deze in stukken verstuurt naarmate het
+     * venster het toelaat. De grens is dus de app-partitie, niet de buffer. */
     req->send_P(200, "text/html; charset=utf-8", PAGE);
   });
   _server.on("/api/status", HTTP_GET, handleStatus);

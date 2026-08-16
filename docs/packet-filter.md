@@ -221,3 +221,55 @@ walkthrough and [`admin.md`](admin.md#packet-filter) for every field. In short:
 The tier is decided from the action and its arguments, on the server, before
 anything is sent — and again in the confirmation check, so a hand-built form
 cannot skip it.
+
+## Managing it from the node's own page
+
+Since firmware **2.5.0** the whole filter is also on the node's own admin page
+(port 80, behind the same login), under *Packet filter*. That matters more than
+convenience: this page is the road that remains when the server, the internet or
+the broker is gone, and this project exists partly for emergency communication.
+The site can do all of this, but the site stands between you and the device; the
+node's own page does not.
+
+It reads `GET /api/filter` and writes `POST /api/filter` — the same two endpoints
+the site uses, so there is one parser and one grammar, not a second one that will
+disagree on the day it matters. The page shows the on/off state, the safe-mode
+disarm, the minimum path hash, the structural check, all twelve packet types with
+their hop limit, rate limit and window, the blocked channels, and the counters per
+reason plus passed and ACL-exempt.
+
+Two things are worth spelling out, because they differ from the site:
+
+- **There is no text box for a command line.** Every button carries a fixed verb
+  and reads its numbers from inputs that are bounded to what the firmware accepts
+  (`0–63` hops, `0–65535` per `1–3600 s`, hash `1|2|3`). A free-text field would
+  be a CLI on a web page, and then the weight of an action depends on how somebody
+  happens to spell it.
+- **The confirmation is in the browser, not in the node.** `POST /api/filter`
+  takes no confirmation field — the server writes down the same path and would
+  trip over one. The node's own protection is unchanged and unconditional: the
+  parser rejects out-of-range values, and the answer carries the state *after the
+  fact* so the page shows what is being enforced rather than what was typed.
+
+The tiers are the same three, decided from the direction of the change and what it
+lands on top of — the same rule as `pktfilter.risk_of()` on the server:
+
+| Tier | Actions on the node's page | Confirmation |
+|---|---|---|
+| ordinary | `off`, `reset`, `type … on`, `hash 1`, `malformed off`, `rate … 0`, `channel remove` | none at all |
+| noticeable | `on`, `hops … n>0`, `rate … n>0`, `hash 2`, `malformed on`, `channel add` | a confirmation naming the action |
+| far-reaching | `hops … 0`, `type … off`, `hash 3`, and `on` while such a rule is already set | retype the node's name |
+
+`off` and `reset` therefore ask **nothing at all** here either — one click. That
+is not sloppiness in the classification, it is the point of it: recovery must
+never be gated more tightly than the mistake it undoes.
+
+Each confirmation states the action as a sentence rather than as a command
+(*"stop forwarding GRP_TXT (05) entirely (0 hops)"*, not `hops 05 0`), for the
+same reason the site does it: a dialog showing `hops 05 0` asks for a yes on
+something the reader has to decode first, and that is exactly the moment somebody
+clicks yes without reading.
+
+None of this replaces the way back. `filter off` and `filter reset` over the mesh
+CLI need no WiFi, no admin page and no server, and 2.5.0 changed nothing about
+that.

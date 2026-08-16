@@ -30,7 +30,7 @@ Everything is opt-in at build time. Without the flags, you get stock MeshCore.
 | `tools/verify_image.py` | Proves a built `.bin` really contains the module |
 
 Two version numbers travel together and must not be confused. `FIRMWARE_VERSION`
-is MeshCore's; `MESHMANAGER_VERSION` (`MeshManagerNet.h:138`) is this module's, and
+is MeshCore's; `MESHMANAGER_VERSION` (`MeshManagerNet.h:158`) is this module's, and
 the two move independently. `ver` prints both, and both appear in every stats
 payload as `repeater.fw` and `repeater.fw_meshmanager` — because when something is
 wrong, the first question is which of the two you are looking at.
@@ -551,8 +551,8 @@ two curves disagreeing by a few percent is a bug report waiting to happen.
 ### 4.1 Version history
 
 The authoritative changelog is the block comment at the top of
-`MeshManagerNet.cpp` (lines 1–262). The current version is in
-`MeshManagerNet.h:138`. This table is a reading aid, not a replacement: the
+`MeshManagerNet.cpp` (lines 1–615). The current version is in
+`MeshManagerNet.h:158`. This table is a reading aid, not a replacement: the
 comment records the *reasoning*, which is the part that matters when you are
 deciding whether to change something.
 
@@ -666,7 +666,7 @@ companion node.
 | `/api/mon` | POST | basic | `add`, `del`, `pass`, `en`, `iv`, `poll` |
 | `/api/backup` | GET | basic | Download the whole filesystem |
 | `/api/restore` | POST | basic | Upload a backup, then reboot |
-| `/api/cfg` | GET | basic | Which CLI parameters may be set remotely, with their type, bounds, allowed words and risk class (2.1.0+) |
+| `/api/cfg` | GET | basic | Which CLI parameters may be set remotely, with their type, bounds, allowed words and risk class (2.1.0+). `?values=1` appends what each one currently holds, and delivers the four sub-bounds of `radio` in `choices` (2.5.0+) |
 | `/api/cfg` | POST | basic | Set one of them and read it straight back — see [`node-management.md`](node-management.md) (2.1.0+) |
 | `/api/moncfg` | GET | basic | The running or last-finished write to a **monitored** repeater over LoRa: what was asked, what was read back, and how it ended (2.4.0+) |
 | `/api/moncfg` | POST | basic | Set one parameter on a repeater this node monitors, over LoRa, then read it back. Answers `202` — nothing has happened yet; two packets over a shared band take tens of seconds (2.4.0+) |
@@ -679,8 +679,14 @@ Authentication is **HTTP basic**, credentials shared with the console
 (`_cfg.user` / `_cfg.console_pass`, default `admin` / `meshcore`). `/` itself is
 unauthenticated: it is a static shell that renders nothing until `/api/status`
 succeeds. `send_P` streams the page straight from flash, because `send()` would
-first copy all 14 kB into a heap `String` on a node that also has to keep a mesh
+first copy all 45 kB into a heap `String` on a node that also has to keep a mesh
 running.
+
+Unlike the companion, this page has **no gzip budget**. The companion's page is
+handed to the socket in one go and is therefore pinned under
+`CONFIG_LWIP_TCP_SND_BUF_DEFAULT` (5760 bytes, §"The gzip budget"); this one goes
+out uncompressed and `AsyncWebServer` feeds it out in chunks as the window
+allows. The ceiling here is the application partition, not the send buffer.
 
 `/api/status` answers with **values and codes, never finished sentences** — the
 page renders them in the reader's language, which is also why the battery arrives
@@ -706,6 +712,83 @@ the top of `msnet_loop()`, which is where filesystem writes and `WiFi.begin()`
 belong. The monitor endpoints use the same discipline through `_mon_action`, and
 a POST arriving while a previous action is still pending is answered
 `{"ok":0,"err":"busy"}` rather than queued.
+
+#### What is on the page (2.5.0+)
+
+Ten collapsible sections: status, WiFi, power, MQTT, monitoring, this node's
+settings (the sweep read-out), **change settings**, **packet filter**, firmware
+and backup. The last two of those first six are what 2.5.0 added — until then the
+page could show you everything and change almost nothing.
+
+They are `<details>`/`<summary>`, not tabs. Opening, closing, the keyboard, the
+screen reader and the browser's own find-on-page then cost nothing to implement;
+tabs are the same function in exchange for a switcher in JS, a state in CSS and
+`aria-*` attributes to stay usable. Only *remembering* the state costs
+JavaScript — four lines, under the same `mcs-collapse:<name>` localStorage key the
+public site uses. The difference: the site stores only "collapsed" and treats
+absent as open, because everything there starts open. Here the default differs per
+section — status open, the rest closed — so the state is stored either way and
+"nothing stored" means "use what the firmware chose".
+
+**Change settings** is drawn entirely from `GET /api/cfg?values=1`. There is no
+second parameter list in the page: a parameter this firmware does not know cannot
+be offered, and a bound that differed here would be the loose one of the two —
+which is exactly where somebody presses a button. Each `kind` becomes the control
+that cannot express an invalid value:
+
+| `kind` | Control |
+|---|---|
+| `bool` | a two-option select, `on` / `off` — the literal words MeshCore compares against |
+| `enum` | a select built from `choices`, current value selected |
+| `int` / `float` | `<input type=number>` with that parameter's own `min`/`max`, `step=1` or `step=any` |
+| `radio` | **four** number fields with their own bounds, from `choices` (`freq:150-2500\|bw:7-500\|sf:5-12\|cr:5-8`), joined with spaces on submit |
+| text, `secret=1` | `type=password`, never pre-filled |
+| text | plain input, `maxlength=39` |
+
+Every field is pre-filled with what the node currently holds, so "set this to what
+it already is" is a one-click dry run over the whole write path. The four radio
+fields exist because `get radio` answers with commas and `set radio` wants spaces:
+one box in which `869.525 250 11 5` has to be retyped is the box where a typo
+loses a node.
+
+The three **risk classes are grouped and explained above the controls** — before
+the choice, not only in the dialog that asks to confirm it. Class 1 saves
+directly, class 2 asks a confirmation naming the parameter and the value, class 3
+requires the node's name to be retyped and states the consequence. That threshold
+lives in the browser, and that is a deliberate boundary: `POST /api/cfg` has no
+confirmation field, because the server writes down the same path and would trip
+over one. What the node does do — check the value against the table and read it
+back — is the check that counts, and it runs regardless of who called.
+
+The result reports **what the node answers, not what was asked**, using the same
+`cfgSameValue()` the server uses. `advert.interval 61` therefore says plainly that
+the node holds 60, and that is shown as a distinct outcome rather than an error,
+because it is the ordinary case. A `reboot` parameter adds the line that it is
+stored but not yet active.
+
+**Packet filter** is drawn from `GET /api/filter` and writes through
+`POST /api/filter`. There is deliberately **no text box for a command line** —
+that would be a CLI on a web page, and then the weight of an action depends on how
+somebody happens to spell it. Every button carries a fixed verb and reads its
+numbers from constrained inputs at the moment it is pressed. The weight follows
+the *direction* of the change and what it lands on top of, mirroring
+`pktfilter.risk_of()` on the server: `off` and `reset` ask nothing at all, and
+switching on asks for the node's name as soon as a rule is already set that closes
+a whole category. See [`packet-filter.md`](packet-filter.md#managing-it-from-the-nodes-own-page).
+
+What it cost: the page went from 25,839 to 46,086 bytes of flash (+20,247). Of
+that, 980 bytes is the collapsible layout itself (714 markup and CSS, 266 the
+remembering), 10,263 bytes the dictionaries for two languages, and 9,004 bytes the
+two forms. `handleCfgList()`'s static buffer went from 3000 to 5600 bytes, sized
+on the worst case rather than the usual one: the old size fitted with 122 bytes to
+spare, and one more parameter would have made the loop stop quietly with an answer
+that is valid JSON and incomplete.
+
+What is deliberately **not** there: `prv.key`, `bridge.secret` and `set freq`
+remain absent for the reasons under §4.11 and in the 2.1.0 changelog entry — the
+surface did not widen, it only became operable. And the way back is untouched:
+`filter off` and `filter reset` still work over the mesh CLI without WiFi, this
+page or a server.
 
 ### 4.5 OTA over your normal network
 

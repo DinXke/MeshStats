@@ -31,7 +31,7 @@ Alles is opt-in bij het bouwen. Zonder de vlaggen krijgt u standaard MeshCore.
 
 Twee versienummers reizen samen mee en mogen niet verward worden.
 `FIRMWARE_VERSION` is die van MeshCore; `MESHMANAGER_VERSION`
-(`MeshManagerNet.h:138`) is die van deze module, en de twee bewegen onafhankelijk
+(`MeshManagerNet.h:158`) is die van deze module, en de twee bewegen onafhankelijk
 van elkaar. `ver` drukt beide af, en beide verschijnen in elke stats-payload als
 `repeater.fw` en `repeater.fw_meshmanager` — want wanneer er iets misloopt, is de
 eerste vraag naar welke van de twee men kijkt.
@@ -574,7 +574,7 @@ wording.
 ### 4.1 Versiegeschiedenis
 
 De gezaghebbende changelog is het blokcommentaar bovenaan `MeshManagerNet.cpp`
-(regels 1–262). De huidige versie staat in `MeshManagerNet.h:138`. Deze tabel is
+(regels 1–615). De huidige versie staat in `MeshManagerNet.h:158`. Deze tabel is
 een leeshulp, geen vervanging: het commentaar legt de *redenering* vast, en dat
 is het deel dat telt wanneer beslist moet worden of er iets gewijzigd wordt.
 
@@ -691,7 +691,7 @@ hoofdlus op en daarmee de mesh, wat op de companion-node al was vastgesteld.
 | `/api/mon` | POST | basic | `add`, `del`, `pass`, `en`, `iv`, `poll` |
 | `/api/backup` | GET | basic | Het volledige bestandssysteem downloaden |
 | `/api/restore` | POST | basic | Een back-up uploaden, daarna herstarten |
-| `/api/cfg` | GET | basic | Welke CLI-parameters van afstand gezet mogen worden, met hun type, grenzen, toegestane woorden en risicoklasse (2.1.0+) |
+| `/api/cfg` | GET | basic | Welke CLI-parameters van afstand gezet mogen worden, met hun type, grenzen, toegestane woorden en risicoklasse (2.1.0+). `?values=1` zet er achter elke parameter bij wat er nú in staat, en levert de vier deelgrenzen van `radio` in `choices` (2.5.0+) |
 | `/api/cfg` | POST | basic | Er één zetten en meteen teruglezen — zie [`node-management.md`](node-management.md) (2.1.0+) |
 | `/api/moncfg` | GET | basic | De lopende of laatst afgeronde schrijfactie naar een **gemonitorde** repeater over LoRa: wat er gevraagd is, wat er teruggelezen is, en hoe het afliep (2.4.0+) |
 | `/api/moncfg` | POST | basic | Één parameter zetten op een repeater die deze node monitort, over LoRa, en hem daarna teruglezen. Antwoordt `202` — er is nog niets gebeurd; twee pakketten over een gedeelde band duren tientallen seconden (2.4.0+) |
@@ -704,8 +704,15 @@ De authenticatie is **HTTP basic**, met dezelfde inloggegevens als de console
 (`_cfg.user` / `_cfg.console_pass`, standaard `admin` / `meshcore`). `/` zelf is
 niet geauthenticeerd: het is een statische schil die niets rendert tot
 `/api/status` slaagt. `send_P` streamt de pagina rechtstreeks uit flash, omdat
-`send()` eerst alle 14 kB naar een `String` op de heap zou kopiëren op een node
+`send()` eerst alle 45 kB naar een `String` op de heap zou kopiëren op een node
 die ook nog een mesh draaiende moet houden.
+
+Anders dan bij de companion is er hier **geen gzip-budget**. De pagina van de
+companion wordt in één keer in de socketbuffer gelegd en zit daarom klem onder
+`CONFIG_LWIP_TCP_SND_BUF_DEFAULT` (5760 byte, §"Het gzip-budget"); deze gaat
+ongecomprimeerd naar buiten en `AsyncWebServer` voert hem in stukken af naarmate
+het venster het toelaat. De grens is hier de applicatiepartitie, niet de
+verzendbuffer.
 
 `/api/status` antwoordt met **waarden en codes, nooit met afgewerkte zinnen** —
 de pagina rendert ze in de taal van de lezer, wat ook de reden is waarom de
@@ -732,6 +739,85 @@ _apply_wifi = true;      // saving and reconnecting happens in loop()
 `_mon_action`, en een POST die binnenkomt terwijl een vorige actie nog in
 behandeling is, wordt beantwoord met `{"ok":0,"err":"busy"}` in plaats van in een
 wachtrij gezet.
+
+#### Wat er op de pagina staat (2.5.0+)
+
+Tien inklapbare secties: toestand, WiFi, energie, MQTT, monitoren, instellingen
+van deze node (de uitslag van de sweep), **instellingen wijzigen**,
+**pakketfilter**, firmware en back-up. Die twee vetgedrukte zijn wat 2.5.0
+toevoegde — tot dan kon de pagina je alles tónen en vrijwel niets veranderen.
+
+Het zijn `<details>`/`<summary>` en geen tabbladen. Open- en dichtklappen, het
+toetsenbord, de schermlezer en het zoeken-op-deze-pagina van de browser kosten dan
+niets om te bouwen; tabbladen zijn dezelfde functie in ruil voor een omschakelaar
+in JS, een toestand in CSS en `aria-*`-attributen om bruikbaar te blijven. Alleen
+het *onthouden* kost JavaScript — vier regels, onder dezelfde
+localStorage-sleutel `mcs-collapse:<naam>` die de publieke site gebruikt. Het
+verschil: de site bewaart alleen "dicht" en beschouwt afwezig als open, want daar
+staat alles standaard open. Hier verschilt de standaard per sectie — toestand
+open, de rest dicht — dus wordt de stand voluit bewaard en betekent "niets
+bewaard" juist "gebruik wat de firmware koos".
+
+**Instellingen wijzigen** wordt volledig getekend uit `GET /api/cfg?values=1`. Er
+staat geen tweede parameterlijst in de pagina: een parameter die deze firmware
+niet kent kan niet aangeboden worden, en een grens die hier afweek zou de losse
+van de twee zijn — en dat is precies waar iemand op een knop drukt. Elk `kind`
+wordt de bediening waarin een ongeldige waarde niet uit te drukken is:
+
+| `kind` | Bediening |
+|---|---|
+| `bool` | een keuzelijst met twee opties, `on` / `off` — letterlijk de woorden waarmee MeshCore vergelijkt |
+| `enum` | een keuzelijst uit `choices`, met de huidige waarde geselecteerd |
+| `int` / `float` | `<input type=number>` met de eigen `min`/`max` van die parameter, `step=1` of `step=any` |
+| `radio` | **vier** getalvelden met elk hun eigen grenzen, uit `choices` (`freq:150-2500\|bw:7-500\|sf:5-12\|cr:5-8`), bij het opslaan samengevoegd met spaties |
+| tekst, `secret=1` | `type=password`, nooit voorgevuld |
+| tekst | gewoon invoerveld, `maxlength=39` |
+
+Elk veld is voorgevuld met wat er nu in de node staat, zodat "zet dit op wat het
+al is" met één klik een proefrit is over de hele schrijfweg. De vier radiovelden
+bestaan omdat `get radio` met komma's antwoordt en `set radio` spaties wil: één
+vak waarin `869.525 250 11 5` overgetypt moet worden, is het vak waarin een
+tikfout een node kwijtmaakt.
+
+De drie **risicoklassen staan gegroepeerd en uitgelegd boven de bediening** — dus
+vóór de keuze, en niet pas in het venster dat om een bevestiging vraagt. Klasse 1
+slaat meteen op, klasse 2 vraagt een bevestiging die de parameter en de waarde
+noemt, klasse 3 laat de naam van de node overtypen en zegt het gevolg erbij. Die
+drempel zit in de browser, en dat is een bewuste grens: `POST /api/cfg` kent geen
+bevestigingsveld, want de server schrijft langs dezelfde weg en zou erover
+struikelen. Wat de node wél doet — de waarde toetsen aan de tabel en hem
+teruglezen — is de controle die telt, en die draait ongeacht wie er aanklopte.
+
+De uitslag meldt **wat de node antwoordt, niet wat er gevraagd is**, met dezelfde
+`cfgSameValue()` die de server gebruikt. `advert.interval 61` zegt dus gewoon dat
+er 60 staat, en dat wordt getoond als een eigen uitkomst en niet als een fout,
+want het is het gewone geval. Bij een `reboot`-parameter komt de regel erbij dat
+het bewaard is maar nog niet actief.
+
+**Pakketfilter** wordt getekend uit `GET /api/filter` en schrijft via
+`POST /api/filter`. Er is met opzet **geen tekstvak voor een commandoregel** — dat
+zou een CLI op een webpagina zijn, en dan hangt de zwaarte van een handeling af
+van hoe iemand toevallig spelt. Elke knop draagt een vast werkwoord en leest zijn
+getallen uit begrensde invoervelden op het moment dat erop gedrukt wordt. De
+zwaarte volgt de *richting* van de wijziging en waar ze bovenop komt, gelijk aan
+`pktfilter.risk_of()` op de server: `off` en `reset` vragen helemaal niets, en
+aanzetten vraagt de naam van de node zodra er al een regel staat die een hele
+categorie dichtzet. Zie
+[`packet-filter.md`](packet-filter.md#beheren-vanaf-de-eigen-pagina-van-de-node).
+
+Wat het kostte: de pagina ging van 25.839 naar 46.086 byte flash (+20.247).
+Daarvan is 980 byte de inklapbare indeling zelf (714 markup en CSS, 266 het
+onthouden), 10.263 byte de woordenlijsten voor twee talen, en 9.004 byte de twee
+formulieren. De statische buffer van `handleCfgList()` ging van 3000 naar 5600
+byte, berekend op het slechtste geval in plaats van op het gewone: de oude maat
+paste met 122 byte over, en één parameter erbij had de lus stilletjes laten
+stoppen met een antwoord dat geldige JSON is en onvolledig.
+
+Wat er met opzet **niet** in zit: `prv.key`, `bridge.secret` en `set freq`
+ontbreken nog steeds, om de redenen uit §4.11 en de changelogregel bij 2.1.0 — het
+oppervlak is niet ruimer geworden, alleen bedienbaar. En de weg terug is
+onaangeroerd: `filter off` en `filter reset` werken nog altijd over de mesh-CLI,
+zonder WiFi, zonder deze pagina en zonder server.
 
 ### 4.5 OTA over het gewone netwerk
 

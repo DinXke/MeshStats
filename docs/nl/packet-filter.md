@@ -230,3 +230,58 @@ doorloopje en [`admin.md`](admin.md#pakketfilter) voor elk veld. Kort:
 De klasse wordt bepaald uit de handeling en zijn argumenten, op de server, vóór
 er iets verstuurd wordt — en nog een keer bij de bevestigingscontrole, zodat een
 zelfgebouwd formulier hem niet kan overslaan.
+
+## Beheren vanaf de eigen pagina van de node
+
+Sinds firmware **2.5.0** staat het volledige filter ook op de eigen beheerpagina
+van de node (poort 80, achter dezelfde login), onder *Pakketfilter*. Dat is meer
+dan gemak: deze pagina is de weg die overblijft als de server, het internet of de
+broker weg is, en dit project bestaat mede voor noodcommunicatie. De site kan dit
+allemaal, maar de site staat tussen jou en het apparaat in; de eigen pagina van de
+node staat dat niet.
+
+Ze leest `GET /api/filter` en schrijft `POST /api/filter` — dezelfde twee
+endpoints die de site gebruikt, dus er is één parser en één grammatica, en niet
+een tweede die op de dag dat het misgaat anders denkt. De pagina toont de
+aan/uit-stand, de ontwapening in veilige modus, de minimale padhash, de
+structuurcontrole, alle twaalf pakkettypes met hun hoplimiet, snelheidslimiet en
+venster, de geblokkeerde kanalen, en de tellers per reden plus doorgelaten en
+vrijgesteld via de ACL.
+
+Twee dingen verdienen het uitgeschreven te worden, want ze verschillen van de
+site:
+
+- **Er is geen tekstvak voor een commandoregel.** Elke knop draagt een vast
+  werkwoord en leest zijn getallen uit velden die begrensd zijn tot wat de
+  firmware aanneemt (`0–63` hops, `0–65535` per `1–3600 s`, hash `1|2|3`). Een
+  vrij tekstveld zou een CLI op een webpagina zijn, en dan hangt de zwaarte van
+  een handeling af van hoe iemand toevallig spelt.
+- **De bevestiging zit in de browser, niet in de node.** `POST /api/filter` kent
+  geen bevestigingsveld — de server schrijft langs dezelfde weg en zou erover
+  struikelen. De bescherming van de node zelf is onveranderd en onvoorwaardelijk:
+  de parser weigert waarden buiten de grenzen, en het antwoord draagt de stand ná
+  afloop mee, zodat de pagina toont wat er gehandhaafd wordt in plaats van wat er
+  ingetypt is.
+
+De klassen zijn dezelfde drie, bepaald uit de richting van de wijziging en waar ze
+bovenop komt — dezelfde regel als `pktfilter.risk_of()` op de server:
+
+| Klasse | Handelingen op de pagina van de node | Bevestiging |
+|---|---|---|
+| gewoon | `off`, `reset`, `type … on`, `hash 1`, `malformed off`, `rate … 0`, `channel remove` | helemaal geen |
+| merkbaar | `on`, `hops … n>0`, `rate … n>0`, `hash 2`, `malformed on`, `channel add` | een bevestiging die de handeling noemt |
+| ingrijpend | `hops … 0`, `type … off`, `hash 3`, en `on` terwijl zo'n regel al staat | de naam van de node overtypen |
+
+`off` en `reset` vragen hier dus ook **helemaal niets** — één klik. Dat is geen
+slordigheid in de indeling maar het punt ervan: herstel mag nooit strakker
+afgeschermd zijn dan de fout die het terugdraait.
+
+Elke bevestiging noemt de handeling als een zin en niet als een commando
+(*"GRP_TXT (05) helemaal niet meer doorsturen (0 hops)"*, niet `hops 05 0`), om
+dezelfde reden als op de site: een venster dat `hops 05 0` toont, vraagt om een ja
+op iets wat de lezer eerst moet ontcijferen — en dat is precies het moment waarop
+iemand op ja klikt zonder het gelezen te hebben.
+
+Dit alles vervangt de weg terug niet. `filter off` en `filter reset` over de
+mesh-CLI hebben geen wifi, geen beheerpagina en geen server nodig, en 2.5.0 heeft
+daar niets aan veranderd.
