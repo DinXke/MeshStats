@@ -53,6 +53,12 @@ services:
       MM_SITE_NAME: "${MM_SITE_NAME:-${MCS_SITE_NAME:-MeshManager}}"
       MM_RETENTION_DAYS: "${MM_RETENTION_DAYS:-${MCS_RETENTION_DAYS:-180}}"
       MM_HEARTBEAT_MIN: "${MM_HEARTBEAT_MIN:-${MCS_HEARTBEAT_MIN:-5}}"
+      # owner/repo waar de firmware-releases staan. Bewust leeg als standaard:
+      # firmware.repo_slug() valt dan terug op de git-remote van de werkkopie,
+      # en in een container is die er niet -- dan staat de firmwarepagina uit
+      # met die reden erbij. Dat is het juiste gedrag voor een fork, die zijn
+      # eigen images hoort te halen en niet stilzwijgend die van een vreemde.
+      MM_GITHUB_REPO: "${MM_GITHUB_REPO-${MCS_GITHUB_REPO-}}"
       # Beveiliging: bodylimiet en het aantal proxies vóór de app (zie .env.example)
       MM_MAX_BODY_BYTES: "${MM_MAX_BODY_BYTES:-${MCS_MAX_BODY_BYTES:-2000000}}"
       MM_TRUSTED_PROXY_HOPS: "${MM_TRUSTED_PROXY_HOPS:-${MCS_TRUSTED_PROXY_HOPS:-1}}"
