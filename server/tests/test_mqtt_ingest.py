@@ -94,6 +94,24 @@ def test_een_goed_bericht_logt_niets(caplog, monkeypatch):
     assert mqtt_ingest._state["errors"] == 0
 
 
+def test_force_uit_de_payload_wordt_genegeerd(monkeypatch):
+    # 'force' hoort bij de handmatige HTTP-verversing (Home Assistant, met token);
+    # de eigen firmware zet het nooit in zijn MQTT-JSON. Een node die het tóch
+    # meestuurt zou anders de heartbeat-ontdubbeling van de samples-tabel kunnen
+    # ontwijken. Deze test legt vast dat de MQTT-weg force nooit doorgeeft.
+    gezien = {}
+    monkeypatch.setattr(mqtt_ingest.db, "get_or_create_repeater",
+                        lambda subject, name: {"id": 1, "slug": "x", "source_prefix": None})
+    monkeypatch.setattr(mqtt_ingest.db, "record_source", lambda *a, **k: None)
+    monkeypatch.setattr(mqtt_ingest.db, "record_firmware", lambda *a, **k: None)
+    monkeypatch.setattr(mqtt_ingest.db, "utcnow", lambda: "2026-08-16T00:00:00Z")
+    monkeypatch.setattr(mqtt_ingest.db, "ingest",
+                        lambda rid, ts, metrics, neighbors, force=False: gezien.update(force=force))
+    payload = b'{"repeater":{"pubkey_prefix":"e3d3f4d7edd0"},"metrics":{"online":true},"force":true}'
+    assert mqtt_ingest.handle_message("meshcore/e3d3f4d7edd0/stats", payload) is True
+    assert gezien == {"force": False}
+
+
 def test_een_pakketbericht_gaat_naar_de_pakketkant(caplog, monkeypatch):
     # Het onderscheid tussen /rx en /stats zat in de sluiting in _run() en werd
     # daarmee door geen enkele test geraakt.

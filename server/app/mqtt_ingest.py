@@ -444,7 +444,16 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     # waren voordat dit bericht binnenkwam.
     prior_source = _field(row, "source_prefix")
     ts = body.get("ts") or db.utcnow()
-    db.ingest(row["id"], ts, metrics, body.get("neighbors"), force=bool(body.get("force")))
+    # Bewust GEEN force uit de payload. 'force' is het signaal "sla dit punt hoe
+    # dan ook op, ook als het niet veranderde" en het overslaat de
+    # heartbeat-ontdubbeling die de samples-tabel klein houdt. Het hoort bij een
+    # handmatige verversing langs de HTTP-ingest (Home Assistant, met token) --
+    # de eigen firmware zet het nooit in zijn MQTT-JSON. Op dit topic is de data
+    # apparaatdata die niet van iedereen komt (iedereen met brokerreferenties kan
+    # eronder publiceren), dus een force die van hier binnenkomt is geen
+    # verversing maar een manier om die ontdubbeling te ontwijken en de tabel vol
+    # te schrijven. We negeren hem daarom en laten db.ingest op force=False staan.
+    db.ingest(row["id"], ts, metrics, body.get("neighbors"))
     db.record_source(row["id"], publisher)
     # Op de statistiekenkant wél naar de databank, want dit moet een herstart
     # van de site overleven: een opdracht aan een node die vandaag nog niets
