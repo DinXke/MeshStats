@@ -1,13 +1,15 @@
 # MQTT
 
+*[Nederlands](nl/mqtt.md)*
+
 MQTT is the recommended way for a node to reach the server. One connection stays
 open; each measurement is a short publish on it. See
 [`architecture.md`](architecture.md#why-mqtt) for why this replaced HTTP.
 
 ## Topics
 
-Topic structure is `<prefix>/<node>/<leaf>`, built by
-`StatsPublisher::topicFor()`:
+Topic structure is `<prefix>/<node>/<leaf>`. Both firmwares build it identically
+— `StatsPublisher::topicFor()` on the companion, `mqttTopic()` on the repeater:
 
 ```c
 snprintf(out, max, "%s/%s/%s", _cfg.prefix,
@@ -128,32 +130,144 @@ paths share one server-side handler.
 }
 ```
 
+### Three producers, one schema
+
+The same shape is built in three places, and they do **not** send the same set of
+fields. Knowing which one you are looking at is the difference between "this node
+does not report duplicates" and "this node is not the kind of node that reports
+duplicates".
+
+| Producer | Function | Subject |
+|---|---|---|
+| **Companion** | `MyMesh::fillStatsJson()` in `examples/companion_radio` | itself |
+| **Repeater** | `MyMesh::fillStatsJson()` added by `repeater-hooks.patch` | itself |
+| **Monitor relaying a repeater** | `publishMonitorRound()` in `MeshStatsNet.cpp` | *another* repeater |
+
+All three publish on `<prefix>/<node>/stats`. The first two describe the node in
+the topic; the third describes somebody else and says so in
+`repeater.pubkey_prefix`.
+
 ### Fields the node sends
 
-| Key | Type | Unit | Source |
-|---|---|---|---|
-| `repeater.pubkey_prefix` | string | — | first 6 bytes of the public key, hex. Optional: left out, the server reads it from the topic |
-| `repeater.name` | string | — | `_prefs.node_name` |
-| `online` | bool | — | always `true`; it is a liveness marker |
-| `bat` | float | V | `board.getBattMilliVolts() / 1000` |
-| `uptime` | float | **days** | `millis()/1000 / 86400`, 5 decimals |
-| `noise_floor` | int | dBm | `_radio->getNoiseFloor()` |
-| `last_rssi` | int | dBm | `radio_driver.getLastRSSI()` |
-| `last_snr` | float | dB | `radio_driver.getLastSNR()` |
-| `airtime` | float | **minutes** | `getTotalAirTime()/1000 / 60` (TX) |
-| `rx_airtime` | float | **minutes** | `getReceiveAirTime()/1000 / 60` |
-| `nb_recv` / `nb_sent` | int | count | radio-level packet counters |
-| `sent_flood` / `sent_direct` | int | count | `Dispatcher` counters |
-| `recv_flood` / `recv_direct` | int | count | `Dispatcher` counters |
-| `recv_errors` | int | count | `getPacketsRecvErrors()` |
-| `tx_queue_len` | int | count | `_mgr->getOutboundTotal()` |
-| `freq` | float | MHz | `_prefs.freq` |
-| `sf` / `cr` | int | — | spreading factor, coding rate |
-| `tx` | int | dBm | `_prefs.tx_power_dbm` |
+| Key | Type | Unit | Companion | Repeater | Relayed | Source |
+|---|---|---|---|---|---|---|
+| `repeater.pubkey_prefix` | string | — | ✓ | ✓ | ✓ | first 6 bytes of the public key, hex. Optional on the first two: left out, the server reads it from the topic |
+| `repeater.name` | string | — | ✓ | ✓ | ✓ | `_prefs.node_name`, or the monitor's name for that entry. JSON-escaped since 1.9.1 |
+| `repeater.fw` | string | — | | ✓ | | `FIRMWARE_VERSION` — MeshCore's version |
+| `repeater.fw_meshstats` | string | — | | ✓ | | `MESHSTATS_VERSION`, empty when the module is not compiled in |
+| `online` | bool | — | ✓ | ✓ | ✓ | always `true`; a liveness marker |
+| `bat` | float | V | ✓ | ✓ | ✓ | cell voltage |
+| `battery_percentage` | int | % | | ✓ | ✓ | shared curve, see `meshstats_batt_percent()` |
+| `ch1_voltage` | float | V | | ✓ | | the same cell voltage under a telemetry channel name |
+| `uptime` | float | **days** | ✓ | ✓ | ✓ | 5 decimals |
+| `noise_floor` | int | dBm | ✓ | ✓ | ✓ | omitted unless negative |
+| `last_rssi` | int | dBm | ✓ | ✓ | ✓ | omitted unless negative |
+| `last_snr` | float | dB | ✓ | ✓ | ✓ | omitted when the node has received nothing |
+| `airtime` / `rx_airtime` | float | **minutes** | ✓ | ✓ | ✓ | TX and RX |
+| `nb_recv` / `nb_sent` | int | count | ✓ | ✓ | ✓ | radio-level packet counters |
+| `sent_flood` / `sent_direct` | int | count | ✓ | ✓ | ✓ | `Dispatcher` counters |
+| `recv_flood` / `recv_direct` | int | count | ✓ | ✓ | ✓ | `Dispatcher` counters |
+| `recv_errors` | int | count | ✓ | ✓ | ✓* | `getPacketsRecvErrors()` |
+| `direct_dups` / `flood_dups` | int | count | | ✓ | ✓* | duplicates suppressed by the dedup table |
+| `err_events` | int | count | | ✓ | ✓* | `_err_flags` |
+| `tx_queue_len` | int | count | ✓ | ✓ | ✓ | `getOutboundTotal()` |
+| `neighbor_count` | int | count | | ✓ | ✓ | how many neighbours the node knows, which is not the same as how many it reported |
+| `mcu_temperature` | float | °C | | ✓ | | ESP32 die temperature |
+| `ch<N>_temperature` / `ch<N>_voltage` | float | °C / V | | | ✓ | decoded from the monitored node's CayenneLPP telemetry |
+| `freq` | float | MHz | ✓ | ✓ | | `_prefs.freq` |
+| `sf` / `cr` | int | — | ✓ | ✓ | | spreading factor, coding rate |
+| `tx` | int | dBm | ✓ | ✓ | | `_prefs.tx_power_dbm` |
+| `neighbors` | array | — | | ✓ | ✓ | see below |
+| `via` | string | — | | | ✓ | 12 hex chars: the node that relayed this. **Currently ignored by the server** — see below |
+
+`✓*` on the relayed column means "only when the monitored node's firmware is new
+enough to have sent those bytes" — see the struct-length rule below.
 
 Watch the units. `uptime` is **days**, not seconds; `airtime` is **minutes**, not
 milliseconds. Both are pre-divided on the node so the server stores what it
 displays.
+
+#### Why a field can be missing, and why that is deliberate
+
+**A metric that is not available is left out, never sent as `0`.** JessaZH
+reported `noise_floor 0`, which drew a line diving to zero on a graph where a gap
+belonged — and cost somebody an afternoon working out which. The tests are about
+physics, not tidiness:
+
+- a noise floor or an RSSI in dBm is always negative; `0` means the radio driver
+  never filled it in;
+- an SNR of 0.0 dB is a perfectly real reading, so it is suppressed only when the
+  node has received nothing at all to have an SNR of;
+- a board reporting no cell voltage gets neither `bat` nor `battery_percentage`.
+
+**Counters are never filtered.** Zero packets sent is a fact, not a gap.
+
+For a *relayed* reading there is a second reason a field can be absent, and it is
+worth understanding because it looks identical from the outside. `RepeaterStats`
+grew over MeshCore releases, and an older node answers with a shorter struct. The
+monitor therefore checks how many bytes actually arrived before emitting each
+field (`ST_HAS()` in `publishMonitorRound()`). So a missing `flood_dups` on a
+relayed repeater means either "that firmware does not have it" or "it was never
+filled in" — and both are better than a confident zero.
+
+#### `mcu_temperature` is not `ch1_temperature`
+
+They are not the same measurement and must never be merged again. `mcu_temperature`
+is the ESP32 die, which with WiFi running sits 20–30 degrees above its
+surroundings — a node reported 51 °C while it was about 25 °C outside. Under a
+`ch1_temperature` name a reader takes that for an ambient reading and concludes
+the roof is on fire. `ch1_temperature` stays reserved for an actual sensor.
+
+For a relayed reading the channel numbers are the far side's own, not ours. On a
+MeshCore repeater channel 1 is its own board, so `ch1_temperature` there is the
+die again — but that is the far side's naming to make, and reinterpreting it here
+would be inventing data. See
+[`protocol.md`](protocol.md#110-telemetry-and-cayenne-lpp).
+
+#### `neighbors`
+
+```json
+"neighbors": [
+  {"prefix": "a1b2c3", "snr": -7.25, "seen_min": 12}
+]
+```
+
+Each entry becomes its own time series under the metric key
+`neighbor_<prefix>`. A relayed neighbour entry carries **no name field**: the
+monitored repeater's reply contains only key, age and SNR, and leaving the name
+out means the server keeps whatever name it already had rather than overwriting
+it with a blank.
+
+`neighbor_count` and the length of `neighbors` are allowed to differ. The count
+is what the node knows; the array is what fitted in the message. The array
+truncates rather than failing — a partial neighbour list is useful, a dropped
+stats message is not.
+
+#### `via`, and why the server does not read it
+
+Both relayed message types — `publishMonitorRound()` and
+`publishMonitorSettings()` — append a top-level `"via"` holding the relaying
+node's own 12-hex-character id. It is redundant with the topic, which already
+names the publisher, and **`mqtt_ingest.py` does not read it**: the server
+derives the relay from the `+` segment and records it as `source_prefix`.
+
+That is not a bug on either side. The topic is the authority for "who spoke",
+because it is the thing a per-node broker ACL can actually bind. A payload field
+claiming a relay would be a claim, not a fact. `via` is there for anyone reading
+the raw stream — a sniffer, a second subscriber, a log — where the topic may
+already have been stripped.
+
+Do not build a server-side feature on `via` without first deciding what happens
+when it disagrees with the topic.
+
+#### Message size
+
+The repeater sets `PubSubClient`'s buffer to `MQTT_PUB_MAX` = **5120 bytes** at
+startup, because the neighbour array can be long and a raw packet is over 500
+hex characters. The 256-byte default would make `publish()` **silently refuse**
+these messages — success on this side, nothing at the broker. Anything longer
+than the buffer is truncated at the source (fewer neighbours) rather than being
+refused here.
 
 ### Fields the server also accepts
 
@@ -182,9 +296,15 @@ message:
   "repeat": "on", "advert.interval": "240",
   "flood.advert.interval": "1440", "flood.max": "3", "flood.max.unscoped": "5",
   "allow.read.only": "off", "rxdelay": "0", "txdelay": "0",
-  "lat": "50.92", "lon": "5.352", "region.home": "be", "region.default": "be"
+  "lat": "50.92", "lon": "5.352", "region.home": "be", "region.default": "be",
+  "cmd:region": "*\n eu F\n  bx F\n   be^ F\n    be-vbr F"
 }
 ```
+
+Nineteen keys, one per entry in `SET_PARAMS` in `MeshStatsNet.cpp`. Eighteen of
+them are one-line values; `cmd:region` is a tree and is the reason `\n` survives
+JSON escaping at all — see below and
+[`firmware.md`](firmware.md#set_params--the-parameter-table).
 
 The keys are whatever the sweep table in the firmware names them — the server
 stores and shows every key it receives, known or not. The parameter list on the
@@ -264,6 +384,37 @@ capability that the other two do not: it changes state. Named plainly, because
 it is the one that deserves an ACL: an attacker on the broker can push a node's
 clock to any time between now and 2100, and that cannot be walked back over the
 air. The reason is in the next section.
+
+### The format of a `cmd` payload
+
+The payload is the bare word, optionally followed by one argument, as plain
+text. No JSON, no envelope, no trailing structure.
+
+| Rule | Value | Consequence |
+|---|---|---|
+| Maximum length | 96 bytes (`MQTT_CMD_MAX`) | Longer than the longest legal command, so a payload that does not fit is recognisable as *too long* rather than truncated into something that happens to match. Over-length payloads are refused and counted |
+| Leading/trailing whitespace | trimmed | A publisher that appends a newline is not punished for it |
+| Argument separator | one space or tab | `settings a1b2c3d4`, `time 1786665600` |
+| Arity | checked per word | `status <anything>` is **refused**, not run as `status`. A publisher sending an argument to a command that takes none has misunderstood something, and running it anyway hides that from both ends |
+| Minimum gap | 30 s (`MQTT_CMD_MIN_GAP_MS`) | Commands arriving inside the gap are **dropped, not queued** — "do it now" loses its meaning if it waits |
+| Retain | must be `false` | See below |
+| QoS | 0 | See below |
+| Concurrency | one word at a time | If a word is already waiting to be processed, the next one is dropped |
+
+Examples, exactly as they go on the wire:
+
+```
+settings
+status
+settings e3d3f4d7ed01
+time 1786665600
+```
+
+`time` takes UNIX epoch **seconds in UTC**, parsed with `strtoul` (not `atol` —
+the epoch passes 2³¹ in 2038 and these nodes may well still be on their roofs). A
+trailing non-digit means the argument was not a bare number, and a number with
+something stuck to it is a mistake upstream, not a time: it is refused and
+counted.
 
 ### Why a clock only ever goes forward
 
@@ -359,9 +510,10 @@ clock is trustworthy, and refuses loudly — logs and admin page — when it can
 > not set it: `timedatectl` there reports `NTP=no` alongside
 > `NTPSynchronized=yes`. What we read is therefore the **host kernel's** claim,
 > passed through. "The host says it is synchronised" is not the same as "the
-> time is demonstrably correct". **The correctness of every clock in this mesh
-> ultimately rests on the NTP configuration of the Proxmox host** — if that is
-> wrong, all of this runs neatly, measurably and completely wrong along with it.
+> time is demonstrably correct". **If you run the server in a container, the
+> correctness of every clock in this mesh ultimately rests on the NTP
+> configuration of the machine underneath it** — if that is wrong, all of this
+> runs neatly, measurably and completely wrong along with it.
 
 Two checks were considered and rejected. Cross-checking against timestamps from
 the mesh is circular: the nodes we would check against are the nodes we set, so
@@ -527,9 +679,10 @@ underscores turned into spaces.
 
 ## Payload: `rx` — raw packet forwarding
 
-> **In development.** The firmware side exists in the MeshCore working tree and
-> the server-side decoder (`server/app/packets.py`) is being written as this is
-> documented. Field names and behaviour may change. Do not build against it yet.
+> **Still settling.** The firmware side is in service and the server-side
+> decoder `server/app/packets.py` now exists and is called from
+> `mqtt_ingest.py`. Field names in the *decoded* result may still change; the
+> five keys of the message itself, below, have not.
 
 The intent: the node does not parse anything. It hex-encodes each frame exactly
 as it came off the radio and lets the server decode it using
@@ -547,19 +700,40 @@ as it came off the radio and lets the server decode it using
 | `len` | frame length in bytes |
 | `raw` | lowercase hex, `len * 2` characters |
 
-Design constraints, all visible in `StatsPublisher::queueRawPacket()` and
-`drainRxQueue()`:
+The design constraints are the same on both firmwares, but **the numbers are
+not**, and conflating them is easy:
 
-- The receive callback only copies into an 8-slot ring buffer. Publishing from
-  inside the receive loop would hold up reception.
-- Queue full → the packet is **dropped** and `_drop_count` increments. Losing a
+| | Companion (`StatsPublisher`) | Repeater (`MeshStatsNet`) |
+|---|---|---|
+| Ring size | `STATS_RX_QUEUE` = **4** slots | `MQTT_RX_QUEUE` = **8** slots |
+| Slot size | `STATS_RX_MAX_LEN` = 255 (a full MTU, 264 B with padding) | `MQTT_RX_MAX_LEN` = 255 |
+| Static RAM | ~1 kB | ~2 kB |
+| Publishes per `loop()` pass | **1** | `MQTT_DRAIN_MAX` = **4** |
+| Publish buffer | `setBufferSize(255 * 2 + 128)` | `setBufferSize(MQTT_PUB_MAX)` = 5120 |
+
+Four slots on the companion is a deliberate trade recorded at the source:
+forwarding is best-effort — the queue is thrown away in its entirety as soon as
+the broker is unreachable — and RAM is worth more there than absorbing peaks.
+Going back to eight would cost 1056 bytes of static RAM. On the repeater eight
+slots buys roughly one burst of traffic; beyond that it would rather lose packets
+than memory.
+
+The shared rules:
+
+- **The receive callback only copies.** Publishing from inside the receive loop
+  would hold up reception. The same discipline as the `cmd` callback and the web
+  server's apply flags.
+- **Queue full → the packet is dropped** and a counter increments. Losing a
   packet is better than stalling the mesh.
-- No broker connection → the whole queue is flushed and counted as drops, rather
-  than sending a burst of stale packets on reconnect.
-- At most 4 publishes per `loop()` pass.
-- `STATS_RX_MAX_LEN` is 255 (`MAX_TRANS_UNIT`), so the JSON can reach roughly
-  600 bytes — which is why `setBufferSize(255 * 2 + 128)` is called at startup.
-  PubSubClient's 256-byte default would silently refuse these publishes.
+- **No broker connection → the whole queue is flushed** and counted as drops,
+  rather than sending a burst of stale packets on reconnect.
+- **`setBufferSize()` is not optional.** A raw frame becomes over 500 hex
+  characters, and PubSubClient's 256-byte default would make `publish()`
+  *silently refuse* — the same shape of failure as the 1.3.0 wrong-topic bug.
+
+On the repeater, forwarding is additionally gated on the battery: above
+`bat_live` percent a received packet goes out immediately, below it the node
+waits. See [`firmware.md`](firmware.md#43-power-management).
 
 ## Retention and QoS
 
@@ -581,7 +755,8 @@ Consequence: **MQTT gives you no delivery guarantee.** Gaps in a graph after a
 WiFi hiccup are expected. If you need guaranteed delivery, use the HTTP ingest
 path, which returns a status code.
 
-## Node-side configuration
+<a id="node-side-configuration"></a>
+## Node-side configuration (companion)
 
 Set on the node's own management page at `http://<node-ip>/`, stored in
 `/stats_cfg.json` on SPIFFS.
@@ -606,6 +781,50 @@ previously cost the whole node its responsiveness.
 
 `TLS is not supported on the node.` `PubSubClient` runs over a plain
 `WiFiClient`.
+
+## Node-side configuration (repeater)
+
+The repeater keeps its settings in `/msnet.json` on SPIFFS, not
+`/stats_cfg.json`, and they are set in three interchangeable ways: the admin page
+at `http://<node-ip>/` (`POST /api/mqtt`), the mesh/serial/telnet CLI, or a
+restored backup.
+
+| Field | CLI | Default | Notes |
+|---|---|---|---|
+| `mqtt_host` | `wifi mqtt host <name>` | *(empty)* | Empty = publisher does nothing. A hostname costs a DNS wait on every connect attempt |
+| `mqtt_port` | `wifi mqtt port <n>` | `1883` | 1–65535 |
+| `mqtt_user` | `wifi mqtt user <name>` | *(empty)* | Empty = connect anonymously |
+| `mqtt_pass` | `wifi mqtt pass <word>` | *(empty)* | |
+| `mqtt_prefix` | `wifi mqtt prefix <p>` | `meshcore` | Empty resets to `meshcore` |
+| `mqtt_enabled` | `wifi mqtt on` / `off` | off | Master switch |
+| `mqtt_rx` | `wifi mqtt rx on` / `off` | — | Forward every received packet |
+
+The publish **interval is not a single number here.** It follows the battery
+through a rule table and the clock through a night window; see
+[`firmware.md`](firmware.md#43-power-management). In power-save mode the interval
+also decides how often the radio wakes, which is why it has a higher floor there
+(60 s) than in always-reachable mode (10 s).
+
+`wifi mqtt` with no argument prints the status line that answers most questions
+at once:
+
+```
+verbonden, broker=<host>:1883, prefix=meshcore, rx=aan,
+stats=412 pkt=9021 drop=3 cmd=7/2
+```
+
+`cmd=<accepted>/<refused>` is the counter that separates "the site never asked"
+from "the broker refused my subscribe" from "it ran and nothing changed".
+
+Client id is `meshcore-<node_hex>` on both firmwares — derived from the public
+key, so two nodes never collide.
+
+Reconnect behaviour on the repeater: `MQTT_RETRY_MS` = **15 s** between attempts.
+A broker that does not answer costs a full socket timeout per attempt, and that
+time comes straight out of the mesh. `setSocketTimeout(4)` and
+`setKeepAlive(60)` bound it further.
+
+**TLS is not supported here either.**
 
 ## Server-side configuration
 

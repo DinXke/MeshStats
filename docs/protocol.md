@@ -1,5 +1,7 @@
 # MeshCore protocols
 
+*[Nederlands](nl/protocol.md)*
+
 Two different protocols are described here. They are unrelated to each other and
 easy to confuse:
 
@@ -131,9 +133,26 @@ offset 1 will be four bytes out of step on transport-scoped packets.
 | `0x0C`–`0x0E` | — | — | unassigned |
 | `0x0F` | `PAYLOAD_TYPE_RAW_CUSTOM` | application-defined | custom encryption/format |
 
-Unknown payload types are dropped and, importantly, **not** flood-forwarded
-(`Mesh::onRecvPacket()` default branch). A new payload type therefore does not
-propagate through a mesh of older nodes.
+Unknown payload types are dropped and **not** flood-forwarded
+(`Mesh::onRecvPacket()` default branch, `src/Mesh.cpp` 326–329). A new payload
+type therefore does not propagate as a *flood* through a mesh of older nodes.
+
+#### The structural gate in front of that switch
+
+The sentence above is true and is not the whole story, and the difference
+matters for anything that reasons about what a node will forward.
+
+To reach the switch on payload type (`src/Mesh.cpp` line 116) at all, a packet
+must be **either flood-routed, or direct-routed with `getPathHashCount() == 0`**.
+Every direct packet with hops still remaining is handled entirely by the
+forwarding block at `src/Mesh.cpp` 78–110 and **never reaches the switch**.
+
+So a direct multi-hop packet of *any* payload type — including an unknown one, a
+`CONTROL` and a `RAW_CUSTOM` — is forwarded by `src/Mesh.cpp` 89–107 without its
+type ever being inspected. Payload-type semantics are a property of packets that
+have arrived, not of packets in transit. Two claims further down in this document
+depend on this rule; see [CONTROL](#control-0x0b) and
+[RAW_CUSTOM](#raw_custom-0x0f).
 
 ### Payload version (bits 6–7)
 
@@ -174,8 +193,8 @@ packet and is never re-applied along the way.
 ### What the application layer does with them
 
 Reading that application layer settles what a receiver can and cannot learn from
-the two codes. `MyMesh::sendFloodScoped()` in `examples/companion_radio` fills
-them in:
+the two codes. `MyMesh::sendFloodScoped()` in `examples/simple_repeater`
+(`MyMesh.cpp` 1274–1283) fills them in:
 
 ```c
 uint16_t codes[2];
@@ -183,15 +202,59 @@ codes[0] = scope.calcTransportCode(pkt);
 codes[1] = 0;  // REVISIT: set to 'home' Region, for sender/return region?
 ```
 
+The companion has its own version of the same function
+(`examples/companion_radio/MyMesh.cpp` 502–510) with a different signature — it
+has no `path_hash_size` parameter and passes `_prefs.path_hash_mode + 1` itself.
+
 | Code | What it is | Can it name a region? |
 |---|---|---|
-| `codes[0]` | `TransportKey::calcTransportCode(pkt)` — computed from the 16-byte scope key **and the packet** | **No.** It differs for every packet sent under one and the same key. Only a node holding the key can recognise it, by recomputing it. |
-| `codes[1]` | Reserved for the sender's home region | In principle yes, in practice no: the firmware writes a literal zero. `filterRecvFloodPacket()` carries a matching `REVISIT` about reading it back. |
+| `codes[0]` | `TransportKey::calcTransportCode(pkt)` — computed from the 16-byte scope key **and the packet** | Not on its own. It differs per packet. But it *is* reproducible by anyone who can guess the region name — see below |
+| `codes[1]` | Reserved for the sender's home region | In principle yes, in practice no: the firmware writes a literal zero. `filterRecvFloodPacket()` carries a matching `REVISIT` about reading it back |
 
-So the presence of the codes tells you a packet was scoped; the codes themselves
-do not tell you to which region. Naming the region has to be done by a node that
-holds the scope keys, and published alongside the frame — it cannot be recovered
-from the bytes on the air.
+#### How the code is derived, and what that means for an archive
+
+This is worth spelling out, because the obvious conclusion — "a scoped packet
+cannot be attributed to a region without the keys" — is **wrong for the default
+case**, and an earlier version of this document said so.
+
+```
+code = first 2 bytes of HMAC-SHA256(key, payload_type_byte || payload)
+```
+
+(`TransportKey::calcTransportCode()`, `src/helpers/TransportKeyStore.cpp` 4–18.)
+Two properties follow directly:
+
+- **The code is computed over `payload_type || payload` only** — the same input
+  as the dedup hash. It therefore does not change from hop to hop; it is
+  identical at every hop of one packet. That is exactly why
+  `RegionMap::findMatch()` (`src/helpers/RegionMap.cpp` 190–205) can recompute
+  the code for every known region on a *received* frame and compare.
+- **Where the key comes from decides whether an outsider can do the same.**
+  `RegionMap::getTransportKeysFor()` (`src/helpers/RegionMap.cpp` 173–188) splits
+  regions into two kinds:
+
+| Region name | Key source | Recoverable by an observer? |
+|---|---|---|
+| starts with `$` | the transport key store — a real shared secret | **No.** This is the private case |
+| starts with `#`, **or has no prefix at all** (the implicit auto-hashtag branch, lines 180–185) | `TransportKeyStore::getAutoKeyFor()` = **plain `SHA256(name)`** over the `#`-prefixed name, no salt (`TransportKeyStore.cpp` 37–50, key at 45–47) | **Yes** |
+
+So for every region that is not `$`-prefixed — which is the default, and what
+region names like `be` or `eu` produce — the key is a public function of the
+name. Any observer who can guess the name can compute the key and therefore
+recognise `codes[0]`. **A raw-packet archive can name the region of a scoped
+packet by trial-matching a list of candidate region names**, without holding any
+secret at all.
+
+The honest summary is therefore: the presence of the codes tells you a packet was
+scoped; `codes[0]` names the region for hashtag and implicit regions if you have
+a candidate list, and names nothing for `$`-prefixed private regions.
+
+For completeness: `codes[1]` is a literal zero in every current firmware path,
+but is not zero *by design*. `RegionEntry.id` is a `uint16` allocated
+sequentially from 1 (`src/helpers/RegionMap.cpp` 45, 166), and the region flags
+are `REGION_DENY_FLOOD` `0x01` and `REGION_DENY_DIRECT` `0x02`
+(`src/helpers/RegionMap.h` 11–12). `MAX_REGION_ENTRIES` is 32, `MAX_TKS_ENTRIES`
+is 16, and a transport key is 16 bytes.
 
 One value is special and is **not** a region at all. `isShare()` in the repeater
 reads codes `{0, 0}` as "send to nowhere":
@@ -212,7 +275,7 @@ its own case for the same reason — see `server/app/packets.py`, which reports
 `unscoped` / `scoped` / `share` on exactly this basis.
 
 `{0, 0}` is available as a marker because `calcTransportCode()` reserves both
-end values (`src/helpers/TransportKeyStore.cpp` lines 15–19: a computed code of
+end values (`src/helpers/TransportKeyStore.cpp` lines 12–16: a computed code of
 `0x0000` is bumped to 1 and `0xFFFF` down to `0xFFFE`). A real scope key can
 therefore never produce `codes[0] == 0`, which is what makes zero unambiguous
 rather than merely unlikely.
@@ -225,7 +288,7 @@ region** reaches only two kinds of packet:
 
 | Packet | Scoped? | Source |
 |---|---|---|
-| ones the repeater originates (its own adverts, self-generated floods) | yes, with `default_scope` | `examples/simple_repeater/MyMesh.cpp` 204, 1312, 1777 |
+| ones the repeater originates (its own adverts, self-generated floods) | yes, with `default_scope` | `examples/simple_repeater/MyMesh.cpp` 204, 1312, 1786 |
 | replies to a request that was itself scoped | yes, with the *request's* region | `MyMesh::sendFloodReply()`, line 642 |
 | replies to an unscoped request | **no** — `sendFlood()` without codes | same function, lines 648 and 651 |
 | everything it forwards for others | **no change at all** | `Mesh::routeRecvPacket()` |
@@ -241,8 +304,20 @@ packet: a direct packet is source-routed along an explicit hop list, not flooded
 and the firmware never asks which region it belongs to —
 `MyMesh::onRecvPacket()` sets `recv_pkt_region = NULL` for every non-flood route
 (`examples/simple_repeater/MyMesh.cpp` line 794), and `allowPacketForward()`
-consults the region only for floods (line 661). Read `unscoped` on a DIRECT row
-as "not applicable", not as "loose in the wild".
+consults the region only for floods (line 662; the function itself starts at
+655). Read `unscoped` on a DIRECT row as "not applicable", not as "loose in the
+wild".
+
+`allowPacketForward()` does two more things that shape what an archive sees:
+
+- **`flood_max_unscoped` applies only to plain `ROUTE_TYPE_FLOOD`**
+  (`examples/simple_repeater/MyMesh.cpp` 657–660). A repeater can therefore give
+  unscoped floods a shorter hop budget than scoped ones, which shows up in an
+  archive as unscoped traffic dying out earlier — a configuration choice, not a
+  propagation anomaly.
+- **Loop detection** via `isLooped()`, which counts how often this node's own
+  hash already appears in the path (`630–639`, applied at `666–679`), in the
+  modes `LOOP_DETECT_OFF` / `MINIMAL` / `MODERATE` / strict.
 
 ## 1.4 The path field
 
@@ -364,6 +439,11 @@ pkt->path[pkt->path_len++] = (int8_t) (pkt->getSNR()*4);   // Mesh.cpp:61
 Note this line increments `path_len` as a raw counter, bypassing the
 size/count packing. TRACE therefore only behaves correctly with hash size 1.
 
+In practice the code does bound it: the increment at `src/Mesh.cpp` 61 sits
+inside `if (pkt->path_len < MAX_PATH_SIZE)` (line 43), so `path_len` can never
+exceed 63 and bit 6 is never set by that path. The warning stands as a warning
+about the *encoding*, not as a live overflow.
+
 ## 1.5 Size constants
 
 From `src/MeshCore.h` unless noted:
@@ -389,6 +469,44 @@ From `src/MeshCore.h` unless noted:
 The 255 / 184 gap is 71 bytes: 1 header + 1 path_len + up to 64 path + 4
 transport codes = 70, plus one byte of slack.
 
+### Derived limits — what actually fits in a payload
+
+The constants above are the ceilings on the frame. What a *builder* accepts is
+lower, and each type has its own arithmetic. A decoder that assumes 184 is the
+plaintext budget will over-estimate every one of these:
+
+| Builder | Guard | Largest plaintext | Source |
+|---|---|---|---|
+| `createDatagram()` | `data_len + CIPHER_MAC_SIZE + 15 > 184` | **167** | `src/Mesh.cpp` 490 |
+| `createAnonDatagram()` | `data_len + 1 + 32 + 15 > 184` | **136** | `src/Mesh.cpp` 514 |
+| `createGroupDatagram()` | `data_len + 1 + 15 > 184` | **168** | `src/Mesh.cpp` 542 |
+| combined path in a PATH return | `MAX_COMBINED_PATH` = `184 - 2 - 16` | **166** | `src/Mesh.cpp` 440, enforced 452 |
+| chat text | `MAX_TEXT_LEN` = `10 * CIPHER_BLOCK_SIZE` | **160** | `src/helpers/BaseChatMesh.h` 8 |
+| companion channel data | `MAX_CHANNEL_DATA_LENGTH` = `MAX_FRAME_SIZE - 9` | **167** | `examples/companion_radio/MyMesh.cpp` 109 |
+
+Note that `createGroupDatagram()`'s own guard (168) is **looser** than
+`MAX_GROUP_DATA_LENGTH` (165). The two do not agree, and the constant is the
+conservative one; do not treat either as the definitive limit without checking
+which path built the packet.
+
+### Two independent length caps, on each side
+
+Receiving: `Dispatcher::checkRecv()` reads into `uint8_t raw[MAX_TRANS_UNIT+1]`
+but calls `recvRaw(raw, MAX_TRANS_UNIT)` (`src/Dispatcher.cpp` 196–197), so 255
+is a hard cap on what is even read.
+
+Sending, there are two separate refusals:
+
+- `sendPacket()` rejects `payload_len > MAX_PACKET_PAYLOAD` or an invalid
+  `path_len` before the packet is ever queued (`src/Dispatcher.cpp` 372–374);
+- `checkSend()` drops the packet again if `len + payload_len > MAX_TRANS_UNIT`
+  while serialising (`src/Dispatcher.cpp` 320–323) — the case where a legal
+  payload plus a long path together no longer fit.
+
+And `Packet::writePath()` returns 0 and writes nothing when
+`count * size > MAX_PATH_SIZE` (`src/Packet.cpp` 20–30): a bad descriptor on TX
+silently truncates the frame rather than erroring.
+
 ## 1.6 Payload layouts by type
 
 ### Encrypted peer-to-peer: REQ, RESPONSE, TXT_MSG, PATH (`0x00`, `0x01`, `0x02`, `0x08`)
@@ -409,9 +527,16 @@ The MAC and ciphertext are produced by `Utils::encryptThenMAC()`
 - Cipher: **AES-128 in ECB mode**, zero-padded to a 16-byte multiple. There is no
   IV and no chaining. Identical plaintext blocks under the same key produce
   identical ciphertext blocks.
+- **The AES key is the first 16 bytes of the 32-byte shared secret only**
+  (`setKey(shared_secret, CIPHER_KEY_SIZE)`, `src/Utils.cpp` 81 and 119). The
+  MAC, by contrast, uses all 32. A reimplementation that feeds the whole secret
+  to AES will decrypt nothing and the mistake looks like a key mismatch.
 - MAC: **HMAC-SHA256 over the ciphertext**, keyed with the full 32-byte shared
   secret, truncated to the first `CIPHER_MAC_SIZE` = **2 bytes**.
-- Order is encrypt-then-MAC. Decryption is refused unless the 2-byte MAC matches.
+- Order is encrypt-then-MAC. Decryption is refused unless the 2-byte MAC matches,
+  and `MACThenDecrypt()` rejects `src_len <= CIPHER_MAC_SIZE` outright
+  (`src/Utils.cpp` 158). On receive the length guard is
+  `i + CIPHER_MAC_SIZE >= payload_len` (`src/Mesh.cpp` 139).
 
 Two bytes of MAC is a 1-in-65536 chance of accepting a random forgery per
 attempt. That is a deliberate airtime trade-off, not an oversight — but it means
@@ -422,7 +547,36 @@ the Ed25519 signature on adverts, not from this MAC.
 The shared secret is ECDH on Curve25519, with the Ed25519 public key transposed
 to X25519 (`LocalIdentity::calcSharedSecret()`, `src/Identity.h` lines 70–81).
 
-Decrypted `PAYLOAD_TYPE_PATH` plaintext has its own structure
+#### Decrypted TXT_MSG plaintext
+
+```
++-----------+-------------------------------+---------------------------+
+| timestamp | flags                         | text                      |
+| uint32 LE | (attempt & 3) | (txt_type<<2) | to the end, zero-padded    |
++-----------+-------------------------------+---------------------------+
+```
+
+Byte 4 packs two fields. The low two bits are the retry attempt
+(`src/helpers/BaseChatMesh.cpp` 427); the rest is the text sub-type, read back as
+`data[4] >> 2` (line 232).
+
+| Value | Name |
+|---|---|
+| 0 | `TXT_TYPE_PLAIN` |
+| 1 | `TXT_TYPE_CLI_DATA` |
+| 2 | `TXT_TYPE_SIGNED_PLAIN` |
+
+(`src/helpers/TxtDataHelpers.h` 6–8.) Group text refuses anything but 0
+(`BaseChatMesh.cpp` 386–388), and attempt numbers above 3 are hidden as an extra
+trailing byte (`434–436`).
+
+`TXT_TYPE_CLI_DATA` is the one MeshStats depends on: it is how a CLI answer comes
+back from a monitored repeater over the air — see
+[`firmware.md`](firmware.md#the-settings-sweep-over-lora-190).
+
+#### Decrypted PATH plaintext
+
+`PAYLOAD_TYPE_PATH` plaintext has its own structure
 (`Mesh::onRecvPacket()` lines 161–172):
 
 ```
@@ -437,6 +591,14 @@ reserved. `extra` runs to the end of the decrypted block and **may be padded
 with zeroes**, because AES-ECB padding is not stripped — the receiver cannot
 distinguish trailing zero padding from trailing zero data. Length has to come
 from `extra_type`'s own encoding.
+
+> **`extra_type == 0x0F` means "no extra".** The builder side
+> (`src/Mesh.cpp` 465–481) writes `extra_type = 0xFF` plus four random bytes when
+> there is nothing to attach, purely so the packet hash stays unique
+> (`476–477`). Since the reader masks with `0x0F`, that arrives as `0x0F`. A
+> decoder that treats `0x0F` as a meaningful extra type will misread **every**
+> path return that carries no extra, and the four random bytes will look like
+> payload.
 
 ### ANON_REQ (`0x07`)
 
@@ -590,6 +752,10 @@ The offset is computed as `uint16_t` with an explicit comment explaining why:
 `path_len` up to 63 times entry size up to 8 exceeds 255, and a `uint8_t` would
 wrap and point the comparison at the wrong bytes.
 
+`Mesh::sendDirect()` builds the outgoing trace differently from every other
+type: it appends the pre-computed hop list to the **payload**, zeroes `path_len`,
+and sends at priority 5 (`src/Mesh.cpp` 698–704).
+
 TRACE is also special-cased in `Packet::calculatePacketHash()` — it is the only
 type whose `path_len` is mixed into the dedup hash, because a trace can legitimately
 revisit the same node on the return leg and must not be suppressed as a duplicate.
@@ -609,12 +775,28 @@ The packing byte splits into `remaining = payload[0] >> 4` (packets still to
 come) and `type = payload[0] & 0x0F` (the wrapped payload type)
 (`Mesh::onRecvPacket()` lines 300–304).
 
+Guards: the handler requires `payload_len > 2` (line 301), and for the ACK case
+`payload_len >= 5` (line 305).
+
 Only `type == PAYLOAD_TYPE_ACK` is implemented. The handler rebuilds a synthetic
-`Packet` with the packing byte stripped and processes it as a normal ACK, so
-multipart ACKs deduplicate against ordinary ACKs. Everything else falls into a
-`// FUTURE: other multipart types??` branch and is dropped.
+`Packet` with the packing byte stripped and processes it as a normal ACK.
+Everything else falls into a `// FUTURE: other multipart types??` branch and is
+dropped.
+
+> **A multipart ACK does *not* deduplicate against an ordinary ACK.** The
+> synthetic packet copies the header verbatim (`tmp.header = pkt->header`,
+> `src/Mesh.cpp` 307), so `getPayloadType()` on it still returns
+> `PAYLOAD_TYPE_MULTIPART` (0x0A). The dedup hash is
+> `SHA256(0x0A || ack_payload)` where a plain ACK hashes
+> `SHA256(0x03 || ack_payload)`. The two differ, so multipart ACKs deduplicate
+> only against other multipart ACKs. (An earlier version of this document had
+> this backwards.)
 
 `Mesh::createMultiAck()` builds the reverse: `payload[0] = (remaining << 4) | PAYLOAD_TYPE_ACK`.
+
+There is a parallel direct path, `forwardMultipartDirect()`
+(`src/Mesh.cpp` 359–377), reached from lines 90–91, which spaces multi-ACK
+retransmissions at `(remaining + 1) * 300` ms.
 
 ### CONTROL (`0x0B`)
 
@@ -625,22 +807,34 @@ multipart ACKs deduplicate against ordinary ACKs. Everything else falls into a
 +-------------+---------------------------+
 ```
 
-Handled at `Mesh::onRecvPacket()` lines 70–76. The only rule enforced by the
-core is a hard restriction: a CONTROL packet is delivered to
+Handled at `Mesh::onRecvPacket()` lines 70–76. A CONTROL packet is delivered to
 `onControlDataRecv()` only when it is **direct-routed, has bit 7 of
 `payload[0]` set, and has a hop count of exactly zero**. Comment in source:
-"just zero-hop control packets allowed (for this subset of payloads)". It is
-never forwarded.
+"just zero-hop control packets allowed (for this subset of payloads)".
+
+> **It is not true that CONTROL is never forwarded**, and an earlier version of
+> this document said so. That block only intercepts CONTROL packets with **bit 7
+> set**. A direct-routed CONTROL packet with bit 7 *clear* and hops remaining
+> never reaches the payload-type switch at all — it falls into the generic direct
+> forwarding block (`src/Mesh.cpp` 78–110) and **is forwarded** like any other
+> direct traffic. See [the structural gate](#the-structural-gate-in-front-of-that-switch).
+> Flood-routed CONTROL does reach the `default:` branch and is dropped
+> (`326–329`).
 
 The meaning of the remaining 7 flag bits and the data after them is defined by
 the application (`CMD_SEND_CONTROL_DATA` on the companion side), not by `src/`.
 
 ### RAW_CUSTOM (`0x0F`)
 
-The payload is entirely application-defined. The core requires it to be
-direct-routed and de-duplicates it, then calls `onRawDataRecv()`. It is
-deliberately not flood-routed — the source carries the comment
-`// don't flood route these (yet)`.
+The payload is entirely application-defined. The core de-duplicates it and calls
+`onRawDataRecv()`, and it is deliberately not flood-routed — the source carries
+the comment `// don't flood route these (yet)` (`src/Mesh.cpp` 296).
+
+"Requires it to be direct-routed" understates the rule. The `case` is reachable
+only for **zero-hop** direct packets; a multi-hop direct RAW_CUSTOM is forwarded
+at `src/Mesh.cpp` 89–107 without `onRawDataRecv()` ever being called. So the
+type is *delivered* only at zero hop count, while being *relayed* like anything
+else in between.
 
 ## 1.7 Packet hash and deduplication
 
@@ -654,6 +848,16 @@ Note what is **excluded**: the route type, the payload version, and the path.
 That is the whole point. The same logical packet arriving over two different
 routes, or in flood and direct form, hashes identically and is suppressed as a
 duplicate by `wasSeen()` / `markSeen()`.
+
+Three details a reimplementation has to get exactly right:
+
+- The output is `MAX_HASH_SIZE` = **8** bytes, the first 8 of the SHA-256.
+- For TRACE, `sha.update(&path_len, sizeof(path_len))` mixes in **2 bytes**,
+  because `path_len` is declared `uint16_t` in the in-memory `Packet`
+  (`src/Packet.h` 47) even though it occupies one byte on the wire. Hashing one
+  byte there will not match.
+- **A sender pre-marks its own packets as seen** (`src/Mesh.cpp` 651, 680, 713,
+  723, 736), so a node never processes the echo of its own transmission.
 
 ## 1.8 Worked example — a repeater advert
 
@@ -754,6 +958,152 @@ offset  bytes         field
 `path_len` went `0x00` → `0x02`, and the frame grew by exactly 2 bytes to 131.
 The payload — and therefore the signature and the dedup hash — is untouched.
 
+## 1.9 The admin/server request protocol
+
+Everything above describes the envelope. Inside a decrypted `REQ` payload there
+is a second, application-level protocol, and it is the one MeshStats actually
+speaks when a monitoring node polls a repeater. It is not part of `src/`: each
+example firmware defines its own request numbers, which is why the tables below
+are per role.
+
+**Repeater** — `examples/simple_repeater/MyMesh.cpp` 50–61:
+
+| Value | Name | Notes |
+|---|---|---|
+| `0x01` | `REQ_TYPE_GET_STATUS` | Answers with `RepeaterStats` |
+| `0x02` | `REQ_TYPE_KEEP_ALIVE` | |
+| `0x03` | `REQ_TYPE_GET_TELEMETRY_DATA` | Answers with Cayenne LPP; see §1.10 |
+| `0x05` | `REQ_TYPE_GET_ACCESS_LIST` | |
+| `0x06` | `REQ_TYPE_GET_NEIGHBOURS` | |
+| `0x07` | `REQ_TYPE_GET_OWNER_INFO` | Requires `FIRMWARE_VER_LEVEL >= 2` |
+
+`RESP_SERVER_LOGIN_OK` is `0` (line 57). The sensor firmware adds
+`REQ_TYPE_LOGIN` `0x00` and `REQ_TYPE_GET_AVG_MIN_MAX` `0x04`
+(`examples/simple_sensor/SensorMesh.cpp` 51–58); the room server has its own set
+(`examples/simple_room_server/MyMesh.cpp` 15–20), and the shared chat-side
+definitions are in `src/helpers/BaseChatMesh.h` 18–21.
+
+Inside an **ANON_REQ** the selector is a different enumeration
+(`examples/simple_repeater/MyMesh.cpp` 59–61):
+
+| Value | Name |
+|---|---|
+| `0x01` | `ANON_REQ_TYPE_REGIONS` |
+| `0x02` | `ANON_REQ_TYPE_OWNER` |
+| `0x03` | `ANON_REQ_TYPE_BASIC` |
+
+The repeater distinguishes those from a login by inspecting one byte: in the
+decrypted body `uint32 timestamp | data[4]`, a `data[4]` that is `0` or `>= ' '`
+means a login/password request, and anything else is an `ANON_REQ_TYPE_*`
+selector (`examples/simple_repeater/MyMesh.cpp` 803–814).
+
+### Access-control roles
+
+`src/helpers/ClientACL.h` 7–11:
+
+| Value | Name |
+|---|---|
+| — | `PERM_ACL_ROLE_MASK` = 3 |
+| 0 | `PERM_ACL_GUEST` |
+| 1 | `PERM_ACL_READ_ONLY` |
+| 2 | `PERM_ACL_READ_WRITE` |
+| 3 | `PERM_ACL_ADMIN` |
+
+These are the numbers behind `setperm <pubkey> <n>` on a repeater's CLI, and the
+distinction that decides whether a monitoring node can read another repeater's
+settings: **a repeater runs a CLI command only for a client it considers an
+admin, and says nothing at all to one it does not.** A read-only monitor
+therefore logs in perfectly and is then ignored — indistinguishable on the air
+from a node out of range. See
+[`firmware.md`](firmware.md#admin-rights-are-required-and-a-read-only-monitor-fails-silently).
+
+## 1.10 Telemetry and Cayenne LPP
+
+A `REQ_TYPE_GET_TELEMETRY_DATA` request answers in **Cayenne LPP**, which is the
+one encoding in this system that does not follow MeshCore's own conventions.
+
+Permission bits (`src/helpers/SensorManager.h` 6–10):
+
+| Value | Name |
+|---|---|
+| `0x01` | `TELEM_PERM_BASE` |
+| `0x02` | `TELEM_PERM_LOCATION` |
+| `0x04` | `TELEM_PERM_ENVIRONMENT` |
+| 1 | `TELEM_CHANNEL_SELF` |
+
+> **`payload[1]` of the request is an *inverse* permission mask.** The responder
+> computes `~payload[1]` (`examples/simple_repeater/MyMesh.cpp` 244–265). A
+> straightforward reading of that byte gives exactly the wrong set of
+> permissions.
+
+Channel numbering: GPS is always channel 1, and every other sensor gets a
+sequentially allocated channel from `TELEM_CHANNEL_SELF + 1` upwards
+(`src/helpers/sensors/EnvironmentSensorManager.cpp` 668, 671). Which channel
+means what is therefore a property of the answering node, not of the protocol —
+which is why MeshStats stores telemetry under `ch<N>_temperature` /
+`ch<N>_voltage`, under the channel the source itself used, rather than renaming
+it to something it assumes it means. On a MeshCore repeater channel 1 is its own
+board, so `ch1_temperature` there is the MCU die and not the outside air.
+
+### Record framing
+
+```
+channel (1 byte) | type (1 byte) | value (type-dependent)
+```
+
+`channel == 0` terminates the stream (`src/helpers/sensors/LPPDataHelpers.h`
+95–103); per-type skip lengths are at 140–172.
+
+> **LPP is big-endian.** `LPPWriter::write()` emits the most significant byte
+> first (lines 180–183) and `LPPReader::getFloat()` shifts left (71–86). Every
+> other multi-byte field in MeshCore — timestamps, transport codes, ACK CRCs,
+> advert coordinates — is little-endian. This is the single easiest place in the
+> whole system to get the byte order wrong, because the surrounding packet
+> trained you the other way.
+
+### Type table
+
+`src/helpers/sensors/LPPDataHelpers.h` 5–31:
+
+| Value | Name | Encoding |
+|---|---|---|
+| 0 | `LPP_DIGITAL_INPUT` | 1 B |
+| 1 | `LPP_DIGITAL_OUTPUT` | 1 B |
+| 2 | `LPP_ANALOG_INPUT` | 2 B, ×100 signed |
+| 3 | `LPP_ANALOG_OUTPUT` | 2 B, ×100 signed |
+| 100 | `LPP_GENERIC_SENSOR` | 4 B unsigned |
+| 101 | `LPP_LUMINOSITY` | 2 B, 1 lux |
+| 102 | `LPP_PRESENCE` | 1 B bool |
+| 103 | `LPP_TEMPERATURE` | 2 B, ×10 signed |
+| 104 | `LPP_RELATIVE_HUMIDITY` | 1 B, ×2 unsigned |
+| 113 | `LPP_ACCELEROMETER` | 2 B per axis, ×1000 |
+| 115 | `LPP_BAROMETRIC_PRESSURE` | 2 B, ×10 unsigned |
+| 116 | `LPP_VOLTAGE` | 2 B, ×100 unsigned |
+| 117 | `LPP_CURRENT` | 2 B, ×1000 |
+| 118 | `LPP_FREQUENCY` | 4 B, 1 Hz |
+| 120 | `LPP_PERCENTAGE` | 1 B |
+| 121 | `LPP_ALTITUDE` | 2 B, 1 m signed |
+| 125 | `LPP_CONCENTRATION` | 2 B, 1 ppm |
+| 128 | `LPP_POWER` | 2 B, 1 W |
+| 130 | `LPP_DISTANCE` | 4 B, ×1000 |
+| 131 | `LPP_ENERGY` | 4 B, ×1000 kWh |
+| 132 | `LPP_DIRECTION` | 2 B, 1 degree |
+| 133 | `LPP_UNIXTIME` | 4 B unsigned |
+| 134 | `LPP_GYROMETER` | 2 B per axis, ×100 |
+| 135 | `LPP_COLOUR` | 3 B RGB |
+| 136 | `LPP_GPS` | 3 B lat + 3 B lon (×10000) + 3 B alt (×100) |
+| 142 | `LPP_SWITCH` | 1 B |
+| 240 | `LPP_POLYLINE` | variable, minimum 8 B |
+
+Multipliers are at lines 34–60; the error codes are `LPP_ERROR_OK` 0,
+`LPP_ERROR_OVERFLOW` 1 and `LPP_ERROR_UNKOWN_TYPE` 2 (spelling as in source),
+lines 62–64.
+
+MeshStats decodes only two of these — `LPP_TEMPERATURE` and `LPP_VOLTAGE` — into
+`ch<N>_temperature` and `ch<N>_voltage`, via `helpers/sensors/LPPDataHelpers.h`
+included by `MeshStatsNet.cpp`. The rest are listed here so an extension does not
+have to rediscover the table.
+
 ---
 
 # 2. The companion protocol (TCP and serial)
@@ -824,7 +1174,7 @@ That is how `mc_proxy.py` inspects frames without decoding them:
 if len(frame) >= 4 and frame[3] == PKT_SELF_INFO:
 ```
 
-Command codes, client → node (`examples/companion_radio/MyMesh.cpp` lines 10–68):
+Command codes, client → node (`examples/companion_radio/MyMesh.cpp` lines 14–72):
 
 | Code | Name | | Code | Name |
 |---|---|---|---|---|
@@ -915,10 +1265,39 @@ the high bit distinguishes a push from a response:
 | `0x82` | `PUSH_CODE_SEND_CONFIRMED` |
 | `0x83` | `PUSH_CODE_MSG_WAITING` |
 | `0x84` | `PUSH_CODE_RAW_DATA` |
+| `0x85` | `PUSH_CODE_LOGIN_SUCCESS` |
+| `0x86` | `PUSH_CODE_LOGIN_FAIL` |
+| `0x87` | `PUSH_CODE_STATUS_RESPONSE` |
+| `0x88` | **`PUSH_CODE_LOG_RX_DATA`** |
+| `0x89` | `PUSH_CODE_TRACE_DATA` |
+| `0x8A` | `PUSH_CODE_NEW_ADVERT` |
+| `0x8B` | `PUSH_CODE_TELEMETRY_RESPONSE` |
+| `0x8C` | `PUSH_CODE_BINARY_RESPONSE` |
+| `0x8D` | `PUSH_CODE_PATH_DISCOVERY_RESPONSE` |
+| `0x8E` | `PUSH_CODE_CONTROL_DATA` (v8+) |
+| `0x8F` | `PUSH_CODE_CONTACT_DELETED` |
+| `0x90` | `PUSH_CODE_CONTACTS_FULL` |
 
-`PUSH_CODE_LOG_RX_DATA` also exists and is emitted by `MyMesh::logRxRaw()`; its
-numeric value is defined further down the same file and was not read for this
-document.
+(`examples/companion_radio/MyMesh.cpp` 120–136.) `PUSH_CODE_LOG_RX_DATA`
+(`0x88`) is the one emitted by `MyMesh::logRxRaw()` — the same hook MeshStats
+taps for its raw feed.
+
+`PUSH_CODE_LOGIN_SUCCESS` / `PUSH_CODE_LOGIN_FAIL` are worth noting alongside
+[the repeater's silence on a refused login](firmware.md#logging-in-without-a-password):
+over the *companion* link a client is told, because the node it is talking to is
+its own. Over the *air*, a repeater that refuses a login says nothing at all.
+
+Error codes, returned in the body of a `RESP_CODE_ERR`
+(`examples/companion_radio/MyMesh.cpp` 138–143):
+
+| Code | Name |
+|---|---|
+| 1 | `ERR_CODE_UNSUPPORTED_CMD` |
+| 2 | `ERR_CODE_NOT_FOUND` |
+| 3 | `ERR_CODE_TABLE_FULL` |
+| 4 | `ERR_CODE_BAD_STATE` |
+| 5 | `ERR_CODE_FILE_IO_ERROR` |
+| 6 | `ERR_CODE_ILLEGAL_ARG` |
 
 Other constants from the same header block:
 
