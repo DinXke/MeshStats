@@ -302,3 +302,142 @@ def test_vacuum_geeft_ruimte_terug_als_erom_gevraagd_wordt(db):
     assert uitslag["ran"] is True
     assert uitslag["after"] <= voor
     assert uitslag["at"]
+
+
+# --- latest en repeater_cli ---------------------------------------------------
+#
+# De twee tabellen die tot voor kort helemaal niet gesnoeid werden, en waar het
+# byteplafond niets tegen kon beginnen: dat verwijdert uitsluitend uit
+# ``packets``. Een opgeblazen ``latest`` liet het dus pakketten wegsnoeien tot de
+# bodem terwijl het bestand precies even groot bleef.
+
+def _meting(db, repeater_id: int, metriek: str, dagen_geleden: float) -> None:
+    ts = (datetime.now(timezone.utc) - timedelta(days=dagen_geleden)).strftime(TS)
+    db.execute("INSERT OR REPLACE INTO latest(repeater_id, metric, ts, value) "
+               "VALUES(?,?,?,?)", (repeater_id, metriek, ts, 1.0))
+
+
+def _wees(db, sql: str, params) -> None:
+    """Schrijf een rij die naar een repeater wijst die niet bestaat.
+
+    Vraagt om de sleutelcontrole even uit te zetten, en dat is meteen het
+    antwoord op "waarom snoeit prune() wezen als CASCADE ze niet toelaat": zo
+    ontstaan ze. Een databank die ooit door een herstelscript of een oudere
+    versie met ``foreign_keys=OFF`` is aangeraakt, houdt ze -- en dan is deze
+    regel het enige dat ze opruimt.
+    """
+    with db._lock:
+        conn = db.get_conn()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute(sql, params)
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
+def test_verweesde_latest_rijen_verdwijnen(db):
+    rep = db.get_or_create_repeater("aabbcc112233", "Node")
+    _meting(db, rep["id"], "online", 0)
+    _wees(db, "INSERT INTO latest(repeater_id, metric, ts, value) VALUES(?,?,?,?)",
+          (9999, "online", db.utcnow(), 1.0))
+
+    db.prune()
+
+    over = {r["repeater_id"] for r in db.q("SELECT repeater_id FROM latest")}
+    assert over == {rep["id"]}
+
+
+def test_uitgestorven_metrieken_van_een_levende_repeater_gaan_weg(db):
+    """Een naam die één keer langskwam en nooit meer, bij een node die nog leeft."""
+    db.set_setting("retention_days", "180")
+    rep = db.get_or_create_repeater("aabbcc112233", "Node")
+    _meting(db, rep["id"], "online", 0)             # vers
+    _meting(db, rep["id"], "verzonnen_ooit", 200)   # buiten de termijn
+
+    db.prune()
+
+    assert set(db.latest_for(rep["id"])) == {"online"}
+
+
+def test_een_dode_repeater_houdt_zijn_laatst_bekende_waarden(db):
+    """Het voorwaardje dat de vorige regel zo omzichtig maakt: dood laten liggen.
+
+    Bij een repeater die al een half jaar stil ligt zijn ál zijn waarden oud.
+    Die dan wissen maakt zijn kaart leeg, terwijl "dit was het laatste wat we van
+    hem hoorden" precies is wat iemand komt zoeken.
+    """
+    db.set_setting("retention_days", "180")
+    dood = db.get_or_create_repeater("aabbcc112233", "Al lang stil")
+    levend = db.get_or_create_repeater("ddeeff445566", "Nog bezig")
+    _meting(db, dood["id"], "online", 300)
+    _meting(db, dood["id"], "battery_percentage", 300)
+    _meting(db, levend["id"], "online", 0)
+
+    db.prune()
+
+    assert set(db.latest_for(dood["id"])) == {"online", "battery_percentage"}
+
+
+def test_het_plafond_per_repeater_houdt_de_nieuwste(db, monkeypatch):
+    """Wat er bij misbruik werkelijk toe doet: binnen de bewaartermijn staat de
+    uitgestorven-regel machteloos, het plafond niet."""
+    monkeypatch.setattr(db, "MAX_LATEST_PER_REPEATER", 10)
+    rep = db.get_or_create_repeater("aabbcc112233", "Node")
+    for i in range(40):
+        # Allemaal binnen de termijn, oplopend in tijd: rij 39 is de nieuwste.
+        _meting(db, rep["id"], f"verzonnen_{i:02d}", 40 - i)
+
+    n = db.prune()["latest"]
+
+    over = set(db.latest_for(rep["id"]))
+    assert n == 30
+    assert over == {f"verzonnen_{i:02d}" for i in range(30, 40)}
+
+
+def test_het_plafond_telt_per_repeater_en_niet_over_de_hele_tabel(db, monkeypatch):
+    monkeypatch.setattr(db, "MAX_LATEST_PER_REPEATER", 5)
+    een = db.get_or_create_repeater("aabbcc112233", "Een")
+    twee = db.get_or_create_repeater("ddeeff445566", "Twee")
+    for i in range(5):
+        _meting(db, een["id"], f"m{i}", 1)
+        _meting(db, twee["id"], f"m{i}", 1)
+
+    db.prune()
+
+    assert len(db.latest_for(een["id"])) == 5
+    assert len(db.latest_for(twee["id"])) == 5
+
+
+def test_repeater_cli_krijgt_dezelfde_drie_regels(db, monkeypatch):
+    monkeypatch.setattr(db, "MAX_CLI_PER_REPEATER", 4)
+    db.set_setting("retention_days", "180")
+    rep = db.get_or_create_repeater("aabbcc112233", "Node")
+    oud = (datetime.now(timezone.utc) - timedelta(days=300)).strftime(TS)
+    nu = db.utcnow()
+    _wees(db, "INSERT INTO repeater_cli(repeater_id, param, value, updated) "
+              "VALUES(?,?,?,?)", (9999, "wees", "x", nu))
+    db.execute("INSERT INTO repeater_cli(repeater_id, param, value, updated) "
+               "VALUES(?,?,?,?)", (rep["id"], "vergeten", "x", oud))
+    for i in range(6):
+        db.execute("INSERT INTO repeater_cli(repeater_id, param, value, updated) "
+                   "VALUES(?,?,?,?)", (rep["id"], f"p{i}", "x", nu))
+
+    db.prune()
+
+    params = {r["param"] for r in db.cli_settings_for(rep["id"])}
+    assert "vergeten" not in params            # buiten de termijn
+    assert len(params) == 4                    # plafond
+    assert db.qone("SELECT COUNT(*) AS n FROM repeater_cli "
+                   "WHERE repeater_id=9999")["n"] == 0
+
+
+def test_het_rapport_noemt_wat_er_uit_latest_en_cli_ging(db, monkeypatch):
+    """Anders is het weer stil snoeien, en daar begon dit hele bestand mee."""
+    monkeypatch.setattr(db, "MAX_LATEST_PER_REPEATER", 2)
+    rep = db.get_or_create_repeater("aabbcc112233", "Node")
+    for i in range(6):
+        _meting(db, rep["id"], f"m{i}", 6 - i)
+
+    rapport = db.prune()
+
+    assert rapport["latest"] == 4
+    assert rapport["cli"] == 0

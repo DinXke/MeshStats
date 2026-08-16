@@ -121,7 +121,7 @@ The tracked repeaters — the ones with a page at `/r/<slug>`.
 | `slug` | TEXT UNIQUE | URL segment, from `db.slugify(name)` with `-2`, `-3`… on collision |
 | `pubkey_prefix` | TEXT UNIQUE | Public-key prefix, lower-case hex. Grows to the longest length ever seen |
 | `name` | TEXT | Display name. Adopted from an incoming message when it changes |
-| `is_public` | INTEGER | 1 = visible on the site and in the public API. Toggled in `/admin` |
+| `is_public` | INTEGER | 1 = visible on the site and in the public API. Toggled in `/admin`. Auto-created repeaters get 0; the column default stays 1 for rows made any other way |
 | `sort_order` | INTEGER | Ordering on the home page and in `/admin` |
 | `last_seen` | TEXT | Timestamp of the last snapshot, written by `db.ingest()` |
 | `created_at` | TEXT | When the row was created |

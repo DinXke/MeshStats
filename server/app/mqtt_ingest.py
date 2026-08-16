@@ -401,11 +401,24 @@ def command_topics(node: str) -> tuple:
 
 
 def _topic_parts(topic: str) -> tuple:
-    """``(voorvoegsel, node)`` uit ``<prefix>/<node_hex>/<kind>``."""
+    """``(voorvoegsel, node)`` uit ``<prefix>/<node_hex>/<kind>``.
+
+    Het middenstuk wordt hier gekeurd als sleutel en niet verderop, want dit is
+    de enige plek waar het binnenkomt en het gaat drie kanten op: naar
+    ``_seen_prefix`` (geheugen), naar ``get_or_create_repeater`` (een rij) en
+    naar ``insert_packet`` (de waarnemerskolom). We abonneren met ``+`` op die
+    positie, dus wat daar staat is precies wat de publisher koos.
+
+    Het VOORVOEGSEL wordt bewust niet tegen een lijst gehouden. Deze site
+    luistert tijdens de hernoeming naar MeshManager op ``meshmanager`` én
+    ``meshcore``, en wie een eigen patroon in de omgeving zet mag een derde
+    naam. De begrenzing daarvan zit waar hij hoort: ``record_topic_prefix``
+    knipt hem op 32 tekens af voor hij de databank in gaat.
+    """
     parts = topic.split("/")
-    node = parts[1].lower().strip() if len(parts) >= 3 else ""
+    node = db.key_prefix(parts[1]) if len(parts) >= 3 else ""
     if not node:
-        raise ValueError(f"no node prefix in topic {topic!r}")
+        raise ValueError(f"topic {topic!r} noemt geen node met een sleutel")
     return parts[0].strip(), node
 
 
@@ -432,10 +445,17 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     rep = body.get("repeater") or {}
     # Subject defaults to the publisher: a node reporting on itself does not
     # have to repeat its own prefix in the payload.
-    subject = str(rep.get("pubkey_prefix", "")).lower().strip() or publisher
     metrics = body.get("metrics")
     if not isinstance(metrics, dict):
         raise ValueError("metrics missing")
+
+    # Keuren vóór er iets geschreven wordt, en in één regel voor beide
+    # ingest-wegen (zie db.check_snapshot). Wat hier opgeworpen wordt, komt
+    # terecht bij de brede vanger in _dispatch: geteld op de beheerpagina en met
+    # een fragment van de payload in het logboek, zodat "geweigerd" naspeurbaar
+    # is in plaats van stil.
+    subject = db.check_snapshot(rep.get("pubkey_prefix") or publisher,
+                                metrics, body.get("neighbors"))
 
     row = db.get_or_create_repeater(subject, rep.get("name"))
     # Wie er vóór dit bericht voor deze repeater publiceerde. Nu vastgehouden,

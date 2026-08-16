@@ -52,17 +52,23 @@ One snapshot of one repeater. The same body the MQTT `stats` topic carries.
 
 | Field | Required | Notes |
 |---|---|---|
-| `repeater.pubkey_prefix` | yes | 422 without it |
+| `repeater.pubkey_prefix` | yes | Bounded lowercase hex, 2–64 characters; 422 for anything else |
 | `repeater.name` | no | Adopted when it differs from the stored name |
 | `repeater.fw`, `repeater.fw_meshmanager` | no | Only the one that is present is written |
 | `ts` | no | Server time when absent |
-| `metrics` | yes | Must be an object; 422 otherwise |
-| `neighbors` | no | `seen_min` is converted to an absolute timestamp |
+| `metrics` | yes | Must be an object; at most 128 names of at most 64 characters; 422 otherwise |
+| `neighbors` | no | At most 512 entries (422 above that); `seen_min` is converted to an absolute timestamp. An entry whose `prefix` is not a key is dropped and logged, the rest of the message is kept |
 | `force` | no | Always store a sample, even unchanged |
 
 Response: `{"ok": true, "repeater": "<slug>"}`. The row is created if the key is
 unknown (`db.get_or_create_repeater()`), `source_prefix` is set to the literal
 `api`, and roughly every 500th call triggers `db.prune()`.
+
+A newly created repeater arrives **hidden** (`is_public = 0`) and stays off the
+public site until an administrator approves it in `/admin`; 429 when the
+repeater ceiling (`db.MAX_REPEATERS`, 500) is reached, which refuses rather than
+deletes. Both checks come from `db.check_snapshot()`, the same function the MQTT
+path uses — see [`retention.md`](retention.md#the-tables-somebody-else-can-grow).
 
 ### `POST /api/v1/contacts`
 

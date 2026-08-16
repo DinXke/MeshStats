@@ -125,7 +125,7 @@ De gevolgde repeaters — die met een pagina op `/r/<slug>`.
 | `slug` | TEXT UNIQUE | URL-deel, uit `db.slugify(name)` met `-2`, `-3`… bij botsing |
 | `pubkey_prefix` | TEXT UNIQUE | Publieke-sleutelprefix, kleine hex. Groeit mee naar de langste ooit geziene lengte |
 | `name` | TEXT | Weergavenaam. Overgenomen uit een binnenkomend bericht als hij verandert |
-| `is_public` | INTEGER | 1 = zichtbaar op de site en in de publieke API. Om te zetten in `/admin` |
+| `is_public` | INTEGER | 1 = zichtbaar op de site en in de publieke API. Om te zetten in `/admin`. Wie vanzelf ontstaat krijgt 0; de kolomstandaard blijft 1 voor rijen die anders ontstaan |
 | `sort_order` | INTEGER | Volgorde op de startpagina en in `/admin` |
 | `last_seen` | TEXT | Tijdstip van de laatste momentopname, geschreven door `db.ingest()` |
 | `created_at` | TEXT | Wanneer de rij is aangemaakt |

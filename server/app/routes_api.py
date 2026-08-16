@@ -130,13 +130,20 @@ async def ingest(request: Request, authorization: str | None = Header(default=No
     limit_body(request)
     body = await request.json()
     rep = body.get("repeater") or {}
-    prefix = str(rep.get("pubkey_prefix", "")).lower().strip()
-    if not prefix:
-        raise HTTPException(422, "repeater.pubkey_prefix ontbreekt")
     mets = body.get("metrics") or {}
-    if not isinstance(mets, dict):
-        raise HTTPException(422, "metrics moet een object zijn")
-    row = db.get_or_create_repeater(prefix, rep.get("name"))
+    # Dezelfde keuring als de MQTT-weg, uit dezelfde functie. Deze weg vraagt om
+    # een token en is dus minder blootgesteld, maar twee ingangen met twee
+    # verschillende ideeën over wat een geldige sleutel is, is precies hoe er
+    # jaren later één overblijft waar niemand meer naar kijkt.
+    try:
+        prefix = db.check_snapshot(rep.get("pubkey_prefix"), mets,
+                                   body.get("neighbors"))
+    except ValueError as err:
+        raise HTTPException(422, str(err)) from err
+    try:
+        row = db.get_or_create_repeater(prefix, rep.get("name"))
+    except ValueError as err:      # het repeaterplafond is geraakt
+        raise HTTPException(429, str(err)) from err
     ts = body.get("ts") or db.utcnow()
     db.ingest(row["id"], ts, mets, body.get("neighbors"), force=bool(body.get("force")))
     # Same bookkeeping as the MQTT path, so the admin page never shows a stale

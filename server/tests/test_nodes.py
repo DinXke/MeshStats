@@ -246,6 +246,11 @@ def test_gevolgde_repeater_verwijst_naar_zijn_eigen_pagina(db):
     raw_adv, pkt_adv = _advert(ts=1)
     db.insert_packet("bbbbbb111111", pkt_adv, raw=raw_adv)
     rep = db.get_or_create_repeater(frames.PUBKEY[:6].hex(), "Testrepeater")
+    # Een repeater die vanzelf uit een bericht ontstaat komt VERBORGEN binnen
+    # (zie get_or_create_repeater), en dit paneel is een publieke route. De
+    # beheerder zet hem zichtbaar -- hier in één regel, in het echt met de knop
+    # in /admin.
+    db.execute("UPDATE repeaters SET is_public=1 WHERE id=?", (rep["id"],))
     db.ingest(rep["id"], db.utcnow(),
               {"online": True, "battery_percentage": 92.0, "uptime": 12.5},
               [{"prefix": "bbbbbb", "name": "Buurman", "snr": -3.5}])
@@ -264,6 +269,9 @@ def test_niet_publieke_repeater_krijgt_geen_blok(db):
     raw_adv, pkt_adv = _advert(ts=1)
     db.insert_packet("bbbbbb111111", pkt_adv, raw=raw_adv)
     rep = db.get_or_create_repeater(frames.PUBKEY[:6].hex(), "Verborgen")
+    # Expliciet, ook al is dit sinds de vertrouwensgrens de standaard: deze test
+    # gaat over wat de publieke API met een verborgen repeater doet, niet over
+    # hoe hij verborgen raakte.
     db.execute("UPDATE repeaters SET is_public=0 WHERE id=?", (rep["id"],))
     assert _detail()["repeater"] is None
 
@@ -275,6 +283,7 @@ def test_buurrelatie_van_een_gewone_node(db):
     raw_adv, pkt_adv = _advert(ts=1)
     db.insert_packet("bbbbbb111111", pkt_adv, raw=raw_adv)
     rep = db.get_or_create_repeater("bbbbbb111111", "Waarnemer")
+    db.execute("UPDATE repeaters SET is_public=1 WHERE id=?", (rep["id"],))
     db.ingest(rep["id"], db.utcnow(), {"online": True},
               [{"prefix": P6, "name": "Testnode", "snr": -3.5}])
 

@@ -8,6 +8,18 @@
      tokens, bewaartermijn, weergave &mdash; staan onder <a href="/admin/server">Server en site</a>.</p>
 </div>
 
+{# Verborgen binnenkomen mag, ongemerkt binnenkomen niet. Een repeater die
+   vanzelf uit een binnengekomen bericht ontstaat stond vroeger meteen op de
+   voorpagina; nu wacht hij op een beslissing. Zonder deze regel blijft hij daar
+   wachten, want één verborgen pil tussen de andere valt niet op. #}
+{% if hidden_repeaters %}
+<p class="pending"><strong>{{ hidden_repeaters }} repeater(s) staan verborgen.</strong>
+   Een repeater die vanzelf ontstaat uit een binnengekomen bericht komt niet meteen op de
+   publieke site: wie op het MQTT-topic mag publiceren, hoort daarmee niet ook op de
+   voorpagina te kunnen publiceren. De pil <em>verborgen</em> bij een node hieronder maakt
+   hem zichtbaar.</p>
+{% endif %}
+
 {#- Waarom de lijst in drie groepen uiteenvalt, en niet op naam of op laatst
     gezien staat: wat je met een node kúnt doen verschilt per groep, en dat is
     hier de enige indeling die de knoppen eronder verklaart. Het niveau is een

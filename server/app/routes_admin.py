@@ -166,6 +166,12 @@ def nodes_page(request: Request):
     return templates.TemplateResponse(request, "admin/nodes.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes",
         "repeaters": repeaters, "routes": routes,
+        # Een repeater die vanzelf uit een bericht ontstaat komt sinds de
+        # vertrouwensgrens verborgen binnen (zie db.get_or_create_repeater).
+        # Verborgen binnenkomen mag, ongemerkt binnenkomen niet: zonder dit getal
+        # bovenaan staat hij ergens tussen de groepen te wachten op een beslissing
+        # waarvan niemand weet dat ze genomen moet worden.
+        "hidden_repeaters": sum(1 for r in repeaters if not r["is_public"]),
         # Lege groepen weglaten: een kopje "Unmanaged — 0" met niets eronder is
         # ruis, en de uitleg bij zo'n kopje gaat dan over niemand.
         "groups": [g for g in groups if g["reps"]],

@@ -55,17 +55,24 @@ draagt.
 
 | Veld | Verplicht | Opmerking |
 |---|---|---|
-| `repeater.pubkey_prefix` | ja | 422 zonder |
+| `repeater.pubkey_prefix` | ja | Begrensde hex in kleine letters, 2–64 tekens; 422 bij al de rest |
 | `repeater.name` | nee | Overgenomen als hij van de bewaarde naam verschilt |
 | `repeater.fw`, `repeater.fw_meshmanager` | nee | Alleen wat aanwezig is, wordt geschreven |
 | `ts` | nee | Servertijd als het ontbreekt |
-| `metrics` | ja | Moet een object zijn; anders 422 |
-| `neighbors` | nee | `seen_min` wordt omgerekend naar een absoluut tijdstip |
+| `metrics` | ja | Moet een object zijn; hoogstens 128 namen van hoogstens 64 tekens; anders 422 |
+| `neighbors` | nee | Hoogstens 512 regels (daarboven 422); `seen_min` wordt omgerekend naar een absoluut tijdstip. Een regel waarvan `prefix` geen sleutel is, valt eruit en wordt gelogd; de rest van het bericht blijft |
 | `force` | nee | Altijd een meting bewaren, ook onveranderd |
 
 Antwoord: `{"ok": true, "repeater": "<slug>"}`. De rij wordt aangemaakt als de
 sleutel onbekend is (`db.get_or_create_repeater()`), `source_prefix` wordt op
 letterlijk `api` gezet, en ongeveer elke 500e aanroep zet `db.prune()` in gang.
+
+Een nieuw aangemaakte repeater komt **verborgen** binnen (`is_public = 0`) en
+blijft van de publieke site tot een beheerder hem in `/admin` vrijgeeft; 429
+zodra het repeaterplafond (`db.MAX_REPEATERS`, 500) bereikt is, dat weigert in
+plaats van verwijdert. Beide controles komen uit `db.check_snapshot()`, dezelfde
+functie die de MQTT-weg gebruikt — zie
+[`retention.md`](retention.md#de-tabellen-die-iemand-anders-kan-laten-groeien).
 
 ### `POST /api/v1/contacts`
 

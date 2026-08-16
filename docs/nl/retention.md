@@ -283,6 +283,93 @@ terwijl de pakketten al op hun ondergrens staan, dan zegt de beheerpagina dat �
 liever een luide waarschuwing dan stilletjes de historiek weggooien waar iedereen
 naar kijkt.
 
+## De tabellen die iemand anders kan laten groeien
+
+Bewaren beantwoordt "hoe lang houden we dit". Daarnaast staat een tweede vraag:
+**wie kan hier überhaupt een rij laten ontstaan.** Het `stats`-topic is geen
+invoer van de eigenaar — iedereen met brokerreferenties publiceert eronder — en
+drie tabellen groeiden rechtstreeks uit wat zo'n bericht zei, zonder dat iets ze
+telde of controleerde:
+
+| Tabel | Eén rij per | Begrensd door |
+|---|---|---|
+| `repeaters` | verschillende sleutel | niets |
+| `latest` | `(repeater, metrieknaam)` | niets |
+| `repeater_cli` | `(repeater, parameter)` | niets |
+
+Het byteplafond kon daar niets tegen beginnen, en dat is het deel dat met zoveel
+woorden gezegd moet worden: het verwijdert uitsluitend uit `packets`. Een
+opgeblazen `latest` zou het pakketten laten wegsnoeien tot de FIFO-bodem terwijl
+het bestand precies even groot bleef — een schijfbewaking die correct leest en de
+verkeerde tabel leegt.
+
+### Geweigerd aan de grens
+
+`db.check_snapshot()` keurt één bericht vóór er iets geschreven wordt, en beide
+ingest-wegen lopen erlangs: de MQTT-lus (die de weigering telt en met een
+fragment van de payload logt) en `POST /api/v1/ingest` (die 422 antwoordt).
+Achteraf snoeien is opruimen; vooraf weigeren is de tabel niet laten groeien.
+
+| Regel | Grens |
+|---|---|
+| `pubkey_prefix` is begrensde hex in kleine letters | 2–64 tekens (`db.key_prefix`) |
+| Metrieknamen per bericht | 128, elk hoogstens 64 tekens |
+| Burenregels per bericht | 512 |
+| De node in het MQTT-topic is een sleutel | gecontroleerd in `_topic_parts` |
+
+Aantallen keuren het **hele bericht** af; één misvormde burenregel keurt alleen
+**zichzelf** af en wordt geteld in een waarschuwing. Tweehonderd metrieknamen is
+iemand die aan het opsommen is; één rare buur tussen veertig is een
+firmware-eigenaardigheid, en de andere negenendertig weggooien om die te
+bestraffen kost meer dan het oplevert.
+
+Het topicvoorvoegsel wordt met opzet *niet* tegen een lijst gehouden — de site
+luistert tijdens de hernoeming op `meshmanager` én `meshcore`, en een eigen
+patroon uit de omgeving is legitiem. Beide voorvoegsels komen dus even ver. Wat
+wél begrensd is, is de *node* in het midden van het topic.
+
+### Gesnoeid per repeater
+
+`latest` en `repeater_cli` krijgen elk drie regels, in `_prune_latest()` en
+`_prune_cli()`:
+
+1. **Wezen** — rijen die naar een repeater wijzen die niet meer bestaat.
+   `ON DELETE CASCADE` hoort ze te voorkomen; dit vangt een databank die ooit met
+   `foreign_keys=OFF` is aangeraakt.
+2. **Uitgestorven regels** — binnen `retention_days` niet ververst, *en alleen
+   bij repeaters die zelf nog rapporteren*. Dat voorwaardje is de subtiele helft:
+   bij een repeater die al een half jaar stil ligt is élke waarde oud, en die
+   wissen maakt zijn kaart leeg terwijl "dit was het laatste wat we van hem
+   hoorden" precies het antwoord is dat iemand komt zoeken. Dood laten liggen.
+3. **Een plafond per repeater** — 1000 metrieken, 200 CLI-parameters, de nieuwste
+   behouden. Dit is wat er bij misbruik werkelijk toe doet: binnen de
+   bewaartermijn staat regel 2 machteloos, en een publisher die per bericht een
+   naam verzint zou er heel wat kwijt kunnen voor die begon te bijten.
+
+### Geweigerd, niet gesnoeid: `repeaters`
+
+De enige tabel die niet geveegd kan worden. Een oude repeater verwijderen is zijn
+historiek verwijderen — `latest` en `repeater_cli` hangen er met
+`ON DELETE CASCADE` aan — en dat automatisch doen bij een node die een maand
+offline was, is precies verkeerd. Dus in plaats van snoeien een plafond dat
+**weigert**: boven `db.MAX_REPEATERS` (500) wordt een nieuwe sleutel niet
+aangemaakt en het bericht afgewezen, en toont de beheerpagina de stand tegen dat
+plafond. Weigeren verliest nooit iets, en begrenst de tabel even goed.
+
+### Nieuwe repeaters komen verborgen binnen
+
+Een repeater die vanzelf ontstaat uit een binnengekomen bericht wordt aangemaakt
+met `is_public = 0`. Dit is een publieke site: een repeater zichtbaar maken is
+een besluit van de beheerder en geen bijwerking van het feit dat er een bericht
+binnenkwam. Tot deze wijziging kon wie op het topic mocht publiceren daarmee iets
+op de voorpagina zetten.
+
+Voor bestaande repeaters verandert er niets — de INSERT draait alleen voor een
+sleutel die nog nooit gezien is, dus wat vandaag zichtbaar is blijft zichtbaar.
+De beheerpagina toont hoeveel er verborgen wachten — bovenaan **Nodes en
+repeaters**, en als stand tegen het plafond onder **Server en site** — want
+verborgen binnenkomen mag en ongemerkt binnenkomen niet.
+
 ## Configuratie
 
 | Variabele | Standaard | Instellingssleutel | Betekenis |
@@ -296,10 +383,32 @@ naar kijkt.
 De eerste vier zijn alleen de **standaard voor een verse installatie**; de
 bewaarde instelling wint.
 
+De grenzen aan de vertrouwensgrens zijn constanten in `db.py` en geen
+instellingen, met opzet: ze bestaan om ruim boven elke eerlijke node te liggen en
+zijn geen knop waaraan iemand hoort te draaien om een misdragende publisher
+alsnog te laten passen.
+
+| Constante | Waarde | Begrenst |
+|---|---|---|
+| `MAX_KEY_HEX` / `MIN_KEY_HEX` | 64 / 2 | Lengte van een sleutelvoorvoegsel |
+| `MAX_METRICS_PER_MESSAGE` | 128 | Metrieknamen in één bericht |
+| `MAX_NEIGHBORS_PER_MESSAGE` | 512 | Burenregels in één bericht |
+| `MAX_METRIC_NAME` | 64 | Lengte van één metrieknaam |
+| `MAX_LATEST_PER_REPEATER` | 1000 | `latest`-rijen per repeater |
+| `MAX_CLI_PER_REPEATER` | 200 | `repeater_cli`-rijen per repeater |
+| `MAX_REPEATERS` | 500 | Repeaters die vanzelf mogen ontstaan |
+
 ## Tests
 
 `server/tests/test_retention.py` dekt de drie regels en hun volgorde, de
-FIFO-ondergrens, de byteschatting met en zonder `dbstat`, en de VACUUM-drempels.
+FIFO-ondergrens, de byteschatting met en zonder `dbstat`, de VACUUM-drempels en
+de opruiming van `latest`/`repeater_cli` — inclusief dat een lang stille repeater
+zijn laatst bekende waarden houdt.
+
+`server/tests/test_ingestgrens.py` dekt de grens zelf: geweigerde sleutels, de
+aantallen per bericht, dat één kapotte burenregel de goede niets kost, het
+repeaterplafond dat weigert in plaats van verwijdert, `is_public` bij nieuwe
+tegenover bestaande repeaters, en dat beide topicvoorvoegsels even ver komen.
 
 ## Verwante documenten
 

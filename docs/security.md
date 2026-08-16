@@ -346,9 +346,11 @@ An access gate in front of `/admin*` at the proxy is still worth having; see
   bound.
 - Templates use Jinja autoescaping.
 
-**Unknown repeaters are created automatically and are public by default.**
-Anyone with a valid token, or publish access to the broker, can make a new
-repeater appear on the public page. Hide it in `/admin`.
+**Unknown repeaters are created automatically, but no longer public.** Anyone
+with a valid token, or publish access to the broker, can still make a repeater
+row appear — bounded by `db.MAX_REPEATERS` — but it arrives with
+`is_public = 0` and stays off the public page until you approve it in `/admin`,
+which says how many are waiting.
 
 ---
 
@@ -532,35 +534,54 @@ arriving there was not a refresh but a way to defeat the de-duplication and fill
 `samples`. The path now always ingests with `force=False`. Real nodes are
 unaffected because they never send the field.
 
-### Open: unbounded growth in tables retention never prunes
+**Unbounded growth in tables retention never pruned.** `db.prune()` bounded
+`packets` (age, row cap, byte ceiling), `samples` (age) and `neighbors` (age),
+but not `latest`, `repeater_cli` or `repeaters` — one row each per distinct
+`(repeater_id, metric)`, per CLI parameter and per public-key subject, with
+nothing ageing them out. An untrusted MQTT publisher reached all three from the
+`stats` topic: `_handle_payload()` stored every key in `metrics` verbatim and
+every `neighbors[].prefix` without a cap or a hex check, and the payload
+`pubkey_prefix` was not validated before `get_or_create_repeater()` created a
+**public** row for it (`repeaters.is_public` defaulted to 1) — so junk subjects
+both polluted `latest` and appeared on the public home page.
 
-`db.prune()` (`server/app/db.py`) bounds `packets` (age, row cap, byte ceiling),
-`samples` (age) and `neighbors` (age). It does **not** touch `latest`,
-`repeater_cli` or `repeaters`. Those grow one row per distinct
-`(repeater_id, metric)`, per CLI parameter, and per public-key subject — and
-nothing ages them out.
+Mosquitto's `message_size_limit 8192` made this a drip rather than a flood, and
+the honest likelihood on this deployment — a LAN behind a VPN, one broker,
+per-node ACLs — was low: it needed a credentialled or compromised node. It was
+fixed anyway because the byte ceiling could not save you here. It only ever
+deletes from `packets`, so bloat in `latest` would have had it trimming packets
+down to the FIFO floor while the file stayed exactly as large: a disk guard that
+reads correctly and empties the wrong table.
 
-An untrusted MQTT publisher reaches all three from the `stats` topic:
+Three measures, described in full in [`retention.md`](retention.md#the-tables-somebody-else-can-grow):
 
-- `_handle_payload()` stores every key in `metrics` verbatim (`db.ingest`, one
-  `latest` row each) and every `neighbors[].prefix` (a `neighbor_<prefix>` row),
-  with no cap on how many and no check that a neighbour prefix is hex. Distinct
-  names rotated across messages accumulate forever.
-- the payload `pubkey_prefix` (subject) is not validated as a key before
-  `get_or_create_repeater()` creates a **public** row for it
-  (`repeaters.is_public` defaults to 1), so junk subjects both pollute `latest`
-  and appear on the public home page.
+- **Refused at the boundary.** `db.check_snapshot()` vets one message before
+  anything is written — the subject as bounded hex (`db.key_prefix`, 2–64
+  characters), at most 128 metric names of at most 64 characters, at most 512
+  neighbour entries — and both ingest paths go through it. `_topic_parts()`
+  checks the node named in the topic the same way. Counts refuse the whole
+  message; a single malformed neighbour entry refuses only itself and is counted
+  in a warning. The topic *prefix* is deliberately not checked against a list, so
+  `meshmanager` and `meshcore` get identical treatment during the rename.
+- **`latest` and `repeater_cli` are pruned**: orphans, entries not refreshed
+  within the sample retention *for repeaters that are still reporting* (a
+  long-silent repeater keeps its last known values rather than having its card
+  blanked), and a ceiling of 1000 metrics / 200 parameters per repeater — which
+  is the rule that matters under abuse, since inside the retention window the
+  staleness rule is powerless.
+- **`repeaters` is bounded by refusal, not by pruning.** Deleting a repeater
+  deletes its history through `ON DELETE CASCADE`, so above `db.MAX_REPEATERS`
+  (500) a new subject is simply not created and the message is rejected.
 
-Mosquitto's `message_size_limit 8192` caps one message, so this is drip rather
-than flood, and the honest likelihood on this deployment — a LAN behind a VPN,
-one broker, per-node ACLs — is low: it needs a credentialled or compromised node.
-But the byte ceiling in `prune()` cannot save you here, because it only ever
-deletes from `packets`; bloat in `latest` would leave it trimming packets down to
-the FIFO floor while the file stays large. Smallest adequate measure: validate the
-subject as bounded hex at the trust boundary, and give `latest`/`repeater_cli`
-their own prune (drop rows whose repeater or metric has not been seen within the
-sample-retention window). Left for the owning `db.py`/`mqtt_ingest.py` work rather
-than changed mid-audit.
+**New repeaters no longer arrive public.** `get_or_create_repeater()` now
+inserts with `is_public = 0`. Making a repeater visible on a public site is the
+administrator's decision, not a side effect of a message arriving; until this
+change, anyone allowed to publish on the topic could publish to the front page.
+Existing repeaters are untouched — the INSERT only runs for a key never seen
+before — and the admin page shows how many are waiting hidden, because arriving
+hidden is fine and arriving unnoticed is not. The deployment checklist item
+"review new repeaters in `/admin`; they appear public by default" is therefore
+superseded: they now appear hidden by default and must be approved.
 
 ### Open: firmware image authenticity
 
@@ -603,7 +624,8 @@ not provide it. Worth stating in the threat model before that path ships.
 - **Privacy**: the public map and pages show other operators' node names and
   positions (`routes_api.py::repeater_map`), which come from adverts anyone with a
   radio can hear, but the only owner control is the per-repeater `is_public`
-  toggle — all or nothing, and public by default. A per-node "hide position but
+  toggle — all or nothing, though a new repeater now arrives hidden rather than
+  public. A per-node "hide position but
   keep statistics" choice does not exist; worth considering, since a position is
   more sensitive than a battery reading.
 
@@ -669,5 +691,6 @@ saying so is part of the point.
 - [ ] Change the node's default `admin` / `meshcore` login before it joins a network
 - [ ] Keep node management pages off any untrusted network
 - [ ] Back up `/data/secret.key` and the database; store node backups as secrets
-- [ ] Review new repeaters in `/admin` — they appear public by default
+- [ ] Review new repeaters in `/admin` — they now arrive **hidden** and stay off
+      the public site until you approve them; the page says how many are waiting
 - [ ] Revoke API tokens you are no longer using; they never expire

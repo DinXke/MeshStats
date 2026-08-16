@@ -371,6 +371,14 @@ API-route. `_public_repeater()` in `routes_api.py` antwoordt 404 voor een
 niet-publieke slug, zodat een repeater die uitgezet is onzichtbaar is en niet
 alleen niet-gelinkt.
 
+**Een repeater die vanzelf verschijnt komt verborgen binnen.** Alles wat uit een
+binnengekomen MQTT- of HTTP-bericht ontstaat, krijgt `is_public = 0`: dit is een
+publieke site, en een repeater zichtbaar maken is jouw besluit en geen bijwerking
+van het feit dat er een bericht binnenkwam. Repeaters die al bestonden houden wat
+ze hadden. Bovenaan **Nodes en repeaters** staat hoeveel er wachten — verborgen
+binnenkomen mag, ongemerkt binnenkomen niet — en de pil *verborgen* bij de node
+zelf is hoe je er een vrijgeeft.
+
 Een repeater verwijderen wist zijn rijen in `samples`, `latest` en `neighbors`
 expliciet, en daarna de rij zelf. Zijn pakketten blijven staan:
 `packets.observer` is een sleutelprefix en geen foreign key, en een ontvangst is

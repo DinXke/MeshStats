@@ -6,6 +6,7 @@ an ORM would only add a dependency and a migration story we do not need. The
 schema is applied with CREATE TABLE IF NOT EXISTS on every connect, which
 doubles as the migration mechanism for additive changes.
 """
+import logging
 import os
 import re
 import shutil
@@ -14,6 +15,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from . import config, countries, packets, tsdb
+
+log = logging.getLogger("meshmanager.db")
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
@@ -341,6 +344,109 @@ def set_setting(key: str, value: str) -> None:
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, value),
     )
+
+
+# --- de vertrouwensgrens: wat één ingest-bericht mag bevatten ----------------
+#
+# Alles hieronder gaat over één vraag: welke rijen in deze databank kan iemand
+# anders laten ontstaan, en hoeveel.
+#
+# Het ``stats``-topic is geen invoer van de eigenaar. Iedereen met
+# brokerreferenties publiceert eronder, en een node is een computertje op een
+# dak dat ooit van iemand anders kan zijn. Drie tabellen groeien rechtstreeks
+# uit wat zo'n bericht zegt -- één ``repeaters``-rij per verschillende sleutel,
+# één ``latest``-rij per metrieknaam, één ``neighbors``-rij per burenprefix --
+# en geen van drieën werd geteld of gecontroleerd.
+#
+# De opruiming redde dat niet. Het byteplafond in ``prune()`` verwijdert
+# uitsluitend uit ``packets``, dus een opgeblazen ``latest`` zou het pakketten
+# tot aan de FIFO-bodem laten wegsnoeien terwijl het bestand precies even groot
+# bleef. Een schijfbewaking die op papier klopt en in de praktijk de verkeerde
+# tabel leegt, is erger dan geen: ze stelt gerust.
+#
+# De regels hier zijn met opzet saai, en ze draaien vóór er iets geschreven
+# wordt. Achteraf snoeien is opruimen; vooraf weigeren is de tabel niet laten
+# groeien.
+#
+# Over de waarschijnlijkheid, want die hoort naast de code en niet alleen in het
+# auditrapport: hiervoor is een node met geldige of gelekte brokerreferenties
+# nodig, op een LAN achter een VPN, met een ACL per node en met Mosquitto's
+# ``message_size_limit`` van 8192 byte die er een druppel van maakt in plaats
+# van een stroom. Laag dus. De reden dat het toch dichtgaat, is dat dit precies
+# het soort gat is waar een schijfbewaking op stukloopt zonder dat iemand het
+# ziet.
+
+_HEX_RE = re.compile(r"[0-9a-f]+")
+
+# Een MeshCore-publieke sleutel is 32 byte. Bronnen zijn het oneens over hoeveel
+# ervan ze meesturen -- Home Assistant vijf, de eigen firmware zes, een advert
+# de hele sleutel -- dus 64 hextekens is de ruimste eerlijke sleutel, en twee
+# het smalste dat überhaupt iets kan aanduiden.
+MAX_KEY_HEX = 64
+MIN_KEY_HEX = 2
+
+# Plafonds op ÉÉN bericht. Een repeater meldt enkele tientallen cijfers plus één
+# regel per buur die hij gehoord heeft, en de firmware begrenst zijn eigen
+# contactentabel al (MAX_CONTACTS: standaard 100, ruimhartig 350). Beide getallen
+# liggen ruim boven elke eerlijke node en ruim onder wat een tabel zou vullen.
+MAX_METRICS_PER_MESSAGE = 128
+MAX_NEIGHBORS_PER_MESSAGE = 512
+MAX_METRIC_NAME = 64
+
+
+def key_prefix(value) -> str:
+    """Een sleutelvoorvoegsel zoals het bewaard mag worden, of "" voor de rest.
+
+    Kleine letters, hex, en een begrensde lengte. Meer niet. Dat "" wordt
+    teruggegeven in plaats van een uitzondering is met opzet: sommige bellers
+    hebben een zinnig alternatief voor "dat was geen sleutel", en alleen wie dat
+    niet heeft hoort er een fout van te maken.
+
+    Merk op dat dit niets zegt over het topicvoorvoegsel. Deze site luistert
+    tijdens de hernoeming naar MeshManager op twee voorvoegsels tegelijk, en het
+    voorvoegsel staat elders in het topic dan de sleutel; wat hier gecontroleerd
+    wordt is uitsluitend het middenstuk ``<voorvoegsel>/<node_hex>/<soort>``.
+    Beide voorvoegsels komen dus even ver.
+    """
+    p = str(value or "").lower().strip()
+    return p if MIN_KEY_HEX <= len(p) <= MAX_KEY_HEX and _HEX_RE.fullmatch(p) else ""
+
+
+def check_snapshot(pubkey_prefix, metrics, neighbors=None) -> str:
+    """Keur één statistiekbericht. Geeft de schone sleutel terug, of werpt op.
+
+    ValueError, met in de tekst welke regel geschonden is, want beide
+    ingest-wegen maken daar al iets zichtbaars van: de MQTT-lus telt hem en zet
+    hem met een fragment van de payload in het logboek, de HTTP-route antwoordt
+    422. Een weigering die niemand kan lezen is maar een halve weigering.
+
+    Aantallen worden op het niveau van het hele bericht geweigerd, losse regels
+    niet. Tweehonderd metrieknamen in één bericht is geen repeater met een
+    slechte dag maar iemand die aan het opsommen is; terwijl één misvormde
+    burenregel tussen veertig goede een firmware-eigenaardigheid is, en de
+    andere negenendertig weggooien om die te bestraffen kost meer dan het
+    oplevert. Die vallen er één voor één uit in ``ingest()``, waar ze geteld
+    worden -- niet hier.
+    """
+    key = key_prefix(pubkey_prefix)
+    if not key:
+        raise ValueError("repeater.pubkey_prefix is geen begrensde hexsleutel: "
+                         f"{str(pubkey_prefix)[:32]!r}")
+    if not isinstance(metrics, dict):
+        raise ValueError("metrics moet een object zijn")
+    if len(metrics) > MAX_METRICS_PER_MESSAGE:
+        raise ValueError(f"{len(metrics)} metrieken in één bericht, "
+                         f"hoogstens {MAX_METRICS_PER_MESSAGE} aanvaard")
+    for name in metrics:
+        if not isinstance(name, str) or not name or len(name) > MAX_METRIC_NAME:
+            raise ValueError(f"onbruikbare metrieknaam: {str(name)[:40]!r}")
+    if neighbors is not None:
+        if not isinstance(neighbors, list):
+            raise ValueError("neighbors moet een lijst zijn")
+        if len(neighbors) > MAX_NEIGHBORS_PER_MESSAGE:
+            raise ValueError(f"{len(neighbors)} buren in één bericht, "
+                             f"hoogstens {MAX_NEIGHBORS_PER_MESSAGE} aanvaard")
+    return key
 
 
 def set_country(prefix6: str, lat, lon) -> None:
@@ -1231,25 +1337,80 @@ def find_repeater(pubkey_prefix: str) -> sqlite3.Row | None:
     return _find_by_prefix(str(pubkey_prefix or "").lower().strip())
 
 
+# Hoeveel repeaters er vanzelf mogen ontstaan.
+#
+# De enige tabel van de drie die niet gesnoeid kan worden. Een oude repeater
+# weggooien betekent zijn hele historiek weggooien -- ``latest`` en
+# ``repeater_cli`` hangen er met ON DELETE CASCADE aan -- en dat automatisch
+# doen aan een node die een maand offline was is precies verkeerd. Dus in plaats
+# van snoeien: een plafond dat WEIGERT. Weigeren verliest nooit iets, en het
+# maakt de tabel even begrensd.
+#
+# Vijfhonderd is twee orden van grootte boven een echt mesh (deze site volgt er
+# een handvol) en ver onder wat op schijf iets voorstelt: een repeaterrij is een
+# paar honderd byte. Wordt hij toch geraakt, dan is dat geen ruis om weg te
+# filteren maar een gebeurtenis -- vandaar de uitzondering, die in het logboek
+# en op de beheerpagina belandt.
+MAX_REPEATERS = 500
+
+
+def repeater_count() -> int:
+    row = qone("SELECT COUNT(*) AS n FROM repeaters")
+    return (row["n"] or 0) if row else 0
+
+
 def get_or_create_repeater(pubkey_prefix: str, name: str | None) -> sqlite3.Row:
-    row = _find_by_prefix(pubkey_prefix)
+    """Zoek de repeater bij deze sleutel, of maak hem aan.
+
+    Twee dingen zijn hier veranderd omdat dit de plek is waar iemand anders een
+    rij in deze databank kan laten ontstaan.
+
+    *De sleutel wordt gekeurd.* Alles wat geen begrensde hexsleutel is, wordt
+    geweigerd in plaats van als repeaternaam bewaard. Zonder dat maakte elke
+    verzonnen ``pubkey_prefix`` een rij, en elke rij sleepte er ``latest``-rijen
+    achteraan.
+
+    *Een nieuwe repeater komt VERBORGEN binnen* (``is_public = 0``). Dit is een
+    publieke site: een repeater zichtbaar maken is een besluit van de beheerder
+    en hoort geen bijwerking te zijn van het feit dat er een MQTT-bericht
+    binnenkwam. Wie op het topic mag publiceren kon tot nu toe rechtstreeks iets
+    op de voorpagina zetten.
+
+    Wat dit NIET raakt: bestaande repeaters. De INSERT hieronder draait alleen
+    voor een sleutel die we nog nooit gezien hebben, dus alles wat vandaag
+    zichtbaar is blijft zichtbaar -- de kolomstandaard in het schema staat nog
+    steeds op 1 en wordt hier alleen voor nieuwe rijen overschreven. De
+    beheerpagina zegt hoeveel er verborgen wachten, zodat een nieuwe repeater
+    opvalt in plaats van te verdwijnen.
+    """
+    key = key_prefix(pubkey_prefix)
+    if not key:
+        raise ValueError("pubkey_prefix is geen begrensde hexsleutel: "
+                         f"{str(pubkey_prefix)[:32]!r}")
+    row = _find_by_prefix(key)
     if row:
         # Adopt the name whenever Home Assistant sends a new one
         if name and name != row["name"]:
             execute("UPDATE repeaters SET name=? WHERE id=?", (name, row["id"]))
             row = qone("SELECT * FROM repeaters WHERE id=?", (row["id"],))
         return row
-    base = slugify(name or pubkey_prefix)
+    if repeater_count() >= MAX_REPEATERS:
+        raise ValueError(f"al {MAX_REPEATERS} repeaters bekend; {key} is niet "
+                         "aangemaakt -- ruim ongebruikte repeaters op in /admin")
+    base = slugify(name or key)
     slug = base
     i = 2
     while qone("SELECT 1 FROM repeaters WHERE slug=?", (slug,)):
         slug = f"{base}-{i}"
         i += 1
     execute(
-        "INSERT INTO repeaters(slug, pubkey_prefix, name, created_at) VALUES(?,?,?,?)",
-        (slug, pubkey_prefix, name or pubkey_prefix, utcnow()),
+        "INSERT INTO repeaters(slug, pubkey_prefix, name, created_at, is_public) "
+        "VALUES(?,?,?,?,0)",
+        (slug, key, name or key, utcnow()),
     )
-    return qone("SELECT * FROM repeaters WHERE pubkey_prefix=?", (pubkey_prefix,))
+    log.info("Nieuwe repeater %s (%s) aangemaakt en verborgen; maak hem publiek "
+             "op /admin als hij op de site hoort", name or key, key)
+    return qone("SELECT * FROM repeaters WHERE pubkey_prefix=?", (key,))
 
 
 def record_source(repeater_id: int, source: str) -> None:
@@ -1446,6 +1607,7 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
     heartbeat = timedelta(minutes=setting_int("heartbeat_min", config.HEARTBEAT_MIN))
     to_tsdb: dict = {}
     slug = None
+    dropped_neighbors = 0
     with _lock:
         conn = get_conn()
         row = conn.execute("SELECT slug FROM repeaters WHERE id=?",
@@ -1498,8 +1660,17 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
                 )
         if neighbors is not None:
             for nb in neighbors:
-                prefix = str(nb.get("prefix", "")).lower()
+                # Een burenprefix is een sleutelvoorvoegsel en verder niets.
+                # Het werd vroeger alleen op "niet leeg" gecontroleerd, en dat
+                # is een gat met twee gaten erin: de tekst belandde als
+                # ``neighbors``-rij én, via ``neighbor_<prefix>``, als
+                # ``latest``-rij, twee tabellen waar niets hem ooit weer uit
+                # haalde. Eén regel eruit gooien en doortellen, want de rest van
+                # dit bericht kan best in orde zijn -- zie check_snapshot over
+                # waarom aantallen wél het hele bericht afkeuren.
+                prefix = key_prefix(nb.get("prefix")) if isinstance(nb, dict) else ""
                 if not prefix:
+                    dropped_neighbors += 1
                     continue
                 # 'seen_min' = minutes since last heard -> absolute timestamp
                 last = ts
@@ -1548,6 +1719,14 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
                         )
         conn.execute("UPDATE repeaters SET last_seen=? WHERE id=?", (ts, repeater_id))
         conn.commit()
+
+    if dropped_neighbors:
+        # WARNING en niet DEBUG. Een echte node stuurt dit nooit, dus dit is
+        # ofwel een firmware die iets anders is gaan sturen ofwel iemand die
+        # probeert wat er in deze tabellen past -- en allebei die antwoorden wil
+        # je kunnen vinden zonder een sniffer op de broker te zetten.
+        log.warning("Repeater %s: %d burenregel(s) zonder bruikbare sleutel "
+                    "overgeslagen", slug or repeater_id, dropped_neighbors)
 
     # Outside the lock, and non-blocking: record() only queues. Nothing in the
     # ingest path waits on a socket, and if the queue cannot take the points
@@ -1766,6 +1945,86 @@ def _span_days(oldest: str | None, newest: str | None) -> float | None:
     return round(max(0.0, (hi - lo).total_seconds()) / 86400.0, 2)
 
 
+# Hoeveel verschillende metrieken één repeater een actuele waarde mag hebben.
+#
+# Een repeater meldt enkele tientallen cijfers plus één ``neighbor_<prefix>``
+# per node die hij gehoord heeft, en de firmware stopt zelf bij een paar
+# honderd contacten. Duizend ligt daar ruim boven en stelt op schijf niets voor;
+# het bestaat zodat een publisher die per bericht een nieuwe metrieknaam
+# verzint de tabel niet eindeloos kan laten groeien.
+MAX_LATEST_PER_REPEATER = 1000
+# Idem voor CLI-parameters. De ingestelde lijst telt er vijftien; tweehonderd is
+# ruimte voor een firmware die er flink bij krijgt, en nog steeds een plafond.
+MAX_CLI_PER_REPEATER = 200
+
+
+def _prune_latest(stale_before: str) -> int:
+    """Snoei ``latest``: wezen, uitgestorven metrieken, en een plafond per repeater.
+
+    Drie regels, en de tweede is de subtiele.
+
+    *Wezen* horen er met ``ON DELETE CASCADE`` niet te zijn. Deze regel is er
+    voor rijen van vóór die clausule en voor een databank die ooit met
+    ``foreign_keys=OFF`` is aangeraakt; hij kost één indexscan en is de enige
+    manier om zeker te weten dat het klopt.
+
+    *Uitgestorven metrieken* zijn rijen die binnen de bewaartermijn van de
+    metingen niet meer ververst zijn -- een naam die één keer langskwam en nooit
+    meer. Alleen bij repeaters die zelf nog WEL rapporteren, en dat voorwaardje
+    is de hele reden dat deze regel zo geschreven is: bij een repeater die al
+    een half jaar stil ligt zijn ál zijn waarden oud, en die dan wissen zou zijn
+    kaart op de startpagina leegmaken terwijl "dit was het laatste wat we van
+    hem hoorden" precies het antwoord is dat iemand zoekt. Dood laten liggen, en
+    alleen bij de levenden opruimen.
+
+    *Het plafond* is wat er werkelijk toe doet bij misbruik. De regel hierboven
+    ruimt pas na de bewaartermijn op, en binnen die termijn kan een publisher
+    die per bericht een nieuwe naam verzint er heel wat kwijt. Het plafond
+    houdt de nieuwste ``MAX_LATEST_PER_REPEATER`` en gooit de rest weg, oudste
+    eerst -- dezelfde FIFO als bij de pakketten, en om dezelfde reden: wat het
+    langst niet ververst is, is het minst waard.
+    """
+    n = execute_rowcount(
+        "DELETE FROM latest WHERE repeater_id NOT IN (SELECT id FROM repeaters)")
+    n += execute_rowcount(
+        "DELETE FROM latest WHERE ts < ? AND repeater_id IN ("
+        "  SELECT repeater_id FROM latest GROUP BY repeater_id "
+        "  HAVING MAX(ts) >= ?)",
+        (stale_before, stale_before))
+    n += execute_rowcount(
+        "DELETE FROM latest WHERE rowid IN (SELECT rowid FROM ("
+        "  SELECT rowid, ROW_NUMBER() OVER ("
+        "    PARTITION BY repeater_id ORDER BY ts DESC, metric) AS rn"
+        "  FROM latest) WHERE rn > ?)",
+        (MAX_LATEST_PER_REPEATER,))
+    return n
+
+
+def _prune_cli(stale_before: str) -> int:
+    """Hetzelfde voor ``repeater_cli``, met ``updated`` in de rol van ``ts``.
+
+    ``upsert_cli_settings(prune=True)`` ruimt hier al op, maar alleen wanneer er
+    een volledige uitlezing binnenkomt en alleen tegen de ingestelde lijst. Een
+    repeater die nooit meer uitgelezen wordt, houdt zijn rijen dus voorgoed; en
+    een firmware die parameters bijverzint komt langs de andere kant binnen.
+    Vandaar dezelfde drie regels als bij ``latest``.
+    """
+    n = execute_rowcount(
+        "DELETE FROM repeater_cli WHERE repeater_id NOT IN (SELECT id FROM repeaters)")
+    n += execute_rowcount(
+        "DELETE FROM repeater_cli WHERE updated < ? AND repeater_id IN ("
+        "  SELECT repeater_id FROM repeater_cli GROUP BY repeater_id "
+        "  HAVING MAX(updated) >= ?)",
+        (stale_before, stale_before))
+    n += execute_rowcount(
+        "DELETE FROM repeater_cli WHERE rowid IN (SELECT rowid FROM ("
+        "  SELECT rowid, ROW_NUMBER() OVER ("
+        "    PARTITION BY repeater_id ORDER BY updated DESC, param) AS rn"
+        "  FROM repeater_cli) WHERE rn > ?)",
+        (MAX_CLI_PER_REPEATER,))
+    return n
+
+
 def prune() -> dict:
     """One retention pass over the whole database. Returns what it did.
 
@@ -1787,7 +2046,7 @@ def prune() -> dict:
     report = {
         "at": utcnow(), "samples": 0, "neighbors": 0, "packets_age": 0,
         "packets_rows": 0, "packets_bytes": 0, "limit_hit": "",
-        "over_by_bytes": 0, **cfg,
+        "over_by_bytes": 0, "latest": 0, "cli": 0, **cfg,
     }
 
     # Measurements: they are pruned by their own, much longer retention, and
@@ -1798,6 +2057,9 @@ def prune() -> dict:
     # Neighbours unheard for 7 days drop off the list.
     report["neighbors"] = execute_rowcount("DELETE FROM neighbors WHERE last_seen<?",
                                            (cutoff(7),))
+    # De twee tabellen die hier tot voor kort helemaal niet in voorkwamen.
+    report["latest"] = _prune_latest(cutoff(cfg["sample_days"]))
+    report["cli"] = _prune_cli(cutoff(cfg["sample_days"]))
     # 1. Age. The retention as the reader understands it.
     report["packets_age"] = execute_rowcount("DELETE FROM packets WHERE ts<?",
                                              (cutoff(cfg["days"]),))
@@ -1949,6 +2211,15 @@ def storage_overview() -> dict:
     free, sized, _page = free_pages()
     oldest = span["lo"] if span else None
     newest = span["hi"] if span else None
+    # De drie tabellen die iemand anders kan laten groeien. Ze staan hier omdat
+    # een plafond dat nergens te zien is, een plafond is waarvan niemand weet
+    # dat het geraakt wordt -- en bij ``repeaters`` is dat extra van belang: dat
+    # plafond snoeit niet, het weigert, en een weigering die stil blijft is een
+    # node die nooit verschijnt zonder dat iemand begrijpt waarom.
+    reps = qone("SELECT COUNT(*) AS n, SUM(CASE WHEN is_public=0 THEN 1 ELSE 0 END) "
+                "AS hidden FROM repeaters")
+    latest_row = qone("SELECT COUNT(*) AS n FROM latest")
+    cli_row = qone("SELECT COUNT(*) AS n FROM repeater_cli")
     return {
         **cfg,
         "db_bytes": db_bytes(),
@@ -1962,4 +2233,10 @@ def storage_overview() -> dict:
         "samples": (samples["n"] or 0) if samples else 0,
         "samples_oldest": samples["lo"] if samples else None,
         "samples_newest": samples["hi"] if samples else None,
+        "latest_rows": (latest_row["n"] or 0) if latest_row else 0,
+        "cli_rows": (cli_row["n"] or 0) if cli_row else 0,
+        "repeaters": (reps["n"] or 0) if reps else 0,
+        "repeaters_hidden": (reps["hidden"] or 0) if reps else 0,
+        "repeaters_max": MAX_REPEATERS,
+        "latest_max": MAX_LATEST_PER_REPEATER,
     }

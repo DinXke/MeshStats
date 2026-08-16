@@ -354,6 +354,14 @@ having no data for it look the same to a visitor.
 route. `_public_repeater()` in `routes_api.py` answers 404 for a non-public slug,
 so a repeater that is switched off is invisible rather than merely unlinked.
 
+**A repeater that appears by itself arrives hidden.** Anything created out of an
+incoming MQTT or HTTP message gets `is_public = 0`: this is a public site, and
+making a repeater visible is your decision rather than a side effect of a message
+arriving. Repeaters that already existed keep whatever they had. A line at the
+top of **Nodes en repeaters** says how many are waiting — arriving hidden is fine,
+arriving unnoticed is not — and the *verborgen* pill on the node itself is how you
+approve one.
+
 Deleting a repeater removes its `samples`, `latest` and `neighbors` rows
 explicitly, then the row itself. Its packets stay: `packets.observer` is a key
 prefix, not a foreign key, and a reception is a fact about the mesh rather than

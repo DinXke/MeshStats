@@ -270,6 +270,91 @@ product, packets are working material. If the byte ceiling cannot be met while
 the packets are already at their floor, the admin page says so — a loud warning
 beats quietly throwing away the history everybody is looking at.
 
+## The tables somebody else can grow
+
+Retention answers "how long do we keep this". A second question sits next to it:
+**who can make a row here at all.** The `stats` topic is not the owner's input —
+anyone with broker credentials publishes under it — and three tables used to
+grow straight from what such a message said, with nothing counting or checking
+them:
+
+| Table | One row per | Was bounded by |
+|---|---|---|
+| `repeaters` | distinct subject key | nothing |
+| `latest` | `(repeater, metric name)` | nothing |
+| `repeater_cli` | `(repeater, parameter)` | nothing |
+
+The byte ceiling could not save this, and that part is worth stating plainly: it
+only ever deletes from `packets`. A bloated `latest` would have it trimming
+packets down to the FIFO floor while the file stayed exactly as large — a disk
+guard that reads correctly and empties the wrong table.
+
+### Refused at the boundary
+
+`db.check_snapshot()` vets one message before anything is written, and both
+ingest paths go through it: the MQTT loop (which counts the refusal and logs it
+with an excerpt of the payload) and `POST /api/v1/ingest` (which answers 422).
+Pruning afterwards is cleanup; refusing beforehand is not letting the table grow.
+
+| Rule | Limit |
+|---|---|
+| `pubkey_prefix` is bounded lowercase hex | 2–64 characters (`db.key_prefix`) |
+| Metric names per message | 128, each at most 64 characters |
+| Neighbour entries per message | 512 |
+| The node named in the MQTT topic is a key | checked in `_topic_parts` |
+
+Counts refuse the **whole message**; a single malformed neighbour entry refuses
+only **itself** and is counted in a warning. Two hundred metric names is somebody
+enumerating; one odd neighbour among forty is a firmware quirk, and discarding
+the other thirty-nine to punish it costs more than it protects.
+
+The topic prefix is deliberately *not* checked against a list — the site listens
+on both `meshmanager` and `meshcore` during the rename, and a custom pattern from
+the environment is legitimate. Both prefixes therefore get exactly the same
+treatment. What is bounded is the *node* in the middle of the topic.
+
+### Pruned per repeater
+
+`latest` and `repeater_cli` get three rules each, in `_prune_latest()` and
+`_prune_cli()`:
+
+1. **Orphans** — rows pointing at a repeater that no longer exists. `ON DELETE
+   CASCADE` should prevent these; this catches a database once touched with
+   `foreign_keys=OFF`.
+2. **Extinct entries** — not refreshed within `retention_days`, *and only for
+   repeaters that are still reporting*. That condition is the subtle half: on a
+   repeater silent for six months every value is old, and wiping those would
+   blank its card while "this is the last we heard from it" is exactly the answer
+   somebody came looking for. Leave the dead alone.
+3. **A ceiling per repeater** — 1000 metrics, 200 CLI parameters, newest kept.
+   This is what actually matters under abuse: inside the retention window rule 2
+   is powerless, and a publisher inventing a name per message would fit a great
+   deal in before it bit.
+
+### Refused, not pruned: `repeaters`
+
+The one table that cannot be swept. Deleting an old repeater means deleting its
+history — `latest` and `repeater_cli` hang off it with `ON DELETE CASCADE` — and
+doing that automatically to a node that was offline for a month is precisely
+wrong. So instead of pruning, a ceiling that **refuses**: above
+`db.MAX_REPEATERS` (500) a new subject is not created and the message is
+rejected, and the admin page shows the count against the ceiling. Refusing never
+loses anything, and it bounds the table just as well.
+
+### New repeaters arrive hidden
+
+A repeater that appears by itself out of an incoming message is created with
+`is_public = 0`. This is a public site: making a repeater visible is the
+administrator's decision, not a side effect of a message arriving. Until this
+changed, anyone allowed to publish on the topic could put something on the front
+page.
+
+Nothing changes for repeaters that already exist — the INSERT only runs for a key
+never seen before, so whatever is visible today stays visible. The admin page
+shows how many are waiting hidden — on **Nodes en repeaters** above the list, and
+as a count against the ceiling under **Server en site** — because arriving hidden
+is fine and arriving unnoticed is not.
+
 ## Configuration
 
 | Variable | Default | Setting key | Meaning |
@@ -283,11 +368,31 @@ beats quietly throwing away the history everybody is looking at.
 Each of the first four is only the **default for a fresh install**; the stored
 setting wins.
 
+The boundary limits are constants in `db.py` rather than settings, on purpose:
+they exist to be far above any honest node and are not a knob anybody should be
+tuning to make a misbehaving publisher fit.
+
+| Constant | Value | Bounds |
+|---|---|---|
+| `MAX_KEY_HEX` / `MIN_KEY_HEX` | 64 / 2 | Length of a key prefix |
+| `MAX_METRICS_PER_MESSAGE` | 128 | Metric names in one message |
+| `MAX_NEIGHBORS_PER_MESSAGE` | 512 | Neighbour entries in one message |
+| `MAX_METRIC_NAME` | 64 | Length of one metric name |
+| `MAX_LATEST_PER_REPEATER` | 1000 | `latest` rows per repeater |
+| `MAX_CLI_PER_REPEATER` | 200 | `repeater_cli` rows per repeater |
+| `MAX_REPEATERS` | 500 | Repeaters that may be auto-created |
+
 ## Tests
 
 `server/tests/test_retention.py` covers the three rules and their order, the
-FIFO floor, the byte estimate with and without `dbstat`, and the VACUUM
-thresholds.
+FIFO floor, the byte estimate with and without `dbstat`, the VACUUM thresholds,
+and the `latest`/`repeater_cli` sweeps — including that a long-silent repeater
+keeps its last known values.
+
+`server/tests/test_ingestgrens.py` covers the boundary: rejected keys, the
+per-message counts, one bad neighbour entry not costing the good ones, the
+repeater ceiling refusing rather than deleting, `is_public` on new versus
+existing repeaters, and that both topic prefixes are treated identically.
 
 ## Related documents
 

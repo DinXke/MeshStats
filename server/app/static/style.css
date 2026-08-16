@@ -291,6 +291,11 @@ label input { width: 100%; margin-top: .25rem; }
 
 .loginbox { max-width: 360px; margin: 3rem auto; }
 .notice { border-color: var(--accent-dim); margin-bottom: 1rem; }
+/* Repeaters die verborgen binnenkwamen en op een beslissing van de beheerder
+   wachten. Opvallend genoeg om niet over te lezen, rustig genoeg om geen fout
+   te lijken -- er is niets stuk, er moet alleen iemand iets vinden. */
+.pending { border: 1px solid var(--accent-dim); border-radius: 6px;
+  padding: .6rem .8rem; margin: 0 0 1rem; font-size: .88rem; }
 .tokenbox { display: block; margin-top: .5rem; padding: .5rem; background: var(--bg);
   border: 1px solid var(--card-edge); border-radius: 6px; word-break: break-all;
   font-family: var(--mono); color: var(--accent); }

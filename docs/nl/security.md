@@ -364,9 +364,11 @@ Een toegangsslot vóór `/admin*` op de proxy blijft de moeite; zie
   waarden blijven gebonden.
 - Templates gebruiken Jinja-autoescaping.
 
-**Onbekende repeaters worden automatisch aangemaakt en zijn standaard publiek.**
-Iedereen met een geldig token, of met publiceerrechten op de broker, kan een
-nieuwe repeater op de publieke pagina laten verschijnen. Verberg hem in `/admin`.
+**Onbekende repeaters worden automatisch aangemaakt, maar niet meer publiek.**
+Iedereen met een geldig token, of met publiceerrechten op de broker, kan nog
+steeds een repeaterrij laten ontstaan — begrensd door `db.MAX_REPEATERS` — maar
+die komt binnen met `is_public = 0` en blijft van de publieke pagina tot je hem
+in `/admin` vrijgeeft, waar staat hoeveel er wachten.
 
 ---
 
@@ -565,38 +567,61 @@ manier om de ontdubbeling te omzeilen en `samples` vol te schrijven. De weg haal
 nu altijd binnen met `force=False`. Echte nodes merken er niets van, want zij
 sturen het veld nooit.
 
-### Open: ongebreidelde groei in tabellen die de bewaartermijn nooit snoeit
+**Ongebreidelde groei in tabellen die de bewaartermijn nooit snoeide.**
+`db.prune()` begrensde `packets` (leeftijd, rijmaximum, bytemaximum), `samples`
+(leeftijd) en `neighbors` (leeftijd), maar niet `latest`, `repeater_cli` en
+`repeaters` — telkens één rij per verschillende `(repeater_id, metric)`, per
+CLI-parameter en per onderwerp met een publieke sleutel, en niets liet ze
+verouderen. Een onvertrouwde MQTT-publicist bereikte alle drie vanaf het
+`stats`-topic: `_handle_payload()` bewaarde elke sleutel in `metrics` woordelijk
+en elke `neighbors[].prefix` zonder bovengrens en zonder hexcontrole, en de
+`pubkey_prefix` uit de payload werd niet gevalideerd voordat
+`get_or_create_repeater()` er een **publieke** rij voor aanmaakte
+(`repeaters.is_public` stond standaard op 1) — dus rommelonderwerpen vervuilden
+zowel `latest` als de publieke startpagina.
 
-`db.prune()` (`server/app/db.py`) begrenst `packets` (leeftijd, rijmaximum,
-bytemaximum), `samples` (leeftijd) en `neighbors` (leeftijd). Hij raakt `latest`,
-`repeater_cli` en `repeaters` **niet** aan. Die groeien met één rij per
-verschillende `(repeater_id, metric)`, per CLI-parameter en per onderwerp met een
-publieke sleutel — en niets laat ze verouderen.
+Mosquitto's `message_size_limit 8192` maakte hier een druppel van en geen
+vloedgolf, en de eerlijke waarschijnlijkheid op deze installatie — een LAN achter
+een VPN, één broker, ACL's per node — was klein: het vergde een node met geldige
+of gelekte inloggegevens. Het is toch gerepareerd omdat het bytemaximum je hier
+niet kon redden. Dat verwijdert enkel ooit uit `packets`, dus opzwelling in
+`latest` zou het pakketten tot aan de FIFO-bodem hebben laten wegsnoeien terwijl
+het bestand precies even groot bleef: een schijfbewaking die correct leest en de
+verkeerde tabel leegt.
 
-Een onvertrouwde MQTT-publicist bereikt alle drie vanaf het `stats`-topic:
+Drie maatregelen, volledig beschreven in
+[`retention.md`](retention.md#de-tabellen-die-iemand-anders-kan-laten-groeien):
 
-- `_handle_payload()` bewaart elke sleutel in `metrics` woordelijk (`db.ingest`,
-  telkens één `latest`-rij) en elke `neighbors[].prefix` (een
-  `neighbor_<prefix>`-rij), zonder bovengrens op hoeveel en zonder controle of
-  een burenprefix hex is. Verschillende namen die over berichten heen afgewisseld
-  worden, stapelen zich eeuwig op.
-- de `pubkey_prefix` uit de payload (het onderwerp) wordt niet als sleutel
-  gevalideerd voor `get_or_create_repeater()` er een **publieke** rij voor
-  aanmaakt (`repeaters.is_public` staat standaard op 1), dus rommelonderwerpen
-  vervuilen zowel `latest` als de publieke startpagina.
+- **Geweigerd aan de grens.** `db.check_snapshot()` keurt één bericht voordat er
+  iets geschreven wordt — het onderwerp als begrensde hex (`db.key_prefix`, 2-64
+  tekens), hoogstens 128 metrieknamen van hoogstens 64 tekens, hoogstens 512
+  burenregels — en beide ingest-wegen lopen erlangs. `_topic_parts()` keurt de
+  node in het topic op dezelfde manier. Aantallen keuren het hele bericht af; een
+  losse misvormde burenregel keurt alleen zichzelf af en wordt geteld in een
+  waarschuwing. Het topic*voorvoegsel* wordt bewust niet tegen een lijst
+  gehouden, zodat `meshmanager` en `meshcore` tijdens de hernoeming even ver
+  komen.
+- **`latest` en `repeater_cli` worden gesnoeid**: wezen, regels die binnen de
+  bewaartermijn van de metingen niet ververst zijn *bij repeaters die zelf nog
+  rapporteren* (een lang stille repeater houdt zijn laatst bekende waarden in
+  plaats van een lege kaart te krijgen), en een plafond van 1000 metrieken / 200
+  parameters per repeater — de regel die er bij misbruik werkelijk toe doet,
+  want binnen de bewaartermijn staat de verouderingsregel machteloos.
+- **`repeaters` wordt begrensd door te weigeren, niet door te snoeien.** Een
+  repeater verwijderen verwijdert zijn historiek via `ON DELETE CASCADE`, dus
+  boven `db.MAX_REPEATERS` (500) wordt een nieuw onderwerp simpelweg niet
+  aangemaakt en het bericht afgewezen.
 
-Mosquitto's `message_size_limit 8192` begrenst één bericht, dus dit is een
-druppel en geen vloedgolf, en de eerlijke waarschijnlijkheid op deze installatie
-— een LAN achter een VPN, één broker, ACL's per node — is klein: het vergt een
-node met geldige inloggegevens of een gecompromitteerde node. Maar het
-bytemaximum in `prune()` kan je hier niet redden, want het verwijdert enkel ooit
-uit `packets`; opzwelling in `latest` zou het pakketten tot de FIFO-bodem laten
-wegsnoeien terwijl het bestand groot blijft. De kleinste afdoende maatregel:
-valideer het onderwerp als begrensde hex op de vertrouwensgrens, en geef
-`latest`/`repeater_cli` hun eigen snoeibeurt (rijen weggooien waarvan de repeater
-of de metriek niet binnen het bewaarvenster van de metingen gezien is).
-Overgelaten aan het werk dat aan `db.py`/`mqtt_ingest.py` toebehoort in plaats
-van halverwege de audit gewijzigd.
+**Nieuwe repeaters komen niet langer publiek binnen.**
+`get_or_create_repeater()` voegt nu in met `is_public = 0`. Een repeater
+zichtbaar maken op een publieke site is een besluit van de beheerder en geen
+bijwerking van een binnengekomen bericht; tot deze wijziging kon wie op het topic
+mocht publiceren, publiceren op de voorpagina. Bestaande repeaters blijven
+ongemoeid — de INSERT draait alleen voor een sleutel die nog nooit gezien is — en
+de beheerpagina toont hoeveel er verborgen wachten, want verborgen binnenkomen
+mag en ongemerkt binnenkomen niet. Het vinkje "bekijk nieuwe repeaters in
+`/admin`; ze verschijnen standaard publiek" is daarmee achterhaald: ze komen nu
+verborgen binnen en moeten worden vrijgegeven.
 
 ### Open: authenticiteit van het firmware-image
 
@@ -645,8 +670,9 @@ voor die weg uitkomt.
 - **Privacy**: de publieke kaart en pagina's tonen nodenamen en posities van
   andere operatoren (`routes_api.py::repeater_map`), die uit adverts komen die
   iedereen met een radio kan horen, maar de enige knop die de eigenaar heeft is
-  de schakelaar `is_public` per repeater — alles of niets, en standaard publiek.
-  Een keuze per node in de trant van "positie verbergen maar statistieken
+  de schakelaar `is_public` per repeater — alles of niets, al komt een nieuwe
+  repeater tegenwoordig verborgen binnen in plaats van publiek. Een keuze per
+  node in de trant van "positie verbergen maar statistieken
   behouden" bestaat niet; het overwegen waard, want een positie is gevoeliger dan
   een batterijmeting.
 
@@ -719,5 +745,7 @@ beveiliging; verscheidene blijken in orde te zijn, en dat zeggen hoort erbij.
 - [ ] Wijzig de standaardlogin `admin` / `meshcore` van de node voor hij op een netwerk komt
 - [ ] Houd de beheerpagina's van nodes weg van elk onvertrouwd netwerk
 - [ ] Maak een back-up van `/data/secret.key` en de databank; bewaar node-back-ups als geheimen
-- [ ] Bekijk nieuwe repeaters in `/admin` — ze verschijnen standaard publiek
+- [ ] Bekijk nieuwe repeaters in `/admin` — ze komen nu **verborgen** binnen en
+      blijven van de publieke site tot je ze vrijgeeft; de pagina zegt hoeveel
+      er wachten
 - [ ] Trek API-tokens in die je niet meer gebruikt; ze verlopen nooit

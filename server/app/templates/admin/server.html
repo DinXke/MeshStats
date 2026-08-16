@@ -125,6 +125,17 @@
     <tr><td>Metingen in SQLite</td><td class="mono">{{ storage.samples }}
       <span class="muted">&middot; bewaartermijn {{ storage.sample_days }} dagen
       {%- if storage.samples_oldest %} &middot; oudste <time class="reltime" datetime="{{ storage.samples_oldest }}">{{ storage.samples_oldest }}</time>{% endif %}</span></td></tr>
+    {# De drie tabellen die iemand anders kan laten groeien. Ze staan hier omdat
+       een plafond dat nergens te zien is, een plafond is waarvan niemand weet
+       dat het geraakt wordt. #}
+    <tr><td>Actuele waarden</td><td class="mono">{{ storage.latest_rows }}
+      <span class="muted">&middot; hoogstens {{ storage.latest_max }} metrieken per repeater</span></td></tr>
+    <tr><td>CLI-parameters</td><td class="mono">{{ storage.cli_rows }}</td></tr>
+    <tr><td>Repeaters</td><td class="mono">{{ storage.repeaters }} / {{ storage.repeaters_max }}
+      <span class="muted">&middot;
+      {%- if storage.repeaters_hidden %} {{ storage.repeaters_hidden }} verborgen
+      {%- else %} allemaal zichtbaar{% endif %} &middot; boven het plafond worden nieuwe
+      repeaters geweigerd, niet gesnoeid</span></td></tr>
     <tr><td>Laatste opruiming</td><td>
       {%- if storage.last %}<time class="reltime" datetime="{{ storage.last.at }}">{{ storage.last.at }}</time>
         &middot; <span class="mono">{{ storage.last.packets_age + storage.last.packets_rows + storage.last.packets_bytes }}</span> pakketten weg
@@ -133,6 +144,8 @@
         {%- endif %}
         {%- if storage.last.samples %} &middot; <span class="mono">{{ storage.last.samples }}</span> metingen{% endif %}
         {%- if storage.last.neighbors %} &middot; <span class="mono">{{ storage.last.neighbors }}</span> burenrijen{% endif %}
+        {%- if storage.last.latest %} &middot; <span class="mono">{{ storage.last.latest }}</span> actuele waarden{% endif %}
+        {%- if storage.last.cli %} &middot; <span class="mono">{{ storage.last.cli }}</span> CLI-parameters{% endif %}
       {%- else %}<span class="muted">nog niet gedraaid sinds deze versie</span>{% endif %}</td></tr>
     <tr><td>Bestand herschreven</td><td>
       {%- if storage.last and storage.last.vacuum and storage.last.vacuum.ran %}
