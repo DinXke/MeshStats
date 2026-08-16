@@ -72,7 +72,17 @@ def require_perm(request: Request, action: str, rep=None) -> str:
     return user
 
 
-def _rep_or_404(rid: int):
+def _rep_or_404(request: Request, rid: int):
+    """De repeater, of 404 -- maar niet vóór er iemand ingelogd is.
+
+    De login-controle staat hier en niet pas bij ``require_perm``, en dat is geen
+    dubbelop. De routes moeten de rij ophalen vóór ze de rechten kunnen wegen
+    (het recht gaat immers over déze node), en zonder deze regel zou een
+    onbekende bezoeker aan het verschil tussen een 404 en een omleiding naar het
+    inlogscherm kunnen aflezen welke node-id's bestaan. Dat is een klein lek, en
+    het gaat juist over de verborgen nodes.
+    """
+    require_login(request)
     row = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not row:
         raise HTTPException(404, "Onbekende repeater")
@@ -490,7 +500,7 @@ def refresh_repeater(request: Request, rid: int, csrf: str = Form(...),
     formulier staat achter een login die dat de moeite waard maakt. Hier komen
     dus alleen de twee bestemmingen uit die deze functie zelf kent.
     """
-    row = _rep_or_404(rid)
+    row = _rep_or_404(request, rid)
     user = require_perm(request, "node.uitvragen", row)
     check_csrf(request, csrf)
     outcome = _dispatch(row, "status")
@@ -526,7 +536,7 @@ def repeater_settings_redirect(request: Request, rid: int):
 @router.get("/repeaters/{rid}", response_class=HTMLResponse)
 def node_page(request: Request, rid: int):
     """Alles over één node: identiteit, uitvragen, klok, firmware, verwijderen."""
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.bekijken", rep)
     requested = request.query_params.get("requested", "")
     rows = db.cli_settings_for(rid)
@@ -606,7 +616,7 @@ def node_page(request: Request, rid: int):
 @router.post("/repeaters/{rid}/settings/refresh")
 def repeater_settings_refresh(request: Request, rid: int, csrf: str = Form(...)):
     """Vraag de CLI-instellingen op: rechtstreeks aan de node en/of via een poller."""
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.uitvragen", rep)
     check_csrf(request, csrf)
     outcome = _dispatch(rep, "settings")
@@ -625,7 +635,7 @@ def repeater_clocksync(request: Request, rid: int, csrf: str = Form(...)):
     aan de pagina doorgeven -- juist zodat er geen tweede plek is waar over
     publiceren beslist wordt.
     """
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.klok", rep)
     check_csrf(request, csrf)
     result = clocksync.sync_now(rep)
@@ -683,7 +693,7 @@ def toggle_repeater(request: Request, rid: int, csrf: str = Form(...),
     Zie refresh_repeater voor waarom ``back`` geen URL is maar een woord dat deze
     functie zelf vertaalt.
     """
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.zichtbaarheid", rep)
     check_csrf(request, csrf)
     column = _VISIBILITY_COLUMNS.get(what)
@@ -698,7 +708,7 @@ def toggle_repeater(request: Request, rid: int, csrf: str = Form(...),
 
 @router.post("/repeaters/{rid}/rename")
 def rename_repeater(request: Request, rid: int, name: str = Form(...), csrf: str = Form(...)):
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.hernoemen", rep)
     check_csrf(request, csrf)
     name = name.strip()
@@ -713,7 +723,7 @@ def rename_repeater(request: Request, rid: int, name: str = Form(...), csrf: str
 
 @router.post("/repeaters/{rid}/delete")
 def delete_repeater(request: Request, rid: int, csrf: str = Form(...)):
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.verwijderen", rep)
     check_csrf(request, csrf)
     # Het trail eerst, en dan pas wissen: erna zou de naam van een node die niet
@@ -853,7 +863,7 @@ def firmware_refresh(request: Request, csrf: str = Form(...)):
 @router.post("/repeaters/{rid}/ota")
 def save_ota(request: Request, rid: int, ota_host: str = Form(""),
              is_critical: str = Form(""), csrf: str = Form(...)):
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.beheeradres", rep)
     check_csrf(request, csrf)
     host = (ota_host or "").strip()
@@ -883,7 +893,7 @@ def probe_node(request: Request, rid: int, csrf: str = Form(...)):
     ophaalt op het moment dat de beheerder zegt dat er een pad is, is eerlijker
     dan een veld dat stilletjes veroudert.
     """
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.uitvragen", rep)
     check_csrf(request, csrf)
     info = firmware.probe(str(rep["ota_host"] or ""))
@@ -901,7 +911,7 @@ def probe_node(request: Request, rid: int, csrf: str = Form(...)):
 def start_upgrade(request: Request, rid: int, tag: str = Form(...),
                   expect_env: str = Form(""), confirm: str = Form(""),
                   csrf: str = Form(...)):
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.firmware", rep)
     check_csrf(request, csrf)
 
@@ -930,7 +940,7 @@ def start_upgrade(request: Request, rid: int, tag: str = Form(...),
 
 @router.post("/repeaters/{rid}/upgrade/clear")
 def clear_upgrade(request: Request, rid: int, csrf: str = Form(...)):
-    rep = _rep_or_404(rid)
+    rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.firmware", rep)
     check_csrf(request, csrf)
     firmware.clear_job(rid)

@@ -431,6 +431,29 @@ def test_elke_handeling_in_de_routes_bestaat_ook_in_het_model():
     assert onbekend == set(), f"onbekende handelingen: {onbekend}"
 
 
+def test_een_onbekende_node_verraadt_zich_niet_aan_wie_niet_ingelogd_is(db):
+    """404 tegenover 303-naar-inlogscherm is een verschil dat je kunt aflezen.
+
+    De routes moeten de repeaterrij ophalen vóór ze de rechten kunnen wegen -- het
+    recht gaat immers over déze node -- en zonder de login-controle in
+    ``_rep_or_404`` zou een onbekende bezoeker daarmee kunnen uitvragen welke
+    node-id's bestaan. Juist over de verborgen nodes.
+    """
+    from fastapi import HTTPException
+    from app import routes_admin
+    from starlette.requests import Request
+
+    kaal = Request({"type": "http", "http_version": "1.1", "method": "POST",
+                    "scheme": "http", "server": ("test", 80), "path": "/x",
+                    "query_string": b"", "headers": []})
+    maak_node(db)
+    for rid in (1, 999):
+        with pytest.raises(HTTPException) as fout:
+            routes_admin._rep_or_404(kaal, rid)
+        # Allebei dezelfde uitkomst: naar het inlogscherm, niet 404.
+        assert fout.value.status_code == 303
+
+
 def test_elke_handeling_heeft_een_geldige_klasse_en_scope():
     from app import rbac
     for naam, h in rbac.ACTIONS.items():

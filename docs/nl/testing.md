@@ -179,7 +179,7 @@ ontwerpnotities bij het gebied dat getest wordt.
 | `test_retention.py` | 15 | Opruimen | Niet "er wordt iets verwijderd" maar de **volgorde** waarin dat gebeurt |
 | `test_settings_chain.py` | 25 | knop → wachtrij → poller → opslag | De clear-on-read-wachtrij, die faalt zonder ook maar één foutmelding op te leveren |
 | `test_zichtbaarheid.py` | 18 | `show_position` / `show_name` over elke publieke route | Niet "de schakelaar klapt om" maar **dat geen enkele route eraan voorbij lekt**, plus dat de standaardwaarden niets veranderen |
-| `test_rechten.py` | 30 | `app/rbac.py`, `app/audit.py`, de migratie | Drie manieren waarop een rechtenmodel stukgaat zonder iets te melden: te ruim, te krap (de eigenaar buitengesloten), en vergeten op een route |
+| `test_rechten.py` | 31 | `app/rbac.py`, `app/audit.py`, de migratie | Drie manieren waarop een rechtenmodel stukgaat zonder iets te melden: te ruim, te krap (de eigenaar buitengesloten), en vergeten op een route |
 | `test_beheerpaginas_renderen.py` | 10 | De beheersjablonen, van begin tot eind | Dat de takken die zeggen *waarom* een knop uit staat werkelijk renderen — een tikfout daar is een lege beheerpagina en geen testfout |
 
 ### Waarom een aantal hiervan een eigen bestand heeft
