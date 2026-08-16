@@ -70,24 +70,30 @@ class Field:
 # step. Sender and observer each get a name of their own as well as a key, since
 # a visitor knows nodes by one or the other depending on which they saw last.
 #
-# ``sort`` marks the columns the result list may be ordered by. It is a subset of
-# the searchable ones on purpose: a column is worth sorting on only when the
-# reader can see what the order is being made of, so it is set exactly for the
-# columns the archive table shows. Two kinds of field can never carry it. The
-# first is 'region', whose ``sql`` is a placeholder that _field_clause swaps for
-# REGION_SQL -- ordering by it would put a column name in the SQL that the
-# packets table does not have. The second is a haystack like 'name' or 'path',
-# where the expression is a concatenation and its alphabetical order means
-# nothing to anybody.
+# ``sort`` marks the fields the result list may be ordered by. It is not simply
+# "everything": 'name' and 'path' are haystacks -- a concatenation of two names,
+# a comma-separated hop list -- and their alphabetical order means nothing to
+# anybody, so they are searchable but never sortable. The reverse case exists
+# too: 'path' is worth showing as a column while being useless as an order, and
+# COLUMNS below says so separately.
 FIELDS: dict[str, Field] = {
     "type":     Field("p.payload_name", _TEXT, "Payloadtype", "ADVERT", facet=True,
                       sort=True),
-    "route":    Field("p.route", _TEXT, "Routetype", "FLOOD", facet=True),
+    "route":    Field("p.route", _TEXT, "Routetype", "FLOOD", facet=True, sort=True),
     "scope":    Field("p.scope", _TEXT, "Bereik", "scoped", facet=True, sort=True),
-    "region":   Field("p.scope_region", _NUM, "Regio", "7", facet=True),
+    "region":   Field("p.scope_region", _NUM, "Regio", "7", facet=True, sort=True),
     "sender":   Field("p.sender", _TEXT, "Afzender (sleutel)", "2ae7c1", facet=True,
                       sort=True),
-    "observer": Field("p.observer", _TEXT, "Waarnemer (sleutel)", "2ae7c1d40f93", facet=True),
+    "observer": Field("p.observer", _TEXT, "Waarnemer (sleutel)", "2ae7c1d40f93",
+                      facet=True, sort=True),
+    # The 1-byte destination hash, exactly as the frame carried it. Searchable
+    # for the same reason it is worth a column: "what was aimed at this node"
+    # is a question the archive could not answer at all before, and the hash is
+    # the only thing the wire says about it. One byte names nobody by itself --
+    # the API resolves it against the contacts table, with the same honesty
+    # about ambiguity a path hop gets -- but the search matches the stored byte,
+    # because that is the part that is a fact.
+    "dest":     Field("p.dest_hash", _TEXT, "Bestemming (hash)", "c3", sort=True),
     # The 1-byte source hash, exactly as the frame carried it. 'sender' holds
     # the full key an ADVERT stated, which most packets simply do not have;
     # this is the byte the rest of them carry. Two fields rather than one,
@@ -99,7 +105,7 @@ FIELDS: dict[str, Field] = {
     # is how you ask for the rest of them. One byte names nobody by itself, so
     # the API resolves it against the contacts table with all the honesty that
     # needs -- but the search matches the stored byte, the part that is a fact.
-    "src":      Field("p.src_hash", _TEXT, "Afzender (hash)", "e3"),
+    "src":      Field("p.src_hash", _TEXT, "Afzender (hash)", "e3", sort=True),
     "name":     Field("COALESCE(c.name, '') || ' ' || COALESCE(o.name, '')", _TEXT,
                       "Naam van afzender of waarnemer", "BE-HSS"),
     "country":  Field("COALESCE(c.country, o.country)", _TEXT, "Land", "BE", facet=True,
@@ -109,7 +115,7 @@ FIELDS: dict[str, Field] = {
     "len":      Field("p.len", _NUM, "Lengte in bytes", "20..40", sort=True),
     "hops":     Field("p.path_len", _NUM, "Aantal hops", ">3", facet=True, sort=True),
     "path":     Field("p.path", _TEXT, "Hop in het pad", "2ae7"),
-    "hash":     Field("p.phash", _TEXT, "Payloadhash", ""),
+    "hash":     Field("p.phash", _TEXT, "Payloadhash", "", sort=True),
 }
 
 # What a bare word searches. Deliberately the identifying columns only: adding
@@ -144,10 +150,33 @@ class SortKey:
 # be sortable -- and it is the one column the schema declares NOT NULL, which the
 # ORDER BY below uses.
 SORTS: dict[str, SortKey] = {"time": SortKey("p.ts", _TS, nullable=False)}
-SORTS.update({name: SortKey(f.sql, f.kind)
-              for name, f in FIELDS.items() if f.sort})
+SORTS.update({
+    # 'region' is the one field whose ``sql`` is a placeholder: _field_clause
+    # swaps it for REGION_SQL, because the region is stored inside scope_codes
+    # rather than in a column. Ordering has to make the same swap, or the query
+    # would name a column the packets table does not have.
+    name: SortKey(REGION_SQL if name == "region" else f.sql, f.kind)
+    for name, f in FIELDS.items() if f.sort
+})
 
 DEFAULT_SORT = "time"
+
+# The columns the archive table can show, in the order it shows them in. An
+# ordered tuple rather than another flag on Field, because this expresses
+# something the field table cannot: where a column sits. Every name in it is a
+# key of SORTS or FIELDS -- there is no separate vocabulary for columns -- but
+# the two lists are not the same list, and neither is a subset of the other:
+# 'path' is worth a column and useless as an order, 'name' is worth searching
+# and is already visible inside the sender column, so it is neither.
+COLUMNS = ("time", "sender", "src", "dest", "observer", "type", "route", "scope",
+           "region", "snr", "rssi", "hops", "len", "path", "hash", "country")
+
+# What the archive shows to somebody who has never chosen anything. Exactly the
+# columns it showed before the choice existed, so the page a visitor knows does
+# not rearrange itself under them the day this shipped. The rest are one click
+# away in the column picker.
+DEFAULT_COLUMNS = ("time", "sender", "type", "scope", "snr", "rssi", "hops",
+                   "len", "country")
 
 _COMPARISONS = (("<=", "<="), (">=", ">="), ("<", "<"), (">", ">"))
 _RANGE = re.compile(r"^(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)$")
@@ -404,3 +433,21 @@ def describe_sorts() -> list[dict]:
     an error message, and it would appear the moment somebody edits this table.
     """
     return [{"name": name, "kind": s.kind} for name, s in SORTS.items()]
+
+
+def describe_columns() -> list[dict]:
+    """The columns the archive may show, for the picker and the table itself.
+
+    ``sort`` travels along so the page can give a heading its clickable button
+    without keeping a second opinion about which columns are sortable; ``default``
+    marks the ones shown to a visitor who has never chosen. Order is the order of
+    COLUMNS, and the page renders the chosen columns in it rather than in the
+    order they were ticked: the table then looks the same whichever route
+    somebody took to it, and a shared link cannot arrive with the timestamp in
+    the middle. Rearranging columns by hand was considered and left out -- it is
+    a second, heavier feature (drag targets, a stored order, a URL that carries
+    it) on top of the one that was asked for.
+    """
+    return [{"name": name, "sort": name in SORTS,
+             "default": name in DEFAULT_COLUMNS}
+            for name in COLUMNS]

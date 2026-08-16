@@ -215,8 +215,7 @@ def test_alleen_kolommen_uit_de_tabel_zijn_sorteerbaar():
         "hops:desc--",                # richting die niet bestaat
         "hops:willekeurig",
         "name",                       # zoekbaar, maar geen kolom om op te sorteren
-        "path",
-        "region",                     # sql is een tijdelijke naam, geen kolom
+        "path",                       # kolom in de tabel, maar geen zinnige volgorde
         "1",
     ]
     for tekst in onzin:
@@ -224,17 +223,53 @@ def test_alleen_kolommen_uit_de_tabel_zijn_sorteerbaar():
             search.parse_sort(tekst)
 
 
+def test_sorteren_op_regio_gebruikt_dezelfde_afleiding_als_zoeken():
+    # De regio staat niet als kolom in de tabel; Field.sql is voor dit ene veld
+    # een tijdelijke naam die _field_clause vervangt. Sorteren moet dezelfde
+    # vervanging doen, anders noemt de query een kolom die niet bestaat.
+    sql = search.parse_sort("region:desc").sql
+    assert search.REGION_SQL in sql
+    assert "p.scope_region" not in sql
+
+
 def test_sorteersleutels_verwijzen_naar_echte_kolommen():
     # SORTS wordt uit FIELDS afgeleid; deze test bewaakt dat daar niets
     # binnenglipt wat geen kolomexpressie is die SQLite kan sorteren.
     con = sqlite3.connect(":memory:")
     con.execute("CREATE TABLE p(id INTEGER, ts TEXT, payload_name TEXT, scope TEXT, "
-                "sender TEXT, snr REAL, rssi REAL, len INTEGER, path_len INTEGER)")
+                "scope_codes TEXT, sender TEXT, observer TEXT, route TEXT, "
+                "src_hash TEXT, dest_hash TEXT, phash TEXT, "
+                "snr REAL, rssi REAL, len INTEGER, path_len INTEGER)")
     con.execute("CREATE TABLE c(country TEXT)")
     con.execute("CREATE TABLE o(country TEXT)")
     for naam in search.SORTS:
         sql = search.parse_sort(naam).sql
         con.execute(f"SELECT p.id FROM p, c, o ORDER BY {sql}").fetchall()
+
+
+def test_kolommen_en_velden_delen_een_woordenschat():
+    # De kolomlijst mag geen tweede naamgeving worden: elke naam erin is een
+    # zoekveld of de tijdkolom, en elke standaardkolom staat ook in de lijst met
+    # beschikbare kolommen.
+    for naam in search.COLUMNS:
+        assert naam == "time" or naam in search.FIELDS, naam
+    for naam in search.DEFAULT_COLUMNS:
+        assert naam in search.COLUMNS, naam
+    # Geen dubbels: de tabel zou de kolom twee keer tekenen.
+    assert len(set(search.COLUMNS)) == len(search.COLUMNS)
+
+
+def test_kolombeschrijving_vertelt_wat_de_pagina_nodig_heeft():
+    kolommen = search.describe_columns()
+    assert [k["name"] for k in kolommen] == list(search.COLUMNS)
+    per_naam = {k["name"]: k for k in kolommen}
+    # Sorteerbaarheid komt uit SORTS, niet uit een tweede mening.
+    assert per_naam["hops"]["sort"] is True
+    assert per_naam["path"]["sort"] is False      # wel kolom, geen volgorde
+    assert per_naam["hops"]["default"] is True
+    assert per_naam["path"]["default"] is False
+    for naam, k in per_naam.items():
+        assert k["sort"] == (naam in search.SORTS), naam
 
 
 def test_elke_clausule_komt_terug_in_de_sql():
@@ -243,3 +278,15 @@ def test_elke_clausule_komt_terug_in_de_sql():
     q = search.parse("type:ADVERT snr:>5 -scope:share")
     assert q.sql.count(" AND ") == 2
     assert q.params == ["ADVERT", 5.0, "share"]
+
+
+def test_afzender_en_bestemming_zijn_los_te_bevragen():
+    # 'sender' is de volledige sleutel die enkel een advert noemt; 'src' is de
+    # ene byte die alle andere pakketten dragen. Twee vragen, twee velden -- en
+    # de lijst toont die byte zodra er geen naam bij hoort, dus je moet er ook
+    # op kunnen doorklikken.
+    assert search.parse("src:e3").params == ["e3"]
+    assert "p.src_hash" in search.parse("src:e3").sql
+    assert "p.dest_hash" in search.parse("dest:c3").sql
+    # En ze lopen elkaar niet in de weg: sender: blijft de sleutelkolom.
+    assert "p.sender" in search.parse("sender:2ae7c1").sql

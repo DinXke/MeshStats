@@ -418,6 +418,23 @@ def _resolve_src(row) -> dict | None:
                               row["route"], row["path_len"]))
 
 
+def _resolve_dest(row) -> dict | None:
+    """Who a packet's 1-byte destination hash could be, or None when it has none.
+
+    The mirror of _resolve_src, and it has to be a mirror rather than a shared
+    call with a role argument passed in from outside: the role is what tells the
+    resolver which way the frame bounds the distance. On a flood the path counts
+    backwards to the originator, so it bounds where the packet came *from*; the
+    destination is bounded on a direct instead. Getting those two the wrong way
+    round would exclude the innocent, which is why neither caller may choose.
+    """
+    dest = row["dest_hash"]
+    if not dest:
+        return None
+    return _trim(_resolve_hop(dest, row["observer"], "dest",
+                              row["route"], row["path_len"]))
+
+
 def _scope_region(codes: list[int] | None) -> int | None:
     """The region a scoped packet names, if it names one at all.
 
@@ -534,6 +551,17 @@ def packet_search(
     flicker or the counts move. Ordering does bear on ``offset``: page 5 of one
     order has nothing to do with page 5 of another, so the page resets it.
 
+    Every row carries every field the table can put in a column, whether or not
+    the reader has that column switched on. That is a deliberate trade: the page
+    lets columns be added and removed on the fly, and a response shaped by the
+    current choice would turn each tick of a checkbox into a round trip, with a
+    table that blinks and a spinner for data the browser already had. The extra
+    weight is small -- a hop list, a payload hash, a destination hash and its
+    candidates -- because the one genuinely heavy field is left out on purpose:
+    ``raw``, the complete frame in hex, roughly doubles a packet row and has no
+    column to appear in. It stays where it belongs, on the detail endpoint for
+    the one packet somebody actually opened.
+
     A query the parser refuses comes back as a 200 with ``error`` set: for this
     endpoint a typo in the query is a normal outcome to render next to the box,
     not an exceptional one worth a 4xx that shows up as noise in proxy logs. An
@@ -585,9 +613,11 @@ def packet_search(
             "route": p["route"], "type": p["payload_name"],
             "scope": p["scope"],
             "scope_region": _scope_region(_scope_codes(p["scope_codes"])),
-            "path_len": p["path_len"],
+            "path_len": p["path_len"], "path": p["path"],
             "sender": p["sender"], "sender_name": p["sender_name"],
-            "src": _resolve_src(p),
+            "src": _resolve_src(p), "src_hash": p["src_hash"],
+            "dest_hash": p["dest_hash"], "dest": _resolve_dest(p),
+            "phash": p["phash"],
             "country": p["sender_country"] or p["observer_country"],
         } for p in rows],
     }

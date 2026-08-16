@@ -17,11 +17,18 @@
      heading sorts (a number reads best from its high end, a word from its A),
      and a column missing from this list simply keeps a heading that does not
      click -- rather than one that offers an order the server would refuse. -->
+<!-- And data-columns for the table itself: every column the archive may show, in
+     the order it shows them in, plus which of them a visitor who has never
+     chosen gets. Three lists out of one field table in search.py, so that
+     searching, ordering and choosing columns can never end up disagreeing about
+     which fields this site has. -->
 <div id="archive"
      data-oldest="{{ span.oldest or '' }}" data-newest="{{ span.newest or '' }}"
      data-total="{{ span.total }}"
      data-fields="{{ fields|map(attribute='name')|join(',') }}"
-     data-sorts="{% for s in sorts %}{{ s.name }}:{{ s.kind }}{{ "," if not loop.last }}{% endfor %}">
+     data-sorts="{% for s in sorts %}{{ s.name }}:{{ s.kind }}{{ "," if not loop.last }}{% endfor %}"
+     data-columns="{{ columns|map(attribute='name')|join(',') }}"
+     data-columns-default="{{ columns|selectattr('default')|map(attribute='name')|join(',') }}">
 
   <div class="card archbar">
     <form id="arch-form" class="archform">
@@ -83,42 +90,54 @@
     <aside class="card archfacets" id="arch-facets"></aside>
 
     <div class="card archresults">
-      <!-- The same ordering twice, in two shapes, because the headings are gone
-           below 700 px where the row folds into two lines and there is nothing
-           left to click. One state, two views of it: this bar shows only on a
-           phone, the headings only above it, and app.js keeps both in step. A
-           sort nobody can reach on the device they are holding is not a sort. -->
-      <div class="archsort">
-        <label for="arch-sort" data-i18n="arch.sort_label">Sorteren op</label>
-        <select id="arch-sort"></select>
-        <!-- The direction is a button whose label is the direction itself, set
-             by app.js. A separate aria-label would replace that label with a
-             fixed sentence and take the one thing it says -- which way the list
-             runs right now -- away from exactly the reader who cannot see the
-             arrow; the hint goes in the title instead. -->
-        <button type="button" id="arch-sortdir"
-                data-i18n-title="arch.sort_flip" title="Volgorde omdraaien"></button>
+      <div class="archtools">
+        <!-- The column picker. A <details> rather than a floating popover: it
+             opens with a click or a space bar, closes with Escape, and needs no
+             code of its own to do either. Deliberately not the plus/minus pair
+             that sits beside every value in a row -- those add a filter, and a
+             second plus a few pixels away that added a column instead would be
+             one gesture with two meanings on one page. -->
+        <details class="archcols">
+          <summary data-i18n="arch.cols">Kolommen</summary>
+          <div class="archcols-body">
+            <div id="arch-cols-list" class="archcols-list"></div>
+            <button type="button" id="arch-cols-reset"
+                    data-i18n="arch.cols_reset">Standaardkolommen</button>
+          </div>
+        </details>
+        <!-- The same ordering twice, in two shapes, because the headings are
+             out of reach on a phone: no hover to reveal anything, and a row of
+             headings that scrolls sideways is not where somebody looks for a
+             control. One state, two views of it: this bar shows only on a
+             phone, the headings only above it, and app.js keeps both in step. A
+             sort nobody can reach on the device they are holding is not a sort. -->
+        <div class="archsort">
+          <label for="arch-sort" data-i18n="arch.sort_label">Sorteren op</label>
+          <select id="arch-sort"></select>
+          <!-- The direction is a button whose label is the direction itself, set
+               by app.js. A separate aria-label would replace that label with a
+               fixed sentence and take the one thing it says -- which way the list
+               runs right now -- away from exactly the reader who cannot see the
+               arrow; the hint goes in the title instead. -->
+          <button type="button" id="arch-sortdir"
+                  data-i18n-title="arch.sort_flip" title="Volgorde omdraaien"></button>
+        </div>
       </div>
+      <!-- Where the table says what it is doing that it cannot show: a column
+           from a link that no longer exists, an order on a field nobody switched
+           on. Both are quiet mismatches, and quiet is exactly what this site
+           does not do with them. -->
+      <p class="archnote muted small" id="arch-note" hidden></p>
       <!-- role="table" over the headings and the rows together: aria-sort only
            means something to a screen reader inside a table, and the list is
            built out of flexbox rather than a <table> because the columns come
-           and go with the traffic (see the packet list section in style.css).
-           The roles put back what the markup gave up. -->
+           and go -- now by choice, and on the live page with the traffic (see
+           the packet list section in style.css). The roles put back what the
+           markup gave up. The headings themselves are built by app.js, since
+           the template no longer knows which columns there are. -->
       <div class="archtable" role="table"
            data-i18n-aria="arch.table_aria" aria-label="Zoekresultaten">
-        <div class="feedhead" role="row">
-          <i aria-hidden="true"></i>
-          <span class="pkt-time-abs" data-sort="time" data-i18n="col.time">Tijd</span>
-          <span class="pkt-who" data-sort="sender" data-i18n="col.sender">Afzender</span>
-          <span class="pkt-obs" data-i18n="col.observer">Gehoord door</span>
-          <span class="pkt-type" data-sort="type" data-i18n="col.type">Type</span>
-          <span class="pkt-scope" data-sort="scope" data-i18n="col.scope">Bereik</span>
-          <span class="pkt-snr" data-sort="snr" data-i18n="col.snr">SNR</span>
-          <span class="pkt-rssi" data-sort="rssi" data-i18n="col.rssi">RSSI</span>
-          <span class="pkt-hops" data-sort="hops" data-i18n="col.hops">Hops</span>
-          <span class="pkt-len" data-sort="len" data-i18n="col.len">Lengte</span>
-          <span class="pkt-cc" data-sort="country" data-i18n="col.country">Land</span>
-        </div>
+        <div class="feedhead" id="arch-head" role="row"></div>
         <ul class="livefeed archlist" id="arch-list" role="rowgroup"></ul>
       </div>
       <p class="muted small" id="arch-empty" hidden data-i18n="arch.empty">Geen pakketten die aan de zoekopdracht voldoen.</p>

@@ -155,6 +155,55 @@ def test_onmogelijke_sortering_is_een_leesbare_fout_geen_rijen(db):
     assert db.qone("SELECT COUNT(*) AS n FROM packets")["n"] == 1
 
 
+def test_elke_kolom_krijgt_zijn_veld_in_het_antwoord(db):
+    """Kolommen worden in de browser aan- en uitgezet, dus moet elke rij alles
+    bij zich hebben wat een kolom kan tonen -- anders is een vinkje zetten een
+    nieuwe aanvraag in plaats van een hertekening.
+    """
+    db.execute(
+        "INSERT INTO packets(ts, observer, route, payload_name, path_len, path, "
+        "snr, rssi, len, sender, phash, scope, scope_codes, src_hash, dest_hash) "
+        "VALUES('2026-08-15T10:00:00Z','aabbcc112233','FLOOD','TXT_MSG',2,'11,22',"
+        "4.5,-90,42,NULL,'ab12','scoped','5,7','e3','c3')")
+    p = _zoek()["packets"][0]
+
+    # Wat de kolommen van de archieftabel uit een rij halen.
+    for sleutel in ("ts", "sender", "sender_name", "src", "src_hash", "dest",
+                    "dest_hash", "observer", "observer_name", "type", "route",
+                    "scope", "scope_region", "snr", "rssi", "path_len", "len",
+                    "path", "phash", "country"):
+        assert sleutel in p, sleutel
+    assert p["path"] == "11,22"
+    assert p["phash"] == "ab12"
+    assert p["src_hash"] == "e3"
+    assert p["dest_hash"] == "c3"
+    assert p["scope_region"] == 7
+    # De volledige frame-hex hoort hier niet: honderd rijen ruwe frames is een
+    # lijstantwoord dat twee keer zo zwaar is voor een kolom die niet bestaat.
+    assert "raw" not in p
+
+
+def test_bestemming_wordt_opgelost_zoals_een_hop(db):
+    # Eén byte noemt niemand; tegen de contactentabel gehouden noemt hij vaak
+    # precies één node. Dat is dezelfde afleiding als bij een hop, met dezelfde
+    # eerlijkheid: het blijft een afleiding.
+    db.execute(
+        "INSERT INTO contacts(prefix, prefix6, name, node_type, updated) "
+        "VALUES('c3aabb00','c3aabb','Bestemmingsnode','repeater',"
+        "'2026-08-15T00:00:00Z')")
+    db.execute(
+        "INSERT INTO packets(ts, observer, route, payload_name, path_len, "
+        "sender, dest_hash) VALUES('2026-08-15T10:00:00Z','aabbcc112233',"
+        "'DIRECT','TXT_MSG',1,NULL,'c3')")
+    p = _zoek()["packets"][0]
+    assert p["dest"] is not None
+    assert [m["name"] for m in p["dest"]["matches"]] == ["Bestemmingsnode"]
+    # Een pakket zonder bestemmingsbyte krijgt geen verzonnen kandidaat.
+    _pakket(db, 20, 3)
+    zonder = [q for q in _zoek()["packets"] if q["dest_hash"] is None]
+    assert zonder and all(q["dest"] is None for q in zonder)
+
+
 def test_alle_aangeboden_sorteringen_werken_echt(db):
     # De pagina biedt precies aan wat search.SORTS zegt; elk van die sleutels
     # moet een query opleveren die SQLite uitvoert, niet alleen een die parst.

@@ -3180,19 +3180,35 @@
     var prevEl = document.getElementById("arch-prev");
     var nextEl = document.getElementById("arch-next");
     var pktModalEl = document.getElementById("pkt-modal");
-    var headEl = archEl.querySelector(".feedhead");
+    var headEl = document.getElementById("arch-head");
     var sortSelEl = document.getElementById("arch-sort");
     var sortDirEl = document.getElementById("arch-sortdir");
+    var noteEl = document.getElementById("arch-note");
+    var colsListEl = document.getElementById("arch-cols-list");
+    var colsResetEl = document.getElementById("arch-cols-reset");
+    var COLS_STORE = "mcs-arch-cols";
     var archOffset = 0;
     var archTotal = 0;
     var archSeq = 0;      // stale responses from a slower earlier search are dropped
     var openPktId = null; // id of the packet whose modal is open, if any
+    // The packets of the page currently on screen. Kept because a column being
+    // switched on or off is not a new question for the server: the answer is
+    // already here, every field of it, and re-rendering from memory is what
+    // makes the choice feel like it happens on the spot instead of like a
+    // reload.
+    var archRows = [];
     // Which column the rows are ordered by, and which way. Held here rather than
     // read back out of the DOM: the URL, the column headings and the phone's
     // picker all have to say the same thing, and three readers of one variable
     // are easier to keep honest than three readers of each other.
     var archSort = "time";
     var archDesc = true;
+    // The columns on screen, always in the server's canonical order.
+    var archCols = [];
+    // Column names from a link that this build does not know. Remembered so the
+    // page can say so instead of silently showing something else than the link
+    // promised.
+    var badCols = [];
 
     // The field table of the query language, straight from search.py. Without
     // it the buttons would be gated on a hand-copied list that goes stale the
@@ -3211,6 +3227,21 @@
       return Object.prototype.hasOwnProperty.call(SORT_KINDS, key);
     }
     function sortToken() { return archSort + (archDesc ? ":desc" : ":asc"); }
+
+    // The columns the table can show and the ones it starts with, from
+    // search.COLUMNS and search.DEFAULT_COLUMNS. Same anti-drift reasoning
+    // again: everything about which fields exist comes from one table on the
+    // server, and this page holds an opinion about none of it.
+    var COLUMN_ORDER = (archEl.dataset.columns || "").split(",").filter(Boolean);
+    var COLUMN_DEFAULT = (archEl.dataset.columnsDefault || "").split(",").filter(Boolean);
+    function knownCol(key) { return COLUMN_ORDER.indexOf(key) >= 0; }
+    // Chosen columns are stored as a set and rendered in COLUMN_ORDER, so the
+    // table looks the same however somebody arrived at that set -- by ticking
+    // boxes in one order or by opening a link written in another.
+    function inOrder(keys) {
+      return COLUMN_ORDER.filter(function (k) { return keys.indexOf(k) >= 0; });
+    }
+    function sameCols(a, b) { return a.join(",") === b.join(","); }
 
     // The query, the window, the order and the open packet live in the URL, so a
     // search or a single packet can be sent to someone as a link -- for a search
@@ -3232,8 +3263,42 @@
         archSort = s[0];
         archDesc = s[1] !== "asc";
       }
+      // Columns: the link wins over what this browser last chose. A link is
+      // somebody showing somebody else a table, and it has to arrive looking
+      // like the table they meant; the stored choice is only what to fall back
+      // on when nobody said anything. Unknown names are dropped rather than
+      // fatal -- a link written before a field was renamed should still open --
+      // but they are remembered, because a table quietly missing the column the
+      // link was about is worse than a line of text saying which one went.
+      var fromUrl = (sp.get("cols") || "").split(",").filter(Boolean);
+      var chosen = null;
+      if (fromUrl.length) {
+        badCols = fromUrl.filter(function (k) { return !knownCol(k); });
+        chosen = inOrder(fromUrl.filter(knownCol));
+      } else {
+        chosen = inOrder(stored().filter(knownCol));
+      }
+      // An empty choice is no choice: a table with nothing in it would be a
+      // page that looks broken, and "remove the last column" is not a wish.
+      archCols = chosen.length ? chosen : COLUMN_DEFAULT.slice();
       if (/^\d+$/.test(sp.get("p") || "")) initialPkt = parseInt(sp.get("p"), 10);
     })();
+
+    // localStorage, wrapped: private browsing and a full quota both throw, and
+    // a column preference is not worth a broken page.
+    function stored() {
+      try {
+        return (localStorage.getItem(COLS_STORE) || "").split(",").filter(Boolean);
+      } catch (e) { return []; }
+    }
+    function store(cols) {
+      try {
+        // The default set is stored as "nothing chosen", so somebody who never
+        // touched the picker keeps following the default if it ever changes.
+        if (sameCols(cols, COLUMN_DEFAULT)) localStorage.removeItem(COLS_STORE);
+        else localStorage.setItem(COLS_STORE, cols.join(","));
+      } catch (e) { /* nothing to do; the choice lives in the URL as well */ }
+    }
 
     function pushUrl() {
       var sp = new URLSearchParams();
@@ -3241,6 +3306,7 @@
       if (windowEl.value !== "24") sp.set("w", windowEl.value);
       // Left out while it is the default, so the plain archive link stays plain.
       if (archSort !== "time" || !archDesc) sp.set("sort", sortToken());
+      if (!sameCols(archCols, COLUMN_DEFAULT)) sp.set("cols", archCols.join(","));
       // replaceState, not pushState: opening and closing a detail is reading,
       // not navigating, and a back button that walked back through every packet
       // somebody glanced at would never reach the previous search.
@@ -3484,14 +3550,134 @@
       runSearch(false);
     }
 
+    /* --- the columns ----------------------------------------------------------
+     *
+     * One entry per column the server offers: the class style.css gives it its
+     * width by, and how one packet turns into one cell. A table of functions
+     * rather than a chain of appends, because the reader now decides which
+     * columns exist and in what quantity -- the old fixed sequence of eleven
+     * appends could not answer "show me path and hash but not scope".
+     *
+     * Every cell that names a value the query language knows carries the same
+     * plus/minus pair as before; the ones that do not (a timestamp, a whole hop
+     * list) get none, because a button producing "Onbekend veld" would be a trap
+     * dressed as a feature.
+     */
+    var COLUMN_CELLS = {
+      time: function (p) {
+        // Absolute time, not relative: the archive exists to pin down when
+        // something happened, and "3 uur geleden" defeats that. Compact 24-hour
+        // form rather than toLocaleString: the locale's full rendering runs to
+        // 22 characters and squeezes the sender out of its own column.
+        var el = document.createElement("time");
+        el.className = "pkt-time-abs";
+        el.setAttribute("role", "cell");
+        el.dateTime = p.ts;
+        el.textContent = fmtTs(p.ts);
+        return el;
+      },
+      sender: function (p) {
+        var who = cell2("pkt-who", p.sender_name || (p.sender || "").toUpperCase() || "");
+        if (!who.textContent) {
+          var lbl = srcLabel(p.src, t);
+          who.textContent = lbl ? lbl.text : t("pkt.sender_short");
+          if (lbl) { who.title = lbl.title; who.classList.add("src-derived"); }
+        }
+        // Two fields, because there are two different questions. A sender an
+        // advert stated has a key, and sender: asks for that node. A sender only
+        // derived from the address byte has no key at all -- but the byte is a
+        // fact, and src: asks for every packet carrying it. That is the wider
+        // question, and the honest one to offer here: the cell is showing a
+        // derivation, and the button filters on precisely what it was derived
+        // from. sender: on a derived name would filter on something other than
+        // what is printed, which is why it never did and still does not.
+        if (p.sender) filterBtns(who, "sender", p.sender, setFilter);
+        else if (p.src && p.src.hash) filterBtns(who, "src", p.src.hash, setFilter);
+        return who;
+      },
+      src: function (p) {
+        // The source byte itself, not the name derived from it -- that is what
+        // the sender column shows. This one exists so the byte can be seen and,
+        // with the plus beside it, asked after: every packet from whoever this
+        // is, named or not.
+        return cell2("pkt-src", p.src_hash ? p.src_hash.toUpperCase() : "—",
+          "src", p.src_hash);
+      },
+      dest: function (p) {
+        // The destination is never more than a derivation: one byte off the
+        // wire, weighed against what this observer can really have heard. It is
+        // marked as one -- dotted, with the candidates in the title -- exactly
+        // like a derived sender, and where nothing stands it shows the byte
+        // itself rather than a name nobody may claim.
+        var el = cell2("pkt-dest", "—", "dest", p.dest_hash);
+        var lbl = srcLabel(p.dest, t);
+        if (lbl) {
+          el.textContent = lbl.text;
+          el.title = lbl.title;
+          el.classList.add("src-derived");
+        } else if (p.dest_hash) {
+          el.textContent = p.dest_hash.toUpperCase();
+        }
+        return el;
+      },
+      observer: function (p) {
+        return cell2("pkt-obs", p.observer_name ||
+          (p.observer || "").slice(0, 6).toUpperCase() || "—", "observer", p.observer);
+      },
+      type: function (p) { return cell2("pkt-type", p.type || "?", "type", p.type); },
+      route: function (p) { return cell2("pkt-route", p.route || "—", "route", p.route); },
+      scope: function (p) {
+        var el = cell2("pkt-scope", p.scope ? t("scope." + p.scope) : "—",
+          "scope", p.scope);
+        // The region rides along inside the scope, as it always has -- but only
+        // while it has no column of its own. Printing it in both places would
+        // be the same number twice on one row.
+        if (p.scope_region && archCols.indexOf("region") < 0) {
+          el.textContent += " · " + p.scope_region;
+        }
+        return el;
+      },
+      region: function (p) {
+        return cell2("pkt-reg", p.scope_region != null ? String(p.scope_region) : "—",
+          "region", p.scope_region);
+      },
+      snr: function (p) {
+        return cell2("pkt-snr", p.snr != null ? p.snr.toFixed(1) + " dB" : "—",
+          "snr", p.snr);
+      },
+      rssi: function (p) {
+        return cell2("pkt-rssi", p.rssi != null ? p.rssi + " dBm" : "—", "rssi", p.rssi);
+      },
+      hops: function (p) {
+        return cell2("pkt-hops", p.path_len != null ? String(p.path_len) : "—",
+          "hops", p.path_len);
+      },
+      len: function (p) {
+        return cell2("pkt-len", p.len != null ? p.len + " B" : "—", "len", p.len);
+      },
+      path: function (p) {
+        // The hops as the frame carried them, in order. No filter buttons: the
+        // path: field matches one hop inside the list, and a button offering
+        // the whole list as a value would search for something no packet has.
+        // A dash for a packet stored before the path column existed is honest;
+        // the detail panel is where that distinction is spelled out.
+        var el = cell2("pkt-path", p.path ? p.path.toUpperCase().replace(/,/g, " ") : "—");
+        if (p.path) el.title = p.path.toUpperCase().replace(/,/g, " → ");
+        return el;
+      },
+      hash: function (p) {
+        return cell2("pkt-hash", p.phash ? p.phash.toUpperCase() : "—", "hash", p.phash);
+      },
+      country: function (p) { return cell2("pkt-cc", p.country || "—", "country", p.country); },
+    };
+
     function archRow(p) {
       var li = document.createElement("li");
       li.dataset.id = p.id;
       li.tabIndex = 0;
       // The roles that make the headings' aria-sort mean something: a table
       // whose rows have cells. Set here rather than in the template because the
-      // rows are built here; the header row and the table itself carry theirs in
-      // packets.html.
+      // rows are built here; the table itself carries its role in packets.html.
       li.setAttribute("role", "row");
       var dot = document.createElement("i");
       dot.style.background = PKT_COLORS[p.type] || "#7d8fa0";
@@ -3500,45 +3686,13 @@
       // screen reader has to walk past on every row.
       dot.setAttribute("aria-hidden", "true");
       li.appendChild(dot);
-      // Absolute time, not relative: the archive exists to pin down when
-      // something happened, and "3 uur geleden" defeats that. Compact 24-hour
-      // form rather than toLocaleString: the locale's full rendering runs to
-      // 22 characters and squeezes the sender out of its own column.
-      var when = document.createElement("time");
-      when.className = "pkt-time-abs";
-      when.setAttribute("role", "cell");
-      when.dateTime = p.ts;
-      when.textContent = fmtTs(p.ts);
-      li.appendChild(when);
-      var who = cell2("pkt-who", p.sender_name || (p.sender || "").toUpperCase() || "");
-      if (!who.textContent) {
-        var lbl = srcLabel(p.src, t);
-        who.textContent = lbl ? lbl.text : t("pkt.sender_short");
-        if (lbl) { who.title = lbl.title; who.classList.add("src-derived"); }
-      }
-      // Only a sender an advert stated has a key in the sender column; a sender
-      // merely derived from the address hash gets no buttons, for the same
-      // reason the detail panel withholds them there.
-      filterBtns(who, "sender", p.sender, setFilter);
-      li.appendChild(who);
-      li.appendChild(cell2("pkt-obs", p.observer_name ||
-        (p.observer || "").slice(0, 6).toUpperCase() || "—", "observer", p.observer));
-      li.appendChild(cell2("pkt-type", p.type || "?", "type", p.type));
-      var scope = document.createElement("span");
-      scope.className = "pkt-scope";
-      scope.setAttribute("role", "cell");
-      scope.textContent = p.scope ? t("scope." + p.scope) : "—";
-      if (p.scope_region) scope.textContent += " · " + p.scope_region;
-      filterBtns(scope, "scope", p.scope, setFilter);
-      li.appendChild(scope);
-      li.appendChild(cell2("pkt-snr", p.snr != null ? p.snr.toFixed(1) + " dB" : "—",
-        "snr", p.snr));
-      li.appendChild(cell2("pkt-rssi", p.rssi != null ? p.rssi + " dBm" : "—",
-        "rssi", p.rssi));
-      li.appendChild(cell2("pkt-hops", p.path_len != null ? String(p.path_len) : "—",
-        "hops", p.path_len));
-      li.appendChild(cell2("pkt-len", p.len != null ? p.len + " B" : "—", "len", p.len));
-      li.appendChild(cell2("pkt-cc", p.country || "—", "country", p.country));
+      archCols.forEach(function (key) {
+        var make = COLUMN_CELLS[key];
+        // A column the server offers and this build has no renderer for is
+        // skipped rather than guessed at: an empty cell in every row would be a
+        // column that looks like missing data instead of missing code.
+        if (make) li.appendChild(make(p));
+      });
       li.addEventListener("click", function () { openPacketModal(p.id); });
       li.addEventListener("keydown", function (e) {
         if (e.key !== "Enter" && e.key !== " ") return;
@@ -3561,6 +3715,7 @@
     }
 
     function renderRows(rows) {
+      archRows = rows;
       listEl.textContent = "";
       rows.forEach(function (p) { listEl.appendChild(archRow(p)); });
       emptyEl.hidden = rows.length > 0;
@@ -3578,64 +3733,211 @@
       nextEl.disabled = to >= archTotal;
     }
 
-    // --- ordering the results ------------------------------------------------
-    // A heading becomes a real <button> instead of getting a click handler of
-    // its own. That is what buys focus, Enter and space without a keydown
+    // --- the heading row -------------------------------------------------------
+    // Built from the chosen columns rather than written out in the template, for
+    // the obvious reason that the template no longer knows which columns there
+    // are. Rebuilt whole on every change: nine cells is nothing to rebuild, and
+    // patching a row of headings in place is how a stale arrow survives.
+    //
+    // A sortable heading gets a real <button> rather than a click handler on the
+    // heading itself. That is what buys focus, Enter and space without a keydown
     // handler reimplementing all three, and what makes a screen reader announce
     // something you can press; the aria-sort that says which way it points goes
     // on the heading around it, because that is the element with the
     // columnheader role.
-    function wireSortHeaders() {
+    function renderHead() {
       if (!headEl) return;
-      Array.prototype.forEach.call(headEl.querySelectorAll("[data-sort]"),
-        function (cell) {
-          var key = cell.getAttribute("data-sort");
-          if (!sortable(key)) {
-            // The server does not order by this column. Drop the marker so the
-            // heading stays a heading rather than becoming a dead button.
-            cell.removeAttribute("data-sort");
-            return;
-          }
-          cell.setAttribute("role", "columnheader");
+      headEl.textContent = "";
+      var dot = document.createElement("i");
+      dot.setAttribute("aria-hidden", "true");
+      headEl.appendChild(dot);
+      archCols.forEach(function (key) {
+        var cell = document.createElement("span");
+        cell.className = colClass(key);
+        cell.setAttribute("role", "columnheader");
+        var label = t("col." + key);
+
+        if (sortable(key)) {
+          cell.setAttribute("data-sort", key);
           var btn = document.createElement("button");
           btn.type = "button";
           btn.className = "sortbtn";
-          btn.textContent = cell.textContent.trim();
-          // The translation key moves along with the text. Left on the heading
-          // it would set textContent there on the next apply() and throw the
-          // button out of the page with it.
-          var i18nKey = cell.getAttribute("data-i18n");
-          if (i18nKey) {
-            cell.removeAttribute("data-i18n");
-            btn.setAttribute("data-i18n", i18nKey);
-          }
+          btn.textContent = label;
+          btn.setAttribute("data-i18n", "col." + key);
           btn.setAttribute("data-i18n-title", "arch.sort_by");
           btn.title = t("arch.sort_by");
-          cell.textContent = "";
-          cell.appendChild(btn);
           btn.addEventListener("click", function () { setSort(key); });
+          cell.appendChild(btn);
+        } else {
+          // Not sortable, so not a button: a heading that looks pressable and
+          // does nothing is worse than one that plainly does not.
+          var span = document.createElement("span");
+          span.className = "sortbtn nosort";
+          span.textContent = label;
+          span.setAttribute("data-i18n", "col." + key);
+          cell.appendChild(span);
+        }
+
+        // Removing a column from the heading it is under, which is where
+        // somebody who wants it gone is already looking. Hidden until the
+        // heading is hovered or focused, the same way the filter buttons behave
+        // inside a row -- nine crosses in a permanently visible row would read
+        // as a toolbar. On a touch screen there is no hover, so the picker is
+        // the way there; that is also true of the filter buttons already.
+        var x = document.createElement("button");
+        x.type = "button";
+        x.className = "colx";
+        x.textContent = "×";
+        x.title = t("arch.col_hide", { col: label });
+        x.setAttribute("aria-label", x.title);
+        x.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          setColumns(archCols.filter(function (k) { return k !== key; }));
         });
+        cell.appendChild(x);
+        headEl.appendChild(cell);
+      });
+      renderSort();
     }
 
-    // The phone's picker is filled from the headings rather than from
-    // SORT_KINDS, so the two views offer the same columns in the same order --
-    // and so a column the server can sort but the table does not show can never
-    // turn up here alone.
+    // The class that gives a column its width. style.css owns every width, so
+    // this is the one place the two have to agree on a name.
+    function colClass(key) {
+      return {
+        time: "pkt-time-abs", sender: "pkt-who", src: "pkt-src", dest: "pkt-dest",
+        observer: "pkt-obs", type: "pkt-type", route: "pkt-route",
+        scope: "pkt-scope", region: "pkt-reg", snr: "pkt-snr",
+        rssi: "pkt-rssi", hops: "pkt-hops", len: "pkt-len",
+        path: "pkt-path", hash: "pkt-hash", country: "pkt-cc",
+      }[key] || "pkt-type";
+    }
+
+    // The phone's picker offers every sortable column, not only the shown ones.
+    // It used to follow the headings, which was right when the headings were
+    // fixed; now that they are not, a picker that shrank with them could not
+    // express the order the page is actually in the moment a column is removed
+    // -- and the note above the table already says when that has happened.
     function buildSortPicker() {
-      if (!sortSelEl || !headEl) return;
-      Array.prototype.forEach.call(headEl.querySelectorAll("[data-sort]"),
-        function (cell) {
-          var opt = document.createElement("option");
-          opt.value = cell.getAttribute("data-sort");
-          opt.textContent = cell.textContent.trim();
-          sortSelEl.appendChild(opt);
-        });
+      if (!sortSelEl) return;
+      COLUMN_ORDER.filter(sortable).forEach(function (key) {
+        var opt = document.createElement("option");
+        opt.value = key;
+        opt.textContent = t("col." + key);
+        sortSelEl.appendChild(opt);
+      });
       sortSelEl.addEventListener("change", function () {
         setSort(sortSelEl.value, true);
       });
       if (sortDirEl) {
         sortDirEl.addEventListener("click", function () { setSort(archSort); });
       }
+    }
+
+    // --- choosing the columns --------------------------------------------------
+    // A panel of checkboxes behind a "Kolommen" button, deliberately not the
+    // plus/minus pair the values in a row already carry: those add a *filter*,
+    // and a second plus a few pixels away that added a *column* instead would be
+    // two different meanings for one gesture on one page.
+    function buildColumnPicker() {
+      if (!colsListEl) return;
+      COLUMN_ORDER.forEach(function (key) {
+        var id = "arch-col-" + key;
+        var row = document.createElement("label");
+        row.className = "archcol";
+        row.htmlFor = id;
+        var box = document.createElement("input");
+        box.type = "checkbox";
+        box.id = id;
+        box.value = key;
+        box.checked = archCols.indexOf(key) >= 0;
+        box.addEventListener("change", function () {
+          var next = box.checked
+            ? archCols.concat([key])
+            : archCols.filter(function (k) { return k !== key; });
+          setColumns(next);
+        });
+        var text = document.createElement("span");
+        text.textContent = t("col." + key);
+        text.setAttribute("data-i18n", "col." + key);
+        row.appendChild(box);
+        row.appendChild(text);
+        colsListEl.appendChild(row);
+      });
+      if (colsResetEl) {
+        colsResetEl.addEventListener("click", function () {
+          setColumns(COLUMN_DEFAULT.slice());
+        });
+      }
+    }
+
+    function syncColumnPicker() {
+      if (!colsListEl) return;
+      Array.prototype.forEach.call(colsListEl.querySelectorAll("input"),
+        function (box) { box.checked = archCols.indexOf(box.value) >= 0; });
+    }
+
+    /* Show exactly these columns, from now on.
+     *
+     * No new search: every field of every row on screen is already in hand (see
+     * the endpoint's docstring for why the response carries them all), so this
+     * redraws from memory. That is the whole point of the feature -- a column
+     * appears in the time it takes to paint, not in the time it takes to ask a
+     * server that has nothing new to say.
+     *
+     * The last column cannot be removed. An empty table is not a wish anybody
+     * has; it is a page that looks broken, and getting back out of it would mean
+     * finding a picker under a heading row that is no longer there.
+     */
+    function setColumns(keys) {
+      var next = inOrder(keys.filter(knownCol));
+      if (!next.length || sameCols(next, archCols)) {
+        syncColumnPicker();
+        return;
+      }
+      archCols = next;
+      badCols = [];        // the reader has moved on from whatever the link said
+      store(archCols);
+      pushUrl();
+      syncColumnPicker();
+      renderHead();        // ends in renderSort, which ends in renderNote
+      renderRows(archRows);
+    }
+
+    /* What the table is doing that it cannot show.
+     *
+     * Two things can be true at once, and both are the kind of quiet mismatch
+     * this site refuses to leave unsaid: a link asked for a column that no
+     * longer exists, or the rows are ordered by a field that is not on screen.
+     * The second one is deliberately not "fixed" by resetting the order to time:
+     * ordering by hops without keeping the hops column is a perfectly sensible
+     * thing to want, and silently reordering somebody's results is a bigger
+     * surprise than a line of text. So it says what is going on and offers the
+     * column back in one click.
+     */
+    function renderNote() {
+      if (!noteEl) return;
+      noteEl.textContent = "";
+      if (badCols.length) {
+        var gone = document.createElement("span");
+        gone.textContent = t("arch.col_unknown", { cols: badCols.join(", ") });
+        noteEl.appendChild(gone);
+      }
+      if (archCols.indexOf(archSort) < 0) {
+        var why = document.createElement("span");
+        why.textContent = t("arch.sort_hidden", { col: t("col." + archSort) });
+        var add = document.createElement("button");
+        add.type = "button";
+        add.className = "linkbtn";
+        add.textContent = t("arch.sort_hidden_add");
+        add.addEventListener("click", function () {
+          setColumns(archCols.concat([archSort]));
+        });
+        why.appendChild(document.createTextNode(" "));
+        why.appendChild(add);
+        noteEl.appendChild(why);
+      }
+      noteEl.hidden = !noteEl.children.length;
     }
 
     /* Order by this column, and search again from the first page.
@@ -3691,6 +3993,9 @@
         sortDirEl.textContent = (archDesc ? "↓ " : "↑ ") +
           t(archDesc ? "arch.sort_desc" : "arch.sort_asc");
       }
+      // The order can now be on a field nobody can see, so every change of it
+      // passes by the note. One caller, one place that decides what to say.
+      renderNote();
     }
 
     // --- one packet, in full -------------------------------------------------
@@ -3764,9 +4069,9 @@
     });
     windowEl.addEventListener("change", function () { runSearch(false); });
 
-    wireSortHeaders();
+    buildColumnPicker();
     buildSortPicker();
-    renderSort();
+    renderHead();       // ends in renderSort, which ends in renderNote
     runSearch(false);
     // A link that names a packet opens it straight away, without waiting for the
     // list around it: the detail comes from its own endpoint, and somebody who
