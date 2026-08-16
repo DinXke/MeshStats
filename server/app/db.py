@@ -1044,10 +1044,16 @@ def upsert_cli_settings(repeater_id: int, values: dict, prune: bool = True) -> N
 
     Pass prune=False when the source omits what it could not read, as the node's
     own daily sweep does. There, an absent parameter means "no answer this
-    time", not "gone" -- and the two are indistinguishable from here. The
-    difference is not academic: the configured list names the region parameter
-    ``cmd:region`` (it is fetched as a literal CLI command) while it is stored
-    under ``region``, so pruning erases it on the first sweep that misses it.
+    time", not "gone" -- and the two are indistinguishable from here. A push
+    that carries no information about deletion must not be allowed to delete.
+
+    What survives a prune is the union of this push with the configured list, so
+    a silent parameter is safe only as long as that list still names it. The
+    node's own table (SET_PARAMS in the firmware) is maintained separately from
+    the server setting and the two drift; a key only the firmware knows about
+    has nothing holding it. Pruning on a partial sweep stakes the row on those
+    two lists agreeing, which is a bet worth avoiding when the push had nothing
+    to say about the row either way.
     """
     now = utcnow()
     # Prune against the configured parameter list rather than this push: a
