@@ -35,7 +35,8 @@ Dutch even here; [`admin.md`](admin.md) explains that choice.
 [confirm-or-revert](#confirm-or-revert-examined-and-deliberately-not-built) ·
 [reading it back](#after-a-write-read-it-back)
 
-**The device** — [the clock](#setting-the-clock) ·
+**The device** — [the packet filter](#the-packet-filter) ·
+[the clock](#setting-the-clock) ·
 [firmware and rollback](#upgrading-firmware-and-going-back) ·
 [when a node does not come back](#when-a-node-does-not-come-back)
 
@@ -1044,6 +1045,71 @@ against a node a human named.
 > test `set`, not anything. It is reached only over LoRa, so a mistake there is
 > not correctable, and it is also the reference case the design exists to serve.
 > Write paths are tested against a node somebody can physically touch.
+
+## The packet filter
+
+A packet filter decides which of *other people's* packets a repeater still
+forwards. It is off by default, it is per node, and it is the only setting on
+this page whose failure mode is a node that looks completely healthy.
+
+That is the whole reason it gets its own section here rather than a row in the
+settings table. Set a frequency wrong and the node goes silent — unpleasant, but
+you find out within the hour. Set a filter wrong and the node keeps answering,
+keeps advertising, keeps showing green on every page, and quietly relays nothing.
+You find out when somebody complains that their messages stopped arriving, which
+can be days.
+
+**Before you switch one on, know how to switch it off.** Three ways, in order of
+how much has to still be working:
+
+1. `filter off` or `filter reset` **over the mesh CLI**. No WiFi, no admin page,
+   no server — LoRa is up before any of them. This is the one that works when the
+   others do not.
+2. The buttons in the *Pakketfilter* block on the node's admin page.
+3. `POST /api/filter` with `cmd=off` on the node itself.
+
+On the site, those two are also the *cheapest* actions in the permission model —
+`node.filter.gewoon`, lighter than switching a filter on. A role that may not
+enable a filter may still disable one. Recovery must never be gated harder than
+the mistake it undoes.
+
+### What you can set, and what it costs
+
+The six rule kinds, what they block and the price of each, are in
+[`packet-filter.md`](packet-filter.md). Two of them surprise people, so they are
+worth repeating here:
+
+- **Blocking a channel needs the channel key, not its name.** All a repeater sees
+  is one byte — `sha256(channel_key)[0]`. And one byte collides: roughly one
+  channel in 256 shares it, and that traffic goes with it.
+- **"Malformed" means structurally impossible**, not "the text looks wrong". The
+  content is encrypted with a key a repeater does not hold.
+
+### The three risk tiers, applied to filters
+
+Same three as for settings, and the tier follows what a rule *blocks* rather than
+what the form looks like. `hops 05 4` and `hops 05 0` are the same input box:
+the first shortens the reach of group text, the second stops it dead. So the
+second asks you to type the node's name, and the first only asks for a `ja`.
+
+`filter on` moves up a tier when such a rule is already stored — because then
+that click is the one that actually silences the traffic, not the click that
+wrote the rule while the filter was off.
+
+### Seeing that one is running
+
+Look for it in three places, none of which you have to go hunting for:
+
+- the **Pakketfilter** block on the node page, which shows what the node reported
+  in its last statistics message, including what it dropped and why;
+- the **Pakketfilter** column in the comparison table, in view by default —
+  "which node has something on" is a question about the set;
+- the `filter` object in `GET /api/v1/repeaters/{slug}`, which is public, because
+  the people who notice missing traffic are not the ones with a login.
+
+All three keep "never reported anything" (usually firmware older than 2.3.0) and
+"reports that nothing is on" as separate states. Flattening those into one empty
+cell would make the only question this exists for unanswerable.
 
 ---
 

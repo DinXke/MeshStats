@@ -55,6 +55,15 @@ ninety days. Blocks collapse and the preference is remembered per visitor.
 hash mode, transmit power — and see them on the site. Read-only: the site can
 request values, never write them.
 
+**Packet filter.** A repeater running our firmware can refuse to forward
+traffic on six kinds of rule — hop count, a rate limit per packet type, minimum
+path hash size, blocked channels, structurally impossible group text, and whole
+packet types. Off by default, manageable from the site with three risk tiers,
+and every dropped packet is counted by reason and graphed. `filter off` stays
+reachable over the mesh CLI, because a filter is the one setting that makes a
+node useless without making it unreachable. See
+[`docs/packet-filter.md`](docs/packet-filter.md).
+
 **Clock synchronisation.** The site can set a node's clock over MQTT, and a
 monitoring node can set the clocks of the repeaters it looks after over LoRa.
 Only forwards, never backwards, because a node that sets its clock back

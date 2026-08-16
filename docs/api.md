@@ -147,8 +147,22 @@ presentation from `metrics.metric_info()`.
 {"slug": "example", "name": "…", "pubkey_prefix": "…", "last_seen": "…",
  "metrics": {"bat": {"value": 4.15, "ts": "…", "label": "Batterijspanning",
                      "unit": "V", "section": "battery", "sort": 1}},
- "neighbors": [{"prefix": "2ae7af", "name": "…", "snr": -4.25, "last_seen": "…"}]}
+ "neighbors": [{"prefix": "2ae7af", "name": "…", "snr": -4.25, "last_seen": "…"}],
+ "filter": {"known": true, "on": false, "text": "uit", "dropped": 0,
+            "passed": 91422, "reasons": [], "updated": "…"}}
 ```
+
+`filter` is the repeater's packet filter, as of its last statistics message. It
+is public on purpose: a repeater with a filter on stops forwarding other
+people's traffic, and the people who notice are the ones reading this API rather
+than the node's operator. Without it, "why does my message not arrive" is only
+answerable by somebody with a login.
+
+`known` false means the node has never said anything about a filter — usually
+firmware older than 2.3.0. That is **not** a claim that no filter is running.
+`reasons` lists only the non-zero ones, largest first. The rule tables (per-type
+hop limits, rate limits, blocked channels) are not here: those are an operator's
+tool and sit behind a login. See [`packet-filter.md`](packet-filter.md).
 
 A metric the catalogue does not know is never rejected: it lands in section
 `other` with its key as a label, so firmware can add a metric without a server
@@ -615,6 +629,7 @@ and records the refusal in the audit trail. Details of the mechanisms are in
 | `/admin/repeaters/{rid}/settings` | GET | Redirect to `/admin/repeaters/{rid}`, query string included. Kept for bookmarks |
 | `/admin/repeaters/{rid}/settings/refresh` | POST | Ask for a CLI settings sweep now |
 | `/admin/repeaters/{rid}/clocksync` | POST | Set this repeater's clock now. See [`clocksync.md`](clocksync.md) |
+| `/admin/repeaters/{rid}/filter` | POST | One packet-filter rule. `cmd` plus optional `arg1`/`arg2` are joined into the command line the node's own CLI takes; the permission asked for follows what the rule blocks (`node.filter.gewoon` / `.merkbaar` / `.ingrijpend`). See [`packet-filter.md`](packet-filter.md) |
 | `/admin/repeaters/{rid}/toggle` | POST | Flip one visibility switch: `what=public` (default), `position` or `name`. `back=node` returns to the node page |
 | `/admin/repeaters/{rid}/rename` | POST | Change the display name |
 | `/admin/repeaters/{rid}/delete` | POST | Delete the repeater and its samples, latest and neighbours |

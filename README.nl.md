@@ -57,6 +57,15 @@ dagen. Blokken klappen dicht en die voorkeur wordt per bezoeker onthouden.
 te lezen — regio, hash mode, zendvermogen — en zie ze op de site. Alleen-lezen:
 de site kan waarden opvragen, nooit schrijven.
 
+**Pakketfilter.** Een repeater met onze firmware kan weigeren verkeer door te
+sturen, op zes soorten regel — aantal hops, een snelheidslimiet per pakkettype,
+minimale padhashgrootte, geblokkeerde kanalen, structureel onmogelijke
+groepstekst, en hele pakkettypes. Standaard uit, vanaf de site te beheren met
+drie risicoklassen, en elk weggegooid pakket wordt geteld per reden en in een
+grafiek gezet. `filter off` blijft bereikbaar over de mesh-CLI, want een filter
+is de ene instelling die een node nutteloos maakt zonder hem onbereikbaar te
+maken. Zie [`docs/nl/packet-filter.md`](docs/nl/packet-filter.md).
+
 **Kloksynchronisatie.** De site kan de klok van een node over MQTT zetten, en een
 monitorende node kan over LoRa de klok zetten van de repeaters waar hij naar
 omkijkt. Alleen vooruit, nooit achteruit, want een node die zijn klok terugzet

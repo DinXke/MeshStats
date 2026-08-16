@@ -320,9 +320,43 @@ geldig over MQTT, aangezien beide door dezelfde handler gaan:
 | `force` | bool; de heartbeat-dedup omzeilen en altijd een meetpunt wegschrijven |
 | `neighbors` | array van `{prefix, name, snr, seen_min}` |
 | `settings` | object met CLI-parameters; zie hieronder |
+| `filter` | de stand en de weggooitellers van het pakketfilter; zie hieronder |
 
 Elke buur wordt ook een eigen tijdreeks onder de metrieksleutel
 `neighbor_<prefix>`.
+
+### `filter` — het pakketfilter
+
+Reist mee met **elk** statistiekenbericht, niet met de dagelijkse ronde:
+
+```json
+"filter": {
+  "on": true, "disarmed": false, "hash": 1, "malformed": true,
+  "channels": 1, "blocked_types": 0, "passed": 91422, "exempt": 12,
+  "drop": {"type": 0, "hops": 41, "rate": 308, "hash": 0,
+           "kanaal": 77, "misvormd": 4}
+}
+```
+
+Ongeveer 160 byte, en die frequentie is het punt. Een filter maakt een node
+nutteloos zonder hem onbereikbaar te maken — hij antwoordt nog, adverteert nog,
+staat nog groen — dus een stand die maar eens per dag reisde, zou een dag te laat
+zijn. De regeltabellen (twaalf hoplimieten, twaalf snelheidslimieten, de
+kanalenlijst) zitten er **niet** in: twee kilobyte die eens per maand verandert
+hoort achter een verzoek van iemand die ze gaat wijzigen, en dat is
+`GET /api/filter` op de node.
+
+De tellers gaan door de gewone metricmolen als `filter_dropped`, `filter_passed`,
+`filter_exempt`, `filter_on` en `filter_drop_<reden>`, zodat ze net als al het
+andere in grafieken komen en verouderen.
+
+De server neemt dit object **alleen aan als het bericht over de afzender zelf
+gaat**. Een node mag legitiem cijfers doorgeven over een repeater die hij
+monitort, maar niet diens filterstand: een gemonitorde repeater vertelt zijn
+filter nergens over de radio, dus een blok dat dat beweert kan niet kloppen.
+Geweigerd, en opgeschreven.
+
+Zie [`packet-filter.md`](packet-filter.md).
 
 ### `settings` — de eigen CLI-configuratie van de node
 

@@ -374,6 +374,40 @@ afgewezen om een reden: een repeater waarvan de monitor alleen-lezen inlogt,
 beantwoordt helemaal geen CLI-commando, en met waarden uit maart nog op het
 scherm en alleen een tijdstempel dat opschoof, zou niemand dat ooit vinden.
 
+### `repeater_filter`
+
+Het pakketfilter van een repeater, zoals hij het in zijn laatste
+statistiekenbericht meldde.
+
+| Kolom | Type | Inhoud |
+|---|---|---|
+| `repeater_id` | INTEGER PK | FK naar `repeaters`, `ON DELETE CASCADE` |
+| `state` | TEXT | De stand als JSON: aan/uit, de minimale padhash, de structuurcontrole, hoeveel kanalen en types dichtstaan, en de weggooitellers per reden |
+| `updated` | TEXT | Wanneer deze rij geschreven is |
+| `source` | TEXT | Welke node het publiceerde |
+
+**Een JSON-blok en geen rijen in `repeater_cli`**, en dat is de enige plek in dit
+schema waar van de sleutel/waardevorm afgeweken wordt, dus de reden hoort erbij.
+`repeater_cli` bewaart wat een node antwoordt op `get <naam>`: één regel tekst
+per sleutel, die de vergelijkingstabel naast elkaar zet. Een filterstand is drie
+tabellen (hoplimiet, snelheidslimiet en aan/uit per pakkettype) plus een
+kanalenlijst plus zes tellers. Dat in rijen persen levert sleutels op als
+`filter.rate.05.limit` — zeventig rijen per node waar niets ooit los naar vraagt,
+en een kolomkiezer die onbruikbaar wordt door zeventig kolommen die niemand wil.
+
+Ook niet genormaliseerd, om dezelfde reden: er is niets dat naar een deel ervan
+vraagt. De site leest deze stand altijd in zijn geheel. Een schema dat query's
+ondersteunt die niemand stelt, is onderhoud zonder opbrengst — en de dag dat de
+firmware er een regel bij krijgt, is dit de vorm die zonder migratie meebeweegt.
+
+Wat hier staat is een **momentopname**, niet de waarheid. De waarheid staat in de
+node; vandaar `updated` en `source`, zodat een pagina "volgens het bericht van
+14:03" kan zeggen in plaats van te doen alsof ze het nu weet. Een ontbrekende rij
+en een bewaarde "uit" zijn verschillende feiten, en `db.filter_state_for()` geeft
+voor de eerste `None`: een node die nooit over een filter begonnen is, draait
+meestal firmware ouder dan 2.3.0, en dat is geen bewering dat er geen filter
+aanstaat.
+
 ### `packets`
 
 Eén rij per ontvangst. Geschreven door `db.insert_packet()` vanuit de

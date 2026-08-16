@@ -152,8 +152,24 @@ uit `metrics.metric_info()`.
 {"slug": "example", "name": "…", "pubkey_prefix": "…", "last_seen": "…",
  "metrics": {"bat": {"value": 4.15, "ts": "…", "label": "Batterijspanning",
                      "unit": "V", "section": "battery", "sort": 1}},
- "neighbors": [{"prefix": "2ae7af", "name": "…", "snr": -4.25, "last_seen": "…"}]}
+ "neighbors": [{"prefix": "2ae7af", "name": "…", "snr": -4.25, "last_seen": "…"}],
+ "filter": {"known": true, "on": false, "text": "uit", "dropped": 0,
+            "passed": 91422, "reasons": [], "updated": "…"}}
 ```
+
+`filter` is het pakketfilter van de repeater, zoals hij het in zijn laatste
+statistiekenbericht meldde. Het staat met opzet in het publieke antwoord: een
+repeater met een filter aan stuurt andermans verkeer niet meer door, en de mensen
+die dat merken zijn de lezers van deze API en niet de beheerder van de node.
+Zonder dit is "waarom komt mijn bericht niet aan" alleen te beantwoorden door
+iemand met een inlog.
+
+`known` false betekent dat de node nooit iets over een filter gezegd heeft —
+meestal firmware ouder dan 2.3.0. Dat is **geen** bewering dat er geen filter
+aanstaat. `reasons` bevat alleen de redenen die niet nul zijn, grootste eerst. De
+regeltabellen (hoplimieten per type, snelheidslimieten, geblokkeerde kanalen)
+staan er niet in: dat is beheerdersgereedschap en dat zit achter een login. Zie
+[`packet-filter.md`](packet-filter.md).
 
 Een metriek die de catalogus niet kent, wordt nooit geweigerd: die belandt in
 sectie `other` met zijn sleutel als label, zodat firmware een metriek kan
@@ -630,6 +646,7 @@ mechanismen staan in [`admin.md`](admin.md); welk recht een route vraagt is de
 | `/admin/repeaters/{rid}/settings` | GET | Omleiding naar `/admin/repeaters/{rid}`, querystring inbegrepen. Blijft bestaan voor bladwijzers |
 | `/admin/repeaters/{rid}/settings/refresh` | POST | Nu om een CLI-instellingenronde vragen |
 | `/admin/repeaters/{rid}/clocksync` | POST | De klok van deze repeater nu zetten. Zie [`clocksync.md`](clocksync.md) |
+| `/admin/repeaters/{rid}/filter` | POST | Eén regel van het pakketfilter. `cmd` plus eventueel `arg1`/`arg2` worden samengevoegd tot de commandoregel die de CLI van de node zelf aanneemt; het gevraagde recht volgt wat de regel blokkeert (`node.filter.gewoon` / `.merkbaar` / `.ingrijpend`). Zie [`packet-filter.md`](packet-filter.md) |
 | `/admin/repeaters/{rid}/toggle` | POST | Eén zichtbaarheidsknop omzetten: `what=public` (standaard), `position` of `name`. Met `back=node` terug naar de nodepagina |
 | `/admin/repeaters/{rid}/rename` | POST | De weergavenaam wijzigen |
 | `/admin/repeaters/{rid}/delete` | POST | De repeater en zijn metingen, actuele waarden en buren verwijderen |

@@ -307,9 +307,41 @@ over MQTT too, since both go through the same handler:
 | `force` | bool; bypass the heartbeat dedup and always write a sample |
 | `neighbors` | array of `{prefix, name, snr, seen_min}` |
 | `settings` | object of CLI parameters; see below |
+| `filter` | the packet filter's state and drop counters; see below |
 
 Each neighbour also becomes its own time series under the metric key
 `neighbor_<prefix>`.
+
+### `filter` — the packet filter
+
+Rides along with **every** statistics message, not with the daily sweep:
+
+```json
+"filter": {
+  "on": true, "disarmed": false, "hash": 1, "malformed": true,
+  "channels": 1, "blocked_types": 0, "passed": 91422, "exempt": 12,
+  "drop": {"type": 0, "hops": 41, "rate": 308, "hash": 0,
+           "kanaal": 77, "misvormd": 4}
+}
+```
+
+About 160 bytes, and the frequency is the point. A filter makes a node useless
+without making it unreachable — it still answers, still advertises, still shows
+green — so a state that only travelled once a day would be a day late. The rule
+tables (twelve hop limits, twelve rate limits, the channel list) are **not** in
+here: two kilobytes that change once a month belong behind a request from
+somebody about to change them, which is `GET /api/filter` on the node.
+
+The counters go through the ordinary metric machinery as `filter_dropped`,
+`filter_passed`, `filter_exempt`, `filter_on` and `filter_drop_<reason>`, so they
+graph and age like everything else.
+
+The server takes this object **only when the message is about the publisher
+itself**. A node may legitimately relay figures about a repeater it monitors, but
+not its filter state: a monitored repeater never reports its filter over the
+radio, so a block claiming otherwise cannot be true. Refused, and logged.
+
+See [`packet-filter.md`](packet-filter.md).
 
 ### `settings` — the node's own CLI configuration
 

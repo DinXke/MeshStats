@@ -560,6 +560,50 @@ The node list at `/admin` shows a second, click-through pill on a node that is
 public but not fully so, because "publiek" alone would promise more than it
 delivers there.
 
+### The packet filter — `#pakketfilter`
+
+Which of *other people's* packets this repeater still forwards. The block is
+always there, even for a node the server cannot reach over IP, because its first
+job is to answer "is a filter running here" — and that answer must not depend on
+whether the node happens to be online right now.
+
+Three sources, three questions, deliberately not merged:
+
+| Context key | Comes from | Answers |
+|---|---|---|
+| `filter_seen` | `repeater_filter`, filled from the last statistics message | Is a filter on, and what has it thrown away, by reason |
+| `filter_live` | `GET /api/filter` on the node itself | What are the rules right now — the tables that are too large to ride along in every message |
+| `filter_route` | `pktfilter.filter_route(rep)` | May and can this site change them |
+
+Merging them produces exactly one kind of bug: a page claiming no filter is
+running because the node did not answer this second.
+
+`filter_seen` has **three** states and not two. "Never reported anything" —
+usually firmware older than 2.3.0 — is not a claim that no filter is on. A node
+that reports `uit (veilige modus)` is a third: it restarted repeatedly, so it
+left its own filter off for this boot, and the rules are still stored.
+
+Writes go to `/admin/repeaters/{rid}/filter`, one form per action. The command is
+assembled from a hidden field plus numeric inputs with their own min and max —
+there is deliberately no text box you can type a whole command line into, because
+then the risk weighting would depend on how somebody happened to spell it.
+
+The risk tier follows what the rule *blocks*, not what the form looks like.
+`hops 05 4` and `hops 05 0` are the same input box and two different permissions;
+the second stops group text entirely and asks for the node's name. `filter on`
+weighs heavier when such a rule is already stored, because that click is the one
+that actually silences the traffic.
+
+The way back is the *cheapest* action: `off` and `reset` are `node.filter.gewoon`,
+lighter than switching on. A role that may not enable a filter may still disable
+one. And the real fallback does not run through this page at all — `filter off`
+over the mesh CLI needs no WiFi, no admin page and no server. See
+[`packet-filter.md`](packet-filter.md).
+
+The audit trail records the sentence, not the command line: "GRP_TXT (05)
+helemaal niet meer doorsturen" is still readable in six months; `hops 05 0` is
+not.
+
 ## Server and site — `GET /admin/server`
 
 | Anchor | Block | Contents |

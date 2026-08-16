@@ -574,6 +574,51 @@ De nodelijst op `/admin` toont bij een node die publiek is maar niet helemaal,
 een tweede pil die doorklikt, want "publiek" alleen belooft daar meer dan het
 waarmaakt.
 
+### Het pakketfilter — `#pakketfilter`
+
+Welke van *andermans* pakketten deze repeater nog doorstuurt. Het blok staat er
+altijd, ook bij een node die de server niet over IP bereikt, want zijn eerste
+taak is de vraag "draait hier een filter" beantwoorden — en dat antwoord mag niet
+afhangen van of de node nu toevallig online is.
+
+Drie bronnen, drie vragen, met opzet niet samengevoegd:
+
+| Contextsleutel | Komt uit | Beantwoordt |
+|---|---|---|
+| `filter_seen` | `repeater_filter`, gevuld uit het laatste statistiekenbericht | Staat er een filter aan, en wat gooide het weg, per reden |
+| `filter_live` | `GET /api/filter` op de node zelf | Wat zijn de regels nu — de tabellen die te groot zijn om in elk bericht mee te reizen |
+| `filter_route` | `pktfilter.filter_route(rep)` | Mag en kan deze site ze wijzigen |
+
+Ze door elkaar halen levert precies één soort fout op: een pagina die beweert dat
+er geen filter aanstaat omdat de node net niet antwoordde.
+
+`filter_seen` heeft **drie** toestanden en geen twee. "Nooit iets gemeld" —
+meestal firmware ouder dan 2.3.0 — is geen bewering dat er geen filter aanstaat.
+Een node die `uit (veilige modus)` meldt is een derde: die is herhaaldelijk
+opnieuw opgestart en liet zijn eigen filter deze keer uit, terwijl de regels
+gewoon bewaard blijven.
+
+Schrijven gaat naar `/admin/repeaters/{rid}/filter`, met één formulier per
+handeling. De commandoregel wordt samengesteld uit een verborgen veld plus
+getalvelden met hun eigen minimum en maximum — er is met opzet geen tekstvak
+waarin je een hele regel kunt typen, want dan zou de risicoweging afhangen van
+hoe iemand het toevallig spelt.
+
+De risicoklasse volgt wat de regel *blokkeert*, niet hoe het formulier eruitziet.
+`hops 05 4` en `hops 05 0` zijn hetzelfde invoerveld en twee verschillende
+bevoegdheden; de tweede zet groepstekst helemaal stil en vraagt de naam van de
+node. `filter on` weegt zwaarder als zo'n regel al klaarstaat, want dán is dat de
+klik die het verkeer werkelijk stilzet.
+
+De weg terug is de *goedkoopste* handeling: `off` en `reset` vallen onder
+`node.filter.gewoon`, lichter dan aanzetten. Een rol die een filter niet aan mag
+zetten, mag er wel een uitzetten. En het echte vangnet loopt helemaal niet langs
+deze pagina — `filter off` over de mesh-CLI heeft geen WiFi, geen beheerpagina en
+geen server nodig. Zie [`packet-filter.md`](packet-filter.md).
+
+Het audittrail legt de zin vast en niet de commandoregel: "GRP_TXT (05) helemaal
+niet meer doorsturen" is over een half jaar nog te lezen, `hops 05 0` niet.
+
 ## Server en site — `GET /admin/server`
 
 | Anker | Blok | Inhoud |

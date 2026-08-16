@@ -357,6 +357,38 @@ for a reason: a repeater whose monitor logs in read-only answers no CLI command
 at all, and with values from March still on screen and only a timestamp moved,
 nobody would ever find that.
 
+### `repeater_filter`
+
+The packet filter of a repeater, as of its last statistics message.
+
+| Column | Type | Contents |
+|---|---|---|
+| `repeater_id` | INTEGER PK | FK to `repeaters`, `ON DELETE CASCADE` |
+| `state` | TEXT | The state as JSON: on/off, minimum path hash, the structural check, how many channels and types are blocked, and the drop counters per reason |
+| `updated` | TEXT | When this row was written |
+| `source` | TEXT | Which node published it |
+
+**A JSON blob and not rows in `repeater_cli`**, which is the one place in this
+schema that deviates from the key/value shape, so the reason belongs here.
+`repeater_cli` holds what a node answers to `get <name>`: one line of text per
+key, which the comparison table puts side by side. A filter state is three tables
+(hop limit, rate limit and on/off per packet type) plus a channel list plus six
+counters. Pressing that into rows yields keys like `filter.rate.05.limit` —
+seventy rows per node that nothing ever queries individually, and a column picker
+made useless by seventy columns nobody wants.
+
+Not normalised either, for the same reason: nothing asks for a part of it. The
+site reads this state whole, always. A schema supporting queries nobody makes is
+maintenance without return — and the day the firmware grows a rule, this is the
+shape that moves along without a migration.
+
+What is stored is a **snapshot**, not the truth. The truth is in the node; hence
+`updated` and `source`, so a page can say "according to the message of 14:03"
+instead of pretending it knows now. A missing row and a stored "off" are
+different facts, and `db.filter_state_for()` returns `None` for the first: a node
+that has never mentioned a filter is usually one running firmware older than
+2.3.0, which is not a claim that no filter is on.
+
 ### `packets`
 
 One row per reception. Written by `db.insert_packet()` from the MQTT `rx` path.

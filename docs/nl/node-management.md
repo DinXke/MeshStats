@@ -34,7 +34,8 @@ opnieuw maakt.
 [bevestigen-of-terugdraaien](#bevestigen-of-terugdraaien-onderzocht-en-met-opzet-niet-gebouwd) ·
 [teruglezen](#lees-na-een-schrijfactie-terug)
 
-**Het apparaat** — [de klok](#de-klok-zetten) ·
+**Het apparaat** — [het pakketfilter](#het-pakketfilter) ·
+[de klok](#de-klok-zetten) ·
 [firmware en terugrollen](#firmware-upgraden-en-terugrollen) ·
 [als een node niet terugkomt](#als-een-node-niet-terugkomt)
 
@@ -1097,6 +1098,72 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 > een vergissing daar is niet te herstellen, en hij is bovendien het
 > referentiegeval waarvoor dit ontwerp bestaat. Schrijfpaden worden getest tegen
 > een node die iemand fysiek kan aanraken.
+
+## Het pakketfilter
+
+Een pakketfilter bepaalt welke van *andermans* pakketten een repeater nog
+doorstuurt. Het staat standaard uit, het geldt per node, en het is de enige
+instelling op deze pagina waarvan de storing eruitziet als een kerngezonde node.
+
+Dat is meteen de reden dat het hier een eigen hoofdstuk krijgt en geen regel in
+de instellingentabel. Zet een frequentie verkeerd en de node valt stil —
+vervelend, maar je merkt het binnen het uur. Zet een filter verkeerd en de node
+blijft antwoorden, blijft adverteren, staat op elke pagina groen, en stuurt
+stilletjes niets meer door. Je merkt het als iemand klaagt dat zijn berichten
+niet meer aankomen, en dat kan dagen duren.
+
+**Weet hoe je hem uitzet vóór je hem aanzet.** Drie wegen, op volgorde van hoeveel
+er nog moet werken:
+
+1. `filter off` of `filter reset` **over de mesh-CLI**. Geen WiFi, geen
+   beheerpagina, geen server — LoRa staat er eerder dan die alle drie. Dit is de
+   weg die werkt als de andere het niet doen.
+2. De knoppen in het blok *Pakketfilter* op de beheerpagina van de node.
+3. `POST /api/filter` met `cmd=off` op de node zelf.
+
+Op de site zijn die twee ook de *goedkoopste* handelingen in het rechtenmodel —
+`node.filter.gewoon`, lichter dan een filter aanzetten. Een rol die een filter
+niet aan mag zetten, mag er wel een uitzetten. Herstel mag nooit strakker
+afgeschermd zijn dan de fout die het terugdraait.
+
+### Wat je kunt zetten, en wat het kost
+
+De zes soorten regel, wat ze blokkeren en wat elk ervan kost, staan in
+[`packet-filter.md`](packet-filter.md). Twee ervan verrassen mensen, dus die
+staan hier nog een keer:
+
+- **Een kanaal blokkeren vraagt de kanaalsleutel, niet de naam.** Alles wat een
+  repeater ziet is één byte: `sha256(kanaalsleutel)[0]`. En één byte botst:
+  ruwweg één kanaal op 256 deelt hem, en dat verkeer gaat mee.
+- **"Misvormd" betekent structureel onmogelijk**, niet "de tekst ziet er raar
+  uit". De inhoud is versleuteld met een sleutel die een repeater niet heeft.
+
+### De drie risicoklassen, toegepast op filters
+
+Dezelfde drie als bij instellingen, en de klasse volgt wat een regel
+*blokkeert* en niet hoe het formulier eruitziet. `hops 05 4` en `hops 05 0` zijn
+hetzelfde invoerveld: de eerste verkort het bereik van groepstekst, de tweede
+zet hem stil. Dus vraagt de tweede om de naam van de node en de eerste alleen om
+een `ja`.
+
+`filter on` gaat een klasse omhoog als zo'n regel al klaarstaat — want dán is dat
+de klik die het verkeer werkelijk stilzet, en niet de klik die de regel schreef
+terwijl het filter uitstond.
+
+### Zien dat er een aanstaat
+
+Kijk op drie plaatsen, waarvan je er geen hoeft te zoeken:
+
+- het blok **Pakketfilter** op de nodepagina, dat toont wat de node in zijn
+  laatste statistiekenbericht meldde, inclusief wat hij weggooide en waarom;
+- de kolom **Pakketfilter** in de vergelijkingstabel, standaard in beeld — "op
+  welke node staat er iets aan" is een vraag over de verzameling;
+- het `filter`-object in `GET /api/v1/repeaters/{slug}`, dat publiek is, want de
+  mensen die verkeer missen zijn niet de mensen met een inlog.
+
+Alle drie houden "nooit iets gemeld" (meestal firmware ouder dan 2.3.0) en
+"meldt dat er niets aanstaat" uit elkaar. Die tot één leeg vakje platslaan maakt
+precies de vraag onbeantwoordbaar waarvoor dit bestaat.
 
 ---
 
