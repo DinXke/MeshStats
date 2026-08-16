@@ -41,7 +41,6 @@ import base64
 import configparser
 import hashlib
 import json
-import os
 import re
 import threading
 import time
@@ -58,20 +57,20 @@ from . import config, db
 # werkkopie, want die staat er al en kan niet stilletjes naar een andere repo
 # wijzen dan waar de code uit komt. De omgevingsvariabele is er voor de
 # container, waar geen .git zit -- zie repo_slug().
-REPO_OVERRIDE = os.environ.get("MCS_GITHUB_REPO", "").strip()
+REPO_OVERRIDE = config.env("GITHUB_REPO", "").strip()
 
 # Inloggegevens van de beheerpagina van de nodes. Eén paar voor alle nodes: het
 # zijn de nodes van één beheerder en de firmware kent maar één account. Niet in
 # de database, omdat een wachtwoord dat in een back-up van de statistieken
 # meelift een wachtwoord is dat je niet meer kunt overzien.
-NODE_USER = os.environ.get("MCS_FW_NODE_USER", "").strip()
-NODE_PASS = os.environ.get("MCS_FW_NODE_PASS", "")
+NODE_USER = config.env("FW_NODE_USER", "").strip()
+NODE_PASS = config.env("FW_NODE_PASS", "")
 
 # GitHub laat anoniem 60 verzoeken per uur toe, per IP, gedeeld met alles wat er
 # verder op die machine draait. De beheerpagina zou dat in een middagje opmaken
 # door bij elke verversing opnieuw te vragen, dus de lijst wordt gecachet en bij
 # een fout blijft de laatste goede lijst staan.
-CACHE_MIN = int(os.environ.get("MCS_FW_CACHE_MIN", "15") or 15)
+CACHE_MIN = int(config.env("FW_CACHE_MIN", "15") or 15)
 GITHUB_TIMEOUT_S = 10
 DOWNLOAD_TIMEOUT_S = 60
 
@@ -89,7 +88,54 @@ RETURN_POLL_S = 5
 MIN_IMAGE = 200_000
 MAX_IMAGE = 6_553_600
 
-ASSET_RE = re.compile(r"^meshstats-(?P<env>.+)-(?P<version>\d+\.\d+\.\d+)\.bin$")
+# Beide voorvoegsels, en dat blijft even zo. De images heten sinds de
+# hernoeming meshmanager-<env>-<versie>.bin, maar de releases die er nu al
+# liggen heten meshstats-...: een site die alleen de nieuwe naam kent, ziet
+# in elke oudere release nul images en kan dus niet terug. Juist terug
+# kunnen is waar de rollback voor bestaat.
+#
+# Weg te halen als er geen release meer in de lijst staat met de oude naam.
+# Dat is af te lezen op /admin/firmware en niet te gokken.
+ASSET_RE = re.compile(
+    r"^(?:meshmanager|meshstats)-(?P<env>.+)-(?P<version>\d+\.\d+\.\d+)\.bin$")
+
+# Bouwomgevingen die van naam veranderd zijn: {wat de node meldt: hoe het
+# image nu heet}.
+#
+# Zonder dit zou de hernoeming naar MeshManager alleen met een USB-kabel te
+# installeren zijn, en dat is op een dak geen upgradeweg. Een node die nog
+# 1.12.0 draait, is gebouwd onder heltec_v4_repeater_meshstats en meldt die
+# naam; de release die hem eroverheen moet helpen draagt
+# heltec_v4_repeater_meshmanager. Precies een keer moeten die twee elkaar
+# vinden -- daarna meldt de node zelf de nieuwe naam.
+#
+# Alleen in deze richting vertaald: van wat een node zegt naar hoe een image
+# heet. Andersom zou een oud image aan een nieuwe node aangeboden worden, en
+# dan draait er firmware die op meshcore/ publiceert op een node waarvan de
+# site denkt dat hij om is.
+#
+# Weg te halen zodra geen enkele node de oude envnaam nog meldt; /admin
+# toont per node wat hij meldt.
+ENV_ALIAS = {
+    "heltec_v4_repeater_meshstats": "heltec_v4_repeater_meshmanager",
+}
+
+
+def image_for(release: dict, env: str) -> dict | None:
+    """Het image uit deze release dat bij deze bouwomgeving hoort.
+
+    Eerst op de naam die de node zelf meldt, en pas als die niets oplevert
+    via ENV_ALIAS. Die volgorde is niet willekeurig: zolang een release nog
+    een image met de oude envnaam bevat, is dat het image dat er echt bij
+    hoort, en een alias die daar overheen walst zou een terugrol naar een
+    oudere versie het verkeerde bestand geven.
+    """
+    images = release.get("images") or {}
+    hit = images.get(env)
+    if hit:
+        return hit
+    alias = ENV_ALIAS.get(env)
+    return images.get(alias) if alias else None
 
 _lock = threading.Lock()
 _cache: dict = {"at": 0.0, "items": [], "error": "", "slug": ""}
@@ -569,7 +615,7 @@ def _run_inner(rep_id: int, host: str, tag: str, expect_env: str) -> None:
                 msg=f"de node meldt {env!r}, de pagina ging uit van {expect_env!r}")
         return
 
-    image = release["images"].get(env)
+    image = image_for(release, env)
     if not image:
         _update(rep_id, state="mislukt", step="env", ended=db.utcnow(),
                 msg=f"release {tag} heeft geen image voor {env!r} "

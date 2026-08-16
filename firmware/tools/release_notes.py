@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Read the MeshStatsNet version and its changelog entry out of the source.
+"""Read the MeshManagerNet version and its changelog entry out of the source.
 
 The release workflow needs three things that already exist in exactly one
 authoritative place each, and copying them anywhere else is how they start
 disagreeing:
 
-  * the version   -- MESHSTATS_VERSION in MeshStatsNet.h
+  * the version   -- MESHMANAGER_VERSION in MeshManagerNet.h
   * the notes     -- the block for that version in the changelog comment at the
-                     top of MeshStatsNet.cpp
+                     top of MeshManagerNet.cpp
   * the agreement -- that the git tag being built names the same version
 
 That last one is the reason this is a script and not three lines of shell. A tag
@@ -31,8 +31,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE.parent / "examples" / "simple_repeater"
-HEADER = SRC / "MeshStatsNet.h"
-BODY = SRC / "MeshStatsNet.cpp"
+HEADER = SRC / "MeshManagerNet.h"
+BODY = SRC / "MeshManagerNet.cpp"
 
 # ' * 1.12.0 An upgrade path that ...' starts a block; the next such line ends it.
 ENTRY = re.compile(r"^ \* (\d+\.\d+\.\d+)\s+(.*)$")
@@ -41,9 +41,9 @@ CONT = re.compile(r"^ \*(?:        )?(.*)$")
 
 def version() -> str:
     text = HEADER.read_text(encoding="utf-8")
-    m = re.search(r'#define\s+MESHSTATS_VERSION\s+"([^"]+)"', text)
+    m = re.search(r'#define\s+MESHMANAGER_VERSION\s+"([^"]+)"', text)
     if not m:
-        sys.exit(f"MESHSTATS_VERSION not found in {HEADER}")
+        sys.exit(f"MESHMANAGER_VERSION not found in {HEADER}")
     return m.group(1)
 
 
@@ -130,7 +130,7 @@ def main() -> None:
     have = version()
     if want != have:
         sys.exit(
-            f"tag {tag} says {want} but MESHSTATS_VERSION says {have}. "
+            f"tag {tag} says {want} but MESHMANAGER_VERSION says {have}. "
             "Bump the header, or tag the version that is in it -- a release "
             "whose assets report a different version than the release does "
             "sends the site looking for an upgrade that installs something else."

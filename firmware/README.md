@@ -1,4 +1,4 @@
-# MeshStats firmware
+# MeshManager firmware
 
 Changes to the [MeshCore](https://github.com/meshcore-dev/MeshCore) firmware
 (companion v1.17.0 line) that give your node:
@@ -6,13 +6,23 @@ Changes to the [MeshCore](https://github.com/meshcore-dev/MeshCore) firmware
 1. **multiple companions at once** — Home Assistant, the MeshCore app and a
    stats server can all be connected simultaneously
 2. a **management page** on port 80, with live statistics
-3. **stats publishing over MQTT** to a MeshStats site
-4. on repeaters, `MeshStatsNet`: WiFi with AP fallback, OTA over your normal
+3. **stats publishing over MQTT** to a MeshManager site
+4. on repeaters, `MeshManagerNet`: WiFi with AP fallback, OTA over your normal
    network, a telnet console on the MeshCore CLI, and filesystem backup/restore
 
 **Full documentation: [`../docs/firmware.md`](../docs/firmware.md).** This file is
 a short index; the detail — including *why* an OTA does not lose your keys — lives
 there.
+
+> **Coming from MeshStats?** The module was called `MeshStatsNet` up to and
+> including 1.12.0. Version 2.0.0 renames everything, the MQTT topic prefix
+> included, so **update the server first** — it listens to both prefixes, a node
+> does not. In your own `platformio.local.ini`, rename `-D MESHSTATS_NET` to
+> `-D MESHMANAGER_NET`; forget it and you get a build that starts as a plain
+> MeshCore repeater without saying so. After flashing, `ver` must answer
+> `MeshManager (by DinX) v2.0.0`. The config on the data partition keeps its
+> filenames and survives, and the topic prefix moves itself once. Full order of
+> operations: [`../docs/migration.md`](../docs/migration.md).
 
 ## Files
 
@@ -23,9 +33,9 @@ there.
 | `examples/companion_radio/StatsPublisher.{h,cpp}` | MQTT publishing + management page |
 | `examples/companion_radio/MyMesh.{h,cpp}` | `fillStatsJson()`, `fillNodeIdHex()`, raw-packet hook |
 | `examples/companion_radio/main.cpp` | Wires the module in |
-| `examples/simple_repeater/MeshStatsNet.{h,cpp}` | Repeater: WiFi, management page, OTA, console, backup |
+| `examples/simple_repeater/MeshManagerNet.{h,cpp}` | Repeater: WiFi, management page, OTA, console, backup |
 | `repeater-hooks.patch` | The three small edits in `simple_repeater` |
-| `meshstats.patch` | Everything, as one patch |
+| `meshmanager.patch` | Everything, as one patch |
 
 ## Why these changes
 
@@ -63,11 +73,11 @@ cd MeshCore
 git checkout companion-v1.17.0
 
 # copy the files from this directory over the tree
-cp -r /path/to/MeshStats/firmware/src/*      src/
-cp -r /path/to/MeshStats/firmware/examples/* examples/
+cp -r /path/to/MeshManager/firmware/src/*      src/
+cp -r /path/to/MeshManager/firmware/examples/* examples/
 
 # or apply as a patch
-git apply /path/to/MeshStats/firmware/meshstats.patch
+git apply /path/to/MeshManager/firmware/meshmanager.patch
 ```
 
 Create a `platformio.local.ini` with your own settings (see
@@ -89,11 +99,11 @@ python -m platformio run -e <your_env> -t upload --upload-port COM4
 
 ## Repeater with network management
 
-`MeshStatsNet` gives a repeater an IP life alongside its mesh life. Built for a
+`MeshManagerNet` gives a repeater an IP life alongside its mesh life. Built for a
 node on a roof, which must never become unreachable:
 
 - **WiFi client**; if it cannot connect within 30 s it broadcasts its own network
-  (`MeshCore-<id>`) with the same management page, and keeps retrying yours every
+  (`MeshManager-<id>`) with the same management page, and keeps retrying yours every
   5 minutes
 - **Management page** on port 80 behind a login, with status, WiFi settings and
   **firmware upload at `/update`** — upgrades go over your normal network, not
@@ -116,7 +126,7 @@ Three safety nets against a bug in this code itself:
 | Radio init fails | No infinite `halt()`; the network side starts anyway so you can reflash |
 
 > **A backup contains your private key.** Set your own password immediately
-> (default `admin` / `meshcore`) — the same login also guards firmware upload.
+> (default `admin` / `meshmanager`) — the same login also guards firmware upload.
 
 ## Management page
 
@@ -135,7 +145,7 @@ After flashing: **http://\<node-ip\>/**
 |---|---|---|
 | `WIFI_MAX_CLIENTS` | 4 | Simultaneous companions (~2–3 kB RAM each) |
 | `TCP_PORT` | 5000 | Companion port |
-| `MESHSTATS_NET` | unset | Enable the repeater network module |
+| `MESHMANAGER_NET` | unset | Enable the repeater network module (was `MESHSTATS_NET` before 2.0.0) |
 | `MAX_GROUP_CHANNELS` | — | Number of channel slots |
 | `WIFI_SSID` / `WIFI_PWD` | — | Built-in network defaults |
 
@@ -147,7 +157,7 @@ Working and tested on a Heltec V3 (ESP32-S3) companion and a Heltec V4 repeater.
 - Channel-counter fix
 - Management page and `/stats.json`
 - MQTT stats publishing
-- `MeshStatsNet` on the repeater
+- `MeshManagerNet` on the repeater
 - Forwarding over **HTTP**: abandoned, it crashed the node
 - Raw-packet forwarding over MQTT: **in development**
 - A full web client on the companion node: **planned**

@@ -1,4 +1,61 @@
-/* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
+/* Changelog of this module (see MESHMANAGER_VERSION in MeshManagerNet.h).
+ *
+ * Deze module heette MeshStats tot en met 1.12.0. Elke regel hieronder met
+ * een versienummer onder 2.0.0 gaat dus over een release die onder die naam
+ * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
+ * heeft, hoort niet in een changelog te staan.
+ *
+ * 2.0.0  Alles heet MeshManager: de module, de bestanden, de defines, het
+ *        MQTT-topicvoorvoegsel, de sleutel waaronder de versie gepubliceerd
+ *        wordt, de kopregel van een backup, de client-id op de broker, het
+ *        eigen AP en de naam van de release-images.
+ *        Een hoofdversie en geen 1.13.0, omdat dit de enige release is die
+ *        eist dat de andere kant eerst om is. Deze firmware publiceert op
+ *        meshmanager/; een server van voor die wissel luistert daar niet, en
+ *        dan valt de datastroom stil zonder dat er ergens een fout staat.
+ *        Server eerst, dan pas flashen -- docs/migration.md zegt het in die
+ *        volgorde, en de site zelf toont per node op welk voorvoegsel hij
+ *        binnenkomt, zodat het na te kijken is in plaats van te geloven.
+ *
+ *        WAT ER NIET VAN NAAM VERANDERT, en dat is de belangrijkste
+ *        beslissing van deze release: de bestandsnamen op de datapartitie.
+ *        /msnet.json, /mspwr.json, /msmon.json, /msfw.json en /adverts.dat
+ *        heten nog precies zo. Een OTA schrijft de applicatiepartitie en
+ *        laat de datapartitie met rust; dat is juist waarom een node zijn
+ *        netwerk en wachtwoord over een upgrade heen houdt. Zouden die
+ *        namen meeverhuizen, dan komt de node terug zonder WiFi-gegevens,
+ *        zonder brokerinstellingen en zonder monitorlijst -- dus als eigen
+ *        accesspoint, op een dak, met een ladder als enige weg terug. Een
+ *        naam op een flashbestand is cosmetica; die configuratie is dat
+ *        niet. De C-namen ernaartoe (MMNET_CFG_FILE en de rest) zijn wel
+ *        hernoemd, want die staan in de code en niet op de flash.
+ *
+ *        Het topicvoorvoegsel verhuist daarom eenmalig vanzelf, van
+ *        'meshcore' naar 'meshmanager', maar alleen als er letterlijk de
+ *        oude STANDAARD stond: wie bewust iets anders koos, wordt niet
+ *        aangeraakt. Anders zou flashen maar de helft van het werk zijn en
+ *        moest er per node ook nog een CLI-regel getypt worden, op nodes
+ *        die soms alleen over de mesh bereikbaar zijn. Er is nu een cfg_ver
+ *        in /msnet.json zodat het maar EEN keer gebeurt: wie hierna met
+ *        opzet terugzet naar 'meshcore', blijft staan waar hij zet.
+ *
+ *        Een backup die onder de oude naam gemaakt is, wordt nog steeds
+ *        teruggezet: de kopregel wordt in beide spellingen aanvaard. Zo'n
+ *        bestand bevat het sleutelpaar van een node, en firmware die haar
+ *        eigen vorige backups weigert, ontdek je op de slechtst denkbare
+ *        dag.
+ *
+ *        De bouwomgeving heet nu heltec_v4_repeater_meshmanager, en de
+ *        images heten meshmanager-<env>-<versie>.bin. Een node die nog
+ *        1.12.0 draait meldt de OUDE envnaam, dus de site vertaalt die naar
+ *        de nieuwe voor ze een image kiest -- zonder dat zou deze release
+ *        alleen met een USB-kabel te installeren zijn, wat op een dak geen
+ *        upgradeweg is. Zie ENV_ALIAS in server/app/firmware.py.
+ *
+ *        Nieuwe nodes krijgen 'meshmanager' als standaardwachtwoord voor
+ *        het eigen netwerk en de console. Dat raakt geen enkele bestaande
+ *        node: die leest zijn wachtwoorden uit /msnet.json, dat blijft
+ *        staan.
  *
  * 1.12.0 An upgrade path that tells the truth: POST /api/fw with the image as
  *        the raw body and its SHA-256 as a query parameter, GET /api/fw for
@@ -29,7 +86,7 @@
  *        server picks a release asset per build environment, and matching that
  *        against getManufacturerName() ("Heltec V4.3 OLED") means matching on
  *        upstream prose that differs between boards taking the same binary and
- *        agrees between boards that do not. MESHSTATS_ENV comes from $PIOENV, so
+ *        agrees between boards that do not. MESHMANAGER_ENV comes from $PIOENV, so
  *        it is exactly the key the image was built under. It is empty on an
  *        image built without the flag, and that stays empty rather than being
  *        guessed at: the cost of a wrong guess is a bricked node on a roof.
@@ -288,11 +345,11 @@
  * 1.0.0  MQTT publishing (own stats + every raw packet), battery- and
  *        clock-aware publish interval with hysteresis, power-save WiFi mode
  *        with a forced-on escape hatch, admin page restyled after the public
- *        MeshStats site with light/dark themes and NL/EN translation, own
+ *        MeshManager site with light/dark themes and NL/EN translation, own
  *        version reported by 'ver', on the page and in the stats payload.
  */
 
-#include "MeshStatsNet.h"
+#include "MeshManagerNet.h"
 #include "MyMesh.h"
 
 #include <WiFi.h>
@@ -308,8 +365,31 @@
 #include <mbedtls/version.h>
 #include <helpers/sensors/LPPDataHelpers.h>   // decodes the telemetry replies
 
-#define MSNET_CFG_FILE    "/msnet.json"
-#define MSNET_BOOT_FILE   "/msboot"
+/* De bestandsnamen op de DATAPARTITIE blijven wat ze waren, ook nu de
+ * module MeshManager heet. Een OTA raakt die partitie niet aan, en dat is
+ * precies waarom een node zijn netwerk en zijn wachtwoord over een upgrade
+ * heen houdt. Zouden deze namen meeverhuizen, dan komt de node terug zonder
+ * configuratie -- als eigen accesspoint, op een dak. De C-namen zijn wel
+ * hernoemd; die staan in de code, niet op de flash. */
+#define MMNET_CFG_FILE    "/msnet.json"
+#define MMNET_BOOT_FILE   "/msboot"
+
+/* Het MQTT-topicvoorvoegsel. 'meshcore' was de naam van het protocol en van
+ * een ander project, niet van dit project; op een gedeelde broker is dat een
+ * botsing die staat te wachten, en een ACL kan er niet mee zeggen "dit is
+ * van ons". De server luistert tijdens de overgang naar allebei, dus een
+ * node die nog niet om is blijft gewoon binnenkomen. */
+#define MQTT_PREFIX_DEFAULT  "meshmanager"
+#define MQTT_PREFIX_LEGACY   "meshcore"
+
+/* Versie van het CONFIGURATIEBESTAND, niet van de firmware. Bestaat voor
+ * precies een ding: een eenmalige verhuizing mag maar een keer gebeuren.
+ * Zie loadConfig(). Zonder dit getal zou een beheerder die met opzet
+ * terugzet naar het oude voorvoegsel dat bij elke herstart teruggedraaid
+ * zien worden, zonder te kunnen zien waarom.
+ *   0 = van voor de hernoeming naar MeshManager
+ *   1 = topicvoorvoegsel verhuisd */
+#define MMNET_CFG_VERSION  1
 
 #define SSID_MAX      33
 #define PASS_MAX      65
@@ -327,7 +407,7 @@
 #define MQTT_USER_MAX     32
 #define MQTT_PREFIX_MAX   32
 
-/* Received packets wait here until msnet_loop() can ship them. Eight slots of
+/* Received packets wait here until mmnet_loop() can ship them. Eight slots of
  * 255 bytes is ~2 kB of RAM, which buys roughly one burst of traffic; beyond
  * that we would rather lose packets than memory. */
 #define MQTT_RX_QUEUE      8
@@ -431,6 +511,7 @@ struct Config {
   uint16_t mqtt_port;
   uint16_t mqtt_enabled;
   uint16_t mqtt_rx;                 // also forward every received packet
+  uint16_t cfg_ver;                 // zie MMNET_CFG_VERSION
 
   /* Power management. All of it is tunable rather than compiled in: the right
    * numbers depend on the panel, the cell and the season, and they have to be
@@ -653,7 +734,7 @@ static void wdtBegin() {
 #endif
   // Called from setup(), so NULL is the task that also runs loop().
   if (esp_task_wdt_add(NULL) == ESP_OK) _wdt_watching = true;
-  Serial.printf("MeshStatsNet: watchdog %s (%d s)\n",
+  Serial.printf("MeshManagerNet: watchdog %s (%d s)\n",
                 _wdt_watching ? "actief" : "NIET actief", WDT_TIMEOUT_S);
 }
 
@@ -718,7 +799,7 @@ static void wdtFeed() {
  * is not a valid sequence ends the copy. This is the part that makes truncation
  * safe. Names live in fixed buffers and are copied in with strncpy(), so a name
  * whose last byte lands in the middle of a two-byte character is already half a
- * character before it reaches us -- see meshstats_on_advert(), which cuts at
+ * character before it reaches us -- see meshmanager_on_advert(), which cuts at
  * ADV_NAME_MAX. Passing that half byte-for-byte yields a JSON string that is
  * not valid UTF-8, and json.loads() refuses it exactly as firmly as it refuses
  * a stray quote: the same disappearance, from a cause nobody would think to
@@ -785,15 +866,22 @@ static void jsonEsc(char *dest, size_t max, const char *src) {
 
 // ------------------------------------------------------------------ settings
 
+/* Gezet door loadConfig() als er iets gemigreerd is. Wegschrijven gebeurt in
+ * mmnet_begin(): saveConfig() staat verderop in dit bestand, en een migratie
+ * die zichzelf niet vastlegt is er een die elke herstart opnieuw gebeurt. */
+static bool _cfg_dirty = false;
+
 static void loadConfig() {
   memset(&_cfg, 0, sizeof(_cfg));
   strncpy(_cfg.ssid, WIFI_SSID, SSID_MAX - 1);
   strncpy(_cfg.pass, WIFI_PWD, PASS_MAX - 1);
-  strcpy(_cfg.ap_pass, "meshcore");
+  strcpy(_cfg.ap_pass, "meshmanager");
   strcpy(_cfg.user, "admin");
-  strcpy(_cfg.console_pass, "meshcore");
+  strcpy(_cfg.console_pass, "meshmanager");
 
-  strcpy(_cfg.mqtt_prefix, "meshcore");
+  strcpy(_cfg.mqtt_prefix, MQTT_PREFIX_DEFAULT);
+  /* Een verse node is per definitie al bij: hij heeft niets te verhuizen. */
+  _cfg.cfg_ver = MMNET_CFG_VERSION;
   _cfg.mqtt_port = 1883;
   _cfg.mqtt_enabled = 0;
   _cfg.mqtt_rx = 1;
@@ -822,7 +910,7 @@ static void loadConfig() {
   _cfg.night_factor = 4;
 
   if (!_fs) return;
-  File f = _fs->open(MSNET_CFG_FILE, "r");
+  File f = _fs->open(MMNET_CFG_FILE, "r");
   if (!f) return;
   String s = f.readString();
   f.close();
@@ -865,11 +953,14 @@ static void loadConfig() {
   grab("mqtt_user", _cfg.mqtt_user, MQTT_USER_MAX);
   grab("mqtt_pass", _cfg.mqtt_pass, PASS_MAX);
   grab("mqtt_prefix", _cfg.mqtt_prefix, MQTT_PREFIX_MAX);
-  if (_cfg.mqtt_prefix[0] == 0) strcpy(_cfg.mqtt_prefix, "meshcore");
+  if (_cfg.mqtt_prefix[0] == 0) strcpy(_cfg.mqtt_prefix, MQTT_PREFIX_DEFAULT);
   num("mqtt_port", _cfg.mqtt_port);
   if (_cfg.mqtt_port == 0) _cfg.mqtt_port = 1883;
   num("mqtt_enabled", _cfg.mqtt_enabled);
   num("mqtt_rx", _cfg.mqtt_rx);
+  /* Ontbreekt in elk bestand van voor de hernoeming, en dat is precies het
+   * signaal: geen cfg_ver betekent 0 betekent "nog niet verhuisd". */
+  num("cfg_ver", _cfg.cfg_ver);
 
   num("pwr_mode", _cfg.pwr_mode);
   num("pwr_window", _cfg.pwr_window);
@@ -896,20 +987,47 @@ static void loadConfig() {
 
   if (_cfg.pwr_window < 30) _cfg.pwr_window = 30;   // shorter is not worth waking for
   if (_cfg.night_factor == 0) _cfg.night_factor = 1;
+
+  /* Eenmalige verhuizing van het topicvoorvoegsel, bij de hernoeming naar
+   * MeshManager.
+   *
+   * Waarom automatisch: anders is flashen maar de helft van het werk en moet
+   * er per node ook nog een CLI-regel getypt worden -- op nodes die op daken
+   * hangen en waarvan sommige alleen over de mesh bereikbaar zijn. Dan
+   * blijft de oude wereld jarenlang half bestaan.
+   *
+   * Waarom veilig: dit raakt alleen een node die letterlijk de oude
+   * STANDAARD had staan. Wie bewust iets anders koos, wordt niet aangeraakt.
+   * En de server luistert in deze periode naar allebei, dus zelfs als deze
+   * regel het mis heeft, valt er geen bericht op de grond.
+   *
+   * Waarom maar een keer: wie hierna met opzet terugzet naar 'meshcore',
+   * moet dat kunnen. Zonder cfg_ver zou elke herstart die keuze stil
+   * overschrijven, en zou niemand begrijpen waarom de instelling niet
+   * blijft staan. */
+  if (_cfg.cfg_ver < MMNET_CFG_VERSION) {
+    if (strcmp(_cfg.mqtt_prefix, MQTT_PREFIX_LEGACY) == 0) {
+      strcpy(_cfg.mqtt_prefix, MQTT_PREFIX_DEFAULT);
+      Serial.printf("MeshManagerNet: topicvoorvoegsel verhuisd van %s naar %s\n",
+                    MQTT_PREFIX_LEGACY, MQTT_PREFIX_DEFAULT);
+    }
+    _cfg.cfg_ver = MMNET_CFG_VERSION;
+    _cfg_dirty = true;      // mmnet_begin() schrijft het weg
+  }
 }
 
 static void saveConfig() {
   if (!_fs) return;
-  File f = _fs->open(MSNET_CFG_FILE, "w");
+  File f = _fs->open(MMNET_CFG_FILE, "w");
   if (!f) return;
   f.printf("{\"ssid\":\"%s\",\"pass\":\"%s\",\"ap_pass\":\"%s\","
            "\"user\":\"%s\",\"console_pass\":\"%s\","
            "\"mqtt_host\":\"%s\",\"mqtt_port\":%u,\"mqtt_user\":\"%s\","
            "\"mqtt_pass\":\"%s\",\"mqtt_prefix\":\"%s\","
-           "\"mqtt_enabled\":%u,\"mqtt_rx\":%u,",
+           "\"mqtt_enabled\":%u,\"mqtt_rx\":%u,\"cfg_ver\":%u,",
            _cfg.ssid, _cfg.pass, _cfg.ap_pass, _cfg.user, _cfg.console_pass,
            _cfg.mqtt_host, _cfg.mqtt_port, _cfg.mqtt_user, _cfg.mqtt_pass,
-           _cfg.mqtt_prefix, _cfg.mqtt_enabled, _cfg.mqtt_rx);
+           _cfg.mqtt_prefix, _cfg.mqtt_enabled, _cfg.mqtt_rx, _cfg.cfg_ver);
   f.printf("\"pwr_mode\":%u,\"pwr_window\":%u,\"wifi_sleep\":%u,\"tx_power\":%u,"
            "\"bat_full\":%u,\"bat_high\":%u,\"bat_norm\":%u,\"bat_crit\":%u,"
            "\"bat_hyst\":%u,\"bat_live\":%u,\"bat_mon\":%u,\"set_iv_min\":%u,\"full_hold\":%u,"
@@ -929,20 +1047,20 @@ static void saveConfig() {
 static void checkSafeMode() {
   if (!_fs) return;
   uint8_t count = 0;
-  File f = _fs->open(MSNET_BOOT_FILE, "r");
+  File f = _fs->open(MMNET_BOOT_FILE, "r");
   if (f) { count = f.read(); f.close(); }
   if (count > 200) count = 0;          // invalid, start over
 
   _safe_mode = (count >= SAFE_MODE_BOOTS);
   _disabled = (count >= DISABLE_BOOTS);
 
-  f = _fs->open(MSNET_BOOT_FILE, "w");
+  f = _fs->open(MMNET_BOOT_FILE, "w");
   if (f) { f.write((uint8_t)(count + 1)); f.close(); }
 }
 
 static void clearBootCount() {
   if (!_fs || _boot_cleared) return;
-  File f = _fs->open(MSNET_BOOT_FILE, "w");
+  File f = _fs->open(MMNET_BOOT_FILE, "w");
   if (f) { f.write((uint8_t)0); f.close(); }
   _boot_cleared = true;
 }
@@ -956,7 +1074,7 @@ static void startAP() {
   _state_since = millis();
   _last_retry = millis();
   _asleep = false;
-  Serial.printf("MeshStatsNet: eigen netwerk '%s' actief op %s\n",
+  Serial.printf("MeshManagerNet: eigen netwerk '%s' actief op %s\n",
                 _ap_ssid, WiFi.softAPIP().toString().c_str());
 }
 
@@ -969,7 +1087,7 @@ static void startSTA() {
     _state = WIFI_TRYING;
     _state_since = millis();
   }
-  Serial.printf("MeshStatsNet: verbinden met '%s'...\n", _cfg.ssid);
+  Serial.printf("MeshManagerNet: verbinden met '%s'...\n", _cfg.ssid);
 }
 
 /* Applied every time we associate, because a reconnect resets both settings.
@@ -1005,7 +1123,7 @@ static const char *stateNameNl() {
  * voltage at all is treated as 'unknown', and unknown is treated as mains
  * power further on: a node that cannot measure its cell should not be
  * throttled by a guess. */
-int meshstats_batt_percent(uint16_t mv) {
+int meshmanager_batt_percent(uint16_t mv) {
   if (mv < 2000) return -1;                      // no usable reading
   if (mv <= BATT_EMPTY_MV) return 0;
   if (mv >= BATT_FULL_MV) return 100;
@@ -1014,7 +1132,7 @@ int meshstats_batt_percent(uint16_t mv) {
 
 static uint8_t battPercent(bool *known) {
   _batt_mv = board.getBattMilliVolts();
-  int pct = meshstats_batt_percent(_batt_mv);
+  int pct = meshmanager_batt_percent(_batt_mv);
   *known = (pct >= 0);
   return (pct < 0) ? 0 : (uint8_t)pct;
 }
@@ -1032,7 +1150,7 @@ static uint8_t battPercent(bool *known) {
 #define PWR_RULES_MAX     8
 #define PWR_MIN_ALWAYS   10
 #define PWR_MIN_SAVE     60
-#define MSPWR_FILE       "/mspwr.json"
+#define MMPWR_FILE       "/mspwr.json"
 
 struct PwrRule {
   uint8_t  pct;      // applies from this battery percentage upwards
@@ -1092,7 +1210,7 @@ static void pwrDefaults() {
 
 static void pwrSave() {
   if (!_fs) return;
-  File f = _fs->open(MSPWR_FILE, "w");
+  File f = _fs->open(MMPWR_FILE, "w");
   if (!f) return;
   f.print("{\"rules\":[");
   for (int i = 0; i < _pwr_n; i++) {
@@ -1105,7 +1223,7 @@ static void pwrSave() {
 static void pwrLoad() {
   pwrDefaults();
   if (!_fs) return;
-  File f = _fs->open(MSPWR_FILE, "r");
+  File f = _fs->open(MMPWR_FILE, "r");
   if (!f) return;                 // no file yet: keep the migrated defaults
   String s = f.readString();
   f.close();
@@ -1207,7 +1325,7 @@ static void wifiSleep() {
   _asleep = true;
   _state = WIFI_TRYING;                 // waking starts the state machine over
   _wake_at = millis() + currentIntervalSecs() * 1000UL;
-  Serial.printf("MeshStatsNet: wifi uit, volgende ronde over %u s\n",
+  Serial.printf("MeshManagerNet: wifi uit, volgende ronde over %u s\n",
                 (unsigned)currentIntervalSecs());
 }
 
@@ -1321,7 +1439,7 @@ static void powerSummaryNl(char *out, size_t max) {
  * message as a "settings" object: unknown top-level keys are already ignored
  * at the far end, so it is inert until the site learns to read it.
  *
- * One parameter per pass of msnet_loop(): handleCommand() is cheap but not
+ * One parameter per pass of mmnet_loop(): handleCommand() is cheap but not
  * free, and there is no reason to do sixteen in one go on a node whose first
  * duty is relaying other people's packets. */
 /* Room for one value.
@@ -1495,7 +1613,7 @@ static char *settingsValue(char *reply, const SetParam &sp) {
    * a value, so for everything that is not declared a list such an answer is
    * dropped and counted as a miss instead. */
   if (!sp.list && (strchr(val, '\n') != NULL || strchr(val, '\r') != NULL)) {
-    Serial.printf("MeshStatsNet: %s gaf meerdere regels, overgeslagen\n", sp.name);
+    Serial.printf("MeshManagerNet: %s gaf meerdere regels, overgeslagen\n", sp.name);
     return NULL;
   }
   /* A list is normalised to plain newlines. The CLI writes '\n' and nothing
@@ -1557,7 +1675,7 @@ static void settingsStep() {
     _set_ready = (_set_n > 0);
     _set_done_at = millis();
     _set_due = millis() + (unsigned long)_cfg.set_iv_min * 60000UL;
-    Serial.printf("MeshStatsNet: instellingen gelezen, %d gelukt, %d geen antwoord\n",
+    Serial.printf("MeshManagerNet: instellingen gelezen, %d gelukt, %d geen antwoord\n",
                   _set_n, _set_miss);
     /* Somebody asked for this sweep over MQTT and is watching a page. Waiting
      * for the ordinary publish interval would mean up to five minutes of a
@@ -1613,7 +1731,7 @@ static bool mqttEnsure() {
   _mqtt_last_try = millis();
 
   char client_id[32];
-  snprintf(client_id, sizeof(client_id), "meshcore-%s",
+  snprintf(client_id, sizeof(client_id), "meshmanager-%s",
            _node_hex[0] ? _node_hex : "node");
 
   bool ok = _cfg.mqtt_user[0]
@@ -1630,7 +1748,7 @@ static bool mqttEnsure() {
     char topic[96];
     mqttTopic("cmd", topic, sizeof(topic));
     if (!_mqtt.subscribe(topic, 0)) {
-      Serial.printf("MeshStatsNet: kon niet inschrijven op %s\n", topic);
+      Serial.printf("MeshManagerNet: kon niet inschrijven op %s\n", topic);
     }
   } else {
     _fail_count++;
@@ -1790,13 +1908,13 @@ static void mqttRunCommand() {
   bool known = takes_arg || (strcmp(w, "status") == 0);
   if (!known || (arg && !takes_arg) || (!arg && wants_arg)) {
     _cmd_refused++;
-    Serial.printf("MeshStatsNet: opdracht '%.16s' geweigerd, alleen "
+    Serial.printf("MeshManagerNet: opdracht '%.16s' geweigerd, alleen "
                   "settings [sleutel]|status|time <epoch>\n", w);
     return;
   }
   if (_cmd_last_ms != 0 && millis() - _cmd_last_ms < MQTT_CMD_MIN_GAP_MS) {
     _cmd_refused++;
-    Serial.printf("MeshStatsNet: opdracht '%s' te snel na de vorige, genegeerd\n", w);
+    Serial.printf("MeshManagerNet: opdracht '%s' te snel na de vorige, genegeerd\n", w);
     return;
   }
   _cmd_last_ms = millis();
@@ -1812,12 +1930,12 @@ static void mqttRunCommand() {
     if (end == arg || (end && *end != 0)) {
       _clk_bad++;
       _cmd_refused++;
-      Serial.printf("MeshStatsNet: 'time %.20s' is geen getal, genegeerd\n", arg);
+      Serial.printf("MeshManagerNet: 'time %.20s' is geen getal, genegeerd\n", arg);
       return;
     }
     long delta = 0;
     const char *res = clockApplyOwn((uint32_t)secs, &delta);
-    Serial.printf("MeshStatsNet: tijd %lu ontvangen (%+ld s): %s\n", secs, delta, res);
+    Serial.printf("MeshManagerNet: tijd %lu ontvangen (%+ld s): %s\n", secs, delta, res);
 
     /* The LoRa half is a separate decision and a separate budget. Our own clock
      * has just been set whatever happens below -- that part is free, it is the
@@ -1825,7 +1943,7 @@ static void mqttRunCommand() {
      * already the larger share of the value. */
     const char *why = "";
     if (!monClockRequest(&why)) {
-      Serial.printf("MeshStatsNet: klokronde langs gemonitorde nodes niet gestart: %s\n", why);
+      Serial.printf("MeshManagerNet: klokronde langs gemonitorde nodes niet gestart: %s\n", why);
     }
   } else if (arg) {
     /* Nothing is armed for publication here. This sweep talks to another node
@@ -1834,17 +1952,17 @@ static void mqttRunCommand() {
     const char *why = "";
     if (!monSettingsRequest(arg, &why)) {
       _cmd_refused++;
-      Serial.printf("MeshStatsNet: sweep voor %.16s geweigerd: %s\n", arg, why);
+      Serial.printf("MeshManagerNet: sweep voor %.16s geweigerd: %s\n", arg, why);
       return;
     }
-    Serial.printf("MeshStatsNet: instellingen-sweep gevraagd voor gemonitorde node %.16s\n", arg);
+    Serial.printf("MeshManagerNet: instellingen-sweep gevraagd voor gemonitorde node %.16s\n", arg);
   } else if (strcmp(w, "settings") == 0) {
     _set_force = true;            // settingsLoop() picks this up this same pass
     _cmd_after_sweep = true;      // publish once it has something to publish
-    Serial.println("MeshStatsNet: instellingen-sweep gevraagd via MQTT");
+    Serial.println("MeshManagerNet: instellingen-sweep gevraagd via MQTT");
   } else {
     _cmd_push = true;
-    Serial.println("MeshStatsNet: statusbericht gevraagd via MQTT");
+    Serial.println("MeshManagerNet: statusbericht gevraagd via MQTT");
   }
 }
 
@@ -1970,7 +2088,7 @@ static void mqttLoop() {
   mqttPublishStats();
 }
 
-void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len) {
+void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len) {
   if (!_started || _disabled || _safe_mode) return;
   if (!_cfg.mqtt_enabled || !_cfg.mqtt_rx) return;
   if (len <= 0 || len > MQTT_RX_MAX_LEN) return;
@@ -2003,8 +2121,8 @@ void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len
  * changes by a name every few hours. So changes accumulate in RAM and go to
  * disk at most once every ADV_WRITE_DELAY, and only when something actually
  * differs from what is already stored. */
-#define MSADV_FILE        "/adverts.dat"
-#define MSADV_MAGIC       0x41565331UL    // "AVS1"
+#define MMADV_FILE        "/adverts.dat"
+#define MMADV_MAGIC       0x41565331UL    // "AVS1"
 #define ADV_CACHE_MAX     48
 #define ADV_NAME_MAX      24
 #define ADV_WRITE_DELAY   120000UL        // 2 minutes of quiet before writing
@@ -2029,7 +2147,7 @@ static int advFind(const uint8_t *key, int prefix_len) {
   return -1;
 }
 
-const char *meshstats_advert_name(const uint8_t *pub_key, int prefix_len) {
+const char *meshmanager_advert_name(const uint8_t *pub_key, int prefix_len) {
   int i = advFind(pub_key, prefix_len);
   return (i >= 0 && _adv[i].name[0]) ? _adv[i].name : NULL;
 }
@@ -2037,7 +2155,7 @@ const char *meshstats_advert_name(const uint8_t *pub_key, int prefix_len) {
 static void advLoad() {
   _adv_count = 0;
   if (!_fs) return;
-  File f = _fs->open(MSADV_FILE, "r");
+  File f = _fs->open(MMADV_FILE, "r");
   if (!f) return;
 
   uint32_t magic = 0;
@@ -2045,7 +2163,7 @@ static void advLoad() {
   /* The entry size is part of the header because these are raw structs: add a
    * field one day and an old file would read back as garbage names and
    * nonsense timestamps. A mismatch just starts the cache empty. */
-  if (f.read((uint8_t *)&magic, 4) == 4 && magic == MSADV_MAGIC &&
+  if (f.read((uint8_t *)&magic, 4) == 4 && magic == MMADV_MAGIC &&
       f.read((uint8_t *)&entry_size, 2) == 2 && entry_size == (uint16_t)sizeof(AdvEntry) &&
       f.read((uint8_t *)&count, 2) == 2) {
     if (count > ADV_CACHE_MAX) count = ADV_CACHE_MAX;
@@ -2056,14 +2174,14 @@ static void advLoad() {
     }
   }
   f.close();
-  Serial.printf("MeshStatsNet: %d adverts geladen\n", _adv_count);
+  Serial.printf("MeshManagerNet: %d adverts geladen\n", _adv_count);
 }
 
 static void advSave() {
   if (!_fs) return;
-  File f = _fs->open(MSADV_FILE, "w");
+  File f = _fs->open(MMADV_FILE, "w");
   if (!f) return;
-  uint32_t magic = MSADV_MAGIC;
+  uint32_t magic = MMADV_MAGIC;
   uint16_t entry_size = (uint16_t)sizeof(AdvEntry);
   uint16_t count = (uint16_t)_adv_count;
   f.write((const uint8_t *)&magic, 4);
@@ -2076,7 +2194,7 @@ static void advSave() {
   _adv_dirty_at = 0;
 }
 
-void meshstats_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
+void meshmanager_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
                          bool has_latlon, int32_t lat, int32_t lon) {
   if (!_started || _disabled) return;
 
@@ -2132,7 +2250,7 @@ void meshstats_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
  * instead), then a REQ of type GET_STATUS once that is accepted, then a
  * RESPONSE carrying RepeaterStats.
  *
- * It is a state machine driven from msnet_loop(), one peer at a time. Not
+ * It is a state machine driven from mmnet_loop(), one peer at a time. Not
  * because that is simpler, but because this node is a repeater: a burst of
  * logins from the very node meant to relay other people's traffic is
  * antisocial, and every flooded login costs the whole mesh airtime.
@@ -2141,7 +2259,7 @@ void meshstats_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
  * answers a rejected login with silence. Hence LOGIN_NOANSWER rather than a
  * pretence of knowing which of the two happened. */
 
-#define MSMON_CFG_FILE   "/msmon.json"
+#define MMMON_CFG_FILE   "/msmon.json"
 #define MON_KEY_HEX_MAX  65      // 64 hex chars + NUL
 #define MON_NAME_MAX     24
 #define MON_PASS_MAX     16      // the protocol truncates at 15 characters
@@ -2300,7 +2418,7 @@ static int findMonitor(const char *key) {
 
 static void saveMonitors() {
   if (!_fs) return;
-  File f = _fs->open(MSMON_CFG_FILE, "w");
+  File f = _fs->open(MMMON_CFG_FILE, "w");
   if (!f) return;
   f.printf("{\"iv\":%u,\"m\":[", _mon_interval);
   for (int i = 0; i < _mon_count; i++) {
@@ -2318,7 +2436,7 @@ static void loadMonitors() {
   _mon_interval = 900;
   if (!_fs) return;
 
-  File f = _fs->open(MSMON_CFG_FILE, "r");
+  File f = _fs->open(MMMON_CFG_FILE, "r");
   if (!f) return;
   String s = f.readString();
   f.close();
@@ -2418,7 +2536,7 @@ static bool resolveMonitors() {
     /* Fall back to the stored adverts, which is what makes a name reappear
      * after a restart instead of waiting hours for the next advert. */
     if (nm[0] == 0) {
-      const char *cached = meshstats_advert_name(prefix, plen);
+      const char *cached = meshmanager_advert_name(prefix, plen);
       if (cached) {
         strncpy(nm, cached, sizeof(nm) - 1);
         nm[sizeof(nm) - 1] = 0;
@@ -2433,7 +2551,7 @@ static bool resolveMonitors() {
   return changed;
 }
 
-void meshstats_on_monitor_response(int mon_idx, uint8_t type, const uint8_t *data, int len) {
+void meshmanager_on_monitor_response(int mon_idx, uint8_t type, const uint8_t *data, int len) {
   if (!_started || _disabled || _safe_mode) return;
   if (len <= 0 || len > (int)sizeof(_mon_reply)) return;
   if (_mon_got_reply) return;            // previous one not consumed yet
@@ -2577,7 +2695,7 @@ static bool publishMonitorRound(MonEntry &m) {
     /* battery_percentage is derived rather than asked for: the same cell
      * voltage through the same shared curve, so it costs no extra packet. A
      * board reporting no usable voltage gets neither field. */
-    int pct = meshstats_batt_percent(st.batt_milli_volts);
+    int pct = meshmanager_batt_percent(st.batt_milli_volts);
     if (pct >= 0) {
       p += snprintf(body + p, sizeof(body) - p, ",\"bat\":%.3f,\"battery_percentage\":%d",
                     st.batt_milli_volts / 1000.0f, pct);
@@ -2966,7 +3084,7 @@ static void monSettingsFinish(const char *why) {
   if (_mset_cur >= 0) {
     MonEntry &m = _mon[_mset_cur];
     monTrace("set klaar %d/%d ok, %s", _mset_ok, SET_PARAM_COUNT, why);
-    Serial.printf("MeshStatsNet: sweep %.12s klaar: %d gelezen, %d geen antwoord (%s)\n",
+    Serial.printf("MeshManagerNet: sweep %.12s klaar: %d gelezen, %d geen antwoord (%s)\n",
                   m.key, _mset_ok, _mset_miss, why);
     // Nothing asked means nothing learned; see the block comment above.
     if (_mset_asked > 0 && !publishMonitorSettings(m)) monTrace("set publish mislukt");
@@ -3255,7 +3373,7 @@ static void monClockFinish(const char *why) {
   monTrace("klok klaar: %u gevraagd, %u geantwoord, %u gezet, %u loopt voor (%s)",
            (unsigned)_mclk_asked, (unsigned)_mclk_answered,
            (unsigned)_mclk_synced, (unsigned)_mclk_ahead, why);
-  Serial.printf("MeshStatsNet: klokronde klaar: %u gevraagd, %u geantwoord, "
+  Serial.printf("MeshManagerNet: klokronde klaar: %u gevraagd, %u geantwoord, "
                 "%u bijgezet, %u loopt voor (%s)\n",
                 (unsigned)_mclk_asked, (unsigned)_mclk_answered,
                 (unsigned)_mclk_synced, (unsigned)_mclk_ahead, why);
@@ -3324,7 +3442,7 @@ static void monClockReply(const uint8_t *data, int len) {
     bool ok = (strstr(text, "OK") != NULL);
     if (ok) _mclk_synced++; else _mclk_ahead++;
     monTrace("klok %.6s zetten: %.24s", m.key, text);
-    Serial.printf("MeshStatsNet: klok %.12s %s (%.40s)\n",
+    Serial.printf("MeshManagerNet: klok %.12s %s (%.40s)\n",
                   m.key, ok ? "bijgezet" : "NIET gezet", text);
     monClockNodeDone();
     return;
@@ -3369,7 +3487,7 @@ static void monClockReply(const uint8_t *data, int len) {
   monTrace("klok %.6s %+lds (%ld..%ld)", m.key, est, lo, hi);
 
   if (hi <= -(long)MON_CLK_SKEW_S) {
-    Serial.printf("MeshStatsNet: klok %.12s loopt %ld s achter, bijzetten\n", m.key, -est);
+    Serial.printf("MeshManagerNet: klok %.12s loopt %ld s achter, bijzetten\n", m.key, -est);
     _mclk_step = 1;
     monClockSend(false);
     return;
@@ -3380,7 +3498,7 @@ static void monClockReply(const uint8_t *data, int len) {
      * reported and left alone -- an operator with a serial cable can decide
      * whether a reboot is worth it, and this node cannot. */
     _mclk_ahead++;
-    Serial.printf("MeshStatsNet: klok %.12s loopt %ld s VOOR; niet corrigeerbaar "
+    Serial.printf("MeshManagerNet: klok %.12s loopt %ld s VOOR; niet corrigeerbaar "
                   "over de lucht, alleen 'clkreboot' op die node helpt\n", m.key, est);
     monClockNodeDone();
     return;
@@ -3900,7 +4018,7 @@ static void monitorLoop() {
  * main loop stalled inside them -- taking the mesh down with it. So: one send,
  * and the page fetches its data as JSON afterwards.
  *
- * Styling follows the public MeshStats site (same tokens, cards, green section
+ * Styling follows the public MeshManager site (same tokens, cards, green section
  * heads) so the two stay one visual family. Theme and language live entirely
  * in the browser: colours are CSS variables swapped by data-theme, and every
  * label carries a data-i18n key that JavaScript fills from one of two small
@@ -3965,7 +4083,7 @@ static const char PAGE[] PROGMEM =
   "label input.ck{width:auto;margin:0 .45rem 0 0}"
   "code{font-family:var(--mono);font-size:.85em;color:var(--cyan)}"
   "</style></head><body>"
-  "<div class=topbar><span class=brand>MeshStats</span>"
+  "<div class=topbar><span class=brand>MeshManager</span>"
   "<span><button class=pill id=lg></button> <button class=pill id=th></button></span></div>"
   "<main>"
   "<h1 id=nm>MeshCore</h1><p class=muted id=sub></p>"
@@ -4390,7 +4508,7 @@ static void handleStatus(AsyncWebServerRequest *req) {
     "\"live\":\"%s\",\"livepct\":%u,",
     e_name, _node_hex,
     board.getManufacturerName(), FIRMWARE_VERSION,
-    MESHSTATS_NAME, MESHSTATS_VERSION, MESHSTATS_ENV,
+    MESHMANAGER_NAME, MESHMANAGER_VERSION, MESHMANAGER_ENV,
     e_ssid, _safe_mode ? 1 : 0,
     wifiStateCode(), ip.toString().c_str(),
     e_net,
@@ -4539,7 +4657,7 @@ static void handleMqttPost(AsyncWebServerRequest *req) {
   copyParam(req, "host", _cfg.mqtt_host, MQTT_HOST_MAX);
   copyParam(req, "user", _cfg.mqtt_user, MQTT_USER_MAX);
   copyParam(req, "prefix", _cfg.mqtt_prefix, MQTT_PREFIX_MAX);
-  if (_cfg.mqtt_prefix[0] == 0) strcpy(_cfg.mqtt_prefix, "meshcore");
+  if (_cfg.mqtt_prefix[0] == 0) strcpy(_cfg.mqtt_prefix, MQTT_PREFIX_DEFAULT);
   if (req->hasParam("pass", true) && req->getParam("pass", true)->value().length() > 0) {
     copyParam(req, "pass", _cfg.mqtt_pass, PASS_MAX);
   }
@@ -4598,7 +4716,7 @@ static void handleMonJson(AsyncWebServerRequest *req) {
     if (name[0] == 0) {
       uint8_t key[PUB_KEY_SIZE];
       if (mesh::Utils::fromHex(key, PUB_KEY_SIZE, hex)) {
-        const char *cached = meshstats_advert_name(key, PUB_KEY_SIZE);
+        const char *cached = meshmanager_advert_name(key, PUB_KEY_SIZE);
         if (cached) {
           strncpy(name, cached, sizeof(name) - 1);
           name[sizeof(name) - 1] = 0;
@@ -4717,7 +4835,7 @@ static void handleMonPost(AsyncWebServerRequest *req) {
 /* Format, deliberately line-based so we never have to hold a whole file in
  * memory:
  *
- *   MESHSTATS-BACKUP 1
+ *   MESHMANAGER-BACKUP 1
  *   FILE /identity 64
  *   <hex, 64 bytes per line>
  *   ...
@@ -4727,13 +4845,18 @@ static void handleMonPost(AsyncWebServerRequest *req) {
  * prefs, the ACL and the network settings. Keep such a backup safe -- whoever
  * has it, has your node's identity.
  */
+/* De kopregel van een backupbestand. Die van voor de hernoeming wordt bij
+ * het terugzetten nog steeds aanvaard -- zie restoreBackupFile(). */
+#define BACKUP_MAGIC         "MESHMANAGER"
+#define LEGACY_BACKUP_MAGIC  "MESHSTATS"
+
 #define BACKUP_FILE   "/backup.mcb"
 #define RESTORE_FILE  "/restore.mcb"
 #define HEX_PER_LINE  64
 
 static bool skipInBackup(const char *name) {
   return strcmp(name, BACKUP_FILE) == 0 || strcmp(name, RESTORE_FILE) == 0 ||
-         strcmp(name, MSNET_BOOT_FILE) == 0;
+         strcmp(name, MMNET_BOOT_FILE) == 0;
 }
 
 static bool writeBackupFile() {
@@ -4741,7 +4864,7 @@ static bool writeBackupFile() {
   File out = _fs->open(BACKUP_FILE, "w");
   if (!out) return false;
 
-  out.print("MESHSTATS-BACKUP 1\n");
+  out.print(BACKUP_MAGIC "-BACKUP 1\n");
 
   File dir = _fs->open("/");
   File f = dir.openNextFile();
@@ -4781,7 +4904,7 @@ static void handleBackup(AsyncWebServerRequest *req) {
     return;
   }
   char fname[64];
-  snprintf(fname, sizeof(fname), "meshcore-%s.mcb", _node_hex);
+  snprintf(fname, sizeof(fname), "meshmanager-%s.mcb", _node_hex);
 
   AsyncWebServerResponse *res = req->beginResponse(*_fs, BACKUP_FILE, "application/octet-stream");
   res->addHeader("Content-Disposition", String("attachment; filename=\"") + fname + "\"");
@@ -4805,7 +4928,18 @@ static bool applyRestore(char *err, size_t err_max) {
   char line[HEX_PER_LINE * 2 + 8];
   size_t len = in.readBytesUntil('\n', line, sizeof(line) - 1);
   line[len] = 0;
-  if (strncmp(line, "MESHSTATS-BACKUP", 16) != 0) {
+  /* Allebei de kopregels aanvaarden, en dat is geen beleefdheid: een backup
+   * die iemand vorige maand maakte draagt de oude naam, en zo'n bestand
+   * bevat het sleutelpaar van een node op een dak. Firmware die haar eigen
+   * vorige backups weigert, ontdek je op de slechtst denkbare dag.
+   *
+   * Weg te halen zodra de oude naam nergens meer op een schijf staat -- wat
+   * je niet kunt weten. Praktisch: laten staan. Zestien bytes vergelijken
+   * kost niets; het alternatief is onherstelbaar. */
+  if (strncmp(line, BACKUP_MAGIC "-BACKUP",
+              sizeof(BACKUP_MAGIC "-BACKUP") - 1) != 0 &&
+      strncmp(line, LEGACY_BACKUP_MAGIC "-BACKUP",
+              sizeof(LEGACY_BACKUP_MAGIC "-BACKUP") - 1) != 0) {
     in.close();
     snprintf(err, err_max, "dit is geen backupbestand");
     return false;
@@ -4917,14 +5051,14 @@ static unsigned long _reboot_at = 0;
  * And the thing this may never do: replace the old path. That path is what you
  * fall back to when this one is broken, and a recovery route may not depend on
  * the thing you are recovering from. Same reasoning that gave 'start ota' its
- * stock behaviour back; see msnet_handle_command().
+ * stock behaviour back; see mmnet_handle_command().
  */
 
 /* Records which version sits in the partition we are NOT running from. The
  * partition table knows there is an image there and esp_ota_get_partition_
  * description() will even hand over its esp_app_desc_t, but that struct carries
  * the ESP-IDF project version -- a constant Arduino sets to something like "1"
- * -- and never MESHSTATS_VERSION. So the only way to answer "what do I fall
+ * -- and never MESHMANAGER_VERSION. So the only way to answer "what do I fall
  * back to" with a number a human recognises is to write it down ourselves, at
  * the moment we know it: just before rebooting into a freshly written image, the
  * version we are still running is the version that stays behind. */
@@ -4934,9 +5068,9 @@ static unsigned long _reboot_at = 0;
 #define FW_SLOT_MAX    16
 
 /* Build environment this image was compiled for -- the PlatformIO env name,
- * e.g. heltec_v4_repeater_meshstats. Set it from platformio.ini with
+ * e.g. heltec_v4_repeater_meshmanager. Set it from platformio.ini with
  *
- *     -D MESHSTATS_ENV='"$PIOENV"'
+ *     -D MESHMANAGER_ENV='"$PIOENV"'
  *
  * so it can never drift from the env that actually built the binary.
  *
@@ -4952,8 +5086,8 @@ static unsigned long _reboot_at = 0;
  * Empty when the flag was not set, and that is deliberately not papered over
  * with a guess: a node that cannot say what it was built from gets no automatic
  * upgrade, because the failure mode is a bricked repeater on a roof. */
-#ifndef MESHSTATS_ENV
-  #define MESHSTATS_ENV ""
+#ifndef MESHMANAGER_ENV
+  #define MESHMANAGER_ENV ""
 #endif
 
 static struct {
@@ -5003,7 +5137,7 @@ static void fwFail(const char *step, const char *fmt, ...) {
   vsnprintf(_fw.err, sizeof(_fw.err), fmt, ap);
   va_end(ap);
   if (Update.isRunning()) Update.abort();
-  Serial.printf("MeshStatsNet: firmware-upload mislukt (%s): %s\n", step, _fw.err);
+  Serial.printf("MeshManagerNet: firmware-upload mislukt (%s): %s\n", step, _fw.err);
 }
 
 // The image now in the partition we are not running from, as far as we know.
@@ -5126,7 +5260,7 @@ static void fwBody(AsyncWebServerRequest *req, uint8_t *data, size_t len,
 
     mbedtls_sha256_init(&_fw_sha);
     FW_SHA_STARTS(&_fw_sha);
-    Serial.printf("MeshStatsNet: firmware-upload gestart, %lu bytes\n",
+    Serial.printf("MeshManagerNet: firmware-upload gestart, %lu bytes\n",
                   (unsigned long)total);
   }
 
@@ -5189,14 +5323,14 @@ static void fwDone(AsyncWebServerRequest *req) {
            "\"env\":\"%s\",\"reboot\":%d}",
            _fw.ok ? 1 : 0, _fw.step, _fw.ok ? "geschreven en geverifieerd" : _fw.err,
            (unsigned long)_fw.got, (unsigned long)_fw.total,
-           _fw.want, _fw.have, MESHSTATS_VERSION, _fw.ver, MESHSTATS_ENV,
+           _fw.want, _fw.have, MESHMANAGER_VERSION, _fw.ver, MESHMANAGER_ENV,
            _fw.ok ? 1 : 0);
   req->send(_fw.ok ? 200 : 400, "application/json", body);
 
   if (_fw.ok) {
     // We are still the old image; after the reboot we are the one behind.
-    fwNoteOther(MESHSTATS_VERSION, run ? run->label : "?");
-    Serial.printf("MeshStatsNet: firmware geschreven, herstart over 1,5 s\n");
+    fwNoteOther(MESHMANAGER_VERSION, run ? run->label : "?");
+    Serial.printf("MeshManagerNet: firmware geschreven, herstart over 1,5 s\n");
     _reboot_pending = true;
     _reboot_at = millis() + 1500;
   }
@@ -5229,7 +5363,7 @@ static void fwState(AsyncWebServerRequest *req) {
            "\"run\":\"%s\",\"other\":{\"slot\":\"%s\",\"valid\":%d,\"ver\":\"%s\"},"
            "\"last\":{\"any\":%d,\"ok\":%d,\"step\":\"%s\",\"msg\":\"%s\","
            "\"bytes\":%lu,\"total\":%lu}}",
-           MESHSTATS_VERSION, FIRMWARE_VERSION, MESHSTATS_ENV,
+           MESHMANAGER_VERSION, FIRMWARE_VERSION, MESHMANAGER_ENV,
            board.getManufacturerName(),
            _fw.active ? 1 : 0, (unsigned long)_fw.got, (unsigned long)_fw.total,
            run ? run->label : "?",
@@ -5275,7 +5409,7 @@ static bool fwRollback(char *msg, size_t msg_max) {
 
   // The roles swap: what we are running now is what stays behind in our slot.
   const esp_partition_t *run = esp_ota_get_running_partition();
-  fwNoteOther(MESHSTATS_VERSION, run ? run->label : "?");
+  fwNoteOther(MESHMANAGER_VERSION, run ? run->label : "?");
 
   snprintf(msg, msg_max, "terug naar %s in %s",
            known ? ver : "de vorige firmware", other->label);
@@ -5321,8 +5455,8 @@ static void handleFwCommand(const char *arg, char *reply) {
   bool known = other_valid && fwReadOther(other->label, ver, sizeof(ver));
 
   snprintf(reply, 155, "v%s in %s, env=%s; terug kan naar %s; laatste upload: %s",
-           MESHSTATS_VERSION, run ? run->label : "?",
-           MESHSTATS_ENV[0] ? MESHSTATS_ENV : "onbekend",
+           MESHMANAGER_VERSION, run ? run->label : "?",
+           MESHMANAGER_ENV[0] ? MESHMANAGER_ENV : "onbekend",
            !other_valid ? "niets (andere sleuf leeg)" : (known ? ver : "onbekende versie"),
            !_fw.any ? "geen" : (_fw.ok ? "gelukt" : _fw.step));
 }
@@ -5389,7 +5523,7 @@ static void consoleHandleLine() {
     }
     char reply[160];
     reply[0] = 0;
-    if (!msnet_handle_command(_con_line, reply) && _mesh) {
+    if (!mmnet_handle_command(_con_line, reply) && _mesh) {
       _mesh->handleCommand(0, _con_line, reply);
     }
     if (reply[0]) { _client.print(reply); _client.print("\r\n"); }
@@ -5817,7 +5951,7 @@ static void handleMqttCommand(const char *arg, char *reply) {
   } else if ((v = subArg(arg, "prefix")) != NULL) {
     strncpy(_cfg.mqtt_prefix, v, MQTT_PREFIX_MAX - 1);
     _cfg.mqtt_prefix[MQTT_PREFIX_MAX - 1] = 0;
-    if (_cfg.mqtt_prefix[0] == 0) strcpy(_cfg.mqtt_prefix, "meshcore");
+    if (_cfg.mqtt_prefix[0] == 0) strcpy(_cfg.mqtt_prefix, MQTT_PREFIX_DEFAULT);
     _apply_mqtt = true;
     snprintf(reply, 155, "OK - topics %.20s/%s/stats en /rx", _cfg.mqtt_prefix, _node_hex);
   } else if ((v = subArg(arg, "rx")) != NULL) {
@@ -5841,19 +5975,19 @@ static void handleMqttCommand(const char *arg, char *reply) {
 
 // -------------------------------------------------------------------- public
 
-bool msnet_is_safe_mode() { return _safe_mode; }
+bool mmnet_is_safe_mode() { return _safe_mode; }
 
-bool msnet_handle_command(const char *command, char *reply) {
+bool mmnet_handle_command(const char *command, char *reply) {
   if (_disabled) return false;   // leave everything to the stock firmware
 
   if (memcmp(command, "wifi", 4) != 0) {
     /* Both versions in one line: this module and the MeshCore release it is
      * built on. If this module ever disables itself, the answer falls through
-     * to stock MeshCore -- so a missing MeshStats name is itself the
+     * to stock MeshCore -- so a missing MeshManager name is itself the
      * diagnosis. */
     if (strcmp(command, "ver") == 0) {
       snprintf(reply, 155, "%s v%s - MeshCore %s (Build: %s)",
-               MESHSTATS_NAME, MESHSTATS_VERSION, FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
+               MESHMANAGER_NAME, MESHMANAGER_VERSION, FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
       return true;
     }
     /* 'start ota' hands over to the stock soft-AP updater instead of merely
@@ -5970,7 +6104,7 @@ bool msnet_handle_command(const char *command, char *reply) {
   return true;
 }
 
-void msnet_begin(FS &fs, MyMesh *mesh) {
+void mmnet_begin(FS &fs, MyMesh *mesh) {
   _fs = &fs;
   _mesh = mesh;
 
@@ -5984,19 +6118,20 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   if (_disabled) {
     // Even safe mode did not hold. Everything of ours stays off; what remains
     // is a plain MeshCore repeater, with mesh CLI and 'start ota'.
-    Serial.println("MeshStatsNet: uitgeschakeld na herhaalde herstarts");
+    Serial.println("MeshManagerNet: uitgeschakeld na herhaalde herstarts");
     _started = true;      // only so the boot counter can still be cleared
     return;
   }
 
   loadConfig();
+  if (_cfg_dirty) { saveConfig(); _cfg_dirty = false; }
   pwrLoad();          // after loadConfig: it migrates from those fields
   advLoad();          // before the monitors: they borrow names from it
   loadMonitors();
   syncMonitorsToMesh();
 
   if (_mesh) mesh::Utils::toHex(_node_hex, _mesh->self_id.pub_key, 6);
-  snprintf(_ap_ssid, sizeof(_ap_ssid), "MeshCore-%s", _node_hex);
+  snprintf(_ap_ssid, sizeof(_ap_ssid), "MeshManager-%s", _node_hex);
 
   /* A raw packet becomes over 500 characters in hex, and the neighbour payload
    * grows with the number of neighbours; the default 256-byte buffer is far too
@@ -6012,7 +6147,7 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   if (_safe_mode) {
     // Something made this node restart repeatedly. Only its own network and
     // the admin page, so you can get in and put it right.
-    Serial.println("MeshStatsNet: VEILIGE MODUS na herhaalde herstarts");
+    Serial.println("MeshManagerNet: VEILIGE MODUS na herhaalde herstarts");
     startAP();
   } else {
     startSTA();
@@ -6077,7 +6212,7 @@ void msnet_begin(FS &fs, MyMesh *mesh) {
   _mqtt_last_push = millis();
 }
 
-void msnet_loop() {
+void mmnet_loop() {
   if (!_started) return;
 
   /* First thing every pass, and before any early return below: reaching this
@@ -6133,7 +6268,7 @@ void msnet_loop() {
         _state = WIFI_OK;
         _state_since = millis();
         applyRadioTuning();
-        Serial.printf("MeshStatsNet: verbonden, http://%s/\n",
+        Serial.printf("MeshManagerNet: verbonden, http://%s/\n",
                       WiFi.localIP().toString().c_str());
       } else if (millis() - _state_since > STA_TIMEOUT_MS) {
         /* In power-save mode, raising an AP nobody is waiting for is the most
@@ -6163,7 +6298,7 @@ void msnet_loop() {
         WiFi.softAPdisconnect(true);
         WiFi.mode(WIFI_STA);
         applyRadioTuning();
-        Serial.printf("MeshStatsNet: netwerk terug, http://%s/\n",
+        Serial.printf("MeshManagerNet: netwerk terug, http://%s/\n",
                       WiFi.localIP().toString().c_str());
       } else if (millis() - _last_retry > STA_RETRY_MS) {
         _last_retry = millis();

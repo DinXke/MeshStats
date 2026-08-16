@@ -10,9 +10,9 @@ index 823cb38..22d9594 100644
 +// hoeft te kennen (en er geen include-cyclus ontstaat). Deze voeden de
 +// ingebouwde webclient; ze kopieren naar een buffer en keren meteen terug,
 +// dus ze mogen vanuit de mesh-callbacks hieronder aangeroepen worden.
-+void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
-+void meshstats_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
-+void meshstats_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
++void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
++void meshmanager_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
++void meshmanager_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
 +
  #define CMD_APP_START                 1
  #define CMD_SEND_TXT_MSG              2
@@ -24,7 +24,7 @@ index 823cb38..22d9594 100644
 +  // Elk binnengekomen pakket ongewijzigd doorgeven aan de statistiekenmodule;
 +  // die zet het in een wachtrij en publiceert het later via MQTT. Hier zelf
 +  // niets ontleden of versturen: dit draait midden in de ontvangstlus.
-+  meshstats_on_raw_packet(snr, rssi, raw, len);
++  meshmanager_on_raw_packet(snr, rssi, raw, len);
 +
    if (_serial->isConnected() && len + 3 <= MAX_FRAME_SIZE) {
      int i = 0;
@@ -33,7 +33,7 @@ index 823cb38..22d9594 100644
                             const char *text) {
    markConnectionActive(from); // in case this is from a server, and we have a connection
    queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
-+  meshstats_on_direct_msg(from.name, sender_timestamp, text);
++  meshmanager_on_direct_msg(from.name, sender_timestamp, text);
  }
  
  void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
@@ -45,7 +45,7 @@ index 823cb38..22d9594 100644
 +    // De kanaalnaam is hier het enige bruikbare label: sendGroupMessage()
 +    // zet de afzender al voor de tekst zelf.
 +    ChannelDetails ch;
-+    meshstats_on_channel_msg(getChannel(channel_idx, ch) ? ch.name : "?", timestamp, text);
++    meshmanager_on_channel_msg(getChannel(channel_idx, ch) ? ch.name : "?", timestamp, text);
 +  }
 +
    if (_serial->isConnected()) {
@@ -104,15 +104,15 @@ index 87097fb..f5815bf 100644
 +
 +static StatsPublisher* _instance = nullptr;
 +
-+void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len) {
++void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len) {
 +  if (_instance) _instance->queueRawPacket(snr, rssi, raw, len);
 +}
 +
-+void meshstats_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text) {
++void meshmanager_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text) {
 +  if (_instance) _instance->noteMessage(STATS_MSG_CHANNEL, channel_name, timestamp, text);
 +}
 +
-+void meshstats_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text) {
++void meshmanager_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text) {
 +  if (_instance) _instance->noteMessage(STATS_MSG_DIRECT, sender_name, timestamp, text);
 +}
 +
@@ -242,7 +242,7 @@ index 87097fb..f5815bf 100644
 +  grab("user", _cfg.user, STATS_USER_MAX);
 +  grab("pass", _cfg.pass, STATS_PASS_MAX);
 +  grab("prefix", _cfg.prefix, STATS_PREFIX_MAX);
-+  if (_cfg.prefix[0] == 0) strcpy(_cfg.prefix, "meshcore");
++  if (_cfg.prefix[0] == 0) strcpy(_cfg.prefix, STATS_PREFIX_DEFAULT);
 +
 +  _cfg.port = (uint16_t)num("port", 1883);
 +  if (_cfg.port == 0) _cfg.port = 1883;
@@ -412,7 +412,7 @@ index 87097fb..f5815bf 100644
 +  _last_connect_try = millis();
 +
 +  char client_id[32];
-+  snprintf(client_id, sizeof(client_id), "meshcore-%s",
++  snprintf(client_id, sizeof(client_id), "meshmanager-%s",
 +           _node_hex[0] ? _node_hex : "node");
 +
 +  bool ok = _cfg.user[0]
@@ -702,7 +702,7 @@ index 87097fb..f5815bf 100644
 +  copy_arg("host", _cfg.host, STATS_HOST_MAX);
 +  copy_arg("user", _cfg.user, STATS_USER_MAX);
 +  copy_arg("prefix", _cfg.prefix, STATS_PREFIX_MAX);
-+  if (_cfg.prefix[0] == 0) strcpy(_cfg.prefix, "meshcore");
++  if (_cfg.prefix[0] == 0) strcpy(_cfg.prefix, STATS_PREFIX_DEFAULT);
 +
 +  if (_server.hasArg("pass") && _server.arg("pass").length() > 0) {
 +    copy_arg("pass", _cfg.pass, STATS_PASS_MAX);
@@ -1130,13 +1130,13 @@ diff --git a/examples/companion_radio/StatsPublisher.h b/examples/companion_radi
 index 2b14b8b..4e21dba 100644
 --- a/examples/companion_radio/StatsPublisher.h
 +++ b/examples/companion_radio/StatsPublisher.h
-@@ -1,66 +1,309 @@
+@@ -1,66 +1,321 @@
  #pragma once
  
 -/* StatsPublisher — publiceert de statistieken van deze node naar een externe
 - * statistiekensite, en biedt een kleine beheerpagina om dat in te stellen.
 +/* StatsPublisher - de ingebouwde webclient van de node, plus het MQTT-kanaal
-+ * naar een MeshStats-site.
++ * naar een MeshManager-site.
   *
 - * - Beheerpagina: http://<node-ip>/  (instellingen + live statistieken)
 - * - Push: POST <url>/api/v1/ingest met Bearer-token, JSON-payload
@@ -1309,6 +1309,18 @@ index 2b14b8b..4e21dba 100644
 +  size_t _asked, _done;
 +};
 +
++/* Het MQTT-topicvoorvoegsel, sinds de hernoeming naar MeshManager.
++ * 'meshcore' was de naam van het protocol en van een ander project; dit is
++ * er een die dit project zelf bezit. De server luistert tijdens de overgang
++ * naar allebei, dus een companion die nog niet om is blijft binnenkomen.
++ *
++ * Anders dan op de repeater verhuist dit hier NIET vanzelf. Een companion
++ * hangt niet op een dak maar op een bureau, hij wordt met de hand ingesteld
++ * en zijn beheerpagina staat een klik verderop; een stille wijziging is daar
++ * meer verrassing dan winst. Op de repeater is de afweging omgekeerd, en
++ * daar staat ze uitgeschreven in loadConfig() van MeshManagerNet.cpp. */
++#define STATS_PREFIX_DEFAULT  "meshmanager"
++
  class StatsPublisher {
  public:
    struct Config {
@@ -1319,7 +1331,7 @@ index 2b14b8b..4e21dba 100644
 +    uint16_t port;                  // 1883
 +    char user[STATS_USER_MAX];
 +    char pass[STATS_PASS_MAX];
-+    char prefix[STATS_PREFIX_MAX];  // topicprefix, standaard "meshcore"
++    char prefix[STATS_PREFIX_MAX];  // topicprefix, standaard "meshmanager"
 +    uint32_t interval_secs;         // hoe vaak statistieken sturen
      bool enabled;
 +    bool forward_rx;                // ook elk ontvangen pakket doorsturen
@@ -1338,7 +1350,7 @@ index 2b14b8b..4e21dba 100644
      _cfg.interval_secs = 300;
      _cfg.enabled = false;
 +    _cfg.forward_rx = true;
-+    strcpy(_cfg.prefix, "meshcore");
++    strcpy(_cfg.prefix, STATS_PREFIX_DEFAULT);
      _last_error[0] = 0;
 +    _node_hex[0] = 0;
 +    memset(_msgs, 0, sizeof(_msgs));
@@ -1454,9 +1466,9 @@ index 2b14b8b..4e21dba 100644
 +
 +/* Globale haken zodat MyMesh niets van deze klasse hoeft te weten. Worden in
 + * begin() ingevuld; zolang die niet liep, doet aanroepen niets. */
-+void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
-+void meshstats_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
-+void meshstats_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
++void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
++void meshmanager_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
++void meshmanager_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
 diff --git a/examples/companion_radio/main.cpp b/examples/companion_radio/main.cpp
 index 9202ebf..07497e8 100644
 --- a/examples/companion_radio/main.cpp
@@ -1538,8 +1550,8 @@ index c93ba1a..961d004 100644
  #include "MyMesh.h"
  #include <algorithm>
  
-+#ifdef MESHSTATS_NET
-+#include "MeshStatsNet.h"
++#ifdef MESHMANAGER_NET
++#include "MeshManagerNet.h"
 +#endif
 +
  /* ------------------------------ Config -------------------------------- */
@@ -1765,10 +1777,10 @@ index c93ba1a..961d004 100644
    Serial.println();
  #endif
 +
-+#ifdef MESHSTATS_NET
-+  // Hand the bytes over exactly as they came off the air; MeshStatsNet only
++#ifdef MESHMANAGER_NET
++  // Hand the bytes over exactly as they came off the air; MeshManagerNet only
 +  // copies them into a queue here, so the receive path is never held up.
-+  meshstats_on_raw_packet(snr, rssi, raw, len);
++  meshmanager_on_raw_packet(snr, rssi, raw, len);
 +#endif
  }
  
@@ -1803,7 +1815,7 @@ index c93ba1a..961d004 100644
  }
  
 +/* Replies from a monitored repeater. Nothing is parsed here beyond handing the
-+ * bytes on: this runs in the receive path, so it may only copy. MeshStatsNet
++ * bytes on: this runs in the receive path, so it may only copy. MeshManagerNet
 + * knows what it asked for and interprets accordingly. */
 +void MyMesh::handleMonitorData(int mon_idx, uint8_t type, const uint8_t *data, size_t len) {
 +  if (mon_idx >= num_monitors) return;
@@ -1811,8 +1823,8 @@ index c93ba1a..961d004 100644
 +   * the answer to a CLI command we sent. Both are forwarded, with the type, so
 +   * the other side knows which of the two it is looking at. */
 +  if (type != PAYLOAD_TYPE_RESPONSE && type != PAYLOAD_TYPE_TXT_MSG) return;
-+#ifdef MESHSTATS_NET
-+  meshstats_on_monitor_response(mon_idx, type, data, (int)len);
++#ifdef MESHMANAGER_NET
++  meshmanager_on_monitor_response(mon_idx, type, data, (int)len);
 +#endif
 +}
 +
@@ -1825,11 +1837,11 @@ index c93ba1a..961d004 100644
  
 +  AdvertDataParser parser(app_data, app_data_len);
 +
-+#ifdef MESHSTATS_NET
++#ifdef MESHMANAGER_NET
 +  /* Every advert, whatever the type or hop count: this feeds the cache that
 +   * makes names survive a restart. Copies only, no file access here. */
 +  if (parser.isValid()) {
-+    meshstats_on_advert(id.pub_key, parser.hasName() ? parser.getName() : NULL,
++    meshmanager_on_advert(id.pub_key, parser.hasName() ? parser.getName() : NULL,
 +                        parser.getType(), parser.hasLatLon(),
 +                        parser.getIntLat(), parser.getIntLon());
 +  }
@@ -1932,14 +1944,14 @@ index c93ba1a..961d004 100644
 +   * mqtt_ingest.py drops them whole, and the repeater quietly stops existing on
 +   * the site while publish() here keeps reporting success -- because it is a
 +   * success, the broker took the bytes. Same reasoning as jsonEsc() in
-+   * MeshStatsNet.cpp; see the 1.9.1 changelog entry there. */
++   * MeshManagerNet.cpp; see the 1.9.1 changelog entry there. */
 +  char name_esc[sizeof(_prefs.node_name) * 2];
 +  jsonEscape(name_esc, sizeof(name_esc), _prefs.node_name);
 +
 +  /* The receiving site wants to know which custom build produced this payload,
 +   * independently of the MeshCore version underneath it. */
-+#ifdef MESHSTATS_NET
-+  const char *ms_ver = MESHSTATS_VERSION;
++#ifdef MESHMANAGER_NET
++  const char *ms_ver = MESHMANAGER_VERSION;
 +#else
 +  const char *ms_ver = "";
 +#endif
@@ -1949,8 +1961,8 @@ index c93ba1a..961d004 100644
 +  uint32_t rx_air = getReceiveAirTime() / 1000;
 +
 +  uint16_t batt_mv = board.getBattMilliVolts();
-+#ifdef MESHSTATS_NET
-+  int batt_pct = meshstats_batt_percent(batt_mv);
++#ifdef MESHMANAGER_NET
++  int batt_pct = meshmanager_batt_percent(batt_mv);
 +#else
 +  int batt_pct = -1;
 +#endif
@@ -2014,7 +2026,7 @@ index c93ba1a..961d004 100644
 +
 +  int n = snprintf(out, max_len,
 +    "{\"repeater\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\","
-+    "\"fw\":\"" FIRMWARE_VERSION "\",\"fw_meshstats\":\"%s\"},"
++    "\"fw\":\"" FIRMWARE_VERSION "\",\"fw_meshmanager\":\"%s\"},"
 +    "\"metrics\":{"
 +      "\"online\":true,"
 +      "\"uptime\":%.5f,"
@@ -2133,11 +2145,11 @@ index c93ba1a..961d004 100644
      command += 3;
    }
  
-+#ifdef MESHSTATS_NET
++#ifdef MESHMANAGER_NET
 +  // The wifi commands have to work over the mesh as well. Otherwise a single
 +  // wrong network setting would make this repeater unreachable, and it lives
 +  // on a roof.
-+  if (msnet_handle_command(command, reply)) return;
++  if (mmnet_handle_command(command, reply)) return;
 +#endif
 +
    // handle ACL related commands
@@ -2216,7 +2228,7 @@ index 2f923c8..0c7470c 100644
    void loop();
  
 +  /* Own statistics as JSON, in the same shape the companion node ships to the
-+   * MeshStats site, so both node types land in one schema. Returns 0 when the
++   * MeshManager site, so both node types land in one schema. Returns 0 when the
 +   * buffer was too small. */
 +  size_t fillStatsJson(char* out, size_t max_len);
 +
@@ -2281,8 +2293,8 @@ index a714db6..ed44f54 100644
    #include <helpers/nrf52/EthernetCLI.h>
  #endif
  
-+#ifdef MESHSTATS_NET
-+  #include "MeshStatsNet.h"
++#ifdef MESHMANAGER_NET
++  #include "MeshManagerNet.h"
 +#endif
 +
  StdRNG fast_rng;
@@ -2296,10 +2308,10 @@ index a714db6..ed44f54 100644
 +  bool radio_ok = radio_init();
 +  if (!radio_ok) {
      MESH_DEBUG_PRINTLN("Radio init failed!");
-+#ifndef MESHSTATS_NET
++#ifndef MESHMANAGER_NET
      halt();
 +#endif
-+    // Met MESHSTATS_NET blijven we niet eeuwig hangen: verderop starten we het
++    // Met MESHMANAGER_NET blijven we niet eeuwig hangen: verderop starten we het
 +    // netwerkdeel alsnog, zodat de node bereikbaar blijft om te herflashen.
    }
  
@@ -2308,12 +2320,12 @@ index a714db6..ed44f54 100644
    ethernet_command[0] = 0;
  #endif
  
-+#ifdef MESHSTATS_NET
++#ifdef MESHMANAGER_NET
 +  if (!radio_ok) {
 +    // Zonder radio heeft de mesh geen zin, maar bereikbaar blijven wel: hier
 +    // draaien we enkel WiFi, beheerpagina en console, zodat je kan herflashen.
-+    msnet_begin(*fs, &the_mesh);
-+    while (1) { msnet_loop(); delay(5); }
++    mmnet_begin(*fs, &the_mesh);
++    while (1) { mmnet_loop(); delay(5); }
 +  }
 +#endif
 +
@@ -2321,8 +2333,8 @@ index a714db6..ed44f54 100644
  
    the_mesh.begin(fs);
  
-+#ifdef MESHSTATS_NET
-+  msnet_begin(*fs, &the_mesh);
++#ifdef MESHMANAGER_NET
++  mmnet_begin(*fs, &the_mesh);
 +#endif
 +
  #ifdef DISPLAY_CLASS
@@ -2332,8 +2344,8 @@ index a714db6..ed44f54 100644
    }
  #endif
  
-+#ifdef MESHSTATS_NET
-+  msnet_loop();   // wifi, beheerpagina en console; blokkeert nooit
++#ifdef MESHMANAGER_NET
++  mmnet_loop();   // wifi, beheerpagina en console; blokkeert nooit
 +#endif
 +
  #if defined(PIN_USER_BTN) && defined(_SEEED_SENSECAP_SOLAR_H_) && !defined(DISPLAY_CLASS)

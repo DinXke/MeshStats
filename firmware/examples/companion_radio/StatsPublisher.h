@@ -1,7 +1,7 @@
 #pragma once
 
 /* StatsPublisher - de ingebouwde webclient van de node, plus het MQTT-kanaal
- * naar een MeshStats-site.
+ * naar een MeshManager-site.
  *
  * Ondanks de naam doet deze module twee samenhangende dingen:
  *
@@ -244,6 +244,18 @@ private:
   size_t _asked, _done;
 };
 
+/* Het MQTT-topicvoorvoegsel, sinds de hernoeming naar MeshManager.
+ * 'meshcore' was de naam van het protocol en van een ander project; dit is
+ * er een die dit project zelf bezit. De server luistert tijdens de overgang
+ * naar allebei, dus een companion die nog niet om is blijft binnenkomen.
+ *
+ * Anders dan op de repeater verhuist dit hier NIET vanzelf. Een companion
+ * hangt niet op een dak maar op een bureau, hij wordt met de hand ingesteld
+ * en zijn beheerpagina staat een klik verderop; een stille wijziging is daar
+ * meer verrassing dan winst. Op de repeater is de afweging omgekeerd, en
+ * daar staat ze uitgeschreven in loadConfig() van MeshManagerNet.cpp. */
+#define STATS_PREFIX_DEFAULT  "meshmanager"
+
 class StatsPublisher {
 public:
   struct Config {
@@ -251,7 +263,7 @@ public:
     uint16_t port;                  // 1883
     char user[STATS_USER_MAX];
     char pass[STATS_PASS_MAX];
-    char prefix[STATS_PREFIX_MAX];  // topicprefix, standaard "meshcore"
+    char prefix[STATS_PREFIX_MAX];  // topicprefix, standaard "meshmanager"
     uint32_t interval_secs;         // hoe vaak statistieken sturen
     bool enabled;
     bool forward_rx;                // ook elk ontvangen pakket doorsturen
@@ -267,7 +279,7 @@ public:
     _cfg.interval_secs = 300;
     _cfg.enabled = false;
     _cfg.forward_rx = true;
-    strcpy(_cfg.prefix, "meshcore");
+    strcpy(_cfg.prefix, STATS_PREFIX_DEFAULT);
     _last_error[0] = 0;
     _node_hex[0] = 0;
     memset(_msgs, 0, sizeof(_msgs));
@@ -380,6 +392,6 @@ private:
 
 /* Globale haken zodat MyMesh niets van deze klasse hoeft te weten. Worden in
  * begin() ingevuld; zolang die niet liep, doet aanroepen niets. */
-void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
-void meshstats_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
-void meshstats_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
+void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
+void meshmanager_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
+void meshmanager_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);

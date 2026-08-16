@@ -1,8 +1,8 @@
-; Repeater met MeshStatsNet: WiFi, beheerpagina, OTA over het gewone netwerk en
+; Repeater met MeshManagerNet: WiFi, beheerpagina, OTA over het gewone netwerk en
 ; een console. De credentials staan hier ingebouwd zodat de eerste OTA-flash
 ; meteen op het netwerk komt; nadien zijn ze via de beheerpagina te wijzigen.
 ; DIT BESTAND NOOIT COMMITTEN.
-[env:heltec_v4_repeater_meshstats]
+[env:heltec_v4_repeater_meshmanager]
 extends = heltec_v4_oled
 build_flags =
   ${heltec_v4_oled.build_flags}
@@ -15,7 +15,13 @@ build_flags =
   ; De FEM-versterker overstuurt bij een sterk signaal; deze node staat hoog en
   ; met vrij zicht, en hoort meer zonder.
   -D RADIO_FEM_RXGAIN_DEFAULT=0
-  -D MESHSTATS_NET=1
+  ; Heette -D MESHSTATS_NET tot moduleversie 2.0.0. Wie een eigen
+  ; platformio.local.ini van voor die wissel heeft: hernoem de vlag.
+  ; Vergeten levert een build op die compileert, flasht en start als een
+  ; gewone MeshCore-repeater -- zonder beheerpagina, zonder MQTT en zonder
+  ; foutmelding. Controle na het flashen: 'ver' hoort
+  ; "MeshManager (by DinX) v2.0.0" te antwoorden.
+  -D MESHMANAGER_NET=1
   ; DISABLE_WIFI_OTA bewust NIET gezet: zolang onze module draait vangt zij
   ; 'start ota' af (er staat al een webserver op poort 80), maar schakelt zij
   ; zichzelf uit na herhaalde herstarts, dan werkt de standaard-OTA weer.

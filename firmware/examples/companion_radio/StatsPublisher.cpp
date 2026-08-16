@@ -11,15 +11,15 @@ extern unsigned int encode_base64(const unsigned char input[], unsigned int inpu
 
 static StatsPublisher* _instance = nullptr;
 
-void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len) {
+void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len) {
   if (_instance) _instance->queueRawPacket(snr, rssi, raw, len);
 }
 
-void meshstats_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text) {
+void meshmanager_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text) {
   if (_instance) _instance->noteMessage(STATS_MSG_CHANNEL, channel_name, timestamp, text);
 }
 
-void meshstats_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text) {
+void meshmanager_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text) {
   if (_instance) _instance->noteMessage(STATS_MSG_DIRECT, sender_name, timestamp, text);
 }
 
@@ -144,7 +144,7 @@ void StatsPublisher::loadConfig() {
   grab("user", _cfg.user, STATS_USER_MAX);
   grab("pass", _cfg.pass, STATS_PASS_MAX);
   grab("prefix", _cfg.prefix, STATS_PREFIX_MAX);
-  if (_cfg.prefix[0] == 0) strcpy(_cfg.prefix, "meshcore");
+  if (_cfg.prefix[0] == 0) strcpy(_cfg.prefix, STATS_PREFIX_DEFAULT);
 
   _cfg.port = (uint16_t)num("port", 1883);
   if (_cfg.port == 0) _cfg.port = 1883;
@@ -279,7 +279,7 @@ bool StatsPublisher::ensureConnected() {
   _last_connect_try = millis();
 
   char client_id[32];
-  snprintf(client_id, sizeof(client_id), "meshcore-%s",
+  snprintf(client_id, sizeof(client_id), "meshmanager-%s",
            _node_hex[0] ? _node_hex : "node");
 
   bool ok = _cfg.user[0]
@@ -490,7 +490,7 @@ void StatsPublisher::handleSave() {
   copy_arg("host", _cfg.host, STATS_HOST_MAX);
   copy_arg("user", _cfg.user, STATS_USER_MAX);
   copy_arg("prefix", _cfg.prefix, STATS_PREFIX_MAX);
-  if (_cfg.prefix[0] == 0) strcpy(_cfg.prefix, "meshcore");
+  if (_cfg.prefix[0] == 0) strcpy(_cfg.prefix, STATS_PREFIX_DEFAULT);
 
   if (_server.hasArg("pass") && _server.arg("pass").length() > 0) {
     copy_arg("pass", _cfg.pass, STATS_PASS_MAX);

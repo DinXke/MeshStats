@@ -69,6 +69,64 @@ def test_assets_die_niet_aan_het_patroon_voldoen_verdwijnen_stil():
     assert list(parsed["images"]) == ["heltec_v4_repeater_meshstats"]
 
 
+# --- de hernoeming naar MeshManager -------------------------------------------
+#
+# Deze vier tests bewaken de enige stap in de hele hernoeming die niet terug te
+# draaien is met een herstart: een node die na een verkeerde keuze een image
+# krijgt dat niet bij hem hoort, hangt op een dak. Ze horen te verdwijnen zodra
+# geen enkele node de oude envnaam nog meldt en er geen release met de oude
+# assetnaam meer in de lijst staat -- allebei af te lezen op /admin/firmware.
+
+def _meshmanager_release(tag="fw-v2.0.0", envs=("heltec_v4_repeater_meshmanager",)):
+    """Zoals release(), maar met de nieuwe naamgeving van de assets."""
+    assets = []
+    for env in envs:
+        name = f"meshmanager-{env}-{tag[len('fw-v'):]}.bin"
+        assets.append({"name": name, "browser_download_url": f"https://x/{name}",
+                       "size": 1_289_053})
+    return {"tag_name": tag, "name": tag, "published_at": "2026-08-16T02:00:00Z",
+            "body": "notities", "assets": assets}
+
+
+def test_images_met_de_nieuwe_naam_worden_herkend():
+    parsed = firmware._parse_release(_meshmanager_release())
+    assert parsed["envs"] == ["heltec_v4_repeater_meshmanager"]
+
+
+def test_images_met_de_oude_naam_blijven_herkend():
+    # Anders ziet de site in elke bestaande release nul images, en is
+    # terugrollen naar de versie van gisteren onmogelijk geworden -- juist
+    # waarvoor de rollback bestaat.
+    parsed = firmware._parse_release(release())
+    assert parsed["envs"] == ["heltec_v4_repeater_meshstats"]
+
+
+def test_een_node_op_de_oude_envnaam_krijgt_het_nieuwe_image():
+    # De kern van de overgang. Een node die nog 1.12.0 draait is gebouwd onder
+    # heltec_v4_repeater_meshstats en meldt die naam; de release die hem
+    # eroverheen helpt draagt de nieuwe. Zonder deze vertaling is 2.0.0 alleen
+    # met een USB-kabel te installeren, en dat is op een dak geen upgradeweg.
+    parsed = firmware._parse_release(_meshmanager_release())
+    image = firmware.image_for(parsed, "heltec_v4_repeater_meshstats")
+    assert image is not None
+    assert image["env"] == "heltec_v4_repeater_meshmanager"
+
+
+def test_de_eigen_envnaam_gaat_voor_op_de_vertaling():
+    # Zolang een release nog een image met de oude envnaam bevat, is dat het
+    # image dat er echt bij hoort. Een alias die daaroverheen walst zou een
+    # terugrol naar een oudere versie het verkeerde bestand geven.
+    parsed = firmware._parse_release(release(
+        envs=("heltec_v4_repeater_meshstats", "heltec_v4_repeater_meshmanager")))
+    image = firmware.image_for(parsed, "heltec_v4_repeater_meshstats")
+    assert image["env"] == "heltec_v4_repeater_meshstats"
+
+
+def test_een_onbekende_bouwomgeving_krijgt_niets():
+    parsed = firmware._parse_release(_meshmanager_release())
+    assert firmware.image_for(parsed, "een_ander_bord") is None
+
+
 # --- mag er een image naar deze node ------------------------------------------
 
 def test_zonder_inloggegevens_geen_enkele_knop(monkeypatch):

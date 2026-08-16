@@ -7,9 +7,9 @@
 // hoeft te kennen (en er geen include-cyclus ontstaat). Deze voeden de
 // ingebouwde webclient; ze kopieren naar een buffer en keren meteen terug,
 // dus ze mogen vanuit de mesh-callbacks hieronder aangeroepen worden.
-void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
-void meshstats_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
-void meshstats_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
+void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
+void meshmanager_on_channel_msg(const char* channel_name, uint32_t timestamp, const char* text);
+void meshmanager_on_direct_msg(const char* sender_name, uint32_t timestamp, const char* text);
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -295,7 +295,7 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   // Elk binnengekomen pakket ongewijzigd doorgeven aan de statistiekenmodule;
   // die zet het in een wachtrij en publiceert het later via MQTT. Hier zelf
   // niets ontleden of versturen: dit draait midden in de ontvangstlus.
-  meshstats_on_raw_packet(snr, rssi, raw, len);
+  meshmanager_on_raw_packet(snr, rssi, raw, len);
 
   if (_serial->isConnected() && len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
@@ -539,7 +539,7 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
-  meshstats_on_direct_msg(from.name, sender_timestamp, text);
+  meshmanager_on_direct_msg(from.name, sender_timestamp, text);
 }
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
@@ -587,7 +587,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     // De kanaalnaam is hier het enige bruikbare label: sendGroupMessage()
     // zet de afzender al voor de tekst zelf.
     ChannelDetails ch;
-    meshstats_on_channel_msg(getChannel(channel_idx, ch) ? ch.name : "?", timestamp, text);
+    meshmanager_on_channel_msg(getChannel(channel_idx, ch) ? ch.name : "?", timestamp, text);
   }
 
   if (_serial->isConnected()) {

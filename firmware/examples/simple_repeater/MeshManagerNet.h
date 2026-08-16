@@ -1,6 +1,6 @@
 #pragma once
 
-/* MeshStatsNet -- gives a repeater an IP life next to its mesh life: WiFi, an
+/* MeshManagerNet -- gives a repeater an IP life next to its mesh life: WiFi, an
  * admin page, firmware upgrades, a console and MQTT publishing.
  *
  * Two topics outbound, and only two, because those are the ones the receiving
@@ -139,32 +139,37 @@
 #include <FS.h>
 
 /* Version of THIS module, not of MeshCore. The two move independently: this
- * firmware tracks upstream MeshCore releases, while everything in MeshStatsNet
+ * firmware tracks upstream MeshCore releases, while everything in MeshManagerNet
  * has its own semantic version. 'ver' prints both, because when something is
  * wrong the first question is which of the two you are looking at. */
-#define MESHSTATS_NAME     "MeshStats (by DinX)"
-#define MESHSTATS_VERSION  "1.12.0"
+/* De naam hieronder is niet enkel opsmuk: hij is het antwoord op "is deze
+ * node al om?". Hij komt uit 'ver', staat op de beheerpagina van de node
+ * zelf, en het hoofdgetal 2 is wat de site in fw_meshmanager binnenkrijgt.
+ * Zo is de overgang na het flashen af te lezen in plaats van te moeten
+ * geloven. */
+#define MESHMANAGER_NAME     "MeshManager (by DinX)"
+#define MESHMANAGER_VERSION  "2.0.0"
 
 class MyMesh;
 
 // Call from setup(), after the file system and the mesh are up.
-void msnet_begin(FS &fs, MyMesh *mesh);
+void mmnet_begin(FS &fs, MyMesh *mesh);
 
 // Call from loop(). Never does anything that blocks for long.
-void msnet_loop();
+void mmnet_loop();
 
 /* Called from the receive path for every packet that comes in. Only copies
- * into a ring buffer -- publishing happens later, in msnet_loop(). A full
+ * into a ring buffer -- publishing happens later, in mmnet_loop(). A full
  * queue drops the packet and counts it; waiting here would hold up reception.
- * Safe to call before msnet_begin() or when the module is disabled. */
-void meshstats_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
+ * Safe to call before mmnet_begin() or when the module is disabled. */
+void meshmanager_on_raw_packet(float snr, float rssi, const uint8_t raw[], int len);
 
 /* Called from the receive path when a repeater we monitor answers a login or a
  * status request, or to a CLI command we sent it. Same rule as above: copy
  * only, interpret later. mon_idx indexes MyMesh's monitor table, and type
  * distinguishes a RESPONSE (status/telemetry/neighbours) from a TXT_MSG (a CLI
  * answer). */
-void meshstats_on_monitor_response(int mon_idx, uint8_t type, const uint8_t *data, int len);
+void meshmanager_on_monitor_response(int mon_idx, uint8_t type, const uint8_t *data, int len);
 
 /* Called for every advert this node hears. Keeps a small cache of who is out
  * there -- key, name, type, when last heard, and coordinates when the advert
@@ -172,27 +177,27 @@ void meshstats_on_monitor_response(int mon_idx, uint8_t type, const uint8_t *dat
  * Without it a reboot leaves the monitor list and the heard list showing bare
  * hex keys until the next advert, and those can be hours apart.
  *
- * Copies into RAM only. The file is written lazily from msnet_loop(), never
+ * Copies into RAM only. The file is written lazily from mmnet_loop(), never
  * from here: adverts arrive in bursts on a busy mesh, and SPIFFS wears out. */
-void meshstats_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
+void meshmanager_on_advert(const uint8_t *pub_key, const char *name, uint8_t type,
                          bool has_latlon, int32_t lat, int32_t lon);
 
 /* Name last heard for this public key, or NULL when we have never heard it.
  * prefix_len is in bytes, so a partial key works. */
-const char *meshstats_advert_name(const uint8_t *pub_key, int prefix_len);
+const char *meshmanager_advert_name(const uint8_t *pub_key, int prefix_len);
 
 /* Battery percentage from cell millivolts. Lives here so the admin page, the
  * power management and the published statistics all quote the same number;
  * two curves that disagree by a few percent is a bug report waiting to happen.
  * Returns -1 when the board reports no usable voltage. */
-int meshstats_batt_percent(uint16_t milli_volts);
+int meshmanager_batt_percent(uint16_t milli_volts);
 
 /* Intercepts the wifi commands. Returns true if the command was ours.
  * Called from the serial CLI, the mesh CLI and the telnet console alike, so a
  * broken WiFi configuration can still be fixed over the mesh:
  *
  *   ver                  version of this module plus the MeshCore version it
- *                        is built on. No MeshStats name in the answer means
+ *                        is built on. No MeshManager name in the answer means
  *                        this module is not running.
  *   wifi                 state, IP, signal, battery, publish interval
  *   wifi ssid <name>     set the network (empty = the compiled-in default)
@@ -236,7 +241,7 @@ int meshstats_batt_percent(uint16_t milli_volts);
  *                        to know what time it is. A person at a serial cable
  *                        does not, and neither does this node.
  */
-bool msnet_handle_command(const char *command, char *reply);
+bool mmnet_handle_command(const char *command, char *reply);
 
 // True when the node runs in safe mode (after repeated restarts).
-bool msnet_is_safe_mode();
+bool mmnet_is_safe_mode();

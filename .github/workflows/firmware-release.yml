@@ -17,7 +17,7 @@
 # install: flashing it onto a virgin board over USB gives a node with no network.
 #
 # TAGGING. `git tag fw-v1.12.0 && git push origin fw-v1.12.0`, where the version
-# must be the one in MESHSTATS_VERSION. The first job refuses the build if the
+# must be the one in MESHMANAGER_VERSION. The first job refuses the build if the
 # two disagree, because a release whose assets report a different version than
 # the release does sends the site looking for an upgrade that installs something
 # else.
@@ -31,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version to build, e.g. fw-v1.12.0 (must match MESHSTATS_VERSION)'
+        description: 'Version to build, e.g. fw-v1.12.0 (must match MESHMANAGER_VERSION)'
         required: true
 
 permissions:
@@ -85,10 +85,10 @@ jobs:
       matrix:
         pioenv: ${{ fromJson(needs.plan.outputs.envs) }}
     steps:
-      - name: MeshStats
+      - name: MeshManager
         uses: actions/checkout@v4
         with:
-          path: meshstats
+          path: meshmanager
 
       - name: MeshCore
         uses: actions/checkout@v4
@@ -107,34 +107,34 @@ jobs:
           path: |
             ~/.platformio
             ~/.cache/pip
-          key: pio-${{ runner.os }}-${{ env.MESHCORE_REF }}-${{ hashFiles('meshstats/firmware/platformio.ci.ini') }}
+          key: pio-${{ runner.os }}-${{ env.MESHCORE_REF }}-${{ hashFiles('meshmanager/firmware/platformio.ci.ini') }}
           restore-keys: pio-${{ runner.os }}-
 
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
       # The same two copies the README tells a human to make. Not `git apply` of
-      # meshstats.patch: the patch and the files are two representations of one
+      # meshmanager.patch: the patch and the files are two representations of one
       # change, and if they ever drift the files are the ones that were compiled.
-      - name: Apply the MeshStats changes
+      - name: Apply the MeshManager changes
         run: |
-          cp -r meshstats/firmware/src/*      meshcore/src/
-          cp -r meshstats/firmware/examples/* meshcore/examples/
-          cp    meshstats/firmware/platformio.ci.ini meshcore/platformio.local.ini
+          cp -r meshmanager/firmware/src/*      meshcore/src/
+          cp -r meshmanager/firmware/examples/* meshcore/examples/
+          cp    meshmanager/firmware/platformio.ci.ini meshcore/platformio.local.ini
 
       - name: Build ${{ matrix.pioenv }}
         working-directory: meshcore
         run: pio run -e ${{ matrix.pioenv }}
 
       # The asset name carries the env, because that is the key the site matches
-      # against MESHSTATS_ENV as reported by the node itself. A name that only
+      # against MESHMANAGER_ENV as reported by the node itself. A name that only
       # said "repeater" would leave the site guessing which board a binary is
       # for, and a guess there ends with an ESP32-S3 image on something else.
       - name: Name it and hash it
         working-directory: meshcore
         run: |
           V="${{ needs.plan.outputs.version }}"
-          BIN="meshstats-${{ matrix.pioenv }}-${V}.bin"
+          BIN="meshmanager-${{ matrix.pioenv }}-${V}.bin"
           mkdir -p ../out
           cp ".pio/build/${{ matrix.pioenv }}/firmware.bin" "../out/$BIN"
           cd ../out
@@ -169,14 +169,14 @@ jobs:
         run: |
           V="${{ needs.plan.outputs.version }}"
           {
-            echo "MeshStatsNet $V, for the MeshCore repeater firmware (built against \`$MESHCORE_REF\`)."
+            echo "MeshManagerNet $V, for the MeshCore repeater firmware (built against \`$MESHCORE_REF\`)."
             echo
             python3 firmware/tools/release_notes.py notes --version "$V"
             echo
             echo '## Which file'
             echo
             echo 'One image per PlatformIO build environment. A node reports the'
-            echo 'environment it was built for in `MESHSTATS_ENV` (`GET /api/fw`),'
+            echo 'environment it was built for in `MESHMANAGER_ENV` (`GET /api/fw`),'
             echo 'and the site matches on that exactly; it refuses rather than'
             echo 'guesses when a node does not report one. Every `.bin` has a'
             echo '`.sha256` beside it, and both the site and the node check it'
@@ -194,6 +194,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: MeshStatsNet ${{ needs.plan.outputs.version }}
+          name: MeshManagerNet ${{ needs.plan.outputs.version }}
           body_path: notes.md
           files: out/*
