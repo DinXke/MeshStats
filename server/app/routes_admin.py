@@ -294,6 +294,11 @@ def server_page(request: Request):
     repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
     tokens = db.q("SELECT * FROM tokens WHERE revoked=0 ORDER BY created_at")
     layout = metrics.parse_layout(db.get_setting("layout"))
+    # Eén keer opgehaald: de groepenlijsten worden twee keer gebruikt (de lijst
+    # zelf en de ledentabellen ernaast), en twee keer dezelfde vraag stellen is
+    # twee keer een kans dat er tussendoor iets verandert.
+    ug = rbac.gebruikersgroepen()
+    ng = rbac.nodegroepen()
     # nieuw token éénmalig tonen via kortlevende cookie (niet via de URL)
     new_token = request.cookies.get("mm_new_token")
     resp = templates.TemplateResponse(request, "admin/server.html", {
@@ -304,12 +309,10 @@ def server_page(request: Request):
         # tussen de tokens en de bewaartermijn, want het gaat over deze
         # installatie en niet over een apparaat.
         "gebruikers": rbac.gebruikers(),
-        "gebruikersgroepen": rbac.gebruikersgroepen(),
-        "nodegroepen": rbac.nodegroepen(),
-        "groepsleden": {g["id"]: rbac.leden("user", g["id"])
-                        for g in rbac.gebruikersgroepen()},
-        "nodegroepsleden": {g["id"]: rbac.leden("node", g["id"])
-                            for g in rbac.nodegroepen()},
+        "gebruikersgroepen": ug,
+        "nodegroepen": ng,
+        "groepsleden": {g["id"]: rbac.leden("user", g["id"]) for g in ug},
+        "nodegroepsleden": {g["id"]: rbac.leden("node", g["id"]) for g in ng},
         "toekenningen": rbac.toekenningen(),
         "rollen": rbac.ROLLEN, "rol_uitleg": rbac.ROL_UITLEG,
         "klasse_uitleg": rbac.KLASSE_UITLEG,
