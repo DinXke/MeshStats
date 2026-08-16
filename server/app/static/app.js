@@ -1013,6 +1013,247 @@
     });
   }
 
+  // --- node detail, behind a dot on the live map --------------------------------
+  // Fills templates/_node_detail.html, and lives at the top level next to
+  // fillPacketDetail for the same reason that one does: the archive already
+  // resolves senders and observers to these very nodes, so the day it wants to
+  // show one it can include the fragment and call this -- instead of growing a
+  // second rendering that would have to be taught the same honesty rules again,
+  // and would eventually be taught one of them wrongly.
+  //
+  // Those rules, in this panel: a figure that was counted is printed plainly, a
+  // figure that was inferred carries a dotted underline with the reasoning in
+  // its title, and something nobody ever told us is written out as unknown
+  // rather than dropped. Dropping it is the tempting one and the wrong one -- a
+  // missing row reads as "does not apply", an empty row reads as zero, and
+  // neither of those is what "we do not know" means.
+
+  // The visible half of an inference. .src-derived is the packet panel's own
+  // class for a value that was worked out rather than stated; reused here
+  // rather than copied under a node- name, because the two must never end up
+  // looking different -- the reader is being told the same thing.
+  function markDerived(id, title) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add("src-derived");
+    el.title = title;
+  }
+
+  // Absolute first, relative second. The absolute time is what someone
+  // correlating with another log needs; the relative one is what makes "is this
+  // node still alive" answerable at a glance.
+  function whenText(iso) {
+    return iso ? new Date(iso).toLocaleString() + " · " + relTime(iso)
+               : t("node.unknown");
+  }
+
+  function nodeRow(id, show) {
+    var row = document.getElementById(id);
+    if (row) row.hidden = !show;
+    return !!show;
+  }
+
+  // One entry in the observer or neighbour list: who, one headline number, and
+  // the measurements behind it on a second line. Two lines rather than one wide
+  // row because this panel is 320 px wide on a phone, and a single line would
+  // either wrap into an unreadable block or lose the numbers to an ellipsis.
+  function nodeListItem(who, num, meta, href) {
+    var li = document.createElement("li");
+    var top = document.createElement("span");
+    top.className = "nodelist-top";
+    var name = document.createElement(href ? "a" : "span");
+    name.className = "nodelist-who";
+    name.textContent = who;
+    if (href) name.href = href;
+    top.appendChild(name);
+    if (num) {
+      var n = document.createElement("span");
+      n.className = "nodelist-num";
+      n.textContent = num;
+      top.appendChild(n);
+    }
+    li.appendChild(top);
+    if (meta) {
+      var m = document.createElement("span");
+      m.className = "nodelist-meta";
+      m.textContent = meta;
+      li.appendChild(m);
+    }
+    return li;
+  }
+
+  /* Fill the shared fragment from one /api/v1/nodes/{prefix} response.
+   *
+   * opts.showCountry -- whether this deployment can say anything about
+   *   countries at all, exactly as fillPacketDetail uses it.
+   */
+  function fillNodeDetail(d, opts) {
+    opts = opts || {};
+    txt("node-name", d.name || t("node.name_unknown"));
+    // The full key prefix when a node advertised itself, the six-character map
+    // key when all we ever got was a contact push. Both are prefixes, never a
+    // whole public key, and the title says so -- the panel's headline field is
+    // the last place to let a reader believe they are looking at an identity
+    // they could verify a signature against.
+    txt("node-key", (d.key_prefix || d.prefix).toUpperCase());
+    markDerived("node-key", t("node.key_why"));
+    txt("node-nodetype", d.node_type || t("node.unknown"));
+    if (nodeRow("node-country-row", opts.showCountry)) {
+      txt("node-country", countryLabel(d.country));
+    }
+    // A node without coordinates is not left off this panel: half the contacts
+    // this site knows have never advertised a position, and a blank where the
+    // position should be would read as an oversight rather than as the fact it
+    // is. It is also why such a node has no dot on the map -- worth saying in
+    // the one place someone might wonder.
+    txt("node-position", d.lat != null && d.lon != null
+      ? d.lat.toFixed(6) + ", " + d.lon.toFixed(6)
+      : t("node.position_unknown"));
+    txt("node-updated", whenText(d.updated));
+
+    // --- the tracked-repeater block ------------------------------------------
+    var rep = d.repeater;
+    document.getElementById("node-rep").hidden = !rep;
+    if (rep) {
+      txt("node-rep-status", t(rep.online ? "node.rep_online" : "node.rep_offline") +
+          " · " + whenText(rep.last_seen));
+      txt("node-rep-battery", rep.battery_percentage != null
+        ? Math.round(rep.battery_percentage) + " %" : t("node.unknown"));
+      txt("node-rep-uptime", rep.uptime != null
+        ? t("node.rep_uptime_v", { n: rep.uptime.toFixed(1) }) : t("node.unknown"));
+      var link = document.getElementById("node-rep-link");
+      link.href = rep.url;
+      link.textContent = t("node.rep_link");
+    }
+
+    // --- traffic --------------------------------------------------------------
+    var win = d.window || {};
+    txt("node-window", win.oldest
+      ? t("node.window", { days: win.days, oldest: whenText(win.oldest) })
+      : t("node.window_empty"));
+
+    var sent = d.sent || { total: 0, observers: [], types: [], scopes: [] };
+    txt("node-sent", sent.total
+      ? t("node.sent_n", { n: sent.total }) : t("node.sent_none"));
+    // Always derived, even when the number is exact. What is inferred is not the
+    // count but its meaning: this is everything provably from this node, which
+    // is not the same as everything it sent, and a reader who is not told that
+    // will read the smaller number as the second thing.
+    markDerived("node-sent", t("node.sent_why"));
+
+    // One timestamp when everything arrived in the same second, two otherwise.
+    // "X to X" is not more precise than "X", only longer, and a range that
+    // repeats itself invites the reader to look for a difference there is none
+    // of.
+    if (nodeRow("node-span-row", !!sent.first)) {
+      txt("node-span", sent.first === sent.last ? whenText(sent.first)
+        : t("node.span_v", { first: whenText(sent.first),
+                             last: whenText(sent.last) }));
+    }
+    if (nodeRow("node-hops-row", sent.hops_min != null)) {
+      txt("node-hops", t("node.hops_v", { n: sent.hops_min }));
+      markDerived("node-hops", t("node.hops_why"));
+    }
+    if (nodeRow("node-types-row", !!(sent.types || []).length)) {
+      txt("node-types", sent.types.map(function (x) {
+        return (x.type || t("node.unknown")) + " " + x.count + "×";
+      }).join(" · "));
+    }
+    if (nodeRow("node-scopes-row", !!(sent.scopes || []).length)) {
+      txt("node-scopes", sent.scopes.map(function (x) {
+        return (x.scope ? t("scope." + x.scope) : t("node.unknown")) +
+          " " + x.count + "×";
+      }).join(" · "));
+    }
+
+    // How often this node's key turns up as a hop in somebody else's path. A
+    // ceiling, and how much of a ceiling depends on how crowded its first key
+    // byte is -- so the panel says which of the two situations it is in rather
+    // than attaching the same vague warning to both.
+    var hop = d.as_hop || { packets: 0, siblings: 0 };
+    txt("node-ashop", hop.packets ? t("node.ashop_n", { n: hop.packets })
+                                  : t("node.ashop_none"));
+    markDerived("node-ashop", hop.siblings > 1
+      ? t("node.ashop_why", { n: hop.siblings - 1 })
+      : t("node.ashop_why_alone"));
+
+    if (nodeRow("node-heard-row", !!d.heard)) {
+      txt("node-heard", t("node.heard_v", { n: d.heard.total,
+                                            s: d.heard.senders }));
+    }
+
+    // --- who hears this node ---------------------------------------------------
+    var obs = document.getElementById("node-observers");
+    obs.textContent = "";
+    (sent.observers || []).forEach(function (o) {
+      var meta = [];
+      if (o.snr_avg != null) {
+        meta.push(t("node.obs_snr", { avg: o.snr_avg.toFixed(2),
+                                      best: o.snr_best.toFixed(2) }));
+      }
+      if (o.rssi_avg != null) meta.push(t("node.obs_rssi", { v: Math.round(o.rssi_avg) }));
+      if (o.hops_min != null) meta.push(t("node.obs_hops", { n: o.hops_min }));
+      meta.push(whenText(o.last));
+      obs.appendChild(nodeListItem(
+        nodeLabel(o.prefix, o.name) || o.prefix.toUpperCase(),
+        o.count + "×", meta.join(" · ")));
+    });
+    txt("node-observers-note", (sent.observers || []).length
+      ? t("node.obs_note") : t("node.obs_none"));
+
+    // --- neighbour relations ----------------------------------------------------
+    // Both directions in one list, each entry saying which way round it is. They
+    // are not symmetric and must not be presented as if they were: a repeater
+    // hearing this node is a measurement that repeater published, and this node
+    // hearing others exists only for the handful of repeaters this site follows.
+    var links = document.getElementById("node-links");
+    links.textContent = "";
+    (d.neighbor_of || []).forEach(function (r) {
+      links.appendChild(nodeListItem(
+        t("node.link_hears", { r: r.name }),
+        r.snr != null ? r.snr.toFixed(2) + " dB" : "",
+        whenText(r.last_seen), r.url));
+    });
+    ((rep && rep.neighbors) || []).forEach(function (n) {
+      links.appendChild(nodeListItem(
+        t("node.link_hears_back", { n: nodeLabel(n.prefix, n.name) || n.prefix.toUpperCase() }),
+        n.snr != null ? n.snr.toFixed(2) + " dB" : "",
+        whenText(n.last_seen)));
+    });
+    var linkNotes = [];
+    if (!links.children.length) linkNotes.push(t("node.link_none"));
+    else linkNotes.push(t("node.link_note"));
+    if (rep && rep.neighbors_capped) linkNotes.push(t("node.link_capped"));
+    txt("node-links-note", linkNotes.join(" "));
+  }
+
+  // Emptied rather than refilled with a blank node, for the reason the packet
+  // panel is: the panel is shown before the fetch resolves, and the previous
+  // node's numbers left standing under a new name would be read as this one's.
+  // The dotted underlines have to go with them -- a stale "derived" mark on an
+  // empty field is a claim about nothing.
+  function blankNodeDetail() {
+    ["node-name", "node-key", "node-nodetype", "node-country", "node-position",
+     "node-updated", "node-window", "node-sent", "node-span", "node-hops",
+     "node-types", "node-scopes", "node-ashop", "node-heard",
+     "node-observers-note", "node-links-note"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = "";
+      el.classList.remove("src-derived");
+      el.removeAttribute("title");
+    });
+    ["node-rep", "node-span-row", "node-hops-row", "node-types-row",
+     "node-scopes-row", "node-heard-row", "node-country-row"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.hidden = true;
+    });
+    ["node-observers", "node-links"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = "";
+    });
+  }
+
   // --- live packet map (public home page) -------------------------------------
   // Colour per payload type, so a burst of adverts is distinguishable from
   // message traffic at a glance without reading the feed.
@@ -1548,6 +1789,10 @@
       // leaves the filter. A gap in a drawn path has to mean "we do not know",
       // never "you filtered this out" -- see drawPath.
       if (pathPrefixes && pathPrefixes[n.prefix]) return true;
+      // The node whose panel is open is exempt for the same reason: a dot that
+      // fades out from under the panel explaining it is the map contradicting
+      // itself, and worse, it hides the one node the reader is looking at.
+      if (selectedNode && selectedNode.n.prefix === n.prefix) return true;
       if (filterCountry) {
         var want = filterCountry === "??" ? null : filterCountry;
         if ((n.country || null) !== want) return false;
@@ -1726,10 +1971,29 @@
                 .addTo(lmap)
                 .bindTooltip(n.name || n.prefix.toUpperCase(), { direction: "top" });
               // Held on to so the filter can restyle them; see applyNodeFilter.
-              nodeMarkers.push({ n: n, m: marker, style: "on" });
+              // The entry, not the node, is what the panel is opened with: the
+              // marker travels with it, and the panel needs it to draw its ring
+              // and to give focus back on close.
+              var entry = { n: n, m: marker, style: "on" };
+              marker.on("click", function (e) {
+                // Kept off the map: Leaflet would otherwise deliver this click
+                // to the map as well, where the outside-click handler would
+                // close the panel this very click is opening.
+                L.DomEvent.stopPropagation(e);
+                openNode(entry);
+              });
+              nodeMarkers.push(entry);
               bounds.push([n.lat, n.lon]);
             });
             if (bounds.length) lmap.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+            // Only now, and deliberately in a second pass: this map is created
+            // without a view and gets its first one from the fitBounds above,
+            // and Leaflet defers a layer's onAdd -- and with it the SVG element
+            // the marker is drawn as -- until the map has one. Asking for that
+            // element inside the loop above returns nothing at all, without an
+            // error, and the dots end up unreachable by keyboard for no visible
+            // reason. Found exactly that way.
+            nodeMarkers.forEach(focusableNode);
             // A filter restored from localStorage has to reach the layer that
             // was only just built, and the view should start where the matches
             // are rather than on the whole mesh.
@@ -1854,7 +2118,18 @@
       }, 150);
     });
 
-    function panelOpen() { return !!panel && !panel.hidden; }
+    // Whichever detail panel is open, or null. There is never more than one --
+    // the packet panel and the node panel share a slot and close each other --
+    // and everything that has to keep clear of the drawer (the map framing
+    // above all) asks this rather than naming one of the two, so that a panel
+    // added later is kept clear of by construction.
+    function openPanelEl() {
+      if (panel && !panel.hidden) return panel;
+      if (nodePanel && !nodePanel.hidden) return nodePanel;
+      return null;
+    }
+
+    function panelOpen() { return !!openPanelEl(); }
 
     function clearPath() {
       if (pathLayer) { lmap.removeLayer(pathLayer); pathLayer = null; }
@@ -1985,7 +2260,8 @@
     // and two thirds of it sit under the panel.
     function mapPadding() {
       var box = livemapEl.getBoundingClientRect();
-      var open = panel && !panel.hidden;
+      var openEl = openPanelEl();
+      var open = !!openEl;
       var sheet = sheetMode();
 
       // Vertical, and computed the same way in both layouts. The map element is
@@ -1993,7 +2269,7 @@
       // has barely 390 px of viewport for a 420 px map -- and on top of that the
       // sheet covers its lower part. Clipping against the viewport and the sheet
       // together covers both without a special case for either.
-      var floor = sheet && open ? panel.getBoundingClientRect().top : window.innerHeight;
+      var floor = sheet && open ? openEl.getBoundingClientRect().top : window.innerHeight;
       var visTop = Math.max(box.top, 0);
       var visBottom = Math.min(box.bottom, window.innerHeight, floor);
       var padTop = Math.max(0, visTop - box.top) + 16;
@@ -2036,6 +2312,10 @@
 
     function openPacket(id) {
       if (!panel || !id) return;
+      // One slot, one panel. See openNode for the whole argument; the two calls
+      // are each other's mirror image so that neither order of clicking can end
+      // up with both drawers fighting over the same edge of the screen.
+      closeNodePanel();
       openId = id;
       blankPacketDetail();
       panel.hidden = false;
@@ -2074,6 +2354,144 @@
       document.getElementById("pkt-close").addEventListener("click", closePanel);
       document.addEventListener("keydown", function (e) {
         if (e.key === "Escape" && !panel.hidden) closePanel();
+      });
+    }
+
+    // --- node detail panel -----------------------------------------------------
+    // Behind a click on a dot. The same docked drawer as the packet panel and
+    // deliberately the same slot: two drawers would either overlap or halve the
+    // map, and both of them want the map framed around their own subject. So
+    // opening one closes the other, in both directions, and the reader is never
+    // left wondering which of two panels the map is currently obeying. A
+    // second, narrower drawer beside the first was tried in the head and
+    // dropped -- at 320 px there is no room for one drawer, let alone two.
+    var nodePanel = document.getElementById("node-panel");
+    var selectedNode = null;    // the marker entry whose panel is open, if any
+    var nodeRing = null;        // the ring drawn around that marker
+    var nodeReq = 0;            // sequence guard: a slow answer must not land
+                                // in a panel that has moved on to another node
+
+    // Selected colour: the cyan the site already uses for "this is the thing
+    // being talked about" (the link map's home node, the hop hashes in the
+    // packet panel), and not the packet route's purple -- a route and a
+    // selection are different claims and must not share a colour.
+    var NODE_SEL_COLOR = cssVar("--cyan", "#4cc9f0");
+
+    function clearNodeRing() {
+      if (nodeRing) { lmap.removeLayer(nodeRing); nodeRing = null; }
+    }
+
+    // A ring around the marker rather than a bigger, brighter dot: the dot's
+    // own size and colour already carry meaning (matched or dimmed by the
+    // filter), and overwriting them to show a selection would cost the reader
+    // the filter state of the very node they are reading about.
+    function ringNode(entry) {
+      clearNodeRing();
+      var ll = entry.m.getLatLng();
+      nodeRing = L.circleMarker(ll, {
+        radius: 11, color: NODE_SEL_COLOR, weight: 2, opacity: 0.95,
+        fillColor: NODE_SEL_COLOR, fillOpacity: 0.1,
+        // Not interactive: it sits on top of the marker, and a ring that ate
+        // the click would make the node it highlights unclickable.
+        interactive: false,
+      }).addTo(lmap);
+      entry.m.bringToFront();
+      // Bring the node out from behind the panel if that is where it ended up,
+      // and no further: panning a map someone deliberately positioned is a cost,
+      // and it is only worth paying when the subject is not visible.
+      var pad = mapPadding();
+      if (lmap.panInside) lmap.panInside(ll, pad);
+    }
+
+    function closeNodePanel(refocus) {
+      if (!nodePanel || nodePanel.hidden) return;
+      var was = selectedNode;
+      nodePanel.hidden = true;
+      selectedNode = null;
+      nodeReq++;              // any answer still in flight is now for nobody
+      clearNodeRing();
+      applyNodeFilter();      // the exemption goes with the selection
+      // Focus goes back where the reader left it, but only when the panel was
+      // closed deliberately (Escape, the cross). After a click elsewhere the
+      // pointer has already moved on and yanking focus back to the map would
+      // scroll the page to it.
+      if (!refocus || !was) return;
+      var el = was.m.getElement();
+      if (el && el.focus) el.focus();
+    }
+
+    function openNode(entry) {
+      if (!nodePanel) return;
+      closePanel();
+      selectedNode = entry;
+      blankNodeDetail();
+      // The name and key are already on the map layer, so the panel opens
+      // named instead of blank while the request is in flight. Everything the
+      // server has to answer stays empty until it has answered -- a heading
+      // filled from one source and figures from another are exactly how a
+      // panel starts telling a half-truth.
+      txt("node-name", entry.n.name || t("node.name_unknown"));
+      txt("node-key", entry.n.prefix.toUpperCase());
+      nodePanel.hidden = false;
+      var body = document.getElementById("node-body");
+      if (body) body.scrollTop = 0;
+      ringNode(entry);
+      applyNodeFilter();
+      nodePanel.focus();
+      var token = ++nodeReq;
+      fetch("/api/v1/nodes/" + encodeURIComponent(entry.n.prefix))
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function (d) {
+          if (token !== nodeReq) return;   // another node took the panel over
+          fillNodeDetail(d, { showCountry: !!countryEl && !countryEl.hidden });
+        })
+        .catch(function () {
+          if (token === nodeReq) txt("node-window", t("node.loaderror"));
+        });
+    }
+
+    // Every node dot is a tab stop with a name. That is one stop per node --
+    // a few hundred on this mesh -- which is a real cost for a keyboard user
+    // and was weighed against the alternative of a map they cannot open at
+    // all. Leaflet's own L.Marker is focusable by default for the same reason,
+    // and the filter box sits directly above the map, so the list is
+    // shortenable by whoever is walking it. Dimmed nodes keep their stop: they
+    // are still real nodes, and a filter that removed them from the keyboard
+    // while leaving them on screen would be a second, invisible filter.
+    function focusableNode(entry) {
+      var el = entry.m.getElement();
+      if (!el) return;
+      el.setAttribute("tabindex", "0");
+      el.setAttribute("role", "button");
+      el.setAttribute("aria-label", t("node.marker_aria", {
+        name: entry.n.name || entry.n.prefix.toUpperCase(),
+      }));
+      el.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        openNode(entry);
+      });
+    }
+
+    if (nodePanel) {
+      document.getElementById("node-close").addEventListener("click", function () {
+        closeNodePanel(true);
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !nodePanel.hidden) closeNodePanel(true);
+      });
+      // Click outside closes. Clicks on the map's own interactive layers are
+      // exempt, because those are the node markers: without the exemption a
+      // click on a second node would close the panel on the way to opening it,
+      // and the reader would see it blink.
+      document.addEventListener("click", function (e) {
+        if (nodePanel.hidden) return;
+        if (nodePanel.contains(e.target)) return;
+        if (e.target.closest && e.target.closest(".leaflet-interactive")) return;
+        closeNodePanel();
       });
     }
 

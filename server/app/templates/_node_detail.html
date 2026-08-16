@@ -1,0 +1,77 @@
+<!-- The detail view of one node, behind a click on a dot of the live map. A
+     sibling of _packet_detail.html and built to the same rule: the markup lives
+     here once and app.js fills it once (fillNodeDetail), so that when a second
+     page needs it -- the archive resolves senders and observers to the same
+     nodes -- there is one rendering to include rather than a second one to keep
+     in step with this one.
+
+     The honesty rules of the packet panel apply unchanged, and most of this
+     node's figures need them more, not less. A number that was counted is
+     printed plainly; a number that was inferred carries the dotted underline
+     (.src-derived) with the reasoning in its title, exactly as a sender derived
+     from an address hash does. A node whose position nobody ever advertised
+     says so in words; it does not quietly lose the row.
+
+     Element ids are prefixed node- so this fragment and the packet fragment can
+     both be on the page at once. They are never both *open* -- see openNode in
+     app.js for why -- but they are both in the DOM. -->
+<div class="modal-head">
+  <h3 id="node-title" data-i18n="node.title">Nodedetail</h3>
+  <button type="button" class="modal-close" id="node-close" data-i18n-aria="modal.close" aria-label="Sluiten">&#10005;</button>
+</div>
+
+<!-- Identity first: on a phone this is what is readable without scrolling, and
+     "which node did I just click" is the question the click asked. -->
+<dl class="pktfields">
+  <div><dt data-i18n="node.name">Naam</dt><dd id="node-name"></dd></div>
+  <div><dt data-i18n="node.key">Sleutel</dt><dd id="node-key"></dd></div>
+  <div><dt data-i18n="node.type">Nodetype</dt><dd id="node-nodetype"></dd></div>
+  <!-- Only when the deployment has borders to classify a position against; the
+       live map hides its country filter in the same case. -->
+  <div id="node-country-row" hidden><dt data-i18n="node.country">Land</dt><dd id="node-country"></dd></div>
+  <div><dt data-i18n="node.position">Positie</dt><dd id="node-position"></dd></div>
+  <div><dt data-i18n="node.updated">Laatste advert</dt><dd id="node-updated"></dd></div>
+</dl>
+
+<!-- Only for the handful of nodes this site follows as repeaters. Headline
+     figures and a link: /r/<slug> is a full page of charts and settings, and
+     rebuilding a slice of it here would be a second set of numbers to keep
+     truthful. -->
+<div id="node-rep" hidden>
+  <h4 data-i18n="node.rep">Gevolgde repeater</h4>
+  <dl class="pktfields">
+    <div><dt data-i18n="node.rep_status">Status</dt><dd id="node-rep-status"></dd></div>
+    <div><dt data-i18n="node.rep_battery">Batterij</dt><dd id="node-rep-battery"></dd></div>
+    <div><dt data-i18n="node.rep_uptime">Uptime</dt><dd id="node-rep-uptime"></dd></div>
+  </dl>
+  <p class="pktnote"><a id="node-rep-link" href="#" data-i18n="node.rep_link">Volledige statistieken van deze repeater &rarr;</a></p>
+</div>
+
+<h4 data-i18n="node.traffic">Verkeer</h4>
+<!-- The window every figure below it lives in, above the figures rather than
+     under them: a bare count reads as "ever" until something says otherwise,
+     and by then it has already been misread. -->
+<p class="muted small pktnote" id="node-window"></p>
+<dl class="pktfields">
+  <div><dt data-i18n="node.sent">Eigen pakketten</dt><dd id="node-sent"></dd></div>
+  <div id="node-span-row" hidden><dt data-i18n="node.span">Gehoord van</dt><dd id="node-span"></dd></div>
+  <div id="node-hops-row" hidden><dt data-i18n="node.hops">Minste hops</dt><dd id="node-hops"></dd></div>
+  <div id="node-types-row" hidden><dt data-i18n="node.types">Pakkettypes</dt><dd id="node-types"></dd></div>
+  <div id="node-scopes-row" hidden><dt data-i18n="node.scopes">Bereik</dt><dd id="node-scopes"></dd></div>
+  <div><dt data-i18n="node.ashop">Als hop in pad</dt><dd id="node-ashop"></dd></div>
+  <!-- Only the few nodes that feed this site have heard anything themselves; a
+       "0 gehoord" line under every other dot would describe a mesh in which
+       nothing hears anything. -->
+  <div id="node-heard-row" hidden><dt data-i18n="node.heard">Zelf gehoord</dt><dd id="node-heard"></dd></div>
+</dl>
+
+<!-- Who picks this node up, and how well. The one place on the site where a
+     node's reach is visible from the receiving end rather than from its own
+     neighbour table. -->
+<h4 data-i18n="node.observers">Wie hoort deze node</h4>
+<ul class="nodelist" id="node-observers"></ul>
+<p class="muted small pktnote" id="node-observers-note"></p>
+
+<h4 data-i18n="node.links">Buurrelaties</h4>
+<ul class="nodelist" id="node-links"></ul>
+<p class="muted small pktnote" id="node-links-note"></p>

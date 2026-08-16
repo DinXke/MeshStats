@@ -513,6 +513,50 @@ label input { width: 100%; margin-top: .25rem; }
    order have to be on screen as text. */
 .candnote { display: block; margin-top: .15rem; line-height: 1.45; font-family: var(--sans); }
 
+/* --- node detail: the observer and neighbour lists ---------------------------- */
+/* Two lines per entry rather than one wide row. This panel is 320 px wide on the
+   narrowest phone that has to work, and a who/count/SNR/RSSI/hops row on one
+   line either wraps into an unreadable block or loses its numbers to an
+   ellipsis -- and the numbers are the entry. So: who and the headline count on
+   the first line, the measurements behind it on the second. */
+.nodelist { list-style: none; margin: 0; padding: 0; }
+.nodelist li {
+  padding: .35rem 0; border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: .1rem;
+}
+.nodelist-top { display: flex; gap: .6rem; align-items: baseline; }
+.nodelist-who {
+  flex: 1 1 auto; min-width: 0; font-size: .82rem; color: var(--text);
+  overflow-wrap: anywhere;
+}
+a.nodelist-who { color: var(--cyan); }
+/* The count is the column the eye runs down, so it is monospaced and never
+   wraps away from the name it belongs to. */
+.nodelist-num {
+  flex: 0 0 auto; font-family: var(--mono); font-size: .78rem; color: var(--accent);
+}
+.nodelist-meta {
+  font-family: var(--mono); font-size: .72rem; color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* The node panel is the same drawer as the packet panel (.pktpanel) and shares
+   all of its layout; only its narrow-screen behaviour differs, below. */
+.nodepanel .modal-head { margin-top: .2rem; }
+/* The panel takes focus when it opens, so that Escape and Tab land inside it
+   rather than back at the top of the page. It is a container, not a control, so
+   it draws no ring of its own -- the browser's default one around the whole
+   drawer reads as an error state. Everything inside it that can be operated
+   keeps its own focus ring. */
+.nodepanel:focus { outline: none; }
+
+/* Every node dot is a tab stop -- see focusableNode in app.js -- so the focus
+   ring has to be visible on an SVG path over a map tile of any colour. Leaflet
+   draws nothing of the sort itself. */
+.leaflet-interactive:focus-visible {
+  outline: 2px solid var(--cyan); outline-offset: 2px;
+}
+
 /* --- plus/minus filter buttons ------------------------------------------------ */
 /* A pair beside a value: + narrows the archive query to it, - excludes it. They
    sit inside the value's own element so they follow it when a row folds onto a
@@ -591,6 +635,15 @@ label input { width: 100%; margin-top: .25rem; }
   .sheet-grip:hover span, .sheet-grip:focus-visible span { opacity: .9; }
   .sheet-grip:focus-visible { outline: 1px solid var(--accent-dim); outline-offset: -2px; }
   .pktfields dt { flex-basis: 6.5rem; }
+  /* The node panel is a sheet too, but a plain one: it has no drag handle and
+     no JS-driven height. The packet sheet needs both because it opens at a peek
+     height that has to keep a drawn route visible and is then dragged up; this
+     one describes a single dot, which the map pans out from under the sheet on
+     open (ringNode -> panInside). A fixed share of the screen is therefore
+     enough, and it saves duplicating the whole drag-and-snap apparatus for a
+     panel that would never use the range. */
+  .nodepanel { height: auto; max-height: 62vh; }
+  .nodepanel .pktbody { padding: 1rem; }
 }
 #modal-map { height: 200px; border-radius: 8px; margin-bottom: .8rem; background: var(--bg-grid); }
 #modal-map[hidden] { display: none; }

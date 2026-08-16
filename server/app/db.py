@@ -104,6 +104,15 @@ CREATE TABLE IF NOT EXISTS packets(
 CREATE INDEX IF NOT EXISTS idx_packets_ts ON packets(ts);
 -- Duplicate lookup and retention sweeps both scan on (observer, hash, time).
 CREATE INDEX IF NOT EXISTS idx_packets_dup ON packets(observer, phash, ts);
+-- The node panel asks "everything this node sent" of a table that holds a week
+-- of receptions, which without an index is a full scan per opened node. Cheap
+-- to carry: the column is six hex characters and NULL on the majority of rows
+-- (only an advert names its sender in full), so the index stays a fraction of
+-- the table. The observer side of the same panel needs no index of its own --
+-- idx_packets_dup already leads with that column, which is why
+-- node_reception_summary asks a range on ``observer`` instead of wrapping it in
+-- substr(), an expression no index can serve.
+CREATE INDEX IF NOT EXISTS idx_packets_sender ON packets(sender);
 """
 
 # Additive column migrations. CREATE TABLE IF NOT EXISTS covers new tables, but
@@ -690,6 +699,218 @@ def located_nodes() -> list[sqlite3.Row]:
         "SELECT prefix6, name, lat, lon, node_type, country FROM contacts "
         "WHERE lat IS NOT NULL AND lon IS NOT NULL GROUP BY prefix6"
     )
+
+
+# --- everything known about one node ----------------------------------------
+# The dots on the live map come from located_nodes() above; clicking one of them
+# asks the questions below. They are all aggregations over ``packets``, which
+# holds a full retention window of receptions -- thousands of rows today, and
+# the mesh is only going to get noisier -- so each of them is a GROUP BY in
+# SQLite rather than a fetch followed by a loop in Python. Counting a week of
+# receptions in the process would mean shipping the whole window over the
+# sqlite3 boundary to produce a dozen numbers, once per opened node.
+#
+# Everything here is keyed on the six-hex ``prefix6``, because that is the key
+# every other table already agrees on: contacts.prefix6, packets.sender, the
+# first six characters of packets.observer, and neighbors.prefix. The longer
+# ``contacts.prefix`` is deliberately not the key -- one node can hold several
+# contact rows under keys of different length (Home Assistant sends five bytes
+# where a node's own firmware sends six), and keying on the literal would split
+# one node's history in two. See set_country for the same trap.
+
+
+def node_contacts(prefix6: str) -> list[sqlite3.Row]:
+    """Every contact row this node owns, longest key first.
+
+    A list rather than a row for exactly the reason above: two sources can have
+    registered the same node under keys of different length. The caller merges
+    them; the order puts the least ambiguous key first.
+    """
+    return q(
+        "SELECT prefix, prefix6, name, lat, lon, node_type, country, updated "
+        "FROM contacts WHERE prefix6=? ORDER BY length(prefix) DESC, updated DESC",
+        (prefix6.lower(),),
+    )
+
+
+def node_sent_by_observer(prefix6: str) -> list[sqlite3.Row]:
+    """Per observer: how much of this node's own traffic it heard, and how well.
+
+    ``sender`` is only ever filled from an advert -- the one payload that names
+    its origin by a full key prefix -- so this counts the traffic that is
+    provably this node's, and nothing else it may have sent. The endpoint says
+    so rather than presenting the total as "all its packets".
+
+    Hop counts are taken from FLOOD packets only. On a FLOOD ``path_len`` is the
+    route already travelled, which is the distance from this node to that
+    observer; on a DIRECT it is the route still to go, and averaging the two
+    together would report a node as a near neighbour on the strength of a packet
+    that was merely nearly finished (docs/protocol.md 1.4). observer_receptions
+    draws the same line for the same reason.
+
+    The observer's name comes from a correlated subquery, not a LEFT JOIN.
+    Joining contacts would multiply every counted row by the number of contact
+    rows that observer happens to own, and the counts in this very function are
+    what would silently double -- the trap recent_packets pays a GROUP BY p.id
+    to avoid.
+    """
+    return q(
+        "SELECT p.observer, substr(p.observer, 1, 6) AS observer6, "
+        "(SELECT c.name FROM contacts c "
+        " WHERE c.prefix6 = substr(p.observer, 1, 6) AND c.name IS NOT NULL "
+        " LIMIT 1) AS observer_name, "
+        "COUNT(*) AS n, MIN(p.ts) AS first_ts, MAX(p.ts) AS last_ts, "
+        "AVG(p.snr) AS snr_avg, MAX(p.snr) AS snr_best, "
+        "AVG(p.rssi) AS rssi_avg, MAX(p.rssi) AS rssi_best, "
+        "MIN(CASE WHEN p.route LIKE '%FLOOD' THEN p.path_len END) AS hops_min, "
+        "AVG(CASE WHEN p.route LIKE '%FLOOD' THEN p.path_len END) AS hops_avg "
+        "FROM packets p WHERE p.sender = ? "
+        "GROUP BY p.observer ORDER BY n DESC",
+        (prefix6.lower(),),
+    )
+
+
+def node_sent_breakdown(prefix6: str) -> list[sqlite3.Row]:
+    """This node's own traffic split by payload type and by scope, in one pass.
+
+    One query for two breakdowns: the pair (type, scope) has a handful of
+    distinct values on any real mesh, so the caller can total each axis over a
+    result of ten-ish rows. Two separate GROUP BYs would read the same rows
+    twice to answer half a question each.
+    """
+    return q(
+        "SELECT payload_name, scope, COUNT(*) AS n FROM packets "
+        "WHERE sender = ? GROUP BY payload_name, scope ORDER BY n DESC",
+        (prefix6.lower(),),
+    )
+
+
+def node_reception_summary(prefix6: str) -> sqlite3.Row | None:
+    """What this node heard, when it is itself an observer feeding this site.
+
+    Written as a range on ``observer`` rather than substr(observer, 1, 6) = ?
+    so idx_packets_dup can serve it: ``observer`` holds a key prefix of unknown
+    length, and hex runs 0-9a-f, so 'g' is the first string that sorts after
+    every key starting with these six characters.
+    """
+    p6 = prefix6.lower()
+    return qone(
+        "SELECT COUNT(*) AS n, MIN(ts) AS first_ts, MAX(ts) AS last_ts, "
+        "COUNT(DISTINCT sender) AS senders "
+        "FROM packets WHERE observer >= ? AND observer < ?",
+        (p6, p6 + "g"),
+    )
+
+
+def node_hop_appearances(prefix6: str) -> sqlite3.Row | None:
+    """How often this node's key prefix turns up as a hop in someone else's path.
+
+    Honest only as a ceiling, and the endpoint labels it as one. A path entry is
+    1, 2 or 3 bytes of a public key -- the originating node chooses which, see
+    path_hash_size -- so the three widths are all tried, and the shortest of
+    them names one byte, which several hundred known nodes cannot help sharing.
+    node_hash_siblings() below says how crowded that byte is, so the panel can
+    print the ambiguity next to the number instead of behind it.
+
+    A full scan, unavoidably: the hop list is one comma-separated column, and
+    the match is on a member of it, which no index can answer. It is bounded by
+    the packet retention (a week) and runs once per opened node, which is the
+    other half of why this is acceptable where a per-packet version would not
+    be. Splitting ``path`` into its own table was considered and rejected: it
+    would carry an insert per hop on every reception -- the hot path -- to speed
+    up a click.
+
+    The commas around both sides make it a whole-entry match: without them the
+    hop '2a' would also match the entry '2ae7'. Hex needs no LIKE escaping,
+    since neither % nor _ can occur in it.
+    """
+    p6 = prefix6.lower()
+    return qone(
+        "SELECT COUNT(*) AS n, MIN(ts) AS first_ts, MAX(ts) AS last_ts "
+        "FROM packets WHERE path IS NOT NULL AND ("
+        "  ',' || path || ',' LIKE '%,' || ? || ',%'"
+        "  OR ',' || path || ',' LIKE '%,' || ? || ',%'"
+        "  OR ',' || path || ',' LIKE '%,' || ? || ',%')",
+        (p6[:2], p6[:4], p6),
+    )
+
+
+def node_hash_siblings(prefix6: str) -> int:
+    """How many known nodes share this node's first key byte.
+
+    The measure of how much a one-byte hop hash is worth. Counted over contacts
+    rather than guessed from 256: what matters is how many nodes this site could
+    actually confuse with each other, not how many the byte could theoretically
+    address.
+    """
+    row = qone(
+        "SELECT COUNT(DISTINCT prefix6) AS n FROM contacts "
+        "WHERE substr(prefix6, 1, 2) = ?",
+        (prefix6.lower()[:2],),
+    )
+    return (row["n"] or 0) if row else 0
+
+
+def node_heard_by_repeaters(prefix6: str) -> list[sqlite3.Row]:
+    """The tracked repeaters that list this node as a neighbour, best link first.
+
+    The one relation in this whole panel that is a measurement by a node rather
+    than an inference by this site: the repeater put the entry in its own
+    neighbour table, key and SNR included.
+    """
+    return q(
+        "SELECT r.slug, r.name, n.snr, n.last_seen FROM neighbors n "
+        "JOIN repeaters r ON r.id = n.repeater_id "
+        "WHERE n.prefix = ? AND r.is_public = 1 "
+        "ORDER BY n.snr DESC",
+        (prefix6.lower(),),
+    )
+
+
+def node_neighbors(repeater_id: int, limit: int) -> list[sqlite3.Row]:
+    """One tracked repeater's own neighbour list, best link first.
+
+    Capped by the caller: a busy repeater lists dozens, and a side panel is not
+    the repeater's own page -- which shows the full table, with history per
+    link, and is one click away.
+    """
+    return q(
+        "SELECT n.prefix, n.snr, n.last_seen, "
+        "CASE WHEN n.name IS NULL OR lower(n.name) = n.prefix "
+        "THEN COALESCE(c.name, n.name) ELSE n.name END AS name "
+        "FROM neighbors n LEFT JOIN contacts c ON c.prefix6 = n.prefix "
+        "WHERE n.repeater_id = ? GROUP BY n.prefix ORDER BY n.snr DESC LIMIT ?",
+        (repeater_id, limit),
+    )
+
+
+def public_repeater_by_prefix6(prefix6: str) -> sqlite3.Row | None:
+    """The public repeater whose key starts with these six hex characters.
+
+    Not find_repeater(): that one refuses to treat a short key as a shortening
+    of a longer one below MIN_PREFIX_MATCH characters, and six is below it --
+    rightly, because it is asked to decide whether two *identities* are the same
+    node. Here the six characters come off the map's own node layer, which is
+    keyed on prefix6 throughout, so the question is only "does a repeater sit at
+    this dot". Public only, like every other route in the public API.
+    """
+    return qone(
+        "SELECT * FROM repeaters WHERE substr(pubkey_prefix, 1, 6) = ? "
+        "AND is_public = 1 ORDER BY length(pubkey_prefix) DESC LIMIT 1",
+        (prefix6.lower(),),
+    )
+
+
+def oldest_packet_ts() -> str | None:
+    """When the oldest retained packet was heard.
+
+    What turns "over the last 7 days" into something a reader can check: on a
+    server that started yesterday the retention window is a promise, not a
+    period, and quoting the configured number alone would overstate what the
+    figures cover.
+    """
+    row = qone("SELECT MIN(ts) AS ts FROM packets")
+    return row["ts"] if row else None
 
 
 def known_countries() -> list[str]:

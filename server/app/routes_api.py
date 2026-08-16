@@ -821,3 +821,224 @@ def repeater_history(
     r = _public_repeater(slug)
     return {"metric": metric, "hours": hours,
             "points": db.metric_history(r, metric, hours)}
+
+
+# --- one node, everything this site knows about it ----------------------------
+# Behind a dot on the live map. Answered in one request rather than the five it
+# is assembled from, because the panel opens on a click and five round trips
+# would fill it field by field -- and half-filled panels are read as "this node
+# has no neighbours" long before the last response lands.
+#
+# Note what is *not* here. There is no node-level history: only the two tracked
+# repeaters have samples, and those already have a whole page of charts at
+# /r/<slug>, which this endpoint links to instead of copying. And there is no
+# attempt to total up "packets sent" beyond what an advert states -- see
+# ``sent`` below.
+
+# A neighbour list in a side panel is a summary. A tracked repeater's own page
+# shows the full table with per-link history, and it is one click away, so the
+# panel stops well before it turns into a second copy of it.
+_NODE_NEIGHBOR_LIMIT = 12
+
+# The map's node layer is keyed on the six-hex prefix, so that is what comes
+# back through a click. Longer keys are accepted and cut down: an operator with
+# a full key prefix in hand should not have to work out which six characters the
+# API wants.
+_NODE_KEY_RE = re.compile(r"[0-9a-fA-F]{6,64}")
+
+
+def _round(value, digits: int):
+    """A number rounded for display, passing None through untouched.
+
+    None means "nothing measured this" and has to survive to the client as
+    null: a 0.0 in its place would be read as a measurement of zero, which for
+    an SNR is a perfectly plausible and completely wrong reading.
+    """
+    return None if value is None else round(value, digits)
+
+
+def _node_identity(rows) -> dict:
+    """One identity out of however many contact rows this node owns.
+
+    Merged rather than picked, because the rows are not rivals: one source may
+    know the name and another the position (Home Assistant pushes contacts
+    without ever hearing an advert), and the rows are keyed on prefixes of
+    different length so neither can overwrite the other. First non-empty wins
+    per field, and the caller ordered the rows longest key first -- the longest
+    key is the least ambiguous identity, so it leads.
+
+    ``updated`` is the newest of all of them: it answers "when did we last hear
+    anything of this node", and taking it from the leading row alone would
+    report a node as stale because its most talkative key happens to be short.
+    """
+    out = {"key_prefix": None, "name": None, "node_type": None,
+           "country": None, "lat": None, "lon": None, "updated": None}
+    for r in rows:
+        if out["key_prefix"] is None:
+            out["key_prefix"] = r["prefix"]
+        for field in ("name", "node_type", "country"):
+            if out[field] is None and r[field]:
+                out[field] = r[field]
+        if out["lat"] is None and r["lat"] is not None and r["lon"] is not None:
+            out["lat"], out["lon"] = r["lat"], r["lon"]
+        if r["updated"] and (out["updated"] is None or r["updated"] > out["updated"]):
+            out["updated"] = r["updated"]
+    return out
+
+
+def _node_sent(prefix6: str) -> dict:
+    """This node's own traffic, as far as anything can be attributed to it.
+
+    "As far as" is the whole caveat, and the client repeats it: ``sender`` is
+    filled from adverts only, because an advert is the one payload that names
+    its origin by a full key prefix. Everything else this node ever transmitted
+    carries a one-byte source hash that several hundred known nodes share, and
+    counting those in would produce a bigger, friendlier number that is partly
+    somebody else's traffic. A ceiling and a floor side by side was considered
+    and rejected: two numbers whose difference is pure ambiguity invite the
+    reader to average them.
+
+    The totals are folded out of the per-observer rows rather than fetched with
+    a second aggregate query. That is a loop over as many rows as there are
+    observers -- a handful -- and not over the receptions themselves, which is
+    the loop that would matter.
+    """
+    per_observer = db.node_sent_by_observer(prefix6)
+    total = sum(r["n"] for r in per_observer)
+    observers = [{
+        "prefix": r["observer6"], "observer": r["observer"],
+        "name": r["observer_name"], "count": r["n"],
+        "first": r["first_ts"], "last": r["last_ts"],
+        "snr_avg": _round(r["snr_avg"], 2), "snr_best": _round(r["snr_best"], 2),
+        "rssi_avg": _round(r["rssi_avg"], 1), "rssi_best": _round(r["rssi_best"], 1),
+        "hops_min": r["hops_min"], "hops_avg": _round(r["hops_avg"], 2),
+    } for r in per_observer]
+
+    types: dict[str, int] = {}
+    scopes: dict[str, int] = {}
+    for r in db.node_sent_breakdown(prefix6):
+        # A packet type or scope this site could not read stays a null key
+        # rather than being lumped in with a real value: rows stored before the
+        # scope column existed genuinely have no answer, and "unscoped" is not
+        # a safe stand-in for "unknown" when the whole point of the column is
+        # to say whether the sender restricted the packet.
+        types[r["payload_name"]] = types.get(r["payload_name"], 0) + r["n"]
+        scopes[r["scope"]] = scopes.get(r["scope"], 0) + r["n"]
+
+    return {
+        "total": total,
+        "first": min((r["first_ts"] for r in per_observer if r["first_ts"]), default=None),
+        "last": max((r["last_ts"] for r in per_observer if r["last_ts"]), default=None),
+        # Fewest hops any of its adverts had travelled when someone picked it
+        # up: the closest thing to "how far into the mesh does this node sit"
+        # that a packet can tell us. FLOOD only -- see node_sent_by_observer.
+        "hops_min": min((r["hops_min"] for r in per_observer
+                         if r["hops_min"] is not None), default=None),
+        "observers": observers,
+        "types": [{"type": k, "count": v} for k, v in
+                  sorted(types.items(), key=lambda kv: -kv[1])],
+        "scopes": [{"scope": k, "count": v} for k, v in
+                   sorted(scopes.items(), key=lambda kv: -kv[1])],
+    }
+
+
+def _node_repeater(prefix6: str) -> dict | None:
+    """The tracked-repeater block, or None for the great majority of nodes.
+
+    Headline figures and a link, deliberately no more: /r/<slug> is a full page
+    of charts, neighbour history and settings, and a panel that reproduced part
+    of it would be a second version of those numbers to keep in step.
+    """
+    rep = db.public_repeater_by_prefix6(prefix6)
+    if rep is None:
+        return None
+    latest = db.latest_for(rep["id"])
+
+    def val(metric):
+        row = latest.get(metric)
+        if row is None:
+            return None
+        return row["value"] if row["value"] is not None else row["value_str"]
+
+    neighbors = [
+        {"prefix": n["prefix"], "name": n["name"], "snr": n["snr"],
+         "last_seen": n["last_seen"]}
+        for n in db.node_neighbors(rep["id"], _NODE_NEIGHBOR_LIMIT)
+    ]
+    return {
+        "slug": rep["slug"], "name": rep["name"],
+        "pubkey_prefix": rep["pubkey_prefix"], "last_seen": rep["last_seen"],
+        "url": f"/r/{rep['slug']}",
+        "online": val("online") == 1.0,
+        "battery_percentage": val("battery_percentage"),
+        "uptime": val("uptime"),
+        "neighbor_count": val("neighbor_count"),
+        "neighbors": neighbors,
+        # An exactly-full list means the cap bit and there are more, so the
+        # panel can say "the best 12" rather than presenting a truncated list
+        # as the whole neighbourhood. Same convention, and the same reasoning,
+        # as ``capped`` on the heat map.
+        "neighbors_capped": len(neighbors) >= _NODE_NEIGHBOR_LIMIT,
+    }
+
+
+@router.get("/nodes/{prefix}")
+def node_detail(prefix: str):
+    """Everything the site holds about one node, for the live map's node panel.
+
+    A 404 here means "nothing at all is known", which is a different thing from
+    "this node has no traffic": a node that only ever advertised itself is a
+    perfectly good answer with an empty ``sent`` block, and the panel says so
+    instead of refusing to open.
+    """
+    if not _NODE_KEY_RE.fullmatch(prefix or ""):
+        raise HTTPException(422, "Ongeldige nodesleutel")
+    p6 = prefix.lower()[:6]
+
+    contacts = db.node_contacts(p6)
+    repeater = _node_repeater(p6)
+    sent = _node_sent(p6)
+    heard = db.node_reception_summary(p6)
+    heard_n = (heard["n"] or 0) if heard else 0
+    if not contacts and repeater is None and not sent["total"] and not heard_n:
+        raise HTTPException(404, "Onbekende node")
+
+    hop = db.node_hop_appearances(p6)
+    return {
+        "prefix": p6,
+        **_node_identity(contacts),
+        # The window every figure below lives in. Both halves are needed: the
+        # configured retention is the promise, the oldest packet still held is
+        # what that promise has actually delivered so far, and on a server that
+        # restarted yesterday those are very different numbers.
+        "window": {
+            "days": db.setting_int("packet_retention_days",
+                                   config.PACKET_RETENTION_DAYS),
+            "oldest": db.oldest_packet_ts(),
+        },
+        "repeater": repeater,
+        "sent": sent,
+        # Absent, not zeroed, when this node is not an observer: almost no node
+        # is one, and a "0 packets heard" line under every dot on the map would
+        # read as a mesh where nothing hears anything.
+        "heard": None if not heard_n else {
+            "total": heard_n, "first": heard["first_ts"],
+            "last": heard["last_ts"], "senders": heard["senders"] or 0,
+        },
+        # A ceiling, and labelled as one by the client: a hop is 1, 2 or 3 bytes
+        # of a key, and ``siblings`` says how many known nodes share the
+        # narrowest of those. With siblings == 1 the count is exact for the
+        # one-byte case as well; with siblings == 12 it is an upper bound and
+        # the panel has the number that says so.
+        "as_hop": {
+            "packets": (hop["n"] or 0) if hop else 0,
+            "first": hop["first_ts"] if hop else None,
+            "last": hop["last_ts"] if hop else None,
+            "siblings": db.node_hash_siblings(p6),
+        },
+        "neighbor_of": [
+            {"slug": r["slug"], "name": r["name"], "snr": r["snr"],
+             "last_seen": r["last_seen"], "url": f"/r/{r['slug']}"}
+            for r in db.node_heard_by_repeaters(p6)
+        ],
+    }
