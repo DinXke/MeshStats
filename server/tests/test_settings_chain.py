@@ -370,3 +370,46 @@ def test_eigen_instellingen_blijven_gewoon_werken(db):
 
     waarden = {r["param"]: r["value"] for r in db.cli_settings_for(eigen["id"])}
     assert waarden == {"role": "repeater"}
+
+
+# --- de regioboom: cmd:region ------------------------------------------------
+#
+# De enige parameter in de sweep waarvan het antwoord meerdere regels beslaat,
+# en waar die regels én hun inspringing de waarde ZIJN: inspringing is de
+# ouder/kind-nesting van de regio's. Twee dingen kunnen hier stilzwijgend
+# misgaan, en beide zien er aan de buitenkant uit als "het werkt".
+
+def test_regioboom_komt_binnen_onder_de_sleutel_die_de_site_al_gebruikt(db):
+    # 'cmd:region' en niet 'region'. De site noemt de rij naar de geconfigureerde
+    # parameter, en 'cmd:<x>' is haar eigen notatie voor "voer <x> letterlijk uit
+    # in plaats van 'get <x>'". Publiceren als "region" zou een tweede rij naast
+    # de eerste zetten en de originele voor altijd laten verouderen -- precies
+    # het soort verschil dat op de pagina alleen te zien is als een tijdstempel
+    # die niet meebeweegt.
+    from app import mqtt_ingest
+    dak = _doorgestuurd(db)
+    db.upsert_cli_settings(dak["id"], {"cmd:region": "*\n eu F"})
+
+    boom = "*\n eu F\n  bx F\n   be^ F\n    be-vbr F"
+    mqtt_ingest._handle_payload(
+        "meshcore/55d9a320a4e3/stats", _bericht("e3d3f4d7edd0", {"cmd:region": boom}))
+
+    rijen = {r["param"]: r["value"] for r in db.cli_settings_for(dak["id"])}
+    assert list(rijen) == ["cmd:region"]        # ververst, geen tweede rij
+    assert rijen["cmd:region"] == boom
+
+
+def test_de_inspringing_van_de_regioboom_blijft_staan(db):
+    # De structuur zit in de spaties: '^' is de thuisregio, ' F' betekent dat
+    # flooding mag, en het aantal spaties zegt wiens kind een regio is. Een
+    # keten die onderweg regels samenvouwt of links trimt levert een lijst op
+    # die eruitziet als een boom en het niet is.
+    from app import mqtt_ingest
+    dak = _doorgestuurd(db)
+
+    boom = "*\n eu F\n  bx F\n   be^ F"
+    mqtt_ingest._handle_payload(
+        "meshcore/55d9a320a4e3/stats", _bericht("e3d3f4d7edd0", {"cmd:region": boom}))
+
+    waarde = {r["param"]: r["value"] for r in db.cli_settings_for(dak["id"])}["cmd:region"]
+    assert waarde.split("\n") == ["*", " eu F", "  bx F", "   be^ F"]

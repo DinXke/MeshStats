@@ -385,6 +385,18 @@ Two things about the result are worth knowing before reading the page:
 - **A sweep whose login never answered publishes nothing at all**, because it
   asked nothing and learned nothing. Throwing away values an earlier sweep did
   get would be the wrong kind of honest.
+- **`cmd:region` is a tree, not a value** (MeshStats 1.11.0). It is the one
+  parameter whose answer spans lines, and whose line breaks *and indentation*
+  carry the meaning: indentation is parent/child nesting, `^` marks the home
+  region, a trailing ` F` means flooding is allowed there and its absence means
+  it is denied. It arrives as **one** text message — MeshCore caps the tree at
+  160 bytes itself (`handleRegionCmd` calls `exportTo(reply, 160)`) and sends
+  the whole reply in a single datagram — so there is no multi-packet collection
+  on this path. A tree larger than that is cut on the far side, not here.
+  The key is `cmd:region` and not `region`: `cmd:<x>` is this site's notation
+  for "run `<x>` literally instead of `get <x>`", and the row in `repeater_cli`
+  is named after the configured parameter. Publishing it as `region` would have
+  created a second row beside the existing one and left the original ageing.
 
 **Nothing is retained, and QoS stays 0.** A retained command is redelivered on
 every reconnect, so the node would sweep its CLI on every boot and after every

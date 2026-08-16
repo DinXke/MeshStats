@@ -1,5 +1,52 @@
 /* Changelog of this module (see MESHSTATS_VERSION in MeshStatsNet.h).
  *
+ * 1.11.0 The sweep collects the region tree again, under the key the site has
+ *        always stored it as: 'cmd:region'.
+ *        Why it was missing: 1.7.1 took 'region' out of the table because its
+ *        answer is a tree and not a value, and publishing a fragment of a table
+ *        in a settings column is worse than publishing nothing. That was right.
+ *        What was wrong was dropping the tree with it -- it is the only place a
+ *        reader can see which regions this node knows, which one is home and
+ *        where flooding is denied. So after a LoRa sweep eighteen rows said "32
+ *        minutes ago" and that one still said "7 days ago", from the last Home
+ *        Assistant read, with nothing on the page to explain the difference.
+ *        Why 'cmd:region' and not 'region': 'cmd:<x>' is the site's notation for
+ *        "run <x> literally instead of 'get <x>'", and the row in repeater_cli
+ *        is named after the configured parameter. Publishing this as "region"
+ *        would have created a second row beside the first and left the original
+ *        ageing forever -- the same near-miss as the parameter tables drifting
+ *        apart in 1.7.2.
+ *        How a multi-line answer actually arrives, because assuming would have
+ *        cost a mechanism nobody needs: as ONE text message. MeshCore caps the
+ *        tree itself at 160 bytes (handleRegionCmd calls exportTo(reply, 160))
+ *        and onPeerDataRecv sends the whole reply in a single datagram, which
+ *        fits inside MAX_PACKET_PAYLOAD with room to spare. So there is no
+ *        collecting-until-quiet here and no widened timeout: one command, one
+ *        reply, exactly like every other entry. (The Home Assistant path does
+ *        gather several events, because there the CLI output reaches it a line
+ *        at a time. Different transport, different problem.) A tree too big for
+ *        160 bytes is cut on the far side, not here.
+ *        Two things had to give for it. SET_VALUE_MAX went from 32 to 176,
+ *        because 160 is the ceiling MeshCore itself imposes; and jsonEsc() now
+ *        writes \n, \r and \t instead of dropping them. That second one was the
+ *        subtle half: control characters were dropped on purpose, and for a
+ *        node name that is right, but here the line breaks and the indentation
+ *        ARE the value -- nesting is expressed as leading spaces. Dropping them
+ *        would have turned fourteen meaningful lines into one run of region
+ *        names, published successfully, and wrong. The two-character escapes
+ *        keep the "twice the source is always enough" sizing that every caller
+ *        relies on, which is why \u00XX stays rejected for the rest.
+ *        Also: MeshCore refuses two ways, "Error..." and "Err - ...", and only
+ *        the first was recognised. So 'Err - unknown region' was stored as
+ *        though it were a setting, with a fresh timestamp beside it -- an answer
+ *        that looks more authoritative than "(geen antwoord)" while meaning
+ *        strictly less. Both spellings are now refused, spelled out rather than
+ *        matched as "Err", so a node called 'Erratic' survives.
+ *        And MON_SET_TOTAL_MS went from 300 s to 360 s. At nineteen parameters
+ *        a sweep nominally takes 272 s, so a 300 s cap no longer bounds a
+ *        runaway -- it truncates a normal run, reporting 'no answer' for
+ *        commands that were never sent. The tree is last in the table for the
+ *        same reason: if a budget does run out, that is the entry worth losing.
  * 1.10.0 The site can set this node's clock, and this node then checks the
  *        clocks of the repeaters it monitors: 'time <epoch>' on the cmd topic,
  *        'wifi clock' to read back what happened.
@@ -605,11 +652,19 @@ static void wdtFeed() {
  * impossible to get half-right, which is why it also handles the two cases
  * below that the first version did not.
  *
- * Control characters (< 0x20) are dropped rather than escaped as \u00XX.
- * Rejected the \u form because it turns one input byte into six output bytes,
- * so every caller's "twice the source is always enough" buffer sizing would
- * silently become wrong; and a control character in a node name carries nothing
- * a reader would miss.
+ * Newline, carriage return and tab are written as \n, \r and \t. Every other
+ * control character (< 0x20) is dropped rather than escaped as \u00XX.
+ *
+ * The split looks arbitrary and is not. The \u form turns one input byte into
+ * six output bytes, so every caller's "twice the source is always enough"
+ * buffer sizing would silently become wrong -- while these three have a
+ * two-character form that keeps it exactly right. And there is one value in the
+ * sweep whose line breaks and indentation are not decoration but the value
+ * itself: cmd:region publishes MeshCore's region tree, where nesting is
+ * expressed as leading spaces. Dropping those characters, which is what this
+ * function did until 1.11.0, collapsed fourteen meaningful lines into one run
+ * of names. A control character in a NODE NAME still carries nothing a reader
+ * would miss, so those keep being dropped.
  *
  * A multi-byte UTF-8 character is copied whole or not at all, and anything that
  * is not a valid sequence ends the copy. This is the part that makes truncation
@@ -637,6 +692,18 @@ static void jsonEsc(char *dest, size_t max, const char *src) {
       if (o + 2 >= max) break;
       dest[o++] = '\\';
       dest[o++] = (char)c;
+      p++;
+    } else if (c == '\n' || c == '\r' || c == '\t') {
+      /* Written out rather than dropped, since 1.11.0. One value in the sweep
+       * is a tree whose line breaks and indentation ARE the value -- see
+       * cmd:region -- and dropping them turned fourteen lines into one
+       * unreadable run of region names. The two-character form keeps the
+       * "twice the source is always enough" sizing every caller here relies on,
+       * which is exactly why the other control characters are still dropped
+       * instead of written as \u00XX: six bytes per character would break it. */
+      if (o + 2 >= max) break;
+      dest[o++] = '\\';
+      dest[o++] = (c == '\n') ? 'n' : (c == '\r') ? 'r' : 't';
       p++;
     } else if (c < 0x20) {
       p++;                                   // dropped; see above
@@ -1209,59 +1276,106 @@ static void powerSummaryNl(char *out, size_t max) {
  * One parameter per pass of msnet_loop(): handleCommand() is cheap but not
  * free, and there is no reason to do sixteen in one go on a node whose first
  * duty is relaying other people's packets. */
-#define SET_VALUE_MAX     32
+/* Room for one value.
+ *
+ * Every setting on this node answers in a dozen characters or so, and 32 was
+ * plenty until cmd:region joined the table in 1.11.0. That one is a tree, and
+ * MeshCore caps it at 160 bytes itself -- handleRegionCmd() calls
+ * exportTo(reply, 160) -- so 160 plus room for a terminator and a little slack
+ * is the honest ceiling rather than a guess.
+ *
+ * Rejected: a second, larger buffer for the one long parameter, leaving this at
+ * 32. It saves about five kilobytes of a two-megabyte part -- a quarter of a
+ * percent of the RAM on a node using five percent of it -- and pays for that
+ * with two storage paths, two sizing rules and a special case in every loop
+ * that walks the table. The day somebody adds a second long parameter, the
+ * cheap version is the one that breaks. */
+#define SET_VALUE_MAX    176
 #define SET_BUF          600
 
 /* Each parameter carries the command that answers it, because they are not all
  * 'get <name>'.
  *
- * 'region' on its own was the odd one, and it was wrong: it reports no setting
- * at all but dumps the entire region tree via RegionMap::exportTo(), one line
- * per region, indented by depth. What got stored as the value of "region" was
- * that whole table:
+ * 'region' on its own is the odd one: it reports no single setting but dumps
+ * the entire region tree via RegionMap::exportTo(), one line per region,
+ * indented by depth:
  *
  *     *
  *      eu F
  *       bx F
  *        be^ F
- *         be-
+ *         be-vbr F
  *
  * Reading printChildRegions() settles what the markers mean: '*' is simply the
  * name of the wildcard root region, NOT a marker for the active one; '^' marks
  * the home region (here 'be'); ' F' means flooding is allowed and its absence
  * means DENY_FLOOD; indentation is parent/child nesting.
  *
- * The two things that genuinely are settings each have their own one-line
- * command, so we ask those instead. 'after' is the separator whose tail we
- * keep: " home is be" -> "be". Explicit per parameter rather than a blanket
- * rule, because a node name could itself contain " is ". */
+ * Until 1.7.1 that tree was collected under the name "region" and stored as if
+ * it were a value, which is what got it refused: a setting is one line, and
+ * publishing a fragment of a table in that column is worse than publishing
+ * nothing. The two things in there that genuinely ARE settings were given their
+ * own one-line commands instead, and that part was right and stays.
+ *
+ * What was wrong was throwing the tree away with them. It is the only place a
+ * reader can see which regions this node knows, which one is home and where
+ * flooding is denied -- and the site has had a row for it, under the key
+ * 'cmd:region', since the Home Assistant path first fetched it. Dropping it
+ * from this table meant that after a LoRa sweep eighteen rows said "32 minutes
+ * ago" and that one still said "7 days ago", with nothing on the page to
+ * explain why. So since 1.11.0 it is collected again, as a list rather than as
+ * a value -- see 'list' below.
+ *
+ * 'name' is the key exactly as the site stores it, which is why this one entry
+ * carries a prefix the others do not. 'cmd:<x>' is the site's own notation for
+ * "run <x> literally instead of 'get <x>'" (see _get_param in the Home
+ * Assistant integration, which strips those four characters), and the row in
+ * repeater_cli is named after the configured parameter. Publishing it as
+ * "region" would not update that row -- it would create a second one next to
+ * it, and leave the original ageing forever.
+ *
+ * 'after' is the separator whose tail we keep: " home is be" -> "be". Explicit
+ * per parameter rather than a blanket rule, because a node name could itself
+ * contain " is ".
+ *
+ * 'list' says the answer may span lines and that this is not a fault. Only one
+ * parameter sets it, and that is the point: every other entry keeps the rule
+ * that a multi-line answer is a table which has no business in a settings
+ * column, and keeps being refused for it. */
 struct SetParam {
   const char *name;      // key in the published object
   const char *cmd;       // CLI command that answers it
   const char *after;     // keep what follows the last occurrence, or NULL
+  bool list;             // a multi-line answer is expected, not a fault
 };
 
 static const SetParam SET_PARAMS[] = {
-  { "name",                  "get name",                  NULL },
-  { "role",                  "get role",                  NULL },
-  { "radio",                 "get radio",                 NULL },
-  { "freq",                  "get freq",                  NULL },
-  { "tx",                    "get tx",                    NULL },
-  { "af",                    "get af",                    NULL },
-  { "repeat",                "get repeat",                NULL },
-  { "advert.interval",       "get advert.interval",       NULL },
-  { "flood.advert.interval", "get flood.advert.interval", NULL },
-  { "flood.max",             "get flood.max",             NULL },
+  { "name",                  "get name",                  NULL,  false },
+  { "role",                  "get role",                  NULL,  false },
+  { "radio",                 "get radio",                 NULL,  false },
+  { "freq",                  "get freq",                  NULL,  false },
+  { "tx",                    "get tx",                    NULL,  false },
+  { "af",                    "get af",                    NULL,  false },
+  { "repeat",                "get repeat",                NULL,  false },
+  { "advert.interval",       "get advert.interval",       NULL,  false },
+  { "flood.advert.interval", "get flood.advert.interval", NULL,  false },
+  { "flood.max",             "get flood.max",             NULL,  false },
   /* Newer firmwares split the flood budget in two; on one that has not, the
    * "??" reply is refused below and the parameter is simply a miss. */
-  { "flood.max.unscoped",    "get flood.max.unscoped",    NULL },
-  { "allow.read.only",       "get allow.read.only",       NULL },
-  { "rxdelay",               "get rxdelay",               NULL },
-  { "txdelay",               "get txdelay",               NULL },
-  { "lat",                   "get lat",                   NULL },
-  { "lon",                   "get lon",                   NULL },
-  { "region.home",           "region home",               " is " },
-  { "region.default",        "region default",            " is " },
+  { "flood.max.unscoped",    "get flood.max.unscoped",    NULL,  false },
+  { "allow.read.only",       "get allow.read.only",       NULL,  false },
+  { "rxdelay",               "get rxdelay",               NULL,  false },
+  { "txdelay",               "get txdelay",               NULL,  false },
+  { "lat",                   "get lat",                   NULL,  false },
+  { "lon",                   "get lon",                   NULL,  false },
+  { "region.home",           "region home",               " is ", false },
+  { "region.default",        "region default",            " is ", false },
+  /* Last on purpose. It is the longest answer and the least urgent thing here:
+   * region topology changes about as often as somebody reflashes the node,
+   * while everything above it is what you look at when something is wrong. If a
+   * sweep ever runs out of its time budget, this is the entry that should be
+   * missing from it. */
+  { "cmd:region",            "region",                    NULL,  true  },
 };
 #define SET_PARAM_COUNT ((int)(sizeof(SET_PARAMS) / sizeof(SET_PARAMS[0])))
 
@@ -1303,7 +1417,14 @@ static char *settingsValue(char *reply, const SetParam &sp) {
    * not actually read would be the same mistake as publishing noise_floor 0. */
   char *val = reply;
   if (*val == '>') val++;
-  while (*val == ' ' || *val == '\t') val++;
+  /* Leading whitespace is stripped off a VALUE and left alone on a list. On the
+   * region tree the indentation is the parent/child nesting -- eating it would
+   * turn a tree into a flat list of names that all look like siblings. The
+   * first line happens to start at column zero today, so this is a rule about
+   * what the data means rather than a bug that has been seen. */
+  if (!sp.list) {
+    while (*val == ' ' || *val == '\t') val++;
+  }
 
   size_t vlen = strlen(val);
   while (vlen && (val[vlen - 1] == '\n' || val[vlen - 1] == '\r' ||
@@ -1321,16 +1442,41 @@ static char *settingsValue(char *reply, const SetParam &sp) {
     }
   }
 
-  /* A value containing a line break is a list, not a setting -- the region tree
-   * was exactly that. Truncating at the first newline would quietly publish a
-   * fragment of a table as though it were a value, so such an answer is
+  /* A value containing a line break is a list, not a setting. Truncating at the
+   * first newline would quietly publish a fragment of a table as though it were
+   * a value, so for everything that is not declared a list such an answer is
    * dropped and counted as a miss instead. */
-  if (strchr(val, '\n') != NULL || strchr(val, '\r') != NULL) {
+  if (!sp.list && (strchr(val, '\n') != NULL || strchr(val, '\r') != NULL)) {
     Serial.printf("MeshStatsNet: %s gaf meerdere regels, overgeslagen\n", sp.name);
     return NULL;
   }
+  /* A list is normalised to plain newlines. The CLI writes '\n' and nothing
+   * else, but a stray '\r' would reach the site as an escaped \r inside the
+   * value and show up as a blank line in a column where every line means
+   * something. Done in place; a lone '\r' becomes a line break rather than
+   * disappearing, because it was one. */
+  if (sp.list) {
+    char *r = val, *w = val;
+    while (*r) {
+      if (*r == '\r') { *w++ = '\n'; r++; if (*r == '\n') r++; }
+      else            { *w++ = *r++; }
+    }
+    *w = 0;
+    vlen = strlen(val);
+  }
+
   if (vlen == 0) return NULL;
-  if (strncmp(val, "Error", 5) == 0 || strncmp(val, "??", 2) == 0) return NULL;
+  /* MeshCore writes its refusals two ways and this only caught one of them.
+   * "Err - unknown region" and "Err - save failed" sailed straight through and
+   * were stored as if they were settings, so a page could show 'region.home =
+   * Err - unknown region' with a fresh timestamp next to it -- an answer that
+   * looks more authoritative than "(geen antwoord)" while meaning strictly
+   * less. Both forms are spelled out rather than testing for "Err", because a
+   * node name like 'Erratic' is a legal value and must not be swallowed. */
+  if (strncmp(val, "Error", 5) == 0 || strncmp(val, "Err - ", 6) == 0 ||
+      strncmp(val, "??", 2) == 0) {
+    return NULL;
+  }
   return val;
 }
 
@@ -2565,7 +2711,19 @@ static void monRoundFailed(MonEntry &m) {
 #define MON_SET_STEP_MS      12000UL
 #define MON_SET_GAP_MS        2000UL   // breathing space between two commands
 #define MON_SET_SILENT_MAX        3    // consecutive silences that end a sweep
-#define MON_SET_TOTAL_MS    300000UL   // hard cap on one sweep, whatever happens
+/* Hard cap on one sweep, whatever happens.
+ *
+ * Raised from 300 s in 1.11.0, when the table went from eighteen parameters to
+ * nineteen. The nominal cost of a sweep is MON_SET_FIRST_MS plus (n-1) times
+ * MON_SET_STEP_MS + MON_SET_GAP_MS: 258 s at eighteen, 272 s at nineteen. A cap
+ * only 28 s above the nominal run does not bound a runaway, it truncates a
+ * normal one -- the last parameters would be dropped by the budget every time
+ * anything went slightly slowly, and 'geen antwoord' would be reported for
+ * commands that were never sent. 360 s restores roughly the margin the 300 s
+ * cap had at eighteen. What a longer cap actually costs is a poll round that
+ * starts later, since the two share this state machine, and that is the cheaper
+ * of the two failures by a wide margin. */
+#define MON_SET_TOTAL_MS    360000UL
 #define MON_SET_MIN_GAP_MS  600000UL   // between two sweeps, for any node
 
 /* The pending request is held as a key rather than as an index into _mon[],
@@ -2713,7 +2871,14 @@ static bool publishMonitorSettings(MonEntry &m) {
    * to tell them apart. null says "asked, no answer" and renders as "(geen
    * antwoord)" -- the same phrase, from the same column, that the Home
    * Assistant path has always produced for the same fact. */
-  for (int i = 0; i < SET_PARAM_COUNT && p < (int)sizeof(body) - 128; i++) {
+  /* Headroom for the longest single entry: an escaped value (two bytes per
+   * source byte, worst case), its name, the quotes, the comma and the closing
+   * braces. Was a flat 128, which was true while no value could exceed 32
+   * characters and became silently false when cmd:region raised that to 176 --
+   * snprintf would then truncate mid-value, the length check at the end would
+   * catch it, and the whole message would be dropped rather than one field. */
+  const int room = SET_VALUE_MAX * 2 + 96;
+  for (int i = 0; i < SET_PARAM_COUNT && p < (int)sizeof(body) - room; i++) {
     if (_mset_got[i]) {
       char esc[SET_VALUE_MAX * 2 + 4];
       jsonEsc(esc, sizeof(esc), _mset_vals[i]);
