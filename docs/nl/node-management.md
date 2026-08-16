@@ -326,11 +326,11 @@ gat kleiner.
 
 Die tweede controle telt het zwaarst voor de gevaarlijke klasse, en om een reden
 die het waard is om precies te benoemen: een frequentie buiten de band is niet
-*riskant*, die is gewoon **fout**, en geen enkel aantal bevestigingen hoort hem
-tot bij de radio te laten komen. De bevestiging gaat erover of een toegestane
-waarde gezet mag worden; de grenzen gaan erover of een waarde überhaupt
-toegestaan is. Dat zijn verschillende vragen, en ze worden op verschillende
-plaatsen beantwoord.
+*riskant*, die is gewoon **fout**, en hoeveel bevestigingen je er ook voor zet,
+hij hoort de radio nooit te bereiken. De bevestiging gaat erover of een
+toegestane waarde gezet mag worden; de grenzen gaan erover of een waarde
+überhaupt toegestaan is. Dat zijn verschillende vragen, en ze worden op
+verschillende plaatsen beantwoord.
 
 Bij een `semi_managed` doel — het pad dat ontworpen is maar niet gebouwd — zou de
 uitzendende node de monitor zijn, met onze firmware, zodat de tabel en de
