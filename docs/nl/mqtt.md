@@ -402,6 +402,65 @@ LoRa-zendtijd werd weggegooid — en de adminpagina bleef de laatste sweep tonen
 die wél was aangekomen, zonder ook maar iets dat verried dat er sindsdien iets
 mislukt was.
 
+### `cfgspec` — de beschrijfbare parametertabel van de node
+
+Reist mee met de instellingenronde hierboven, en met niets anders: deze tabel
+verandert alleen als er andere firmware op de node gaat, dus hem bij elk bericht
+betalen zou maandelijks betalen zijn voor iets dat jaarlijks verandert.
+
+```json
+"cfgspec": {
+  "name": "text,0,0,1,0,0",
+  "flood.max": "int,0,64,2,0,0",
+  "loop.detect": "enum,0,0,2,0,0,off|minimal|moderate|strict",
+  "tx": "int,0,30,3,0,0"
+}
+```
+
+Eén string per parameter, in een vaste volgorde:
+`<soort>,<lo>,<hi>,<risico>,<herstart>,<geheim>[,<keuzes>]`. Compact met opzet —
+zevenentwintig objecten met zeven sleutels elk zijn twee kilobyte tegen
+negenhonderd byte op deze manier, en het reist in een bericht met een vaste
+buffer.
+
+**Waarom dit er is.** De server bouwt zijn schrijfformulier uit de lijst van de
+node zelf en houdt met opzet geen eigen parametertabel; tot 2.8.0 kwam die lijst
+alleen van `GET /api/cfg`, en dat is precies wat een node waarvoor de server geen
+weblogin heeft niet kan beantwoorden. Zonder `cfgspec` zou de MQTT-schrijfweg
+bestaan en onbruikbaar zijn: de site zou de risicoklasse van een parameter niet
+kennen, bij twijfel de zwaarste aannemen (`nodeconfig.risk_of`), en dus alles
+blokkeren.
+
+Het blijft de lijst van de node en geen tabel die hier verzonnen is — alleen een
+tweede *bron* voor diezelfde lijst. Hij wordt alleen aangenomen als het bericht
+over de publisher zelf gaat: een parametertabel is de ingecompileerde lijst van
+de publicerende firmware, dus een blok dat beweert die van een ander te dragen
+kan niet waar zijn. Dat weegt zwaarder dan het klinkt, want de site hangt haar
+bevestigingen en haar rechten aan die risicoklassen op.
+
+### `cfgset` — de uitslag van de laatste schrijfactie over `cmd`
+
+Reist mee met elk statistiekbericht zodra er ooit een geweest is, want het is een
+paar honderd byte en een gemiste publicatie hoort hem niet te verliezen:
+
+```json
+"cfgset": {
+  "seq": 3, "ok": 1, "param": "flood.max", "asked": "12",
+  "applied": "12", "exact": 1, "reboot": 0, "msg": ""
+}
+```
+
+`applied` is wat de node achteraf terugleest en niet wat er gevraagd is —
+dezelfde discipline als bij `POST /api/cfg`, en om dezelfde gemeten redenen
+(`set lat abc` is een kale `atof()`, `advert.interval 61` legt 60 vast). `exact`
+zegt of die twee gelijk zijn. `seq` telt schrijfacties sinds de start, zodat de
+server deze uitslag van de vorige kan onderscheiden.
+
+Een **weigering wordt hier ook gemeld**, met `ok: 0` en de reden in `msg`. Stilte
+zou niet te onderscheiden zijn van een node die slaapt op zijn zonnebudget, en
+dan lijkt een tikfout precies op een lege batterij. Dezelfde publisherregel als
+bij `cfgspec`.
+
 **Waarom het geen eigen topic heeft.** Het zou `meshmanager/<node>/settings`
 worden, tot een controle van `mqtt_ingest.py` uitwees dat deze abonnee naar
 precies twee patronen luistert. Een derde topic zou door de broker aanvaard zijn
@@ -430,6 +489,7 @@ Daarom publiceert de server één woord op `meshmanager/<node>/cmd`:
 | `settings <key>` | logt in op een repeater die hij *monitort*, leest de CLI-parameters van **die** repeater over LoRa, en publiceert ze onder de naam van die repeater (nodefirmware 1.9.0) |
 | `status` | publiceert onmiddellijk een statistiekbericht |
 | `time <epoch>` | zet zijn eigen klok op die UNIX-tijd in UTC-seconden, en controleert daarna over LoRa de klokken van de repeaters die hij monitort (nodefirmware 1.10.0) |
+| `set <param> <waarde>` | zet een van **zijn eigen** CLI-parameters, leest hem terug, en meldt de uitslag met het statistiekbericht dat hij er meteen na publiceert (nodefirmware 2.8.0) |
 
 Het antwoord komt terug op het gewone `stats`-topic. Verder verandert er niets
 aan het ingestpad, en een ontvanger die niets van `cmd` afweet, blijft werken.
@@ -437,8 +497,8 @@ aan het ingestpad, en een ontvanger die niets van `cmd` afweet, blijft werken.
 verandering op de node. Wat er gebeurd is, valt af te lezen met `wifi clock` op
 de node en op de adminpagina van de site.
 
-**De firmware aanvaardt die drie woorden en niets anders.** Geen prefixtest,
-geen doorval naar `handleCommand()` — een exacte match tegen een lijst van drie.
+**De firmware aanvaardt die vier woorden en niets anders.** Geen prefixtest,
+geen doorval naar `handleCommand()` — een exacte match tegen een lijst van vier.
 De telnetconsole op de node geeft haar invoer wél door aan de CLI, maar die
 console vraagt een wachtwoord over een verbinding die de operator beheert,
 terwijl dit topic bereikbaar is voor iedereen met brokergegevens. Deze repeaters
@@ -448,8 +508,8 @@ uit zichzelf ook gezegd zou hebben, dus het ergste dat een aanvaller op de
 broker ermee bereikt, is een statistiekbericht, hoogstens één per 30 seconden
 (`MQTT_CMD_MIN_GAP_MS`).
 
-De argumenten verruimen dat niet, en de twee zijn het waard om te scheiden omdat
-het verschillende soorten dingen zijn.
+De argumenten verruimen dat niet, en ze zijn het waard om te scheiden omdat het
+verschillende soorten dingen zijn.
 
 Dat bij `settings` wordt nooit tekst die een CLI bereikt: het selecteert één item
 uit de monitorlijst van de node, en de commando's die dan verstuurd worden, zijn
@@ -466,6 +526,34 @@ toestand. Onomwonden benoemd, omdat het het woord is dat een ACL verdient: een
 aanvaller op de broker kan de klok van een node op om het even welk tijdstip
 tussen nu en 2100 zetten, en dat valt niet meer over de lucht terug te draaien.
 De reden staat in de volgende sectie.
+
+Dat bij `set` is het woord dat het plafond van dit topic werkelijk verhoogt, en
+het is de moeite om precies te zijn over hoever. Het is een **grotere whitelist,
+geen doorgang**, en de node doet het keuren:
+
+- de parameter moet een van de achtentwintig namen zijn die in `CFG_PARAMS`
+  ingecompileerd staan. Het commando wordt daarna opgebouwd met de sleutel *uit
+  die tabel*, dus er wordt nooit tekst uit het bericht een commando — alleen de
+  waarde reist mee, en die is altijd het laatste woord, dus er is geen scheider
+  waar een tweede commando na kan beginnen;
+- de waarde moet door `cfgCheckValue()`, dezelfde zeef die `POST /api/cfg` en
+  `POST /api/moncfg` gebruiken. Eén zeef, niet drie die uit elkaar kunnen lopen;
+- de risicoklasse mag `CFG_MQTT_MAX_RISK` niet overschrijden, en die staat op
+  *verandert merkbaar hoe de node zich gedraagt* en niet op *kan deze node
+  afsnijden*. Radio-instellingen staan sinds 2.6.0 helemaal niet meer op die
+  tabel, dus deze weg kan ze net zomin aanbieden als de andere twee.
+
+Een node die een onbekende parameter of een waarde buiten de grenzen krijgt,
+weigert hem, telt hem, en **zegt het** — zie `cfgset` hierboven. Stilte zou niet
+te onderscheiden zijn van een node die slaapt op zijn zonnebudget, en dat is het
+enige wat dit antwoord niet mag zijn.
+
+Waarom het plafond hier lager ligt dan op de twee HTTP-schrijfwegen komt neer op
+wie er aan de overkant staat: die hebben een geauthenticeerde tegenpartij, deze
+heeft wie de broker heeft binnengelaten. Op een broker met één gedeeld account is
+dat elke node die ermee praat. De volledige afweging, en wat het voor je
+brokerinrichting betekent, staat in
+[`security.md`](security.md#een-instelling-wijzigen-drie-vervoermiddelen).
 
 ### Het formaat van een `cmd`-payload
 
@@ -490,7 +578,13 @@ settings
 status
 settings e3d3f4d7ed01
 time 1786665600
+set flood.max 12
+set name Dak Noord
 ```
+
+`set` is het enige woord met twee argumenten: de parameternaam, dan de waarde.
+De waarde is alles na de parameter, spaties inbegrepen — `name` en `owner.info`
+bestaan uit weinig anders.
 
 `time` neemt UNIX-epoch in **seconden in UTC**, geparset met `strtoul` (niet
 `atol` — de epoch passeert 2³¹ in 2038 en deze nodes hangen dan misschien nog
@@ -733,6 +827,16 @@ topic write meshmanager/e3d3f4d7ed01/stats
 topic write meshmanager/e3d3f4d7ed01/rx
 topic read  meshmanager/e3d3f4d7ed01/cmd
 ```
+
+Sinds nodefirmware 2.8.0 kan het `cmd`-topic ook een *instelling wijzigen*
+(`set <param> <waarde>`), en daarmee wordt "wie mag er publiceren op
+`<voorvoegsel>/<node>/cmd`" de bepalende vraag in plaats van een kwestie van
+netheid. Met een account per node en de regels hierboven luidt het antwoord "de
+site, en niemand anders". Met één **gedeeld account** — en daar draait een
+standaardopstelling van `init-passwd.sh` op — houdt elke node inloggegevens
+waarmee op het `cmd`-topic van elke andere node gepubliceerd kan worden. Lees
+[`security.md`](security.md#de-broker-is-nu-de-bepalende-vraag) voordat je op die
+schrijfweg gaat leunen.
 
 Zonder de leesregel verbindt de node, abonneert hij zich, wordt hij door de
 broker geweigerd, en rapporteert hij daar niets over — de knop ziet er dan

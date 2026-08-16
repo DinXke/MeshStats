@@ -31,7 +31,7 @@ opnieuw maakt.
 [een node onder beheer brengen](#een-node-onder-beheer-brengen)
 
 **Instellingen** — [uitlezen](#instellingen-uitlezen) ·
-[over MQTT?](#kunnen-instellingen-over-diezelfde-mqtt-route-geschreven-worden) ·
+[drie vervoermiddelen](#drie-vervoermiddelen-voor-één-schrijfweg) ·
 [welke geschreven mogen worden](#welke-instellingen-geschreven-mogen-worden) ·
 [schrijven over LoRa](#schrijven-over-lora-via-de-monitor) ·
 [bevestigen-of-terugdraaien](#bevestigen-of-terugdraaien-onderzocht-en-met-opzet-niet-gebouwd) ·
@@ -259,87 +259,168 @@ indruk dat je aan één node iets bijzonders kunt vragen.
 
 ---
 
-## Kunnen instellingen over diezelfde MQTT-route geschreven worden?
+## Drie vervoermiddelen voor één schrijfweg
 
-Het korte antwoord, omdat het rechtstreeks gevraagd is: **technisch gezien ja, en
-het aanbevolen ontwerp doet het niet zo.**
+Het korte antwoord, omdat het rechtstreeks gevraagd is: **ja, ook over MQTT —
+sinds nodefirmware 2.8.0, en met opzet niet door het `cmd`-topic tot een CLI te
+verbreden.**
 
-### Waarom niet via het `cmd`-topic
+Er is één schrijfweg. Alles wat een schrijfactie kan weigeren — de parameterlijst
+van de node zelf, zijn grenzen, de risicoklassen, de bevestiging, het recht uit
+het RBAC-model, de terugleescontrole — gebeurt in `nodeconfig.write()`, ongeacht
+welk vervoermiddel gebruikt wordt. Alleen *hoe het commando reist* verschilt. Per
+node kiest de site de eerste van deze drie die werkelijk beschikbaar is, en de
+nodepagina zegt welke het geworden is en waarom:
 
-Het topic accepteert `settings`, `status` en `time <epoch>` — een strikte
-toelatingslijst, nooit een doorgeefluik naar de CLI. De redenering staat in
-`MeshManagerNet.h` en gaat over wie dat topic kan bereiken: **iedereen met
-broker-inloggegevens**, gedeeld, gelekt of vertypt. Eén `reboot` in een lus kost
-je de dakrepeater.
+| # | Vervoermiddel | Beschikbaar als | Tegenpartij | Risicoklassen |
+|---|---|---|---|---|
+| 1 | HTTP naar de node (`POST /api/cfg`) | hij een IP-pad heeft en `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` gezet zijn | de weblogin van die node | 1, 2 en 3 |
+| 2 | MQTT-`cmd`-topic (`set <param> <waarde>`) | de node zelf op MQTT publiceert, nodefirmware 2.8.0 draait, en de broker verbonden is | wie de broker heeft binnengelaten | 1 en 2 |
+| 3 | Mesh-CLI via zijn monitor (`POST /api/moncfg`) | de node doorgestuurd wordt en zijn monitor een IP-pad, een weblogin en nodefirmware 2.4.0 heeft | de login van de monitor, daarna zijn eigen rechten op de doelnode | 1, 2 en 3 |
 
-Dat argument wordt niet zwakker bij schrijven. Het wordt sterker, want lezen kan
-een node niet onbereikbaar maken en schrijven wel. Een verkeerde `freq`, een
-verkeerde `radio`, `tx 0`, `repeat off` of een verkeerde WiFi-instelling op een
-node die je alleen over LoRa bereikt, is geen vergissing die je herstelt — de
-instelling wordt van kracht, en daarmee verdwijnt de enige weg terug. Op een dak
-is dat het einde van de node.
+De volgorde is een rangschikking: sterkste tegenpartij en snelste, volledigste
+teruglezing eerst; duurste laatst. Een doorgestuurde node heeft alleen regel 3 —
+hij publiceert niet, dus hij heeft geen eigen `cmd`-topic. Een node die voor
+zichzelf publiceert heeft regel 1 en 2.
 
-### De route die in plaats daarvan aanbevolen wordt
+Is geen van de drie beschikbaar, dan blijft dát het antwoord — met de reden per
+vervoermiddel, zodat "niet mogelijk" iets is waar je mee verder kunt in plaats
+van een doodlopende weg.
 
-**Schrijfacties gaan over HTTP, naar een node die de server kan bereiken, achter
-de eigen login van die node.** Welke node dat is, hangt af van het niveau:
+### Waarom het `cmd`-topic heropend is
 
-| Doel | Schrijfpad |
-|---|---|
-| `full_managed` met een IP-pad | HTTP naar de node zelf |
-| `semi_managed` (JessaZH) | HTTP naar zijn **monitor** (DinX-Home), die `set …` over LoRa uitstuurt |
-| `full_managed` zonder IP-pad | wordt niet aangeboden — zie hieronder |
-| `unmanaged` | wordt niet aangeboden, er is niets om mee te authenticeren |
+Het eerdere ontwerp zei dat schrijfacties nooit over MQTT gaan, en benoemde het
+geval dat die beslissing zou heropenen: *een `full_managed` node zonder IP-pad
+kan helemaal niet geschreven worden, ook al werkt zijn `cmd`-topic.* Het zei er
+meteen bij dat het antwoord dan niet zou zijn om de toelatingslijst stilletjes te
+verbreden, maar om de beslissing bewust opnieuw te openen.
 
-Hier is het de moeite waard even bij stil te staan: het doorgegeven geval werkt.
-JessaZH wordt geschreven door met DinX-Home te praten, en DinX-Home hangt aan het
-LAN. **Het referentiegeval wordt gedekt door de route die MQTT helemaal niet
-aanraakt.** Die regel is gebouwd sinds firmware 2.4.0 en heeft hieronder een
-eigen sectie, [Schrijven over LoRa](#schrijven-over-lora-via-de-monitor).
+Dat geval dook op in een iets andere vorm. Een node die op MQTT publiceert en
+onze firmware draait — full managed volgens elke definitie — meldde "kan niet
+gewijzigd worden" zodra `MM_FW_NODE_USER` leeg gelaten was, terwijl er een open,
+werkende verbinding naartoe ongebruikt lag. Een full managed node heeft per
+definitie een MQTT-verbinding, dus "kan niet" was daar feitelijk onjuist.
 
-Wat het oplevert:
+De beslissing is dus heropend, en dit is wat overeind bleef.
 
-- Broker-inloggegevens blijven niets kunnen veranderen. De MQTT-toelatingslijst
-  blijft precies drie woorden, en aan het dreigingsmodel van dat topic verandert
-  niets.
-- Een schrijfactie wordt geauthenticeerd tegen de eigen beheerderslogin van de
-  node, en dat is een inloggegeven dat een mens in handen heeft, geen
-  serviceaccount dat een container in handen heeft.
-- Het transport bestaat al en wordt al gebruikt voor firmware, inclusief de
-  adresvalidatie en de foutmeldingen.
+**Het is een grotere toelatingslijst, geen doorgeefluik naar de CLI.** Het topic
+vergelijkt nog steeds exacte woorden; er is er nu een vierde. De node valideert
+zelf:
 
-Wat het kost: een `full_managed` node zonder IP-pad kan helemaal niet geschreven
-worden, ook al werkt zijn `cmd`-topic. Dat geval bestaat vandaag niet in deze
-installatie. Duikt het op, dan is het antwoord niet om de MQTT-toelatingslijst
-stilletjes te verbreden — het is om deze beslissing bewust opnieuw te openen, met
-de risicoklassen hieronder als datgene wat overeind moet blijven.
+- de parameter moet een van de achtentwintig namen zijn die in `CFG_PARAMS`
+  ingecompileerd staan, en het commando wordt opgebouwd met de sleutel *uit die
+  tabel* — er wordt nooit tekst uit het bericht een commando. Alleen de waarde
+  reist mee, en die is altijd het laatste woord, dus er is geen scheider waar een
+  tweede commando na kan beginnen;
+- de waarde moet door `cfgCheckValue()`, dezelfde zeef die beide
+  HTTP-schrijfwegen gebruiken. Eén zeef, zodat de drie niet uit elkaar kunnen
+  lopen;
+- de risicoklasse mag `CFG_MQTT_MAX_RISK` niet overschrijden.
 
-### Als het ooit tóch over MQTT zou gebeuren
+Een node die een onbekende parameter of een waarde buiten de grenzen krijgt,
+weigert hem, telt hem, en meldt hem — de weigering komt terug in het
+statistiekbericht dat hij er meteen na publiceert. Stilte zou niet te
+onderscheiden zijn van een node die slaapt op zijn zonnebudget, en dat is het
+enige wat dit antwoord niet mag zijn.
 
-Dan wordt de brokerconfiguratie dragend in plaats van hygiënisch, en moet
-`mosquitto/acl.example` dat ook zeggen:
+### Het plafond van dat vervoermiddel, en waarom het daar ligt
 
-- Het account van de site is het **enige** met `write meshmanager/+/cmd`.
-  Node-accounts krijgen `write meshmanager/<own-id>/#` en verder niets, zodat een
-  gecompromitteerde node zijn buren niet kan commanderen.
-- Elk node-account is per node, nooit gedeeld. Een gedeeld account betekent dat
-  een lek niet in te dammen is zonder elke node opnieuw in te richten.
-- Een gedeeld geheim of een handtekening op het commando zou helpen, en het is
-  eerlijk om erbij te zeggen dat dat op zichzelf niet genoeg is: de node zou dat
-  geheim moeten bewaren in dezelfde flash die een back-up uitdeelt, en het
-  beschermt de *inhoud* van een commando, niet het feit dat wie
-  broker-inloggegevens heeft die van gisteren opnieuw kan afspelen.
+**Klasse 1 en 2 gaan over het `cmd`-topic. Klasse 3 niet.**
 
-Dat is een hoop machinerie om een route veilig te maken die we niet nodig hebben.
-Vandaar HTTP.
+Het verschil tussen de vervoermiddelen is niet snelheid maar wie er aan de
+overkant staat. Regel 1 en 3 hebben een geauthenticeerde tegenpartij: een
+wachtwoord op een verbinding die jij beheert, of een monitor die over LoRa inlogt
+met rechten die de eigenaar aan de overkant uitgaf en kan intrekken. Regel 2
+heeft wie er brokergegevens houdt — en `mosquitto/acl.example` ondersteunt een
+account per node, terwijl een standaardopstelling op één gedeeld account draait.
+Met een gedeeld account is dat elke node die met de broker praat.
+
+Daar komt bij dat er geen teruglezing in hetzelfde verzoek zit. De node meldt de
+uitslag in zijn eerstvolgende statistiekbericht, dus een vergissing is niet
+zichtbaar op het moment dat ze gemaakt wordt — en dat is precies wat je wél wilt
+als die vergissing een node van de lucht kan halen.
+
+"Overal alles" en "nergens iets" zouden allebei verkeerd zijn. De instellingen
+die je op een gewone dag bijstelt — naam, positie, advertentie-interval,
+floodgrenzen, zendtijdbudget — zijn klasse 1 en 2, en die gaan erlangs. De
+handvol die een node kan afsnijden houdt zijn twee geauthenticeerde wegen. Wil je
+die van hieraf kunnen zetten, vul dan `MM_FW_NODE_USER` en `MM_FW_NODE_PASS` in;
+de pagina zegt dat waar hij weigert.
+
+Het plafond wordt twee keer gehandhaafd: `nodeconfig.MQTT_MAX_RISK` in de server,
+zodat er niets vertrekt dat toch geweigerd zou worden, en `CFG_MQTT_MAX_RISK` in
+de firmware, omdat de node degene is die het gevolg draagt.
+
+### Radio-instellingen worden op alle drie geweigerd
+
+`radio` — frequentie, bandbreedte, spreidingsfactor en coderingssnelheid, die
+MeshCore als één parameter zet — wordt **van afstand helemaal niet geschreven**.
+Niet over IP, niet over het `cmd`-topic, niet over de mesh-CLI van een monitor.
+`tx` (zendvermogen) mag wel en houdt zijn eigen risicoklasse.
+
+De asymmetrie is het argument. Een verkeerde `tx` maakt een node zwakker en laat
+hem bereikbaar: je hoort hem nog, hij hoort jou nog, en je zet het terug. Een
+verkeerde frequentie, spreidingsfactor, coderingssnelheid of bandbreedte haalt
+hem van de lucht — hij hoort niemand meer en niemand hoort hem — en er is geen
+weg terug die niet fysiek is. Op een dak is dat het einde van die node. Geen
+bevestiging repareert dat: een drempel beschermt tegen twijfel en tegen de klik
+op de verkeerde regel, niet tegen een getal dat een zender op een band zet waar
+de antenne niet voor gemaakt is. `radio` wordt bovendien pas na een herstart van
+kracht, dus de fout wordt pas zichtbaar op het moment dat hij al onomkeerbaar is.
+
+Het is een weigering aan de bron en geen ontbrekend invoerveld. Een parameter die
+alleen uit een *formulier* weggelaten is, valt met een met de hand gemaakt
+verzoek alsnog te schrijven; de drempel hoort te staan waar het verzoek werkelijk
+uitgevoerd wordt. Hij staat dus op twee plaatsen:
+
+- **in de firmware**, waar `radio` sinds nodefirmware 2.6.0 uit `CFG_PARAMS`
+  verdwenen is. Die ene tabel is wat `GET /api/cfg` publiceert, wat
+  `POST /api/moncfg` aanvaardt en wat het `cmd`-topic doorlaat, dus één regel
+  weghalen sluit alle drie de ingangen tegelijk. In het commentaar op de plek
+  waar hij stond staat de regel nog uitgeschreven, zodat terugzetten één regel is;
+- **op de server**, als `nodeconfig.NO_REMOTE`, getoetst in `write()` nog vóór er
+  een vervoermiddel gekozen wordt. Niet overbodig: het weigert voordat er iets
+  vertrekt, met een zin die zegt waarom, en een node die nog firmware van vóór
+  2.6.0 draait hééft `radio` in zijn tabel en zou hem aannemen.
+
+### Wat dit van je broker vraagt
+
+Met vervoermiddel 2 in gebruik houdt "wie mag er publiceren op
+`<voorvoegsel>/<node>/cmd`" op een kwestie van netheid te zijn.
+`mosquitto/acl.example` ondersteunt een account per node — elke node schrijft
+alleen onder zijn eigen voorvoegsel en leest alleen zijn eigen `cmd`-topic, en de
+site schrijft alleen op `<voorvoegsel>/+/cmd`. Dat is de aanbevolen inrichting.
+
+**Deze installatie draait op dit moment op één gedeeld account.** Dan houdt elke
+node inloggegevens waarmee op het `cmd`-topic van elke andere node gepubliceerd
+kan worden, en sinds 2.8.0 betekent dat klasse 1 en 2 op elke node die het
+draait. Lees [`security.md`](security.md#de-broker-is-nu-de-bepalende-vraag)
+voordat je op deze weg gaat leunen — die sectie zet het plafond onomwonden neer
+en somt op wat het begrenst.
+
+### De parameterlijst, voor een node die alleen over MQTT bereikbaar is
+
+De server bouwt zijn formulier uit de lijst van de node zelf en houdt met opzet
+geen eigen tabel. Die lijst kwam tot nu toe alleen van `GET /api/cfg` — precies
+wat een node waarvoor de server geen weblogin heeft niet kan beantwoorden.
+
+Sinds 2.8.0 publiceert de node hem ook (`cfgspec`), samen met zijn
+instellingenronde. De handeling die deze weg opent is dus de handeling die er al
+was: druk één keer op **instellingen opvragen**, en de site kent zowel de waarden
+als de grenzen. Tot dat gebeurd is zegt de pagina dat en biedt ze geen formulier,
+want een formulier gebouwd uit een tabel die op de server verzonnen is, is
+precies wat dit ontwerp weigert.
 
 ---
 
 ## Welke instellingen geschreven mogen worden
 
-**Allemaal, op drie na.** De lijst is het volledige `handleSetCmd()`-oppervlak
-van `src/helpers/CommonCLI.cpp` — achtentwintig parameters — en niet een
-zorgvuldig uitgekozen veilig hoekje.
+**Allemaal, op vier na.** De lijst is het volledige `handleSetCmd()`-oppervlak
+van `src/helpers/CommonCLI.cpp` — zevenentwintig parameters — en niet een
+zorgvuldig uitgekozen veilig hoekje. Drie van de vier stonden er nooit op
+(hieronder); de vierde is `radio`, die in nodefirmware 2.6.0 verwijderd is — zie
+[radio-instellingen](#radio-instellingen-worden-op-alle-drie-geweigerd)
+hierboven.
 
 Dat is een bewuste omkering van het eerste ontwerp, dat alleen parameters toeliet
 die de bereikbaarheid niet konden afsnijden. Veilig, en naast de kwestie: de
@@ -405,7 +486,7 @@ kapot kan maken, dus de invoer volgt het opgegeven type:
 | `enum` | Keuzelijst met precies de toegestane woorden (`loop.detect` → off / minimal / moderate / strict) |
 | `bool` | Keuzelijst met `on` / `off` — geen vrij veld, want MeshCore vergelijkt met `memcmp(…, "on", 2)`, zodat `onzin` daar *on* betekent |
 | `int` / `float` | Getalveld met de eigen `min` en `max` van die parameter |
-| `radio` | **Vier** getalvelden — frequentie, bandbreedte, spreading factor, coding rate — elk met een eigen bereik. Eén tekstvak waarin je `869.525 250 11 5` moet typen is precies het vak waar een typfout een verloren node van maakt |
+| `radio` | **Wordt niet aangeboden.** Firmware 2.6.0 en hoger noemt hem niet, dus de regel verschijnt niet; een node op oudere firmware noemt hem wél, en daar toont de pagina de reden in plaats van vier velden. Het waren vier getalvelden met elk een eigen bereik, op het argument dat één tekstvak voor `869.525 250 11 5` precies het vak is waar een typfout een verloren node van maakt. Dat klopte en ging niet ver genoeg: ook een correct ingevuld formulier zet een zender net zo definitief op een band waar de antenne niet voor gemaakt is |
 | `text` | Vrije tekst, alleen daar waar het ook echt vrije tekst is |
 | `text` + geheim | Wachtwoordveld, nooit voorgevuld — zie hieronder |
 
@@ -524,7 +605,7 @@ Dit is de weg waarvoor het hele project bestaat, en tot firmware 2.4.0 was het
 het enige in dit document dat ontworpen was en niet gebouwd. De node waar het om
 gaat is JessaZH: stock MeshCore op een dak, geen IP-pad, en dat komt er ook niet.
 
-**Eén schrijfweg, twee vervoermiddelen.** Alles hierboven blijft zonder
+**Eén schrijfweg, drie vervoermiddelen.** Alles hierboven blijft zonder
 uitzondering gelden — dezelfde parameterlijst, dezelfde grenzen, dezelfde drie
 risicoklassen, dezelfde bevestigingen, dezelfde rechten, hetzelfde teruglezen.
 Alleen de laatste stap verschilt. `nodeconfig.write()` doorloopt eerst elke
@@ -1257,6 +1338,8 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | `ota_route()` als aparte sleutel voor wat er kan | **gebouwd** |
 | `niet_teruggekomen` als toestand die blijft tot ze gezien is | **gebouwd** |
 | Instellingen schrijven naar een `full_managed` node met een IP-pad | **gebouwd** — firmware 2.1.0 `POST /api/cfg`: het hele CLI-oppervlak op drie na, bediening per type, bevestiging per risicoklasse, met teruglezen. Vereist dat het beheeradres van de node ingevuld is |
+| Instellingen schrijven naar een `full_managed` node zonder weblogin | **gebouwd** — firmware 2.8.0, `set <param> <waarde>` op het `cmd`-topic, met het teruglezen gemeld in het eerstvolgende statistiekbericht. Alleen risicoklasse 1 en 2, en de node toetst tegen zijn eigen tabel |
+| Radio-instellingen van afstand schrijven | **geweigerd op elk vervoermiddel**, in de server en nog eens in de firmware. `tx` mag wel; frequentie, bandbreedte, spreidingsfactor en coderingssnelheid niet |
 | Instellingen schrijven naar een `semi_managed` node over LoRa | **gebouwd** — firmware 2.4.0, `POST`/`GET /api/moncfg` op de **monitor**, plus `wifi mon set` vanaf elke CLI. `set` en dan `get`, één tegelijk, begrensd, met het teruglezen als gemelde uitslag. Dezelfde tabel, grenzen, risicoklassen en rechten als de weg over IP |
 | Schrijven naar de WiFi- en MQTT-instellingen van een node | **wordt hier niet aangeboden.** Dat zijn de onze en niet die van MeshCore, en ze hebben al hun eigen formulieren op de beheerpagina van de node zelf en in de `wifi`-CLI |
 | Bevestigen-of-terugdraaien | **onderzocht en verworpen**, met de redenering hierboven |
@@ -1358,5 +1441,5 @@ precies de vraag onbeantwoordbaar waarvoor dit bestaat.
   het is
 - [`firmware-upgrade.md`](firmware-upgrade.md) — het upgrademechanisme van begin
   tot eind
-- [`mqtt.md`](mqtt.md) — de topics, en de drie woorden die de site mag publiceren
+- [`mqtt.md`](mqtt.md) — de topics, en de vier woorden die de site mag publiceren
 - [`firmware.md`](firmware.md) — de nodefirmware bouwen en flashen

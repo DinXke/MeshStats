@@ -324,6 +324,10 @@ def _compare_page(request: Request, extra: dict | None = None):
         # daar valt niets aan te zetten -- het sjabloon moet dat verschil kennen
         # om geen potloodje te tekenen bij een waarde die geen knop verdient.
         "builtin_keys": compare.BUILTIN_KEYS,
+        # Wat er van afstand nooit gezet wordt. Ook hier, want dit is een tweede
+        # knop naar dezelfde schrijfactie.
+        "cfg_no_remote": nodeconfig.NO_REMOTE,
+        "cfg_no_remote_reason": nodeconfig.NO_REMOTE_REASON,
         "cfg_result": None,
         **(extra or {}),
     })
@@ -352,7 +356,10 @@ def _compare_editor(spec: str, tabel: dict) -> dict | None:
     if rij is None or not key:
         return None
 
-    lijst = nodeconfig.params(rij["cfg"]["host"]) if rij["cfg"]["can"] else         {"ok": False, "error": "", "params": []}
+    # params_for kiest zelf de bron die bij de gekozen weg hoort: de node over
+    # HTTP, of de tabel die hij over MQTT meestuurde. Hier hoeft dat niet bekend
+    # te zijn, en dat is het hele punt van die functie.
+    lijst = nodeconfig.params_for(rij["rep"], rij["cfg"])
     param = next((p for p in lijst.get("params") or [] if p.get("key") == key), None)
     return {
         "rij": rij, "key": key, "param": param, "lijst": lijst,
@@ -699,9 +706,8 @@ def _node_page(request: Request, rid: int, **extra):
     # eindigt een klik op "er is niets verstuurd", en dat kan de pagina van
     # tevoren zeggen in plaats van achteraf.
     broker = mqtt_ingest.can_publish()
-    cfg = nodeconfig.cfg_route(rep)
-    cfg_params = (nodeconfig.params(cfg["host"]) if cfg["can"]
-                  else {"ok": False, "error": "", "params": []})
+    cfg = nodeconfig.cfg_route(rep, broker_connected=broker)
+    cfg_params = nodeconfig.params_for(rep, cfg)
     # Gaat het schrijven over LoRa, dan blijft de uitslag op de MONITOR staan en
     # niet hier. Dat is met opzet -- zie nodeconfig.mesh_state -- en het heeft dit
     # gevolg: de pagina haalt hem op bij het tonen, zodat een herlading een
@@ -785,6 +791,11 @@ def _node_page(request: Request, rid: int, **extra):
         # De vorige schrijfactie van de monitor, als die weg gebruikt wordt.
         "cfg_mesh": cfg_mesh,
         "cfg_mesh_steps": nodeconfig.MESH_STEPS,
+        # De laatste schrijfactie die deze node over MQTT meldde. Zelfde rol als
+        # cfg_mesh hierboven: bij die weg blijft de uitslag op de monitor staan
+        # en bij deze komt hij mee in een statistiekenbericht, dus in beide
+        # gevallen is er iets te tonen dat niet uit dit verzoek komt.
+        "cfg_mqtt": nodeconfig.cfgset_state(rep["source_prefix"] or ""),
         # Drie dingen over het filter, en ze beantwoorden drie vragen. 'Staat er
         # een filter aan en wat gooit het weg' (uit het laatste bericht, altijd
         # beschikbaar), 'wat zijn de regels precies' (van de node zelf, alleen
@@ -810,6 +821,14 @@ def _node_page(request: Request, rid: int, **extra):
         "sweep_last": sweepsched.entry(rep["pubkey_prefix"]),
         "sweep_status": sweepsched.status(),
         "cfg_params": cfg_params,
+        # Wat er van afstand nooit gezet wordt. Als lijst naar het sjabloon en
+        # niet als redenering daarin, om dezelfde reden als bij ``rechten``: een
+        # sjabloon dat zelf redeneert is een tweede plek waar het antwoord
+        # vandaan komt. De weigering zelf staat in nodeconfig.write() én in de
+        # firmware; dit is alleen wat de pagina erover zegt.
+        "cfg_no_remote": nodeconfig.NO_REMOTE,
+        "cfg_no_remote_reason": nodeconfig.NO_REMOTE_REASON,
+        "cfg_transport_text": nodeconfig.TRANSPORT_TEXT,
         # Gegroepeerd op risicoklasse, want dat is waar de bediening op stuurt:
         # gewoon opslaan, bevestigen, of de naam overtypen. De groepen komen uit
         # de firmware mee zodat de indeling niet op twee plaatsen bestaat.

@@ -1402,6 +1402,24 @@ geschreven wordt, krijgt twee doodgewone CLI-commando's binnen en hoeft niets te
 weten — en dat is de hele reden dat deze weg bestaat voor een node die maandenlang
 niet opnieuw geflasht wordt.
 
+Sinds 2.8.0 is er een derde ingang voor diezelfde schrijfweg, en die is voor de
+node zelf: `set <param> <waarde>` op het `cmd`-topic. Hij bestaat omdat een node
+die op MQTT publiceert een werkende verbinding met de broker heeft, zodat "er is
+geen weg naartoe" onjuist was over precies de node die het makkelijkst te
+bereiken is. De node toetst tegen zijn eigen `CFG_PARAMS` — de parameter moet op
+de tabel staan, de waarde binnen zijn grenzen vallen, en de risicoklasse mag niet
+hoger zijn dan `CFG_MQTT_MAX_RISK` — en meldt de teruglezing, of de weigering, in
+het statistiekbericht dat hij er meteen na publiceert (`cfgset`). Zijn
+parametertabel reist mee met de instellingenronde (`cfgspec`), zodat een server
+zonder weblogin voor deze node toch een formulier kan bouwen uit de lijst van de
+node zelf.
+
+`radio` wordt op deze weg net zomin aangeboden, en niet door een controle hier:
+sinds 2.6.0 staat hij helemaal niet meer in `CFG_PARAMS`, en die ene tabel is
+waar alle drie de ingangen van afstand uit lezen. Een verkeerde `tx` laat een
+node bereikbaar; een verkeerde frequentie, spreidingsfactor, coderingssnelheid of
+bandbreedte niet, en er is geen weg terug die niet fysiek is.
+
 ### 4.12 Kloksynchronisatie
 
 #### Waarom de mesh dit überhaupt nodig heeft

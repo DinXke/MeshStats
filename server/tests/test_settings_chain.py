@@ -413,3 +413,107 @@ def test_de_inspringing_van_de_regioboom_blijft_staan(db):
 
     waarde = {r["param"]: r["value"] for r in db.cli_settings_for(dak["id"])}["cmd:region"]
     assert waarde.split("\n") == ["*", " eu F", "  bx F", "   be^ F"]
+
+# --- de parametertabel en de uitslag van een schrijfactie -------------------
+#
+# Twee dingen die sinds nodefirmware 2.5.0 met een statistiekenbericht meereizen,
+# en die allebei alleen over de publicerende node zelf kunnen gaan. Die grens is
+# hier strenger dan bij de instellingen hierboven, en met reden: bij een sweep
+# leest een monitor werkelijk de CLI van een ander uit, maar een parametertabel
+# is de ingebakken lijst van de publicerende firmware en een schrijfuitslag gaat
+# over een commando dat op het cmd-topic van die node aankwam. Wie ze onder de
+# naam van een ander stuurt, beweert iets wat hij niet kan weten.
+#
+# En het is niet theoretisch. De site hangt haar bevestigingen en haar rechten
+# op aan de risicoklassen uit die tabel. Zou een vreemde publisher hem mogen
+# neerleggen, dan koos hij welke wijziging er licht genoeg is om zonder drempel
+# te mogen -- precies de verkeerde kant op.
+
+SPEC = '{"flood.max":"int,0,64,2,0,0"}'
+
+
+def _met(prefix, **extra):
+    import json
+    body = {"repeater": {"pubkey_prefix": prefix}, "metrics": {}}
+    body.update(extra)
+    return json.dumps(body).encode()
+
+
+def test_een_node_meldt_zijn_eigen_parametertabel(db):
+    from app import mqtt_ingest, nodeconfig
+    rij = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+
+    mqtt_ingest._handle_payload("meshmanager/55d9a320a4e3/stats",
+                                _met("55d9a320a4e3", cfgspec={"flood.max": "int,0,64,2,0,0"}))
+
+    vers = dict(db.qone("SELECT * FROM repeaters WHERE id=?", (rij["id"],)))
+    assert vers["cfg_spec"]
+    assert vers["cfg_spec_at"]
+    lijst = nodeconfig.spec_from_node(vers)
+    assert lijst["ok"] is True
+    assert lijst["params"][0]["key"] == "flood.max"
+
+
+def test_een_monitor_meldt_de_tabel_van_een_ander_niet(db):
+    """Een parametertabel is de lijst van de firmware die publiceert. Voor een
+    node die zelf niet publiceert bestaat hij dus niet, en hem toch aannemen zou
+    betekenen dat een vreemde de risicoklassen kiest waarop de bevestigingen van
+    deze site rusten."""
+    from app import mqtt_ingest
+    dak = _doorgestuurd(db)
+
+    mqtt_ingest._handle_payload("meshcore/55d9a320a4e3/stats",
+                                _met("e3d3f4d7edd0", cfgspec={"tx": "int,0,30,1,0,0"}))
+
+    vers = dict(db.qone("SELECT * FROM repeaters WHERE id=?", (dak["id"],)))
+    assert not vers["cfg_spec"]
+
+
+def test_een_ronde_zonder_tabel_wist_de_tabel_van_gisteren_niet(db):
+    """Zwijgen is geen bewering. Dezelfde regel als bij record_firmware, en hier
+    weegt hij zwaarder: zonder tabel is er geen formulier."""
+    from app import mqtt_ingest
+    rij = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+    db.record_cfg_spec(rij["id"], SPEC)
+
+    mqtt_ingest._handle_payload("meshmanager/55d9a320a4e3/stats", _met("55d9a320a4e3"))
+
+    vers = dict(db.qone("SELECT * FROM repeaters WHERE id=?", (rij["id"],)))
+    assert vers["cfg_spec"] == SPEC
+
+
+def test_de_uitslag_van_een_schrijfactie_komt_binnen(db):
+    from app import mqtt_ingest, nodeconfig
+    db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+
+    mqtt_ingest._handle_payload(
+        "meshmanager/55d9a320a4e3/stats",
+        _met("55d9a320a4e3", cfgset={"seq": 3, "ok": 1, "param": "flood.max",
+                                     "asked": "12", "applied": "12", "exact": 1,
+                                     "reboot": 0, "msg": ""}))
+
+    job = nodeconfig.cfgset_state("55d9a320a4e3")
+    assert job["seq"] == 3 and job["param"] == "flood.max"
+
+
+def test_een_uitslag_onder_de_naam_van_een_ander_wordt_genegeerd(db):
+    from app import mqtt_ingest, nodeconfig
+    _doorgestuurd(db)
+    nodeconfig._cfgset.clear()
+
+    mqtt_ingest._handle_payload(
+        "meshcore/55d9a320a4e3/stats",
+        _met("e3d3f4d7edd0", cfgset={"seq": 9, "ok": 1, "param": "tx",
+                                     "asked": "30", "applied": "30", "exact": 1,
+                                     "reboot": 0, "msg": ""}))
+
+    assert nodeconfig.cfgset_state("e3d3f4d7edd0") == {}
+    assert nodeconfig.cfgset_state("55d9a320a4e3") == {}
+
+
+def test_een_onmogelijk_grote_tabel_wordt_niet_bewaard(db):
+    """Dit komt van het stats-topic, en dat is geen invoer van de eigenaar."""
+    rij = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+    db.record_cfg_spec(rij["id"], "x" * (db.MAX_CFG_SPEC + 1))
+    vers = dict(db.qone("SELECT * FROM repeaters WHERE id=?", (rij["id"],)))
+    assert not vers["cfg_spec"]

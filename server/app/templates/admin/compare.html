@@ -125,6 +125,13 @@
   {% elif not bewerken.param %}
     <p class="muted small"><strong>Kan niet:</strong> deze node biedt
       <span class="mono">{{ bewerken.key }}</span> niet aan om van afstand te zetten.</p>
+  {% elif bewerken.key in cfg_no_remote %}
+    {#- Dezelfde weigering als op de nodepagina, en met opzet hier herhaald: dit
+        is een tweede knop naar dezelfde schrijfactie, en een drempel die maar
+        op één van de twee staat is geen drempel. Wat hier staat is de
+        beleefdheid; de weigering zelf staat in nodeconfig.write() en nog eens
+        in de firmware. -#}
+    <p class="muted small"><strong>Niet van afstand:</strong> {{ cfg_no_remote_reason }}</p>
   {% else %}
     {% set p = bewerken.param %}
     <p class="muted small">

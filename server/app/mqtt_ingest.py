@@ -182,7 +182,7 @@ MQTT_CMD_TOPIC = config.env("MQTT_CMD_TOPIC", "{prefix}/{node}/cmd")
 # Everything the firmware accepts, and nothing more. Kept here as well so a
 # typo on this side is refused before it costs a round trip, and so the list is
 # readable next to the code that sends it -- MeshManagerNet.cpp, mqttRunCommand().
-COMMANDS = ("settings", "status", "time")
+COMMANDS = ("settings", "status", "time", "set")
 
 # Alleen deze mag een onderwerp meekrijgen, want alleen deze betekent iets voor
 # een ander dan de node zelf. 'status' met een sleutel erbij zou vragen om
@@ -196,6 +196,26 @@ COMMANDS_WITH_SUBJECT = ("settings",)
 # verandert iets. Ze door één parameter laten lopen zou betekenen dat één
 # vergissing in de aanroep een sleutel als tijd laat vertrekken.
 COMMANDS_WITH_EPOCH = ("time",)
+
+# En alleen deze krijgt een parameter met een waarde mee. Apart van de twee
+# hierboven om dezelfde reden als die twee van elkaar: het is een derde soort
+# argument met een derde soort controle. Een sleutel selecteert iets, een epoch
+# verandert een klok, en dit verandert een instelling -- ze door één parameter
+# laten lopen zou betekenen dat één vergissing in de aanroep een tijd als
+# parameternaam laat vertrekken.
+COMMANDS_WITH_SETTING = ("set",)
+
+# Wat er van een parameternaam en een waarde nog een commando mag worden. De
+# lengtes komen uit CFG_KEY_MAX en CFG_VALUE_MAX in de firmware, en de tekens
+# uit wat daar een sleutel mag zijn.
+#
+# Dit is de beleefdheid en niet de beveiliging -- de node keurt de sleutel tegen
+# zijn eigen tabel en de waarde tegen zijn eigen grenzen, en dat is de controle
+# die telt. Wat het hier wél doet, is voorkomen dat er een payload vertrekt die
+# aan de overkant in stilte wordt afgekapt: MQTT_CMD_MAX is daar 96 byte, en een
+# afgekapte waarde is een andere waarde.
+MAX_SETTING_KEY = 27
+MAX_SETTING_VALUE = 39
 
 # Het venster waarbinnen een tijd geloofwaardig is, in UNIX-epochseconden UTC:
 # 2025-01-01 tot 2100-01-01. Dezelfde grenzen als CLOCK_MIN_EPOCH/CLOCK_MAX_EPOCH
@@ -356,7 +376,8 @@ def can_publish() -> bool:
 
 
 def publish_command(node: str, command: str, subject: str | None = None,
-                    epoch: int | None = None) -> bool:
+                    epoch: int | None = None,
+                    setting: tuple | None = None) -> bool:
     """Ask one node to do something now. False when nothing was sent.
 
     ``subject`` is the public key of a repeater that ``node`` monitors, and
@@ -365,6 +386,20 @@ def publish_command(node: str, command: str, subject: str | None = None,
     ``command`` so the word itself keeps being checked against COMMANDS as an
     exact string -- the same discipline the firmware applies at the far end, and
     for the same reason.
+
+    ``setting`` is ``(parameter, waarde)`` and turns ``set`` into
+    ``set <parameter> <waarde>``: change one of that node's own CLI settings.
+    Passed as its own argument for the same reason as the two above -- it is a
+    third kind of argument with a third kind of check.
+
+    That word is where this topic gained the ability to *change* something other
+    than a clock, so it is worth saying what this side does and does not do. It
+    does not decide whether the parameter may be set: that lives in
+    ``nodeconfig.write``, which has already weighed the risk class, the ceiling
+    of this transport and the confirmation by the time it gets here. And the node
+    weighs all of it again against its own compiled-in table, which is the check
+    that counts -- this side cannot know what a given firmware accepts, and a
+    server that guessed would be a second parameter list.
 
     ``epoch`` is UNIX time in UTC seconds and turns ``time`` into
     ``time <epoch>``: set your clock to this, and then check the clocks of the
@@ -428,6 +463,33 @@ def publish_command(node: str, command: str, subject: str | None = None,
         payload = f"{command} {epoch}"
     elif epoch is not None:
         raise ValueError(f"command {command!r} takes no epoch")
+
+    if command in COMMANDS_WITH_SETTING:
+        # Ontbreken is een programmeerfout: 'set' zonder parameter betekent
+        # niets. Een uitzondering dus, zodat het bij het schrijven stukgaat.
+        if setting is None:
+            raise ValueError(f"command {command!r} needs a setting")
+        param, waarde = (str(x) for x in setting)
+        param = param.strip()
+        waarde = waarde.strip()
+        # Een lege waarde is hier geen 'wissen' maar een aanroepfout: elke
+        # parameter in de tabel van de node heeft een vorm, en geen enkele
+        # aanvaardt niets. Teruggeven en niet opwerpen -- dit komt uit een
+        # formulier en de beller mag het melden.
+        if not param or not waarde:
+            log.warning("Instelling %r=%r onvolledig; niets verstuurd naar %s",
+                        param, waarde, node)
+            return False
+        if (len(param) > MAX_SETTING_KEY or len(waarde) > MAX_SETTING_VALUE
+                or not re.fullmatch(r"[a-z0-9._]+", param)):
+            # Aan de overkant zou dit afgekapt of geweigerd worden, en een
+            # afgekapte waarde is een ándere waarde. Dat hoort hier te stranden.
+            log.warning("Instelling %r=%r past niet in een cmd-bericht; niets "
+                        "verstuurd naar %s", param, waarde, node)
+            return False
+        payload = f"{command} {param} {waarde}"
+    elif setting is not None:
+        raise ValueError(f"command {command!r} takes no setting")
 
     if not can_publish():
         return False
@@ -598,6 +660,7 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     settings = body.get("settings")
     if isinstance(settings, dict):
         _handle_settings(row, publisher, settings, prior_source)
+    _handle_cfg(row, publisher, subject, body)
     _state["messages"] += 1
     _state["last_msg"] = ts
 
@@ -1033,6 +1096,42 @@ def _rx_verdict(body: dict) -> tuple[str | None, str | None]:
     if not isinstance(reden, str) or reden not in FILTER_DROP_METRICS:
         reden = None
     return "geweerd", reden
+
+
+def _handle_cfg(row, publisher: str, subject: str, body: dict) -> None:
+    """De parametertabel en de laatste schrijfactie, als ze meekwamen.
+
+    Twee dingen die alleen een node over ZICHZELF kan melden, en die regel is
+    hier strenger dan bij ``_handle_settings``. Daar mag ook de monitor
+    publiceren, omdat hij de CLI van een ander werkelijk uitleest; hier kan dat
+    niet bestaan. De parametertabel is de ingebakken lijst van de publicerende
+    firmware, en de uitslag gaat over een commando dat op het cmd-topic van die
+    node aankwam. Een node die deze twee onder de naam van een ander stuurt,
+    beweert iets wat hij niet kan weten.
+
+    Dat verschil is niet theoretisch. Wie de gedeelde brokergegevens heeft, kan
+    onder elk topic publiceren -- zie de kop van dit bestand. Zou een vreemde
+    publisher hier een parametertabel voor een andere node mogen neerleggen, dan
+    zou hij de risicoklassen kiezen waarop de site haar bevestigingen en haar
+    rechten baseert. Dat is precies de verkeerde kant om.
+    """
+    eigen = subject == publisher
+    spec = body.get("cfgspec")
+    if isinstance(spec, dict) and spec:
+        if eigen:
+            db.record_cfg_spec(row["id"], json.dumps(spec, separators=(",", ":")))
+        else:
+            log.info("cfgspec voor %s van %s genegeerd: een node meldt alleen "
+                     "zijn eigen parametertabel", subject, publisher)
+
+    job = body.get("cfgset")
+    if isinstance(job, dict) and job:
+        if eigen:
+            from . import nodeconfig
+            nodeconfig.note_cfgset(publisher, job)
+        else:
+            log.info("cfgset voor %s van %s genegeerd: een node meldt alleen "
+                     "zijn eigen schrijfacties", subject, publisher)
 
 
 def _handle_rx(topic: str, raw: bytes) -> None:

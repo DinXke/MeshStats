@@ -95,15 +95,145 @@ een inbraak hier geen sleutelbos is voor andermans apparatuur.
 | | Vóór firmware 2.1.0 | Nu |
 |---|---|---|
 | Alle statistieken en pakkethistorie lezen | ja | ja |
-| De drie vaste woorden op het `cmd`-topic publiceren | ja | ja |
+| De vaste woorden op het `cmd`-topic publiceren | ja | ja |
 | Wachtwoorden van repeaters die niet van jou zijn | nee | **nee** — nog steeds |
 | Een radio instellen die niet van jou is | nee | **nee** — daarvoor zijn rechten nodig die de monitor houdt |
+| De radio wijzigen van een node die *wel* van jou is | nee | **nee** — geweigerd op elke weg van afstand |
 | Firmware schrijven naar je eigen nodes | nee | **ja, als `MM_FW_NODE_*` gezet is** |
-| CLI-instellingen wijzigen op je eigen nodes | nee | **ja, als `MM_FW_NODE_*` gezet is** |
+| CLI-instellingen wijzigen op je eigen nodes | nee | **ja** — zie de drie vervoermiddelen hieronder |
 
 Die laatste twee regels zijn de verandering. Ze zijn de prijs van een repeater op
-een dak kunnen upgraden zonder ladder, en de schakelaar die hem betaalt is een
-paar omgevingsvariabelen die jij beheert.
+een dak kunnen onderhouden zonder ladder.
+
+Let op de vorm van de laatste regel sinds nodefirmware 2.8.0: hij hangt niet meer
+alleen aan `MM_FW_NODE_*`. Een CLI-instelling kan langs drie vervoermiddelen
+reizen, en alleen het eerste heeft die variabelen nodig — zie
+[Een instelling wijzigen: drie vervoermiddelen](#een-instelling-wijzigen-drie-vervoermiddelen).
+
+### Radio-instellingen worden van afstand nooit gezet
+
+`radio` — frequentie, bandbreedte, spreidingsfactor en coderingssnelheid, die
+MeshCore als één parameter zet — wordt geweigerd op **elke** schrijfweg van
+afstand: HTTP naar de node, het MQTT-`cmd`-topic, en de mesh-CLI van een monitor.
+`tx` (zendvermogen) mag wel en houdt zijn eigen risicoklasse.
+
+De asymmetrie is het hele argument. Een verkeerde `tx` maakt een node zwakker en
+laat hem bereikbaar — je hoort hem nog, hij hoort jou nog, en je zet het terug.
+Een verkeerde frequentie, spreidingsfactor, coderingssnelheid of bandbreedte
+haalt hem van de lucht: hij hoort niemand meer en niemand hoort hem, en er is
+geen weg terug die niet fysiek is. Op een dak is dat het einde van die node. Geen
+bevestigingsvenster repareert dat; een drempel beschermt tegen twijfel en tegen
+de klik op de verkeerde regel, niet tegen een getal dat een zender op een band
+zet waar de antenne niet voor gemaakt is.
+
+Het is een weigering aan de bron en geen ontbrekend invoerveld, op twee plaatsen.
+
+**In de firmware** is `radio` sinds nodefirmware 2.6.0 gewoon uit `CFG_PARAMS`
+verdwenen. Die ene lijst is tegelijk wat `GET /api/cfg` publiceert, wat
+`POST /api/moncfg` aanvaardt en wat het `cmd`-topic doorlaat, dus één regel
+weghalen sluit alle drie de ingangen op de node zelf. Drie schermen die er elk
+zelf iets van vinden kunnen uit elkaar lopen; één tabel niet. In het commentaar
+op de plek waar de regel stond staat hij nog uitgeschreven, zodat terugzetten
+één regel is.
+
+**Op de server** weigert `nodeconfig.NO_REMOTE` hem nog een keer onder eigen
+naam, getoetst in `write()` nog vóór er een vervoermiddel gekozen wordt. Dat is
+niet overbodig. Het weigert *voordat er iets vertrekt*, met een zin die zegt
+waarom in plaats van het "staat niet op de lijst" van de node -- wat ook het
+antwoord is op een tikfout. En de harde reden: een node die nog firmware van
+vóór 2.6.0 draait hééft `radio` in zijn tabel en zou hem aannemen. De regel hangt
+aan de handeling en niet aan de firmwareversie van de node die hem toevallig
+krijgt.
+
+### Een instelling wijzigen: drie vervoermiddelen
+
+Eén schrijfweg, drie manieren waarop het commando kan reizen. Alles wat een
+schrijfactie kan weigeren — de parameterlijst van de node zelf, zijn grenzen, de
+risicoklassen, de bevestiging, het recht uit het RBAC-model, de terugleescontrole
+— gebeurt in `nodeconfig.write()`, ongeacht welke gebruikt wordt. Per node de
+eerste die werkelijk beschikbaar is:
+
+| # | Vervoermiddel | Vereist | Tegenpartij | Risicoklassen |
+|---|---|---|---|---|
+| 1 | HTTP naar de node (`POST /api/cfg`) | een IP-pad plus `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` | de weblogin van die node | 1, 2 en 3 |
+| 2 | MQTT-`cmd`-topic (`set <param> <waarde>`) | de node publiceert zelf op MQTT, nodefirmware 2.8.0, broker verbonden | **wie de broker heeft binnengelaten** | alleen 1 en 2 |
+| 3 | Mesh-CLI via een monitor (`POST /api/moncfg`) | een monitor met een IP-pad, zijn weblogin, nodefirmware 2.4.0 | de weblogin van de monitor, daarna zijn eigen rechten op de doelnode | 1, 2 en 3 |
+
+De tweede regel is nieuw, en hij bestaat omdat "deze node kan niet gewijzigd
+worden" feitelijk onjuist was over een node die op MQTT publiceert: zo'n node
+*heeft* een werkende verbinding met deze broker. Vóór 2.8.0 was het antwoord voor
+een full-managed node zonder `MM_FW_NODE_*` dat er niets te wijzigen viel,
+terwijl er een open weg naartoe ongebruikt lag.
+
+**Waarom het plafond op regel 2 lager ligt.** Regel 1 en 3 hebben een
+geauthenticeerde tegenpartij: een wachtwoord op een verbinding die jij beheert,
+of een monitor die inlogt met rechten die de eigenaar aan de overkant uitgaf en
+kan intrekken. Regel 2 heeft wie er brokergegevens houdt. Daar komt bij dat er
+geen teruglezing in hetzelfde verzoek zit — de node meldt de uitslag in zijn
+eerstvolgende statistiekbericht — dus een vergissing is niet zichtbaar op het
+moment dat ze gemaakt wordt. Parameters die een node kunnen afsnijden houden
+daarom hun twee geauthenticeerde wegen.
+
+"Overal alles" en "nergens iets" zijn allebei het verkeerde antwoord. De
+instellingen die je op een gewone dag bijstelt — naam, positie,
+advertentie-interval, floodgrenzen, zendtijdbudget — zijn klasse 1 en 2, en die
+gaan erlangs. De handvol die een node van de lucht kan halen niet.
+
+Datzelfde plafond wordt twee keer gehandhaafd: `nodeconfig.MQTT_MAX_RISK` in de
+server, zodat er niets vertrekt dat toch geweigerd zou worden, en
+`CFG_MQTT_MAX_RISK` in de firmware, omdat de node degene is die het gevolg
+draagt.
+
+**Wat de node zelf valideert.** `set` is geen doorgeeflus naar de CLI. De
+parameternaam wordt opgezocht in de ingebakken tabel `CFG_PARAMS` en het commando
+wordt daarna opgebouwd met de sleutel *uit die tabel*, dus er wordt geen tekst
+uit het bericht een commando; de waarde gaat door `cfgCheckValue()`, dezelfde
+zeef als beide HTTP-schrijfwegen; en de risicoklasse wordt getoetst. Een
+onbekende parameter of een waarde buiten de grenzen wordt geweigerd, geteld **en
+gemeld** — de weigering reist mee terug in het eerstvolgende statistiekbericht
+onder `cfgset`, want stilte zou hier niet te onderscheiden zijn van een node die
+slaapt op zijn zonnebudget.
+
+De node publiceert ook zijn parametertabel (`cfgspec`) met zijn
+instellingenronde. De server bouwt zijn formulier uit de lijst van de node en
+houdt met opzet geen eigen tabel; zonder dit zou een node die de server niet over
+IP bereikt een schrijfweg hebben die niet te gebruiken is.
+
+### De broker is nu de bepalende vraag
+
+Lees dit vóór je vervoermiddel 2 aanzet.
+
+`mosquitto/acl.example` ondersteunt **een account per node**: elke node mag alleen
+schrijven onder zijn eigen `<voorvoegsel>/<pubkey>/` en alleen zijn eigen
+`cmd`-topic lezen, en de site mag alleen schrijven op `<voorvoegsel>/+/cmd`. Dat
+is de aanbevolen inrichting, en daarmee heeft "wie mag er publiceren op
+`<voorvoegsel>/<node>/cmd`" een kort antwoord: de site, en niemand anders.
+
+**Deze opstelling draait op dit moment op één gedeeld account.** Met een gedeeld
+account houdt elke node inloggegevens waarmee op het `cmd`-topic van elke andere
+node gepubliceerd kan worden. Dat gold al voor de statistiektopics — iedereen met
+brokergegevens kon cijfers publiceren onder de naam van elke node, en juist
+daarom werd een account per node aanbevolen — maar tot 2.8.0 kon het `cmd`-topic
+een node alleen vragen om te *praten*. Nu kan het hem vragen een instelling te
+wijzigen.
+
+De eerlijke zin luidt dus: **op een gedeeld brokeraccount laat een inbraak op één
+node zijn inloggegevens klasse 1 en 2 wijzigen op elke andere node die 2.8.0
+draait.** Niet de radio, niet het zendvermogen, niet wie er mag inloggen — die
+worden op deze weg geweigerd — maar wel namen, posities, advertentie-intervallen
+en floodgrenzen, hoogstens één per 30 seconden per node.
+
+Drie manieren om dat te begrenzen, in volgorde van wat ze opleveren:
+
+- **Geef elke node een eigen brokeraccount** (`mosquitto/add-node-user.sh`) met de
+  ACL uit `mosquitto/acl.example`. Dan kan alleen de site een commando
+  publiceren, en houdt deze hele alinea op te gelden.
+- **Houd `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` gezet** voor nodes die de server over
+  IP bereikt. Vervoermiddel 1 wint dan de volgorde en het `cmd`-topic wordt
+  helemaal niet voor schrijven gebruikt — al blijft het *bereikbaar*, dus dit
+  versmalt het gedrag van de site en niet dat van de broker.
+- **Zet de broker niet op het internet.** Het gewone advies, en het is degene die
+  bepaalt hoe groot "wie de broker heeft binnengelaten" werkelijk is.
 
 Gegevens stroomden vroeger strikt één kant op. Naast de twee HTTP-wegen hierboven
 bestaan er twee *smalle* terugwegen over MQTT, en beide zijn het waard te
@@ -111,26 +241,40 @@ begrijpen: ze staan open voor iedereen met brokergegevens, en dat is een ruimere
 groep dan wie de weblogin van de node heeft.
 
 **1. Het MQTT-commandotopic.** De server publiceert op `meshmanager/<node>/cmd`, en
-de firmware aanvaardt daar precies drie woorden: `settings` (lees nu mijn eigen
-CLI-parameters), `status` (publiceer nu een statistiekbericht) en `time <epoch>`
-(zet mijn klok). Het is een
+de firmware aanvaardt daar precies vier woorden: `settings` (lees nu mijn eigen
+CLI-parameters), `status` (publiceer nu een statistiekbericht), `time <epoch>`
+(zet mijn klok) en, sinds nodefirmware 2.8.0, `set <param> <waarde>` (wijzig een
+van mijn eigen CLI-instellingen). Het is een
 exacte vergelijking met die lijst — geen prefixtest, en uitdrukkelijk
 *geen* doorval naar de CLI van de node, ook al doet de telnetconsole van de node
 precies dat. Die console zit achter een wachtwoord op een verbinding die jij
 beheert; dit topic is bereikbaar voor iedereen met brokerinloggegevens, en deze
 repeaters hangen op daken waar één `reboot` in een lus een verloren node is.
 
-Twee van de drie laten de node alleen zeggen wat hij uit zichzelf ook gezegd zou
-hebben. De derde niet: `time` schrijft op het apparaat. Wat hem begrenst zijn de
-regels van de firmware zelf en niet het topic — een klok mag alleen vooruit, en
-een node die al voorloopt wordt met rust gelaten — dus het ergste dat iemand met
-brokerinloggegevens kan doen is de klok van een node de toekomst in duwen. Dat is
-over de lucht niet terug te draaien en vergt een herstart om te herstellen. Dát
-is het werkelijke plafond van deze weg, en het ligt hoger dan "een node een
-statistiekbericht laten publiceren". Begrens het
+Twee van de vier laten de node alleen zeggen wat hij uit zichzelf ook gezegd zou
+hebben. De andere twee schrijven op het apparaat, en allebei worden ze begrensd
+door de regels van de firmware zelf en niet door het topic.
+
+`time` mag een klok alleen vooruit zetten, en een node die al voorloopt wordt met
+rust gelaten — dus het ergste dat iemand met brokerinloggegevens kan doen is de
+klok van een node de toekomst in duwen. Dat is over de lucht niet terug te
+draaien en vergt een herstart om te herstellen.
+
+`set` is een **grotere whitelist, geen doorgang**: de parameter moet een van de
+achtentwintig namen zijn die in de firmware ingebakken staan, de waarde moet
+binnen de grenzen van díe parameter vallen, en zijn risicoklasse mag
+`CFG_MQTT_MAX_RISK` niet overschrijden — en die staat op "verandert merkbaar hoe
+de node zich gedraagt" en niet op "kan deze node afsnijden". Radio-instellingen
+worden hier geweigerd zoals overal. De volledige redenering, de drie
+vervoermiddelen waar dit bij hoort en wat het voor je broker betekent staan in
+[Een instelling wijzigen: drie vervoermiddelen](#een-instelling-wijzigen-drie-vervoermiddelen)
+hierboven. Dat is het stuk om te lezen vóór je hier iets van aanzet.
+
+Begrens het hele topic
 verder met een ACL die elke node enkel leesrecht geeft op zijn eigen
 `cmd`-topic, en de server enkel schrijfrecht op `meshmanager/+/cmd` — zie
-`mosquitto/acl.example`.
+`mosquitto/acl.example`. Met één gedeeld brokeraccount bestaat die grens niet, en
+sinds 2.8.0 weegt dat zwaarder dan voorheen.
 
 **2. De pollwachtrij.** De HA-integratie pollt `GET /api/v1/commands` en handelt
 naar wat ze daar vindt — een lijst repeaterprefixen om te verversen en

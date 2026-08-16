@@ -497,11 +497,18 @@ def _render(**over):
                   "node_stale": False, "ha": False, "poller_seen": None},
         "cfg_route": {"can": True, "blocker": "", "host": "http://x",
                       "fw": "2.1.0", "min_fw": "2.1.0", "relayed": False,
-                      "transport": "ip", "target": "", "monitor": ""},
+                      "transport": "ip", "target": "", "monitor": "",
+                      "max_risk": nc.RISK_CUTOFF, "options": [],
+                      "why": "over HTTP naar de node zelf"},
         # De vorige schrijfactie van de monitor. Hier: er is er nooit een geweest,
         # want deze reeks gaat over de weg over IP.
         "cfg_mesh": {"ok": False, "error": "", "job": {}},
         "cfg_mesh_steps": nc.MESH_STEPS,
+        # En die over het cmd-topic, om dezelfde reden leeg.
+        "cfg_mqtt": {},
+        "cfg_no_remote": nc.NO_REMOTE,
+        "cfg_no_remote_reason": nc.NO_REMOTE_REASON,
+        "cfg_transport_text": nc.TRANSPORT_TEXT,
         "cfg_params": {"ok": True, "error": "", "params": params},
         "cfg_groups": [(r, [q for q in params if q["risk"] == r])
                        for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],
@@ -558,14 +565,26 @@ def test_een_getal_krijgt_de_grenzen_van_de_node_mee():
     assert 'min="0" max="30"' in html      # tx
 
 
-def test_radio_krijgt_vier_velden_met_elk_eigen_grenzen():
-    """Eén tekstveld waarin je "869.525 250 11 5" moet typen is precies het soort
-    veld waarin een tikfout een node van de lucht haalt."""
+def test_radio_krijgt_geen_invoervelden_maar_de_reden():
+    """Van afstand geen radio-instellingen buiten tx.
+
+    Hier stonden vier invoervelden met elk hun eigen grenzen, omdat één tekstveld
+    waarin je "869.525 250 11 5" moet typen het soort veld is waarin een tikfout
+    een node van de lucht haalt. Die redenering klopte en ging niet ver genoeg:
+    ook een keurig ingevuld formulier kan een zender op een band zetten waar de
+    antenne niet op staat, en dan is er geen weg terug die niet fysiek is.
+
+    Dus geen velden, en wél de reden. Weglaten zonder uitleg zou de vraag
+    "waarom staat de radio er niet bij" onbeantwoord laten bij iedereen die de
+    lijst kent."""
     html = _render()
     for naam in ("rf", "rb", "rs", "rc"):
-        assert f'name="{naam}"' in html
-    assert 'min="150" max="2500"' in html
-    assert 'min="5" max="12"' in html
+        assert f'name="{naam}"' not in html
+    assert "Niet van afstand" in html
+    assert "van de lucht" in html
+    # En 'tx' blijft wél te zetten: een node die te zwak zendt is zwakker maar
+    # bereikbaar, en dat is precies de asymmetrie waar deze regel op rust.
+    assert 'min="0" max="30"' in html
 
 
 def test_de_zwaarste_klasse_vraagt_om_de_naam_van_de_node():
@@ -598,7 +617,9 @@ def test_elke_reden_om_niet_te_kunnen_schrijven_krijgt_zijn_eigen_zin(blocker, t
     html = _render(cfg_route={"can": False, "blocker": blocker, "host": "",
                               "fw": "2.0.0", "min_fw": "2.1.0",
                               "relayed": transport == "mesh", "transport": transport,
-                              "target": DAK, "monitor": "DinX-Home"},
+                              "target": DAK, "monitor": "DinX-Home",
+                              "max_risk": nodeconfig.RISK_CUTOFF, "options": [],
+                              "why": "geen enkele weg"},
                    relay={"name": "DinX-Home", "id": 2})
     assert zin in html
     assert 'action="/admin/repeaters/1/config"' not in html
@@ -802,7 +823,8 @@ def test_elke_stilte_krijgt_zijn_eigen_diagnose_op_de_pagina(diagnose, zin):
     html = _render(
         cfg_route={"can": False, "blocker": "no_relay_host", "host": "",
                    "fw": "", "min_fw": "2.4.0", "relayed": True,
-                   "transport": "mesh", "target": DAK, "monitor": "DinX-Home"},
+                   "transport": "mesh", "target": DAK, "monitor": "DinX-Home",
+                   "max_risk": nodeconfig.RISK_CUTOFF, "options": [], "why": "geen enkele weg"},
         relay={"name": "DinX-Home", "id": 2},
         rights={"ok": True, "known": True, "mode": "acl", "diagnosis": diagnose,
                 "polls": 4, "oks": 4 if diagnose == "goed" else 0,
@@ -814,7 +836,8 @@ def test_de_toegangslijst_wordt_als_de_betere_weg_gepresenteerd():
     html = _render(
         cfg_route={"can": False, "blocker": "no_relay_host", "host": "",
                    "fw": "", "min_fw": "2.4.0", "relayed": True,
-                   "transport": "mesh", "target": DAK, "monitor": "DinX-Home"},
+                   "transport": "mesh", "target": DAK, "monitor": "DinX-Home",
+                   "max_risk": nodeconfig.RISK_CUTOFF, "options": [], "why": "geen enkele weg"},
         relay={"name": "DinX-Home", "id": 2},
         rights={"ok": True, "known": True, "mode": "password", "diagnosis": "goed",
                 "polls": 2, "oks": 2, "heard": True, "error": ""})
@@ -827,7 +850,9 @@ def test_een_doorgestuurde_node_vraagt_niet_om_serverinloggegevens_op_de_pagina(
     onder een node waarvoor de server die nooit hoeft te hebben."""
     html = _render(cfg_route={"can": False, "blocker": "no_relay_host", "host": "",
                               "fw": "", "min_fw": "2.4.0", "relayed": True,
-                              "transport": "mesh", "target": DAK, "monitor": ""},
+                              "transport": "mesh", "target": DAK, "monitor": "",
+                              "max_risk": nodeconfig.RISK_CUTOFF, "options": [],
+                              "why": "geen enkele weg"},
                    relay=None, rights=None)
     assert "MM_FW_NODE_USER" not in html
     assert "op de rij van die monitor" in html
@@ -1094,7 +1119,9 @@ def _mesh_render(**over):
     ctx = {
         "cfg_route": {"can": True, "blocker": "", "host": "http://monitor.invalid",
                       "fw": "2.4.0", "min_fw": "2.4.0", "relayed": True,
-                      "transport": "mesh", "target": DAK, "monitor": "DinX-Home"},
+                      "transport": "mesh", "target": DAK, "monitor": "DinX-Home",
+                      "max_risk": nodeconfig.RISK_CUTOFF, "options": [],
+                      "why": "over LoRa via zijn monitor"},
         "relay": {"name": "DinX-Home", "id": 2},
     }
     ctx.update(over)
@@ -1148,3 +1175,268 @@ def test_het_invoerveld_is_voorgevuld_met_wat_er_nu_staat():
     beproeving die de hele weg aflegt zonder iets te veranderen."""
     html = _render()                       # cfg_now zet tx op 22
     assert 'value="22"' in html
+
+# --- het derde vervoermiddel: het cmd-topic ----------------------------------
+#
+# De aanleiding: bij een full managed node zonder weblogin meldde de pagina dat
+# een instellingswijziging niet kon. Een full managed node HEEFT per definitie
+# een MQTT-verbinding, dus dat was feitelijk onjuist -- er lag een open,
+# werkende weg naartoe waar niets overheen ging.
+#
+# Wat hieronder vastligt is de keuze uit drie, in volgorde, met de reden erbij.
+
+# Zoals cfgSpecJson() hem schrijft. 'radio' staat er met opzet in: die parameter
+# is sinds nodefirmware 2.6.0 uit de tabel, maar een node die nog ouder is meldt
+# hem gewoon, en dat is precies de node waarvoor de weigering op de server nog
+# nodig is.
+SPEC = ('{"name":"text,0,0,1,0,0",'
+        '"flood.max":"int,0,64,2,0,0",'
+        '"tx":"int,0,30,3,0,0",'
+        '"loop.detect":"enum,0,0,2,0,0,off|minimal|moderate|strict",'
+        '"radio":"radio,0,0,3,1,0"}')
+
+
+def eigen(db, **overrides):
+    """Een node die zelf publiceert, met zijn parametertabel al binnen."""
+    row = db.get_or_create_repeater("55d9a320a4e3", "DinX-Home")
+    db.execute("UPDATE repeaters SET fw_meshmanager='2.8.0', ota_host='', "
+               "source_prefix='55d9a320a4e3', cfg_spec=? WHERE id=?",
+               (SPEC, row["id"]))
+    out = dict(db.qone("SELECT * FROM repeaters WHERE id=?", (row["id"],)))
+    out.update(overrides)
+    return out
+
+
+@pytest.fixture
+def broker_aan(monkeypatch):
+    from app import mqtt_ingest
+    monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: True)
+    return mqtt_ingest
+
+
+@pytest.fixture
+def geen_login(monkeypatch):
+    monkeypatch.setattr(firmware, "NODE_USER", "")
+    monkeypatch.setattr(firmware, "NODE_PASS", "")
+
+
+def test_zonder_weblogin_loopt_het_over_het_cmd_topic(db, broker_aan, geen_login):
+    """De fout die dit alles in gang zette: "kan niet" over een node met een
+    open verbinding naar deze broker."""
+    route = nodeconfig.cfg_route(eigen(db))
+    assert route["can"] is True
+    assert route["transport"] == "mqtt"
+    # En waarom, want bij drie wegen is "het is gelukt" te weinig.
+    assert "MQTT" in route["why"]
+    assert "weblogin" in route["why"]
+
+
+def test_met_weblogin_wint_de_weg_naar_de_node_zelf(db, broker_aan):
+    """De volgorde is de rangschikking: sterkste tegenpartij en beste
+    teruglezing eerst. Waar HTTP kan, is er geen reden voor iets anders."""
+    node = eigen(db, ota_host="http://node.invalid", fw_meshmanager="2.8.0")
+    route = nodeconfig.cfg_route(node)
+    assert route["transport"] == "ip"
+    assert route["max_risk"] == nodeconfig.RISK_CUTOFF
+
+
+def test_zonder_broker_blijft_er_niets_over_en_dat_staat_erbij(db, geen_login, monkeypatch):
+    from app import mqtt_ingest
+    monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: False)
+    route = nodeconfig.cfg_route(eigen(db))
+    assert route["can"] is False
+    # Beide redenen, want de ene is een instelling en de andere een storing, en
+    # dat zijn verschillende handelingen.
+    assert "weblogin" in route["why"]
+    assert "broker" in route["why"]
+    assert [o["blocker"] for o in route["options"]] == ["no_credentials", "broker_down"]
+
+
+def test_te_oude_firmware_kent_het_woord_niet(db, broker_aan, geen_login):
+    route = nodeconfig.cfg_route(eigen(db, fw_meshmanager="2.7.0"))
+    assert route["can"] is False
+    assert [o["blocker"] for o in route["options"]] == ["no_credentials", "old_fw"]
+
+
+def test_een_doorgestuurde_node_heeft_geen_eigen_cmd_topic(db, broker_aan):
+    """Hij publiceert niet, dus hij leest ook niets. Het topic van zijn monitor
+    bestaat wel, maar daarop een schrijfactie voor een DERDE node aanbieden zou
+    een tweede soort commando zijn over het kanaal met de zwakste tegenpartij."""
+    doel, _ = doorgestuurd(db)
+    route = nodeconfig.cfg_route(doel)
+    assert route["transport"] == "mesh"
+    assert [o["transport"] for o in route["options"]] == ["mesh"]
+
+
+# --- het plafond van dat kanaal ----------------------------------------------
+
+def test_de_zwaarste_klasse_gaat_niet_over_de_broker(db, broker_aan, geen_login, monkeypatch):
+    """De afweging die de drie wegen van elkaar onderscheidt.
+
+    Bij HTTP staat de weblogin van de node ertegenover, bij de mesh-weg die van
+    een monitor die met eigen rechten inlogt. Hier staat "wie de broker heeft
+    binnengelaten" -- op een broker met een gedeeld account is dat elke node die
+    eraan meepraat. En er is geen teruglezing in hetzelfde verzoek die een fout
+    meteen zichtbaar maakt. Wat een node van de lucht kan halen hoort niet langs
+    de zwakste van de drie."""
+    from app import mqtt_ingest
+    monkeypatch.setattr(mqtt_ingest, "publish_command",
+                        lambda *a, **k: pytest.fail("mocht niet vertrekken"))
+    uit = nodeconfig.write(eigen(db), "tx", "22", confirm="DinX-Home")
+    assert uit["ok"] is False
+    assert uit["step"] == "plafond"
+    assert "MM_FW_NODE_USER" in uit["msg"]
+
+
+def test_de_lichtere_klassen_gaan_er_wel_langs(db, broker_aan, geen_login, monkeypatch):
+    """"Nergens iets" is net zo verkeerd als "overal alles". De instellingen die
+    je op een gewone dag bijstelt zijn klasse 1 en 2."""
+    from app import mqtt_ingest
+    node = eigen(db)
+    verstuurd = {}
+
+    def publiceer(n, cmd, setting=None, **k):
+        verstuurd.update(node=n, cmd=cmd, setting=setting)
+        nodeconfig.note_cfgset(n, {"seq": 1, "ok": 1, "param": setting[0],
+                                   "asked": setting[1], "applied": setting[1],
+                                   "exact": 1, "reboot": 0, "msg": ""})
+        return True
+
+    monkeypatch.setattr(mqtt_ingest, "publish_command", publiceer)
+    monkeypatch.setattr(nodeconfig, "MQTT_POLL_S", 0.01)
+    uit = nodeconfig.write(node, "flood.max", "12", confirm="ja")
+    assert uit["ok"] is True and uit["exact"] is True
+    assert uit["transport"] == "mqtt"
+    assert verstuurd["cmd"] == "set" and verstuurd["setting"] == ("flood.max", "12")
+    # En wat er teruggelezen is, staat ook in onze eigen tabel -- anders blijft
+    # de kolom "Nu" de oude waarde tonen naast een melding dat het gelukt is.
+    rijen = {r["param"]: r["value"] for r in db.cli_settings_for(node["id"])}
+    assert rijen["flood.max"] == "12"
+
+
+def test_stilte_over_de_broker_heet_geen_mislukking(db, broker_aan, geen_login, monkeypatch):
+    """Het commando IS vertrokken. Of het is uitgevoerd weten we niet, en
+    "mislukt" laat iemand denken dat er niets gebeurd is."""
+    from app import mqtt_ingest
+    monkeypatch.setattr(mqtt_ingest, "publish_command", lambda *a, **k: True)
+    monkeypatch.setattr(nodeconfig, "MQTT_POLL_S", 0.01)
+    monkeypatch.setattr(nodeconfig, "MQTT_WAIT_S", 0.05)
+    uit = nodeconfig.write(eigen(db), "flood.max", "12", confirm="ja")
+    assert uit["ok"] is False
+    assert uit["step"] == "geen_antwoord"
+    assert "niet te zien" in uit["msg"]
+
+
+def test_een_publicatie_die_niet_vertrok_is_de_geruststellende_helft(
+        db, broker_aan, geen_login, monkeypatch):
+    from app import mqtt_ingest
+    monkeypatch.setattr(mqtt_ingest, "publish_command", lambda *a, **k: False)
+    uit = nodeconfig.write(eigen(db), "flood.max", "12", confirm="ja")
+    assert uit["step"] == "niet_verstuurd"
+    assert "met zekerheid niets veranderd" in uit["msg"]
+
+
+def test_een_weigering_van_de_node_komt_terug_met_zijn_reden(
+        db, broker_aan, geen_login, monkeypatch):
+    """De node valideert zelf, en een weigering hoort niet in stilte te
+    eindigen: dan is een tikfout niet te onderscheiden van een node die slaapt."""
+    from app import mqtt_ingest
+
+    def publiceer(n, cmd, setting=None, **k):
+        nodeconfig.note_cfgset(n, {"seq": 7, "ok": 0, "param": setting[0],
+                                   "asked": setting[1], "applied": "",
+                                   "exact": 0, "reboot": 0,
+                                   "msg": "Err - onbekende parameter"})
+        return True
+
+    monkeypatch.setattr(mqtt_ingest, "publish_command", publiceer)
+    monkeypatch.setattr(nodeconfig, "MQTT_POLL_S", 0.01)
+    uit = nodeconfig.write(eigen(db), "flood.max", "12", confirm="ja")
+    assert uit["ok"] is False and uit["step"] == "node"
+    assert "onbekende parameter" in uit["msg"]
+
+
+# --- de radio, langs geen enkele weg -----------------------------------------
+
+@pytest.mark.parametrize("bouw", ["ip", "mqtt", "mesh"])
+def test_de_radio_wordt_van_afstand_nergens_gezet(db, monkeypatch, broker_aan, bouw):
+    """De regel hangt aan de HANDELING en niet aan het kanaal.
+
+    De asymmetrie: een verkeerde tx maakt een node zwakker maar laat hem
+    bereikbaar. Een verkeerde frequentie, spreidingsfactor, coderingssnelheid of
+    bandbreedte haalt hem van de lucht, en er is geen weg terug die niet fysiek
+    is. Op een dak is dat het einde.
+
+    Weigeren aan de bron en niet door het invoerveld weg te laten: een verzoek
+    dat het formulier omzeilt komt hier alsnog binnen."""
+    from app import mqtt_ingest
+    monkeypatch.setattr(nodeconfig, "_open",
+                        lambda *a, **k: pytest.fail("mocht de node niet benaderen"))
+    monkeypatch.setattr(mqtt_ingest, "publish_command",
+                        lambda *a, **k: pytest.fail("mocht niet vertrekken"))
+    if bouw == "mesh":
+        node, _ = doorgestuurd(db)
+    elif bouw == "mqtt":
+        monkeypatch.setattr(firmware, "NODE_USER", "")
+        node = eigen(db)
+    else:
+        node = eigen(db, ota_host="http://node.invalid")
+
+    uit = nodeconfig.write(node, "radio", "869.525 250 11 5", confirm=node["name"])
+    assert uit["ok"] is False
+    assert uit["step"] == "afstand"
+    assert "van de lucht" in uit["msg"]
+    assert "tx" in uit["msg"]
+
+
+def test_de_firmware_biedt_de_radio_helemaal_niet_aan():
+    """Crosscheck op de bron aan de overkant, want dat is de helft die het
+    onomkeerbaar maakt: de server is niet het enige dat een node kan bereiken,
+    en de node draagt het gevolg.
+
+    Daar is de regel anders afgedwongen dan hier, en beter: 'radio' staat sinds
+    2.6.0 niet meer in CFG_PARAMS. Die ene lijst is tegelijk wat /api/cfg
+    publiceert, wat /api/moncfg aanvaardt en wat het cmd-topic doorlaat, dus
+    één regel weghalen sluit alle drie tegelijk."""
+    from pathlib import Path
+    bron = (Path(__file__).resolve().parents[2]
+            / "firmware" / "examples" / "simple_repeater" / "MeshManagerNet.cpp")
+    if not bron.exists():          # de server draait ook zonder de firmwareboom
+        pytest.skip("firmwarebron niet aanwezig")
+    tekst = bron.read_text(encoding="utf-8", errors="replace")
+    tabel = tekst[tekst.index("static const CfgParam CFG_PARAMS[] = {"):
+                  tekst.index("#define CFG_PARAM_COUNT")]
+    # Alleen de werkelijke rijen tellen. In het commentaar op de plek waar
+    # 'radio' stond staat de regel nog uitgeschreven, zodat terugzetten één regel
+    # is -- en dat is documentatie, geen tabelrij.
+    rijen = [r.strip() for r in tabel.splitlines() if r.strip().startswith('{ "')]
+    sleutels = [r.split('"')[1] for r in rijen]
+    assert 'tx' in sleutels                    # het zendvermogen mag wel
+    assert 'radio' not in sleutels             # en de rest van de radio niet
+
+
+# --- de parametertabel die over MQTT binnenkomt ------------------------------
+
+def test_de_lijst_komt_van_de_node_ook_als_er_geen_http_pad_is(db, broker_aan, geen_login):
+    """Nog steeds de lijst van de node en geen tabel van hier -- alleen langs een
+    tweede bron, voor het geval waarin de eerste niet bestaat."""
+    node = eigen(db)
+    lijst = nodeconfig.params_for(node, nodeconfig.cfg_route(node))
+    assert lijst["ok"] is True
+    spec = {p["key"]: p for p in lijst["params"]}
+    assert spec["flood.max"]["risk"] == 2
+    assert spec["flood.max"]["lo"] == 0 and spec["flood.max"]["hi"] == 64
+    assert spec["loop.detect"]["choices"] == "off|minimal|moderate|strict"
+
+
+def test_zonder_gemelde_lijst_geen_formulier_maar_wel_de_volgende_stap(
+        db, broker_aan, geen_login):
+    node = eigen(db, cfg_spec="")
+    lijst = nodeconfig.params_for(node, nodeconfig.cfg_route(node))
+    assert lijst["ok"] is False
+    assert "instellingenronde" in lijst["error"]
+
+
+def test_een_onleesbare_lijst_blokkeert_in_plaats_van_te_gokken(db, broker_aan, geen_login):
+    node = eigen(db, cfg_spec="{niet eens json")
+    assert nodeconfig.params_for(node, nodeconfig.cfg_route(node))["ok"] is False

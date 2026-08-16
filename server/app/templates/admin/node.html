@@ -520,7 +520,8 @@
         op. De uitslag ligt op de monitor, dus een herlading vindt hem alsnog. -#}
     <strong>Loopt nog.</strong> {{ cfg_result.msg }}.
     {% elif cfg_result.step == "geen_antwoord" %}
-    {#- De uitkomst die alleen over de radio bestaat, en de reden dat ze een
+    {#- De uitkomst die alleen bestaat op de twee wegen zonder antwoord in
+        hetzelfde verzoek — over LoRa en over de broker — en de reden dat ze een
         eigen tekst heeft: dit is géén mislukking. -#}
     <strong>Verstuurd, maar onbevestigd.</strong> {{ cfg_result.msg }}.
     {% elif cfg_result.step == "geen_teruglezing" %}
@@ -577,6 +578,25 @@
       {% else %}
       Niet teruggelezen: {{ cfg_mesh_steps.get(cfg_mesh.job.step, cfg_mesh.job.end) }}.
       {% endif %}
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  {#- En hetzelfde voor de weg over de broker. De uitslag komt daar mee in een
+      statistiekenbericht en niet in het antwoord op de klik, dus na een
+      herlading is dit wat er nog van te zien is. -#}
+  {% if cfg_mqtt.seq and not cfg_result %}
+  <div class="card">
+    <h3>Laatste schrijfactie over MQTT</h3>
+    <p class="small">
+      <span class="mono">{{ cfg_mqtt.param }}</span> gevraagd op
+      <span class="mono">{{ cfg_mqtt.asked }}</span>.
+      {% if cfg_mqtt.ok %}
+      Teruggelezen: <span class="mono">{{ cfg_mqtt.applied }}</span>{% if not cfg_mqtt.exact %}
+      — <strong>niet gelijk aan wat er gevraagd is</strong>{% endif %}.
+      {% else %}
+      <strong>Geweigerd door de node:</strong> {{ cfg_mqtt.msg }}.
       {% endif %}
     </p>
   </div>
@@ -680,6 +700,19 @@
     {%- else %}{{ cfg_route.blocker }}.
     {%- endif %}
   </p>
+  {#- En wat er per weg aan ontbreekt. Zonder dit staat er één reden op het
+      scherm terwijl er drie wegen bekeken zijn, en dan is "niet mogelijk" een
+      bewering waar je niets mee kunt. Wie hier leest dat het cmd-topic klaarligt
+      op één firmwareversie na, weet meteen wat de eerstvolgende handeling is. -#}
+  <p class="muted small">
+    Alle wegen die bekeken zijn:
+  </p>
+  <ul class="muted small">
+    {% for o in cfg_route.options %}
+    <li><strong>{{ cfg_transport_text.get(o.transport, o.transport) }}</strong> —
+      {% if o.can %}beschikbaar{% else %}{{ o.blocker }}{% endif %}</li>
+    {% endfor %}
+  </ul>
   </div>
   {% elif not cfg_params.ok %}
   <div class="card">
@@ -690,6 +723,50 @@
   </p>
   </div>
   {% else %}
+
+  {#- Welke van de drie wegen het geworden is, en waarom. Staat er ook als alles
+      gewoon werkt: bij één weg is "gelukt" genoeg, bij drie is het dat niet --
+      de handeling duurt anders lang, kost zendtijd of heeft een lager plafond,
+      en dat hoor je te weten vóór je klikt en niet erna. -#}
+  <p class="muted small">
+    <strong>Deze wijziging gaat {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }}.</strong>
+    {{ cfg_route.why }}.
+  </p>
+
+  {% if cfg_route.transport == "mqtt" %}
+  <div class="card notice">
+    <h3>Dit gaat over de broker <span class="pill">plafond op klasse 2</span></h3>
+    <p class="small">
+      De server heeft geen weblogin voor de beheerpagina van deze node, maar de node
+      publiceert zelf over MQTT — en dan is er wel degelijk een weg naartoe. De
+      wijziging vertrekt als <span class="mono">set &lt;parameter&gt; &lt;waarde&gt;</span>
+      op zijn <span class="mono">cmd</span>-topic. De node zoekt die parameter op in zijn
+      eigen ingebakken tabel, toetst de waarde aan zijn eigen grenzen, zet hem en leest
+      hem terug; wat hieronder als uitslag verschijnt is <em>die teruglezing</em>.
+    </p>
+    <p class="small">
+      <strong>Wat hier niet langs kan.</strong> Alles wat de bereikbaarheid van de node
+      kan afsnijden — zendvermogen, <span class="mono">repeat</span>, wie er mag
+      inloggen — wordt over deze weg geweigerd, door de server én door de node zelf.
+      De reden is wie er aan de overkant staat: bij de twee andere wegen is dat iemand
+      met een wachtwoord, hier is het iedereen die de broker binnenlaat. Draait die op
+      één gedeeld account, dan is dat elke node die eraan meepraat. Wil je zulke
+      instellingen wél van hieraf kunnen zetten, vul dan
+      <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in.
+    </p>
+    <p class="small">
+      Er is geen antwoord op een publicatie, dus de uitslag komt terug in het
+      eerstvolgende statistiekenbericht — dat de node meteen verstuurt. Reken op enkele
+      seconden. Blijft het uit, dan is dat geen mislukking maar onzekerheid: een node
+      op zonnestroom kan slapen.
+    </p>
+    <p class="small">
+      <strong>Beproef ook deze weg eerst zonder iets te veranderen.</strong> Zet een
+      parameter op de waarde die er al staat — de kolom “Nu” is voorgevuld, dus dat is
+      één klik.
+    </p>
+  </div>
+  {% endif %}
 
   {% if cfg_route.transport == "mesh" %}
   <div class="card notice">
@@ -739,12 +816,19 @@
       Deze veranderen merkbaar hoe de node zich gedraagt op het mesh. Ze vragen een
       bevestiging, maar ze kunnen de node niet buiten bereik brengen.
       {%- else %}
-      Deze raken de radio of wie er mag inloggen. Gaat er iets mis op een node die je
-      alleen over de radio bereikt, dan is er geen tweede weg om het mee terug te
-      draaien — bij de dakrepeater is een verkeerde frequentie het einde. Daarom moet
-      je hier de naam van de node overtypen.
+      Deze raken het zendvermogen, het doorgeven of wie er mag inloggen. Gaat er iets
+      mis op een node die je alleen over de radio bereikt, dan is er geen tweede weg om
+      het mee terug te draaien. Daarom moet je hier de naam van de node overtypen.
       {%- endif %}
     </p>
+    {% if risk == 3 and cfg_route.max_risk < 3 %}
+    <p class="muted small">
+      <strong>Niet over de weg die nu beschikbaar is.</strong> Deze klasse gaat alleen
+      over een weg met een wachtwoord ertegenover, en dat is
+      {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }} niet. De
+      velden staan er en de server weigert ze; de node weigert ze nog een keer.
+    </p>
+    {% endif %}
     <table class="cfgtable">
       <thead><tr><th>Parameter</th><th>Nu</th><th>Nieuwe waarde</th></tr></thead>
       <tbody>
@@ -753,6 +837,19 @@
         <td class="mono">{{ p.key }}</td>
         <td class="mono muted">{% if p.secret %}<span title="Een geheim wordt hier niet getoond">•••</span>{% else %}{{ cfg_now.get(p.key, "—") }}{% endif %}</td>
         <td>
+          {#- Van afstand wordt deze parameter niet gezet. Op firmware van
+              2.6.0 en hoger komt hij hier niet eens langs -- daar staat hij niet
+              meer in de tabel van de node -- maar een node die nog ouder is
+              biedt hem wél aan, en die is precies de node waarvoor deze regel
+              bestaat. Getoond en niet weggelaten, want de vraag "waarom staat de
+              radio er niet bij" stelt iedereen die de lijst kent. Dit is de
+              beleefdheid en niet de drempel: die staat in nodeconfig.write(),
+              want een vak dat hier niet getekend wordt is met een aangepast
+              verzoek alsnog te bereiken. -#}
+          {% if p.key in cfg_no_remote %}
+          <span class="muted small"><strong>Niet van afstand.</strong>
+            {{ cfg_no_remote_reason }}</span>
+          {% else %}
           <form method="post" action="/admin/repeaters/{{ rep.id }}/config" class="rowform">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="key" value="{{ p.key }}">
@@ -821,8 +918,11 @@
                    title="Typ de naam van deze node over om te bevestigen">
             {% endif %}
 
-            <button type="submit" {% if risk == 3 %}class="danger"{% endif %}>Zet</button>
+            <button type="submit" {% if risk == 3 %}class="danger"{% endif %}
+                    {% if risk > cfg_route.max_risk %}disabled
+                    title="niet over {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }}"{% endif %}>Zet</button>
           </form>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

@@ -1343,6 +1343,23 @@ Note which node needs this firmware: **the monitor**. The repeater being written
 to receives two ordinary CLI commands and needs to know nothing — which is the
 whole reason this route exists for a node that will not be reflashed for months.
 
+Since 2.8.0 there is a third way in for the same write path, and this one is for
+the node itself: `set <param> <value>` on the `cmd` topic. It exists because a
+node that publishes to MQTT has a working connection to the broker, so "there is
+no way to reach it" was wrong about exactly the node that is easiest to reach.
+The node validates against its own `CFG_PARAMS` — the parameter must be on the
+table, the value inside its bounds, and the risk class no higher than
+`CFG_MQTT_MAX_RISK` — and reports the read-back, or the refusal, in the
+statistics message it publishes immediately after (`cfgset`). Its parameter table
+travels with the settings sweep (`cfgspec`) so a server without a web login for
+this node can still build a form from the node’s own list.
+
+`radio` is not offered on this path either, and not because of a check here:
+since 2.6.0 it is not in `CFG_PARAMS` at all, and that one table is what all
+three remote entrances read from. A wrong `tx` leaves a node reachable; a wrong
+frequency, spreading factor, coding rate or bandwidth does not, and there is no
+way back that is not physical.
+
 ### 4.12 Clock synchronisation
 
 #### Why the mesh needs it at all

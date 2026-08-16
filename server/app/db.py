@@ -221,6 +221,21 @@ COLUMN_MIGRATIONS = [
     # is read from the node again -- a board can have been swapped since.
     ("repeaters", "ota_host", "TEXT"),
     ("repeaters", "pio_env", "TEXT"),
+    # De parametertabel zoals de node hem zelf meldt, en wanneer.
+    #
+    # Waarom dit bewaard wordt en niet elke keer opgehaald: de site bouwt zijn
+    # schrijfformulier uit de lijst van de node -- nooit uit een tabel hier, zie
+    # nodeconfig.py -- en die lijst kwam tot nu toe alleen van GET /api/cfg. Dat
+    # werkt uitsluitend voor een node die de server over IP bereikt en waarvoor
+    # hij een weblogin heeft. Een node die alleen over MQTT te bereiken is stuurt
+    # hem mee met zijn instellingenronde, en die gebeurt hooguit dagelijks -- dus
+    # moet wat er ooit binnenkwam blijven staan, ook na een herstart van de site.
+    #
+    # Nog steeds de lijst van de NODE en geen lijst van ons: hier staat alleen
+    # wat hij zelf gemeld heeft. Ontbreekt hij, dan is er geen formulier, en dat
+    # is het juiste antwoord -- niet een gok op een tabel die hier verzonnen is.
+    ("repeaters", "cfg_spec", "TEXT"),
+    ("repeaters", "cfg_spec_at", "TEXT"),
     # Whether this node counts as critical. A flag rather than something derived,
     # because "critical" is the operator's judgement about what breaks when this
     # node goes away, and that is nothing the traffic can be read for. With it
@@ -1945,6 +1960,27 @@ def record_firmware(repeater_id: int, fw=None, fw_module=None) -> None:
     if not sets:
         return
     execute(f"UPDATE repeaters SET {', '.join(sets)} WHERE id=?", (*args, repeater_id))
+
+
+# Hoeveel tekst de parametertabel van één node mag beslaan. Achtentwintig
+# parameters meten ongeveer 960 byte; het dubbele is ruim en het is tegelijk een
+# grens op wat een publisher onder dit veld de databank in kan schrijven. Dit
+# komt van het stats-topic, en dat is geen invoer van de eigenaar.
+MAX_CFG_SPEC = 4000
+
+
+def record_cfg_spec(repeater_id: int, spec: str) -> None:
+    """De parametertabel die een node in zijn instellingenronde meestuurde.
+
+    Alleen overschrijven als er werkelijk iets meekwam. Een ronde die de tabel
+    niet bij zich had, mag de tabel van gisteren niet wissen -- dezelfde regel
+    als bij ``record_firmware``, en om dezelfde reden: zwijgen is geen bewering.
+    """
+    text = str(spec or "").strip()
+    if not text or len(text) > MAX_CFG_SPEC:
+        return
+    execute("UPDATE repeaters SET cfg_spec=?, cfg_spec_at=? WHERE id=?",
+            (text, utcnow(), repeater_id))
 
 
 def record_pio_env(repeater_id: int, env: str) -> None:

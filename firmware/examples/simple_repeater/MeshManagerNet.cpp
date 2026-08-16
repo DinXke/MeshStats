@@ -5,6 +5,47 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.8.0  Het derde vervoermiddel: 'set <param> <waarde>' op het cmd-topic.
+ *
+ *        Een node die zelf op MQTT publiceert HEEFT een verbinding met deze
+ *        broker; zolang dat topic alleen kon vragen om te práten, betekende "de
+ *        server heeft geen weblogin voor deze node" dat er niets te wijzigen
+ *        viel, terwijl er een open, werkende weg naartoe lag. "Kan niet" was
+ *        daar feitelijk onjuist, en dat is wat deze regel wegneemt.
+ *        Nadrukkelijk geen doorgeeflus naar de CLI, en dat blijft de kern van
+ *        dit topic. Er komt geen tekst uit het bericht in een CLI terecht
+ *        behalve de waarde: de sleutel moet in CFG_PARAMS staan (het commando
+ *        wordt met p->key opgebouwd), de waarde moet door cfgCheckValue() --
+ *        dezelfde zeef als /api/cfg en /api/moncfg -- en de risicoklasse moet
+ *        CFG_MQTT_MAX_RISK niet overschrijden. Een grotere whitelist dus, geen
+ *        open doorgang. Onbekende sleutel of waarde buiten de grenzen:
+ *        geweigerd, geteld, en gemeld.
+ *        Dat plafond staat op klasse 2, en die keuze gaat over wie er aan de
+ *        overkant staat. /api/cfg heeft de weblogin van deze node achter zich,
+ *        /api/moncfg die van een monitor die met eigen rechten inlogt; dit
+ *        kanaal heeft "wie de broker heeft binnengelaten" -- op een broker met
+ *        één gedeeld account is dat elke node die er meepraat. Wat de
+ *        bereikbaarheid kan afsnijden hoort niet langs de zwakste van de drie,
+ *        te meer daar er hier geen synchrone teruglezing is die een fout meteen
+ *        zichtbaar maakt. "Overal alles" en "nergens iets" zijn allebei het
+ *        verkeerde antwoord; de instellingen die je op een gewone dag bijstelt
+ *        zijn juist klasse 1 en 2.
+ *        De uitslag reist mee in het eerstvolgende statistiekenbericht
+ *        ('cfgset'), en dat bericht wordt meteen afgedwongen -- dezelfde vlag
+ *        die 'status' zet. Ook een weigering, want stilte is hier niet te
+ *        onderscheiden van een node die slaapt op zijn zonnebudget.
+ *        De parametertabel gaat mee met de instellingenronde ('cfgspec'), omdat
+ *        de site zijn formulier uit de lijst van de node bouwt en die lijst tot
+ *        nu toe alleen via GET /api/cfg te krijgen was -- precies wat een node
+ *        zonder weblogin op de server niet kan leveren. Zonder die tabel zou
+ *        deze schrijfweg bestaan zonder bruikbaar te zijn.
+ *        Over de radio verandert hier niets: 'radio' is sinds 2.6.0 uit
+ *        CFG_PARAMS, dus deze weg biedt hem net zomin aan als de andere twee.
+ *        Wat er op de SERVER bij komt is een tweede weigering onder eigen naam
+ *        (nodeconfig.NO_REMOTE), en die is niet overbodig: een node die nog
+ *        firmware van vóór 2.6.0 draait heeft 'radio' wél in zijn tabel staan,
+ *        en de regel hangt aan de handeling en niet aan de firmwareversie van de
+ *        node die hem toevallig krijgt.
  * 2.7.0  Een geweerd pakket is in het archief te herkennen, met de reden erbij.
  *        Het pakket zelf stond er al in. De rauwe doorgifte hangt aan
  *        logRxRaw() in Dispatcher::checkRecv(), dus bij ONTVANGST, terwijl het
@@ -2255,6 +2296,40 @@ static bool monSettingsRequest(const char *key_hex, const char **why);
  * not happen, for the log. */
 static bool monClockRequest(const char **why);
 
+/* Het vierde woord op het cmd-topic: 'set <param> <waarde>'. Zelfde afspraak als
+ * de twee regels hierboven -- gedefinieerd bij CFG_PARAMS ver hieronder, want
+ * daar staat de tabel en de zeef, en aangeroepen vanuit de opdrachtafhandeling
+ * die erboven zit. Geeft terug of er iets gedaan is; *why draagt de reden als er
+ * niets gedaan is, en die reden reist ook terug naar de site (zie cfgSetReport).
+ *
+ * Waarom dit uitgerekend hier hoort en niet in een doorgeeflus naar de CLI: de
+ * node valideert zelf. De sleutel moet in ZIJN tabel staan, de waarde binnen ZIJN
+ * grenzen vallen, en de risicoklasse die ZIJN firmware eraan hangt moet laag
+ * genoeg zijn voor dit kanaal. Het is een grotere whitelist geworden, geen open
+ * doorgang -- dat onderscheid is het hele verschil tussen deze feature en de
+ * 'reboot' die we nooit wilden weggeven. */
+static bool cfgSetFromMqtt(const char *param, const char *value, const char **why);
+
+/* Legt een uitslag vast zonder dat er iets gezet is: een parameter die niet
+ * bestaat, een waarde die niet mag, een weigering nog voor de tabel bereikt is.
+ * Zodat 'niets gebeurd' en 'niets gehoord' op de site twee verschillende dingen
+ * blijven. */
+static void cfgSetReport(const char *param, const char *asked, const char *reason);
+
+/* Hoeveel plaats de laatste uitslag en de parametertabel in een
+ * statistiekenbericht innemen, en of er iets te melden valt. Zelfde reden voor de
+ * voorwaartse verklaring. */
+static size_t cfgSetJson(char *out, size_t max);
+static size_t cfgSpecJson(char *out, size_t max);
+
+/* De maten van CFG_PARAMS staan hier en niet meer bij de tabel zelf: de
+ * opdrachtafhandeling hierboven knipt een parameternaam op precies deze lengte
+ * af, en een buffer die groter is dan wat de tabel aankan zou een naam
+ * doorlaten die verderop toch geweigerd wordt -- alleen dan met een minder
+ * duidelijke reden. */
+#define CFG_VALUE_MAX   40
+#define CFG_KEY_MAX     28
+
 /* Sets our own clock from a time the site gave us. Returns what happened, in
  * words, and never anything that is not one of the four counters above.
  *
@@ -2340,7 +2415,54 @@ static const char *clockApplyOwn(uint32_t epoch, long *delta_out) {
  *
  * Rejected alternative: a third word, 'monsettings <key>'. It buys nothing over
  * an argument -- the same parse, the same list -- and it would have meant a
- * second name to keep in step with the site's COMMANDS tuple. */
+ * second name to keep in step with the site's COMMANDS tuple.
+ *
+ * ---- 2.5.0: 'set <param> <waarde>' -------------------------------------
+ *
+ * Het vierde woord, en het eerste dat een INSTELLING verandert. Dat is een
+ * werkelijke verhoging van het plafond van dit topic en die verdient te worden
+ * uitgeschreven in plaats van weggemoffeld.
+ *
+ * Waarom het er is. Een node die zelf op MQTT publiceert HEEFT per definitie een
+ * verbinding met deze broker. Zolang het cmd-topic alleen kon vragen om te
+ * praten, betekende "de server heeft geen weblogin voor deze node" dat er niets
+ * te wijzigen viel -- terwijl er een open, werkende weg naartoe lag. "Kan niet"
+ * was daar feitelijk onjuist, en dat is de fout die deze regel wegneemt.
+ *
+ * Waarom het GEEN doorgeeflus naar de CLI is, en dat blijft de kern. Er komt
+ * geen tekst uit dit bericht in een CLI terecht behalve de WAARDE, en de weg
+ * daarheen loopt langs drie zeven die deze node zelf houdt:
+ *
+ *   1. de sleutel moet in CFG_PARAMS staan. Niet 'een parameter', maar een van
+ *      de achtentwintig namen die hier ingebakken staan; het commando wordt
+ *      opgebouwd met p->key en nooit met de tekst uit het bericht.
+ *   2. de waarde moet door cfgCheckValue() komen. Dezelfde zeef als /api/cfg en
+ *      /api/moncfg, dus er is er precies een en die kan niet uit elkaar lopen.
+ *   3. de risicoklasse moet CFG_MQTT_MAX_RISK niet overschrijden.
+ *
+ * Punt 3 is de afweging die dit kanaal onderscheidt van de twee andere, en hij
+ * gaat over WIE er aan de overkant staat. Bij /api/cfg is dat iemand met de
+ * weblogin van deze node; bij /api/moncfg iemand met de weblogin van de monitor,
+ * die vervolgens met eigen rechten over LoRa inlogt. Hier is het "wie de broker
+ * heeft binnengelaten", en in de aanbevolen opstelling is dat nog een account
+ * per node -- maar in een opstelling met een gedeeld account is het iedere node
+ * op de broker. Een parameter die de bereikbaarheid kan afsnijden hoort niet
+ * langs het kanaal met de zwakste tegenpartij te lopen, zeker niet omdat er hier
+ * geen synchrone teruglezing is die de fout meteen zichtbaar maakt.
+ *
+ * Vandaar: klasse 1 en 2 mogen hier, klasse 3 niet. Niet "overal alles" en niet
+ * "nergens iets" -- de instellingen die je op een dagelijkse dag wilt bijstellen
+ * (zendtijd, floodgrenzen, naam, positie) zijn precies klasse 1 en 2, en de
+ * handvol die een node van de lucht kan halen houdt zijn twee geauthenticeerde
+ * wegen.
+ *
+ * En wat er teruggemeld wordt. Er is hier geen antwoordkanaal per bericht, dus
+ * de uitslag reist mee in het eerstvolgende statistiekenbericht ('cfgset'), en
+ * dat bericht wordt meteen afgedwongen -- dezelfde vlag die 'status' zet. Een
+ * geweigerde sleutel of een waarde buiten de grenzen levert dus geen stilte op
+ * maar een regel op de site, met de reden erbij. Stilte zou hier het slechtste
+ * antwoord zijn: dan valt een tikfout niet te onderscheiden van een node die
+ * slaapt. */
 static void mqttRunCommand() {
   if (!_cmd_have) return;
 
@@ -2364,17 +2486,18 @@ static void mqttRunCommand() {
   }
   if (arg && *arg == 0) arg = NULL;
 
-  /* Which of the three words takes an argument is checked here and not further
+  /* Which of the four words takes an argument is checked here and not further
    * down, so 'status <anything>' is refused rather than quietly run as 'status'.
    * A publisher sending an argument to a command that has none has misunderstood
    * something, and running the command anyway hides that from both ends. */
-  bool wants_arg = (strcmp(w, "time") == 0);          // must have one
+  bool is_set = (strcmp(w, "set") == 0);
+  bool wants_arg = (strcmp(w, "time") == 0) || is_set;   // must have one
   bool takes_arg = wants_arg || (strcmp(w, "settings") == 0);
   bool known = takes_arg || (strcmp(w, "status") == 0);
   if (!known || (arg && !takes_arg) || (!arg && wants_arg)) {
     _cmd_refused++;
     Serial.printf("MeshManagerNet: opdracht '%.16s' geweigerd, alleen "
-                  "settings [sleutel]|status|time <epoch>\n", w);
+                  "settings [sleutel]|status|time <epoch>|set <param> <waarde>\n", w);
     return;
   }
   if (_cmd_last_ms != 0 && millis() - _cmd_last_ms < MQTT_CMD_MIN_GAP_MS) {
@@ -2385,7 +2508,41 @@ static void mqttRunCommand() {
   _cmd_last_ms = millis();
   _cmd_count++;
 
-  if (strcmp(w, "time") == 0) {
+  if (is_set) {
+    /* 'set <param> <waarde>'. De waarde is alles na de parameter, spaties en al:
+     * 'name Dak Noord' is een geldige opdracht en 'owner.info' bestaat uit
+     * niets anders dan spaties. Er is dus geen scheider waarmee een tweede
+     * commando kan beginnen -- er IS geen tweede commando, want de tekst gaat
+     * niet naar een parser maar naar cfgSetFromMqtt(), die met de sleutel uit
+     * zijn eigen tabel werkt. */
+    char param[CFG_KEY_MAX] = "";
+    const char *val = strpbrk(arg, " \t");
+    size_t plen = val ? (size_t)(val - arg) : strlen(arg);
+    if (!val || plen >= sizeof(param)) {
+      /* Geen waarde, of een naam die langer is dan de langste in de tabel. Dat
+       * laatste niet stilletjes afkappen: een afgekapte naam die toevallig wél
+       * bestaat zou een andere parameter zetten dan er gevraagd is. */
+      _cmd_refused++;
+      cfgSetReport(arg, "", val ? "parameternaam te lang"
+                                : "set vraagt een parameter en een waarde");
+      Serial.printf("MeshManagerNet: 'set %.24s' geweigerd bij het ontleden\n", arg);
+      _cmd_push = true;             // de weigering hoort terug te komen
+      return;
+    }
+    memcpy(param, arg, plen);
+    param[plen] = 0;
+    while (*val == ' ' || *val == '\t') val++;
+
+    const char *why = "";
+    if (!cfgSetFromMqtt(param, val, &why)) {
+      _cmd_refused++;
+      Serial.printf("MeshManagerNet: 'set %.20s' geweigerd: %s\n", param, why);
+    }
+    /* Gelukt of geweigerd: het antwoord vertrekt hoe dan ook, en meteen. Een
+     * weigering die alleen in het serielogboek staat, is op een dak hetzelfde
+     * als geen weigering -- dan lijkt een tikfout op een node die slaapt. */
+    _cmd_push = true;
+  } else if (strcmp(w, "time") == 0) {
     /* strtoul and not atol: the epoch passes 2^31 in 2038 and this node may
      * well still be on that roof. A trailing character that is not a digit
      * means the argument was not a bare number, and a number with something
@@ -2474,10 +2631,34 @@ static bool mqttPublishStats() {
     }
   }
 
+  /* De uitslag van de laatste schrijfactie over het cmd-topic. Klein (een paar
+   * honderd byte) en alleen aanwezig als er ooit een geweest is, dus hij mag
+   * bij elk bericht mee: dat is meteen wat een gemiste publicatie ongevaarlijk
+   * maakt. De site herkent aan 'seq' of dit dezelfde uitslag is als die hij al
+   * had.
+   *
+   * Vóór de instellingenronde hieronder, want als er iets niet past hoort dit
+   * het te overleven: een uitslag van een paar honderd byte is dringender dan
+   * een ronde die morgen weer langskomt. */
+  {
+    char cjson[700];
+    size_t cn = cfgSetJson(cjson, sizeof(cjson));
+    if (cn > 0 && n + cn + 12 < sizeof(body)) {
+      size_t start = n - 1;
+      int w = snprintf(body + start, sizeof(body) - start, ",\"cfgset\":%s}", cjson);
+      if (w > 0 && start + (size_t)w < sizeof(body)) {
+        n = start + w;
+      } else {
+        body[n - 1] = '}';
+      }
+    }
+  }
+
   /* A finished settings sweep rides along with this message. Appended here
    * rather than built into fillStatsJson because it is this module's data, not
    * the mesh's, and because it goes out once a day against the metrics' every
    * couple of minutes. */
+  bool sweep_shipped = false;
   if (_set_ready && _set_n > 0) {
     size_t start = n - 1;                   // step back over the closing brace
     int w = snprintf(body + start, sizeof(body) - start, ",\"settings\":{");
@@ -2497,9 +2678,37 @@ static bool mqttPublishStats() {
       if (e > 0 && q + (size_t)e < sizeof(body)) {
         n = q + e;
         _set_ready = false;
+        sweep_shipped = true;
       }
     }
     if (_set_ready) body[n - 1] = '}';       // did not fit: restore the payload
+  }
+
+  /* De parametertabel reist mee met de instellingenronde en met niets anders.
+   *
+   * Waarom aan die ronde vastgeknoopt en niet aan elk bericht: hij verandert
+   * alleen als er andere firmware op deze node gaat, en negenhonderd byte bij
+   * elke meting is de prijs van iets wat maanden hetzelfde blijft. Waarom hij
+   * überhaupt over MQTT gaat: hij is wat de site nodig heeft om een formulier te
+   * bouwen voor een node die hij niet over IP bereikt -- en zonder hem zou de
+   * schrijfweg over het cmd-topic bestaan zonder bruikbaar te zijn.
+   *
+   * Dat maakt de instellingenronde meteen de handeling die deze weg opent: één
+   * klik op 'Instellingen opvragen', en de site kent zowel de waarden als de
+   * grenzen. Dat is dezelfde knop die er al was en dezelfde ronde die er al
+   * gebeurde. */
+  if (sweep_shipped) {
+    char sjson[1200];      // de tabel meet ongeveer 960 byte; de rest is marge
+    size_t sn = cfgSpecJson(sjson, sizeof(sjson));
+    if (sn > 0 && n + sn + 12 < sizeof(body)) {
+      size_t start = n - 1;
+      int w = snprintf(body + start, sizeof(body) - start, ",\"cfgspec\":%s}", sjson);
+      if (w > 0 && start + (size_t)w < sizeof(body)) {
+        n = start + w;
+      } else {
+        body[n - 1] = '}';
+      }
+    }
   }
 
   char topic[96];
@@ -6908,8 +7117,8 @@ static void fwRollbackPost(AsyncWebServerRequest *req) {
  * staat, met de vraag ernaast, en laat het aan de pagina om te melden dat die
  * twee verschillen. */
 
-#define CFG_VALUE_MAX   40
-#define CFG_KEY_MAX     28
+/* CFG_VALUE_MAX en CFG_KEY_MAX staan boven bij de voorwaartse verklaringen,
+ * omdat mqttRunCommand() ze nodig heeft en die ver hierboven staat. */
 
 enum CfgKind {
   CFG_TEXT = 0,   // vrije tekst
@@ -6930,6 +7139,17 @@ enum CfgRisk {
   RISK_WRITES = 2,   // verandert merkbaar hoe de node zich gedraagt
   RISK_CUTOFF = 3,   // kan de bereikbaarheid afsnijden
 };
+
+/* Het plafond van het cmd-topic. Klasse 1 en 2 mogen erlangs, klasse 3 niet.
+ *
+ * De reden staat voluit bij mqttRunCommand() en komt op dit neer: de andere twee
+ * schrijfwegen hebben een geauthenticeerde tegenpartij (de weblogin van deze
+ * node, of die van een monitor die met eigen rechten inlogt), dit kanaal heeft
+ * "wie de broker heeft binnengelaten". Op een broker met een account per node is
+ * dat weinig; op een broker met een gedeeld account -- en dat is wat er in de
+ * praktijk draait -- is dat elke node die er meepraat. Wat een node van de lucht
+ * kan halen hoort niet langs de zwakste van de drie te kunnen. */
+#define CFG_MQTT_MAX_RISK  RISK_WRITES
 
 struct CfgParam {
   const char *key;      // wat de aanroeper vraagt; ook wat 'get <key>' teruggeeft
@@ -6973,30 +7193,31 @@ struct CfgParam {
  * adc.multiplier worden aan de overkant met een kale atof()/atoi() ingelezen
  * zonder één controle. */
 static const CfgParam CFG_PARAMS[] = {
+  //                       soort       lo      hi  keuzes                         risico       rb geh rem
   // --- zo weer terug te zetten ---------------------------------------------
-  { "name",                  CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0 },
-  { "lat",                   CFG_FLOAT,  -90,     90, NULL,                          RISK_PLAIN,  0, 0 },
-  { "lon",                   CFG_FLOAT, -180,    180, NULL,                          RISK_PLAIN,  0, 0 },
-  { "owner.info",            CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0 },
-  { "advert.interval",       CFG_INT,     60,    240, NULL,                          RISK_PLAIN,  0, 0 },  // minuten, stappen van 2
-  { "flood.advert.interval", CFG_INT,      3,    168, NULL,                          RISK_PLAIN,  0, 0 },  // uren
-  { "rxdelay",               CFG_FLOAT,    0,     20, NULL,                          RISK_PLAIN,  0, 0 },
-  { "txdelay",               CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0 },
-  { "direct.txdelay",        CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0 },
+  { "name",                  CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0, 1 },
+  { "lat",                   CFG_FLOAT,  -90,     90, NULL,                          RISK_PLAIN,  0, 0, 1 },
+  { "lon",                   CFG_FLOAT, -180,    180, NULL,                          RISK_PLAIN,  0, 0, 1 },
+  { "owner.info",            CFG_TEXT,     0,      0, NULL,                          RISK_PLAIN,  0, 0, 1 },
+  { "advert.interval",       CFG_INT,     60,    240, NULL,                          RISK_PLAIN,  0, 0, 1 },  // minuten, stappen van 2
+  { "flood.advert.interval", CFG_INT,      3,    168, NULL,                          RISK_PLAIN,  0, 0, 1 },  // uren
+  { "rxdelay",               CFG_FLOAT,    0,     20, NULL,                          RISK_PLAIN,  0, 0, 1 },
+  { "txdelay",               CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0, 1 },
+  { "direct.txdelay",        CFG_FLOAT,    0,      2, NULL,                          RISK_PLAIN,  0, 0, 1 },
 
   // --- verandert merkbaar hoe de node zich gedraagt -------------------------
-  { "dutycycle",             CFG_FLOAT,    1,    100, NULL,                          RISK_WRITES, 0, 0 },
-  { "af",                    CFG_FLOAT,    0,    100, NULL,                          RISK_WRITES, 0, 0 },
-  { "flood.max",             CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
-  { "flood.max.unscoped",    CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
-  { "flood.max.advert",      CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0 },
-  { "int.thresh",            CFG_INT,      0,    255, NULL,                          RISK_WRITES, 0, 0 },
-  { "agc.reset.interval",    CFG_INT,      0,   1020, NULL,                          RISK_WRITES, 0, 0 },  // bewaard als /4
-  { "multi.acks",            CFG_INT,      0,      3, NULL,                          RISK_WRITES, 0, 0 },
-  { "path.hash.mode",        CFG_INT,      0,      2, NULL,                          RISK_WRITES, 0, 0 },
-  { "loop.detect",           CFG_ENUM,     0,      0, "off|minimal|moderate|strict", RISK_WRITES, 0, 0 },
-  { "cad",                   CFG_BOOL,     0,      0, NULL,                          RISK_WRITES, 0, 0 },
-  { "adc.multiplier",        CFG_FLOAT,    0,     10, NULL,                          RISK_WRITES, 0, 0 },
+  { "dutycycle",             CFG_FLOAT,    1,    100, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "af",                    CFG_FLOAT,    0,    100, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "flood.max",             CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "flood.max.unscoped",    CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "flood.max.advert",      CFG_INT,      0,     64, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "int.thresh",            CFG_INT,      0,    255, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "agc.reset.interval",    CFG_INT,      0,   1020, NULL,                          RISK_WRITES, 0, 0, 1 },  // bewaard als /4
+  { "multi.acks",            CFG_INT,      0,      3, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "path.hash.mode",        CFG_INT,      0,      2, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "loop.detect",           CFG_ENUM,     0,      0, "off|minimal|moderate|strict", RISK_WRITES, 0, 0, 1 },
+  { "cad",                   CFG_BOOL,     0,      0, NULL,                          RISK_WRITES, 0, 0, 1 },
+  { "adc.multiplier",        CFG_FLOAT,    0,     10, NULL,                          RISK_WRITES, 0, 0, 1 },
 
   // --- kan de bereikbaarheid afsnijden --------------------------------------
   /* Alle vijf hieronder raken de radio of wie er mag inloggen. Op een node met
@@ -7263,6 +7484,177 @@ static const char *cfgCheckValue(const CfgParam *p, const char *value) {
     }
   }
   return NULL;    // onbereikbaar; de compiler ziet dat niet aan een switch
+}
+
+/* Mag deze parameter überhaupt van afstand gezet worden? NULL = ja.
+ *
+ * Eén regel, en hij staat op alle vier de ingangen die een verzoek van buiten
+ * uitvoeren: POST /api/cfg, POST /api/moncfg, het cmd-topic en 'wifi mon set'.
+ * Dat is met opzet vier keer dezelfde aanroep en niet vier keer dezelfde
+ * redenering -- een regel die op vier plaatsen apart geschreven staat, is een
+ * regel die op de vierde plek ooit vergeten wordt.
+ *
+ * Hij staat hier en niet alleen op de server. De server weigert het ook, vóór
+ * er iets vertrekt, en dat is prettig maar niet afdoende: de server is niet de
+ * enige die aan deze node kan komen, en het is deze node die de gevolgen
+ * draagt. De laatste die het kan tegenhouden hoort het te doen. */
+static const char *cfgMqttRefusal(const CfgParam *p) {
+  if (p->risk > CFG_MQTT_MAX_RISK) {
+    return ("deze parameter kan de bereikbaarheid afsnijden en wordt daarom niet "
+            "over het MQTT-cmd-topic gezet; gebruik de beheerpagina van deze node "
+            "of de monitor, waar een wachtwoord tegenover staat");
+  }
+  return NULL;
+}
+
+// --------------------------------- schrijven vanaf het cmd-topic ------------
+//
+// De uitslag van de laatste schrijfactie over MQTT, zodat ze mee kan in het
+// eerstvolgende statistiekenbericht. Bewaard en niet meteen verstuurd, want er
+// is op dit kanaal geen antwoord per bericht: de weg terug is het stats-topic,
+// en die vertrekt zodra mqttRunCommand() _cmd_push zet.
+//
+// Blijft na afloop staan tot de volgende schrijfactie, om dezelfde reden als bij
+// de monitor: wie een bericht mist, hoort de uitslag nog te kunnen vinden.
+#define CFG_SET_REPLY_MAX 96
+static uint32_t _cset_seq = 0;      // 0 = sinds de start nooit een geweest
+static char _cset_param[CFG_KEY_MAX] = {0};
+static char _cset_asked[CFG_VALUE_MAX] = {0};
+static char _cset_applied[CFG_SET_REPLY_MAX] = {0};   // leeg = niet teruggelezen
+static char _cset_msg[160] = {0};   // leeg = het ging goed
+static bool _cset_ok = false;
+static bool _cset_exact = false;
+static bool _cset_reboot = false;
+
+static void cfgSetReport(const char *param, const char *asked, const char *reason) {
+  _cset_seq++;
+  snprintf(_cset_param, sizeof(_cset_param), "%s", param ? param : "");
+  snprintf(_cset_asked, sizeof(_cset_asked), "%s", asked ? asked : "");
+  _cset_applied[0] = 0;
+  snprintf(_cset_msg, sizeof(_cset_msg), "%s", reason ? reason : "");
+  _cset_ok = false;
+  _cset_exact = false;
+  _cset_reboot = false;
+}
+
+/* Eén parameter zetten op verzoek van het cmd-topic, en meteen teruglezen.
+ *
+ * Dezelfde volgorde en dezelfde functies als handleCfgPost(): de tabel, de zeef,
+ * de CLI, de teruglezing, de vergelijking. Wat er alleen hier bij staat is
+ * cfgMqttRefusal(), en dat is precies het verschil tussen deze weg en die met
+ * een wachtwoord ervoor. */
+static bool cfgSetFromMqtt(const char *param, const char *value, const char **why) {
+  const CfgParam *p = cfgFind(param);
+  if (!p) {
+    /* Dezelfde tekst voor "bestaat niet" en "mag niet" als bij /api/cfg, en om
+     * dezelfde reden: welke parameters er zijn is geen geheim, maar een antwoord
+     * dat die twee uit elkaar houdt nodigt uit tot aftasten. */
+    *why = "staat niet op de lijst van wat er van afstand gezet mag worden";
+    cfgSetReport(param, value, *why);
+    return false;
+  }
+  const char *nee = cfgMqttRefusal(p);
+  if (nee) {
+    *why = nee;
+    cfgSetReport(p->key, value, nee);
+    return false;
+  }
+  if (strlen(value) >= CFG_VALUE_MAX) {
+    *why = "waarde te lang";
+    cfgSetReport(p->key, value, *why);
+    return false;
+  }
+  const char *bad = cfgCheckValue(p, value);
+  if (bad) {
+    *why = bad;
+    cfgSetReport(p->key, value, bad);
+    return false;
+  }
+
+  char set_reply[160];
+  cfgCli(set_reply, sizeof(set_reply), "set %s %s", p->key, value);
+  char get_reply[160];
+  cfgCli(get_reply, sizeof(get_reply), "get %s", p->key);
+  const char *applied = cfgStripMarker(get_reply);
+
+  bool refused = cfgIsError(set_reply);
+  bool exact = !refused && cfgSameValue(p, value, applied);
+  if (p->secret) applied = "(verborgen)";
+
+  _cset_seq++;
+  snprintf(_cset_param, sizeof(_cset_param), "%s", p->key);
+  snprintf(_cset_asked, sizeof(_cset_asked), "%s", value);
+  snprintf(_cset_applied, sizeof(_cset_applied), "%s", applied);
+  snprintf(_cset_msg, sizeof(_cset_msg), "%s", refused ? set_reply : "");
+  _cset_ok = !refused;
+  _cset_exact = exact;
+  _cset_reboot = p->reboot != 0;
+
+  Serial.printf("MeshManagerNet: 'set %s %s' via MQTT -> '%s', teruggelezen '%s'\n",
+                p->key, value, set_reply, applied);
+  if (refused) { *why = "de node weigerde het commando"; return false; }
+  return true;
+}
+
+/* Wat er van die schrijfactie mee moet in het statistiekenbericht.
+ *
+ * Ook een MISLUKTE, en dat is de helft van waarom dit bestaat. Op dit kanaal is
+ * er geen antwoord per bericht, dus een geweigerde sleutel of een waarde buiten
+ * de grenzen zou anders stilte opleveren -- en stilte is hier niet te
+ * onderscheiden van een node die slaapt of van een broker die het bericht liet
+ * vallen. Een node die weigert hoort dat te melden. */
+static size_t cfgSetJson(char *out, size_t max) {
+  if (_cset_seq == 0) return 0;
+  char e_param[CFG_KEY_MAX * 2 + 4], e_asked[CFG_VALUE_MAX * 2 + 4];
+  char e_applied[CFG_SET_REPLY_MAX * 2 + 4], e_msg[340];
+  jsonEsc(e_param, sizeof(e_param), _cset_param);
+  jsonEsc(e_asked, sizeof(e_asked), _cset_asked);
+  jsonEsc(e_applied, sizeof(e_applied), _cset_applied);
+  jsonEsc(e_msg, sizeof(e_msg), _cset_msg);
+  int n = snprintf(out, max,
+                   "{\"seq\":%lu,\"ok\":%d,\"param\":\"%s\",\"asked\":\"%s\","
+                   "\"applied\":\"%s\",\"exact\":%d,\"reboot\":%d,\"msg\":\"%s\"}",
+                   (unsigned long)_cset_seq, _cset_ok ? 1 : 0, e_param, e_asked,
+                   e_applied, _cset_exact ? 1 : 0, _cset_reboot ? 1 : 0, e_msg);
+  if (n <= 0 || (size_t)n >= max) return 0;
+  return (size_t)n;
+}
+
+/* De parametertabel, compact, voor een site die deze node alleen over MQTT
+ * bereikt.
+ *
+ * Waarom dit er moet zijn. De server bouwt zijn formulier uit de lijst van de
+ * node zelf en heeft met opzet geen eigen tabel -- dat staat in nodeconfig.py en
+ * het blijft waar. Maar die lijst kwam tot nu toe van GET /api/cfg, en dat is
+ * precies wat een node zonder weblogin op de server niet kan leveren. Zonder
+ * deze regels zou de nieuwe schrijfweg bestaan en onbruikbaar zijn: de site weet
+ * dan niet welke risicoklasse een parameter heeft en moet bij twijfel de
+ * zwaarste aannemen, wat alles blokkeert.
+ *
+ * Eén string per parameter en niet een object per parameter: dit reist mee in
+ * een bericht met een vaste buffer, en achtentwintig objecten met acht sleutels
+ * elk zijn twee kilobyte tegen negenhonderd byte. De volgorde is vast en staat
+ * in de server naast de ontleding.
+ *
+ *   <soort>,<lo>,<hi>,<risico>,<herstart>,<geheim>,<afstand>[,<keuzes>]
+ *
+ * Gaat mee met de instellingenronde en niet met elk bericht: deze tabel
+ * verandert alleen als er andere firmware op gaat. */
+static size_t cfgSpecJson(char *out, size_t max) {
+  int n = snprintf(out, max, "{");
+  if (n <= 0) return 0;
+  for (int i = 0; i < CFG_PARAM_COUNT; i++) {
+    const CfgParam &p = CFG_PARAMS[i];
+    int w = snprintf(out + n, max - n, "%s\"%s\":\"%s,%g,%g,%u,%u,%u%s%s\"",
+                     i ? "," : "", p.key, cfgKindName(p.kind), p.lo, p.hi,
+                     (unsigned)p.risk, (unsigned)p.reboot, (unsigned)p.secret,
+                     p.choices ? "," : "", p.choices ? p.choices : "");
+    if (w <= 0 || (size_t)(n + w) + 2 >= max) return 0;   // past niet: liever niets
+    n += w;
+  }
+  int w = snprintf(out + n, max - n, "}");
+  if (w <= 0 || (size_t)(n + w) >= max) return 0;
+  return (size_t)(n + w);
 }
 
 static void handleCfgPost(AsyncWebServerRequest *req) {

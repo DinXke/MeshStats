@@ -1,11 +1,42 @@
 """Eén CLI-instelling van een node zetten vanaf de beheerpagina.
 
-De weg is die uit ``docs/node-management.md``: over HTTP naar een node die de
-server kan bereiken, achter de eigen login van die node. Nadrukkelijk NIET over
-het ``cmd``-topic van MQTT. Dat topic is bereikbaar voor iedereen met
-brokergegevens en aanvaardt daarom precies een handvol vaste woorden; lezen kan
-een node niet onbereikbaar maken en schrijven wel, dus het argument om die lijst
-kort te houden wordt bij schrijven sterker in plaats van zwakker.
+**Eén schrijfweg, drie vervoermiddelen.** Alles wat een schrijfactie kan
+tegenhouden -- de parameterlijst van de node, zijn grenzen, de risicoklassen, de
+bevestiging, de rechten, de terugleescontrole -- staat in ``write()`` en gebeurt
+onverkort. Pas als er niets meer te weigeren valt, wordt er gekozen hóé het
+commando er komt. Per node de eerste van deze drie die werkelijk beschikbaar is:
+
+    1. ``ip``    HTTP naar de node zelf (``POST /api/cfg``). Vraagt een IP-pad en
+                 ``MM_FW_NODE_USER``/``MM_FW_NODE_PASS``. Tienden van seconden,
+                 want het is één CLI-aanroep, en het teruglezen zit in hetzelfde
+                 antwoord.
+    2. ``mqtt``  het ``cmd``-topic (``set <param> <waarde>``). Beschikbaar voor
+                 elke node die zelf publiceert, want die HEEFT per definitie een
+                 verbinding met deze broker. Seconden; het teruglezen komt terug
+                 in het eerstvolgende statistiekenbericht.
+    3. ``mesh``  HTTP naar de MONITOR van deze node (``POST /api/moncfg``), die
+                 het over LoRa doorgeeft. Voor een node zonder IP-pad, en dat is
+                 de node waar dit project omheen gebouwd is. Tientallen seconden.
+
+De volgorde is niet willekeurig. Bovenaan staat de weg met de sterkste
+tegenpartij en de snelste, meest volledige teruglezing; onderaan de duurste.
+Wat er per node gekozen is en waaróm staat in ``why`` en op de nodepagina, want
+"het is gelukt" zonder te zeggen waarlangs, is bij drie wegen te weinig.
+
+**Waarom het cmd-topic erbij is gekomen.** Tot 2.5.0 stond hier dat dit
+nadrukkelijk NIET over MQTT ging. Dat was houdbaar zolang dat topic alleen kon
+vragen om te práten. Maar het gevolg ervan was een node die zelf publiceert,
+onze firmware draait en volledig beheerd heet, en waarover de pagina "kan niet"
+zei zodra er geen weblogin ingevuld was -- terwijl er een open, werkende
+verbinding naartoe lag. Dat was feitelijk onjuist, en dat is wat er veranderd is.
+
+Wat er NIET veranderd is, is waarom die lijst kort moest blijven. Het topic is
+bereikbaar voor iedereen met brokergegevens, en er is één nauw omschreven woord
+bij gekomen waarbij de NODE ZELF valideert: alleen parameters uit zijn eigen
+ingebakken tabel, alleen waarden binnen zijn eigen grenzen, en alleen de
+risicoklassen die zijn firmware laag genoeg vindt voor dit kanaal. Een grotere
+whitelist, geen doorgeefluik. Zie ``MQTT_MAX_RISK`` hieronder voor de afweging
+die daarbij hoort, en ``docs/security.md`` voor wat dit voor de broker betekent.
 
 Twee dingen die dit bestand met opzet NIET doet.
 
@@ -18,23 +49,14 @@ en gebruikt die om het formulier te bouwen én om een tikfout alvast te weigeren
 Dat blijft "controleren aan beide kanten": hier voor een snelle, leesbare fout,
 daar omdat dat de controle is die telt.
 
-**Geen tweede schrijfweg voor een node die alleen over LoRa bereikbaar is.** Die
-node bestaat -- het is een stock MeshCore-repeater op een dak, en het is de node
-waar dit hele project omheen gebouwd is -- en er wordt sinds firmware 2.4.0 ook
-naar geschreven. Maar niet langs een eigen stelsel: het is dezelfde weg met een
-ander VERVOERMIDDEL. Zelfde parameterlijst, zelfde grenzen, zelfde
-risicoklassen, zelfde bevestigingen, zelfde rechten, zelfde terugleescontrole.
-Wat verschilt is hoe het commando er komt.
+**Geen tweede schrijfweg naast deze.** Er is één ``write()`` en er zijn drie
+vervoermiddelen. Een tweede functie voor een van de drie zou een tweede plek
+zijn waar een drempel kan ontbreken, en dat is het soort fout dat je pas ontdekt
+als er een node stil is. Zelfde parameterlijst, zelfde grenzen, zelfde
+risicoklassen, zelfde bevestigingen, zelfde rechten, zelfde terugleescontrole --
+alleen het transport verschilt.
 
-    doel met een IP-pad      HTTP naar de node zelf, POST /api/cfg. Tienden van
-                             seconden, want het is één CLI-aanroep.
-    doel alleen over LoRa    HTTP naar zijn MONITOR, POST /api/moncfg. Die node
-                             draait onze firmware en staat op het lokale net; hij
-                             zet `set <param> <waarde>` over LoRa en leest daarna
-                             `get <param>` terug. Tientallen seconden, want het
-                             zijn twee pakketten over een gedeelde band.
-
-Twee dingen die aan dat tweede geval anders zijn en die hieronder terugkomen.
+Twee dingen die aan de LoRa-weg anders zijn en die hieronder terugkomen.
 
 De MONITOR heeft de nieuwe firmware nodig, niet het doel. De dakrepeater leert
 niets, krijgt niets en merkt niets: hij ontvangt twee doodgewone CLI-commando's.
@@ -70,6 +92,95 @@ MIN_CFG_VERSION = (2, 1, 0)
 # doel draait stock MeshCore en krijgt gewoon twee CLI-commando's binnen. Dat is
 # precies waarom deze weg werkt voor een node die nooit nieuwe firmware krijgt.
 MIN_MESH_CFG_VERSION = (2, 4, 0)
+
+# En de firmware die 'set <param> <waarde>' op zijn cmd-topic aanneemt. Ouder
+# betekent hier niet "misschien": zo'n node kent het woord niet, weigert het en
+# telt het als geweigerd -- en dat gebeurt aan de overkant, zonder dat er hier
+# iets van te zien is. Vandaar dat de knop niet getekend wordt in plaats van een
+# opdracht te versturen die de lucht in verdwijnt.
+MIN_MQTT_CFG_VERSION = (2, 8, 0)
+
+# Hoe lang de server op de uitslag van een schrijfactie over MQTT wacht.
+#
+# De node zet en leest terug in dezelfde lus en publiceert daarna meteen (het
+# 'set'-commando zet dezelfde vlag als 'status'), dus dit is een kwestie van
+# seconden en niet van een halve minuut zoals over LoRa. Blijft het uit, dan is
+# dat geen mislukking maar onzekerheid, en die heeft hier dezelfde naam als daar:
+# ``geen_antwoord``.
+MQTT_WAIT_S = 20
+MQTT_POLL_S = 0.5
+
+# Het plafond van het cmd-topic: klasse 1 en 2 mogen erlangs, klasse 3 niet.
+#
+# Dit is de afweging die de drie vervoermiddelen van elkaar onderscheidt, en ze
+# gaat over wie er aan de overkant staat.
+#
+#   ip    de weblogin van de node zelf, uit de omgeving van deze server.
+#   mesh  de weblogin van de monitor, die vervolgens met zijn EIGEN rechten
+#         inlogt op het doel -- rechten die de eigenaar aan de overkant heeft
+#         uitgegeven en zelf kan intrekken.
+#   mqtt  wie de broker heeft binnengelaten. In de aanbevolen opstelling is dat
+#         een account per node met een ACL eromheen; in de opstelling die hier
+#         draait is het één gedeeld account, en dan is het elke node die met deze
+#         broker praat.
+#
+# Bij de eerste twee staat een geauthenticeerde tegenpartij; bij de derde staat
+# de brokerinrichting, en die is een instelling van iemand anders. Daar komt bij
+# dat de teruglezing over MQTT asynchroon is: er is geen antwoord in hetzelfde
+# verzoek dat een fout meteen zichtbaar maakt, en dat is precies wat je wél wilt
+# bij een handeling die een node van de lucht kan halen.
+#
+# "Overal alles" en "nergens iets" zijn allebei het verkeerde antwoord. De
+# instellingen die je op een gewone dag bijstelt -- naam, positie,
+# advertentie-interval, floodgrenzen, zendtijdbudget -- zijn klasse 1 en 2, en
+# die mogen hier. De handvol die de bereikbaarheid kan afsnijden houdt zijn twee
+# wegen met een wachtwoord ervoor. De firmware handhaaft dezelfde grens
+# (CFG_MQTT_MAX_RISK), zodat deze regel niet alleen in de server leeft.
+MQTT_MAX_RISK = 2
+
+# Wat er van afstand NOOIT gezet wordt, langs geen enkel vervoermiddel.
+#
+# 'radio' is in MeshCore één parameter die vier getallen tegelijk zet:
+# frequentie, bandbreedte, spreidingsfactor en coderingssnelheid. De asymmetrie
+# die deze streep rechtvaardigt: een verkeerde 'tx' maakt een node zwakker maar
+# laat hem bereikbaar -- je hoort hem nog, hij hoort jou nog, en je zet het
+# terug. Een verkeerde frequentie, spreidingsfactor, coderingssnelheid of
+# bandbreedte haalt hem van de lucht: hij hoort niemand meer en niemand hoort
+# hem, en er is geen weg terug die niet fysiek is. Op een dak is dat het einde.
+#
+# Geen bevestiging repareert dat. Een drempel beschermt tegen twijfel en tegen
+# de klik op de verkeerde regel; ze beschermt niet tegen een getal dat de zender
+# op een band zet waar de antenne niet op staat. Daarom is dit een weigering en
+# geen zwaardere drempel, en daarom staat 'tx' er niet bij.
+#
+# Twee plaatsen, en de tweede is niet overbodig.
+#
+# In de FIRMWARE is 'radio' sinds 2.6.0 helemaal uit CFG_PARAMS verdwenen. Die
+# ene lijst is tegelijk wat /api/cfg publiceert, wat /api/moncfg aanvaardt en wat
+# het cmd-topic doorlaat, dus één regel weghalen sluit alle drie de ingangen op
+# de node zelf. Dat is de helft die telt: de server is niet het enige dat een
+# node kan bereiken, en de node draagt het gevolg.
+#
+# Hier staat de weigering nog een keer, onder eigen naam, en daar zijn twee
+# redenen voor. Ten eerste weigert de server dan vóórdat er iets vertrekt, met
+# een zin die zegt waarom -- in plaats van een node die "staat niet op de lijst"
+# terugstuurt, wat ook het antwoord is op een tikfout. Ten tweede, en dat is de
+# harde reden: een node die nog firmware van vóór 2.6.0 draait HÉÉFT 'radio' nog
+# in zijn tabel staan en zou hem gewoon aannemen. De regel hangt aan de handeling
+# en niet aan de firmwareversie van de node die hem toevallig krijgt.
+#
+# En als weigering, niet als ontbrekend invoerveld: dit staat in ``write()``,
+# waar het verzoek werkelijk begint. Een parameter die alleen uit het formulier
+# weg is, valt met een aangepast verzoek alsnog te schrijven.
+NO_REMOTE = ("radio",)
+
+NO_REMOTE_REASON = (
+    "de radio-instellingen worden van afstand niet gezet. Een verkeerde "
+    "frequentie, spreidingsfactor, coderingssnelheid of bandbreedte haalt deze "
+    "node van de lucht, en dat is van hieraf niet terug te draaien -- er is dan "
+    "geen weg meer naartoe die niet fysiek is. Het zendvermogen (tx) kan wel: "
+    "een node die te zwak zendt blijft bereikbaar."
+)
 
 # Hoe lang de server op de monitor wacht voordat hij de pagina teruggeeft.
 #
@@ -113,70 +224,91 @@ def _field(row, key, default=None):
 
 # --- kan er naar deze node geschreven worden ---------------------------------
 
-def cfg_route(rep, relay=None) -> dict:
-    """Mag en kan de site een instelling van deze repeater zetten, en waarlangs?
+def _route_ip(rep) -> dict:
+    """Kandidaat 1: HTTP naar de node zelf.
 
-    Bewust een eigen sleutel naast ``commanding.route_for`` en naast
-    ``firmware.ota_route``, om dezelfde reden als daar: de drie reizen over
-    verschillende dingen. Een node kan opdrachten over MQTT aannemen zonder
-    IP-pad (dan geen schrijfweg), en een node kan een image aannemen terwijl zijn
-    firmware nog geen /api/cfg kent (dan ook niet). Ze door elkaar halen levert
-    precies één soort fout op, en dat is de knop die belooft wat hij niet kan.
-
-    ``transport`` zegt hoe het commando er komt, en dat is de enige vraag waarop
-    het antwoord voor een doorgestuurde node anders luidt:
-
-    ``ip``    HTTP naar de node zelf. Zijn eigen beheeradres, zijn eigen login.
-    ``mesh``  HTTP naar zijn MONITOR, die het over LoRa doorgeeft. ``host`` is
-              dan het adres van de monitor en ``target`` de sleutel van het doel.
-
-    Wat er in beide gevallen gelijk blijft is alles wat ertoe doet: de
-    parameterlijst, de grenzen, de risicoklassen en het teruglezen. Vandaar één
-    sleutel met een vervoermiddel erin en niet twee functies -- twee functies
-    zouden twee plekken zijn waar een drempel kan ontbreken.
-
-    ``relay`` is de repeaterrij van de node die voor deze repeater publiceert.
-    Als argument zodat deze functie te testen is zonder databank; wordt hij niet
-    meegegeven, dan zoekt hij hem zelf op.
+    De snelste en de volledigste. Eén CLI-aanroep over het lokale net, met het
+    teruglezen in hetzelfde antwoord, en met de weblogin van de node ertussen.
+    Daarom staat hij bovenaan: waar deze kan, is er geen reden voor een andere.
     """
-    relayed = commanding.is_relayed(rep)
-    if relayed and relay is None:
-        relay = db.find_repeater(_field(rep, "source_prefix"))
+    host = (_field(rep, "ota_host") or "").strip()
+    fw = _field(rep, "fw_meshmanager") or ""
+    version = commanding.parse_version(fw)
+    out = {"transport": "ip", "can": False, "blocker": "", "host": host, "fw": fw,
+           "min_fw": ".".join(str(n) for n in MIN_CFG_VERSION),
+           "max_risk": RISK_CUTOFF, "target": "", "monitor": ""}
+    if not firmware.NODE_USER:
+        out["blocker"] = "no_credentials"
+    elif not host:
+        out["blocker"] = "no_host"
+    elif version is None:
+        out["blocker"] = "no_fw"
+    elif version < MIN_CFG_VERSION:
+        out["blocker"] = "old_fw"
+    else:
+        out["can"] = True
+    return out
 
-    out = {"can": False, "blocker": "", "host": "", "fw": "", "relayed": relayed,
-           "transport": "mesh" if relayed else "ip", "target": "", "monitor": ""}
 
-    if not relayed:
-        host = (_field(rep, "ota_host") or "").strip()
-        fw = _field(rep, "fw_meshmanager") or ""
-        version = commanding.parse_version(fw)
-        out.update(host=host, fw=fw,
-                   min_fw=".".join(str(n) for n in MIN_CFG_VERSION))
-        if not firmware.NODE_USER:
-            out["blocker"] = "no_credentials"
-        elif not host:
-            out["blocker"] = "no_host"
-        elif version is None:
-            out["blocker"] = "no_fw"
-        elif version < MIN_CFG_VERSION:
-            out["blocker"] = "old_fw"
-        else:
-            out["can"] = True
-        return out
+def _route_mqtt(rep, broker_connected: bool) -> dict:
+    """Kandidaat 2: het cmd-topic.
 
-    # De weg over LoRa. Elke eis hieronder gaat over de MONITOR en geen enkele
-    # over het doel -- dat is niet een bijzonderheid maar de kern van deze weg.
-    # De dakrepeater draait stock MeshCore, krijgt nooit iets van ons, en dat
-    # hoeft ook niet: hij ontvangt twee doodgewone CLI-commando's.
+    Beschikbaar voor elke node die zelf publiceert. Dat is de kern van waarom
+    deze kandidaat bestaat: zo'n node HEEFT een verbinding met deze broker, dus
+    "er is geen weg naartoe" was er altijd al naast.
+
+    Wat hier NIET gevraagd wordt is een weblogin, en wat er wél gevraagd wordt is
+    een levende brokerverbinding. Dat laatste als laatste getoetst, om dezelfde
+    reden als in ``commanding.route_for``: een broker die even weg is, hoort de
+    blijvende reden niet te overschaduwen.
+
+    ``max_risk`` ligt hier lager dan bij de andere twee. Zie ``MQTT_MAX_RISK``.
+    """
+    node = (_field(rep, "source_prefix") or "").lower().strip()
+    fw = _field(rep, "fw_meshmanager") or ""
+    version = commanding.parse_version(fw)
+    out = {"transport": "mqtt", "can": False, "blocker": "", "host": "", "fw": fw,
+           "min_fw": ".".join(str(n) for n in MIN_MQTT_CFG_VERSION),
+           "max_risk": MQTT_MAX_RISK, "target": "", "monitor": "", "node": node}
+    if not node:
+        out["blocker"] = "no_source"
+    elif node == "api":
+        out["blocker"] = "http_source"
+    elif commanding.is_relayed(rep):
+        # Een doorgestuurde node heeft geen eigen cmd-topic: hij publiceert niet
+        # en leest dus ook niets. Het topic van zijn monitor bestaat wel, maar
+        # daarop een schrijfactie voor een DERDE node aanbieden zou een tweede
+        # soort commando zijn met een tweede soort doel erin, over het kanaal met
+        # de zwakste tegenpartij. Die weg heet hier 'mesh' en loopt over HTTP.
+        out["blocker"] = "relayed"
+    elif version is None:
+        out["blocker"] = "no_fw"
+    elif version < MIN_MQTT_CFG_VERSION:
+        out["blocker"] = "old_fw"
+    elif not broker_connected:
+        out["blocker"] = "broker_down"
+    else:
+        out["can"] = True
+    return out
+
+
+def _route_mesh(rep, relay) -> dict:
+    """Kandidaat 3: HTTP naar de MONITOR, die het over LoRa doorgeeft.
+
+    Elke eis hieronder gaat over de MONITOR en geen enkele over het doel -- dat
+    is niet een bijzonderheid maar de kern van deze weg. De dakrepeater draait
+    stock MeshCore, krijgt nooit iets van ons, en dat hoeft ook niet: hij
+    ontvangt twee doodgewone CLI-commando's.
+    """
     host = (_field(relay, "ota_host") or "").strip()
     fw = _field(relay, "fw_meshmanager") or ""
     version = commanding.parse_version(fw)
-    out.update(host=host, fw=fw,
-               min_fw=".".join(str(n) for n in MIN_MESH_CFG_VERSION),
-               target=(_field(rep, "pubkey_prefix") or "").lower().strip(),
-               monitor=str(_field(relay, "name") or
-                           _field(rep, "source_prefix") or "").strip())
-
+    out = {"transport": "mesh", "can": False, "blocker": "", "host": host, "fw": fw,
+           "min_fw": ".".join(str(n) for n in MIN_MESH_CFG_VERSION),
+           "max_risk": RISK_CUTOFF,
+           "target": (_field(rep, "pubkey_prefix") or "").lower().strip(),
+           "monitor": str(_field(relay, "name") or
+                          _field(rep, "source_prefix") or "").strip()}
     if relay is None:
         # De doorstuurder is hier zelf geen bekende repeater. Dan is er geen
         # beheeradres om aan te kloppen en geen firmwareversie om op te toetsen,
@@ -199,6 +331,105 @@ def cfg_route(rep, relay=None) -> dict:
         out["blocker"] = "no_target"
     else:
         out["can"] = True
+    return out
+
+
+# Waarom een kandidaat afvalt, in het Nederlands, zodat de reden in ``why``
+# dezelfde is als die op de pagina en in het logboek. Een zin die op drie
+# plaatsen anders luidt, is een zin waar niemand meer op vertrouwt.
+BLOCKER_TEXT = {
+    "no_credentials": "geen weblogin voor de beheerpagina (MM_FW_NODE_USER/PASS)",
+    "no_host": "geen beheeradres ingevuld",
+    "no_fw": "meldt geen versie van onze firmware",
+    "old_fw": "de firmware is er te oud voor",
+    "no_source": "er is nog geen bericht van deze node binnengekomen",
+    "http_source": "de cijfers komen via de HTTP-API; er is geen cmd-topic",
+    "relayed": "publiceert zelf niet, dus er is geen eigen cmd-topic",
+    "broker_down": "de broker is nu niet verbonden",
+    "relay_unknown": "de doorstuurder is hier zelf niet bekend",
+    "no_relay_host": "de monitor heeft geen beheeradres ingevuld",
+    "relay_no_fw": "de monitor meldt geen versie van onze firmware",
+    "relay_old_fw": "de firmware van de monitor is er te oud voor",
+    "no_target": "van deze repeater is geen publieke sleutel bekend",
+}
+
+TRANSPORT_TEXT = {
+    "ip": "over HTTP naar de node zelf",
+    "mqtt": "over het MQTT-cmd-topic",
+    "mesh": "over LoRa via zijn monitor",
+}
+
+
+def cfg_route(rep, relay=None, broker_connected=None) -> dict:
+    """Mag en kan de site een instelling van deze repeater zetten, en waarlangs?
+
+    Bewust een eigen sleutel naast ``commanding.route_for`` en naast
+    ``firmware.ota_route``, om dezelfde reden als daar: de drie reizen over
+    verschillende dingen. Een node kan opdrachten over MQTT aannemen zonder
+    IP-pad, en een node kan een image aannemen terwijl zijn firmware nog geen
+    /api/cfg kent. Ze door elkaar halen levert precies één soort fout op, en dat
+    is de knop die belooft wat hij niet kan.
+
+    Drie kandidaten worden alle drie doorgerekend en niet alleen de eerste die
+    past. Dat kost niets -- het zijn drie vergelijkingen op rijen die er al zijn
+    -- en het levert het antwoord op de vraag die iemand werkelijk stelt als er
+    niets kan: niet "het gaat niet", maar wat er per weg aan ontbreekt.
+    ``options`` draagt die drie, ``why`` vat ze samen in één zin.
+
+    De gekozen weg staat in ``transport``, met ``host``, ``target``,
+    ``monitor``, ``fw``, ``min_fw`` en ``max_risk`` erbij die daarbij horen.
+    Kan er niets, dan draagt de sleutel de kandidaat die het dichtst bij was --
+    de eerste van de drie die überhaupt van toepassing is -- zodat de pagina één
+    reden kan tonen in plaats van drie.
+
+    ``relay`` is de repeaterrij van de node die voor deze repeater publiceert.
+    Als argument zodat deze functie te testen is zonder databank; wordt hij niet
+    meegegeven, dan zoekt hij hem zelf op. Hetzelfde geldt voor
+    ``broker_connected``.
+    """
+    relayed = commanding.is_relayed(rep)
+    if relayed and relay is None:
+        relay = db.find_repeater(_field(rep, "source_prefix"))
+    if broker_connected is None:
+        from . import mqtt_ingest
+        broker_connected = mqtt_ingest.can_publish()
+
+    ip = _route_ip(rep)
+    mqtt = _route_mqtt(rep, broker_connected)
+    mesh = _route_mesh(rep, relay) if relayed else None
+
+    # De volgorde is de rangschikking: sterkste tegenpartij en beste teruglezing
+    # eerst, duurste laatst. Een doorgestuurde node heeft alleen de derde; een
+    # node die zelf publiceert heeft de eerste twee. Dat de lijst per node
+    # verschilt is geen uitzondering maar wat deze functie te zeggen heeft.
+    kandidaten = [ip, mqtt] if not relayed else [mesh]
+    gekozen = next((k for k in kandidaten if k["can"]), None)
+
+    out = {"can": False, "blocker": "", "host": "", "fw": "", "relayed": relayed,
+           "transport": "mesh" if relayed else "ip", "target": "", "monitor": "",
+           "min_fw": "", "max_risk": RISK_CUTOFF,
+           "options": kandidaten, "why": ""}
+
+    if gekozen is not None:
+        out.update({k: v for k, v in gekozen.items() if k != "can"}, can=True)
+        # Alles vóór de gekozene is per definitie afgevallen -- dat is wat "de
+        # eerste die werkelijk beschikbaar is" betekent -- en juist die redenen
+        # horen erbij. Wie ziet dat er over MQTT geschreven wordt, hoort te weten
+        # dat dat komt doordat er geen weblogin staat.
+        afgevallen = kandidaten[:kandidaten.index(gekozen)]
+        reden = "; ".join(f"{TRANSPORT_TEXT[k['transport']]} kan niet: "
+                          f"{BLOCKER_TEXT.get(k['blocker'], k['blocker'])}"
+                          for k in afgevallen)
+        out["why"] = (f"{TRANSPORT_TEXT[gekozen['transport']]}"
+                      + (f" -- {reden}" if reden else
+                         " -- de eerste en snelste weg is beschikbaar"))
+        return out
+
+    eerste = kandidaten[0]
+    out.update({k: v for k, v in eerste.items() if k != "can"})
+    out["why"] = "geen enkele weg: " + "; ".join(
+        f"{TRANSPORT_TEXT[k['transport']]} -- {BLOCKER_TEXT.get(k['blocker'], k['blocker'])}"
+        for k in kandidaten)
     return out
 
 
@@ -251,6 +482,96 @@ def params(host: str, force: bool = False) -> dict:
         with _lock:
             _params[key] = dict(out)
     return out
+
+
+# De volgorde van de velden in een regel van ``cfgspec``, zoals de firmware ze
+# schrijft (cfgSpecJson). Compact omdat die tabel in een bericht met een vaste
+# buffer meereist: achtentwintig objecten met acht sleutels elk zijn twee
+# kilobyte, deze vorm is negenhonderd byte.
+#
+#   <soort>,<lo>,<hi>,<risico>,<herstart>,<geheim>[,<keuzes>]
+#
+# De ontleding staat hier, naast de vorm, en de vorm staat in de firmware naast
+# het schrijven. Twee plaatsen die het over hetzelfde eens moeten zijn is er één
+# meer dan ideaal; het alternatief was een tweede parametertabel in deze server,
+# en dat is precies wat dit bestand niet wil.
+SPEC_FIELDS = ("kind", "lo", "hi", "risk", "reboot", "secret")
+
+
+def spec_from_node(rep) -> dict:
+    """De parameterlijst zoals deze node hem zelf over MQTT meldde.
+
+    Hetzelfde soort antwoord als ``params()``, zodat de rest van dit bestand en
+    het sjabloon niet hoeven te weten waar de lijst vandaan komt. Wat er niet is,
+    is er niet: een node die zijn tabel nog nooit meestuurde levert hier een
+    lege lijst met een zin die zegt wat je eraan doet -- één instellingenronde.
+    """
+    out = {"ok": False, "error": "", "params": [], "at": 0.0}
+    ruw = str(_field(rep, "cfg_spec") or "").strip()
+    if not ruw:
+        out["error"] = ("deze node heeft zijn parameterlijst nog niet gemeld. "
+                        "Vraag eenmalig een instellingenronde op; die stuurt de "
+                        "lijst mee, en daarna staat het formulier er")
+        return out
+    try:
+        rauw = json.loads(ruw)
+    except (ValueError, TypeError):
+        out["error"] = "de gemelde parameterlijst is onleesbaar"
+        return out
+    if not isinstance(rauw, dict):
+        out["error"] = "de gemelde parameterlijst heeft niet de verwachte vorm"
+        return out
+
+    lijst = []
+    for key, regel in rauw.items():
+        delen = str(regel).split(",")
+        if len(delen) < len(SPEC_FIELDS):
+            continue
+        spec = {"key": str(key), "choices": ",".join(delen[len(SPEC_FIELDS):])}
+        for naam, waarde in zip(SPEC_FIELDS, delen):
+            if naam in ("lo", "hi"):
+                try:
+                    spec[naam] = float(waarde)
+                except ValueError:
+                    spec[naam] = 0.0
+            elif naam == "kind":
+                spec[naam] = waarde
+            else:
+                try:
+                    spec[naam] = int(waarde)
+                except ValueError:
+                    # Bij twijfel de veilige kant: een risicoklasse die niet te
+                    # lezen is, is de zwaarste.
+                    spec[naam] = RISK_CUTOFF if naam == "risk" else 0
+        lijst.append(spec)
+
+    if not lijst:
+        out["error"] = "de gemelde parameterlijst is leeg"
+        return out
+    out.update(ok=True, params=lijst)
+    return out
+
+
+def params_for(rep, route=None) -> dict:
+    """De parameterlijst van deze node, langs de weg die er is.
+
+    Nog steeds de lijst van de node zelf en nooit een tabel van hier -- dat is de
+    regel bovenaan dit bestand en die blijft. Wat erbij gekomen is, is een tweede
+    BRON voor diezelfde lijst, voor precies het geval waarin de eerste niet
+    bestaat: een node die de server niet over IP bereikt of waarvoor hij geen
+    weblogin heeft, kan ``GET /api/cfg`` niet beantwoorden en stuurt zijn tabel
+    daarom mee met zijn instellingenronde.
+
+    Zonder dit zou de schrijfweg over MQTT bestaan zonder bruikbaar te zijn: de
+    site zou de risicoklasse van een parameter niet kennen, bij twijfel de
+    zwaarste aannemen (zie ``risk_of``) en dus alles blokkeren.
+    """
+    route = route or cfg_route(rep)
+    if not route["can"]:
+        return {"ok": False, "error": "", "params": []}
+    if route["transport"] == "mqtt":
+        return spec_from_node(rep)
+    return params(route["host"])
 
 
 def choices(spec: dict) -> list[str]:
@@ -357,7 +678,7 @@ def risk_of(rep, key: str) -> int:
     route = cfg_route(rep)
     if not route["can"]:
         return RISK_CUTOFF
-    listing = params(route["host"])
+    listing = params_for(rep, route)
     if not listing["ok"]:
         return RISK_CUTOFF
     spec = next((p for p in listing["params"] if p.get("key") == key), None)
@@ -376,25 +697,33 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
     als minuten/2 in één byte, zodat 61 als 60 terugkomt. Wie hier "OK" zou
     teruggeven, zou dezelfde onwaarheid vertellen als de oude OTA-weg deed.
 
-    Eén ingang voor beide vervoermiddelen, en dat is met opzet. Alles wat een
-    schrijfactie tegenhoudt -- de route, de lijst van de node, de grenzen, de
+    Eén ingang voor alle drie de vervoermiddelen, en dat is met opzet. Alles wat
+    een schrijfactie tegenhoudt -- de route, de lijst van de node, de grenzen, de
     bevestiging -- staat hierboven en gebeurt dus onverkort, of het commando nu
-    over een netwerkkabel of over de lucht verdergaat. Pas als er niets meer te
-    weigeren valt, gaan de twee wegen uiteen. Een tweede functie voor de
-    LoRa-weg zou een tweede plek zijn waar een drempel kan ontbreken, en dat is
-    precies het soort fout dat je pas ontdekt als er een node stil is.
+    over een netwerkkabel, over de broker of over de lucht verdergaat. Pas als er
+    niets meer te weigeren valt, gaan de drie wegen uiteen. Een tweede functie
+    voor een van de drie zou een tweede plek zijn waar een drempel kan ontbreken,
+    en dat is precies het soort fout dat je pas ontdekt als er een node stil is.
     """
     route = cfg_route(rep)
     out = {"ok": False, "step": "", "msg": "", "key": key, "asked": value,
            "applied": "", "exact": False, "reboot": False,
-           "transport": route["transport"], "busy": False}
+           "transport": route["transport"], "busy": False,
+           "why": route.get("why", "")}
+
+    # Vóór alles, en met opzet vóór de route: dit is geen eigenschap van de weg
+    # maar van de handeling. Deze parameter wordt van afstand niet gezet, en dan
+    # doet het er niet toe of er een weg naartoe is. Zie NO_REMOTE.
+    if key in NO_REMOTE:
+        out.update(step="afstand", msg=NO_REMOTE_REASON)
+        return out
 
     if not route["can"]:
         out.update(step="route", msg=f"deze node kan geen instelling ontvangen "
                                      f"({route['blocker']})")
         return out
 
-    listing = params(route["host"])
+    listing = params_for(rep, route)
     if not listing["ok"]:
         out.update(step="lijst", msg=listing["error"])
         return out
@@ -403,6 +732,22 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
     if spec is None:
         out.update(step="sleutel",
                    msg="deze node biedt die parameter niet aan om van afstand te zetten")
+        return out
+
+    # Het plafond van dit vervoermiddel. Alleen het cmd-topic heeft er een dat
+    # lager ligt dan de zwaarste klasse; zie MQTT_MAX_RISK voor waarom, en let
+    # erop dat de firmware dezelfde grens nog eens handhaaft. Deze weigering
+    # staat hier zodat er niets vertrekt dat aan de overkant toch geweigerd
+    # wordt -- en zodat de pagina kan zeggen wat er dan wél kan.
+    risk = int(spec.get("risk") or RISK_PLAIN)
+    if risk > int(route.get("max_risk") or RISK_CUTOFF):
+        out.update(step="plafond", msg=(
+            f"deze instelling kan de bereikbaarheid van de node afsnijden, en de "
+            f"weg die nu beschikbaar is ({TRANSPORT_TEXT[route['transport']]}) "
+            f"neemt zulke wijzigingen niet aan. Daar staat geen wachtwoord "
+            f"tegenover en er is geen teruglezing in hetzelfde verzoek. Vul "
+            f"MM_FW_NODE_USER/MM_FW_NODE_PASS in, of doe het op de beheerpagina "
+            f"van de node zelf"))
         return out
 
     problem = _check(spec, value)
@@ -423,6 +768,8 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
 
     if route["transport"] == "mesh":
         _write_mesh(route, out)
+    elif route["transport"] == "mqtt":
+        _write_mqtt(rep, route, out)
     else:
         _write_ip(route, out)
 
@@ -460,6 +807,109 @@ def _write_ip(route: dict, out: dict) -> None:
         msg=str(answer.get("msg") or ""),
         applied=str(answer.get("applied") or ""),
         exact=bool(answer.get("exact")),
+    )
+
+
+# --- de weg over het cmd-topic ------------------------------------------------
+#
+# De uitslag komt hier niet terug in het antwoord op het verzoek -- er IS geen
+# antwoord op een MQTT-publicatie -- maar in het eerstvolgende
+# statistiekenbericht van de node, dat hij meteen verstuurt. Die berichten komen
+# binnen op de ingest-draad, dus is er één plek nodig waar die draad zijn vondst
+# neerlegt en waar de webverzoekdraad hem ophaalt.
+#
+# In het geheugen en niet in de databank, en dat is een keuze met een prijs. Wat
+# het kost: na een herstart van de site is de laatste uitslag weg. Wat het
+# oplevert: geen tabel, geen opruiming, geen bewaartermijn voor iets dat hooguit
+# een halve minuut interessant is. En wat er WEL bewaard blijft is het enige dat
+# er blijvend toe doet -- de teruggelezen waarde gaat via ``_remember`` de
+# gewone instellingentabel in, precies zoals bij de andere twee wegen.
+_cfgset_lock = threading.Lock()
+_cfgset: dict[str, dict] = {}
+
+# Zoveel nodes onthouden we een uitslag van. Ruim boven elk mesh dat deze site
+# bedient, en het is er alleen om te voorkomen dat een broker vol vreemde nodes
+# dit geheugen laat groeien: dit vult zich van het stats-topic, en dat is geen
+# invoer van de eigenaar.
+CFGSET_MAX_NODES = 200
+
+
+def note_cfgset(node: str, job: dict) -> None:
+    """De uitslag van een schrijfactie die met een statistiekenbericht meekwam.
+
+    Aangeroepen vanuit de ingest en niet andersom, zodat deze module niets van
+    het bericht hoeft te weten behalve welke node het stuurde.
+    """
+    sleutel = (node or "").lower().strip()
+    if not sleutel or not isinstance(job, dict):
+        return
+    with _cfgset_lock:
+        if sleutel not in _cfgset and len(_cfgset) >= CFGSET_MAX_NODES:
+            # Oudste eruit. Een dict houdt invoegvolgorde, dus dit is de node
+            # die het langst niets nieuws meldde.
+            _cfgset.pop(next(iter(_cfgset)))
+        _cfgset[sleutel] = dict(job)
+
+
+def cfgset_state(node: str) -> dict:
+    """De laatst gemelde schrijfactie van deze node, of een leeg antwoord."""
+    with _cfgset_lock:
+        return dict(_cfgset.get((node or "").lower().strip()) or {})
+
+
+def _write_mqtt(rep, route: dict, out: dict) -> None:
+    """De weg over het cmd-topic van de node zelf.
+
+    Publiceren en dan wachten. Het wachten is kort en dat mag: de node zet en
+    leest terug in dezelfde lus en publiceert daarna meteen, dus dit is een
+    kwestie van seconden. Blijft het uit, dan is het antwoord ``geen_antwoord``
+    -- dezelfde naam als bij de LoRa-weg, en om dezelfde reden. Een publicatie
+    die vertrokken is, kan gewoon zijn uitgevoerd; "mislukt" zou iemand laten
+    denken dat er niets gebeurd is.
+
+    Herkend aan ``seq`` en niet aan "er staat nu iets": de node telt zijn
+    schrijfacties door en houdt de laatste vast, dus zonder dat nummer zou de
+    uitslag van vorige week doorgaan voor de uitslag van nu.
+    """
+    from . import mqtt_ingest
+
+    node = str(route.get("node") or _field(rep, "source_prefix") or "").lower().strip()
+    vorige = int(cfgset_state(node).get("seq") or 0)
+
+    if not mqtt_ingest.publish_command(node, "set",
+                                       setting=(out["key"], out["asked"])):
+        # Met zekerheid niets veranderd: het bericht heeft deze machine niet
+        # verlaten. Zelfde onderscheid als bij de LoRa-weg, waar dit
+        # 'niet_verstuurd' heet -- de geruststellende helft van 'er ging iets mis'.
+        out.update(step="niet_verstuurd", msg=(
+            "er is niets vertrokken -- de brokerverbinding weigerde de publicatie. "
+            "Op de node is dus met zekerheid niets veranderd; probeer het opnieuw"))
+        return
+
+    deadline = time.monotonic() + MQTT_WAIT_S
+    job = {}
+    while True:
+        time.sleep(MQTT_POLL_S)
+        job = cfgset_state(node)
+        if int(job.get("seq") or 0) > vorige:
+            break
+        if time.monotonic() >= deadline:
+            out.update(step="geen_antwoord", msg=(
+                "het commando is naar de broker vertrokken, maar de node heeft er "
+                "nog geen uitslag over gepubliceerd. Of hij het heeft uitgevoerd is "
+                "van hieraf niet te zien; hij kan slapen op zijn stroombudget. "
+                "Herlaad deze pagina, of vraag een statusbericht op"))
+            return
+
+    # De node meldt 'ok' als de 'set' niet geweigerd werd, en 'applied' als wat
+    # er ná afloop werkelijk in staat -- dezelfde betekenis en dezelfde velden
+    # als /api/cfg, zodat er hier niets te vertalen valt.
+    out.update(
+        ok=bool(job.get("ok")),
+        step="" if job.get("ok") else "node",
+        msg=str(job.get("msg") or ""),
+        applied=str(job.get("applied") or ""),
+        exact=bool(job.get("exact")),
     )
 
 

@@ -260,3 +260,82 @@ def test_te_kort_onderwerp_vertrekt_niet(broker):
     assert mqtt_ingest.publish_command("55d9a320a4e3", "settings",
                                        subject="e3d3f4") is False
     assert broker.published == []
+
+
+# --- 'set <param> <waarde>', sinds nodefirmware 2.5.0 ------------------------
+#
+# Het vierde woord, en het eerste dat een instelling verandert. Wat hier
+# vastligt is uitsluitend wat er de deur uit gaat: of het gezet MÁG worden is
+# een vraag van nodeconfig.write() en van de node zelf, en die hebben hun eigen
+# tests. Deze laag is de postbode.
+
+
+def test_een_instelling_vertrekt_als_een_commando_met_twee_woorden(broker, gehoord):
+    gehoord("e3d3f4d7edd0", "meshmanager")
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "set",
+                                       setting=("flood.max", "12")) is True
+    (msg,) = broker.published
+    assert msg["topic"] == "meshmanager/e3d3f4d7edd0/cmd"
+    assert msg["payload"] == b"set flood.max 12"
+    # Retained zou dit bij elke herverbinding opnieuw uitvoeren, en dan zet
+    # iemand een maand later een instelling terug die hij ooit één keer koos.
+    assert msg["retain"] is False
+
+
+def test_een_waarde_met_spaties_blijft_heel(broker, gehoord):
+    # 'name' en 'owner.info' bestaan uit weinig anders. De waarde is aan de
+    # overkant alles na de parameter, dus er valt niets in te smokkelen: er is
+    # geen scheider waarmee een tweede commando begint.
+    gehoord("e3d3f4d7edd0", "meshmanager")
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "set",
+                                       setting=("name", "Dak Noord")) is True
+    assert broker.published[0]["payload"] == b"set name Dak Noord"
+
+
+def test_set_zonder_instelling_werpt_op(broker):
+    # Een programmeerfout en geen bedrijfsongeval: 'set' zonder parameter
+    # betekent niets. Stukgaan bij het schrijven, niet in productie.
+    with pytest.raises(ValueError):
+        mqtt_ingest.publish_command("e3d3f4d7edd0", "set")
+    assert broker.published == []
+
+
+def test_een_commando_zonder_instelling_neemt_er_ook_geen_aan(broker):
+    with pytest.raises(ValueError):
+        mqtt_ingest.publish_command("e3d3f4d7edd0", "status", setting=("tx", "22"))
+    assert broker.published == []
+
+
+@pytest.mark.parametrize("param,waarde", [
+    ("", "12"),                       # geen parameter
+    ("flood.max", ""),                # geen waarde; geen enkele parameter neemt niets
+    ("flood max", "12"),              # een spatie zou er twee argumenten van maken
+    ("Flood.Max", "12"),              # de tabel aan de overkant is hoofdlettergevoelig
+    ("x" * 40, "12"),                 # langer dan CFG_KEY_MAX
+    ("flood.max", "y" * 60),          # langer dan CFG_VALUE_MAX
+])
+def test_wat_aan_de_overkant_afgekapt_zou_worden_vertrekt_hier_niet(broker, param, waarde):
+    # MQTT_CMD_MAX is daar 96 byte en de tabel kapt op 28 resp. 40. Een
+    # afgekapte waarde is een ÁNDERE waarde, en die hoort niet stilletjes gezet
+    # te worden. Geen uitzondering maar False: dit komt uit een formulier.
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "set",
+                                       setting=(param, waarde)) is False
+    assert broker.published == []
+
+
+def test_de_firmware_kent_hetzelfde_woord():
+    """Crosscheck op de bron aan de overkant.
+
+    COMMANDS hier en de allowlist in mqttRunCommand() moeten dezelfde vier
+    woorden zijn. Ze staan op twee plaatsen omdat een tikfout hier anders een
+    ronde over het netwerk kost voordat iemand hem ziet -- en twee lijsten die
+    uit elkaar lopen zijn erger dan één lijst op de verkeerde plek.
+    """
+    from pathlib import Path
+    bron = (Path(__file__).resolve().parents[2]
+            / "firmware" / "examples" / "simple_repeater" / "MeshManagerNet.cpp")
+    if not bron.exists():          # de server draait ook zonder de firmwareboom
+        pytest.skip("firmwarebron niet aanwezig")
+    tekst = bron.read_text(encoding="utf-8", errors="replace")
+    for woord in mqtt_ingest.COMMANDS:
+        assert f'strcmp(w, "{woord}")' in tekst, woord

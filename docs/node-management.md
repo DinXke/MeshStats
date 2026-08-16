@@ -31,7 +31,7 @@ Dutch even here; [`admin.md`](admin.md) explains that choice.
 [bringing a node under management](#bringing-a-node-under-management)
 
 **Settings** — [reading](#reading-settings) ·
-[over MQTT?](#can-settings-be-written-over-the-same-mqtt-route) ·
+[three transports](#three-transports-for-one-write-path) ·
 [which may be written](#which-settings-may-be-written) ·
 [writing over LoRa](#writing-over-lora-through-the-monitor) ·
 [confirm-or-revert](#confirm-or-revert-examined-and-deliberately-not-built) ·
@@ -251,82 +251,158 @@ idea that you can ask one node something special.
 
 ---
 
-## Can settings be written over the same MQTT route?
+## Three transports for one write path
 
-The short answer, because it was asked directly: **technically yes, and the
-recommended design does not do it that way.**
+The short answer, because it was asked directly: **yes, over MQTT too — since
+nodefirmware 2.8.0, and deliberately not by widening the `cmd` topic into a
+CLI.**
 
-### Why not the `cmd` topic
+There is one write path. Everything that can refuse a write — the node's own
+parameter list, its bounds, the risk classes, the confirmation, the RBAC
+permission, the read-back — happens in `nodeconfig.write()` no matter which
+transport is used. Only *how the command travels* differs. Per node, the site
+picks the first of these that is actually available, and the node page says which
+one it picked and why:
 
-The topic accepts `settings`, `status` and `time <epoch>` — a strict allow-list,
-never a pipe into the CLI. The reasoning is in `MeshManagerNet.h` and it is about
-who can reach that topic: **anyone holding broker credentials**, shared, leaked
-or mistyped. One `reboot` in a loop costs you the roof repeater.
+| # | Transport | Available when | Counterparty | Risk classes |
+|---|---|---|---|---|
+| 1 | HTTP to the node (`POST /api/cfg`) | it has an IP path and `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` are set | that node's web login | 1, 2 and 3 |
+| 2 | MQTT `cmd` topic (`set <param> <value>`) | the node publishes to MQTT itself, runs nodefirmware 2.8.0, and the broker is connected | whoever the broker let in | 1 and 2 |
+| 3 | Mesh CLI via its monitor (`POST /api/moncfg`) | the node is relayed and its monitor has an IP path, a web login and nodefirmware 2.4.0 | the monitor's login, then its own rights on the far node | 1, 2 and 3 |
 
-That argument does not weaken for writing. It gets stronger, because reading
-cannot make a node unreachable and writing can. A wrong `freq`, a wrong `radio`,
-`tx 0`, `repeat off` or a wrong WiFi setting on a node you reach only over LoRa
-is not a mistake you correct — the setting takes effect, and with it the only way
-back disappears. On a roof that is the end of the node.
+The ordering is a ranking: strongest counterparty and fastest, most complete
+read-back first; most expensive last. A relayed node only ever has row 3 — it
+does not publish, so it has no `cmd` topic of its own. A node that publishes for
+itself has rows 1 and 2.
 
-### The route that is recommended instead
+If none of the three is available, that is still the answer — with the reason per
+transport, so "not possible" is something you can act on rather than a dead end.
 
-**Writes go over HTTP, to a node the server can reach, behind that node's own
-login.** Which node that is depends on the level:
+### Why the `cmd` topic was reopened
 
-| Target | Write path |
-|---|---|
-| `full_managed` with an IP path | HTTP to the node itself |
-| `semi_managed` (JessaZH) | HTTP to its **monitor** (DinX-Home), which issues `set …` over LoRa |
-| `full_managed` without an IP path | not offered — see below |
-| `unmanaged` | not offered, there is nothing to authenticate with |
+The earlier design said writes never go over MQTT, and named the case that would
+force the decision back open: *a `full_managed` node with no IP path cannot be
+written to at all, even though its `cmd` topic works.* It then said the answer
+would not be to widen the allow-list quietly, but to reopen the decision on
+purpose.
 
-This is worth dwelling on: the relayed case works. JessaZH is written by talking
-to DinX-Home, and DinX-Home is on the LAN. **The reference case is covered by the
-route that does not touch MQTT at all.** That row is built as of firmware 2.4.0
-and has its own section below,
-[Writing over LoRa](#writing-over-lora-through-the-monitor).
+That case turned up in a slightly different shape. A node that publishes to MQTT
+and runs our firmware — full managed by every definition — reported "cannot be
+changed" as soon as `MM_FW_NODE_USER` was left empty, while an open, working
+connection to it lay unused. A full managed node has an MQTT connection by
+definition, so "cannot" was factually wrong there.
 
-What it buys:
+So the decision was reopened, and this is what held.
 
-- Broker credentials stay unable to change anything. The MQTT allow-list stays
-  exactly three words, and nothing about the threat model of that topic changes.
-- A write is authenticated against the node's own admin login, which is a
-  credential a person holds, not a service account a container holds.
-- The transport already exists and is already used for firmware, including its
-  address validation and its error reporting.
+**It is a larger allow-list, not a pipe into the CLI.** The topic still matches
+exact words; there is now a fourth one. The node itself validates:
 
-What it costs: a `full_managed` node with no IP path cannot be written to at all,
-even though its `cmd` topic works. That case does not exist in this installation
-today. If it appears, the answer is not to widen the MQTT allow-list quietly —
-it is to reopen this decision on purpose, with the risk classes below as the
-thing that has to hold.
+- the parameter must be one of the twenty-eight names compiled into `CFG_PARAMS`,
+  and the command is built from *the table's* key — no text out of the message
+  ever becomes a command. Only the value travels, and it is always the last word,
+  so there is no separator a second command could start after;
+- the value must pass `cfgCheckValue()`, the same sieve both HTTP write paths
+  use. One sieve, so the three cannot drift apart;
+- the risk class must not exceed `CFG_MQTT_MAX_RISK`.
 
-### If it were ever done over MQTT anyway
+A node that gets an unknown parameter or an out-of-bounds value refuses it,
+counts it, and reports it — the refusal comes back in the statistics message it
+publishes immediately after. Silence would be indistinguishable from a node
+asleep on its solar budget, which is the one thing this answer may not be.
 
-Then the broker configuration becomes load-bearing rather than hygienic, and
-`mosquitto/acl.example` has to say so:
+### The ceiling on that transport, and why it sits where it does
 
-- The site's account is the **only** one with `write meshmanager/+/cmd`. Node
-  accounts get `write meshmanager/<own-id>/#` and nothing else, so a compromised
-  node cannot command its neighbours.
-- Every node account is per node, never shared. A shared account means a leak
-  cannot be contained without re-provisioning every node.
-- A shared secret or signature on the command would help, and it is the honest
-  thing to say that this is not enough on its own: the node would have to keep
-  that secret in the same flash a backup hands out, and it protects the *content*
-  of a command, not the fact that whoever holds broker credentials can replay
-  yesterday's.
+**Classes 1 and 2 go over the `cmd` topic. Class 3 does not.**
 
-That is a lot of machinery to make a route safe that we do not need. Hence HTTP.
+The difference between the transports is not speed but who stands on the other
+side. Rows 1 and 3 have an authenticated counterparty: a password on a link you
+control, or a monitor logging in over LoRa with rights the far side's operator
+granted and can revoke. Row 2 has whoever holds broker credentials — and
+`mosquitto/acl.example` supports one account per node, while a default deployment
+runs on one shared account. On a shared account that is every node speaking to
+the broker.
+
+On top of that, there is no read-back inside the same request. The node reports
+the outcome in its next statistics message, so a mistake is not visible at the
+moment it is made — which is precisely what you want when the mistake can take a
+node off the air.
+
+"Everything everywhere" and "nothing anywhere" would both be wrong. The settings
+you adjust on an ordinary day — name, position, advert interval, flood limits,
+duty cycle — are classes 1 and 2, and they go through. The handful that can cut a
+node off keep their two authenticated roads. If you want those from here, fill in
+`MM_FW_NODE_USER` and `MM_FW_NODE_PASS`; the page says so where it refuses.
+
+The ceiling is enforced twice: `nodeconfig.MQTT_MAX_RISK` on the server, so
+nothing leaves that would be refused anyway, and `CFG_MQTT_MAX_RISK` in the
+firmware, because the node is the one that carries the consequence.
+
+### Radio parameters are refused on all three
+
+`radio` — frequency, bandwidth, spreading factor, coding rate, which MeshCore
+sets as one parameter — is **not written from a distance at all**. Not over IP,
+not over the `cmd` topic, not over a monitor's mesh CLI. `tx` (transmit power) is
+allowed and keeps its own risk class.
+
+The asymmetry is the argument. A wrong `tx` makes a node weaker and leaves it
+reachable: you still hear it, it still hears you, and you put it back. A wrong
+frequency, spreading factor, coding rate or bandwidth takes it off the air — it
+hears nobody and nobody hears it — and there is no way back that is not physical.
+On a roof that is the end of the node. No confirmation repairs that: a threshold
+protects against hesitation and against clicking the wrong row, not against a
+number that puts a transmitter on a band the antenna is not cut for. `radio` also
+only takes effect on reboot, so the mistake first becomes visible at the moment
+it is already irreversible.
+
+It is a refusal at the source, not a missing form field. A parameter merely left
+out of a *form* can still be written with a hand-made request; the threshold
+belongs where the request is actually carried out. So it lives in two places:
+
+- **in the firmware**, where `radio` is gone from `CFG_PARAMS` since nodefirmware
+  2.6.0. That one table is what `GET /api/cfg` publishes, what
+  `POST /api/moncfg` accepts and what the `cmd` topic lets through, so one row
+  removed closes all three entrances at once. The comment where it stood keeps
+  the line written out, so putting it back is one line;
+- **on the server**, as `nodeconfig.NO_REMOTE`, checked in `write()` before a
+  transport is even chosen. Not redundant: it refuses before anything leaves,
+  with a sentence saying why, and a node still on firmware older than 2.6.0 does
+  have `radio` in its table and would accept it.
+
+### What this asks of your broker
+
+With transport 2 in use, "who may publish on `<prefix>/<node>/cmd`" stops being a
+tidiness question. `mosquitto/acl.example` supports an account per node — each
+node writes only under its own prefix and reads only its own `cmd` topic, and the
+site writes only on `<prefix>/+/cmd`. That is the recommended arrangement.
+
+**This installation currently runs on one shared account.** Then every node holds
+credentials that may publish on every other node's `cmd` topic, and since 2.8.0
+that means classes 1 and 2 on every node running it. Read
+[`security.md`](security.md#the-broker-is-now-the-deciding-question) before
+relying on this path — that section states the ceiling plainly and lists what
+bounds it.
+
+### The parameter list, for a node reached only over MQTT
+
+The server builds its form from the node's own list and deliberately keeps no
+table of its own. That list used to come only from `GET /api/cfg` — exactly what a
+node the server has no web login for cannot answer.
+
+Since 2.8.0 the node also publishes it (`cfgspec`) alongside its settings sweep.
+So the action that opens this path is the one that was already there: press
+**fetch settings** once, and the site knows both the values and the bounds. Until
+that has happened the page says so and offers no form, because a form built from
+a table invented on the server is precisely what this design refuses.
 
 ---
 
 ## Which settings may be written
 
-**All of them, bar three.** The list is the full `handleSetCmd()` surface of
-`src/helpers/CommonCLI.cpp` — twenty-eight parameters — not a curated safe
-corner.
+**All of them, bar four.** The list is the full `handleSetCmd()` surface of
+`src/helpers/CommonCLI.cpp` — twenty-seven parameters — not a curated safe
+corner. Three of the four were never on it (below); the fourth is `radio`, which
+was removed in nodefirmware 2.6.0 — see
+[radio parameters](#radio-parameters-are-refused-on-all-three) above.
 
 That is a deliberate reversal of the first design, which admitted only
 parameters that could not cut off reachability. Safe, and beside the point: the
@@ -389,7 +465,7 @@ so the control follows the declared type:
 | `enum` | Dropdown containing exactly the allowed words (`loop.detect` → off / minimal / moderate / strict) |
 | `bool` | Dropdown of `on` / `off` — not a free field, because MeshCore compares with `memcmp(…, "on", 2)`, so upstream `onzin` means *on* |
 | `int` / `float` | Number field carrying that parameter's own `min` and `max` |
-| `radio` | **Four** number fields — frequency, bandwidth, spreading factor, coding rate — each with its own range. One text box in which you must type `869.525 250 11 5` is exactly the box a typo turns into a lost node |
+| `radio` | **Not offered.** Firmware 2.6.0 and up do not list it, so the row does not appear; a node on older firmware still does, and there the page shows the reason instead of four fields. It used to be four number fields with their own ranges, on the argument that one text box for `869.525 250 11 5` is the box a typo turns into a lost node. True, and not far enough: a correctly filled form can put a transmitter on a band the antenna is not cut for just as finally |
 | `text` | Free text, only where it really is free text |
 | `text` + secret | Password field, never pre-filled — see below |
 
@@ -500,7 +576,7 @@ This is the route the whole project exists for, and until firmware 2.4.0 it was
 the one thing in this document that was designed and not built. The node it
 serves is JessaZH: stock MeshCore on a roof, no IP path, and none coming.
 
-**One write path, two transports.** Everything above still applies without
+**One write path, three transports.** Everything above still applies without
 exception — the same parameter table, the same bounds, the same three risk
 classes, the same confirmations, the same permissions, the same read-back. Only
 the last step differs. `nodeconfig.write()` runs every check first and picks a
@@ -1199,6 +1275,8 @@ against a node a human named.
 | `ota_route()` as a separate capability key | **built** |
 | `niet_teruggekomen` as a state that stays until acknowledged | **built** |
 | Writing settings to a `full_managed` node with an IP path | **built** — firmware 2.1.0 `POST /api/cfg`: the whole CLI surface bar three, typed controls, risk-driven confirmation, read-back. Requires the node's management address to be filled in |
+| Writing settings to a `full_managed` node with no web login | **built** — firmware 2.8.0 `set <param> <value>` on the `cmd` topic, with the read-back reported in the next statistics message. Risk classes 1 and 2 only, and the node validates against its own table |
+| Writing radio settings from a distance | **refused on every transport**, in the server and again in the firmware. `tx` is allowed; frequency, bandwidth, spreading factor and coding rate are not |
 | Writing settings to a `semi_managed` node over LoRa | **built** — firmware 2.4.0 `POST`/`GET /api/moncfg` on the **monitor**, plus `wifi mon set` on any CLI. `set` then `get`, one at a time, budgeted, with the read-back as the reported outcome. Same table, bounds, risk classes and permissions as the IP route |
 | Writing to a node's WiFi and MQTT settings | **not offered here.** Those are ours, not MeshCore's, and they already have their own forms on the node's own admin page and the `wifi` CLI |
 | Confirm-or-revert | **examined and rejected**, with the reasoning above |
@@ -1297,5 +1375,5 @@ cell would make the only question this exists for unanswerable.
 - [`clocksync.md`](clocksync.md) — whether this machine may tell the mesh what
   time it is
 - [`firmware-upgrade.md`](firmware-upgrade.md) — the upgrade mechanism end to end
-- [`mqtt.md`](mqtt.md) — the topics, and the three words the site may publish
+- [`mqtt.md`](mqtt.md) — the topics, and the four words the site may publish
 - [`firmware.md`](firmware.md) — building and flashing the node firmware

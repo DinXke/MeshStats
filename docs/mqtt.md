@@ -384,6 +384,62 @@ answering 404 to Home Assistant, throwing away a look-up that costs one to two
 minutes of LoRa airtime — and the admin page would keep showing the last sweep
 that did land, with nothing to say that anything had failed since.
 
+### `cfgspec` — the node's writable parameter table
+
+Rides along with the settings sweep above, and only with it: this table changes
+only when different firmware goes onto the node, so paying for it in every
+message would be paying monthly for something that changes yearly.
+
+```json
+"cfgspec": {
+  "name": "text,0,0,1,0,0",
+  "flood.max": "int,0,64,2,0,0",
+  "loop.detect": "enum,0,0,2,0,0,off|minimal|moderate|strict",
+  "tx": "int,0,30,3,0,0"
+}
+```
+
+One string per parameter, in a fixed order:
+`<kind>,<lo>,<hi>,<risk>,<reboot>,<secret>[,<choices>]`. Compact on purpose —
+twenty-seven objects with seven keys each are two kilobytes against nine hundred
+bytes this way, and it travels in a message with a fixed buffer.
+
+**Why this exists at all.** The server builds its write form from the node's own
+list and deliberately keeps no parameter table of its own; until 2.8.0 that list
+came only from `GET /api/cfg`, which is exactly what a node the server has no web
+login for cannot answer. Without `cfgspec` the MQTT write path would exist and be
+unusable: the site would not know a parameter's risk class, would assume the
+heaviest (`nodeconfig.risk_of`), and would block everything.
+
+It is still the node's list and not a table invented here — only a second
+*source* for the same list. It is accepted only when the message is about the
+publisher itself: a parameter table is the compiled-in list of the publishing
+firmware, so a block claiming to hold another node's cannot be true. That matters
+more than it sounds, because the site hangs its confirmations and its permissions
+on those risk classes.
+
+### `cfgset` — the outcome of the last write over `cmd`
+
+Rides along with every statistics message once there has been one, because it is
+a few hundred bytes and a missed publication should not lose it:
+
+```json
+"cfgset": {
+  "seq": 3, "ok": 1, "param": "flood.max", "asked": "12",
+  "applied": "12", "exact": 1, "reboot": 0, "msg": ""
+}
+```
+
+`applied` is what the node read back afterwards, not what was asked — the same
+discipline as `POST /api/cfg`, and for the same measured reasons (`set lat abc`
+is a bare `atof()`, `advert.interval 61` stores 60). `exact` says whether those
+two agree. `seq` counts writes since boot, so the server can tell this outcome
+from the previous one.
+
+A **refusal is reported here too**, with `ok: 0` and the reason in `msg`. Silence
+would be indistinguishable from a node asleep on its solar budget, and then a
+typo looks exactly like a flat battery. Same publisher rule as `cfgspec`.
+
 **Why it is not on a topic of its own.** It was going to be
 `meshmanager/<node>/settings`, until a check of `mqtt_ingest.py` showed this
 subscriber listens to exactly two patterns. A third topic would have been
@@ -410,14 +466,15 @@ So the server publishes one word on `meshmanager/<node>/cmd`:
 | `settings <key>` | logs in to a repeater it *monitors*, reads **that** repeater's CLI parameters over LoRa, and publishes them under that repeater's name (nodefirmware 1.9.0) |
 | `status` | publishes a statistics message immediately |
 | `time <epoch>` | sets its own clock to that UNIX time in UTC seconds, then checks the clocks of the repeaters it monitors over LoRa (nodefirmware 1.10.0) |
+| `set <param> <value>` | sets one of **its own** CLI parameters, reads it back, and reports the outcome with the statistics message it publishes immediately after (nodefirmware 2.8.0) |
 
 The answer comes back on the ordinary `stats` topic. Nothing else in the ingest
 path changes, and a receiver that knows nothing about `cmd` still works. `time`
 is the exception: it produces no message at all, only a change on the node. What
 happened is readable with `wifi clock` on the node and on the site's admin page.
 
-**The firmware accepts those three words and nothing else.** Not a prefix test,
-not a fallthrough to `handleCommand()` — an exact match against a list of three.
+**The firmware accepts those four words and nothing else.** Not a prefix test,
+not a fallthrough to `handleCommand()` — an exact match against a list of four.
 The telnet console on the node does hand its input to the CLI, but that console
 asks for a password over a link the operator controls, while this topic is
 reachable by anyone holding broker credentials. These repeaters hang on roofs and
@@ -426,8 +483,8 @@ words only make the node say what it would have said by itself, so the worst an
 attacker on the broker achieves with them is a statistics message, at most one
 every 30 seconds (`MQTT_CMD_MIN_GAP_MS`).
 
-The arguments do not widen that, and the two are worth separating because they
-are different kinds of thing.
+The arguments do not widen that, and they are worth separating because they are
+different kinds of thing.
 
 The one on `settings` never becomes text that reaches a CLI: it selects a single
 entry from the node's monitor list, and the commands then sent are the
@@ -443,6 +500,31 @@ capability that the other two do not: it changes state. Named plainly, because
 it is the one that deserves an ACL: an attacker on the broker can push a node's
 clock to any time between now and 2100, and that cannot be walked back over the
 air. The reason is in the next section.
+
+The one on `set` is the word that genuinely raises the ceiling of this topic, and
+it is worth being exact about how far. It is a **larger allowlist, not a
+passthrough**, and the node does the checking:
+
+- the parameter must be one of the twenty-eight names compiled into `CFG_PARAMS`.
+  The command is then built from *the table's* key, so no text out of the message
+  ever becomes a command — only the value travels, and it is always the last
+  word, so there is no separator a second command could start after;
+- the value must pass `cfgCheckValue()`, the same sieve `POST /api/cfg` and
+  `POST /api/moncfg` use. One sieve, not three that can drift apart;
+- the risk class must not exceed `CFG_MQTT_MAX_RISK`, which stands at *changes
+  behaviour noticeably* and not at *can cut this node off*. Radio parameters are not on
+  that table at all since 2.6.0, so this path cannot offer them either.
+
+A node that gets an unknown parameter or an out-of-bounds value refuses it,
+counts it, and **says so** — see `cfgset` above. Silence would be
+indistinguishable from a node asleep on its solar budget, which is the one thing
+this reply may not be.
+
+Why the ceiling sits lower here than on the two HTTP write paths comes down to
+who stands on the other side: those have an authenticated counterparty, this one
+has whoever the broker let in. On a broker with one shared account that is every
+node speaking to it. The full weighing, and what it means for your broker setup,
+is in [`security.md`](security.md#changing-a-setting-three-transports).
 
 ### The format of a `cmd` payload
 
@@ -467,7 +549,13 @@ settings
 status
 settings e3d3f4d7ed01
 time 1786665600
+set flood.max 12
+set name Dak Noord
 ```
+
+`set` is the one word with two arguments: the parameter name, then the value.
+The value is everything after the parameter, spaces included — `name` and
+`owner.info` consist of little else.
 
 `time` takes UNIX epoch **seconds in UTC**, parsed with `strtoul` (not `atol` —
 the epoch passes 2³¹ in 2038 and these nodes may well still be on their roofs). A
@@ -691,6 +779,16 @@ topic write meshmanager/e3d3f4d7ed01/stats
 topic write meshmanager/e3d3f4d7ed01/rx
 topic read  meshmanager/e3d3f4d7ed01/cmd
 ```
+
+Since nodefirmware 2.8.0 the `cmd` topic can also *change a setting*
+(`set <param> <value>`), which makes "who may publish on
+`<prefix>/<node>/cmd`" the deciding question rather than a tidiness one. With one
+account per node and the rules above, the answer is "the site, and nothing else".
+With a **single shared account** — which is what a default `init-passwd.sh`
+deployment runs on — every node holds credentials that may publish on every
+other node's `cmd` topic. Read
+[`security.md`](security.md#the-broker-is-now-the-deciding-question) before
+relying on that write path.
 
 Without the read rule the node connects, subscribes, is refused by the broker,
 and reports nothing about it — the button then looks exactly as dead as it did

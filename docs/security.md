@@ -94,15 +94,139 @@ equipment.
 | | Before firmware 2.1.0 | Now |
 |---|---|---|
 | Read all statistics and packet history | yes | yes |
-| Publish the three fixed words on the `cmd` topic | yes | yes |
+| Publish the fixed words on the `cmd` topic | yes | yes |
 | Passwords for repeaters you do not own | no | **no** — still |
 | Configure a radio you do not own | no | **no** — needs rights the monitor holds |
+| Change the radio of a node you *do* own | no | **no** — refused on every remote path |
 | Write firmware to your own nodes | no | **yes, if `MM_FW_NODE_*` is set** |
-| Change CLI settings on your own nodes | no | **yes, if `MM_FW_NODE_*` is set** |
+| Change CLI settings on your own nodes | no | **yes** — see the three transports below |
 
-The last two rows are the change. They are the price of being able to upgrade a
-repeater on a roof without a ladder, and the switch that pays it is a pair of
-environment variables you control.
+The last two rows are the change. They are the price of being able to maintain a
+repeater on a roof without a ladder.
+
+Note the shape of the last row since nodefirmware 2.8.0: it no longer depends on
+`MM_FW_NODE_*` alone. A CLI setting can travel by three transports, and only the
+first of them needs those variables — see
+[Changing a setting: three transports](#changing-a-setting-three-transports).
+
+### Radio parameters are never set remotely
+
+`radio` — frequency, bandwidth, spreading factor, coding rate, which MeshCore
+sets as one parameter — is refused on **every** remote write path: HTTP to the
+node, the MQTT `cmd` topic, and the mesh CLI of a monitor. `tx` (transmit power)
+is allowed and keeps its own risk class.
+
+The asymmetry is the whole argument. A wrong `tx` makes a node weaker and leaves
+it reachable — you still hear it, it still hears you, and you put it back. A
+wrong frequency, spreading factor, coding rate or bandwidth takes it off the air:
+it hears nobody and nobody hears it, and there is no way back that is not
+physical. On a roof that is the end of the node. No confirmation dialog repairs
+that; a threshold protects against hesitation and against clicking the wrong row,
+not against a number that puts a transmitter on a band the antenna is not cut
+for.
+
+It is enforced at the source rather than as a missing form field, in two places.
+
+**In the firmware**, `radio` is simply gone from `CFG_PARAMS` since nodefirmware
+2.6.0. That one list is at the same time what `GET /api/cfg` publishes, what
+`POST /api/moncfg` accepts and what the `cmd` topic lets through, so removing one
+row closes all three entrances on the node itself. Three screens each deciding
+for themselves could drift apart; one table cannot. The comment where the row
+stood keeps the line written out, so putting it back is one line.
+
+**On the server**, `nodeconfig.NO_REMOTE` refuses it again by name, checked in
+`write()` before a transport is even chosen. That is not redundant. It refuses
+*before anything leaves*, with a sentence that says why rather than the node's
+"not on the list" — which is also the answer to a typo. And, the hard reason: a
+node still running firmware older than 2.6.0 does have `radio` in its table and
+would accept it. The rule belongs to the action, not to the firmware version of
+whichever node happens to receive it.
+
+### Changing a setting: three transports
+
+One write path, three ways for the command to travel. Everything that can refuse
+a write — the node's own parameter list, its bounds, the risk classes, the
+confirmation, the RBAC permission, the read-back — happens in
+`nodeconfig.write()` regardless of which one is used. Per node, the first that is
+actually available:
+
+| # | Transport | Needs | Counterparty | Risk classes |
+|---|---|---|---|---|
+| 1 | HTTP to the node (`POST /api/cfg`) | an IP path plus `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` | that node's web login | 1, 2 and 3 |
+| 2 | MQTT `cmd` topic (`set <param> <value>`) | the node publishes to MQTT itself, nodefirmware 2.8.0, broker connected | **whoever the broker let in** | 1 and 2 only |
+| 3 | Mesh CLI via a monitor (`POST /api/moncfg`) | a monitor with an IP path, its web login, nodefirmware 2.4.0 | the monitor's web login, then its own rights on the far node | 1, 2 and 3 |
+
+The second row is new, and it exists because "this node cannot be changed" was
+factually wrong about a node that publishes to MQTT: such a node *has* a working
+connection to this broker. Before 2.8.0 the answer for a full-managed node
+without `MM_FW_NODE_*` was that nothing could be changed at all, while an open
+path to it lay unused.
+
+**Why the ceiling on row 2 is lower.** Rows 1 and 3 have an authenticated
+counterparty: a password on a link you control, or a monitor logging in with
+rights the far side's operator granted and can revoke. Row 2 has whoever holds
+broker credentials. On top of that, there is no read-back inside the same
+request — the node reports the outcome in its next statistics message — so a
+mistake is not visible at the moment it is made. Parameters that can cut a node
+off therefore keep their two authenticated roads.
+
+"Everything everywhere" and "nothing anywhere" are both wrong answers. The
+settings you adjust on an ordinary day — name, position, advert interval, flood
+limits, duty cycle — are classes 1 and 2, and they go through. The handful that
+can take a node off the air do not.
+
+The same ceiling is enforced twice: `nodeconfig.MQTT_MAX_RISK` on the server, so
+nothing leaves that would be refused anyway, and `CFG_MQTT_MAX_RISK` in the
+firmware, because the node is the one that carries the consequence.
+
+**What the node validates.** `set` is not a passthrough to the CLI. The parameter
+name is looked up in the firmware's compiled-in `CFG_PARAMS` table and the
+command is then built from *the table's* key, so no text from the message becomes
+a command; the value passes `cfgCheckValue()`, the same sieve as both HTTP write
+paths; and the risk class is checked. An unknown parameter or an out-of-bounds
+value is refused, counted, **and reported** — the refusal rides back on the next
+statistics message under `cfgset`, because silence here would be
+indistinguishable from a node asleep on its solar budget.
+
+The node also publishes its parameter table (`cfgspec`) with its settings sweep.
+The server builds its form from the node's list and deliberately keeps no table
+of its own; without this, a node the server cannot reach over IP would have a
+write path that could not be used.
+
+### The broker is now the deciding question
+
+Read this before turning transport 2 on.
+
+`mosquitto/acl.example` supports **one account per node**: each node may write
+only under its own `<prefix>/<pubkey>/` and read only its own `cmd` topic, and
+the site may write only on `<prefix>/+/cmd`. That is the recommended arrangement,
+and with it "who may publish on `<prefix>/<node>/cmd`" has a short answer: the
+site, and nothing else.
+
+**This deployment currently runs on one shared account.** With a shared account
+every node holds credentials that may publish on every other node's `cmd` topic.
+That was already true for the statistics topics — anyone with broker credentials
+could publish figures under any node's name, which is why per-node accounts were
+recommended in the first place — but until 2.8.0 the `cmd` topic could only ask a
+node to *speak*. It can now ask it to change a setting.
+
+So the honest sentence is: **on a shared broker account, a compromise of any one
+node lets its credentials change classes 1 and 2 on every other node that runs
+2.8.0.** Not the radio, not transmit power, not who may log in — those are
+refused on this path — but names, positions, advert intervals and flood limits,
+at most one every 30 seconds per node.
+
+Three ways to bound it, in order of how much they buy:
+
+- **Give each node its own broker account** (`mosquitto/add-node-user.sh`) and
+  the ACL from `mosquitto/acl.example`. Then only the site can publish a command,
+  and this whole paragraph stops applying.
+- **Keep `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` set** for nodes the server reaches
+  over IP. Transport 1 then wins the ordering and the `cmd` topic is not used for
+  writes at all — though it stays *reachable*, so this narrows the site's
+  behaviour and not the broker's.
+- **Do not expose the broker to the internet.** The usual advice, and it is the
+  one that decides how large "whoever the broker let in" actually is.
 
 Data used to flow strictly one way. Beside the two HTTP paths above there are
 two *narrow* return paths over MQTT, and both are worth understanding: they are
@@ -110,25 +234,39 @@ open to anyone holding broker credentials, which is a wider set of people than
 those holding the node's web login.
 
 **1. The MQTT command topic.** The server publishes on `meshmanager/<node>/cmd`, and
-the firmware accepts exactly three words there: `settings` (read my own CLI
-parameters now), `status` (publish a statistics message now) and `time <epoch>`
-(set my clock). It is an exact match against that list — not a prefix test, and
-explicitly *not* a
+the firmware accepts exactly four words there: `settings` (read my own CLI
+parameters now), `status` (publish a statistics message now), `time <epoch>`
+(set my clock) and, since nodefirmware 2.8.0, `set <param> <value>` (change one
+of my own CLI settings). It is an exact match against that list — not a prefix
+test, and explicitly *not* a
 fallthrough to the node's CLI, even though the node's telnet console does exactly
 that. That console sits behind a password on a link you control; this topic is
 reachable by anyone holding broker credentials, and these repeaters hang on roofs
 where one `reboot` in a loop is a lost node.
 
-Two of the three only make the node say what it would have said by itself. The
-third does not: `time` writes to the device. It is bounded by the firmware's own
-rules rather than by the topic — a clock may only move forward, and a node that
-already runs ahead is left alone — so the worst an attacker with broker
-credentials can do is push a node's clock into the future, which is not
-recoverable over the air and needs a reboot to undo. That is the real ceiling on
-this path, and it is higher than "make a node publish a statistics message".
-Bound it further with an ACL that gives each node read permission on
+Two of the four only make the node say what it would have said by itself. The
+other two write to the device, and both are bounded by the firmware's own rules
+rather than by the topic.
+
+`time` may only move a clock forward, and a node that already runs ahead is left
+alone — so the worst an attacker with broker credentials can do is push a node's
+clock into the future, which is not recoverable over the air and needs a reboot
+to undo.
+
+`set` is a **larger allowlist, not a passthrough**: the parameter must be one of
+the twenty-eight names compiled into the firmware, the value must fall inside
+that parameter's own bounds, and its risk class must not exceed
+`CFG_MQTT_MAX_RISK` — which stands at "changes behaviour noticeably" and not at
+"can cut this node off". Radio parameters are refused here as they are
+everywhere. The full reasoning, the three transports it belongs to, and what it
+means for your broker are in
+[Changing a setting: three transports](#changing-a-setting-three-transports)
+above. That section is the one to read before enabling any of this.
+
+Bound the whole topic with an ACL that gives each node read permission on
 its own `cmd` topic only, and the server write permission on `meshmanager/+/cmd`
-only — see `mosquitto/acl.example`.
+only — see `mosquitto/acl.example`. With one shared broker account that bound
+does not exist, and since 2.8.0 that matters more than it did.
 
 **2. The polling queue.** The HA integration polls `GET /api/v1/commands` and
 acts on what it finds — a list of repeater prefixes to refresh and CLI parameters

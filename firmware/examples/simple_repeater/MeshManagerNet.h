@@ -33,19 +33,45 @@
  *                           Since 1.10.0 also 'time <epoch>': set our own clock
  *                           to that UNIX time in UTC seconds, and then check
  *                           the clocks of the repeaters we monitor over LoRa.
+ *                           Since 2.8.0 also 'set <param> <waarde>': set one of
+ *                           OUR OWN CLI parameters, from the compiled-in
+ *                           CFG_PARAMS table, and report the read-back with the
+ *                           next statistics message.
  *
  * Deliberately NOT a remote CLI. The word is still matched against a list of
- * exactly three, so a broker account -- shared, leaked or simply mistyped --
- * cannot reach 'reboot', 'set', or the wifi commands. The two arguments that
- * exist do not change that. The one on 'settings' is never text that reaches a
+ * exactly four, so a broker account -- shared, leaked or simply mistyped --
+ * cannot reach 'reboot' or the wifi commands. The arguments that exist do not
+ * change that. The one on 'settings' is never text that reaches a
  * CLI, it only selects one entry from the monitor list, and that list is
  * writable solely from the admin page and the mesh CLI, both of which ask for a
  * password. The commands actually sent are the compiled-in parameter table. The
  * one on 'time' is parsed here as a number, checked against a window of years,
- * and never reaches a CLI either. This node hangs on a roof; the most an
+ * and never reaches a CLI either.
+ *
+ * 'set' is the one that genuinely raises the ceiling of this topic, so it is
+ * worth being exact about how far. The parameter name is looked up in
+ * CFG_PARAMS and the command is then built from the table's own key, so no text
+ * from the message becomes a command; the value passes cfgCheckValue(), the same
+ * sieve as the two HTTP write paths; and the parameter's risk class must not
+ * exceed CFG_MQTT_MAX_RISK, which stands at 'changes behaviour noticeably' and
+ * not at 'can cut this node off'. That last line is where this channel differs
+ * from the other two on purpose: they have an authenticated counterparty (this
+ * node's web login, or a monitor's), this one has whoever the broker let in --
+ * on a broker with one shared account, every node that speaks to it. So the
+ * settings you adjust on an ordinary day go through here, and the handful that
+ * can take a node off the air keep their two authenticated roads.
+ *
+ * Radio parameters do not appear on this road either, and for a reason that has
+ * nothing to do with the channel: since 2.6.0 'radio' is not in CFG_PARAMS at
+ * all, so no remote path offers it. A wrong 'tx' leaves a node reachable and
+ * reversible; a wrong frequency, spreading factor, coding rate or bandwidth does
+ * not. See the note where that row used to stand.
+ *
+ * This node hangs on a roof; the most an
  * attacker on the broker can make it do is publish what it already publishes by
- * itself, read out a repeater its operator already chose to monitor, or move
- * this node's clock forward inside that window -- at most once every 30
+ * itself, read out a repeater its operator already chose to monitor, move
+ * this node's clock forward inside that window, or set one of the reversible
+ * halves of its own parameter table -- at most once every 30
  * seconds, and for the two that cost airtime at most once every ten minutes
  * resp. once an hour.
  *
@@ -155,7 +181,7 @@
  * Zo is de overgang na het flashen af te lezen in plaats van te moeten
  * geloven. */
 #define MESHMANAGER_NAME     "MeshManager (by DinX)"
-#define MESHMANAGER_VERSION  "2.7.0"
+#define MESHMANAGER_VERSION  "2.8.0"
 
 class MyMesh;
 
