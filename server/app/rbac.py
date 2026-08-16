@@ -134,6 +134,21 @@ ACTIONS = {
                                 "deze node hernoemen"),
     "node.instelling.gewoon": Handeling("node", KLASSE_GEWOON,
                                         "een gewone instelling van deze node schrijven"),
+    # Het pakketfilter, met opzet een eigen reeks handelingen naast
+    # node.instelling.*. Ze lijken op elkaar en ze zijn het niet: een filter
+    # bepaalt wat deze node van ANDERMANS verkeer doorlaat, en dat is een andere
+    # bevoegdheid dan het zendvermogen van je eigen node bijstellen. Wie de
+    # dagelijkse verstoppingen op het mesh opruimt, hoeft daarvoor niet aan de
+    # radio te mogen komen.
+    #
+    # En de lichtste klasse is hier de WEG TERUG: uitzetten en terugzetten op de
+    # standaard vallen onder 'gewoon', aanzetten niet. Een filter maakt een node
+    # nutteloos zonder hem onbereikbaar te maken -- hij antwoordt nog, hij staat
+    # groen op elke pagina, en hij stuurt niets meer door. Dan mag de handeling
+    # die dat opheft niet zwaarder afgeschermd zijn dan de handeling die het
+    # veroorzaakte.
+    "node.filter.gewoon": Handeling("node", KLASSE_GEWOON,
+                                    "het pakketfilter van deze node uitzetten of ruimer maken"),
     # -- merkbaar
     "node.klok": Handeling("node", KLASSE_MERKBAAR,
                            "de klok van deze node zetten"),
@@ -143,6 +158,8 @@ ACTIONS = {
                                   "het beheeradres van deze node wijzigen"),
     "node.instelling.merkbaar": Handeling("node", KLASSE_MERKBAAR,
                                           "een merkbare instelling van deze node schrijven"),
+    "node.filter.merkbaar": Handeling("node", KLASSE_MERKBAAR,
+                                      "het pakketfilter van deze node aanzetten of strenger maken"),
     # Een schema is geen gewone instelling: het kost niet één keer zendtijd maar
     # elke dag opnieuw, op een band die van iedereen is. Wie het aanzet legt dus
     # een terugkerende last op andermans mesh, en dat hoort een klasse zwaarder
@@ -155,6 +172,9 @@ ACTIONS = {
     "node.instelling.ingrijpend": Handeling(
         "node", KLASSE_INGRIJPEND,
         "een instelling schrijven die deze node onbereikbaar kan maken"),
+    "node.filter.ingrijpend": Handeling(
+        "node", KLASSE_INGRIJPEND,
+        "een filterregel zetten die al het verkeer van een soort kan blokkeren"),
     "node.verwijderen": Handeling("node", KLASSE_INGRIJPEND,
                                   "deze node verwijderen"),
     # -- deze installatie

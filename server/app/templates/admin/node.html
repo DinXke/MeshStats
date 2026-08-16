@@ -708,6 +708,290 @@
   {% endif %}
 </section>
 
+<section id="pakketfilter">
+  <h2>Pakketfilter</h2>
+
+  <p class="muted small">
+    Welke van <em>andermans</em> pakketten deze repeater nog doorstuurt. Staat standaard
+    uit. Pakketten aan deze node zelf en direct gerouteerde pakketten gaan er altijd
+    omheen, dus je kunt jezelf hier niet mee buitensluiten — maar je kunt de node wél
+    stilletjes nutteloos maken. Zie <code>docs/nl/packet-filter.md</code>.
+  </p>
+
+  {% if filter_result %}
+  <div class="card notice">
+    {% if filter_result.ok %}
+    <strong>Gedaan:</strong> {{ filter_result.wat }}.
+    <br><span class="mono small">{{ filter_result.msg }}</span>
+    {% else %}
+    <strong>Niet gedaan.</strong>
+    {% if filter_result.step %}<span class="mono">[{{ filter_result.step }}]</span>{% endif %}
+    {{ filter_result.msg }}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {#- Wat de node zelf meldde in zijn laatste statistiekenbericht. Altijd zichtbaar,
+      ook zonder schrijfweg: dit is het antwoord op "staat hier iets aan dat ik
+      vergeten ben", en dat hoort niet af te hangen van of de node nu toevallig over
+      IP bereikbaar is. -#}
+  <div class="card">
+    <h3>Wat de node meldt</h3>
+    {% if not filter_seen.bekend %}
+    <p class="muted small">
+      Deze node heeft nog nooit iets over een pakketfilter gemeld. Meestal betekent dat
+      firmware van vóór 2.3.0 — het is in elk geval geen bewering dat er geen filter
+      aanstaat.
+    </p>
+    {% else %}
+    <p>
+      <strong>{{ filter_seen.tekst }}</strong>
+      {% if filter_seen.updated %}<span class="muted small">— volgens het bericht van
+        {{ filter_seen.updated }}</span>{% endif %}
+    </p>
+    {% if filter_seen.disarmed %}
+    <p class="muted small">
+      De node heeft het filter zelf uit gelaten na herhaalde herstarts (veilige modus).
+      De regels staan er nog en komen terug zodra hij weer normaal opstart.
+    </p>
+    {% endif %}
+    <p class="small">
+      Doorgelaten: <span class="mono">{{ filter_seen.door }}</span> ·
+      weggegooid: <span class="mono">{{ filter_seen.weg }}</span> ·
+      vrijgesteld via de ACL: <span class="mono">{{ filter_seen.vrij }}</span>
+    </p>
+    {% if filter_seen.redenen %}
+    <table class="cfgtable">
+      <thead><tr><th>Weggegooid omdat</th><th>aantal</th></tr></thead>
+      <tbody>
+        {% for label, aantal in filter_seen.redenen %}
+        <tr><td>{{ label }}</td><td class="mono">{{ aantal }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% elif filter_seen.aan %}
+    <p class="muted small">Er staat een filter aan, en het heeft nog niets weggegooid.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+
+  {% if not filter_route.can %}
+  <div class="card">
+    <p class="muted small">
+      <strong>Niet te zetten vanaf hier:</strong>
+      {%- if filter_route.blocker == "relayed_only" %}
+      deze repeater draait onze firmware niet en heeft geen IP-pad. Voor hem loopt de weg
+      over de mesh-CLI: <code>filter</code>, <code>filter off</code>,
+      <code>filter reset</code>.
+      {%- elif filter_route.blocker == "no_credentials" %}
+      de server heeft geen weblogin voor de beheerpagina van deze node
+      (<code>MM_FW_NODE_USER</code> / <code>MM_FW_NODE_PASS</code>).
+      {%- elif filter_route.blocker == "no_host" %}
+      er staat geen beheeradres bij deze node.
+      {%- elif filter_route.blocker == "no_fw" %}
+      we weten niet welke firmware hierop draait.
+      {%- elif filter_route.blocker == "old_fw" %}
+      deze node draait <span class="mono">{{ filter_route.fw }}</span>; het pakketfilter
+      bestaat vanaf <span class="mono">{{ filter_route.min_fw }}</span>.
+      {%- else %}{{ filter_route.blocker }}.
+      {%- endif %}
+      <br>De weg terug werkt hoe dan ook over de mesh-CLI: <code>filter off</code> en
+      <code>filter reset</code> hebben geen WiFi, geen beheerpagina en deze site niet
+      nodig.
+    </p>
+  </div>
+  {% elif not filter_live.ok %}
+  <div class="card">
+    <p class="muted small">
+      <strong>Regels niet op te halen:</strong> {{ filter_live.error }}.
+      Zonder de stand van de node zelf wordt hier niets aangeboden — een formulier op een
+      gegokte stand zet regels die je niet bedoelde.
+    </p>
+  </div>
+  {% else %}
+  {% set f = filter_live.filter %}
+
+  <div class="card">
+    <h3>Aan of uit</h3>
+    <p class="muted small">
+      Uitzetten laat de regels staan; terugzetten wist ze én zet het filter uit. Allebei
+      lichter dan aanzetten, met opzet: herstel mag nooit strakker afgeschermd zijn dan de
+      fout die het terugdraait.
+    </p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="off">
+      <button type="submit">Filter uit</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="reset">
+      <button type="submit">Alles terug naar standaard</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="on">
+      <label class="cfgconfirm">bevestig
+        <input name="confirm" placeholder="ja" autocomplete="off" required
+               title="Typ ja. Staat er al een regel klaar die een heel pakkettype dichtzet, dan vraagt de server de naam van de node."></label>
+      <button type="submit" class="danger">Filter aan</button>
+    </form>
+    <p class="muted small">
+      Nu volgens de node zelf: <strong>{% if f.on %}aan{% else %}uit{% endif %}</strong>,
+      minimale padhash <span class="mono">{{ f.hash }}</span>, structuurcontrole op
+      groepstekst <span class="mono">{% if f.malformed %}aan{% else %}uit{% endif %}</span>.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3>Losse regels</h3>
+    <table class="cfgtable">
+      <thead><tr><th>Regel</th><th>Nu</th><th>Nieuwe waarde</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Minimale padhash</td>
+          <td class="mono">{{ f.hash }}</td>
+          <td>
+            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="cmd" value="hash">
+              <select name="arg1">
+                <option value="1">1 byte — alles door</option>
+                <option value="2">2 byte — oudere nodes vallen af</option>
+                <option value="3">3 byte — vrijwel alles valt af</option>
+              </select>
+              <label class="cfgconfirm">bevestig
+                <input name="confirm" placeholder="ja / {{ rep.name }}" autocomplete="off"
+                       title="Typ ja. Bij 3 byte vraagt de server de naam van de node, want die regel blokkeert vandaag vrijwel al het verkeer."></label>
+              <button type="submit">Zet</button>
+            </form>
+          </td>
+        </tr>
+        <tr>
+          <td>Misvormde groepstekst</td>
+          <td class="mono">{% if f.malformed %}aan{% else %}uit{% endif %}</td>
+          <td>
+            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="cmd" value="malformed">
+              <select name="arg1">
+                <option value="on">aan</option>
+                <option value="off">uit</option>
+              </select>
+              <label class="cfgconfirm">bevestig
+                <input name="confirm" placeholder="ja" autocomplete="off"></label>
+              <button type="submit">Zet</button>
+            </form>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted small">
+      "Misvormd" betekent hier: structureel onmogelijk (lengte en blokuitlijning). De
+      inhoud kan een repeater niet lezen — daarvoor zou hij de kanaalsleutel nodig hebben.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3>Per pakkettype</h3>
+    <p class="muted small">
+      Een hoplimiet van <span class="mono">0</span> of een type op "niet doorsturen" zet
+      een hele categorie verkeer stil. Daar vraagt de server de naam van de node voor.
+      Drie losse knoppen per regel, want het zijn drie handelingen met drie
+      verschillende gewichten — in één formulier zouden ze op één bevestiging meeliften.
+    </p>
+    <table class="cfgtable">
+      <thead><tr>
+        <th>Type</th><th>Door</th><th>Max hops</th><th>Snelheid</th><th>Weg</th><th>Wijzigen</th>
+      </tr></thead>
+      <tbody>
+      {% for t in f.types %}
+      <tr>
+        <td class="mono">{{ "%02d"|format(t.id) }} {{ t.name }}</td>
+        <td class="mono">{% if t.on %}ja{% else %}<strong>nee</strong>{% endif %}</td>
+        <td class="mono">{{ t.hops }}</td>
+        <td class="mono">{% if t.limit %}{{ t.limit }}/{{ t.window }}s{% else %}—{% endif %}</td>
+        <td class="mono">{{ t.drop }}</td>
+        <td>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="cmd" value="hops {{ "%02d"|format(t.id) }}">
+            <input type="number" name="arg1" min="0" max="63" value="{{ t.hops }}" required
+                   title="hoogstens zoveel hops; 0 = niets van dit type doorsturen">
+            <input name="confirm" placeholder="ja / {{ rep.name }}" autocomplete="off" required>
+            <button type="submit">hops</button>
+          </form>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="cmd" value="rate {{ "%02d"|format(t.id) }}">
+            <input type="number" name="arg1" min="0" max="65535" value="{{ t.limit }}" required
+                   title="aantal pakketten; 0 = geen snelheidslimiet">
+            <input type="number" name="arg2" min="1" max="3600" value="{{ t.window }}" required
+                   title="per zoveel seconden">
+            <input name="confirm" placeholder="ja" autocomplete="off" required>
+            <button type="submit">snelheid</button>
+          </form>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="cmd"
+                   value="type {{ "%02d"|format(t.id) }} {% if t.on %}off{% else %}on{% endif %}">
+            <input name="confirm" autocomplete="off" required
+                   placeholder="{% if t.on %}{{ rep.name }}{% else %}ja{% endif %}">
+            <button type="submit" {% if t.on %}class="danger"{% endif %}>{% if t.on %}dichtzetten{% else %}openzetten{% endif %}</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Geblokkeerde kanalen</h3>
+    <p class="muted small">
+      Een repeater ziet geen kanaal<em>naam</em> — alleen één byte:
+      <span class="mono">sha256(kanaalsleutel)[0]</span>. Geef daarom de sleutel (base64,
+      zoals je hem in een client plakt) of de hashbyte zelf als
+      <span class="mono">#a3</span>. Let op: ongeveer één kanaal op 256 deelt die byte met
+      een ander, en dat kanaal gaat dan mee.
+    </p>
+    {% if f.channels %}
+    <table class="cfgtable">
+      <thead><tr><th>Label</th><th>Hash</th><th></th></tr></thead>
+      <tbody>
+        {% for c in f.channels %}
+        <tr>
+          <td>{{ c.label }}</td>
+          <td class="mono">#{{ c.hash }}</td>
+          <td>
+            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="cmd" value="channel remove {{ c.label }}">
+              <button type="submit">weer doorlaten</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted small">Geen enkel kanaal geblokkeerd.</p>
+    {% endif %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="channel add">
+      <input name="arg1" maxlength="23" placeholder="label" required autocomplete="off"
+             title="Een naam voor jezelf; de node vergelijkt op de hash">
+      <input name="arg2" maxlength="64" placeholder="psk-base64 of #a3" required
+             autocomplete="off">
+      <input name="confirm" placeholder="ja" autocomplete="off" required>
+      <button type="submit">blokkeer</button>
+    </form>
+  </div>
+
+  {% endif %}
+</section>
+
 <section>
   <h2>Klok</h2>
   <div class="card">

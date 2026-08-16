@@ -55,6 +55,22 @@ CATALOG = {
     "rx_airtime_utilization": ("airtime", "RX-benutting", "%", 1),
     "airtime":                ("airtime", "TX-airtime totaal", "min", 2),
     "rx_airtime":             ("airtime", "RX-airtime totaal", "min", 3),
+    # Pakketfilter -- wat deze repeater WEIGERDE door te sturen, per reden.
+    # Een eigen sectie en niet bij 'Berichten', want deze getallen gaan over een
+    # keuze van de beheerder en niet over wat de radio deed. Ze naast
+    # 'Ontvangen flood' zetten zou suggereren dat het metingen van dezelfde
+    # soort zijn, en juist het verschil is hier het punt: een lijn die omhoog
+    # loopt betekent dat er iets wegvalt omdat iemand dat zo ingesteld heeft.
+    "filter_on":              ("filter", "Filter aan", None, 0),
+    "filter_dropped":         ("filter", "Weggegooid totaal", None, 1),
+    "filter_passed":          ("filter", "Doorgelaten", None, 2),
+    "filter_exempt":          ("filter", "Vrijgesteld (ACL)", None, 3),
+    "filter_drop_hops":       ("filter", "Weg: te veel hops", None, 4),
+    "filter_drop_rate":       ("filter", "Weg: snelheidslimiet", None, 5),
+    "filter_drop_type":       ("filter", "Weg: type dicht", None, 6),
+    "filter_drop_hash":       ("filter", "Weg: padhash te klein", None, 7),
+    "filter_drop_channel":    ("filter", "Weg: geblokkeerd kanaal", None, 8),
+    "filter_drop_malformed":  ("filter", "Weg: misvormde groepstekst", None, 9),
     # Overig (bekend maar minder prominent)
     "request_successes":      ("other", "Verzoeken gelukt", None, 0),
     "request_failures":       ("other", "Verzoeken mislukt", None, 1),
@@ -66,6 +82,7 @@ SECTIONS = [
     ("battery", "Batterij & solar"),
     ("messages", "Berichten"),
     ("airtime", "Airtime"),
+    ("filter", "Pakketfilter"),
     ("other", "Overig"),
 ]
 
@@ -79,6 +96,11 @@ TILE_METRICS = {
                  "sent_flood", "sent_direct", "flood_dups", "recv_errors"],
     "airtime": ["airtime_utilization", "rx_airtime_utilization",
                 "airtime", "rx_airtime"],
+    # 'Doorgelaten' staat er met opzet naast 'Weggegooid': een weggooiteller
+    # zonder noemer zegt niets. Duizend weg is veel op tienduizend en bijna
+    # niets op een miljoen, en dat verschil is precies wat je wil weten voor je
+    # aan de regels gaat zitten.
+    "filter": ["filter_on", "filter_dropped", "filter_passed", "filter_exempt"],
 }
 
 # Charts on a repeater page: (key, title, [metrics], hours). The key is the
@@ -95,6 +117,11 @@ CHARTS = [
     ("mcu_temperature", "Chiptemperatuur (48 u)", ["mcu_temperature"], 48),
     ("msg_rates", "Berichtenrates (24 u)", ["nb_recv_rate", "nb_sent_rate"], 24),
     ("neighbor_count", "Aantal buren (7 d)", ["neighbor_count"], 168),
+    # Weggegooid naast doorgelaten in één frame, want dat is de vergelijking die
+    # de vraag beantwoordt. Alleen getekend als er ooit iets van gemeld is: een
+    # lege grafiek op elke nodepagina zou suggereren dat er iets stuk is op elke
+    # node die simpelweg geen filter heeft.
+    ("filter", "Pakketfilter (24 u)", ["filter_dropped", "filter_passed"], 24),
 ]
 
 # Meters (gauges): metric -> (min, max, [(vanaf, kleur), ...])

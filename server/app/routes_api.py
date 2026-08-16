@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
-from . import auth, candidates, config, countries, db, metrics, packets, search
+from . import (auth, candidates, config, countries, db, metrics, packets,
+               pktfilter, search)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -205,9 +206,31 @@ def repeater_detail(slug: str):
         {"prefix": n["prefix"], "name": n["name"], "snr": n["snr"], "last_seen": n["last_seen"]}
         for n in db.neighbor_rows(r["id"])
     ]
+    # De filterstand hoort in het publieke antwoord, en dat is een keuze.
+    # Een repeater met een filter aan stuurt andermans verkeer niet meer door,
+    # en de mensen die dat merken zijn precies de mensen die deze API lezen --
+    # niet de beheerder van de node. "Waarom komt mijn bericht niet aan" is
+    # anders alleen te beantwoorden door iemand met een inlog.
+    #
+    # Alleen de samenvatting, niet de regeltabellen. Aan/uit en hoeveel er weg
+    # is, is wat een buitenstaander nodig heeft; welke pakkettypes op welke
+    # hoplimiet staan is beheerdersgereedschap, en dat staat achter een login.
+    samenvatting = pktfilter.summarise(db.filter_state_for(r["id"]))
     return {
         "slug": r["slug"], "name": db.public_name(r), "pubkey_prefix": r["pubkey_prefix"],
         "last_seen": r["last_seen"], "metrics": mets, "neighbors": neighbors,
+        "filter": {
+            # 'known' false betekent: deze node heeft er nooit iets over gezegd.
+            # Dat is geen bewering dat er geen filter aanstaat.
+            "known": samenvatting["bekend"],
+            "on": samenvatting["aan"],
+            "text": samenvatting["tekst"],
+            "dropped": samenvatting["weg"],
+            "passed": samenvatting["door"],
+            "reasons": [{"reason": naam, "count": aantal}
+                        for naam, aantal in samenvatting["redenen"]],
+            "updated": samenvatting.get("updated") or None,
+        },
     }
 
 

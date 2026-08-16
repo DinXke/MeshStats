@@ -427,6 +427,7 @@ def _render(**over):
     beheerpagina.
     """
     from app import nodeconfig as nc
+    from app import pktfilter as pf
     from app.templating import templates
     params = over.pop("params", PARAMS)
     ctx = {
@@ -457,6 +458,16 @@ def _render(**over):
                        for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],
         "cfg_now": {"name": "DinX-Home", "tx": "22"},
         "cfg_result": None, "rights": None, "relay": None,
+        # Het pakketfilter zit op dezelfde pagina maar heeft zijn eigen tests
+        # (test_pktfilter.py). Hier de toestand die niets toont: geen
+        # schrijfweg, en de node heeft nooit iets over een filter gemeld. Zo
+        # gaat deze reeks over de instellingenschrijver en niets anders.
+        "filter_route": {"can": False, "blocker": "old_fw", "host": "http://x",
+                         "fw": "2.1.0", "min_fw": "2.3.0", "relayed": False},
+        "filter_live": {"ok": False, "error": "", "filter": {}},
+        "filter_seen": pf.summarise(None),
+        "filter_types": pf.TYPE_NAMES,
+        "filter_result": None,
         "sweep_hours": 0, "sweep_next": None, "sweep_last": None,
         "sweep_status": {"enabled": True, "min_gap_min": 15,
                          "max_per_day": 48, "today": 0},

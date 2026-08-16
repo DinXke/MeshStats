@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from . import commanding, db, firmware, nodeconfig
+from . import commanding, db, firmware, nodeconfig, pktfilter
 
 # Kolommen die niet uit de CLI-sweep komen maar uit de repeatertabel zelf. Ze
 # staan vooraan omdat ze de vraag beantwoorden die je meestal het eerst stelt --
@@ -37,6 +37,13 @@ BUILTIN = [
     # de verzameling stelt, niet over één node. Een node die als enige geen
     # schema heeft is precies de node waarvan de waarden stilletjes verouderen.
     ("sweep_hours", "Uitvraagschema"),
+    # Het pakketfilter hoort hier om de reden waarom deze tabel bestaat. Een
+    # filter maakt een node nutteloos zonder hem onbereikbaar te maken: hij
+    # blijft antwoorden, blijft adverteren, en staat overal groen. Bij twintig
+    # nodes is "op welke staat er eigenlijk een filter aan" precies zo'n vraag
+    # die je over de verzameling stelt en niet per node -- en het is de vraag
+    # die je pas stelt als iemand al klaagt dat er berichten wegblijven.
+    ("filter", "Pakketfilter"),
 ]
 BUILTIN_KEYS = [k for k, _ in BUILTIN]
 
@@ -51,6 +58,10 @@ DEFAULT_COLUMNS = [
     "region.default",
     "flood.max.unscoped",
     "flood.max",
+    # Standaard in beeld, ook al staat het filter op vrijwel elke node uit. Juist
+    # daarom: een kolom die twintig keer "uit" zegt en één keer "aan" is een
+    # kolom waarin die ene meteen opvalt.
+    "filter",
 ]
 
 SETTING_KEY = "compare_columns"
@@ -135,6 +146,9 @@ def build(repeaters, columns: list[str] | None = None, broker_connected: bool = 
     je niet kunt testen zonder het te renderen.
     """
     ruw = db.cli_settings_all()
+    # Eén query voor alle nodes, net als hierboven: per node vragen is twintig
+    # query's voor één scherm.
+    filterstanden = db.filter_states_all()
     # Drie toestanden, geen twee. Een rij die er niet is betekent "nooit
     # gevraagd"; een rij met NULL betekent "gevraagd, geen antwoord" -- dat is de
     # afspraak die mqtt_ingest._clean_settings vastlegt en die de nodepagina al
@@ -163,6 +177,15 @@ def build(repeaters, columns: list[str] | None = None, broker_connected: bool = 
         for k in kolommen:
             if k == "level":
                 waarden[k] = route.get("level", "")
+            elif k == "filter":
+                # Drie toestanden, en die zijn hier belangrijker dan elders.
+                # MISSING = deze node heeft nooit iets over een filter gezegd
+                # (meestal firmware van vóór 2.3.0), en dat is iets anders dan
+                # een node die meldt dat er geen filter aanstaat. Ze tot één leeg
+                # vakje platslaan zou de kolom onbruikbaar maken voor de enige
+                # vraag die hij beantwoordt.
+                stand = filterstanden.get(rid)
+                waarden[k] = pktfilter.summarise(stand)["tekst"] if stand else MISSING
             elif k in BUILTIN_KEYS:
                 if k == "sweep_hours":
                     # 0 en NULL betekenen allebei 'uit', en dat is een antwoord

@@ -25,8 +25,8 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
-               firmware, metrics, mqtt_ingest, nodeconfig, ratelimit, rbac,
-               retention, sweepsched, tsdb)
+               firmware, metrics, mqtt_ingest, nodeconfig, pktfilter, ratelimit,
+               rbac, retention, sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -706,6 +706,17 @@ def _node_page(request: Request, rid: int, **extra):
     # Voor een doorgestuurde node: hoe komt zijn monitor bij hem binnen, en werkt
     # dat. Alleen ophalen als er een monitor met een beheeradres is, anders staat
     # elke paginaweergave op een node te wachten die er niet is.
+    # Het pakketfilter. De stand komt uit twee bronnen en dat is met opzet:
+    # ``fstate`` is wat de node in zijn laatste statistiekenbericht meldde -- die
+    # is er altijd, ook voor een node zonder IP-pad, en hij is misschien een paar
+    # minuten oud. ``flive`` wordt alleen opgehaald als er een schrijfweg is, en
+    # is de stand van nu inclusief de regeltabellen die niet in het bericht
+    # passen. Wie iets gaat wijzigen krijgt de tweede te zien; wie alleen kijkt
+    # heeft aan de eerste genoeg en hoeft er geen node voor wakker te maken.
+    froute = pktfilter.filter_route(rep)
+    fstate = db.filter_state_for(rid)
+    flive = (pktfilter.state(froute["host"], pktfilter.FILTER_PEEK_TIMEOUT_S)
+             if froute["can"] else {"ok": False, "error": "", "filter": {}})
     relay = db.find_repeater(rep["source_prefix"]) if cfg["relayed"] else None
     relay_host = str((relay["ota_host"] if relay else "") or "")
     rights = (nodeconfig.rights_for(relay_host, rep["pubkey_prefix"])
@@ -763,6 +774,16 @@ def _node_page(request: Request, rid: int, **extra):
         # Alleen ophalen als er ook echt een weg is, anders staat elke
         # paginaweergave tien seconden op een node te wachten die er niet is.
         "cfg_route": cfg,
+        # Drie dingen over het filter, en ze beantwoorden drie vragen. 'Staat er
+        # een filter aan en wat gooit het weg' (uit het laatste bericht, altijd
+        # beschikbaar), 'wat zijn de regels precies' (van de node zelf, alleen
+        # als hij bereikbaar is) en 'mag ik eraan komen' (de route). Ze door
+        # elkaar halen levert precies één soort fout op: een pagina die beweert
+        # dat er geen filter aanstaat omdat de node net niet antwoordde.
+        "filter_route": froute,
+        "filter_live": flive,
+        "filter_seen": pktfilter.summarise(fstate),
+        "filter_types": pktfilter.TYPE_NAMES,
         # Welke van de twee wegen zijn monitor gebruikt, en waar het op stukloopt.
         # Een sweep die op stilte uitloopt heeft drie oorzaken die er van hieraf
         # identiek uitzien, en dat verschil is waar iemand een half uur op
@@ -843,6 +864,49 @@ def write_config(request: Request, rid: int, key: str = Form(...),
         value = " ".join(v.strip() for v in (rf, rb, rs, rc))
     result = nodeconfig.write(rep, key.strip(), value.strip(), confirm)
     return _node_page(request, rid, cfg_result=result)
+
+
+@router.post("/repeaters/{rid}/filter")
+def write_filter(request: Request, rid: int, cmd: str = Form(""),
+                 arg1: str = Form(""), arg2: str = Form(""),
+                 confirm: str = Form(""), csrf: str = Form(...)):
+    """Eén filterregel van deze node zetten en de nieuwe stand teruglezen.
+
+    Synchroon en met de pagina als antwoord, om dezelfde redenen als bij
+    ``write_config``: het is één aanroep over het lokale netwerk, en het antwoord
+    is meer dan gelukt-of-niet -- er staat de volledige stand ná afloop in.
+
+    Het recht hangt aan wat de regel aanricht en niet aan een kaal "mag deze
+    gebruiker aan het filter komen". Een snelheidslimiet bijstellen en een
+    pakkettype helemaal dichtzetten zijn twee handelingen die er in het
+    formulier hetzelfde uitzien, en die hoor je aan verschillende mensen te
+    kunnen geven. De huidige stand gaat mee in de weging voor het ene geval
+    waarin dat uitmaakt: aanzetten terwijl er al een categorale regel klaarstaat
+    is de klik die het verkeer stilzet, niet de klik die de regel maakte.
+    """
+    check_csrf(request, csrf)
+    rep = _rep_or_404(request, rid)
+    # De regel komt in stukken binnen: het vaste deel in een verborgen veld, de
+    # getallen in invoervelden met hun eigen min en max. Zo staat er in het
+    # formulier geen tekstveld waarin je een hele commandoregel kunt typen --
+    # dat zou een CLI op een webpagina zijn, en dan is de risicoweging een
+    # kwestie van hoe iemand toevallig spelt.
+    cmd = " ".join(deel.strip() for deel in (cmd, arg1, arg2) if deel.strip())
+    route = pktfilter.filter_route(rep)
+    huidig = (pktfilter.state(route["host"]).get("filter") or {}) if route["can"] else {}
+    _risk_perm = {
+        pktfilter.RISK_PLAIN: "node.filter.gewoon",
+        pktfilter.RISK_WRITES: "node.filter.merkbaar",
+    }.get(pktfilter.risk_of(cmd, huidig), "node.filter.ingrijpend")
+    user = require_perm(request, _risk_perm, rep)
+
+    result = pktfilter.write(rep, cmd, confirm, huidig)
+    # In het audittrail de zin en niet de commandoregel: "GRP_TXT (05) helemaal
+    # niet meer doorsturen" is over een half jaar nog te lezen, "hops 05 0" niet.
+    _noteer(request, user, _risk_perm, rep=rep,
+            outcome=audit.OK if result["ok"] else audit.MISLUKT,
+            detail=f"{result['wat']} -- {result['msg']}"[:400])
+    return _node_page(request, rid, filter_result=result)
 
 
 @router.post("/repeaters/{rid}/schedule")

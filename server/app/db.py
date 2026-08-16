@@ -148,6 +148,12 @@ CREATE TABLE IF NOT EXISTS repeater_cli(
   updated TEXT NOT NULL,
   PRIMARY KEY(repeater_id, param)
 );
+CREATE TABLE IF NOT EXISTS repeater_filter(
+  repeater_id INTEGER PRIMARY KEY REFERENCES repeaters(id) ON DELETE CASCADE,
+  state TEXT NOT NULL,
+  updated TEXT NOT NULL,
+  source TEXT
+);
 CREATE TABLE IF NOT EXISTS packets(
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL,
@@ -1498,6 +1504,87 @@ def pending_settings_request(prefix: str) -> str | None:
         return None
     entry = d.get(prefix)
     return entry.get("ts") if isinstance(entry, dict) else None
+
+
+# --- de filterstand van een repeater ------------------------------------------
+#
+# Een eigen tabel met een JSON-blok erin, en niet als rijen in ``repeater_cli``.
+# Dat is de enige plek in dit bestand waar bewust van de sleutel/waarde-vorm
+# afgeweken wordt, dus de reden hoort erbij.
+#
+# ``repeater_cli`` bewaart wat de CLI van een node antwoordt op ``get <naam>``:
+# één regel tekst per sleutel, en de vergelijkingstabel zet die naast elkaar. Een
+# filterstand is drie tabellen (hoplimiet, snelheidslimiet en aan/uit per
+# pakkettype) plus een lijst geblokkeerde kanalen plus zes tellers. Dat in rijen
+# persen levert sleutels op als ``filter.rate.05.limit`` -- zeventig rijen per
+# node waar de site er nooit één los van bevraagt, en een kolomkiezer die
+# onbruikbaar wordt omdat er zeventig kolommen bij komen die niemand wil.
+#
+# Waarom dan niet genormaliseerd, met een rij per type? Omdat er niets is dat
+# ernaar vraagt. De site leest deze stand altijd in zijn geheel: om hem te tonen,
+# om hem te vergelijken met wat de node zelf zegt, of om te weten of er
+# überhaupt een filter aanstaat. Een schema dat query's ondersteunt die niemand
+# stelt, is onderhoud zonder opbrengst -- en de dag dat de firmware er een regel
+# bij krijgt, is dit de vorm die zonder migratie meebeweegt.
+#
+# Wat hier staat is een MOMENTOPNAME uit het laatste statistiekenbericht, niet de
+# waarheid. De waarheid staat in de node. Vandaar ``updated`` en ``source``: wie
+# het zei en wanneer, zodat de pagina "volgens het bericht van 14:03" kan tonen
+# in plaats van te doen alsof ze het nu weet.
+
+
+def upsert_filter_state(repeater_id: int, state: dict, source: str = "") -> None:
+    """Bewaar de filterstand zoals hij in een bericht binnenkwam."""
+    import json as _json
+    execute(
+        "INSERT INTO repeater_filter(repeater_id, state, updated, source) VALUES(?,?,?,?) "
+        "ON CONFLICT(repeater_id) DO UPDATE SET "
+        "state=excluded.state, updated=excluded.updated, source=excluded.source",
+        (repeater_id, _json.dumps(state)[:20000], utcnow(), (source or "")[:32]),
+    )
+
+
+def filter_state_for(repeater_id: int) -> dict | None:
+    """De laatst gemelde filterstand, of None als er nooit een bericht was.
+
+    None en een lege stand zijn met opzet verschillend. 'Deze node heeft nooit
+    iets over een filter gezegd' betekent meestal dat er firmware zonder filter
+    op staat, en dat is iets anders dan 'deze node meldt dat er geen filter
+    aanstaat'. De pagina zegt die twee ook anders.
+    """
+    import json as _json
+    row = qone("SELECT * FROM repeater_filter WHERE repeater_id=?", (repeater_id,))
+    if not row:
+        return None
+    try:
+        state = _json.loads(row["state"])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    state["_updated"] = row["updated"]
+    state["_source"] = row["source"]
+    return state
+
+
+def filter_states_all() -> dict:
+    """Elke bekende filterstand, per repeater-id -- één query voor de tabel.
+
+    Zelfde reden als ``cli_settings_all``: de vergelijkingstabel vraagt het van
+    alle nodes tegelijk, en dat per node doen is twintig query's voor één scherm.
+    """
+    import json as _json
+    uit = {}
+    for row in q("SELECT * FROM repeater_filter"):
+        try:
+            state = _json.loads(row["state"])
+        except (ValueError, TypeError):
+            continue
+        if isinstance(state, dict):
+            state["_updated"] = row["updated"]
+            state["_source"] = row["source"]
+            uit[row["repeater_id"]] = state
+    return uit
 
 
 def upsert_cli_settings(repeater_id: int, values: dict, prune: bool = True) -> None:

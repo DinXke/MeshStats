@@ -545,6 +545,18 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     if not isinstance(metrics, dict):
         raise ValueError("metrics missing")
 
+    # De filterstand reist mee met elk statistiekenbericht. De tellers erin gaan
+    # als gewone metrics door dezelfde molen: dan tekenen ze in de grafieken,
+    # verouderen ze met dezelfde bewaartermijn en zijn ze te vergelijken met het
+    # verkeer waar ze uit weggeknipt zijn -- allemaal machinerie die er al is.
+    # Het zou zonde zijn er een tweede stelsel naast te zetten voor zes getallen.
+    filter_state = body.get("filter")
+    if isinstance(filter_state, dict):
+        extra = _filter_metrics(filter_state)
+        if extra:
+            metrics = dict(metrics)
+            metrics.update(extra)
+
     # Keuren vóór er iets geschreven wordt, en in één regel voor beide
     # ingest-wegen (zie db.check_snapshot). Wat hier opgeworpen wordt, komt
     # terecht bij de brede vanger in _dispatch: geteld op de beheerpagina en met
@@ -581,11 +593,107 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     db.record_firmware(row["id"], rep.get("fw"), db.payload_module_version(rep))
     if subject != publisher:
         log.info("stats for %s relayed by node %s", subject, publisher)
+    if isinstance(filter_state, dict):
+        _handle_filter(row, publisher, subject, filter_state)
     settings = body.get("settings")
     if isinstance(settings, dict):
         _handle_settings(row, publisher, settings, prior_source)
     _state["messages"] += 1
     _state["last_msg"] = ts
+
+
+# --- het pakketfilter ---------------------------------------------------------
+
+# De tellers die als metric verdergaan, met de naam die ze op de site krijgen.
+# Een vaste lijst en geen doorgeeflus: dit is een topic waar iedereen met
+# brokergegevens onder kan publiceren, en een lus zou een vreemde afzender laten
+# bepalen welke metricnamen er in de databank verschijnen. Zes namen die wij
+# kiezen, en de rest van de payload wordt genegeerd.
+FILTER_DROP_METRICS = {
+    "type": "filter_drop_type",
+    "hops": "filter_drop_hops",
+    "rate": "filter_drop_rate",
+    "hash": "filter_drop_hash",
+    "kanaal": "filter_drop_channel",
+    "misvormd": "filter_drop_malformed",
+}
+
+
+def _num(value):
+    """Een teller, of None. Negatieve en onzinnige waarden vallen af."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value < 0 or value > 4_000_000_000:
+        return None
+    return float(value)
+
+
+def _filter_metrics(state: dict) -> dict:
+    """De tellers uit een filterblok, als gewone metrics.
+
+    Ook wanneer het filter uit staat, en dat is met opzet. Een nul die
+    gepubliceerd wordt is een meting -- 'dit filter gooide vandaag niets weg' --
+    en die is iets anders dan een ontbrekende reeks. Zonder die nullen zou de
+    grafiek van een node waarvan het filter net uitgezet is gewoon ophouden, wat
+    er precies zo uitziet als een node die niets meer meldt.
+    """
+    uit = {}
+    drops = state.get("drop")
+    totaal = 0.0
+    if isinstance(drops, dict):
+        for sleutel, naam in FILTER_DROP_METRICS.items():
+            waarde = _num(drops.get(sleutel))
+            if waarde is None:
+                continue
+            uit[naam] = waarde
+            totaal += waarde
+    if uit:
+        uit["filter_dropped"] = totaal
+    for sleutel, naam in (("passed", "filter_passed"), ("exempt", "filter_exempt")):
+        waarde = _num(state.get(sleutel))
+        if waarde is not None:
+            uit[naam] = waarde
+    # Aan of uit als getal, zodat 'wanneer stond dit filter aan' een reeks is en
+    # geen gok op basis van wanneer er weer iets weggegooid werd.
+    if isinstance(state.get("on"), bool):
+        uit["filter_on"] = 1.0 if state["on"] else 0.0
+    return uit
+
+
+def _handle_filter(row, publisher: str, subject: str, state: dict) -> None:
+    """Bewaar de filterstand -- maar alleen die van de afzender zelf.
+
+    Dezelfde regel als bij de CLI-instellingen, en om een scherpere reden. Een
+    node kan legitiem cijfers dóórgeven over een repeater die hij monitort, dus
+    voor metrics is 'niet over jezelf' normaal. Voor een filterstand niet: de
+    firmware publiceert alleen zijn eigen filter, want een gemonitorde repeater
+    vertelt zijn filterstand nergens over de radio. Een blok dat over iemand
+    anders beweert te gaan, kan dus niet kloppen -- en het gaat over de
+    instelling waarmee je een node onopvallend nutteloos maakt. Weigeren, en het
+    opschrijven.
+    """
+    if subject != publisher:
+        log.info("filterstand voor %s meegestuurd door %s: genegeerd, "
+                 "een node meldt alleen zijn eigen filter", subject, publisher)
+        return
+    bewaard = {
+        "on": bool(state.get("on")),
+        "disarmed": bool(state.get("disarmed")),
+        "hash": int(_num(state.get("hash")) or 1),
+        "malformed": bool(state.get("malformed")),
+        "channels": int(_num(state.get("channels")) or 0),
+        "blocked_types": int(_num(state.get("blocked_types")) or 0),
+        "passed": int(_num(state.get("passed")) or 0),
+        "exempt": int(_num(state.get("exempt")) or 0),
+        "drop": {},
+    }
+    drops = state.get("drop")
+    if isinstance(drops, dict):
+        for sleutel in FILTER_DROP_METRICS:
+            waarde = _num(drops.get(sleutel))
+            if waarde is not None:
+                bewaard["drop"][sleutel] = int(waarde)
+    db.upsert_filter_state(row["id"], bewaard, publisher)
 
 
 def _field(row, name):
