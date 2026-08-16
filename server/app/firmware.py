@@ -199,11 +199,23 @@ def releases(force: bool = False) -> dict:
     wilde is een beheerpagina die je op het verkeerde moment in de steek laat.
     Een lege lijst zonder fout is iets anders -- dan zijn er echt geen releases,
     en dat hoort er ook zo te staan.
+
+    De cache telt op de KLOK en niet op de inhoud, en dat verschil is een bug
+    waard geweest. "Vers genoeg" afmeten aan of er items in zitten lijkt
+    voorzichtig, maar het betekent dat een repository zonder releases nooit een
+    geldige cache heeft -- en dat is precies de toestand waarin dit project
+    vandaag verkeert. Elke keer dat iemand de beheerpagina opende zou er dan
+    opnieuw bij GitHub aangeklopt worden, tot de zestig verzoeken per uur op
+    waren en de pagina ging klagen over een limiet die hij zelf had opgemaakt.
+    Nu is een geslaagde ophaal die niets opleverde ook een antwoord, en een fout
+    zet de klok net zo goed vooruit -- dat laatste is de wachttijd die voorkomt
+    dat een kapot netwerk in een strak ritme opnieuw geprobeerd wordt. De knop
+    "Lijst nu verversen" is de uitweg voor wie niet wil wachten.
     """
     slug = repo_slug()
     with _lock:
         fresh = (time.time() - _cache["at"]) < CACHE_MIN * 60
-        if not force and fresh and _cache["slug"] == slug and _cache["items"]:
+        if not force and fresh and _cache["slug"] == slug:
             return dict(_cache)
 
     if not slug:

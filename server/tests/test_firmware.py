@@ -446,3 +446,46 @@ def test_limiet_bij_github_haalt_de_pagina_niet_onderuit():
     assert "anonieme limiet" in html
     # De laatst opgehaalde lijst blijft bruikbaar; de knop blijft staan.
     assert "Upgraden" in html
+
+
+def test_een_repo_zonder_releases_wordt_ook_gecachet(monkeypatch):
+    """De toestand van vandaag: er zijn nog geen releases. Als een lege uitkomst
+    niet als cache telt, klopt de beheerpagina bij elke weergave opnieuw bij
+    GitHub aan en maakt hij de limiet op waar hij daarna over klaagt."""
+    monkeypatch.setattr(firmware, "repo_slug", lambda: "DinXke/MeshStats")
+    keer = []
+
+    def tel(*a, **k):
+        keer.append(1)
+        return b"[]"
+
+    monkeypatch.setattr(firmware, "_get", tel)
+    firmware._cache.update(at=0, items=[], error="", slug="")
+
+    eerst = firmware.releases()
+    assert eerst["items"] == [] and eerst["error"] == ""
+    firmware.releases()
+    firmware.releases()
+    assert len(keer) == 1, "de lege lijst had gecachet moeten zijn"
+
+    # ...en de knop op de pagina komt er wél doorheen.
+    firmware.releases(force=True)
+    assert len(keer) == 2
+
+
+def test_een_fout_zet_de_klok_ook_vooruit(monkeypatch):
+    """Anders wordt een kapot netwerk in een strak ritme opnieuw geprobeerd,
+    één keer per paginaweergave."""
+    monkeypatch.setattr(firmware, "repo_slug", lambda: "DinXke/MeshStats")
+    keer = []
+
+    def stuk(*a, **k):
+        keer.append(1)
+        raise OSError("netwerk weg")
+
+    monkeypatch.setattr(firmware, "_get", stuk)
+    firmware._cache.update(at=0, items=[], error="", slug="")
+
+    assert firmware.releases()["error"] == "offline"
+    firmware.releases()
+    assert len(keer) == 1
