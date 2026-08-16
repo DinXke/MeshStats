@@ -513,15 +513,53 @@ def contacts_by_key_prefix(key_prefix: str) -> list[sqlite3.Row]:
     Returns a list, never a single row, because a path hop identifies a node by
     only its first one or two key bytes -- so several nodes can legitimately
     answer to the same hop. Callers must present that as the ambiguity it is.
+
+    ``updated`` rides along because the candidate weighing (app/candidates.py)
+    falls back to it for recency when this observer has never heard the node's
+    advert itself -- a contact pushed by Home Assistant has a date but no
+    reception.
     """
     h = (key_prefix or "").lower().strip()
     if not h or len(h) > 6 or not re.fullmatch(r"[0-9a-f]+", h):
         return []
     return q(
-        "SELECT prefix6, name, lat, lon, node_type FROM contacts "
+        "SELECT prefix6, name, lat, lon, node_type, MAX(updated) AS updated "
+        "FROM contacts "
         "WHERE substr(prefix6, 1, ?) = ? GROUP BY prefix6 ORDER BY prefix6",
         (len(h), h),
     )
+
+
+def observer_receptions(observer: str) -> dict[str, dict]:
+    """Which nodes this observer has really heard, and how close they came.
+
+    Keyed on the node's 6-hex key prefix: ``{"hops": int, "seen": iso}``, where
+    ``hops`` is the fewest hops any of its adverts had travelled when this
+    observer picked it up, and ``seen`` the most recent one.
+
+    Only adverts can answer this, and that is the point: an advert is the one
+    payload that names its sender by full key prefix, so every row here is a
+    measurement rather than a resolution of some ambiguous byte. Feeding
+    ambiguous data into the thing that resolves ambiguity would be circular.
+
+    Only floods count. On a FLOOD ``path_len`` is the route already travelled,
+    which is the number wanted; on a DIRECT it is the route still to go, and
+    mixing the two in one MIN() would report a node as a neighbour on the
+    strength of a packet that was merely nearly finished (docs/protocol.md 1.4).
+
+    A full scan of the packets table, which packet retention keeps to a week --
+    a few thousand rows. Callers cache it; see routes_api.
+    """
+    return {
+        r["prefix6"]: {"hops": r["hops"], "seen": r["seen"]}
+        for r in q(
+            "SELECT sender AS prefix6, MIN(path_len) AS hops, MAX(ts) AS seen "
+            "FROM packets WHERE observer = ? AND sender IS NOT NULL "
+            "AND route LIKE '%FLOOD' AND path_len IS NOT NULL "
+            "GROUP BY sender",
+            (observer,),
+        )
+    }
 
 
 # The archive page asks three questions about one query -- the rows, the total,

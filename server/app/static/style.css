@@ -495,10 +495,23 @@ label input { width: 100%; margin-top: .25rem; }
 .pktpath code { font-family: var(--mono); color: var(--cyan); flex: 0 0 auto; }
 .pktpath span { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
 /* Certainty is visible: a single match reads as plain text, while several or no
-   matches get the same muted, dashed treatment the map uses for those hops. */
+   matches get the same muted, dashed treatment the map uses for those hops. A
+   ranked hop ("likely") sits on the uncertain side of that line as well -- the
+   map draws it as a gap with a ring on every candidate, and the list must not
+   look surer than the picture beside it. Its underline is dashed; the text is
+   left in the normal colour so the eye still lands on the node's name and only
+   then on the clause qualifying it. */
 .pktpath li.hop-ambiguous span, .pktpath li.hop-unknown span { color: var(--muted); font-style: italic; }
-.pktpath li.hop-ambiguous, .pktpath li.hop-unknown { border-bottom-style: dashed; }
+.pktpath li.hop-ambiguous, .pktpath li.hop-unknown,
+.pktpath li.hop-likely { border-bottom-style: dashed; }
+.pktpath li.hop-likely { cursor: help; }
 .pktnote { margin: .5rem 0 0; line-height: 1.5; }
+
+/* The reasoning under a derived name in the detail panel. It is a second line
+   rather than only a tooltip on purpose: the panel is what a phone opens, and a
+   touch screen has no hover at all, so the candidates and the ground for their
+   order have to be on screen as text. */
+.candnote { display: block; margin-top: .15rem; line-height: 1.45; font-family: var(--sans); }
 
 /* --- plus/minus filter buttons ------------------------------------------------ */
 /* A pair beside a value: + narrows the archive query to it, - excludes it. They

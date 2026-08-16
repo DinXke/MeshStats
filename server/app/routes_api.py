@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
-from . import auth, config, countries, db, metrics, packets, search
+from . import auth, candidates, config, countries, db, metrics, packets, search
 
 router = APIRouter(prefix="/api/v1")
 
@@ -244,60 +244,130 @@ def repeater_map(slug: str):
 # for answers that only change when a node we have never heard of advertises
 # itself. Hence a short-lived memo: fresh enough that a new node shows up within
 # the minute, cheap enough to survive a mesh that mirrors every frame it hears.
+#
+# The key carries the observer and the hop bound as well as the hash, because the
+# same byte resolves differently depending on who heard the packet and what the
+# frame says about how far away the node can be. Both are small, repeating values
+# -- one observer per node, hop bounds in the single digits -- so the memo still
+# collapses a feed's worth of packets onto a handful of entries.
 _HOP_CACHE_TTL_S = 60
-_hop_cache: dict[str, dict] = {}
+_hop_cache: dict[tuple, dict] = {}
+_observer_cache: dict[str, dict] = {}
 _hop_cache_filled = 0.0
 
 
-def _resolve_hop(hop_hash: str) -> dict:
-    """Work out which node a single path hop refers to -- honestly.
+def _expire_caches() -> None:
+    """Drop both memos together once the TTL is up.
 
-    A hop entry is not an identifier, it is the first one or two bytes of the
-    forwarder's public key (see docs/protocol.md 1.4). One byte gives 256
-    possible values while this site already knows several hundred nodes, so two
-    nodes sharing a hop value is the normal case, not a data error.
-
-    Therefore: never pick a "best" candidate. Report all of them and let the
-    caller draw the difference between knowing and guessing.
-
-    ``state`` is one of:
-      known      exactly one node matches -- as certain as this protocol gets
-      ambiguous  several nodes match; which one forwarded is not recoverable
-      unknown    no node we have ever heard an advert from matches
+    Together on purpose: a resolution is a function of the observer context it
+    was computed from, and letting one expire without the other would serve
+    rankings built on evidence that had already been refreshed.
     """
     global _hop_cache_filled
     now = time.monotonic()
     if now - _hop_cache_filled > _HOP_CACHE_TTL_S:
         _hop_cache.clear()
+        _observer_cache.clear()
         _hop_cache_filled = now
-    hit = _hop_cache.get(hop_hash)
+
+
+def _observer_context(observer: str | None) -> dict:
+    """What one observer knows of the mesh, as the weighing needs it.
+
+    Two lookups -- the observer's own position and the nodes it has actually
+    heard -- shared by every hash resolved for that observer in this minute. The
+    reception table is a scan of the packets table, which is far too much work
+    to repeat per packet in a feed of hundreds.
+    """
+    key = (observer or "").lower()
+    hit = _observer_cache.get(key)
     if hit is not None:
         return hit
-
-    matches = [
-        {"prefix": m["prefix6"], "name": m["name"], "lat": m["lat"], "lon": m["lon"],
-         "node_type": m["node_type"]}
-        for m in db.contacts_by_key_prefix(hop_hash)
-    ]
-    state = "known" if len(matches) == 1 else ("ambiguous" if matches else "unknown")
-    hit = {"hash": hop_hash, "state": state, "matches": matches}
-    _hop_cache[hop_hash] = hit
+    prefix6 = key[:6]
+    home = db.contact_location(prefix6) if prefix6 else None
+    hit = {
+        "prefix6": prefix6 or None,
+        "pos": (home["lat"], home["lon"]) if home else None,
+        "evidence": db.observer_receptions(key) if key else {},
+    }
+    _observer_cache[key] = hit
     return hit
 
 
-def _hop_waypoint(hop_hash: str) -> dict:
+def _resolve_hop(hop_hash: str, observer: str | None = None,
+                 role: str = "hop", route: str | None = None,
+                 path_len: int | None = None, index: int | None = None) -> dict:
+    """Work out which node a single address hash refers to -- honestly.
+
+    A hop entry, a src_hash and a dest_hash are all the same kind of thing: the
+    first one or two bytes of a public key (see docs/protocol.md 1.4). One byte
+    gives 256 possible values while this site already knows several hundred
+    nodes, so two nodes sharing a value is the normal case, not a data error.
+
+    What we may not do is quietly pick a favourite and print it as fact. What we
+    may do -- and now do -- is drop the candidates the frame itself places out of
+    reach, and order the rest by evidence with the reason attached. The weighing,
+    and the reasons it is allowed to lean on, live in app/candidates.py; this
+    function only supplies it with the observer's context and the bound that
+    follows from this packet's route and hop count.
+
+    ``state`` is one of:
+      known      one node stands -- either the only match, or the last one left
+                 after an exclusion. Still derived from one byte, never stated.
+      likely     several stand, and the evidence puts one above the rest;
+                 ``lead`` names the signal that did it
+      ambiguous  several stand and nothing separates them: which one it was is
+                 not recoverable
+      unknown    nothing stands: no contact matches, or all of them were excluded
+    """
+    _expire_caches()
+    bound = candidates.radio_hop_bound(role, route, path_len, index)
+    key = (hop_hash, (observer or "").lower(), bound)
+    hit = _hop_cache.get(key)
+    if hit is not None:
+        return hit
+
+    ctx = _observer_context(observer)
+    weighed = candidates.weigh(
+        [{"prefix": m["prefix6"], "name": m["name"], "lat": m["lat"],
+          "lon": m["lon"], "node_type": m["node_type"], "updated": m["updated"]}
+         for m in db.contacts_by_key_prefix(hop_hash)],
+        evidence=ctx["evidence"], observer6=ctx["prefix6"],
+        observer_pos=ctx["pos"], bound=bound,
+    )
+    hit = {"hash": hop_hash, **weighed}
+    _hop_cache[key] = hit
+    return hit
+
+
+def _hop_waypoint(hop_hash: str, observer: str | None = None,
+                  route: str | None = None, path_len: int | None = None,
+                  index: int | None = None) -> dict:
     """The same resolution as _resolve_hop, reduced to what a moving dot needs.
 
     A position is handed out only for a hop that resolves to exactly one located
     node. Everything else keeps its state and no coordinates, so the client draws
-    that stretch of the route as the guess-free gap it is.
+    that stretch of the route as the guess-free gap it is -- and ``likely`` is
+    deliberately on the wrong side of that line. A ranking is good enough to name
+    a probable node in words next to the reason it is probable; it is not good
+    enough to draw a line on a map, where the reason does not travel with it.
     """
-    hop = _resolve_hop(hop_hash)
+    hop = _resolve_hop(hop_hash, observer, "hop", route, path_len, index)
     one = hop["matches"][0] if hop["state"] == "known" else None
     return {
         "hash": hop["hash"], "state": hop["state"],
         "lat": one["lat"] if one else None, "lon": one["lon"] if one else None,
     }
+
+
+def _hops(stored: str | None) -> list[str]:
+    """The stored ``path`` column back as a list of hop hashes.
+
+    The position in that list is not decoration: it is how far along the route a
+    hop sits, and therefore half of the bound its candidates are weighed against.
+    Hence one helper, so the two callers cannot drift into indexing differently.
+    """
+    return [h for h in (stored or "").split(",") if h]
 
 
 def _scope_codes(stored: str | None) -> list[int] | None:
@@ -309,26 +379,43 @@ def _scope_codes(stored: str | None) -> list[int] | None:
         return None
 
 
+def _trim(res: dict, limit: int = 6) -> dict:
+    """A resolution reduced to what a list row needs: names, and the counts the
+    reader has to be told about.
+
+    Coordinates and timestamps go; the ranking's own signals stay, because they
+    are what the row's tooltip says the order was built from. ``total`` survives
+    the trim so a row can still say how many candidates there were even when it
+    only prints the first few.
+    """
+    return {
+        "hash": res["hash"], "state": res["state"], "lead": res.get("lead"),
+        "total": len(res["matches"]),
+        "matches": [{"prefix": m["prefix"], "name": m["name"], "hops": m["hops"],
+                     "km": m["km"]} for m in res["matches"][:limit]],
+        "dropped": [{"prefix": d["prefix"], "name": d["name"], "km": d["km"],
+                     "why": d["why"]} for d in res["dropped"][:limit]],
+        "dropped_total": len(res["dropped"]),
+    }
+
+
 def _resolve_src(row) -> dict | None:
     """Who a packet's 1-byte source hash could be, or None when there is nothing
     to resolve -- an advert already names its sender in full, and an ACK carries
     no identity at all.
 
     Reuses the hop resolver: a src_hash is exactly a hop-sized key prefix, and
-    the honesty rules are identical. The matches are trimmed to name and prefix;
-    a candidate list needs no coordinates.
+    the honesty rules are identical. Only the role differs, and the role is what
+    decides whether the frame bounds how far away the node can be -- on a flood
+    the path counts backwards to the originator, so it does.
     """
     if row["sender"]:
         return None
     src = row["src_hash"]
     if not src:
         return None
-    hop = _resolve_hop(src)
-    return {
-        "hash": src, "state": hop["state"],
-        "matches": [{"prefix": m["prefix"], "name": m["name"]}
-                    for m in hop["matches"][:6]],
-    }
+    return _trim(_resolve_hop(src, row["observer"], "src",
+                              row["route"], row["path_len"]))
 
 
 def _scope_region(codes: list[int] | None) -> int | None:
@@ -399,7 +486,8 @@ def packet_feed(
             "origin": None if lat is None else origin,
             "sender_lat": p["sender_lat"], "sender_lon": p["sender_lon"],
             "observer_lat": p["observer_lat"], "observer_lon": p["observer_lon"],
-            "path": [_hop_waypoint(h) for h in (p["path"] or "").split(",") if h],
+            "path": [_hop_waypoint(h, p["observer"], p["route"], p["path_len"], i)
+                     for i, h in enumerate(_hops(p["path"]))],
             # The country of whichever node the reception is attributed to, so
             # filtering by country matches the dot the visitor sees on the map.
             "country": (p["sender_country"] if origin == "sender"
@@ -559,6 +647,11 @@ def packet_heatmap():
         for h in (p["path"] or "").split(","):
             if not h:
                 continue
+            # Deliberately without an observer or a route: the heat map only
+            # ever uses a hop that resolves to exactly one node, so a ranking
+            # would change nothing here, and the query behind it is a lean one
+            # that does not carry those columns. A resolution that stayed
+            # ambiguous before still stays out of the aggregation now.
             hop = _resolve_hop(h)
             one = hop["matches"][0] if hop["state"] == "known" else None
             stops.append(_heat_stop(one["prefix"], one["name"],
@@ -654,7 +747,7 @@ def packet_detail(packet_id: int):
 
     # Packets stored before the path column existed keep a path_len but no path;
     # the client says so rather than pretending the packet took no hops.
-    hops = [h for h in (p["path"] or "").split(",") if h]
+    hops = _hops(p["path"])
 
     # Same rule as the advert block: the frame decides where it can, the stored
     # column answers for the rows whose frame was never kept.
@@ -685,10 +778,18 @@ def packet_detail(packet_id: int):
         "sender": p["sender"], "sender_name": p["sender_name"],
         "sender_lat": p["sender_lat"], "sender_lon": p["sender_lon"],
         "sender_country": p["sender_country"],
-        "src": _resolve_hop(src_hash) if src_hash and not p["sender"] else None,
-        "dest": _resolve_hop(dest_hash) if dest_hash else None,
+        # Source and destination are weighed against what this observer has
+        # really heard, and against what the frame's own route type allows: a
+        # flood bounds where the packet came from, a direct bounds where it is
+        # going. See candidates.radio_hop_bound -- getting those two the wrong
+        # way round would exclude the innocent.
+        "src": _resolve_hop(src_hash, p["observer"], "src", p["route"],
+                            p["path_len"]) if src_hash and not p["sender"] else None,
+        "dest": _resolve_hop(dest_hash, p["observer"], "dest", p["route"],
+                             p["path_len"]) if dest_hash else None,
         "raw": raw,
-        "path": [_resolve_hop(h) for h in hops],
+        "path": [_resolve_hop(h, p["observer"], "hop", p["route"], p["path_len"], i)
+                 for i, h in enumerate(hops)],
         "path_stored": bool(p["path"]) or p["path_len"] == 0,
         "error": decoded.get("error"),
         "advert": advert,

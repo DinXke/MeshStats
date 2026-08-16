@@ -12,24 +12,104 @@
     var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
   }
-  // Sender of a packet that is not an advert, worked out from the 1-byte source
-  // hash the server resolved against the contacts table (the `src` object on a
-  // packet). One byte is honest ambiguity: one match reads as a name, several
-  // read as "N mogelijk" with every candidate in the mouseover -- the same rule
-  // the path hops follow. Shared between the live feed and the archive, which
-  // render the same packets in two places.
-  function srcLabel(src, t) {
-    if (!src || !src.matches || !src.matches.length) return null;
-    var names = src.matches.map(function (m) {
+  // --- address-hash candidates ---------------------------------------------
+  // A sender, a destination and a path hop are all named by one or two bytes of
+  // a public key, which on a mesh of several hundred nodes routinely fits more
+  // than one node. The server no longer merely lists the matches: it drops the
+  // ones the frame places out of radio reach and ranks the rest on evidence
+  // (server/app/candidates.py). Four states come back, and each reads
+  // differently:
+  //
+  //   known      one node stands. A name -- but dotted, because one byte is a
+  //              derivation however few nodes answer to it.
+  //   likely     several stand and one ranks above the rest. The leader's name,
+  //              dotted, with the others and the ground for the order alongside.
+  //   ambiguous  several stand and nothing separates them. "N mogelijk", as
+  //              before: putting one of them first here would be a coin toss
+  //              printed as a conclusion.
+  //   unknown    nothing stands.
+  //
+  // Shared between the live feed and the archive, which render the same packets
+  // in two places and must tell the same story in both.
+  function candNames(res) {
+    return (res.matches || []).map(function (m) {
       return m.name || (m.prefix || "").toUpperCase();
     });
-    if (src.state === "known") {
-      return { text: names[0],
-               title: t("pkt.src_from_hash", { h: (src.hash || "").toUpperCase() }) };
+  }
+
+  // List rows get a trimmed resolution (a count plus the first few names), the
+  // detail panel the whole one. Read the counts from whichever arrived.
+  function candTotal(res) {
+    return res.total != null ? res.total : (res.matches || []).length;
+  }
+  function droppedTotal(res) {
+    return res.dropped_total != null ? res.dropped_total : (res.dropped || []).length;
+  }
+
+  // Which measurement put the leader on top, in the leader's own figures. The
+  // server names the signal that broke the tie; the sentence stays about what
+  // was measured rather than about how sure anyone feels.
+  function leadReason(res) {
+    var m = (res.matches || [])[0];
+    if (!m || !res.lead) return null;
+    if (res.lead === "hops") {
+      if (m.hops == null) return null;
+      if (m.hops === 0) return t("pkt.cand_why_direct");
+      return t(m.hops === 1 ? "pkt.cand_why_hop1" : "pkt.cand_why_hops", { n: m.hops });
     }
-    return { text: t("pkt.src_multi", { n: src.matches.length }),
-             title: t("pkt.src_candidates", { list: names.join(", "),
-                                              h: (src.hash || "").toUpperCase() }) };
+    if (res.lead === "distance") {
+      return m.km == null ? null : t("pkt.cand_why_near", { km: m.km });
+    }
+    if (res.lead === "recency") return t("pkt.cand_why_recent");
+    return null;
+  }
+
+  // An excluded candidate must never simply vanish: say how many went and on
+  // what ground, so a reader who knows better can disagree with the reasoning.
+  function droppedNote(res) {
+    var n = droppedTotal(res);
+    if (!n) return null;
+    var names = (res.dropped || []).map(function (m) {
+      return m.name || (m.prefix || "").toUpperCase();
+    });
+    return t(n === 1 ? "pkt.cand_dropped_one" : "pkt.cand_dropped",
+             { n: n, list: names.join(", ") });
+  }
+
+  // Where the name came from. Said in every state, because the dotted underline
+  // is a promise that this sentence exists somewhere.
+  function hashNote(res) {
+    return t("pkt.src_from_hash", { h: (res.hash || "").toUpperCase() });
+  }
+
+  // Everything about the ordering: that it is one, who else is in it, why this
+  // one leads, and who was ruled out. Empty when there is nothing to rank.
+  function rankNote(res) {
+    var bits = [];
+    var names = candNames(res);
+    if (res.state === "likely") {
+      bits.push(t("pkt.cand_ranked", { n: candTotal(res) }));
+      if (names.length > 1) {
+        bits.push(t("pkt.cand_others", { list: names.slice(1).join(", ") }));
+      }
+      var why = leadReason(res);
+      if (why) bits.push(why);
+    } else if (res.state === "ambiguous") {
+      bits.push(t("pkt.src_candidates", { list: names.join(", "),
+                                          h: (res.hash || "").toUpperCase() }));
+    }
+    var drop = droppedNote(res);
+    if (drop) bits.push(drop);
+    return bits.join(" · ");
+  }
+
+  function srcLabel(src, t) {
+    if (!src || !src.matches || !src.matches.length) return null;
+    var text = src.state === "ambiguous"
+      ? t("pkt.src_multi", { n: candTotal(src) })
+      : candNames(src)[0];
+    var rank = rankNote(src);
+    return { text: text, title: hashNote(src) + (rank ? " · " + rank : "") };
   }
 
   // --- packet detail, shared by the live page and the archive -------------------
@@ -82,33 +162,72 @@
   }
 
   function hopLabel(hop) {
-    if (hop.state === "known") {
+    if (hop.state === "known" || hop.state === "likely") {
       var m = hop.matches[0];
+      var s = m.name || m.prefix.toUpperCase();
+      // A ranked hop says so in the line itself, and names the runners-up
+      // there rather than only in the hover: the map still draws this hop as a
+      // gap with a ring on every candidate, and a name here that looked as firm
+      // as a resolved one would contradict the picture beside it.
+      if (hop.state === "likely") {
+        s += " · " + t("pkt.hop_likely", { n: candTotal(hop) }) +
+          " (" + t("pkt.cand_also", { list: candNames(hop).slice(1).join(", ") }) + ")";
+      }
       // Saying which node it was but not being able to place it is exactly why
       // the map shows a dashed gap here; spell that out rather than leaving
       // the reader to wonder why a named hop has no dot.
-      return (m.name || m.prefix.toUpperCase()) +
-        (m.lat == null || m.lon == null ? " — " + t("pkt.hop_nolocation") : "");
+      if (m.lat == null || m.lon == null) s += " — " + t("pkt.hop_nolocation");
+      return s;
     }
     if (hop.state === "ambiguous") {
-      return t("pkt.hop_ambiguous", { n: hop.matches.length }) + ": " +
-        hop.matches.map(function (m) { return m.name || m.prefix.toUpperCase(); }).join(", ");
+      return t("pkt.hop_ambiguous", { n: candTotal(hop) }) + ": " +
+        candNames(hop).join(", ");
     }
     return t("pkt.hop_unknown");
   }
 
-  // The panel spells out what the column only hints at: every candidate by
-  // name, and which hash they were derived from.
-  function srcDetail(res) {
-    if (!res || !res.matches || !res.matches.length) return null;
-    var names = res.matches.map(function (m) {
-      return m.name || (m.prefix || "").toUpperCase();
-    });
-    if (res.state === "known") {
-      return names[0] + " · " + t("pkt.src_from_hash", { h: res.hash.toUpperCase() });
+  // A muted second line under a derived name. The column can put its reasoning
+  // in a tooltip; the panel cannot, because the panel is what a phone opens and
+  // a touch screen has no hover. So everything the tooltip says has to be
+  // readable here as plain text -- who else was in the running, why this one
+  // came first, and how many were ruled out.
+  function candNote(text) {
+    var el = document.createElement("span");
+    el.className = "muted small candnote";
+    el.textContent = text;
+    return el;
+  }
+
+  /* Fill one field of the panel from a resolved address hash.
+   *
+   * Returns false when there is nothing at all to say, so the caller can decide
+   * what an absent answer looks like in its own row.
+   */
+  function fillResolved(id, res) {
+    var el = document.getElementById(id);
+    if (!el || !res) return false;
+    el.textContent = "";
+    if (!res.matches || !res.matches.length) {
+      // Every candidate excluded is a different answer from never having had
+      // one, and the note below is what carries that difference.
+      if (!res.hash) return false;
+      el.appendChild(document.createTextNode(
+        "0x" + res.hash.toUpperCase() + " · " +
+        t(droppedTotal(res) ? "pkt.cand_none_left" : "pkt.hop_unknown")));
+      var gone = droppedNote(res);
+      if (gone) el.appendChild(candNote(gone));
+      return true;
     }
-    return t("pkt.src_multi", { n: res.matches.length }) + ": " + names.join(", ") +
-      " · " + t("pkt.src_from_hash", { h: res.hash.toUpperCase() });
+    var main = document.createElement("span");
+    main.className = "src-derived";
+    main.textContent = res.state === "ambiguous"
+      ? t("pkt.src_multi", { n: candTotal(res) })
+      : candNames(res)[0];
+    main.title = hashNote(res);
+    el.appendChild(main);
+    var rank = rankNote(res);
+    el.appendChild(candNote(rank ? hashNote(res) + " · " + rank : hashNote(res)));
+    return true;
   }
 
   // One value written the way search.py's parser reads it back. Quotes are the
@@ -173,8 +292,12 @@
     opts = opts || {};
     var onFilter = opts.onFilter || null;
     txt("pkt-time", new Date(d.ts).toLocaleString() + " · " + relTime(d.ts));
-    txt("pkt-sender", nodeLabel(d.sender, d.sender_name) || srcDetail(d.src) ||
-        t("pkt.sender_unknown"));
+    // An advert states its sender; everything else at best derives one. The
+    // stated name is plain text, the derived one goes through fillResolved and
+    // comes out dotted with its reasoning underneath.
+    var stated = nodeLabel(d.sender, d.sender_name);
+    if (stated) txt("pkt-sender", stated);
+    else if (!fillResolved("pkt-sender", d.src)) txt("pkt-sender", t("pkt.sender_unknown"));
     // Only a sender stated by an advert has a key to filter on. A sender merely
     // derived from the one-byte address hash gets no buttons: sender: searches
     // the stored key column, and offering it here would silently filter on
@@ -185,11 +308,8 @@
     // The destination row only exists for packet types that name one; an empty
     // row on every ACK and advert would be noise.
     var destRow = document.getElementById("pkt-dest-row");
-    var destText = srcDetail(d.dest) ||
-      (d.dest && d.dest.hash ? "0x" + d.dest.hash.toUpperCase() + " · " +
-        t("pkt.hop_unknown") : null);
-    destRow.hidden = !destText;
-    if (destText) txt("pkt-dest", destText);
+    destRow.hidden = !(d.dest && d.dest.hash);
+    if (!destRow.hidden) fillResolved("pkt-dest", d.dest);
     // Whose country to show follows whose position the map used for this
     // packet: the sender's when we know it, the observer's otherwise.
     var countryRow = document.getElementById("pkt-country-row");
@@ -259,6 +379,13 @@
       label.textContent = hopLabel(h);
       li.appendChild(hex);
       li.appendChild(label);
+      // The same reasoning the sender and destination rows print underneath
+      // themselves, kept to the hover here: a path of eight hops with a
+      // paragraph under each would drown the field it belongs to. The list
+      // entry already names the candidates it ranked, so nothing is hidden --
+      // only the ground for the order is.
+      var why = rankNote(h);
+      if (why) li.title = why;
       // path: matches on containment in the stored hop list, so the hash is the
       // right value here even when we cannot say which node it was -- "every
       // packet that went through this hop" is a question worth asking about
@@ -1752,9 +1879,12 @@
 
     // A hop that resolves to several candidates gets a hollow ring on each of
     // them rather than a line: showing all the possibilities is honest, picking
-    // one of them would not be.
+    // one of them would not be. A ranked hop ("likely") is drawn exactly the
+    // same way. The ranking is a sentence with its reasons attached, and a line
+    // on a map carries no sentence -- it would arrive at the reader as a claim
+    // about where the packet went.
     function markCandidates(group, hop, bounds) {
-      if (!hop || hop.state !== "ambiguous") return;
+      if (!hop || (hop.state !== "ambiguous" && hop.state !== "likely")) return;
       hop.matches.forEach(function (m) {
         if (m.lat == null || m.lon == null) return;
         L.circleMarker([m.lat, m.lon], {
@@ -1793,8 +1923,8 @@
       if (d.observer) pathPrefixes[d.observer.slice(0, 6)] = true;
       (d.path || []).forEach(function (h) {
         var m = h.state === "known" ? h.matches[0] : null;
-        // Ambiguous hops exempt every candidate: their rings are part of the
-        // same answer as the line is.
+        // Ambiguous and ranked hops exempt every candidate: their rings are
+        // part of the same answer as the line is.
         (h.matches || []).forEach(function (c) { pathPrefixes[c.prefix] = true; });
         stops.push({
           lat: m ? m.lat : null, lon: m ? m.lon : null,

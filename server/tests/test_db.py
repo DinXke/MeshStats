@@ -222,3 +222,48 @@ def test_migratie_gevolgd_door_backfill_vult_oude_rijen(tmp_path):
         assert row["src_hash"] == "d4"
     finally:
         conn.close()
+
+
+def _advert_rij(db, observer, prefix6, route, path_len, ts):
+    """Eén advert-ontvangst rechtstreeks in de tabel gezet.
+
+    Rechtstreeks, want wat hier op de proef wordt gesteld is de leesquery en
+    niet de decoder: insert_packet zou een compleet frame vragen om precies
+    dezelfde vier kolommen te vullen.
+    """
+    db.execute(
+        "INSERT INTO packets(ts, observer, route, payload_name, path_len, sender) "
+        "VALUES(?,?,?,'ADVERT',?,?)", (ts, observer, route, path_len, prefix6))
+
+
+def test_observer_receptions_neemt_de_kortste_flood(db):
+    db.get_conn()
+    _advert_rij(db, "aabbcc112233", "112233", "FLOOD", 4, "2026-01-01T00:00:00Z")
+    _advert_rij(db, "aabbcc112233", "112233", "TRANSPORT_FLOOD", 2, "2026-01-02T00:00:00Z")
+
+    ev = db.observer_receptions("aabbcc112233")
+    assert ev["112233"] == {"hops": 2, "seen": "2026-01-02T00:00:00Z"}
+
+
+def test_observer_receptions_negeert_direct_gerouteerde_adverts(db):
+    """Bij een direct pakket is path_len de nog af te leggen route.
+
+    Een bijna afgelegde directe route zou die node anders als buurman opvoeren
+    terwijl hij dat niet is -- en juist die verwarring is wat de weging duur
+    komt te staan.
+    """
+    db.get_conn()
+    _advert_rij(db, "aabbcc112233", "112233", "FLOOD", 5, "2026-01-01T00:00:00Z")
+    _advert_rij(db, "aabbcc112233", "112233", "DIRECT", 0, "2026-01-02T00:00:00Z")
+
+    assert db.observer_receptions("aabbcc112233")["112233"]["hops"] == 5
+
+
+def test_observer_receptions_scheidt_de_waarnemers(db):
+    db.get_conn()
+    _advert_rij(db, "aabbcc112233", "112233", "FLOOD", 1, "2026-01-01T00:00:00Z")
+    _advert_rij(db, "ddeeff445566", "112233", "FLOOD", 7, "2026-01-01T00:00:00Z")
+
+    assert db.observer_receptions("aabbcc112233")["112233"]["hops"] == 1
+    assert db.observer_receptions("ddeeff445566")["112233"]["hops"] == 7
+    assert db.observer_receptions("000000000000") == {}

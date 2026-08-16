@@ -460,6 +460,48 @@ about a panel lying over its container, and without the padding it centres the
 path in a rectangle half of which cannot be seen. The same computation covers a
 landscape phone, where the map runs off the top of a short viewport.
 
+### Naming a node from one byte
+
+A packet's sender, its destination and every hop in its path are named by the
+first byte or two of a public key. One byte has 256 values and a site of this
+kind knows several hundred nodes, so more than one node answering to the same
+value is routine, not a fault (see [`protocol.md`](protocol.md) §1.4). The panel
+used to list every match as "N mogelijk" — honest, but needlessly wide: it
+compared against every node ever heard anywhere, including nodes hundreds of
+kilometres away that had only ever arrived after a dozen hops.
+
+`server/app/candidates.py` narrows that list on evidence the database already
+holds, in two steps and never a third.
+
+**Exclusion, only where the frame supports it.** The route type decides which end
+of a packet its hop count constrains, and getting that backwards would rule out
+the innocent. A FLOOD carries the route already travelled, so it bounds where the
+packet *came from*: heard at zero hops means the sender was inside radio range,
+full stop. A DIRECT carries the route still to go, so it bounds where the packet
+is *headed*. Neither bounds the other — a flooded packet's destination may sit
+anywhere in the mesh however few hops it has travelled so far, and that is why
+the case this was built for keeps all four of its candidates and merely orders
+them. Where a bound does exist, a candidate further away than `MAX_RADIO_HOP_KM`
+per remaining link is dropped, and the panel says how many went and on what
+ground. A node this observer has really heard at that hop count is never dropped:
+the threshold stands in for a measurement and loses to one.
+
+**Ranking, on three coarse signals in a fixed order.** How few hops away this
+observer has actually heard the node — from ADVERTs, the one payload that names
+its sender in full — then distance, then how recently it was seen. Bands rather
+than a score, compared in order rather than summed: a weighted number would
+separate every pair of candidates including the pairs the evidence does not
+separate, and nobody could retell why the winner won.
+
+**And a refusal.** When nothing separates the top two, the answer is still "N
+mogelijk". The list is sorted, so something is always first — but first by
+alphabet is not evidence, and printing it as "most likely" would be a coin toss
+dressed as a conclusion. Four states come back (`known`, `likely`, `ambiguous`,
+`unknown`) and the front end reads each differently. `likely` sits deliberately
+on the *uncertain* side of the map's line: rings on every candidate, not a route
+through the leader. A ranking is a sentence with its reasons attached, and a line
+on a map carries no sentence.
+
 | Question | Document |
 |---|---|
 | What is in a packet? | [`protocol.md`](protocol.md) |

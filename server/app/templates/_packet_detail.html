@@ -1,10 +1,17 @@
 <!-- The detail view of one packet, shared between the live page (docked panel /
      bottom sheet) and the archive (modal). The two render the same packets and
-     must tell the same truth -- one match reads as a name, several as "N
-     mogelijk", none as unknown -- so the markup exists once and app.js fills it
-     once (fillPacketDetail). Each page provides its own container and wiring
-     around this fragment; only one of the two ever exists on a page, so the
-     element ids stay unique. -->
+     must tell the same truth about an address hash -- one candidate reads as a
+     name, several ranked as the leader plus its runners-up, several unrankable
+     as "N mogelijk", none as unknown -- so the markup exists once and app.js
+     fills it once (fillPacketDetail). Each page provides its own container and
+     wiring around this fragment; only one of the two ever exists on a page, so
+     the element ids stay unique.
+
+     The sender and destination cells are filled by fillResolved rather than as
+     plain text: a derived name carries a dotted underline and a second line
+     naming the other candidates and the ground for the order. That second line
+     is not decoration -- this fragment is what a phone opens, and a touch
+     screen has no hover to hide the reasoning in. -->
 <div class="modal-head">
   <h3 id="pkt-title" data-i18n="pkt.title">Pakketdetail</h3>
   <button type="button" class="modal-close" id="pkt-close" data-i18n-aria="modal.close" aria-label="Sluiten">&#10005;</button>
