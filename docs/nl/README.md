@@ -1,0 +1,130 @@
+# MeshStats-documentatie
+
+*[English](../README.md)*
+
+Alles wat over dit project is opgeschreven, gegroepeerd naar wat je probeert te
+doen. Bij elk item staat in één zin wat je er vindt, zodat je niet vijf
+bestanden hoeft te openen om het juiste te vinden.
+
+Elk document bestaat in het Engels als `docs/<naam>.md` en in het Nederlands als
+`docs/nl/<naam>.md`, met dezelfde koppen. De link bovenaan elke pagina wisselt
+van taal.
+
+---
+
+## Begin hier
+
+| Document | Wat je er vindt |
+|---|---|
+| [README van de repo](../../README.nl.md) | Wat dit project is, wat de site kan, en een snelstart van vijf commando's |
+| [`architecture.md`](architecture.md) | Hoe de onderdelen samenhangen, welke wegen data van een radio naar de site kan afleggen, en waarom het transport MQTT is en geen HTTP |
+| [`glossary.md`](glossary.md) | Advert, flood, direct, scoped, hop, adreshash, padhash, transportcodes, companion, repeater, monitor — het vocabulaire dat de rest van deze documenten veronderstelt |
+| [`deployment.md`](deployment.md) | De site installeren en draaien: Docker Compose, systemd zonder Docker, omgevingsvariabelen, reverse proxies, back-ups, upgrades |
+
+Nieuw in MeshCore zelf? Lees eerst de [woordenlijst](glossary.md), daarna
+[`architecture.md`](architecture.md). Nieuw in deze repo als ontwikkelaar? Lees
+[`contributing.md`](contributing.md) vóór je eerste wijziging.
+
+---
+
+## De site en zijn API
+
+| Document | Wat je er vindt |
+|---|---|
+| [`server.md`](server.md) | Wat er binnen `server/` draait: de FastAPI-applicatie, haar modules, achtergrondtaken, en hoe de delen samenhangen |
+| [`api.md`](api.md) | Elke route die de server bedient — de JSON-API, de publieke pagina's, de beheerformulieren — met parameters, antwoorden en authenticatie |
+| [`search.md`](search.md) | De Kibana-achtige zoektaal van het pakketarchief: syntaxis, velden, sorteren, en de belofte dat er nooit stilletjes iets wegvalt |
+
+---
+
+## De data
+
+| Document | Wat je er vindt |
+|---|---|
+| [`database.md`](database.md) | Elke tabel en kolom in het SQLite-schema, wat erin gaat en waarom, plus hoe additieve migraties werken |
+| [`decoder.md`](decoder.md) | Wat `server/app/packets.py` uit een ruw frame haalt, wat hij weigert te decoderen, en waarom weigeren het juiste antwoord is |
+| [`candidates.md`](candidates.md) | Hoe een node uit één byte sleutel benoemd wordt, wanneer de site mag zeggen wélke node het was, en wanneer hij in plaats daarvan alle mogelijkheden moet tonen |
+
+---
+
+## Het MeshCore-protocol
+
+| Document | Wat je er vindt |
+|---|---|
+| [`protocol.md`](protocol.md) | Het pakketformaat in de ether en het companion-protocol over TCP/serieel, byte voor byte gespecificeerd met uitgewerkte voorbeelden, gereconstrueerd uit de firmwarebroncode |
+| [`mqtt.md`](mqtt.md) | Topics, payloadschema's, de twee commando's die de site mag sturen, bewaartermijnen, en brokeropzet met een account per node |
+
+[`protocol.md`](protocol.md) is het lezen waard, ook als je dit project nooit
+draait. Het MeshCore-wireformaat staat nergens anders beschreven.
+
+---
+
+## De firmware
+
+| Document | Wat je er vindt |
+|---|---|
+| [`firmware.md`](firmware.md) | Elke wijziging die MeshStats in MeshCore aanbrengt — meerdere companions tegelijk, de statspublisher, de netwerkmodule van de repeater — en hoe je het bouwt en flasht |
+
+---
+
+## Optionele onderdelen
+
+Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
+
+| Document | Wat je er vindt |
+|---|---|
+| [`homeassistant.md`](homeassistant.md) | De HA-integratie: wat hij nog doet nu nodes zelf over MQTT publiceren, wanneer je hem wilt, hoe hij repeaters ontdekt, en hoe hij CLI-instellingen over LoRa ophaalt |
+| [`proxy.md`](proxy.md) | De TCP-fan-outproxy waarmee meerdere clients één node kunnen delen als je geen aangepaste firmware kunt flashen |
+
+---
+
+## Draaien en onderhouden
+
+| Document | Wat je er vindt |
+|---|---|
+| [`deployment.md`](deployment.md) | Omgevingsvariabelen, reverse proxies, automatische upgrades, back-ups, schijfgebruik, logs, en de tijdreeksdatabase |
+| [`security.md`](security.md) | Het dreigingsmodel, wat er hoe beschermd wordt, en — minstens zo belangrijk — wat niet |
+
+---
+
+## Ontwikkelen
+
+| Document | Wat je er vindt |
+|---|---|
+| [`contributing.md`](contributing.md) | De conventies die verklaren waarom de code eruitziet zoals hij eruitziet: eerlijkheid over onzekerheid, commentaar dat het waarom draagt, Nederlandse commitboodschappen, vanilla JS zonder buildstap, additieve migraties, `packets.raw` als grondwaarheid |
+| [`testing.md`](testing.md) | Hoe je de testsuite draait, hoe testpakketten uit de specificatie gebouwd worden in plaats van opgevangen, en waarom de meeste tests een weigering vastleggen |
+
+---
+
+## Zoeken op vraag
+
+| Vraag | Ga naar |
+|---|---|
+| Wat betekent dit woord? | [`glossary.md`](glossary.md) |
+| Hoe krijg ik dit draaiend? | [`deployment.md`](deployment.md) |
+| Wat geeft dit API-endpoint terug? | [`api.md`](api.md) |
+| Hoe doorzoek ik het pakketarchief? | [`search.md`](search.md) |
+| Wat staat er in deze databasekolom? | [`database.md`](database.md) |
+| Wat betekenen deze bytes? | [`protocol.md`](protocol.md) |
+| Waarom zegt de site hier "onbekend"? | [`candidates.md`](candidates.md), [`decoder.md`](decoder.md) |
+| Hoe krijg ik mijn node aan het publiceren? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
+| Is het veilig dit op het internet te zetten? | [`security.md`](security.md) |
+| Mijn data komt uit Home Assistant | [`homeassistant.md`](homeassistant.md) |
+| Ik kan geen firmware flashen | [`proxy.md`](proxy.md) |
+| Hoe draag ik een wijziging bij? | [`contributing.md`](contributing.md) |
+| Hoe draai ik de tests? | [`testing.md`](testing.md) |
+
+---
+
+## Conventies in deze documenten
+
+- **Beweringen zijn na te trekken.** Gedrag wordt toegeschreven aan een bestand
+  en, waar dat uitmaakt, aan een functie of regelnummer. Firmwaregedrag wordt
+  geciteerd tegen de MeshCore-broncode, zodat een latere lezer het tegen zijn
+  eigen versie kan hercontroleren.
+- **Onzekerheid wordt benoemd.** Waar de documentatie iets niet weet, of waar het
+  systeem bewust weigert het te weten, staat dat er — in plaats van dat het glad
+  gestreken wordt.
+- **Beide talen zijn volledig.** Het Nederlands is een volwaardige vertaling, geen
+  samenvatting. Een document met maar één helft is een fout — zie
+  [`contributing.md` §10](contributing.md#10-documentatieconventies).

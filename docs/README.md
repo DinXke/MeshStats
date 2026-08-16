@@ -1,0 +1,130 @@
+# MeshStats documentation
+
+*[Nederlands](nl/README.md)*
+
+Everything written down about this project, grouped by what you are trying to
+do. Each entry says in one sentence what you will find there, so you do not have
+to open five files to locate the right one.
+
+Every document exists in English at `docs/<name>.md` and in Dutch at
+`docs/nl/<name>.md`, with the same headings. The link at the top of each page
+switches language.
+
+---
+
+## Start here
+
+| Document | What you will find |
+|---|---|
+| [Repository README](../README.md) | What this project is, what the site can do, and a five-command quick start |
+| [`architecture.md`](architecture.md) | How the pieces fit together, which paths data can take from a radio to the site, and why the transport is MQTT rather than HTTP |
+| [`glossary.md`](glossary.md) | Advert, flood, direct, scoped, hop, address hash, path hash, transport codes, companion, repeater, monitor — the vocabulary the rest of these documents assume |
+| [`deployment.md`](deployment.md) | Installing and running the site: Docker Compose, systemd without Docker, environment variables, reverse proxies, backups, upgrades |
+
+New to MeshCore itself? Read the [glossary](glossary.md) first, then
+[`architecture.md`](architecture.md). New to this repository as a developer? Read
+[`contributing.md`](contributing.md) before your first change.
+
+---
+
+## The site and its API
+
+| Document | What you will find |
+|---|---|
+| [`server.md`](server.md) | What runs inside `server/`: the FastAPI application, its modules, background tasks, and how the parts hold together |
+| [`api.md`](api.md) | Every route the server serves — the JSON API, the public pages, the admin forms — with parameters, responses and authentication |
+| [`search.md`](search.md) | The Kibana-style query language of the packet archive: syntax, fields, sorting, and the promise that nothing is silently dropped |
+
+---
+
+## The data
+
+| Document | What you will find |
+|---|---|
+| [`database.md`](database.md) | Every table and column in the SQLite schema, what goes in it and why, plus how additive migrations work |
+| [`decoder.md`](decoder.md) | What `server/app/packets.py` extracts from a raw frame, what it refuses to decode, and why refusing is the right answer |
+| [`candidates.md`](candidates.md) | How a node is named from one byte of key, when the site is allowed to say which node it was, and when it must show all the possibilities instead |
+
+---
+
+## The MeshCore protocol
+
+| Document | What you will find |
+|---|---|
+| [`protocol.md`](protocol.md) | The over-the-air packet format and the companion TCP/serial protocol, specified byte by byte with worked examples, reconstructed from the firmware source |
+| [`mqtt.md`](mqtt.md) | Topics, payload schemas, the two commands the site may send, retention, and broker setup with per-node accounts |
+
+[`protocol.md`](protocol.md) is worth reading even if you never run this project.
+The MeshCore wire format is documented nowhere else.
+
+---
+
+## The firmware
+
+| Document | What you will find |
+|---|---|
+| [`firmware.md`](firmware.md) | Every change MeshStats makes to MeshCore — multiple simultaneous companions, the stats publisher, the repeater's network module — and how to build and flash it |
+
+---
+
+## Optional components
+
+Neither of these is required. Both exist for situations the main path does not
+cover.
+
+| Document | What you will find |
+|---|---|
+| [`homeassistant.md`](homeassistant.md) | The HA integration: what it still does now that nodes publish over MQTT themselves, when you want it, how it discovers repeaters, and how it fetches CLI settings over LoRa |
+| [`proxy.md`](proxy.md) | The TCP fan-out proxy that lets several clients share one node when you cannot flash modified firmware |
+
+---
+
+## Running and maintaining
+
+| Document | What you will find |
+|---|---|
+| [`deployment.md`](deployment.md) | Environment variables, reverse proxies, automatic upgrades, backups, disk usage, logs, and the time-series database |
+| [`security.md`](security.md) | The threat model, what is protected and how, and — as importantly — what is not |
+
+---
+
+## Developing
+
+| Document | What you will find |
+|---|---|
+| [`contributing.md`](contributing.md) | The conventions that explain why the code looks the way it does: honesty about uncertainty, comments that carry the why, Dutch commit messages, vanilla JS without a build step, additive migrations, `packets.raw` as ground truth |
+| [`testing.md`](testing.md) | How to run the test suite, how test packets are built from the specification instead of captured, and why most tests assert a refusal |
+
+---
+
+## Finding things by question
+
+| Question | Go to |
+|---|---|
+| What does this word mean? | [`glossary.md`](glossary.md) |
+| How do I get this running? | [`deployment.md`](deployment.md) |
+| What does this API endpoint return? | [`api.md`](api.md) |
+| How do I search the packet archive? | [`search.md`](search.md) |
+| What is in this database column? | [`database.md`](database.md) |
+| What do these bytes mean? | [`protocol.md`](protocol.md) |
+| Why does the site say "unknown" here? | [`candidates.md`](candidates.md), [`decoder.md`](decoder.md) |
+| How do I get my node publishing? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
+| Is it safe to put this on the internet? | [`security.md`](security.md) |
+| My data comes from Home Assistant | [`homeassistant.md`](homeassistant.md) |
+| I cannot flash firmware | [`proxy.md`](proxy.md) |
+| How do I contribute a change? | [`contributing.md`](contributing.md) |
+| How do I run the tests? | [`testing.md`](testing.md) |
+
+---
+
+## Conventions in these documents
+
+- **Claims are citable.** Behaviour is attributed to a file and, where it matters,
+  a function or line number. Firmware behaviour is cited against the MeshCore
+  source tree so a later reader can re-check it against their own version.
+- **Uncertainty is stated.** Where the documentation does not know something, or
+  where the system deliberately refuses to know it, it says so instead of
+  smoothing it over.
+- **Both languages are complete.** The Dutch is a full translation, not a
+  summary. A document with only one half is a bug — see
+  [`contributing.md` §10](contributing.md#10-documentation-conventions).
