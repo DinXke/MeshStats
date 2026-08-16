@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from . import auth, commanding, config, db, metrics, retention, search
+from . import auth, commanding, config, db, metrics, rbac, retention, search
 from .templating import templates
 
 router = APIRouter()
@@ -136,7 +136,15 @@ def repeater_page(request: Request, slug: str):
 
     online_row = latest.get("online")
     session_cookie = request.cookies.get(auth.SESSION_COOKIE, "")
-    is_admin = auth.read_session(session_cookie) is not None
+    ingelogd = auth.read_session(session_cookie)
+    # De opvraagknop staat op deze publieke pagina voor wie ingelogd is. Sinds
+    # toegang niet meer alles-of-niets is, is "ingelogd" niet meer hetzelfde als
+    # "mag deze node uitvragen": iemand kan lezer zijn op deze node, of er
+    # helemaal niets over mogen. De knop verdwijnt daar niet van -- hij staat uit
+    # met de reden erbij, zoals overal op deze site -- dus de beslissing reist
+    # mee naar de sjabloon in plaats van dat de klik in een 403 eindigt.
+    mag_uitvragen = rbac.decide(ingelogd, "node.uitvragen", r) if ingelogd else None
+    is_admin = ingelogd is not None
     return templates.TemplateResponse(request, "repeater.html", {
         "site_name": config.SITE_NAME, "r": r, "blocks": blocks,
         # De naam apart naast de rij, en de template gebruikt uitsluitend deze.
@@ -149,6 +157,7 @@ def repeater_page(request: Request, slug: str):
         "default_hours": 24 if 24 in ranges else ranges[0],
         "is_online": online_row is not None and online_row["value"] == 1.0,
         "is_admin": is_admin,
+        "mag_uitvragen": mag_uitvragen,
         "csrf": auth.csrf_token(session_cookie) if is_admin else "",
         # 'mqtt' | 'queued' | 'both' | 'none', en '1' uit oudere links. Wat er
         # werkelijk gebeurd is, want de knop kan tegenwoordig ook nergens heen,

@@ -174,7 +174,8 @@ class Gebruiker:
     ingetrokken heeft.
     """
 
-    __slots__ = ("id", "username", "is_superuser", "disabled", "_groups", "_grants")
+    __slots__ = ("id", "username", "is_superuser", "disabled", "_groups",
+                 "_grants", "_nodegroups")
 
     def __init__(self, row):
         self.id = row["id"]
@@ -183,6 +184,10 @@ class Gebruiker:
         self.disabled = bool(row["disabled"])
         self._groups = None
         self._grants = None
+        # Ledenlijsten van nodegroepen, per groep-id. De nodepagina vraagt dertien
+        # besluiten over dezelfde node, en elk ervan zou anders dezelfde
+        # lidmaatschapsvraag opnieuw aan de databank stellen.
+        self._nodegroups = {}
 
     @property
     def group_ids(self) -> set:
@@ -201,6 +206,11 @@ class Gebruiker:
             self._grants = [r for r in rows
                             if r["subject_type"] == "user" or r["subject_id"] in mine]
         return self._grants
+
+    def nodes_in(self, group_id: int) -> set:
+        if group_id not in self._nodegroups:
+            self._nodegroups[group_id] = _node_ids_in_group(group_id)
+        return self._nodegroups[group_id]
 
 
 def load(username: str | None):
@@ -224,10 +234,16 @@ class Besluit(namedtuple("Besluit", "allowed reason rol")):
     ``rol`` staat er als eigen veld naast en wordt niet uit die zin teruggelezen.
     Dat lijkt overbodig zolang de zin de rol noemt, en het is precies het soort
     koppeling dat stukgaat zodra iemand de tekst mooier maakt.
-    """
 
-    def __bool__(self):
-        return self.allowed
+    **Er staat met opzet geen ``__bool__`` op.** Die stond er wel, en hij deed
+    precies wat je zou verwachten -- een weigering was onwaar -- en juist daarom
+    was hij een val. Een sjabloon dat ``{% if besluit %}`` schrijft bedoelt "is er
+    een besluit", want de reden dat het er geen is, is dat de bezoeker niet
+    ingelogd is. Met ``__bool__`` viel dat samen met "het besluit is nee", en dan
+    slaat de tak die de knop uitschakelt stilletjes over -- bij een weigering,
+    precies wanneer het ertoe doet. Nu is elk besluit waar en vraag je expliciet
+    naar ``.allowed``.
+    """
 
 
 def _node_ids_in_group(group_id: int) -> set:
@@ -235,7 +251,7 @@ def _node_ids_in_group(group_id: int) -> set:
         "SELECT repeater_id FROM node_group_members WHERE group_id=?", (group_id,))}
 
 
-def _matches_object(grant, rep) -> bool:
+def _matches_object(user: Gebruiker, grant, rep) -> bool:
     kind = grant["object_type"]
     if kind == "all":
         return True
@@ -245,7 +261,9 @@ def _matches_object(grant, rep) -> bool:
     if kind == "node":
         return grant["object_id"] == rid
     if kind == "nodegroup":
-        return rid in _node_ids_in_group(grant["object_id"])
+        # Via de gebruiker en niet rechtstreeks: die onthoudt het antwoord voor de
+        # duur van dit verzoek. Zie Gebruiker._nodegroups.
+        return rid in user.nodes_in(grant["object_id"])
     return False
 
 
@@ -279,7 +297,7 @@ def resolve(user: Gebruiker, rep) -> Besluit:
     nodig hebt -- deze ene node niet, hoe dan ook -- is een geval zonder
     graduaties.
     """
-    passend = [g for g in user.grants if _matches_object(g, rep)]
+    passend = [g for g in user.grants if _matches_object(user, g, rep)]
     weigering = next((g for g in passend if g["effect"] == "deny"), None)
     if weigering is not None:
         return Besluit(False, "een uitdrukkelijke weigering "
@@ -401,22 +419,12 @@ def serverrechten(user) -> dict:
             for naam, h in ACTIONS.items() if h.scope == "server"}
 
 
-# --- de knop ------------------------------------------------------------------
-
-def knop(besluit: Besluit, kan: bool = True, kan_reden: str = "") -> dict:
-    """Wat een sjabloon over één knop moet weten: mag het, kan het, en zo niet waarom.
-
-    De twee helften komen uit verschillende hoeken -- ``commanding.route_for``
-    zegt wat er kán, ``decide`` wat er mág -- en de knop hoort pas te werken als
-    ze allebei ja zeggen. Welke van de twee als eerste genoemd wordt bij een nee:
-    het recht. Iemand die iets niet mag, hoeft niet te horen dat de broker plat
-    ligt; dat is een detail over een handeling die hem sowieso niet aangaat.
-    """
-    if not besluit.allowed:
-        return {"ok": False, "reden": besluit.reason, "waarom": "recht"}
-    if not kan:
-        return {"ok": False, "reden": kan_reden or "dit kan nu niet", "waarom": "weg"}
-    return {"ok": True, "reden": besluit.reason, "waarom": ""}
+# De knop zelf staat niet hier. Wat een sjabloon nodig heeft is een besluit en
+# de vraag of de weg openstaat, en die twee komen uit verschillende hoeken --
+# ``commanding.route_for`` zegt wat er kán, ``decide`` wat er mág. Ze hier
+# samenvoegen tot één woordenboek leverde een derde vorm op naast de twee die er
+# al waren; de sjablonen doen het met de macro in admin/node.html en het filter
+# ``mag_attr`` in templating.py, allebei één regel breed.
 
 
 # --- beheer van het model -----------------------------------------------------

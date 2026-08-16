@@ -1,4 +1,9 @@
-"""De beheerpagina's echt renderen, met een echte sessie en een echte databank.
+"""De pagina's met beheerknoppen echt renderen, met een echte sessie en databank.
+
+Dat zijn de vier onder /admin plus de publieke repeaterpagina, want daar staat
+sinds jaar en dag dezelfde opvraagknop voor wie ingelogd is -- en "ingelogd" is
+sinds het rechtenmodel niet meer hetzelfde als "mag dit".
+
 
 De rest van de suite roept routefuncties aan en kijkt naar wat ze teruggeven; bij
 een sjabloon is dat te weinig. Bijna alles wat er op deze pagina's mis kan gaan
@@ -56,6 +61,11 @@ def wereld(db, monkeypatch):
     lid = rbac.maak_gebruiker("lid", auth.hash_password("wachtwoord123"))
     dak = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
     tuin = db.get_or_create_repeater("aabbccddeeff", "Tuinnode")
+    # Een node die vanzelf ontstaat komt verborgen binnen; de publieke pagina
+    # bestaat pas als hij goedgekeurd is, en die pagina is hier het onderwerp.
+    db.execute("UPDATE repeaters SET is_public=1")
+    dak = db.qone("SELECT * FROM repeaters WHERE id=?", (dak["id"],))
+    tuin = db.qone("SELECT * FROM repeaters WHERE id=?", (tuin["id"],))
     ug = rbac.maak_groep("user", "Ploeg", "de mensen die de daken doen")
     rbac.maak_groep("user", "Leeg")
     ng = rbac.maak_groep("node", "Daken")
@@ -150,6 +160,27 @@ def test_firmwarepagina_toont_alleen_de_eigen_nodes(wereld):
     # De technicus mag het beheeradres wel zetten en de firmware niet. Beide
     # knoppen staan er; alleen de tweede staat uit.
     assert "disabled" in html
+
+
+def test_publieke_pagina_zet_de_opvraagknop_uit_in_plaats_van_hem_weg_te_halen(wereld):
+    """De knop staat er sinds jaar en dag voor iedereen die ingelogd is.
+
+    Zonder deze controle eindigt een klik van iemand zonder rechten in een kale
+    403 — en dat is precies wat een uitgeschakelde knop met een reden moet
+    voorkomen.
+    """
+    from app import routes_public
+    dak = wereld["dak"]
+    html = tekst(routes_public.repeater_page(
+        verzoek(f"/r/{dak['slug']}", wereld["koek"]["lid"]), dak["slug"]))
+    # Op de node waar hij technicus is, werkt de knop gewoon (of hij staat uit om
+    # een reden die over de weg gaat, niet over het recht).
+    assert "Opvragen mag niet" not in html
+
+    tuin = wereld["tuin"]
+    html = tekst(routes_public.repeater_page(
+        verzoek(f"/r/{tuin['slug']}", wereld["koek"]["lid"]), tuin["slug"]))
+    assert "Opvragen mag niet" in html
 
 
 def test_nodelijst_noemt_de_rol_en_telt_wat_er_niet_staat(wereld):

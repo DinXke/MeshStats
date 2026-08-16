@@ -193,6 +193,23 @@ def test_een_uitgezet_account_mag_niets_meer(db):
     assert not rbac.decide("vertrokken", "node.bekijken", node).allowed
 
 
+def test_een_besluit_is_altijd_waar_ook_als_het_nee_zegt(db):
+    """Regressie op een val die er echt in gezeten heeft.
+
+    Een ``__bool__`` die de uitkomst teruggaf leek logisch en betekende dat een
+    weigering onwaar was. Een sjabloon dat ``{% if besluit %}`` schrijft, bedoelt
+    "is er een besluit" -- want de reden dat het er geen is, is dat de bezoeker
+    niet ingelogd is -- en dan sloeg de tak die de knop uitschakelt stilletjes
+    over, precies bij de weigering. Elk besluit is dus waar; wie de uitkomst wil,
+    vraagt naar ``.allowed``.
+    """
+    from app import rbac
+    maak_gebruiker(db, "iemand")
+    besluit = rbac.decide("iemand", "node.firmware", maak_node(db))
+    assert besluit.allowed is False
+    assert bool(besluit) is True
+
+
 def test_een_onbekende_handeling_is_een_dichte_deur(db):
     """Fail closed: een tikfout in een routenaam mag geen open deur zijn."""
     from app import rbac
