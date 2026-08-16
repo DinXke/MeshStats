@@ -12,6 +12,17 @@
     var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
   }
+
+  // Every catch that deliberately carries on says so out loud. A `.catch` with
+  // an empty body is the right shape for "the network hiccuped, the next tick
+  // tries again" and the wrong shape for everything else: it swallows genuine
+  // render errors just as quietly, and one of those left the live map without
+  // a single dot, line or feed row for a day with a perfectly clean console.
+  // Nothing here changes behaviour -- the page still carries on -- it only
+  // stops the failure from being invisible.
+  function logFail(what, err) {
+    if (window.console && console.error) console.error("[meshstats] " + what, err);
+  }
   // --- address-hash candidates ---------------------------------------------
   // A sender, a destination and a path hop are all named by one or two bytes of
   // a public key, which on a mesh of several hundred nodes routinely fits more
@@ -1319,6 +1330,22 @@
   var livemapEl = document.getElementById("livemap");
   if (livemapEl && typeof L !== "undefined") {
     var lmap = L.map(livemapEl, { scrollWheelZoom: false });
+    // A view immediately, before a single layer is added, and this is load
+    // bearing. Leaflet queues a layer's onAdd until the map has a centre and a
+    // zoom. With several layers waiting, they run in the order they were asked
+    // for -- and the shared SVG renderer is not one of them: it gets registered
+    // in the map's layer list by whichever vector layer asks for it first, but
+    // its own onAdd is queued behind that layer. A LayerGroup queued earlier
+    // then runs, asks for the renderer, finds it already registered, and so
+    // never initialises it; its polylines clip against a renderer that has no
+    // bounds yet and throw. That is not a hypothetical: with the heat map
+    // switched on it happened on every load, and because the exception escaped
+    // through fitBounds into the packet poll's catch it took the node markers
+    // and the packet feed down with it. Nothing is ever queued if the map has a
+    // view from the start. The world view lasts only until the first packet
+    // response calls fitBounds on the real nodes, and it deliberately hard
+    // codes no location of its own.
+    lmap.setView([0, 0], 2);
     L.tileLayer(TILE_URL, { attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19 })
       .addTo(lmap);
     var feedEl = document.getElementById("livefeed");
@@ -1757,10 +1784,18 @@
         lbl.title = t("live.heat_title") +
           (d.capped ? " " + t("live.heat_capped") : "");
       }
-      heatLayer = group.addTo(lmap);
-      // Whichever came second -- this layer or the node dots -- the dots end up
-      // on top, hoverable and the same size they always were.
-      nodeMarkers.forEach(function (e) { e.m.bringToFront(); });
+      // The heat map is an overlay on top of the map, never a precondition for
+      // it. If Leaflet refuses this layer, that is this layer's problem: say so
+      // and leave the node markers and the packet feed exactly as they were.
+      try {
+        heatLayer = group.addTo(lmap);
+        // Whichever came second -- this layer or the node dots -- the dots end
+        // up on top, hoverable and the same size they always were.
+        nodeMarkers.forEach(function (e) { e.m.bringToFront(); });
+      } catch (e) {
+        logFail("drukte-heatmap tekenen", e);
+        heatLayer = null;
+      }
     }
 
     // No silent filtering: the moment the threshold hides links, the page says
@@ -1805,7 +1840,11 @@
       fetch("/api/v1/packets/heatmap")
         .then(function (r) { return r.json(); })
         .then(function (d) { if (heatOn) drawHeat(d); })
-        .catch(function () { /* the next toggle or refresh tries again */ });
+        .catch(function (e) {
+          // The next toggle or refresh tries again either way, but a failure
+          // that is not the network's fault should not hide behind that.
+          logFail("drukte-heatmap ophalen of tekenen", e);
+        });
     }
 
     if (heatMinEl) {
@@ -2266,41 +2305,49 @@
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (first) buildCountryFilter(d.countries);
+          // The map and the feed are two readings of the same response and
+          // neither is worth more than the other. Building the map used to be
+          // able to throw straight past the render() below, so a map that
+          // refused to draw also emptied the packet list -- two failures for
+          // the price of one, and the visible symptom pointed away from the
+          // cause. They fail separately now.
           if (first && d.nodes) {
-            var bounds = [];
-            d.nodes.forEach(function (n) {
-              var marker = L.circleMarker([n.lat, n.lon], NODE_ON)
-                .addTo(lmap)
-                .bindTooltip(n.name || n.prefix.toUpperCase(), { direction: "top" });
-              // Held on to so the filter can restyle them; see applyNodeFilter.
-              // The entry, not the node, is what the panel is opened with: the
-              // marker travels with it, and the panel needs it to draw its ring
-              // and to give focus back on close.
-              var entry = { n: n, m: marker, style: "on" };
-              marker.on("click", function (e) {
-                // Kept off the map: Leaflet would otherwise deliver this click
-                // to the map as well, where the outside-click handler would
-                // close the panel this very click is opening.
-                L.DomEvent.stopPropagation(e);
-                openNode(entry);
+            try {
+              var bounds = [];
+              d.nodes.forEach(function (n) {
+                var marker = L.circleMarker([n.lat, n.lon], NODE_ON)
+                  .addTo(lmap)
+                  .bindTooltip(n.name || n.prefix.toUpperCase(), { direction: "top" });
+                // Held on to so the filter can restyle them; see applyNodeFilter.
+                // The entry, not the node, is what the panel is opened with: the
+                // marker travels with it, and the panel needs it to draw its ring
+                // and to give focus back on close.
+                var entry = { n: n, m: marker, style: "on" };
+                marker.on("click", function (e) {
+                  // Kept off the map: Leaflet would otherwise deliver this click
+                  // to the map as well, where the outside-click handler would
+                  // close the panel this very click is opening.
+                  L.DomEvent.stopPropagation(e);
+                  openNode(entry);
+                });
+                nodeMarkers.push(entry);
+                bounds.push([n.lat, n.lon]);
               });
-              nodeMarkers.push(entry);
-              bounds.push([n.lat, n.lon]);
-            });
-            if (bounds.length) lmap.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
-            // Only now, and deliberately in a second pass: this map is created
-            // without a view and gets its first one from the fitBounds above,
-            // and Leaflet defers a layer's onAdd -- and with it the SVG element
-            // the marker is drawn as -- until the map has one. Asking for that
-            // element inside the loop above returns nothing at all, without an
-            // error, and the dots end up unreachable by keyboard for no visible
-            // reason. Found exactly that way.
-            nodeMarkers.forEach(focusableNode);
-            // A filter restored from localStorage has to reach the layer that
-            // was only just built, and the view should start where the matches
-            // are rather than on the whole mesh.
-            applyNodeFilter();
-            fitToMatches();
+              if (bounds.length) lmap.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+              // Still deliberately a second pass. The map is given a view the
+              // moment it is created now, so a marker's SVG element does exist
+              // by the time the loop adds it -- but this pass costs nothing and
+              // keeps the guarantee local, instead of resting on how far up the
+              // file somebody remembers to leave that setView alone.
+              nodeMarkers.forEach(focusableNode);
+              // A filter restored from localStorage has to reach the layer that
+              // was only just built, and the view should start where the matches
+              // are rather than on the whole mesh.
+              applyNodeFilter();
+              fitToMatches();
+            } catch (e) {
+              logFail("nodes op de kaart zetten", e);
+            }
           }
           lastId = d.last_id || lastId;
           // The first response is history (the newest stored packets), not
@@ -2308,7 +2355,12 @@
           // a firework of flashes for receptions that predate the visit.
           render(d.packets || [], !first);
         })
-        .catch(function () { /* next tick tries again */ })
+        .catch(function (e) {
+          // The poll runs on a timer, so the next tick tries again regardless;
+          // this only makes sure a broken response or a broken render is not
+          // indistinguishable from a quiet mesh.
+          logFail("pakketten ophalen of tonen", e);
+        })
         .then(function () { polling = false; });
     }
 
