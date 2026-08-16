@@ -24,7 +24,10 @@
       <button type="submit" class="pill refreshbtn" disabled data-i18n="rep.refresh_off" data-i18n-title="rep.refresh_off_title" title="Er is op dit ogenblik geen weg naar deze repeater — zie de instellingenpagina">&#10005; Opvragen kan nu niet</button>
       {% endif %}
     </form>
-    <a class="pill settingslink" href="/admin/repeaters/{{ r.id }}/settings" data-i18n="rep.settings" data-i18n-title="rep.settings_title" title="CLI-instellingen van deze repeater">&#9881; Instellingen</a>
+    {#- Wijst naar de beheerpagina van deze ene node, die sinds de herindeling
+        meer is dan de CLI-instellingen alleen: identiteit en versies, uitvragen,
+        klok, firmware, verwijderen. Vandaar 'Beheren' en niet 'Instellingen'. -#}
+    <a class="pill settingslink" href="/admin/repeaters/{{ r.id }}" data-i18n="rep.settings" data-i18n-title="rep.settings_title" title="Beheerpagina van deze node">&#9881; Beheren</a>
     {% endif %}
   </div>
   {% if refresh_state == "mqtt" %}

@@ -314,15 +314,15 @@
       "rep.refresh": "↻ Status opvragen",
       "rep.refresh_title": "Vraag nu een verse status: rechtstreeks aan de node, of via een poller over LoRa",
       "rep.refresh_off": "✕ Opvragen kan nu niet",
-      "rep.refresh_off_title": "Er is op dit ogenblik geen weg naar deze repeater — zie de instellingenpagina",
-      "rep.settings": "⚙ Instellingen",
-      "rep.settings_title": "CLI-instellingen van deze repeater",
+      "rep.refresh_off_title": "Er is op dit ogenblik geen weg naar deze repeater — zie de beheerpagina van deze node",
+      "rep.settings": "⚙ Beheren",
+      "rep.settings_title": "Beheerpagina van deze node",
       // Vier meldingen in plaats van één belofte: wat er gebeurd is hangt af van
       // wie er te bereiken viel, en de pagina hoort dat te zeggen.
       "rep.refresh_mqtt": "⏳ De node is gevraagd nu een statusbericht te sturen; binnen ±1 minuut verschijnt een vers datapunt.",
       "rep.refresh_queued": "⏳ Statusverzoek in de wachtrij gezet — de poller vraagt de repeater over LoRa uit; binnen ±1 minuut verschijnt een vers datapunt.",
       "rep.refresh_both": "⏳ Statusverzoek verstuurd naar de node én in de wachtrij gezet; binnen ±1 minuut verschijnt een vers datapunt.",
-      "rep.refresh_none": "⚠ Er is niets verstuurd — geen weg naar deze repeater op dit ogenblik. De instellingenpagina zegt waarom.",
+      "rep.refresh_none": "⚠ Er is niets verstuurd — geen weg naar deze repeater op dit ogenblik. De beheerpagina van deze node zegt waarom.",
       "rep.lastupdate": "laatste update",
       "rep.hint": "💡 Klik op een tegel of buur voor de historiek",
 
@@ -689,13 +689,13 @@
       "rep.refresh": "↻ Request status",
       "rep.refresh_title": "Ask for a fresh status now: straight to the node, or through a poller over LoRa",
       "rep.refresh_off": "✕ Cannot request now",
-      "rep.refresh_off_title": "No route to this repeater at the moment — the settings page says why",
-      "rep.settings": "⚙ Settings",
-      "rep.settings_title": "CLI settings of this repeater",
+      "rep.refresh_off_title": "No route to this repeater at the moment — the node's admin page says why",
+      "rep.settings": "⚙ Manage",
+      "rep.settings_title": "Admin page for this node",
       "rep.refresh_mqtt": "⏳ The node has been asked to publish a status message now; a fresh data point appears within ±1 minute.",
       "rep.refresh_queued": "⏳ Status request queued — the poller queries the repeater over LoRa; a fresh data point appears within ±1 minute.",
       "rep.refresh_both": "⏳ Status request sent to the node and queued for the poller; a fresh data point appears within ±1 minute.",
-      "rep.refresh_none": "⚠ Nothing was sent — no route to this repeater at the moment. The settings page says why.",
+      "rep.refresh_none": "⚠ Nothing was sent — no route to this repeater at the moment. The node's admin page says why.",
       "rep.lastupdate": "last update",
       "rep.hint": "💡 Click a tile or a neighbour for its history",
 
@@ -802,9 +802,20 @@
     }
   }
 
-  // A stored choice always wins; otherwise follow the browser and land on Dutch
-  // for anything that is not clearly an English-speaking visitor.
-  var lang = stored() ||
+  // A page may pin its language with <html data-lang-lock="nl">, and that beats
+  // both the stored choice and the browser. The admin pages use it: they are
+  // deliberately Dutch-only (the reasoning sits in admin/_layout.html), and
+  // without the lock a visitor who once picked English on the public site would
+  // get English relative times and an English <html lang> on top of Dutch
+  // prose -- half a translation, which reads worse than none.
+  //
+  // Rejected alternative: leave the stored choice alone and merely hide the
+  // toggle on those pages. That hides the switch but not its effect, so the
+  // half-translated state stays reachable for anyone who ever flipped it.
+  var locked = document.documentElement.getAttribute("data-lang-lock");
+  // A stored choice wins over the browser; otherwise land on Dutch for anything
+  // that is not clearly an English-speaking visitor.
+  var lang = (DICT[locked] ? locked : null) || stored() ||
     (/^en\b/i.test(navigator.language || "") ? "en" : "nl");
 
   function t(key, vars) {

@@ -1,0 +1,69 @@
+{#- Gemeenschappelijk kader voor élke ingelogde beheerpagina.
+
+    Waarom dit bestand er is: de beheerpagina viel uiteen in twee dingen die
+    niets met elkaar te maken hebben. Handelingen op een fysiek apparaat (een
+    node uitvragen, zijn klok zetten, straks zijn firmware schrijven) staan
+    tegenover instellingen van deze installatie (accounts, tokens, bewaartermijn,
+    weergave). Dat waren losse secties op één lange pagina geworden, en de
+    volgorde was niet meer dan de volgorde waarin ze ooit toegevoegd zijn. Wie
+    een repeater wilde uitvragen scrolde langs de tokens; wie de bewaartermijn
+    wilde wijzigen scrolde langs de radioknoppen. Het gevaarlijke daaraan is niet
+    de scroll maar de gewenning: een knop die zendtijd kost hoort niet in
+    dezelfde visuele rang te staan als een vinkje.
+
+    De tabbalk hieronder is die scheiding, en niet alleen een menu: welke wereld
+    je in bent, staat boven elke pagina. ``world`` komt uit de route en niet uit
+    een {% set %} in de kindtemplate, omdat een pagina die vergeet te zeggen waar
+    ze hoort dan stil in de verkeerde tab belandt -- als contextvariabele valt
+    dat bij het bouwen van de route op.
+
+    Verworpen alternatief: /admin een tussenpagina maken met twee grote knoppen.
+    Dat kost elke handeling een klik extra en verstopt precies de statusblokken
+    die je op één blik wilt zien.
+-#}
+{% extends "base.html" %}
+
+{#- Beheer is eentalig Nederlands, en dat is hier een keuze en geen achterstand.
+    De publieke site is tweetalig via static/i18n.js, maar dat werkt doordat elke
+    vertaalbare knoop een data-i18n-sleutel draagt. Beheer heeft er geen enkele,
+    en de teksten hier zijn het tegenovergestelde van labelwerk: hele alinea's
+    die uitleggen wat de site wel en niet weet over een node op een dak. Die
+    tweetalig maken is honderden sleutels en een tweede plek waar dezelfde
+    nuance juist moet blijven -- en één verkeerd vertaalde zin over een klok die
+    niet terug te draaien is, kost een ritje naar dat dak.
+
+    Dus: consequent Nederlands, en de taalknop verdwijnt hier. Een knop die
+    alleen de kop- en voetregel omzet en de pagina zelf Nederlands laat, is
+    erger dan geen knop. De <html data-lang-lock="nl"> hieronder zorgt dat ook
+    de door JavaScript gebouwde teksten (relatieve tijden) Nederlands blijven
+    voor wie op de publieke site ooit Engels koos.
+
+    Wanneer dit wél moet gebeuren: als beheer ooit tweetalig wordt, dan in één
+    aparte stap die alle beheerteksten tegelijk van sleutels voorziet -- niet
+    knop voor knop. -#}
+{% block htmlattrs %} data-lang-lock="nl"{% endblock %}
+{% block langtoggle %}{% endblock %}
+
+{% block nav %}
+  <a href="/admin">&#9881; Beheer</a>
+  <a href="/admin/logout">Uitloggen ({{ user }})</a>
+{% endblock %}
+
+{% block content %}
+{#- Firmware staat als eigen ingang naast de nodelijst en niet onder Server en
+    site: het schrijft een image naar een apparaat op een dak, en dat hoort in de
+    wereld van de apparaten. Het is wél een eigen pagina en geen blok per node,
+    omdat "welke release draait waar" een vraag is die je over alle nodes
+    tegelijk stelt. -#}
+<nav class="adminnav" aria-label="Beheeronderdelen">
+  <a href="/admin"{% if world == 'nodes' and not firmware_tab %} class="on" aria-current="page"{% endif %}>
+    &#128225; Nodes en repeaters</a>
+  <a href="/admin/firmware"{% if firmware_tab %} class="on" aria-current="page"{% endif %}>
+    &#8679; Firmware</a>
+  <a href="/admin/server"{% if world == 'server' %} class="on" aria-current="page"{% endif %}>
+    &#9881; Server en site</a>
+</nav>
+{% block admin %}{% endblock %}
+{% endblock %}
+
+{% block scripts %}<script src="/static/app.js?v={{ asset_v }}"></script>{% endblock %}

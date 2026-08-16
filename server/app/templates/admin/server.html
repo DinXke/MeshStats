@@ -1,0 +1,343 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Server en site — {{ site_name }}{% endblock %}
+{% block admin %}
+<div class="pagehead">
+  <div class="pagehead-top"><h1>Server en site</h1></div>
+  <p class="muted small">Alles op deze pagina configureert <em>deze installatie</em> en raakt geen
+     enkel apparaat. Handelingen op een node &mdash; uitvragen, klok, firmware &mdash; staan onder
+     <a href="/admin">Nodes en repeaters</a>.</p>
+</div>
+
+{% if new_token %}
+<div class="card notice">
+  <strong>Nieuw API-token aangemaakt.</strong> Kopieer het nu — het wordt niet opnieuw getoond:
+  <code class="tokenbox">{{ new_token }}</code>
+</div>
+{% endif %}
+
+<section id="toegang">
+  <h2>Toegang</h2>
+  <div class="card">
+  <p class="muted small">Ingelogd als <strong>{{ user }}</strong>. Een wachtwoordwijziging maakt elke
+     andere sessie ongeldig; dit tabblad krijgt meteen een nieuwe koek en blijft dus open.
+     Extra accounts maak je vanaf de opdrachtregel
+     (<code>python -m app.main set-password &lt;naam&gt;</code>) &mdash; bewust niet vanaf een
+     webformulier.</p>
+  <form method="post" action="/admin/password" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="password" name="current" placeholder="Huidig wachtwoord" autocomplete="current-password" required>
+    <input type="password" name="new" placeholder="Nieuw wachtwoord (min. 8)" autocomplete="new-password" required minlength="8">
+    <button type="submit">Wachtwoord wijzigen</button>
+  </form>
+  </div>
+</section>
+
+<section id="tokens">
+  <h2>API-tokens</h2>
+  <div class="card tablecard">
+  <table>
+    <thead><tr><th>Naam</th><th>Aangemaakt</th><th>Laatst gebruikt</th><th></th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+      <tr>
+        <td>{{ t.name }}</td>
+        <td><time class="reltime" datetime="{{ t.created_at }}">{{ t.created_at }}</time></td>
+        <td>{% if t.last_used %}<time class="reltime" datetime="{{ t.last_used }}">{{ t.last_used }}</time>{% else %}nooit{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/tokens/{{ t.id }}/revoke" class="inline"
+                onsubmit="return confirm('Token {{ t.name }} intrekken?')">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger">Intrekken</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Nog geen tokens. Zonder token werkt de site prima —
+        nodes publiceren over MQTT. Een token heb je nodig voor wie via de HTTP-API binnenkomt,
+        zoals de Home Assistant-integratie.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/tokens" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="name" placeholder="Naam (bv. home-assistant)" required>
+    <button type="submit">Token aanmaken</button>
+  </form>
+  </div>
+</section>
+
+{# Snoeien dat stil gebeurt is precies wat je niet wilt als je later een gat in
+   je grafiek ziet. Daarom staat hier niet alleen wat er ingesteld is, maar ook
+   wat dat feitelijk oplevert: hoe groot de databank is, hoeveel pakketten er
+   staan, welk tijdvenster dat beslaat en wat de laatste ronde weggooide.
+
+   Instellen en uitkomst staan sinds de herindeling in één blok en niet in twee
+   secties ver uit elkaar: het getal dat je invult en het gevolg dat het heeft
+   zijn dezelfde vraag, en wie de termijn verlaagt hoort meteen te zien dat de
+   bovengrens hem misschien toch eerder afsnijdt. #}
+<section id="opslag">
+  <h2>Bewaartermijn en opslag</h2>
+  <div class="card">
+
+  {% if storage.falls_short %}
+  <p class="error"><strong>De ingestelde bewaartermijn wordt niet gehaald.</strong>
+     Er is <strong>{{ storage.days }} dagen</strong> ingesteld, maar er staat feitelijk
+     <strong>{{ storage.effective_days }} dagen</strong> aan pakketten in de databank: de
+     {% if storage.limit_hit == 'rows' %}grens van {{ '{:,}'.format(storage.max_rows).replace(',', '.') }} rijen{% else %}grens van {{ storage.max_mb }} MB{% endif %}
+     snijdt eerder. De oudste pakketten gaan als eerste weg (FIFO). Wil je de volle termijn,
+     verhoog dan die bovengrens &mdash; en kijk eerst of daar schijfruimte voor is.</p>
+  {% endif %}
+  {% if storage.over_ceiling %}
+  <p class="error"><strong>De databank staat boven de bovengrens van {{ storage.max_mb }} MB.</strong>
+     De pakketten zijn al tot hun ondergrens teruggesnoeid; wat er nu nog staat zijn metingen en
+     contacten, en die gooit deze site niet uit zichzelf weg. Verhoog de bovengrens of verlaag de
+     bewaartermijn van de historiek.</p>
+  {% endif %}
+
+  <form method="post" action="/admin/settings" class="settingsgrid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Bewaartermijn historiek (dagen)
+      <input type="number" name="retention_days" value="{{ settings.retention_days }}" min="1" max="3650" required>
+    </label>
+    <label>Bewaartermijn pakketten (dagen)
+      <input type="number" name="packet_retention_days" value="{{ settings.packet_retention_days }}" min="1" max="365" required>
+    </label>
+    <label>Maximum aantal pakketrijen (FIFO)
+      <input type="number" name="packet_max_rows" value="{{ settings.packet_max_rows }}" min="1000" max="50000000" required>
+    </label>
+    <label>Maximale bestandsgrootte (MB)
+      <input type="number" name="db_max_mb" value="{{ settings.db_max_mb }}" min="16" max="1000000" required>
+    </label>
+    <div class="settingsactions"><button type="submit">Opslaan</button></div>
+  </form>
+
+  <table>
+    <tr><td>Databestand</td><td class="mono">{{ storage.db_bytes | filesizeformat(true) }}
+      <span class="muted">&middot; bovengrens {{ storage.max_mb }} MB
+      {%- if storage.free_bytes %} &middot; {{ storage.free_bytes | filesizeformat(true) }} vrije ruimte binnenin{% endif %}</span></td></tr>
+    <tr><td>Pakketten</td><td class="mono">{{ storage.packets }}
+      <span class="muted">&middot; maximaal {{ storage.max_rows }} rijen</span></td></tr>
+    <tr><td>Tijdvenster pakketten</td><td>
+      {%- if storage.oldest %}<time class="reltime" datetime="{{ storage.oldest }}">{{ storage.oldest }}</time>
+        &rarr; <time class="reltime" datetime="{{ storage.newest }}">{{ storage.newest }}</time>
+        <span class="muted">&middot; {{ storage.effective_days }} van {{ storage.days }} ingestelde dagen</span>
+      {%- else %}<span class="muted">nog geen pakketten</span>{% endif %}</td></tr>
+    <tr><td>Metingen in SQLite</td><td class="mono">{{ storage.samples }}
+      <span class="muted">&middot; bewaartermijn {{ storage.sample_days }} dagen
+      {%- if storage.samples_oldest %} &middot; oudste <time class="reltime" datetime="{{ storage.samples_oldest }}">{{ storage.samples_oldest }}</time>{% endif %}</span></td></tr>
+    <tr><td>Laatste opruiming</td><td>
+      {%- if storage.last %}<time class="reltime" datetime="{{ storage.last.at }}">{{ storage.last.at }}</time>
+        &middot; <span class="mono">{{ storage.last.packets_age + storage.last.packets_rows + storage.last.packets_bytes }}</span> pakketten weg
+        {%- if storage.last.packets_rows or storage.last.packets_bytes %}
+          <span class="muted">(waarvan {{ storage.last.packets_rows + storage.last.packets_bytes }} op de bovengrens)</span>
+        {%- endif %}
+        {%- if storage.last.samples %} &middot; <span class="mono">{{ storage.last.samples }}</span> metingen{% endif %}
+        {%- if storage.last.neighbors %} &middot; <span class="mono">{{ storage.last.neighbors }}</span> burenrijen{% endif %}
+      {%- else %}<span class="muted">nog niet gedraaid sinds deze versie</span>{% endif %}</td></tr>
+    <tr><td>Bestand herschreven</td><td>
+      {%- if storage.last and storage.last.vacuum and storage.last.vacuum.ran %}
+        <time class="reltime" datetime="{{ storage.last.vacuum.at }}">{{ storage.last.vacuum.at }}</time>
+        <span class="muted">&middot; {{ storage.last.vacuum.reason }}</span>
+      {%- elif storage.last and storage.last.vacuum %}<span class="muted">{{ storage.last.vacuum.reason }}</span>
+      {%- else %}<span class="muted">nog niet beoordeeld</span>{% endif %}</td></tr>
+    <tr><td>Opruimronde</td><td class="mono">elke {{ storage.state.interval_min }} min
+      <span class="muted">&middot; {{ storage.state.runs }} ronde(n) sinds deze start
+      {%- if storage.state.last_error %} &middot; laatste fout: {{ storage.state.last_error }}{% endif %}</span></td></tr>
+  </table>
+
+  <p class="muted small"><strong>Twee grenzen, niet één.</strong> Een termijn in dagen zegt niets over
+     schijfruimte: bij een verkeersexplosie loopt de schijf alsnog vol terwijl de instelling keurig
+     gerespecteerd wordt. Daarom is de termijn wat we <em>willen</em>, en zijn het rijmaximum en de
+     maximale bestandsgrootte wat we <em>beloven</em>. Botsen ze, dan gaat de oudste eruit &mdash; wie het
+     eerst binnenkwam gaat het eerst weg &mdash; en zegt deze pagina dat hierboven met zoveel woorden.
+     Er wordt elk uur opgeruimd en niet alleen bij het opstarten, want een server die maanden draait
+     hoort tussendoor op te ruimen.</p>
+  <p class="muted small"><strong>Waarom het bestand niet altijd krimpt.</strong> SQLite geeft ruimte na een
+     verwijdering niet terug aan de schijf: de pagina's komen op een vrije lijst en worden hergebruikt.
+     Bij een gelijkmatige instroom is dat prima. Verlaag je een termijn of snijdt de bovengrens, dan
+     blijft er een groot gat achter, en pas dan wordt het bestand herschreven (<code>VACUUM</code>).
+     Dat gebeurt alleen als er minstens 16 MB én een vijfde van het bestand vrij staat, en alleen als er
+     ruim genoeg schijfruimte is voor de tijdelijke tweede kopie.</p>
+  <p class="muted small">De bewaartermijn voor pakketten bepaalt meteen het venster van de heatmap op de
+     kaart: verhoog je hem, dan groeit die mee, zonder herstart.</p>
+  </div>
+</section>
+
+<section id="weergave">
+  <h2>Weergave van de publieke site</h2>
+  <div class="card">
+  <form method="post" action="/admin/settings" class="settingsgrid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Punt-interval grafieken (minuten)
+      <input type="number" name="heartbeat_min" value="{{ settings.heartbeat_min }}" min="1" max="1440" required>
+    </label>
+    <label>Historiekperiodes (uren, kommagescheiden)
+      <input name="history_ranges" value="{{ settings.history_ranges }}" placeholder="4,24,48,168,744,2160" required>
+    </label>
+    <div class="settingsactions"><button type="submit">Opslaan</button></div>
+  </form>
+  <p class="muted small">Punt-interval: hoe vaak er minstens een grafiekpunt wordt opgeslagen, ook als
+     de waarde niet wijzigt. Periodes: 24 = 24 u, 168 = 7 d, 744 = 31 d.</p>
+
+  <h3>Blokken op de startpagina</h3>
+  <p class="muted small">Sleep de blokken in de gewenste volgorde; vink af wat verborgen moet blijven.</p>
+  <ul id="layout-list">
+    {% for item in layout %}
+    <li draggable="true" data-key="{{ item.key }}">
+      <span class="draghandle" title="Versleep om te herordenen">&#8942;&#8942;</span>
+      <span class="layout-name">{{ block_names[item.key] }}</span>
+      <label class="layout-visible"><input type="checkbox" {% if item.visible %}checked{% endif %}> zichtbaar</label>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/admin/layout" id="layout-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="layout" id="layout-json">
+    <button type="submit">Indeling opslaan</button>
+  </form>
+  </div>
+</section>
+
+{#- De parameterlijst stond op de pagina van één repeater, en dat klopte niet:
+    hij geldt voor allemaal. Wie hem daar wijzigde, wijzigde hem stilletjes ook
+    voor de andere nodes. Hier staat hij op de plek waar hij thuishoort, met de
+    beperking erbij die hem het vaakst verwart. -#}
+<section id="cli-params">
+  <h2>Op te vragen parameters</h2>
+  <div class="card">
+  <form method="post" action="/admin/cli_params" class="rowform" style="flex-direction: column; align-items: stretch;">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="cli_params" value="{{ cli_params }}" class="mono" aria-label="Op te vragen CLI-parameters">
+    <div><button type="submit">Parameterlijst opslaan</button></div>
+  </form>
+  <p class="muted small">Eén lijst voor alle repeaters: kommagescheiden <code>get</code>-parameters van
+     de repeater-CLI. Onbekende parameters leveren gewoon een foutantwoord op en kunnen geen kwaad.
+     <strong>Deze lijst stuurt alleen de poller-weg.</strong> Beide MQTT-wegen gebruiken de
+     lijst in de firmware (<code>SET_PARAMS</code>) — zowel een node die zichzelf uitleest als
+     een monitor die een gemonitorde repeater over LoRa uitvraagt — dus een parameter die je
+     hier toevoegt bereikt die pas na een firmware-aanpassing.</p>
+  </div>
+</section>
+
+{# Zichtbaarheid is hier de helft van de feature. Een kloksynchronisatie die
+   weigert te draaien mag er niet uitzien als een die nooit is ingesteld, en een
+   die draait hoort te zeggen wanneer en met welke afloop -- anders is de enige
+   manier om te weten of het werkt: gaan kijken op een dak. #}
+<section id="kloksync">
+  <h2>Kloksynchronisatie</h2>
+  <div class="card">
+  <table>
+    <tr><td>Staat aan</td><td>
+      {%- if clocksync.enabled %}<span class="ok">ja</span>, elke {{ clocksync.interval_hours }} uur
+      {%- else %}<span class="muted">nee &mdash; <code>MM_CLOCKSYNC_ENABLED=0</code></span>{% endif %}</td></tr>
+    <tr><td>Klok van deze server</td><td>
+      {%- if not clocksync.clock %}<span class="muted">nog niet gemeten</span>
+      {%- elif clocksync.clock.ok %}<span class="ok">bruikbaar</span>
+        <span class="muted">&middot; {{ clocksync.clock.kernel.detail }}</span>
+      {%- else %}<span class="bad">niet vertrouwd</span>
+        <span class="muted">&middot; {{ clocksync.clock.reason }}</span>{% endif %}</td></tr>
+    <tr><td>Laatste ronde</td><td>
+      {%- if clocksync.last_run %}<time class="reltime" datetime="{{ clocksync.last_run }}">{{ clocksync.last_run }}</time>
+        &middot; {{ clocksync.last_result }}
+        {%- if clocksync.last_reason %} <span class="muted">({{ clocksync.last_reason }})</span>{% endif %}
+      {%- else %}<span class="muted">nog niet gedraaid</span>{% endif %}</td></tr>
+    <tr><td>Laatst geslaagd</td><td>
+      {%- if clocksync.last_ok %}<time class="reltime" datetime="{{ clocksync.last_ok }}">{{ clocksync.last_ok }}</time>
+      {%- else %}<span class="muted">nog nooit</span>{% endif %}</td></tr>
+    <tr><td>Rondes / geweigerd</td><td class="mono">{{ clocksync.runs }} / {{ clocksync.refusals }}</td></tr>
+    <tr><td>Handmatig</td><td>
+      {%- if clocksync.last_manual %}<time class="reltime" datetime="{{ clocksync.last_manual }}">{{ clocksync.last_manual }}</time>
+      &middot; naar node <span class="mono">{{ clocksync.manual_node }}</span>
+      {%- else %}<span class="muted">nog niet gebruikt</span>{% endif %}</td></tr>
+  </table>
+
+  {#- Deze tabel staat op de serverpagina en niet bij de nodes, omdat ze over de
+      planner gaat: wie krijgt er straks uit zichzelf een tijd. De knop om het nu
+      te doen staat waar hij hoort -- op de pagina van die ene node, met de
+      bevestigingsvraag erbij. -#}
+  {% if clock_targets %}
+  <table>
+    <tr><th>Repeater</th><th>Krijgt de tijd?</th></tr>
+    {% for t in clock_targets %}
+    <tr>
+      <td><a href="/admin/repeaters/{{ t.id }}">{{ t.name }}</a> <span class="muted mono">{{ t.prefix[:6] }}</span></td>
+      <td>{% if t.ok %}<span class="ok">ja</span>{% else %}<span class="muted">nee</span>{% endif %}
+          <span class="muted">&middot; {{ t.why }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  <p class="muted small">Een MeshCore-node zet zijn klok nooit uit zichzelf goed: na een herstart staat
+     hij op de datum die in de firmware zit. De site stuurt daarom periodiek
+     <code>time &lt;epoch&gt;</code> naar elke node die rechtstreeks publiceert; die zet zijn eigen klok
+     en controleert daarna over LoRa de klokken van de repeaters die hij monitort &mdash; de enige weg
+     naar een repeater die hier zelf niets publiceert. Vereist nodefirmware 1.10.0 op de node.</p>
+  <p class="muted small"><strong>Wat &quot;bruikbaar&quot; hier wel en niet betekent.</strong> Deze app
+     draait in een container en leest de tijddiscipline van de kernel (<code>adjtimex</code>, dezelfde
+     bron als <code>NTPSynchronized</code> van <code>timedatectl</code>). In een LXC is dat het oordeel
+     van de <em>host</em>, doorgegeven: &quot;de host meldt dat hij gelijkloopt&quot; is iets anders dan
+     &quot;de tijd is aantoonbaar juist&quot;. De juistheid van elke klok in dit mesh hangt dus
+     uiteindelijk aan de NTP-instelling van die host. Daarnaast wordt gecontroleerd of de wandklok niet
+     springt ten opzichte van de monotone klok en of hij niet achteruitloopt. Bij twijfel vertrekt er
+     niets: een klok kan alleen vooruit gezet worden, dus een fout hier is op een dak niet meer terug
+     te draaien.</p>
+  </div>
+</section>
+
+<section id="invoer">
+  <h2>Gegevensinvoer</h2>
+  <div class="card">
+  <table>
+    <tr><td>MQTT-broker</td><td class="mono">{{ mqtt.broker or 'niet ingesteld' }}</td></tr>
+    <tr><td>Onderwerp statistieken</td><td class="mono">{{ mqtt.topic }}</td></tr>
+    <tr><td>Onderwerp pakketten</td><td class="mono">{{ mqtt.rx_topic }}</td></tr>
+    {# De hernoeming naar MeshManager in één regel: waar melden de nodes zich
+       vandaag? Zolang hier nog iets op het oude voorvoegsel staat, mag de
+       terugval in mqtt_ingest.py niet weg. #}
+    <tr><td>Nodes per voorvoegsel</td><td class="mono">
+      {%- if topic_prefixes %}{% for tp in topic_prefixes %}{{ tp.prefix }}: {{ tp.n }}{% if not loop.last %} &middot; {% endif %}{% endfor %}
+        {%- if topic_prefixes|selectattr('prefix', 'equalto', mqtt.legacy_prefix)|list %}
+        <div class="muted small">Er publiceren nog nodes op het oude voorvoegsel
+          <code>{{ mqtt.legacy_prefix }}</code>. Flash die met MeshManager-firmware en zet
+          <code>wifi mqtt prefix {{ mqtt.prefix }}</code>; pas als deze regel weg is, mag de
+          terugval uit de server.</div>
+        {%- endif %}
+      {%- else %}<span class="muted">nog niets binnengekomen</span>{% endif %}</td></tr>
+    <tr><td>Verbonden</td><td>{% if mqtt.connected %}<span class="ok">ja</span>{% else %}<span class="muted">nee</span>{% endif %}</td></tr>
+    <tr><td>Berichten ontvangen</td><td class="mono">{{ mqtt.messages }}</td></tr>
+    <tr><td>Pakketten ontvangen</td><td class="mono">{{ mqtt.packets }}{% if mqtt.last_packet %} &middot; <span class="muted">laatste <time class="reltime" datetime="{{ mqtt.last_packet }}">{{ mqtt.last_packet }}</time></span>{% endif %}</td></tr>
+    <tr><td>Fouten</td><td class="mono">{{ mqtt.errors }}{% if mqtt.last_error %} &middot; <span class="muted">{{ mqtt.last_error }}</span>{% endif %}</td></tr>
+  </table>
+  <p class="muted small">Nodes publiceren hun statistieken naar de MQTT-broker; dat is voor een ESP32
+     veel lichter dan HTTP. Op het pakketonderwerp sturen ze bovendien elk ontvangen LoRa-pakket ruw door,
+     wat de live kaart op de startpagina voedt. Instellen doe je op de node zelf (beheerpagina) en via de
+     omgevingsvariabelen <code>MM_MQTT_*</code>. De HTTP-ingest blijft daarnaast gewoon werken.</p>
+  </div>
+</section>
+
+<section id="tsdb">
+  <h2>Metingen (tijdreeksen)</h2>
+  <div class="card">
+  <table>
+    <tr><td>Tijdreeksdatabank</td><td class="mono">{{ tsdb.url or 'niet ingesteld &mdash; alles in SQLite' }}</td></tr>
+    <tr><td>Bereikbaar</td><td>
+      {%- if not tsdb.enabled %}<span class="muted">niet in gebruik</span>
+      {%- elif tsdb.connected %}<span class="ok">ja</span>
+      {%- elif tsdb.connected is none %}<span class="muted">nog niet geprobeerd</span>
+      {%- else %}<span class="bad">nee</span>{% endif %}
+    </td></tr>
+    <tr><td>Punten weggeschreven</td><td class="mono">{{ tsdb.written }}{% if tsdb.batches %} &middot; <span class="muted">{{ tsdb.batches }} batches</span>{% endif %}{% if tsdb.last_write %} &middot; <span class="muted">laatste <time class="reltime" datetime="{{ tsdb.last_write }}">{{ tsdb.last_write }}</time></span>{% endif %}</td></tr>
+    <tr><td>In wachtrij</td><td class="mono">{{ tsdb.queued }}</td></tr>
+    <tr><td>Uitgeweken naar SQLite</td><td class="mono">{{ tsdb.spilled }}</td></tr>
+    <tr><td>Fouten</td><td class="mono">{{ tsdb.failures }}{% if tsdb.last_error %} &middot; <span class="muted">{{ tsdb.last_error }}</span>{% endif %}</td></tr>
+  </table>
+  <p class="muted small">Alleen de metingen staan hier; repeaters, actuele waarden, contacten, buren en
+     pakketten blijven in SQLite. Nodes gaan tot elke tien seconden publiceren, en VictoriaMetrics bewaart
+     dat op volle resolutie voor ongeveer een byte per meetpunt. Schrijven gebeurt gebufferd in een aparte
+     thread, zodat de ingest nooit op het netwerk staat te wachten. Valt de databank weg, dan gaan de punten
+     naar de tabel <code>samples</code> in SQLite en lezen de grafieken daar weer uit: je verliest resolutie,
+     geen metingen. Instellen met <code>MM_TSDB_URL</code> (leeg = alles in SQLite).</p>
+  </div>
+</section>
+{% endblock %}

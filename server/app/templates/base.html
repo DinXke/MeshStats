@@ -1,5 +1,13 @@
 <!doctype html>
-<html lang="nl">
+{#- htmlattrs bestaat voor de beheerpagina's. Die zijn eentalig Nederlands (zie
+    admin/_layout.html voor waarom), en zonder een slot hier zou i18n.js op zo'n
+    pagina alsnog document.documentElement.lang op "en" zetten zodra iemand op de
+    publieke site ooit Engels koos -- een <html lang="en"> boven Nederlandse tekst
+    is precies het soort halve vertaling dat een schermlezer de das omdoet.
+    Alternatief dat is verworpen: i18n.js helemaal niet laden op /admin. Dan
+    breekt MCSI18N.t weg onder de relatieve tijden ("2 uur geleden"), en die
+    staan op elke beheerpagina. -#}
+<html lang="nl"{% block htmlattrs %}{% endblock %}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,7 +23,9 @@
 <header class="topbar">
   <a class="brand" href="/">&#128225; {{ site_name }}</a>
   <nav>{% block nav %}<a href="/admin" data-i18n="nav.admin">&#9881; Beheer</a>{% endblock %}
+    {%- block langtoggle %}
     <button type="button" id="lang-toggle" data-i18n-title="nav.lang_title" title="Taal wisselen / switch language">NL</button>
+    {%- endblock %}
     <button type="button" id="theme-toggle" data-i18n-title="nav.theme_title" title="Wissel licht/donker thema">&#9788;</button>
   </nav>
 </header>

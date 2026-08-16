@@ -1,0 +1,110 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Nodes en repeaters — {{ site_name }}{% endblock %}
+{% block admin %}
+<div class="pagehead">
+  <div class="pagehead-top"><h1>Nodes en repeaters</h1></div>
+  <p class="muted small">Alles op deze pagina gaat over een apparaat dat ergens staat: uitvragen,
+     de klok zetten, zichtbaar maken. Instellingen van deze installatie zelf &mdash; accounts,
+     tokens, bewaartermijn, weergave &mdash; staan onder <a href="/admin/server">Server en site</a>.</p>
+</div>
+
+{#- Waarom de lijst in drie groepen uiteenvalt, en niet op naam of op laatst
+    gezien staat: wat je met een node kúnt doen verschilt per groep, en dat is
+    hier de enige indeling die de knoppen eronder verklaart. Het niveau is een
+    WAARNEMING -- er is nergens een knop om het te zetten. Het verschuift vanzelf
+    als een node zijn verbinding verliest of andere firmware krijgt, en de zin
+    achter elke node zegt waaraan we het op dit ogenblik zien.
+
+    Waarom dit geen tabel meer is: de oude had zeven kolommen, met een
+    prullenbakje pal naast een naamveld, en werd onder 700 px een horizontaal
+    schuivend blok waarin je op de gok tikt. De duurste fout op deze site is een
+    handeling op de verkeerde node -- dus staan hier alleen de twee omkeerbare
+    dingen (zichtbaarheid, en doorklikken) en verhuizen hernoemen en verwijderen
+    naar de pagina van die ene node, waar zijn naam en sleutel groot boven de
+    knop staan. -#}
+{% for group in groups %}
+<section>
+  {% if group.level == 'full_managed' %}
+  <h2>Full managed &mdash; {{ group.reps | length }}</h2>
+  <p class="muted small">Onze firmware, met MQTT-koppeling. De node publiceert zijn eigen cijfers en
+     neemt opdrachten aan op zijn <code>cmd</code>-topic: uitvragen, instellingen, klok, en &mdash;
+     als er ook een IP-pad naartoe is &mdash; een firmware-upgrade.</p>
+  {% elif group.level == 'semi_managed' %}
+  <h2>Semi-managed &mdash; {{ group.reps | length }}</h2>
+  <p class="muted small">Geen firmware van ons, wél rechten op zijn CLI: een andere node monitort hem
+     en vraagt hem over LoRa uit, of de poller logt in met zijn wachtwoord. Instellingen lezen en
+     begrensd schrijven kan, de klok zetten kan. Firmware schrijven niet, en eigen statistieken
+     stuurt hij niet &mdash; wat je van hem ziet, ziet iemand anders voor hem.</p>
+  {% else %}
+  <h2>Unmanaged &mdash; {{ group.reps | length }}</h2>
+  <p class="muted small">Alleen telemetrie: we zien deze node langskomen en verder niets. Geen
+     wachtwoord, geen weg om iets te vragen &mdash; dus staat er hieronder ook geen knop die dat
+     belooft. Krijgt hij later een monitor of onze firmware, dan schuift hij vanzelf op.</p>
+  {% endif %}
+
+  <ul class="nodecards">
+    {% for rep in group.reps %}
+    {% set route = routes[rep.id] %}
+    <li class="noderow">
+      <div class="noderow-head">
+        <a class="noderow-name" href="/admin/repeaters/{{ rep.id }}">{{ rep.name }}</a>
+        <span class="chip mono">{{ rep.pubkey_prefix }}</span>
+        <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}"
+                  title="{{ 'Deze repeater staat op de publieke site — klik om te verbergen' if rep.is_public else 'Deze repeater is verborgen — klik om hem publiek te maken' }}">
+            {{ 'publiek' if rep.is_public else 'verborgen' }}</button>
+        </form>
+      </div>
+
+      <p class="noderow-why muted small">{{ route.level_why }}</p>
+
+      <dl class="noderow-facts">
+        {#- Via welke node de laatste statistieken binnenkwamen. Wijkt af van de
+            prefix zodra een node over een andere repeater rapporteert -- dat mag,
+            maar een onbekende bron hoort zichtbaar te zijn. #}
+        <div><dt>Bron</dt><dd>
+          {%- if not rep.source_prefix %}<span class="muted">&mdash;</span>
+          {%- elif rep.source_prefix == 'api' %}<span class="muted">HTTP-API</span>
+          {%- elif rep.source_prefix == rep.pubkey_prefix %}<span class="muted">zichzelf</span>
+          {%- else %}<span class="mono" title="Doorgestuurd door een andere node">via {{ rep.source_prefix }}</span>
+          {%- endif %}</dd></div>
+        <div><dt>Firmware</dt><dd>
+          {%- if rep.fw or rep.fw_meshmanager %}<span class="mono">{{ rep.fw or '?' }}</span>
+            {%- if rep.fw_meshmanager %} <span class="muted mono">+ {{ rep.fw_meshmanager }}</span>{% endif %}
+          {%- else %}<span class="muted">onbekend</span>{% endif %}</dd></div>
+        <div><dt>Laatst gezien</dt><dd>
+          {%- if rep.last_seen %}<time class="reltime" datetime="{{ rep.last_seen }}">{{ rep.last_seen }}</time>
+          {%- else %}<span class="muted">nooit</span>{% endif %}</dd></div>
+        {#- "Weg nu" en niet "online": dit is wat de site op dit ogenblik kan
+            versturen, niet of het apparaat brandt, en ook niet hetzelfde als het
+            niveau hierboven. Een full managed node achter een weggevallen broker
+            blijft full managed -- er is alleen nu geen weg. #}
+        <div><dt>Weg nu</dt><dd>
+          {%- if route.mqtt and route.via_monitor %}<span class="ok">via monitor</span>
+            <span class="muted mono">{{ route.node }}</span>
+          {%- elif route.mqtt and route.ha %}<span class="ok">MQTT + poller</span>
+          {%- elif route.mqtt %}<span class="ok">MQTT</span>
+          {%- elif route.ha %}<span class="ok">poller</span>
+          {%- else %}<span class="muted">geen</span>{% endif %}</dd></div>
+      </dl>
+
+      <div class="noderow-actions">
+        <a class="linkbtn" href="/admin/repeaters/{{ rep.id }}">Beheren &rarr;</a>
+        <a class="muted small" href="/r/{{ rep.slug }}">publieke pagina</a>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<section>
+  <h2>Overzicht</h2>
+  <div class="card">
+    <p class="muted">Nog geen repeaters &mdash; die verschijnen automatisch zodra een node data
+       stuurt, over MQTT of via de HTTP-API. Er valt hier dus niets aan te maken; er valt op
+       te wachten.</p>
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

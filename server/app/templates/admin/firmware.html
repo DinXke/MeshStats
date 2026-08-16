@@ -1,8 +1,16 @@
-{% extends "base.html" %}
+{#- Firmware hoort bij de wereld van de apparaten en niet bij die van de server:
+    dit schrijft een image naar een node op een dak. Vandaar dat deze pagina het
+    beheerkader deelt met de nodelijst -- zelfde tabbalk, zelfde taalslot -- in
+    plaats van een eigen kop en een eigen navigatie te voeren. -#}
+{% extends "admin/_layout.html" %}
 {% block title %}Firmware — {{ site_name }}{% endblock %}
-{% block nav %}<a href="/admin">Beheer</a> <a href="/admin/logout">Uitloggen ({{ user }})</a>{% endblock %}
-{% block content %}
-<h1>Firmware</h1>
+{% block admin %}
+<div class="pagehead">
+  <div class="pagehead-top"><h1>Firmware</h1></div>
+  <p class="muted small">Eén overzicht over alle nodes heen: welke versie erop staat, welke
+     releases er zijn, en wie er een image kan krijgen. De rest van wat je met één node kunt
+     doen staat op <a href="/admin">zijn eigen pagina</a>.</p>
+</div>
 
 {# Wat de pagina als geheel niet kan, staat bovenaan. Een lijst nodes met overal
    dezelfde uitleg eronder is een lijst waarin niemand de uitleg nog leest. #}

@@ -1,0 +1,571 @@
+{% extends "admin/_layout.html" %}
+{% block title %}{{ rep.name }} — beheer — {{ site_name }}{% endblock %}
+{% block admin %}
+
+{#- De kop is hier geen versiering. Elke knop op deze pagina raakt één bepaald
+    apparaat, en de duurste fout die je op deze site kunt maken is dezelfde
+    handeling op de verkeerde node. Naam én sleutel staan daarom groot bovenaan,
+    en elke bevestigingsvraag hieronder herhaalt ze -- zodat "weet je het zeker?"
+    ook echt over iets gaat en niet over "deze". -#}
+<div class="pagehead">
+  <div class="pagehead-top">
+    <h1>{{ rep.name }}</h1>
+    <span class="lvl lvl--{{ route.level }}" title="{{ route.level_why }}">
+      {%- if route.level == 'full_managed' %}full managed
+      {%- elif route.level == 'semi_managed' %}semi-managed
+      {%- else %}unmanaged{% endif %}</span>
+    <span class="badge {{ 'on' if rep.is_public else 'off' }}">{{ 'publiek' if rep.is_public else 'verborgen' }}</span>
+  </div>
+  <div class="muted mono-line">
+    <span class="chip">{{ rep.pubkey_prefix }}</span>
+    <a href="/r/{{ rep.slug }}">&rarr; publieke pagina</a>
+    <a href="/admin">&larr; alle nodes</a>
+  </div>
+</div>
+
+{#- Waarom deze meldingen zo uitgebreid zijn: een opvraging loopt over een radio
+    en kan op vier plaatsen doodlopen zonder ergens een fout op te leveren. De
+    pagina meldde vroeger in álle gevallen "Opvraging gestart", ook toen er al
+    dagen niemand meer was om ze te starten. Wat hier staat is wat er werkelijk
+    gebeurd is. -#}
+{% if status == "both" %}
+<div class="card notice">
+  &#9203; Statusverzoek verstuurd naar de node <em>én</em> in de wachtrij gezet;
+  binnen &plusmn;1 minuut verschijnt een vers datapunt op de
+  <a href="/r/{{ rep.slug }}">publieke pagina</a>.
+</div>
+{% elif status == "mqtt" %}
+<div class="card notice">
+  &#9203; De node is gevraagd nu een statusbericht te sturen; binnen &plusmn;1 minuut
+  verschijnt een vers datapunt op de <a href="/r/{{ rep.slug }}">publieke pagina</a>.
+</div>
+{% elif status == "queued" %}
+<div class="card notice">
+  &#9203; Statusverzoek in de wachtrij gezet &mdash; de poller vraagt de repeater over LoRa
+  uit; binnen &plusmn;1 minuut verschijnt een vers datapunt.
+</div>
+{% elif status == "none" %}
+<div class="card notice">
+  &#9888; Er is <strong>niets verstuurd</strong> &mdash; er was op dit ogenblik geen weg
+  naar deze repeater. De uitleg staat bij het blok <em>Uitvragen</em> hieronder.
+</div>
+{% endif %}
+
+{% if requested == "both" %}
+<div class="card notice">
+  &#9203; Opvraging langs beide wegen verstuurd: de node is rechtstreeks gevraagd
+  zijn CLI uit te lezen, en de opvraging staat ook in de wachtrij voor de poller.
+  Reken op <strong>1 à 2 minuten</strong>; herlaad deze pagina daarna.
+</div>
+{% elif requested == "mqtt" and route.via_monitor %}
+<div class="card notice">
+  &#9203; Node <span class="mono">{{ route.node }}</span> is gevraagd deze repeater
+  over LoRa uit te vragen. Hij logt in en stelt de parameters één voor één, met
+  ademruimte ertussen omdat elk commando en elk antwoord zendtijd kost op een
+  gedeelde band. Reken op <strong>2 à 5 minuten</strong>; herlaad deze pagina daarna.
+  Blijft alles op “(geen antwoord)” staan, dan is de meest voorkomende oorzaak dat
+  de monitor daar alleen leesrechten heeft — een repeater voert CLI-commando's
+  alleen uit voor een admin.
+</div>
+{% elif requested == "mqtt" %}
+<div class="card notice">
+  &#9203; De node is gevraagd zijn instellingen nu uit te lezen (over MQTT, naar
+  node <span class="mono">{{ route.node }}</span>). Hij leest ze één voor één van
+  zijn eigen CLI en stuurt ze mee zodra hij klaar is — meestal binnen een
+  <strong>halve minuut</strong>. Herlaad deze pagina daarna.
+</div>
+{% elif requested == "queued" %}
+<div class="card notice">
+  &#9203; Opvraging in de wachtrij gezet. De poller haalt ze op, logt in op de
+  repeater en vraagt de parameters over LoRa op; dat duurt
+  <strong>1 à 2 minuten</strong>. Herlaad deze pagina daarna.
+</div>
+{% elif requested == "none" %}
+<div class="card notice">
+  &#9888; Er is <strong>niets verstuurd</strong> — er was op dit ogenblik geen weg
+  naar deze repeater. De uitleg staat bij de knop hieronder.
+</div>
+{% elif queued_since %}
+<div class="card notice">
+  &#9888; Er staat sinds <time class="reltime" datetime="{{ queued_since }}">{{ queued_since }}</time>
+  nog een opvraging in de wachtrij, en niemand heeft ze opgehaald.
+  {% if route.poller_seen %}De laatste poll was
+  <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
+  {% else %}Er heeft nog nooit een poller aangeklopt.{% endif %}
+</div>
+{% elif delivery_unanswered %}
+{#- Het derde geval, en het gemeenste: de poller hééft het verzoek meegenomen
+    en er is daarna niets teruggekomen. Een lege wachtrij ziet er dan uit als
+    een geslaagde opvraging, en de tabel hieronder toont ongewijzigd wat er al
+    stond. Alleen het uitreikingsmoment naast de ouderdom van de waarden maakt
+    dat zichtbaar. -#}
+<div class="card notice">
+  &#9888; Een poller heeft de laatste opvraging
+  <time class="reltime" datetime="{{ delivered_since }}">{{ delivered_since }}</time>
+  meegenomen, en sindsdien is er geen enkel antwoord binnengekomen. De wachtrij is
+  dus wél leeggehaald; wat erna moest gebeuren — inloggen op de repeater en de
+  parameters over LoRa opvragen — is niet gelukt of niet geprobeerd. De waarden
+  hieronder zijn ouder dan dat.
+</div>
+{% endif %}
+
+<section>
+  <h2>Identiteit en versies</h2>
+  <div class="card">
+  {#- Het beheerniveau staat bovenaan en niet onderaan, omdat het de vraag
+      beantwoordt die je hebt vóór je naar beneden scrolt: wat kan ik hier
+      eigenlijk mee? Het is een waarneming en geen instelling -- er is nergens
+      een knop om het te zetten, en het verschuift vanzelf zodra deze node zijn
+      verbinding verliest of andere firmware krijgt. -#}
+  <div class="lvlcard lvl--{{ route.level }}">
+    <div class="lvlcard-head">
+      <span class="lvl lvl--{{ route.level }}">
+        {%- if route.level == 'full_managed' %}full managed
+        {%- elif route.level == 'semi_managed' %}semi-managed
+        {%- else %}unmanaged{% endif %}</span>
+      <span class="muted small">waargenomen: {{ route.level_why }}</span>
+    </div>
+    <p class="muted small">
+      {%- if route.level == 'full_managed' %}
+      Onze firmware met MQTT-koppeling. Uitvragen, instellingen, klok en &mdash; als er ook een
+      IP-pad naar dit apparaat is &mdash; een firmware-upgrade horen hier allemaal te kunnen.
+      {%- elif route.level == 'semi_managed' %}
+      Geen firmware van ons, wél rechten op zijn CLI. Instellingen lezen en begrensd schrijven
+      kan, de klok zetten kan. Firmware schrijven niet: daar is een weg voor nodig die deze node
+      niet heeft. En eigen statistieken stuurt hij niet &mdash; wat je van hem ziet, ziet een
+      andere node voor hem.
+      {%- else %}
+      Alleen telemetrie. Geen wachtwoord, geen weg om iets te vragen; de knoppen hieronder staan
+      daarom uit, met per knop de reden erbij. Krijgt deze node later een monitor of onze
+      firmware, dan schuift hij vanzelf op &mdash; hier valt niets aan te zetten.
+      {%- endif %}
+    </p>
+  </div>
+
+  <table>
+    <tr><td>Sleutelprefix</td><td class="mono">{{ rep.pubkey_prefix }}</td></tr>
+    <tr><td>Slug (URL)</td><td class="mono"><a href="/r/{{ rep.slug }}">{{ rep.slug }}</a></td></tr>
+    <tr><td>Bron van de cijfers</td><td>
+      {%- if not rep.source_prefix %}<span class="muted">nog niets binnengekomen</span>
+      {%- elif rep.source_prefix == 'api' %}<span class="muted">HTTP-API</span>
+      {%- elif rep.source_prefix == rep.pubkey_prefix %}<span class="muted">hijzelf, rechtstreeks over MQTT</span>
+      {%- else %}doorgestuurd door node <span class="mono">{{ rep.source_prefix }}</span>{% endif %}
+      {%- if rep.source_seen %} <span class="muted">&middot; <time class="reltime" datetime="{{ rep.source_seen }}">{{ rep.source_seen }}</time></span>{% endif %}</td></tr>
+    <tr><td>Laatst gezien</td><td>
+      {%- if rep.last_seen %}<time class="reltime" datetime="{{ rep.last_seen }}">{{ rep.last_seen }}</time>
+      {%- else %}<span class="muted">nooit</span>{% endif %}</td></tr>
+    <tr><td>MeshCore-firmware</td><td class="mono">{{ rep.fw or '—' }}</td></tr>
+    {#- De versie van de nodefirmware staat hier niet voor de volledigheid: zij beslist of
+        de knoppen verderop iets mógen versturen (opdrachten vanaf 1.8.0, een
+        gemonitorde repeater uitvragen vanaf 1.9.0, de klok vanaf 1.10.0). Wie
+        zich afvraagt waarom een knop uit staat, kijkt eerst hier. #}
+    <tr><td>Nodefirmware (MeshManager)</td><td class="mono">{{ rep.fw_meshmanager or '—' }}
+      {%- if not rep.fw_meshmanager %} <span class="muted">— zonder deze versie stuurt de site
+      niets naar deze node; zie de uitleg bij <em>Uitvragen</em></span>{% endif %}</td></tr>
+  </table>
+
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/rename" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="name" value="{{ rep.name }}" aria-label="Naam van deze repeater">
+    <button type="submit">Naam opslaan</button>
+  </form>
+  <p class="muted small">De naam is alleen van deze site: hij verandert niets op het apparaat en
+     is zo weer terug te zetten. Een node die zichzelf anders noemt, overschrijft hem wél &mdash;
+     zijn eigen naam wint bij het volgende bericht.</p>
+
+  </div>
+</section>
+
+<section>
+  <h2>Zichtbaarheid op de site</h2>
+  <div class="card">
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="back" value="node">
+    <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}">
+      {{ 'publiek — klik om te verbergen' if rep.is_public else 'verborgen — klik om publiek te maken' }}</button>
+  </form>
+  <p class="muted small">Verborgen betekent: niet op de startpagina, en <code>/r/{{ rep.slug }}</code>
+     geeft 404 voor bezoekers. De gegevens blijven staan en de node blijft gewoon binnenkomen.
+     Omkeerbaar met dezelfde klik &mdash; vandaar geen bevestigingsvraag.</p>
+  <p class="muted small"><strong>Publiek is nu alles of niets.</strong> Staat deze repeater aan, dan
+     ziet een bezoeker zijn naam, zijn cijfers én zijn positie op de kaart. Een positie is
+     gevoeliger dan een batterijstand, en dat verschil kan deze site vandaag niet uitdrukken.
+     Er is dus geen &ldquo;wel de cijfers, niet de plek&rdquo;.</p>
+
+  {#- ── Landingsplek voor een fijnmaziger zichtbaarheidskeuze ─────────────────
+      Hier horen de extra schakelaars: positie tonen ja/nee, naam tonen ja/nee,
+      naast de bestaande publiek ja/nee. In dit blok, niet in een eigen sectie:
+      het is één vraag -- wat ziet een bezoeker van deze node -- en drie
+      antwoorden.
+
+      Wat er in de databank bij hoort: twee kolommen op ``repeaters``, via
+      db.COLUMN_MIGRATIONS, allebei ``INTEGER NOT NULL DEFAULT 1``. De standaard
+      móét 1 zijn: bestaande rijen krijgen die waarde bij het toevoegen, en zo
+      verandert er morgenochtend niets aan wat er nu op de kaart staat. Een
+      nieuwe instelling die stilzwijgend iets van een kaart haalt, is een
+      slechtere fout dan de instelling die ontbrak.
+
+      En het echte werk zit niet hier maar in de handhaving. Een schakelaar die
+      belooft een positie te verbergen terwijl ze elders nog uitgeleverd wordt,
+      is erger dan geen schakelaar -- dit is de plek waar deze site geen halve
+      beloftes doet. Een positie van een gevolgde repeater komt langs
+      routes_api.py naar buiten op: /repeaters/{slug}/map, /packets (zowel
+      sender_lat/observer_lat als de contacts-lijst), /packets/search,
+      /packets/heatmap, /packets/{id} en /nodes/{prefix}. Alle zes, of geen.
+      De naam loopt daarnaast ook nog over /repeaters en de zoekfunctie.
+   ─────────────────────────────────────────────────────────────────────────── -#}
+  </div>
+</section>
+
+<section>
+  <h2>Uitvragen</h2>
+  <div class="card tablecard">
+  <table>
+    <thead><tr><th>Parameter</th><th>Waarde</th><th>Opgehaald</th></tr></thead>
+    <tbody>
+    {% for row in settings_rows %}
+      <tr>
+        <td class="mono">{{ row.param }}</td>
+        <td class="mono prewrap">{% if row.value is not none %}{{ row.value }}{% else %}<span class="muted">(geen antwoord)</span>{% endif %}</td>
+        <td>{% if row.updated %}<time class="reltime" datetime="{{ row.updated }}">{{ row.updated }}</time>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">Nog niets opgehaald. Een node met de nodefirmware
+        leest zijn eigen instellingen één keer per dag uit en stuurt ze mee met zijn
+        statistieken; met de knop hieronder vraag je er nu een.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {#- Twee handelingen, allebei in een act-blok en niet als kale knop tussen de
+      tekst. Ze lezen alleen -- er verandert niets op het apparaat -- maar ze
+      kosten wél zendtijd op een band die iedereen deelt, en dat is de reden dat
+      ze zwaarder ogen dan het vinkje hierboven. Een bevestigingsvraag staat er
+      niet op: wat je hier fout kunt doen kost een halve minuut lucht en is met
+      niets meer terug te draaien dan geduld. -#}
+  <div class="act act--read">
+    <div class="act-head">
+      <h3>Instellingen nu opvragen</h3>
+      <span class="act-tag">kost zendtijd</span>
+    </div>
+    <p class="muted small">
+      {%- if route.mqtt and route.ha %}
+      Beschikbaar: rechtstreeks aan node <span class="mono">{{ route.node }}</span> over MQTT,
+      én via de poller over LoRa.
+      {%- elif route.mqtt and route.via_monitor %}
+      Deze repeater publiceert zelf niet, maar node <span class="mono">{{ route.node }}</span>
+      monitort hem en kan hem over LoRa uitvragen (nodefirmware {{ route.fw_meshmanager }}).
+      De site vraagt het aan die node; die logt in bij deze repeater, stelt de parameters
+      één voor één en publiceert de antwoorden onder deze repeater. Wat onbeantwoord
+      blijft komt hierboven als “(geen antwoord)” te staan in plaats van als een oude
+      waarde die vers lijkt.
+      {%- elif route.mqtt %}
+      De site vraagt het rechtstreeks aan node <span class="mono">{{ route.node }}</span> over
+      MQTT (nodefirmware {{ route.fw_meshmanager }}). Die leest zijn eigen CLI uit en stuurt de
+      waarden mee met zijn eerstvolgende statistiekbericht.
+      {%- elif route.ha %}
+      De rechtstreekse weg is dicht, dus dit loopt via de wachtrij en de poller.
+      {%- else %}
+      Geen van beide wegen staat open, en daarom doet de knop niets.
+      {%- endif %}
+    </p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/settings/refresh">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if route.mqtt or route.ha %}
+      <button type="submit">&#128225; Instellingen nu opvragen</button>
+      {% else %}
+      <button type="submit" disabled title="Er is op dit ogenblik geen weg naar deze repeater">
+        &#128225; Opvragen kan nu niet</button>
+      {% endif %}
+    </form>
+  </div>
+
+  <div class="act act--read">
+    <div class="act-head">
+      <h3>Nu een verse status vragen</h3>
+      <span class="act-tag">kost zendtijd</span>
+    </div>
+    <p class="muted small">Vraagt om één statusbericht (batterij, uptime, buren) in plaats van te
+       wachten op het eerstvolgende. Het datapunt verschijnt op de
+       <a href="/r/{{ rep.slug }}">publieke pagina</a> van deze repeater.
+       {%- if route.via_monitor %} Deze repeater publiceert zelf niet; zijn cijfers komen van de
+       node die hem monitort, en die stuurt ze op zijn eigen rondes &mdash; hem hierom vragen kan
+       niet, dus als er nog een poller is loopt dit langs die weg.{% endif %}</p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/refresh">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="back" value="node">
+      {% if ('status' in route.commands and route.mqtt) or route.ha %}
+      <button type="submit">&#8635; Status nu opvragen</button>
+      {% else %}
+      <button type="submit" disabled title="Er is op dit ogenblik geen weg om dit te vragen">
+        &#8635; Status opvragen kan nu niet</button>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if not route.mqtt %}
+  <p class="muted small">
+    <strong>Rechtstreeks (MQTT):</strong>
+    {%- if route.blocker == "no_source" %}
+    er is nog geen enkel bericht van deze repeater binnengekomen, dus is niet bekend
+    welke node ervoor publiceert.
+    {%- elif route.blocker == "http_source" %}
+    deze repeater komt binnen via de HTTP-API en niet via MQTT; langs die weg valt een
+    node niets te vragen.
+    {%- elif route.blocker == "relay_unknown" %}
+    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
+    en die node is hier zelf geen bekende repeater. Van zijn firmware weten we dus niets,
+    en een opdracht sturen zou neerkomen op hopen dat hij hem kent.
+    {%- elif route.blocker == "no_fw" and route.via_monitor %}
+    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
+    en die meldt geen firmwareversie. Alleen een monitor die de sweep kent kan deze
+    repeater over LoRa uitvragen, en of dat zo is valt niet vast te stellen.
+    {%- elif route.blocker == "no_fw" %}
+    de node meldt geen firmwareversie, dus valt niet vast te stellen of hij opdrachten
+    aanneemt. Publiceren zou hier neerkomen op hopen.
+    {%- elif route.blocker == "old_fw" and route.via_monitor %}
+    deze repeater publiceert zelf niet; node <span class="mono">{{ route.node }}</span>
+    stuurt zijn cijfers door en draait nodefirmware {{ route.fw_meshmanager }}. Een gemonitorde
+    repeater over LoRa uitvragen kan pas vanaf {{ route.min_fw }} — oudere firmware weigert
+    het argument en telt de opdracht als geweigerd.
+    {%- elif route.blocker == "old_fw" %}
+    de node draait nodefirmware {{ route.fw_meshmanager }}. Opdrachten over MQTT bestaan pas
+    vanaf {{ route.min_fw }}; oudere firmware schrijft zich niet in op het cmd-topic, dus de
+    broker gooit het bericht weg zonder dat iemand het merkt.
+    {%- elif route.blocker == "broker_down" %}
+    de site heeft op dit ogenblik geen verbinding met de MQTT-broker.
+    {%- endif %}
+  </p>
+  {% elif route.node_stale %}
+  <p class="muted small">
+    &#9888; De laatste statistieken van deze node kwamen
+    <time class="reltime" datetime="{{ route.node_seen }}">{{ route.node_seen }}</time> binnen.
+    Een opdracht wordt niet bewaard voor een node die offline is: staat zijn WiFi in zuinige
+    modus uit, dan komt ze niet aan en verschijnt hier gewoon niets.
+  </p>
+  {% endif %}
+
+  <p class="muted small">
+    <strong>Poller (Home Assistant):</strong>
+    {%- if route.ha %}
+    aanwezig, laatste poll
+    <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
+    Vereist wel dat het repeater-wachtwoord in de integratie ingevuld staat.
+    {%- elif route.poller_seen %}
+    niets meer opgehaald sinds
+    <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
+    De integratie geldt als afwezig, dus er wordt niets meer in de wachtrij gelegd.
+    {%- else %}
+    er heeft nog nooit iemand <span class="mono">/api/v1/commands</span> opgehaald. Deze weg
+    is optioneel — zonder poller doet de node het zelf.
+    {%- endif %}
+  </p>
+  <p class="muted small">Wélke parameters er opgevraagd worden, staat niet hier maar bij
+     <a href="/admin/server#cli-params">Server en site</a>: het is één lijst voor alle repeaters.</p>
+  </div>
+</section>
+
+{#- De klok. Eigen sectie en niet een knop bij het uitvragen, omdat het een
+    andere handeling is met een andere prijs: instellingen opvragen leest, dit
+    schrijft, en het schrijft op een node die je daarna niet meer kunt
+    terugdraaien. Wat er hieronder zo uitgebreid staat, staat er om dezelfde
+    reden als bij de opvraagknop hierboven: dit loopt over een radio en kan op
+    meer dan één plaats doodlopen zonder ergens een fout op te leveren. -#}
+<section>
+  <h2>Klok</h2>
+  <div class="card">
+
+  {% if clock == "sent" %}
+  <div class="card notice">
+    &#9203; De tijd is naar node <span class="mono">{{ clock_route.node }}</span> verstuurd.
+    Die zet meteen zijn eigen klok
+    {%- if clock_route.via_monitor %} en loopt daarna zijn gemonitorde repeaters af,
+    waaronder deze. Per repeater vraagt hij eerst de klok op en zet hij die alleen bij
+    als ze meer dan twee minuten afwijkt, met ademruimte ertussen omdat elk commando
+    zendtijd kost. Reken op <strong>1 à 3 minuten</strong>.
+    {%- else %}, en loopt daarna de repeaters af die hij monitort.{% endif %}
+  </div>
+  {% elif clock == "too_soon" %}
+  <div class="card notice">
+    &#9888; Er is <strong>niets verstuurd</strong>. Node <span class="mono">{{ clock_route.node }}</span>
+    kreeg minder dan {{ clock_gap_min }} minuten geleden al een tijd van deze site, en hij
+    doet de ronde langs zijn gemonitorde repeaters hoogstens één keer per uur — die zou
+    hij nu dus overslaan. Volgende synchronisatie mogelijk over
+    <strong>{{ clock_wait }} minuten</strong>.
+  </div>
+  {% elif clock == "no_clock" %}
+  <div class="card notice">
+    &#9888; Er is <strong>niets verstuurd</strong>: de klok van deze server is op dit
+    ogenblik niet als betrouwbaar vast te stellen — {{ clocksync_reason or "zie Server en site" }}.
+    Een verkeerde tijd is op een node niet meer terug te draaien (een klok kan alleen
+    vooruit), dus bij twijfel gaat er niets uit. De uitleg staat op
+    <a href="/admin/server#kloksync">Server en site</a>.
+  </div>
+  {% elif clock == "failed" %}
+  <div class="card notice">
+    &#9888; De opdracht is <strong>niet vertrokken</strong> van deze machine. Meestal is
+    de verbinding met de MQTT-broker net weggevallen; kijk op
+    <a href="/admin/server#invoer">Server en site</a>.
+  </div>
+  {% elif clock == "no_route" %}
+  <div class="card notice">
+    &#9888; Er is <strong>niets verstuurd</strong> — er was geen weg om de tijd heen te
+    brengen. De uitleg staat bij de knop hieronder.
+  </div>
+  {% elif clock == "disabled" %}
+  <div class="card notice">
+    &#9888; Kloksynchronisatie staat uit (<code>MM_CLOCKSYNC_ENABLED=0</code>).
+  </div>
+  {% endif %}
+
+  <table>
+    <tr><td>Laatst tijd gestuurd</td><td>
+      {%- if clock_sent %}<time class="reltime" datetime="{{ clock_sent }}">{{ clock_sent }}</time>
+      naar node <span class="mono">{{ clock_route.node }}</span>
+      {%- else %}<span class="muted">nog nooit door deze site</span>{% endif %}</td></tr>
+    <tr><td>Automatisch</td><td>
+      {%- if clock_enabled %}ja, de site doet dit uit zichzelf; de knop hieronder is er om niet te
+      hoeven wachten{% else %}<span class="muted">uitgeschakeld</span>{% endif %}</td></tr>
+  </table>
+
+  {#- Dit is de eerste handeling op deze pagina die iets op het apparaat
+      verándert, en de enige waarvan een fout niet vanaf hier te herstellen is.
+      Vandaar het zwaarste blok, én een bevestigingsvraag die de node bij naam
+      noemt. Verworpen alternatief: een eigen bevestigingsscherm in de pagina.
+      Dat ziet er rustiger uit, maar confirm() is wat de rest van deze site al
+      gebruikt, werkt zonder een regel extra JavaScript en is met het toetsenbord
+      te bedienen -- en de vraag is hier belangrijker dan het kader eromheen. -#}
+  <div class="act act--write">
+    <div class="act-head">
+      <h3>Klok nu synchroniseren</h3>
+      <span class="act-tag">schrijft op het apparaat</span>
+    </div>
+    <p class="muted small">
+      {%- if clock_route.ok and not broker %}
+      {#- De weg klopt, maar er is nu geen broker om hem over te bewandelen.
+          clocksync.time_route kijkt daar bewust niet naar; de knop hier wel,
+          want anders eindigt een klik op "er is niets verstuurd" en had de
+          pagina dat vooraf kunnen zeggen. -#}
+      De weg naar node <span class="mono">{{ clock_route.node }}</span> staat open, maar de site
+      heeft op dit ogenblik geen verbinding met de MQTT-broker. Er zou dus niets vertrekken.
+      {%- elif clock_route.ok and clock_route.via_monitor %}
+      Deze repeater publiceert zelf niet en heeft dus geen eigen weg naar de site. Zijn klok
+      komt van node <span class="mono">{{ clock_route.node }}</span>, die hem monitort
+      (nodefirmware {{ clock_route.fw_meshmanager }}). <strong>De knop richt zich daarom niet op
+      deze repeater alleen:</strong> de site stuurt de tijd naar die node, en die kijkt de
+      klokken na van <em>alle</em> repeaters die hij monitort. De firmware kent geen manier
+      om dat op één node toe te spitsen, en dat is geen omissie — een klokronde kost per
+      gemonitorde repeater één vraag en één antwoord, dus de hele lijst aflopen is
+      ongeveer een vijfde van wat één gewone pollronde kost.
+      {%- elif clock_route.ok %}
+      De site stuurt <code>time &lt;epoch&gt;</code> rechtstreeks naar node
+      <span class="mono">{{ clock_route.node }}</span> (nodefirmware {{ clock_route.fw_meshmanager }}).
+      Die zet zijn eigen klok en kijkt daarna over LoRa de klokken na van de repeaters die
+      hij monitort.
+      {%- elif clock_route.blocker == "no_source" %}
+      er is nog geen enkel bericht van deze repeater binnengekomen, dus is niet bekend welke
+      node ervoor publiceert.
+      {%- elif clock_route.blocker == "http_source" %}
+      deze repeater komt binnen via de HTTP-API en niet via MQTT; langs die weg valt een node
+      niets te sturen.
+      {%- elif clock_route.blocker == "relay_unknown" %}
+      de cijfers van deze repeater worden doorgestuurd door node
+      <span class="mono">{{ clock_route.node }}</span>, en die node is hier zelf geen bekende
+      repeater. Van zijn firmware weten we dus niets.
+      {%- elif clock_route.blocker == "no_fw" %}
+      de node die de tijd zou krijgen meldt geen firmwareversie, dus valt niet vast te
+      stellen of hij <code>time</code> kent. Publiceren zou hier neerkomen op hopen.
+      {%- elif clock_route.blocker == "old_fw" %}
+      de node die de tijd zou krijgen draait nodefirmware {{ clock_route.fw_meshmanager }}. Het
+      commando <code>time</code> bestaat pas vanaf {{ clock_min_fw }}; oudere firmware weigert
+      het woord en telt het als geweigerd, zonder dat iemand dat hier ziet.
+      {%- elif clock_route.blocker == "stale" %}
+      er is al te lang niets van de node gehoord die de tijd zou krijgen. Een opdracht wordt
+      niet bewaard voor een node die offline is.
+      {%- elif clock_route.blocker == "broker_down" %}
+      de site heeft op dit ogenblik geen verbinding met de MQTT-broker.
+      {%- else %}
+      {{ clock_route.why }}
+      {%- endif %}
+    </p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/clocksync"
+          onsubmit="return confirm('De tijd van deze server naar node {{ clock_route.node or '?' }} sturen, voor {{ rep.name }} ({{ rep.pubkey_prefix }})?\n\nDit zet klokken op apparaten die je van hier niet meer kunt terugdraaien{% if clock_route.via_monitor %}, en die node kijkt meteen ook de klokken na van alle andere repeaters die hij monitort{% endif %}.')">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if clock_route.ok and clock_enabled and broker %}
+      <button type="submit">&#128340; Klok nu synchroniseren</button>
+      {% else %}
+      <button type="submit" disabled title="Er is op dit ogenblik geen weg om de tijd heen te brengen">
+        &#128340; Synchroniseren kan nu niet</button>
+      {% endif %}
+    </form>
+  </div>
+
+  <p class="muted small">
+    <strong>Wat deze pagina wel en niet weet.</strong> Hierboven staat wanneer <em>deze
+    site</em> voor het laatst een tijd verstuurd heeft — niet of de klok daarna ook echt
+    goed stond. De node meet zelf hoeveel elke gemonitorde repeater afwijkt en corrigeert
+    alleen boven twee minuten, maar hij stuurt die meting nergens naartoe; ze is te lezen
+    met <code>wifi clock</code> op de node zelf (serieel, telnet of over de mesh-CLI).
+    Een node die <em>vóór</em> loopt wordt daar gemeld en met rust gelaten: adverts dragen
+    de klok van hun afzender mee en worden geweigerd als die tijdstempel niet stijgt, dus
+    een klok terugzetten zou die repeater even lang onzichtbaar maken als de stap groot is.
+  </p>
+  </div>
+</section>
+
+{#- De firmware-upgradeweg is er, en hij staat op zijn eigen pagina: welke
+    release waar draait is een vraag die je over alle nodes tegelijk stelt. Hier
+    staat de weg ernaartoe, op de plek waar hij hoort -- ná de klok en vóór het
+    verwijderblok, in oplopende onomkeerbaarheid. Opvragen leest, de klok
+    schrijft één getal, firmware schrijft het hele apparaat.
+
+    Wat hier bewust NIET herhaald wordt: de versie die er nu op staat. Die staat
+    in "Identiteit en versies" hierboven, en twee plaatsen die hetzelfde getal
+    tonen zijn twee plaatsen die het een keer oneens worden.
+
+    En let op bij het niveau: of een upgrade kán is niet af te leiden uit
+    ``route.level``. Een full managed node zonder IP-pad neemt commando's aan
+    maar geen image van ruim een megabyte, en een node waarvan we de
+    bouwomgeving niet kennen mag er sowieso geen krijgen -- verkeerd board is een
+    kapotte node. Die afweging maakt firmware.ota_route(), en de firmwarepagina
+    toont hem per node. -#}
+<section>
+  <h2>Firmware</h2>
+  <div class="card">
+  <div class="act act--danger">
+    <div class="act-head">
+      <h3>Een image naar dit apparaat schrijven</h3>
+      <span class="act-tag">schrijft firmware</span>
+    </div>
+    <p class="muted small">De upgrade zelf staat op de firmwarepagina: daar zie je naast elkaar
+       welke versie op elke node draait, welke releases er zijn met hun release notes, en per
+       node of er een weg naartoe is. Van deze node staat de versie hierboven bij
+       <em>Identiteit en versies</em>.</p>
+    <p><a class="linkbtn" href="/admin/firmware">&#8679; Naar firmware &rarr;</a></p>
+  </div>
+  </div>
+</section>
+
+<section>
+  <h2>Verwijderen</h2>
+  <div class="card">
+  <div class="act act--danger">
+    <div class="act-head">
+      <h3>Deze repeater en al zijn historiek wissen</h3>
+      <span class="act-tag">onomkeerbaar</span>
+    </div>
+    <p class="muted small">Weg zijn: alle metingen, de actuele waarden en de burenlijst van
+       <strong>{{ rep.name }}</strong> (<span class="mono">{{ rep.pubkey_prefix }}</span>).
+       Dit stopt niets op het apparaat zelf &mdash; blijft de node publiceren, dan staat hij er
+       binnen enkele minuten weer bij, leeg. Wil je hem alleen van de publieke site af, gebruik
+       dan <em>verbergen</em> hierboven.</p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/delete"
+          onsubmit="return confirm('{{ rep.name }} ({{ rep.pubkey_prefix }}) en alle historiek verwijderen?\n\nDit is niet ongedaan te maken.')">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="danger">&#128465;&#65039; Verwijderen</button>
+    </form>
+  </div>
+  </div>
+</section>
+{% endblock %}

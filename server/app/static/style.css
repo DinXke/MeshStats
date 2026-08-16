@@ -295,6 +295,163 @@ label input { width: 100%; margin-top: .25rem; }
   border: 1px solid var(--card-edge); border-radius: 6px; word-break: break-all;
   font-family: var(--mono); color: var(--accent); }
 
+/* --- admin: de twee werelden -------------------------------------------------
+   De beheerpagina viel uiteen in handelingen op apparaten en instellingen van
+   deze installatie. De tabbalk is die scheiding; alles hieronder dient om het
+   verschil in gewicht zichtbaar te maken dat er in werkelijkheid al was.
+   Er staan geen vaste kleuren in: alles loopt over de variabelen bovenaan, dus
+   het licht-thema doet vanzelf mee. */
+.adminnav {
+  display: flex; gap: .3rem; flex-wrap: wrap;
+  margin: 1.1rem 0 0; border-bottom: 1px solid var(--border);
+}
+.adminnav a {
+  font-family: var(--mono); font-size: .8rem; padding: .5rem .9rem;
+  color: var(--muted); border: 1px solid transparent; border-bottom: 0;
+  border-radius: 8px 8px 0 0; white-space: nowrap;
+}
+.adminnav a:hover { color: var(--text); }
+/* -1px zodat de actieve tab de lijn eronder wegduwt en aan zijn paneel vastzit. */
+.adminnav a.on {
+  color: var(--accent); background: var(--card);
+  border-color: var(--card-edge); margin-bottom: -1px;
+}
+
+/* Groen/rood los van de pillenknoppen: dit zijn mededelingen, geen knoppen, en
+   ze stonden eerder als losse style="" in vier templates. */
+.ok, .bad {
+  display: inline-block; padding: .15rem .6rem; border-radius: 99px;
+  font-size: .8rem;
+}
+.ok { background: rgba(53, 224, 140, .12); color: var(--accent); }
+.bad { background: rgba(255, 92, 92, .12); color: var(--red); }
+
+/* --- admin: beheerniveau van een node ---------------------------------------
+   Een waarneming en geen instelling, dus nadrukkelijk geen knop-vorm: een label
+   waar je niet op kunt drukken. */
+.lvl {
+  font-family: var(--mono); font-size: .66rem; text-transform: uppercase;
+  letter-spacing: .12em; padding: .2rem .6rem; border-radius: 99px;
+  border: 1px solid currentColor; white-space: nowrap;
+}
+.lvl--full_managed { color: var(--accent); }
+.lvl--semi_managed { color: var(--amber); }
+.lvl--unmanaged { color: var(--muted); }
+.lvlcard {
+  border: 1px solid var(--card-edge); border-left: 3px solid var(--muted);
+  border-radius: 8px; background: var(--bg-grid); padding: .7rem .8rem;
+  margin: 0 0 1rem;
+}
+.lvlcard.lvl--full_managed { border-left-color: var(--accent); }
+.lvlcard.lvl--semi_managed { border-left-color: var(--amber); }
+.lvlcard-head { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.lvlcard p { margin: .5rem 0 0; }
+
+/* --- admin: nodelijst ---------------------------------------------------------
+   Een tabel met zeven kolommen werd onder 700 px een schuivend blok waarin je op
+   de gok tikt, en dat is precies waar de duurste fout van deze site zit: een
+   handeling op de verkeerde node. Vandaar kaarten die van 320 px tot 1400 px
+   dezelfde volgorde houden. */
+/* .nodecards en niet .nodelist: die naam was al bezet door de lijst in het
+   nodepaneel van de live kaart, en `.nodelist li` daar zet display:flex met een
+   hogere specificiteit dan `.noderow`. Het gevolg was een kaart die op 1400 px
+   even smal bleef als op een telefoon, zonder dat er in dit blok iets fout
+   stond. Een eigen naam is de enige echte oplossing; !important zou de volgende
+   lezer laten zoeken naar een tegenstander die hij niet kan vinden. */
+.nodecards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .7rem; }
+.noderow {
+  background: var(--card); border: 1px solid var(--card-edge); border-radius: 10px;
+  padding: .75rem .9rem;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 1rem; row-gap: .45rem; align-items: start;
+}
+.noderow-head { grid-column: 1; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.noderow-name { font-weight: 700; font-size: 1.02rem; color: var(--text); }
+.noderow-name:hover { color: var(--accent); }
+.noderow-why { grid-column: 1; margin: 0; }
+.noderow-facts {
+  grid-column: 1; margin: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .35rem .9rem;
+}
+.noderow-facts dt {
+  font-family: var(--mono); font-size: .62rem; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--muted);
+}
+.noderow-facts dd { margin: 0; font-size: .86rem; }
+.noderow-actions {
+  grid-column: 2; grid-row: 1 / span 3;
+  display: flex; flex-direction: column; align-items: flex-end; gap: .4rem;
+}
+.linkbtn {
+  font-family: var(--mono); font-size: .8rem; padding: .4rem .8rem; border-radius: 7px;
+  border: 1px solid var(--accent-dim); color: var(--accent); white-space: nowrap;
+}
+.linkbtn:hover { background: var(--accent); color: #06130c; }
+@media (max-width: 600px) {
+  /* Onder deze breedte past er geen tweede kolom meer naast de feiten zonder
+     dat de knop op één woord per regel uitkomt. */
+  .noderow { grid-template-columns: 1fr; }
+  .noderow-actions { grid-column: 1; grid-row: auto; flex-direction: row;
+                     align-items: center; justify-content: space-between; }
+}
+
+/* --- admin: handelingen met een prijs -----------------------------------------
+   Het verschil dat deze blokken moeten dragen: een vinkje zet je zo weer terug,
+   maar een opdracht over de radio kost zendtijd op een band die iedereen deelt,
+   en een klok of een firmware-image schrijf je op een apparaat dat op een dak
+   staat. Dat verschil zat eerder alleen in de tekst. Nu ook in de vorm: een
+   gekleurde rand links, een etiket dat de prijs noemt, en bij het schrijven een
+   bevestigingsvraag die de node bij naam noemt (zie de templates). */
+.act {
+  border: 1px solid var(--card-edge); border-left: 3px solid var(--muted);
+  border-radius: 8px; background: var(--bg-grid);
+  padding: .7rem .8rem; margin: 1rem 0;
+}
+.act--read { border-left-color: var(--cyan); }
+.act--write { border-left-color: var(--amber); }
+.act--danger { border-left-color: var(--red); }
+.act-head { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
+.act-head h3 {
+  margin: 0; color: var(--text); font-size: .92rem; font-family: var(--sans);
+  letter-spacing: 0; text-transform: none;
+}
+.act-tag {
+  font-family: var(--mono); font-size: .6rem; text-transform: uppercase;
+  letter-spacing: .12em; padding: .1rem .5rem; border-radius: 99px;
+  border: 1px solid currentColor; white-space: nowrap;
+}
+.act--read .act-tag { color: var(--cyan); }
+.act--write .act-tag { color: var(--amber); }
+.act--danger .act-tag { color: var(--red); }
+.act p { margin: .45rem 0 .7rem; }
+.act form { margin: 0; }
+.act--read button:not(:disabled) {
+  background: transparent; border-color: var(--cyan); color: var(--cyan);
+}
+.act--read button:not(:disabled):hover {
+  background: var(--cyan); color: #06131a; box-shadow: 0 0 12px rgba(76, 201, 240, .35);
+}
+.act--write button:not(:disabled) {
+  background: transparent; border-color: var(--amber); color: var(--amber);
+}
+.act--write button:not(:disabled):hover {
+  background: var(--amber); color: #1a1206; box-shadow: 0 0 12px rgba(255, 180, 84, .35);
+}
+
+/* Een knop die niets kan doen blijft staan en zegt waarom -- dat is de lijn van
+   commanding.py -- maar hij hoort er dan ook niet uit te zien alsof hij wacht op
+   een klik. Dit ontbrak: uitgeschakelde knoppen waren van ingeschakelde niet te
+   onderscheiden. */
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:disabled:hover { box-shadow: none; }
+
+/* Toetsenbord: de beheerpagina is helemaal met tab te doorlopen, en dan moet
+   zichtbaar zijn waar je bent. De browserstandaard verdwijnt op donkere randen. */
+.adminnav a:focus-visible, .linkbtn:focus-visible,
+button:focus-visible, .noderow-name:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
 /* --- admin: instellingen & indeling ----------------------------------------- */
 .settingsgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .8rem; align-items: end; }
 .settingsactions { display: flex; align-items: end; }

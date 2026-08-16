@@ -164,6 +164,11 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
     ``fw_meshmanager`` de firmware van de node die de opdracht krijgt -- dus van
                      de monitor als het langs een monitor gaat. Dat is de versie
                      waar de bewering over gaat, en de pagina toont hem.
+    ``level``        het beheerniveau van deze node: 'unmanaged', 'semi_managed'
+                     of 'full_managed'. Een waarneming, geen instelling -- zie
+                     ``_level`` hieronder.
+    ``level_why``    waarom dat niveau, in het Nederlands en met de node erbij
+                     die het mogelijk maakt.
     """
     now = now or datetime.now(timezone.utc)
     node = (_field(rep, "source_prefix") or "").lower().strip()
@@ -197,8 +202,15 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
         blocker = "broker_down"
 
     open_ = blocker == ""
+    poller_fresh = _fresh(poller_seen, POLLER_STALE_SECS, now)
+    level, level_why = _level(rep, via_monitor=via_monitor, relay=relay,
+                              poller_fresh=poller_fresh)
     return {
         "mqtt": open_,
+        # Wat deze node IS, naast wat er nu open staat. Zie _level hierboven voor
+        # waarom die twee uit elkaar gehouden worden.
+        "level": level,
+        "level_why": level_why,
         "commands": ("settings",) if via_monitor else ("settings", "status"),
         "via_monitor": via_monitor,
         "blocker": blocker,
@@ -208,9 +220,95 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
         "min_fw": ".".join(str(n) for n in needed),
         "node_seen": _field(rep, "source_seen"),
         "node_stale": not _fresh(_field(rep, "source_seen"), NODE_STALE_SECS, now),
-        "ha": _fresh(poller_seen, POLLER_STALE_SECS, now),
+        "ha": poller_fresh,
         "poller_seen": poller_seen,
     }
+
+
+# --- beheerniveau ------------------------------------------------------------
+#
+# Drie niveaus, en ze zijn een WAARNEMING en geen instelling. Nergens staat een
+# knop om ze te zetten: ze volgen uit wat er binnenkomt, en ze verschuiven vanzelf
+# zodra een node zijn netwerkverbinding verliest of andere firmware krijgt.
+#
+#   unmanaged  alleen telemetrie. We zien hem in het verkeer en verder niets:
+#              geen wachtwoord, geen weg om iets te vragen. Er is dus ook geen
+#              handeling die op zo'n node kan slagen.
+#   semi       geen eigen firmware van ons, maar wél rechten op zijn CLI --
+#              bereikt over LoRa door een node die hem monitort, of door de
+#              poller die met het repeaterwachtwoord inlogt. Instellingen lezen
+#              en begrensd schrijven kan, de klok zetten kan; firmware schrijven
+#              niet, en eigen statistieken stuurt hij niet.
+#   full       onze firmware met MQTT-koppeling. Alles kan, firmware-upgrade
+#              inbegrepen.
+#
+# Waarom dit náást ``mqtt``/``ha`` staat en die niet vervangt: die twee zeggen
+# wat er op DIT OGENBLIK openstaat, en dat is iets anders dan wat deze node is.
+# Een full-managed node achter een weggevallen broker blijft full managed -- er
+# is alleen nu geen weg. Precies daarom kijkt de berekening hieronder niet naar
+# ``broker_connected``: anders zou het niveau van een node op en neer springen
+# met de netwerkverbinding van de server, en zou "semi-managed" iets over ons
+# gaan zeggen in plaats van over hem.
+#
+# Verworpen alternatief: het niveau als kolom in de repeaters-tabel, door de
+# beheerder in te stellen. Dat leest prettig -- je zegt wat een node is -- maar
+# het loopt gegarandeerd uit de pas met de werkelijkheid, en dan staat er een
+# knop die "kan" zegt over een node die zijn firmware kwijt is.
+# De waarden staan voluit en niet afgekort: ze reizen mee in JSON-antwoorden en
+# "semi" alleen zegt daar niets.
+LEVEL_UNMANAGED = "unmanaged"
+LEVEL_SEMI = "semi_managed"
+LEVEL_FULL = "full_managed"
+
+
+def _level(rep, *, via_monitor: bool, relay, poller_fresh: bool) -> tuple[str, str]:
+    """(niveau, waargenomen reden). De reden is Nederlandse tekst voor op het scherm.
+
+    Toetsvolgorde zoals afgesproken: eerst full managed, dan semi, dan de rest.
+    ``level_why`` is bewust geen code die een template in een zin omzet -- anders
+    dan ``blocker`` hierboven -- omdat de reden hier de node bij naam noemt en
+    dat op elke plek waar het niveau opduikt hetzelfde hoort te luiden.
+
+    Wat hier NIET in zit: of er een firmware-upgrade mogelijk is. Dat is een
+    eigen eigenschap en geen vierde niveau -- een full managed node zonder
+    IP-pad neemt commando's aan maar geen image van ruim een megabyte, en een
+    node waarvan we de bouwomgeving niet kennen mag er sowieso geen krijgen
+    (verkeerd board = kapotte node). Die sleutel komt uit de firmwareweg.
+    """
+    source = (_field(rep, "source_prefix") or "").lower().strip()
+    fw = _field(relay, "fw_meshmanager") if via_monitor else _field(rep, "fw_meshmanager")
+    version = parse_version(fw)
+
+    # Full managed: de node publiceert zijn eigen cijfers over MQTT en meldt een
+    # firmwareversie. Dan bestaat zijn cmd-topic en kan de site hem
+    # rechtstreeks aansturen. Een doorgestuurde repeater kan dit per definitie
+    # niet zijn: de versie die we dan kennen is die van de doorstuurder.
+    if source and source != "api" and not via_monitor and version is not None:
+        return LEVEL_FULL, f"publiceert zelf over MQTT met nodefirmware {fw}"
+
+    # Semi managed: geen eigen firmware van ons, maar wel rechten op zijn CLI.
+    if via_monitor and version is not None and version >= MIN_MON_CMD_VERSION:
+        who = _field(relay, "name") or _field(rep, "source_prefix")
+        return LEVEL_SEMI, f"bereikbaar via {who} over LoRa"
+
+    # De poller staat niet met zoveel woorden in de afgesproken regel, en hij
+    # hoort er toch bij: de Home Assistant-integratie logt met het
+    # repeaterwachtwoord in en leest en schrijft dezelfde CLI. Hem hier weglaten
+    # zou een repeater die alleen zo binnenkomt "unmanaged -- alleen waargenomen
+    # in het verkeer" noemen terwijl de knop ernaast werkt, en dat is precies de
+    # oneerlijkheid die commanding.py bestaat om te voorkomen. Het bewijs is wel
+    # brozer dan een monitor -- het vervalt zodra de poller een kwartier zwijgt --
+    # en dat staat er daarom bij.
+    if poller_fresh:
+        return LEVEL_SEMI, "bereikbaar via de poller over LoRa, zolang die pollt"
+
+    if not source:
+        return LEVEL_UNMANAGED, "nog geen enkel bericht van deze node binnengekomen"
+    if source == "api":
+        return LEVEL_UNMANAGED, "cijfers komen via de HTTP-API; geen weg met rechten"
+    if via_monitor and relay is None:
+        return LEVEL_UNMANAGED, "doorgestuurd door een node die hier zelf niet bekend is"
+    return LEVEL_UNMANAGED, "alleen waargenomen in het verkeer"
 
 
 def describe(rep, **kwargs) -> dict:

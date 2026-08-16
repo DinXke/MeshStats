@@ -1,4 +1,26 @@
-"""Beheerders-backend: login, repeaterbeheer, API-tokens, wachtwoord."""
+"""Beheerders-backend, in twee werelden gesplitst.
+
+De beheerpagina was één lange lijst secties geworden, in de volgorde waarin ze
+ooit toegevoegd zijn. Daardoor stonden dingen die niets met elkaar te maken
+hebben naast elkaar: een knop die een node over de radio uitvraagt, en het
+invoerveld voor de bewaartermijn van de databank. Die twee horen niet in dezelfde
+visuele rang, want de ene kost zendtijd op een gedeelde band en kan een apparaat
+op een dak raken, en de andere zet je zo weer terug.
+
+Sindsdien:
+
+``GET /admin``                  nodes en repeaters -- alles wat een handeling op
+                                of informatie over een fysiek apparaat is.
+``GET /admin/repeaters/{rid}``  één node: identiteit, uitvragen, klok, firmware,
+                                verwijderen.
+``GET /admin/server``           deze installatie -- accounts, tokens, bewaring,
+                                weergave, parameterlijst, kloksynchronisatie en
+                                de statusblokken over de server zelf.
+
+De POST-routes zijn gebleven waar ze stonden. Dat is geen luiheid maar het
+voorkomt dat een beheerpagina die al in een tabblad openstond bij het volgende
+klikken een 404 oplevert. Waar een GET-URL wél verhuisde staat een omleiding.
+"""
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -113,17 +135,59 @@ def logout():
     return resp
 
 
+# De volgorde waarin de drie beheerniveaus op het scherm komen: van "hier kan
+# alles" naar "hier kan niets". Dat is de volgorde waarin je ze nodig hebt --
+# wie iets wil dóén begint bovenaan -- en meteen de volgorde waarin het aantal
+# knoppen afneemt.
+LEVEL_ORDER = (commanding.LEVEL_FULL, commanding.LEVEL_SEMI, commanding.LEVEL_UNMANAGED)
+
+
 @router.get("", response_class=HTMLResponse)
-def dashboard(request: Request):
+def nodes_page(request: Request):
+    """Wereld 1: alles wat over een apparaat gaat.
+
+    De route bepaalt hier ook het beheerniveau van elke node, en niet de
+    template. Dat is dezelfde regel als bij de opdrachtroutes: wat mogelijk is
+    wordt vastgesteld vóór de knop getekend wordt.
+    """
+    user = require_login(request)
+    repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    # Eén keer opgevraagd en dan meegegeven, in plaats van per repeater opnieuw:
+    # commanding.describe() haalt ze anders zelf op, en dat is bij twintig nodes
+    # veertig overbodige vragen aan de broker en de databank.
+    broker = mqtt_ingest.can_publish()
+    poller = db.poller_last_seen()
+    routes = {rep["id"]: commanding.describe(rep, broker_connected=broker,
+                                             poller_seen=poller)
+              for rep in repeaters}
+    groups = [{"level": level,
+               "reps": [r for r in repeaters if routes[r["id"]]["level"] == level]}
+              for level in LEVEL_ORDER]
+    return templates.TemplateResponse(request, "admin/nodes.html", {
+        "site_name": config.SITE_NAME, "user": user, "world": "nodes",
+        "repeaters": repeaters, "routes": routes,
+        # Lege groepen weglaten: een kopje "Unmanaged — 0" met niets eronder is
+        # ruis, en de uitleg bij zo'n kopje gaat dan over niemand.
+        "groups": [g for g in groups if g["reps"]],
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+    })
+
+
+@router.get("/server", response_class=HTMLResponse)
+def server_page(request: Request):
+    """Wereld 2: alles wat deze installatie configureert en geen apparaat raakt."""
     user = require_login(request)
     repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
     tokens = db.q("SELECT * FROM tokens WHERE revoked=0 ORDER BY created_at")
     layout = metrics.parse_layout(db.get_setting("layout"))
     # nieuw token éénmalig tonen via kortlevende cookie (niet via de URL)
     new_token = request.cookies.get("mm_new_token")
-    resp = templates.TemplateResponse(request, "admin/dashboard.html", {
-        "site_name": config.SITE_NAME, "user": user,
-        "repeaters": repeaters, "tokens": tokens,
+    resp = templates.TemplateResponse(request, "admin/server.html", {
+        "site_name": config.SITE_NAME, "user": user, "world": "server",
+        # ``repeaters`` staat hier niet meer in de context: de lijst hoort bij
+        # Nodes en repeaters. Hij wordt nog wel opgehaald, want clocksync.targets
+        # heeft hem nodig om te zeggen wie er straks uit zichzelf een tijd krijgt.
+        "tokens": tokens,
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "new_token": new_token,
         "mqtt": mqtt_ingest.status(),
@@ -134,6 +198,7 @@ def dashboard(request: Request):
         "tsdb": tsdb.status(),
         "clocksync": clocksync.status(),
         "clock_targets": clocksync.targets(repeaters),
+        "cli_params": db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS),
         "settings": {
             "heartbeat_min": db.setting_int("heartbeat_min", config.HEARTBEAT_MIN),
             "retention_days": db.setting_int("retention_days", config.RETENTION_DAYS),
@@ -157,44 +222,59 @@ def dashboard(request: Request):
 
 
 @router.post("/settings")
-def save_settings(request: Request, heartbeat_min: int = Form(...),
-                  retention_days: int = Form(...), history_ranges: str = Form(...),
-                  csrf: str = Form(...),
-                  packet_retention_days: int = Form(default=0),
-                  packet_max_rows: int = Form(default=0),
-                  db_max_mb: int = Form(default=0)):
-    """Bewaartermijnen en bovengrenzen opslaan, en meteen toepassen.
+def save_settings(request: Request, csrf: str = Form(...),
+                  heartbeat_min: int | None = Form(default=None),
+                  retention_days: int | None = Form(default=None),
+                  history_ranges: str | None = Form(default=None),
+                  packet_retention_days: int | None = Form(default=None),
+                  packet_max_rows: int | None = Form(default=None),
+                  db_max_mb: int | None = Form(default=None)):
+    """Instellingen opslaan; elk veld apart, en alleen wat er werkelijk in stond.
 
-    De drie pakketvelden hebben een standaard van 0 in plaats van ``Form(...)``,
-    en dat is geen slordigheid: 0 betekent "dit formulier ging er niet over" en
-    laat de bestaande waarde staan. Zonder dat zou een oudere pagina die nog in
-    een tabblad openstond, of een script dat alleen het punt-interval wil zetten,
-    de bewaargrenzen op nul zetten -- en dat is precies de instelling waarvan
-    het verkeerd zetten data kost.
+    Geen enkel veld is verplicht, en dat is geen slordigheid maar de kern van de
+    zaak: de instellingen staan sinds de herindeling over twee formulieren
+    verdeeld (bewaring en opslag, en weergave). Met ``Form(...)`` zou het ene
+    formulier de waarden van het andere als verborgen velden moeten meesturen, en
+    dan overschrijft een pagina die al even openstond stilletjes een instelling
+    die intussen elders gewijzigd is. ``None`` betekent hier dus: dit formulier
+    ging er niet over, laat staan wat er stond. Bij de bewaargrenzen is dat het
+    verschil tussen niets doen en data weggooien.
 
-    Grenzen: de termijn tot een jaar (langer is een tijdreeksdatabank en geen
-    pakkettenlog), het rijmaximum vanaf ``db.PACKET_FIFO_FLOOR`` (lager kan de
-    FIFO toch niet honoreren) en het bytemaximum vanaf 16 MB.
+    Sentinel is None en niet 0, want 0 is voor deze velden geen geldige waarde en
+    "niet ingevuld" is iets anders dan "op nul gezet" -- dat onderscheid was met
+    een standaard van 0 niet te maken.
+
+    Grenzen: de pakkettermijn tot een jaar (langer is een tijdreeksdatabank en
+    geen pakkettenlog), het rijmaximum vanaf ``db.PACKET_FIFO_FLOOR`` (lager kan
+    de FIFO toch niet honoreren) en het bytemaximum vanaf 16 MB.
     """
     require_login(request)
     check_csrf(request, csrf)
-    db.set_setting("heartbeat_min", str(max(1, min(1440, heartbeat_min))))
-    db.set_setting("retention_days", str(max(1, min(3650, retention_days))))
-    if packet_retention_days > 0:
+    if heartbeat_min is not None:
+        db.set_setting("heartbeat_min", str(max(1, min(1440, heartbeat_min))))
+    if retention_days is not None:
+        db.set_setting("retention_days", str(max(1, min(3650, retention_days))))
+    if packet_retention_days is not None:
         db.set_setting("packet_retention_days", str(max(1, min(365, packet_retention_days))))
-    if packet_max_rows > 0:
+    if packet_max_rows is not None:
         db.set_setting("packet_max_rows",
                        str(max(db.PACKET_FIFO_FLOOR, min(50_000_000, packet_max_rows))))
-    if db_max_mb > 0:
+    if db_max_mb is not None:
         db.set_setting("db_max_mb", str(max(16, min(1_000_000, db_max_mb))))
-    db.set_setting("history_ranges", ",".join(str(h) for h in metrics.parse_ranges(history_ranges)))
+    if history_ranges is not None:
+        db.set_setting("history_ranges",
+                       ",".join(str(h) for h in metrics.parse_ranges(history_ranges)))
     # Via de opruimlus en niet via db.prune() rechtstreeks: zo doorloopt een
     # verlaagde termijn hetzelfde pad als de uurlijkse ronde -- inclusief de
     # afweging over VACUUM, want juist het verlagen van een termijn is het geval
     # waarin het bestand anders groot blijft terwijl de inhoud gesnoeid is -- en
     # staat het resultaat meteen op de pagina waar de gebruiker net op klikte.
-    retention.run_once()
-    return RedirectResponse("/admin", status_code=303)
+    # Alleen als er iets aan een termijn of grens veranderd is: het weergave-
+    # formulier hoeft geen opruimronde uit te lokken.
+    if any(v is not None for v in (retention_days, packet_retention_days,
+                                   packet_max_rows, db_max_mb)):
+        retention.run_once()
+    return RedirectResponse("/admin/server", status_code=303)
 
 
 @router.post("/layout")
@@ -204,7 +284,7 @@ def save_layout(request: Request, layout: str = Form(...), csrf: str = Form(...)
     import json as _json
     validated = metrics.parse_layout(layout)
     db.set_setting("layout", _json.dumps(validated))
-    return RedirectResponse("/admin", status_code=303)
+    return RedirectResponse("/admin/server", status_code=303)
 
 
 def _dispatch(rep, command: str) -> str:
@@ -252,20 +332,47 @@ def _dispatch(rep, command: str) -> str:
 
 
 @router.post("/repeaters/{rid}/refresh")
-def refresh_repeater(request: Request, rid: int, csrf: str = Form(...)):
-    """Vraag nu een verse status: rechtstreeks aan de node en/of via een poller."""
+def refresh_repeater(request: Request, rid: int, csrf: str = Form(...),
+                     back: str = Form(default="")):
+    """Vraag nu een verse status: rechtstreeks aan de node en/of via een poller.
+
+    ``back`` zegt waar de knop stond en niet waarheen omgeleid moet worden. Dat
+    verschil is het hele punt: een veld dat een URL bevat is een open redirect
+    zodra iemand het formulier naar zijn eigen adres laat wijzen, en dit
+    formulier staat achter een login die dat de moeite waard maakt. Hier komen
+    dus alleen de twee bestemmingen uit die deze functie zelf kent.
+    """
     require_login(request)
     check_csrf(request, csrf)
     row = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not row:
         raise HTTPException(404, "Onbekende repeater")
     outcome = _dispatch(row, "status")
+    if back == "node":
+        return RedirectResponse(f"/admin/repeaters/{rid}?status={outcome}", status_code=303)
     return RedirectResponse(f"/r/{row['slug']}?refresh={outcome}", status_code=303)
 
 
-@router.get("/repeaters/{rid}/settings", response_class=HTMLResponse)
-def repeater_settings_page(request: Request, rid: int):
-    """Readonly-overzicht van de CLI-instellingen van een repeater."""
+@router.get("/repeaters/{rid}/settings")
+def repeater_settings_redirect(request: Request, rid: int):
+    """De oude URL van de instellingenpagina, nu een omleiding.
+
+    Deze pagina heette ``/settings`` toen ze alleen over CLI-instellingen ging.
+    Ze gaat nu over de node als geheel en staat op ``/admin/repeaters/{rid}``.
+    De oude URL blijft omdat hij in documentatie, in bladwijzers en op de
+    publieke repeaterpagina stond -- een dode link is hier een gebruiker die
+    denkt dat de knop stuk is. De query-string reist mee, zodat een oude POST
+    die hier uitkwam zijn melding niet onderweg verliest.
+    """
+    require_login(request)
+    query = request.url.query
+    return RedirectResponse(f"/admin/repeaters/{rid}" + (f"?{query}" if query else ""),
+                            status_code=303)
+
+
+@router.get("/repeaters/{rid}", response_class=HTMLResponse)
+def node_page(request: Request, rid: int):
+    """Alles over één node: identiteit, uitvragen, klok, firmware, verwijderen."""
     user = require_login(request)
     rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not rep:
@@ -277,14 +384,26 @@ def repeater_settings_page(request: Request, rid: int):
     # poller die het verzoek meenam er ook iets mee gedaan heeft.
     last_answer = max((r["updated"] for r in rows if r["updated"]), default=None)
     delivered = db.settings_delivered_at(rep["pubkey_prefix"])
-    return templates.TemplateResponse(request, "admin/repeater_settings.html", {
-        "site_name": config.SITE_NAME, "user": user, "rep": rep,
+    # Eén keer gelezen en aan beide knoppen doorgegeven. clocksync.time_route
+    # kijkt bewust niet naar de broker -- die vraag hoort bij het versturen en
+    # niet bij de weg -- maar de knop hoort dat wél te weten: zonder verbinding
+    # eindigt een klik op "er is niets verstuurd", en dat kan de pagina van
+    # tevoren zeggen in plaats van achteraf.
+    broker = mqtt_ingest.can_publish()
+    return templates.TemplateResponse(request, "admin/node.html", {
+        "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
         "settings_rows": rows,
+        # De uitslag van een statusopvraging die vanaf déze pagina vertrok. De
+        # publieke repeaterpagina heeft dezelfde knop en houdt zijn eigen
+        # ?refresh=; welke van de twee je krijgt hangt af van waar je klikte.
+        "status": request.query_params.get("status", ""),
         "delivered_since": delivered,
         # ISO-tijdstempels in dit formaat sorteren alfabetisch juist.
         "delivery_unanswered": bool(delivered
                                     and (last_answer is None or last_answer < delivered)),
-        "cli_params": db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS),
+        # De parameterlijst staat niet meer in deze context: hij geldt voor alle
+        # repeaters tegelijk en hoort dus bij Server en site. Hem hier tonen
+        # wekte de indruk dat je hem per node kon zetten.
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         # '1' is de oude vorm, van vóór er meer dan één weg was; een pagina die
         # nog in een tabblad openstaat mag daar niet op stukvallen.
@@ -306,17 +425,18 @@ def repeater_settings_page(request: Request, rid: int):
         "clock_min_fw": ".".join(str(n) for n in clocksync.MIN_TIME_VERSION),
         "clock": request.query_params.get("clock", ""),
         # De reden uit de laatste klokcontrole, zodat een weigering hier
-        # meteen zegt wát er mis was in plaats van naar /admin te verwijzen
-        # en de lezer daar te laten zoeken.
+        # meteen zegt wát er mis was in plaats van naar Server en site te
+        # verwijzen en de lezer daar te laten zoeken.
         "clocksync_reason": (clocksync.status().get("clock") or {}).get("reason", ""),
         "clock_wait": request.query_params.get("wait", ""),
         "clock_enabled": clocksync.ENABLED,
+        "broker": broker,
         # Wat er kán, bepaald vóór de knop getekend wordt: een knop die niets
         # kan doen hoort uitgeschakeld te zijn en te zeggen waarom. De vereiste
         # firmwareversie zit in die route en niet apart hier: welke versie nodig
         # is hangt af van de weg (1.8.0 voor de node zelf, 1.9.0 voor een
         # monitor), en twee plaatsen die dat allebei uitrekenen is er één te veel.
-        "route": commanding.describe(rep),
+        "route": commanding.describe(rep, broker_connected=broker),
     })
 
 
@@ -329,7 +449,7 @@ def repeater_settings_refresh(request: Request, rid: int, csrf: str = Form(...))
     if not rep:
         raise HTTPException(404, "Onbekende repeater")
     outcome = _dispatch(rep, "settings")
-    return RedirectResponse(f"/admin/repeaters/{rid}/settings?requested={outcome}",
+    return RedirectResponse(f"/admin/repeaters/{rid}?requested={outcome}",
                             status_code=303)
 
 
@@ -352,25 +472,40 @@ def repeater_clocksync(request: Request, rid: int, csrf: str = Form(...)):
     # mededeling waar niemand iets mee kan.
     suffix = f"&wait={result['wait_min']}" if result["outcome"] == "too_soon" else ""
     return RedirectResponse(
-        f"/admin/repeaters/{rid}/settings?clock={result['outcome']}{suffix}",
+        f"/admin/repeaters/{rid}?clock={result['outcome']}{suffix}",
         status_code=303)
 
 
 @router.post("/cli_params")
 def save_cli_params(request: Request, cli_params: str = Form(...),
-                    rid: int = Form(...), csrf: str = Form(...)):
+                    csrf: str = Form(...), rid: int = Form(default=0)):
+    """De parameterlijst, die voor alle repeaters tegelijk geldt.
+
+    ``rid`` is er alleen nog voor een pagina die vóór de herindeling geopend
+    werd: het formulier stond toen op de pagina van één repeater en stuurde zijn
+    id mee om terug te kunnen keren. Die waarde wordt genegeerd -- de lijst was
+    ook toen al globaal, en dat is precies waarom ze hier is komen staan.
+    """
     require_login(request)
     check_csrf(request, csrf)
     cleaned = ",".join(p.strip() for p in cli_params.replace(";", ",").split(",") if p.strip())
     db.set_setting("cli_params", cleaned or db.DEFAULT_CLI_PARAMS)
-    return RedirectResponse(f"/admin/repeaters/{rid}/settings", status_code=303)
+    return RedirectResponse("/admin/server#cli-params", status_code=303)
 
 
 @router.post("/repeaters/{rid}/toggle")
-def toggle_repeater(request: Request, rid: int, csrf: str = Form(...)):
+def toggle_repeater(request: Request, rid: int, csrf: str = Form(...),
+                    back: str = Form(default="")):
+    """Zichtbaarheid omklappen. Staat op twee pagina's, dus ``back`` zegt welke.
+
+    Zie refresh_repeater voor waarom dit geen URL is maar een woord dat deze
+    functie zelf vertaalt.
+    """
     require_login(request)
     check_csrf(request, csrf)
     db.execute("UPDATE repeaters SET is_public = 1 - is_public WHERE id=?", (rid,))
+    if back == "node":
+        return RedirectResponse(f"/admin/repeaters/{rid}", status_code=303)
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -381,7 +516,9 @@ def rename_repeater(request: Request, rid: int, name: str = Form(...), csrf: str
     name = name.strip()
     if name:
         db.execute("UPDATE repeaters SET name=? WHERE id=?", (name, rid))
-    return RedirectResponse("/admin", status_code=303)
+    # Terug naar de pagina van deze node: daar staat het veld sinds de
+    # herindeling, en daar zie je meteen of de nieuwe naam er staat.
+    return RedirectResponse(f"/admin/repeaters/{rid}", status_code=303)
 
 
 @router.post("/repeaters/{rid}/delete")
@@ -400,7 +537,7 @@ def create_token(request: Request, name: str = Form(...), csrf: str = Form(...))
     require_login(request)
     check_csrf(request, csrf)
     token = auth.create_token(name.strip() or "token")
-    resp = RedirectResponse("/admin", status_code=303)
+    resp = RedirectResponse("/admin/server#tokens", status_code=303)
     resp.set_cookie("mm_new_token", token, max_age=60, httponly=True,
                     samesite="lax", secure=_secure(request))
     return resp
@@ -411,7 +548,7 @@ def revoke_token(request: Request, tid: int, csrf: str = Form(...)):
     require_login(request)
     check_csrf(request, csrf)
     db.execute("UPDATE tokens SET revoked=1 WHERE id=?", (tid,))
-    return RedirectResponse("/admin", status_code=303)
+    return RedirectResponse("/admin/server#tokens", status_code=303)
 
 
 @router.post("/password")
@@ -428,7 +565,7 @@ def change_password(request: Request, current: str = Form(...),
     # Every session signed under the old password is now invalid, this one
     # included -- so hand this browser a new cookie instead of logging the
     # person who just changed the password out of their own admin page.
-    resp = RedirectResponse("/admin", status_code=303)
+    resp = RedirectResponse("/admin/server#toegang", status_code=303)
     resp.set_cookie(
         auth.SESSION_COOKIE, auth.make_session(user),
         max_age=auth.SESSION_TTL, httponly=True, samesite="lax", secure=_secure(request),
@@ -464,6 +601,9 @@ def _fw_context(request: Request, **extra):
         })
     ctx = {
         "site_name": config.SITE_NAME, "user": current_user(request),
+        # Firmware is een handeling op een apparaat, dus deze pagina staat in de
+        # wereld van de nodes en licht daar op in de tabbalk.
+        "world": "nodes", "firmware_tab": True,
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "rows": rows,
         "releases": rel.get("items") or [],
