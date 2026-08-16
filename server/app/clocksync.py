@@ -139,6 +139,32 @@ NODE_STALE_SECS = 6 * 3600
 # die na een herstart plots in het verleden staat opvalt.
 _SEEN_KEY = "clocksync_high_water"
 
+# Sleutel waaronder bijgehouden wordt wanneer we voor het laatst een tijd naar
+# een node stuurden: {node_hex: epoch}. Zonder dat zou de handmatige knop
+# "verstuurd" melden voor een ronde waarvan de node de dure helft overslaat.
+_SENT_KEY = "clocksync_sent"
+# Zoveel nodes onthouden we. Ruim boven elk denkbaar aantal publicerende nodes,
+# en een bovengrens zodat dit instellingenveld niet ongemerkt blijft groeien met
+# sleutels die nooit meer terugkomen.
+_SENT_MAX = 50
+
+# Minimum tussen twee handmatige synchronisaties naar dezelfde node.
+#
+# Spiegelt MON_CLK_MIN_GAP_MS in de firmware, met opzet hetzelfde getal. Wat dit
+# wel en niet is, want dat scheelt: het is GEEN veiligheidsmaatregel. Die staat
+# in de firmware, bij de code die de radio bezit, en ze is absoluut -- honderd
+# keer klikken levert daar hoogstens één LoRa-ronde per uur op, wat er ook op het
+# cmd-topic binnenkomt. De band valt met deze knop dus niet te bezetten, ook niet
+# als deze regel er niet stond.
+#
+# Wat het wél is: eerlijkheid in de knop. Binnen het uur zou publiceren de node
+# alleen zijn eigen klok laten zetten -- en die is dan net gezet door het vorige
+# bericht -- terwijl de ronde langs de gemonitorde repeaters overgeslagen wordt
+# zonder dat de pagina daar iets van ziet. "Verstuurd" melden terwijl de helft
+# die ertoe doet niet gebeurt, is precies de belofte die commanding.py ooit
+# moest wegwerken.
+MANUAL_MIN_GAP_S = 3600
+
 _TS = "%Y-%m-%dT%H:%M:%SZ"
 
 # --- adjtimex(2) --------------------------------------------------------------
@@ -331,6 +357,194 @@ def _fresh(ts, seconds: int, now: datetime) -> bool:
     return (now - dt).total_seconds() <= seconds
 
 
+# --- wanneer stuurden we deze node voor het laatst iets ----------------------
+
+def _sent_map() -> dict:
+    """{node_hex: epoch} van onze laatste tijdbericht per node."""
+    import json
+    try:
+        raw = db.get_setting(_SENT_KEY) or "{}"
+        data = json.loads(raw)
+    except Exception:  # noqa: BLE001 - stuk veld is geen reden om de knop te breken
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for key, value in data.items():
+        try:
+            out[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def last_sent(node: str) -> float | None:
+    """Wanneer deze site voor het laatst een tijd naar die node stuurde."""
+    return _sent_map().get((node or "").lower().strip())
+
+
+def last_sent_iso(node: str) -> str | None:
+    """Hetzelfde, in de ISO-vorm die de pagina in een 'x minuten geleden' omzet."""
+    when = last_sent(node)
+    if when is None:
+        return None
+    return datetime.fromtimestamp(when, timezone.utc).strftime(_TS)
+
+
+def _record_sent(node: str, when: float) -> None:
+    import json
+    node = (node or "").lower().strip()
+    if not node:
+        return
+    data = _sent_map()
+    data[node] = when
+    if len(data) > _SENT_MAX:
+        # Oudste eruit. Een node die er ooit was en nooit meer terugkomt hoort
+        # dit veld niet eeuwig te laten groeien.
+        for key in sorted(data, key=data.get)[:len(data) - _SENT_MAX]:
+            data.pop(key, None)
+    try:
+        db.set_setting(_SENT_KEY, json.dumps(data))
+    except Exception as err:  # noqa: BLE001 - een volle schijf mag de publicatie niet ongedaan maken
+        log.debug("laatste verzending niet bewaard: %s", err)
+
+
+def _rebooted_since(node: str, seconds_ago: float, now: float) -> bool:
+    """Of die node herstart is sinds wij hem voor het laatst de tijd stuurden.
+
+    Dit bestaat om één valse weigering te vermijden, en net die zou de feature
+    op haar zwakste moment tegenhouden. Een node die zojuist herstartte staat op
+    de datum uit zijn firmware -- dat is de toestand waar dit alles voor gebouwd
+    is -- terwijl onze eigen administratie zegt dat we hem twintig minuten
+    geleden nog de tijd stuurden. De knop zou dan "wacht nog veertig minuten"
+    melden, precies wanneer wachten het slechtste antwoord is.
+
+    De uptime komt uit het laatste statistiekbericht en is dus zelf al even oud;
+    daarom wordt er bij geteld hoe lang geleden dat bericht binnenkwam. Zonder
+    die correctie zou een node die tien minuten stil was er tien minuten jonger
+    uitzien dan hij is, en dat is de kant die valse toestemming geeft.
+    """
+    row = db.find_repeater(node)
+    if row is None:
+        return False
+    try:
+        latest = db.latest_for(row["id"])
+    except Exception:  # noqa: BLE001
+        return False
+    up = latest.get("uptime")
+    if up is None or up["value"] is None:
+        return False
+    try:
+        # De metriek staat in dagen (zie metrics.py), het bericht in ISO-tijd.
+        uptime_s = float(up["value"]) * 86400.0
+    except (TypeError, ValueError):
+        return False
+    measured = _parse_epoch(up["ts"])
+    if measured is not None and now > measured:
+        uptime_s += now - measured
+    return uptime_s < seconds_ago
+
+
+def _parse_epoch(ts) -> float | None:
+    if not ts:
+        return None
+    try:
+        return (datetime.strptime(str(ts), _TS)
+                .replace(tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        return None
+
+
+# --- welke node kan de klok van deze repeater zetten --------------------------
+
+def time_route(rep, relay=None, now=None, allow_monitor: bool = True) -> dict:
+    """Wie krijgt 'time <epoch>' als het om deze repeater gaat, en kan dat nu.
+
+    Twee gevallen, en het verschil is de hele reden dat dit een eigen functie is
+    naast ``commanding.route_for``:
+
+    - De repeater publiceert zelf. Het bericht gaat naar hemzelf; hij zet zijn
+      eigen klok en loopt daarna zijn monitorlijst af.
+    - De repeater wordt doorgestuurd (de dakrepeater). Het bericht gaat naar zijn
+      monitor. Die zet zijn eigen klok en controleert de klokken van ALLE nodes
+      die hij monitort -- niet alleen deze. Er is geen argument om dat toe te
+      spitsen, en dat is geen omissie: de firmware loopt bij een klokronde de
+      hele lijst af, want de ronde is per node goedkoop en per gemonitorde node
+      één heen-en-weer. De pagina hoort dat te zeggen in plaats van te doen alsof
+      de knop deze ene repeater aanwijst.
+
+    ``allow_monitor=False`` sluit het tweede geval uit. Dat is wat de dagelijkse
+    ronde nodig heeft: die loopt over álle repeaters, en als twee doorgestuurde
+    repeaters dezelfde monitor hebben zou hij hem twee keer hetzelfde bericht
+    sturen.
+
+    ``commanding.route_for`` beantwoordt een naburige maar andere vraag -- kan ik
+    deze repeater naar zijn INSTELLINGEN vragen -- met een versiegrens die van de
+    weg afhangt (1.8.0 rechtstreeks, 1.9.0 via een monitor). Voor 'time' is die
+    grens 1.10.0 langs beide wegen, want het is dezelfde ontvanger die hetzelfde
+    woord moet kennen. Die twee in één functie proppen zou betekenen dat
+    route_for per commando een andere versie gaat uitrekenen, en dat is precies
+    de soort vertakking waar een verkeerde knop uit rolt.
+    """
+    now = now or datetime.now(timezone.utc)
+    prefix = (commanding._field(rep, "pubkey_prefix") or "").lower().strip()
+    source = (commanding._field(rep, "source_prefix") or "").lower().strip()
+    via_monitor = commanding.is_relayed(rep)
+
+    out = {"id": commanding._field(rep, "id"), "prefix": prefix,
+           "name": commanding._field(rep, "name") or prefix,
+           "node": None, "via_monitor": via_monitor, "ok": False,
+           "blocker": "", "why": "", "fw_meshstats": None}
+
+    if via_monitor and not allow_monitor:
+        out["blocker"] = "relayed"
+        out["why"] = "krijgt zijn tijd van zijn monitor, over LoRa"
+        return out
+    if not source:
+        out["blocker"] = "no_source"
+        out["why"] = "publiceert niet over MQTT"
+        return out
+    if source == "api":
+        out["blocker"] = "http_source"
+        out["why"] = "komt binnen via de HTTP-API, niet over MQTT"
+        return out
+
+    # De ONTVANGER telt, en bij een doorgestuurde repeater is dat de monitor.
+    # Diens firmware moet het woord kennen; die van het onderwerp zegt hier
+    # niets -- een node die zelf niet publiceert meldt nergens een versie.
+    if via_monitor and relay is None:
+        relay = db.find_repeater(source)
+    carrier = relay if via_monitor else rep
+    if via_monitor and carrier is None:
+        out["node"] = source
+        out["blocker"] = "relay_unknown"
+        out["why"] = "de doorstuurder is hier zelf geen bekende repeater"
+        return out
+
+    out["node"] = source
+    fw = commanding._field(carrier, "fw_meshstats")
+    out["fw_meshstats"] = fw
+    version = commanding.parse_version(fw)
+    if version is None:
+        out["blocker"] = "no_fw"
+        out["why"] = "MeshStats-versie onbekend"
+        return out
+    if version < MIN_TIME_VERSION:
+        out["blocker"] = "old_fw"
+        out["why"] = ("MeshStats " + ".".join(str(n) for n in MIN_TIME_VERSION)
+                      + " of nieuwer nodig")
+        return out
+    if not _fresh(commanding._field(carrier, "source_seen"), NODE_STALE_SECS, now):
+        out["blocker"] = "stale"
+        out["why"] = "al te lang niets van die node gehoord"
+        return out
+
+    out["ok"] = True
+    out["why"] = ("gaat naar zijn monitor, die de klokken van zijn gemonitorde "
+                  "repeaters nakijkt" if via_monitor else "krijgt de tijd rechtstreeks")
+    return out
+
+
 def targets(rows=None, now=None) -> list[dict]:
     """Nodes die 'time <epoch>' zelf kunnen aannemen.
 
@@ -347,34 +561,12 @@ def targets(rows=None, now=None) -> list[dict]:
     now = now or datetime.now(timezone.utc)
     if rows is None:
         rows = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
-
-    out = []
-    for rep in rows:
-        prefix = (commanding._field(rep, "pubkey_prefix") or "").lower().strip()
-        source = (commanding._field(rep, "source_prefix") or "").lower().strip()
-        name = commanding._field(rep, "name") or prefix
-        entry = {"prefix": prefix, "name": name, "node": source, "ok": False, "why": ""}
-
-        if commanding.is_relayed(rep):
-            entry["why"] = "krijgt zijn tijd van zijn monitor, over LoRa"
-        elif not source:
-            entry["why"] = "publiceert niet over MQTT"
-        elif source == "api":
-            entry["why"] = "komt binnen via de HTTP-API, niet over MQTT"
-        else:
-            version = commanding.parse_version(commanding._field(rep, "fw_meshstats"))
-            if version is None:
-                entry["why"] = "MeshStats-versie onbekend"
-            elif version < MIN_TIME_VERSION:
-                entry["why"] = ("MeshStats " + ".".join(str(n) for n in MIN_TIME_VERSION)
-                                + " of nieuwer nodig")
-            elif not _fresh(commanding._field(rep, "source_seen"), NODE_STALE_SECS, now):
-                entry["why"] = "al te lang niets van gehoord"
-            else:
-                entry["ok"] = True
-                entry["why"] = "krijgt de tijd rechtstreeks"
-        out.append(entry)
-    return out
+    # Eén regel, op één plek: dezelfde functie die de knop gebruikt, met de
+    # monitorweg dicht. Toen dit hier zijn eigen kopie van de redenering had,
+    # kon de pagina van een repeater iets anders beweren dan de dagelijkse ronde
+    # deed -- en dat verschil valt pas op als iemand de logboeken naast de
+    # beheerpagina legt.
+    return [time_route(rep, now=now, allow_monitor=False) for rep in rows]
 
 
 # --- de ronde -----------------------------------------------------------------
@@ -391,12 +583,119 @@ _state = {
     "runs": 0,
     "refusals": 0,           # rondes die op de klokcontrole strandden
     "clock": None,           # laatste uitslag van check_clock()
+    # Apart van last_ok/last_run, want het is een andere gebeurtenis: die twee
+    # gaan over de planner, dit over iemand die op een knop drukte. Ze samen in
+    # één veld tellen zou een beheerpagina opleveren waarop niet te zien is of
+    # de dagelijkse ronde nog draait.
+    "last_manual": None,     # ISO-tijdstip van de laatste handmatige synchronisatie
+    "manual_node": None,     # naar welke node die ging
 }
 
 
 def status() -> dict:
     """Voor de beheerpagina."""
     return dict(_state)
+
+
+def _publish_time(node: str, when: float) -> bool:
+    """Publiceer 'time <epoch>' naar één node en onthoud dat we dat deden.
+
+    ``when`` komt van de beller en wordt voor allebei gebruikt: het is de tijd
+    die verstuurd wordt én de tijd die we noteren. Dat lijkt een detail en was
+    het niet -- toen deze functie zelf ``time.time()`` las, stond er in de
+    administratie een ander ogenblik dan er verstuurd was. Onzichtbaar in
+    productie, want daar schelen ze microseconden, maar het betekende ook dat de
+    wachttijdberekening in ``sync_now`` over een andere klok redeneerde dan
+    degene die de notitie schreef. Eén ogenblik, één waarde.
+
+    Alleen bij succes onthouden. Een mislukte publicatie mag de knop geen uur
+    lang laten zeggen dat er net gesynchroniseerd is.
+    """
+    if not mqtt_ingest.publish_command(node, "time", epoch=int(when)):
+        return False
+    _record_sent(node, when)
+    return True
+
+
+def sync_now(rep, now: float | None = None) -> dict:
+    """Eén synchronisatie, nu, voor de node die deze repeater kan bereiken.
+
+    Geen tweede code-pad naast de dagelijkse ronde, en dat is het punt. De
+    klokcontrole hieronder is letterlijk dezelfde ``check_clock`` die de planner
+    aanroept, en het versturen loopt door dezelfde ``publish_command`` met
+    dezelfde venstercontrole op de epoch. Een knop die zijn eigen weg naar de
+    broker had gehad, zou een achterdeur om die controles heen zijn geweest --
+    en de enige zichtbare aanwijzing daarvoor zou een verkeerde klok op een dak
+    zijn geweest, weken later.
+
+    Wat de knop NIET overdoet is de driftdrempel en de weigering voor een node
+    die voorloopt. Die staan in de firmware, bij de code die meet en zendt, en
+    ze gelden hier dus vanzelf: dit bericht is hetzelfde bericht.
+
+    Teruggegeven wordt een ``outcome`` die de pagina in een zin omzet. Elk geval
+    apart, want "er is niets gebeurd" heeft hier zes verschillende oorzaken en
+    vijf ervan kan de gebruiker zelf verhelpen.
+    """
+    now = time.time() if now is None else now
+    out = {"outcome": "", "node": None, "via_monitor": False, "reason": "",
+           "wait_min": 0, "blocker": ""}
+
+    if not ENABLED:
+        out["outcome"] = "disabled"
+        return out
+
+    route = time_route(rep)
+    out["node"] = route["node"]
+    out["via_monitor"] = route["via_monitor"]
+    out["blocker"] = route["blocker"]
+    if not route["ok"]:
+        out["outcome"] = "no_route"
+        out["reason"] = route["why"]
+        return out
+
+    if not mqtt_ingest.can_publish():
+        out["outcome"] = "no_route"
+        out["blocker"] = "broker_down"
+        out["reason"] = "de site hangt op dit ogenblik niet aan de broker"
+        return out
+
+    # De klokcontrole staat vóór de wachttijd, niet erna. Een server die niet
+    # weet hoe laat het is, hoort dat te zeggen -- ook, en juist, als het
+    # antwoord anders "wacht nog even" was geweest. Andersom zou iemand een uur
+    # wachten om dan pas te horen dat het sowieso niet kon.
+    check = check_clock(now)
+    _state["clock"] = check
+    if not check["ok"]:
+        out["outcome"] = "no_clock"
+        out["reason"] = check["reason"]
+        log.warning("Handmatige kloksynchronisatie geweigerd: %s", check["reason"])
+        return out
+
+    previous = last_sent(route["node"])
+    if previous is not None and now - previous < MANUAL_MIN_GAP_S:
+        waited = now - previous
+        # De ene uitzondering, en ze is de moeite: een node die intussen
+        # herstartte staat op de datum uit zijn firmware. Dat is precies de
+        # toestand waarvoor dit bestaat, en dan is wachten het slechtste
+        # antwoord dat een knop kan geven.
+        if _rebooted_since(route["node"], waited, now):
+            log.info("Node %s herstartte sinds de vorige tijd; wachttijd vervalt",
+                     route["node"])
+        else:
+            out["outcome"] = "too_soon"
+            out["wait_min"] = max(1, int((MANUAL_MIN_GAP_S - waited) // 60) + 1)
+            return out
+
+    if not _publish_time(route["node"], now):
+        out["outcome"] = "failed"
+        out["reason"] = "de opdracht is niet van deze machine vertrokken"
+        return out
+
+    _state["last_manual"] = db.utcnow()
+    _state["manual_node"] = route["node"]
+    log.info("Handmatige kloksynchronisatie verstuurd naar node %s", route["node"])
+    out["outcome"] = "sent"
+    return out
 
 
 def run_once(now: float | None = None) -> dict:
@@ -439,7 +738,7 @@ def run_once(now: float | None = None) -> dict:
         # één waarde hergebruiken zou betekenen dat de laatste node een tijd
         # krijgt die ouder is dan het bericht zelf, en dat is precies het soort
         # detail waar dit bestand over gaat.
-        if mqtt_ingest.publish_command(entry["node"], "time", epoch=int(time.time())):
+        if _publish_time(entry["node"], time.time()):
             sent += 1
         else:
             entry["ok"] = False

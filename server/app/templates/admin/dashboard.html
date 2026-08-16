@@ -139,6 +139,10 @@
       {%- if clocksync.last_ok %}<time class="reltime" datetime="{{ clocksync.last_ok }}">{{ clocksync.last_ok }}</time>
       {%- else %}<span class="muted">nog nooit</span>{% endif %}</td></tr>
     <tr><td>Rondes / geweigerd</td><td class="mono">{{ clocksync.runs }} / {{ clocksync.refusals }}</td></tr>
+    <tr><td>Handmatig</td><td>
+      {%- if clocksync.last_manual %}<time class="reltime" datetime="{{ clocksync.last_manual }}">{{ clocksync.last_manual }}</time>
+      &middot; naar node <span class="mono">{{ clocksync.manual_node }}</span>
+      {%- else %}<span class="muted">nog niet gebruikt</span>{% endif %}</td></tr>
   </table>
 
   {% if clock_targets %}
@@ -148,7 +152,8 @@
     <tr>
       <td>{{ t.name }} <span class="muted mono">{{ t.prefix[:6] }}</span></td>
       <td>{% if t.ok %}<span style="color:var(--accent)">ja</span>{% else %}<span class="muted">nee</span>{% endif %}
-          <span class="muted">&middot; {{ t.why }}</span></td>
+          <span class="muted">&middot; {{ t.why }}</span>
+          <a class="muted small" href="/admin/repeaters/{{ t.id }}/settings">nu synchroniseren &rarr;</a></td>
     </tr>
     {% endfor %}
   </table>

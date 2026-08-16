@@ -250,6 +250,22 @@ def repeater_settings_page(request: Request, rid: int):
         # hoort dat verschil te tonen in plaats van in beide gevallen "gestart"
         # te melden.
         "queued_since": db.pending_settings_request(rep["pubkey_prefix"]),
+        # Klok: dezelfde opzet als hierboven. Welke node de tijd zou krijgen en
+        # of dat nu kan, bepaald vóór de knop getekend wordt; en wanneer deze
+        # site die node voor het laatst iets stuurde, want dat is het enige wat
+        # ze met zekerheid weet -- of de klok daarna ook echt goed stond, weet
+        # alleen de node zelf ('wifi clock').
+        "clock_route": clocksync.time_route(rep),
+        "clock_sent": clocksync.last_sent_iso(rep["source_prefix"] or ""),
+        "clock_gap_min": clocksync.MANUAL_MIN_GAP_S // 60,
+        "clock_min_fw": ".".join(str(n) for n in clocksync.MIN_TIME_VERSION),
+        "clock": request.query_params.get("clock", ""),
+        # De reden uit de laatste klokcontrole, zodat een weigering hier
+        # meteen zegt wát er mis was in plaats van naar /admin te verwijzen
+        # en de lezer daar te laten zoeken.
+        "clocksync_reason": (clocksync.status().get("clock") or {}).get("reason", ""),
+        "clock_wait": request.query_params.get("wait", ""),
+        "clock_enabled": clocksync.ENABLED,
         # Wat er kán, bepaald vóór de knop getekend wordt: een knop die niets
         # kan doen hoort uitgeschakeld te zijn en te zeggen waarom. De vereiste
         # firmwareversie zit in die route en niet apart hier: welke versie nodig
@@ -270,6 +286,29 @@ def repeater_settings_refresh(request: Request, rid: int, csrf: str = Form(...))
     outcome = _dispatch(rep, "settings")
     return RedirectResponse(f"/admin/repeaters/{rid}/settings?requested={outcome}",
                             status_code=303)
+
+
+@router.post("/repeaters/{rid}/clocksync")
+def repeater_clocksync(request: Request, rid: int, csrf: str = Form(...)):
+    """Zet de klok van (de node achter) deze repeater nu, in plaats van morgen.
+
+    Alle beslissingen zitten in clocksync.sync_now, waar ook de planner
+    langsloopt. Deze functie doet niets dan de repeater opzoeken en de uitslag
+    aan de pagina doorgeven -- juist zodat er geen tweede plek is waar over
+    publiceren beslist wordt.
+    """
+    require_login(request)
+    check_csrf(request, csrf)
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+    result = clocksync.sync_now(rep)
+    # De wachttijd reist mee in de URL, want zonder dat getal is "te snel" een
+    # mededeling waar niemand iets mee kan.
+    suffix = f"&wait={result['wait_min']}" if result["outcome"] == "too_soon" else ""
+    return RedirectResponse(
+        f"/admin/repeaters/{rid}/settings?clock={result['outcome']}{suffix}",
+        status_code=303)
 
 
 @router.post("/cli_params")

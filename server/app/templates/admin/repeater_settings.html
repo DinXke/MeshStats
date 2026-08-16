@@ -186,6 +186,132 @@
   </div>
 </section>
 
+{#- De klok. Eigen sectie en niet een knop bij de instellingen, omdat het een
+    andere handeling is met een andere prijs: instellingen opvragen leest, dit
+    schrijft, en het schrijft op een node die je daarna niet meer kunt
+    terugdraaien. Wat er hieronder zo uitgebreid staat, staat er om dezelfde
+    reden als bij de opvraagknop hierboven: dit loopt over een radio en kan op
+    meer dan één plaats doodlopen zonder ergens een fout op te leveren. -#}
+<section>
+  <h2>Klok</h2>
+  <div class="card">
+
+  {% if clock == "sent" %}
+  <div class="card notice">
+    &#9203; De tijd is naar node <span class="mono">{{ clock_route.node }}</span> verstuurd.
+    Die zet meteen zijn eigen klok
+    {%- if clock_route.via_monitor %} en loopt daarna zijn gemonitorde repeaters af,
+    waaronder deze. Per repeater vraagt hij eerst de klok op en zet hij die alleen bij
+    als ze meer dan twee minuten afwijkt, met ademruimte ertussen omdat elk commando
+    zendtijd kost. Reken op <strong>1 à 3 minuten</strong>.
+    {%- else %}, en loopt daarna de repeaters af die hij monitort.{% endif %}
+  </div>
+  {% elif clock == "too_soon" %}
+  <div class="card notice">
+    &#9888; Er is <strong>niets verstuurd</strong>. Node <span class="mono">{{ clock_route.node }}</span>
+    kreeg minder dan {{ clock_gap_min }} minuten geleden al een tijd van deze site, en hij
+    doet de ronde langs zijn gemonitorde repeaters hoogstens één keer per uur — die zou
+    hij nu dus overslaan. Volgende synchronisatie mogelijk over
+    <strong>{{ clock_wait }} minuten</strong>.
+  </div>
+  {% elif clock == "no_clock" %}
+  <div class="card notice">
+    &#9888; Er is <strong>niets verstuurd</strong>: de klok van deze server is op dit
+    ogenblik niet als betrouwbaar vast te stellen — {{ clocksync_reason or "zie de beheerpagina" }}.
+    Een verkeerde tijd is op een node niet meer terug te draaien (een klok kan alleen
+    vooruit), dus bij twijfel gaat er niets uit. De uitleg staat op <a href="/admin">/admin</a>.
+  </div>
+  {% elif clock == "failed" %}
+  <div class="card notice">
+    &#9888; De opdracht is <strong>niet vertrokken</strong> van deze machine. Meestal is
+    de verbinding met de MQTT-broker net weggevallen; kijk op <a href="/admin">/admin</a>.
+  </div>
+  {% elif clock == "no_route" %}
+  <div class="card notice">
+    &#9888; Er is <strong>niets verstuurd</strong> — er was geen weg om de tijd heen te
+    brengen. De uitleg staat bij de knop hieronder.
+  </div>
+  {% elif clock == "disabled" %}
+  <div class="card notice">
+    &#9888; Kloksynchronisatie staat uit (<code>MCS_CLOCKSYNC_ENABLED=0</code>).
+  </div>
+  {% endif %}
+
+  <table>
+    <tr><td>Laatst tijd gestuurd</td><td>
+      {%- if clock_sent %}<time class="reltime" datetime="{{ clock_sent }}">{{ clock_sent }}</time>
+      naar node <span class="mono">{{ clock_route.node }}</span>
+      {%- else %}<span class="muted">nog nooit door deze site</span>{% endif %}</td></tr>
+    <tr><td>Automatisch</td><td>
+      {%- if clock_enabled %}ja, de site doet dit uit zichzelf; deze knop is er om niet te
+      hoeven wachten{% else %}<span class="muted">uitgeschakeld</span>{% endif %}</td></tr>
+  </table>
+
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/clocksync" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if clock_route.ok and clock_enabled %}
+    <button type="submit">&#128340; Klok nu synchroniseren</button>
+    {% else %}
+    <button type="submit" disabled title="Er is op dit ogenblik geen weg om de tijd heen te brengen">
+      &#128340; Synchroniseren kan nu niet</button>
+    {% endif %}
+  </form>
+
+  <p class="muted small">
+    {%- if clock_route.ok and clock_route.via_monitor %}
+    Deze repeater publiceert zelf niet en heeft dus geen eigen weg naar de site. Zijn klok
+    komt van node <span class="mono">{{ clock_route.node }}</span>, die hem monitort
+    (MeshStats {{ clock_route.fw_meshstats }}). <strong>De knop richt zich daarom niet op
+    deze repeater alleen:</strong> de site stuurt de tijd naar die node, en die kijkt de
+    klokken na van <em>alle</em> repeaters die hij monitort. De firmware kent geen manier
+    om dat op één node toe te spitsen, en dat is geen omissie — een klokronde kost per
+    gemonitorde repeater één vraag en één antwoord, dus de hele lijst aflopen is
+    ongeveer een vijfde van wat één gewone pollronde kost.
+    {%- elif clock_route.ok %}
+    De site stuurt <code>time &lt;epoch&gt;</code> rechtstreeks naar node
+    <span class="mono">{{ clock_route.node }}</span> (MeshStats {{ clock_route.fw_meshstats }}).
+    Die zet zijn eigen klok en kijkt daarna over LoRa de klokken na van de repeaters die
+    hij monitort.
+    {%- elif clock_route.blocker == "no_source" %}
+    er is nog geen enkel bericht van deze repeater binnengekomen, dus is niet bekend welke
+    node ervoor publiceert.
+    {%- elif clock_route.blocker == "http_source" %}
+    deze repeater komt binnen via de HTTP-API en niet via MQTT; langs die weg valt een node
+    niets te sturen.
+    {%- elif clock_route.blocker == "relay_unknown" %}
+    de cijfers van deze repeater worden doorgestuurd door node
+    <span class="mono">{{ clock_route.node }}</span>, en die node is hier zelf geen bekende
+    repeater. Van zijn firmware weten we dus niets.
+    {%- elif clock_route.blocker == "no_fw" %}
+    de node die de tijd zou krijgen meldt geen MeshStats-versie, dus valt niet vast te
+    stellen of hij <code>time</code> kent. Publiceren zou hier neerkomen op hopen.
+    {%- elif clock_route.blocker == "old_fw" %}
+    de node die de tijd zou krijgen draait MeshStats {{ clock_route.fw_meshstats }}. Het
+    commando <code>time</code> bestaat pas vanaf {{ clock_min_fw }}; oudere firmware weigert
+    het woord en telt het als geweigerd, zonder dat iemand dat hier ziet.
+    {%- elif clock_route.blocker == "stale" %}
+    er is al te lang niets van de node gehoord die de tijd zou krijgen. Een opdracht wordt
+    niet bewaard voor een node die offline is.
+    {%- elif clock_route.blocker == "broker_down" %}
+    de site heeft op dit ogenblik geen verbinding met de MQTT-broker.
+    {%- else %}
+    {{ clock_route.why }}
+    {%- endif %}
+  </p>
+
+  <p class="muted small">
+    <strong>Wat deze pagina wel en niet weet.</strong> Hierboven staat wanneer <em>deze
+    site</em> voor het laatst een tijd verstuurd heeft — niet of de klok daarna ook echt
+    goed stond. De node meet zelf hoeveel elke gemonitorde repeater afwijkt en corrigeert
+    alleen boven twee minuten, maar hij stuurt die meting nergens naartoe; ze is te lezen
+    met <code>wifi clock</code> op de node zelf (serieel, telnet of over de mesh-CLI).
+    Een node die <em>vóór</em> loopt wordt daar gemeld en met rust gelaten: adverts dragen
+    de klok van hun afzender mee en worden geweigerd als die tijdstempel niet stijgt, dus
+    een klok terugzetten zou die repeater even lang onzichtbaar maken als de stap groot is.
+  </p>
+  </div>
+</section>
+
 <section>
   <h2>Op te vragen parameters</h2>
   <div class="card">

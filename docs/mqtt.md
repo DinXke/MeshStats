@@ -301,9 +301,46 @@ The server does, so it publishes `time <epoch>` on a schedule
 `CommonCLI::handleCommand` parses in its `time ` branch — `_atoi` of the rest of
 the line, straight into `setCurrentTime`, UNIX seconds in UTC.
 
-Only nodes that **publish here directly** are addressed. A relayed repeater gets
-its time from its monitor over LoRa, which is exactly what the command makes
-that monitor do, and is the only path there is to it.
+Only nodes that **publish here directly** are addressed by the schedule. A
+relayed repeater gets its time from its monitor over LoRa, which is exactly what
+the command makes that monitor do, and is the only path there is to it. The
+schedule deliberately does not walk relayed repeaters: two of them behind one
+monitor would send that monitor the same message twice, and it would pay for two
+clock rounds where one was asked for.
+
+### The button
+
+Every repeater's admin page has **"Klok nu synchroniseren"**, for when waiting a
+day is not an option — a node that just came back from a power cut stamps
+everything it says with a date from 2024 until the next round.
+
+It is not a second path to the broker. The button calls the same `sync_now` in
+`clocksync.py` that the scheduler goes through, so the clock guard below, the
+epoch window and the firmware version gate all apply unchanged. The drift
+threshold and the refusal for a node running fast are not re-implemented either:
+they live in the firmware, and this is the same message.
+
+Two things are worth knowing before pressing it:
+
+- **On a relayed repeater it does not target that repeater alone.** The message
+  goes to the node that monitors it, and that node checks the clocks of *every*
+  repeater it monitors. There is no argument to narrow that down, and that is not
+  an omission — a clock round costs one command and one reply per monitored
+  repeater, so walking the whole list is about a fifth of one ordinary poll
+  round. The page says so rather than implying the button is aimed.
+- **It refuses inside the hour**, reporting when the next one is possible. Not
+  for safety: `MON_CLK_MIN_GAP_MS` in the firmware already makes it impossible to
+  occupy the band by clicking, however often you click. For honesty — within the
+  hour the node would set only its own clock, which the previous message already
+  did, and skip the round that actually matters, while the page said "sent". The
+  one exception is a node that rebooted since, detected from its `uptime` metric,
+  because that is precisely when waiting is the worst possible answer.
+
+What the site cannot show is the measured drift. The node measures how far each
+monitored repeater is off, and corrects only past two minutes, but it publishes
+that nowhere; it is readable with `wifi clock` on the node itself. Getting it
+onto this page would mean putting it in the stats message — a firmware change.
+The button itself needs none beyond the 1.10.0 that `time` already requires.
 
 Before anything leaves, `clocksync.py` has to establish that this machine's own
 clock is trustworthy, and refuses loudly — logs and admin page — when it cannot:

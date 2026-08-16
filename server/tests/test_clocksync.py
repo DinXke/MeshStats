@@ -154,6 +154,162 @@ def test_een_repeater_via_de_http_api_krijgt_niets():
     assert t["ok"] is False
 
 
+# --- de knop: welke node krijgt het bericht ----------------------------------
+
+def test_de_knop_op_een_doorgestuurde_repeater_mikt_op_zijn_monitor(monkeypatch):
+    # De dakrepeater publiceert zelf niets. Zijn klok komt van de node die hem
+    # monitort, en dus gaat het bericht daarheen -- niet naar een cmd-topic waar
+    # niemand naar luistert.
+    monitor = _rep(pubkey_prefix="55d9a320a4e3", fw_meshstats="1.11.0")
+    monkeypatch.setattr(clocksync.db, "find_repeater", lambda p: monitor)
+    r = clocksync.time_route(_rep(source_prefix="55d9a320a4e3"), now=NOW)
+    assert r["ok"] is True
+    assert r["node"] == "55d9a320a4e3"
+    assert r["via_monitor"] is True
+
+
+def test_bij_een_monitor_telt_de_firmware_van_de_monitor(monkeypatch):
+    # Niet die van het onderwerp: een node die zelf niet publiceert meldt nergens
+    # een versie, dus daarop gokken kost een opdracht die stil geweigerd wordt.
+    monkeypatch.setattr(clocksync.db, "find_repeater",
+                        lambda p: _rep(pubkey_prefix="55d9a320a4e3", fw_meshstats="1.9.1"))
+    r = clocksync.time_route(_rep(source_prefix="55d9a320a4e3", fw_meshstats="1.11.0"),
+                             now=NOW)
+    assert r["ok"] is False
+    assert r["blocker"] == "old_fw"
+
+
+def test_de_dagelijkse_ronde_stuurt_niet_twee_keer_naar_dezelfde_monitor():
+    # Twee doorgestuurde repeaters achter een monitor. De ronde loopt over alle
+    # repeaters, dus zonder deze regel kreeg die monitor hetzelfde bericht twee
+    # keer, en deed hij twee klokrondes over de lucht voor de prijs van een. De
+    # knop mag de monitorweg wel gebruiken; dat is een handeling van een mens.
+    rows = [_rep(pubkey_prefix="aaaaaaaaaaaa", source_prefix="55d9a320a4e3"),
+            _rep(pubkey_prefix="bbbbbbbbbbbb", source_prefix="55d9a320a4e3"),
+            _rep(pubkey_prefix="55d9a320a4e3", source_prefix="55d9a320a4e3")]
+    got = [t for t in clocksync.targets(rows, now=NOW) if t["ok"]]
+    assert [t["node"] for t in got] == ["55d9a320a4e3"]
+
+
+# --- de knop: dezelfde controles als de automatische ronde -------------------
+
+@pytest.fixture
+def knop(monkeypatch):
+    """Een open weg en een verbonden broker; legt vast wat er vertrok."""
+    sent = []
+    monkeypatch.setattr(clocksync, "ENABLED", True)
+    monkeypatch.setattr(clocksync, "time_route",
+                        lambda rep, **kw: {"id": 1, "prefix": "e3", "name": "Dak",
+                                           "node": "55d9a320a4e3", "via_monitor": True,
+                                           "ok": True, "blocker": "", "why": "",
+                                           "fw_meshstats": "1.11.0"})
+    monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: True)
+    monkeypatch.setattr(mqtt_ingest, "publish_command",
+                        lambda node, cmd, subject=None, epoch=None:
+                        sent.append((node, cmd, epoch)) or True)
+    store = {}
+    monkeypatch.setattr(clocksync.db, "get_setting", lambda k, d=None: store.get(k, d))
+    monkeypatch.setattr(clocksync.db, "set_setting", lambda k, v: store.__setitem__(k, v))
+    monkeypatch.setattr(clocksync, "_rebooted_since", lambda n, s, w: False)
+    return sent
+
+
+def test_de_knop_weigert_wanneer_de_serverklok_niet_vaststaat(monkeypatch, knop):
+    # Het punt van deze test: een handmatige start mag geen achterdeur om de
+    # klokcontrole heen zijn. Een verkeerde tijd is op een node niet meer terug
+    # te draaien, en dat verandert niet doordat er iemand op een knop drukte in
+    # plaats van dat een timer afliep.
+    monkeypatch.setattr(clocksync, "check_clock",
+                        lambda now=None: {"ok": False, "reason": "kapotte klok",
+                                          "kernel": {}, "epoch": 0})
+    out = clocksync.sync_now(_rep(), now=1_800_000_000.0)
+    assert out["outcome"] == "no_clock"
+    assert out["reason"] == "kapotte klok"
+    assert knop == []
+
+
+def test_de_knop_stuurt_time_met_een_epoch_naar_de_juiste_node(monkeypatch, knop):
+    monkeypatch.setattr(clocksync, "check_clock",
+                        lambda now=None: {"ok": True, "reason": "", "kernel": {}, "epoch": 0})
+    out = clocksync.sync_now(_rep(), now=1_800_000_000.0)
+    assert out["outcome"] == "sent"
+    assert knop[0][0] == "55d9a320a4e3"
+    assert knop[0][1] == "time"
+    assert knop[0][2] > clocksync.mqtt_ingest.MIN_EPOCH
+
+
+def test_twee_keer_klikken_stuurt_niet_twee_keer(monkeypatch, knop):
+    # De firmware zou de tweede ronde toch weigeren (hoogstens een per uur), dus
+    # publiceren zou hier "verstuurd" melden voor een ronde die niet gebeurt.
+    # Dat is de valse geslaagdheid die deze knop niet mag hebben.
+    monkeypatch.setattr(clocksync, "check_clock",
+                        lambda now=None: {"ok": True, "reason": "", "kernel": {}, "epoch": 0})
+    assert clocksync.sync_now(_rep(), now=1_800_000_000.0)["outcome"] == "sent"
+    out = clocksync.sync_now(_rep(), now=1_800_000_060.0)
+    assert out["outcome"] == "too_soon"
+    assert 55 <= out["wait_min"] <= 60
+    assert len(knop) == 1
+
+
+def test_na_het_uur_mag_het_weer(monkeypatch, knop):
+    monkeypatch.setattr(clocksync, "check_clock",
+                        lambda now=None: {"ok": True, "reason": "", "kernel": {}, "epoch": 0})
+    clocksync.sync_now(_rep(), now=1_800_000_000.0)
+    out = clocksync.sync_now(_rep(), now=1_800_000_000.0 + clocksync.MANUAL_MIN_GAP_S + 1)
+    assert out["outcome"] == "sent"
+    assert len(knop) == 2
+
+
+def test_een_node_die_intussen_herstartte_hoeft_niet_te_wachten(monkeypatch, knop):
+    # De uitzondering die ertoe doet. Een node die zojuist herstartte staat op
+    # de datum uit zijn firmware -- precies de toestand waarvoor dit bestaat --
+    # en dan is "wacht nog veertig minuten" het slechtste antwoord dat een knop
+    # kan geven.
+    monkeypatch.setattr(clocksync, "check_clock",
+                        lambda now=None: {"ok": True, "reason": "", "kernel": {}, "epoch": 0})
+    clocksync.sync_now(_rep(), now=1_800_000_000.0)
+    monkeypatch.setattr(clocksync, "_rebooted_since", lambda n, s, w: True)
+    out = clocksync.sync_now(_rep(), now=1_800_000_060.0)
+    assert out["outcome"] == "sent"
+    assert len(knop) == 2
+
+
+def test_een_mislukte_publicatie_blokkeert_het_uur_niet(monkeypatch, knop):
+    # Anders zou een weggevallen brokerverbinding de knop een uur lang laten
+    # beweren dat er net gesynchroniseerd is.
+    monkeypatch.setattr(clocksync, "check_clock",
+                        lambda now=None: {"ok": True, "reason": "", "kernel": {}, "epoch": 0})
+    monkeypatch.setattr(mqtt_ingest, "publish_command",
+                        lambda node, cmd, subject=None, epoch=None: False)
+    assert clocksync.sync_now(_rep(), now=1_800_000_000.0)["outcome"] == "failed"
+    monkeypatch.setattr(mqtt_ingest, "publish_command",
+                        lambda node, cmd, subject=None, epoch=None:
+                        knop.append((node, cmd, epoch)) or True)
+    assert clocksync.sync_now(_rep(), now=1_800_000_010.0)["outcome"] == "sent"
+
+
+def test_zonder_brokerverbinding_meldt_de_knop_dat(monkeypatch, knop):
+    monkeypatch.setattr(clocksync, "check_clock",
+                        lambda now=None: {"ok": True, "reason": "", "kernel": {}, "epoch": 0})
+    monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: False)
+    out = clocksync.sync_now(_rep(), now=1_800_000_000.0)
+    assert out["outcome"] == "no_route"
+    assert out["blocker"] == "broker_down"
+    assert knop == []
+
+
+def test_een_dichte_weg_publiceert_niet(monkeypatch, knop):
+    monkeypatch.setattr(clocksync, "time_route",
+                        lambda rep, **kw: {"id": 1, "prefix": "e3", "name": "Dak",
+                                           "node": None, "via_monitor": False, "ok": False,
+                                           "blocker": "old_fw", "why": "te oude firmware",
+                                           "fw_meshstats": "1.9.1"})
+    out = clocksync.sync_now(_rep(), now=1_800_000_000.0)
+    assert out["outcome"] == "no_route"
+    assert out["blocker"] == "old_fw"
+    assert knop == []
+
+
 # --- de ronde -----------------------------------------------------------------
 
 @pytest.fixture
