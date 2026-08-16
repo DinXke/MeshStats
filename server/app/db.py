@@ -68,6 +68,64 @@ CREATE TABLE IF NOT EXISTS admins(
   username TEXT UNIQUE NOT NULL,
   pw_hash TEXT NOT NULL
 );
+-- Groepen gebruikers en groepen nodes. Twee tabellenparen met dezelfde vorm, en
+-- met opzet niet één generieke ``groups``-tabel met een typekolom: een lidmaatschap
+-- verwijst naar een echte rij, en een gedeelde tabel zou die refertes niet meer
+-- door de databank kunnen laten bewaken. Zie rbac.py voor wat een groep betekent.
+CREATE TABLE IF NOT EXISTS user_groups(
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_group_members(
+  group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+  PRIMARY KEY(group_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS node_groups(
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS node_group_members(
+  group_id INTEGER NOT NULL REFERENCES node_groups(id) ON DELETE CASCADE,
+  repeater_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
+  PRIMARY KEY(group_id, repeater_id)
+);
+-- Eén toekenning: wie (gebruiker of gebruikersgroep) mag wat (rol) op welke
+-- nodes (één node, een nodegroep, of alle). ``effect`` is 'allow' of 'deny'.
+-- De oplossingsregel staat in rbac.resolve() en nergens anders.
+CREATE TABLE IF NOT EXISTS grants(
+  id INTEGER PRIMARY KEY,
+  subject_type TEXT NOT NULL,
+  subject_id INTEGER NOT NULL,
+  object_type TEXT NOT NULL,
+  object_id INTEGER,
+  role TEXT,
+  effect TEXT NOT NULL DEFAULT 'allow',
+  created_at TEXT NOT NULL,
+  created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_grants_subject ON grants(subject_type, subject_id);
+-- Het audittrail. Eén rij per handeling die iets probeerde te doen -- geslaagd,
+-- geweigerd of mislukt. Zie audit.py voor waarom een geweigerde poging er net zo
+-- goed in hoort als een geslaagde.
+CREATE TABLE IF NOT EXISTS audit(
+  id INTEGER PRIMARY KEY,
+  ts TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  object_type TEXT,
+  object_id INTEGER,
+  object_name TEXT,
+  outcome TEXT NOT NULL,
+  detail TEXT,
+  ip TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
+CREATE INDEX IF NOT EXISTS idx_audit_object ON audit(object_type, object_id, ts);
 CREATE TABLE IF NOT EXISTS settings(
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -214,6 +272,43 @@ COLUMN_MIGRATIONS = [
     # looking for a hash that was never there.
     ("packets", "src_hash", "TEXT"),
     ("packets", "dest_hash", "TEXT"),
+    # Of dit account alles mag, overal. Er staat DEFAULT 0 en niet DEFAULT 1, en
+    # dat is een bewuste keuze met een prijs: ALTER TABLE ADD COLUMN vult
+    # bestaande rijen met de standaard, dus zonder meer zou deze migratie élke
+    # bestaande beheerder van al zijn rechten ontdoen. Dat wordt hieronder
+    # rechtgezet door POST_MIGRATIONS, precies één keer, op het moment dat de
+    # kolom aangemaakt wordt. Andersom -- DEFAULT 1 -- zou korter zijn en
+    # verkeerd de andere kant op falen: een INSERT die de kolom vergeet, levert
+    # dan stilzwijgend een serverbeheerder op.
+    ("admins", "is_superuser", "INTEGER NOT NULL DEFAULT 0"),
+    # Een account uitzetten zonder het te verwijderen. Verwijderen zou de naam
+    # uit het audittrail niet weghalen (dat is de bedoeling) maar wel de
+    # toekenningen, en dan is "waarom mocht die persoon dat" achteraf niet meer
+    # te beantwoorden.
+    ("admins", "disabled", "INTEGER NOT NULL DEFAULT 0"),
+    ("admins", "created_at", "TEXT"),
+    ("admins", "created_by", "TEXT"),
+    # Wie dit token heeft aangemaakt. Zonder deze kolom is een token een sleutel
+    # zonder eigenaar zodra er meer dan één beheerder is.
+    ("tokens", "created_by", "TEXT"),
+]
+
+
+# Wat er precies één keer moet gebeuren: op het ogenblik dat een kolom hierboven
+# voor het eerst aangemaakt wordt, en daarna nooit meer.
+#
+# Er staat er één in, en die is de belangrijkste regel van de hele
+# rechtenmigratie. Vóór dit model was toegang alles-of-niets: wie kon inloggen,
+# kon alles. Elk account dat er al stond had dus in de praktijk volledige
+# rechten, en de migratie hoort dat te behouden in plaats van iedereen buiten te
+# sluiten en een nieuwe eigenaar te moeten uitvinden.
+#
+# Gebonden aan het aanmaken van de kolom en niet aan "is er al een
+# serverbeheerder": dat laatste zou bij elke start opnieuw kijken, en dan zet een
+# beheerder die zichzelf bewust degradeert zichzelf bij de volgende herstart weer
+# terug.
+POST_MIGRATIONS = [
+    ("admins", "is_superuser", "UPDATE admins SET is_superuser=1"),
 ]
 
 
@@ -308,17 +403,38 @@ NEIGHBOR_FROM = (
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
+    # PRAGMA table_info op een tabel die niet bestaat geeft geen fout maar een
+    # lege lijst, en dan zou de regel hieronder concluderen dat de kolom nog
+    # ontbreekt en op een ALTER stuklopen. In productie kan dat niet gebeuren --
+    # SCHEMA draait ervoor -- maar deze functie wordt ook los aangeroepen op een
+    # oude database met een handvol tabellen erin, en dan hoort ze de rest over
+    # te slaan in plaats van te vallen.
+    def kolommen(table: str) -> set:
+        return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+    bestaat = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+
     # Eerst hernoemen, dan pas toevoegen: andersom maakt de regel hieronder
     # eerst een lege nieuwe kolom aan, en dan zou de hernoeming stuiten op een
     # naam die al bestaat en de oude waarden alsnog laten liggen.
     for table, old, new in COLUMN_RENAMES:
-        names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if table not in bestaat:
+            continue
+        names = kolommen(table)
         if old in names and new not in names:
             conn.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
+    fresh = set()
     for table, column, decl in COLUMN_MIGRATIONS:
-        names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
-        if column not in names:
+        if table not in bestaat:
+            continue
+        if column not in kolommen(table):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            fresh.add((table, column))
+    # Alleen voor kolommen die zojuist ontstaan zijn. Zie POST_MIGRATIONS.
+    for table, column, sql in POST_MIGRATIONS:
+        if (table, column) in fresh:
+            conn.execute(sql)
     # Ná de kolommen, want de view leest ze. En met een DROP ervoor in plaats
     # van CREATE IF NOT EXISTS: een view bewaart de tekst waarmee ze gemaakt is,
     # dus een database die de vorige versie al draaide zou anders voor altijd de

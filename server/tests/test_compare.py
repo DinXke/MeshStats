@@ -185,6 +185,12 @@ def _routes(monkeypatch, params=None):
     """De buitenwereld rond de vergelijkingsroutes weghalen."""
     from app import firmware, nodeconfig, routes_admin
     monkeypatch.setattr(routes_admin, "require_login", lambda request: "beheerder")
+    # Ook de rechtenpoort, om dezelfde reden als de login: deze tests gaan over
+    # de tabel en niet over wie wat mag. Het rechtenmodel heeft zijn eigen tests
+    # in test_rechten.py, waaronder één die afdwingt dat elke schrijvende route
+    # hier werkelijk langskomt -- dus deze vervalsing kan die eis niet verbergen.
+    monkeypatch.setattr(routes_admin, "require_perm",
+                        lambda request, sleutel, rep=None: "beheerder")
     monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
     monkeypatch.setattr(firmware, "NODE_USER", "admin")
     lijst = {"ok": True, "error": "", "at": 0, "params": params if params is not None else [

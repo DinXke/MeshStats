@@ -81,7 +81,7 @@
     {% endif %}
     <form method="post" action="/admin/firmware/refresh" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit">Lijst nu verversen</button>
+      <button type="submit"{% if serverrechten and not serverrechten['server.firmwarelijst'].allowed %} disabled title="{{ serverrechten['server.firmwarelijst'].reason }}"{% endif %}>Lijst nu verversen</button>
     </form>
   </div>
 </section>
@@ -126,7 +126,7 @@
       {% if job.state not in ("voorbereiden", "downloaden", "schrijven", "wachten") %}
       <form method="post" action="/admin/repeaters/{{ rep.id }}/upgrade/clear" class="inline">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <button type="submit">Wegklikken</button>
+        <button type="submit"{{ row.mag|mag_attr }}>Wegklikken</button>
       </form>
       {% endif %}
     </div>
@@ -161,11 +161,11 @@
         <input type="checkbox" name="is_critical" value="1" {% if rep.is_critical %}checked{% endif %}>
         Kritiek (bevestiging vereist)
       </label>
-      <button type="submit">Opslaan</button>
+      <button type="submit"{{ row.mag_beheeradres|mag_attr }}>Opslaan</button>
     </form>
     <form method="post" action="/admin/repeaters/{{ rep.id }}/probe" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" {% if not rep.ota_host %}disabled{% endif %}>Node uitvragen</button>
+      <button type="submit"{% if not rep.ota_host %} disabled{% endif %}{{ row.mag_uitvragen|mag_attr }}>Node uitvragen</button>
     </form>
 
     {# Nooit een knop die niet kan. Uitgeschakeld met de reden erbij, want een
@@ -221,7 +221,8 @@
         <input name="confirm" placeholder="{{ rep.name }}" autocomplete="off">
       </label>
       {% endif %}
-      <button type="submit" class="danger">Upgraden</button>
+      <button type="submit" class="danger"{{ row.mag|mag_attr }}>Upgraden</button>
+      {% if row.mag and not row.mag.allowed %}<span class="muted small">&#128274; {{ row.mag.reason }}</span>{% endif %}
     </form>
     <p class="muted small">
       Een oudere versie kiezen mag en is soms precies wat je wilt. Instellingen overleven

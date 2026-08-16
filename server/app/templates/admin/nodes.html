@@ -12,6 +12,16 @@
    vanzelf uit een binnengekomen bericht ontstaat stond vroeger meteen op de
    voorpagina; nu wacht hij op een beslissing. Zonder deze regel blijft hij daar
    wachten, want één verborgen pil tussen de andere valt niet op. #}
+{#- Nodes waar deze gebruiker niets over mag weten. Het getal wel, de namen
+    niet -- dat zou de lijst zijn die hij niet hoort te zien. Zonder dit getal is
+    "waar is die node gebleven" een vraag zonder antwoord, en dat is precies het
+    soort stilte waar de rest van deze pagina tegen gebouwd is. -#}
+{% if onzichtbaar %}
+<p class="pending"><strong>{{ onzichtbaar }} node(s) worden hier niet getoond.</strong>
+   U hebt er geen rechten op. Wie deze server beheert, kan u een rol geven op een node of
+   op een nodegroep.</p>
+{% endif %}
+
 {% if hidden_repeaters %}
 <p class="pending"><strong>{{ hidden_repeaters }} repeater(s) staan verborgen.</strong>
    Een repeater die vanzelf ontstaat uit een binnengekomen bericht komt niet meteen op de
@@ -64,7 +74,9 @@
         <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="inline">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}"
-                  title="{{ 'Deze repeater staat op de publieke site — klik om te verbergen' if rep.is_public else 'Deze repeater is verborgen — klik om hem publiek te maken' }}">
+                  {%- if rollen and rollen[rep.id] not in ('technicus', 'beheerder') %} disabled
+                  title="Uw rol {{ rollen[rep.id] }} op deze node staat geen zichtbaarheidswijziging toe"
+                  {%- else %} title="{{ 'Deze repeater staat op de publieke site — klik om te verbergen' if rep.is_public else 'Deze repeater is verborgen — klik om hem publiek te maken' }}"{% endif %}>
             {{ 'publiek' if rep.is_public else 'verborgen' }}</button>
         </form>
         {#- Alleen zichtbaar als er iets áf staat, en zonder knop: omklappen doe
@@ -115,6 +127,7 @@
 
       <div class="noderow-actions">
         <a class="linkbtn" href="/admin/repeaters/{{ rep.id }}">Beheren &rarr;</a>
+        {% if rollen %}<span class="muted small">uw rol: {{ rollen[rep.id] or 'geen' }}</span>{% endif %}
         <a class="muted small" href="/r/{{ rep.slug }}">publieke pagina</a>
       </div>
     </li>

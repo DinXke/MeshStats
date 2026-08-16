@@ -398,6 +398,26 @@ PARAMS = [
 ]
 
 
+class _AllesMag:
+    """Een rechtenwoordenboek dat op elke sleutel 'ja' antwoordt.
+
+    De sjabloon doet ``rechten[sleutel]`` en verwacht een besluit dat waar is en
+    een reden kan geven. Een gewone dict zou elke onbekende sleutel laten
+    struikelen, en dan test je of de test alle sleutels kent in plaats van wat
+    de pagina toont.
+    """
+
+    def __getitem__(self, sleutel):
+        return self
+
+    def __bool__(self):
+        return True
+
+    @property
+    def reden(self):
+        return ""
+
+
 def _render(**over):
     """De echte nodepagina door de echte Jinja-omgeving.
 
@@ -437,6 +457,15 @@ def _render(**over):
                        for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],
         "cfg_now": {"name": "DinX-Home", "tx": "22"},
         "cfg_result": None,
+        # Sinds het rechtenmodel vraagt de sjabloon wat er mág. Hier alles
+        # toegestaan: deze tests gaan over de bediening van instellingen, niet
+        # over de rechten -- die hebben hun eigen tests in test_rechten.py. Zou
+        # dit meebeslissen, dan zou een test rood worden om een reden die niets
+        # met zijn onderwerp te maken heeft.
+        "rechten": _AllesMag(),
+        "mijn_rol": "beheerder",
+        "serverrechten": _AllesMag(),
+        "audit": [],
     }
     ctx.update(over)
     return templates.env.get_template("admin/node.html").render(ctx)

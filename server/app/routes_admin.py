@@ -24,8 +24,9 @@ klikken een 404 oplevert. Waar een GET-URL wél verhuisde staat een omleiding.
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import (auth, clocksync, commanding, compare, config, db, firmware,
-               metrics, mqtt_ingest, nodeconfig, ratelimit, retention, tsdb)
+from . import (audit, auth, clocksync, commanding, compare, config, db,
+               firmware, metrics, mqtt_ingest, nodeconfig, ratelimit, rbac,
+               retention, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -46,6 +47,81 @@ def check_csrf(request: Request, csrf: str):
     cookie = request.cookies.get(auth.SESSION_COOKIE, "")
     if not cookie or not auth.eq(csrf, auth.csrf_token(cookie)):
         raise HTTPException(403, "CSRF-controle mislukt")
+
+
+# --- de poort ----------------------------------------------------------------
+#
+# Elke schrijvende beheerroute gaat hierdoorheen, en er is een test
+# (test_rechten.py) die dat controleert door de routes van deze router af te
+# lopen. Een controle per route die met de hand overgeschreven wordt, is een
+# controle die bij de volgende route vergeten wordt; dit is de ene plek.
+
+def require_perm(request: Request, action: str, rep=None) -> str:
+    """Ingelogd én bevoegd, anders 403. Een weigering komt in het audittrail.
+
+    De weigering wordt hier vastgelegd en niet bij de aanroeper, om dezelfde
+    reden als hierboven: een geweigerde poging is juist de rij die je later wil
+    terugvinden, en dat mag niet afhangen van of iemand eraan dacht hem te
+    loggen.
+    """
+    user = require_login(request)
+    besluit = rbac.decide(user, action, rep)
+    if not besluit.allowed:
+        audit.log(user, action, rep=rep, outcome=audit.GEWEIGERD,
+                  detail=besluit.reason, ip=_ip(request))
+        raise HTTPException(403, besluit.reason)
+    return user
+
+
+def _rep_or_404(request: Request, rid: int):
+    """De repeater, of 404 -- maar niet vóór er iemand ingelogd is.
+
+    De login-controle staat hier en niet pas bij ``require_perm``, en dat is geen
+    dubbelop. De routes moeten de rij ophalen vóór ze de rechten kunnen wegen
+    (het recht gaat immers over déze node), en zonder deze regel zou een
+    onbekende bezoeker aan het verschil tussen een 404 en een omleiding naar het
+    inlogscherm kunnen aflezen welke node-id's bestaan. Dat is een klein lek, en
+    het gaat juist over de verborgen nodes.
+    """
+    require_login(request)
+    row = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not row:
+        raise HTTPException(404, "Onbekende repeater")
+    return row
+
+
+def _ip(request) -> str:
+    """Het adres voor in het audittrail, of leeg.
+
+    Even weerbaar als audit.log zelf, en om dezelfde reden: het schrijven van een
+    regel mag de handeling waar hij over gaat nooit laten stranden. Een verzoek
+    zonder herkenbaar adres levert dan een regel zonder adres op, en niet een
+    firmware-upgrade die halverwege afbreekt.
+    """
+    try:
+        return ratelimit.client_ip(request)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _noteer(request, user: str, action: str, *, rep=None,
+            outcome: str = audit.OK, detail: str = "") -> None:
+    audit.log(user, action, rep=rep, outcome=outcome, detail=detail, ip=_ip(request))
+
+
+# De schrijvende beheerroutes die géén rechtencontrole hebben, met de reden
+# erbij. Ze staan hier zodat test_rechten.py de rest kan afdwingen: elke POST
+# onder /admin gaat door require_perm, tenzij hij in deze lijst staat. Een lijst
+# van uitzonderingen die je moet bijwerken is precies de bedoeling -- iemand die
+# een route toevoegt en de controle vergeet, komt langs een rode test.
+ROUTES_ZONDER_RECHTENCONTROLE = {
+    # Het inlogscherm zelf. Er is nog geen gebruiker om iets over te beslissen.
+    "login",
+    # Het eigen wachtwoord wijzigen. Elke ingelogde gebruiker mag dat, en de
+    # controle die telt staat in de functie zelf: het huidige wachtwoord moet
+    # kloppen. Er is geen node en geen rol die hier iets aan zou toevoegen.
+    "change_password",
+}
 
 
 def _secure(request: Request) -> bool:
@@ -101,10 +177,24 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     row = db.qone("SELECT * FROM admins WHERE username=?", (username.strip(),))
     if row:
         ok = auth.verify_password(password, row["pw_hash"])
+        # Een uitgezet account faalt ná de wachtwoordcontrole en niet ervoor: zo
+        # kost een uitgezette naam evenveel tijd als een bestaande, en verraadt
+        # het inlogscherm niet welke accounts er nog zijn. De melding blijft
+        # bewust dezelfde als bij een verkeerd wachtwoord.
+        if ok and row["disabled"]:
+            audit.log(row["username"], "login", outcome=audit.GEWEIGERD,
+                      detail="account staat uit", ip=ip)
+            ok = False
     else:
         auth.verify_dummy(password)  # equal cost, so timing reveals no usernames
         ok = False
     if not ok:
+        # Zonder het wachtwoord en zonder te zeggen of de naam bestond: wat hier
+        # vastligt is dát er een mislukte poging was, met welk adres en op welke
+        # naam. Dat is genoeg om een aanval te herkennen en te weinig om er een
+        # gebruikerslijst uit af te leiden.
+        audit.log(username.strip()[:64] or "onbekend", "login",
+                  outcome=audit.MISLUKT, detail="ongeldige inloggegevens", ip=ip)
         wait = ratelimit.record_failure(ip, username)
         if wait:
             return _login_page(
@@ -115,6 +205,7 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
                            "login.invalid", status=401)
 
     ratelimit.record_success(ip, username)
+    audit.log(row["username"], "login", outcome=audit.OK, ip=ip)
     resp = RedirectResponse("/admin", status_code=303)
     resp.set_cookie(
         auth.SESSION_COOKIE, auth.make_session(row["username"]),
@@ -151,7 +242,12 @@ def nodes_page(request: Request):
     wordt vastgesteld vóór de knop getekend wordt.
     """
     user = require_login(request)
-    repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    ik = rbac.load(user)
+    alle = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    # Wat deze gebruiker mag zien, en niet wat er staat. Filteren en niet grijs
+    # maken: zie rbac.zichtbare_nodes voor waarom die twee hier niet hetzelfde
+    # zijn.
+    repeaters = rbac.zichtbare_nodes(ik, alle)
     # Eén keer opgevraagd en dan meegegeven, in plaats van per repeater opnieuw:
     # commanding.describe() haalt ze anders zelf op, en dat is bij twintig nodes
     # veertig overbodige vragen aan de broker en de databank.
@@ -166,6 +262,12 @@ def nodes_page(request: Request):
     return templates.TemplateResponse(request, "admin/nodes.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes",
         "repeaters": repeaters, "routes": routes,
+        "rollen": {r["id"]: rbac.rol_op_node(ik, r) for r in repeaters},
+        "serverrechten": rbac.serverrechten(ik),
+        # Hoeveel nodes er zijn waar deze gebruiker niets over mag weten. Niet
+        # welke: dat zou de lijst zijn die hij niet hoort te zien. Het getal
+        # staat er zodat "waar is die node gebleven" een antwoord heeft.
+        "onzichtbaar": len(alle) - len(repeaters),
         # Een repeater die vanzelf uit een bericht ontstaat komt sinds de
         # vertrouwensgrens verborgen binnen (zie db.get_or_create_repeater).
         # Verborgen binnenkomen mag, ongemerkt binnenkomen niet: zonder dit getal
@@ -271,11 +373,16 @@ def compare_write(request: Request, rid: int = Form(...), key: str = Form(...),
     drempels kunnen ontbreken, en dat is precies de fout die je pas ontdekt als
     er een node stil is.
     """
-    require_login(request)
     check_csrf(request, csrf)
-    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
-    if not rep:
-        raise HTTPException(404, "Onbekende repeater")
+    rep = _rep_or_404(request, rid)
+    # Dezelfde risicogestuurde poort als de nodepagina, en met opzet niet iets
+    # lichters omdat dit "maar" een tabelcel is: het is dezelfde schrijfactie op
+    # dezelfde node. Een tweede, soepelere ingang naar hetzelfde is precies hoe
+    # een drempel in de praktijk verdwijnt.
+    require_perm(request, {
+        nodeconfig.RISK_PLAIN: "node.instelling.gewoon",
+        nodeconfig.RISK_WRITES: "node.instelling.merkbaar",
+    }.get(nodeconfig.risk_of(rep, key.strip()), "node.instelling.ingrijpend"), rep)
     if key.strip() == "radio" and (rf or rb or rs or rc):
         value = " ".join(v.strip() for v in (rf, rb, rs, rc))
     result = nodeconfig.write(rep, key.strip(), value.strip(), confirm)
@@ -293,23 +400,55 @@ def compare_columns(request: Request, csrf: str = Form(...),
     dat hoort daar en niet hier, zodat een handmatig leeggemaakte instelling
     hetzelfde uitpakt als een instelling die nooit gezet is.
     """
-    require_login(request)
     check_csrf(request, csrf)
+    # Een weergavekeuze en geen handeling op een node: hij hoort bij de
+    # serverinstellingen, want de kolomkeuze staat serverbreed opgeslagen en
+    # geldt dus voor iedereen die de tabel opent.
+    require_perm(request, "server.instellingen")
     db.set_setting(compare.SETTING_KEY, ",".join(c.strip() for c in col if c.strip()))
     return RedirectResponse("/admin/compare", status_code=303)
 
 
 @router.get("/server", response_class=HTMLResponse)
 def server_page(request: Request):
-    """Wereld 2: alles wat deze installatie configureert en geen apparaat raakt."""
-    user = require_login(request)
+    """Wereld 2: alles wat deze installatie configureert en geen apparaat raakt.
+
+    Voorbehouden aan een serverbeheerder, en dat is geen strengheid maar wat de
+    pagina is: elk formulier erop is een serverhandeling, en die zijn per
+    definitie niet per node of per groep toe te kennen (zie rbac.decide). Een
+    halve pagina tonen zou een lijst tokens en accounts laten zien aan iemand die
+    er niets mee mag.
+    """
+    user = require_perm(request, "server.instellingen")
     repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
     tokens = db.q("SELECT * FROM tokens WHERE revoked=0 ORDER BY created_at")
     layout = metrics.parse_layout(db.get_setting("layout"))
+    # Eén keer opgehaald: de groepenlijsten worden twee keer gebruikt (de lijst
+    # zelf en de ledentabellen ernaast), en twee keer dezelfde vraag stellen is
+    # twee keer een kans dat er tussendoor iets verandert.
+    ug = rbac.gebruikersgroepen()
+    ng = rbac.nodegroepen()
     # nieuw token éénmalig tonen via kortlevende cookie (niet via de URL)
     new_token = request.cookies.get("mm_new_token")
     resp = templates.TemplateResponse(request, "admin/server.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "server",
+        "serverrechten": rbac.serverrechten(user),
+        # Gebruikersbeheer hoort onder Server en site, en de gegevens ervoor
+        # komen hier binnen in plaats van op een eigen pagina: het is een sectie
+        # tussen de tokens en de bewaartermijn, want het gaat over deze
+        # installatie en niet over een apparaat.
+        "gebruikers": rbac.gebruikers(),
+        "gebruikersgroepen": ug,
+        "nodegroepen": ng,
+        "groepsleden": {g["id"]: rbac.leden("user", g["id"]) for g in ug},
+        "nodegroepsleden": {g["id"]: rbac.leden("node", g["id"]) for g in ng},
+        "toekenningen": rbac.toekenningen(),
+        "rollen": rbac.ROLLEN, "rol_uitleg": rbac.ROL_UITLEG,
+        "klasse_uitleg": rbac.KLASSE_UITLEG,
+        "handelingen": rbac.ACTIONS,
+        "losse_nodes": rbac.nodes_zonder_groep(repeaters),
+        "alle_repeaters": repeaters,
+        "audit": audit.recent(40),
         # ``repeaters`` staat hier niet meer in de context: de lijst hoort bij
         # Nodes en repeaters. Hij wordt nog wel opgehaald, want clocksync.targets
         # heeft hem nodig om te zeggen wie er straks uit zichzelf een tijd krijgt.
@@ -374,7 +513,7 @@ def save_settings(request: Request, csrf: str = Form(...),
     geen pakkettenlog), het rijmaximum vanaf ``db.PACKET_FIFO_FLOOR`` (lager kan
     de FIFO toch niet honoreren) en het bytemaximum vanaf 16 MB.
     """
-    require_login(request)
+    user = require_perm(request, "server.instellingen")
     check_csrf(request, csrf)
     if heartbeat_min is not None:
         db.set_setting("heartbeat_min", str(max(1, min(1440, heartbeat_min))))
@@ -400,16 +539,26 @@ def save_settings(request: Request, csrf: str = Form(...),
     if any(v is not None for v in (retention_days, packet_retention_days,
                                    packet_max_rows, db_max_mb)):
         retention.run_once()
+    # Welke velden dit formulier meebracht, niet wat erin stond: de waarden staan
+    # op de pagina en het trail hoeft geen tweede kopie van de instellingen te
+    # worden. Wat je later wil weten is wie er aan de bewaartermijn zat.
+    gewijzigd = [naam for naam, waarde in (
+        ("heartbeat_min", heartbeat_min), ("retention_days", retention_days),
+        ("packet_retention_days", packet_retention_days),
+        ("packet_max_rows", packet_max_rows), ("db_max_mb", db_max_mb),
+        ("history_ranges", history_ranges)) if waarde is not None]
+    _noteer(request, user, "server.instellingen", detail=", ".join(gewijzigd))
     return RedirectResponse("/admin/server", status_code=303)
 
 
 @router.post("/layout")
 def save_layout(request: Request, layout: str = Form(...), csrf: str = Form(...)):
-    require_login(request)
+    user = require_perm(request, "server.instellingen")
     check_csrf(request, csrf)
     import json as _json
     validated = metrics.parse_layout(layout)
     db.set_setting("layout", _json.dumps(validated))
+    _noteer(request, user, "server.instellingen", detail="weergave van de publieke site")
     return RedirectResponse("/admin/server", status_code=303)
 
 
@@ -457,6 +606,21 @@ def _dispatch(rep, command: str) -> str:
     return "none"
 
 
+def _uitkomst(weg: str) -> str:
+    """De uitslag van _dispatch als uitkomst voor het audittrail.
+
+    'none' is geen fout van de gebruiker maar wel een handeling die niets
+    bereikte, en dat is precies het geval waarvan je later wil weten dat het zich
+    voordeed. 'both' en 'mqtt' zijn geslaagd; 'queued' staat er als 'deels', want
+    er is een verzoek neergelegd en nog niets gebeurd.
+    """
+    if weg == "none":
+        return audit.MISLUKT
+    if weg == "queued":
+        return audit.DEELS
+    return audit.OK
+
+
 @router.post("/repeaters/{rid}/refresh")
 def refresh_repeater(request: Request, rid: int, csrf: str = Form(...),
                      back: str = Form(default="")):
@@ -468,12 +632,12 @@ def refresh_repeater(request: Request, rid: int, csrf: str = Form(...),
     formulier staat achter een login die dat de moeite waard maakt. Hier komen
     dus alleen de twee bestemmingen uit die deze functie zelf kent.
     """
-    require_login(request)
+    row = _rep_or_404(request, rid)
+    user = require_perm(request, "node.uitvragen", row)
     check_csrf(request, csrf)
-    row = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
-    if not row:
-        raise HTTPException(404, "Onbekende repeater")
     outcome = _dispatch(row, "status")
+    _noteer(request, user, "node.uitvragen", rep=row, detail=f"status, weg: {outcome}",
+            outcome=_uitkomst(outcome))
     if back == "node":
         return RedirectResponse(f"/admin/repeaters/{rid}?status={outcome}", status_code=303)
     return RedirectResponse(f"/r/{row['slug']}?refresh={outcome}", status_code=303)
@@ -490,6 +654,11 @@ def repeater_settings_redirect(request: Request, rid: int):
     denkt dat de knop stuk is. De query-string reist mee, zodat een oude POST
     die hier uitkwam zijn melding niet onderweg verliest.
     """
+    # Alleen ingelogd, en met opzet geen rechtencontrole: deze route doet niets
+    # dan een 303 naar de pagina die de controle wél doet. Hier al weigeren zou
+    # betekenen dat een oude bladwijzer een ander antwoord geeft dan de nieuwe
+    # URL -- en dat de node bestaat zou dan uit een 404 blijken op een adres dat
+    # alleen een doorverwijzing is.
     require_login(request)
     query = request.url.query
     return RedirectResponse(f"/admin/repeaters/{rid}" + (f"?{query}" if query else ""),
@@ -510,11 +679,13 @@ def _node_page(request: Request, rid: int, **extra):
     antwoord van een schrijfactie is namelijk meer dan gelukt-of-niet: er staat in
     wat er ná afloop in de node staat, en dat kan afwijken van wat er gevraagd is.
     Dat past niet in een queryparameter zonder het te verminken.
+
+    De rij komt via ``_rep_or_404`` binnen en niet met een eigen query: die
+    controleert eerst of er iemand ingelogd is, zodat het verschil tussen een 404
+    en een omleiding naar het inlogscherm niet verraadt welke node-id's bestaan.
     """
-    user = require_login(request)
-    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
-    if not rep:
-        raise HTTPException(404, "Onbekende repeater")
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.bekijken", rep)
     requested = request.query_params.get("requested", "")
     rows = db.cli_settings_for(rid)
     # Nieuwste antwoord dat we hebben, ongeacht via welke weg het binnenkwam.
@@ -598,6 +769,18 @@ def _node_page(request: Request, rid: int, **extra):
         # kan tonen in plaats van leeg te beginnen. Een leeg veld naast een
         # parameter nodigt uit tot gokken.
         "cfg_now": {r["param"]: r["value"] for r in rows if r["value"] is not None},
+        # En wat er mág, uit dezelfde beweging. De sjabloon vraagt
+        # ``rechten['node.klok']`` en redeneert niet zelf: een sjabloon dat zelf
+        # redeneert is een tweede plek waar het antwoord vandaan komt, en de
+        # eerste keer dat die twee het oneens zijn belooft een knop iets wat de
+        # route weigert.
+        "rechten": rbac.rechten_op(user, rep),
+        "mijn_rol": rbac.rol_op_node(user, rep),
+        "serverrechten": rbac.serverrechten(user),
+        # Wat er met déze node gebeurd is, en door wie. Op de nodepagina en niet
+        # alleen op de serverpagina: de vraag "wie heeft deze node geflasht"
+        # stel je terwijl je naar die node kijkt.
+        "audit": audit.recent(15, rep_id=rid),
         **extra,
     })
 
@@ -617,11 +800,19 @@ def write_config(request: Request, rid: int, key: str = Form(...),
     ná afloop in de node staat -- en dat is soms iets anders dan wat er gevraagd
     is. Zie nodeconfig.write() voor de twee gemeten redenen waarom.
     """
-    require_login(request)
     check_csrf(request, csrf)
-    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
-    if not rep:
-        raise HTTPException(404, "Onbekende repeater")
+    rep = _rep_or_404(request, rid)
+    # Het recht hangt aan de risicoklasse van déze parameter, en niet aan een
+    # kaal "mag deze gebruiker schrijven". Zo is "wel de zendtijd bijstellen,
+    # niet aan de radio komen" een rol en geen uitzondering. Kent de node de
+    # parameter niet, dan is de zwaarste klasse de veilige aanname: een
+    # onbekende parameter als ongevaarlijk behandelen is precies hoe je een node
+    # van de lucht haalt.
+    _risk_perm = {
+        nodeconfig.RISK_PLAIN: "node.instelling.gewoon",
+        nodeconfig.RISK_WRITES: "node.instelling.merkbaar",
+    }.get(nodeconfig.risk_of(rep, key.strip()), "node.instelling.ingrijpend")
+    require_perm(request, _risk_perm, rep)
     # 'radio' is de enige parameter die uit vier getallen bestaat, en die vier
     # krijgen elk hun eigen invoerveld met hun eigen minimum en maximum. Eén
     # tekstveld waarin je "869.525 250 11 5" moet typen is precies het soort veld
@@ -635,12 +826,12 @@ def write_config(request: Request, rid: int, key: str = Form(...),
 @router.post("/repeaters/{rid}/settings/refresh")
 def repeater_settings_refresh(request: Request, rid: int, csrf: str = Form(...)):
     """Vraag de CLI-instellingen op: rechtstreeks aan de node en/of via een poller."""
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.uitvragen", rep)
     check_csrf(request, csrf)
-    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
-    if not rep:
-        raise HTTPException(404, "Onbekende repeater")
     outcome = _dispatch(rep, "settings")
+    _noteer(request, user, "node.uitvragen", rep=rep,
+            detail=f"instellingen, weg: {outcome}", outcome=_uitkomst(outcome))
     return RedirectResponse(f"/admin/repeaters/{rid}?requested={outcome}",
                             status_code=303)
 
@@ -654,12 +845,12 @@ def repeater_clocksync(request: Request, rid: int, csrf: str = Form(...)):
     aan de pagina doorgeven -- juist zodat er geen tweede plek is waar over
     publiceren beslist wordt.
     """
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.klok", rep)
     check_csrf(request, csrf)
-    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
-    if not rep:
-        raise HTTPException(404, "Onbekende repeater")
     result = clocksync.sync_now(rep)
+    _noteer(request, user, "node.klok", rep=rep, detail=result["outcome"],
+            outcome=audit.OK if result["outcome"] == "sent" else audit.MISLUKT)
     # De wachttijd reist mee in de URL, want zonder dat getal is "te snel" een
     # mededeling waar niemand iets mee kan.
     suffix = f"&wait={result['wait_min']}" if result["outcome"] == "too_soon" else ""
@@ -678,10 +869,11 @@ def save_cli_params(request: Request, cli_params: str = Form(...),
     id mee om terug te kunnen keren. Die waarde wordt genegeerd -- de lijst was
     ook toen al globaal, en dat is precies waarom ze hier is komen staan.
     """
-    require_login(request)
+    user = require_perm(request, "server.instellingen")
     check_csrf(request, csrf)
     cleaned = ",".join(p.strip() for p in cli_params.replace(";", ",").split(",") if p.strip())
     db.set_setting("cli_params", cleaned or db.DEFAULT_CLI_PARAMS)
+    _noteer(request, user, "server.instellingen", detail="op te vragen parameters")
     return RedirectResponse("/admin/server#cli-params", status_code=303)
 
 
@@ -711,11 +903,14 @@ def toggle_repeater(request: Request, rid: int, csrf: str = Form(...),
     Zie refresh_repeater voor waarom ``back`` geen URL is maar een woord dat deze
     functie zelf vertaalt.
     """
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.zichtbaarheid", rep)
     check_csrf(request, csrf)
     column = _VISIBILITY_COLUMNS.get(what)
     if column:
         db.execute(f"UPDATE repeaters SET {column} = 1 - {column} WHERE id=?", (rid,))
+        _noteer(request, user, "node.zichtbaarheid", rep=rep,
+                detail=f"{column} omgeklapt naar {0 if rep[column] else 1}")
     if back == "node":
         return RedirectResponse(f"/admin/repeaters/{rid}#zichtbaarheid", status_code=303)
     return RedirectResponse("/admin", status_code=303)
@@ -723,11 +918,14 @@ def toggle_repeater(request: Request, rid: int, csrf: str = Form(...),
 
 @router.post("/repeaters/{rid}/rename")
 def rename_repeater(request: Request, rid: int, name: str = Form(...), csrf: str = Form(...)):
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.hernoemen", rep)
     check_csrf(request, csrf)
     name = name.strip()
     if name:
         db.execute("UPDATE repeaters SET name=? WHERE id=?", (name, rid))
+        _noteer(request, user, "node.hernoemen", rep=rep,
+                detail=f"'{rep['name']}' → '{name}'")
     # Terug naar de pagina van deze node: daar staat het veld sinds de
     # herindeling, en daar zie je meteen of de nieuwe naam er staat.
     return RedirectResponse(f"/admin/repeaters/{rid}", status_code=303)
@@ -735,8 +933,17 @@ def rename_repeater(request: Request, rid: int, name: str = Form(...), csrf: str
 
 @router.post("/repeaters/{rid}/delete")
 def delete_repeater(request: Request, rid: int, csrf: str = Form(...)):
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.verwijderen", rep)
     check_csrf(request, csrf)
+    # Het trail eerst, en dan pas wissen: erna zou de naam van een node die niet
+    # meer bestaat uit een rij moeten komen die net verdwenen is. De regel houdt
+    # de naam als tekst vast, zodat "wie heeft die node weggegooid" te
+    # beantwoorden blijft nadat de rij weg is.
+    _noteer(request, user, "node.verwijderen", rep=rep,
+            detail=f"sleutel {rep['pubkey_prefix']}")
+    db.execute("DELETE FROM node_group_members WHERE repeater_id=?", (rid,))
+    db.execute("DELETE FROM grants WHERE object_type='node' AND object_id=?", (rid,))
     db.execute("DELETE FROM samples WHERE repeater_id=?", (rid,))
     db.execute("DELETE FROM latest WHERE repeater_id=?", (rid,))
     db.execute("DELETE FROM neighbors WHERE repeater_id=?", (rid,))
@@ -746,9 +953,14 @@ def delete_repeater(request: Request, rid: int, csrf: str = Form(...)):
 
 @router.post("/tokens")
 def create_token(request: Request, name: str = Form(...), csrf: str = Form(...)):
-    require_login(request)
+    user = require_perm(request, "server.tokens")
     check_csrf(request, csrf)
-    token = auth.create_token(name.strip() or "token")
+    naam = name.strip() or "token"
+    token = auth.create_token(naam, door=user)
+    # De naam van het token, nooit het token zelf. Dat gaat één keer over het
+    # scherm via een kortlevende koek en komt verder nergens terecht -- niet in
+    # een URL, niet in een log, en dus ook niet hier.
+    _noteer(request, user, "server.tokens", detail=f"token '{naam}' aangemaakt")
     resp = RedirectResponse("/admin/server#tokens", status_code=303)
     resp.set_cookie("mm_new_token", token, max_age=60, httponly=True,
                     samesite="lax", secure=_secure(request))
@@ -757,9 +969,12 @@ def create_token(request: Request, name: str = Form(...), csrf: str = Form(...))
 
 @router.post("/tokens/{tid}/revoke")
 def revoke_token(request: Request, tid: int, csrf: str = Form(...)):
-    require_login(request)
+    user = require_perm(request, "server.tokens")
     check_csrf(request, csrf)
+    row = db.qone("SELECT name FROM tokens WHERE id=?", (tid,))
     db.execute("UPDATE tokens SET revoked=1 WHERE id=?", (tid,))
+    _noteer(request, user, "server.tokens",
+            detail=f"token '{row['name'] if row else tid}' ingetrokken")
     return RedirectResponse("/admin/server#tokens", status_code=303)
 
 
@@ -774,10 +989,13 @@ def change_password(request: Request, current: str = Form(...),
     if len(new) < 8:
         raise HTTPException(422, "Nieuw wachtwoord moet minstens 8 tekens zijn")
     db.execute("UPDATE admins SET pw_hash=? WHERE id=?", (auth.hash_password(new), row["id"]))
+    # Dát het gebeurd is, nooit wat er gezet is. Een wachtwoord hoort niet in een
+    # log en niet in een URL, en dat geldt voor het audittrail net zo hard.
+    _noteer(request, user, "eigen.wachtwoord", detail="eigen wachtwoord gewijzigd")
     # Every session signed under the old password is now invalid, this one
     # included -- so hand this browser a new cookie instead of logging the
     # person who just changed the password out of their own admin page.
-    resp = RedirectResponse("/admin/server#toegang", status_code=303)
+    resp = RedirectResponse("/admin/account", status_code=303)
     resp.set_cookie(
         auth.SESSION_COOKIE, auth.make_session(user),
         max_age=auth.SESSION_TTL, httponly=True, samesite="lax", secure=_secure(request),
@@ -796,7 +1014,9 @@ def _fw_context(request: Request, **extra):
     worden, en de eerste keer dat dat gebeurt staat er een knop onder een node
     die hem niet kan uitvoeren.
     """
-    repeaters = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    user = current_user(request)
+    ik = rbac.load(user)
+    repeaters = rbac.zichtbare_nodes(ik, db.q("SELECT * FROM repeaters ORDER BY sort_order, name"))
     rel = firmware.releases()
     rows = []
     for rep in repeaters:
@@ -805,6 +1025,13 @@ def _fw_context(request: Request, **extra):
             "rep": rep,
             "ota": route,
             "job": firmware.job(rep["id"]),
+            # Naast wat er kán (``ota``) wat er mág. Firmware is de duurste
+            # handeling op deze site -- een verkeerde image is een node van een
+            # dak halen -- dus de knop hoort uitgeschakeld te staan met de reden
+            # erbij, en niet te verdwijnen.
+            "mag": rbac.decide(ik, "node.firmware", rep),
+            "mag_beheeradres": rbac.decide(ik, "node.beheeradres", rep),
+            "mag_uitvragen": rbac.decide(ik, "node.uitvragen", rep),
             # Welke releases een image dragen voor de bouwomgeving die deze node
             # meldde. Leeg als we die omgeving niet kennen -- dan is de eerlijke
             # uitkomst 'niet vast te stellen' en geen lijst om uit te kiezen.
@@ -812,7 +1039,8 @@ def _fw_context(request: Request, **extra):
                       if route["env"] else [],
         })
     ctx = {
-        "site_name": config.SITE_NAME, "user": current_user(request),
+        "site_name": config.SITE_NAME, "user": user,
+        "serverrechten": rbac.serverrechten(ik),
         # Firmware is een handeling op een apparaat, dus deze pagina staat in de
         # wereld van de nodes en licht daar op in de tabbalk.
         "world": "nodes", "firmware_tab": True,
@@ -836,7 +1064,7 @@ def firmware_page(request: Request):
 
 @router.post("/firmware/refresh")
 def firmware_refresh(request: Request, csrf: str = Form(...)):
-    require_login(request)
+    require_perm(request, "server.firmwarelijst")
     check_csrf(request, csrf)
     firmware.releases(force=True)
     return RedirectResponse("/admin/firmware", status_code=303)
@@ -845,10 +1073,9 @@ def firmware_refresh(request: Request, csrf: str = Form(...)):
 @router.post("/repeaters/{rid}/ota")
 def save_ota(request: Request, rid: int, ota_host: str = Form(""),
              is_critical: str = Form(""), csrf: str = Form(...)):
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.beheeradres", rep)
     check_csrf(request, csrf)
-    if not db.qone("SELECT id FROM repeaters WHERE id=?", (rid,)):
-        raise HTTPException(404, "Onbekende repeater")
     host = (ota_host or "").strip()
     if host:
         try:
@@ -857,6 +1084,12 @@ def save_ota(request: Request, rid: int, ota_host: str = Form(""),
             raise HTTPException(422, f"Adres onbruikbaar: {exc}") from exc
     db.set_ota_host(rid, host)
     db.set_critical(rid, bool(is_critical))
+    # Het adres staat er niet in. Deze repo is publiek en dit trail is
+    # exporteerbaar; een beheeradres is een intern adres, en de vraag die het
+    # trail moet beantwoorden is wie eraan zat, niet wat het was.
+    _noteer(request, user, "node.beheeradres", rep=rep,
+            detail=("beheeradres gezet" if host else "beheeradres gewist")
+                   + (", kritiek" if is_critical else ", niet kritiek"))
     return RedirectResponse("/admin/firmware", status_code=303)
 
 
@@ -870,16 +1103,17 @@ def probe_node(request: Request, rid: int, csrf: str = Form(...)):
     ophaalt op het moment dat de beheerder zegt dat er een pad is, is eerlijker
     dan een veld dat stilletjes veroudert.
     """
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.uitvragen", rep)
     check_csrf(request, csrf)
-    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
-    if not rep:
-        raise HTTPException(404, "Onbekende repeater")
     info = firmware.probe(str(rep["ota_host"] or ""))
     if info["ok"]:
         db.record_pio_env(rid, info["env"])
         if info["ver"]:
             db.record_firmware(rid, fw_module=info["ver"])
+    _noteer(request, user, "node.uitvragen", rep=rep,
+            detail=f"aangeklopt bij de node; omgeving {info.get('env') or 'onbekend'}",
+            outcome=audit.OK if info["ok"] else audit.MISLUKT)
     return _fw_context(request, probe={"rid": rid, "info": info})
 
 
@@ -887,16 +1121,16 @@ def probe_node(request: Request, rid: int, csrf: str = Form(...)):
 def start_upgrade(request: Request, rid: int, tag: str = Form(...),
                   expect_env: str = Form(""), confirm: str = Form(""),
                   csrf: str = Form(...)):
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.firmware", rep)
     check_csrf(request, csrf)
-    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
-    if not rep:
-        raise HTTPException(404, "Onbekende repeater")
 
     # De bevestiging voor een kritieke node. Niet 'weet u het zeker' maar de
     # naam overtypen, want de fout die dit moet vangen is niet twijfel maar een
     # klik op de verkeerde regel -- en daar helpt een ja/nee-vraag niet tegen.
     if rep["is_critical"] and (confirm or "").strip() != (rep["name"] or ""):
+        _noteer(request, user, "node.firmware", rep=rep, outcome=audit.MISLUKT,
+                detail=f"naar {tag}; bevestiging voor een kritieke node ontbrak")
         return _fw_context(request, started={
             "rid": rid, "ok": False,
             "error": f"Deze node staat als kritiek gemarkeerd. Typ de naam "
@@ -904,14 +1138,23 @@ def start_upgrade(request: Request, rid: int, tag: str = Form(...),
         })
 
     result = firmware.start(rep, tag, expect_env)
+    # Het starten wordt vastgelegd en niet de afloop: die komt uit een thread die
+    # minuten later klaar is, en tegen die tijd is er geen verzoek meer om hem
+    # aan op te hangen. Wat hier moet staan is wie het in gang zette en met welke
+    # release -- dat is de vraag die na een node die niet terugkomt gesteld wordt.
+    _noteer(request, user, "node.firmware", rep=rep,
+            detail=f"upgrade naar {tag} gestart",
+            outcome=audit.OK if result.get("ok") else audit.MISLUKT)
     return _fw_context(request, started={"rid": rid, **result})
 
 
 @router.post("/repeaters/{rid}/upgrade/clear")
 def clear_upgrade(request: Request, rid: int, csrf: str = Form(...)):
-    require_login(request)
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.firmware", rep)
     check_csrf(request, csrf)
     firmware.clear_job(rid)
+    _noteer(request, user, "node.firmware", rep=rep, detail="opdracht opgeruimd")
     return RedirectResponse("/admin/firmware", status_code=303)
 
 
@@ -926,3 +1169,235 @@ def firmware_jobs(request: Request):
     """
     require_login(request)
     return firmware.jobs()
+
+
+# --- eigen account -----------------------------------------------------------
+
+@router.get("/account", response_class=HTMLResponse)
+def account_page(request: Request):
+    """Eigen wachtwoord en eigen rechten, voor iedereen die kan inloggen.
+
+    Bestaat sinds toegang niet meer alles-of-niets is. Het wachtwoordformulier
+    stond op Server en site, en die pagina is voorbehouden aan serverbeheerders
+    -- een gebruiker met rechten op twee nodes zou zijn eigen wachtwoord dan niet
+    meer kunnen wijzigen.
+
+    De pagina toont ook wat deze gebruiker mag, en dat is geen versiering: een
+    uitgeschakelde knop zegt waarom hij uit staat, maar "waar mag ik dan wél bij"
+    is een vraag die je niet node voor node hoort te beantwoorden.
+    """
+    user = require_login(request)
+    ik = rbac.load(user)
+    repeaters = rbac.zichtbare_nodes(ik, db.q("SELECT * FROM repeaters ORDER BY sort_order, name"))
+    return templates.TemplateResponse(request, "admin/account.html", {
+        "site_name": config.SITE_NAME, "user": user, "world": "account",
+        "ik": ik, "serverrechten": rbac.serverrechten(ik),
+        "mijn_nodes": [{"rep": r, "rol": rbac.rol_op_node(ik, r)} for r in repeaters],
+        "rol_uitleg": rbac.ROL_UITLEG, "klasse_uitleg": rbac.KLASSE_UITLEG,
+        "handelingen": rbac.ACTIONS,
+        "audit": audit.recent(20, actor=user),
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+    })
+
+
+# --- gebruikers, groepen en toekenningen -------------------------------------
+#
+# Allemaal voorbehouden aan een serverbeheerder (rbac.decide laat 'server.*' niet
+# anders toe), en allemaal met een regel in het audittrail. Het toekennen van
+# rechten is zelf de gevoeligste handeling op deze site: wie hier iets mag, mag
+# zichzelf morgen alles geven.
+
+@router.post("/users")
+def create_user(request: Request, username: str = Form(...), password: str = Form(...),
+                is_superuser: str = Form(""), csrf: str = Form(...)):
+    """Een account erbij. De beheerder zet het wachtwoord en kan het niet teruglezen.
+
+    Het wachtwoord komt binnen over POST en gaat er gehasht in; nergens onderweg
+    staat het in een URL, in een log of in het audittrail. Dat is dezelfde regel
+    die overal in dit project geldt, en hij is hier het scherpst: dit is het
+    formulier waarmee iemand een wachtwoord voor een ánder zet.
+    """
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    naam = username.strip()
+    if not naam or len(naam) > 64:
+        raise HTTPException(422, "Gebruikersnaam ontbreekt of is te lang")
+    if len(password) < 8:
+        raise HTTPException(422, "Wachtwoord moet minstens 8 tekens zijn")
+    if rbac.gebruiker_op_naam(naam):
+        raise HTTPException(409, f"'{naam}' bestaat al")
+    rbac.maak_gebruiker(naam, auth.hash_password(password),
+                        is_superuser=bool(is_superuser), door=user)
+    _noteer(request, user, "server.gebruikers",
+            detail=f"account '{naam}' aangemaakt"
+                   + (" als serverbeheerder" if is_superuser else ""))
+    return RedirectResponse("/admin/server#gebruikers", status_code=303)
+
+
+@router.post("/users/{uid}/password")
+def set_user_password(request: Request, uid: int, password: str = Form(...),
+                      csrf: str = Form(...)):
+    """Een wachtwoord voor iemand anders zetten.
+
+    Zonder het huidige wachtwoord te kennen -- dat is het punt van deze knop -- en
+    zonder het nieuwe te kunnen teruglezen. De sessies van die gebruiker vervallen
+    hierdoor vanzelf: de wachtwoordvingerafdruk in hun koek klopt niet meer (zie
+    auth.password_stamp). Dat is precies het gewenste gedrag als de reden voor
+    deze knop is dat er iets misging.
+    """
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    row = db.qone("SELECT * FROM admins WHERE id=?", (uid,))
+    if not row:
+        raise HTTPException(404, "Onbekend account")
+    if len(password) < 8:
+        raise HTTPException(422, "Wachtwoord moet minstens 8 tekens zijn")
+    db.execute("UPDATE admins SET pw_hash=? WHERE id=?", (auth.hash_password(password), uid))
+    _noteer(request, user, "server.gebruikers",
+            detail=f"wachtwoord gezet voor '{row['username']}'")
+    return RedirectResponse("/admin/server#gebruikers", status_code=303)
+
+
+@router.post("/users/{uid}/flags")
+def set_user_flags(request: Request, uid: int, is_superuser: str = Form(""),
+                   disabled: str = Form(""), csrf: str = Form(...)):
+    """Serverbeheerder ja/nee en uitgezet ja/nee, in één formulier.
+
+    Met de ene controle die deze hele feature moet overleven: de laatste actieve
+    serverbeheerder kan niet weg. Zonder die grendel is één verkeerd vinkje een
+    installatie waar niemand meer bij de gebruikers kan, en loopt de weg terug
+    langs de opdrachtregel op de server zelf.
+    """
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    row = db.qone("SELECT * FROM admins WHERE id=?", (uid,))
+    if not row:
+        raise HTTPException(404, "Onbekend account")
+    super_ = bool(is_superuser)
+    uit = bool(disabled)
+    if (not super_ or uit) and rbac.aantal_serverbeheerders(behalve=uid) == 0 \
+            and row["is_superuser"] and not row["disabled"]:
+        raise HTTPException(
+            409, "Dit is de laatste actieve serverbeheerder. Maak eerst iemand "
+                 "anders serverbeheerder.")
+    rbac.zet_serverbeheerder(uid, super_)
+    rbac.zet_uit(uid, uit)
+    _noteer(request, user, "server.gebruikers",
+            detail=f"'{row['username']}': "
+                   f"{'serverbeheerder' if super_ else 'gewone gebruiker'}, "
+                   f"{'uit' if uit else 'actief'}")
+    return RedirectResponse("/admin/server#gebruikers", status_code=303)
+
+
+@router.post("/users/{uid}/delete")
+def delete_user(request: Request, uid: int, csrf: str = Form(...)):
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    row = db.qone("SELECT * FROM admins WHERE id=?", (uid,))
+    if not row:
+        raise HTTPException(404, "Onbekend account")
+    if row["is_superuser"] and not row["disabled"] \
+            and rbac.aantal_serverbeheerders(behalve=uid) == 0:
+        raise HTTPException(409, "Dit is de laatste actieve serverbeheerder.")
+    rbac.verwijder_gebruiker(uid)
+    _noteer(request, user, "server.gebruikers",
+            detail=f"account '{row['username']}' verwijderd")
+    return RedirectResponse("/admin/server#gebruikers", status_code=303)
+
+
+@router.post("/groups")
+def create_group(request: Request, soort: str = Form(...), name: str = Form(...),
+                 note: str = Form(""), csrf: str = Form(...)):
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    if soort not in ("user", "node"):
+        raise HTTPException(422, "Onbekende groepssoort")
+    if not name.strip():
+        raise HTTPException(422, "Een groep heeft een naam nodig")
+    rbac.maak_groep(soort, name, note)
+    _noteer(request, user, "server.gebruikers",
+            detail=f"{'gebruikers' if soort == 'user' else 'node'}groep "
+                   f"'{name.strip()}' aangemaakt")
+    return RedirectResponse("/admin/server#groepen", status_code=303)
+
+
+@router.post("/groups/{soort}/{gid}/delete")
+def remove_group(request: Request, soort: str, gid: int, csrf: str = Form(...)):
+    """Een groep weg, en met haar de toekenningen die erop stonden.
+
+    Die toekenningen meenemen is geen opruimwerk maar een veiligheidsmaatregel:
+    een toekenning die naar een verdwenen groep wijst, is een rij waarvan niemand
+    meer kan zien wat ze betekent -- en als er later een groep met hetzelfde id
+    ontstaat, betekent ze ineens iets anders.
+    """
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    if soort not in ("user", "node"):
+        raise HTTPException(422, "Onbekende groepssoort")
+    rbac.verwijder_groep(soort, gid)
+    _noteer(request, user, "server.gebruikers", detail=f"groep {soort}/{gid} verwijderd")
+    return RedirectResponse("/admin/server#groepen", status_code=303)
+
+
+@router.post("/groups/{soort}/{gid}/members")
+def set_group_member(request: Request, soort: str, gid: int, member: int = Form(...),
+                     lid: str = Form(""), csrf: str = Form(...)):
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    if soort not in ("user", "node"):
+        raise HTTPException(422, "Onbekende groepssoort")
+    rbac.zet_lidmaatschap(soort, gid, member, bool(lid))
+    _noteer(request, user, "server.gebruikers",
+            detail=f"lidmaatschap {soort}/{gid}: {member} "
+                   f"{'toegevoegd' if lid else 'verwijderd'}")
+    return RedirectResponse("/admin/server#groepen", status_code=303)
+
+
+@router.post("/grants")
+def create_grant(request: Request, subject_type: str = Form(...),
+                 subject_id: int = Form(...), object_type: str = Form(...),
+                 object_id: int = Form(default=0), role: str = Form(default=""),
+                 effect: str = Form(default="allow"), csrf: str = Form(...)):
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    try:
+        rbac.maak_toekenning(subject_type, subject_id, object_type,
+                             object_id or None, role or None, effect, door=user)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    _noteer(request, user, "server.gebruikers",
+            detail=f"toekenning: {subject_type} {subject_id} → "
+                   f"{object_type} {object_id or 'alle'} ({effect} {role})")
+    return RedirectResponse("/admin/server#toekenningen", status_code=303)
+
+
+@router.post("/grants/{grant_id}/delete")
+def remove_grant(request: Request, grant_id: int, csrf: str = Form(...)):
+    user = require_perm(request, "server.gebruikers")
+    check_csrf(request, csrf)
+    rbac.verwijder_toekenning(grant_id)
+    _noteer(request, user, "server.gebruikers", detail=f"toekenning {grant_id} ingetrokken")
+    return RedirectResponse("/admin/server#toekenningen", status_code=303)
+
+
+@router.get("/audit", response_class=HTMLResponse)
+def audit_page(request: Request):
+    """Het volledige audittrail, nieuwste eerst.
+
+    Een eigen pagina en niet alleen het blok van veertig regels op Server en
+    site: veertig regels zijn genoeg om te zien dat er iets gebeurd is, en te
+    weinig om terug te kijken naar de avond waarop een node niet terugkwam.
+    """
+    user = require_perm(request, "server.audit")
+    try:
+        limit = int(request.query_params.get("n", "200"))
+    except ValueError:
+        limit = 200
+    return templates.TemplateResponse(request, "admin/audit.html", {
+        "site_name": config.SITE_NAME, "user": user, "world": "server",
+        "regels": audit.recent(limit),
+        "limit": limit,
+        "serverrechten": rbac.serverrechten(user),
+        "bewaardagen": db.setting_int("audit_retention_days", audit.DEFAULT_AUDIT_DAYS),
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+    })

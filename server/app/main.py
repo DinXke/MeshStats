@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, clocksync, db, limits, mqtt_ingest, retention,
+from . import (auth, clocksync, db, limits, mqtt_ingest, rbac, retention,
                routes_admin, routes_api, routes_public, tsdb)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
@@ -62,10 +62,10 @@ def bootstrap():
     db.get_conn()
     if not db.qone("SELECT 1 FROM admins LIMIT 1"):
         password = secrets.token_urlsafe(12)
-        db.execute(
-            "INSERT INTO admins(username, pw_hash) VALUES(?,?)",
-            ("admin", auth.hash_password(password)),
-        )
+        # Serverbeheerder, want anders is er bij de allereerste start een account
+        # dat niets mag en niemand die daar iets aan kan veranderen.
+        rbac.maak_gebruiker("admin", auth.hash_password(password),
+                            is_superuser=True, door="eerste start")
         print(f"[meshmanager] Eerste start: admin-account aangemaakt.", flush=True)
         print(f"[meshmanager] Gebruikersnaam: admin  Wachtwoord: {password}", flush=True)
         print(f"[meshmanager] Wijzig dit meteen via /admin.", flush=True)
@@ -93,7 +93,14 @@ def bootstrap():
 
 
 def set_password():
-    """CLI: python -m app.main set-password <gebruikersnaam> — leest wachtwoord van stdin."""
+    """CLI: python -m app.main set-password <gebruikersnaam> — leest wachtwoord van stdin.
+
+    Dit is de weg terug naar binnen als er niemand meer bij kan, en daarom maakt
+    hij een account dat hij zelf moet aanmaken meteen serverbeheerder. Een
+    herstelweg die een account zonder rechten oplevert is geen herstelweg.
+    Bestaande accounts houden de rechten die ze hadden -- het zetten van een
+    wachtwoord is geen reden om iemand te promoveren.
+    """
     username = sys.argv[2] if len(sys.argv) > 2 else "admin"
     password = sys.stdin.readline().strip()
     if len(password) < 8:
@@ -103,11 +110,33 @@ def set_password():
     if db.qone("SELECT 1 FROM admins WHERE username=?", (username,)):
         db.execute("UPDATE admins SET pw_hash=? WHERE username=?",
                    (auth.hash_password(password), username))
+        print(f"Wachtwoord ingesteld voor '{username}'")
     else:
-        db.execute("INSERT INTO admins(username, pw_hash) VALUES(?,?)",
-                   (username, auth.hash_password(password)))
-    print(f"Wachtwoord ingesteld voor '{username}'")
+        rbac.maak_gebruiker(username, auth.hash_password(password),
+                            is_superuser=True, door="opdrachtregel")
+        print(f"Account '{username}' aangemaakt als serverbeheerder")
 
 
-if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "set-password":
-    set_password()
+def promote():
+    """CLI: python -m app.main promote <gebruikersnaam> — maak iemand serverbeheerder.
+
+    De tweede herstelweg. Bestaat voor het geval dat wél een account bestaat maar
+    geen enkele meer serverbeheerder is: dan is de gebruikerspagina onbereikbaar
+    en is een wachtwoord zetten niet genoeg.
+    """
+    username = sys.argv[2] if len(sys.argv) > 2 else "admin"
+    db.get_conn()
+    row = db.qone("SELECT id FROM admins WHERE username=?", (username,))
+    if not row:
+        print(f"Onbekend account '{username}'", file=sys.stderr)
+        sys.exit(1)
+    rbac.zet_serverbeheerder(row["id"], True)
+    rbac.zet_uit(row["id"], False)
+    print(f"'{username}' is nu serverbeheerder")
+
+
+if __name__ == "__main__" and len(sys.argv) > 1:
+    if sys.argv[1] == "set-password":
+        set_password()
+    elif sys.argv[1] == "promote":
+        promote()

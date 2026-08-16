@@ -43,7 +43,7 @@ python -m pytest -k backfill                    # op naam
 python -m pytest -x -q                          # stop bij de eerste fout
 ```
 
-Ruwweg 220 tests over een tiental modules; een volledige run duurt seconden.
+Ruwweg 400 tests over een tiental modules; een volledige run duurt seconden.
 
 ---
 
@@ -179,11 +179,26 @@ ontwerpnotities bij het gebied dat getest wordt.
 | `test_retention.py` | 15 | Opruimen | Niet "er wordt iets verwijderd" maar de **volgorde** waarin dat gebeurt |
 | `test_settings_chain.py` | 25 | knop → wachtrij → poller → opslag | De clear-on-read-wachtrij, die faalt zonder ook maar één foutmelding op te leveren |
 | `test_zichtbaarheid.py` | 18 | `show_position` / `show_name` over elke publieke route | Niet "de schakelaar klapt om" maar **dat geen enkele route eraan voorbij lekt**, plus dat de standaardwaarden niets veranderen |
+| `test_rechten.py` | 31 | `app/rbac.py`, `app/audit.py`, de migratie | Drie manieren waarop een rechtenmodel stukgaat zonder iets te melden: te ruim, te krap (de eigenaar buitengesloten), en vergeten op een route |
+| `test_beheerpaginas_renderen.py` | 10 | De beheersjablonen, van begin tot eind | Dat de takken die zeggen *waarom* een knop uit staat werkelijk renderen — een tikfout daar is een lege beheerpagina en geen testfout |
 
 ### Waarom een aantal hiervan een eigen bestand heeft
 
 De keuzes zijn niet willekeurig, en de docstrings leggen ze uit:
 
+- **`test_rechten.py`** — een rechtenmodel kan op drie manieren stukgaan zonder
+  dat er iets gemeld wordt. *Te ruim*: iemand mag iets wat niet zou mogen, en dat
+  merk je pas als het gebeurd is — bij firmware betekent "het is gebeurd" een
+  node van een dak halen. *Te krap*: de migratie draait op een databank waarin
+  één beheerder alles mocht, en één verkeerde kolom sluit de enige buiten die het
+  kan herstellen. *Vergeten*: een route zonder controle werkt — hij werkt alleen
+  voor iedereen. De laatste sectie loopt daarom de router zelf af in plaats van
+  gedrag te testen.
+- **`test_beheerpaginas_renderen.py`** — de rest van de suite roept routefuncties
+  aan en kijkt naar wat ze teruggeven; bij een sjabloon is dat te weinig. Bijna
+  alles wat er op deze pagina's mis kan gaan zit in de takken die zeggen *waarom*
+  iets er niet is, en die branden pas bij het renderen. Dezelfde reden waarom
+  `test_firmware.py` de firmwarepagina door de echte Jinja-omgeving haalt.
 - **`test_commanding.py`** — het antwoord op "kan deze knop iets doen?" komt uit
   vier losse bronnen: wie er voor deze repeater publiceert, welke firmware die
   draait, of de broker eraan hangt, en of er recent gepold is. Fout antwoorden

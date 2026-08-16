@@ -54,6 +54,26 @@ volgorde, zonder versienummer om bij te houden.
 | `packets` | `scope_codes` | TEXT | De twee transportcodes, komma-gescheiden |
 | `packets` | `src_hash` | TEXT | Afzenderhash van 1 byte, twee hextekens |
 | `packets` | `dest_hash` | TEXT | Bestemmingshash van 1 byte, twee hextekens |
+| `admins` | `is_superuser` | INTEGER NOT NULL DEFAULT 0 | Mag alles, overal |
+| `admins` | `disabled` | INTEGER NOT NULL DEFAULT 0 | Account uit, zonder het te verwijderen |
+| `admins` | `created_at`, `created_by` | TEXT | Wie dit account toevoegde, en wanneer |
+| `tokens` | `created_by` | TEXT | Wie dit token aanmaakte |
+
+**`admins.is_superuser` is de ene kolom met een vervolg.** Hij staat met opzet op
+standaard 0 — een kolom die standaard "volledige rechten" zegt faalt de verkeerde
+kant op, want een `INSERT` die hem vergeet levert stilzwijgend een
+serverbeheerder op. Maar `ALTER TABLE ADD COLUMN` vult bestaande rijen met die
+standaard, en vóór dit model kon elk account dat kon inloggen alles. Daarom
+draait `POST_MIGRATIONS` de opdracht `UPDATE admins SET is_superuser=1` op het
+moment dat de kolom aangemaakt wordt, en alleen dan. Het is een lijst van
+`(tabel, kolom, sql)` en de regels vuren precies één keer, op de ronde die de
+kolom maakt.
+
+Gebonden aan het aanmaken en niet aan een voorwaarde als "is er al een
+serverbeheerder", want zo'n voorwaarde wordt bij elke start opnieuw beoordeeld —
+en dan zet een beheerder die zichzelf bewust degradeert zichzelf bij de volgende
+herstart weer terug. Zie
+[`admin.md`](admin.md#een-bestaande-installatie-migreren).
 
 **De twee zichtbaarheidskolommen staan standaard op 1, en die standaard is het
 ontwerp.** `ALTER TABLE ADD COLUMN` geeft bestaande rijen de opgegeven
@@ -470,11 +490,96 @@ geen verwijdering, zodat `last_used` de intrekking overleeft.
 | `id` | INTEGER PK | |
 | `username` | TEXT UNIQUE | |
 | `pw_hash` | TEXT | `pbkdf2$<salt hex>$<afgeleide sleutel hex>`, SHA-256, 200 000 rondes |
+| `is_superuser` | INTEGER | 1 = mag alles, overal, deze pagina inbegrepen |
+| `disabled` | INTEGER | 1 = kan niet inloggen; account en toekenningen blijven |
+| `created_at`, `created_by` | TEXT | Wanneer, en door wie |
+
+Nog steeds `admins` en niet `users`, en dat is met opzet: een levende tabel
+hernoemen levert hier niets op en kost een terugrolweg. Een versie van de site
+die na de hernoeming teruggerold wordt, zou via `CREATE TABLE IF NOT EXISTS` een
+lege `admins` aanmaken en er een vers willekeurig account naast zetten — een
+verwarrende toestand om in te zitten op de avond dat je aan het terugrollen bent.
 
 Er is geen sessietabel. De kolom `pw_hash` *is* de intrekkingslijst: elke
 sessiecookie draagt een korte HMAC-vingerafdruk ervan, zodat een
 wachtwoordwijziging elke cookie ongeldig maakt die onder het oude wachtwoord
-geslagen is. Zie [`admin.md`](admin.md#sessies).
+geslagen is. Een wachtwoord dat een beheerder vanuit `/admin` voor iemand anders
+zet, beëindigt daarom diens sessies — precies wat je wilt als de reden voor die
+knop is dat er iets misging. Zie [`admin.md`](admin.md#sessies).
+
+Een account verwijderen haalt zijn toekenningen en lidmaatschappen weg; zijn
+`audit`-rijen blijven. Het trail bewaart de gebruikersnaam als tekst en niet als
+verwijzing, juist zodat dat kan.
+
+### `user_groups`, `user_group_members`, `node_groups`, `node_group_members`
+
+Twee paren met dezelfde vorm: een groep met een unieke naam, en een
+lidmaatschapstabel die ernaar verwijst met `ON DELETE CASCADE`. Met opzet geen
+generieke `groups`-tabel met een typekolom — een lidmaatschap wijst naar een
+echte rij, en een gedeelde tabel zou die refertes niet meer door de databank
+kunnen laten bewaken.
+
+| Kolom | Type | Inhoud |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `name` | TEXT UNIQUE | |
+| `note` | TEXT | Vrije tekst, getoond op de beheerpagina |
+| `created_at` | TEXT | |
+
+Een repeater verschijnt vanzelf in de databank en zit dus eerst in geen enkele
+nodegroep. `rbac.nodes_zonder_groep()` is wat voorkomt dat dat stil gebeurt.
+
+### `grants`
+
+Wie wat mag, op welke nodes.
+
+| Kolom | Type | Inhoud |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `subject_type` | TEXT | `user` of `group` |
+| `subject_id` | INTEGER | Rij in `admins` of `user_groups` |
+| `object_type` | TEXT | `node`, `nodegroup` of `all` |
+| `object_id` | INTEGER | Rij in `repeaters` of `node_groups`; NULL bij `all` |
+| `role` | TEXT | `lezer`, `bediener`, `technicus`, `beheerder`; NULL bij een weigering |
+| `effect` | TEXT | `allow` of `deny` |
+| `created_at`, `created_by` | TEXT | |
+
+Geïndexeerd op `(subject_type, subject_id)`, want zo leest
+`rbac.Gebruiker.grants` hem: één keer per verzoek, en daarna in Python opgelost.
+Er staat geen foreign key op `subject_id`/`object_id`, omdat de kolom een andere
+tabel betekent afhankelijk van de typekolom ernaast; het opruimen gebeurt
+expliciet wanneer een gebruiker, groep of repeater weggaat.
+
+De oplossingsregel — weigeren wint van toestaan, de ruimste toestemming wint,
+geen toekenning is geen toegang — staat in `rbac.resolve()` en nergens anders.
+Zie [`admin.md`](admin.md#botsende-toekenningen).
+
+### `audit`
+
+Wie wat deed, met welke node, wanneer en hoe het afliep.
+
+| Kolom | Type | Inhoud |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `ts` | TEXT | UTC, ISO |
+| `actor` | TEXT | Gebruikersnaam als tekst, zodat de rij het account overleeft |
+| `action` | TEXT | Handelingsnaam uit `rbac.ACTIONS`, of `login` |
+| `object_type`, `object_id`, `object_name` | TEXT/INTEGER | De node, mét naam, zodat de rij de node overleeft |
+| `outcome` | TEXT | `ok`, `geweigerd`, `mislukt`, `deels` |
+| `detail` | TEXT | Leesbare samenvatting; nooit een geheim |
+| `ip` | TEXT | `ratelimit.client_ip()`, of leeg |
+
+Twee indexen: `(ts)` voor de omgekeerd-chronologische lijst, en
+`(object_type, object_id, ts)` voor het blok per node op zijn eigen pagina.
+
+De namen staan er gedenormaliseerd in, met opzet. Een foreign key zou een netter
+schema opleveren en een leeg antwoord op "wie heeft de node geflasht die we
+vorige maand verwijderd hebben" — precies de ene vraag waarvoor deze tabel
+bestaat.
+
+Gesnoeid door `audit.prune()` op `audit_retention_days` (standaard 730),
+aangeroepen vanuit `retention.run_once()` en niet vanuit `db.prune()`: die
+functie gaat over meetgegevens, en deze tabel is er geen.
 
 ## De queryhulpjes die het waard zijn te kennen
 

@@ -2,6 +2,30 @@
 {% block title %}{{ rep.name }} — beheer — {{ site_name }}{% endblock %}
 {% block admin %}
 
+{#- Twee vragen per knop, en pas als ze allebei ja zeggen werkt hij.
+
+    ``route``   wat er KÁN -- firmware, brokerverbinding, wie er publiceert.
+                Komt uit commanding.route_for.
+    ``rechten`` wat deze gebruiker MAG. Komt uit rbac.decide.
+
+    Deze macro zet de tweede om in de attributen van een knop. Een handeling die
+    niet mag verdwijnt niet: ze staat er uitgeschakeld, met de reden in de
+    tooltip -- dezelfde lijn die deze pagina overal aanhoudt voor knoppen die
+    niet kúnnen. Een knop die stilletjes weg is, laat iemand denken dat de site
+    stuk is; een knop die zegt waarom hij uit staat, laat hem weten wie hij moet
+    aanspreken.
+
+    Waarom een macro en niet per knop uitgeschreven: dertien knoppen die allemaal
+    hetzelfde `{% if %}` herhalen, zijn dertien plaatsen om er één te vergeten. -#}
+{%- macro recht(sleutel) -%}
+{%- set besluit = rechten[sleutel] -%}
+{%- if not besluit.allowed %} disabled title="{{ besluit.reason }}"{% endif %}
+{%- endmacro -%}
+{%- macro waarom(sleutel) -%}
+{%- set besluit = rechten[sleutel] -%}
+{%- if not besluit.allowed %}<p class="muted small">&#128274; {{ besluit.reason }}.</p>{% endif %}
+{%- endmacro -%}
+
 {#- De kop is hier geen versiering. Elke knop op deze pagina raakt één bepaald
     apparaat, en de duurste fout die je op deze site kunt maken is dezelfde
     handeling op de verkeerde node. Naam én sleutel staan daarom groot bovenaan,
@@ -21,6 +45,10 @@
     <a href="/r/{{ rep.slug }}">&rarr; publieke pagina</a>
     <a href="/admin">&larr; alle nodes</a>
   </div>
+  {#- Wat u hier mag, één keer bovenaan. Zonder die zin is elke uitgeschakelde
+      knop hieronder een losse verrassing. -#}
+  <p class="muted small">Uw rol op deze node: <strong>{{ mijn_rol or 'geen' }}</strong>.
+     Knoppen die uw rol niet toestaat staan uit, met de reden erbij.</p>
 </div>
 
 {#- Waarom deze meldingen zo uitgebreid zijn: een opvraging loopt over een radio
@@ -166,9 +194,11 @@
 
   <form method="post" action="/admin/repeaters/{{ rep.id }}/rename" class="rowform">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="name" value="{{ rep.name }}" aria-label="Naam van deze repeater">
-    <button type="submit">Naam opslaan</button>
+    <input name="name" value="{{ rep.name }}" aria-label="Naam van deze repeater"
+           {{- recht('node.hernoemen') }}>
+    <button type="submit"{{ recht('node.hernoemen') }}>Naam opslaan</button>
   </form>
+  {{ waarom('node.hernoemen') }}
   <p class="muted small">De naam is alleen van deze site: hij verandert niets op het apparaat en
      is zo weer terug te zetten. Een node die zichzelf anders noemt, overschrijft hem wél &mdash;
      zijn eigen naam wint bij het volgende bericht.</p>
@@ -195,7 +225,7 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="back" value="node">
     <input type="hidden" name="what" value="public">
-    <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}">
+    <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}"{{ recht('node.zichtbaarheid') }}>
       {{ 'publiek — klik om te verbergen' if rep.is_public else 'verborgen — klik om publiek te maken' }}</button>
   </form>
   <p class="muted small">Verborgen betekent: niet op de startpagina, en <code>/r/{{ rep.slug }}</code>
@@ -206,7 +236,7 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="back" value="node">
     <input type="hidden" name="what" value="position">
-    <button type="submit" class="pill {{ 'on' if rep.show_position else 'off' }}">
+    <button type="submit" class="pill {{ 'on' if rep.show_position else 'off' }}"{{ recht('node.zichtbaarheid') }}>
       {{ 'positie zichtbaar — klik om te verbergen' if rep.show_position else 'positie verborgen — klik om te tonen' }}</button>
   </form>
   <p class="muted small">Staat dit uit, dan gedraagt de site zich alsof ze van deze node
@@ -221,7 +251,7 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="back" value="node">
     <input type="hidden" name="what" value="name">
-    <button type="submit" class="pill {{ 'on' if rep.show_name else 'off' }}">
+    <button type="submit" class="pill {{ 'on' if rep.show_name else 'off' }}"{{ recht('node.zichtbaarheid') }}>
       {{ 'naam zichtbaar — klik om te verbergen' if rep.show_name else 'naam verborgen — klik om te tonen' }}</button>
   </form>
   <p class="muted small">Staat dit uit, dan heet deze node overal op de publieke site
@@ -296,7 +326,7 @@
     <form method="post" action="/admin/repeaters/{{ rep.id }}/settings/refresh">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       {% if route.mqtt or route.ha %}
-      <button type="submit">&#128225; Instellingen nu opvragen</button>
+      <button type="submit"{{ recht('node.uitvragen') }}>&#128225; Instellingen nu opvragen</button>
       {% else %}
       <button type="submit" disabled title="Er is op dit ogenblik geen weg naar deze repeater">
         &#128225; Opvragen kan nu niet</button>
@@ -319,7 +349,7 @@
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="back" value="node">
       {% if ('status' in route.commands and route.mqtt) or route.ha %}
-      <button type="submit">&#8635; Status nu opvragen</button>
+      <button type="submit"{{ recht('node.uitvragen') }}>&#8635; Status nu opvragen</button>
       {% else %}
       <button type="submit" disabled title="Er is op dit ogenblik geen weg om dit te vragen">
         &#8635; Status opvragen kan nu niet</button>
@@ -675,7 +705,7 @@
           onsubmit="return confirm('De tijd van deze server naar node {{ clock_route.node or '?' }} sturen, voor {{ rep.name }} ({{ rep.pubkey_prefix }})?\n\nDit zet klokken op apparaten die je van hier niet meer kunt terugdraaien{% if clock_route.via_monitor %}, en die node kijkt meteen ook de klokken na van alle andere repeaters die hij monitort{% endif %}.')">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       {% if clock_route.ok and clock_enabled and broker %}
-      <button type="submit">&#128340; Klok nu synchroniseren</button>
+      <button type="submit"{{ recht('node.klok') }}>&#128340; Klok nu synchroniseren</button>
       {% else %}
       <button type="submit" disabled title="Er is op dit ogenblik geen weg om de tijd heen te brengen">
         &#128340; Synchroniseren kan nu niet</button>
@@ -725,6 +755,7 @@
        node of er een weg naartoe is. Van deze node staat de versie hierboven bij
        <em>Identiteit en versies</em>.</p>
     <p><a class="linkbtn" href="/admin/firmware">&#8679; Naar firmware &rarr;</a></p>
+    {{ waarom('node.firmware') }}
   </div>
   </div>
 </section>
@@ -745,9 +776,39 @@
     <form method="post" action="/admin/repeaters/{{ rep.id }}/delete"
           onsubmit="return confirm('{{ rep.name }} ({{ rep.pubkey_prefix }}) en alle historiek verwijderen?\n\nDit is niet ongedaan te maken.')">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" class="danger">&#128465;&#65039; Verwijderen</button>
+      <button type="submit" class="danger"{{ recht('node.verwijderen') }}>&#128465;&#65039; Verwijderen</button>
     </form>
+    {{ waarom('node.verwijderen') }}
   </div>
+  </div>
+</section>
+
+{#- Wat er met déze node gebeurd is, en door wie.
+
+    Op de nodepagina en niet alleen op Server en site, omdat de vraag "wie heeft
+    deze node geflasht" gesteld wordt terwijl je naar die node kijkt. Zichtbaar
+    voor iedereen die de node mag bekijken: het verbergen ervan voor wie er
+    dagelijks aan werkt zou het trail tot een controlemiddel maken in plaats van
+    tot gedeelde geschiedenis. -#}
+<section id="trail">
+  <h2>Wat er met deze node gebeurd is</h2>
+  <div class="card tablecard">
+  <table>
+    <thead><tr><th>Wanneer</th><th>Wie</th><th>Handeling</th><th>Uitkomst</th><th>Toelichting</th></tr></thead>
+    <tbody>
+    {% for r in audit %}
+      <tr>
+        <td><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
+        <td>{{ r.actor }}</td>
+        <td><code>{{ r.action }}</code></td>
+        <td>{{ r.outcome }}</td>
+        <td class="muted small">{{ r.detail }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">Nog niets vastgelegd voor deze node.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
   </div>
 </section>
 {% endblock %}

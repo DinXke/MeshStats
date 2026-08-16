@@ -52,6 +52,24 @@ track.
 | `packets` | `scope_codes` | TEXT | The two transport codes, comma-separated |
 | `packets` | `src_hash` | TEXT | 1-byte source hash, two hex characters |
 | `packets` | `dest_hash` | TEXT | 1-byte destination hash, two hex characters |
+| `admins` | `is_superuser` | INTEGER NOT NULL DEFAULT 0 | May do everything, everywhere |
+| `admins` | `disabled` | INTEGER NOT NULL DEFAULT 0 | Account switched off without deleting it |
+| `admins` | `created_at`, `created_by` | TEXT | Who added this account, and when |
+| `tokens` | `created_by` | TEXT | Who minted this token |
+
+**`admins.is_superuser` is the one column with a follow-up.** It defaults to 0
+deliberately — a column defaulting to "full rights" fails the wrong way, because
+an `INSERT` that forgets it silently produces a server administrator. But `ALTER
+TABLE ADD COLUMN` fills existing rows with that default, and before this model
+every account that could log in could do everything. So `POST_MIGRATIONS` runs
+`UPDATE admins SET is_superuser=1` at the moment the column is created, and only
+then. It is a list of `(table, column, sql)` and its entries fire exactly once,
+on the pass that creates the column.
+
+Bound to the creation rather than to a condition like "is there a server
+administrator yet", because a condition would be re-evaluated on every start —
+and then an administrator who deliberately demotes themselves is promoted back on
+the next restart. See [`admin.md`](admin.md#migrating-an-existing-installation).
 
 **The two visibility columns default to 1, and that default is the design.**
 `ALTER TABLE ADD COLUMN` gives existing rows the declared default, so a database
@@ -453,11 +471,94 @@ The token is `mm_` + `secrets.token_urlsafe(32)` and is shown once, through a
 | `id` | INTEGER PK | |
 | `username` | TEXT UNIQUE | |
 | `pw_hash` | TEXT | `pbkdf2$<salt hex>$<derived key hex>`, SHA-256, 200 000 rounds |
+| `is_superuser` | INTEGER | 1 = may do everything, everywhere, including this page |
+| `disabled` | INTEGER | 1 = cannot log in; the account and its grants stay |
+| `created_at`, `created_by` | TEXT | When, and by whom |
+
+Still called `admins` rather than `users`, and that is on purpose: renaming a live
+table gains nothing here and costs a rollback path. A version of the site rolled
+back after the rename would recreate an empty `admins` through
+`CREATE TABLE IF NOT EXISTS` and bootstrap a fresh random account beside the real
+one — a confusing state to be in on the evening you are rolling back.
 
 There is no session table. The `pw_hash` column *is* the revocation list: every
 session cookie carries a short HMAC fingerprint of it, so changing a password
-invalidates every cookie minted under the old one. See
+invalidates every cookie minted under the old one. Setting someone else's
+password from `/admin` therefore ends their sessions, which is the wanted
+behaviour when the reason for that button is that something went wrong. See
 [`admin.md`](admin.md#sessions).
+
+Deleting an account removes its grants and group memberships; its `audit` rows
+stay. The trail stores the username as text rather than as a reference, precisely
+so it can.
+
+### `user_groups`, `user_group_members`, `node_groups`, `node_group_members`
+
+Two pairs with the same shape: a group with a unique name, and a membership table
+referencing it with `ON DELETE CASCADE`. Deliberately not one generic `groups`
+table with a type column — a membership points at a real row, and a shared table
+could no longer let the database police those references.
+
+| Column | Type | Contents |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `name` | TEXT UNIQUE | |
+| `note` | TEXT | Free text shown on the admin page |
+| `created_at` | TEXT | |
+
+A repeater appears in the database by itself, so it starts in no node group.
+`rbac.nodes_zonder_groep()` is what keeps that from being silent.
+
+### `grants`
+
+Who may do what, to which nodes.
+
+| Column | Type | Contents |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `subject_type` | TEXT | `user` or `group` |
+| `subject_id` | INTEGER | Row in `admins` or `user_groups` |
+| `object_type` | TEXT | `node`, `nodegroup` or `all` |
+| `object_id` | INTEGER | Row in `repeaters` or `node_groups`; NULL on `all` |
+| `role` | TEXT | `lezer`, `bediener`, `technicus`, `beheerder`; NULL on a deny |
+| `effect` | TEXT | `allow` or `deny` |
+| `created_at`, `created_by` | TEXT | |
+
+Indexed on `(subject_type, subject_id)`, which is how `rbac.Gebruiker.grants`
+reads it: once per request, then resolved in Python. There is no foreign key on
+`subject_id`/`object_id` because the column means a different table depending on
+the type column beside it; the cleanup is done explicitly when a user, group or
+repeater is removed.
+
+The resolution rule — deny beats allow, widest allow wins, no grant is no access
+— lives in `rbac.resolve()` and nowhere else. See
+[`admin.md`](admin.md#conflicting-grants).
+
+### `audit`
+
+Who did what, to which node, when, and how it ended.
+
+| Column | Type | Contents |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `ts` | TEXT | UTC, ISO |
+| `actor` | TEXT | Username as text, so the row outlives the account |
+| `action` | TEXT | Action name from `rbac.ACTIONS`, or `login` |
+| `object_type`, `object_id`, `object_name` | TEXT/INTEGER | The node, name included, so the row outlives the node |
+| `outcome` | TEXT | `ok`, `geweigerd`, `mislukt`, `deels` |
+| `detail` | TEXT | Readable summary; never a secret |
+| `ip` | TEXT | `ratelimit.client_ip()`, or empty |
+
+Two indexes: `(ts)` for the reverse-chronological list, and
+`(object_type, object_id, ts)` for the per-node block on a node's page.
+
+The names are denormalised on purpose. A foreign key would give a tidier schema
+and an empty answer to "who flashed the node we deleted last month", which is the
+one question this table exists for.
+
+Pruned by `audit.prune()` on `audit_retention_days` (default 730), called from
+`retention.run_once()` rather than from `db.prune()` — that function is about
+measurements, and this table is not a measurement.
 
 ## The query helpers worth knowing
 

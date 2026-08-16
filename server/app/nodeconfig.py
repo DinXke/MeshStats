@@ -243,6 +243,30 @@ def confirmation_for(spec: dict, rep, confirm: str) -> str:
             f"({naam}) precies over om te bevestigen")
 
 
+def risk_of(rep, key: str) -> int:
+    """De risicoklasse van één parameter op déze node.
+
+    Bestaat zodat de rechtencontrole vóór de schrijfactie op dezelfde klasse kan
+    wegen als de bevestiging erna. Zonder dit zou het recht "mag schrijven" zijn
+    en niet "mag dit soort wijziging", en dan is "wel de zendtijd bijstellen,
+    niet aan de radio komen" een uitzondering in plaats van een rol.
+
+    Bij twijfel de zwaarste klasse: kan de lijst niet opgehaald worden of kent
+    de node de parameter niet, dan is dat geen reden om hem als ongevaarlijk te
+    behandelen. Wie de sleutel niet herkent, weet ook niet wat hij aanricht.
+    """
+    route = cfg_route(rep)
+    if not route["can"]:
+        return RISK_CUTOFF
+    listing = params(route["host"])
+    if not listing["ok"]:
+        return RISK_CUTOFF
+    spec = next((p for p in listing["params"] if p.get("key") == key), None)
+    if spec is None:
+        return RISK_CUTOFF
+    return int(spec.get("risk") or RISK_PLAIN)
+
+
 def write(rep, key: str, value: str, confirm: str = "") -> dict:
     """Eén parameter zetten en teruggeven wat er ná afloop in de node staat.
 
