@@ -279,3 +279,34 @@ def test_discoverypagina_rendert(wereld):
     from app import routes_admin
     html = tekst(routes_admin.discovery_page(verzoek("/admin/discovery", wereld["koek"]["admin"])))
     assert html
+
+
+def test_beheerderspagina_rendert_en_haalt_zijn_module_binnen(wereld):
+    """Dezelfde val als bij de uitvraagpagina, en daarom staat deze er meteen bij.
+
+    ``monitors`` is een nieuwe module in ``routes_admin``, en een ontbrekende
+    import is geen sjabloonfout en geen logicafout: hij komt er alleen uit door de
+    route werkelijk aan te roepen. De rest van de suite roept
+    ``monitors``-functies rechtstreeks aan en die werken ook zonder die regel.
+    """
+    from app import db as db_module
+    from app import routes_admin
+    # Zonder een node met onze firmware valt er niets toe te wijzen, en dan toont
+    # de pagina terecht alleen die uitleg. Voor deze test moet er dus één zijn.
+    db_module.execute("UPDATE repeaters SET fw_meshmanager='2.8.2'")
+    html = tekst(routes_admin.monitors_page(verzoek("/admin/monitors", wereld["koek"]["admin"])))
+    assert html
+    # De twee lijsten moeten uit elkaar te houden zijn op de pagina zelf, want dat
+    # is de vraag die deze pagina oproept zodra er een monitorlijst op een node is.
+    assert "Deze lijst en de lijst op de node zelf" in html
+
+
+def test_beheerderspagina_toont_alleen_de_eigen_nodes(wereld):
+    """Toewijzen is een handeling op een node; wie de node niet mag zien, hoort
+    hem hier ook niet te kunnen aanwijzen."""
+    from app import db as db_module
+    from app import routes_admin
+    db_module.execute("UPDATE repeaters SET fw_meshmanager='2.8.2'")
+    html = tekst(routes_admin.monitors_page(verzoek("/admin/monitors", wereld["koek"]["lid"])))
+    assert "Dakrepeater" in html
+    assert "Tuinnode" not in html

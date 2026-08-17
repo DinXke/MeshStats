@@ -1,0 +1,212 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Beheerders — beheer — {{ site_name }}{% endblock %}
+{% block admin %}
+<h1>Wie mag welke node uitvragen</h1>
+
+<p class="muted">
+  Een node die alleen over LoRa te bereiken is, wordt uitgevraagd door een andere
+  repeater — zijn <strong>monitor</strong>. Tot nu toe was dat een waarneming: wie
+  zijn cijfers doorstuurde, was het. Hier stel je het in, met een volgorde, zodat
+  bij stilte de volgende kandidaat het probeert.
+</p>
+
+{% if outcome %}
+<div class="card notice">
+  {% if outcome.ok %}<strong>Opgeslagen.</strong>{% else %}<strong>Niet opgeslagen.</strong>{% endif %}
+  {{ outcome.msg }}
+</div>
+{% endif %}
+
+{% if rights %}
+<div class="card notice">
+  <strong>{{ rights.monitor.name }} over deze node:</strong>
+  {% if not rights.note.known %}
+  niet vast te stellen — {{ rights.note.reason }}.
+  Dat is nadrukkelijk niet hetzelfde als "het kan niet": onbekend is onbekend.
+  {% else %}
+  {% set d = rights.note.info.diagnosis %}
+  {%- if d == "goed" %}komt binnen en krijgt antwoord ({{ rights.note.info.oks }} van
+  {{ rights.note.info.polls }} opvragingen).
+  {%- elif d == "alleen_lezen" %}<strong>komt binnen als lezer, niet als beheerder.</strong>
+  De login lukt en de commando's blijven onbeantwoord. Vraag de eigenaar om
+  <code>setperm &lt;pubkey van de monitor&gt; 3</code>, of geef de monitor het
+  adminwachtwoord.
+  {%- elif d == "geen_toegang" %}<strong>wordt niet binnengelaten.</strong> We horen zijn
+  adverts wel, dus het ligt niet aan het bereik.
+  {%- elif d == "buiten_bereik" %}<strong>bereikt hem niet.</strong> Geen antwoord op de
+  login en geen adverts — dat wijst op bereik en niet op rechten.
+  {%- elif d == "niet_gemonitord" %}<strong>heeft deze node niet in zijn monitorlijst.</strong>
+  Toewijzen hier zegt wie de site kiest; in de lijst zetten is wat de monitor kan.
+  Zie de uitleg onderaan.
+  {%- else %}nog niet geprobeerd sinds zijn laatste herstart.
+  {%- endif %}
+  {% endif %}
+</div>
+{% endif %}
+
+{% if not possible %}
+<div class="card">
+  <p class="muted small">
+    <strong>Er is nog niets om toe te wijzen.</strong> Alleen een repeater met onze
+    firmware kan monitor zijn — hij moet over LoRa kunnen inloggen en commando's
+    versturen. Er is er hier nog geen die dat meldt.
+  </p>
+</div>
+{% else %}
+
+<section>
+  <h2>Per node</h2>
+  {% for row in rows %}
+  <div class="card">
+    <h3>
+      <a href="/admin/repeaters/{{ row.rep.id }}">{{ row.rep.name }}</a>
+      <span class="mono muted small">{{ row.rep.pubkey_prefix }}</span>
+    </h3>
+
+    {#- Waarneming náást configuratie, nooit in plaats van. Ze kunnen verschillen
+        en dat verschil is informatie: X hoort hem en Y bereikt hem niet, of
+        iemand heeft de instelling net veranderd en de volgende ronde moet het
+        nog laten zien. -#}
+    <p class="small">
+      <strong>Waargenomen:</strong>
+      {%- if row.observed and row.observed.id == row.rep.id %}
+      stuurt zijn cijfers zelf in.
+      {%- elif row.observed %}
+      stuurt zijn cijfers door via <a href="/admin/repeaters/{{ row.observed.id }}">{{ row.observed.name }}</a>.
+      {%- else %}
+      er is nog geen bericht van of over deze node binnengekomen.
+      {%- endif %}
+      <br>
+      <strong>Ingesteld:</strong>
+      {%- if row.source == "node" %}
+      {% for m in row.configured %}{{ m.name }}{% if not loop.last %}, dan {% endif %}{% endfor %}.
+      {%- elif row.source == "group" %}
+      via nodegroep <em>{{ row.group.name }}</em>:
+      {% for m in row.configured %}{{ m.name }}{% if not loop.last %}, dan {% endif %}{% endfor %}.
+      {%- else %}
+      niets — dan geldt de waarneming, en dat is voor de meeste installaties het
+      juiste antwoord.
+      {%- endif %}
+    </p>
+
+    {#- Wat er bij de laatste geplande poging gebeurde. Zonder dit is een lijst
+        die nooit voorbij de eerste kandidaat komt niet op te merken. -#}
+    {% set poging = attempts.get(row.rep.pubkey_prefix) %}
+    {% if poging and poging.result %}
+    <p class="small{% if poging.result == 'gevraagd, geen antwoord' or poging.result == 'monitor kan het niet' %} cmp-off{% endif %}"
+       {%- if poging.result == 'monitor kan het niet' %} style="padding:.4rem .5rem"{% endif %}>
+      <strong>Laatste poging:</strong> {{ poging.result }}
+      {%- if poging.cursor %} (stond op kandidaat {{ poging.cursor + 1 }}){% endif %}.
+      {%- if poging.result == "monitor kan het niet" %}
+      Er wordt <em>niet</em> doorgeschoven naar de volgende: dit is blijvend en was
+      bij de eerste poging al bekend. Doorschuiven zou verbergen dat de eerste
+      kandidaat verkeerd staat.
+      {%- elif poging.result == "alle monitors geprobeerd, geen antwoord" %}
+      De hele lijst is afgelopen zonder antwoord.
+      {%- endif %}
+    </p>
+    {% endif %}
+
+    <form method="post" action="/admin/repeaters/{{ row.rep.id }}/monitors" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% for n in range(max_candidates) %}
+      <label>{{ loop.index }}<sup>e</sup>
+        <select name="m{{ loop.index }}">
+          <option value="">— geen —</option>
+          {% for opt in row.options %}
+          {#- Een kandidaat die het nooit kan staat er als zodanig bij, met de
+              reden. Dat was de eis van het begin: een lijst met een monitor die
+              het nooit kan, is een lijst die liegt. -#}
+          <option value="{{ opt.rep.id }}"
+                  {% if opt.problem %}disabled title="{{ opt.problem }}"{% endif %}
+                  {% if row.configured | length > n and row.configured[n].id == opt.rep.id and row.source == "node" %}selected{% endif %}>
+            {{ opt.rep.name }}{% if opt.problem %} — kan niet{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endfor %}
+      <button type="submit">Opslaan</button>
+    </form>
+
+    {% if row.effective %}
+    <form method="post" action="/admin/repeaters/{{ row.rep.id }}/monitors/rights" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="mid" value="{{ row.effective[0].id }}">
+      <button type="submit">Rechten van {{ row.effective[0].name }} nakijken</button>
+    </form>
+    <span class="muted small">Vraagt de monitor zelf of hij bij deze node binnenkomt.
+      Niet automatisch: op deze pagina zou dat één HTTP-verzoek per node per weergave zijn.</span>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+
+{% if groups %}
+<section>
+  <h2>Per nodegroep</h2>
+  <p class="muted small">
+    Zodat twintig nodes niet twintig keer hoeven. Een lijst op een node <strong>wint</strong>
+    van die van zijn groep — ze worden niet samengevoegd, want een lijst die half uit
+    een groep en half uit een node komt is een lijst waarvan de volgorde niet meer na
+    te vertellen is, en de volgorde is hier het hele punt.
+  </p>
+  {% for g in groups %}
+  <div class="card">
+    <h3>{{ g.group.name }} <span class="muted small">{{ g.members }} node(s)</span></h3>
+    <form method="post" action="/admin/nodegroups/{{ g.group.id }}/monitors" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% for n in range(max_candidates) %}
+      <label>{{ loop.index }}<sup>e</sup>
+        <select name="m{{ loop.index }}">
+          <option value="">— geen —</option>
+          {% for m in possible %}
+          <option value="{{ m.id }}"
+                  {% if g.monitors | length > n and g.monitors[n].id == m.id %}selected{% endif %}>
+            {{ m.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endfor %}
+      <button type="submit">Opslaan</button>
+    </form>
+    <p class="muted small">
+      Hier wordt niet per lid gecontroleerd of de monitor die node kan bereiken: dat
+      hangt van de node af en een groep kan leden hebben die verschillen. De regel van
+      elke node hierboven laat zien wat er voor hém uitkomt — de groep is een voorkeur,
+      geen belofte per lid.
+    </p>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section>
+  <h2>Deze lijst en de lijst op de node zelf</h2>
+  <div class="card">
+    <p class="small">
+      Er zijn twee lijsten en ze zeggen iets anders. <strong>Deze</strong> zegt wie de
+      site kíest als er iets uitgevraagd moet worden. <strong>Die op de repeater zelf</strong>
+      (<code>wifi mon</code>, of zijn beheerpagina) zegt wie hij werkelijk kán uitvragen —
+      daar staan de sleutels en, als het nodig is, het wachtwoord.
+    </p>
+    <p class="small">
+      Ze moeten het eens zijn, en deze pagina vult de lijst op de node
+      <strong>niet</strong> automatisch. Dat is een keuze: een node aan die lijst
+      toevoegen laat de monitor hem elke ronde pollen — terugkerende zendtijd — en het
+      vraagt een besluit over inloggegevens (leeg, via zijn toegangslijst, of een
+      wachtwoord). Zulke gevolgen horen niet als bijwerking van een keuzelijst te
+      ontstaan.
+    </p>
+    <p class="muted small">
+      Twee wegen die die lijst wél vullen en die hier dus niet doorkruist worden:
+      <a href="/admin/discovery">Uitvragen</a> zet een node erin zonder wachtwoord (de
+      gastweg), en de beheerpagina van de repeater zelf blijft de baas over zijn eigen
+      lijst. Staat een node hier ingesteld maar niet in de lijst van die monitor, dan
+      zegt “Rechten nakijken” dat met zoveel woorden.
+    </p>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

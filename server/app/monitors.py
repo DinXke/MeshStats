@@ -159,6 +159,54 @@ def set_for_group(group_id: int, monitor_ids: list) -> None:
                    (group_id, positie, mid, db.utcnow()))
 
 
+def possible(reps) -> list:
+    """Alle repeaters die überhaupt monitor kunnen zijn.
+
+    Eén keer uitrekenen en dan aan elke rij meegeven, in plaats van per node de
+    hele tabel opnieuw te doorlopen: bij twintig nodes is dat vierhonderd keer
+    dezelfde vraag. Dezelfde reden waarom de nodelijst zijn routes ook één keer
+    ophaalt.
+    """
+    uit = []
+    for rep in reps:
+        versie = commanding.parse_version(rep["fw_meshmanager"])
+        if versie is not None and versie >= commanding.MIN_MON_CMD_VERSION:
+            uit.append(rep)
+    return uit
+
+
+def overview(reps, kandidaten=None) -> list:
+    """Per node: wat er waargenomen is, wat er ingesteld staat, en wat er kan.
+
+    Alles wat de pagina moet weten wordt hier uitgerekend en niet in het sjabloon.
+    Een template dat zelf gaat bepalen of een monitor geschikt is, is een template
+    dat je niet kunt testen zonder het te renderen -- en dit is precies de
+    berekening waar de eis 'een lijst die liegt' over ging.
+
+    ``rights`` blijft hier leeg: dat is de enige uitspraak die het netwerk op moet
+    en het zou de pagina op twintig nodes twintig HTTP-verzoeken kosten. Die haalt
+    de pagina per node op als iemand erom vraagt.
+    """
+    mogelijk = kandidaten if kandidaten is not None else possible(reps)
+    uit = []
+    for rep in reps:
+        gekozen = candidates(rep)
+        waargenomen = db.find_repeater(firmware._field(rep, "source_prefix") or "")
+        uit.append({
+            "rep": rep,
+            "configured": gekozen["monitors"] if gekozen["source"] in ("node", "group") else [],
+            "source": gekozen["source"],
+            "group": gekozen["group"],
+            "effective": gekozen["monitors"],
+            "observed": waargenomen,
+            # Per mogelijke monitor of hij deze node kán bereiken, met de reden
+            # als hij het niet kan. Dat hoort in de keuzelijst te staan en niet
+            # pas bij de eerste poging.
+            "options": [{"rep": m, "problem": check(rep, m)} for m in mogelijk],
+        })
+    return uit
+
+
 def _schoon(monitor_ids: list) -> list:
     """Lege plekken eruit, dubbelen eruit, en afkappen op MAX_CANDIDATES.
 

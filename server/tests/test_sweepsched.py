@@ -543,3 +543,104 @@ def test_waarneming_en_configuratie_blijven_los(db):
     assert monitors.candidates(doel)["monitors"][0]["name"] == "Wie-het-mag"
     # ...en de waarneming staat er nog, onaangeroerd.
     assert doel["source_prefix"] == "112233445566"
+
+
+# --- de toewijzingspagina -----------------------------------------------------
+
+def _pagina(monkeypatch, gebruiker="beheerder"):
+    from app import monitors, routes_admin
+    monkeypatch.setattr(routes_admin, "require_login", lambda request: gebruiker)
+    monkeypatch.setattr(routes_admin, "require_perm",
+                        lambda request, actie, rep=None: gebruiker)
+    monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
+    monkeypatch.setattr(routes_admin, "_monitors_page",
+                        lambda request, extra=None: extra)
+    return routes_admin, monitors
+
+
+def test_een_kandidaat_die_het_nooit_kan_wordt_geweigerd_bij_opslaan(db, monkeypatch):
+    """Weigeren en niet stil weglaten: een lijst die korter blijkt dan wat iemand
+    koos, zonder dat er staat waarom, is precies de lijst die liegt."""
+    ra, mon = _pagina(monkeypatch)
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    stock = db.get_or_create_repeater("aabbccddeeff", "Stock-node")
+
+    uit = ra.save_node_monitors(None, doel["id"], m1=str(stock["id"]), csrf="x")
+    assert uit["outcome"]["ok"] is False
+    assert "onze firmware" in uit["outcome"]["msg"]
+    # ...en er is niets opgeslagen.
+    assert mon.candidates(doel)["source"] != "node"
+
+
+def test_een_geldige_lijst_wordt_in_volgorde_opgeslagen(db, monkeypatch):
+    ra, mon = _pagina(monkeypatch)
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    een = _node(db, "55d9a320a4e3", "Eerste")
+    twee = _node(db, "aabbccddeeff", "Tweede")
+
+    uit = ra.save_node_monitors(None, doel["id"], m1=str(twee["id"]),
+                                m2=str(een["id"]), csrf="x")
+    assert uit["outcome"]["ok"] is True
+    gekozen = mon.candidates(doel)
+    assert [m["name"] for m in gekozen["monitors"]] == ["Tweede", "Eerste"]
+
+
+def test_een_lege_lijst_geeft_de_waarneming_terug(db, monkeypatch):
+    ra, mon = _pagina(monkeypatch)
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    db.execute("UPDATE repeaters SET source_prefix='55d9a320a4e3' WHERE id=?",
+               (doel["id"],))
+    _node(db, "55d9a320a4e3", "Wie-hem-hoort")
+    een = _node(db, "aabbccddeeff", "Ingesteld")
+    ra.save_node_monitors(None, doel["id"], m1=str(een["id"]), csrf="x")
+
+    ra.save_node_monitors(None, doel["id"], csrf="x")
+    doel = db.qone("SELECT * FROM repeaters WHERE id=?", (doel["id"],))
+    assert mon.candidates(doel)["source"] == "observed"
+
+
+def test_de_overzichtsrij_houdt_waarneming_en_configuratie_apart(db):
+    """Ze kunnen verschillen en dat verschil is informatie, geen fout."""
+    from app import monitors as mon
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    db.execute("UPDATE repeaters SET source_prefix='112233445566' WHERE id=?",
+               (doel["id"],))
+    _node(db, "112233445566", "Wie-hem-hoort")
+    ingesteld = _node(db, "55d9a320a4e3", "Wie-het-mag")
+    mon.set_for_node(doel["id"], [ingesteld["id"]])
+
+    reps = db.q("SELECT * FROM repeaters ORDER BY name")
+    rij = next(r for r in mon.overview(reps) if r["rep"]["id"] == doel["id"])
+    assert rij["observed"]["name"] == "Wie-hem-hoort"
+    assert [m["name"] for m in rij["configured"]] == ["Wie-het-mag"]
+    assert rij["source"] == "node"
+
+
+def test_de_keuzelijst_draagt_de_reden_waarom_iets_niet_kan(db):
+    """De eis van het begin: een kandidaat die het nooit kan hoort in de
+    keuzelijst al als zodanig te staan."""
+    from app import monitors as mon
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    goed = _node(db, "55d9a320a4e3", "Geschikt")
+    reps = db.q("SELECT * FROM repeaters ORDER BY name")
+
+    rij = next(r for r in mon.overview(reps) if r["rep"]["id"] == doel["id"])
+    per_naam = {o["rep"]["name"]: o["problem"] for o in rij["options"]}
+    assert per_naam["Geschikt"] == ""
+    # De node zelf staat er wel bij, maar met de reden dat hij het niet kan.
+    assert "zichzelf" in per_naam["JessaZH"]
+
+
+def test_een_groepslijst_geldt_voor_de_leden(db, monkeypatch):
+    ra, mon = _pagina(monkeypatch)
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    monitor = _node(db, "55d9a320a4e3", "Via-groep")
+    db.execute("INSERT INTO node_groups(name, created_at) VALUES('Daken', ?)",
+               (db.utcnow(),))
+    gid = db.qone("SELECT id FROM node_groups WHERE name='Daken'")["id"]
+    db.execute("INSERT INTO node_group_members(group_id, repeater_id) VALUES(?,?)",
+               (gid, doel["id"]))
+
+    uit = ra.save_group_monitors(None, gid, m1=str(monitor["id"]), csrf="x")
+    assert uit["outcome"]["ok"] is True
+    assert mon.candidates(doel)["source"] == "group"

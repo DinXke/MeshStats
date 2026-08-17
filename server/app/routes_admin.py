@@ -25,8 +25,8 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
-               discovery, firmware, metrics, mqtt_ingest, nodeconfig, pktfilter,
-               ratelimit, rbac, retention, sweepsched, tsdb)
+               discovery, firmware, metrics, monitors, mqtt_ingest, nodeconfig,
+               pktfilter, ratelimit, rbac, retention, sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -529,6 +529,151 @@ def discovery_forget(request: Request, key: str = Form(...), csrf: str = Form(..
     uit = discovery.forget(str(afzender["rep"]["ota_host"] or ""), key)
     return _discovery_page(request, {"outcome": {
         "ok": uit["ok"], "msg": uit["error"] or "uit de monitorlijst gehaald"}})
+
+
+def _keuzes(*waarden) -> list:
+    """De aangevinkte kandidaten als rij-ids, in de opgegeven volgorde.
+
+    Alles wat geen getal is valt weg in plaats van een fout op te leveren. Dat
+    dekt de lege keuze uit het formulier ("— geen —") en ook een aanroep die de
+    velden niet alle drie meegeeft, wat de tests in deze map doen wanneer ze een
+    route rechtstreeks aanroepen. Een 500 op een leeg selectievakje zou een
+    foutmelding voor niemand zijn.
+    """
+    uit = []
+    for waarde in waarden:
+        tekst = str(waarde or "").strip()
+        if tekst.isdigit():
+            uit.append(int(tekst))
+    return uit
+
+
+@router.get("/monitors", response_class=HTMLResponse)
+def monitors_page(request: Request):
+    """Welke repeater welke node mag uitvragen: per node en per nodegroep.
+
+    Eén pagina en niet een blok per node, om dezelfde reden als de
+    vergelijkingstabel: dit is een vraag over de verzameling. "Welke node heeft
+    nog geen beheerder" en "welke lijst komt nooit voorbij de eerste kandidaat"
+    stel je over alle nodes tegelijk, en per node doorklikken zou dat verstoppen.
+    """
+    return _monitors_page(request)
+
+
+def _monitors_page(request: Request, extra: dict | None = None):
+    user = require_login(request)
+    reps = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    zichtbaar = rbac.zichtbare_nodes(user, reps) if hasattr(rbac, "zichtbare_nodes") else reps
+    # Kandidaten uit de ZICHTBARE nodes en niet uit alle: een monitor die je niet
+    # mag zien, hoort niet in een keuzelijst te staan waar je zijn naam uit kunt
+    # lezen. Dat de rechten per node gelden maakt dit geen detail -- de keuzelijst
+    # was de enige plek op deze pagina waar een naam van buiten je bereik langskwam.
+    mogelijk = monitors.possible(zichtbaar)
+    groepen = rbac.nodegroepen()
+
+    ctx = {
+        "site_name": config.SITE_NAME, "user": user, "world": "nodes",
+        "monitors_tab": True,
+        "rows": monitors.overview(zichtbaar, mogelijk),
+        "possible": mogelijk,
+        "max_candidates": monitors.MAX_CANDIDATES,
+        "groups": [{"group": g,
+                    "monitors": monitors._group_rows(g["id"]),
+                    "members": len(rbac.leden("node", g["id"]))}
+                   for g in groepen],
+        # De uitslag van de laatste geplande poging per node, zodat een lijst die
+        # nooit voorbij de eerste kandidaat komt op te merken valt.
+        "attempts": {r["pubkey_prefix"]: sweepsched.entry(r["pubkey_prefix"])
+                     for r in zichtbaar},
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+        "outcome": None, "rights": None,
+    }
+    ctx.update(extra or {})
+    return templates.TemplateResponse(request, "admin/monitors.html", ctx)
+
+
+@router.post("/repeaters/{rid}/monitors")
+def save_node_monitors(request: Request, rid: int, m1: str = Form(""),
+                       m2: str = Form(""), m3: str = Form(""), csrf: str = Form(...)):
+    """De geordende lijst voor één node. Leeg betekent: terug naar de waarneming.
+
+    Dezelfde klasse als het uitvraagschema, en om dezelfde reden: wie hier iets
+    zet bepaalt van wélke node er zendtijd afgaat, elke ronde opnieuw.
+    """
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    if not rep:
+        raise HTTPException(404, "Onbekende repeater")
+    user = require_perm(request, "node.schema", rep)
+    check_csrf(request, csrf)
+
+    gekozen, geweigerd = [], []
+    for waarde in _keuzes(m1, m2, m3):
+        monitor = db.qone("SELECT * FROM repeaters WHERE id=?", (waarde,))
+        probleem = monitors.check(rep, monitor)
+        if probleem:
+            # Weigeren en niet stil weglaten: een lijst die korter blijkt dan wat
+            # iemand koos, zonder dat er staat waarom, is precies de lijst die
+            # liegt waar dit tegen gebouwd is.
+            geweigerd.append(f"{monitor['name'] if monitor else waarde}: {probleem}")
+            continue
+        gekozen.append(monitor["id"])
+
+    if geweigerd:
+        return _monitors_page(request, {"outcome": {
+            "ok": False, "rid": rid,
+            "msg": "niet opgeslagen — " + "; ".join(geweigerd)}})
+
+    monitors.set_for_node(rid, gekozen)
+    audit.log(user, "node.schema", rep=rep,
+              detail=f"monitorlijst: {len(gekozen)} kandidaat(en)" if gekozen
+              else "monitorlijst gewist (terug naar de waarneming)")
+    return _monitors_page(request, {"outcome": {
+        "ok": True, "rid": rid,
+        "msg": f"{len(gekozen)} kandidaat(en) opgeslagen" if gekozen
+        else "lijst gewist; de waarneming geldt weer"}})
+
+
+@router.post("/nodegroups/{gid}/monitors")
+def save_group_monitors(request: Request, gid: int, m1: str = Form(""),
+                        m2: str = Form(""), m3: str = Form(""), csrf: str = Form(...)):
+    """Hetzelfde per nodegroep, zodat twintig nodes niet twintig keer hoeven.
+
+    Een groepslijst wordt NIET per lid gecontroleerd: of een monitor een node kan
+    bereiken hangt van die node af, en een groep kan leden hebben die verschillen.
+    De pagina van elke node laat daarna zien wat er voor hém uitkomt -- de groep
+    is een voorkeur, niet een belofte per lid.
+    """
+    groep = db.qone("SELECT * FROM node_groups WHERE id=?", (gid,))
+    if not groep:
+        raise HTTPException(404, "Onbekende nodegroep")
+    user = require_perm(request, "server.instellingen")
+    check_csrf(request, csrf)
+
+    gekozen = _keuzes(m1, m2, m3)
+    monitors.set_for_group(gid, gekozen)
+    audit.log(user, "server.instellingen",
+              detail=f"monitorlijst nodegroep {groep['name']}: {len(gekozen)}")
+    return _monitors_page(request, {"outcome": {
+        "ok": True, "gid": gid, "msg": f"{len(gekozen)} kandidaat(en) voor de groep"}})
+
+
+@router.post("/repeaters/{rid}/monitors/rights")
+def check_monitor_rights(request: Request, rid: int, mid: int = Form(...),
+                         csrf: str = Form(...)):
+    """Vraag de monitor zelf of hij bij deze node binnenkomt.
+
+    Apart van het opslaan omdat dit het netwerk op gaat: op een pagina met twintig
+    nodes zou dit twintig HTTP-verzoeken per weergave zijn. Wie het wil weten,
+    vraagt het.
+    """
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
+    monitor = db.qone("SELECT * FROM repeaters WHERE id=?", (mid,))
+    if not rep or not monitor:
+        raise HTTPException(404, "Onbekende repeater")
+    require_perm(request, "node.bekijken", rep)
+    check_csrf(request, csrf)
+    return _monitors_page(request, {"rights": {
+        "rid": rid, "monitor": monitor, "note": monitors.rights_note(rep, monitor)}})
 
 
 @router.get("/server", response_class=HTMLResponse)
