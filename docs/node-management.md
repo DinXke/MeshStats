@@ -1069,6 +1069,79 @@ the restart. Steps 2 to 5 are the way back from that too.
 
 ---
 
+### Assigning it from the site
+
+`/admin/monitors`. One page rather than a block per node, for the same reason as
+the comparison table: *"which node has no manager yet"* and *"which list never
+gets past its first candidate"* are questions about the set.
+
+Per node, an ordered list of at most `MAX_CANDIDATES` (three). Per node group the
+same, so twenty nodes do not need twenty visits. **A list on a node wins over its
+group's** — they are not merged, because a list half from a group and half from a
+node is a list whose order can no longer be recounted, and the order is the whole
+point.
+
+### The check belongs in the dropdown, not in the first attempt
+
+A candidate that can never reach the node appears **disabled, with the reason in
+its tooltip**. That was the requirement from the start: a list containing a
+monitor that can never do it is a list that lies, and the cost of that lie is a
+sweep timeout on a shared band, every round.
+
+On save it is **refused rather than quietly dropped**. A list that turns out
+shorter than what somebody chose, with no statement of why, is the same lie in a
+different costume.
+
+`rights_note()` — which asks the monitor itself whether it gets in — sits behind a
+button instead. It goes onto the network, and on a page with twenty nodes it would
+be twenty HTTP requests per view.
+
+### Observation beside configuration
+
+Both are shown, always:
+
+> **Observed:** sends its figures via X
+> **Configured:** may be managed via X, then Y
+
+They can differ, and the difference is information rather than a fault: X hears it
+and Y cannot reach it, or somebody changed the setting and the next round has yet
+to show it. The outcome of the last scheduled attempt sits underneath — including,
+when a candidate gave a substantive refusal, the note that the list did **not**
+advance and why not.
+
+### This list and the list on the node itself
+
+There are two lists and they say different things. **This one** says who the site
+*picks*. **The one on the repeater** (`wifi mon`, or its own management page) says
+who it can actually *poll* — that is where the keys live, and the password if one
+is needed.
+
+They have to agree, and **this page does not fill the node's list automatically.**
+That is a decision, not an omission: adding a node to that list makes the monitor
+poll it every round — recurring airtime — and it forces a choice about credentials
+(empty, via their access list, or a password). Consequences like that should not
+arise as a side effect of a dropdown.
+
+Two paths do fill that list, and this page deliberately does not cut across
+either: [discovery](#telemetry-without-credentials) adds a node without a password
+(the guest route), and the repeater's own management page remains the authority on
+its own list. When a node is configured here but absent from that monitor's list,
+*Rechten nakijken* says so in as many words.
+
+### Rights
+
+Assigning is `node.schema` — the same class as the sweep schedule, and for the
+same reason: whoever sets this decides which node's airtime is spent, every round.
+A group list is `server.instellingen`, because it reaches across nodes that the
+person setting it may not individually own.
+
+The candidate dropdowns are built from the **visible** nodes. A monitor you are not
+allowed to see should not appear in a list you can read a name out of — that
+dropdown was the only place on this page where a name from outside your reach came
+past.
+
+---
+
 ## Two kinds of credentials, and they live in different places
 
 This is the part the first design got wrong, and the difference matters enough to
@@ -1443,7 +1516,7 @@ against a node a human named.
 | Bulk edit across several nodes | **not built, and gated by design**: plain-class parameters only, never the two heavier classes. Ten nodes in one click is also ten nodes lost in one click |
 | Forced mesh transport for a node that has an IP path | **not built.** The LoRa write path now exists, so what is missing is only the choice: the route is derived from the node rather than picked. It stays out until there is a node that is both monitored and IP-reachable to exercise it on |
 | Telemetry polling without credentials | **built** — `/admin/discovery`, point-and-probe, four outcomes, cost shown before the click. No firmware change needed; the sender needs 1.4.0 |
-| Configured monitor assignment (ordered, per node and per group) | **half built** — the resolution, validation and fallback live in `monitors.py` and the scheduler uses them; the assignment page does not exist yet |
+| Configured monitor assignment (ordered, per node and per group) | **built** — `/admin/monitors`, ordered per node and per group, the check in the dropdown, observation beside configuration, and the last attempt's outcome |
 | Publishing other people's telemetry | **deliberately not built.** Behind the admin login until somebody decides; a proposal is above |
 | MeshCore version for relayed nodes | **built** — `ver` joins the sweep, and one answer fills both version columns |
 | A sweep schedule per node | **built** — off by default, one round at a time with a global minimum gap, and a daily ceiling across all nodes |

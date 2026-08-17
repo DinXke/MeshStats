@@ -1126,6 +1126,81 @@ pas bij de herstart aan het licht. Stap 2 tot 5 zijn ook daar de weg terug.
 
 ---
 
+### Het vanaf de site toewijzen
+
+`/admin/monitors`. Één pagina in plaats van een blok per node, om dezelfde reden
+als bij de vergelijkingstabel: *"welke node heeft nog geen monitor"* en *"welke
+lijst komt nooit voorbij zijn eerste kandidaat"* zijn vragen over de verzameling.
+
+Per node een geordende lijst van ten hoogste `MAX_CANDIDATES` (drie). Per
+nodegroep hetzelfde, zodat twintig nodes geen twintig bezoeken kosten. **Een
+lijst op een node gaat voor die van zijn groep** — ze worden niet samengevoegd,
+want een lijst die half uit een groep en half uit een node komt is een lijst
+waarvan de volgorde niet meer na te tellen is, en juist die volgorde is het hele
+punt.
+
+### De controle hoort in de keuzelijst, niet in de eerste poging
+
+Een kandidaat die de node nooit kan bereiken staat er **uitgeschakeld bij, met de
+reden in zijn tooltip**. Dat was vanaf het begin de eis: een lijst met een
+monitor erin die het nooit kan, is een lijst die liegt, en die leugen kost een
+sweep die in een time-out afloopt op een gedeelde band, elke ronde.
+
+Bij het opslaan wordt hij **geweigerd en niet stilletjes weggelaten**. Een lijst
+die korter blijkt dan wat iemand koos, zonder dat er staat waarom, is dezelfde
+leugen in een ander jasje.
+
+`rights_note()` — die de monitor zelf vraagt of hij binnenkomt — zit in plaats
+daarvan achter een knop. Die gaat het netwerk op, en op een pagina met twintig
+nodes zou dat twintig HTTP-verzoeken per keer bekijken zijn.
+
+### Waarneming naast configuratie
+
+Allebei worden ze altijd getoond:
+
+> **Waargenomen:** stuurt zijn cijfers via X
+> **Ingesteld:** mag beheerd worden via X, daarna Y
+
+Ze kunnen verschillen, en dat verschil is informatie en geen storing: X hoort hem
+en Y kan hem niet bereiken, of iemand veranderde de instelling en de volgende
+ronde moet het nog laten zien. De uitslag van de laatste ingeplande poging staat
+eronder — met daarbij, als een kandidaat een inhoudelijke weigering gaf, de
+melding dat de lijst **niet** doorgeschoven is en waarom niet.
+
+### Deze lijst en de lijst op de node zelf
+
+Er zijn twee lijsten en ze zeggen verschillende dingen. **Deze** zegt wie de site
+*kiest*. **Die op de repeater** (`wifi mon`, of zijn eigen beheerpagina) zegt wie
+hij werkelijk kan *uitvragen* — daar staan de sleutels, en het wachtwoord als er
+een nodig is.
+
+Ze moeten overeenkomen, en **deze pagina vult de lijst op de node niet
+automatisch aan.** Dat is een beslissing en geen omissie: een node aan die lijst
+toevoegen laat de monitor hem elke ronde uitvragen — terugkerende zendtijd — en
+het dwingt een keuze over de inloggegevens (leeg, via hun toegangslijst, of een
+wachtwoord). Zulke gevolgen horen niet als bijwerking van een keuzelijst te
+ontstaan.
+
+Twee wegen vullen die lijst wél, en deze pagina gaat met opzet langs geen van
+beide heen: [ontdekken](#telemetrie-zonder-inloggegevens) voegt een node zonder
+wachtwoord toe (de gastweg), en de eigen beheerpagina van de repeater blijft de
+baas over zijn eigen lijst. Staat een node hier ingesteld maar niet in de lijst
+van die monitor, dan zegt *Rechten nakijken* dat met zoveel woorden.
+
+### Rechten
+
+Toewijzen is `node.schema` — dezelfde klasse als het sweepschema, en om dezelfde
+reden: wie dit zet, beslist wiens zendtijd er elke ronde opgaat. Een lijst per
+groep is `server.instellingen`, want die reikt over nodes heen die degene die hem
+zet niet allemaal zelf in beheer hoeft te hebben.
+
+De keuzelijsten met kandidaten worden opgebouwd uit de **zichtbare** nodes. Een
+monitor die je niet mag zien, hoort niet te staan in een lijst waar je een naam
+uit kunt lezen — die keuzelijst was de enige plek op deze pagina waar een naam
+van buiten je bereik voorbijkwam.
+
+---
+
 ## Twee soorten inloggegevens, en ze staan op verschillende plaatsen
 
 Dit is het deel dat het eerste ontwerp verkeerd had, en het verschil is genoeg
@@ -1521,7 +1596,7 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Meerdere nodes tegelijk bewerken | **niet gebouwd, en in het ontwerp al ingeperkt**: alleen parameters uit de klasse Gewoon, nooit de twee zwaardere klassen. Tien nodes in één klik is ook tien nodes kwijt in één klik |
 | Mesh-transport forceren voor een node die een IP-pad heeft | **niet gebouwd.** Het LoRa-schrijfpad bestaat nu wel, dus wat ontbreekt is alleen de keuze: de weg volgt uit de node in plaats van gekozen te worden. Het blijft eruit tot er een node is die zowel gemonitord als over IP bereikbaar is om het op te beproeven |
 | Telemetrie opvragen zonder inloggegevens | **gebouwd** — `/admin/discovery`, aanwijzen-en-uitvragen, vier uitkomsten, de kosten in beeld vóór de klik. Geen firmwarewijziging voor nodig; de afzender heeft 1.4.0 nodig |
-| Ingestelde monitortoewijzing (geordend, per node en per groep) | **half gebouwd** — het oplossen, het valideren en de terugval staan in `monitors.py` en de planner gebruikt ze; de toewijzingspagina bestaat nog niet |
+| Ingestelde monitortoewijzing (geordend, per node en per groep) | **gebouwd** — `/admin/monitors`, geordend per node en per groep, de controle in de keuzelijst, de waarneming naast de configuratie, en de uitslag van de laatste poging |
 | Andermans telemetrie publiceren | **met opzet niet gebouwd.** Achter de inlog van het beheer tot iemand beslist; het voorstel staat hierboven |
 | MeshCore-versie van doorgestuurde nodes | **gebouwd** — `ver` gaat mee in de sweep, en één antwoord vult allebei de versiekolommen |
 | Een sweepschema per node | **gebouwd** — standaard uit, één ronde tegelijk met een globale minimale tussenruimte, en een plafond per dag over alle nodes heen |
