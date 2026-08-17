@@ -25,8 +25,12 @@ What is shown about a third-party node is its key prefix, its name, its node
 type and, when its advert carried one, its position. All four come out of the
 **advert** — a packet the node broadcasts on an open, licence-free band,
 unencrypted, roughly every few hours, to anyone within radio range. Nothing here
-is obtained by asking, probing or correlating; the site writes down what was
-transmitted to it, the same as any other receiver in the area.
+is obtained by probing or correlating; the site writes down what was transmitted
+to it, the same as any other receiver in the area.
+
+That used to say "asking" as well, and since `/admin/discovery` exists it no
+longer can — see the next section, which is the honest correction rather than a
+footnote.
 
 That is the honest justification and also its limit. It explains why this
 information is not secret; it does not by itself make collecting it in one
@@ -46,6 +50,80 @@ deliberate:
 If you run this installation and someone asks you to remove their node, the
 honest answer is that you can (delete the contact rows), that it will come back
 the next time they advertise, and that the durable fix is on their device.
+
+---
+
+## 1b. A third kind: nodes we ask
+
+The two kinds above were the whole story until `/admin/discovery` existed. They no
+longer are, and the sentence about never asking needs correcting rather than
+quietly leaving in place.
+
+A **polled node** is somebody else's repeater that this installation *actively
+queried* over LoRa, without credentials, and now has a row for. It sits between
+the other two: it has a row and a page like a tracked repeater, but nobody who
+owns it ever agreed to that.
+
+### Why it is possible at all
+
+Not through a hole. MeshCore ships with an empty guest password, an empty password
+matches it, and a guest is answered without a permission check — see
+[`node-management.md`](node-management.md) for the source references. The door is
+open by upstream default. **That is not the same as an invitation**, and this page
+should not pretend otherwise.
+
+### What is recorded
+
+| Recorded | Source |
+|---|---|
+| Full `RepeaterStats`: uptime, air time, TX/RX counters, flood/direct split, duplicates, error flags, queue length, noise floor, last RSSI and SNR | answered by the node, no permission check |
+| Battery voltage and MCU temperature | base telemetry; a guest's `perm_mask` is forced to zero, so external sensors stay behind |
+| The node's neighbour list | answered by the node |
+| Nothing from the CLI — no settings, no access list | `handleCommand` is only reached under `isAdmin()`, so this is enforced by the far side |
+
+The last row matters: the limit on what a guest can learn is not a promise this
+site makes, it is a refusal the other node performs. That is the only kind of
+limit worth relying on.
+
+### The three rules that apply
+
+**Off by default, and refusing rather than pruning.** A polled node arrives as
+**not public** — `get_or_create_repeater` creates every automatic row that way, and
+this is one. Making it visible is a separate, deliberate act on its own page. The
+`MAX_REPEATERS` ceiling of 500 refuses rather than evicting, so adding polled nodes
+cannot silently push out a repeater somebody cares about.
+
+**Provenance is kept, permanently.** The row carries `is_guest_polled`, and
+removing the node from the monitor list does *not* clear it. What was collected was
+collected this way, and a graph must still be able to say so a month later.
+Clearing the flag would rewrite the history into figures the node published
+itself — which it never did.
+
+**A gap means "not polled", not "the node was down".** The figures arrive at the
+monitor's own round interval — 900 s by default, per monitor and not per node,
+because the firmware has no round of one — so a gap the width of that interval is
+expected and says nothing about the node. This project keeps that distinction
+everywhere else (stated versus derived, measured versus modelled) and it holds
+here too.
+
+### What may be published
+
+**Nothing, at the time of writing.** All of it sits behind the admin login. That
+is an interim position, not a conclusion, and the conclusion belongs to whoever
+runs the installation.
+
+The proposal on the table: per node, off by default, with a way for the node's
+operator to object — reusing the existing `show_position` / `show_name` shape
+rather than inventing a mechanism. And if anything is opened first, let it be the
+aggregate views (how many repeaters are reachable, coverage) rather than a page
+with somebody's battery voltage on it: a count is a much weaker claim on another
+person's data than a graph of their hardware.
+
+One asymmetry is worth stating plainly, because it is the whole argument. Reading
+an advert is passive: the node broadcast it to everyone in range and this site
+merely received it, like any other receiver. Polling is not. **We sent a packet to
+their device and it answered.** Publishing the result is a further step again, and
+each of those three is a bigger claim than the one before.
 
 ---
 

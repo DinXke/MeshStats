@@ -25,8 +25,12 @@ Van zo'n node toont de site zijn sleutelprefix, zijn naam, zijn nodetype en, als
 zijn advert er een droeg, zijn positie. Alle vier komen uit de **advert** — een
 pakket dat de node op een open, vergunningsvrije band uitzendt, onversleuteld,
 om de zoveel uur, naar iedereen binnen radiobereik. Er wordt hier niets
-verkregen door te vragen, te porren of te combineren; de site schrijft op wat
-haar toegezonden is, net als elke andere ontvanger in de buurt.
+verkregen door te porren of te combineren; de site schrijft op wat haar
+toegezonden is, net als elke andere ontvanger in de buurt.
+
+Daar stond ook "vragen" bij, en sinds `/admin/discovery` bestaat kan dat niet
+meer — zie de volgende paragraaf, die de eerlijke correctie is in plaats van een
+voetnoot.
 
 Dat is de eerlijke rechtvaardiging en meteen ook haar grens. Ze verklaart waarom
 deze gegevens niet geheim zijn; ze maakt het verzamelen ervan op één doorzoekbare
@@ -47,6 +51,83 @@ opzet:
 Draai je deze installatie en vraagt iemand zijn node te verwijderen, dan is het
 eerlijke antwoord: dat kan (de contactrijen wissen), dat hij terugkomt zodra ze
 weer adverteren, en dat de blijvende oplossing op hun apparaat zit.
+
+---
+
+## 1b. Een derde soort: nodes die we bevragen
+
+De twee soorten hierboven waren het hele verhaal tot `/admin/discovery` bestond.
+Dat zijn ze niet meer, en de zin over nooit vragen hoort gecorrigeerd te worden
+in plaats van er stilletjes te blijven staan.
+
+Een **uitgevraagde node** is andermans repeater die deze installatie *actief
+bevraagd* heeft over LoRa, zonder inloggegevens, en waar ze nu een rij voor
+heeft. Hij zit tussen de andere twee in: hij heeft een rij en een pagina zoals
+een gevolgde repeater, maar niemand die hem bezit heeft daar ooit mee ingestemd.
+
+### Waarom het überhaupt kan
+
+Niet door een gat. MeshCore komt met een leeg gastwachtwoord, een leeg wachtwoord
+matcht daarop, en een gast wordt zonder rechtencontrole geantwoord — zie
+[`node-management.md`](node-management.md) voor de verwijzingen naar de broncode.
+De deur staat open door een standaardinstelling van upstream. **Dat is niet
+hetzelfde als een uitnodiging**, en deze pagina hoort niet te doen alsof.
+
+### Wat er vastgelegd wordt
+
+| Vastgelegd | Bron |
+|---|---|
+| De volledige `RepeaterStats`: uptime, zendtijd, TX/RX-tellers, verdeling flood/direct, duplicaten, foutvlaggen, lengte van de wachtrij, ruisvloer, laatste RSSI en SNR | door de node geantwoord, geen rechtencontrole |
+| Batterijspanning en MCU-temperatuur | basistelemetrie; de `perm_mask` van een gast wordt op nul gedwongen, dus externe sensoren blijven achter |
+| De burenlijst van de node | door de node geantwoord |
+| Niets uit de CLI — geen instellingen, geen toegangslijst | `handleCommand` wordt alleen onder `isAdmin()` bereikt, dus dit wordt door de overkant afgedwongen |
+
+Die laatste regel is de belangrijkste: de grens van wat een gast te weten kan
+komen is geen belofte van deze site, het is een weigering die de andere node
+uitvoert. Dat is de enige soort grens waarop je kunt bouwen.
+
+### De drie regels die gelden
+
+**Standaard uit, en weigeren in plaats van opruimen.** Een uitgevraagde node komt
+binnen als **niet publiek** — `get_or_create_repeater` maakt elke automatische rij
+zo aan, en dit is er een. Hem zichtbaar maken is een aparte, bewuste daad op zijn
+eigen pagina. Het plafond `MAX_REPEATERS` van 500 weigert in plaats van te
+verdringen, dus uitgevraagde nodes toevoegen kan nooit stilletjes een repeater
+wegduwen waar iemand aan hangt.
+
+**De herkomst blijft bewaard, voorgoed.** De rij draagt `is_guest_polled`, en de
+node uit de monitorlijst halen wist dat *niet*. Wat er zo verzameld is, is zo
+verzameld, en een grafiek moet dat een maand later nog kunnen zeggen. De vlag
+wissen zou de geschiedenis herschrijven tot cijfers die de node zelf gepubliceerd
+zou hebben — en dat heeft hij nooit gedaan.
+
+**Een gat betekent "niet uitgevraagd", niet "de node lag eruit".** De cijfers
+komen binnen op het eigen rondeinterval van de monitor — standaard 900 s, per
+monitor en niet per node, want de firmware kent geen ronde van één — dus een gat
+ter breedte van dat interval is te verwachten en zegt niets over de node. Dit
+project houdt dat onderscheid overal elders aan (gemeld tegenover afgeleid,
+gemeten tegenover gemodelleerd) en hier dus ook.
+
+### Wat er gepubliceerd mag worden
+
+**Niets, op het moment van schrijven.** Het zit allemaal achter de inlog van het
+beheer. Dat is een tussenstand en geen conclusie, en die conclusie is van wie de
+installatie draait.
+
+Het voorstel dat op tafel ligt: per node, standaard uit, met een manier voor de
+operator van de node om bezwaar te maken — door de bestaande vorm van
+`show_position` / `show_name` te hergebruiken in plaats van een mechanisme te
+verzinnen. En gaat er iets als eerste open, laat het dan de overzichten in het
+groot zijn (hoeveel repeaters er bereikbaar zijn, dekking) en niet een pagina met
+iemands batterijspanning erop: een aantal is een veel zwakkere claim op de
+gegevens van een ander dan een grafiek van zijn hardware.
+
+Eén asymmetrie is het waard om ronduit te zeggen, want ze is het hele argument.
+Een advert lezen is passief: de node zond hem uit naar iedereen binnen bereik en
+deze site ving hem alleen op, net als elke andere ontvanger. Uitvragen is dat
+niet. **Wij stuurden een pakket naar hun apparaat en het antwoordde.** Het
+resultaat publiceren is daar weer een stap bovenop, en elk van die drie is een
+grotere claim dan de vorige.
 
 ---
 
