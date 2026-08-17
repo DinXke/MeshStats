@@ -274,6 +274,16 @@ def nodes_page(request: Request):
         # bovenaan staat hij ergens tussen de groepen te wachten op een beslissing
         # waarvan niemand weet dat ze genomen moet worden.
         "hidden_repeaters": sum(1 for r in repeaters if not r["is_public"]),
+        # Nodes waarvan wij ons deel van de configuratie niet af hebben. Bovenaan
+        # en niet pas bij een knopklik, omdat dit vandaag twee keer een hele weg
+        # dichtzette zonder dat er iets aan te zien was: een leeg beheeradres
+        # blokkeert zowel de HTTP-schrijfweg als de weg die bij de monitor
+        # aanklopt, en beide meldden dat pas als iemand het probeerde. Dezelfde
+        # reden als het MQTT-gezondheidsblok: een ontbrekende voorwaarde hoort te
+        # staan waar je hem ziet voordat je hem nodig hebt.
+        "no_host_reps": [r for r in repeaters
+                         if not (r["ota_host"] or "").strip()
+                         and routes[r["id"]]["level"] == commanding.LEVEL_FULL],
         # Lege groepen weglaten: een kopje "Unmanaged — 0" met niets eronder is
         # ruis, en de uitleg bij zo'n kopje gaat dan over niemand.
         "groups": [g for g in groups if g["reps"]],

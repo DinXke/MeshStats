@@ -98,13 +98,75 @@ def _save(data: dict) -> None:
     db.set_setting(_LEDGER_KEY, json.dumps(data))
 
 
-def record(prefix: str, when: float, result: str) -> None:
+# Hoe lang een gevraagde ronde de tijd krijgt voordat de stilte als uitkomst
+# geldt. Een sweep is nominaal 286 s en de node mag hem uitstellen als er net een
+# andere liep, dus tien minuten is ruim -- en korter dan de minimumafstand, zodat
+# het oordeel altijd valt vóór de volgende ronde vertrekt.
+VERIFY_AFTER_S = 600
+
+RESULT_ASKED = "gevraagd"
+RESULT_ANSWERED = "gevraagd, antwoord binnen"
+RESULT_SILENT = "gevraagd, geen antwoord"
+
+
+def record(prefix: str, when: float, result: str, seen: str | None = None) -> None:
+    """Eén regel in het grootboek.
+
+    ``seen`` is de jongste tijdstempel die we van deze node hadden op het moment
+    van vragen. Dat is de meetlat voor later: is er na de verificatietermijn geen
+    verser tijdstempel, dan heeft de ronde niets opgeleverd. Zonder die
+    nulmeting is 'geslaagd' niet vast te stellen -- alleen 'er staat iets', en dat
+    stond er gisteren ook.
+    """
     with _lock:
         data = _ledger()
         data[prefix.lower()] = {"asked": datetime.fromtimestamp(when, timezone.utc)
                                 .isoformat(timespec="seconds"),
-                                "at": when, "result": result}
+                                "at": when, "result": result, "seen_before": seen}
         _save(data)
+
+
+def _newest_value_ts(rep_id: int) -> str | None:
+    """De jongste ``updated`` van de uitgelezen parameters van deze node."""
+    rij = db.qone("SELECT MAX(updated) AS m FROM repeater_cli WHERE repeater_id=?",
+                  (rep_id,))
+    return (rij["m"] if rij else None) or None
+
+
+def verify_pending(now: float | None = None) -> list:
+    """Beoordeel gevraagde rondes waarvan de termijn verstreken is.
+
+    Dit bestaat omdat 'gevraagd' te optimistisch was. Publiceren lukt zodra de
+    broker de bytes aanneemt, en dat zegt niets over of de monitor de ronde
+    gelopen heeft: hij kan hem weigeren omdat er net een andere liep, hij kan
+    slapen op zijn zonnebudget, of het onderwerp staat niet in zijn monitorlijst.
+    In alle drie de gevallen zag het grootboek er identiek uit aan een geslaagde
+    ronde -- en dat is de reden dat twaalf uur stilte onopgemerkt bleef.
+
+    Nu is er een derde uitkomst. Dezelfde vier die de LoRa-schrijfweg al
+    onderscheidt, teruggebracht tot wat hier te meten valt: verstuurd of niet,
+    en daarna antwoord of stilte.
+    """
+    now = time.time() if now is None else now
+    veranderd = []
+    for prefix, regel in _ledger().items():
+        if regel.get("result") != RESULT_ASKED:
+            continue
+        if now - float(regel.get("at") or 0) < VERIFY_AFTER_S:
+            continue
+        rij = db.find_repeater(prefix)
+        if rij is None:
+            continue
+        nu_gezien = _newest_value_ts(rij["id"])
+        eerder = regel.get("seen_before")
+        beter = bool(nu_gezien) and (not eerder or nu_gezien > eerder)
+        record(prefix, float(regel["at"]),
+               RESULT_ANSWERED if beter else RESULT_SILENT, seen=eerder)
+        veranderd.append((prefix, beter))
+        if not beter:
+            log.warning("Uitvraagronde voor %s leverde niets op: geen versere "
+                        "waarden na %d s", rij["slug"], VERIFY_AFTER_S)
+    return veranderd
 
 
 def entry(prefix: str) -> dict:
@@ -169,6 +231,11 @@ def run_once(now: float | None = None) -> dict:
     now = time.time() if now is None else now
     uit = {"gestart": None, "reden": "", "wachtend": 0}
 
+    # Eerst de oogst van eerdere rondes beoordelen, en dan pas een nieuwe
+    # sturen. Andersom zou een node die nooit antwoordt elke ronde opnieuw als
+    # 'gevraagd' in het grootboek belanden en zou de stilte nooit opvallen.
+    verify_pending(now)
+
     if not ENABLED:
         uit["reden"] = "uitgeschakeld"
         return uit
@@ -217,9 +284,13 @@ def run_once(now: float | None = None) -> dict:
     ok = mqtt_ingest.publish_command(
         route["node"], "settings",
         subject=route["subject"] if route["via_monitor"] else None)
-    record(rep["pubkey_prefix"], now, "gevraagd" if ok else "versturen mislukt")
+    # De nulmeting mee, zodat verify_pending() straks kan zien of er iets
+    # verscher is geworden in plaats van alleen dat er iets staat.
+    record(rep["pubkey_prefix"], now,
+           RESULT_ASKED if ok else "versturen mislukt",
+           seen=_newest_value_ts(rep["id"]))
     uit["gestart"] = rep["pubkey_prefix"]
-    uit["reden"] = "gevraagd" if ok else "versturen mislukt"
+    uit["reden"] = RESULT_ASKED if ok else "versturen mislukt"
     log.info("Uitvraagronde gepland voor %s: %s", rep["slug"], uit["reden"])
     return uit
 

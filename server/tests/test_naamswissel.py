@@ -127,12 +127,17 @@ def test_het_voorvoegsel_overleeft_een_herstart_van_de_site():
     # opdracht in de eerste minuten na een herstart een gok.
     rij = db.get_or_create_repeater("aa11bb22cc33", "Voorvoegseltest")
     db.record_topic_prefix("aa11bb22cc33", "meshcore")
+    db.record_topic_node("aa11bb22cc33", "AA11BB22CC33")
     assert db.topic_prefix_for("aa11bb22cc33") == "meshcore"
 
     mqtt_ingest._seen_prefix.pop("aa11bb22cc33", None)
+    mqtt_ingest._seen_node.pop("aa11bb22cc33", None)
     assert mqtt_ingest.command_prefix("aa11bb22cc33") == "meshcore"
+    # Ook de schrijfwijze van het middenstuk komt uit de databank: MQTT-topics
+    # zijn hoofdlettergevoelig, dus zonder die kolom is een opdracht na een
+    # herstart een gok op de verkeerde helft van het alfabet.
     assert mqtt_ingest.command_topics("aa11bb22cc33") == (
-        "meshcore/aa11bb22cc33/cmd",)
+        "meshcore/AA11BB22CC33/cmd",)
 
     db.record_topic_prefix("aa11bb22cc33", "meshmanager")
     assert db.topic_prefix_for("aa11bb22cc33") == "meshmanager"

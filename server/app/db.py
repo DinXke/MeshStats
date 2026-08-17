@@ -252,6 +252,25 @@ COLUMN_MIGRATIONS = [
     # node twee straten verderop bijna gratis is. Eén interval voor allemaal
     # betekent dat je de duurste node bepaalt of de goedkoopste verwaarloost.
     ("repeaters", "sweep_hours", "INTEGER"),
+    # Het middenstuk van het topic waarop deze node zich meldt, LETTERLIJK zoals
+    # het langskwam. Niet hetzelfde als pubkey_prefix: dat is genormaliseerd naar
+    # kleine letters, en MQTT-topics zijn hoofdlettergevoelig.
+    #
+    # Dit bestaat omdat het niet zo was en dat twaalf uur onopgemerkt bleef.
+    # MeshCore bouwt zijn topics met Utils::toHex(), en dat gebruikt
+    # "0123456789ABCDEF" -- dus een node schrijft op en luistert naar
+    # HOOFDLETTERS. De site normaliseerde bij binnenkomst naar kleine letters en
+    # bouwde de opdracht daar weer mee op, waardoor elke opdracht op een topic
+    # belandde waar niemand op geabonneerd was. publish() slaagde, de broker nam
+    # de bytes aan, en er luisterde niemand -- exact hetzelfde patroon als de
+    # verkeerde-topic-bug van firmware 1.3.0, en om exact dezelfde reden
+    # onzichtbaar.
+    #
+    # Dus: onthouden wat we gezien hebben in plaats van uitrekenen wat het zou
+    # moeten zijn. Dezelfde redenering als bij topic_prefix hierboven, en de
+    # kolommen staan naast elkaar omdat ze samen één antwoord vormen: waar gaat
+    # een opdracht voor deze node heen.
+    ("repeaters", "topic_node", "TEXT"),
     # Wat een bezoeker van deze node te zien krijgt, fijnmaziger dan is_public.
     # Een positie is gevoeliger dan een batterijstand, en tot deze twee kolommen
     # er waren kon deze site dat verschil niet uitdrukken: publiek was alles of
@@ -1860,6 +1879,29 @@ def record_source(repeater_id: int, source: str) -> None:
     """
     execute("UPDATE repeaters SET source_prefix=?, source_seen=? WHERE id=?",
             (str(source or "")[:32] or None, utcnow(), repeater_id))
+
+
+def record_topic_node(node: str, raw: str) -> None:
+    """Note het middenstuk van het topic zoals deze node het schrijft.
+
+    Alleen als het na normalisatie dezelfde sleutel is; anders zou een topic met
+    een tikfout erin de weg terug kunnen kapen. En alleen als het veranderd is,
+    want dit komt bij elk statistiekbericht langs en een UPDATE per bericht is
+    een schrijfactie per bericht.
+    """
+    schoon = str(raw or "").strip()
+    if not schoon or key_prefix(schoon) != key_prefix(node):
+        return
+    rij = find_repeater(node)
+    if rij is None:
+        return
+    try:
+        huidig = rij["topic_node"]
+    except (KeyError, IndexError):
+        huidig = None
+    if huidig == schoon:
+        return
+    execute("UPDATE repeaters SET topic_node=? WHERE id=?", (schoon[:32], rij["id"]))
 
 
 def record_topic_prefix(node: str, prefix: str) -> None:

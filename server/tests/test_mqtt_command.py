@@ -49,9 +49,16 @@ def broker(monkeypatch):
 
 @pytest.fixture
 def gehoord(monkeypatch):
-    """Doet alsof een node zich op een bepaald voorvoegsel gemeld heeft."""
-    def zet(node, prefix):
+    """Doet alsof een node zich op een bepaald voorvoegsel gemeld heeft.
+
+    Inclusief de vorm van het middenstuk, want dat is deel van wat 'gehoord'
+    betekent: MQTT-topics zijn hoofdlettergevoelig en MeshCore schrijft ze met
+    hoofdletters. ``raw`` is standaard het middenstuk zoals MeshCore het zou
+    schrijven; geef iets anders mee om een node na te doen die het anders doet.
+    """
+    def zet(node, prefix, raw=None):
         mqtt_ingest._seen_prefix[node] = prefix
+        mqtt_ingest._seen_node[node] = raw if raw is not None else node.upper()
     return zet
 
 
@@ -63,7 +70,7 @@ def test_opdracht_gaat_naar_het_cmd_topic_van_de_node(broker, gehoord):
     gehoord("e3d3f4d7edd0", "meshmanager")
     assert mqtt_ingest.publish_command("E3D3F4D7EDD0", "settings") is True
     (msg,) = broker.published
-    assert msg["topic"] == "meshmanager/e3d3f4d7edd0/cmd"
+    assert msg["topic"] == "meshmanager/E3D3F4D7EDD0/cmd"
     assert msg["payload"] == b"settings"
 
 
@@ -76,14 +83,22 @@ def test_een_node_op_het_oude_voorvoegsel_wordt_daar_aangesproken(broker, gehoor
     # stilte waar dit project omheen gebouwd is.
     gehoord("e3d3f4d7edd0", "meshcore")
     assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is True
-    assert _topics(broker) == ["meshcore/e3d3f4d7edd0/cmd"]
+    assert _topics(broker) == ["meshcore/E3D3F4D7EDD0/cmd"]
 
 
 def test_een_onbekende_node_krijgt_het_op_allebei(broker):
-    # Nooit iets van gehoord: dan is er niets om uit te kiezen. Twee berichtjes
-    # van acht bytes zijn goedkoper dan een knop die niets doet.
+    # Nooit iets van gehoord: dan is er niets om uit te kiezen. Twee voorvoegsels
+    # maal twee schrijfwijzen van het middenstuk, en berichtjes van acht bytes
+    # zijn goedkoper dan een knop die niets doet.
+    #
+    # De hoofdlettervariant staat vooraan omdat dat is wat MeshCore schrijft
+    # (Utils::toHex gebruikt "0123456789ABCDEF"). Dat het er twee zijn en niet
+    # één is precies de fout die dit oplevert als je hem weglaat: een opdracht op
+    # een topic waar niemand op geabonneerd is, met een publish die slaagt.
     assert mqtt_ingest.publish_command("aabbccddeeff", "status") is True
-    assert _topics(broker) == ["meshmanager/aabbccddeeff/cmd",
+    assert _topics(broker) == ["meshmanager/AABBCCDDEEFF/cmd",
+                               "meshmanager/aabbccddeeff/cmd",
+                               "meshcore/AABBCCDDEEFF/cmd",
                                "meshcore/aabbccddeeff/cmd"]
 
 
@@ -92,7 +107,7 @@ def test_een_vast_topic_uit_de_omgeving_blijft_vast(broker, monkeypatch):
     # tak. Dat overrulen met onze voorvoegsels zou zo'n installatie stilleggen.
     monkeypatch.setattr(mqtt_ingest, "MQTT_CMD_TOPIC", "eigen/tak/{node}/cmd")
     assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is True
-    assert _topics(broker) == ["eigen/tak/e3d3f4d7edd0/cmd"]
+    assert _topics(broker) == ["eigen/tak/E3D3F4D7EDD0/cmd"]
 
 
 def test_het_voorvoegsel_wordt_onthouden_uit_het_topic():
@@ -144,7 +159,7 @@ def test_sleutel_wordt_tot_hex_teruggebracht(broker, gehoord):
     # Een '+' of een '#' erin zou een topic maken dat iets heel anders raakt.
     gehoord("e3d3f4d7", "meshmanager")
     assert mqtt_ingest.publish_command("e3d3f4/#+d7", "status") is True
-    assert broker.published[0]["topic"] == "meshmanager/e3d3f4d7/cmd"
+    assert broker.published[0]["topic"] == "meshmanager/E3D3F4D7/cmd"
 
 
 def test_lege_sleutel_levert_geen_publicatie_op(broker):
@@ -191,7 +206,7 @@ def test_onderwerp_reist_mee_in_de_opdracht(broker, gehoord):
     assert mqtt_ingest.publish_command("55d9a320a4e3", "settings",
                                        subject="E3D3F4D7EDD0") is True
     (msg,) = broker.published
-    assert msg["topic"] == "meshmanager/55d9a320a4e3/cmd"
+    assert msg["topic"] == "meshmanager/55D9A320A4E3/cmd"
     assert msg["payload"] == b"settings e3d3f4d7edd0"
 
 
@@ -205,7 +220,7 @@ def test_de_tijd_gaat_als_epoch_in_seconden_mee(broker, gehoord):
     gehoord("e3d3f4d7edd0", "meshmanager")
     assert mqtt_ingest.publish_command("e3d3f4d7edd0", "time", epoch=1_800_000_000) is True
     (msg,) = broker.published
-    assert msg["topic"] == "meshmanager/e3d3f4d7edd0/cmd"
+    assert msg["topic"] == "meshmanager/E3D3F4D7EDD0/cmd"
     assert msg["payload"] == b"time 1800000000"
     assert msg["retain"] is False
 
@@ -275,7 +290,7 @@ def test_een_instelling_vertrekt_als_een_commando_met_twee_woorden(broker, gehoo
     assert mqtt_ingest.publish_command("e3d3f4d7edd0", "set",
                                        setting=("flood.max", "12")) is True
     (msg,) = broker.published
-    assert msg["topic"] == "meshmanager/e3d3f4d7edd0/cmd"
+    assert msg["topic"] == "meshmanager/E3D3F4D7EDD0/cmd"
     assert msg["payload"] == b"set flood.max 12"
     # Retained zou dit bij elke herverbinding opnieuw uitvoeren, en dan zet
     # iemand een maand later een instelling terug die hij ooit één keer koos.
@@ -339,3 +354,54 @@ def test_de_firmware_kent_hetzelfde_woord():
     tekst = bron.read_text(encoding="utf-8", errors="replace")
     for woord in mqtt_ingest.COMMANDS:
         assert f'strcmp(w, "{woord}")' in tekst, woord
+
+
+# --- hoofdletters in het middenstuk -----------------------------------------
+#
+# Twaalf uur onopgemerkt, en dat maakt deze vier tests de belangrijkste in dit
+# bestand. MeshCore bouwt zijn topics met Utils::toHex(), en die tabel is
+# "0123456789ABCDEF" -- een node schrijft dus op en luistert naar HOOFDLETTERS.
+# De site normaliseerde bij binnenkomst naar kleine letters en bouwde de opdracht
+# daar weer mee op. Resultaat: publish() slaagde, de broker nam de bytes aan, en
+# er was niemand geabonneerd. Exact het patroon van de verkeerde-topic-bug uit
+# firmware 1.3.0, en om exact dezelfde reden onzichtbaar.
+
+def test_de_opdracht_gaat_naar_het_topic_zoals_de_node_het_schrijft(broker, gehoord):
+    gehoord("e3d3f4d7edd0", "meshmanager", raw="E3D3F4D7EDD0")
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is True
+    assert _topics(broker) == ["meshmanager/E3D3F4D7EDD0/cmd"]
+
+
+def test_een_node_die_kleine_letters_schrijft_krijgt_kleine_letters(broker, gehoord):
+    """Niet 'altijd hoofdletters' maar 'wat we gezien hebben'. Uitrekenen wat het
+    zou moeten zijn is precies hoe dit misging."""
+    gehoord("e3d3f4d7edd0", "meshmanager", raw="e3d3f4d7edd0")
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is True
+    assert _topics(broker) == ["meshmanager/e3d3f4d7edd0/cmd"]
+
+
+def test_een_topic_met_een_andere_sleutel_erin_wordt_niet_geloofd(broker, gehoord):
+    """Het middenstuk komt van buiten. Een 'gezien' middenstuk dat na normalisatie
+    een ándere sleutel is, mag de weg terug niet kapen."""
+    gehoord("e3d3f4d7edd0", "meshmanager", raw="AABBCCDDEEFF")
+    assert mqtt_ingest.publish_command("e3d3f4d7edd0", "status") is True
+    for topic in _topics(broker):
+        assert "AABBCCDDEEFF" not in topic
+
+
+def test_het_onderwerp_blijft_wel_genormaliseerd(broker, gehoord):
+    """Het onderwerp staat in de PAYLOAD en niet in het topic, en daar hoort het
+    juist WEL in kleine letters.
+
+    Niet omdat de firmware ongevoelig is voor hoofdletters -- sameNode() doet
+    memcmp() en is dat dus niet -- maar omdat monKeyArg() elke sleutel naar kleine
+    letters brengt vóór hij in de monitorlijst gaat én vóór een binnenkomend
+    onderwerp ermee vergeleken wordt. Beide kanten zijn daar dus al klein, en een
+    onderwerp in hoofdletters zou juist NIET matchen. Twee tegengestelde regels
+    in één bericht, en dat is precies waarom ze hier allebei vastgelegd staan."""
+    gehoord("55d9a320a4e3", "meshmanager", raw="55D9A320A4E3")
+    assert mqtt_ingest.publish_command("55d9a320a4e3", "settings",
+                                       subject="E3D3F4D7EDD0") is True
+    (msg,) = broker.published
+    assert msg["topic"] == "meshmanager/55D9A320A4E3/cmd"
+    assert msg["payload"] == b"settings e3d3f4d7edd0"

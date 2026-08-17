@@ -30,6 +30,20 @@
    hem zichtbaar.</p>
 {% endif %}
 
+{% if no_host_reps %}
+{#- Een leeg beheeradres is geen kleinigheid: het sluit de HTTP-schrijfweg én de
+    firmware-upgradeweg, en het is niet aan de node te zien. Vandaar hier en niet
+    pas als iemand op een knop drukt -- dezelfde reden als het gezondheidsblok
+    van de broker. Alleen voor full managed nodes: bij een doorgestuurde node is
+    een leeg adres de normale toestand en geen verzuim. -#}
+<p class="pending"><strong>{{ no_host_reps | length }} node(s) hebben geen beheeradres.</strong>
+   Zonder dat adres kan de server hun beheerpagina niet bereiken: geen firmware-upgrade,
+   geen instellingen schrijven, en geen rechtencontrole bij hun monitor. Er is aan de node
+   zelf niets te zien van dit gemis — het valt pas op als je op een knop drukt die dan
+   niets doet.
+   {% for r in no_host_reps %}<a href="/admin/repeaters/{{ r.id }}">{{ r.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+{% endif %}
+
 {#- Waarom de lijst in drie groepen uiteenvalt, en niet op naam of op laatst
     gezien staat: wat je met een node kúnt doen verschilt per groep, en dat is
     hier de enige indeling die de knoppen eronder verklaart. Het niveau is een

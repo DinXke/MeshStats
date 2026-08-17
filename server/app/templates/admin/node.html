@@ -473,19 +473,31 @@
     </p>
 
     {% if sweep_last %}
-    <p class="small">
+    {#- Drie uitkomsten en niet één, en dat is de reden dat dit blok bestaat.
+        'Gevraagd' was te optimistisch: publiceren lukt zodra de broker de bytes
+        aanneemt, en een geslaagde ronde zag er identiek uit aan een verdwenen
+        ronde. Daarom staat 'geen antwoord' hier als een probleem en niet als een
+        mededeling. -#}
+    <p class="small{% if sweep_last.result == 'gevraagd, geen antwoord' %} cmp-off{% endif %}"
+       {%- if sweep_last.result == 'gevraagd, geen antwoord' %} style="padding:.4rem .5rem"{% endif %}>
       <strong>Laatst gevraagd:</strong> {{ sweep_last.result }} —
       <time class="reltime" datetime="{{ sweep_last.asked }}">{{ sweep_last.asked }}</time>.
       {%- if sweep_last.result.startswith("geen weg") %}
       Er was toen geen weg naar deze node. De planner heeft dat opgeschreven in plaats
       van het elke minuut opnieuw te proberen, anders zou hij de wachtrij blokkeren.
+      {%- elif sweep_last.result == "gevraagd, geen antwoord" %}
+      <strong>Het verzoek vertrok en er kwam niets terug.</strong> De waarden hierboven
+      zijn dus niet verser geworden. Mogelijke oorzaken: de monitor sliep op zijn
+      zonnebudget, hij weigerde omdat er net een andere ronde liep, of deze node staat
+      niet in zijn monitorlijst. Kijk bij <em>Instellingen schrijven</em> hoe zijn
+      monitor bij hem binnenkomt.
+      {%- elif sweep_last.result == "versturen mislukt" %}
+      Er is niets vertrokken — geen brokerverbinding op dat moment.
+      {%- elif sweep_last.result == "gevraagd, antwoord binnen" %}
+      De waarden hierboven zijn daarna verser geworden, dus de ronde is gelopen.
       {%- else %}
-      {#- 'Gevraagd' is precies wat het zegt: het bericht is verstuurd. Of de
-          monitor de ronde ook gelopen heeft, weet deze kant niet -- hij kan hem
-          weigeren omdat er net een andere liep. Dat is af te lezen aan de
-          ouderdom van de waarden hierboven, en niet aan deze regel. -#}
-      Dat betekent dat het verzoek verstuurd is; of de ronde ook gelopen heeft, lees
-      je aan de ouderdom van de waarden hierboven.
+      Het verzoek is verstuurd; of de ronde ook gelopen heeft, staat er over enkele
+      minuten bij — de planner kijkt dan of de waarden verser geworden zijn.
       {%- endif %}
     </p>
     {% endif %}

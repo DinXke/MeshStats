@@ -237,3 +237,146 @@ def test_het_schema_wordt_geklemd_in_plaats_van_geweigerd(db, monkeypatch):
     # 0 wordt NULL: 'uit' is één toestand en niet twee.
     assert db.qone("SELECT sweep_hours FROM repeaters WHERE id=?",
                    (rep["id"],))["sweep_hours"] is None
+
+
+# --- 'gevraagd' is geen uitkomst ----------------------------------------------
+#
+# De reden dat twaalf uur stilte onopgemerkt bleef: publiceren lukt zodra de
+# broker de bytes aanneemt, en het grootboek zei daarop 'gevraagd'. Een geslaagde
+# en een verdwenen ronde zagen er identiek uit.
+
+def _waarde(db, rep, param, updated):
+    db.execute("INSERT INTO repeater_cli(repeater_id, param, value, updated) "
+               "VALUES(?,?,?,?) ON CONFLICT(repeater_id, param) DO UPDATE SET "
+               "value=excluded.value, updated=excluded.updated",
+               (rep["id"], param, "64", updated))
+
+
+def test_een_ronde_die_niets_opleverde_heet_geen_antwoord(db, verzonden):
+    rep = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    _waarde(db, rep, "flood.max", "2026-08-16T11:33:24+00:00")
+    nu = time.time()
+
+    assert sweepsched.run_once(nu)["gestart"] == "e3d3f4d7edd0"
+    assert sweepsched.entry("e3d3f4d7edd0")["result"] == sweepsched.RESULT_ASKED
+
+    # Termijn verstreken, geen versere waarde: dat is stilte en hoort zo te heten.
+    sweepsched.verify_pending(nu + sweepsched.VERIFY_AFTER_S + 1)
+    assert sweepsched.entry("e3d3f4d7edd0")["result"] == sweepsched.RESULT_SILENT
+
+
+def test_een_ronde_met_versere_waarden_heet_antwoord_binnen(db, verzonden):
+    rep = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    _waarde(db, rep, "flood.max", "2026-08-16T11:33:24+00:00")
+    nu = time.time()
+    sweepsched.run_once(nu)
+
+    # De monitor heeft geantwoord: de ingest schreef een versere tijdstempel.
+    _waarde(db, rep, "flood.max", "2026-08-17T04:29:00+00:00")
+    sweepsched.verify_pending(nu + sweepsched.VERIFY_AFTER_S + 1)
+    assert sweepsched.entry("e3d3f4d7edd0")["result"] == sweepsched.RESULT_ANSWERED
+
+
+def test_binnen_de_termijn_wordt_er_nog_niet_geoordeeld(db, verzonden):
+    rep = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    _waarde(db, rep, "flood.max", "2026-08-16T11:33:24+00:00")
+    nu = time.time()
+    sweepsched.run_once(nu)
+    sweepsched.verify_pending(nu + 60)
+    assert sweepsched.entry("e3d3f4d7edd0")["result"] == sweepsched.RESULT_ASKED
+
+
+def test_een_node_zonder_enige_waarde_die_zwijgt(db, verzonden):
+    """Nooit iets van gehoord en nu ook niet: dat is stilte en geen succes. Zonder
+    de nulmeting zou 'er staat niets' niet te onderscheiden zijn van 'er staat
+    iets nieuws'."""
+    _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    nu = time.time()
+    sweepsched.run_once(nu)
+    sweepsched.verify_pending(nu + sweepsched.VERIFY_AFTER_S + 1)
+    assert sweepsched.entry("e3d3f4d7edd0")["result"] == sweepsched.RESULT_SILENT
+
+
+def test_de_beoordeling_gebeurt_voor_de_volgende_ronde(db, verzonden):
+    """Andersom zou een node die nooit antwoordt elke ronde opnieuw als
+    'gevraagd' in het grootboek belanden en zou de stilte nooit opvallen."""
+    rep = _node(db, "e3d3f4d7edd0", "JessaZH", uren=1)
+    _waarde(db, rep, "flood.max", "2026-08-16T11:33:24+00:00")
+    nu = time.time()
+    sweepsched.run_once(nu)
+    # Een uur later is hij weer aan de beurt; de vorige ronde moet dan al
+    # beoordeeld zijn.
+    sweepsched.run_once(nu + 3700)
+    regel = sweepsched.entry("e3d3f4d7edd0")
+    assert regel["result"] == sweepsched.RESULT_ASKED   # de nieuwe ronde
+    assert regel["at"] > nu                            # ...en het is de nieuwe
+
+
+# --- een ontbrekend beheeradres is zichtbaar vóór de knopklik -----------------
+
+def test_nodes_zonder_beheeradres_staan_bovenaan_de_nodelijst(db, monkeypatch):
+    """Vandaag twee keer een hele weg dichtgezet door een leeg configuratieveld
+    zonder dat er iets aan te zien was. Een ontbrekende voorwaarde hoort te staan
+    waar je hem ziet voordat je hem nodig hebt."""
+    from app import commanding, mqtt_ingest, routes_admin
+    from app.templating import templates
+
+    monkeypatch.setattr(routes_admin, "require_login", lambda request: "beheerder")
+    monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: True)
+    zonder = _node(db, "55d9a320a4e3", "DinX-Home", uren=6)
+    met = _node(db, "aabbccddeeff", "Met-Adres", uren=6)
+    db.execute("UPDATE repeaters SET ota_host='http://x' WHERE id=?", (met["id"],))
+    reps = db.q("SELECT * FROM repeaters ORDER BY sort_order, name")
+    routes = {r["id"]: {"level": commanding.LEVEL_FULL} for r in reps}
+
+    ontbreekt = [r for r in reps
+                 if not (r["ota_host"] or "").strip()
+                 and routes[r["id"]]["level"] == commanding.LEVEL_FULL]
+    assert [r["name"] for r in ontbreekt] == ["DinX-Home"]
+
+    html = templates.env.get_template("admin/nodes.html").render({
+        "site_name": "MeshManager", "user": "u", "world": "nodes",
+        "repeaters": reps, "routes": routes, "groups": [], "csrf": "x",
+        "hidden_repeaters": 0, "onzichtbaar": 0, "no_host_reps": ontbreekt,
+    })
+    assert "geen beheeradres" in html
+    assert "DinX-Home" in html
+    assert "Met-Adres" not in html
+
+
+def test_een_doorgestuurde_node_zonder_adres_is_geen_verzuim(db):
+    """Bij een node die alleen over LoRa te bereiken is, is een leeg beheeradres
+    de normale toestand. Die erbij zetten zou de waarschuwing waardeloos maken."""
+    from app import commanding
+    _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    reps = db.q("SELECT * FROM repeaters")
+    routes = {r["id"]: {"level": commanding.LEVEL_SEMI} for r in reps}
+    ontbreekt = [r for r in reps
+                 if not (r["ota_host"] or "").strip()
+                 and routes[r["id"]]["level"] == commanding.LEVEL_FULL]
+    assert ontbreekt == []
+
+
+@pytest.mark.parametrize("uitkomst,zin", [
+    ("gevraagd, geen antwoord", "Het verzoek vertrok en er kwam niets terug"),
+    ("gevraagd, antwoord binnen", "de ronde is gelopen"),
+    ("versturen mislukt", "geen brokerverbinding"),
+    ("gevraagd", "of de waarden verser geworden zijn"),
+    ("geen weg (no_fw)", "geen weg naar deze node"),
+])
+def test_elke_uitkomst_krijgt_zijn_eigen_zin_op_de_pagina(uitkomst, zin):
+    """'Gevraagd' was te optimistisch en een geslaagde ronde zag er identiek uit
+    aan een verdwenen ronde. Nu niet meer, en de stilte staat er als probleem."""
+    from tests.test_nodeconfig import _render
+    html = _render(sweep_hours=12,
+                   sweep_last={"result": uitkomst, "asked": "2026-08-17T04:27:42+00:00"})
+    assert zin in html
+
+
+def test_de_stilte_wordt_gemarkeerd_en_de_rest_niet():
+    from tests.test_nodeconfig import _render
+    stil = _render(sweep_hours=12, sweep_last={
+        "result": "gevraagd, geen antwoord", "asked": "2026-08-17T04:27:42+00:00"})
+    goed = _render(sweep_hours=12, sweep_last={
+        "result": "gevraagd, antwoord binnen", "asked": "2026-08-17T04:27:42+00:00"})
+    assert stil.count("cmp-off") > goed.count("cmp-off")

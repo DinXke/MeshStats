@@ -844,6 +844,80 @@ sake: the button costs airtime once, this costs it every day, on a band that
 belongs to everybody. Whoever switches it on imposes a recurring load on somebody
 else's mesh.
 
+### Topics are case-sensitive, and that cost twelve hours
+
+The scheduler ran, wrote `gevraagd` in its ledger, and delivered nothing. The
+cause was not the scheduler.
+
+MeshCore builds its MQTT topics with `Utils::toHex()`, and that function's table
+is `"0123456789ABCDEF"` (`src/Utils.cpp:186`). A node therefore **publishes on and
+subscribes to uppercase hex**: `meshmanager/55D9A320A4E3/cmd`. The site
+normalised the node key to lowercase on the way in — correctly, it is a database
+key — and then built the command topic from that same normalised value. Every
+command went to `meshmanager/55d9a320a4e3/cmd`, which nobody was subscribed to.
+
+`publish()` succeeded, the broker accepted the bytes, and there was no listener.
+That is the same shape as the wrong-topic bug in firmware 1.3.0, and invisible for
+the same reason: **success at the transport layer says nothing about arrival.**
+
+It affected every command the site has ever sent on this topic — the settings
+button, clock sync, status requests, the MQTT settings write — not only the
+scheduler. The scheduler merely made it visible, by being the first thing that
+sent commands nobody was watching in real time.
+
+**The fix is to remember rather than to compute.** The node segment is now stored
+exactly as it arrived (`repeaters.topic_node`), next to `topic_prefix`, which
+exists for the identical reason one field over. A command goes to the topic the
+node actually uses. For a node never heard from, both casings are tried —
+uppercase first, because that is what MeshCore does — on the same reasoning that
+already applies to an unknown prefix: one extra eight-byte message is cheaper
+than a button that silently does nothing.
+
+Two opposite rules travel in one message, so both are pinned by tests:
+
+| Part | Case | Why |
+|---|---|---|
+| the node in the **topic** | as the node writes it, normally **UPPER** | MQTT topics are case-sensitive and MeshCore uses uppercase |
+| the subject in the **payload** | **lower** | `monKeyArg()` lowercases every key before it enters the monitor list *and* before an incoming subject is compared to it, and `sameNode()` compares with `memcmp` — so an uppercase subject would *not* match |
+
+Computing what the topic ought to be is exactly how this went wrong; the second
+row is why "just uppercase everything" would have broken the other half.
+
+### "Asked" is not an outcome
+
+The ledger said `gevraagd` as soon as publishing succeeded, which is a statement
+about the broker and not about the node. A successful round and a vanished one
+looked identical, and that is why twelve hours of silence went unnoticed.
+
+There are now three outcomes. When a round is requested, the newest timestamp
+among that node's stored values is written down as a baseline. Ten minutes later
+— longer than a sweep's nominal 286 s, shorter than the minimum gap, so the
+verdict always falls before the next round leaves — the scheduler looks again:
+
+| Ledger | Meaning |
+|---|---|
+| `versturen mislukt` | nothing left the server |
+| `gevraagd` | sent, verdict not yet due |
+| `gevraagd, antwoord binnen` | values are fresher than before |
+| `gevraagd, geen antwoord` | sent, and nothing came back |
+
+The last one is logged as a warning and shown on the node's page. Verification
+runs *before* a new round is sent, because the other order would let a node that
+never answers overwrite its own ledger line every cycle and the silence would
+never surface.
+
+### A missing management address is now visible up front
+
+An empty `ota_host` closes the HTTP write path, the firmware upgrade path, and the
+rights check that knocks on a node's monitor — and none of that is visible on the
+node. Until now it was reported only when somebody pressed a button that then did
+nothing.
+
+The node list therefore names full-managed nodes without an address at the top of
+the page, in the same place and for the same reason as the broker health block.
+Relayed nodes are excluded: for a node reachable only over LoRa an empty address
+is the normal state, and including it would make the warning worthless.
+
 ---
 
 ## After a write, read it back
@@ -1288,6 +1362,9 @@ against a node a human named.
 | Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |
 | MeshCore version for relayed nodes | **built** — `ver` joins the sweep, and one answer fills both version columns |
 | A sweep schedule per node | **built** — off by default, one round at a time with a global minimum gap, and a daily ceiling across all nodes |
+| Verifying that a scheduled round produced anything | **built** — `gevraagd` is no longer an outcome; a baseline timestamp plus a ten-minute verdict separates "answer came in" from "nothing came back" |
+| Sending commands to the topic a node actually listens on | **fixed** — the node segment is stored as it arrived instead of computed from the normalised key. Affected every command the site sent, not only the scheduler |
+| Warning about a missing management address before a button is pressed | **built** — full-managed nodes without one are named at the top of the node list |
 | Showing which right a monitor uses per target | **built** — access list or password, read from the monitor's own list, which reports *that* a password is set and never *which* |
 | Telling the three silences apart | **built** — out of range / not allowed in / read-only, from login state plus the heard list |
 | Setting a target's password from the site | **built as pass-through** — `nodeconfig.push_monitor_password()` sends it to the monitor and stores nothing. Not yet on a page: the form is the remaining piece |

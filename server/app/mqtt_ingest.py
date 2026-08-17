@@ -517,6 +517,10 @@ def publish_command(node: str, command: str, subject: str | None = None,
 # na een herstart van de site is dit leeg terwijl de node nog steeds daar
 # luistert waar hij gisteren luisterde.
 _seen_prefix = {}
+# Het middenstuk zoals de node het schrijft, per genormaliseerde sleutel. Naast
+# _seen_prefix en om dezelfde reden: allebei komen ze alleen hier langs, en samen
+# vormen ze het antwoord op "waar gaat een opdracht voor deze node heen".
+_seen_node = {}
 
 
 def command_prefix(node: str) -> str | None:
@@ -550,12 +554,45 @@ def command_topics(node: str) -> tuple:
     trouwens nauwelijks zijn: de knoppen die dit gebruiken staan op de pagina
     van een repeater die hier al binnenkomt.
     """
+    # Het middenstuk in de vorm die deze node zelf gebruikt. MQTT-topics zijn
+    # hoofdlettergevoelig en MeshCore schrijft ze met hoofdletters, dus met de
+    # genormaliseerde sleutel zou de opdracht op een topic belanden waar niemand
+    # op geabonneerd is: publish() slaagt, de broker neemt de bytes aan, en er
+    # luistert niemand. Precies het patroon dat twaalf uur onopgemerkt bleef.
+    #
+    # Nooit gehoord? Dan allebei de vormen, met de hoofdlettervariant vooraan
+    # omdat dat is wat MeshCore doet. Dezelfde afweging als bij een onbekend
+    # voorvoegsel hieronder: één klein bericht extra is goedkoper dan een knop
+    # die niets doet zonder te zeggen waarom.
+    knopen = command_nodes(node)
     if "{prefix}" not in MQTT_CMD_TOPIC:
         # Vast patroon uit de omgeving: respecteren zoals opgegeven.
-        return (MQTT_CMD_TOPIC.format(node=node),)
+        return tuple(MQTT_CMD_TOPIC.format(node=n) for n in knopen)
     prefix = command_prefix(node)
     prefixes = (prefix,) if prefix else PREFIXES
-    return tuple(MQTT_CMD_TOPIC.format(prefix=p, node=node) for p in prefixes)
+    return tuple(MQTT_CMD_TOPIC.format(prefix=p, node=n)
+                 for p in prefixes for n in knopen)
+
+
+def command_nodes(node: str) -> tuple:
+    """Het middenstuk van het topic voor deze node, zoals hij het zelf schrijft.
+
+    Eén vorm als we hem ooit gehoord hebben, anders twee. Het geheugen eerst en
+    de databank daarna, zodat een node die zich net gemeld heeft niet op een
+    schrijfactie hoeft te wachten.
+    """
+    gezien = _seen_node.get(node)
+    if not gezien:
+        rij = db.find_repeater(node)
+        if rij is not None:
+            try:
+                gezien = rij["topic_node"]
+            except (KeyError, IndexError):
+                gezien = None
+    if gezien and db.key_prefix(gezien) == db.key_prefix(node):
+        return (gezien,)
+    boven = node.upper()
+    return (boven, node) if boven != node else (node,)
 
 
 def _topic_parts(topic: str) -> tuple:
@@ -577,7 +614,12 @@ def _topic_parts(topic: str) -> tuple:
     node = db.key_prefix(parts[1]) if len(parts) >= 3 else ""
     if not node:
         raise ValueError(f"topic {topic!r} noemt geen node met een sleutel")
-    return parts[0].strip(), node
+    # Ook het ruwe middenstuk terug, want de normalisatie hierboven gooit iets weg
+    # dat we straks nodig hebben: MQTT-topics zijn hoofdlettergevoelig en MeshCore
+    # schrijft ze met hoofdletters (Utils::toHex gebruikt "0123456789ABCDEF").
+    # Een opdracht die met het genormaliseerde middenstuk opgebouwd wordt, komt op
+    # een topic terecht waar niemand op geabonneerd is.
+    return parts[0].strip(), node, parts[1].strip()
 
 
 def _topic_node(topic: str) -> str:
@@ -591,9 +633,11 @@ def _topic_node(topic: str) -> str:
     snelste stroom die deze server kent; naar de databank schrijven gebeurt op
     de statistiekenkant, waar het om enkele berichten per minuut gaat.
     """
-    prefix, node = _topic_parts(topic)
+    prefix, node, raw = _topic_parts(topic)
     if prefix:
         _seen_prefix[node] = prefix
+    if raw:
+        _seen_node[node] = raw
     return node
 
 
@@ -652,6 +696,7 @@ def _handle_payload(topic: str, raw: bytes) -> None:
     # per seconde. Hier en niet bovenaan, want pas na get_or_create_repeater
     # bestaat de rij van een node die zich voor het eerst meldt.
     db.record_topic_prefix(publisher, _seen_prefix.get(publisher, ""))
+    db.record_topic_node(publisher, _seen_node.get(publisher, ""))
     db.record_firmware(row["id"], rep.get("fw"), db.payload_module_version(rep))
     if subject != publisher:
         log.info("stats for %s relayed by node %s", subject, publisher)

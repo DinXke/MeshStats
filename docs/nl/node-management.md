@@ -884,6 +884,88 @@ de knop kost eenmalig zendtijd, dit kost het elke dag, op een band die van
 iedereen is. Wie hem aanzet legt een terugkerende belasting op het mesh van
 iemand anders.
 
+### Topics zijn hoofdlettergevoelig, en dat kostte twaalf uur
+
+De planner liep, schreef `gevraagd` in zijn aantekeningen, en leverde niets af.
+De oorzaak was niet de planner.
+
+MeshCore bouwt zijn MQTT-topics met `Utils::toHex()`, en de tabel van die functie
+is `"0123456789ABCDEF"` (`src/Utils.cpp:186`). Een node **publiceert dus op hex in
+hoofdletters en abonneert zich daar ook op**: `meshmanager/55D9A320A4E3/cmd`. De
+site normaliseerde de nodesleutel bij binnenkomst naar kleine letters — terecht,
+het is een databasesleutel — en bouwde het opdrachttopic daarna uit diezelfde
+genormaliseerde waarde. Elke opdracht ging naar
+`meshmanager/55d9a320a4e3/cmd`, waar niemand op geabonneerd was.
+
+`publish()` slaagde, de broker nam de bytes aan, en er was geen luisteraar. Dat
+is dezelfde soort fout als de verkeerdetopicbug in firmware 1.3.0, en om dezelfde
+reden onzichtbaar: **succes op de transportlaag zegt niets over aankomst.**
+
+Het raakte elke opdracht die de site ooit op dit topic verstuurd heeft — de knop
+voor instellingen, het zetten van de klok, statusverzoeken, het schrijven van de
+MQTT-instellingen — en niet alleen de planner. De planner maakte het enkel
+zichtbaar, doordat hij het eerste was dat opdrachten verstuurde waar niemand op
+dat moment naar keek.
+
+**De oplossing is onthouden in plaats van uitrekenen.** Het nodedeel wordt nu
+precies zo bewaard als het aankwam (`repeaters.topic_node`), naast
+`topic_prefix`, dat één veld verderop om exact dezelfde reden bestaat. Een
+opdracht gaat naar het topic dat de node werkelijk gebruikt. Voor een node die we
+nog nooit hoorden worden beide schrijfwijzen geprobeerd — hoofdletters eerst,
+want dat is wat MeshCore doet — volgens dezelfde redenering die al voor een
+onbekend voorvoegsel geldt: één extra berichtje van acht bytes is goedkoper dan
+een knop die stilzwijgend niets doet.
+
+Twee tegengestelde regels reizen in één bericht mee, dus ze worden beide door
+tests vastgelegd:
+
+| Deel | Schrijfwijze | Waarom |
+|---|---|---|
+| de node in het **topic** | zoals de node hem schrijft, normaal in **HOOFDLETTERS** | MQTT-topics zijn hoofdlettergevoelig en MeshCore gebruikt hoofdletters |
+| het onderwerp in de **payload** | in **kleine letters** | `monKeyArg()` zet elke sleutel om naar kleine letters voordat die in de monitorlijst komt *én* voordat een binnenkomend onderwerp ermee vergeleken wordt, en `sameNode()` vergelijkt met `memcmp` — een onderwerp in hoofdletters zou dus *niet* overeenkomen |
+
+Uitrekenen wat het topic zou moeten zijn is precies hoe dit misging; de tweede
+rij is waarom "zet alles maar in hoofdletters" de andere helft gebroken zou
+hebben.
+
+### "Gevraagd" is geen uitkomst
+
+De aantekening zei `gevraagd` zodra het publiceren gelukt was, en dat is een
+uitspraak over de broker en niet over de node. Een geslaagde ronde en een
+verdwenen ronde zagen er identiek uit, en daarom viel twaalf uur stilte niet op.
+
+Er zijn nu drie uitkomsten. Wanneer een ronde aangevraagd wordt, wordt de
+nieuwste tijdstempel onder de bewaarde waarden van die node als vertrekpunt
+opgeschreven. Tien minuten later — langer dan de nominale 286 s van een sweep,
+korter dan de minimale tussenruimte, zodat het oordeel altijd valt voordat de
+volgende ronde vertrekt — kijkt de planner opnieuw:
+
+| Aantekening | Betekenis |
+|---|---|
+| `versturen mislukt` | er is niets van de server vertrokken |
+| `gevraagd` | verstuurd, het oordeel moet nog vallen |
+| `gevraagd, antwoord binnen` | de waarden zijn nieuwer dan daarvoor |
+| `gevraagd, geen antwoord` | verstuurd, en er kwam niets terug |
+
+De laatste wordt als waarschuwing gelogd en op de pagina van de node getoond. De
+verificatie loopt *voordat* er een nieuwe ronde verstuurd wordt, want in de
+andere volgorde zou een node die nooit antwoordt zijn eigen aantekening elke
+cyclus overschrijven en zou de stilte nooit bovenkomen.
+
+### Een ontbrekend beheeradres is nu vooraf zichtbaar
+
+Een leeg `ota_host` sluit het schrijfpad over HTTP, het pad voor
+firmware-upgrades, en de rechtencontrole die bij de monitor van een node
+aanklopt — en niets daarvan is op de node zelf te zien. Tot nu toe werd het pas
+gemeld wanneer iemand op een knop drukte die dan niets deed.
+
+De nodelijst noemt full managed nodes zonder adres daarom bovenaan de pagina, op
+dezelfde plek en om dezelfde reden als het blok over de gezondheid van de broker.
+
+Doorgestuurde nodes vallen erbuiten: voor een node die alleen over LoRa
+bereikbaar is, is een leeg adres de normale toestand, en ze meenemen zou de
+waarschuwing waardeloos maken.
+
 ---
 
 ## Lees na een schrijfactie terug
@@ -1351,6 +1433,9 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Telemetrie opvragen zonder inloggegevens | **onderzocht, niet gebouwd.** Het werkt en levert meer op dan verwacht — zie hierboven |
 | MeshCore-versie van doorgestuurde nodes | **gebouwd** — `ver` gaat mee in de sweep, en één antwoord vult allebei de versiekolommen |
 | Een sweepschema per node | **gebouwd** — standaard uit, één ronde tegelijk met een globale minimale tussenruimte, en een plafond per dag over alle nodes heen |
+| Nagaan of een ingeplande ronde iets opgeleverd heeft | **gebouwd** — `gevraagd` is geen uitkomst meer; een tijdstempel als vertrekpunt plus een oordeel na tien minuten scheidt "antwoord binnen" van "niets teruggekomen" |
+| Opdrachten sturen naar het topic waar een node werkelijk op luistert | **opgelost** — het nodedeel wordt bewaard zoals het aankwam in plaats van uitgerekend uit de genormaliseerde sleutel. Raakte elke opdracht die de site verstuurde, niet alleen de planner |
+| Waarschuwen voor een ontbrekend beheeradres voordat er op een knop gedrukt wordt | **gebouwd** — full managed nodes zonder adres worden bovenaan de nodelijst genoemd |
 | Tonen welk recht een monitor per doelnode gebruikt | **gebouwd** — toegangslijst of wachtwoord, gelezen uit de monitorlijst van de monitor zelf, die meldt *dát* er een wachtwoord staat en nooit *welk* |
 | De drie stiltes uit elkaar houden | **gebouwd** — buiten bereik / niet binnengelaten / alleen lezen, uit de loginstatus plus de gehoorde lijst |
 | Het wachtwoord van een doelnode vanaf de site zetten | **gebouwd als doorgeefluik** — `nodeconfig.push_monitor_password()` stuurt het naar de monitor en bewaart niets. Nog niet op een pagina: het formulier is het resterende stuk |
