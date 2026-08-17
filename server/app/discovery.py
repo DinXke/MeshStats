@@ -123,10 +123,18 @@ def heard(host: str) -> dict:
     bekend = {str(e.get("k", "")).lower() for e in lijst["entries"]}
     kandidaten = []
     for regel in lijst["heard"]:
-        sleutel = str(regel.get("k", ""))
+        # De monitor geeft de volle 32-byte sleutel; de rij die hier straks van
+        # gemaakt wordt draagt de korte. Hier al inkorten, zodat het formulier de
+        # vorm doorgeeft waarin hij bewaard wordt en er nergens twee vormen van
+        # dezelfde node naast elkaar bestaan.
+        vol = str(regel.get("k", ""))
+        sleutel = db.node_key(vol) or vol.lower()
         kandidaten.append({
             "key": sleutel,
-            "name": regel.get("n") or "",
+            "full": vol,
+            # De naam die de monitor meegeeft, en anders die uit contacts. Een
+            # node zonder treffer houdt zijn hex, maar dan als hex op het scherm.
+            "name": regel.get("n") or db.contact_name_for(sleutel) or "",
             "snr": regel.get("snr"),
             "age": regel.get("age"),
             "cached": bool(regel.get("cached")),
@@ -175,7 +183,7 @@ def _save(data: dict) -> None:
 
 
 def job(key: str) -> dict:
-    return _jobs().get(db.key_prefix(key) or "", {})
+    return _jobs().get(db.node_key(key) or "", {})
 
 
 def jobs() -> dict:
@@ -183,7 +191,7 @@ def jobs() -> dict:
 
 
 def _record(key: str, **velden) -> None:
-    sleutel = db.key_prefix(key) or ""
+    sleutel = db.node_key(key) or ""
     if not sleutel:
         return
     data = _jobs()
@@ -203,13 +211,24 @@ def probe(host: str, key: str, label: str = "") -> dict:
     lege string, en de overkant vergelijkt die met zijn gastwachtwoord -- dat
     standaard leeg is. Geen omzeiling, gewoon de deur die openstaat.
     """
-    sleutel = db.key_prefix(key)
+    # node_key en niet key_prefix: die laatste KEURT op lengte en kort niet in,
+    # en de gehoorde lijst levert de volle 32-byte sleutel uit een advert. Dat
+    # verschil leverde rijen op met een sleutel van 64 tekens waar de rest van het
+    # systeem er 12 verwacht -- geen naamtreffer, en geen uitvraging, want de
+    # monitor adresseert op de korte vorm. Normaliseren aan de rand, hier, en niet
+    # repareren aan de andere kant.
+    sleutel = db.node_key(key)
     uit = {"ok": False, "step": "", "msg": "", "key": sleutel}
     if not sleutel or len(sleutel) < 8:
         uit.update(step="sleutel", msg="een sleutel van minstens 8 hextekens graag")
         return uit
 
-    naam = (label or "")[:30]
+    # De naam uit contacts als de aanroeper er geen meegaf. Daar staan de namen
+    # uit adverts, ook van nodes zonder repeaterrij, en ze waren dus al bekend
+    # toen deze pagina de hex als naam ging gebruiken. Geen treffer? Dan blijft
+    # het leeg, en toont de pagina de sleutel als sleutel in plaats van hem als
+    # naam te vermommen.
+    naam = (label or "").strip()[:30] or db.contact_name_for(sleutel)[:30]
 
     # De rij eerst, en dat is een ordekwestie met gevolgen. get_or_create_repeater
     # WEIGERT boven MAX_REPEATERS in plaats van te snoeien, en die weigering moet
@@ -251,7 +270,7 @@ def probe(host: str, key: str, label: str = "") -> dict:
 
 def forget(host: str, key: str) -> dict:
     """Uit de monitorlijst halen. Het grootboek houdt wat we geleerd hebben."""
-    sleutel = db.key_prefix(key)
+    sleutel = db.node_key(key)
     weg = nodeconfig.post_mon(host, {"act": "del", "key": sleutel})
     if weg["ok"]:
         _record(sleutel, result="vergeten")

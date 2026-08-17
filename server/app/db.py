@@ -559,6 +559,87 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.executescript(VIEWS)
 
 
+def _shorten_long_node_keys(conn: sqlite3.Connection) -> None:
+    """Repareer repeaterrijen met een sleutel die langer is dan NODE_KEY_HEX.
+
+    Ze zijn ontstaan doordat de uitvraagpagina de volle 32-byte sleutel uit een
+    advert doorgaf aan een controle die op lengte alleen keurt. De weg is
+    dichtgezet met ``node_key``; deze functie ruimt op wat er al staat, want die
+    rijen blijven anders zitten -- zonder naamtreffer en zonder mogelijkheid om
+    uitgevraagd te worden.
+
+    Inkorten kan botsen met een rij die de korte sleutel al heeft, en dan is
+    weggooien de juiste keus in plaats van samenvoegen. De korte rij is de
+    oudere: hij ontstond uit een bericht van de node zelf of van zijn monitor,
+    hij wordt elders aangewezen (``latest``, ``repeater_cli``, ``node_monitors``,
+    toekenningen) en hij draagt wat een beheerder erover besloten heeft. De lange
+    rij is hoogstens een paar uur oud en draagt niets dat de korte niet ook kan
+    krijgen. Alleen ``is_guest_polled`` verhuist mee, want dat is een ware
+    uitspraak over de herkomst van cijfers die nu bij de korte rij horen, en die
+    zou anders verdwijnen.
+
+    Eén ding gaat NIET mee: de naam. Die was op de lange rij de hex zelf -- dat
+    is precies het gebrek dat dit oplost -- en hem overzetten zou de goede naam
+    van de korte rij overschrijven met een sleutel.
+    """
+    try:
+        rijen = conn.execute(
+            "SELECT id, pubkey_prefix, is_guest_polled FROM repeaters "
+            "WHERE length(pubkey_prefix) > ?", (NODE_KEY_HEX,)).fetchall()
+    except sqlite3.OperationalError:
+        return                      # kolom bestaat nog niet op een oude database
+    for rij in rijen:
+        kort = node_key(rij["pubkey_prefix"])
+        if not kort:
+            continue
+        bestaand = conn.execute(
+            "SELECT id FROM repeaters WHERE pubkey_prefix=?", (kort,)).fetchone()
+        if bestaand is None:
+            conn.execute("UPDATE repeaters SET pubkey_prefix=? WHERE id=?",
+                         (kort, rij["id"]))
+            # De naam meteen mee. Op deze rijen stond de hex als naam -- dat is het
+            # gebrek dat de lange sleutel veroorzaakte -- en hij is nu wél op te
+            # zoeken. Alleen als de naam de sleutel zelf was: een naam die iemand
+            # zelf getypt heeft, blijft staan.
+            oude_naam = conn.execute("SELECT name FROM repeaters WHERE id=?",
+                                     (rij["id"],)).fetchone()["name"]
+            if (oude_naam or "").lower() in (rij["pubkey_prefix"].lower(), kort):
+                p6 = kort[:6]
+                treffer = conn.execute(
+                    "SELECT name FROM contacts WHERE prefix6=? "
+                    "ORDER BY length(prefix) DESC, updated DESC", (p6,)).fetchone()
+                if treffer and (treffer["name"] or "").strip():
+                    conn.execute("UPDATE repeaters SET name=? WHERE id=?",
+                                 (treffer["name"].strip()[:64], rij["id"]))
+                    log.info("Repeaternaam voor %s uit contacts overgenomen: %s",
+                             kort, treffer["name"])
+
+            # En terug naar verborgen, maar alleen voor een node die wij bij
+            # iemand anders zijn gaan ophalen. Dat is de standaard die voor zulke
+            # rijen geldt, en met een sleutel van 64 tekens kon niemand zien wát
+            # hij publiek zette. Dit staat luid in het logboek en in het rapport,
+            # want het is niet aan deze migratie om een keuze van de beheerder
+            # stil terug te draaien -- één klik op de pagina zet hem weer aan.
+            if rij["is_guest_polled"]:
+                was = conn.execute("SELECT is_public FROM repeaters WHERE id=?",
+                                   (rij["id"],)).fetchone()["is_public"]
+                if was:
+                    conn.execute("UPDATE repeaters SET is_public=0 WHERE id=?",
+                                 (rij["id"],))
+                    log.warning(
+                        "Repeater %s stond publiek terwijl hij zonder inloggegevens "
+                        "bij iemand anders opgehaald wordt; op verborgen gezet. "
+                        "Zet hem desgewenst met één klik weer zichtbaar.", kort)
+            log.info("Repeatersleutel ingekort naar %s", kort)
+            continue
+        if rij["is_guest_polled"]:
+            conn.execute("UPDATE repeaters SET is_guest_polled=1 WHERE id=?",
+                         (bestaand["id"],))
+        conn.execute("DELETE FROM repeaters WHERE id=?", (rij["id"],))
+        log.info("Dubbele repeaterrij met lange sleutel verwijderd; %s bestond al",
+                 kort)
+
+
 def _backfill_from_raw(conn: sqlite3.Connection) -> None:
     """Fill decoder-derived columns on packets stored before those columns existed.
 
@@ -617,6 +698,7 @@ def get_conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.executescript(SCHEMA)
         _migrate(_conn)
+        _shorten_long_node_keys(_conn)
         _backfill_from_raw(_conn)
         _conn.commit()
     return _conn
@@ -721,6 +803,44 @@ MIN_KEY_HEX = 2
 MAX_METRICS_PER_MESSAGE = 128
 MAX_NEIGHBORS_PER_MESSAGE = 512
 MAX_METRIC_NAME = 64
+
+
+# Hoe lang de sleutel van een NODE is. Zes bytes, twaalf hextekens, en dat is
+# geen keuze van ons: de firmware bouwt zijn eigen identiteit met
+# ``toHex(_node_hex, self_id.pub_key, 6)`` en publiceert onder die twaalf tekens.
+# ``contacts`` volgde dat al met ``pk[:12]``, en dat getal stond daar los in de
+# code.
+#
+# Deze constante en ``node_key`` hieronder bestaan omdat het NIET één plek was,
+# en dat kostte drie kapotte rijen. De uitvraagpagina gaf de sleutel door die uit
+# een advert komt -- de volle 32 bytes, vierenzestig tekens -- door ``key_prefix``,
+# die op lengte alleen KEURT en niet inkort. Gevolg: rijen met een sleutel van 64
+# waar de rest van het systeem er 12 verwacht, dus geen naamtreffer (de hex
+# belandde in het naamveld) en geen uitvraging (de monitor adresseert op 12).
+#
+# Dat is dezelfde fout als de hoofdletters in de MQTT-topics, in een andere
+# gedaante: één identiteit die op twee plaatsen een andere vorm heeft. Daar was
+# het antwoord onthouden in plaats van berekenen; hier is het één functie in
+# plaats van elke weg zijn eigen variant.
+NODE_KEY_HEX = 12
+
+
+def node_key(value) -> str:
+    """De sleutel van een node in de enige vorm waarin hij bewaard mag worden.
+
+    Kleine letters, hex, en afgekapt op ``NODE_KEY_HEX``. Geeft "" terug voor
+    alles wat geen sleutel is, net als ``key_prefix``, zodat een beller met een
+    zinnig alternatief dat kan gebruiken.
+
+    Het verschil met ``key_prefix`` is precies de reden dat deze functie bestaat.
+    ``key_prefix`` keurt een sleutelVOORVOEGSEL zoals het ergens langskomt -- in
+    een topic, in de payload van een opdracht -- en daar zijn langere vormen
+    legitiem; het kort dus niet in. ``node_key`` levert de IDENTITEIT van een rij,
+    en die heeft één lengte. Wie een rij aanmaakt of opzoekt, hoort deze te
+    gebruiken.
+    """
+    schoon = key_prefix(value)
+    return schoon[:NODE_KEY_HEX] if schoon else ""
 
 
 def key_prefix(value) -> str:
@@ -908,7 +1028,7 @@ def upsert_advert(pubkey: str, name: str | None = None, lat: float | None = None
     # 32-byte key in an advert. Reuse the existing row's key so both sources
     # keep converging on one row per node instead of two that shadow each other.
     row = qone("SELECT prefix, lat, lon FROM contacts WHERE prefix6=?", (prefix6,))
-    prefix = row["prefix"] if row else pk[:12]
+    prefix = row["prefix"] if row else pk[:NODE_KEY_HEX]
     if lat is None or lon is None:
         lat = lon = None
     execute(
@@ -1283,6 +1403,27 @@ def node_contacts(prefix6: str) -> list[sqlite3.Row]:
         "FROM visible_contacts WHERE prefix6=? ORDER BY length(prefix) DESC, updated DESC",
         (prefix6.lower(),),
     )
+
+
+def contact_name_for(key: str) -> str:
+    """De bekende naam van een node, of "" als er geen is.
+
+    Uit ``contacts``, want daar staan de namen die uit adverts komen -- ook van
+    nodes die hier geen repeaterrij hebben. De opzoeking loopt op ``prefix6``
+    omdat dat de kolom is waarop de tabel geïndexeerd is en waarop dezelfde node
+    onder verschillende sleutellengtes samenvalt; de langste sleutel eerst, want
+    die is het minst dubbelzinnig.
+
+    Bestaat omdat de uitvraagpagina de hex zelf als naam gebruikte toen er geen
+    treffer was. De namen waren wél bekend -- ze stonden in deze tabel -- en het
+    is niet aan een nieuwe weg om zijn eigen naamloosheid mee te brengen.
+    """
+    p6 = (key_prefix(key) or "")[:6]
+    if len(p6) < 6:
+        return ""
+    rij = qone("SELECT name FROM contacts WHERE prefix6=? "
+               "ORDER BY length(prefix) DESC, updated DESC", (p6,))
+    return (rij["name"] or "") if rij else ""
 
 
 def node_sent_by_observer(prefix6: str) -> list[sqlite3.Row]:
