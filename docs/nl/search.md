@@ -28,7 +28,9 @@ Fouten komen binnen als een 200 met een `error`-tekst op
 |---|---|---|
 | `veld:waarde` | `type:ADVERT` | Exacte match, hoofdletterongevoelig |
 | meerdere clausules | `type:ADVERT scope:scoped` | Verbonden met AND |
-| joker aan het eind | `sender:2ae7*` | Zoeken op prefix |
+| joker, begint met | `sender:2ae7*` | Alleen tekstvelden |
+| joker, eindigt op | `name:*circuit` | Alleen tekstvelden |
+| joker, bevat | `name:*circuit*` | Alleen tekstvelden |
 | vergelijking | `snr:>5`, `rssi:<=-100` | Alleen numerieke velden |
 | bereik | `len:20..40` | Aan beide kanten inclusief, alleen numerieke velden |
 | aanhalingstekens | `name:"BE-XXX-Example.VIR"` | Voor een waarde met spaties erin |
@@ -44,6 +46,45 @@ kaal `A B` als dezelfde lijst aanvaard.
 
 Uitsluiting omvat de hele clausule: `-type:(ACK OR ADVERT)` wordt
 `NOT (type = ACK OR type = ADVERT)`.
+
+### Het sterretje
+
+**Een sterretje staat voor "wat dan ook", waar het ook staat.** Eén regel in
+plaats van drie losse vormen, want wie geleerd heeft dat een sterretje "wat dan
+ook" betekent, hoeft er niet ook nog bij te leren waar het mag staan:
+
+| Zoekopdracht | LIKE-patroon | Vraagt om |
+|---|---|---|
+| `sender:2ae7*` | `2ae7%` | begint met |
+| `name:*circuit` | `%circuit` | eindigt op |
+| `name:*circuit*` | `%circuit%` | bevat |
+| `name:BE*VIR` | `BE%VIR` | beide delen, in die orde |
+
+Het werkt binnen een OR-lijst (`type:(*MSG* OR ACK)`) en binnen een uitsluiting
+(`-name:*test*`) net als elke andere waarde.
+
+**Alleen tekstvelden.** Bevat-zoeken op een getal zegt niets — `snr:*5*` zou
+vragen om een signaalsterkte met ergens een vijf in de decimale notatie — dus een
+sterretje op een getalveld is een fout, en de melding gaat over het sterretje in
+plaats van over een waarde die geen getal is. `Field.kind` is de hele regel; er is
+geen tweede lijst veldnamen die daarvan weg zou kunnen driften. Getalvelden hebben
+in de plaats daarvan vergelijkingen en bereiken, en dat is wat iemand die naar
+`snr:*5*` grijpt eigenlijk wilde.
+
+Een sterretje gaat wél boven het bevat-gedrag van `name` en `path`: zonder
+sterretje is `name:BE-HSS` al `%BE-HSS%`, omdat die kolom een hooiberg is, maar
+`name:BE-HSS*` ankert aan het begin. De bezoeker heeft dan zelf gezegd waar de
+match moet zitten, en dat antwoord gaat voor op de standaard van de kolom.
+
+**Bij `name` en `path` ankert een anker de hooiberg, niet één naam.** `name` is
+`c.name || ' ' || o.name`, dus `name:BE-HSS*` matcht wanneer de naam van de
+*afzender* zo begint, en `name:*VIR` wanneer de naam van de *waarnemer* daarop
+eindigt — en heeft die waarnemer helemaal geen naam, dan eindigt de uitdrukking op
+de scheidingsspatie en eindigt er niets op `VIR`. `path` doet hetzelfde rond zijn
+kommagescheiden hoplijst, waar "begint met" de eerste hop betekent. Beide zijn
+eerlijke lezingen van "dit veld begint hiermee", en beide zijn makkelijk aan te
+zien voor "een van de twee namen begint hiermee". `name:*BE-HSS*` is de vorm die
+de vraag stelt die mensen doorgaans bedoelen.
 
 ## Velden
 
@@ -119,8 +160,10 @@ pakkettentabel niet heeft.
 kolommen — `snr` erbij zou betekenen dat `5` intypen op een signaalsterkte matcht,
 en dat is nooit wat iemand met een los woord in een zoekvak bedoelt.
 
-Een vrije term is altijd bevat-zoeken; een `*` aan het eind wordt eraf gehaald in
-plaats van geweigerd.
+Een vrije term is altijd bevat-zoeken, dus een sterretje aan een van de uiteinden
+voegt niets toe en wordt eraf gehaald in plaats van geweigerd: `Jessa`, `Jessa*`
+en `*Jessa*` leveren hetzelfde patroon op. Een sterretje in het midden is geen
+versiering en houdt zijn betekenis — `BE*VIR` wordt `%BE%VIR%`.
 
 ## Sorteren
 
@@ -229,6 +272,17 @@ underscore zoekt — waar elke nodenaam vol mee staat — stilzwijgend een joker
 één teken krijgen, en zou het resultaat eruitzien als een werkende zoekopdracht
 die net iets verkeerde rijen teruggeeft.
 
+**Het sterretje van de bezoeker wordt ná die escaping omgezet, nooit ervoor.** De
+twee gebruiken hetzelfde mechanisme, dus de orde is wat ze uit elkaar houdt:
+`_escape_like()` produceert enkel `\`, `%` en `_`, nooit een sterretje, dus niets
+van wat die functie afgeeft kan achteraf gelezen worden als een joker die iemand
+gevraagd heeft — en een getypt `%` is al onschadelijk gemaakt op het ogenblik dat
+de sterretjes `%` worden. De omgekeerde orde zou een getypt `%` in een joker
+veranderen, en zou `name:*_*` laten zoeken naar drie willekeurige tekens in plaats
+van naar een letterlijke underscore tussen twee jokers.
+`server/tests/test_search.py` test dat geval tegen echte SQLite, want het is een
+afspraak met de database en niet met een string.
+
 Al het overige is een gebonden parameter. De enige teksten die in SQL
 geïnterpoleerd worden, zijn kolomexpressies uit `FIELDS`, `SORTS` en
 `REGION_SQL`.
@@ -247,7 +301,8 @@ benoemen het probleem in plaats van de parser:
 | Niet-gesloten haakje | `Een haakje is niet gesloten.` |
 | Haakjes zonder veld | `Haakjes horen bij een veld, zoals type:(ADVERT OR ACK).` |
 | Lege lijst | `Veld 'type' heeft een lege lijst.` |
-| Alleen een sterretje als waarde | `Veld 'sender' heeft alleen een sterretje als waarde.` |
+| Alleen sterretjes als waarde | `Veld 'sender' heeft alleen sterretjes als waarde.` |
+| Een sterretje op een veld dat geen tekst is | `Een sterretje werkt alleen op tekstvelden, en 'snr' is een getalveld.` |
 | Niet-numerieke waarde op een numeriek veld | `Veld 'snr' is een getal, en 'abc' is dat niet.` |
 | Omgekeerd bereik | `Bereik voor 'len' loopt achteruit: 40..20.` |
 | Onbekende sorteersleutel | `Sorteren op 'foo' kan niet. Wel mogelijk: …` |

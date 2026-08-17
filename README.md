@@ -36,6 +36,7 @@ Kibana-style query bar:
 ```
 type:ADVERT scope:scoped           snr:>5  len:20..40
 sender:2ae7*  -type:ACK            type:(ADVERT OR TXT_MSG)
+name:circuit*  name:*circuit       name:*circuit*
 ```
 
 Sortable on every visible column, with a readable detail panel per packet and

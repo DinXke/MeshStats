@@ -61,9 +61,19 @@
       <div class="archhelp-body">
         <p class="muted small" data-i18n="arch.help_syntax">
           Clausules met een spatie ertussen moeten allemaal gelden. <code>veld:waarde</code> zoekt exact,
-          <code>2ae7*</code> op prefix, <code>-type:ACK</code> sluit uit, <code>type:(ADVERT OR ACK)</code> is een van beide,
+          <code>-type:ACK</code> sluit uit, <code>type:(ADVERT OR ACK)</code> is een van beide,
           aanhalingstekens voor een waarde met spaties.
           Een los woord zoekt in namen, sleutels, type, bereik en land.</p>
+        <!-- De joker heeft om dezelfde reden een alinea van zichzelf als de
+             vergelijkingen hieronder: hij stond als <code>2ae7*</code> "op
+             prefix" middenin de zin erboven, en wie een deeltekst binnen één
+             veld zocht las eroverheen en typte dan iets dat nul treffers gaf. -->
+        <p class="muted small" data-i18n="arch.help_wildcards">
+          Een sterretje staat voor “wat dan ook” en mag overal in een tekstveld staan:
+          <code>name:BE-HSS*</code> begint ermee, <code>name:*circuit</code> eindigt erop,
+          <code>name:*circuit*</code> bevat het.
+          Een los woord zoekt altijd al op bevatten; het sterretje is er om dat binnen één veld te doen.
+          Getalvelden nemen geen sterretje — daar zijn groter en kleiner dan voor.</p>
         <!-- Vergelijkingen hebben een alinea van zichzelf gekregen: ze stonden
              als losse voorbeelden middenin de zin hierboven, en wie op zoek was
              naar "pakketten met meer dan drie hops" las eroverheen. Wat een

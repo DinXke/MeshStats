@@ -10,7 +10,9 @@ Syntax
 
     type:ADVERT                     one field equals one value
     type:ADVERT scope:scoped        several clauses, all of which must hold
-    sender:2ae7*                    trailing wildcard
+    sender:2ae7*                    wildcard: starts with
+    name:*circuit                   wildcard: ends with
+    name:*circuit*                  wildcard: contains
     snr:>5  rssi:<=-100             comparison, numeric fields only
     len:20..40                      range, numeric fields only
     name:"BE-HSS-JessaZH.VIR"       quotes, for a value with spaces in it
@@ -304,22 +306,48 @@ def _field_clause(name: str, value: str) -> tuple[str, list]:
 
 
 def _single(name: str, field: Field, column: str, value: str) -> tuple[str, list]:
+    # A star is a text thing, so it is refused before the kinds are told apart:
+    # otherwise 'snr:*5*' would be reported as "that is not a number", which is
+    # true but tells the reader nothing about the star they typed. The field
+    # table decides -- ``kind`` is the whole rule -- rather than a second list of
+    # names that could drift away from it.
+    if "*" in value and field.kind != _TEXT:
+        soort = "getalveld" if field.kind == _NUM else "tijdveld"
+        raise QueryError(f"Een sterretje werkt alleen op tekstvelden, en "
+                         f"'{name}' is een {soort}.")
+
     if field.kind == _NUM:
         return _numeric(name, column, value)
 
     if field.kind == _TS:
         return f"{column} >= ?", [value]
 
-    # Text. A trailing star is a prefix search, which is how a visitor asks for
-    # "every node whose key starts with these characters".
-    if value.endswith("*"):
-        stem = value[:-1]
-        if not stem:
-            raise QueryError(f"Veld '{name}' heeft alleen een sterretje als waarde.")
-        return f"{column} LIKE ? ESCAPE '\\'", [_escape_like(stem) + "%"]
+    # Text. A star stands for "anything", wherever it sits: 'sender:2ae7*'
+    # starts with, 'name:*circuit' ends with, 'name:*circuit*' contains. One
+    # rule for all three positions rather than three cases, because a visitor
+    # who has learned that a star means "anything" then does not have to learn
+    # where it is allowed to stand.
+    if "*" in value:
+        if not value.strip("*"):
+            raise QueryError(f"Veld '{name}' heeft alleen sterretjes als waarde.")
+        # Escape first, translate second, and in that order: escaping only ever
+        # produces \, % and _, never a star, so no star it emits can be mistaken
+        # for the visitor's own. The reverse order would turn a typed % into a
+        # wildcard. This is what keeps 'name:*_*' a search for a literal
+        # underscore between two wildcards, which is the point of _escape_like.
+        return (f"{column} LIKE ? ESCAPE '\\'",
+                [_escape_like(value).replace("*", "%")])
     # 'name' and 'path' are haystacks -- several names in one expression, a
     # comma-separated hop list -- so an exact match on the whole column would
-    # never hit. They match on containment; the rest match exactly.
+    # never hit. They match on containment; the rest match exactly. A value with
+    # a star in it is the exception to both: there the visitor said where the
+    # match should be anchored, and that answer wins over the column's default.
+    # For these two that anchor lands on the haystack rather than on one name --
+    # 'name:BE*' is the sender's name, 'name:*VIR' the observer's -- which is an
+    # honest reading of "this field starts with" and still easy to mistake for
+    # "either name". Documented in docs/search.md rather than papered over here:
+    # splitting the expression per name would change what 'name:x' has always
+    # meant, which is a separate decision from adding the star.
     if name in ("name", "path"):
         return f"{column} LIKE ? ESCAPE '\\'", ["%" + _escape_like(value) + "%"]
     return f"{column} = ? COLLATE NOCASE", [value]
@@ -351,7 +379,11 @@ def _free_text(value: str) -> tuple[str, list]:
     """A bare word: containment across the identifying columns."""
     if value.startswith("(") and value.endswith(")"):
         raise QueryError("Haakjes horen bij een veld, zoals type:(ADVERT OR ACK).")
-    like = "%" + _escape_like(value.rstrip("*")) + "%"
+    # A bare word is containment already, so a star on either end adds nothing
+    # and is dropped rather than refused -- 'Jessa*' and '*Jessa*' both mean what
+    # 'Jessa' already meant. A star in the middle is not a decoration and does
+    # keep its meaning: 'BE*VIR' asks for the two parts in that order.
+    like = "%" + _escape_like(value.strip("*")).replace("*", "%") + "%"
     subs = [f"COALESCE({col}, '') LIKE ? ESCAPE '\\'" for col in FREE_TEXT_FIELDS]
     return "(" + " OR ".join(subs) + ")", [like] * len(FREE_TEXT_FIELDS)
 
@@ -362,6 +394,13 @@ def _escape_like(value: str) -> str:
     Without this a visitor searching for a literal underscore -- which every
     node name is full of -- would silently get a single-character wildcard, and
     the result would look like a working search returning slightly wrong rows.
+
+    The star a visitor may type is deliberately *not* handled here: it is
+    translated to ``%`` by the caller, after this function has run. That order is
+    what keeps the two apart. This function emits only ``\\``, ``%`` and ``_``,
+    never a star, so nothing it produces can be read back as a wildcard the
+    visitor asked for -- and a typed ``%`` is already neutralised by the time the
+    stars are translated.
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 

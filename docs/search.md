@@ -27,7 +27,9 @@ why that is not a 4xx.
 |---|---|---|
 | `field:value` | `type:ADVERT` | Exact match, case-insensitive |
 | several clauses | `type:ADVERT scope:scoped` | Joined with AND |
-| trailing wildcard | `sender:2ae7*` | Prefix search |
+| wildcard, starts with | `sender:2ae7*` | Text fields only |
+| wildcard, ends with | `name:*circuit` | Text fields only |
+| wildcard, contains | `name:*circuit*` | Text fields only |
 | comparison | `snr:>5`, `rssi:<=-100` | Numeric fields only |
 | range | `len:20..40` | Inclusive at both ends, numeric fields only |
 | quotes | `name:"BE-XXX-Example.VIR"` | For a value containing spaces |
@@ -43,6 +45,45 @@ rules nobody would remember. Inside the parentheses both `A OR B` and a plain
 
 Negation wraps the whole clause: `-type:(ACK OR ADVERT)` becomes
 `NOT (type = ACK OR type = ADVERT)`.
+
+### The star
+
+**A star stands for "anything", wherever it sits.** One rule rather than three
+separate forms, because a visitor who has learned that a star means "anything"
+should not then have to learn where it is allowed to stand:
+
+| Query | LIKE pattern | Asks for |
+|---|---|---|
+| `sender:2ae7*` | `2ae7%` | starts with |
+| `name:*circuit` | `%circuit` | ends with |
+| `name:*circuit*` | `%circuit%` | contains |
+| `name:BE*VIR` | `BE%VIR` | both parts, in that order |
+
+It works inside an OR list (`type:(*MSG* OR ACK)`) and inside a negation
+(`-name:*test*`) like any other value.
+
+**Text fields only.** A containment match on a number says nothing — `snr:*5*`
+would be asking for a signal strength with a five somewhere in its decimal
+notation — so a star on a numeric field is an error, and the message is about the
+star rather than about the value not being a number. `Field.kind` is the whole
+rule; there is no second list of field names that could drift away from it.
+Numeric fields have comparisons and ranges instead, which is what somebody
+reaching for `snr:*5*` actually wanted.
+
+A star does override the containment default of `name` and `path`: without one,
+`name:BE-HSS` is already `%BE-HSS%` because the column is a haystack, but
+`name:BE-HSS*` anchors at the start. The visitor said where the match belongs,
+and that answer wins over the column's default.
+
+**On `name` and `path`, an anchor anchors the haystack, not one name.** `name` is
+`c.name || ' ' || o.name`, so `name:BE-HSS*` matches when the *sender's* name
+starts that way, and `name:*VIR` matches when the *observer's* name ends that way
+— and when the observer has no name at all the expression ends in the separator
+space, so nothing ends with `VIR`. `path` behaves the same way around its
+comma-separated hop list, where "starts with" means the first hop. Both are
+honest readings of "the field starts with this", and both are easy to mistake for
+"either name starts with this". `name:*BE-HSS*` is the form that asks the
+question people usually mean.
 
 ## Fields
 
@@ -114,8 +155,10 @@ not have.
 columns only — adding `snr` would mean typing `5` matched a signal strength,
 which is never what somebody means by a loose word in a search box.
 
-A bare word is always containment; a trailing `*` on one is stripped rather than
-refused.
+A bare word is always containment, so a star on either end adds nothing and is
+stripped rather than refused: `Jessa`, `Jessa*` and `*Jessa*` produce the same
+pattern. A star in the middle is not a decoration and keeps its meaning —
+`BE*VIR` becomes `%BE%VIR%`.
 
 ## Sorting
 
@@ -220,6 +263,16 @@ it a visitor searching for a literal underscore — which every node name is ful
 of — would silently get a single-character wildcard, and the result would look
 like a working search returning slightly wrong rows.
 
+**The visitor's star is translated after that escaping, never before.** The two
+use the same mechanism, so the order is what keeps them apart: `_escape_like()`
+only ever emits `\`, `%` and `_`, never a star, so nothing it produces can be
+read back as a wildcard somebody asked for — and a typed `%` is already
+neutralised by the time the stars become `%`. The reverse order would turn a
+typed `%` into a wildcard, and would leave `name:*_*` searching for three
+arbitrary characters instead of for a literal underscore between two wildcards.
+`server/tests/test_search.py` asserts that case against real SQLite, because it
+is an agreement with the database rather than with a string.
+
 Everything else is a bound parameter. The only strings interpolated into SQL are
 column expressions from `FIELDS`, `SORTS` and `REGION_SQL`.
 
@@ -237,7 +290,8 @@ problem rather than the parser:
 | Unclosed parenthesis | `Een haakje is niet gesloten.` |
 | Parentheses without a field | `Haakjes horen bij een veld, zoals type:(ADVERT OR ACK).` |
 | Empty list | `Veld 'type' heeft een lege lijst.` |
-| Only a star as a value | `Veld 'sender' heeft alleen een sterretje als waarde.` |
+| Only stars as a value | `Veld 'sender' heeft alleen sterretjes als waarde.` |
+| A star on a non-text field | `Een sterretje werkt alleen op tekstvelden, en 'snr' is een getalveld.` |
 | Non-numeric value on a numeric field | `Veld 'snr' is een getal, en 'abc' is dat niet.` |
 | Reversed range | `Bereik voor 'len' loopt achteruit: 40..20.` |
 | Unknown sort key | `Sorteren op 'foo' kan niet. Wel mogelijk: …` |

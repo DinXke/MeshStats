@@ -37,6 +37,55 @@ def test_joker_achteraan_wordt_prefixzoekopdracht():
     assert q.params == ["2ae7%"]
 
 
+def test_joker_vooraan_zoekt_op_het_einde():
+    q = search.parse("name:*circuit")
+    assert q.sql == ("COALESCE(c.name, '') || ' ' || COALESCE(o.name, '')"
+                     " LIKE ? ESCAPE '\\'")
+    assert q.params == ["%circuit"]
+
+
+def test_joker_aan_beide_kanten_zoekt_op_bevatten():
+    # De vorm waar het om gevraagd is: binnen één veld een deeltekst zoeken.
+    # Zonder dit stond er een sterretje letterlijk in het patroon en gaf de
+    # zoekopdracht nul treffers zonder te klagen -- geen foutmelding, geen
+    # resultaat, en niets dat verklaarde waarom.
+    q = search.parse("name:*circuit*")
+    assert q.params == ["%circuit%"]
+    # Ook op een gewoon veld dat anders exact matcht.
+    q = search.parse("type:*MSG*")
+    assert q.sql == "p.payload_name LIKE ? ESCAPE '\\'"
+    assert q.params == ["%MSG%"]
+
+
+def test_joker_in_het_midden_houdt_de_volgorde_vast():
+    # Eén regel voor alle standen van het sterretje: het staat voor "wat dan
+    # ook", waar het ook zit.
+    assert search.parse("name:BE*VIR").params == ["BE%VIR"]
+
+
+def test_joker_werkt_ook_binnen_een_or_lijst():
+    q = search.parse("type:(*MSG* OR ACK)")
+    assert q.sql == ("(p.payload_name LIKE ? ESCAPE '\\'"
+                     " OR p.payload_name = ? COLLATE NOCASE)")
+    assert q.params == ["%MSG%", "ACK"]
+
+
+def test_joker_mag_niet_op_een_getalveld():
+    # Bevatten op een getal is zinloos, en de melding moet over het sterretje
+    # gaan -- niet over "dit is geen getal", wat waar is maar niets uitlegt over
+    # wat er getypt werd.
+    for tekst in ("snr:*5*", "hops:3*", "region:*7"):
+        with pytest.raises(search.QueryError) as err:
+            search.parse(tekst)
+        assert "sterretje" in str(err.value), tekst
+        assert "tekstveld" in str(err.value), tekst
+    # Het veld wordt bij naam genoemd, en het soort waar het op stukloopt.
+    with pytest.raises(search.QueryError) as err:
+        search.parse("snr:*5*")
+    assert "snr" in str(err.value)
+    assert "getalveld" in str(err.value)
+
+
 def test_uitsluiting_met_min_en_not():
     # Beide spellingen moeten dezelfde ontkenning opleveren.
     for tekst in ("-type:ACK", "NOT type:ACK", "not type:ACK"):
@@ -94,8 +143,11 @@ def test_vrije_tekst_zoekt_over_de_tekstvelden():
     q = search.parse("2ae7")
     assert q.sql.count(" OR ") == len(search.FREE_TEXT_FIELDS) - 1
     assert q.params == ["%2ae7%"] * len(search.FREE_TEXT_FIELDS)
-    # Een joker achteraan voegt bij bevatten-zoeken niets toe en verdwijnt.
+    # Een joker aan de rand voegt bij bevatten-zoeken niets toe en verdwijnt.
     assert search.parse("2ae7*").params == search.parse("2ae7").params
+    assert search.parse("*2ae7*").params == search.parse("2ae7").params
+    # Een joker in het midden zegt wél iets en blijft dus staan.
+    assert search.parse("BE*VIR").params[0] == "%BE%VIR%"
 
 
 def test_region_gebruikt_de_afleiding_uit_scope_codes():
@@ -134,6 +186,35 @@ def test_underscore_in_naam_is_letterlijk():
     assert search.parse(r"name:a\b").params == ["%a\\\\b%"]
 
 
+def test_joker_en_underscore_raken_niet_in_de_knoop():
+    # Het gevoelige geval: de joker van de gebruiker en de escaping van LIKE
+    # gebruiken hetzelfde mechanisme. 'name:*_*' hoort een letterlijke
+    # underscore te zoeken met aan weerskanten "wat dan ook", niet drie keer
+    # "één willekeurig teken". Getest tegen echte SQLite, want dit is een
+    # afspraak met de database en niet met een string.
+    q = search.parse("name:*_*")
+    assert q.params == ["%\\_%"]
+
+    con = sqlite3.connect(":memory:")
+    def matcht(tekst, patroon):
+        return con.execute("SELECT ? LIKE ? ESCAPE '\\'",
+                           (tekst, patroon)).fetchone()[0]
+    assert matcht("BE-HSS_JessaZH", q.params[0]) == 1
+    assert matcht("BE-HSS.JessaZH", q.params[0]) == 0
+
+    # En een getypt procentteken blijft een procentteken, ook naast een joker.
+    q = search.parse('name:"*50%*"')
+    assert q.params == ["%50\\%%"]
+    assert matcht("korting 50% erop", q.params[0]) == 1
+    assert matcht("korting 5012 erop", q.params[0]) == 0
+
+    # Een underscore aan de rand van een prefixzoekopdracht net zo.
+    q = search.parse("sender:node_*")
+    assert q.params == ["node\\_%"]
+    assert matcht("node_a", q.params[0]) == 1
+    assert matcht("nodeXa", q.params[0]) == 0
+
+
 def test_onbekend_veld_is_een_fout_met_veldenlijst():
     with pytest.raises(search.QueryError) as err:
         search.parse("veldje:x")
@@ -157,6 +238,8 @@ def test_onzin_is_altijd_een_fout_nooit_stilte():
         "(ADVERT OR ACK)",      # haakjes zonder veld
         "type:()",              # lege lijst
         "sender:*",             # joker zonder stam
+        "sender:**",            # ook twee jokers zijn nog geen zoekterm
+        "snr:*5*",              # joker op een getalveld
     ]
     for tekst in onzin:
         with pytest.raises(search.QueryError):

@@ -38,6 +38,7 @@ doorzoekbaar met een Kibana-achtige zoekbalk:
 ```
 type:ADVERT scope:scoped           snr:>5  len:20..40
 sender:2ae7*  -type:ACK            type:(ADVERT OR TXT_MSG)
+name:circuit*  name:*circuit       name:*circuit*
 ```
 
 Sorteerbaar op elke zichtbare kolom, met een leesbaar detailvenster per pakket en
