@@ -1115,7 +1115,7 @@ def monitors(host: str) -> dict:
     welk. Precies genoeg om de modus te tonen en te weinig om er iets mee te
     kunnen, wat de juiste hoeveelheid is.
     """
-    out = {"ok": False, "error": "", "entries": [], "heard": []}
+    out = {"ok": False, "error": "", "entries": [], "heard": [], "interval": None}
     if not (host or "").strip():
         out["error"] = "geen beheeradres"
         return out
@@ -1129,8 +1129,14 @@ def monitors(host: str) -> dict:
     except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
         out["error"] = f"niet bereikbaar ({type(exc).__name__})"
         return out
+    # 'iv' is het pollinterval van deze monitor in seconden, en het hoort hier mee
+    # terug omdat het de enige plek is waar het langskomt: het staat op de node en
+    # nergens in onze databank. Het is per MONITOR en niet per node -- de firmware
+    # kent geen ronde van één node -- en dat maakt het de enige knop die er over
+    # het ritme van het uitvragen te draaien valt.
     out.update(ok=True, entries=list(data.get("mon") or data.get("entries") or []),
-               heard=list(data.get("heard") or []))
+               heard=list(data.get("heard") or []),
+               interval=data.get("iv"))
     return out
 
 
@@ -1184,6 +1190,32 @@ def rights_for(monitor_host: str, target_key: str) -> dict:
     return uit
 
 
+def post_mon(host: str, velden: dict) -> dict:
+    """Eén wijziging in de monitorlijst van een node. Smalle netwerkgrens.
+
+    Alle acties van ``/api/mon`` lopen hierlangs -- add, del, pass, poll -- zodat
+    er één plek is die de fouten van die grens in woorden omzet, en één plek die
+    een test kan vervangen. Dezelfde afspraak als bij ``push`` en
+    ``publish_command``, en om dezelfde reden.
+
+    De firmware handelt één monitorwijziging per lus af. Twee verzoeken vlak
+    achter elkaar kunnen dus op "previous change not applied yet" stuiten; dat is
+    geen fout van deze kant en de beller hoort er ruimte tussen te laten.
+    """
+    uit = {"ok": False, "error": ""}
+    body = urllib.parse.urlencode(velden).encode()
+    try:
+        with _open(host, "/api/mon", data=body) as resp:
+            resp.read()
+        uit["ok"] = True
+    except urllib.error.HTTPError as exc:
+        uit["error"] = ("aanmelden geweigerd door de node" if exc.code == 401
+                        else f"node antwoordde HTTP {exc.code}")
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        uit["error"] = f"node niet bereikbaar ({type(exc).__name__})"
+    return uit
+
+
 def push_monitor_password(monitor_host: str, target_key: str, password: str) -> dict:
     """Het wachtwoord van een doelnode aan de monitor geven. En dan vergeten.
 
@@ -1195,16 +1227,4 @@ def push_monitor_password(monitor_host: str, target_key: str, password: str) -> 
     wachtwoord en zet de monitor terug op de ACL-weg, wat de aanbevolen manier
     is. Vandaar dat hier niet op leegte gecontroleerd wordt.
     """
-    uit = {"ok": False, "error": ""}
-    body = urllib.parse.urlencode({"act": "pass", "key": target_key,
-                                   "pass": password}).encode()
-    try:
-        with _open(monitor_host, "/api/mon", data=body) as resp:
-            resp.read()
-        uit["ok"] = True
-    except urllib.error.HTTPError as exc:
-        uit["error"] = ("aanmelden geweigerd door de monitor" if exc.code == 401
-                        else f"monitor antwoordde HTTP {exc.code}")
-    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
-        uit["error"] = f"monitor niet bereikbaar ({type(exc).__name__})"
-    return uit
+    return post_mon(monitor_host, {"act": "pass", "key": target_key, "pass": password})

@@ -1,0 +1,243 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Uitvragen — beheer — {{ site_name }}{% endblock %}
+{% block admin %}
+<h1>Uitvragen zonder inloggegevens</h1>
+
+<p class="muted">
+  Van een repeater die niet van jou is valt meer op te halen dan je zou denken:
+  de volledige statustelling, zijn burenlijst en zijn accuspanning en
+  chiptemperatuur — zonder wachtwoord. Dat kan omdat MeshCore het toestaat en
+  niet omdat er iets omzeild wordt: het gastwachtwoord is standaard leeg, een leeg
+  wachtwoord matcht erop, en een gast krijgt de status zonder rechtencontrole.
+  De CLI blijft dicht, dus er valt niets te <em>zetten</em> — dat is door de
+  overkant afgedwongen.
+</p>
+
+{% if outcome %}
+<div class="card notice">
+  {% if outcome.ok %}<strong>Gestart.</strong>{% else %}<strong>Niet gestart.</strong>{% endif %}
+  {{ outcome.msg }}
+  {% if outcome.ok %}
+  Het antwoord komt niet meteen: de afzender loopt zijn ronde af en publiceert
+  daarna. Ververs deze pagina over een minuut of twee.
+  {% endif %}
+</div>
+{% endif %}
+
+{% if sender.rep is none %}
+<div class="card">
+  <p class="muted small">
+    <strong>Niets om het mee te versturen.</strong>
+    {%- if sender.blocker == "no_credentials" %}
+    De server heeft geen weblogin voor de beheerpagina's van de nodes
+    (<code>MM_FW_NODE_USER</code> / <code>MM_FW_NODE_PASS</code>). Uitvragen loopt over
+    <code>/api/mon</code> op de afzender, en zonder die login is er geen weg naar zijn
+    monitorlijst.
+    {%- else %}
+    Er is geen node met onze firmware én een beheeradres. Een uitvraging vertrekt
+    vanaf zo'n node — hij doet het werk over LoRa, wij vragen het hem over IP.
+    {%- endif %}
+  </p>
+</div>
+{% else %}
+
+<div class="card">
+  <p class="small">
+    Verzoeken vertrekken vanaf <a href="/admin/repeaters/{{ sender.rep.id }}">{{ sender.rep.name }}</a>
+    <span class="mono muted">{{ sender.rep.pubkey_prefix }}</span>.
+    {% if sender.candidates | length > 1 %}
+    Er zijn {{ sender.candidates | length }} nodes die dit kunnen; voorlopig wordt de
+    eerste gebruikt. Een keuze met volgorde en terugval komt later.
+    {% else %}
+    Dat is voorlopig de enige node die dit kan.
+    {% endif %}
+  </p>
+
+  {#- Kosten vóór de klik en niet erna. En eerlijk over het lastige deel: de
+      firmware kent geen poll van één node, dus een uitvraging neemt élke
+      gemonitorde node mee in de ronde. -#}
+  {% if cost and cost.ok %}
+  <p class="muted small">
+    <strong>Wat het kost.</strong> Een uitvraging start een pollronde, en die loopt de
+    hele monitorlijst af — de firmware kent geen ronde van één node. Met
+    {{ cost.monitored }} gemonitorde node(s) erbij wordt dat
+    <strong>{{ cost.nodes }} node(s), {{ cost.requests }} verzoeken</strong> over LoRa, en
+    in het slechtste geval <strong>{{ (cost.worst_secs / 60) | round(1) }} minuten</strong>
+    waarin de mesh-machinerie van die node bezig is. Dat slechtste geval is precies wat
+    je aan het uitproberen bent: een node die antwoordt is in seconden klaar, een node
+    die zwijgt kost de volle wachttijd.
+  </p>
+  {% endif %}
+</div>
+
+<section>
+  <h2>Hoe vaak</h2>
+  <div class="card">
+    {#- Per monitor en niet per node, en dat is de vorm van de firmware en niet
+        onze keuze: MA_POLL zet _mon_next_round en de ronde loopt de hele lijst
+        af. Er bestaat geen ronde van één node, dus er bestaat geen interval van
+        één node. Een per-node-veld hierboven zou iets beloven wat de firmware
+        niet kan doen. -#}
+    <p class="muted small">
+      Herhaald uitvragen hoeft niet gepland te worden: <strong>{{ sender.rep.name }} doet
+      het zelf</strong>. Hij loopt zijn hele monitorlijst af op zijn eigen interval, en dat
+      interval geldt <strong>per monitor en niet per node</strong> — de firmware kent geen
+      ronde van één node. Wat per node wél bestaat is aan of uit: in de lijst staan, of
+      eruit met <em>Vergeten</em>.
+    </p>
+    <form method="post" action="/admin/discovery/interval" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Elke
+        <input type="number" name="secs" min="60" max="65535" step="60"
+               value="{{ poll_iv.secs if poll_iv and poll_iv.secs else 900 }}" required>
+        seconden
+      </label>
+      <button type="submit">Opslaan</button>
+    </form>
+    <p class="muted small">
+      Ondergrens 60 s, want daar klemt de firmware zelf. Elke ronde is een
+      LoRa-heen-en-weer per gemonitorde node op een gedeelde band; korter betekent niet
+      meer weten maar vaker vragen.
+    </p>
+  </div>
+</section>
+
+<section>
+  <h2>Wie wil je uitvragen?</h2>
+  <div class="card">
+    <p class="muted small">
+      Jij wijst aan. Er is met opzet geen knop die alles aanklopt wat deze node ooit
+      gehoord heeft: het gaat om andermans apparatuur op een gedeelde band, en een
+      site die dat op eigen initiatief doet is niet nieuwsgierig maar onbeschoft.
+    </p>
+
+    {% if not heard.ok %}
+    <p class="muted small"><strong>Gehoorde lijst niet op te halen:</strong>
+      {{ heard.error or "onbekend" }}.</p>
+    {% elif not heard.entries %}
+    <p class="muted small">Deze afzender heeft nog geen andere repeaters gehoord.</p>
+    {% else %}
+    <table>
+      <thead><tr><th>Node</th><th>Sleutel</th><th>Gehoord</th><th></th></tr></thead>
+      <tbody>
+      {% for h in heard.entries %}
+      <tr>
+        <td>{{ h.name or "—" }}</td>
+        <td class="mono small">{{ h.key[:12] }}</td>
+        <td class="small">
+          {%- if h.cached %}<span class="muted" title="Uit een bewaarde advert; niet deze keer gehoord">uit advert</span>
+          {%- elif h.snr is not none %}SNR {{ h.snr }}
+          {%- else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td>
+          {% if h.already %}
+          <span class="muted small">staat al in de lijst</span>
+          {% else %}
+          <form method="post" action="/admin/discovery/probe" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="key" value="{{ h.key }}">
+            <input type="hidden" name="label" value="{{ h.name }}">
+            <button type="submit">Uitvragen</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    <form method="post" action="/admin/discovery/probe" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Of plak een publieke sleutel
+        <input name="key" placeholder="hex, minstens 8 tekens" autocomplete="off" required>
+      </label>
+      <label>Naam (optioneel)
+        <input name="label" maxlength="30" autocomplete="off">
+      </label>
+      <button type="submit">Uitvragen</button>
+    </form>
+  </div>
+</section>
+
+{% if jobs %}
+<section>
+  <h2>Wat er terugkwam</h2>
+  {% for key, job in jobs.items() %}
+  <div class="card">
+    <h3>
+      {{ job.name or "(zonder naam)" }}
+      <span class="mono muted small">{{ key[:12] }}</span>
+    </h3>
+    <p class="small">
+      <strong>
+        {%- if job.result == "antwoord binnen" %}Antwoord binnen
+        {%- elif job.result == "gevraagd" %}Gevraagd, nog geen oordeel
+        {%- elif job.result == "vergeten" %}Uit de monitorlijst gehaald
+        {%- else %}Geen antwoord — {{ job.result }}{% endif %}
+      </strong>
+      {% if job.asked %}—
+      <time class="reltime" datetime="{{ job.asked }}">{{ job.asked }}</time>{% endif %}
+    </p>
+
+    {#- De drie stiltes, en ze zien er niet identiek uit als je de monitor ernaar
+        vraagt: de loginuitkomst plus de gehoorde lijst scheiden ze. Alleen de
+        middelste is een vermoeden, en dat staat er dan ook zo bij. -#}
+    {% if job.result == "buiten bereik" %}
+    <p class="muted small">De login werd niet beantwoord en we horen zijn adverts niet.
+      Dat wijst op bereik en niet op rechten — een radioprobleem, geen instelling.</p>
+    {% elif job.result == "gastwachtwoord ingesteld" %}
+    <p class="muted small">De login werd niet beantwoord terwijl we zijn adverts wél
+      binnenkrijgen. Hij is er dus, en hij laat ons niet binnen: de eigenaar heeft
+      <code>set guest.password</code> gedraaid, of hij werkt met een toegangslijst waar wij
+      niet in staan. Dat is een vermoeden en geen zekerheid — dat we hem horen bewijst
+      dat hij bestaat, niet waaróm hij zwijgt.</p>
+    {% elif job.result == "niet ondersteund" %}
+    <p class="muted small">De login lukte en daarna kwam er niets. Dat is ongewoon: een
+      gast hoort de status te krijgen zonder rechtencontrole. Vermoedelijk oudere
+      firmware of een variant die deze aanvraag niet kent.</p>
+    {% endif %}
+
+    {% set res = results.get(key) %}
+    {% if res and res.metrics %}
+    <table>
+      <thead><tr><th>Meting</th><th>Waarde</th><th>Gelezen</th></tr></thead>
+      <tbody>
+      {% for naam, rij in res.metrics.items() | sort %}
+      <tr>
+        <td class="mono small">{{ naam }}</td>
+        <td class="mono">{% if rij.value is not none %}{{ rij.value }}{% else %}{{ rij.value_str }}{% endif %}</td>
+        <td class="small"><time class="reltime" datetime="{{ rij.ts }}">{{ rij.ts }}</time></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted small">
+      Dit is wat een gast krijgt. Externe sensoren blijven achter: de firmware zet
+      <code>perm_mask</code> op nul voor een gast, dus alleen de basistelemetrie komt mee.
+      <br>
+      Deze node staat als <strong>opgehaald</strong> gemarkeerd, en dat blijft zo. Een gat
+      in zijn grafiek betekent <em>niet gepolst</em> en niet <em>de node lag stil</em>:
+      er wordt hoogstens elke
+      {{ poll_iv.secs if poll_iv and poll_iv.secs else 900 }} seconden gekeken. Hij staat
+      ook <strong>niet publiek</strong> — het gaat per definitie om de node van iemand
+      anders, en zichtbaar maken is een aparte, bewuste handeling op zijn eigen pagina.
+    </p>
+    {% endif %}
+
+    {% if job.result != "vergeten" %}
+    <form method="post" action="/admin/discovery/forget" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="key" value="{{ key }}">
+      <button type="submit">Vergeten</button>
+    </form>
+    <span class="muted small">Haalt hem uit de monitorlijst van {{ sender.rep.name }},
+      zodat hij niet in elke volgende ronde meegaat.</span>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% endif %}
+{% endblock %}

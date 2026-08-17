@@ -300,6 +300,24 @@ COLUMN_MIGRATIONS = [
     # kolommen staan naast elkaar omdat ze samen één antwoord vormen: waar gaat
     # een opdracht voor deze node heen.
     ("repeaters", "topic_node", "TEXT"),
+    # Of de cijfers van deze repeater bij hem OPGEHAALD zijn zonder inloggegevens,
+    # in plaats van door hem zelf gepubliceerd of door een monitor met rechten
+    # doorgestuurd. Een eigen kolom omdat het een eigen soort meting is:
+    #
+    #   er komt minder uit   een gast krijgt de status, de burenlijst en de
+    #                        basistelemetrie; externe sensoren blijven achter
+    #                        (perm_mask gaat op nul voor een gast)
+    #   het komt minder vaak de monitor polt zijn hele lijst op zijn eigen
+    #                        interval (standaard 900 s), niet op het ritme waarin
+    #                        de node zelf zou publiceren
+    #   het mag ontbreken    een gat in een grafiek betekent hier "niet gepolst"
+    #                        en niet "de node lag stil", en dat verschil hoort
+    #                        leesbaar te blijven
+    #
+    # Ditzelfde onderscheid maakt dit project elders overal -- gesteld tegenover
+    # afgeleid bij een afzender, gemeten tegenover gemodelleerd bij een accu -- en
+    # het weglaten zou een grafiek met gaten laten liegen over wie er stil was.
+    ("repeaters", "is_guest_polled", "INTEGER NOT NULL DEFAULT 0"),
     # Wat een bezoeker van deze node te zien krijgt, fijnmaziger dan is_public.
     # Een positie is gevoeliger dan een batterijstand, en tot deze twee kolommen
     # er waren kon deze site dat verschil niet uitdrukken: publiek was alles of
@@ -1908,6 +1926,23 @@ def record_source(repeater_id: int, source: str) -> None:
     """
     execute("UPDATE repeaters SET source_prefix=?, source_seen=? WHERE id=?",
             (str(source or "")[:32] or None, utcnow(), repeater_id))
+
+
+def mark_guest_polled(key: str, on: bool = True) -> None:
+    """Leg vast dat de cijfers van deze node bij hem opgehaald worden.
+
+    Op de sleutel en niet op een rij-id, want bij het uitvragen bestaat de rij
+    vaak nog niet: die ontstaat pas als de monitor het eerste bericht over hem
+    publiceert. Vandaar ook ``get_or_create_repeater`` hier -- en die maakt hem
+    NIET-publiek aan, wat precies goed is: het gaat per definitie om de node van
+    iemand anders.
+    """
+    sleutel = key_prefix(key)
+    if not sleutel:
+        return
+    rij = get_or_create_repeater(sleutel, sleutel)
+    execute("UPDATE repeaters SET is_guest_polled=? WHERE id=?",
+            (1 if on else 0, rij["id"]))
 
 
 def record_topic_node(node: str, raw: str) -> None:

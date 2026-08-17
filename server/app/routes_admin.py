@@ -426,6 +426,111 @@ def compare_columns(request: Request, csrf: str = Form(...),
     return RedirectResponse("/admin/compare", status_code=303)
 
 
+@router.get("/discovery", response_class=HTMLResponse)
+def discovery_page(request: Request):
+    """Telemetrie ophalen van nodes waarvoor we geen inloggegevens hebben."""
+    return _discovery_page(request)
+
+
+def _discovery_page(request: Request, extra: dict | None = None):
+    user = require_login(request)
+    afzender = discovery.sender()
+    host = str((afzender["rep"]["ota_host"] if afzender["rep"] is not None else "") or "")
+
+    # Beoordeel eerst wat er van eerdere uitvragingen geworden is, dan pas tonen.
+    if host:
+        try:
+            discovery.verify(host)
+        except Exception:                                  # noqa: BLE001
+            pass
+
+    lijst = discovery.heard(host) if host else {"ok": False, "error": "",
+                                                "entries": [], "monitored": []}
+    banen = discovery.jobs()
+    # Wat er werkelijk binnenkwam, per uitgevraagde node: onze eigen tabellen,
+    # want de afzender publiceert de uitkomst over MQTT onder de naam van het
+    # doelwit. Dat is dezelfde weg als bij een gewone gemonitorde repeater.
+    resultaten = {}
+    for sleutel in banen:
+        rij = db.find_repeater(sleutel)
+        if rij is None:
+            continue
+        resultaten[sleutel] = {
+            "rep": rij,
+            "metrics": db.latest_for(rij["id"]),
+        }
+
+    ctx = {
+        "site_name": config.SITE_NAME, "user": user, "world": "nodes",
+        "discovery_tab": True,
+        "sender": afzender, "sender_host": host,
+        "heard": lijst,
+        "cost": discovery.cost(host) if host else None,
+        "poll_iv": discovery.poll_interval(host) if host else None,
+        "jobs": banen, "results": resultaten,
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+        "outcome": None,
+    }
+    ctx.update(extra or {})
+    return templates.TemplateResponse(request, "admin/discovery.html", ctx)
+
+
+@router.post("/discovery/probe")
+def discovery_probe(request: Request, key: str = Form(...), label: str = Form(""),
+                    csrf: str = Form(...)):
+    """Eén node uitvragen. De beheerder wijst aan; er is geen ronde over alles."""
+    afzender = discovery.sender()
+    if afzender["rep"] is None:
+        require_login(request)
+        return _discovery_page(request, {"outcome": {
+            "ok": False, "msg": "er is geen node die dit kan versturen"}})
+    # De bevoegdheid hangt aan de AFZENDER en niet aan het doelwit, en dat is de
+    # eerlijke plaatsing: het doelwit is niet van ons en staat misschien niet eens
+    # in onze tabellen, terwijl wat hier verandert de monitorlijst van onze eigen
+    # node is. 'Een merkbare instelling schrijven' dus -- het kost zendtijd op een
+    # gedeelde band en het legt een terugkerende verhouding aan.
+    require_perm(request, "node.instelling.merkbaar", afzender["rep"])
+    check_csrf(request, csrf)
+    host = str(afzender["rep"]["ota_host"] or "")
+    uit = discovery.probe(host, key, label)
+    return _discovery_page(request, {"outcome": {
+        "ok": uit["ok"],
+        "msg": uit["msg"] or f"uitgevraagd via {afzender['rep']['name']}",
+        "key": uit["key"]}})
+
+
+@router.post("/discovery/interval")
+def discovery_interval(request: Request, secs: int = Form(...), csrf: str = Form(...)):
+    """Het pollinterval van de afzender zetten.
+
+    Per MONITOR en niet per node, want de firmware kent geen ronde van één node.
+    Zie discovery.poll_interval() voor waarom een per-node-veld hier een knop zou
+    zijn die iets belooft wat de firmware niet kan doen.
+    """
+    afzender = discovery.sender()
+    if afzender["rep"] is None:
+        require_login(request)
+        raise HTTPException(409, "Geen afzender beschikbaar")
+    require_perm(request, "node.instelling.merkbaar", afzender["rep"])
+    check_csrf(request, csrf)
+    uit = discovery.set_poll_interval(str(afzender["rep"]["ota_host"] or ""), secs)
+    return _discovery_page(request, {"outcome": {
+        "ok": uit["ok"], "msg": uit["error"] or "pollinterval aangepast"}})
+
+
+@router.post("/discovery/forget")
+def discovery_forget(request: Request, key: str = Form(...), csrf: str = Form(...)):
+    afzender = discovery.sender()
+    if afzender["rep"] is None:
+        require_login(request)
+        raise HTTPException(409, "Geen afzender beschikbaar")
+    require_perm(request, "node.instelling.merkbaar", afzender["rep"])
+    check_csrf(request, csrf)
+    uit = discovery.forget(str(afzender["rep"]["ota_host"] or ""), key)
+    return _discovery_page(request, {"outcome": {
+        "ok": uit["ok"], "msg": uit["error"] or "uit de monitorlijst gehaald"}})
+
+
 @router.get("/server", response_class=HTMLResponse)
 def server_page(request: Request):
     """Wereld 2: alles wat deze installatie configureert en geen apparaat raakt.

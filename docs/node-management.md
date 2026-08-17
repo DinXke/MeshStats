@@ -1252,6 +1252,89 @@ have, which is one of increasing capability. Telemetry-polling is not "more than
 unmanaged and less than semi-managed" — a `full_managed` node can be polled this
 way too. It is a different axis, so it gets a different field.
 
+### How it works, and what it costs
+
+**No firmware change was needed.** The monitor machinery already does this: a
+monitor-list entry with no password logs in with an empty string, and a poll round
+asks exactly those three things. Discovery drives that machinery over HTTP and
+reports the outcome honestly.
+
+A probe is two calls to the sender's `/api/mon`: `act=add` with the key and no
+password, then `act=poll`. Two calls and not one because the firmware applies one
+monitor change per loop pass — a poll in the same breath would hit *"previous
+change not applied yet"*.
+
+**It is not a snapshot, and the page says so.** Probing means adding the node to
+the sender's monitor list, so it joins every subsequent poll round until somebody
+removes it. Pretending otherwise would misrepresent the firmware, which is why
+there is a *Vergeten* button beside each result.
+
+**The cost is shown before the click**, including the part that is easy to omit:
+the firmware has no poll-of-one. `MA_POLL` sets `_mon_next_round` and the round
+walks the whole list, so a probe costs `(monitored + 1) × 4` requests. The
+worst-case figure on the page is wall-clock, not airtime — `MON_STEP_MS` is 30 s
+per answer over four steps — and the worst case is precisely what you are testing
+for: a node that answers is done in seconds, a node that stays silent costs the
+full wait.
+
+### Four outcomes, because "no answer" is three different things
+
+The verdict falls five minutes after the probe. The monitor knows enough to
+separate what would otherwise all read as silence: its monitor list reports the
+login result per entry, and its heard list says whether the node's adverts are
+still arriving.
+
+| Outcome | What it means | Certainty |
+|---|---|---|
+| **antwoord binnen** | fresher figures arrived | measured |
+| **buiten bereik** | login unanswered *and* no adverts | a radio problem, not a setting |
+| **gastwachtwoord ingesteld** | login unanswered while we *do* hear it | **a suspicion** — hearing it proves it exists, not why it is silent |
+| **niet ondersteund** | login succeeded and then nothing | unusual; a guest should get status without a permission check |
+
+The third row is deliberately hedged on the page. The operator may have run
+`set guest.password`, or may work with an access list we are not in; both look
+identical from here and the wording says so rather than picking one.
+
+The verdict is evaluated when the page is opened rather than on a timer. That is a
+choice: the answer only matters when somebody is looking at it, and a background
+thread that judged probes nobody asked about would be machinery for nothing.
+
+### Where the request comes from
+
+One function, `discovery.sender()`, and that is the whole of it today: the first
+repeater with our firmware and a management address. With one such node the choice
+is not a choice.
+
+The minimum is **1.4.0**, and deliberately not the `cmd`-topic minimum — discovery
+never touches that topic. What it needs is the monitor machinery with the login
+result (1.3.1) and the per-request-type counters (1.4.0), because the three
+silences rest on those. Being stricter than necessary would exclude a node that
+can do it perfectly well.
+
+When there is more than one candidate this becomes an ordered list with fallback,
+the same shape `monitors.candidates()` already has — and only that one function
+changes.
+
+### Open question: what may be public
+
+**Nothing, for now.** All of this sits behind the admin login, and that is not the
+final answer but the honest interim one.
+
+Telemetry fetched without credentials from somebody else's node is a different
+category from the figures your own repeaters publish to you. Their operator did
+not choose to be on this site; they left a guest door open, which is not the same
+as consenting to publication. And the site is reachable from the public internet.
+
+The proposal, for whoever decides: **per node, off by default, with the operator's
+name and a way to object** — the same shape as the existing `show_position` /
+`show_name` flags rather than a new mechanism. Aggregate views (how many repeaters
+are reachable, a coverage map) are a weaker claim on someone else's data than a
+page with their battery voltage on it, so those are the ones worth allowing first
+if anything is.
+
+That decision is easier to make with real data on screen than from a description,
+which is why the reading came first.
+
 ---
 
 ## Working without internet
@@ -1359,7 +1442,9 @@ against a node a human named.
 | Editing from that table | **built** — a pencil per editable cell opens one editor below the table, pre-filled. One editor rather than an input in every cell: twenty nodes by six columns is a hundred and twenty forms each with its own confirmation, and the confirmation is exactly what becomes unreadable. It calls the same `nodeconfig.write()` as the node page, so the risk classes, the bounds and the read-back apply unchanged |
 | Bulk edit across several nodes | **not built, and gated by design**: plain-class parameters only, never the two heavier classes. Ten nodes in one click is also ten nodes lost in one click |
 | Forced mesh transport for a node that has an IP path | **not built.** The LoRa write path now exists, so what is missing is only the choice: the route is derived from the node rather than picked. It stays out until there is a node that is both monitored and IP-reachable to exercise it on |
-| Telemetry polling without credentials | **researched, not built.** It works and yields more than expected — see above |
+| Telemetry polling without credentials | **built** — `/admin/discovery`, point-and-probe, four outcomes, cost shown before the click. No firmware change needed; the sender needs 1.4.0 |
+| Configured monitor assignment (ordered, per node and per group) | **half built** — the resolution, validation and fallback live in `monitors.py` and the scheduler uses them; the assignment page does not exist yet |
+| Publishing other people's telemetry | **deliberately not built.** Behind the admin login until somebody decides; a proposal is above |
 | MeshCore version for relayed nodes | **built** — `ver` joins the sweep, and one answer fills both version columns |
 | A sweep schedule per node | **built** — off by default, one round at a time with a global minimum gap, and a daily ceiling across all nodes |
 | Verifying that a scheduled round produced anything | **built** — `gevraagd` is no longer an outcome; a baseline timestamp plus a ten-minute verdict separates "answer came in" from "nothing came back" |

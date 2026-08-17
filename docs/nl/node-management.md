@@ -1320,6 +1320,96 @@ hebben, en dat is er een van oplopende mogelijkheden. Telemetrie opvragen is nie
 "meer dan unmanaged en minder dan semi-managed" — een `full_managed` node kun je
 op dezelfde manier bevragen. Het is een andere as, dus krijgt het een ander veld.
 
+### Hoe het werkt, en wat het kost
+
+**Er was geen firmwarewijziging voor nodig.** De monitormachinerie doet dit al:
+een regel in de monitorlijst zonder wachtwoord logt in met een lege tekenreeks,
+en een pollronde vraagt precies die drie dingen op. Ontdekken stuurt die
+machinerie over HTTP aan en meldt de uitslag eerlijk.
+
+Een uitvraag is twee aanroepen naar `/api/mon` van de afzender: `act=add` met de
+sleutel en zonder wachtwoord, en daarna `act=poll`. Twee aanroepen en niet één,
+want de firmware voert per doorloop van de lus één wijziging in de monitorlijst
+door — een poll in dezelfde beweging zou op *"previous change not applied yet"*
+stuiten.
+
+**Het is geen momentopname, en de pagina zegt dat.** Uitvragen betekent dat de
+node aan de monitorlijst van de afzender toegevoegd wordt, dus gaat hij mee in
+elke volgende pollronde tot iemand hem verwijdert. Iets anders voorwenden zou de
+firmware verkeerd voorstellen, en daarom staat er bij elke uitslag een knop
+*Vergeten*.
+
+**De kosten staan er vóór de klik**, inclusief het deel dat je makkelijk
+weglaat: de firmware kent geen poll van één node. `MA_POLL` zet
+`_mon_next_round` en de ronde loopt de hele lijst af, dus een uitvraag kost
+`(gemonitord + 1) × 4` verzoeken. Het getal voor het slechtste geval op de
+pagina is kloktijd en geen zendtijd — `MON_STEP_MS` is 30 s per antwoord over
+vier stappen — en juist dat slechtste geval is waarop je toetst: een node die
+antwoordt is in seconden klaar, een node die stil blijft kost de volle
+wachttijd.
+
+### Vier uitkomsten, want "geen antwoord" is drie verschillende dingen
+
+Het oordeel valt vijf minuten na de uitvraag. De monitor weet genoeg om te
+scheiden wat anders allemaal als stilte zou lezen: zijn monitorlijst meldt de
+loginuitslag per regel, en zijn gehoorde lijst zegt of de adverts van de node
+nog binnenkomen.
+
+| Uitkomst | Wat het betekent | Zekerheid |
+|---|---|---|
+| **antwoord binnen** | er kwamen versere cijfers binnen | gemeten |
+| **buiten bereik** | de login bleef onbeantwoord *en* er zijn geen adverts | een radioprobleem, geen instelling |
+| **gastwachtwoord ingesteld** | de login bleef onbeantwoord terwijl we hem *wel* horen | **een vermoeden** — dat we hem horen bewijst dat hij bestaat, niet waarom hij zwijgt |
+| **niet ondersteund** | de login lukte en daarna kwam er niets | ongebruikelijk; een gast hoort de status zonder rechtencontrole te krijgen |
+
+De derde regel is op de pagina met opzet voorzichtig geformuleerd. De operator
+kan `set guest.password` gedraaid hebben, of kan met een toegangslijst werken
+waar wij niet in staan; van hieraf zien die twee er identiek uit, en de
+formulering zegt dat in plaats van er een te kiezen.
+
+Het oordeel wordt geveld wanneer de pagina geopend wordt en niet op een timer.
+Dat is een keuze: het antwoord doet alleen ter zake wanneer iemand ernaar kijkt,
+en een achtergronddraad die uitvragen beoordeelt waar niemand naar vroeg zou
+machinerie om niets zijn.
+
+### Waar het verzoek vandaan komt
+
+Eén functie, `discovery.sender()`, en dat is vandaag het hele verhaal: de eerste
+repeater met onze firmware en een beheeradres. Met één zo'n node is de keuze
+geen keuze.
+
+Het minimum is **1.4.0**, en met opzet niet het minimum van het `cmd`-topic —
+ontdekken raakt dat topic nooit aan. Wat het nodig heeft is de
+monitormachinerie met de loginuitslag (1.3.1) en de tellers per verzoeksoort
+(1.4.0), want de drie stiltes rusten daarop. Strenger zijn dan nodig zou een
+node uitsluiten die het prima kan.
+
+Zodra er meer dan één kandidaat is wordt dit een geordende lijst met terugval,
+dezelfde vorm die `monitors.candidates()` al heeft — en alleen die ene functie
+verandert.
+
+### Openstaande vraag: wat er publiek mag
+
+**Niets, voorlopig.** Dit alles zit achter de inlog van het beheer, en dat is
+niet het definitieve antwoord maar het eerlijke tussenantwoord.
+
+Telemetrie die zonder inloggegevens van andermans node gehaald is, is een andere
+categorie dan de cijfers die je eigen repeaters aan jou publiceren. Hun operator
+heeft er niet voor gekozen om op deze site te staan; hij liet een gastdeur open
+staan, en dat is niet hetzelfde als toestemming om te publiceren. En de site is
+bereikbaar vanaf het publieke internet.
+
+Het voorstel, voor wie erover beslist: **per node, standaard uit, met de naam
+van de operator erbij en een manier om bezwaar te maken** — dezelfde vorm als de
+bestaande schakelaars `show_position` / `show_name`, en geen nieuw mechanisme.
+Overzichten in het groot (hoeveel repeaters er bereikbaar zijn, een
+dekkingskaart) leggen een zwakkere claim op iemand anders zijn gegevens dan een
+pagina met zijn batterijspanning erop, dus als er iets toegestaan wordt, zijn
+dat de eerste kandidaten.
+
+Die beslissing is makkelijker te nemen met echte gegevens op het scherm dan
+vanuit een beschrijving, en daarom kwam het uitlezen eerst.
+
 ---
 
 ## Werken zonder internet
@@ -1427,10 +1517,12 @@ bewuste klop, op een moment dat een mens koos, op een node die een mens noemde.
 | Bevestigen-of-terugdraaien | **onderzocht en verworpen**, met de redenering hierboven |
 | Automatisch rechten ontdekken | **verworpen**, in plaats daarvan aanwijzen-en-één-keer-proberen |
 | Vergelijkingstabel over repeaters heen | **gebouwd** — `/admin/compare`, gekozen kolommen, afwijkingen van de meerderheid gemarkeerd |
-| Bewerken vanuit die tabel | **niet gebouwd.** Het ontwerp is één bewerkveld dat door de tabel aangestuurd wordt, in plaats van een invoerveld in elke cel; zie hieronder |
+| Bewerken vanuit die tabel | **gebouwd** — een potloodje per te zetten cel opent één bewerkveld onder de tabel, voorgevuld. Één bewerkveld en niet een invoerveld in elke cel: twintig nodes maal zes kolommen is honderdtwintig formulieren met elk hun eigen bevestiging, en juist die bevestiging wordt dan onleesbaar. Het loopt door dezelfde `nodeconfig.write()` als de nodepagina, dus de risicoklassen, de grenzen en het teruglezen gelden onverkort |
 | Meerdere nodes tegelijk bewerken | **niet gebouwd, en in het ontwerp al ingeperkt**: alleen parameters uit de klasse Gewoon, nooit de twee zwaardere klassen. Tien nodes in één klik is ook tien nodes kwijt in één klik |
 | Mesh-transport forceren voor een node die een IP-pad heeft | **niet gebouwd.** Het LoRa-schrijfpad bestaat nu wel, dus wat ontbreekt is alleen de keuze: de weg volgt uit de node in plaats van gekozen te worden. Het blijft eruit tot er een node is die zowel gemonitord als over IP bereikbaar is om het op te beproeven |
-| Telemetrie opvragen zonder inloggegevens | **onderzocht, niet gebouwd.** Het werkt en levert meer op dan verwacht — zie hierboven |
+| Telemetrie opvragen zonder inloggegevens | **gebouwd** — `/admin/discovery`, aanwijzen-en-uitvragen, vier uitkomsten, de kosten in beeld vóór de klik. Geen firmwarewijziging voor nodig; de afzender heeft 1.4.0 nodig |
+| Ingestelde monitortoewijzing (geordend, per node en per groep) | **half gebouwd** — het oplossen, het valideren en de terugval staan in `monitors.py` en de planner gebruikt ze; de toewijzingspagina bestaat nog niet |
+| Andermans telemetrie publiceren | **met opzet niet gebouwd.** Achter de inlog van het beheer tot iemand beslist; het voorstel staat hierboven |
 | MeshCore-versie van doorgestuurde nodes | **gebouwd** — `ver` gaat mee in de sweep, en één antwoord vult allebei de versiekolommen |
 | Een sweepschema per node | **gebouwd** — standaard uit, één ronde tegelijk met een globale minimale tussenruimte, en een plafond per dag over alle nodes heen |
 | Nagaan of een ingeplande ronde iets opgeleverd heeft | **gebouwd** — `gevraagd` is geen uitkomst meer; een tijdstempel als vertrekpunt plus een oordeel na tien minuten scheidt "antwoord binnen" van "niets teruggekomen" |
