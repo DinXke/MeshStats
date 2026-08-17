@@ -25,8 +25,8 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
-               firmware, metrics, mqtt_ingest, nodeconfig, pktfilter, ratelimit,
-               rbac, retention, sweepsched, tsdb)
+               discovery, firmware, metrics, mqtt_ingest, nodeconfig, pktfilter,
+               ratelimit, rbac, retention, sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")

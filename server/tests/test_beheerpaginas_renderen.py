@@ -265,3 +265,17 @@ def test_voorpagina_zwijgt_als_geen_node_ooit_een_filter_meldde(wereld):
     from app import routes_public
     html = tekst(routes_public.index(verzoek("/", "")))
     assert "Pakketfilter in dit mesh" not in html
+
+
+def test_discoverypagina_rendert(wereld):
+    """Deze pagina viel om op een ontbrekende import, en geen test merkte het.
+
+    De rest van de suite roept `discovery`-functies rechtstreeks aan en die
+    werken; wat er miste was de regel die de module in `routes_admin` haalt. Een
+    NameError in een route is geen sjabloonfout en geen logicafout -- hij komt er
+    alleen uit door de route werkelijk aan te roepen, en dat is precies wat dit
+    bestand doet voor de andere beheerpagina's.
+    """
+    from app import routes_admin
+    html = tekst(routes_admin.discovery_page(verzoek("/admin/discovery", wereld["koek"]["admin"])))
+    assert html
