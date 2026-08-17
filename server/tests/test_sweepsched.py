@@ -163,9 +163,13 @@ def test_een_node_zonder_weg_blokkeert_de_wachtrij_niet(db, monkeypatch):
                                            "node": None, "subject": None})
     rep = _node(db, "55d9a320a4e3", "DinX-Home", uren=24)
     uit = sweepsched.run_once()
-    assert uit["reden"] == "geen weg"
-    # ...en het staat opgeschreven, dus hij is niet meteen weer aan de beurt.
-    assert "geen weg" in sweepsched.entry(rep["pubkey_prefix"])["result"]
+    assert uit["reden"] == "afzender niet aanspreekbaar"
+    # ...en het staat opgeschreven met de naam van de afzender erbij, dus hij is
+    # niet meteen weer aan de beurt én je ziet wélke node niet aanspreekbaar was.
+    # Dat onderscheid is er sinds de afzender uit een ingestelde lijst komt: 'geen
+    # weg' zei niets over of het doelwit of de monitor het probleem was.
+    regel = sweepsched.entry(rep["pubkey_prefix"])["result"]
+    assert "niet aanspreekbaar" in regel and "DinX-Home" in regel
 
 
 def test_uitgeschakelde_planner_doet_niets(db, verzonden, monkeypatch):
@@ -380,3 +384,162 @@ def test_de_stilte_wordt_gemarkeerd_en_de_rest_niet():
     goed = _render(sweep_hours=12, sweep_last={
         "result": "gevraagd, antwoord binnen", "asked": "2026-08-17T04:27:42+00:00"})
     assert stil.count("cmp-off") > goed.count("cmp-off")
+
+
+# --- wie de vraag stelt -------------------------------------------------------
+
+def test_de_afzender_komt_uit_de_ingestelde_lijst(db, verzonden):
+    """Eén plek waar 'wie stuurt dit' vandaan komt. Vandaag valt die terug op de
+    waarneming; morgen is het een lijst met een volgorde."""
+    from app import monitors
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    baas = _node(db, "55d9a320a4e3", "DinX-Home")
+    monitors.set_for_node(doel["id"], [baas["id"]])
+
+    sweepsched.run_once()
+    assert verzonden == [("55d9a320a4e3", "settings", "e3d3f4d7edd0")]
+
+
+def test_een_zelfpublicerende_node_vraagt_zichzelf_uit(db, verzonden):
+    """'Monitor' is daar een groot woord voor 'zichzelf', en dan gaat er geen
+    onderwerp mee: anders leest hij de CLI van iemand anders."""
+    _node(db, "55d9a320a4e3", "DinX-Home", uren=6)
+    sweepsched.run_once()
+    assert verzonden == [("55d9a320a4e3", "settings", None)]
+
+
+def test_na_stilte_komt_de_volgende_kandidaat_aan_de_beurt(db, verzonden):
+    from app import monitors
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    een = _node(db, "55d9a320a4e3", "Eerste")
+    twee = _node(db, "aabbccddeeff", "Tweede")
+    monitors.set_for_node(doel["id"], [een["id"], twee["id"]])
+
+    nu = time.time()
+    sweepsched.run_once(nu)
+    assert verzonden[0][0] == "55d9a320a4e3"
+
+    # Stilte -> cursor verzet, en de node is meteen weer opeisbaar zodra de
+    # minimumafstand voorbij is. Geen extra zendtijd: één sweep per venster.
+    sweepsched.verify_pending(nu + sweepsched.VERIFY_AFTER_S + 1)
+    assert sweepsched.entry("e3d3f4d7edd0")["cursor"] == 1
+    sweepsched.run_once(nu + 16 * 60)
+    assert verzonden[1][0] == "aabbccddeeff"
+
+
+def test_met_een_kandidaat_wacht_stilte_het_interval_uit(db, verzonden):
+    """Zonder die voorwaarde wordt een schema een sirene: elke minimumafstand
+    opnieuw bevragen in plaats van elke twaalf uur."""
+    _node(db, "55d9a320a4e3", "DinX-Home", uren=12)
+    nu = time.time()
+    sweepsched.run_once(nu)
+    sweepsched.verify_pending(nu + sweepsched.VERIFY_AFTER_S + 1)
+    regel = sweepsched.entry("55d9a320a4e3")
+    assert regel["result"] == sweepsched.RESULT_SILENT
+    assert regel["cursor"] == 0
+    # Ruim binnen het interval: er hoort niets te vertrekken.
+    assert sweepsched.run_once(nu + 40 * 60)["gestart"] is None
+
+
+def test_na_een_inhoudelijke_weigering_valt_hij_niet_terug(db, verzonden, monkeypatch):
+    """Terugvallen na 'kan het niet' zou een verkeerd ingestelde eerste kandidaat
+    verbergen: de volgende ronde loopt tegen dezelfde muur bij een andere node."""
+    from app import monitors
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    een = _node(db, "55d9a320a4e3", "Eerste")
+    twee = _node(db, "aabbccddeeff", "Tweede")
+    monitors.set_for_node(doel["id"], [een["id"], twee["id"]])
+    monkeypatch.setattr(monitors, "rights_note",
+                        lambda rep, mon: {"known": True,
+                                          "info": {"diagnosis": "alleen_lezen"}})
+    nu = time.time()
+    sweepsched.run_once(nu)
+    sweepsched.verify_pending(nu + sweepsched.VERIFY_AFTER_S + 1)
+    regel = sweepsched.entry("e3d3f4d7edd0")
+    assert regel["result"] == sweepsched.RESULT_REFUSED
+    assert regel["cursor"] == 0          # blijft op déze kandidaat staan
+
+
+def test_onbekende_rechten_gelden_als_stilte_en_niet_als_weigering(db, verzonden, monkeypatch):
+    """Onbekend is geen weigering. De volgende kandidaat kost één sweep om uit te
+    sluiten, en dat is de goedkopere fout dan blijven hangen op een monitor die
+    misschien gewoon sliep."""
+    from app import monitors
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    een = _node(db, "55d9a320a4e3", "Eerste")
+    twee = _node(db, "aabbccddeeff", "Tweede")
+    monitors.set_for_node(doel["id"], [een["id"], twee["id"]])
+    monkeypatch.setattr(monitors, "rights_note",
+                        lambda rep, mon: {"known": False, "reason": "geen beheeradres"})
+    nu = time.time()
+    sweepsched.run_once(nu)
+    sweepsched.verify_pending(nu + sweepsched.VERIFY_AFTER_S + 1)
+    assert sweepsched.entry("e3d3f4d7edd0")["cursor"] == 1
+
+
+def test_de_lijst_weigert_een_monitor_die_het_nooit_kan(db):
+    """Getoetst bij het toewijzen en niet bij de eerste poging: een lijst met een
+    monitor die het nooit kan is een lijst die liegt, en die leugen kost een
+    sweep-timeout per ronde."""
+    from app import monitors
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    stock = db.get_or_create_repeater("aabbccddeeff", "Stock-node")
+    oud = _node(db, "112233445566", "Oude-firmware")
+    db.execute("UPDATE repeaters SET fw_meshmanager='1.8.0' WHERE id=?", (oud["id"],))
+    oud = db.qone("SELECT * FROM repeaters WHERE id=?", (oud["id"],))
+
+    assert "onze firmware" in monitors.check(doel, stock)
+    assert "1.9.0" in monitors.check(doel, oud)
+    assert "zichzelf" in monitors.check(doel, doel)
+    assert monitors.check(doel, None)
+
+    goed = _node(db, "55d9a320a4e3", "DinX-Home")
+    assert monitors.check(doel, goed) == ""
+
+
+def test_dubbelen_en_te_lange_lijsten_worden_afgekapt(db):
+    from app import monitors
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    ids = [_node(db, "55d9a32000%02d" % i, "m%d" % i)["id"] for i in range(5)]
+    monitors.set_for_node(doel["id"], ids + [ids[0]])
+    lijst = monitors.candidates(doel)
+    assert lijst["source"] == "node"
+    assert len(lijst["monitors"]) == monitors.MAX_CANDIDATES
+
+
+def test_de_node_wint_van_de_groep(db):
+    """Niet samenvoegen: een lijst die half uit een groep en half uit een node
+    komt is een lijst waarvan de volgorde niet na te vertellen is."""
+    from app import monitors
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    uit_groep = _node(db, "55d9a320a4e3", "Via-groep")
+    uit_node = _node(db, "aabbccddeeff", "Via-node")
+    db.execute("INSERT INTO node_groups(name, created_at) VALUES('Daken', ?)",
+               (db.utcnow(),))
+    gid = db.qone("SELECT id FROM node_groups WHERE name='Daken'")["id"]
+    db.execute("INSERT INTO node_group_members(group_id, repeater_id) VALUES(?,?)",
+               (gid, doel["id"]))
+    monitors.set_for_group(gid, [uit_groep["id"]])
+
+    assert monitors.candidates(doel)["source"] == "group"
+    monitors.set_for_node(doel["id"], [uit_node["id"]])
+    gekozen = monitors.candidates(doel)
+    assert gekozen["source"] == "node"
+    assert [m["name"] for m in gekozen["monitors"]] == ["Via-node"]
+
+
+def test_waarneming_en_configuratie_blijven_los(db):
+    """Ze kunnen verschillen en dat is informatie, geen fout."""
+    from app import monitors
+    doel = _node(db, "e3d3f4d7edd0", "JessaZH", uren=12)
+    db.execute("UPDATE repeaters SET source_prefix='112233445566' WHERE id=?",
+               (doel["id"],))
+    _node(db, "112233445566", "Wie-hem-hoort")
+    ingesteld = _node(db, "55d9a320a4e3", "Wie-het-mag")
+    doel = db.qone("SELECT * FROM repeaters WHERE id=?", (doel["id"],))
+
+    assert monitors.candidates(doel)["source"] == "observed"
+    monitors.set_for_node(doel["id"], [ingesteld["id"]])
+    assert monitors.candidates(doel)["monitors"][0]["name"] == "Wie-het-mag"
+    # ...en de waarneming staat er nog, onaangeroerd.
+    assert doel["source_prefix"] == "112233445566"

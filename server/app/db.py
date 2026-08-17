@@ -94,6 +94,35 @@ CREATE TABLE IF NOT EXISTS node_group_members(
   repeater_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
   PRIMARY KEY(group_id, repeater_id)
 );
+-- Welke repeaters een node MOGEN beheren, in volgorde van voorkeur. Twee
+-- tabellen met dezelfde vorm, één per doelsoort: één node, of een nodegroep --
+-- dezelfde tweedeling als bij grants, en om dezelfde reden.
+--
+-- Dit is CONFIGURATIE en staat nadrukkelijk naast de WAARNEMING in
+-- repeaters.source_prefix. Die kolom zegt wie de cijfers van een node feitelijk
+-- doorstuurt; deze tabellen zeggen wie hem mag uitvragen. Ze kunnen verschillen,
+-- en dat verschil is informatie en geen fout: een node die via X binnenkomt
+-- terwijl Y is ingesteld, betekent dat X hem hoort en Y hem niet bereikt -- of
+-- dat iemand de instelling net veranderd heeft en de volgende ronde het nog moet
+-- laten zien. Ze in één kolom persen zou dat onzichtbaar maken.
+--
+-- ``position`` is de volgorde van proberen, vanaf 0. Redundantie loopt over
+-- ronden en niet binnen één ronde: zie sweepsched voor waarom drie kandidaten
+-- achter elkaar aflopen zendtijd is die niemand gevraagd heeft.
+CREATE TABLE IF NOT EXISTS node_monitors(
+  repeater_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  monitor_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(repeater_id, position)
+);
+CREATE TABLE IF NOT EXISTS node_group_monitors(
+  group_id INTEGER NOT NULL REFERENCES node_groups(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  monitor_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(group_id, position)
+);
 -- Eén toekenning: wie (gebruiker of gebruikersgroep) mag wat (rol) op welke
 -- nodes (één node, een nodegroep, of alle). ``effect`` is 'allow' of 'deny'.
 -- De oplossingsregel staat in rbac.resolve() en nergens anders.

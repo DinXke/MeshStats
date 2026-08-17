@@ -44,7 +44,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import commanding, config, db, mqtt_ingest
+from . import commanding, config, db, monitors, mqtt_ingest, nodeconfig
 
 log = logging.getLogger(__name__)
 
@@ -107,9 +107,12 @@ VERIFY_AFTER_S = 600
 RESULT_ASKED = "gevraagd"
 RESULT_ANSWERED = "gevraagd, antwoord binnen"
 RESULT_SILENT = "gevraagd, geen antwoord"
+RESULT_EXHAUSTED = "alle monitors geprobeerd, geen antwoord"
+RESULT_REFUSED = "monitor kan het niet"
 
 
-def record(prefix: str, when: float, result: str, seen: str | None = None) -> None:
+def record(prefix: str, when: float, result: str, seen: str | None = None,
+           cursor: int = 0) -> None:
     """Eén regel in het grootboek.
 
     ``seen`` is de jongste tijdstempel die we van deze node hadden op het moment
@@ -122,7 +125,8 @@ def record(prefix: str, when: float, result: str, seen: str | None = None) -> No
         data = _ledger()
         data[prefix.lower()] = {"asked": datetime.fromtimestamp(when, timezone.utc)
                                 .isoformat(timespec="seconds"),
-                                "at": when, "result": result, "seen_before": seen}
+                                "at": when, "result": result, "seen_before": seen,
+                                "cursor": int(cursor or 0)}
         _save(data)
 
 
@@ -160,13 +164,72 @@ def verify_pending(now: float | None = None) -> list:
         nu_gezien = _newest_value_ts(rij["id"])
         eerder = regel.get("seen_before")
         beter = bool(nu_gezien) and (not eerder or nu_gezien > eerder)
-        record(prefix, float(regel["at"]),
-               RESULT_ANSWERED if beter else RESULT_SILENT, seen=eerder)
-        veranderd.append((prefix, beter))
-        if not beter:
-            log.warning("Uitvraagronde voor %s leverde niets op: geen versere "
-                        "waarden na %d s", rij["slug"], VERIFY_AFTER_S)
+        if beter:
+            # Gelukt: de cursor terug naar de eerste kandidaat. Anders zou de
+            # volgende ronde bij nummer twee beginnen terwijl nummer één werkt.
+            record(prefix, float(regel["at"]), RESULT_ANSWERED, seen=eerder, cursor=0)
+            veranderd.append((prefix, True))
+            continue
+
+        uitkomst, volgende = _na_stilte(rij, int(regel.get("cursor") or 0))
+        record(prefix, float(regel["at"]), uitkomst, seen=eerder, cursor=volgende)
+        veranderd.append((prefix, False))
+        log.warning("Uitvraagronde voor %s leverde niets op: %s", rij["slug"], uitkomst)
     return veranderd
+
+
+def _na_stilte(rep, cursor: int) -> tuple:
+    """Wat betekent stilte van kandidaat ``cursor``, en wat is de volgende stap?
+
+    Hier zit de hele terugvalredenering, en die is met opzet niet "probeer de
+    volgende". Twee dingen zien er van hieraf identiek uit en verdienen een
+    verschillende reactie:
+
+    - **De monitor zweeg.** Hij sliep op zijn zonnebudget, zijn wifi was weg, of
+      hij weigerde omdat er net een andere ronde liep. Dat is tijdelijk en zegt
+      niets over de relatie met het doelwit, dus dan is de volgende kandidaat
+      precies waar hij voor bestaat.
+    - **De monitor kan het niet.** Het doelwit staat niet in zijn monitorlijst, of
+      hij is er alleen als lezer binnen. Dat is blijvend, het was bij de eerste
+      poging al vast te stellen, en terugvallen zou het verbergen: de volgende
+      ronde loopt dan tegen precies dezelfde muur, alleen bij een andere node, en
+      niemand ziet ooit dat de eerste kandidaat verkeerd ingesteld staat.
+
+    Dus: terugvallen na stilte, niet na een inhoudelijke weigering. Wat de monitor
+    kan is te lezen uit zijn eigen monitorlijst -- zie ``nodeconfig.rights_for``,
+    dat login, pogingen en antwoorden combineert. Is die niet te lezen (geen
+    beheeradres), dan telt het als stilte: onbekend is geen weigering, en de
+    kandidaat die daarna komt kost één sweep om uit te sluiten.
+
+    Terugvallen gebeurt over RONDEN en niet binnen één ronde, en dat is de rem.
+    Een sweep is nominaal 286 s; drie kandidaten achter elkaar aflopen is een
+    kwartier band voor één node z'n instellingen, en die veranderen ongeveer nooit.
+    Door de cursor te verzetten en de node meteen weer opeisbaar te maken, pakt de
+    wachtrij hem op na de gewone minimumafstand -- één sweep per tussenruimte,
+    zoals altijd, alleen met een andere afzender.
+    """
+    lijst = monitors.candidates(rep)["monitors"]
+    huidige = lijst[cursor] if cursor < len(lijst) else None
+
+    if huidige is not None:
+        oordeel = monitors.rights_note(rep, huidige)
+        if oordeel["known"] and oordeel["info"]["diagnosis"] in ("alleen_lezen",
+                                                                "niet_gemonitord"):
+            # Blijvend, en al bekend. Niet terugvallen: de cursor blijft staan,
+            # zodat de melding over déze kandidaat blijft gaan.
+            return RESULT_REFUSED, cursor
+
+    volgende = cursor + 1
+    if volgende >= len(lijst):
+        # Lijst op. Terug naar het begin, maar pas bij het volgende interval:
+        # due_at() wacht alleen niet bij RESULT_SILENT, en dit is het niet.
+        #
+        # Bij één kandidaat luidt de uitkomst gewoon 'geen antwoord'. "Alle
+        # monitors geprobeerd" is waar maar misleidend als er nooit meer dan één
+        # was: het suggereert een lijst die is afgelopen, en dan gaat iemand
+        # zoeken naar de tweede kandidaat die er niet is.
+        return (RESULT_SILENT if len(lijst) <= 1 else RESULT_EXHAUSTED), 0
+    return RESULT_SILENT, volgende
 
 
 def entry(prefix: str) -> dict:
@@ -194,8 +257,23 @@ def due_at(rep, now: float | None = None) -> float | None:
     uren = interval_hours(rep)
     if not uren:
         return None
-    laatst = entry(rep["pubkey_prefix"]).get("at")
+    regel = entry(rep["pubkey_prefix"])
+    laatst = regel.get("at")
     if not laatst:
+        return now if now is not None else time.time()
+    # Meteen weer opeisbaar, maar alleen als er werkelijk een ONGEPROBEERDE
+    # kandidaat klaarstaat. Dat is precies wat een cursor boven nul betekent: de
+    # vorige zweeg en de volgende heeft zijn kans nog niet gehad. Die verdient
+    # hem zonder een heel interval te wachten, en het kost geen extra zendtijd --
+    # de wachtrij houdt de minimumafstand aan, er staat alleen een andere
+    # afzender in het volgende venster.
+    #
+    # Staat de cursor weer op nul, dan is de lijst rond (of was er maar één) en
+    # wacht deze node zijn interval uit. Zonder die voorwaarde zou een node met
+    # één monitor die niet antwoordt elke minimumafstand opnieuw bevraagd worden
+    # in plaats van elke twaalf uur -- van een schema een sirene maken, op een
+    # band die van iedereen is.
+    if regel.get("result") == RESULT_SILENT and int(regel.get("cursor") or 0) > 0:
         return now if now is not None else time.time()
     return float(laatst) + uren * 3600
 
@@ -269,29 +347,55 @@ def run_once(now: float | None = None) -> dict:
     _, rep = kandidaten[0]
 
     broker = mqtt_ingest.can_publish()
-    route = commanding.describe(rep, broker_connected=broker)
-    if not route["mqtt"] or "settings" not in route["commands"]:
-        # Geen weg naar deze node. Wél opschrijven, anders blijft hij elke minuut
-        # opnieuw de meest achterstallige en komt niemand anders meer aan de
-        # beurt -- en zou de pagina blijven beloven dat er iets staat te gebeuren.
-        record(rep["pubkey_prefix"], now, f"geen weg ({route['blocker'] or 'onbekend'})")
-        uit["reden"] = "geen weg"
+    if not broker:
+        uit["reden"] = "geen brokerverbinding"
         return uit
 
-    # Dezelfde aanroep als achter de knop op de nodepagina, met dezelfde
-    # onderwerpsleutel als het langs een monitor gaat. Een eigen weg naar de
-    # broker zou een achterdeur zijn om de controles heen die daar staan.
+    # Wie de vraag stelt komt uit de ingestelde lijst, op de plek waar de cursor
+    # staat. Staat er niets ingesteld, dan valt candidates() terug op de
+    # waarneming -- wie de cijfers feitelijk doorstuurt -- wat precies is wat er
+    # vóór deze tabellen gebeurde.
+    cursor = int(entry(rep["pubkey_prefix"]).get("cursor") or 0)
+    lijst = monitors.candidates(rep)["monitors"]
+    if not lijst:
+        record(rep["pubkey_prefix"], now, "geen monitor bekend")
+        uit["reden"] = "geen monitor"
+        return uit
+    if cursor >= len(lijst):
+        cursor = 0
+    afzender = lijst[cursor]
+
+    zelf = int(afzender["id"]) == int(rep["id"])
+    route = commanding.describe(afzender, broker_connected=broker)
+    if not route["mqtt"]:
+        # De AFZENDER is niet aanspreekbaar, niet het doelwit. Opschrijven zodat
+        # deze node niet elke minuut opnieuw de meest achterstallige is -- en de
+        # cursor verzetten, want een volgende kandidaat is precies waarvoor de
+        # lijst bestaat.
+        volgende = cursor + 1
+        record(rep["pubkey_prefix"], now,
+               f"{afzender['name']} niet aanspreekbaar ({route['blocker'] or 'onbekend'})",
+               cursor=volgende if volgende < len(lijst) else 0)
+        uit["reden"] = "afzender niet aanspreekbaar"
+        return uit
+
+    # Dezelfde aanroep als achter de knop op de nodepagina. Een eigen weg naar de
+    # broker zou een achterdeur zijn om de controles heen die daar staan. Het
+    # onderwerp gaat mee tenzij de afzender het doelwit zelf is: dan leest hij
+    # zijn eigen CLI en zou een onderwerp hem naar iemand anders laten kijken.
     ok = mqtt_ingest.publish_command(
-        route["node"], "settings",
-        subject=route["subject"] if route["via_monitor"] else None)
+        afzender["pubkey_prefix"], "settings",
+        subject=None if zelf else rep["pubkey_prefix"])
     # De nulmeting mee, zodat verify_pending() straks kan zien of er iets
     # verscher is geworden in plaats van alleen dat er iets staat.
     record(rep["pubkey_prefix"], now,
            RESULT_ASKED if ok else "versturen mislukt",
-           seen=_newest_value_ts(rep["id"]))
+           seen=_newest_value_ts(rep["id"]), cursor=cursor)
     uit["gestart"] = rep["pubkey_prefix"]
+    uit["via"] = afzender["pubkey_prefix"]
     uit["reden"] = RESULT_ASKED if ok else "versturen mislukt"
-    log.info("Uitvraagronde gepland voor %s: %s", rep["slug"], uit["reden"])
+    log.info("Uitvraagronde gepland voor %s via %s (kandidaat %d): %s",
+             rep["slug"], afzender["name"], cursor + 1, uit["reden"])
     return uit
 
 
