@@ -597,6 +597,45 @@ is het deel dat telt wanneer beslist moet worden of er iets gewijzigd wordt.
 | **1.10.0** | De site kan de klok van deze node zetten (`time <epoch>` op `cmd`), waarna de node de klokken controleert van de repeaters die hij monitort, over LoRa; `wifi clock` leest terug wat er gebeurd is | Een ESP32 zonder batterijgevoede RTC komt terug uit een herstart en stempelt alles met mei 2024, en niets op de mesh weet beter. De site wel |
 | **1.11.0** | De sweep verzamelt de regioboom opnieuw, als `cmd:region`; `SET_VALUE_MAX` 32 → 176; `jsonEsc()` schrijft `\n`, `\r`, `\t`; `Err - …` wordt naast `Error…` als weigering herkend; `MON_SET_TOTAL_MS` 300 s → 360 s | 1.7.1 stopte terecht met het publiceren van een boom in een instellingenkolom, maar liet ten onrechte de boom volledig vallen — waardoor één rij op "7 dagen" stond te verouderen naast achttien op "32 minuten" |
 
+| *(2.0.0 – 2.8.2)* | Hier niet uitgesplitst — de module is bij 1.12.0 hernoemd en de 2.x-historiek staat alleen in het blokcommentaar bovenaan `MeshManagerNet.cpp`, en dat is de gezaghebbende changelog | Deze tabel is bij 1.11.0 gestopt met bijgehouden worden; hij is een leeshulp, het commentaar is de vastlegging |
+| **2.9.0** | Telemetriedecodering kreeg `LPP_SWITCH` → `ch<N>_switch` en `LPP_GENERIC_SENSOR` → `ch<N>_generic`; `MON_TELEM_MAX` 6 → 40; een onbeantwoord statusverzoek beëindigt de ronde niet meer; sensornodes verschijnen in de lijst met monitorkandidaten | Drie onafhankelijke redenen waarom de telemetrie van een **sensornode** de site nooit kon bereiken, elk op zich al genoeg — zie hieronder |
+
+### Waarom een sensornode vóór 2.9.0 niets rapporteerde
+
+Een MeshCore-sensornode antwoordt op `REQ_TYPE_GET_TELEMETRY_DATA` met CayenneLPP en
+dat is zijn hele bestaansreden. Drie dingen stonden in de weg, en elk daarvan was op
+zich al genoeg voor een node die "niets antwoordt":
+
+1. **De decoder gooide de waarden weg.** `monDecodeTelemetry()` bewaarde
+   `LPP_TEMPERATURE` en `LPP_VOLTAGE` en riep `skipData()` op al de rest — en al de
+   rest is precies wat een uptimemonitor spreekt: `LPP_SWITCH` voor op/neer en
+   `LPP_GENERIC_SENSOR` voor een responstijd. Ze werden gedecodeerd, overgeslagen, en
+   nooit gepubliceerd.
+2. **Een onbeantwoord statusverzoek beëindigde de ronde vóór er ooit om telemetrie
+   gevraagd werd.** Een sensornode implementeert `REQ_TYPE_GET_STATUS` helemaal niet:
+   een onbekend verzoektype krijgt geen antwoord en geen fout, dus status loopt elke
+   ronde af in een time-out, met opzet en voor altijd. `MST_REQ_WAIT` liet de ronde
+   dan varen, waardoor het telemetrieverzoek nooit vertrok. De ronde gaat nu door —
+   gerechtvaardigd en niet hoopvol, want die toestand wordt alleen bereikt na een
+   login die wél lukte, dus de node is aantoonbaar bereikbaar en kent ons.
+3. **De kandidatenlijst bood er geen aan.** De lijst waaruit je een monitor kiest
+   liet alleen `ADV_TYPE_REPEATER` toe, en een sensornode adverteert als
+   `ADV_TYPE_SENSOR`. Dit was een vindbaarheidsgat en geen harde blokkade — een
+   ingang heeft enkel een publieke sleutel nodig en `mon add` keek nooit naar het
+   adverttype — en juist daarom kon het daar onopgemerkt blijven zitten.
+
+`MON_TELEM_MAX` ging van 6 naar 40 om dezelfde reden: zes was genoeg voor de twee of
+drie sensoren die een repeater draagt, en veel te weinig voor een node die per
+gemonitorde dienst een toestand *én* een tijd meldt. Een antwoord kan
+`MAX_PACKET_PAYLOAD` niet overschrijden, wat het aantal records dat fysiek kan
+aankomen op ongeveer 60 begrenst.
+
+> **Twee records op één kanaal is normaal.** Een dienst komt binnen als `ch5_switch`
+> en `ch5_generic` onder hetzelfde kanaalnummer, en daarom zit het LPP-type in de
+> metricnaam. Een naam uit alleen het kanaal zou de tweede de eerste laten
+> overschrijven. En de naam zegt het type, nooit de betekenis: `ch6_generic` en niet
+> `ch6_ping_ms` — zie [`protocol.md`](protocol.md).
+
 Twee patronen lopen door die lijst heen en verdienen het benoemd te worden, want
 ze zijn de reden dat verschillende van de regels hieronder bestaan:
 

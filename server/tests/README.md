@@ -27,6 +27,7 @@ werkkopie aanmaakt.
 | `test_mqtt_command.py` | De keten site → broker → node, en de eigenschap dat publiceren niets zegt over aankomen |
 | `test_mqtt_ingest.py` | Berichten die niet te lezen vallen; regressie voor een nodenaam met een aanhalingsteken erin |
 | `test_nodes.py` | Het nodedetail achter een bolletje op de live kaart, dat bijna helemaal uit afleidingen bestaat |
+| `test_kanalen.py` | Kanaalmetingen van een sensornode: het wireformaat van CayenneLPP, twee LPP-types op één kanaal, en de namen die de site er per node bij bewaart |
 | `test_retention.py` | Het opruimen: de bewaartermijn, de twee bovengrenzen, en vooral de volgorde waarin ze bijten |
 | `test_settings_chain.py` | De instellingenketen knop → wachtrij → poller → opslag, met zijn clear-on-read-wachtrij |
 | `frames.py` | Bouwstenen voor zelfgemaakte MeshCore-frames, naar `docs/protocol.md` §1 |

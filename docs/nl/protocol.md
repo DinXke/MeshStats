@@ -1127,10 +1127,42 @@ De vermenigvuldigers staan op regels 34–60; de foutcodes zijn `LPP_ERROR_OK` 0
 `LPP_ERROR_OVERFLOW` 1 en `LPP_ERROR_UNKOWN_TYPE` 2 (spelling zoals in de
 broncode), regels 62–64.
 
-MeshManager decodeert er slechts twee van — `LPP_TEMPERATURE` en `LPP_VOLTAGE` — naar
-`ch<N>_temperature` en `ch<N>_voltage`, via `helpers/sensors/LPPDataHelpers.h` dat
-door `MeshManagerNet.cpp` wordt geïncludeerd. De rest staat hier vermeld zodat een
-uitbreiding de tabel niet opnieuw hoeft te ontdekken.
+MeshManager decodeert er vier van:
+
+| LPP-type | Metricnaam | Waarde |
+|---|---|---|
+| `LPP_TEMPERATURE` | `ch<N>_temperature` | °C, 2 byte signed ×10 |
+| `LPP_VOLTAGE` | `ch<N>_voltage` | V, 2 byte unsigned ×100 |
+| `LPP_SWITCH` | `ch<N>_switch` | 0 of 1, 1 byte |
+| `LPP_GENERIC_SENSOR` | `ch<N>_generic` | heel getal, 4 byte unsigned ×1 |
+
+De rest staat hier vermeld zodat een uitbreiding de tabel niet opnieuw hoeft te
+ontdekken; een onbekend type wordt overgeslagen op zijn lengte uit die tabel.
+
+**Het LPP-type zit in de metricnaam, niet alleen het kanaal.** Eén kanaal draagt
+gerust twee records: een sensornode meldt een dienst als een switch (bereikbaar
+ja/nee) én als een generic sensor (responstijd) onder hetzelfde nummer. Een naam
+uit alleen het kanaal zou de tweede de eerste laten overschrijven, en dan is de
+helft van wat de node zei stil weg.
+
+**En de naam zegt het type, nooit de betekenis** — `ch6_generic` en niet
+`ch6_ping_ms`. Het type garandeert vier unsigned byte met vermenigvuldiger 1 en
+belooft niets over wát er geteld wordt; dat het bij een uptimemonitor om
+milliseconden naar een webserver gaat, is kennis die de zendende node heeft en dit
+pakket niet draagt. Daarom bewaart de site de koppeling kanaal → dienst zelf, per
+node, in de tabel `channel_names` — zie [`database.md`](database.md) en
+[`admin.md`](admin.md).
+
+> **Waarom de decoder de stroom zelf doorloopt.** `LPPReader` uit
+> `helpers/sensors/LPPDataHelpers.h` heeft geen lezer voor een switch of een
+> generic sensor — geen `readSwitch()`, geen `readGenericSensor()` — en zowel
+> `getFloat()` als de leespositie zijn privé, dus er is langs die klasse geen weg
+> naar die bytes. Zijn `skipData()` stapt er netjes over, en dat was precies de
+> fout: de types die hij niet kent zijn geen obscuur hoekje maar de hele
+> woordenschat van een uptimemonitor. Omdat dit project `LPPDataHelpers.h` niet
+> patcht (het is upstream MeshCore), loopt `monDecodeTelemetry()` in
+> `MeshManagerNet.cpp` de stroom zelf af. De typenummers en de lengtetabel komen nog
+> steeds uit die header, zodat die getallen op één plek staan.
 
 ---
 

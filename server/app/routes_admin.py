@@ -954,6 +954,7 @@ def _node_page(request: Request, rid: int, **extra):
     rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.bekijken", rep)
     requested = request.query_params.get("requested", "")
+    ch_names = db.channel_names_for(rid)
     rows = db.cli_settings_for(rid)
     # Nieuwste antwoord dat we hebben, ongeacht via welke weg het binnenkwam.
     # Samen met het tijdstip waarop de wachtrij is uitgereikt, zegt dit of een
@@ -1108,6 +1109,17 @@ def _node_page(request: Request, rid: int, **extra):
         # eerste keer dat die twee het oneens zijn belooft een knop iets wat de
         # route weigert.
         "rechten": rbac.rechten_op(user, rep),
+        # De kanalen die deze node werkelijk gestuurd heeft, met de namen die er
+        # al bij staan. Uit de metingen zelf en niet uit een lijst die iemand
+        # vooraf moest invullen: welke kanalen een node heeft, weet alleen die
+        # node. Een kanaal verschijnt hier dus zodra er één meting van binnen is.
+        "channels": [
+            dict(c, name=(ch_names[c["channel"]]["name"]
+                          if c["channel"] in ch_names else ""),
+                 unit=(ch_names[c["channel"]]["unit"] or ""
+                       if c["channel"] in ch_names else ""))
+            for c in metrics.channels_seen(db.latest_for(rid))
+        ],
         "mijn_rol": rbac.rol_op_node(user, rep),
         "serverrechten": rbac.serverrechten(user),
         # Wat er met déze node gebeurd is, en door wie. Op de nodepagina en niet
@@ -1320,6 +1332,66 @@ def toggle_repeater(request: Request, rid: int, csrf: str = Form(...),
     return RedirectResponse("/admin", status_code=303)
 
 
+@router.post("/repeaters/{rid}/channels")
+async def save_channel_names(request: Request, rid: int):
+    """Bewaart de namen bij de kanalen van één node.
+
+    Het formulier stuurt per kanaal ``ch_naam_<N>`` en, waar dat zin heeft,
+    ``ch_eenheid_<N>``. Het kanaalnummer staat IN de veldnaam en wordt niet uit
+    de volgorde van de rijen afgeleid. Dat is geen omslachtigheid maar het hele
+    punt: volgorde is precies wat hier niet mag verschuiven, en een rangnummer
+    zou bij een verdwenen kanaal alle namen een plaats laten opschuiven -- stil,
+    zonder foutmelding, met verkeerde cijfers als enige spoor. Zie de
+    waarschuwing bij db.channel_names_for.
+
+    ``node.hernoemen`` en geen eigen handeling: dit is naamgeving en niets
+    anders. Er gaat geen pakket de lucht in, de node merkt er niets van, en het
+    is dezelfde soort ingreep als het hernoemen van de node zelf -- alleen een
+    laag dieper.
+
+    Async omdat het hele formulier in één keer gelezen moet worden: naam en
+    eenheid van elk kanaal komen samen binnen, en los na elkaar schrijven zou de
+    tweede de eerste laten wissen.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.hernoemen", rep)
+    form = await request.form()
+    check_csrf(request, str(form.get("csrf", "")))
+
+    # Alleen kanalen waarvan we werkelijk een meting hebben. Zonder die controle
+    # maakt een verzonnen veldnaam in een POST een rij aan voor een kanaal dat
+    # niet bestaat, en die blijft daarna in de lijst staan zonder dat er ooit een
+    # meting bij komt.
+    known = {c["channel"] for c in metrics.channels_seen(db.latest_for(rid))}
+    velden: dict[int, dict] = {}
+    for key, value in form.items():
+        for prefix, veld in (("ch_naam_", "name"), ("ch_eenheid_", "unit")):
+            if not key.startswith(prefix):
+                continue
+            try:
+                channel = int(key[len(prefix):])
+            except ValueError:
+                break
+            if channel in known:
+                velden.setdefault(channel, {})[veld] = str(value)
+            break
+
+    # Naam en eenheid samen per kanaal, in één schrijfactie: los na elkaar zou de
+    # tweede de eerste weer wissen, want een rij bewaart beide velden.
+    gewijzigd = []
+    was = db.channel_names_for(rid)
+    for channel, vals in sorted(velden.items()):
+        naam = vals.get("name", "")
+        oud = was[channel]["name"] if channel in was else ""
+        db.set_channel_name(rid, channel, naam, vals.get("unit"))
+        if naam.strip() != oud:
+            gewijzigd.append(f"kanaal {channel}: '{oud}' → '{naam.strip()}'")
+    if gewijzigd:
+        _noteer(request, user, "node.hernoemen", rep=rep,
+                detail="; ".join(gewijzigd))
+    return RedirectResponse(f"/admin/repeaters/{rid}#kanalen", status_code=303)
+
+
 @router.post("/repeaters/{rid}/rename")
 def rename_repeater(request: Request, rid: int, name: str = Form(...), csrf: str = Form(...)):
     rep = _rep_or_404(request, rid)
@@ -1351,6 +1423,12 @@ def delete_repeater(request: Request, rid: int, csrf: str = Form(...)):
     db.execute("DELETE FROM samples WHERE repeater_id=?", (rid,))
     db.execute("DELETE FROM latest WHERE repeater_id=?", (rid,))
     db.execute("DELETE FROM neighbors WHERE repeater_id=?", (rid,))
+    # De kanaalnamen horen bij de metingen hierboven en gaan mee. Expliciet en
+    # niet op de cascade vertrouwen, net als de regels erboven: die tabel heeft
+    # wél ON DELETE CASCADE, maar dan zou dit de enige verwijdering zijn die er
+    # niet staat -- en de volgende lezer moet niet hoeven nagaan welke van deze
+    # tabellen zichzelf opruimt en welke niet.
+    db.execute("DELETE FROM channel_names WHERE repeater_id=?", (rid,))
     db.execute("DELETE FROM repeaters WHERE id=?", (rid,))
     return RedirectResponse("/admin", status_code=303)
 

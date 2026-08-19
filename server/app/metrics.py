@@ -2,7 +2,12 @@
 
 Onbekende metrics die via de API binnenkomen worden automatisch getoond in de
 sectie 'Overig'.
+
+Kanaalmetingen (``ch<N>_...``) zijn de uitzondering op dat laatste: die krijgen
+hun eigen sectie, want er kunnen er willekeurig veel zijn en ze horen bij
+elkaar. Zie :func:`channel_metric` verderop.
 """
+import re
 
 # section, label, unit, sort  (volgorde zoals het HA-dashboard van JessaZH.VIR)
 CATALOG = {
@@ -87,6 +92,7 @@ CATALOG = {
 SECTIONS = [
     ("status", "Status"),
     ("battery", "Batterij & solar"),
+    ("channels", "Kanalen"),
     ("messages", "Berichten"),
     ("airtime", "Airtime"),
     ("filter", "Pakketfilter"),
@@ -169,9 +175,113 @@ HINTS = {
 }
 
 
+# ---- kanaalmetingen ---------------------------------------------------------
+#
+# Een sensornode antwoordt in CayenneLPP: per meting een kanaalnummer, een type
+# en een waarde. De firmware die zo'n node uitleest bewaart elke meting onder
+# het kanaal dat de bron zelf gebruikte en hernoemt niets -- zie
+# monDecodeTelemetry in de repeaterfirmware. Wat hier binnenkomt heet dus
+# ``ch<N>_voltage``, ``ch<N>_temperature``, ``ch<N>_switch`` of
+# ``ch<N>_generic``, met N het kanaalnummer van de bron.
+#
+# Twee LPP-types op HETZELFDE kanaal is normaal en geen vergissing: een
+# uptimemonitor zet per dienst een switch (bereikbaar ja/nee) én een generic
+# sensor (responstijd) op één nummer. Het soort zit daarom in de metricnaam en
+# niet alleen het kanaal, zodat beide naast elkaar bewaard blijven in plaats van
+# elkaar te overschrijven.
+#
+# De MENSELIJKE naam hoort hier niet: die is per node verschillend en staat in
+# de tabel ``channel_names`` (zie db.channel_names_for). Deze module levert het
+# soortlabel en de indeling; de pagina plakt de naam ervoor.
+CHANNEL_METRIC = re.compile(r"^ch([0-9]{1,3})_(voltage|temperature|switch|generic)$")
+
+# soort -> (label, eenheid, sorteervolgorde binnen één kanaal)
+CHANNEL_KINDS = {
+    "voltage":     ("spanning", "V", 0),
+    "temperature": ("temperatuur", "°C", 1),
+    "switch":      ("toestand", None, 2),
+    # Bewust geen eenheid: LPP_GENERIC_SENSOR is 4 byte met vermenigvuldiger 1
+    # en belooft niets over wát er gemeten is. Een uptimemonitor zet er hele
+    # milliseconden pingtijd in, maar dat weet alleen wie de node kent -- vandaar
+    # het eenheidsveld bij de naam, per node in te vullen.
+    "generic":     ("meetwaarde", None, 3),
+}
+
+
+def channel_metric(name: str):
+    """``(kanaal, soort)`` voor een kanaalmeting, anders ``None``."""
+    m = CHANNEL_METRIC.match(name)
+    return (int(m.group(1)), m.group(2)) if m else None
+
+
+def channel_label(channel: int, kind: str, name: str | None = None) -> str:
+    """Het label bij één kanaalmeting.
+
+    Zonder naam wordt dat "kanaal 6 — toestand". Een naamloos kanaal moet
+    zichtbaar blijven: een meting waarvan we de naam niet kennen is nog steeds
+    een meting, en ze verbergen zou de node stiller maken dan hij is.
+    """
+    kind_label = CHANNEL_KINDS[kind][0]
+    head = (name or "").strip() or f"kanaal {channel}"
+    return f"{head} — {kind_label}"
+
+
+def channel_unit(kind: str, unit: str | None = None) -> str | None:
+    """De eenheid: die van het LPP-type, of de door de beheerder gezette."""
+    kind_unit = CHANNEL_KINDS[kind][1]
+    return kind_unit or ((unit or "").strip() or None)
+
+
+def channels_seen(names) -> list[dict]:
+    """De kanalen die in deze metricnamen voorkomen, op nummer gesorteerd.
+
+    Per kanaal: het nummer en de soorten die eronder binnenkwamen. Dat laatste is
+    wat de beheerpagina nodig heeft om te kunnen zeggen wát er op een kanaal
+    staat, want een kanaal met een switch én een generic sensor is een dienst met
+    een toestand en een responstijd, en een kanaal met alleen een switch is dat
+    niet.
+
+    Gaten in de nummering blijven gaten. Ze worden niet opgevuld en niet
+    hernummerd: zie de waarschuwing bij db.channel_names_for -- een verschoven
+    nummer laat elke bewaarde naam stil naar de verkeerde dienst wijzen.
+    """
+    found: dict[int, set] = {}
+    for name in names:
+        ch = channel_metric(name)
+        if ch is not None:
+            found.setdefault(ch[0], set()).add(ch[1])
+    return [
+        {"channel": channel,
+         "kinds": sorted(kinds, key=lambda k: CHANNEL_KINDS[k][2]),
+         "kind_labels": [CHANNEL_KINDS[k][0]
+                         for k in sorted(kinds, key=lambda k: CHANNEL_KINDS[k][2])],
+         # Alleen bij een generic sensor heeft een eigen eenheid zin: de andere
+         # soorten hebben er al een uit het LPP-type (V, °C) of horen er geen te
+         # hebben (een toestand is op of neer).
+         "wants_unit": "generic" in kinds}
+        for channel, kinds in sorted(found.items())
+    ]
+
+
 def metric_info(name: str):
     """(section, label, unit, sort) — met fallback voor onbekende metrics."""
-    return CATALOG.get(name, ("other", name.replace("_", " "), None, 99))
+    known = CATALOG.get(name)
+    if known is not None:
+        return known
+    # Kanaalmetingen krijgen hun eigen sectie in plaats van 'Overig'. Ch1 en ch2
+    # spanning/temperatuur staan hierboven in CATALOG en blijven dus waar ze
+    # altijd stonden, bij de batterij -- op een MeshCore-repeater is kanaal 1 het
+    # eigen bord, en die tegels verhuizen zou de pagina van elke bestaande node
+    # veranderen voor een verbetering die alleen nieuwe kanalen nodig hebben.
+    ch = channel_metric(name)
+    if ch is not None:
+        channel, kind = ch
+        # Op kanaal, dan op soort: de metingen van één dienst komen zo bij
+        # elkaar te staan in plaats van alle toestanden bij elkaar en alle
+        # pingtijden bij elkaar.
+        sort = channel * 10 + CHANNEL_KINDS[kind][2]
+        return ("channels", channel_label(channel, kind), CHANNEL_KINDS[kind][1], sort)
+    return ("other", name.replace("_", " "), None, 99)
 
 
 # ---- instelbare weergave (beheerd via /admin, opgeslagen in settings) -------
@@ -182,6 +292,7 @@ DEFAULT_RANGES = [4, 24, 48, 168, 744, 2160]  # uren in het historiekvenster
 DEFAULT_LAYOUT = [
     {"key": "status", "visible": True},
     {"key": "battery", "visible": True},
+    {"key": "channels", "visible": True},
     {"key": "messages", "visible": True},
     {"key": "airtime", "visible": True},
     # Het pakketfilter had wel een sectie met tegels en een grafiek, maar stond
@@ -196,7 +307,8 @@ DEFAULT_LAYOUT = [
     {"key": "neighbors", "visible": True},
 ]
 BLOCK_NAMES = {
-    "status": "Status", "battery": "Batterij & solar", "messages": "Berichten",
+    "status": "Status", "battery": "Batterij & solar", "channels": "Kanalen",
+    "messages": "Berichten",
     "airtime": "Airtime", "filter": "Pakketfilter", "other": "Overig",
     "charts": "Grafieken", "map": "Linkkaart", "neighbors": "Buren",
 }

@@ -320,6 +320,44 @@ way round. A nameless advert must not erase a known name.
 under the same `prefix6`, so both sources keep converging on one row instead of
 two that shadow each other.
 
+### `channel_names`
+
+The channel-to-service naming of a sensor node: what "channel 6" on *this* node
+actually is.
+
+| Column | Type | Contents |
+|---|---|---|
+| `repeater_id` | INTEGER | FK to `repeaters`, `ON DELETE CASCADE` |
+| `channel` | INTEGER | The LPP channel number, as chosen by the answering node |
+| `name` | TEXT | What runs on it, at most 64 characters |
+| `unit` | TEXT | Unit for a generic sensor (e.g. `ms`), or NULL |
+| `updated` | TEXT | When this row was written |
+
+Primary key `(repeater_id, channel)`.
+
+**Why this table exists at all.** A telemetry reply is CayenneLPP: a run of
+triples, channel number / type / value, with **no name field** — not in the format
+and not in MeshCore, which only has an incrementing channel counter. What comes off
+the radio is literally "channel 6, switch, 1", never "google is reachable". The
+mapping from number to service is a property of the answering node, and the only
+place it can be kept is on the receiving side. Hence a table.
+
+**Why here and not on the repeater that reads the node out.** That repeater is a
+pass-through with limited flash: a name stored there is lost on a reflash or a
+board swap, has to be set per channel over the radio, and helps the MeshCore app
+not at all — the app asks the *sensor node* for its telemetry and never passes the
+repeater. Here the name sits in the same database as the measurements it belongs
+to, is set with a form, and survives every firmware rollout.
+
+> **Channel numbers must never shift or be reused.** The name hangs off the
+> number, because that is the only thing the packet carries. If the sending side
+> drops a service and the rest move up, every name in this table silently points
+> at the wrong service — no error, just wrong figures on a dashboard. A gap in the
+> numbering is therefore *not* untidiness to be cleaned up; it is the evidence
+> that nothing moved. `db.set_channel_name()` deletes the row on an empty name
+> rather than storing a blank one, so an unnamed channel shows as "kanaal N" and
+> does not linger in the admin list as something that once was.
+
 ### `repeater_cli`
 
 The CLI configuration of a repeater, as read over LoRa or over MQTT.

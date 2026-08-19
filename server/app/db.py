@@ -177,6 +177,17 @@ CREATE TABLE IF NOT EXISTS repeater_cli(
   updated TEXT NOT NULL,
   PRIMARY KEY(repeater_id, param)
 );
+-- Namen bij de kanalen van een sensornode. Zie de uitleg boven
+-- channel_names_for() waarom die koppeling hier hoort en niet op de repeater,
+-- en waarom een kanaalnummer nooit mag verschuiven.
+CREATE TABLE IF NOT EXISTS channel_names(
+  repeater_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
+  channel INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  unit TEXT,
+  updated TEXT NOT NULL,
+  PRIMARY KEY(repeater_id, channel)
+);
 CREATE TABLE IF NOT EXISTS repeater_filter(
   repeater_id INTEGER PRIMARY KEY REFERENCES repeaters(id) ON DELETE CASCADE,
   state TEXT NOT NULL,
@@ -1884,6 +1895,66 @@ def upsert_cli_settings(repeater_id: int, values: dict, prune: bool = True) -> N
 
 def cli_settings_for(repeater_id: int) -> list:
     return q("SELECT * FROM repeater_cli WHERE repeater_id=? ORDER BY param", (repeater_id,))
+
+
+# --- namen bij kanalen -------------------------------------------------------
+#
+# Een sensornode antwoordt op een telemetrieverzoek in CayenneLPP, en dat
+# formaat is een reeks drietallen: kanaalnummer, type, waarde. Er is GEEN
+# naamveld -- niet in het formaat en niet in MeshCore, dat alleen een oplopende
+# ``next_available_channel`` kent. Wat er van de radio komt is dus letterlijk
+# "kanaal 6, switch, 1" en niet "google is bereikbaar". De koppeling van nummer
+# naar dienst is een eigenschap van de antwoordende node en moet aan de
+# ONTVANGENDE kant onthouden worden, want anders is ze nergens.
+#
+# Waarom hier en niet op de repeater die de node uitleest:
+#
+#   * de repeater is een doorgeefluik met beperkte flash, en een naam die daar
+#     staat is weg na een herflash of bij vervanging van het bord;
+#   * ze zou dan via de mesh-CLI gezet moeten worden, één commando per kanaal,
+#     over de radio;
+#   * en ze helpt de MeshCore-app niet, want die vraagt de telemetrie bij de
+#     sensornode zelf op en komt langs de repeater niet eens voorbij.
+#
+# Hier staat ze in dezelfde databank als de metingen waar ze bij hoort, is ze
+# met een formulier te zetten, en overleeft ze elke firmware-uitrol.
+#
+# WAARSCHUWING VOOR WIE HIERNA KOMT: het kanaalnummer is de sleutel, en die
+# nummers mogen NOOIT verschuiven of hergebruikt worden. Wordt aan de zendende
+# kant een dienst verwijderd en schuift de rest een plaats op, dan wijzen deze
+# namen stil naar de verkeerde dienst -- geen foutmelding, alleen verkeerde
+# cijfers. Een gat in de nummering is dus geen rommel die opgeruimd hoort te
+# worden; het is het bewijs dat er niets verschoven is.
+
+
+def channel_names_for(repeater_id: int) -> dict[int, sqlite3.Row]:
+    """De namen bij de kanalen van deze node, op kanaalnummer."""
+    return {r["channel"]: r for r in
+            q("SELECT * FROM channel_names WHERE repeater_id=? ORDER BY channel",
+              (repeater_id,))}
+
+
+def set_channel_name(repeater_id: int, channel: int, name: str,
+                     unit: str | None = None) -> None:
+    """Zet of wist de naam bij één kanaal.
+
+    Een lege naam wist de rij in plaats van een leeg veld te bewaren: een
+    kanaal zonder naam hoort als "kanaal N" getoond te worden, en dat is precies
+    wat een ontbrekende rij oplevert. Een lege rij zou hetzelfde doen maar wel
+    in de beheerlijst blijven staan als iets wat er ooit was.
+    """
+    name = (name or "").strip()[:64]
+    unit = (unit or "").strip()[:16] or None
+    if not name and not unit:
+        execute("DELETE FROM channel_names WHERE repeater_id=? AND channel=?",
+                (repeater_id, channel))
+        return
+    execute(
+        "INSERT INTO channel_names(repeater_id, channel, name, unit, updated) "
+        "VALUES(?,?,?,?,?) ON CONFLICT(repeater_id, channel) DO UPDATE SET "
+        "name=excluded.name, unit=excluded.unit, updated=excluded.updated",
+        (repeater_id, channel, name, unit, utcnow()),
+    )
 
 
 def cli_settings_all() -> list:

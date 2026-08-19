@@ -207,6 +207,8 @@ node in het topic; de derde beschrijft iemand anders en zegt dat in
 | `neighbor_count` | int | aantal | | ✓ | ✓ | hoeveel buren de node kent, wat niet hetzelfde is als hoeveel ze er gerapporteerd heeft |
 | `mcu_temperature` | float | °C | | ✓ | | ESP32-dietemperatuur |
 | `ch<N>_temperature` / `ch<N>_voltage` | float | °C / V | | | ✓ | gedecodeerd uit de CayenneLPP-telemetrie van de gemonitorde node |
+| `ch<N>_switch` | int | 0/1 | | | ✓ | `LPP_SWITCH` op kanaal N — zo meldt een sensornode een dienst op of neer |
+| `ch<N>_generic` | int | — | | | ✓ | `LPP_GENERIC_SENSOR` op kanaal N: een heel getal zonder eigen eenheid. Een uptimemonitor zet er een responstijd in ms in, maar het type zegt dat niet — zie de noot onder de tabel |
 | `freq` | float | MHz | ✓ | ✓ | | `_prefs.freq` |
 | `sf` / `cr` | int | — | ✓ | ✓ | | spreading factor, coding rate |
 | `tx` | int | dBm | ✓ | ✓ | | `_prefs.tx_power_dbm` |
@@ -216,6 +218,30 @@ node in het topic; de derde beschrijft iemand anders en zegt dat in
 `✓*` in de kolom "Doorgegeven" betekent "alleen wanneer de firmware van de
 gemonitorde node nieuw genoeg is om die bytes verstuurd te hebben" — zie de
 regel over de structlengte hieronder.
+
+#### Kanaalmetingen: het type zit in de naam, de betekenis niet
+
+De vier `ch<N>_*`-velden dragen een kanaalnummer `N` dat de *antwoordende* node
+gekozen heeft, en een achtervoegsel dat het **LPP-type** noemt — nooit wat de
+waarde betekent.
+
+Twee ervan op hetzelfde kanaal is normaal en geen vergissing: een sensornode meldt
+één dienst tegelijk als `ch5_switch` (bereikbaar ja/nee) en `ch5_generic`
+(responstijd). Daarom zit het type in de veldnaam; een naam uit alleen het kanaal
+zou de tweede de eerste laten overschrijven.
+
+`ch6_generic` heet met opzet niet `ch6_ping_ms`. `LPP_GENERIC_SENSOR` garandeert
+vier unsigned byte met vermenigvuldiger 1 en zegt niets over wát er geteld wordt,
+dus een eenheid in de naam zou een verzinsel zijn. De koppeling kanaal → dienst —
+"kanaal 6 is google, in ms" — wordt per node op de server bewaard, in
+`channel_names`, en op de beheerpagina gezet. Zie
+[`protocol.md`](protocol.md) en [`admin.md`](admin.md).
+
+**Kanaalnummers mogen nooit verschuiven.** De bewaarde naam hangt aan het nummer,
+want dat is het enige wat het pakket draagt. Laat de antwoordende kant een dienst
+vallen en schuift de rest op, dan wijst elke bewaarde naam stil naar de verkeerde
+dienst — geen foutmelding, alleen verkeerde cijfers. Een gat in de nummering is dus
+geen rommel om op te ruimen; het is het bewijs dat er niets verschoven is.
 
 Let op de eenheden. `uptime` staat in **dagen**, niet in seconden; `airtime` in
 **minuten**, niet in milliseconden. Beide worden op de node al gedeeld, zodat de

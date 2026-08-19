@@ -535,6 +535,43 @@ showing the same number are two places that eventually disagree. Whether an
 upgrade is possible does **not** follow from `route["level"]`: that verdict is
 `firmware.ota_route()`.
 
+### Naming the channels — `#kanalen`
+
+A sensor node's telemetry arrives as CayenneLPP, and that format is a run of
+triples: channel number, type, value. There is **no name field**, not in the format
+and not in MeshCore, which only has an incrementing channel counter. So what a node
+sends is literally "channel 6, switch, 1" and never "google is reachable". This form
+is where that mapping is supplied; it is not a convenience, it is the only route.
+
+The form lists only the channels the node has genuinely reported — read from
+`latest`, not from a list somebody had to fill in first, because which channels a
+node has is known only to that node. A channel appears as soon as one measurement
+of it has arrived. Each row takes a name and, for a generic sensor only, a unit:
+`LPP_GENERIC_SENSOR` is four unsigned bytes with multiplier 1 and promises nothing
+about *what* it measures, so `12` without `ms` after it is a number without a
+meaning. A voltage and a temperature already have their unit from the LPP type, and
+a switch should not have one.
+
+The channel number travels **in the field name** (`ch_naam_<N>`), never as a row
+index, and a number the node has not reported is refused. Names and units are
+written per channel in one action, because a row holds both and writing them
+separately would let the second erase the first.
+
+It posts to `/admin/repeaters/{rid}/channels` and needs `node.hernoemen` — this is
+naming and nothing else: no packet goes out, the node never notices, and it is the
+same kind of act as renaming the node itself, one layer down.
+
+> **Why channel numbers must never shift.** The stored name hangs off the number,
+> because that is the only thing the packet carries. If the sending side drops a
+> service and the rest move up, every name here silently points at the wrong
+> service: no error, just wrong figures. A gap in the numbering is therefore not
+> untidiness to be cleaned up — it is the evidence that nothing moved. The page says
+> this in as many words, so that a later reader does not get the idea of tidying the
+> gaps away.
+
+An empty name clears it. The channel then shows as "kanaal N" on the public page
+and does **not** disappear: an unnamed measurement is still a measurement.
+
 ### Visibility on the site — `#zichtbaarheid`
 
 Three switches in one block, in decreasing severity: `is_public` takes the whole

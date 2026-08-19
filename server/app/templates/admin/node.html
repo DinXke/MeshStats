@@ -947,6 +947,91 @@
   {% endif %}
 </section>
 
+{#- Namen bij kanalen. Dit blok bestaat omdat het telemetrieformaat geen naamveld
+    heeft, en die uitleg staat op de pagina zelf en niet alleen in de code: wie dit
+    formulier voor het eerst ziet, ziet anders een lijst nummers zonder te weten
+    waarom iemand die met de hand moet benoemen -- en wie later "de gaten in de
+    nummering opruimen" bedenkt, hoort hier te lezen waarom dat elke naam stil naar
+    de verkeerde dienst laat wijzen. -#}
+{% if channels %}
+<section id="kanalen">
+  <h2>Namen bij de kanalen</h2>
+
+  <p class="muted small"><strong>Waarom dit met de hand moet.</strong> Een sensornode
+     antwoordt op een telemetrieverzoek in <strong>CayenneLPP</strong>, en dat formaat is een
+     reeks drietallen: kanaalnummer, type, waarde. Er is <strong>geen naamveld</strong> — niet
+     in het formaat en niet in MeshCore, dat alleen een oplopende kanaalteller kent. Wat er van
+     de radio komt is dus letterlijk <span class="mono">kanaal 6, switch, 1</span> en niet
+     “google is bereikbaar”. De koppeling van nummer naar dienst is een eigenschap van de
+     antwoordende node, en de enige plek waar ze bewaard kan worden is hier, aan de ontvangende
+     kant. Dit formulier is dus geen gemak; het is de enige weg.</p>
+
+  <p class="muted small"><strong>Waarom hier en niet op de repeater.</strong> De repeater die
+     deze node uitleest is een doorgeefluik met beperkte flash. Een naam die daar staat is weg
+     na een herflash of bij vervanging van het bord, moet per kanaal over de radio gezet worden,
+     en helpt de MeshCore-app niets — die vraagt de telemetrie bij de sensornode zelf op en komt
+     langs de repeater niet eens voorbij. Hier staat de naam in dezelfde databank als de
+     metingen waar ze bij hoort, en overleeft ze elke firmware-uitrol.</p>
+
+  <p class="error small"><strong>Kanaalnummers mogen nooit verschuiven.</strong> De naam hangt
+     aan het <em>nummer</em>, want dat is het enige wat het pakket draagt. Wordt aan de zendende
+     kant een dienst verwijderd en schuift de rest een plaats op, dan wijst elke naam hieronder
+     stil naar de verkeerde dienst: geen foutmelding, alleen verkeerde cijfers op een dashboard.
+     Een gat in de nummering hieronder is dus <strong>geen rommel die opgeruimd hoort te
+     worden</strong> — het is het bewijs dat er niets verschoven is. Laat gaten staan, en
+     hergebruik een vrijgekomen nummer niet.</p>
+
+  {% if rechten['node.hernoemen'].allowed %}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/channels">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <table>
+      <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Naam</th><th>Eenheid</th></tr></thead>
+      <tbody>
+      {% for c in channels %}
+        <tr>
+          <td class="mono">{{ c.channel }}</td>
+          <td class="muted">{{ c.kind_labels | join(' + ') }}</td>
+          <td><input type="text" name="ch_naam_{{ c.channel }}" value="{{ c.name }}"
+                     maxlength="64" autocomplete="off"
+                     placeholder="kanaal {{ c.channel }}"></td>
+          <td>
+            {%- if c.wants_unit %}
+            {#- Alleen bij een generic sensor: die is 4 byte met vermenigvuldiger 1 en
+                belooft niets over wát er gemeten is, dus zonder eenheid is "12" een getal
+                zonder betekenis. Een spanning en een temperatuur hebben hun eenheid al uit
+                het LPP-type, en een toestand hoort er geen te hebben. -#}
+            <input type="text" name="ch_eenheid_{{ c.channel }}" value="{{ c.unit }}"
+                   maxlength="16" autocomplete="off" placeholder="bv. ms">
+            {%- else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="rowform"><button type="submit">&#128190; Namen bewaren</button></div>
+  </form>
+
+  <p class="muted small">Een leeg naamveld wist de naam. Het kanaal blijft dan als
+     “kanaal N” op de statistiekpagina staan en verdwijnt niet: een naamloze meting is nog
+     steeds een meting.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Naam</th></tr></thead>
+    <tbody>
+    {% for c in channels %}
+      <tr>
+        <td class="mono">{{ c.channel }}</td>
+        <td class="muted">{{ c.kind_labels | join(' + ') }}</td>
+        <td>{% if c.name %}{{ c.name }}{% else %}<span class="muted">kanaal {{ c.channel }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">{{ rechten['node.hernoemen'].reason }}</p>
+  {% endif %}
+</section>
+{% endif %}
+
 <section id="pakketfilter">
   <h2>Pakketfilter</h2>
 

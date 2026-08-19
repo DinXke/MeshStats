@@ -1099,10 +1099,42 @@ Multipliers are at lines 34–60; the error codes are `LPP_ERROR_OK` 0,
 `LPP_ERROR_OVERFLOW` 1 and `LPP_ERROR_UNKOWN_TYPE` 2 (spelling as in source),
 lines 62–64.
 
-MeshManager decodes only two of these — `LPP_TEMPERATURE` and `LPP_VOLTAGE` — into
-`ch<N>_temperature` and `ch<N>_voltage`, via `helpers/sensors/LPPDataHelpers.h`
-included by `MeshManagerNet.cpp`. The rest are listed here so an extension does not
-have to rediscover the table.
+MeshManager decodes four of these:
+
+| LPP type | Metric name | Value |
+|---|---|---|
+| `LPP_TEMPERATURE` | `ch<N>_temperature` | °C, 2 B signed ×10 |
+| `LPP_VOLTAGE` | `ch<N>_voltage` | V, 2 B unsigned ×100 |
+| `LPP_SWITCH` | `ch<N>_switch` | 0 or 1, 1 B |
+| `LPP_GENERIC_SENSOR` | `ch<N>_generic` | whole number, 4 B unsigned ×1 |
+
+The rest are listed here so an extension does not have to rediscover the table; an
+unknown type is skipped by its length from that table.
+
+**The LPP type is part of the metric name, not just the channel.** One channel
+quite legitimately carries two records: a sensor node reports a service as a
+switch (reachable yes/no) *and* as a generic sensor (response time) under the same
+number. A name built from the channel alone would let the second overwrite the
+first, and half of what the node said would be silently gone.
+
+**And the name states the type, never the meaning** — `ch6_generic`, not
+`ch6_ping_ms`. The type guarantees four unsigned bytes with multiplier 1 and
+promises nothing about what is being counted; that an uptime monitor puts
+milliseconds to a web server there is knowledge the sending node has and this
+packet does not carry. Which is why the site keeps the channel-to-service naming
+itself, per node, in the `channel_names` table — see [`database.md`](database.md)
+and [`admin.md`](admin.md).
+
+> **Why the decoder walks the stream itself.** `LPPReader` in
+> `helpers/sensors/LPPDataHelpers.h` has no reader for a switch or a generic
+> sensor — no `readSwitch()`, no `readGenericSensor()` — and both `getFloat()` and
+> the read position are private, so there is no route to those bytes through that
+> class. Its `skipData()` steps neatly over them, and that was exactly the bug:
+> the types it does not implement are not an obscure corner but the entire
+> vocabulary of an uptime monitor. Since this project does not patch
+> `LPPDataHelpers.h` (it is upstream MeshCore), `monDecodeTelemetry()` in
+> `MeshManagerNet.cpp` walks the stream itself. The type numbers and the length
+> table still come from that header, so those numbers live in one place.
 
 ---
 

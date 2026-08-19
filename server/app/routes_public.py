@@ -81,6 +81,11 @@ def repeater_page(request: Request, slug: str):
         "rx_airtime_utilization": db.computed_utilization(r, "rx_airtime"),
     }
 
+    # De namen die een beheerder bij de kanalen van deze node gezet heeft. Het
+    # telemetrieformaat draagt er geen, dus zonder deze tabel heet elk kanaal
+    # alleen naar zijn nummer. Zie db.channel_names_for.
+    ch_names = db.channel_names_for(r["id"])
+
     # tiles per section
     sections: dict[str, dict] = {}
     used = set()
@@ -106,8 +111,9 @@ def repeater_page(request: Request, slug: str):
             if m in used:
                 continue
             section, label, unit, sort = metrics.metric_info(m)
-            if section == key:
-                extra.append((sort, m, _tile(m, label, unit, row)))
+            if section != key:
+                continue
+            extra.append((sort, m, _channel_tile(m, label, unit, row, ch_names)))
         for _, m, t in sorted(extra, key=lambda x: x[0]):
             tiles.append(t)
             used.add(m)
@@ -124,6 +130,28 @@ def repeater_page(request: Request, slug: str):
         for key, title, mets, hours in metrics.CHARTS
         if any(m in latest for m in mets)
     ]
+
+    # Eén grafiek per generic-sensorkanaal, in plaats van een vaste lijst zoals
+    # metrics.CHARTS. Welke kanalen een node heeft weet alleen die node, dus een
+    # vaste lijst zou per dienst uitgebreid moeten worden en zou bij een nieuwe
+    # dienst stil niets tonen. Een uptimemonitor zet hier de pingtijd, en dat is
+    # een tijdreeks zoals elke andere -- ze hoort ook zo getekend te worden.
+    #
+    # Alleen generic sensors: een switch is 0/1 en daar is een lijndiagram geen
+    # goede vorm voor. Die staat als tegel in de kanalensectie en blijft
+    # aanklikbaar, dus zijn historiek is niet weg.
+    for m in sorted(latest, key=lambda n: (metrics.channel_metric(n) or (0, ""))[0]):
+        ch = metrics.channel_metric(m)
+        if ch is None or ch[1] != "generic":
+            continue
+        channel, kind = ch
+        named = ch_names.get(channel)
+        label = metrics.channel_label(channel, kind, named["name"] if named else None)
+        charts.append({
+            "key": m, "title": f"{label} (24 u)", "metrics": [m], "hours": 24,
+            "labels": [label],
+            "unit": metrics.channel_unit(kind, named["unit"] if named else None),
+        })
 
     # configurable block order and history ranges
     layout = metrics.parse_layout(db.get_setting("layout"))
@@ -193,6 +221,37 @@ def repeater_page(request: Request, slug: str):
             for m, cfg in {**metrics.GAUGES, **metrics.THERMOMETERS}.items()
         },
     })
+
+
+def _channel_tile(metric: str, label: str, unit: str | None, row, ch_names) -> dict:
+    """Een tegel, met voor kanaalmetingen de naam die de beheerder gaf.
+
+    Voor alles wat geen kanaalmeting is verandert er niets. Voor een kanaalmeting
+    komt de naam uit ``channel_names`` voor het soortlabel te staan, en bij een
+    generic sensor mag de beheerder ook de eenheid zetten -- het LPP-type zegt
+    daar niets over (4 byte, vermenigvuldiger 1) en "12" zonder "ms" erachter is
+    een getal zonder betekenis.
+    """
+    ch = metrics.channel_metric(metric)
+    if ch is None:
+        return _tile(metric, label, unit, row)
+    channel, kind = ch
+    named = ch_names.get(channel)
+    label = metrics.channel_label(channel, kind, named["name"] if named else None)
+    unit = metrics.channel_unit(kind, named["unit"] if named else None)
+    tile = _tile(metric, label, unit, row)
+    # Een switch is 0 of 1 en dat is geen getal om te lezen. 'op'/'neer' is wat
+    # het betekent: de dienst antwoordt, of hij antwoordt niet.
+    if kind == "switch" and tile["value"] is not None:
+        tile["display"] = "op" if tile["value"] == 1.0 else "neer"
+        tile["i18n"] = "state.up" if tile["value"] == 1.0 else "state.down"
+        tile["i18n_vars"] = {}
+    # De tegel is aanklikbaar op zijn metricnaam, en daarmee heeft elke pingtijd
+    # dezelfde historiek als elke andere meting -- zonder dat er per dienst een
+    # grafiek bijgeprogrammeerd hoeft te worden.
+    tile["channel"] = channel
+    tile["kind"] = kind
+    return tile
 
 
 def _tile(metric: str, label: str, unit: str | None, row) -> dict:

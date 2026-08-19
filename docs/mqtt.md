@@ -201,6 +201,8 @@ the topic; the third describes somebody else and says so in
 | `neighbor_count` | int | count | | ✓ | ✓ | how many neighbours the node knows, which is not the same as how many it reported |
 | `mcu_temperature` | float | °C | | ✓ | | ESP32 die temperature |
 | `ch<N>_temperature` / `ch<N>_voltage` | float | °C / V | | | ✓ | decoded from the monitored node's CayenneLPP telemetry |
+| `ch<N>_switch` | int | 0/1 | | | ✓ | `LPP_SWITCH` on channel N — how a sensor node reports a service up or down |
+| `ch<N>_generic` | int | — | | | ✓ | `LPP_GENERIC_SENSOR` on channel N: a whole number with no unit of its own. An uptime monitor puts a response time in ms here, but the type does not say so — see the note below the table |
 | `freq` | float | MHz | ✓ | ✓ | | `_prefs.freq` |
 | `sf` / `cr` | int | — | ✓ | ✓ | | spreading factor, coding rate |
 | `tx` | int | dBm | ✓ | ✓ | | `_prefs.tx_power_dbm` |
@@ -209,6 +211,29 @@ the topic; the third describes somebody else and says so in
 
 `✓*` on the relayed column means "only when the monitored node's firmware is new
 enough to have sent those bytes" — see the struct-length rule below.
+
+#### Channel metrics: the type is in the name, the meaning is not
+
+The four `ch<N>_*` fields carry a channel number `N` chosen by the *answering*
+node, and a suffix naming the **LPP type** — never what the value means.
+
+Two of them on the same channel is normal, not a mistake: a sensor node reports
+one service as `ch5_switch` (reachable yes/no) and `ch5_generic` (response time) at
+once. That is why the type is part of the field name; a name built from the channel
+alone would let the second overwrite the first.
+
+`ch6_generic` is deliberately not called `ch6_ping_ms`. `LPP_GENERIC_SENSOR`
+guarantees four unsigned bytes with multiplier 1 and says nothing about what is
+counted, so a unit in the name would be an invention. The channel-to-service
+mapping — "channel 6 is google, in ms" — is kept per node on the server, in
+`channel_names`, and set on the admin page. See
+[`protocol.md`](protocol.md) and [`admin.md`](admin.md).
+
+**Channel numbers must never shift.** The stored name hangs off the number,
+because that is the only thing the packet carries. If the answering side drops a
+service and the rest move up, every stored name silently points at the wrong
+service — no error, just wrong figures. A gap in the numbering is therefore not
+untidiness to be cleaned up; it is the evidence that nothing moved.
 
 Watch the units. `uptime` is **days**, not seconds; `airtime` is **minutes**, not
 milliseconds. Both are pre-divided on the node so the server stores what it

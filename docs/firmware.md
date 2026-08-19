@@ -575,6 +575,44 @@ deciding whether to change something.
 | **1.10.0** | The site can set this node's clock (`time <epoch>` on `cmd`), after which the node checks the clocks of the repeaters it monitors over LoRa; `wifi clock` reads back what happened | An ESP32 without a battery-backed RTC comes back from a reboot stamping everything with May 2024, and nothing on the mesh knows better. The site does |
 | **1.11.0** | The sweep collects the region tree again, as `cmd:region`; `SET_VALUE_MAX` 32 → 176; `jsonEsc()` writes `\n`, `\r`, `\t`; `Err - …` recognised as a refusal alongside `Error…`; `MON_SET_TOTAL_MS` 300 s → 360 s | 1.7.1 rightly stopped publishing a tree in a settings column, but wrongly dropped the tree entirely — leaving one row ageing at "7 days" beside eighteen at "32 minutes" |
 
+| *(2.0.0 – 2.8.2)* | Not itemised here — the module was renamed at 1.12.0 and the 2.x history lives only in the block comment at the top of `MeshManagerNet.cpp`, which is the authoritative changelog | This table stopped being maintained at 1.11.0; it is a reading aid, and the comment is the record |
+| **2.9.0** | Telemetry decoding gained `LPP_SWITCH` → `ch<N>_switch` and `LPP_GENERIC_SENSOR` → `ch<N>_generic`; `MON_TELEM_MAX` 6 → 40; an unanswered status request no longer ends the round; sensor nodes appear in the monitor candidate list | Three independent reasons a **sensor node's** telemetry could never reach the site, each of them sufficient on its own — see below |
+
+### Why a sensor node reported nothing before 2.9.0
+
+A MeshCore sensor node answers `REQ_TYPE_GET_TELEMETRY_DATA` with CayenneLPP and
+that is its entire purpose. Three things stood in the way, and each one alone was
+enough to produce a node that "answers nothing":
+
+1. **The decoder threw the values away.** `monDecodeTelemetry()` kept
+   `LPP_TEMPERATURE` and `LPP_VOLTAGE` and called `skipData()` on everything else
+   — and everything else is exactly what an uptime monitor speaks: `LPP_SWITCH`
+   for up/down and `LPP_GENERIC_SENSOR` for a response time. They were decoded,
+   stepped over, and never published.
+2. **An unanswered status request ended the round before telemetry was ever asked
+   for.** A sensor node does not implement `REQ_TYPE_GET_STATUS` at all: an
+   unknown request type gets no reply and no error, so status times out every
+   round, by design and forever. `MST_REQ_WAIT` then abandoned the round, so the
+   telemetry request was never sent. The round now continues — justified rather
+   than hopeful, because that state is only reached after a login that *worked*,
+   so the node is demonstrably reachable and knows us.
+3. **The candidate list would not offer one.** The list of nodes to pick a monitor
+   from admitted `ADV_TYPE_REPEATER` only, and a sensor node advertises as
+   `ADV_TYPE_SENSOR`. This one was a discovery gap rather than a hard block — an
+   entry only needs a public key and `mon add` never looked at the advert type —
+   which is precisely why it could sit there unnoticed.
+
+`MON_TELEM_MAX` went from 6 to 40 for the same reason: six was enough for the two
+or three sensors a repeater carries, and far too few for a node reporting a switch
+*and* a timing per monitored service. A reply cannot exceed `MAX_PACKET_PAYLOAD`,
+which caps what can physically arrive at around 60 records.
+
+> **Two records on one channel is normal.** A service arrives as `ch5_switch` and
+> `ch5_generic` under the same channel number, which is why the LPP type is part of
+> the metric name. A name built from the channel alone would let the second
+> overwrite the first. And the name states the type, never the meaning:
+> `ch6_generic`, not `ch6_ping_ms` — see [`protocol.md`](protocol.md).
+
 Two patterns run through that list and are worth naming, because they are the
 reason several of the rules below exist:
 

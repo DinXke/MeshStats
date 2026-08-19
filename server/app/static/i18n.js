@@ -366,7 +366,15 @@
       // --- blokken ---
       "block.status": "Status",
       "block.battery": "Batterij & solar",
+      "block.channels": "Kanalen",
       "block.messages": "Berichten",
+
+      /* Een switch op een kanaal is 0 of 1, en dat is geen getal om te lezen.
+         De naam van het kanaal wordt NIET vertaald: die heeft een beheerder
+         zelf ingevuld en staat in de databank, niet hier. */
+      "state.up": "op",
+      "state.down": "neer",
+
       "block.airtime": "Airtime",
       "block.other": "Overig",
       "block.charts": "Grafieken",
@@ -776,7 +784,12 @@
 
       "block.status": "Status",
       "block.battery": "Battery & solar",
+      "block.channels": "Channels",
       "block.messages": "Messages",
+
+      "state.up": "up",
+      "state.down": "down",
+
       "block.airtime": "Airtime",
       "block.other": "Other",
       "block.charts": "Charts",

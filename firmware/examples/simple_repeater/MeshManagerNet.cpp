@@ -5,6 +5,38 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.9.0  De telemetrie van een SENSORNODE komt nu heel binnen, in plaats van
+ *        helemaal niet. Drie oorzaken, elk op zich al genoeg, en alle drie
+ *        opgelost:
+ *          1. monDecodeTelemetry() bewaarde alleen LPP_TEMPERATURE en
+ *             LPP_VOLTAGE en riep skipData() op al de rest -- en al de rest is
+ *             precies de woordenschat van een uptimemonitor: LPP_SWITCH voor
+ *             op/neer en LPP_GENERIC_SENSOR voor een responstijd. Die worden nu
+ *             gedecodeerd naar ch<N>_switch en ch<N>_generic. De decoder loopt de
+ *             LPP-stroom zelf af, want LPPReader heeft geen readSwitch() en geen
+ *             readGenericSensor(), en getFloat() en de leespositie zijn privé.
+ *             LPPDataHelpers.h is upstream en dat patchen we niet; de
+ *             typenummers en de lengtetabel komen er nog wel uit.
+ *          2. Een onbeantwoord statusverzoek beëindigde de ronde VOORDAT er om
+ *             telemetrie gevraagd werd. Een sensornode implementeert
+ *             REQ_TYPE_GET_STATUS niet: geen antwoord, geen fout, dus elke ronde
+ *             een time-out, met opzet en voor altijd. De ronde gaat nu door naar
+ *             MST_TELEM_WAIT. Dat mag: we staan daar alleen na een login die wél
+ *             lukte, dus de node is aantoonbaar bereikbaar. De sessie wordt niet
+ *             meer hier weggegooid maar pas als de hele ronde niets opleverde.
+ *          3. De kandidatenlijst liet alleen ADV_TYPE_REPEATER toe, en een
+ *             sensornode adverteert als ADV_TYPE_SENSOR -- dus juist de node die
+ *             voor telemetrie bestaat werd niet aangeboden. Handmatig toevoegen
+ *             werkte altijd al ('mon add' keek nooit naar het adverttype), en
+ *             daarom kon dit hier onopgemerkt blijven zitten.
+ *        MON_TELEM_MAX 6 -> 40: zes was genoeg voor de sensoren van een repeater
+ *        en veel te weinig voor een node die per dienst een toestand EN een tijd
+ *        meldt. Twee records op één kanaal is hier normaal, en daarom zit het
+ *        LPP-type in de veldnaam en niet alleen het kanaal -- anders overschrijft
+ *        de tweede de eerste. De naam zegt het type, nooit de betekenis
+ *        (ch6_generic, niet ch6_ping_ms): de koppeling kanaal -> dienst staat op
+ *        de server, in channel_names, want dit pakket kan geen naam dragen.
+ *
  * 2.8.2  Er is geen bug: voor bijna al het verkeer valt er niets te beslissen.
  *        De meting van 2.8.1 wees ergens anders heen dan zowel ik als de
  *        beheerder verwachtte, en dat is de reden dat die tellers er staan. Over
@@ -3343,12 +3375,33 @@ static int  _mon_st_len = 0;        // bytes of RepeaterStats that actually arri
 static uint8_t _mon_nbr[176];       // raw neighbours reply, decoded when publishing
 static int  _mon_nbr_len = 0;
 static bool _mon_have_nbr = false;
+/* Status went unanswered while the login had worked. Not a failure by itself: a
+ * sensor node does not implement the status request at all. See MST_REQ_WAIT. */
+static bool _mon_st_missed = false;
 
 /* Telemetry arrives as CayenneLPP, so which channels a node reports on is not
  * known in advance. Values are kept under the channel the source used rather
- * than renamed to something we assume they mean. */
-#define MON_TELEM_MAX 6
-struct MonTelem { uint8_t channel; char kind; float value; };   // kind: 't' or 'v'
+ * than renamed to something we assume they mean.
+ *
+ * TWO RECORDS ON ONE CHANNEL IS NORMAL. A monitoring sensor node reports a
+ * service as a switch (reachable yes/no) AND a generic sensor (round-trip time)
+ * on the same channel number. So the channel alone is not the key here -- the
+ * pair (channel, kind) is -- and 'one value per channel' would have thrown away
+ * exactly half of what such a node says.
+ *
+ * The cap used to be 6, which was enough for the two or three sensors a MeshCore
+ * repeater carries and far too few for a node that reports one switch plus one
+ * timing per monitored service: four fixed channels plus eight services is 20
+ * records. 40 leaves room without being a memory decision worth agonising over
+ * (40 * 12 bytes). A reply cannot exceed MAX_PACKET_PAYLOAD anyway, which caps
+ * the records that can physically arrive at around 60. */
+#define MON_TELEM_MAX 40
+struct MonTelem {
+  uint8_t  channel;
+  char     kind;    // 't' temperature, 'v' voltage, 's' switch, 'g' generic sensor
+  float    value;   // 't', 'v', 's'
+  uint32_t raw;     // 'g' only: the 4-byte unsigned value, exact
+};
 static MonTelem _mon_tl[MON_TELEM_MAX];
 static int _mon_tl_n = 0;
 static unsigned long _mon_deadline = 0;
@@ -3588,32 +3641,118 @@ static void monResetResults() {
   _mon_have_nbr = false;
   _mon_nbr_len = 0;
   _mon_tl_n = 0;
+  _mon_st_missed = false;
 }
 
-/* Decodes a CayenneLPP telemetry reply. Only temperature and voltage are kept:
- * those are the two the site has fields for, and skipData() lets us step over
- * everything else without having to understand it. */
+/* How many value bytes one LPP record of this type carries. Same table as
+ * LPPReader::skipData(), which is where these numbers come from -- but we need
+ * the LENGTH as a number and not just the ability to step past it, because we
+ * walk the stream ourselves (see monDecodeTelemetry). The default of 1 matches
+ * skipData()'s default, so an unknown type is skipped exactly as before. */
+static uint8_t lppValueLen(uint8_t type) {
+  switch (type) {
+    case LPP_GPS:                   return 9;
+    case LPP_POLYLINE:              return 8;   // MINIMUM, as upstream notes
+    case LPP_GYROMETER:
+    case LPP_ACCELEROMETER:         return 6;
+    case LPP_GENERIC_SENSOR:
+    case LPP_FREQUENCY:
+    case LPP_DISTANCE:
+    case LPP_ENERGY:
+    case LPP_UNIXTIME:              return 4;
+    case LPP_COLOUR:                return 3;
+    case LPP_ANALOG_INPUT:
+    case LPP_ANALOG_OUTPUT:
+    case LPP_LUMINOSITY:
+    case LPP_TEMPERATURE:
+    case LPP_CONCENTRATION:
+    case LPP_BAROMETRIC_PRESSURE:
+    case LPP_ALTITUDE:
+    case LPP_VOLTAGE:
+    case LPP_CURRENT:
+    case LPP_DIRECTION:
+    case LPP_POWER:                 return 2;
+    default:                        return 1;
+  }
+}
+
+/* Decodes a CayenneLPP telemetry reply: temperature, voltage, switch and generic
+ * sensor, skipping every other type.
+ *
+ * Why this walks the stream itself instead of using LPPReader. Switch and
+ * generic sensor are the two types a monitoring sensor node speaks in, and
+ * LPPReader has no reader for either: there is no readSwitch() and no
+ * readGenericSensor(), getFloat() is private, and so is the read position, so
+ * there is no way to take those bytes through that class. Its skipData() would
+ * step over them -- which is precisely the bug this replaces. The types it does
+ * not implement are not obscure corners; they are the whole vocabulary of an
+ * uptime monitor, and a decoder that silently drops them makes every service
+ * reading on such a node unreachable from here.
+ *
+ * LPPDataHelpers.h is upstream MeshCore and this project does not patch it, so
+ * the fix belongs here. The type constants and the length table still come from
+ * that header, so the numbers stay single-sourced.
+ *
+ * LPP IS BIG-ENDIAN. Every other multi-byte field in MeshCore is little-endian,
+ * which is what makes this the easiest place in the system to get byte order
+ * wrong. Most significant byte first, as LPPWriter::write() emits it. */
 static void monDecodeTelemetry(const uint8_t *data, int len) {
   _mon_tl_n = 0;
   if (len <= 4) return;
 
-  LPPReader reader(&data[4], (uint8_t)(len - 4));
-  uint8_t channel, type;
-  while (_mon_tl_n < MON_TELEM_MAX && reader.readHeader(channel, type)) {
-    float v;
-    if (type == LPP_TEMPERATURE && reader.readTemperature(v)) {
-      _mon_tl[_mon_tl_n].channel = channel;
-      _mon_tl[_mon_tl_n].kind = 't';
-      _mon_tl[_mon_tl_n].value = v;
+  const uint8_t *buf = &data[4];
+  const int n = len - 4;
+  int pos = 0;
+
+  // Two header bytes plus at least one value byte, or there is no record left.
+  while (_mon_tl_n < MON_TELEM_MAX && pos + 2 < n) {
+    uint8_t channel = buf[pos];
+    uint8_t type    = buf[pos + 1];
+    if (channel == 0) break;              // channel 0 terminates the stream
+    pos += 2;
+
+    uint8_t vlen = lppValueLen(type);
+    if (pos + vlen > n) break;            // truncated record: stop, do not guess
+
+    MonTelem &t = _mon_tl[_mon_tl_n];
+    t.channel = channel;
+    t.raw = 0;
+
+    if (type == LPP_TEMPERATURE) {
+      // 2 bytes, signed, x10
+      int16_t v = (int16_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+      t.kind = 't';
+      t.value = v / 10.0f;
       _mon_tl_n++;
-    } else if (type == LPP_VOLTAGE && reader.readVoltage(v)) {
-      _mon_tl[_mon_tl_n].channel = channel;
-      _mon_tl[_mon_tl_n].kind = 'v';
-      _mon_tl[_mon_tl_n].value = v;
+    } else if (type == LPP_VOLTAGE) {
+      // 2 bytes, unsigned, x100
+      uint16_t v = (uint16_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+      t.kind = 'v';
+      t.value = v / 100.0f;
       _mon_tl_n++;
-    } else {
-      reader.skipData(type);
+    } else if (type == LPP_SWITCH) {
+      /* 1 byte, 0 or 1. Anything other than 0 counts as 1 rather than being
+       * dropped: the far side means 'on' by every non-zero value it could
+       * plausibly send, and a service reported up is not worth losing over a
+       * byte we did not expect. */
+      t.kind = 's';
+      t.value = buf[pos] ? 1.0f : 0.0f;
+      _mon_tl_n++;
+    } else if (type == LPP_GENERIC_SENSOR) {
+      /* 4 bytes, unsigned, multiplier 1 -- so a whole number, and the type
+       * promises nothing about what is being counted. An uptime monitor puts
+       * milliseconds here. Kept as uint32 alongside the float because a float
+       * silently loses the low bits above 2^24; round-trip times in ms are
+       * nowhere near that, but the exact value costs four bytes and one field. */
+      t.raw = ((uint32_t)buf[pos] << 24) | ((uint32_t)buf[pos + 1] << 16) |
+              ((uint32_t)buf[pos + 2] << 8) | (uint32_t)buf[pos + 3];
+      t.kind = 'g';
+      t.value = (float)t.raw;
+      _mon_tl_n++;
     }
+    // anything else: not stored, and pos steps over it below
+
+    pos += vlen;
   }
 }
 
@@ -3711,12 +3850,36 @@ static bool publishMonitorRound(MonEntry &m) {
   /* Under the channel the source itself used. On a MeshCore repeater channel 1
    * is its own board, so ch1_temperature there is the MCU die rather than the
    * outside air -- but that is the far side's naming to make, not ours to
-   * reinterpret. */
+   * reinterpret.
+   *
+   * The LPP TYPE is part of the field name, not just the channel, because one
+   * channel legitimately carries two records: a sensor node reports a service as
+   * a switch and its response time as a generic sensor under the same number. A
+   * name built from the channel alone would make the second overwrite the first.
+   *
+   * And the name says the type, never the meaning: 'ch6_generic' and not
+   * 'ch6_ping_ms'. The type guarantees 4 unsigned bytes with multiplier 1 and
+   * says nothing about what is counted; that this happens to be milliseconds to
+   * a web server is knowledge the far side has and this packet does not carry.
+   * Which is why the site keeps the channel-to-service naming itself -- see
+   * db.channel_names_for on the server. */
   for (int i = 0; i < _mon_tl_n && p < (int)sizeof(body) - 64; i++) {
+    const MonTelem &t = _mon_tl[i];
+    if (t.kind == 'g') {
+      // Whole number, printed from the exact uint32 rather than via the float.
+      p += snprintf(body + p, sizeof(body) - p, ",\"ch%u_generic\":%lu",
+                    (unsigned)t.channel, (unsigned long)t.raw);
+      continue;
+    }
+    if (t.kind == 's') {
+      p += snprintf(body + p, sizeof(body) - p, ",\"ch%u_switch\":%d",
+                    (unsigned)t.channel, t.value != 0.0f ? 1 : 0);
+      continue;
+    }
     p += snprintf(body + p, sizeof(body) - p, ",\"ch%u_%s\":%.2f",
-                  (unsigned)_mon_tl[i].channel,
-                  _mon_tl[i].kind == 't' ? "temperature" : "voltage",
-                  _mon_tl[i].value);
+                  (unsigned)t.channel,
+                  t.kind == 't' ? "temperature" : "voltage",
+                  t.value);
   }
 
   int nbr_written = 0;
@@ -5287,11 +5450,30 @@ static void monitorLoop() {
       } else {
         monTrace("req timeout after flood retry, giving up");
       }
-      // Log in again next round; the session may be what went stale.
-      _mon[_mon_cur].logged_in = false;
-      monRoundFailed(_mon[_mon_cur]);
-      _mon_state = MST_GAP;
-      _mon_deadline = millis() + MON_GAP_MS;
+      /* No status, but the round goes on to telemetry instead of ending here.
+       *
+       * This used to abandon the round, and on a SENSOR node that made the rest
+       * of the sequence unreachable: MeshCore's sensor firmware implements
+       * REQ_TYPE_GET_TELEMETRY_DATA and simply does not implement
+       * REQ_TYPE_GET_STATUS -- an unknown request type returns no reply and no
+       * error, so status times out every single round, by design and forever.
+       * Giving up at that point meant the telemetry request was never sent, and a
+       * node whose entire purpose is telemetry looked like a node that answers
+       * nothing at all.
+       *
+       * Continuing is cheap and it is justified rather than hopeful: we only get
+       * here after a login that WORKED, so the node is reachable and knows us.
+       * Silence on status after a successful login says "does not answer status",
+       * not "is gone". A truly dead node fails at the login step and never
+       * reaches this state.
+       *
+       * The session is deliberately NOT invalidated here any more. Doing that
+       * cost a fresh login every round on a node that answers everything except
+       * status. If telemetry and neighbours also come up empty the round still
+       * ends in monRoundFailed() at MST_NBR_WAIT, which is where a round that
+       * genuinely learned nothing belongs. */
+      _mon_st_missed = true;
+      monStep(MST_TELEM_WAIT);
       break;
 
     /* Telemetry and neighbours get no flood retry. They are extras on top of a
@@ -5309,7 +5491,16 @@ static void monitorLoop() {
       if (!passed(_mon_deadline)) return;
       if (_mon_cur < 0) { _mon_state = MST_GAP; _mon_deadline = millis() + MON_GAP_MS; break; }
       monTrace("nbrs timeout, publishing what we have");
-      if (!publishMonitorRound(_mon[_mon_cur])) monRoundFailed(_mon[_mon_cur]);
+      if (!publishMonitorRound(_mon[_mon_cur])) {
+        monRoundFailed(_mon[_mon_cur]);
+        /* Nothing at all came back this round, so the session is the most likely
+         * suspect: log in again next time. This used to sit at the status
+         * timeout, which punished a sensor node -- one that never answers status
+         * but does answer telemetry -- with a fresh login every round. Here it
+         * only fires when the whole round was silent, which is the case the
+         * re-login was for. */
+        _mon[_mon_cur].logged_in = false;
+      }
       _mon_state = MST_GAP;
       _mon_deadline = millis() + MON_GAP_MS;
       break;
@@ -6577,8 +6768,20 @@ static void handleMonJson(AsyncWebServerRequest *req) {
     uint8_t h;
     if (_mesh && _mesh->getClockHour(&h)) now = _mesh->getRTCClock()->getCurrentTime();
   }
+  /* Sensor nodes belong in this list too. It used to admit ADV_TYPE_REPEATER
+   * only, which was right when a monitor entry could only ever be another
+   * repeater, and became wrong the moment a node could be polled for telemetry: a
+   * MeshCore sensor node advertises as ADV_TYPE_SENSOR, so the one kind of node
+   * whose whole purpose is answering telemetry was the one kind this list refused
+   * to offer. It could still be added by hand -- the entry only needs a public
+   * key, and 'mon add' never looked at the advert type -- so this was a discovery
+   * gap and not a hard block, which is exactly why it could sit here unnoticed.
+   *
+   * The type travels along so the page can say which is which. A sensor node has
+   * no neighbours and no status to report, only telemetry, and someone choosing
+   * from this list should not have to find that out from an empty table. */
   for (int i = 0; i < _adv_count && p < (int)sizeof(body) - 200; i++) {
-    if (_adv[i].type != ADV_TYPE_REPEATER) continue;
+    if (_adv[i].type != ADV_TYPE_REPEATER && _adv[i].type != ADV_TYPE_SENSOR) continue;
 
     uint8_t full[PUB_KEY_SIZE];
     char nm[MON_NAME_MAX];
@@ -6592,8 +6795,8 @@ static void handleMonJson(AsyncWebServerRequest *req) {
     long age = (now && _adv[i].heard && now > _adv[i].heard)
                ? (long)(now - _adv[i].heard) : -1;
     p += snprintf(body + p, sizeof(body) - p,
-                  "%s{\"k\":\"%s\",\"n\":\"%s\",\"age\":%ld,\"cached\":1}",
-                  written ? "," : "", hex, esc, age);
+                  "%s{\"k\":\"%s\",\"n\":\"%s\",\"age\":%ld,\"cached\":1,\"t\":%u}",
+                  written ? "," : "", hex, esc, age, (unsigned)_adv[i].type);
     written++;
   }
 

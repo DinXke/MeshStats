@@ -549,6 +549,45 @@ versies*, en twee plaatsen die hetzelfde getal tonen zijn twee plaatsen die het
 een keer oneens worden. Of een upgrade mogelijk is volgt **niet** uit
 `route["level"]`: dat oordeel is `firmware.ota_route()`.
 
+### Namen bij de kanalen — `#kanalen`
+
+De telemetrie van een sensornode komt binnen als CayenneLPP, en dat formaat is een
+reeks drietallen: kanaalnummer, type, waarde. Er is **geen naamveld**, niet in het
+formaat en niet in MeshCore, dat alleen een oplopende kanaalteller kent. Wat een node
+stuurt is dus letterlijk "kanaal 6, switch, 1" en nooit "google is bereikbaar". Dit
+formulier is waar die koppeling ingevuld wordt; het is geen gemak, het is de enige
+weg.
+
+Het formulier toont alleen de kanalen die de node werkelijk gestuurd heeft — gelezen
+uit `latest` en niet uit een lijst die iemand eerst moest invullen, want welke
+kanalen een node heeft weet alleen die node. Een kanaal verschijnt zodra er één
+meting van binnen is. Elke rij neemt een naam en, alleen bij een generic sensor, een
+eenheid: `LPP_GENERIC_SENSOR` is vier unsigned byte met vermenigvuldiger 1 en belooft
+niets over wát er gemeten wordt, dus `12` zonder `ms` erachter is een getal zonder
+betekenis. Een spanning en een temperatuur hebben hun eenheid al uit het LPP-type, en
+een toestand hoort er geen te hebben.
+
+Het kanaalnummer reist **in de veldnaam** (`ch_naam_<N>`), nooit als rangnummer, en
+een nummer dat de node niet gestuurd heeft wordt geweigerd. Naam en eenheid worden
+per kanaal in één actie geschreven, want een rij bewaart beide en los na elkaar
+schrijven zou de tweede de eerste laten wissen.
+
+Hij post naar `/admin/repeaters/{rid}/channels` en vraagt `node.hernoemen` — dit is
+naamgeving en niets anders: er gaat geen pakket de lucht in, de node merkt er niets
+van, en het is dezelfde soort ingreep als het hernoemen van de node zelf, een laag
+dieper.
+
+> **Waarom kanaalnummers nooit mogen verschuiven.** De bewaarde naam hangt aan het
+> nummer, want dat is het enige wat het pakket draagt. Laat de zendende kant een
+> dienst vallen en schuift de rest op, dan wijst elke naam hier stil naar de verkeerde
+> dienst: geen foutmelding, alleen verkeerde cijfers. Een gat in de nummering is dus
+> geen rommel die opgeruimd hoort te worden — het is het bewijs dat er niets
+> verschoven is. De pagina zegt dat met zoveel woorden, zodat een latere lezer niet op
+> het idee komt die gaten weg te werken.
+
+Een leeg naamveld wist de naam. Het kanaal staat dan als "kanaal N" op de publieke
+pagina en verdwijnt **niet**: een naamloze meting is nog steeds een meting.
+
 ### Zichtbaarheid op de site — `#zichtbaarheid`
 
 Drie schakelaars in één blok, in afnemende zwaarte: `is_public` haalt de hele

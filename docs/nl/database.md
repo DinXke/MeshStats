@@ -336,6 +336,47 @@ omgekeerd. Een naamloze advert mag een bekende naam niet wissen.
 al een is onder dezelfde `prefix6`, zodat beide bronnen naar één rij blijven
 convergeren in plaats van naar twee die elkaar overschaduwen.
 
+### `channel_names`
+
+De koppeling kanaal → dienst van een sensornode: wat "kanaal 6" op *deze* node
+werkelijk is.
+
+| Kolom | Type | Inhoud |
+|---|---|---|
+| `repeater_id` | INTEGER | FK naar `repeaters`, `ON DELETE CASCADE` |
+| `channel` | INTEGER | Het LPP-kanaalnummer, zoals de antwoordende node het koos |
+| `name` | TEXT | Wat erop draait, hoogstens 64 tekens |
+| `unit` | TEXT | Eenheid bij een generic sensor (bv. `ms`), of NULL |
+| `updated` | TEXT | Wanneer deze rij geschreven is |
+
+Primaire sleutel `(repeater_id, channel)`.
+
+**Waarom deze tabel überhaupt bestaat.** Een telemetrieantwoord is CayenneLPP: een
+reeks drietallen, kanaalnummer / type / waarde, met **geen naamveld** — niet in het
+formaat en niet in MeshCore, dat alleen een oplopende kanaalteller kent. Wat er van
+de radio komt is letterlijk "kanaal 6, switch, 1" en nooit "google is bereikbaar".
+De koppeling van nummer naar dienst is een eigenschap van de antwoordende node, en
+de enige plek waar ze bewaard kan worden is aan de ontvangende kant. Vandaar een
+tabel.
+
+**Waarom hier en niet op de repeater die de node uitleest.** Die repeater is een
+doorgeefluik met beperkte flash: een naam die daar staat is weg na een herflash of
+bij vervanging van het bord, moet per kanaal over de radio gezet worden, en helpt de
+MeshCore-app niets — de app vraagt de telemetrie bij de *sensornode* zelf op en komt
+langs de repeater niet eens voorbij. Hier staat de naam in dezelfde databank als de
+metingen waar ze bij hoort, wordt ze met een formulier gezet, en overleeft ze elke
+firmware-uitrol.
+
+> **Kanaalnummers mogen nooit verschuiven of hergebruikt worden.** De naam hangt aan
+> het nummer, want dat is het enige wat het pakket draagt. Laat de zendende kant een
+> dienst vallen en schuift de rest op, dan wijst elke naam in deze tabel stil naar de
+> verkeerde dienst — geen foutmelding, alleen verkeerde cijfers op een dashboard. Een
+> gat in de nummering is dus *geen* rommel die opgeruimd hoort te worden; het is het
+> bewijs dat er niets verschoven is. `db.set_channel_name()` verwijdert de rij bij een
+> lege naam in plaats van een leeg veld te bewaren, zodat een naamloos kanaal als
+> "kanaal N" getoond wordt en niet in de beheerlijst blijft hangen als iets wat er
+> ooit was.
+
 ### `repeater_cli`
 
 De CLI-configuratie van een repeater, zoals uitgelezen over LoRa of over MQTT.
