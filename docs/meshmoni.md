@@ -85,3 +85,16 @@ happened here last week?" unanswerable. Who fills the table does not matter to
 this subsite: the table is the interface, and both the writer and this reader
 create it with `CREATE TABLE IF NOT EXISTS` and the same schema, so ordering
 never matters.
+
+**Two sources, and the page says which — because they differ in one thing that
+matters: age.** An alert labelled *via het mesh* was relayed by a repeater
+seconds after the fact. An alert labelled *IP-poll* was **derived**: the server
+polls the sensor node's own API every `MM_SENSOR_POLL_S` (300 s by default) and
+turns a state transition — a service going down, a reporter falling silent,
+mains dropping away — into an alert row. That alert is therefore up to one poll
+interval late, and the label says so, with the actual interval filled in. The
+derivation exists because the mesh leg node→repeater is a confirmed hardware
+fault right now; the moment it works again, the same event would arrive twice —
+which is why both rows carry a `kind` and are de-duplicated on
+(node, kind, service) within a 15-minute window. One event, one notification,
+whichever road wins.

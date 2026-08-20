@@ -35,7 +35,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-from . import audit, auth, db, metrics, rbac, routes_admin, webpush
+from . import audit, auth, db, metrics, rbac, routes_admin, sensornode, webpush
 from .templating import templates
 
 router = APIRouter(prefix="/meshmoni")
@@ -275,7 +275,13 @@ def api_alerts(request: Request, all: int = 0):
                       "severity": a["severity"], "ts": a["ts"],
                       "source": a["source"], "acked": bool(a["acked"])})
     open_row = db.qone("SELECT COUNT(*) AS n FROM alerts WHERE acked=0")
-    return _json({"alerts": items, "open": open_row["n"] if open_row else 0})
+    # Het pollinterval reist mee zodat de pagina bij een alert met bron 'ip'
+    # eerlijk kan zeggen hoe laat die weg is. Een mesh-alert is er seconden na
+    # het feit; een uit de poll afgeleide pas bij de volgende ronde -- en wie een
+    # melding leest, hoort te weten hoe oud ze kan zijn. Uit de module en niet
+    # hier hardcoded, want MM_SENSOR_POLL_S is instelbaar.
+    return _json({"alerts": items, "open": open_row["n"] if open_row else 0,
+                  "poll_s": sensornode.INTERVAL_S})
 
 
 @router.post("/api/alerts/{aid}/ack")

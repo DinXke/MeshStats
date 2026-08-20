@@ -1043,6 +1043,19 @@ repeater brakes that on its side (`MON_ALERT_DEDUP_MS`) and the server again
 (`db.ALERT_DEDUP_S`, 300 s) — the first brake lives in RAM and does not survive a
 restart, and two repeaters hearing the same node would each send one.
 
+**And the same event can arrive along a second road entirely.** While the mesh leg
+node→repeater is broken — a confirmed hardware fault at the time of writing — the
+server derives alerts from its own IP poll of the sensor node
+(`sensornode._derive_alerts`): a state transition between two rounds becomes an
+alert row with `source='ip'`, up to `MM_SENSOR_POLL_S` late. The moment the mesh
+works again, the same fault arrives here too, with a text that differs slightly.
+Both writers therefore stamp a `kind` (`neer`, `op`, `stil`) and `db.add_alert`
+de-duplicates across sources on (node, kind, channel-or-service-name) within
+`ALERT_CROSS_DEDUP_S` (900 s — three poll rounds, which covers the poll delay
+plus a mesh alert straggling in while the node retries). The price is stated
+where the window is defined: a service genuinely making the *same* transition
+twice within fifteen minutes yields one row, not two.
+
 **And the reflex:** an alert pulls the next poll round forward on the relaying
 repeater, so the figures that go with the fault follow within seconds instead of
 at the next interval. Bounded by three brakes; see

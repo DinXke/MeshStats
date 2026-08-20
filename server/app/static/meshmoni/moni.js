@@ -130,7 +130,18 @@
         var kop = [a.node, a.channel_name].filter(Boolean).join(" — ");
         if (kop) t.appendChild(el("strong", "", kop));
         t.appendChild(el("div", "", a.text));
-        t.appendChild(el("small", "", tijdKort(a.ts) + " · " + a.source));
+        // De bron, in woorden en met de latentie erbij. 'mesh' is er seconden
+        // na het feit; 'ip' is afgeleid uit de poll en kan een heel
+        // pollinterval oud zijn. Dat verschil hoort bij de melding te staan:
+        // wie op een push kijkt, leest hier hoe vers "nu" is.
+        var bron = a.source;
+        if (a.source === "ip") {
+          var min = Math.ceil((data.poll_s || 300) / 60);
+          bron = "IP-poll · tot " + min + " min na het feit";
+        } else if (a.source === "mesh") {
+          bron = "via het mesh";
+        }
+        t.appendChild(el("small", "", tijdKort(a.ts) + " · " + bron));
         rij.appendChild(t);
         if (!a.acked) {
           var knop = el("button", "moni-ack", "✓");

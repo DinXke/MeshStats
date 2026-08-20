@@ -87,3 +87,16 @@ hier vorige week gebeurd?" onbeantwoordbaar maken. Wie de tabel vult maakt
 voor deze subsite niet uit: de tabel is het koppelvlak, en zowel de vuller als
 deze lezer maken haar aan met `CREATE TABLE IF NOT EXISTS` en hetzelfde
 schema, zodat de volgorde niet uitmaakt.
+
+**Twee bronnen, en de pagina zegt welke — want ze verschillen in het ene dat
+telt: de ouderdom.** Een alert met het label *via het mesh* is door een repeater
+doorgezet, seconden na het feit. Een alert met het label *IP-poll* is
+**afgeleid**: de server leest elke `MM_SENSOR_POLL_S` (standaard 300 s) de eigen
+API van de sensornode uit en maakt van een overgang — een dienst die neergaat,
+een melder die stilvalt, netvoeding die wegvalt — een alertrij. Zo'n alert is
+dus tot een heel pollinterval laat, en het label zegt dat, met het echte
+interval erin. De afleiding bestaat omdat de mesh-schakel node→repeater op dit
+moment een bevestigd hardwaredefect is; zodra die weer werkt, zou dezelfde
+gebeurtenis twee keer binnenkomen — en daarom dragen beide rijen een `kind` en
+worden ze ontdubbeld op (node, soort, dienst) binnen een venster van vijftien
+minuten. Eén gebeurtenis, één melding, welke weg ook wint.

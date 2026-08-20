@@ -322,6 +322,21 @@ Wat de server ermee doet:
   [`database.md`](database.md);
 - **de buren lezen** uit `/acl.json`, zodat de linkkaart en de burenlijst werken
   zonder de mesh-weg;
+- **alerts afleiden** uit het verschil tussen twee rondes: een dienst die neergaat
+  of herstelt, een melder die stilvalt, netvoeding die wegvalt. De teksten
+  spiegelen de alertteksten van de firmware en de rijen belanden in dezelfde
+  `alerts`-tabel die de mesh-weg vult, dus webpush en `/meshmoni` hoeven nergens
+  iets nieuws voor. De vorige toestand leeft in het geheugen van de poller: de
+  eerste ronde na een serverherstart ijkt alleen en meldt nooit, zodat een deploy
+  geen golf "nieuwe" alerts kan geven voor toestanden die al zo waren — de prijs
+  is dat een storing die al bestond vóór de herstart pas bij haar volgende
+  overgang gemeld wordt. Per kanaal wordt de laatst *bekende* toestand bewaard,
+  zodat een node-herstart (`?` op elk kanaal) een `op → neer` eromheen niet
+  opslokt. **De latentie is de eerlijke kanttekening:** deze weg loopt tot een
+  pollinterval (standaard 300 s) achter op het feit, waar de mesh-weg seconden
+  zou zijn — de alertenlijst zegt dat per regel. Gaat de mesh-weg ooit werken, dan
+  vangt de kruisontdubbeling op (node, soort, dienst) de dubbele binnenkomst af —
+  zie [`mqtt.md`](mqtt.md);
 - **beheren**: advert (flood of zerohop), de klok, de regio, een herstart, en de
   instellingen uit `/cfg.json`. Instellingen lopen door `nodeconfig.write()` zoals
   elk ander vervoermiddel, met alle drempels onverkort.

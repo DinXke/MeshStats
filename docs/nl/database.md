@@ -470,8 +470,9 @@ Wat een sensornode **gemeld** heeft, tegenover wat een poll **gemeten** heeft.
 | `text` | TEXT | De melding zoals de node hem schreef, hoogstens 500 tekens |
 | `severity` | TEXT | `laag`, `hoog`, of NULL als het niet af te leiden is |
 | `ts` | TEXT | ISO-8601 UTC |
-| `source` | TEXT | `mesh` (doorgegeven door een repeater), `ip`, of `test` |
+| `source` | TEXT | `mesh` (doorgegeven door een repeater), `ip` (afgeleid uit de poll), of `test` |
 | `acked` | INTEGER | 0 tot iemand zegt dat hij het gezien heeft |
+| `kind` | TEXT | De overgang: `neer`, `op` of `stil`; NULL als hij niet af te leiden is |
 
 **Telemetrie is SNMP-polling; een alarm is een SNMP-trap.** Die vergelijking is de
 hele reden dat dit een eigen tabel is en geen meting in `samples`. Pollen is
@@ -499,6 +500,14 @@ krijgt, en de repeater die het doorgeeft bevestigt een monitorbericht niet, dus 
 storing levert een handvol identieke DM's op. De repeater remt dat aan zijn kant
 ook af, maar die rem leeft in RAM en overleeft geen herstart — en twee repeaters
 die dezelfde node horen zouden er elk een sturen.
+
+`db.ALERT_CROSS_DEDUP_S` (900 s) is het tweede venster, over de **bronnen**
+heen: dezelfde gebeurtenis kan binnenkomen als mesh-alarm én als rij die uit de
+IP-poll is afgeleid, met teksten die nét verschillen. De sleutel is (node,
+`kind`, kanaal-of-dienstnaam) — de dienstnaam is het eerste woord van de tekst,
+en dat garanderen beide schrijvers. Zonder `kind` geldt dit venster niet: een rij
+waarvan we de overgang niet kunnen benoemen, mag er nooit een onderdrukken
+waarvan we hem wél kennen.
 
 Wat er met opzet **niet** in staat: een regel die een alarm laat verdwijnen.
 Bevestigen is wat een mens doet; verwijderen doet de bewaartermijn, samen met de

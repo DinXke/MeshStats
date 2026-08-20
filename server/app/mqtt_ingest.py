@@ -1227,7 +1227,10 @@ def _handle_rx(topic: str, raw: bytes) -> None:
 # niet past krijgt NULL, en dat is een geldig antwoord -- de tekst staat er
 # voluit naast, en een verzonnen ernst is erger dan geen.
 _ALERT_HIGH = ("onbereikbaar", "gemeld als neer", "geen melding meer")
-_ALERT_LOW = ("test ", "simulatie", "weer bereikbaar", "hersteld")
+_ALERT_LOW = ("test ", "simulatie", "weer bereikbaar", "hersteld",
+              # De herstelvormen van de firmware: "X weer op gemeld na 3 min",
+              # "X meldt weer (was 3 min stil)", "netvoeding terug na 2 min".
+              "weer op gemeld", "meldt weer", "terug na")
 
 # Waar het kanaalnummer in de tekst staat, als het erin staat. De alarmen van
 # MeshUptime noemen de NAAM van een dienst en niet zijn kanaal, dus dit vindt
@@ -1250,6 +1253,35 @@ def alert_severity(text: str) -> str | None:
         return "laag"
     if any(w in laag for w in _ALERT_HIGH):
         return "hoog"
+    return None
+
+
+def alert_kind(text: str) -> str | None:
+    """De soort overgang uit de tekst van een mesh-alarm, of None.
+
+    Dezelfde kleine-lijst-aanpak als ``alert_severity`` en om dezelfde reden:
+    de teksten hebben een vaste vorm (monitorAlertText, fixedAlertText en hun
+    herstelvarianten in de firmware) en een paar woorden daaruit zeggen genoeg.
+    De soort is de sleutel van de kruisontdubbeling met de IP-afleiding
+    (db.ALERT_CROSS_DEDUP_S), dus hij moet hier hetzelfde heten als daar.
+
+    Eerst de simulaties, want die bevatten de echte woorden ook -- dat is de
+    bedoeling van een test. Een simulatie krijgt None: een testalarm mag nooit
+    een echte melding onderdrukken, en andersom ook niet.
+
+    Dan de herstelvormen vóór de storingsvormen, want "weer bereikbaar" bevat
+    het woord niet maar "meldt weer (was 3 min stil)" bevat wél "stil" -- de
+    volgorde is hier, net als bij de ernst, de halve functie.
+    """
+    laag = str(text or "").lower()
+    if "simulatie" in laag or laag.startswith("test"):
+        return None
+    if "weer bereikbaar" in laag or "weer op gemeld" in laag             or "meldt weer" in laag or "terug na" in laag or "hersteld" in laag:
+        return "op"
+    if "geen melding meer" in laag:
+        return "stil"
+    if "onbereikbaar" in laag or "gemeld als neer" in laag             or "netvoeding weg" in laag or "wifi weg" in laag:
+        return "neer"
     return None
 
 
@@ -1298,7 +1330,8 @@ def _handle_alert(topic: str, raw: bytes) -> None:
 
     alert_id = db.add_alert(
         rij["id"] if rij is not None else None, text, source="mesh", ts=ts,
-        channel=alert_channel(text), severity=alert_severity(text))
+        channel=alert_channel(text), severity=alert_severity(text),
+        kind=alert_kind(text))
     _state["alerts"] = _state.get("alerts", 0) + 1
     if alert_id:
         _state["last_alert"] = db.utcnow()

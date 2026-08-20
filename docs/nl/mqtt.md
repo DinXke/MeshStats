@@ -1106,6 +1106,19 @@ de server nog een keer (`db.ALERT_DEDUP_S`, 300 s) — die eerste rem leeft in R
 overleeft geen herstart, en twee repeaters die dezelfde node horen zouden er elk
 een sturen.
 
+**En dezelfde gebeurtenis kan langs een tweede weg binnenkomen.** Zolang de
+mesh-schakel node→repeater stuk is — op dit moment een bevestigd hardwaredefect —
+leidt de server alerts af uit zijn eigen IP-poll van de sensornode
+(`sensornode._derive_alerts`): een overgang tussen twee rondes wordt een alertrij
+met `source='ip'`, tot `MM_SENSOR_POLL_S` laat. Zodra het mesh weer werkt, komt
+dezelfde storing ook hier binnen, met een tekst die nét verschilt. Beide
+schrijvers stempelen daarom een `kind` (`neer`, `op`, `stil`) en `db.add_alert`
+ontdubbelt over de bronnen heen op (node, soort, kanaal-of-dienstnaam) binnen
+`ALERT_CROSS_DEDUP_S` (900 s — drie pollrondes, wat de pollvertraging dekt plus
+een mesh-alert dat nog binnendruppelt terwijl de node herhaalt). De prijs staat
+bij het venster zelf: een dienst die binnen vijftien minuten écht twee keer
+dezelfde overgang maakt, levert één rij op en geen twee.
+
 **En de reflex:** een alarm trekt op de doorgevende repeater de volgende
 uitvraagronde naar voren, zodat de cijfers die bij de storing horen binnen seconden
 volgen in plaats van bij het volgende interval. Begrensd door drie remmen; zie

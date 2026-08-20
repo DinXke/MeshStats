@@ -207,6 +207,13 @@ CREATE TABLE IF NOT EXISTS channel_names(
 -- twee zijn bij deze weg per definitie verschillend: een sensornode stuurt zijn
 -- alarm als DM naar een repeater, en die zet het op de broker. Ze door elkaar
 -- halen hangt een storing aan het verkeerde apparaat.
+--
+-- ``kind`` is de SOORT overgang -- 'neer', 'op' of 'stil' -- en hij bestaat om
+-- over bronnen heen te kunnen ontdubbelen. Dezelfde gebeurtenis kan langs twee
+-- wegen binnenkomen (het mesh, en de afleiding uit de IP-poll) met teksten die
+-- nét verschillen, dus de tekst is geen sleutel; de soort wel. NULL betekent
+-- "niet af te leiden" en zet de kruisontdubbeling voor die rij uit -- een
+-- verzonnen soort is erger dan geen, om dezelfde reden als bij severity.
 CREATE TABLE IF NOT EXISTS alerts(
   id INTEGER PRIMARY KEY,
   repeater_id INTEGER,
@@ -215,7 +222,8 @@ CREATE TABLE IF NOT EXISTS alerts(
   severity TEXT,
   ts TEXT NOT NULL,
   source TEXT NOT NULL,
-  acked INTEGER DEFAULT 0
+  acked INTEGER DEFAULT 0,
+  kind TEXT
 );
 -- De twee vragen die deze tabel krijgt: "wat is er met deze node gebeurd" (op de
 -- nodepagina, nieuwste eerst) en "hoeveel staat er nog open" (de badge). Beide
@@ -340,6 +348,12 @@ COLUMN_MIGRATIONS = [
     ("repeaters", "sensor_host", "TEXT"),
     ("repeaters", "sensor_seen", "TEXT"),
     ("repeaters", "sensor_fw", "TEXT"),
+    # De soort overgang van een alarm, voor de kruisontdubbeling. Zie het
+    # schema hierboven. Als migratie omdat de tabel op twee plekken aangemaakt
+    # wordt (hier en in webpush.ensure_schema) en een databank van vóór deze
+    # kolom hem langs geen van beide krijgt: CREATE TABLE IF NOT EXISTS raakt
+    # een bestaande tabel niet aan.
+    ("alerts", "kind", "TEXT"),
     # Wie deze kanaalnaam gezet heeft: 'user' of 'auto'. De standaard is 'user'
     # en dat is geen slordigheid maar de enige juiste keuze: ALTER TABLE ADD
     # COLUMN vult bestaande rijen met de standaard, en élke rij die er nu staat
@@ -2176,9 +2190,49 @@ def _clear_channel_name(repeater_id: int, channel: int, source: str, was) -> boo
 # repeaters die dezelfde node horen zouden er elk een sturen.
 ALERT_DEDUP_S = 300
 
+# Hoe lang dezelfde GEBEURTENIS via een ándere weg nog als dezelfde geldt.
+#
+# Een eigen venster naast ALERT_DEDUP_S, want het bewaakt iets anders. Dat eerste
+# vangt herhalingen van hetzelfde bericht langs dezelfde weg; dit vangt het geval
+# dat één gebeurtenis langs TWEE wegen binnenkomt -- over het mesh (seconden na
+# het feit, als die weg werkt) en uit de IP-poll (tot een pollinterval erna). De
+# teksten verschillen dan nét ("hoas onbereikbaar (hoas.local)" tegenover een
+# tekst met een duur erin), dus er wordt niet op tekst vergeleken maar op de
+# SOORT overgang plus de dienst: (node, kind, kanaal-of-naamtoken).
+#
+# Vijftien minuten, en dat is narekenbaar: de IP-afleiding loopt tot
+# MM_SENSOR_POLL_S (standaard 300 s) achter op het feit, en een mesh-alert kan
+# ook nog minuten later binnendruppelen omdat de node hem herhaalt tot hij een
+# ACK krijgt. Drie pollrondes dekt beide ruim, ook als het pollinterval omlaag
+# gaat. De prijs staat erbij: een dienst die binnen dit venster twee keer
+# ECHT dezelfde overgang maakt (neer, op, neer) levert voor de tweede keer geen
+# nieuwe rij -- de toestand zelf blijft op de nodepagina zichtbaar, en dat is de
+# goedkopere fout dan twee pushmeldingen voor één storing.
+ALERT_CROSS_DEDUP_S = 900
+
+# De geldige soorten. 'neer' en 'stil' zijn twee verschillende slechte
+# uitkomsten -- bij de eerste ligt de DIENST plat, bij de tweede is de MELDER
+# stil en weten we niets -- en dat onderscheid maakt de firmware ook.
+ALERT_KINDS = ("neer", "op", "stil")
+
+
+def _alert_dienst(text: str) -> str:
+    """Het naamtoken waar een alarm over gaat: het eerste woord van de tekst.
+
+    Dat is geen gok maar een eigenschap van de teksten aan beide kanten: de
+    firmware begint elk alarm met de naam van de dienst (monitorAlertText) en de
+    IP-afleiding spiegelt die vorm. Namen van monitors kunnen geen spatie
+    bevatten (validName laat alleen letters, cijfers, punt en streepjes door),
+    dus het eerste woord IS de naam. De dubbele punt van "naam: geen melding
+    meer" gaat eraf.
+    """
+    kop = str(text or "").strip().split(" ", 1)[0]
+    return kop.rstrip(":").lower()
+
 
 def add_alert(repeater_id, text: str, *, source: str, ts: str | None = None,
-              channel=None, severity: str | None = None) -> int:
+              channel=None, severity: str | None = None,
+              kind: str | None = None) -> int:
     """Eén alarm vastleggen. Geeft het id terug, of 0 als het een herhaling was.
 
     ``repeater_id`` mag None zijn, en dat is geen slordigheid: een alarm van een
@@ -2187,10 +2241,21 @@ def add_alert(repeater_id, text: str, *, source: str, ts: str | None = None,
     onbekende node het hardst nodig hebt. De beheerpagina toont zo'n regel dan
     zonder node erbij.
 
-    Een herhaling binnen ``ALERT_DEDUP_S`` levert 0 op en verandert niets --
-    ook niet de tijdstempel van de eerste. Dat is met opzet: de eerste keer is
-    het moment waarop de storing begon, en dat is het getal waar iemand later
-    naar kijkt.
+    Twee ontdubbelingen, en ze vangen twee verschillende dingen:
+
+    * dezelfde TEKST langs dezelfde weg binnen ``ALERT_DEDUP_S`` -- de
+      herhalingen van een node die op een ACK wacht;
+    * dezelfde GEBEURTENIS langs een andere weg binnen ``ALERT_CROSS_DEDUP_S``,
+      herkend aan (node, ``kind``, kanaal-of-naamtoken). Dit is wat een
+      mesh-alert die na de IP-afleiding binnendruppelt géén tweede pushmelding
+      laat worden, en andersom. Zonder ``kind`` staat deze tweede uit: een rij
+      waarvan we de soort niet kennen, mag geen rij onderdrukken waarvan we hem
+      wél kennen.
+
+    In beide gevallen levert een herhaling 0 op en verandert er niets -- ook
+    niet de tijdstempel van de eerste. Dat is met opzet: de eerste keer is het
+    moment waarop de storing begon, en dat is het getal waar iemand later naar
+    kijkt.
     """
     text = str(text or "").strip()[:500]
     if not text:
@@ -2199,6 +2264,9 @@ def add_alert(repeater_id, text: str, *, source: str, ts: str | None = None,
     severity = (severity or "").strip().lower() or None
     if severity not in (None, "laag", "hoog"):
         severity = None
+    kind = (kind or "").strip().lower() or None
+    if kind not in (None,) + ALERT_KINDS:
+        kind = None
     try:
         channel = int(channel) if channel is not None else None
     except (TypeError, ValueError):
@@ -2214,10 +2282,28 @@ def add_alert(repeater_id, text: str, *, source: str, ts: str | None = None,
              f"-{int(ALERT_DEDUP_S)} seconds")).fetchone()
         if eerder is not None:
             return 0
+        # De kruisontdubbeling. Alleen met een soort én een bekende node: over
+        # een naamloos alarm of een onbekende node valt niet te zeggen dat het
+        # dezelfde gebeurtenis is, en bij twijfel is een dubbele melding minder
+        # erg dan een verzwegen storing.
+        if kind is not None and repeater_id is not None:
+            dienst = _alert_dienst(text)
+            for r in conn.execute(
+                    "SELECT channel, text FROM alerts WHERE repeater_id=? "
+                    "AND kind=? AND ts >= datetime(?, ?)",
+                    (repeater_id, kind, ts, f"-{int(ALERT_CROSS_DEDUP_S)} seconds")):
+                if channel is not None and r["channel"] is not None:
+                    if int(r["channel"]) == channel:
+                        return 0
+                    continue
+                # Minstens één kant kent het kanaal niet (een mesh-alert draagt
+                # er zelden een), dus dan beslist het naamtoken.
+                if dienst and _alert_dienst(r["text"]) == dienst:
+                    return 0
         cur = conn.execute(
             "INSERT INTO alerts(repeater_id, channel, text, severity, ts, source, "
-            "acked) VALUES(?,?,?,?,?,?,0)",
-            (repeater_id, channel, text, severity, ts, str(source)[:16]))
+            "acked, kind) VALUES(?,?,?,?,?,?,0,?)",
+            (repeater_id, channel, text, severity, ts, str(source)[:16], kind))
         conn.commit()
         return int(cur.lastrowid or 0)
 

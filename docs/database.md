@@ -449,8 +449,9 @@ What a sensor node **reported**, as opposed to what a poll **measured**.
 | `text` | TEXT | The message as the node wrote it, at most 500 characters |
 | `severity` | TEXT | `laag`, `hoog`, or NULL when it cannot be derived |
 | `ts` | TEXT | ISO-8601 UTC |
-| `source` | TEXT | `mesh` (relayed by a repeater), `ip`, or `test` |
+| `source` | TEXT | `mesh` (relayed by a repeater), `ip` (derived from the poll), or `test` |
 | `acked` | INTEGER | 0 until somebody says they have seen it |
+| `kind` | TEXT | The transition: `neer`, `op` or `stil`; NULL when it cannot be derived |
 
 **Telemetry is SNMP polling; an alert is an SNMP trap.** That comparison is the
 whole reason this is a table of its own and not a metric in `samples`. Polling is
@@ -476,6 +477,13 @@ and the repeater relaying it does not acknowledge a monitor message, so one faul
 produces a handful of identical DMs. The repeater brakes that on its side too, but
 that brake lives in RAM and does not survive a restart — and two repeaters hearing
 the same node would each send one.
+
+`db.ALERT_CROSS_DEDUP_S` (900 s) is the second window, across **sources**: the
+same event can arrive both as a mesh alert and as a row derived from the IP poll,
+with texts that differ slightly. The key is (node, `kind`,
+channel-or-service-name) — the service name being the first word of the text,
+which both writers guarantee. Without a `kind` this window does not apply: a row
+whose transition we cannot name must never suppress one we can.
 
 What is deliberately **not** here: a rule that lets an alert disappear.
 Acknowledging is what a human does; removing is what the retention does, together

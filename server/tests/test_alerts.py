@@ -300,3 +300,280 @@ def test_de_beheerroute_bevestigt_en_legt_het_vast(db, monkeypatch):
     routes_admin.ack_alerts(None, node["id"], alert_id=alert_id, csrf="x")
     assert db.alerts_open_count(node["id"]) == 0
     assert gelogd and "bevestigd" in gelogd[0]
+
+
+# --- de afleiding uit de IP-poll ------------------------------------------------
+#
+# De mesh-schakel node->repeater is defect bevestigd (heen werkt, terug niet;
+# zes softwareverdenkingen weerlegd -- MeshUptime docs/openstaand.md), dus zolang
+# dat ter plekke niet gerepareerd is komt er over het mesh niets binnen. De
+# IP-poll ziet elke ronde de volledige toestand, en een OVERGANG daarin is
+# dezelfde gebeurtenis als het alarm dat de node gestuurd zou hebben. Wat deze
+# reeks vastlegt zijn de vier dingen die daarbij stil kunnen misgaan: een golf na
+# een herstart, een gemiste overgang rond een node-herstart, een dubbele melding
+# zodra het mesh ooit weer meedoet, en een vorm die van de MQTT-rijen afwijkt
+# zodat webpush of /meshmoni er iets anders van maakt.
+
+from app import sensornode
+
+
+def _status(**over):
+    """Een /status.json zoals de node hem stuurt, met kanaal 5 en 6 als dienst."""
+    basis = {
+        "fw": "1.4.0", "mains": 1, "volts": "4.139",
+        "mon": [
+            {"ch": 5, "n": "google", "h": "google.com", "st": "op",
+             "ms": 37, "k": "ping"},
+            {"ch": 6, "n": "hoas", "h": "(gemeld)", "st": "op",
+             "ms": 12, "k": "gemeld"},
+        ],
+    }
+    basis.update(over)
+    return basis
+
+
+def _mon(ch, st, k="ping", n=None, h=None):
+    return {"ch": ch, "n": n or ("google" if ch == 5 else "hoas"),
+            "h": h or ("google.com" if k == "ping" else "(gemeld)"),
+            "st": st, "ms": 1, "k": k}
+
+
+@pytest.fixture
+def schone_toestand(monkeypatch):
+    """De vorige-toestandtabel leeg, per test. Die leeft op moduleniveau -- met
+    opzet, zie het blok boven _toestand -- en zou anders van test naar test
+    lekken zoals hij in productie van ronde naar ronde hoort te dragen."""
+    monkeypatch.setattr(sensornode, "_toestand", {})
+
+
+def test_de_eerste_ronde_ijkt_en_meldt_niets(db, schone_toestand):
+    """De herstartregel, en hij is de helft van het ontwerp.
+
+    De vorige toestand leeft in het geheugen, dus een serverherstart wist de
+    vergelijkingsbasis. Zou de eerste ronde daarna gewoon melden, dan geeft elke
+    deploy een golf "nieuwe" alarmen voor toestanden die al dagen zo waren -- en
+    een alarmkanaal dat bij elke deploy blaft, leest niemand na een week nog.
+    Dus: de eerste ronde legt alleen vast, ook als er iets neer staat.
+    """
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    data = _status(mains=0, mon=[_mon(5, "neer"), _mon(6, "stil", k="gemeld")])
+    assert sensornode._derive_alerts(node["id"], data) == 0
+    assert db.alerts_recent(10) == []
+
+
+def test_op_naar_neer_geeft_een_alarm_in_de_firmwarevorm(db, schone_toestand):
+    """De tekst spiegelt monitorAlertText, en dat is de halve ontdubbeling:
+    komt hetzelfde feit ooit alsnog over het mesh binnen, dan begint dat bericht
+    met dezelfde dienstnaam."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    aantal = sensornode._derive_alerts(node["id"], _status(mon=[
+        _mon(5, "neer"), _mon(6, "op", k="gemeld")]))
+    assert aantal == 1
+    rij = db.alerts_for(node["id"])[0]
+    assert rij["text"] == "google onbereikbaar (google.com)"
+    assert rij["kind"] == "neer" and rij["severity"] == "hoog"
+    assert rij["source"] == "ip" and rij["channel"] == 5
+
+
+def test_herstel_is_een_lagere_ernst_net_als_in_de_firmware(db, schone_toestand):
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "neer")]))
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "op")]))
+    rij = db.alerts_for(node["id"])[0]
+    assert rij["text"] == "google weer bereikbaar"
+    assert rij["kind"] == "op" and rij["severity"] == "laag"
+
+
+def test_een_melder_die_stilvalt_is_een_andere_boodschap_dan_neer(db, schone_toestand):
+    """Bij 'neer' ligt de DIENST plat; bij 'stil' is de MELDER stil en weten wij
+    niets. Wie dat door elkaar haalt, gaat de verkeerde kant op zoeken -- de
+    firmware maakt precies dit onderscheid en de afleiding hoort het te houden."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(6, "op", k="gemeld")]))
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(6, "stil", k="gemeld")]))
+    rij = db.alerts_for(node["id"])[0]
+    assert rij["text"] == "hoas: geen melding meer"
+    assert rij["kind"] == "stil" and rij["severity"] == "hoog"
+    # En het herstel na een stilte zegt dat de MELDINGEN terug zijn, niet dat
+    # een dienst hersteld is die misschien nooit plat lag.
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(6, "op", k="gemeld")]))
+    assert db.alerts_for(node["id"])[0]["text"] == "hoas meldt weer"
+
+
+def test_de_netvoeding_wisselt_en_dat_is_een_alarm(db, schone_toestand):
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status(mains=1))
+    assert sensornode._derive_alerts(node["id"], _status(mains=0)) == 1
+    rij = db.alerts_for(node["id"])[0]
+    assert rij["text"].startswith("netvoeding weg")
+    assert rij["kind"] == "neer" and rij["severity"] == "hoog"
+    assert sensornode._derive_alerts(node["id"], _status(mains=1)) == 1
+    assert db.alerts_for(node["id"])[0]["text"] == "netvoeding terug"
+
+
+def test_geen_overgang_geen_alarm(db, schone_toestand):
+    """Een poll is geen gebeurtenis. Twintig rondes met dezelfde neer-toestand
+    zijn een storing, niet twintig."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    data = _status(mon=[_mon(5, "neer")])
+    assert sensornode._derive_alerts(node["id"], data) == 1
+    for _ in range(5):
+        assert sensornode._derive_alerts(node["id"], data) == 0
+    assert len(db.alerts_for(node["id"])) == 1
+
+
+def test_onbekend_wist_de_laatste_uitspraak_niet(db, schone_toestand):
+    """Na een herstart van de NODE staan alle kanalen even op '?'.
+
+    'op -> ? -> neer' zou zonder deze regel in twee stille stappen uiteenvallen:
+    naar onbekend is geen storing, en vanuit onbekend zou de ijkregel gelden. De
+    afleiding onthoudt daarom de laatst BEKENDE toestand en vergelijkt neer met
+    op -- en meldt de storing alsnog.
+    """
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "op")]))
+    assert sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "?")])) == 0
+    assert sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "pauze")])) == 0
+    assert sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "neer")])) == 1
+
+
+def test_een_nieuw_kanaal_ijkt_eerst(db, schone_toestand):
+    """Een monitor die net is aangemaakt en meteen 'neer' meet, kan een tikfout
+    in een adres zijn -- geen storing om iemand voor te wekken."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "op")]))
+    data = _status(mon=[_mon(5, "op"), _mon(9, "neer", n="nieuw", h="x.local")])
+    assert sensornode._derive_alerts(node["id"], data) == 0
+
+
+def test_dezelfde_gebeurtenis_via_het_mesh_geeft_geen_tweede_melding(db, schone_toestand):
+    """De kruisontdubbeling, in de richting die er straks toe doet.
+
+    Wordt de RF-schakel ooit gerepareerd, dan komt dezelfde storing ook als
+    mesh-alarm binnen -- met een tekst die net verschilt en zonder kanaalnummer.
+    De sleutel is daarom (node, soort, dienstnaam), en de winst is precies een
+    ding: geen tweede pushmelding voor een gebeurtenis.
+    """
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "neer")]))
+    assert len(db.alerts_for(node["id"])) == 1
+    # Het mesh-alarm voor hetzelfde feit, minuten later, met de firmwaretekst.
+    assert mqtt_ingest.handle_message(
+        TOPIC, _alarm("google onbereikbaar (google.com)")) is True
+    assert len(db.alerts_for(node["id"])) == 1
+
+
+def test_de_ontdubbeling_werkt_ook_andersom(db, schone_toestand):
+    """Mesh eerst (seconden na het feit), dan de poll die hetzelfde ziet."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    mqtt_ingest.handle_message(TOPIC, _alarm("google onbereikbaar (google.com)"))
+    assert len(db.alerts_for(node["id"])) == 1
+    assert sensornode._derive_alerts(
+        node["id"], _status(mon=[_mon(5, "neer")])) == 0
+    assert len(db.alerts_for(node["id"])) == 1
+
+
+def test_twee_verschillende_diensten_dedupen_niet(db, schone_toestand):
+    """De sleutel is de dienst, niet de node: twee storingen tegelijk zijn twee
+    meldingen. Anders verzwijgt de ontdubbeling precies de tweede storing."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    aantal = sensornode._derive_alerts(node["id"], _status(mon=[
+        _mon(5, "neer"), _mon(6, "stil", k="gemeld")]))
+    assert aantal == 2
+
+
+def test_neer_en_herstel_dedupen_elkaar_niet(db, schone_toestand):
+    """Zelfde dienst, andere soort: het herstel hoort er wel doorheen, ook
+    binnen het venster -- dat is het bericht waar iemand op wacht."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "neer")]))
+    assert sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "op")])) == 1
+    assert len(db.alerts_for(node["id"])) == 2
+
+
+def test_de_ip_rijen_hebben_dezelfde_vorm_als_de_mesh_rijen(db, schone_toestand):
+    """Webpush en /meshmoni lezen de tabel en niets anders, dus de twee bronnen
+    moeten dezelfde kolommen vullen: text, severity, kind, ts, acked. Wijkt de
+    vorm af, dan is dat geen fout die iemand ziet -- de melding komt gewoon
+    anders of niet op een telefoon aan."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "neer")]))
+    mqtt_ingest.handle_message(TOPIC, _alarm("hoas onbereikbaar (hoas.local)"))
+    ip_rij, mesh_rij = None, None
+    for r in db.alerts_for(node["id"]):
+        if r["source"] == "ip":
+            ip_rij = r
+        elif r["source"] == "mesh":
+            mesh_rij = r
+    assert ip_rij is not None and mesh_rij is not None
+    assert set(ip_rij.keys()) == set(mesh_rij.keys())
+    assert ip_rij["severity"] == mesh_rij["severity"] == "hoog"
+    assert ip_rij["kind"] == mesh_rij["kind"] == "neer"
+    assert ip_rij["acked"] == mesh_rij["acked"] == 0
+    # En de ene extra van de IP-weg: het kanaalnummer, dat een mesh-tekst niet
+    # draagt. Meer weten is geen vormverschil.
+    assert ip_rij["channel"] == 5 and mesh_rij["channel"] is None
+
+
+def test_de_soort_van_een_mesh_alarm_komt_uit_de_tekst():
+    """Dezelfde soortnamen als de afleiding, want dat is de dedupsleutel."""
+    assert mqtt_ingest.alert_kind("hoas onbereikbaar (hoas.local)") == "neer"
+    assert mqtt_ingest.alert_kind("hoas gemeld als neer") == "neer"
+    assert mqtt_ingest.alert_kind("netvoeding weg, node op batterij (3.9V)") == "neer"
+    assert mqtt_ingest.alert_kind("hoas: geen melding meer (>900s)") == "stil"
+    assert mqtt_ingest.alert_kind("hoas weer bereikbaar na 3 min") == "op"
+    assert mqtt_ingest.alert_kind("hoas weer op gemeld na 3 min") == "op"
+    assert mqtt_ingest.alert_kind("hoas meldt weer (was 5 min stil)") == "op"
+    assert mqtt_ingest.alert_kind("netvoeding terug na 2 min") == "op"
+    # Een simulatie leest als het echte bericht -- dat is de bedoeling van een
+    # test -- en mag daarom nooit een echte melding onderdrukken of andersom.
+    assert mqtt_ingest.alert_kind(
+        "TEST hoas onbereikbaar (x) -- dit is een SIMULATIE, geen echte storing") is None
+
+
+def test_poll_neemt_de_afleiding_mee(db, schone_toestand, monkeypatch):
+    """Door poll() zelf en niet alleen door de losse functie: de plek in de
+    volgorde (na de metingen) is deel van de afspraak -- wie op de melding klikt
+    vindt de cijfers die erbij horen er al."""
+    from app import firmware, nodeconfig
+
+    monkeypatch.setattr(firmware, "NODE_USER", "admin")
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    db.set_sensor_host(node["id"], "192.168.110.160", by_admin=True)
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (node["id"],))
+
+    antwoorden = {"status": _status()}
+
+    class _Resp:
+        def __init__(self, body):
+            self._body = body
+
+        def read(self):
+            return json.dumps(self._body).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def nep(host, path, data=None, timeout=None):
+        if path == "/status.json":
+            return _Resp(antwoorden["status"])
+        if path == "/acl.json":
+            return _Resp({"acl": [], "nb": []})
+        raise AssertionError(path)
+
+    monkeypatch.setattr(nodeconfig, "_open", nep)
+    assert sensornode.poll(rep)["alerts"] == 0        # ijkronde
+    antwoorden["status"] = _status(mon=[_mon(5, "neer"), _mon(6, "op", k="gemeld")])
+    uit = sensornode.poll(rep)
+    assert uit["ok"] is True and uit["alerts"] == 1
+    assert db.alerts_for(node["id"])[0]["source"] == "ip"

@@ -312,6 +312,20 @@ What the server does with it:
   [`database.md`](database.md);
 - **reads the neighbours** from `/acl.json`, so the link map and the neighbour list
   work without the mesh route;
+- **derives alerts** from the difference between two rounds: a service going down
+  or recovering, a reporter falling silent, mains dropping away. The texts mirror
+  the firmware's own alert texts and the rows land in the same `alerts` table the
+  mesh route fills, so web push and `/meshmoni` need nothing new. The previous
+  state lives in the poller's memory: the first round after a server restart only
+  calibrates and never alerts, so a deploy cannot produce a wave of "new" alerts
+  for conditions that were already so — the price being that a fault which existed
+  before the restart is only reported at its next transition. Per channel the last
+  *known* state is kept, so a node reboot (`?` on every channel) does not swallow
+  an `op → neer` that happens around it. **Latency is the honest caveat:** this
+  road is up to one poll interval (default 300 s) behind the fact, where the mesh
+  road would be seconds — the alert list says so per row. If the mesh road ever
+  starts working, the same event arriving twice is caught by the cross-source
+  de-duplication on (node, kind, service) — see [`mqtt.md`](mqtt.md);
 - **manages**: advert (flood or zerohop), the clock, the region, a restart, and the
   settings from `/cfg.json`. Settings go through `nodeconfig.write()` like every
   other transport, with every threshold intact.

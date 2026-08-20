@@ -679,6 +679,173 @@ _lock = threading.Lock()
 _last: dict[int, dict] = {}
 _state = {"last_run": None, "last_result": "nog niet gedraaid"}
 
+# --- alarmen uit de poll afleiden ----------------------------------------------
+#
+# WAAROM DE POLL ALARMEN MAAKT, terwijl de node ze zelf al stuurt. De node stuurt
+# zijn alarmen als DM over het mesh naar een repeater, en die RF-richting
+# (node -> repeater) is defect bevestigd: heen werkt, terug niet, en zes
+# softwareverdenkingen zijn weerlegd (MeshUptime, docs/openstaand.md). Zolang dat
+# ter plekke niet gerepareerd is, komt er over het mesh dus NIETS binnen -- en
+# een alertketen die op een kapotte schakel wacht, is geen alertketen. De poll
+# ziet elke ronde de volledige toestand, en een OVERGANG daarin is dezelfde
+# gebeurtenis als het alarm dat de node zou hebben gestuurd.
+#
+# Wat deze weg niet kan en de mesh-weg wel, en dat staat overal waar het telt:
+# de LATENTIE. Een mesh-alarm is er seconden na het feit; deze afleiding pas bij
+# de volgende ronde, dus tot MM_SENSOR_POLL_S (standaard 300 s) later. Vandaar
+# de bronvermelding op /meshmoni: wie een melding leest, hoort te weten hoe oud
+# ze kan zijn.
+#
+# DE VORIGE TOESTAND leeft hier, in het geheugen van dit proces, en nergens
+# anders. Dat is een keuze met een gedocumenteerde prijs: een herstart van de
+# server wist de vergelijkingsbasis. De eerste ronde na een start is daarom
+# ALLEEN IJKEN -- ze legt vast wat er is en meldt niets. Zonder die regel zou
+# elke herstart een golf "nieuwe" alarmen geven voor toestanden die al dagen zo
+# waren, en een alarmkanaal dat bij elke deploy blaft is er binnen een week een
+# dat niemand meer leest. Wat het kost: een storing die al bestond toen de
+# server startte, wordt pas gemeld bij haar eerstvolgende overgang. Dat is de
+# goedkopere fout, en de toestand zelf staat intussen gewoon op de pagina's.
+#
+# Per kanaal wordt de laatst BEKENDE toestand onthouden, en '?' en 'pauze'
+# overschrijven die niet. Dat is meer dan netheid: na een herstart van de NODE
+# staan alle kanalen even op '?', en 'op -> ? -> neer' zou anders in twee stille
+# stappen uiteenvallen. Nu vergelijkt de afleiding neer met op -- de laatste
+# toestand waarvan we iets wisten -- en meldt ze de storing alsnog.
+_toestand: dict[int, dict] = {}
+
+# Toestanden waar een uitspraak in zit. 'pauze' en '?' zeggen niet dat er iets
+# mis is maar dat WIJ het niet weten, en op niet-weten hoort geen alarm te
+# volgen -- dezelfde lijn als de firmware, die 'pauze' en 'stil' amber kleurt en
+# rood reserveert voor wat is vastgesteld. 'stil' staat er wél bij: dat is een
+# vaststelling over de MELDER, en de firmware alarmeert er zelf ook op.
+_DEFINITE = ("op", "neer", "stil")
+
+
+def _state_from_status(data: dict) -> dict:
+    """De toestand van één ronde, teruggebracht tot wat de vergelijking nodig heeft.
+
+    ``{"mains": 0|1|None, "mon": {kanaal: {"st","naam","host","soort"}}}``.
+    Alleen de monitorkanalen (ping/gemeld): de vaste kanalen herhalen mains en
+    wifi, en wifi is over deze weg per definitie 'online' -- wij praten erover
+    met de node. Mains komt uit het veld zelf; -1 (geen sensorlaag) wordt None.
+    """
+    uit: dict = {"mains": None, "mon": {}}
+    if not isinstance(data, dict):
+        return uit
+    mains = data.get("mains")
+    if mains in (0, 1):
+        uit["mains"] = int(mains)
+    for entry in data.get("mon") or []:
+        if not isinstance(entry, dict):
+            continue
+        soort = str(entry.get("k") or "")
+        if soort not in (KIND_PING, KIND_PUSH):
+            continue
+        try:
+            channel = int(entry.get("ch"))
+        except (TypeError, ValueError):
+            continue
+        uit["mon"][channel] = {
+            "st": str(entry.get("st") or "").strip(),
+            "naam": str(entry.get("n") or "").strip(),
+            "host": str(entry.get("h") or "").strip(),
+            "soort": soort,
+        }
+    return uit
+
+
+def _transition_alert(prev: dict, cur: dict, channel: int) -> dict | None:
+    """Het alarm bij één kanaalovergang, of None als er niets te melden is.
+
+    De teksten spiegelen de vormen van de firmware (monitorAlertText en
+    recoverAlertText), en dat is geen stijlkeuze maar de helft van de
+    ontdubbeling: komt hetzelfde feit ooit alsnog over het mesh binnen, dan
+    begint dat bericht met dezelfde dienstnaam -- en (node, soort, naam) is de
+    sleutel waarop db.add_alert de tweede melding herkent.
+    """
+    was, nu = prev["st"], cur["st"]
+    if nu == was or was not in _DEFINITE or nu not in _DEFINITE:
+        return None
+    naam = cur["naam"] or f"kanaal {channel}"
+    push = cur["soort"] == KIND_PUSH
+
+    if nu == "neer":
+        return {"kind": "neer", "severity": "hoog", "channel": channel,
+                "text": (f"{naam} gemeld als neer" if push
+                         else f"{naam} onbereikbaar ({cur['host']})")}
+    if nu == "stil":
+        # Een heel andere boodschap dan 'neer', en het verschil is voor de
+        # lezer het halve bericht: hier is de MELDER stil en weten wij niets.
+        return {"kind": "stil", "severity": "hoog", "channel": channel,
+                "text": f"{naam}: geen melding meer"}
+    # nu == "op": het herstel. Lagere ernst, zoals de firmware dat ook doet --
+    # en na een stilte een andere zin, want dan is er geen dienst hersteld
+    # waarvan we weten dat hij plat lag.
+    if was == "stil":
+        return {"kind": "op", "severity": "laag", "channel": channel,
+                "text": f"{naam} meldt weer"}
+    return {"kind": "op", "severity": "laag", "channel": channel,
+            "text": (f"{naam} weer op gemeld" if push
+                     else f"{naam} weer bereikbaar")}
+
+
+def _derive_alerts(rid: int, data: dict) -> int:
+    """Vergelijk deze ronde met de vorige en leg overgangen vast als alarm.
+
+    Geeft het aantal NIEUWE rijen terug (ontdubbelde tellen niet mee). De
+    eerste ronde per node -- na een serverherstart dus ook -- ijkt alleen; zie
+    het blok boven ``_toestand`` voor waarom dat geen gemakzucht is.
+    """
+    nieuw = _state_from_status(data)
+    with _lock:
+        vorig = _toestand.get(rid)
+        if vorig is None:
+            _toestand[rid] = nieuw
+            return 0
+        # De vorige toestand bijwerken zonder de laatst bekende uitspraak te
+        # verliezen: een onbepaalde 'st' laat de oude staan (zie _DEFINITE), en
+        # een kanaal dat uit de kaart verdwijnt, verdwijnt ook hier -- een
+        # verwijderde monitor is geen storing.
+        bewaard: dict = {"mains": nieuw["mains"] if nieuw["mains"] is not None
+                                  else vorig.get("mains"),
+                         "mon": {}}
+        overgangen = []
+        for channel, cur in nieuw["mon"].items():
+            prev = vorig["mon"].get(channel)
+            if prev is None:
+                # Nieuw kanaal: eerst ijken, net als een nieuwe node. Een
+                # monitor die net is aangemaakt en meteen 'neer' meet, kan een
+                # dienst zijn die nooit bestaan heeft -- een tikfout in een
+                # adres -- en dat is geen storing om iemand voor te wekken.
+                bewaard["mon"][channel] = cur
+                continue
+            alert = _transition_alert(prev, cur, channel)
+            if alert is not None:
+                overgangen.append(alert)
+            if cur["st"] in _DEFINITE:
+                bewaard["mon"][channel] = cur
+            else:
+                bewaard["mon"][channel] = prev
+        if vorig.get("mains") is not None and nieuw["mains"] is not None \
+                and nieuw["mains"] != vorig["mains"]:
+            if nieuw["mains"] == 0:
+                overgangen.append({"kind": "neer", "severity": "hoog",
+                                   "channel": None,
+                                   "text": "netvoeding weg, node op batterij"})
+            else:
+                overgangen.append({"kind": "op", "severity": "laag",
+                                   "channel": None,
+                                   "text": "netvoeding terug"})
+        _toestand[rid] = bewaard
+
+    aantal = 0
+    for alert in overgangen:
+        if db.add_alert(rid, alert["text"], source="ip",
+                        channel=alert["channel"], severity=alert["severity"],
+                        kind=alert["kind"]):
+            aantal += 1
+    return aantal
+
 
 def poll(rep, timeout: int | None = None) -> dict:
     """Eén node uitlezen en alles wat eruit komt wegschrijven.
@@ -693,7 +860,7 @@ def poll(rep, timeout: int | None = None) -> dict:
     rid = int(firmware._field(rep, "id") or 0)
     host = str(firmware._field(rep, "sensor_host") or "").strip()
     out = {"ok": False, "error": "", "at": db.utcnow(), "metrics": 0,
-           "channels": 0, "neighbors": 0, "host": host}
+           "channels": 0, "neighbors": 0, "alerts": 0, "host": host}
 
     got = status(host, timeout)
     if not got["ok"]:
@@ -713,6 +880,13 @@ def poll(rep, timeout: int | None = None) -> dict:
     if gemeten:
         db.ingest(rid, out["at"], gemeten, None)
         out["metrics"] = len(gemeten)
+
+    # De overgangen sinds de vorige ronde, als alarm. Ná de metingen, zodat wie
+    # op een pushmelding de pagina opent daar al de cijfers vindt die erbij
+    # horen. Zolang de mesh-schakel node->repeater defect is, is dit de enige
+    # weg waarlangs een storing van deze node iemands telefoon haalt -- met de
+    # latentie van het pollinterval, en dat staat erbij waar de melding staat.
+    out["alerts"] = _derive_alerts(rid, data)
 
     buren = acl(host, timeout)
     if buren["ok"]:
@@ -741,7 +915,7 @@ def last(rid) -> dict:
     with _lock:
         return dict(_last.get(int(rid or 0)) or
                     {"ok": False, "error": "", "at": None, "metrics": 0,
-                     "channels": 0, "neighbors": 0, "host": ""})
+                     "channels": 0, "neighbors": 0, "alerts": 0, "host": ""})
 
 
 def run_once() -> dict:
