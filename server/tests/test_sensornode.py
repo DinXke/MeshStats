@@ -126,7 +126,7 @@ class _Antwoord:
 
 
 def _node_op_afstand(monkeypatch, *, cfg=None, cli_reply=b"OK",
-                     status_body=None, gezien=None):
+                     status_body=None):
     """Vervangt de netwerkgrens en houdt bij wat er verstuurd is.
 
     Geeft de logboeklijst terug: per verzoek ``(pad, body)``. Dat is waar de
@@ -150,8 +150,6 @@ def _node_op_afstand(monkeypatch, *, cfg=None, cli_reply=b"OK",
         raise AssertionError(f"onverwacht pad {path}")
 
     monkeypatch.setattr(nodeconfig, "_open", nep)
-    if gezien is not None:
-        monkeypatch.setattr(sensornode, "cli", sensornode.cli)
     return verstuurd
 
 

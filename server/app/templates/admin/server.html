@@ -490,6 +490,30 @@
    weigert te draaien mag er niet uitzien als een die nooit is ingesteld, en een
    die draait hoort te zeggen wanneer en met welke afloop -- anders is de enige
    manier om te weten of het werkt: gaan kijken op een dak. #}
+{#- De uitleesronde voor sensornodes: de weg over IP, naast het mesh. Hier en
+    niet alleen op de pagina van een node, om dezelfde reden als het blok
+    hieronder: een ronde die uitstaat hoort niet te lijken op een ronde die niets
+    vond. -#}
+<section id="sensorronde">
+  <h2>Sensornodes over IP</h2>
+  <div class="card">
+  <table>
+    <tr><td>Staat aan</td><td>
+      {%- if sensor_poll.enabled %}<span class="ok">ja</span>, elke {{ sensor_poll.interval_s }} s
+      {%- else %}<span class="muted">nee &mdash; <code>MM_SENSOR_POLL_ENABLED=0</code></span>{% endif %}</td></tr>
+    <tr><td>Laatste ronde</td><td>
+      {%- if sensor_poll.last_run %}<time class="reltime" datetime="{{ sensor_poll.last_run }}">{{ sensor_poll.last_run }}</time>
+      {%- else %}<span class="muted">nog niet gedraaid</span>{% endif %}</td></tr>
+    <tr><td>Afloop</td><td>{{ sensor_poll.last_result }}</td></tr>
+  </table>
+  <p class="muted small">Deze ronde leest nodes uit die hun eigen API over IP aanbieden, op
+     hetzelfde tempo als de bestaande polling. Het adres staat per node op zijn beheerpagina en
+     mag alleen door een serverbeheerder ingevuld worden &mdash; de server stuurt daarheen de
+     inloggegevens die elke node openen. Deze weg loopt over WiFi en niet over het mesh: valt die
+     verbinding weg, dan valt hij mee weg.</p>
+  </div>
+</section>
+
 <section id="kloksync">
   <h2>Kloksynchronisatie</h2>
   <div class="card">

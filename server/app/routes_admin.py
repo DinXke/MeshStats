@@ -764,6 +764,10 @@ def server_page(request: Request):
         "topic_prefixes": db.topic_prefix_counts(),
         "tsdb": tsdb.status(),
         "clocksync": clocksync.status(),
+        # De uitleesronde voor sensornodes. Zichtbaar hier en niet alleen in het
+        # logboek, om dezelfde reden als bij de kloksynchronisatie hieronder: een
+        # ronde die uitstaat mag er niet uitzien als een die nooit iets vond.
+        "sensor_poll": sensornode.status_summary(),
         "clock_targets": clocksync.targets(repeaters),
         "cli_params": db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS),
         "settings": {
