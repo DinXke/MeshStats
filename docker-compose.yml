@@ -93,6 +93,12 @@ services:
       MM_CLOCKSYNC_MAX_JUMP_S: "${MM_CLOCKSYNC_MAX_JUMP_S:-${MCS_CLOCKSYNC_MAX_JUMP_S:-30}}"
       # Tijdreeksen: leeg laten om alles in SQLite te houden
       MM_TSDB_URL: "${MM_TSDB_URL-${MCS_TSDB_URL-http://victoria:8428}}"
+      # Webpush voor de /meshmoni-subsite. Bewust leeg als standaard: leeg zet
+      # pushmeldingen uit, met die reden zichtbaar in de UI -- dezelfde afspraak
+      # als MM_FW_NODE_USER hierboven. Aanmaken: zie docs/nl/meshmoni.md.
+      MM_VAPID_PUBLIC: "${MM_VAPID_PUBLIC-${MCS_VAPID_PUBLIC-}}"
+      MM_VAPID_PRIVATE: "${MM_VAPID_PRIVATE-${MCS_VAPID_PRIVATE-}}"
+      MM_VAPID_SUBJECT: "${MM_VAPID_SUBJECT-${MCS_VAPID_SUBJECT-}}"
     volumes:
       # Zelfde reden als de projectnaam hierboven: de sleutel van dit volume
       # is de naam waaronder de databank op schijf staat. Hernoemen levert
