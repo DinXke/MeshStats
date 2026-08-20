@@ -180,14 +180,47 @@ CREATE TABLE IF NOT EXISTS repeater_cli(
 -- Namen bij de kanalen van een sensornode. Zie de uitleg boven
 -- channel_names_for() waarom die koppeling hier hoort en niet op de repeater,
 -- en waarom een kanaalnummer nooit mag verschuiven.
+--
+-- ``source`` is 'user' of 'auto', en het bestaat om één regel te kunnen
+-- handhaven: een naam die een MENS getypt heeft wint altijd. Zonder deze kolom
+-- is dat niet vast te stellen -- na de eerste automatische vulling ziet een
+-- ingetypte naam er precies zo uit als een overgenomen naam, en dan overschrijft
+-- de volgende ronde het werk van iemand die er een reden voor had.
 CREATE TABLE IF NOT EXISTS channel_names(
   repeater_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
   channel INTEGER NOT NULL,
   name TEXT NOT NULL,
   unit TEXT,
   updated TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'user',
   PRIMARY KEY(repeater_id, channel)
 );
+-- Alarmen van een sensornode. Zie de uitleg boven ``add_alert()``.
+--
+-- TELEMETRIE IS SNMP-POLLING, EEN ALERT IS EEN SNMP-TRAP. Die vergelijking is de
+-- hele reden dat dit een eigen tabel is en geen meting in ``samples``: een trap
+-- komt op het moment dat er iets gebeurt, draagt één feit, en arriveert
+-- misschien niet. Een meetreeks is het tegenovergestelde -- regelmatig,
+-- volledig, en blind voor wat er tussen twee punten gebeurde.
+--
+-- ``repeater_id`` is de node WAAROVER het alarm gaat en niet de doorgever. Die
+-- twee zijn bij deze weg per definitie verschillend: een sensornode stuurt zijn
+-- alarm als DM naar een repeater, en die zet het op de broker. Ze door elkaar
+-- halen hangt een storing aan het verkeerde apparaat.
+CREATE TABLE IF NOT EXISTS alerts(
+  id INTEGER PRIMARY KEY,
+  repeater_id INTEGER,
+  channel INTEGER,
+  text TEXT NOT NULL,
+  severity TEXT,
+  ts TEXT NOT NULL,
+  source TEXT NOT NULL,
+  acked INTEGER DEFAULT 0
+);
+-- De twee vragen die deze tabel krijgt: "wat is er met deze node gebeurd" (op de
+-- nodepagina, nieuwste eerst) en "hoeveel staat er nog open" (de badge). Beide
+-- lopen over dezelfde kolommen, dus één index bedient ze samen.
+CREATE INDEX IF NOT EXISTS idx_alerts_node ON alerts(repeater_id, acked, ts);
 CREATE TABLE IF NOT EXISTS repeater_filter(
   repeater_id INTEGER PRIMARY KEY REFERENCES repeaters(id) ON DELETE CASCADE,
   state TEXT NOT NULL,
@@ -261,6 +294,58 @@ COLUMN_MIGRATIONS = [
     # is read from the node again -- a board can have been swapped since.
     ("repeaters", "ota_host", "TEXT"),
     ("repeaters", "pio_env", "TEXT"),
+    # Of een SERVERBEHEERDER de adressen van deze rij heeft vastgelegd. De
+    # toegestane-lijst voor uitgaande verbindingen naar een node; zie
+    # firmware.check_target voor het gat dat dit dichtzet.
+    #
+    # Kort: ``node.beheeradres`` is een delegeerbaar recht, en de server stuurt
+    # MM_FW_NODE_USER/MM_FW_NODE_PASS mee naar het adres dat in dat veld staat.
+    # Die inloggegevens openen ELKE node. Wie dat veld mag vullen, kon dus met één
+    # tekstveld de sleutel van de hele vloot naar zijn eigen server laten sturen.
+    #
+    # DEFAULT 0, en dat zou elke bestaande node afsluiten -- daarom staat er een
+    # POST_MIGRATION bij die elke rij die AL een adres heeft op 1 zet. Die keuze
+    # is te verdedigen en niet gratis: zo'n adres is ingevuld voordat deze regel
+    # bestond, op een installatie waar het beheer bij één persoon lag, en het
+    # afzetten zou een werkende vloot stilleggen bij een update die niemand als
+    # gevaarlijk aankondigde. Wat het kost: een adres dat vóór vandaag met een
+    # gedelegeerd recht is ingevuld, blijft vertrouwd. Dat is precies één
+    # installatie-moment aan risico, tegen een site die anders morgen niet meer
+    # kan upgraden -- en de eerste wijziging aan zo'n adres vraagt wél om een
+    # serverbeheerder.
+    ("repeaters", "host_admin", "INTEGER NOT NULL DEFAULT 0"),
+    # Het adres van de EIGEN API van een sensornode, en wat die API laatst zei.
+    #
+    # Drie kolommen naast ``ota_host`` en niet erin, en dat is de kern van deze
+    # weg. ``ota_host`` betekent één ding: daar staat de beheerpagina van onze
+    # REPEATERFIRMWARE, met ``/api/fw``, ``/api/cfg`` en ``/api/mon`` erachter.
+    # Wie het adres van een sensornode daar zou invullen, krijgt een site die een
+    # firmware-image aanbiedt aan een node waarvan wij de bouwomgeving niet
+    # beheren (verkeerd board = kapotte node) en die ``GET /api/cfg`` probeert op
+    # een node die dat pad niet heeft. Twee betekenissen in één veld is precies
+    # de fout die dit project elders al een paar keer heeft opgeruimd.
+    #
+    # ``sensor_host`` wordt net als ``ota_host`` door een mens ingetypt: geen
+    # bericht van een node draagt zijn eigen IP, en of deze server hem over IP
+    # bereikt is een eigenschap van het netwerk ertussen en niet van de node.
+    #
+    # ``sensor_seen`` en ``sensor_fw`` zijn WAARNEMINGEN: het tijdstip waarop
+    # ``GET /status.json`` voor het laatst antwoordde, en de versie die daarin
+    # stond. Ze staan hier omdat ``commanding._level`` erop weegt en die functie
+    # geen netwerk op mag: het beheerniveau van een node hoort niet af te hangen
+    # van of er nu net een socket opengaat. Een ingevuld adres zonder
+    # ``sensor_seen`` is dus geen bewering dat de node beheerd is -- het is een
+    # adres waar nog nooit iets van teruggekomen is, en dat kan net zo goed een
+    # tikfout zijn.
+    ("repeaters", "sensor_host", "TEXT"),
+    ("repeaters", "sensor_seen", "TEXT"),
+    ("repeaters", "sensor_fw", "TEXT"),
+    # Wie deze kanaalnaam gezet heeft: 'user' of 'auto'. De standaard is 'user'
+    # en dat is geen slordigheid maar de enige juiste keuze: ALTER TABLE ADD
+    # COLUMN vult bestaande rijen met de standaard, en élke rij die er nu staat
+    # is met de hand ingetypt -- er was nog geen automatische vulling. 'auto' als
+    # standaard zou al dat werk vogelvrij maken voor de eerstvolgende ronde.
+    ("channel_names", "source", "TEXT NOT NULL DEFAULT 'user'"),
     # De parametertabel zoals de node hem zelf meldt, en wanneer.
     #
     # Waarom dit bewaard wordt en niet elke keer opgehaald: de site bouwt zijn
@@ -345,6 +430,32 @@ COLUMN_MIGRATIONS = [
     # naam-uitdrukkingen verderop; zie de toelichting bij VIEWS.
     ("repeaters", "show_position", "INTEGER NOT NULL DEFAULT 1"),
     ("repeaters", "show_name", "INTEGER NOT NULL DEFAULT 1"),
+    # En of de NAMEN BIJ DE KANALEN van deze node publiek zijn. Een derde vlag
+    # naast de twee hierboven, want het is een derde soort gegeven en het gedraagt
+    # zich anders dan beide.
+    #
+    # Wat een kanaalnaam apart maakt: de naam en de positie van een node zijn
+    # ooit door hem zelf uitgezonden -- ze reizen in elke advert mee, dus ze
+    # verbergen op deze site is een keuze over hoe zichtbaar iets is dat al
+    # bestaat. Een kanaalnaam is nergens uitgezonden. Hij komt uit de eigen API
+    # van de node of uit het toetsenbord van een beheerder, en hij kan een intern
+    # adres bevatten ("hoas (hoas.scheepers.one)") dat over de radio nooit
+    # langskwam. Dat is een gegeven dat deze site zelf zou publiceren.
+    #
+    # En toch DEFAULT 1, om precies dezelfde reden als bij de twee hierboven:
+    # ALTER TABLE ADD COLUMN vult bestaande rijen met de standaard, en de vorige
+    # versie toonde deze namen al publiek. Een privacykolom die bij het toevoegen
+    # stilzwijgend iets van een bestaande pagina haalt, is een slechtere fout dan
+    # de kolom die ontbrak: wie morgenochtend zijn pagina opent hoort daar niets
+    # van te merken.
+    #
+    # Het tegenargument staat er wel bij, want het is niet niks: sinds de eigen
+    # API van een sensornode komen deze namen AUTOMATISCH binnen, en dan is er
+    # niemand die per naam besloten heeft dat hij publiek mag. Daarom staat de
+    # waarschuwing op de beheerpagina bij de vlag en niet in de documentatie, en
+    # daarom valt een verborgen kanaal terug op "kanaal N" en nooit op de ruwe
+    # metricnaam -- die zou het nummer én de vorm van de meting alsnog verklappen.
+    ("repeaters", "show_channels", "INTEGER NOT NULL DEFAULT 1"),
     # The hop hashes of the packet's path, comma-separated. Denormalised out of
     # ``raw`` on purpose: the packet detail view resolves every hop against the
     # contacts table, and re-decoding frames for that is work the ingest path has
@@ -436,6 +547,13 @@ COLUMN_MIGRATIONS = [
 # terug.
 POST_MIGRATIONS = [
     ("admins", "is_superuser", "UPDATE admins SET is_superuser=1"),
+    # Elk adres dat er al staat, gold tot vandaag als bruikbaar. Zie de
+    # toelichting bij de kolom: het alternatief is een update die een werkende
+    # vloot stillegt zonder dat iemand daarom vroeg.
+    ("repeaters", "host_admin",
+     "UPDATE repeaters SET host_admin=1 "
+     "WHERE (ota_host IS NOT NULL AND TRIM(ota_host) <> '') "
+     "   OR (sensor_host IS NOT NULL AND TRIM(sensor_host) <> '')"),
 ]
 
 
@@ -1927,34 +2045,238 @@ def cli_settings_for(repeater_id: int) -> list:
 # worden; het is het bewijs dat er niets verschoven is.
 
 
-def channel_names_for(repeater_id: int) -> dict[int, sqlite3.Row]:
-    """De namen bij de kanalen van deze node, op kanaalnummer."""
+def channel_names_for(repeater_id: int, public: bool = False) -> dict[int, sqlite3.Row]:
+    """De namen bij de kanalen van deze node, op kanaalnummer.
+
+    ``public=True`` handhaaft de zichtbaarheidsvlag ``show_channels``: staat die
+    uit, dan komt er een LEGE tabel terug en heet elk kanaal weer "kanaal N".
+    Niet een tabel met lege namen en niet de ruwe metricnaam -- zie de toelichting
+    bij de kolom in COLUMN_MIGRATIONS. Handhaven in het LEESPAD en niet in de
+    sjablonen, om dezelfde reden als bij ``visible_contacts``: een sjabloon dat
+    zelf moet onthouden dat het iets niet mag tonen, vergeet dat één keer.
+    """
+    if public:
+        rij = qone("SELECT show_channels FROM repeaters WHERE id=?", (repeater_id,))
+        # Geen rij is geen node, en dan is er niets te tonen. Niet opwerpen: deze
+        # functie wordt aangeroepen tijdens het tekenen van een pagina, en een
+        # verdwenen node hoort daar een lege lijst te geven en geen 500.
+        if rij is None or not rij["show_channels"]:
+            return {}
     return {r["channel"]: r for r in
             q("SELECT * FROM channel_names WHERE repeater_id=? ORDER BY channel",
               (repeater_id,))}
 
 
+SOURCE_USER = "user"
+SOURCE_AUTO = "auto"
+
+
 def set_channel_name(repeater_id: int, channel: int, name: str,
-                     unit: str | None = None) -> None:
-    """Zet of wist de naam bij één kanaal.
+                     unit: str | None = None, source: str = SOURCE_USER) -> bool:
+    """Zet of wist de naam bij één kanaal. Geeft terug of er iets veranderd is.
 
     Een lege naam wist de rij in plaats van een leeg veld te bewaren: een
     kanaal zonder naam hoort als "kanaal N" getoond te worden, en dat is precies
     wat een ontbrekende rij oplevert. Een lege rij zou hetzelfde doen maar wel
     in de beheerlijst blijven staan als iets wat er ooit was.
+
+    **Een door een mens gezette naam wint altijd.** Een schrijfactie met
+    ``source='auto'`` -- de vulling uit ``/status.json``, zie
+    ``sensornode.py`` -- raakt een rij met ``source='user'`` niet aan. Die naam
+    is met een reden getypt: de node noemt een dienst "hoas" en de beheerder
+    heeft er "Home Assistant (dak)" van gemaakt, en een ronde die dat elke vijf
+    minuten terugdraait is een ronde die niemand nog aan laat staan.
+
+    Andersom geldt het niet: een mens overschrijft een automatische naam zonder
+    meer, en de rij wordt dan 'user' -- ook als hij precies hetzelfde intypt. Wie
+    een overgenomen naam bevestigt, heeft er daarmee zijn eigen naam van gemaakt.
+
+    Wissen is óók een menselijke keuze: een beheerder die het veld leegmaakt wil
+    "kanaal N" zien staan en geen naam die de volgende ronde opnieuw uit de node
+    komt rollen. Daarom laat een leeg veld een rij achter met een lege naam en
+    ``source='user'``, en niet niets -- zie ``_clear_channel_name``.
     """
     name = (name or "").strip()[:64]
     unit = (unit or "").strip()[:16] or None
+    source = SOURCE_AUTO if source == SOURCE_AUTO else SOURCE_USER
+    was = qone("SELECT name, unit, source FROM channel_names "
+               "WHERE repeater_id=? AND channel=?", (repeater_id, channel))
+    if source == SOURCE_AUTO and was is not None and was["source"] != SOURCE_AUTO:
+        return False
     if not name and not unit:
-        execute("DELETE FROM channel_names WHERE repeater_id=? AND channel=?",
-                (repeater_id, channel))
-        return
+        return _clear_channel_name(repeater_id, channel, source, was)
+    if was is not None and was["name"] == name and was["unit"] == unit \
+            and was["source"] == source:
+        return False
     execute(
-        "INSERT INTO channel_names(repeater_id, channel, name, unit, updated) "
-        "VALUES(?,?,?,?,?) ON CONFLICT(repeater_id, channel) DO UPDATE SET "
-        "name=excluded.name, unit=excluded.unit, updated=excluded.updated",
-        (repeater_id, channel, name, unit, utcnow()),
+        "INSERT INTO channel_names(repeater_id, channel, name, unit, updated, source) "
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(repeater_id, channel) DO UPDATE SET "
+        "name=excluded.name, unit=excluded.unit, updated=excluded.updated, "
+        "source=excluded.source",
+        (repeater_id, channel, name, unit, utcnow(), source),
     )
+    return True
+
+
+def _clear_channel_name(repeater_id: int, channel: int, source: str, was) -> bool:
+    """Een leeg naamveld verwerken. Zie de uitleg in ``set_channel_name``.
+
+    Van een MENS is dit een uitspraak die bewaard moet blijven ("laat dit kanaal
+    naamloos"), want anders vult de eerstvolgende automatische ronde het weer in
+    en lijkt de knop stuk. Van de automaat is het geen uitspraak maar het
+    ontbreken van er een: dan verdwijnt de rij, precies zoals vroeger.
+    """
+    if source == SOURCE_AUTO:
+        if was is None:
+            return False
+        execute("DELETE FROM channel_names WHERE repeater_id=? AND channel=? "
+                "AND source=?", (repeater_id, channel, SOURCE_AUTO))
+        return True
+    if was is not None and not was["name"] and not was["unit"] \
+            and was["source"] == SOURCE_USER:
+        return False
+    execute(
+        "INSERT INTO channel_names(repeater_id, channel, name, unit, updated, source) "
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(repeater_id, channel) DO UPDATE SET "
+        "name=excluded.name, unit=excluded.unit, updated=excluded.updated, "
+        "source=excluded.source",
+        (repeater_id, channel, "", None, utcnow(), SOURCE_USER),
+    )
+    return True
+
+
+# --- alarmen ------------------------------------------------------------------
+#
+# TELEMETRIE IS SNMP-POLLING, EEN ALERT IS EEN SNMP-TRAP.
+#
+# Die vergelijking maakt het ontwerp in één zin duidelijk, en ze klopt tot in de
+# details. Pollen is regelmatig, betaalbaar en volledig, en het weet niets van wat
+# er tussen twee rondes gebeurde. Een trap komt op het moment dat er iets
+# gebeurt, draagt alleen dat ene feit, en arriveert misschien niet. Je hebt ze
+# beide nodig: de trap zegt WANNEER, de poll zegt WAT.
+#
+# Daarom een eigen tabel en geen meetreeks. Een alarm heeft eigenschappen die een
+# meting niet heeft -- een tekst die een mens leest, een ernst, en de vraag of
+# iemand het al gezien heeft -- en een meting heeft eigenschappen die een alarm
+# niet heeft: een waarde die je kunt tekenen en een interval waarop hij hoort te
+# komen. Ze in één tabel persen zou van beide de helft weggooien.
+#
+# WAT ER NIET IN ZIT, en dat is met opzet: een regel die zegt wanneer een alarm
+# WEG mag. Bevestigen (``acked``) is wat een mens doet; verwijderen doet de
+# bewaartermijn, samen met de rest. Een alarm dat na een uur vanzelf verdwijnt is
+# een alarm dat je 's nachts mist.
+
+# Hoe lang na een identiek alarm van dezelfde node een tweede als dezelfde geldt.
+#
+# Dit bestaat om een reden die in de firmware zit: een sensornode herhaalt zijn
+# alarm tot hij een ACK krijgt, en de repeater die het doorzet bevestigt een
+# monitorbericht niet. Eén storing levert dus een handvol identieke DM's op. De
+# repeater remt dat aan zijn kant al (MON_ALERT_DEDUP_MS), en hier staat het nog
+# een keer -- want die rem leeft in RAM en overleeft geen herstart, en twee
+# repeaters die dezelfde node horen zouden er elk een sturen.
+ALERT_DEDUP_S = 300
+
+
+def add_alert(repeater_id, text: str, *, source: str, ts: str | None = None,
+              channel=None, severity: str | None = None) -> int:
+    """Eén alarm vastleggen. Geeft het id terug, of 0 als het een herhaling was.
+
+    ``repeater_id`` mag None zijn, en dat is geen slordigheid: een alarm van een
+    node die hier geen rij heeft is nog steeds een alarm, en het weggooien omdat
+    we de afzender niet kennen zou precies de melding verliezen die je bij een
+    onbekende node het hardst nodig hebt. De beheerpagina toont zo'n regel dan
+    zonder node erbij.
+
+    Een herhaling binnen ``ALERT_DEDUP_S`` levert 0 op en verandert niets --
+    ook niet de tijdstempel van de eerste. Dat is met opzet: de eerste keer is
+    het moment waarop de storing begon, en dat is het getal waar iemand later
+    naar kijkt.
+    """
+    text = str(text or "").strip()[:500]
+    if not text:
+        return 0
+    ts = ts or utcnow()
+    severity = (severity or "").strip().lower() or None
+    if severity not in (None, "laag", "hoog"):
+        severity = None
+    try:
+        channel = int(channel) if channel is not None else None
+    except (TypeError, ValueError):
+        channel = None
+
+    with _lock:
+        conn = get_conn()
+        eerder = conn.execute(
+            "SELECT id FROM alerts WHERE text=? AND source=? "
+            "AND (repeater_id IS ? OR repeater_id = ?) "
+            "AND ts >= datetime(?, ?) ORDER BY id DESC LIMIT 1",
+            (text, source, repeater_id, repeater_id, ts,
+             f"-{int(ALERT_DEDUP_S)} seconds")).fetchone()
+        if eerder is not None:
+            return 0
+        cur = conn.execute(
+            "INSERT INTO alerts(repeater_id, channel, text, severity, ts, source, "
+            "acked) VALUES(?,?,?,?,?,?,0)",
+            (repeater_id, channel, text, severity, ts, str(source)[:16]))
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def alerts_for(repeater_id: int, limit: int = 25) -> list:
+    """De alarmen van deze node, nieuwste eerst."""
+    return q("SELECT * FROM alerts WHERE repeater_id=? ORDER BY ts DESC, id DESC "
+             "LIMIT ?", (repeater_id, max(1, min(int(limit), 200))))
+
+
+def alerts_recent(limit: int = 50) -> list:
+    """De laatste alarmen over alle nodes, met de naam van de node erbij.
+
+    Een LEFT JOIN en geen gewone: een alarm van een node die hier geen rij heeft
+    hoort zichtbaar te blijven. Zie ``add_alert``.
+    """
+    return q("SELECT a.*, r.name AS node_name, r.slug AS node_slug "
+             "FROM alerts a LEFT JOIN repeaters r ON r.id = a.repeater_id "
+             "ORDER BY a.ts DESC, a.id DESC LIMIT ?",
+             (max(1, min(int(limit), 500)),))
+
+
+def alerts_open_count(repeater_id=None) -> int:
+    """Hoeveel alarmen nog niet bevestigd zijn, in totaal of voor één node."""
+    if repeater_id is None:
+        rij = qone("SELECT COUNT(*) AS n FROM alerts WHERE acked=0")
+    else:
+        rij = qone("SELECT COUNT(*) AS n FROM alerts WHERE acked=0 AND repeater_id=?",
+                   (repeater_id,))
+    return int(rij["n"] if rij else 0)
+
+
+def alerts_open_by_node() -> dict:
+    """Per node het aantal openstaande alarmen, voor de badge in de nodelijst.
+
+    Eén query en niet één per node: bij twintig nodes is dat twintig keer
+    dezelfde vraag voor één scherm -- dezelfde reden als bij ``cli_settings_all``.
+    """
+    return {int(r["repeater_id"]): int(r["n"]) for r in
+            q("SELECT repeater_id, COUNT(*) AS n FROM alerts "
+              "WHERE acked=0 AND repeater_id IS NOT NULL GROUP BY repeater_id")}
+
+
+def ack_alert(alert_id: int) -> bool:
+    """Eén alarm bevestigen. False als het er niet was of al bevestigd was."""
+    return execute_rowcount("UPDATE alerts SET acked=1 WHERE id=? AND acked=0",
+                            (alert_id,)) > 0
+
+
+def ack_alerts_for(repeater_id: int) -> int:
+    """Alle openstaande alarmen van één node bevestigen. Geeft het aantal terug.
+
+    Bestaat naast ``ack_alert`` omdat een node die een uur onbereikbaar was
+    tientallen regels oplevert, en ze één voor één wegklikken betekent dat
+    niemand het doet -- en dan zegt de badge over een week nog steeds iets over
+    vorige dinsdag.
+    """
+    return execute_rowcount("UPDATE alerts SET acked=1 WHERE repeater_id=? AND acked=0",
+                            (repeater_id,))
 
 
 def cli_settings_all() -> list:
@@ -2313,15 +2635,79 @@ def record_pio_env(repeater_id: int, env: str) -> None:
         execute("UPDATE repeaters SET pio_env=? WHERE id=?", (text, repeater_id))
 
 
-def set_ota_host(repeater_id: int, host: str) -> None:
-    """Where this node's management page is, or empty to say there is no IP path."""
+def set_ota_host(repeater_id: int, host: str, by_admin: bool = False) -> None:
+    """Where this node's management page is, or empty to say there is no IP path.
+
+    ``by_admin`` legt vast dat een SERVERBEHEERDER dit adres gezet heeft, en dat
+    is geen boekhouding maar de toegestane-lijst zelf: zonder die vlag verbindt
+    de server er niet naartoe en stuurt hij er geen inloggegevens naartoe. Zie
+    firmware.check_target.
+
+    Wissen zet de vlag terug op 0. Dat hoort zo: de vlag gaat over hét adres dat
+    er staat, en een leeg veld heeft geen adres om over te gaan. Zonder dit zou
+    een gedelegeerde gebruiker een vertrouwd adres kunnen wissen en er zijn eigen
+    adres in kunnen zetten, dat dan de vlag van zijn voorganger zou erven.
+    """
     text = str(host or "").strip()[:120]
-    execute("UPDATE repeaters SET ota_host=? WHERE id=?", (text or None, repeater_id))
+    execute("UPDATE repeaters SET ota_host=?, host_admin=? WHERE id=?",
+            (text or None, 1 if (text and by_admin) else 0, repeater_id))
 
 
 def set_critical(repeater_id: int, critical: bool) -> None:
     execute("UPDATE repeaters SET is_critical=? WHERE id=?",
             (1 if critical else 0, repeater_id))
+
+
+# --- de eigen API van een sensornode -----------------------------------------
+
+def set_sensor_host(repeater_id: int, host: str, by_admin: bool = False) -> None:
+    """Waar de eigen API van deze sensornode staat, of leeg voor 'geen'.
+
+    ``by_admin`` is de toegestane-lijst en niet een logregel: zonder die vlag
+    verbindt de server er niet naartoe. Zie ``set_ota_host`` en
+    firmware.check_target.
+
+    Wissen wist ook de waarneming, en dat is met opzet: ``sensor_seen`` is een
+    uitspraak over een ADRES ("daar antwoordde iets"), niet over de node. Blijft
+    hij staan bij een leeg adres, dan houdt een node zijn beheerniveau over aan
+    een adres dat niemand meer kan navragen -- en dan belooft de pagina iets
+    waarvan de reden weg is.
+    """
+    text = str(host or "").strip()[:120]
+    if text:
+        execute("UPDATE repeaters SET sensor_host=?, host_admin=? WHERE id=?",
+                (text, 1 if by_admin else 0, repeater_id))
+        return
+    execute("UPDATE repeaters SET sensor_host=NULL, sensor_seen=NULL, "
+            "sensor_fw=NULL, host_admin=0 WHERE id=?", (repeater_id,))
+
+
+def record_sensor_seen(repeater_id: int, fw: str = "") -> None:
+    """Onthoud dat de eigen API van deze node zojuist geantwoord heeft.
+
+    Alleen bij een GELUKTE ronde, en de tijdstempel wordt bij een mislukking niet
+    gewist. Dat is dezelfde regel als bij ``record_firmware``: wat we ooit
+    vastgesteld hebben blijft waar, ook als de node nu niet opneemt. Het niveau
+    zegt wat deze node IS -- hij biedt een eigen API aan -- en de verse-heid van
+    die waarneming is een tweede vraag, die de pagina apart stelt.
+    """
+    text = str(fw or "").strip()[:32]
+    if text:
+        execute("UPDATE repeaters SET sensor_seen=?, sensor_fw=? WHERE id=?",
+                (utcnow(), text, repeater_id))
+        return
+    execute("UPDATE repeaters SET sensor_seen=? WHERE id=?", (utcnow(), repeater_id))
+
+
+def sensor_nodes() -> list:
+    """Elke node met een adres voor zijn eigen API, voor de pollronde.
+
+    Op id gesorteerd zodat de ronde bij elke doorloop dezelfde volgorde heeft:
+    wie een logboek naast een grafiek legt, moet twee rondes met elkaar kunnen
+    vergelijken.
+    """
+    return q("SELECT * FROM repeaters WHERE sensor_host IS NOT NULL "
+             "AND TRIM(sensor_host) <> '' ORDER BY id")
 
 
 # When the Home Assistant poller last emptied the command queue. The queue is

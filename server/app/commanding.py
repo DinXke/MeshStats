@@ -55,6 +55,20 @@ MIN_MON_CMD_VERSION = (1, 9, 0)
 # vertraging maar een afwezigheid.
 POLLER_STALE_SECS = 900
 
+# Hoe lang na de laatste geslaagde polling de eigen API van een sensornode nog
+# als aanwezig geldt. De pollronde loopt elke 300 s (sensornode.INTERVAL_S), dus
+# dit is ruwweg "twee rondes overgeslagen". Hier hardcoded en niet uit die module
+# gehaald, om dezelfde reden als bij POLLER_STALE_SECS hierboven: dit bestand is
+# met opzet te lezen en te testen zonder de rest van de app erbij, en het geeft
+# alleen een oordeel -- het polt zelf niets. test_sensornode.py houdt de twee
+# getallen tegen elkaar aan zodat een korter interval hier niet stil blijft staan.
+#
+# Waarom een grens en niet "de laatste keer telt altijd": deze weg loopt over
+# WiFi, en op batterij is dat een pad dat komt en gaat. Zonder grens zou de
+# pagina van een node die vanmorgen nog antwoordde en sindsdien van het net is,
+# nog steeds zeggen dat de knoppen werken.
+IP_API_STALE_SECS = 600
+
 # Hoe lang na het laatste bericht van een node een opdracht een gok wordt. Het
 # publicatie-interval loopt met de batterij mee en kan in zuinige modus oplopen,
 # dus dit staat ruim: het is een waarschuwing op de pagina, geen weigering.
@@ -222,6 +236,34 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
         "node_stale": not _fresh(_field(rep, "source_seen"), NODE_STALE_SECS, now),
         "ha": poller_fresh,
         "poller_seen": poller_seen,
+        # De eigen API van de node, als waarneming en naast het niveau. Het
+        # niveau zegt wat deze node IS; dit zegt of die weg NU nog draagt, en dat
+        # is een ander antwoord -- precies de tweedeling die ``mqtt`` naast
+        # ``level`` ook maakt. ``stale`` weegt op het pollinterval en niet op een
+        # eigen getal: valt er meer dan twee rondes niets binnen, dan is dat geen
+        # vertraging maar een afwezigheid, en over WiFi op batterij is dat een
+        # gemeten en geen theoretisch geval.
+        "ip_api": _ip_api(rep, now),
+    }
+
+
+def _ip_api(rep, now: datetime) -> dict:
+    """Wat de eigen API van deze node laatst deed. Leeg als hij er geen heeft.
+
+    Als eigen sleutel en niet verwerkt in ``blocker``, want die gaat over de
+    MQTT-weg en deze weg is de tegenovergestelde: hij werkt juist als de broker
+    weg is, en hij valt weg als de WiFi weg is. Ze in één veld persen zou van
+    twee onafhankelijke wegen één toestand maken.
+    """
+    host = (_field(rep, "sensor_host") or "").strip()
+    seen = _field(rep, "sensor_seen")
+    return {
+        "host": host,
+        "seen": seen,
+        "fw": _field(rep, "sensor_fw") or "",
+        "ever": bool(host and seen),
+        "fresh": _fresh(seen, IP_API_STALE_SECS, now),
+        "stale_after_s": IP_API_STALE_SECS,
     }
 
 
@@ -285,6 +327,37 @@ def _level(rep, *, via_monitor: bool, relay, poller_fresh: bool) -> tuple[str, s
     # niet zijn: de versie die we dan kennen is die van de doorstuurder.
     if source and source != "api" and not via_monitor and version is not None:
         return LEVEL_FULL, f"publiceert zelf over MQTT met nodefirmware {fw}"
+
+    # Full managed, tweede vorm: de node biedt zijn EIGEN API aan over IP, en die
+    # heeft ook geantwoord. Andere firmware, hetzelfde niveau -- en dat laatste is
+    # een uitspraak die uitleg verdient.
+    #
+    # Waarom dit niet 'semi' is. Het niveau weegt drie dingen: is er een weg,
+    # staat er een geauthenticeerde tegenpartij tegenover, en valt er te
+    # controleren wat er gebeurd is. Deze weg scoort op alle drie minstens zo hoog
+    # als de MQTT-weg: de weblogin van de node zelf in plaats van wie de broker
+    # binnenliet, een antwoord in hetzelfde verzoek in plaats van een bericht dat
+    # later langskomt, en tienden van seconden in plaats van tientallen. Hem
+    # 'semi' noemen zou het woord laten betekenen "draait onze firmware niet" in
+    # plaats van "beperkt te beheren", en dan gaat het niveau over ONS in plaats
+    # van over hem.
+    #
+    # Waarom er niet naar de VERSHEID van sensor_seen gekeken wordt: om dezelfde
+    # reden dat deze berekening niet naar broker_connected kijkt. Het niveau zegt
+    # wat deze node IS en niet wat er nu openstaat. Een node waarvan de WiFi net
+    # wegviel is nog steeds een node met een eigen API -- er is alleen nu geen
+    # weg, en dat hoort de pagina te tonen in plaats van stil in het niveau te
+    # verdwijnen. Anders springt het niveau op en neer met een netwerkverbinding.
+    #
+    # De prijs staat erbij: een node die deze API ooit had en nu voorgoed van het
+    # net is, blijft full managed heten. Dat is dezelfde prijs die de MQTT-weg al
+    # betaalt (``fw_meshmanager`` blijft ook staan als een node nooit meer
+    # publiceert) en het is de goedkoopste van de twee fouten.
+    sensor_host = (_field(rep, "sensor_host") or "").strip()
+    sensor_seen = _field(rep, "sensor_seen")
+    if sensor_host and sensor_seen:
+        return LEVEL_FULL, (f"biedt zijn eigen API aan over IP op {sensor_host}; "
+                            f"laatst geantwoord {sensor_seen}")
 
     # Semi managed: geen eigen firmware van ons, maar wel rechten op zijn CLI.
     if via_monitor and version is not None and version >= MIN_MON_CMD_VERSION:

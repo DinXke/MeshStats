@@ -1,11 +1,17 @@
 """Eén CLI-instelling van een node zetten vanaf de beheerpagina.
 
-**Eén schrijfweg, drie vervoermiddelen.** Alles wat een schrijfactie kan
+**Eén schrijfweg, vier vervoermiddelen.** Alles wat een schrijfactie kan
 tegenhouden -- de parameterlijst van de node, zijn grenzen, de risicoklassen, de
 bevestiging, de rechten, de terugleescontrole -- staat in ``write()`` en gebeurt
 onverkort. Pas als er niets meer te weigeren valt, wordt er gekozen hóé het
-commando er komt. Per node de eerste van deze drie die werkelijk beschikbaar is:
+commando er komt. Per node de eerste van deze vier die werkelijk beschikbaar is:
 
+    0. ``sensor`` HTTP naar de EIGEN API van de node (``POST /cli``), voor een
+                 node die er een heeft en onze firmware niet draait. Vraagt een
+                 adres, ``MM_FW_NODE_USER``/``MM_FW_NODE_PASS``, en het bewijs
+                 dat er ooit iets van dat adres terugkwam. Tienden van seconden;
+                 het teruglezen kost één extra verzoek en gebeurt onverkort.
+                 Zie ``sensornode.py``.
     1. ``ip``    HTTP naar de node zelf (``POST /api/cfg``). Vraagt een IP-pad en
                  ``MM_FW_NODE_USER``/``MM_FW_NODE_PASS``. Tienden van seconden,
                  want het is één CLI-aanroep, en het teruglezen zit in hetzelfde
@@ -21,7 +27,13 @@ commando er komt. Per node de eerste van deze drie die werkelijk beschikbaar is:
 De volgorde is niet willekeurig. Bovenaan staat de weg met de sterkste
 tegenpartij en de snelste, meest volledige teruglezing; onderaan de duurste.
 Wat er per node gekozen is en waaróm staat in ``why`` en op de nodepagina, want
-"het is gelukt" zonder te zeggen waarlangs, is bij drie wegen te weinig.
+"het is gelukt" zonder te zeggen waarlangs, is bij vier wegen te weinig.
+
+Nummer 0 staat vóór 1 en niet erachter, en dat is geen rangschikking maar een
+vaststelling: een node met een eigen API heeft de andere drie niet. Hij draait
+onze firmware niet, publiceert niet op de broker, en zolang de mesh-weg naar hem
+niet werkt stuurt geen monitor iets voor hem door. Hem achteraan zetten zou de
+pagina eerst laten opsommen wat er allemaal niet is.
 
 **Waarom het cmd-topic erbij is gekomen.** Tot 2.5.0 stond hier dat dit
 nadrukkelijk NIET over MQTT ging. Dat was houdbaar zolang dat topic alleen kon
@@ -172,7 +184,29 @@ MQTT_MAX_RISK = 2
 # En als weigering, niet als ontbrekend invoerveld: dit staat in ``write()``,
 # waar het verzoek werkelijk begint. Een parameter die alleen uit het formulier
 # weg is, valt met een aangepast verzoek alsnog te schrijven.
-NO_REMOTE = ("radio",)
+#
+# WAAROM ER SINDS DE SENSORNODE VIJF NAMEN STAAN en niet één. 'radio' is de vorm
+# waarin ONZE repeaterfirmware die vier getallen aanbiedt: één parameter, vier
+# waarden, en dus één naam om te weigeren. Een node met een eigen API draait
+# dezelfde CommonCLI maar zijn beheerpagina biedt de vier los aan, en zijn
+# ``POST /cli`` neemt ``set freq`` ook als apart woord aan. Eén naam weigeren
+# terwijl er vijf woorden zijn die hetzelfde doen, is een regel die alleen op
+# papier klopt.
+#
+# 'bw', 'sf' en 'cr' bestaan in MeshCore níet als los 'set'-woord -- de vier gaan
+# altijd samen -- en ze staan er toch bij. Niet uit ijver: deze lijst is wat de
+# server WEIGERT, en de dag dat een firmware ze los aanbiedt hoort de weigering
+# er al te staan in plaats van dan pas geschreven te worden. Een weigeringslijst
+# die achterloopt op de CLI is precies één node te laat.
+#
+# Wat er NIET bij hoort, en dat is het werk van deze lijst: 'radio.rxgain' en
+# 'radio.fem.rxgain'. Die beginnen met hetzelfde woord en doen iets anders -- ze
+# zetten de ontvangstversterking, en dat maakt een node hooguit dover terwijl hij
+# op hetzelfde kanaal blijft. Dat is de kant van de asymmetrie waar 'tx' ook
+# staat. Vandaar dat er op de EXACTE sleutel getoetst wordt en nooit op een
+# voorvoegsel; zie ``sensornode.radio_refusal`` voor dezelfde toets op een hele
+# CLI-regel.
+NO_REMOTE = ("radio", "freq", "bw", "sf", "cr")
 
 NO_REMOTE_REASON = (
     "de radio-instellingen worden van afstand niet gezet. Een verkeerde "
@@ -245,6 +279,47 @@ def _route_ip(rep) -> dict:
         out["blocker"] = "no_fw"
     elif version < MIN_CFG_VERSION:
         out["blocker"] = "old_fw"
+    else:
+        out["can"] = True
+    return out
+
+
+def _route_sensor(rep) -> dict:
+    """Kandidaat 0: HTTP naar de EIGEN API van een sensornode.
+
+    Nog vóór ``_route_ip``, en dat is geen voorkeur maar een vaststelling: een
+    node met een eigen API heeft de andere drie wegen niet. Hij draait onze
+    firmware niet (dus geen ``/api/cfg`` en geen cmd-topic) en zolang de mesh-weg
+    niet werkt stuurt geen monitor iets voor hem door. Deze kandidaat wordt
+    daarom alleen aan de lijst toegevoegd als er een adres staat -- zonder dat
+    adres bestaat deze soort node niet en hoort ze ook niet als afgevallen
+    kandidaat op de pagina te verschijnen. Zie ``cfg_route``.
+
+    ``max_risk`` staat op de zwaarste klasse, zoals bij ``ip`` en ``mesh`` en
+    anders dan bij ``mqtt``. Dat is dezelfde afweging als daar, en ze valt hier
+    dezelfde kant op: er staat een weblogin tegenover, de teruglezing zit in
+    hetzelfde verzoek, en de tegenpartij is de node zelf en geen broker waar ook
+    anderen op mogen.
+
+    Geen firmware-eis, en dat is het opvallende verschil met de andere drie.
+    Daar toetsen we op een versie van ONZE module, omdat het endpoint anders niet
+    bestaat. Hier is de API de node zelf: hij is er of hij is er niet, en dat
+    valt niet uit een versienummer af te leiden maar uit een antwoord.
+    ``sensor_seen`` IS dat antwoord -- de laatste keer dat ``/status.json`` iets
+    teruggaf. Een adres zonder dat tijdstip is een adres waar nog nooit iets
+    vandaan kwam, en dat kan net zo goed een tikfout zijn.
+    """
+    host = (_field(rep, "sensor_host") or "").strip()
+    seen = _field(rep, "sensor_seen")
+    out = {"transport": "sensor", "can": False, "blocker": "", "host": host,
+           "fw": _field(rep, "sensor_fw") or "", "min_fw": "",
+           "max_risk": RISK_CUTOFF, "target": "", "monitor": "", "seen": seen}
+    if not firmware.NODE_USER:
+        out["blocker"] = "no_credentials"
+    elif not host:
+        out["blocker"] = "no_sensor_host"
+    elif not seen:
+        out["blocker"] = "no_sensor_answer"
     else:
         out["can"] = True
     return out
@@ -351,9 +426,13 @@ BLOCKER_TEXT = {
     "relay_no_fw": "de monitor meldt geen versie van onze firmware",
     "relay_old_fw": "de firmware van de monitor is er te oud voor",
     "no_target": "van deze repeater is geen publieke sleutel bekend",
+    "no_sensor_host": "er is geen adres voor de eigen API van deze node ingevuld",
+    "no_sensor_answer": ("op dat adres heeft nog nooit iets geantwoord; zolang "
+                         "dat zo is, is het een adres en geen weg"),
 }
 
 TRANSPORT_TEXT = {
+    "sensor": "over HTTP naar de eigen API van de node",
     "ip": "over HTTP naar de node zelf",
     "mqtt": "over het MQTT-cmd-topic",
     "mesh": "over LoRa via zijn monitor",
@@ -370,17 +449,22 @@ def cfg_route(rep, relay=None, broker_connected=None) -> dict:
     /api/cfg kent. Ze door elkaar halen levert precies één soort fout op, en dat
     is de knop die belooft wat hij niet kan.
 
-    Drie kandidaten worden alle drie doorgerekend en niet alleen de eerste die
-    past. Dat kost niets -- het zijn drie vergelijkingen op rijen die er al zijn
-    -- en het levert het antwoord op de vraag die iemand werkelijk stelt als er
-    niets kan: niet "het gaat niet", maar wat er per weg aan ontbreekt.
-    ``options`` draagt die drie, ``why`` vat ze samen in één zin.
+    Elke kandidaat wordt doorgerekend en niet alleen de eerste die past. Dat kost
+    niets -- het zijn vergelijkingen op rijen die er al zijn -- en het levert het
+    antwoord op de vraag die iemand werkelijk stelt als er niets kan: niet "het
+    gaat niet", maar wat er per weg aan ontbreekt. ``options`` draagt ze,
+    ``why`` vat ze samen in één zin.
+
+    Welke kandidaten er in de lijst staan hangt van de node af, en dat is wat
+    deze functie te zeggen heeft. Een node met een eigen API heeft er één (die),
+    een doorgestuurde node heeft er één (over LoRa via zijn monitor), en een node
+    die zelf publiceert heeft er twee.
 
     De gekozen weg staat in ``transport``, met ``host``, ``target``,
     ``monitor``, ``fw``, ``min_fw`` en ``max_risk`` erbij die daarbij horen.
     Kan er niets, dan draagt de sleutel de kandidaat die het dichtst bij was --
-    de eerste van de drie die überhaupt van toepassing is -- zodat de pagina één
-    reden kan tonen in plaats van drie.
+    de eerste die überhaupt van toepassing is -- zodat de pagina één reden kan
+    tonen in plaats van drie.
 
     ``relay`` is de repeaterrij van de node die voor deze repeater publiceert.
     Als argument zodat deze functie te testen is zonder databank; wordt hij niet
@@ -397,12 +481,24 @@ def cfg_route(rep, relay=None, broker_connected=None) -> dict:
     ip = _route_ip(rep)
     mqtt = _route_mqtt(rep, broker_connected)
     mesh = _route_mesh(rep, relay) if relayed else None
+    # Alleen als er een adres staat. Een node zonder ``sensor_host`` is geen node
+    # met een eigen API, en zo'n kandidaat als afgevallen weg op elke nodepagina
+    # tonen zou de lijst met een reden vullen die voor bijna elke node nietszeggend
+    # is -- "er is geen adres ingevuld" naast twee wegen die er wél zijn.
+    sensor = (_route_sensor(rep)
+              if (_field(rep, "sensor_host") or "").strip() else None)
 
     # De volgorde is de rangschikking: sterkste tegenpartij en beste teruglezing
     # eerst, duurste laatst. Een doorgestuurde node heeft alleen de derde; een
     # node die zelf publiceert heeft de eerste twee. Dat de lijst per node
     # verschilt is geen uitzondering maar wat deze functie te zeggen heeft.
-    kandidaten = [ip, mqtt] if not relayed else [mesh]
+    #
+    # De eigen API staat vooraan waar hij bestaat, en dat is geen voorkeur: zo'n
+    # node HEEFT de andere wegen niet. Hem achteraan zetten zou betekenen dat de
+    # pagina eerst twee redenen opsomt waarom onze firmware er niet op staat,
+    # voordat ze bij de weg komt die werkt.
+    kandidaten = ([sensor] if sensor is not None else []) \
+        + ([ip, mqtt] if not relayed else [mesh])
     gekozen = next((k for k in kandidaten if k["can"]), None)
 
     out = {"can": False, "blocker": "", "host": "", "fw": "", "relayed": relayed,
@@ -436,13 +532,22 @@ def cfg_route(rep, relay=None, broker_connected=None) -> dict:
 # --- de node ------------------------------------------------------------------
 
 def _open(host: str, path: str, data: bytes | None = None, timeout: int = CFG_TIMEOUT_S):
-    url = firmware._url(host, path)
-    headers = dict(firmware._auth_header())
-    if data is not None:
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-    req = urllib.request.Request(url, data=data, headers=headers,
-                                 method="POST" if data is not None else "GET")
-    return urllib.request.urlopen(req, timeout=timeout)
+    """Eén verzoek naar een node, langs de doelcontrole.
+
+    Doorgeleid naar ``firmware.open_node`` en niet zelf een socket geopend, en
+    dat is sinds de doelcontrole geen kwestie van stijl. Daar hangen de
+    vlootinloggegevens aan het verzoek, en daar wordt getoetst of dit adres door
+    een serverbeheerder vastgelegd is -- een tweede plek die zelf verbindt, is
+    een tweede plek waar die toets kan ontbreken.
+
+    Werpt ``firmware.TargetRefused`` als het adres niet mag. Elke aanroeper in
+    dit bestand vangt ``ValueError`` al af (TargetRefused is er een), dus zo'n
+    weigering komt als leesbare tekst op de pagina terecht in plaats van als een
+    500.
+    """
+    return firmware.open_node(
+        host, path, data=data, timeout=timeout,
+        content_type="application/x-www-form-urlencoded" if data is not None else None)
 
 
 def params(host: str, force: bool = False) -> dict:
@@ -565,10 +670,21 @@ def params_for(rep, route=None) -> dict:
     Zonder dit zou de schrijfweg over MQTT bestaan zonder bruikbaar te zijn: de
     site zou de risicoklasse van een parameter niet kennen, bij twijfel de
     zwaarste aannemen (zie ``risk_of``) en dus alles blokkeren.
+
+    En sinds de sensornode is er een DERDE bron, om precies dezelfde reden en met
+    één verschil dat eerlijk benoemd hoort te worden: die node publiceert zijn
+    tabel nergens -- niet over HTTP en niet over MQTT -- en draait wél dezelfde
+    CommonCLI als onze firmware. Wat hij aangeboden krijgt is daarom de tabel van
+    die firmware, gespiegeld in ``sensornode.SPEC``, met een test die de spiegel
+    tegen de C-broncode aan houdt. Zie de uitleg boven die tabel voor waarom dat
+    hier de minst slechte van drie opties is.
     """
     route = route or cfg_route(rep)
     if not route["can"]:
         return {"ok": False, "error": "", "params": []}
+    if route["transport"] == "sensor":
+        from . import sensornode
+        return sensornode.spec()
     if route["transport"] == "mqtt":
         return spec_from_node(rep)
     return params(route["host"])
@@ -770,11 +886,60 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
         _write_mesh(route, out)
     elif route["transport"] == "mqtt":
         _write_mqtt(rep, route, out)
+    elif route["transport"] == "sensor":
+        _write_sensor(route, spec, out)
     else:
         _write_ip(route, out)
 
     _remember(rep, spec, out)
     return out
+
+
+def _write_sensor(route: dict, spec: dict, out: dict) -> None:
+    """De weg naar een node die zijn eigen API aanbiedt.
+
+    Synchroon zoals ``_write_ip``, en met één verschil dat het waard is om uit te
+    schrijven: onze firmware antwoordt op ``POST /api/cfg`` met JSON waar
+    ``applied`` en ``exact`` al in staan -- de node heeft de waarde daar zelf
+    teruggelezen. ``POST /cli`` geeft alleen de tekst die de CLI produceerde, en
+    MeshCore antwoordt "OK" op dingen die het niet werkelijk heeft overgenomen.
+
+    Dus leest deze functie zelf terug, met een tweede verzoek naar
+    ``/cfg.json``. Dat is één netwerkronde extra en het is niet optioneel: zonder
+    die tweede vraag zou dit de enige schrijfweg zijn die "gelukt" meldt op het
+    woord van de node, en dat is precies de onwaarheid waar dit hele bestand om
+    heen gebouwd is.
+
+    Het teruglezen gebeurt ná de ``set`` en niet ervoor, en het antwoord is
+    driedelig: gelukt met dezelfde waarde, gelukt met een andere waarde (de node
+    heeft afgerond of geknipt), of niet gelukt met de tekst van de node erbij.
+    """
+    from . import sensornode
+
+    antwoord = sensornode.cli(route["host"], f"set {out['key']} {out['asked']}")
+    if not antwoord["ok"]:
+        out.update(step="verbinding", msg=antwoord["error"])
+        return
+    if sensornode.is_error(antwoord["reply"]):
+        out.update(step="node", msg=antwoord["reply"])
+        return
+
+    terug = sensornode.values(route["host"])
+    if not terug["ok"]:
+        # De schrijfactie is de deur uit en de node zei geen fout; wat er nu in
+        # staat weten we niet. Dat is dezelfde derde uitkomst als over LoRa, en
+        # ze heet daar en hier hetzelfde: geen mislukking, maar ook geen
+        # bevestiging.
+        out.update(step="geen_antwoord", msg=(
+            f"de opdracht is aangenomen ({antwoord['reply'] or 'zonder fout'}), "
+            f"maar het teruglezen lukte niet: {terug['error']}"))
+        return
+
+    applied = terug["values"].get(out["key"], "")
+    out.update(ok=True, step="", applied=applied,
+               exact=sensornode.same_value(str(spec.get("kind") or ""),
+                                           out["asked"], applied),
+               msg=antwoord["reply"])
 
 
 def _write_ip(route: dict, out: dict) -> None:

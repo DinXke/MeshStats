@@ -26,7 +26,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
                discovery, firmware, metrics, monitors, mqtt_ingest, nodeconfig,
-               pktfilter, ratelimit, rbac, retention, sweepsched, tsdb)
+               pktfilter, ratelimit, rbac, retention, sensornode, sweepsched,
+               tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -70,6 +71,33 @@ def require_perm(request: Request, action: str, rep=None) -> str:
         audit.log(user, action, rep=rep, outcome=audit.GEWEIGERD,
                   detail=besluit.reason, ip=_ip(request))
         raise HTTPException(403, besluit.reason)
+    return user
+
+
+def require_server_admin(request: Request, waarvoor: str) -> str:
+    """Ingelogd én SERVERbeheerder, anders 403. De weigering komt in het trail.
+
+    Bestaat naast ``require_perm`` omdat er handelingen zijn waarvan de zwaarte
+    niet aan een NODE hangt maar aan deze installatie. De eerste is het
+    beheeradres: dat veld bepaalt waarheen de server verbindt, en hij stuurt daar
+    de inloggegevens naartoe die ELKE node openen. ``node.beheeradres`` is een
+    delegeerbaar recht per node; wie dat krijgt, hoort daarmee niet de sleutel van
+    de hele vloot te kunnen omleiden. Zie firmware.check_target voor het gat en
+    de afweging.
+
+    Waarom niet een nieuwe handeling in ACTIONS: dit is geen recht dat je uitdeelt
+    maar een grens die niet te delegeren is. Een handeling met de tekst "een adres
+    invullen waar het vlootwachtwoord heen gaat" zou aan iemand toegekend kunnen
+    worden, en dat is precies wat hier niet mag.
+    """
+    user = require_login(request)
+    ik = rbac.load(user)
+    if not getattr(ik, "is_superuser", False):
+        reden = (f"{waarvoor} mag alleen een serverbeheerder: de server stuurt "
+                 f"de inloggegevens die elke node openen naar dat adres")
+        audit.log(user, "node.beheeradres", outcome=audit.GEWEIGERD,
+                  detail=reden, ip=_ip(request))
+        raise HTTPException(403, reden)
     return user
 
 
@@ -287,6 +315,13 @@ def nodes_page(request: Request):
         # Lege groepen weglaten: een kopje "Unmanaged — 0" met niets eronder is
         # ruis, en de uitleg bij zo'n kopje gaat dan over niemand.
         "groups": [g for g in groups if g["reps"]],
+        # Openstaande alarmen, per node en in totaal. Bovenaan de nodelijst en
+        # niet weggestopt op de pagina van één node: een alarm is een trap en het
+        # hele punt van een trap is dat je hem ziet zonder ernaar te zoeken. Eén
+        # query voor alle nodes -- zie db.alerts_open_by_node.
+        "alerts_open": db.alerts_open_by_node(),
+        "alerts_total": db.alerts_open_count(),
+        "alerts_recent": db.alerts_recent(12),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
     })
 
@@ -832,17 +867,40 @@ def save_layout(request: Request, layout: str = Form(...), csrf: str = Form(...)
 def _dispatch(rep, command: str) -> str:
     """Stuur één opdracht langs elke weg die openstaat. Geeft terug welke.
 
-    Beide wegen worden bewandeld en niet de eerste de beste: ze zijn niet
+    Elke weg wordt bewandeld en niet de eerste de beste: ze zijn niet
     uitwisselbaar. De MQTT-weg bereikt de node zelf en alleen als die op dit
     ogenblik aan de broker hangt; de wachtrij bereikt een poller die de repeater
-    over LoRa uitvraagt en ook werkt als de node zijn WiFi uit heeft staan. Wie
-    er allebei zijn, heeft er allebei iets aan; wie er geen heeft, hoort dat te
-    zien en niet "gestart" te lezen.
+    over LoRa uitvraagt en ook werkt als de node zijn WiFi uit heeft staan; de
+    eigen API van een sensornode werkt juist alleen als die WiFi er is. Wie er
+    meer dan één heeft, heeft er meer dan één iets aan; wie er geen heeft, hoort
+    dat te zien en niet "gestart" te lezen.
 
-    Terug komt 'mqtt', 'queued', 'both' of 'none' -- wat de pagina daarna zegt
-    hangt daaraan en niet aan wat we hoopten dat er zou gebeuren.
+    Terug komt 'ip', 'mqtt', 'queued', 'both' of 'none' -- wat de pagina daarna
+    zegt hangt daaraan en niet aan wat we hoopten dat er zou gebeuren.
+
+    'ip' staat apart en niet onder 'both', en dat is met opzet: bij de andere
+    wegen betekent een geslaagde verzending "er is iets vertrokken" en niets over
+    de aankomst. Bij deze weg is het antwoord al binnen op het moment dat deze
+    functie terugkeert -- de cijfers staan in de databank, niet in een wachtrij.
+    Dat verschil hoort de pagina te kunnen zeggen.
     """
     route = commanding.describe(rep)
+    # De eigen API eerst, want die levert een ANTWOORD op en niet een verzoek.
+    # Voor een node die zo binnenkomt bestaan de andere twee wegen niet, dus dit
+    # is geen voorrang die iets anders wegdrukt -- het is de enige weg die er is.
+    if route["ip_api"]["ever"]:
+        if command == "settings":
+            gelezen = sensornode.values(str(rep["sensor_host"] or ""))
+            if gelezen["ok"] and gelezen["values"]:
+                # prune=False: dit antwoord gaat alleen over de velden die
+                # /cfg.json draagt, en een rij waar het niets over te zeggen had
+                # mag het niet weggooien. Dezelfde regel als bij de eigen ronde
+                # van een node -- zie db.upsert_cli_settings.
+                db.upsert_cli_settings(int(rep["id"]), gelezen["values"], prune=False)
+                return "ip"
+        else:
+            if sensornode.poll(rep)["ok"]:
+                return "ip"
     # Gaat het langs een monitor, dan reist de sleutel van het onderwerp mee:
     # de opdracht komt aan bij een andere node dan waar ze over gaat. En dan kan
     # niet elke opdracht -- 'status' hoort daar niet, want die cijfers stuurt de
@@ -878,8 +936,8 @@ def _uitkomst(weg: str) -> str:
 
     'none' is geen fout van de gebruiker maar wel een handeling die niets
     bereikte, en dat is precies het geval waarvan je later wil weten dat het zich
-    voordeed. 'both' en 'mqtt' zijn geslaagd; 'queued' staat er als 'deels', want
-    er is een verzoek neergelegd en nog niets gebeurd.
+    voordeed. 'both', 'mqtt' en 'ip' zijn geslaagd; 'queued' staat er als
+    'deels', want er is een verzoek neergelegd en nog niets gebeurd.
     """
     if weg == "none":
         return audit.MISLUKT
@@ -996,6 +1054,19 @@ def _node_page(request: Request, rid: int, **extra):
     relay_host = str((relay["ota_host"] if relay else "") or "")
     rights = (nodeconfig.rights_for(relay_host, rep["pubkey_prefix"])
               if relay_host else None)
+    # De eigen API van de node, als die er is. Twee blikken en ze antwoorden twee
+    # vragen. ``sensor_last`` is wat de laatste ronde opleverde -- dat kost niets,
+    # het staat in het geheugen. ``sensor_acl`` gaat wél het netwerk op, en alleen
+    # als de weg er is: dat is de toegangslijst van de node, en die bevat het
+    # antwoord op de vraag waarom de MESH-weg naar hem niet werkt. Staat de
+    # sleutel van zijn monitor er niet in en heeft die monitor geen wachtwoord,
+    # dan is 'LOGIN_NOANSWER' geen storing maar een weigering -- en dat verschil
+    # is waar iemand anders een middag op verliest.
+    sensor_route = (nodeconfig._route_sensor(rep)
+                    if str(rep["sensor_host"] or "").strip() else None)
+    sensor_acl = (sensornode.acl(sensor_route["host"])
+                  if sensor_route is not None and sensor_route["can"]
+                  else {"ok": False, "error": "", "data": {}})
     return templates.TemplateResponse(request, "admin/node.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
         "settings_rows": rows,
@@ -1090,6 +1161,11 @@ def _node_page(request: Request, rid: int, **extra):
         "cfg_no_remote": nodeconfig.NO_REMOTE,
         "cfg_no_remote_reason": nodeconfig.NO_REMOTE_REASON,
         "cfg_transport_text": nodeconfig.TRANSPORT_TEXT,
+        # Waarom een weg afvalt, in het Nederlands. Als tabel naar het
+        # sjabloon en niet als drie if-takken daarin: dezelfde zin hoort op
+        # elke plek te staan waar de reden opduikt, en een sjabloon dat hem
+        # zelf formuleert is de tweede plek waar hij anders gaat luiden.
+        "cfg_blocker_text": nodeconfig.BLOCKER_TEXT,
         # Gegroepeerd op risicoklasse, want dat is waar de bediening op stuurt:
         # gewoon opslaan, bevestigen, of de naam overtypen. De groepen komen uit
         # de firmware mee zodat de indeling niet op twee plaatsen bestaat.
@@ -1113,15 +1189,43 @@ def _node_page(request: Request, rid: int, **extra):
         # al bij staan. Uit de metingen zelf en niet uit een lijst die iemand
         # vooraf moest invullen: welke kanalen een node heeft, weet alleen die
         # node. Een kanaal verschijnt hier dus zodra er één meting van binnen is.
+        # ``herkomst`` staat erbij en dat is meer dan aardigheid: het zegt of deze
+        # naam overgenomen is uit /status.json of door iemand getypt, en dat is
+        # precies het verschil dat bepaalt of de volgende ronde eraan mag komen.
+        # Zonder die kolom ziet een beheerder een naam staan zonder te weten of
+        # hij hem morgen nog terugvindt.
         "channels": [
             dict(c, name=(ch_names[c["channel"]]["name"]
                           if c["channel"] in ch_names else ""),
                  unit=(ch_names[c["channel"]]["unit"] or ""
-                       if c["channel"] in ch_names else ""))
+                       if c["channel"] in ch_names else ""),
+                 herkomst=(ch_names[c["channel"]]["source"]
+                           if c["channel"] in ch_names else ""))
             for c in metrics.channels_seen(db.latest_for(rid))
         ],
+        # De derde weg: de eigen API van deze node. ``sensor_route`` is None voor
+        # elke node zonder adres -- dan tekent het sjabloon de sectie helemaal
+        # niet, in plaats van een blok met vier uitgeschakelde knoppen op elke
+        # repeaterpagina van de site.
+        "sensor_route": sensor_route,
+        "sensor_last": sensornode.last(rid),
+        "sensor_acl": sensor_acl,
+        "sensor_interval_s": sensornode.INTERVAL_S,
+        "sensor_enabled": sensornode.ENABLED,
+        "sensor_region_fields": sensornode.REGION_FIELDS,
+        "sensor_no_readback": sensornode.NO_READBACK,
+        # Leeg tenzij er zojuist een handeling langs deze weg gebeurd is; die
+        # routes geven de pagina terug met hun antwoord erin in plaats van een
+        # 303 die het kwijt is. Zelfde opzet als bij ``cfg_result``.
+        "sensor_result": None,
         "mijn_rol": rbac.rol_op_node(user, rep),
         "serverrechten": rbac.serverrechten(user),
+        # De alarmen van deze node, en hoeveel er nog openstaan. Een eigen lijst
+        # naast het audittrail hieronder, want ze antwoorden op twee
+        # verschillende vragen: het trail zegt wat WIJ met deze node gedaan
+        # hebben, de alarmen zeggen wat DE NODE ons gemeld heeft.
+        "alerts": db.alerts_for(rid, 30),
+        "alerts_open": db.alerts_open_count(rid),
         # Wat er met déze node gebeurd is, en door wie. Op de nodepagina en niet
         # alleen op de serverpagina: de vraag "wie heeft deze node geflasht"
         # stel je terwijl je naar die node kijkt.
@@ -1275,6 +1379,196 @@ def repeater_clocksync(request: Request, rid: int, csrf: str = Form(...)):
         status_code=303)
 
 
+# --- de eigen API van een sensornode -----------------------------------------
+#
+# Zes routes, en ze staan hier bij elkaar omdat ze allemaal over hetzelfde
+# vervoermiddel gaan: HTTP naar de node zelf. Wat ze NIET met elkaar delen is de
+# handeling, en dus ook niet het recht -- het adres invullen is iets anders dan
+# de node herstarten, en dat verschil hoort in ACTIONS te staan en niet in een
+# gedeelde "sensor mag"-vlag.
+#
+# Wat hier met opzet NIET staat is het schrijven van een instelling. Dat loopt
+# door ``write_config`` hierboven, langs ``nodeconfig.write()``, met al zijn
+# drempels -- de weigeringslijst, de grenzen, de risicoklassen, de bevestiging.
+# Een tweede ingang hier zou een tweede plek zijn waar een drempel kan ontbreken.
+
+@router.post("/repeaters/{rid}/sensor")
+def save_sensor_host(request: Request, rid: int, sensor_host: str = Form(""),
+                     csrf: str = Form(...)):
+    """Het adres van de eigen API van deze node zetten of wissen.
+
+    ``node.beheeradres`` en dezelfde controle als bij ``ota_host``: dit veld
+    wordt door een mens getypt en 'file:///etc' erin zou deze server zijn eigen
+    bestanden laten lezen.
+
+    Een apart veld naast ``ota_host`` en niet hetzelfde -- zie de uitleg bij de
+    kolom in db.py. Kort: ``ota_host`` betekent "daar staat onze
+    repeaterfirmware", en dat is een belofte die over deze node niet waar is.
+    """
+    rep = _rep_or_404(request, rid)
+    host = (sensor_host or "").strip()
+    # Dezelfde grens als bij het beheeradres, en om dezelfde reden: hierheen gaan
+    # MM_FW_NODE_USER/MM_FW_NODE_PASS, en die openen elke node. Zie
+    # firmware.check_target en require_server_admin.
+    if host:
+        require_server_admin(request, "een adres voor de eigen API invullen")
+    user = require_perm(request, "node.beheeradres", rep)
+    check_csrf(request, csrf)
+    if host:
+        try:
+            firmware._url(host, "/status.json")
+        except ValueError as exc:
+            raise HTTPException(422, f"Adres onbruikbaar: {exc}") from exc
+    db.set_sensor_host(rid, host, by_admin=bool(host))
+    # Het adres staat niet in het trail. Deze repo is publiek en het trail is
+    # exporteerbaar; een intern adres hoort daar niet in, en de vraag die het
+    # trail beantwoordt is wie eraan zat.
+    _noteer(request, user, "node.beheeradres", rep=rep,
+            detail=("adres van de eigen API gezet" if host
+                    else "adres van de eigen API gewist"))
+    return RedirectResponse(f"/admin/repeaters/{rid}#eigen-api", status_code=303)
+
+
+@router.post("/repeaters/{rid}/sensor/poll")
+def sensor_poll(request: Request, rid: int, csrf: str = Form(...)):
+    """Nu uitlezen in plaats van bij de volgende ronde.
+
+    Dezelfde functie die de ronde gebruikt en geen tweede weg ernaast: wat deze
+    knop doet is het wachten overslaan, niet iets anders doen.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.uitvragen", rep)
+    check_csrf(request, csrf)
+    uitslag = sensornode.poll(rep)
+    _noteer(request, user, "node.uitvragen", rep=rep,
+            detail=f"eigen API uitgelezen: {uitslag['metrics']} metingen",
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={"soort": "poll", **uitslag})
+
+
+@router.post("/repeaters/{rid}/sensor/advert")
+def sensor_advert(request: Request, rid: int, zerohop: str = Form(""),
+                  csrf: str = Form(...)):
+    """De node zich laten melden op het mesh, mesh-breed of alleen aan zijn buren."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.uitvragen", rep)
+    check_csrf(request, csrf)
+    uitslag = sensornode.send_advert(rep, zerohop=bool(zerohop))
+    _noteer(request, user, "node.uitvragen", rep=rep,
+            detail=f"advert gestuurd over de eigen API ({uitslag['cmd']})",
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={"soort": "advert", **uitslag})
+
+
+@router.post("/repeaters/{rid}/sensor/clock")
+def sensor_clock(request: Request, rid: int, csrf: str = Form(...)):
+    """De klok van deze node op de servertijd zetten, over IP.
+
+    Het oordeel of dat mag komt uit ``clocksync.check_clock`` en niet van hier;
+    zie ``sensornode.set_clock``. Deze functie zoekt de node op en geeft de
+    uitslag door.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.klok", rep)
+    check_csrf(request, csrf)
+    uitslag = sensornode.set_clock(rep)
+    _noteer(request, user, "node.klok", rep=rep,
+            detail=f"klok over de eigen API: {uitslag['outcome']}",
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={"soort": "clock", **uitslag})
+
+
+@router.post("/repeaters/{rid}/sensor/reboot")
+def sensor_reboot(request: Request, rid: int, confirm: str = Form(""),
+                  csrf: str = Form(...)):
+    """De node herstarten.
+
+    Met de naam van de node overgetypt als bevestiging, en dat is geen
+    zwaarwichtigheid: een herstart is onschuldig en de klik op de VERKEERDE node
+    is dat niet. Een ja/nee-vraag beschermt tegen twijfel en niet tegen de
+    verkeerde regel -- dezelfde afweging als bij de firmwarepagina en bij
+    ``nodeconfig.confirmation_for``.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.herstart", rep)
+    check_csrf(request, csrf)
+    if confirm.strip() != str(rep["name"] or ""):
+        return _node_page(request, rid, sensor_result={
+            "soort": "reboot", "ok": False, "error": (
+                f"typ de naam van de node ({rep['name']}) precies over om een "
+                f"herstart te bevestigen"), "reply": ""})
+    uitslag = sensornode.reboot(rep)
+    _noteer(request, user, "node.herstart", rep=rep,
+            detail="herstart aangevraagd over de eigen API",
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={"soort": "reboot", **uitslag})
+
+
+@router.post("/repeaters/{rid}/sensor/region")
+def sensor_region(request: Request, rid: int, veld: str = Form(""),
+                  naam: str = Form(""), confirm: str = Form(""),
+                  csrf: str = Form(...)):
+    """Een regioveld zetten en vastleggen.
+
+    ``node.instelling.merkbaar`` met een bevestiging erbij. Een scope bepaalt wie
+    dit verkeer doorstuurt, dus een verkeerde waarde kan een node stil buiten het
+    bereik van zijn buren zetten -- en 'stil' is hier het probleem. Het verschil
+    met de radio, en de reden dat dit een bevestiging is en geen weigering: deze
+    fout is van hieraf terug te draaien, want de node blijft over IP bereikbaar
+    en dit commando kan opnieuw.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    if confirm.strip() != "ja":
+        return _node_page(request, rid, sensor_result={
+            "soort": "region", "ok": False, "error":
+                "een regiowijziging moet bevestigd worden", "set": "", "saved": ""})
+    uitslag = sensornode.set_region(rep, veld.strip(), naam)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=f"regio {veld.strip()} -> {naam.strip()} over de eigen API",
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={"soort": "region", **uitslag})
+
+
+# --- alarmen ------------------------------------------------------------------
+#
+# Bevestigen en niets anders. Er is geen route die een alarm VERWIJDERT, en dat
+# is een keuze: een alarm dat je kunt wegklikken zonder spoor is een alarm dat
+# achteraf niet meer na te vertellen is. Opruimen doet de bewaartermijn, samen
+# met de rest van de historiek.
+#
+# ``node.uitvragen`` en geen eigen handeling: dit is de lichtste klasse die over
+# één node gaat, er verandert niets op het apparaat, en er gaat geen pakket de
+# lucht in. Wie een node mag uitvragen, mag zeggen dat hij zijn melding gezien
+# heeft.
+
+@router.post("/repeaters/{rid}/alerts/ack")
+def ack_alerts(request: Request, rid: int, alert_id: int = Form(default=0),
+               csrf: str = Form(...)):
+    """Eén alarm bevestigen, of alle openstaande van deze node.
+
+    Twee handelingen in één route omdat het dezelfde handeling is met een andere
+    omvang. En de omvang moet er zijn: een node die een uur onbereikbaar was
+    levert tientallen regels op, en die één voor één wegklikken betekent dat
+    niemand het doet -- en dan zegt de badge over een week nog steeds iets over
+    vorige dinsdag.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.uitvragen", rep)
+    check_csrf(request, csrf)
+    if alert_id:
+        gelukt = db.ack_alert(int(alert_id))
+        detail = f"alarm {int(alert_id)} bevestigd" if gelukt else                  f"alarm {int(alert_id)} was al bevestigd of bestaat niet"
+    else:
+        aantal = db.ack_alerts_for(rid)
+        gelukt = aantal > 0
+        detail = f"{aantal} alarm(en) bevestigd"
+    _noteer(request, user, "node.uitvragen", rep=rep, detail=detail,
+            outcome=audit.OK if gelukt else audit.DEELS)
+    return RedirectResponse(f"/admin/repeaters/{rid}#alarmen", status_code=303)
+
+
 @router.post("/cli_params")
 def save_cli_params(request: Request, cli_params: str = Form(...),
                     csrf: str = Form(...), rid: int = Form(default=0)):
@@ -1301,6 +1595,12 @@ _VISIBILITY_COLUMNS = {
     "public": "is_public",
     "position": "show_position",
     "name": "show_name",
+    # De namen bij de kanalen. Een derde vlag en geen bijzaak: anders dan de naam
+    # en de positie van een node is een kanaalnaam nooit over de radio gegaan, en
+    # sinds hij automatisch uit de eigen API van een sensornode komt, heeft er
+    # niemand per naam besloten dat hij publiek mag. Zie de kolomtoelichting in
+    # db.py voor waarom hij toch op 1 begint.
+    "channels": "show_channels",
 }
 
 
@@ -1556,15 +1856,24 @@ def firmware_refresh(request: Request, csrf: str = Form(...)):
 def save_ota(request: Request, rid: int, ota_host: str = Form(""),
              is_critical: str = Form(""), csrf: str = Form(...)):
     rep = _rep_or_404(request, rid)
+    host = (ota_host or "").strip()
+    # Wissen mag wie het recht heeft; INVULLEN alleen een serverbeheerder. Dat
+    # onderscheid is de kern van de reparatie: een adres weghalen sluit een weg en
+    # kan er nooit een openen, en een adres invullen bepaalt waarheen de server de
+    # inloggegevens stuurt die elke node openen. Zie firmware.check_target.
+    if host:
+        require_server_admin(request, "een beheeradres invullen")
+    # En het recht op DEZE node geldt hoe dan ook. Voor een serverbeheerder is dat
+    # geen dubbelop maar de gewone weg: rbac.decide laat hem alles, en zo komt de
+    # handeling langs één plek in het audittrail terecht.
     user = require_perm(request, "node.beheeradres", rep)
     check_csrf(request, csrf)
-    host = (ota_host or "").strip()
     if host:
         try:
-            firmware._url(host, "/api/fw")      # zelfde controle als bij het schrijven
+            firmware._url(host, "/api/fw")      # zelfde vormcontrole als bij het schrijven
         except ValueError as exc:
             raise HTTPException(422, f"Adres onbruikbaar: {exc}") from exc
-    db.set_ota_host(rid, host)
+    db.set_ota_host(rid, host, by_admin=bool(host))
     db.set_critical(rid, bool(is_critical))
     # Het adres staat er niet in. Deze repo is publiek en dit trail is
     # exporteerbaar; een beheeradres is een intern adres, en de vraag die het

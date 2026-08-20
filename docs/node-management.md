@@ -266,6 +266,7 @@ one it picked and why:
 
 | # | Transport | Available when | Counterparty | Risk classes |
 |---|---|---|---|---|
+| 0 | The node's **own API** (`POST /cli`) | it has a `sensor_host` recorded by a server administrator, `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` are set, and `/status.json` has answered at least once | that node's web login | 1, 2 and 3 |
 | 1 | HTTP to the node (`POST /api/cfg`) | it has an IP path and `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` are set | that node's web login | 1, 2 and 3 |
 | 2 | MQTT `cmd` topic (`set <param> <value>`) | the node publishes to MQTT itself, runs nodefirmware 2.8.0, and the broker is connected | whoever the broker let in | 1 and 2 |
 | 3 | Mesh CLI via its monitor (`POST /api/moncfg`) | the node is relayed and its monitor has an IP path, a web login and nodefirmware 2.4.0 | the monitor's login, then its own rights on the far node | 1, 2 and 3 |
@@ -273,10 +274,113 @@ one it picked and why:
 The ordering is a ranking: strongest counterparty and fastest, most complete
 read-back first; most expensive last. A relayed node only ever has row 3 — it
 does not publish, so it has no `cmd` topic of its own. A node that publishes for
-itself has rows 1 and 2.
+itself has rows 1 and 2. A node with its own API has row 0 and none of the others:
+it does not run our firmware, it does not publish on the broker, and while the mesh
+route to it does not work no monitor relays anything for it. Row 0 sits **before**
+row 1 for that reason and not out of preference — putting it last would make the
+page recite what is missing before it reaches the way that works.
 
-If none of the three is available, that is still the answer — with the reason per
+If none of them is available, that is still the answer — with the reason per
 transport, so "not possible" is something you can act on rather than a dead end.
+
+### A node that manages itself over IP
+
+The third kind of node, and it is not a variant of the other two. A
+**MeshUptime sensor node** offers `/status.json`, `/cfg.json`, `/acl.json` and
+`POST /cli` over HTTP, behind the same basic auth the firmware path already uses.
+That makes it *full managed*: the levels in `commanding.py` are an observation, and
+this route scores at least as high as the MQTT route on every point the level
+weighs — an authenticated counterparty, synchronous, read-back in the same request,
+tenths of a second, and no third party paying for it.
+
+What the server does with it:
+
+- **reads** `/status.json` every `MM_SENSOR_POLL_S` (300 s, the same cadence as the
+  existing polling and as `MM_HEARTBEAT_MIN`) and stores the channels under the
+  metric names the repeater firmware already publishes — `ch<N>_switch`,
+  `ch<N>_generic`, `ch<N>_voltage`. One namespace and not two: the same node can
+  arrive over LoRa as well, and two names for one service would draw two graphs of
+  the same thing with a kink where the route changed. The rule that goes wrong
+  quietest is copied along: the response time only travels when the channel is
+  *up*, exactly as `querySensors()` does, because a timing on a dead service is not
+  a measurement but an old value — and a graph that keeps running through an outage
+  is read at exactly the moment you want the truth;
+- **fills the channel names** from what the node reports (`mon[].n` and `mon[].h`),
+  with the unit `ms` where a channel can carry a response time. That unit is a
+  statement only this route can make: `LPP_GENERIC_SENSOR` promises four bytes and
+  nothing about meaning. A name a human typed always wins — see
+  [`database.md`](database.md);
+- **reads the neighbours** from `/acl.json`, so the link map and the neighbour list
+  work without the mesh route;
+- **manages**: advert (flood or zerohop), the clock, the region, a restart, and the
+  settings from `/cfg.json`. Settings go through `nodeconfig.write()` like every
+  other transport, with every threshold intact.
+
+**And it says out loud what it is.** This is WiFi and not the mesh. If that link
+drops, this whole route drops with it — measured, not theoretical: in the power
+measurement of 19 August 2026 the node on battery first missed answers
+intermittently (four of the first fifteen polls) and then fourteen polls in a row,
+while it existed perfectly well over LoRa. The mesh is the route meant for that
+case and it does not work yet: the round starts with a login that gets no answer,
+and the round is repeater-shaped while a sensor node does not implement the status
+request and answers a neighbour request with a literal "not supported". The node
+page says that instead of hiding it.
+
+**One parameter table, mirrored.** A sensor node publishes no parameter table —
+`/cfg.json` gives *values*, not a specification — and it runs the same MeshCore
+CommonCLI as our firmware. So the table offered is the firmware's own
+`CFG_PARAMS`, mirrored in `sensornode.SPEC`, with a test that parses the C source
+and compares it row by row. Two places that must agree is one too many; a test that
+notices the moment they stop agreeing is the best available here. Keys without a
+readable-back counterpart in `/cfg.json` are deliberately not offered
+(`dutycycle`, `guest.password`), with the reason shown on the page: without
+read-back the site would have to report "succeeded" on the node's word, and
+MeshCore answers "OK" to things it has not actually taken.
+
+### Which addresses the server may connect to
+
+`ota_host` and `sensor_host` decide where this server opens a connection, and it
+sends `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` along in the `Authorization` header.
+Those credentials open **every** node. Two problems in one field, and both are
+serious: a user-chosen target (SSRF) and a secret sent to it.
+
+`node.beheeradres` is a *delegatable* right — an administrator can grant it per
+node. Whoever holds it could, until this was fixed, enter the address of their own
+server and receive the fleet key.
+
+The usual repair is "refuse private addresses": 127/8, 10/8, 172.16/12,
+192.168/16, 169.254/16, ::1, fc00::/7. That does not work here, because the nodes
+of this project *are* on 192.168.x — that is what a management address is. Such a
+list would abolish the feature rather than secure it.
+
+**So the distinction is not the address but who recorded it.** Entering a LAN
+address is inherently an administrator's act: the server has to be able to reach
+it, and whoever knows which address that is knows the network the server sits on.
+Hence:
+
+- **filling in** an address requires a *server administrator*. **Clearing** it needs
+  only `node.beheeradres`: removing an address closes a way and can never open one;
+- when **connecting**, `firmware.check_target` checks that this address really was
+  recorded that way (`repeaters.host_admin`). That is the allow-list, and the
+  database is the only place it can live — it has to hold for a row that was
+  already there, and after a restart;
+- the refusal also applies to a **public** address. The leak is not that the server
+  touches a LAN; the leak is the password in the header. To an attacker's server on
+  a public address that is exactly as bad, and checking private ranges only would
+  leave the hole open on the side that is easiest to abuse;
+- the resolved address is judged and not the string, because a name pointing at
+  127.0.0.1 is not a public address. That no longer decides admission — the
+  allow-list does — but it decides what the message says, and it refuses the ranges
+  that can never be a node (0.0.0.0, multicast).
+
+The check sits where the connection is actually made and not only in the form, for
+the same reason as `nodeconfig.NO_REMOTE`: a check that lives in the form is
+bypassed by a hand-made request. It stands *beside* the first check and not instead
+of it — two locks for one rule, of which the second is the one that counts.
+
+> **Do not hand `node.beheeradres` to anyone but a server administrator.** The code
+> now enforces the boundary, but the right still covers the field, and the field is
+> where the fleet credentials are aimed.
 
 ### Why the `cmd` topic was reopened
 

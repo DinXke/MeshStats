@@ -408,6 +408,19 @@ def _record_sent(node: str, when: float) -> None:
         log.debug("laatste verzending niet bewaard: %s", err)
 
 
+def note_sent(node: str, when: float | None = None) -> None:
+    """Leg vast dat er een tijd naar die node gegaan is, langs welke weg ook.
+
+    Bestaat omdat er sinds de eigen API van een sensornode een tweede weg is
+    waarlangs deze site een klok zet (``sensornode.set_clock``), en één grootboek
+    beter is dan twee: "wanneer heeft deze site deze node voor het laatst de tijd
+    gestuurd" hoort één antwoord te hebben. Wat hier NIET bij zit is het oordeel
+    of dat mocht -- dat blijft ``check_clock``, en de andere weg roept die zelf
+    aan.
+    """
+    _record_sent(node, time.time() if when is None else when)
+
+
 def _rebooted_since(node: str, seconds_ago: float, now: float) -> bool:
     """Of die node herstart is sinds wij hem voor het laatst de tijd stuurden.
 

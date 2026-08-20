@@ -115,6 +115,7 @@ import json
 import logging
 import re
 import threading
+import time
 
 from . import config, db, packets
 
@@ -169,6 +170,18 @@ MQTT_TOPICS = tuple(dict.fromkeys(_patterns("stats") + tuple(
     t for t in (config.env("MQTT_TOPIC", "").strip(),) if t)))
 MQTT_RX_TOPICS = tuple(dict.fromkeys(_patterns("rx") + tuple(
     t for t in (config.env("MQTT_RX_TOPIC", "").strip(),) if t)))
+
+# En de alarmen. TELEMETRIE IS SNMP-POLLING, EEN ALERT IS EEN SNMP-TRAP -- en die
+# vergelijking is precies de reden dat dit een derde topic is en geen veld in het
+# statistiekenbericht. Een trap hoort niet te wachten op de volgende ronde, en het
+# statistiekenbericht IS die ronde. Zie ``_handle_alert`` en db.add_alert.
+#
+# Geen eigen omgevingsvariabele, anders dan bij de twee hierboven. Die twee
+# hebben er een omdat ze bestonden voordat de voorvoegselregel er was en er
+# installaties zijn die een eigen topic gebruiken; dit topic is nieuw en heeft
+# die geschiedenis niet. Een variabele erbij zou een instelling zijn die niemand
+# ooit anders zet.
+MQTT_ALERT_TOPICS = _patterns("alert")
 
 # The one topic this side publishes on. ``{node}`` is the publishing node's own
 # pubkey prefix, exactly as it appears in the two topics above, so a broker ACL
@@ -275,7 +288,11 @@ QUIET_MIN = int(config.env("MQTT_QUIET_MIN", "90") or 90)
 
 _state = {"connected": False, "messages": 0, "packets": 0, "errors": 0,
           "last_error": "", "last_msg": None, "last_packet": None,
-          "commands": 0, "refusals": 0, "connects": 0, "started": None}
+          "commands": 0, "refusals": 0, "connects": 0, "started": None,
+          # Alarmen apart geteld en niet bij 'messages': ze komen zelden en ze
+          # betekenen iets anders. Een teller die op nul blijft terwijl er
+          # storingen zijn, is precies de meting die zegt dat deze weg stil is.
+          "alerts": 0, "last_alert": None}
 
 # The live client, so the request handlers can publish over the connection the
 # subscriber already holds. None until the background thread has built one.
@@ -1201,6 +1218,118 @@ def _handle_rx(topic: str, raw: bytes) -> None:
         db.prune()
 
 
+# Woorden waaraan de ernst van een alarm te zien is, en aan welke kant ze staan.
+#
+# Dit is met opzet een KLEINE lijst en geen poging tot taalbegrip. De alarmen van
+# MeshUptime hebben een vaste vorm (zie monitorAlertText in MonitorSensors.cpp),
+# en drie woorden daaruit zeggen genoeg: een dienst die onbereikbaar is of als
+# neer gemeld werd, is 'hoog'; een test en een herstelmelding zijn 'laag'. Wat
+# niet past krijgt NULL, en dat is een geldig antwoord -- de tekst staat er
+# voluit naast, en een verzonnen ernst is erger dan geen.
+_ALERT_HIGH = ("onbereikbaar", "gemeld als neer", "geen melding meer")
+_ALERT_LOW = ("test ", "simulatie", "weer bereikbaar", "hersteld")
+
+# Waar het kanaalnummer in de tekst staat, als het erin staat. De alarmen van
+# MeshUptime noemen de NAAM van een dienst en niet zijn kanaal, dus dit vindt
+# meestal niets -- en dat is waarom het veld mag ontbreken. Wat het wél vindt is
+# de vorm die een mens intypt bij een testalarm ("kanaal 6: ...").
+_ALERT_CHANNEL = re.compile(r"\b(?:kanaal|channel|ch)\s*([0-9]{1,3})\b", re.I)
+
+
+def alert_severity(text: str) -> str | None:
+    """De ernst van een alarm uit zijn tekst, of None.
+
+    Eerst 'laag' en dan 'hoog', en die volgorde is de hele functie: een
+    testalarm bevat het woord "onbereikbaar" ook, want dat is precies de
+    bedoeling van een test -- hij leest als het echte bericht. Andersom toetsen
+    zou elke simulatie als een storing melden, en dan is de test onbruikbaar
+    geworden door de weergave ervan.
+    """
+    laag = str(text or "").lower()
+    if any(w in laag for w in _ALERT_LOW):
+        return "laag"
+    if any(w in laag for w in _ALERT_HIGH):
+        return "hoog"
+    return None
+
+
+def alert_channel(text: str):
+    """Het kanaalnummer uit de tekst, of None. Zie ``_ALERT_CHANNEL``."""
+    m = _ALERT_CHANNEL.search(str(text or ""))
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    return n if 1 <= n <= 255 else None
+
+
+def _handle_alert(topic: str, raw: bytes) -> None:
+    """Eén alarm van een sensornode, doorgezet door de repeater die het hoorde.
+
+    De node WAAROVER het gaat staat in de payload (``alert.pubkey_prefix``); het
+    topic noemt de DOORGEVER. Die twee zijn hier per definitie verschillend -- een
+    sensornode publiceert zelf niet -- en koppelen op het topic zou elke storing
+    aan de repeater hangen in plaats van aan de node die stilviel.
+
+    Een alarm van een node zonder rij hier wordt bewaard zonder node erbij en
+    niet weggegooid: zie db.add_alert. Dat is de melding die je bij een onbekende
+    node het hardst nodig hebt.
+
+    De TIJD komt van de repeater als hij er een meestuurt, en anders van deze
+    server. Wat er NIET gebeurt is de tijd van de sensornode gebruiken: die heeft
+    geen gebufferde klok en staat na elke herstart op 15 mei 2024 -- precies het
+    apparaat dat deze alarmen stuurt.
+    """
+    publisher = _topic_node(topic)
+    body = json.loads(raw.decode("utf-8"))
+    alert = body.get("alert") or {}
+    text = str(alert.get("text") or "").strip()
+    if not text:
+        raise ValueError("alert zonder tekst")
+
+    subject = db.key_prefix(alert.get("pubkey_prefix")) or publisher
+    rij = db.find_repeater(subject)
+    ts = None
+    epoch = alert.get("ts")
+    if isinstance(epoch, (int, float)) and not isinstance(epoch, bool):
+        ts = _iso_from_epoch(epoch)
+
+    alert_id = db.add_alert(
+        rij["id"] if rij is not None else None, text, source="mesh", ts=ts,
+        channel=alert_channel(text), severity=alert_severity(text))
+    _state["alerts"] = _state.get("alerts", 0) + 1
+    if alert_id:
+        _state["last_alert"] = db.utcnow()
+        # Waarschuwingsniveau, want dat is wat dit is. Een alarm dat alleen in een
+        # tabel belandt, is een alarm dat niemand ziet tot hij gaat kijken.
+        log.warning("ALERT van %s (via %s): %s", subject, publisher, text[:120])
+    else:
+        log.info("Alarm van %s was een herhaling binnen %ss; niet opnieuw bewaard",
+                 subject, db.ALERT_DEDUP_S)
+
+
+def _iso_from_epoch(epoch) -> str | None:
+    """Een epoch van een node naar onze ISO-vorm, of None als hij onbruikbaar is.
+
+    De ondergrens is geen netheid: een node zonder gebufferde klok staat op de
+    datum uit zijn firmware, en die tijdstempel zou een alarm van vandaag jaren
+    in het verleden zetten -- onder elke andere regel in de lijst, waar niemand
+    hem ziet. Liever de ontvangsttijd van deze server, die aantoonbaar klopt.
+    """
+    from datetime import datetime, timezone
+    try:
+        seconds = float(epoch)
+    except (TypeError, ValueError):
+        return None
+    # 2025-01-01 als vloer, en een dag vooruit als plafond: alles buiten dat
+    # venster is geen klok maar een fabrieksinstelling of een tikfout.
+    if not (1735689600 <= seconds <= time.time() + 86400):
+        return None
+    return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _excerpt(raw: bytes) -> str:
     """Een begrensd, altijd afdrukbaar stuk van een payload, voor in het logboek.
 
@@ -1252,8 +1381,11 @@ def handle_message(topic: str, payload: bytes) -> bool:
     ingest-lus niet stilleggen voor alle andere.
     """
     try:
-        if topic.rsplit("/", 1)[-1] == "rx":
+        leaf = topic.rsplit("/", 1)[-1]
+        if leaf == "rx":
             _handle_rx(topic, payload)
+        elif leaf == "alert":
+            _handle_alert(topic, payload)
         else:
             _handle_payload(topic, payload)
         return True
@@ -1273,7 +1405,7 @@ def _run() -> None:
             _state["connected"] = True
             _state["connects"] += 1
             _state["last_error"] = ""
-            topics = MQTT_TOPICS + MQTT_RX_TOPICS
+            topics = MQTT_TOPICS + MQTT_RX_TOPICS + MQTT_ALERT_TOPICS
             for topic in topics:
                 client.subscribe(topic, qos=0)
             log.info("MQTT connected to %s:%s, subscribed to %s",

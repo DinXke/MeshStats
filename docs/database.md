@@ -216,6 +216,34 @@ replaces it, because the longest key seen is the least ambiguous.
 `db.find_repeater()` is the public door to that match, for callers that need to
 ask "are these two keys the same node?" rather than "give me a row".
 
+**`sensor_host`, `sensor_seen`, `sensor_fw`** are the third management route:
+a node that offers its own HTTP API over IP. Three columns beside `ota_host` and
+not inside it, because `ota_host` means one thing in this project — *our repeater
+firmware's admin page lives there*, with `/api/fw`, `/api/cfg` and `/api/mon`
+behind it. Putting a sensor node's address in that field yields a site that
+offers a firmware image to a board whose build environment we do not control, and
+that tries `GET /api/cfg` on a path that is not there.
+
+`sensor_host` is typed in, like `ota_host`: no message a node sends carries its
+own IP, and whether this server reaches it over IP is a property of the network
+between them. `sensor_seen` and `sensor_fw` are **observations** — when
+`GET /status.json` last answered, and the version it stated. They live here
+because `commanding._level` weighs on them and that function may not touch the
+network: a node's management level must not depend on whether a socket happens to
+open right now. An address without a `sensor_seen` is therefore not a claim that
+the node is managed; it is an address nothing ever came back from, which may just
+as well be a typo.
+
+**`host_admin`** is the allow-list for outgoing connections to a node, and it
+closes two holes at once — see `firmware.check_target`. Short version:
+`node.beheeradres` is a *delegatable* right, and the server sends
+`MM_FW_NODE_USER`/`MM_FW_NODE_PASS` to whatever address stands in those fields.
+Those credentials open **every** node. So filling such a field in requires a
+*server administrator*, clearing it does not (removing an address closes a way and
+can never open one), and the check is repeated where the connection is actually
+made — because a check that only lives in the form is bypassed by a hand-made
+request.
+
 **`record_source()` and `record_firmware()`** are separate writes on purpose.
 `record_firmware()` only overwrites what the message actually named: Home
 Assistant reads a repeater's MeshCore version off the mesh and has no idea
@@ -354,9 +382,23 @@ to, is set with a form, and survives every firmware rollout.
 > drops a service and the rest move up, every name in this table silently points
 > at the wrong service — no error, just wrong figures on a dashboard. A gap in the
 > numbering is therefore *not* untidiness to be cleaned up; it is the evidence
-> that nothing moved. `db.set_channel_name()` deletes the row on an empty name
-> rather than storing a blank one, so an unnamed channel shows as "kanaal N" and
-> does not linger in the admin list as something that once was.
+> that nothing moved.
+
+**`source` is `user` or `auto`, and it exists to enforce one rule: a name a human
+typed always wins.** Since a node with its own IP API supplies these names
+itself (see [`node-management.md`](node-management.md)), a write with
+`source='auto'` never touches a row marked `user`. That name was typed for a
+reason — the node calls a service `hoas` and the operator made it
+"Home Assistant (roof)" — and a round that undoes that every five minutes is a
+round nobody leaves switched on. The other way round it does not hold: a human
+overwrites an automatic name freely, and the row then becomes `user`, even when
+the same text is retyped. Confirming a borrowed name makes it yours.
+
+Clearing is also a human statement. An empty field leaves a row behind with an
+empty name and `source='user'`, rather than nothing: for display that is
+identical (`metrics.channel_label` turns an empty name into "kanaal N", exactly
+as a missing row does), and for the automatic fill it is the difference between
+"nothing yet" and "no".
 
 ### `repeater_cli`
 
@@ -394,6 +436,51 @@ overwrites a value an earlier sweep did get — and the alternative was rejected
 for a reason: a repeater whose monitor logs in read-only answers no CLI command
 at all, and with values from March still on screen and only a timestamp moved,
 nobody would ever find that.
+
+### `alerts`
+
+What a sensor node **reported**, as opposed to what a poll **measured**.
+
+| Column | Type | Contents |
+|---|---|---|
+| `id` | INTEGER | Primary key |
+| `repeater_id` | INTEGER | The node the alert is **about**, or NULL when we do not know it |
+| `channel` | INTEGER | Channel, when the text names one; otherwise NULL |
+| `text` | TEXT | The message as the node wrote it, at most 500 characters |
+| `severity` | TEXT | `laag`, `hoog`, or NULL when it cannot be derived |
+| `ts` | TEXT | ISO-8601 UTC |
+| `source` | TEXT | `mesh` (relayed by a repeater), `ip`, or `test` |
+| `acked` | INTEGER | 0 until somebody says they have seen it |
+
+**Telemetry is SNMP polling; an alert is an SNMP trap.** That comparison is the
+whole reason this is a table of its own and not a metric in `samples`. Polling is
+regular, affordable and complete, and knows nothing about what happened between
+two rounds. A trap arrives the moment something happens, carries one fact, and may
+not arrive at all. You need both: the trap says *when*, the poll says *what*.
+
+An alert also has properties a measurement does not — a text a human reads, a
+severity, and the question of whether anyone has looked at it — and a measurement
+has properties an alert does not: a value you can plot and an interval it is
+supposed to arrive on. Pressing them into one table throws away half of each.
+
+`repeater_id` is the node the alert is **about** and never the relayer. Along this
+route those two differ by definition: a sensor node sends its alert as a DM to a
+repeater, and that repeater puts it on the broker. Mixing them up hangs a fault on
+the wrong device. A NULL is deliberate too — an alert from a node that has no row
+here is still an alert, and dropping it because we do not know the sender loses
+exactly the message you need most.
+
+`db.ALERT_DEDUP_S` (300 s) collapses repeats of the same text from the same node.
+That is not tidiness: a sensor node re-sends its alert until it receives an ACK,
+and the repeater relaying it does not acknowledge a monitor message, so one fault
+produces a handful of identical DMs. The repeater brakes that on its side too, but
+that brake lives in RAM and does not survive a restart — and two repeaters hearing
+the same node would each send one.
+
+What is deliberately **not** here: a rule that lets an alert disappear.
+Acknowledging is what a human does; removing is what the retention does, together
+with the rest. An alert that vanishes by itself after an hour is an alert you miss
+at night.
 
 ### `repeater_filter`
 

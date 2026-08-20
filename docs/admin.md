@@ -572,6 +572,54 @@ same kind of act as renaming the node itself, one layer down.
 An empty name clears it. The channel then shows as "kanaal N" on the public page
 and does **not** disappear: an unnamed measurement is still a measurement.
 
+### Management over IP — `#eigen-api`
+
+For a node that offers its own HTTP API: a MeshUptime sensor node. The address
+goes in here, and from then on the server reads `/status.json` every five minutes
+and the buttons in this block work — advert (flood or zerohop), set the clock,
+set the region, restart, and the settings from `/cfg.json`.
+
+**The block says out loud that this is IP and not the mesh**, and what that means:
+if the WiFi drops, this whole block drops with it. That is measured and not
+theoretical, and the mesh route meant for that case does not work yet. The page
+states both instead of hiding the second.
+
+A separate field beside the *management address* on the firmware page, on purpose:
+that field means "our repeater firmware lives there", with a firmware upgrade
+behind it, and this node does not run that firmware. One field for both would
+offer an image to a board whose build environment we do not know.
+
+**Filling in the address requires a server administrator.** Clearing it does not.
+The server sends the credentials that open every node to that address, and
+`node.beheeradres` is delegatable per node — see
+[`security.md`](security.md#where-the-fleet-credentials-may-go).
+
+The block also shows the node's **access list**, read-only. That is where the mesh
+route breaks: a monitor that logs in and gets no answer is usually not in that
+list and has no admin password either. Then "no answer" is a refusal and not an
+outage, and that is a different problem.
+
+### Alerts — `#alarmen`
+
+**Telemetry is polling; an alert is a trap.** The figures and graphs of a node come
+from a poll round: regular, complete, and blind to what happened between two
+rounds. An alert arrives the moment something happens, carries one fact, and may
+not arrive at all — the sensor node sends it to the repeaters that hold alert
+rights in its access list, and they publish it immediately.
+
+Per alert: the time, the text, the severity where it can be derived from the text,
+and the source (`mesh`, `ip` or `test`). Unacknowledged alerts are counted in a
+badge on the node list as well, because the point of a trap is that you see it
+without looking for it.
+
+**Acknowledging does not remove an alert** — it records that somebody saw it. There
+is deliberately no button that deletes one: a message you can click away without a
+trace is a message that cannot be recounted afterwards. Removal is the retention's
+job, together with the rest of the history. There is one button for a single alert
+and one for all open alerts of a node, because a node that was unreachable for an
+hour produces dozens of rows, and clicking those away one by one means nobody does
+it.
+
 ### Visibility on the site — `#zichtbaarheid`
 
 Three switches in one block, in decreasing severity: `is_public` takes the whole

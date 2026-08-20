@@ -398,7 +398,11 @@ def _render(**over):
                   "commands": ("settings", "status"), "via_monitor": False,
                   "blocker": "", "node": "55d9", "subject": "55d9",
                   "fw_meshmanager": "2.3.0", "min_fw": "1.8.0", "node_seen": None,
-                  "node_stale": False, "ha": False, "poller_seen": None},
+                  "node_stale": False, "ha": False, "poller_seen": None,
+                  # De eigen API van de node. Hier: die heeft hij niet -- deze
+                  # reeks gaat over een node met onze firmware op de broker.
+                  "ip_api": {"host": "", "seen": None, "fw": "", "ever": False,
+                             "fresh": False, "stale_after_s": 600}},
         "cfg_route": {"can": False, "blocker": "no_host", "host": "",
                       "fw": "2.3.0", "min_fw": "2.1.0", "relayed": False,
                       "transport": "ip", "target": "", "monitor": "",
@@ -414,6 +418,16 @@ def _render(**over):
         "cfg_no_remote": nodeconfig.NO_REMOTE,
         "cfg_no_remote_reason": nodeconfig.NO_REMOTE_REASON,
         "cfg_transport_text": nodeconfig.TRANSPORT_TEXT,
+        "cfg_blocker_text": nodeconfig.BLOCKER_TEXT,
+        # De derde weg heeft zijn eigen tests (test_sensornode.py). Hier de
+        # toestand die niets toont: geen adres, dus geen sectie.
+        "sensor_route": None,
+        "sensor_last": {"ok": False, "error": "", "at": None, "metrics": 0,
+                        "channels": 0, "neighbors": 0, "host": ""},
+        "sensor_acl": {"ok": False, "error": "", "data": {}},
+        "sensor_interval_s": 300, "sensor_enabled": True,
+        "sensor_region_fields": {}, "sensor_no_readback": {},
+        "sensor_result": None,
         "rights": None, "relay": None,
         "sweep_hours": 0, "sweep_next": None, "sweep_last": None,
         "sweep_status": {"enabled": True, "min_gap_min": 15,

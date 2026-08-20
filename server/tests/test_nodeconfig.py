@@ -174,14 +174,46 @@ def test_een_geweigerde_route_raakt_het_netwerk_niet(db, monkeypatch):
 
 
 def test_een_parameter_die_de_node_niet_aanbiedt_wordt_niet_verstuurd(db, monkeypatch):
-    """De server heeft geen eigen lijst; hij vraagt het de node. Staat 'freq' er
+    """De server heeft geen eigen lijst; hij vraagt het de node. Staat 'tx' er
     niet bij, dan gaat er niets de deur uit -- ook niet als iemand het formulier
-    met de hand verbouwt."""
+    met de hand verbouwt.
+
+    'tx' en niet 'freq', en dat verschil is precies de test hiernaast: een
+    radiosleutel komt tot deze controle niet eens, want die valt al op NO_REMOTE.
+    Met 'freq' zou deze test iets anders bewijzen dan zijn naam belooft."""
     _lijst_van_de_node(monkeypatch)
     monkeypatch.setattr(nodeconfig, "_open",
                         lambda *a, **k: pytest.fail("mocht de node niet benaderen"))
-    uit = nodeconfig.write(rep(), "freq", "869.525")
+    uit = nodeconfig.write(rep(), "tx", "20")
     assert uit["ok"] is False and uit["step"] == "sleutel"
+
+
+def test_elk_radiowoord_valt_op_de_weigering_en_niet_op_de_lijst(db, monkeypatch):
+    """De vijf namen uit NO_REMOTE komen niet tot de parameterlijst.
+
+    Dat onderscheid is de hele reden dat de lijst vijf namen heeft in plaats van
+    één. 'radio' is de vorm waarin onze eigen firmware de vier getallen aanbiedt;
+    een node met een eigen API neemt 'set freq' als apart woord aan. Wie alleen
+    'radio' weigert, weigert op de ene node en niet op de andere -- en het
+    verschil is een node die van de lucht valt."""
+    _lijst_van_de_node(monkeypatch)
+    monkeypatch.setattr(nodeconfig, "_open",
+                        lambda *a, **k: pytest.fail("mocht de node niet benaderen"))
+    for sleutel in nodeconfig.NO_REMOTE:
+        uit = nodeconfig.write(rep(), sleutel, "869.525")
+        assert uit["ok"] is False, sleutel
+        assert uit["step"] == "afstand", sleutel
+
+
+def test_de_ontvangstversterking_is_geen_radiowoord():
+    """'radio.rxgain' begint met hetzelfde woord en is het niet.
+
+    Hij zet de ontvangstversterking: een node wordt er hooguit dover van en
+    blijft op hetzelfde kanaal, en dat is de kant van de asymmetrie waar 'tx' ook
+    staat. Een weigering op voorvoegsel zou hem meenemen, en dan zou de regel
+    iets anders gaan betekenen dan ze zegt."""
+    assert "radio.rxgain" not in nodeconfig.NO_REMOTE
+    assert "radio.fem.rxgain" not in nodeconfig.NO_REMOTE
 
 
 def test_een_waarde_buiten_de_grenzen_wordt_niet_verstuurd(db, monkeypatch):
@@ -494,7 +526,11 @@ def _render(**over):
                   "commands": ("settings", "status"), "via_monitor": False,
                   "blocker": "", "node": "55d9", "subject": "55d9",
                   "fw_meshmanager": "2.1.0", "min_fw": "1.8.0", "node_seen": None,
-                  "node_stale": False, "ha": False, "poller_seen": None},
+                  "node_stale": False, "ha": False, "poller_seen": None,
+                  # De eigen API van de node. Hier: die heeft hij niet -- deze
+                  # reeks gaat over een node met onze firmware op de broker.
+                  "ip_api": {"host": "", "seen": None, "fw": "", "ever": False,
+                             "fresh": False, "stale_after_s": 600}},
         "cfg_route": {"can": True, "blocker": "", "host": "http://x",
                       "fw": "2.1.0", "min_fw": "2.1.0", "relayed": False,
                       "transport": "ip", "target": "", "monitor": "",
@@ -509,6 +545,16 @@ def _render(**over):
         "cfg_no_remote": nc.NO_REMOTE,
         "cfg_no_remote_reason": nc.NO_REMOTE_REASON,
         "cfg_transport_text": nc.TRANSPORT_TEXT,
+        "cfg_blocker_text": nc.BLOCKER_TEXT,
+        # De derde weg heeft zijn eigen tests (test_sensornode.py). Hier de
+        # toestand die niets toont: geen adres, dus geen sectie.
+        "sensor_route": None,
+        "sensor_last": {"ok": False, "error": "", "at": None, "metrics": 0,
+                        "channels": 0, "neighbors": 0, "host": ""},
+        "sensor_acl": {"ok": False, "error": "", "data": {}},
+        "sensor_interval_s": 300, "sensor_enabled": True,
+        "sensor_region_fields": {}, "sensor_no_readback": {},
+        "sensor_result": None,
         "cfg_params": {"ok": True, "error": "", "params": params},
         "cfg_groups": [(r, [q for q in params if q["risk"] == r])
                        for r in (nc.RISK_PLAIN, nc.RISK_WRITES, nc.RISK_CUTOFF)],

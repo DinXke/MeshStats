@@ -5,6 +5,72 @@
  * verschenen is. Met opzet niet herschreven: een release die nooit bestaan
  * heeft, hoort niet in een changelog te staan.
  *
+ * 2.10.0 Twee dingen die dezelfde denkfout rechtzetten: een filter op de
+ *        verkeerde as, en een melding die nergens aankwam.
+ *
+ *        HET FILTER OP DE KANDIDATENLIJST IS WEG. Die lijst liet ADV_TYPE_REPEATER
+ *        toe, en sinds 2.9.0 ook ADV_TYPE_SENSOR. Dat tweede was de eerste fout
+ *        met een uitzondering erop geplakt, en de fout zelf bleef staan:
+ *        TELEMETRIE IS EEN VERMOGEN EN GEEN ROL. Het adverttype is de bewering van
+ *        een node over waarvoor hij BEDOELD is; of hij
+ *        REQ_TYPE_GET_TELEMETRY_DATA antwoordt is een andere vraag, en de
+ *        companion-firmware in examples/companion_radio antwoordt hem terwijl
+ *        hij als ADV_TYPE_CHAT adverteert. Het eerste gebruiken om het tweede te
+ *        filteren sluit precies de nodes uit die je wilt uitlezen.
+ *        Het geval dat het onontkoombaar maakte: de MeshUptime-node wordt mogelijk
+ *        omgezet naar ADV_TYPE_CHAT, omdat een telefoon alleen bij een
+ *        chatcontact een tekstvenster geeft -- en zijn DM-opdrachten ('list',
+ *        'get', 'status') zijn een gebouwde functie die anders onbereikbaar is.
+ *        Met het oude filter zou juist die wijziging de node waar deze hele
+ *        monitorweg voor bestaat uit de lijst hebben laten verdwijnen. Twee
+ *        gewenste dingen, elkaar uitsluitend door een filter dat er niet hoort.
+ *        Het ruisprobleem is echt en wordt op de juiste as opgelost: ONTHOUDEN wat
+ *        er geantwoord heeft. ADV_F_TELEM staat in de advertcache, wordt gezet
+ *        vanuit de ronde zelf, overleeft een herstart, en gaat nooit meer uit --
+ *        een node die ooit telemetrie gaf is voorgoed een goede kandidaat. De rol
+ *        blijft, als LABEL en als sorteersleutel (infrastructuur bovenaan). Per
+ *        regel gaat mee waarom hij in de lijst staat: nu gehoord, uit een bewaarde
+ *        advert, of al eens geantwoord. Dat is dezelfde beweging die dit project
+ *        nu drie keer nodig had: onthouden in plaats van herberekenen.
+ *        MON_CACHED_MAX (24) is een gevolg en geen detail: zonder filter kan die
+ *        lijst voorbij één JSON-body groeien, en een afgekapte body is geen
+ *        kortere lijst maar een pagina die leeg blijft zonder iets in het logboek.
+ *        Er wordt daarom eerst gesorteerd en dan afgekapt, zodat wat afvalt het
+ *        minst interessante is. Body 6500 -> 7800 om dezelfde reden.
+ *
+ *        ALERTS GAAN NU METEEN NAAR DE BROKER. Telemetrie is SNMP-polling; een
+ *        alert is een SNMP-trap. Die vergelijking klopt tot in de details: pollen
+ *        is regelmatig, betaalbaar en volledig, en weet niets van wat er tussen
+ *        twee rondes gebeurde; een trap komt op het moment dat er iets gebeurt,
+ *        draagt één feit, en arriveert misschien niet. Je hebt ze beide nodig --
+ *        de trap zegt WANNEER, de poll zegt WAT.
+ *        Een sensornode stuurt zijn alarmen als DM naar de contacten met
+ *        PERM_RECV_ALERTS_*. Staat deze repeater in die lijst, dan kwam zo'n DM
+ *        hier binnen als een TXT_MSG van een gemonitorde node -- en verdween met
+ *        "reply type genegeerd" in het logboek. Nu gaat hij op een EIGEN topic
+ *        (<prefix>/<node>/alert) naar de broker, met de sleutel van het ONDERWERP
+ *        in de payload en de doorgever in het topic; in het statsbericht proppen
+ *        zou een trap precies zo traag maken als het pollen dat hij aanvult.
+ *        En de trap-reflex: een alert trekt de volgende uitvraagronde naar voren.
+ *        Bewust de RONDE en niet één node -- de eenheid van werk hier is een
+ *        ronde, er is één toestandsmachine en één radio, en een gerichte poll zou
+ *        een tweede planner naast de bestaande zijn. Wat dat kost staat erbij: de
+ *        andere gemonitorde nodes worden dan ook eerder uitgevraagd. Drie remmen,
+ *        elk voor iets anders: MON_ALERT_DEDUP_MS tegen de herhalingen (de node
+ *        stuurt opnieuw tot hij een ACK krijgt en die geven wij niet),
+ *        MON_ALERT_POLL_GAP_MS per node, MON_ALERT_ROUND_GAP_MS over alle nodes
+ *        samen -- want de eerste is per node en tien alarmerende nodes zouden er
+ *        tien rondes van maken.
+ *        De tijdstempel in het bericht is die van DEZE repeater en niet die uit
+ *        het alertpakket: een sensornode heeft geen gebufferde klok en staat na
+ *        elke herstart op 15 mei 2024, en dat is precies het apparaat dat deze
+ *        alarmen stuurt.
+ *
+ *        UIT TE ROLLEN: dit werkt pas na een firmware-uitrol. De repeater draait
+ *        2.9.0, en tot hij om is blijft de kandidatenlijst filteren en verdwijnt
+ *        elk alarm nog steeds in het logboek. De serverkant is achterwaarts
+ *        compatibel en doet niets tot er zulke berichten binnenkomen.
+ *
  * 2.9.0  De telemetrie van een SENSORNODE komt nu heel binnen, in plaats van
  *        helemaal niet. Drie oorzaken, elk op zich al genoeg, en alle drie
  *        opgelost:
@@ -3163,17 +3229,54 @@ void meshmanager_on_forward_verdict(bool allowed, uint8_t reason,
 #define ADV_NAME_MAX      24
 #define ADV_WRITE_DELAY   120000UL        // 2 minutes of quiet before writing
 
+/* What we learned about a node BY ASKING, as opposed to what it says about
+ * itself. One bit so far, and it is the bit that replaced a filter.
+ *
+ * ADV_F_TELEM means: this node has at least once answered a telemetry request
+ * with data. That is a CAPABILITY, and this is the only honest evidence of one.
+ * The advert type is a node's own claim about what it is FOR, and using that to
+ * decide who may be polled is the wrong axis: a node advertising as
+ * ADV_TYPE_CHAT answers REQ_TYPE_GET_TELEMETRY_DATA just as well (the companion
+ * firmware in examples/companion_radio does exactly that), and a sensor node may
+ * be re-advertised as chat tomorrow because that is the only way a phone gives it
+ * a text window. See the note above the candidate loop in handleMonJson for what
+ * that filter cost.
+ *
+ * Once set, never cleared. A node that answered is a good candidate for good:
+ * that it is out of range today, or asleep, or renamed, does not unmake the
+ * measurement. Clearing it after a failed round would turn one bad round into a
+ * node that quietly leaves the list -- the same silent disappearance this bit
+ * exists to end. */
+#define ADV_F_TELEM  0x01
+
 struct AdvEntry {
   uint8_t  key[PUB_KEY_SIZE];
   char     name[ADV_NAME_MAX];
   uint8_t  type;
   uint32_t heard;                 // epoch seconds, 0 when the clock was unset
   int32_t  lat, lon;              // 1e-6 degrees; 0,0 means 'not advertised'
+  uint8_t  flags;                 // ADV_F_*: what we learned by asking
 };
 
 static AdvEntry _adv[ADV_CACHE_MAX];
 static int _adv_count = 0;
 static unsigned long _adv_dirty_at = 0;   // 0 = nothing to write
+
+/* How useful a node's own claim about itself is as a SORT KEY. Not as a gate --
+ * that was the bug. Infrastructure first because that is what a monitor list is
+ * usually for; a sensor next; a chat node, a phone or an unknown type last. A
+ * telephone in the list is not wrong, it is only rarely what you were looking
+ * for, and 'rarely what you were looking for' is an argument about order and
+ * never about existence. */
+static int advRoleRank(uint8_t type) {
+  switch (type) {
+    case 2:  return 0;    // ADV_TYPE_REPEATER
+    case 3:  return 1;    // ADV_TYPE_ROOM -- also infrastructure
+    case 4:  return 2;    // ADV_TYPE_SENSOR
+    case 1:  return 3;    // ADV_TYPE_CHAT
+    default: return 4;    // ADV_TYPE_NONE, or something we do not know yet
+  }
+}
 
 static int advFind(const uint8_t *key, int prefix_len) {
   if (prefix_len <= 0 || prefix_len > PUB_KEY_SIZE) return -1;
@@ -3186,6 +3289,53 @@ static int advFind(const uint8_t *key, int prefix_len) {
 const char *meshmanager_advert_name(const uint8_t *pub_key, int prefix_len) {
   int i = advFind(pub_key, prefix_len);
   return (i >= 0 && _adv[i].name[0]) ? _adv[i].name : NULL;
+}
+
+/* Note that this node answered a telemetry request. Takes the key as HEX,
+ * because that is the form a monitor entry keeps it in, and it may be a prefix
+ * rather than the whole key -- advFind takes prefixes for exactly that reason.
+ *
+ * A node we have never heard advertise gets an entry of its own here. That looks
+ * like a detour (why store an advert we never received?) and it is the point: a
+ * node added by hand from a pasted key, which then answers, is the strongest
+ * candidate there is and would otherwise be the only one this list forgets.
+ *
+ * Writing is scheduled and not immediate, following the same reasoning as the
+ * rest of this cache: this fires at most once per round per node and the bit
+ * only ever changes from 0 to 1, so it can ride along with the lazy write. What
+ * it must not do is get lost across a restart -- the whole reason it exists is
+ * that the alternative was recomputing a guess from the advert type. */
+static void advNoteTelemetry(const char *hexkey) {
+  if (!hexkey || !*hexkey) return;
+  int hexlen = (int)strlen(hexkey);
+  if (hexlen > PUB_KEY_SIZE * 2) hexlen = PUB_KEY_SIZE * 2;
+  int bytes = hexlen / 2;
+  if (bytes <= 0) return;
+
+  uint8_t key[PUB_KEY_SIZE];
+  memset(key, 0, sizeof(key));
+  char tmp[PUB_KEY_SIZE * 2 + 1];
+  memcpy(tmp, hexkey, bytes * 2);
+  tmp[bytes * 2] = 0;
+  if (!mesh::Utils::fromHex(key, bytes, tmp)) return;
+
+  int i = advFind(key, bytes);
+  if (i < 0) {
+    if (_adv_count >= ADV_CACHE_MAX) {
+      // Full: drop whoever we heard longest ago, same rule as on an advert.
+      i = 0;
+      for (int j = 1; j < _adv_count; j++) {
+        if (_adv[j].heard < _adv[i].heard) i = j;
+      }
+    } else {
+      i = _adv_count++;
+    }
+    memset(&_adv[i], 0, sizeof(AdvEntry));
+    memcpy(_adv[i].key, key, bytes);
+  }
+  if (_adv[i].flags & ADV_F_TELEM) return;      // already known; nothing to write
+  _adv[i].flags |= ADV_F_TELEM;
+  _adv_dirty_at = millis() + ADV_WRITE_DELAY;
 }
 
 static void advLoad() {
@@ -3312,6 +3462,14 @@ void meshmanager_on_advert(const uint8_t *pub_key, const char *name, uint8_t typ
 // First automatic round after boot, late enough not to fight with startup.
 #define MON_FIRST_MS     60000UL
 #define MON_HEARD_MAX      40    // heard rows handed to the page
+/* And how many rows from the STORED adverts. Its own limit since 2.10.0, when
+ * the advert type stopped filtering that list: without a filter every phone in
+ * range is a candidate, and the JSON body is one buffer. A truncated body is not
+ * a shorter list -- it is a page that stays blank with nothing in the log, and
+ * that is the failure this cap exists to prevent. The rows are sorted before the
+ * cap bites, so what falls off is the least interesting and not whatever came
+ * last out of the cache. */
+#define MON_CACHED_MAX     24
 
 enum MonLogin { LOGIN_NONE = 0, LOGIN_OK = 1, LOGIN_NOANSWER = 2 };
 
@@ -3334,6 +3492,16 @@ struct MonEntry {
   uint32_t ok_st, ok_tl, ok_nb;
   uint8_t  fails;              // consecutive rounds that produced nothing
   unsigned long last_ok;
+  /* Alerts van deze node. Twee getallen en niet één, want ze remmen twee
+   * verschillende dingen. ``last_alert`` houdt herhalingen van HETZELFDE alert
+   * tegen: de sensornode stuurt opnieuw tot hij een ACK krijgt en die geeft deze
+   * repeater niet (een monitorantwoord wordt niet bevestigd), dus één storing
+   * levert een handvol identieke DM's op. ``last_alert_poll`` remt de reflex
+   * erna -- zie MON_ALERT_POLL_GAP_MS. Runtime only: na een herstart is een
+   * alert dat we al doorgaven ook een alert dat de server al heeft. */
+  unsigned long last_alert;
+  unsigned long last_alert_poll;
+  uint32_t alerts;             // hoeveel alerts deze node ons stuurde
 };
 
 /* Three requests each waiting out a 30 s timeout is 90 s spent on a peer that
@@ -3343,6 +3511,46 @@ struct MonEntry {
  * every fourth one. Any answer at all clears it. */
 #define MON_BACKOFF_AFTER   3
 #define MON_BACKOFF_EVERY   4
+
+/* ------------------------------------------------------------------ alerts
+ *
+ * TELEMETRIE IS SNMP-POLLING, EEN ALERT IS EEN SNMP-TRAP. Dat is de hele
+ * vergelijking en ze klopt tot in de details: pollen is regelmatig, betaalbaar
+ * en volledig, en het weet niets van wat er tussen twee rondes gebeurde. Een
+ * trap komt op het moment dat er iets gebeurt, draagt alleen dat ene feit, en
+ * arriveert misschien niet. Je hebt ze beide nodig, en om precies dezelfde reden
+ * als in SNMP: de trap zegt WANNEER, de poll zegt WAT.
+ *
+ * Een sensornode stuurt zijn alerts als DM naar de contacten met
+ * PERM_RECV_ALERTS_*. Staat deze repeater in die lijst, dan komt zo'n DM hier
+ * binnen als een TXT_MSG van een node die in de monitorlijst staat -- en tot
+ * 2.10.0 werd hij daar in het logboek gezet als "reply type genegeerd" en
+ * weggegooid. Nu gaat hij meteen naar de broker, op een EIGEN topic, en trekt hij
+ * de volgende uitvraagronde naar voren.
+ *
+ * DE DRIE REMMEN, en elk vangt iets anders:
+ *
+ *   MON_ALERT_DEDUP_MS      dezelfde node, kort na elkaar. De sensornode
+ *                           herhaalt een alert tot hij een ACK krijgt, en deze
+ *                           repeater bevestigt een monitorbericht niet -- dus één
+ *                           storing levert een handvol identieke DM's op. Zonder
+ *                           deze rem zouden dat evenveel berichten op de broker
+ *                           zijn.
+ *   MON_ALERT_POLL_GAP_MS   hoe vaak één node een ronde naar voren mag trekken.
+ *                           Precies de eis: hoogstens één extra poll per node
+ *                           per minuut.
+ *   MON_ALERT_ROUND_GAP_MS  hoe vaak dat over ALLE nodes samen mag. De eerste rem
+ *                           is per node en tien alarmerende nodes zouden er tien
+ *                           van maken; deze staat om de radio, en die is van
+ *                           iedereen.
+ */
+#define MON_ALERT_DEDUP_MS      60000UL
+#define MON_ALERT_POLL_GAP_MS   60000UL
+#define MON_ALERT_ROUND_GAP_MS  60000UL
+/* De tekst van een alert. SensorMesh::sendAlert schrijft 5 + strlen(text) in een
+ * pakket van MAX_PACKET_PAYLOAD (184), dus 179 is het absolute plafond aan de
+ * zendende kant; 180 vangt dat met de afsluitende nul erbij. */
+#define MON_ALERT_TEXT_MAX      180
 
 static MonEntry _mon[MAX_MONITORS];
 static int _mon_count = 0;
@@ -3406,6 +3614,10 @@ static MonTelem _mon_tl[MON_TELEM_MAX];
 static int _mon_tl_n = 0;
 static unsigned long _mon_deadline = 0;
 static unsigned long _mon_next_round = 0;
+/* Wanneer een alert voor het laatst een ronde naar voren trok, over alle
+ * nodes samen. Zie MON_ALERT_ROUND_GAP_MS: de rem per node is niet genoeg,
+ * want tien alarmerende nodes zouden er tien rondes van maken. */
+static unsigned long _mon_alert_round = 0;
 static uint32_t _mon_round = 0;
 
 /* A short trace of the poll sequence, because the counters alone cannot tell
@@ -3940,6 +4152,163 @@ static bool publishMonitorRound(MonEntry &m) {
 // A round that yielded nothing at all counts towards the backoff.
 static void monRoundFailed(MonEntry &m) {
   if (m.fails < 255) m.fails++;
+}
+
+/* De SNR waarop we deze node het laatst hoorden, of NAN als we het niet weten.
+ *
+ * Uit de burenlijst en niet uit het alertpakket, want de hook waarlangs een
+ * monitorbericht binnenkomt draagt geen SNR: hij geeft alleen mon_idx, type en
+ * de bytes (zie meshmanager_on_monitor_response). Dit is dus de sterkte van het
+ * laatste ADVERT en niet van dit bericht -- goed genoeg om te weten of een node
+ * aan de rand van het bereik zit, en te weinig om te doen alsof het over dit
+ * pakket gaat. Vandaar dat het antwoord driedelig is en niet "0.0": niet weten
+ * is hier een uitkomst, en een 0 in dBm is een meting.
+ */
+static float monLastSnr(const char *hexkey) {
+  if (!_mesh || !hexkey || !*hexkey) return NAN;
+  int n = _mesh->getNumNeighbours();
+  for (int i = 0; i < n; i++) {
+    char hex[PUB_KEY_SIZE * 2 + 1], name[MON_NAME_MAX];
+    uint32_t secs_ago;
+    int8_t snr4;
+    if (!_mesh->getNeighbourAt(i, hex, name, sizeof(name), &secs_ago, &snr4)) continue;
+    if (strncasecmp(hex, hexkey, strlen(hexkey)) == 0) return snr4 / 4.0f;
+  }
+  return NAN;
+}
+
+/* Eén alert doorzetten naar de broker, op zijn eigen topic.
+ *
+ * EEN EIGEN BERICHTTYPE EN NIET IN HET STATSBERICHT. Dat is het punt van een
+ * trap: hij hoort niet te wachten op de volgende ronde, en het statsbericht IS
+ * die ronde. Er in proppen zou een alert precies zo traag maken als het pollen
+ * dat hij moet aanvullen -- en het zou een bericht dat over MEETWAARDEN gaat een
+ * tweede betekenis geven.
+ *
+ * De payload noemt het ONDERWERP en niet de doorgever. Het topic draagt de
+ * sleutel van deze repeater (mqttTopic bouwt hem uit _node_hex), en dat is de
+ * node die publiceert; ``alert.pubkey_prefix`` is de node waar het alert over
+ * gaat. Dat is dezelfde tweedeling als bij een doorgestuurd statsbericht, en om
+ * dezelfde reden: wie die twee door elkaar haalt, hangt een storing aan het
+ * verkeerde apparaat.
+ */
+static bool publishAlert(MonEntry &m, const char *text) {
+  if (!mqttEnsure()) return false;
+
+  char prefix_hex[13];
+  memcpy(prefix_hex, m.key, 12);
+  prefix_hex[12] = 0;
+
+  char name_esc[MON_NAME_MAX * 2];
+  jsonEsc(name_esc, sizeof(name_esc), m.name);
+  /* De tekst komt van een ander apparaat en gaat als JSON-string mee, dus
+   * ontsnappen is hier geen netheid maar noodzaak: één aanhalingsteken maakt het
+   * hele bericht onleesbaar en dan verdwijnt de melding in plaats van aan te
+   * komen. Twee keer de lengte is het slechtste geval, een tekst van alleen
+   * aanhalingstekens. */
+  char text_esc[MON_ALERT_TEXT_MAX * 2];
+  jsonEsc(text_esc, sizeof(text_esc), text);
+
+  /* De tijdstempel van DEZE repeater en niet die uit het alertpakket. Een
+   * sensornode zonder gebufferde klok staat na elke herstart op 15 mei 2024, en
+   * dat is precies het apparaat dat deze alerts stuurt -- zijn tijdstempel zou
+   * de melding jaren in het verleden zetten. Onze klok komt van de site en die
+   * weet het wel. Staat hij hier ook niet, dan gaat het veld er niet in: de
+   * server zet dan zijn eigen ontvangsttijd, en dat is eerlijker dan een datum
+   * uit 2024. */
+  uint32_t now = 0;
+  if (_mesh) {
+    uint8_t h;
+    if (_mesh->getClockHour(&h)) now = _mesh->getRTCClock()->getCurrentTime();
+  }
+  float snr = monLastSnr(m.key);
+
+  static char body[MQTT_PUB_MAX];
+  int p = snprintf(body, sizeof(body),
+    "{\"alert\":{\"pubkey_prefix\":\"%s\",\"name\":\"%s\",\"text\":\"%s\"",
+    prefix_hex, name_esc, text_esc);
+  if (p <= 0 || p >= (int)sizeof(body)) return false;
+  if (now) p += snprintf(body + p, sizeof(body) - p, ",\"ts\":%lu", (unsigned long)now);
+  if (!isnan(snr)) p += snprintf(body + p, sizeof(body) - p, ",\"snr\":%.2f", snr);
+  p += snprintf(body + p, sizeof(body) - p, "},\"via\":\"%s\"}", _node_hex);
+  if (p <= 0 || p >= (int)sizeof(body)) return false;
+
+  char topic[96];
+  mqttTopic("alert", topic, sizeof(topic));
+  if (!_mqtt.publish(topic, (const uint8_t *)body, p, false)) {
+    _fail_count++;
+    _mqtt_err = "alert";
+    return false;
+  }
+  return true;
+}
+
+/* Een onaangekondigd tekstbericht van een gemonitorde node: de trap.
+ *
+ * Aangeroepen als een TXT_MSG binnenkomt die op geen enkel openstaand
+ * CLI-antwoord past. Dat is het beste onderscheid dat er is -- het protocol
+ * koppelt een antwoord niet aan de vraag die het veroorzaakte -- en de vensters
+ * waarin er wél iets uitstaat worden hierboven één voor één afgevangen. Wat hier
+ * overblijft is dus per definitie iets waar niemand om gevraagd heeft.
+ *
+ * DE REFLEX, en waarom hij de hele ronde naar voren trekt en niet één node.
+ * De eenheid van werk in deze module is een RONDE: monitorAdvance() loopt de
+ * lijst af, en er is precies één toestandsmachine en één radio. Een gerichte
+ * poll van één node zou een tweede planner naast de bestaande zijn, en de
+ * geschiedenis van dit bestand is een waarschuwing over twee planners die
+ * dezelfde radio delen. Dus: de ronde komt naar voren, de alarmerende node zit
+ * erin, en de remmen hierboven zorgen dat een alertstorm geen pollstorm wordt.
+ * Wat dat kost is eerlijk op te schrijven: de andere gemonitorde nodes worden
+ * dan ook eerder uitgevraagd dan hun interval zei.
+ */
+static void monAlert(int mon_idx, const uint8_t *data, int len) {
+  int i = -1;
+  for (int j = 0; j < _mon_count; j++) {
+    if (_mon[j].mesh_idx == mon_idx) { i = j; break; }
+  }
+  if (i < 0) return;
+  MonEntry &m = _mon[i];
+
+  /* timestamp(4) + flags(1) + tekst, precies zoals SensorMesh::sendAlert hem
+   * bouwt. Korter dan zes byte is geen bericht met tekst erin. */
+  if (len < 6) return;
+  char text[MON_ALERT_TEXT_MAX];
+  int n = len - 5;
+  if (n > (int)sizeof(text) - 1) n = (int)sizeof(text) - 1;
+  memcpy(text, data + 5, n);
+  text[n] = 0;
+  /* Stuurtekens eruit. Een DM komt van een ander apparaat en een regeleinde in
+   * een JSON-string is ongeldig; jsonEsc dekt de aanhalingstekens en de
+   * backslash, dit dekt de rest. */
+  for (char *q = text; *q; q++) if ((unsigned char)*q < 0x20) *q = ' ';
+  if (text[0] == 0) return;
+
+  unsigned long nu = millis();
+  if (m.last_alert != 0 && nu - m.last_alert < MON_ALERT_DEDUP_MS) {
+    monTrace("alert herhaling van %.6s, genegeerd", m.key);
+    return;
+  }
+  m.last_alert = nu;
+  m.alerts++;
+  monTrace("ALERT %.6s: %.40s", m.key, text);
+
+  if (!publishAlert(m, text)) {
+    /* Niet doorgezet, en dat is geen stilte: de melding is er wél. Het logboek
+     * op de nodepagina houdt hem, zodat "de broker lag eruit" te onderscheiden
+     * is van "er is niets gebeurd". */
+    monTrace("alert niet gepubliceerd (broker?)");
+  }
+
+  /* En dan de reflex. Per node hoogstens één, en over alle nodes samen ook
+   * hoogstens één per venster. */
+  if (m.last_alert_poll != 0 && nu - m.last_alert_poll < MON_ALERT_POLL_GAP_MS) return;
+  if (_mon_alert_round != 0 && nu - _mon_alert_round < MON_ALERT_ROUND_GAP_MS) return;
+  m.last_alert_poll = nu;
+  _mon_alert_round = nu;
+  if (_mon_state == MST_IDLE && nu < _mon_next_round) {
+    _mon_next_round = nu;               // de volgende pas start de ronde
+    monTrace("alert trekt de ronde naar voren");
+  }
 }
 
 // ------------------------------------- CLI settings of a MONITORED repeater
@@ -5273,6 +5642,16 @@ static void monitorLoop() {
       monClockReply(_mon_reply, _mon_reply_len);
       return;
     }
+    /* Een TXT_MSG die op geen enkel openstaand CLI-antwoord past, is niet
+     * gevraagd -- en dat is precies wat een alert is. Tot 2.10.0 kwam hij hier
+     * in het logboek terecht als "reply type genegeerd" en verdween hij: een
+     * storing waar het apparaat óver praatte, en die de site nooit zag. Zie
+     * monAlert() voor de vergelijking waar dit ontwerp op rust (telemetrie is
+     * SNMP-polling, een alert is een trap) en voor de drie remmen erop. */
+    if (rtype == PAYLOAD_TYPE_TXT_MSG) {
+      monAlert(idx, _mon_reply, _mon_reply_len);
+      return;
+    }
     // Every state below expects a RESPONSE; a stray CLI answer is not one.
     if (rtype != PAYLOAD_TYPE_RESPONSE) {
       monTrace("reply type %u genegeerd", (unsigned)rtype);
@@ -5315,7 +5694,16 @@ static void monitorLoop() {
       }
       if (_mon_state == MST_TELEM_WAIT) {
         monDecodeTelemetry(_mon_reply, _mon_reply_len);
-        if (_mon_tl_n > 0) m.ok_tl++;
+        if (_mon_tl_n > 0) {
+          m.ok_tl++;
+          /* En onthouden, buiten deze monitorregel om. De teller hierboven
+           * verdwijnt zodra iemand de regel weghaalt, en de kandidatenlijst zou
+           * die node dan weer als "nooit geantwoord" aanbieden -- terwijl we het
+           * beter weten. Dit is de enige waarneming die zegt dat een node
+           * werkelijk telemetrie kan leveren; het adverttype zegt daar niets
+           * over. Zie ADV_F_TELEM. */
+          advNoteTelemetry(m.key);
+        }
         monTrace("telem len=%d, %d values", _mon_reply_len, _mon_tl_n);
         monStep(MST_NBR_WAIT);
         return;
@@ -5754,7 +6142,8 @@ static const char PAGE[] PROGMEM =
   "<details class=sec data-ck=mon><summary data-i18n=t_mon></summary><div class=card>"
   "<p class=muted data-i18n=h_mon></p>"
   "<label><span data-i18n=l_filter></span><input id=fl></label>"
-  "<h3 data-i18n=t_heard></h3><table id=hl></table>"
+  "<h3 data-i18n=t_heard></h3><p class=muted data-i18n=h_role></p>"
+  "<table id=hl></table>"
   "<h3 data-i18n=t_manual></h3>"
   "<div class=row><label><span data-i18n=l_key></span><input id=mk></label>"
   "<label style='max-width:9rem'><span data-i18n=l_name></span><input id=mn></label></div>"
@@ -5862,6 +6251,14 @@ static const char PAGE[] PROGMEM =
   "wachtwoorden rondsturen. Een geweigerde login is niet te onderscheiden van een "
   "onbereikbare node: beide zwijgen.',"
   "m_none:'nog niets',m_heardnone:'nog geen repeaters gehoord',h_stored:'uit bewaarde adverts',"
+  // Sinds 2.10.0: de rol is een LABEL en geen poort, dus hij moet leesbaar zijn.
+  "r_rep:'repeater',r_room:'roomserver',r_sen:'sensor',r_chat:'chat',r_unk:'rol onbekend',"
+  "w_heard:'nu gehoord',w_stored:'uit bewaarde advert',"
+  "w_telem:'heeft al telemetrie geantwoord',"
+  "h_role:'De rol is wat een node over zichzelf zegt, niet wat hij kan. Telemetrie is een "
+  "vermogen: een node die als chat adverteert antwoordt er net zo goed op. Daarom staat "
+  "alles in deze lijst en bepaalt de rol alleen de volgorde \u2014 wie ooit telemetrie "
+  "antwoordde staat bovenaan.',"
   "st_unres:'wacht op advert',st_never:'nog niet geprobeerd',st_ok:'login gelukt',"
   "st_noans:'geen antwoord (geweigerd of onbereikbaar)',"
   "ph_pw:'leeg = via access list',u_ago:'geleden',u_never:'nooit',"
@@ -6022,6 +6419,13 @@ static const char PAGE[] PROGMEM =
   "3=admin). Tidier than passing passwords around. A refused login cannot be told from an "
   "unreachable node: both stay silent.',"
   "m_none:'nothing yet',m_heardnone:'no repeaters heard yet',h_stored:'from stored adverts',"
+  "r_rep:'repeater',r_room:'room server',r_sen:'sensor',r_chat:'chat',r_unk:'role unknown',"
+  "w_heard:'heard just now',w_stored:'from a stored advert',"
+  "w_telem:'has answered telemetry before',"
+  "h_role:'The role is what a node says about itself, not what it can do. Telemetry is a "
+  "capability: a node advertising as chat answers just as well. So everything is listed "
+  "here and the role only sets the order \u2014 whatever has answered telemetry comes "
+  "first.',"
   "st_unres:'waiting for advert',st_never:'not tried yet',st_ok:'login succeeded',"
   "st_noans:'no answer (refused or unreachable)',"
   "ph_pw:'empty = via access list',u_ago:'ago',u_never:'never',"
@@ -6195,12 +6599,25 @@ static const char PAGE[] PROGMEM =
   "function monst(m,t){if(!m.res)return'<span class=bad>'+t.st_unres+'</span>';"
   "if(m.lr==1)return'<span class=ok>'+t.st_ok+'</span>';"
   "if(m.lr==2)return'<span class=bad>'+t.st_noans+'</span>';return t.st_never}"
+  // De rol als label, en waarom een regel in de lijst staat. Sinds 2.10.0 is
+  // de rol geen poort meer, dus hij moet leesbaar zijn: wie hem als filter
+  // kwijtraakt, hoort hem als informatie terug te krijgen.
+  "function role(x,t){return x.t==2?t.r_rep:x.t==3?t.r_room:x.t==4?t.r_sen:"
+  "x.t==1?t.r_chat:t.r_unk}"
+  // Dezelfde ordening als op de node: eerst wat ooit antwoordde, dan de rol,
+  // dan wat het laatst gehoord is. Hier nog een keer omdat de twee helften
+  // (nu gehoord / uit bewaarde adverts) apart binnenkomen en de lezer er
+  // één lijst van moet kunnen lezen.
+  "function rank(x){return (x.tl?0:1)*10+(x.t==2?0:x.t==3?1:x.t==4?2:x.t==1?3:4)}"
   "function renderMon(){var d=mon,t=T[L];if(!d)return;"
   "var q=$('#fl').value,h='',i;"
-  "for(i=0;i<d.heard.length;i++){var x=d.heard[i];if(!hit(x,q))continue;"
+  "var hl=d.heard.slice(0).sort(function(a,b){return rank(a)-rank(b)});"
+  "for(i=0;i<hl.length;i++){var x=hl[i];if(!hit(x,q))continue;"
   "h+='<tr><td>'+esc(x.n||'-')+'<br><small>'+x.k.substr(0,12)+'</small></td>'"
   "+'<td>'+(x.snr==null?'<span class=muted>'+t.h_stored+'</span>':x.snr.toFixed(1)+' dB')"
   "+'<br><small>'+ago(x.age,t)+'</small></td>'"
+  "+'<td><small>'+role(x,t)+'<br>'+(x.why=='heard'?t.w_heard:t.w_stored)"
+  "+(x.tl?'<br><span class=ok>'+t.w_telem+'</span>':'')+'</small></td>'"
   "+'<td class=act><button class=\"mini ha\" data-k=\"'+x.k+'\" data-n=\"'+esc(x.n||'')+'\">+</button></td></tr>'}"
   "$('#hl').innerHTML=h||'<tr><td>'+t.m_heardnone+'</td></tr>';"
   "h='';"
@@ -6702,7 +7119,12 @@ static void handleMqttPost(AsyncWebServerRequest *req) {
  * you chose. */
 static void handleMonJson(AsyncWebServerRequest *req) {
   if (!requireAuth(req)) return;
-  static char body[6500];
+  /* Grown from 6500 in 2.10.0. The rows carry three fields more (type, the
+   * telemetry bit, and why the row is here) and the stored half is no longer
+   * filtered on role, so the same list is both longer and wider. Static and not
+   * on the stack, as it was: this is a web handler on a node that is also
+   * relaying traffic. */
+  static char body[7800];
   char esc[MON_TRACE_LEN * 2 + 4];   // also used for trace lines, the longest
   int p = 0;
 
@@ -6721,12 +7143,13 @@ static void handleMonJson(AsyncWebServerRequest *req) {
     long age = _mon[i].last_ok ? (long)((millis() - _mon[i].last_ok) / 1000UL) : -1;
     p += snprintf(body + p, sizeof(body) - p,
       "%s{\"k\":\"%s\",\"n\":\"%s\",\"pw\":%d,\"e\":%d,\"res\":%d,\"lr\":%u,"
-      "\"polls\":%u,\"oks\":%u,\"pubs\":%u,\"st\":%u,\"tl\":%u,\"nb\":%u,\"age\":%ld}",
+      "\"polls\":%u,\"oks\":%u,\"pubs\":%u,\"st\":%u,\"tl\":%u,\"nb\":%u,"
+      "\"al\":%u,\"age\":%ld}",
       i ? "," : "", _mon[i].key, esc, _mon[i].pass[0] ? 1 : 0,
       _mon[i].enabled ? 1 : 0, _mon[i].mesh_idx >= 0 ? 1 : 0,
       (unsigned)_mon[i].login_res, (unsigned)_mon[i].polls, (unsigned)_mon[i].oks,
       (unsigned)_mon[i].pubs, (unsigned)_mon[i].ok_st, (unsigned)_mon[i].ok_tl,
-      (unsigned)_mon[i].ok_nb, age);
+      (unsigned)_mon[i].ok_nb, (unsigned)_mon[i].alerts, age);
   }
 
   p += snprintf(body + p, sizeof(body) - p, "],\"heard\":[");
@@ -6751,10 +7174,25 @@ static void handleMonJson(AsyncWebServerRequest *req) {
         }
       }
     }
+    /* The type and the telemetry bit come from the advert cache, because
+     * neighbours[] carries neither. Not knowing them is a normal state -- a node
+     * we heard this run but whose advert we never stored -- and then the row says
+     * 'unknown' rather than 'chat'. Guessing here would put a claim on the page
+     * that nothing made. */
+    uint8_t rowtype = 0, rowflags = 0;
+    {
+      uint8_t key[PUB_KEY_SIZE];
+      if (mesh::Utils::fromHex(key, PUB_KEY_SIZE, hex)) {
+        int ai = advFind(key, PUB_KEY_SIZE);
+        if (ai >= 0) { rowtype = _adv[ai].type; rowflags = _adv[ai].flags; }
+      }
+    }
     jsonEsc(esc, sizeof(esc), name);
     p += snprintf(body + p, sizeof(body) - p,
-                  "%s{\"k\":\"%s\",\"n\":\"%s\",\"snr\":%.2f,\"age\":%u}",
-                  written ? "," : "", hex, esc, snr4 / 4.0f, (unsigned)secs_ago);
+                  "%s{\"k\":\"%s\",\"n\":\"%s\",\"snr\":%.2f,\"age\":%u,"
+                  "\"t\":%u,\"tl\":%d,\"why\":\"heard\"}",
+                  written ? "," : "", hex, esc, snr4 / 4.0f, (unsigned)secs_ago,
+                  (unsigned)rowtype, (rowflags & ADV_F_TELEM) ? 1 : 0);
     written++;
   }
 
@@ -6768,35 +7206,82 @@ static void handleMonJson(AsyncWebServerRequest *req) {
     uint8_t h;
     if (_mesh && _mesh->getClockHour(&h)) now = _mesh->getRTCClock()->getCurrentTime();
   }
-  /* Sensor nodes belong in this list too. It used to admit ADV_TYPE_REPEATER
-   * only, which was right when a monitor entry could only ever be another
-   * repeater, and became wrong the moment a node could be polled for telemetry: a
-   * MeshCore sensor node advertises as ADV_TYPE_SENSOR, so the one kind of node
-   * whose whole purpose is answering telemetry was the one kind this list refused
-   * to offer. It could still be added by hand -- the entry only needs a public
-   * key, and 'mon add' never looked at the advert type -- so this was a discovery
-   * gap and not a hard block, which is exactly why it could sit here unnoticed.
+  /* THE ROLE NO LONGER DECIDES WHO IS IN THIS LIST.
    *
-   * The type travels along so the page can say which is which. A sensor node has
-   * no neighbours and no status to report, only telemetry, and someone choosing
-   * from this list should not have to find that out from an empty table. */
-  for (int i = 0; i < _adv_count && p < (int)sizeof(body) - 200; i++) {
-    if (_adv[i].type != ADV_TYPE_REPEATER && _adv[i].type != ADV_TYPE_SENSOR) continue;
-
+   * Until 2.10.0 this loop admitted ADV_TYPE_REPEATER, and from 2.9.0 also
+   * ADV_TYPE_SENSOR. Both were the wrong axis, and the second was the wrong axis
+   * with an extra case bolted on.
+   *
+   * Telemetry is a CAPABILITY, not a ROLE. The advert type is a node's own claim
+   * about what it is FOR; whether it answers REQ_TYPE_GET_TELEMETRY_DATA is a
+   * different question, and the companion firmware answers it while advertising
+   * as ADV_TYPE_CHAT. Using the first to filter the second excludes exactly the
+   * nodes you want to read.
+   *
+   * The case that made it undeniable: the MeshUptime sensor node is likely to be
+   * re-advertised as ADV_TYPE_CHAT, because a phone only gives a CHAT contact a
+   * text window -- and its DM commands ('list', 'get', 'status') are a built
+   * feature that is otherwise unreachable. With the old filter, that one change
+   * would have removed the node this whole monitor path exists for. Two wanted
+   * things made mutually exclusive by a filter that should not be there.
+   *
+   * So: every node we know of may be offered, and the noise problem -- without a
+   * filter every phone in range is in the list -- is solved on the right axis.
+   * We REMEMBER what answered (ADV_F_TELEM, set from the round itself) and sort
+   * on that; the role stays, as a label and as a tie-breaker. That is the same
+   * move this project has now needed three times: remember instead of recompute.
+   *
+   * The cap is a consequence and not a detail. Without a filter this list can
+   * grow past what one JSON body holds, and a truncated body is not a shorter
+   * list -- it is a page that stays blank with nothing in the log. Hence the
+   * order below: sort first, then emit until the cap. What falls off the end is
+   * then always the least interesting, instead of whatever happened to come last
+   * out of the cache. */
+  int order[ADV_CACHE_MAX];
+  int n_order = 0;
+  for (int i = 0; i < _adv_count; i++) {
     uint8_t full[PUB_KEY_SIZE];
     char nm[MON_NAME_MAX];
     if (_mesh && _mesh->findNeighbourByPrefix(_adv[i].key, PUB_KEY_SIZE, full, nm, sizeof(nm))) {
       continue;                      // already listed above, with a live SNR
     }
-    char hex[PUB_KEY_SIZE * 2 + 1];
-    mesh::Utils::toHex(hex, _adv[i].key, PUB_KEY_SIZE);
-    jsonEsc(esc, sizeof(esc), _adv[i].name);
+    order[n_order++] = i;
+  }
+  /* Insertion sort: at most 48 entries on a node whose day job is relaying
+   * traffic, and the comparison is three integers. Anything cleverer would cost
+   * more code than it saves cycles.
+   *
+   * Answered-once first, then role, then most recently heard. The first key is
+   * the measurement and therefore outranks the other two: a phone that once
+   * answered telemetry is a better candidate than a repeater that never did. */
+  for (int a = 1; a < n_order; a++) {
+    int cur = order[a], b = a - 1;
+    while (b >= 0) {
+      const AdvEntry &x = _adv[order[b]], &y = _adv[cur];
+      int xk = (x.flags & ADV_F_TELEM) ? 0 : 1, yk = (y.flags & ADV_F_TELEM) ? 0 : 1;
+      bool after = (xk != yk) ? (xk < yk)
+                 : (advRoleRank(x.type) != advRoleRank(y.type))
+                   ? (advRoleRank(x.type) < advRoleRank(y.type))
+                   : (x.heard >= y.heard);
+      if (after) break;
+      order[b + 1] = order[b];
+      b--;
+    }
+    order[b + 1] = cur;
+  }
 
-    long age = (now && _adv[i].heard && now > _adv[i].heard)
-               ? (long)(now - _adv[i].heard) : -1;
+  for (int j = 0; j < n_order && j < MON_CACHED_MAX && p < (int)sizeof(body) - 220; j++) {
+    const AdvEntry &e = _adv[order[j]];
+    char hex[PUB_KEY_SIZE * 2 + 1];
+    mesh::Utils::toHex(hex, e.key, PUB_KEY_SIZE);
+    jsonEsc(esc, sizeof(esc), e.name);
+
+    long age = (now && e.heard && now > e.heard) ? (long)(now - e.heard) : -1;
     p += snprintf(body + p, sizeof(body) - p,
-                  "%s{\"k\":\"%s\",\"n\":\"%s\",\"age\":%ld,\"cached\":1,\"t\":%u}",
-                  written ? "," : "", hex, esc, age, (unsigned)_adv[i].type);
+                  "%s{\"k\":\"%s\",\"n\":\"%s\",\"age\":%ld,\"cached\":1,"
+                  "\"t\":%u,\"tl\":%d,\"why\":\"stored\"}",
+                  written ? "," : "", hex, esc, age, (unsigned)e.type,
+                  (e.flags & ADV_F_TELEM) ? 1 : 0);
     written++;
   }
 

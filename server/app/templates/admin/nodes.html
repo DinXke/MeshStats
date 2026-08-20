@@ -22,6 +22,22 @@
    op een nodegroep.</p>
 {% endif %}
 
+{#- Alarmen bovenaan, en dat is niet dezelfde soort melding als de drie hieronder.
+    Die gaan over configuratie die niet af is; dit gaat over een storing die NU
+    speelt. Telemetrie is polling en een alarm is een trap: het hele punt van een
+    trap is dat je hem ziet zonder ernaar te zoeken, en een storing die alleen op
+    de pagina van één node staat is een storing die je pas vindt als je al weet
+    waar je moet kijken. -#}
+{% if alerts_total %}
+<p class="pending"><strong>&#9888; {{ alerts_total }} niet-bevestigd(e) alarm(en).</strong>
+   Meldingen van sensornodes, doorgezet door de repeater die ze hoorde. Ze wachten niet op
+   een uitvraagronde &mdash; ze komen op het moment dat er iets gebeurt.
+   {% for a in alerts_recent %}{% if not a.acked %}
+   <br>&middot; <time class="reltime" datetime="{{ a.ts }}">{{ a.ts }}</time> &mdash;
+   {% if a.repeater_id %}<a href="/admin/repeaters/{{ a.repeater_id }}#alarmen">{{ a.node_name or 'node' }}</a>{% else %}<span class="muted">onbekende node</span>{% endif %}:
+   {{ a.text }}{% endif %}{% endfor %}</p>
+{% endif %}
+
 {% if hidden_repeaters %}
 <p class="pending"><strong>{{ hidden_repeaters }} repeater(s) staan verborgen.</strong>
    Een repeater die vanzelf ontstaat uit een binnengekomen bericht komt niet meteen op de
@@ -98,12 +114,18 @@
             enkel zodat "publiek" niet meer belooft dan het waarmaakt -- een
             repeater die publiek is maar zijn positie niet toont, zag er op deze
             lijst anders precies zo uit als een die alles toont. -#}
-        {% if rep.is_public and not (rep.show_position and rep.show_name) %}
+        {%- if alerts_open.get(rep.id) %}
+        <a class="pill off" href="/admin/repeaters/{{ rep.id }}#alarmen"
+           title="Niet-bevestigde meldingen van deze node">&#9888; {{ alerts_open[rep.id] }}</a>
+        {% endif %}
+        {% if rep.is_public and not (rep.show_position and rep.show_name and rep.show_channels) %}
+        {%- set verborgen = [] %}
+        {%- if not rep.show_position %}{% set _ = verborgen.append('positie') %}{% endif %}
+        {%- if not rep.show_name %}{% set _ = verborgen.append('naam') %}{% endif %}
+        {%- if not rep.show_channels %}{% set _ = verborgen.append('kanaalnamen') %}{% endif %}
         <a class="pill off" href="/admin/repeaters/{{ rep.id }}#zichtbaarheid"
            title="Publiek, maar niet volledig — klik voor de schakelaars en wat ze betekenen">
-          {%- if not rep.show_position and not rep.show_name %}positie en naam verborgen
-          {%- elif not rep.show_position %}positie verborgen
-          {%- else %}naam verborgen{% endif %}</a>
+          {{ verborgen | join(' en ') }} verborgen</a>
         {% endif %}
       </div>
 

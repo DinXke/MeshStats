@@ -64,6 +64,12 @@ bijwerkt.
 
 Beide worden geabonneerd op **QoS 0**.
 
+Sinds firmware 2.10.0 is er een derde blad, `<prefix>/+/alert`. Dat heeft geen
+eigen omgevingsvariabele, anders dan de twee hierboven: die hebben er een omdat ze
+bestonden vóór de voorvoegselregel en er installaties zijn met een eigen topic.
+Dit topic is nieuw en heeft die geschiedenis niet, en een variabele ervoor zou een
+instelling zijn die niemand ooit anders zet.
+
 ### Het enige topic waarop de server publiceert
 
 | Env-variabele | Standaard | Doel |
@@ -1041,6 +1047,69 @@ De gedeelde regels:
 Op de repeater is doorsturen bovendien afhankelijk van de batterij: boven
 `bat_live` procent vertrekt een ontvangen pakket onmiddellijk, daaronder wacht de
 node. Zie [`firmware.md`](firmware.md).
+
+## Payload: `alert` — een storing, op het moment dat hij gebeurt
+
+**Telemetrie is SNMP-polling; een alarm is een SNMP-trap.** Die ene zin is het
+ontwerp. Pollen is regelmatig, betaalbaar en volledig, en weet niets van wat er
+tussen twee rondes gebeurde. Een trap komt op het moment dat er iets gebeurt,
+draagt één feit, en arriveert misschien niet. Je hebt ze beide nodig: de trap zegt
+*wanneer*, de poll zegt *wat*.
+
+Een sensornode stuurt zijn alarmen als DM naar de contacten met
+`PERM_RECV_ALERTS_*`. Een repeater die in die lijst staat, krijgt zo'n DM binnen
+als een `TXT_MSG` en publiceert hem — sinds firmware 2.10.0 — meteen op
+`<prefix>/<node>/alert`:
+
+```json
+{
+  "alert": {
+    "pubkey_prefix": "48d7aade232b",
+    "name": "MeshUptime",
+    "text": "hoas onbereikbaar (hoas.scheepers.one)",
+    "ts": 1755691200,
+    "snr": 8.50
+  },
+  "via": "aabbccddeeff"
+}
+```
+
+| Veld | Type | Inhoud |
+|---|---|---|
+| `alert.pubkey_prefix` | string | De node waar het alarm **over gaat**: 6 byte van zijn publieke sleutel, hex |
+| `alert.name` | string | De naam van die node zoals de doorgever hem kent, JSON-ge-escaped |
+| `alert.text` | string | De melding zoals de node hem schreef |
+| `alert.ts` | int | Epochseconden **van de doorgevende repeater**, weggelaten als zijn klok niet staat |
+| `alert.snr` | float | Signaal van de laatste advert van die node, weggelaten als onbekend |
+| `via` | string | De doorgevende repeater — dezelfde waarde als in het topic |
+
+**Een eigen topic, en geen veld in `stats`.** Een trap hoort niet te wachten op de
+volgende ronde, en het statistiekenbericht *is* die ronde. Erin proppen zou een
+alarm precies zo traag maken als het pollen dat hij moet aanvullen — en het zou een
+bericht dat over *metingen* gaat een tweede betekenis geven.
+
+**Het onderwerp staat in de payload, de doorgever in het topic.** Langs deze weg
+zijn die twee per definitie verschillend: een sensornode publiceert helemaal niet.
+Koppelen op het topic zou elke storing aan de repeater hangen in plaats van aan de
+node die stilviel.
+
+**De tijdstempel is die van de doorgever en nooit die van de sensornode.** Zo'n
+node heeft geen batterijgevoede klok en staat na elke herstart op 15 mei 2024 —
+precies het apparaat dat deze alarmen stuurt. De server weigert alles van vóór
+2025 en zet zijn eigen ontvangsttijd, want anders staat de melding onder elke
+andere regel in de lijst, waar niemand hem ziet.
+
+**Herhalingen zijn normaal.** De node stuurt opnieuw tot hij een ACK krijgt, en
+een monitorbericht wordt niet bevestigd, dus één storing levert een handvol
+identieke DM's op. De repeater remt dat aan zijn kant af (`MON_ALERT_DEDUP_MS`) en
+de server nog een keer (`db.ALERT_DEDUP_S`, 300 s) — die eerste rem leeft in RAM en
+overleeft geen herstart, en twee repeaters die dezelfde node horen zouden er elk
+een sturen.
+
+**En de reflex:** een alarm trekt op de doorgevende repeater de volgende
+uitvraagronde naar voren, zodat de cijfers die bij de storing horen binnen seconden
+volgen in plaats van bij het volgende interval. Begrensd door drie remmen; zie
+[`firmware.md`](firmware.md).
 
 ## Retentie en QoS
 

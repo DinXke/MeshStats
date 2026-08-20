@@ -227,6 +227,34 @@ minst dubbelzinnige.
 `db.find_repeater()` is de publieke deur naar die match, voor bellers die willen
 vragen "zijn deze twee sleutels dezelfde node?" in plaats van "geef me een rij".
 
+**`sensor_host`, `sensor_seen`, `sensor_fw`** zijn de derde beheerweg: een node
+die zijn eigen HTTP-API over IP aanbiedt. Drie kolommen naast `ota_host` en niet
+erin, want `ota_host` betekent in dit project één ding — *daar staat de
+beheerpagina van onze repeaterfirmware*, met `/api/fw`, `/api/cfg` en `/api/mon`
+erachter. Wie het adres van een sensornode in dat veld zet, krijgt een site die
+een firmware-image aanbiedt aan een bord waarvan wij de bouwomgeving niet beheren,
+en die `GET /api/cfg` probeert op een pad dat er niet is.
+
+`sensor_host` wordt ingetypt, net als `ota_host`: geen bericht van een node draagt
+zijn eigen IP, en of deze server hem over IP bereikt is een eigenschap van het
+netwerk ertussen. `sensor_seen` en `sensor_fw` zijn **waarnemingen** — wanneer
+`GET /status.json` voor het laatst antwoordde, en de versie die daarin stond. Ze
+staan hier omdat `commanding._level` erop weegt en die functie geen netwerk op mag:
+het beheerniveau van een node hoort niet af te hangen van of er nu net een socket
+opengaat. Een adres zonder `sensor_seen` is dus geen bewering dat de node beheerd
+is; het is een adres waar nog nooit iets van teruggekomen is, en dat kan net zo
+goed een tikfout zijn.
+
+**`host_admin`** is de toegestane-lijst voor uitgaande verbindingen naar een node,
+en hij sluit twee gaten tegelijk — zie `firmware.check_target`. Kort:
+`node.beheeradres` is een *delegeerbaar* recht, en de server stuurt
+`MM_FW_NODE_USER`/`MM_FW_NODE_PASS` naar het adres dat in die velden staat. Die
+inloggegevens openen **elke** node. Zo'n veld invullen mag daarom alleen een
+*serverbeheerder*, wissen mag ieder met het recht (een adres weghalen sluit een weg
+en kan er nooit een openen), en de toets staat nog een keer op de plek waar de
+verbinding werkelijk gemaakt wordt — want een controle die alleen in het formulier
+zit, is met een aangepast verzoek te omzeilen.
+
 **`record_source()` en `record_firmware()`** zijn met opzet aparte schrijfacties.
 `record_firmware()` overschrijft alleen wat het bericht werkelijk noemde: Home
 Assistant leest de MeshCore-versie van een repeater van het mesh af en weet niet
@@ -372,10 +400,25 @@ firmware-uitrol.
 > dienst vallen en schuift de rest op, dan wijst elke naam in deze tabel stil naar de
 > verkeerde dienst — geen foutmelding, alleen verkeerde cijfers op een dashboard. Een
 > gat in de nummering is dus *geen* rommel die opgeruimd hoort te worden; het is het
-> bewijs dat er niets verschoven is. `db.set_channel_name()` verwijdert de rij bij een
-> lege naam in plaats van een leeg veld te bewaren, zodat een naamloos kanaal als
-> "kanaal N" getoond wordt en niet in de beheerlijst blijft hangen als iets wat er
-> ooit was.
+> bewijs dat er niets verschoven is.
+
+**`source` is `user` of `auto`, en die kolom bestaat om één regel te kunnen
+handhaven: een naam die een mens getypt heeft, wint altijd.** Sinds een node met
+een eigen API over IP deze namen zelf aanlevert (zie
+[`node-management.md`](node-management.md)) raakt een schrijfactie met
+`source='auto'` een rij met `user` niet aan. Die naam is met een reden getypt — de
+node noemt een dienst `hoas` en de beheerder heeft er "Home Assistant (dak)" van
+gemaakt — en een ronde die dat elke vijf minuten terugdraait, is een ronde die
+niemand aan laat staan. Andersom geldt het niet: een mens overschrijft een
+automatische naam zonder meer, en de rij wordt dan `user`, ook als hij precies
+hetzelfde intypt. Wie een overgenomen naam bevestigt, heeft er zijn eigen naam van
+gemaakt.
+
+Wissen is ook een menselijke uitspraak. Een leeg veld laat een rij achter met een
+lege naam en `source='user'`, en niet niets: voor de weergave is dat hetzelfde
+(`metrics.channel_label` maakt van een lege naam "kanaal N", precies zoals bij een
+ontbrekende rij), en voor de automatische vulling is het het verschil tussen "nog
+niets" en "nee".
 
 ### `repeater_cli`
 
@@ -414,6 +457,53 @@ overschrijft een waarde die een eerdere ronde wél kreeg — en het alternatief 
 afgewezen om een reden: een repeater waarvan de monitor alleen-lezen inlogt,
 beantwoordt helemaal geen CLI-commando, en met waarden uit maart nog op het
 scherm en alleen een tijdstempel dat opschoof, zou niemand dat ooit vinden.
+
+### `alerts`
+
+Wat een sensornode **gemeld** heeft, tegenover wat een poll **gemeten** heeft.
+
+| Kolom | Type | Inhoud |
+|---|---|---|
+| `id` | INTEGER | Primaire sleutel |
+| `repeater_id` | INTEGER | De node waar het alarm **over gaat**, of NULL als we die niet kennen |
+| `channel` | INTEGER | Kanaal, als de tekst er een noemt; anders NULL |
+| `text` | TEXT | De melding zoals de node hem schreef, hoogstens 500 tekens |
+| `severity` | TEXT | `laag`, `hoog`, of NULL als het niet af te leiden is |
+| `ts` | TEXT | ISO-8601 UTC |
+| `source` | TEXT | `mesh` (doorgegeven door een repeater), `ip`, of `test` |
+| `acked` | INTEGER | 0 tot iemand zegt dat hij het gezien heeft |
+
+**Telemetrie is SNMP-polling; een alarm is een SNMP-trap.** Die vergelijking is de
+hele reden dat dit een eigen tabel is en geen meting in `samples`. Pollen is
+regelmatig, betaalbaar en volledig, en weet niets van wat er tussen twee rondes
+gebeurde. Een trap komt op het moment dat er iets gebeurt, draagt één feit, en
+arriveert misschien niet. Je hebt ze beide nodig: de trap zegt *wanneer*, de poll
+zegt *wat*.
+
+Een alarm heeft ook eigenschappen die een meting niet heeft — een tekst die een
+mens leest, een ernst, en de vraag of iemand ernaar gekeken heeft — en een meting
+heeft eigenschappen die een alarm niet heeft: een waarde die je kunt tekenen en een
+interval waarop hij hoort te komen. Ze in één tabel persen gooit van beide de helft
+weg.
+
+`repeater_id` is de node waar het alarm **over gaat** en nooit de doorgever. Langs
+deze weg zijn die twee per definitie verschillend: een sensornode stuurt zijn alarm
+als DM naar een repeater, en die zet het op de broker. Ze door elkaar halen hangt
+een storing aan het verkeerde apparaat. Een NULL is ook met opzet — een alarm van
+een node die hier geen rij heeft is nog steeds een alarm, en het weggooien omdat we
+de afzender niet kennen verliest precies de melding die je het hardst nodig hebt.
+
+`db.ALERT_DEDUP_S` (300 s) vouwt herhalingen van dezelfde tekst van dezelfde node
+samen. Dat is geen netheid: een sensornode herhaalt zijn alarm tot hij een ACK
+krijgt, en de repeater die het doorgeeft bevestigt een monitorbericht niet, dus één
+storing levert een handvol identieke DM's op. De repeater remt dat aan zijn kant
+ook af, maar die rem leeft in RAM en overleeft geen herstart — en twee repeaters
+die dezelfde node horen zouden er elk een sturen.
+
+Wat er met opzet **niet** in staat: een regel die een alarm laat verdwijnen.
+Bevestigen is wat een mens doet; verwijderen doet de bewaartermijn, samen met de
+rest. Een alarm dat na een uur vanzelf verdwijnt, is een alarm dat je 's nachts
+mist.
 
 ### `repeater_filter`
 

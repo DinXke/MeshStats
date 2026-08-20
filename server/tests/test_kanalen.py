@@ -336,12 +336,25 @@ def test_naam_bewaren_en_teruglezen(db):
     assert (row["name"], row["unit"]) == ("google", "ms")
 
 
-def test_lege_naam_wist_de_rij(db):
-    """Anders blijft een gewiste naam in de beheerlijst staan als iets wat er was."""
+def test_lege_naam_van_een_mens_blijft_een_uitspraak(db):
+    """Leegmaken is iets anders dan nooit ingevuld hebben.
+
+    Vroeger verdween de rij, en dat was juist zolang er niets anders was dat hem
+    kon vullen. Sinds de eigen API van een sensornode de namen aanlevert (zie
+    ``sensornode.py``) is een verdwenen rij een uitnodiging: de eerstvolgende
+    ronde vult hem opnieuw, en dan is de wissing van de beheerder ongedaan
+    gemaakt zonder dat er ergens iets over te lezen valt.
+
+    Dus blijft er een rij staan met een LEGE naam en herkomst 'user'. Voor de
+    weergave is dat hetzelfde -- ``channel_label`` maakt van een lege naam
+    "kanaal N", precies zoals bij een ontbrekende rij -- en voor de automaat is
+    het het verschil tussen "nog niets" en "nee"."""
     rep = _node(db)
     db.set_channel_name(rep["id"], 6, "google", "ms")
     db.set_channel_name(rep["id"], 6, "", "")
-    assert 6 not in db.channel_names_for(rep["id"])
+    rij = db.channel_names_for(rep["id"])[6]
+    assert rij["name"] == "" and rij["source"] == db.SOURCE_USER
+    assert metrics.channel_label(6, "switch", rij["name"]) == "kanaal 6 — toestand"
 
 
 def test_namen_van_twee_nodes_lopen_niet_door_elkaar(db):
@@ -556,3 +569,154 @@ class _AdminRequest:
 
     async def form(self):
         return self._form
+
+
+# --- de naam gaat overal mee -------------------------------------------------
+#
+# Wat hieronder getest wordt is niet dat de koppeling BESTAAT -- dat doen de tests
+# hierboven -- maar dat ze OVERAL geldt. Dat is een andere soort fout: de tabel
+# werkte, de nodepagina toonde de namen, en op de publieke tegels, in de API en in
+# de legenda van een grafiek stond nog "Ch1 spanning" of "ch6 generic". Eén plek
+# die het niet doet is genoeg om een lezer met een ruwe metricnaam achter te laten,
+# en dat is een implementatiedetail dat naar buiten lekt.
+
+def test_de_catalogus_kent_de_naam_als_je_hem_meegeeft():
+    """``metric_info`` is de ene plek die bepaalt hoe een kanaal heet.
+
+    Vier plaatsen deden dit eerder elk voor zich (de tegels, de API, de
+    grafieken, en de catalogus deed het niet). Vier plaatsen die hetzelfde moeten
+    zeggen, is drie te veel.
+    """
+    namen = {6: {"name": "google", "unit": "ms"}}
+    sectie, label, eenheid, sort = metrics.metric_info("ch6_generic", namen)
+    assert (sectie, label, eenheid) == ("channels", "google — meetwaarde", "ms")
+    # Zonder naamtabel blijft het antwoord bruikbaar, en dat is de reden dat de
+    # parameter optioneel is.
+    assert metrics.metric_info("ch6_generic")[1] == "kanaal 6 — meetwaarde"
+
+
+def test_een_naam_wint_van_het_catalogus_label_maar_niet_van_de_indeling():
+    """Kanaal 1 en 2 staan in de catalogus, bij de batterij.
+
+    Een gezette naam is specifieker dan onze catalogus -- de beheerder weet welke
+    sensor op welk kanaal zit -- dus die wint van het LABEL. De SECTIE en de
+    sorteervolgorde blijven van de catalogus: anders zou één naam de hele pagina
+    van een node herschikken.
+    """
+    zonder = metrics.metric_info("ch1_voltage")
+    met = metrics.metric_info("ch1_voltage", {1: {"name": "paneel", "unit": ""}})
+    assert zonder[1] == "Ch1 spanning"
+    assert met[1] == "paneel — spanning"
+    assert met[0] == zonder[0] == "battery"
+    assert met[3] == zonder[3]
+    # De eenheid van het LPP-type blijft: een spanning is volt, wat er ook in het
+    # eenheidsveld staat.
+    assert met[2] == "V"
+
+
+def test_de_naam_van_kanaal_1_staat_ook_op_de_tegel(db, monkeypatch):
+    """Kanaal 1 komt langs de catalogus-lus en niet langs de kanalen-lus.
+
+    Dat is precies het kanaal dat een sensornode als eerste vult ("spanning"), en
+    tot nu toe bleef die tegel "Ch1 spanning" heten hoe je het kanaal ook noemde.
+    """
+    from app import routes_public
+
+    rep = _node(db, {"ch1_voltage": 4.11, "ch5_switch": 1})
+    db.set_channel_name(rep["id"], 1, "paneel", "")
+    monkeypatch.setattr(routes_public.templates, "TemplateResponse",
+                        lambda request, name, ctx: ctx)
+    ctx = routes_public.repeater_page(_Request(), rep["slug"])
+    tegels = {t["metric"]: t for b in ctx["blocks"] if b["type"] == "section"
+              for t in b["section"]["tiles"]}
+    assert tegels["ch1_voltage"]["label"] == "paneel — spanning"
+
+
+def test_de_vaste_grafieken_dragen_de_naam_in_hun_legenda(db, monkeypatch):
+    """'Spanning (24 u)' tekent ch1_voltage, en dat kanaal kan een naam hebben."""
+    from app import routes_public
+
+    rep = _node(db, {"ch1_voltage": 4.11})
+    db.set_channel_name(rep["id"], 1, "paneel", "")
+    monkeypatch.setattr(routes_public.templates, "TemplateResponse",
+                        lambda request, name, ctx: ctx)
+    ctx = routes_public.repeater_page(_Request(), rep["slug"])
+    charts = {c["key"]: c for b in ctx["blocks"] if b["type"] == "charts"
+              for c in b["charts"]}
+    assert "paneel — spanning" in charts["voltage"]["labels"]
+
+
+def test_de_api_geeft_de_naam_en_de_eenheid_bij_de_meting(db):
+    from app import routes_api
+
+    rep = _node(db)
+    db.set_channel_name(rep["id"], 6, "google", "ms")
+    antwoord = routes_api.repeater_detail(rep["slug"])
+    meting = antwoord["metrics"]["ch6_generic"]
+    assert meting["label"] == "google — meetwaarde"
+    assert meting["unit"] == "ms"
+    assert (meting["channel"], meting["kind"]) == (6, "generic")
+
+
+def test_de_tijdreeks_kan_zijn_eigen_as_benoemen(db):
+    """Wie een reeks tekent hoort de as te kunnen benoemen zonder een tweede
+    verzoek. ``ch6_generic`` met 412 erbij is anders een getal zonder betekenis."""
+    from app import routes_api
+
+    rep = _node(db)
+    db.set_channel_name(rep["id"], 6, "google", "ms")
+    antwoord = routes_api.repeater_history(rep["slug"], metric="ch6_generic", hours=24)
+    assert antwoord["label"] == "google — meetwaarde"
+    assert antwoord["unit"] == "ms"
+
+
+# --- publiek of niet ---------------------------------------------------------
+
+def test_kanaalnamen_zijn_per_node_publiek_te_maken_of_niet(db):
+    """Een derde zichtbaarheidsvlag, naast naam en positie.
+
+    En hij is nodig om een reden die de andere twee niet hebben: een kanaalnaam is
+    nooit uitgezonden. De naam en de positie van een node reizen in elke advert
+    mee, dus die verbergen is een keuze over iets dat al bestaat. Een kanaalnaam
+    komt uit de eigen API van de node of uit een toetsenbord, en hij kan een
+    intern adres bevatten dat over de radio nooit langskwam.
+    """
+    rep = _node(db)
+    db.set_channel_name(rep["id"], 6, "hoas (hoas.scheepers.one)", "ms")
+    assert db.channel_names_for(rep["id"], public=True)[6]["name"].startswith("hoas")
+    db.execute("UPDATE repeaters SET show_channels=0 WHERE id=?", (rep["id"],))
+    assert db.channel_names_for(rep["id"], public=True) == {}
+    # Voor de beheerder blijft hij staan: die naam is voor hem.
+    assert db.channel_names_for(rep["id"])[6]["name"].startswith("hoas")
+
+
+def test_een_verborgen_kanaal_valt_terug_op_kanaal_n_en_niet_op_de_metricnaam(db, monkeypatch):
+    """De ruwe metricnaam verklapt het nummer én de vorm van de meting alsnog.
+
+    En het kanaal verdwijnt niet: een naamloze meting is nog steeds een meting, en
+    juist het teken dat er iets binnenkomt dat nog benoemd moet worden.
+    """
+    from app import routes_public
+
+    rep = _node(db)
+    db.set_channel_name(rep["id"], 6, "hoas (hoas.scheepers.one)", "ms")
+    db.execute("UPDATE repeaters SET show_channels=0 WHERE id=?", (rep["id"],))
+    monkeypatch.setattr(routes_public.templates, "TemplateResponse",
+                        lambda request, name, ctx: ctx)
+    ctx = routes_public.repeater_page(_Request(), rep["slug"])
+    tegels = {t["metric"]: t for b in ctx["blocks"] if b["type"] == "section"
+              for t in b["section"]["tiles"]}
+    assert tegels["ch6_generic"]["label"] == "kanaal 6 — meetwaarde"
+    assert "hoas" not in str(ctx["blocks"])
+
+
+def test_een_bestaande_node_blijft_zijn_kanaalnamen_tonen(db):
+    """De standaard van de nieuwe kolom, en waarom hij 1 is.
+
+    ALTER TABLE ADD COLUMN vult bestaande rijen met de standaard, en de vorige
+    versie toonde deze namen al publiek. Een privacykolom die bij het toevoegen
+    stilzwijgend iets van een bestaande pagina haalt, is een slechtere fout dan de
+    kolom die ontbrak.
+    """
+    rep = _node(db)
+    assert rep["show_channels"] == 1

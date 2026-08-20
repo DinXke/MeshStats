@@ -26,6 +26,15 @@ CATALOG = {
     # sensor channel. A node can report both, and then they are two different
     # measurements in two different sections -- see the hint below.
     "mcu_temperature":        ("status", "Chiptemperatuur", "°C", 8),
+    # De WiFi-verbinding, en niet de LoRa-radio. Een eigen naam en nadrukkelijk
+    # niet ``last_rssi``: dat is een ander signaal van een andere radio, en twee
+    # grootheden onder één naam is precies hoe een grafiek gaat liegen.
+    #
+    # Deze meting bestaat alleen voor een node die de server over IP uitleest, en
+    # ze staat er om één reden: ze meet de gezondheid van precies dát pad. Zakt ze
+    # weg, dan verdwijnt de beheerweg -- en dat is geen theoretisch geval maar een
+    # gemeten geval. Zie sensornode.py.
+    "wifi_rssi":              ("status", "WiFi-signaal", "dBm", 9),
     # Batterij & solar
     "battery_percentage":     ("battery", "Batterij", "%", 0),
     "bat":                    ("battery", "Batterijspanning", "V", 1),
@@ -103,7 +112,7 @@ SECTIONS = [
 TILE_METRICS = {
     "status": ["online", "uptime", "neighbor_count", "tx_queue_len",
                "noise_floor", "last_rssi", "last_snr", "out_path_len",
-               "mcu_temperature"],
+               "mcu_temperature", "wifi_rssi"],
     "battery": ["battery_percentage", "bat", "ch1_voltage", "ch1_temperature"],
     "messages": ["nb_recv", "nb_sent", "recv_flood", "recv_direct",
                  "sent_flood", "sent_direct", "flood_dups", "recv_errors"],
@@ -172,6 +181,10 @@ HINTS = {
     "mcu_temperature": ("metric_hint.mcu_temperature",
                         "Temperatuur van de chip zelf, niet van de buitenlucht. "
                         "Een ESP32-S3 met WiFi aan draait 20 à 30 °C boven de omgeving."),
+    "wifi_rssi": ("metric_hint.wifi_rssi",
+                  "Het signaal van de WiFi-verbinding, niet van de LoRa-radio. "
+                  "Deze node wordt over IP beheerd; zakt dit weg, dan verdwijnt "
+                  "die beheerweg en blijft alleen het mesh over."),
 }
 
 
@@ -263,24 +276,59 @@ def channels_seen(names) -> list[dict]:
     ]
 
 
-def metric_info(name: str):
-    """(section, label, unit, sort) — met fallback voor onbekende metrics."""
-    known = CATALOG.get(name)
-    if known is not None:
-        return known
-    # Kanaalmetingen krijgen hun eigen sectie in plaats van 'Overig'. Ch1 en ch2
-    # spanning/temperatuur staan hierboven in CATALOG en blijven dus waar ze
-    # altijd stonden, bij de batterij -- op een MeshCore-repeater is kanaal 1 het
-    # eigen bord, en die tegels verhuizen zou de pagina van elke bestaande node
-    # veranderen voor een verbetering die alleen nieuwe kanalen nodig hebben.
+def metric_info(name: str, names=None):
+    """(section, label, unit, sort) — met fallback voor onbekende metrics.
+
+    ``names`` is de kanaalnaamtabel van ÉÉN node (``db.channel_names_for``), en
+    hij is optioneel omdat het antwoord zonder hem nog steeds bruikbaar is: dan
+    heet kanaal 6 "kanaal 6". Meegeven hoort de regel te zijn en niet de
+    uitzondering -- een tegel die ``ch6_generic`` heet is voor niemand leesbaar,
+    en dat is een implementatiedetail dat naar buiten lekt.
+
+    **Eén functie en geen tweede per pagina.** Deze koppeling gold tot nu toe
+    alleen op de plekken die er zelf aan dachten: de publieke tegels en de
+    JSON-API hadden elk hun eigen paar regels, de grafieken hun eigen, en de
+    catalogus wist er niets van. Vier plaatsen die hetzelfde moeten zeggen, is
+    drie te veel -- en de vierde die het niet doet is precies de plek waar een
+    lezer straks ``ch6_generic`` ziet staan.
+
+    De NAAM wint van het label, de INDELING blijft. ``ch1_voltage`` staat in
+    CATALOG onder de batterij en blijft daar staan; wat een naam verandert is hoe
+    het kanaal HEET, niet waar het op de pagina hoort. Anders zou een node die
+    één kanaal een naam geeft zijn hele pagina zien herschikken.
+    """
     ch = channel_metric(name)
+    known = CATALOG.get(name)
+
     if ch is not None:
         channel, kind = ch
+        gezet = (names or {}).get(channel)
+        # De naam en de eenheid zoals ze gezet zijn, of niets. Een sqlite3.Row
+        # laat zich met [] uitlezen en een dict ook, dus beide kunnen hier binnen
+        # zonder dat de aanroeper hem eerst hoeft om te bouwen.
+        naam = (gezet["name"] if gezet is not None else "") or ""
+        eenheid = (gezet["unit"] if gezet is not None else "") or ""
+        if known is not None:
+            # Kanaal 1 en 2 staan in de catalogus, bij de batterij: op een
+            # MeshCore-repeater is kanaal 1 het eigen bord. Een gezette naam
+            # overschrijft dat label wél -- die is specifieker dan onze catalogus,
+            # want de beheerder weet welk kanaal welke sensor is -- maar de sectie
+            # en de sorteervolgorde blijven van de catalogus.
+            sectie, label, eenheid_catalogus, sort = known
+            if naam:
+                return (sectie, channel_label(channel, kind, naam),
+                        channel_unit(kind, eenheid) or eenheid_catalogus, sort)
+            return known
+        # Kanaalmetingen krijgen hun eigen sectie in plaats van 'Overig'.
         # Op kanaal, dan op soort: de metingen van één dienst komen zo bij
         # elkaar te staan in plaats van alle toestanden bij elkaar en alle
         # pingtijden bij elkaar.
         sort = channel * 10 + CHANNEL_KINDS[kind][2]
-        return ("channels", channel_label(channel, kind), CHANNEL_KINDS[kind][1], sort)
+        return ("channels", channel_label(channel, kind, naam),
+                channel_unit(kind, eenheid), sort)
+
+    if known is not None:
+        return known
     return ("other", name.replace("_", " "), None, 99)
 
 

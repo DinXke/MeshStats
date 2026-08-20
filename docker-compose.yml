@@ -91,6 +91,12 @@ services:
       MM_CLOCKSYNC_HOURS: "${MM_CLOCKSYNC_HOURS:-${MCS_CLOCKSYNC_HOURS:-24}}"
       MM_CLOCKSYNC_MAX_ERROR_S: "${MM_CLOCKSYNC_MAX_ERROR_S:-${MCS_CLOCKSYNC_MAX_ERROR_S:-10}}"
       MM_CLOCKSYNC_MAX_JUMP_S: "${MM_CLOCKSYNC_MAX_JUMP_S:-${MCS_CLOCKSYNC_MAX_JUMP_S:-30}}"
+      # Sensornodes met een eigen API over IP: hoe vaak de server ze uitleest.
+      # 300 s is hetzelfde tempo als de bestaande polling en als de hartslag
+      # hierboven -- zie .env.example en server/app/sensornode.py.
+      MM_SENSOR_POLL_ENABLED: "${MM_SENSOR_POLL_ENABLED:-${MCS_SENSOR_POLL_ENABLED:-1}}"
+      MM_SENSOR_POLL_S: "${MM_SENSOR_POLL_S:-${MCS_SENSOR_POLL_S:-300}}"
+      MM_SENSOR_TIMEOUT_S: "${MM_SENSOR_TIMEOUT_S:-${MCS_SENSOR_TIMEOUT_S:-8}}"
       # Tijdreeksen: leeg laten om alles in SQLite te houden
       MM_TSDB_URL: "${MM_TSDB_URL-${MCS_TSDB_URL-http://victoria:8428}}"
       # Webpush voor de /meshmoni-subsite. Bewust leeg als standaard: leeg zet

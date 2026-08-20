@@ -107,6 +107,19 @@ def sender() -> dict:
 
 
 # --- wat is er te kiezen -------------------------------------------------------
+# Het adverttype zoals MeshCore het nummert, en hoe zwaar het weegt in de
+# ordening. Twee tabellen en geen één, want het zijn twee verschillende vragen:
+# hoe heet deze rol, en hoe hoog staat ze. Ze antwoorden allebei op iets dat GEEN
+# poort meer is -- zie de toelichting bij ``heard`` en de changelog van firmware
+# 2.10.0.
+#
+# 'infrastructuur bovenaan' is een keuze over waar een monitorlijst meestal voor
+# is en niet over wat er kan. Een telefoon in de lijst is niet verkeerd; hij is
+# alleen zelden wat je zocht, en dat is een argument over volgorde.
+ROLE_NAMES = {1: "chat", 2: "repeater", 3: "roomserver", 4: "sensor"}
+ROLE_RANK = {"repeater": 0, "roomserver": 1, "sensor": 2, "chat": 3, "": 4}
+
+
 
 def heard(host: str) -> dict:
     """De lijst repeaters die de afzender gehoord heeft, om uit te kiezen.
@@ -138,9 +151,31 @@ def heard(host: str) -> dict:
             "snr": regel.get("snr"),
             "age": regel.get("age"),
             "cached": bool(regel.get("cached")),
+            # De ROL zoals de node hem over zichzelf beweert, en of hij ooit
+            # werkelijk telemetrie geantwoord heeft. Twee verschillende dingen, en
+            # het verschil is de hele reden dat deze lijst er nu anders uitziet:
+            # tot firmware 2.10.0 was de rol een POORT (alleen repeaters, later
+            # ook sensors) en dat is de verkeerde as. Telemetrie is een vermogen,
+            # geen rol -- een node die als chat adverteert antwoordt er net zo
+            # goed op. Sinds 2.10.0 staat alles in de lijst en is de rol een
+            # label plus een sorteersleutel.
+            "role": ROLE_NAMES.get(regel.get("t"), ""),
+            "telemetry": bool(regel.get("tl")),
+            # Waarom deze regel er staat: nu gehoord, of uit een bewaarde advert.
+            # Een lijst waarin alles staat zonder onderscheid is net zo onbruikbaar
+            # als een lijst die te veel weglaat.
+            "why": str(regel.get("why") or ("stored" if regel.get("cached") else "heard")),
             "already": sleutel.lower() in bekend
                        or sleutel.lower()[:12] in {b[:12] for b in bekend},
         })
+    # Dezelfde ordening als de firmware aanhoudt, en met opzet nog een keer hier:
+    # de twee helften (nu gehoord / uit bewaarde adverts) komen apart binnen, en
+    # de lezer moet er één lijst van kunnen lezen. Wat ooit antwoordde bovenaan,
+    # want dat is de meting; daarna de rol, want dat is een bewering; daarna de
+    # naam, zodat de volgorde tussen twee verversingen niet verspringt.
+    kandidaten.sort(key=lambda k: (0 if k["telemetry"] else 1,
+                                   ROLE_RANK.get(k["role"], 9),
+                                   (k["name"] or k["key"]).lower()))
     return {"ok": True, "error": "", "entries": kandidaten,
             "monitored": lijst["entries"]}
 

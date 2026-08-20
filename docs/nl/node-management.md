@@ -274,6 +274,7 @@ nodepagina zegt welke het geworden is en waarom:
 
 | # | Vervoermiddel | Beschikbaar als | Tegenpartij | Risicoklassen |
 |---|---|---|---|---|
+| 0 | De **eigen API** van de node (`POST /cli`) | er een `sensor_host` staat die een serverbeheerder heeft vastgelegd, `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` gezet zijn, en `/status.json` minstens één keer geantwoord heeft | de weblogin van die node | 1, 2 en 3 |
 | 1 | HTTP naar de node (`POST /api/cfg`) | hij een IP-pad heeft en `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` gezet zijn | de weblogin van die node | 1, 2 en 3 |
 | 2 | MQTT-`cmd`-topic (`set <param> <waarde>`) | de node zelf op MQTT publiceert, nodefirmware 2.8.0 draait, en de broker verbonden is | wie de broker heeft binnengelaten | 1 en 2 |
 | 3 | Mesh-CLI via zijn monitor (`POST /api/moncfg`) | de node doorgestuurd wordt en zijn monitor een IP-pad, een weblogin en nodefirmware 2.4.0 heeft | de login van de monitor, daarna zijn eigen rechten op de doelnode | 1, 2 en 3 |
@@ -281,11 +282,119 @@ nodepagina zegt welke het geworden is en waarom:
 De volgorde is een rangschikking: sterkste tegenpartij en snelste, volledigste
 teruglezing eerst; duurste laatst. Een doorgestuurde node heeft alleen regel 3 —
 hij publiceert niet, dus hij heeft geen eigen `cmd`-topic. Een node die voor
-zichzelf publiceert heeft regel 1 en 2.
+zichzelf publiceert heeft regel 1 en 2. Een node met een eigen API heeft regel 0
+en geen van de andere: hij draait onze firmware niet, publiceert niet op de broker,
+en zolang de mesh-weg naar hem niet werkt stuurt geen monitor iets voor hem door.
+Regel 0 staat daarom **vóór** regel 1 en niet uit voorkeur — hem achteraan zetten
+zou de pagina eerst laten opsommen wat er allemaal niet is.
 
-Is geen van de drie beschikbaar, dan blijft dát het antwoord — met de reden per
-vervoermiddel, zodat "niet mogelijk" iets is waar je mee verder kunt in plaats
-van een doodlopende weg.
+Is geen van de wegen beschikbaar, dan blijft dát het antwoord — met de reden per
+vervoermiddel, zodat "niet mogelijk" iets is waar je mee verder kunt in plaats van
+een doodlopende weg.
+
+### Een node die zichzelf over IP laat beheren
+
+De derde soort node, en hij is geen variant op de andere twee. Een
+**MeshUptime-sensornode** biedt `/status.json`, `/cfg.json`, `/acl.json` en
+`POST /cli` aan over HTTP, achter dezelfde basislogin die de firmwareweg al
+gebruikt. Dat maakt hem *full managed*: de niveaus in `commanding.py` zijn een
+waarneming, en deze weg scoort op elk punt dat het niveau weegt minstens zo hoog
+als de MQTT-weg — een geauthenticeerde tegenpartij, synchroon, teruglezing in
+hetzelfde verzoek, tienden van seconden, en geen derde partij die ervoor betaalt.
+
+Wat de server ermee doet:
+
+- **uitlezen**: `/status.json` elke `MM_SENSOR_POLL_S` (300 s, hetzelfde tempo als
+  de bestaande polling en als `MM_HEARTBEAT_MIN`), en de kanalen bewaren onder de
+  metricnamen die de repeaterfirmware al publiceert — `ch<N>_switch`,
+  `ch<N>_generic`, `ch<N>_voltage`. Één naamruimte en niet twee: dezelfde node kan
+  ook over LoRa binnenkomen, en twee namen voor één dienst zouden twee grafieken
+  van hetzelfde tekenen met een knik op het moment dat er van weg gewisseld werd.
+  De regel die daarbij het stilst misgaat reist mee: de responstijd gaat alleen
+  mee als het kanaal *op* staat, precies zoals `querySensors()` doet, want een
+  tijd bij een dode dienst is geen meting maar een oude waarde — en een grafiek
+  die tijdens een storing gewoon doorloopt, wordt gelezen op precies het moment
+  dat je de waarheid wilt;
+- **de kanaalnamen vullen** uit wat de node meldt (`mon[].n` en `mon[].h`), met de
+  eenheid `ms` waar een kanaal een responstijd kan dragen. Die eenheid is een
+  uitspraak die alleen deze weg kan doen: `LPP_GENERIC_SENSOR` belooft vier byte
+  en niets over betekenis. Een naam die een mens getypt heeft, wint altijd — zie
+  [`database.md`](database.md);
+- **de buren lezen** uit `/acl.json`, zodat de linkkaart en de burenlijst werken
+  zonder de mesh-weg;
+- **beheren**: advert (flood of zerohop), de klok, de regio, een herstart, en de
+  instellingen uit `/cfg.json`. Instellingen lopen door `nodeconfig.write()` zoals
+  elk ander vervoermiddel, met alle drempels onverkort.
+
+**En hij zegt ronduit wat hij is.** Dit is WiFi en niet het mesh. Valt die
+verbinding weg, dan valt deze hele weg weg — gemeten en niet theoretisch: in de
+voedingsmeting van 19 augustus 2026 kreeg de node op batterij eerst met
+tussenpozen geen antwoord (vier van de eerste vijftien pollingen) en daarna
+veertien pollingen op rij niets, terwijl hij over LoRa gewoon bestond. Het mesh is
+de weg die voor dat geval bedoeld is en die werkt nog niet: de ronde begint met
+een login die geen antwoord krijgt, en de ronde is op een repeater afgestemd
+terwijl een sensornode het statusverzoek niet implementeert en op een burenverzoek
+letterlijk "not supported" antwoordt. De nodepagina zegt dat, in plaats van het te
+verzwijgen.
+
+**Eén parametertabel, gespiegeld.** Een sensornode publiceert geen parametertabel
+— `/cfg.json` geeft *waarden* en geen keuring — en hij draait dezelfde MeshCore
+CommonCLI als onze firmware. Wat er aangeboden wordt is daarom de `CFG_PARAMS` van
+die firmware, gespiegeld in `sensornode.SPEC`, met een test die de C-broncode
+uitleest en er regel voor regel tegenaan houdt. Twee plaatsen die het eens moeten
+zijn is er één te veel; een test die het merkt zodra ze het niet meer zijn, is het
+beste dat hier te krijgen is. Sleutels zonder terugleesbaar spiegelbeeld in
+`/cfg.json` worden met opzet niet aangeboden (`dutycycle`, `guest.password`), met
+de reden op de pagina erbij: zonder teruglezing zou de site "gelukt" moeten melden
+op het woord van de node, en MeshCore antwoordt "OK" op dingen die het niet
+werkelijk heeft overgenomen.
+
+### Welke adressen de server mag benaderen
+
+`ota_host` en `sensor_host` bepalen waarheen deze server een verbinding opent, en
+hij stuurt `MM_FW_NODE_USER`/`MM_FW_NODE_PASS` mee in de `Authorization`-header.
+Die inloggegevens openen **elke** node. Twee problemen in één veld, en ze zijn
+beide ernstig: een doel dat de gebruiker koos (SSRF) en een geheim dat daarheen
+gaat.
+
+`node.beheeradres` is een *delegeerbaar* recht — een beheerder kan het per node
+toekennen. Wie het had, kon tot deze reparatie het adres van zijn eigen server
+invullen en de sleutel van de vloot ontvangen.
+
+De gebruikelijke reparatie is "weiger private adressen": 127/8, 10/8, 172.16/12,
+192.168/16, 169.254/16, ::1, fc00::/7. Dat werkt hier niet, want de nodes van dit
+project *staan* op 192.168.x — dat ís wat een beheeradres is. Zo'n lijst zou de
+functie afschaffen in plaats van beveiligen.
+
+**Het onderscheid zit dus niet in het adres maar in wie het vastlegde.** Een
+LAN-adres opgeven is inherent een beheerdersdaad: de server moet het kunnen
+bereiken, en wie weet welk adres dat is, kent het netwerk waar de server op staat.
+Dus:
+
+- een adres **invullen** mag alleen een *serverbeheerder*. **Wissen** vraagt alleen
+  `node.beheeradres`: een adres weghalen sluit een weg en kan er nooit een openen;
+- bij het **verbinden** toetst `firmware.check_target` of dit adres werkelijk zo
+  vastgelegd is (`repeaters.host_admin`). Dat is de toegestane-lijst, en de
+  databank is de enige plek waar ze kan staan — ze moet ook kloppen voor een rij
+  die er al stond, en na een herstart;
+- de weigering geldt óók voor een **publiek** adres. Het lek is niet dat de server
+  een LAN aanraakt; het lek is het wachtwoord in de header. Naar de server van een
+  aanvaller op een publiek adres is dat precies zo erg, en alleen private bereiken
+  toetsen zou het gat openlaten aan de kant waar het makkelijkst te misbruiken is;
+- er wordt geoordeeld over het **opgeloste** adres en niet over de tekst, want een
+  naam die naar 127.0.0.1 wijst is geen publiek adres. Dat beslist niet meer over
+  toelating — de toegestane-lijst doet dat — maar het bepaalt wat de melding zegt,
+  en het weigert de bereiken die nooit een node kunnen zijn (0.0.0.0, multicast).
+
+De toets staat op de plek waar de verbinding werkelijk gemaakt wordt en niet
+alleen in het formulier, om dezelfde reden als bij `nodeconfig.NO_REMOTE`: een
+controle die in het formulier zit, is met een aangepast verzoek te omzeilen. Ze
+staat *naast* de eerste en niet in de plaats ervan — twee sloten voor één regel,
+waarvan de tweede degene is die telt.
+
+> **Geef `node.beheeradres` aan niemand behalve serverbeheerders.** De code dwingt
+> de grens nu af, maar het recht gaat nog steeds over dat veld, en dat veld is
+> waar de vlootinloggegevens op gericht staan.
 
 ### Waarom het `cmd`-topic heropend is
 

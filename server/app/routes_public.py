@@ -81,10 +81,15 @@ def repeater_page(request: Request, slug: str):
         "rx_airtime_utilization": db.computed_utilization(r, "rx_airtime"),
     }
 
-    # De namen die een beheerder bij de kanalen van deze node gezet heeft. Het
-    # telemetrieformaat draagt er geen, dus zonder deze tabel heet elk kanaal
-    # alleen naar zijn nummer. Zie db.channel_names_for.
-    ch_names = db.channel_names_for(r["id"])
+    # De namen bij de kanalen van deze node. Het telemetrieformaat draagt er geen,
+    # dus zonder deze tabel heet elk kanaal alleen naar zijn nummer. Zie
+    # db.channel_names_for.
+    #
+    # ``public=True``: deze pagina is voor iedereen, en een kanaalnaam is niet
+    # zonder meer publiek. Anders dan de naam van een node is hij nooit over de
+    # radio gegaan, en hij kan een intern adres bevatten. De vlag staat per node
+    # op de beheerpagina; staat hij uit, dan heet elk kanaal hier weer "kanaal N".
+    ch_names = db.channel_names_for(r["id"], public=True)
 
     # tiles per section
     sections: dict[str, dict] = {}
@@ -100,8 +105,12 @@ def repeater_page(request: Request, slug: str):
                 used.add(m)
                 continue
             used.add(m)
-            _, label, unit, _ = metrics.metric_info(m)
-            tile = _tile(m, label, unit, row)
+            # Met de namen erbij, ook hier. Kanaal 1 en 2 staan in de catalogus en
+            # komen dus langs deze lus en niet langs de volgende -- zonder de
+            # namen zou juist het kanaal dat een node als eerste vult ("spanning")
+            # als "Ch1 spanning" blijven staan.
+            _, label, unit, _ = metrics.metric_info(m, ch_names)
+            tile = _channel_tile(m, label, unit, row)
             if computed.get(m) is not None:
                 tile["value"] = computed[m]
                 tile["display"] = f"{computed[m]:g} {unit}" if unit else f"{computed[m]:g}"
@@ -110,10 +119,10 @@ def repeater_page(request: Request, slug: str):
         for m, row in latest.items():
             if m in used:
                 continue
-            section, label, unit, sort = metrics.metric_info(m)
+            section, label, unit, sort = metrics.metric_info(m, ch_names)
             if section != key:
                 continue
-            extra.append((sort, m, _channel_tile(m, label, unit, row, ch_names)))
+            extra.append((sort, m, _channel_tile(m, label, unit, row)))
         for _, m, t in sorted(extra, key=lambda x: x[0]):
             tiles.append(t)
             used.add(m)
@@ -123,10 +132,13 @@ def repeater_page(request: Request, slug: str):
     # name from the neighbour sensor, falling back to the contacts table
     # (adverts) -- en met de zichtbaarheidskeuze erboven; zie db.neighbor_rows.
     neighbors = db.neighbor_rows(r["id"])
+    # Ook de vaste grafieken met de namen erbij: 'Spanning (24 u)' tekent
+    # ch1_voltage, en op een node waar dat kanaal een naam heeft hoort die naam in
+    # de legenda te staan en niet 'Ch1 spanning'.
     charts = [
         {"key": key, "title": title, "metrics": mets, "hours": hours,
-         "labels": [metrics.metric_info(m)[1] for m in mets],
-         "unit": metrics.metric_info(mets[0])[2]}
+         "labels": [metrics.metric_info(m, ch_names)[1] for m in mets],
+         "unit": metrics.metric_info(mets[0], ch_names)[2]}
         for key, title, mets, hours in metrics.CHARTS
         if any(m in latest for m in mets)
     ]
@@ -144,13 +156,10 @@ def repeater_page(request: Request, slug: str):
         ch = metrics.channel_metric(m)
         if ch is None or ch[1] != "generic":
             continue
-        channel, kind = ch
-        named = ch_names.get(channel)
-        label = metrics.channel_label(channel, kind, named["name"] if named else None)
+        _, label, unit, _ = metrics.metric_info(m, ch_names)
         charts.append({
             "key": m, "title": f"{label} (24 u)", "metrics": [m], "hours": 24,
-            "labels": [label],
-            "unit": metrics.channel_unit(kind, named["unit"] if named else None),
+            "labels": [label], "unit": unit,
         })
 
     # configurable block order and history ranges
@@ -223,22 +232,20 @@ def repeater_page(request: Request, slug: str):
     })
 
 
-def _channel_tile(metric: str, label: str, unit: str | None, row, ch_names) -> dict:
-    """Een tegel, met voor kanaalmetingen de naam die de beheerder gaf.
+def _channel_tile(metric: str, label: str, unit: str | None, row) -> dict:
+    """Een tegel, met wat een kanaalmeting extra nodig heeft.
 
-    Voor alles wat geen kanaalmeting is verandert er niets. Voor een kanaalmeting
-    komt de naam uit ``channel_names`` voor het soortlabel te staan, en bij een
-    generic sensor mag de beheerder ook de eenheid zetten -- het LPP-type zegt
-    daar niets over (4 byte, vermenigvuldiger 1) en "12" zonder "ms" erachter is
-    een getal zonder betekenis.
+    Het LABEL en de EENHEID komen hier al binnen: die maakt
+    ``metrics.metric_info`` met de naamtabel erbij, zodat er één plek is die
+    bepaalt hoe een kanaal heet. Wat hier overblijft is wat alleen een tegel
+    aangaat -- hoe een schakelaar leest, en dat hij aanklikbaar is.
+
+    Voor alles wat geen kanaalmeting is verandert er niets.
     """
     ch = metrics.channel_metric(metric)
     if ch is None:
         return _tile(metric, label, unit, row)
     channel, kind = ch
-    named = ch_names.get(channel)
-    label = metrics.channel_label(channel, kind, named["name"] if named else None)
-    unit = metrics.channel_unit(kind, named["unit"] if named else None)
     tile = _tile(metric, label, unit, row)
     # Een switch is 0 of 1 en dat is geen getal om te lezen. 'op'/'neer' is wat
     # het betekent: de dienst antwoordt, of hij antwoordt niet.

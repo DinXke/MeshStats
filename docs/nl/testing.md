@@ -176,7 +176,9 @@ ontwerpnotities bij het gebied dat getest wordt.
 | `test_mqtt_command.py` | 17 | site → broker → node | Dat publiceren niets zegt over aankomen, en wat er dus **niet** mag gebeuren |
 | `test_mqtt_ingest.py` | 7 | `app/mqtt_ingest.py` | Onleesbare berichten. Regressie voor een nodenaam met een aanhalingsteken |
 | `test_nodes.py` | 16 | `/api/v1/nodes/{prefix}` | Een paneel dat bijna helemaal samengesteld is uit dingen die in geen enkele kolom staan |
-| `test_kanalen.py` | 33 | `app/metrics.py`, `channel_names`, de nodepagina | Het wirecontract van CayenneLPP, twee LPP-types op één kanaal, en de kanaalnamen per node |
+| `test_kanalen.py` | 42 | `app/metrics.py`, `channel_names`, de nodepagina | Het wirecontract van CayenneLPP, twee LPP-types op één kanaal, en de kanaalnamen per node |
+| `test_sensornode.py` | 55 | `app/sensornode.py`, het vierde vervoermiddel in `nodeconfig`, `firmware.check_target` | Één naamruimte voor de metricnamen, één weigeringslijst voor de radio, één parametertabel gespiegeld tegen de C-broncode, en welke adressen de server mag benaderen |
+| `test_alerts.py` | 27 | `alerts`, het `alert`-topic, de acked-flow | Telemetrie is polling, een alarm is een trap: het onderwerp tegenover de doorgever, herhalingen, een klok uit 2024, en waarom niets een alarm verwijdert |
 | `test_retention.py` | 15 | Opruimen | Niet "er wordt iets verwijderd" maar de **volgorde** waarin dat gebeurt |
 | `test_settings_chain.py` | 25 | knop → wachtrij → poller → opslag | De clear-on-read-wachtrij, die faalt zonder ook maar één foutmelding op te leveren |
 | `test_zichtbaarheid.py` | 18 | `show_position` / `show_name` over elke publieke route | Niet "de schakelaar klapt om" maar **dat geen enkele route eraan voorbij lekt**, plus dat de standaardwaarden niets veranderen |

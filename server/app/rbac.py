@@ -166,6 +166,18 @@ ACTIONS = {
     # te wegen dan de knop die één ronde start ("node.uitvragen").
     "node.schema": Handeling("node", KLASSE_MERKBAAR,
                              "het uitvraagschema van deze node wijzigen"),
+    # Herstarten is geen instelling, en daarom een eigen handeling in plaats van
+    # meeliften op node.instelling.merkbaar -- die tekst zou in de weigering
+    # "een merkbare instelling schrijven" komen te staan bij een knop die niets
+    # schrijft.
+    #
+    # Merkbaar en niet ingrijpend: de node komt uit zichzelf terug, in ongeveer
+    # twintig seconden, en er gaat niets blijvend verloren. Wat er wél verloren
+    # gaat hoort op de pagina te staan: de gemeten toestanden beginnen weer op
+    # onbekend, en een node zonder batterijgevoede klok staat daarna weer op de
+    # datum uit zijn firmware.
+    "node.herstart": Handeling("node", KLASSE_MERKBAAR,
+                               "deze node herstarten"),
     # -- ingrijpend
     "node.firmware": Handeling("node", KLASSE_INGRIJPEND,
                                "de firmware van deze node schrijven"),

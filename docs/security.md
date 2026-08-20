@@ -142,6 +142,46 @@ node still running firmware older than 2.6.0 does have `radio` in its table and
 would accept it. The rule belongs to the action, not to the firmware version of
 whichever node happens to receive it.
 
+**Five names on that list and not one.** `radio` is the shape *our* repeater
+firmware offers those four numbers in: one parameter, four values, one name to
+refuse. A node with its own API runs the same CommonCLI but offers the four
+separately, and its `POST /cli` accepts `set freq` as a word of its own. Refusing
+one name while five words do the same thing is a rule that only holds on paper.
+`bw`, `sf` and `cr` do not exist as separate `set` words in MeshCore today, and
+they are on the list anyway — this list is what the *server* refuses, and the day a
+firmware offers them separately the refusal should already be there rather than
+being written then. A refusal list that lags the CLI is exactly one node too late.
+
+What is deliberately **not** on it: `radio.rxgain` and `radio.fem.rxgain`. Those
+begin with the same word and do something else — they set the receive gain, which
+makes a node deafer while it stays on the same channel. That is the side of the
+asymmetry `tx` sits on. Hence the test is on the *exact* key and never on a prefix;
+`sensornode.radio_refusal` applies the same test to a whole CLI line, and the node
+itself uses exactly the same boundary (`cmdIs(cmd, "set radio ")`, with a space).
+
+**And the confirmation parameter is never sent.** A sensor node's `POST /cli`
+refuses `set radio`/`set freq` without `confirm=radio` and `erase` without
+`confirm=erase` — locks that exist against a loose fetch, a bookmarklet or a
+preloaded link. This site is such a fetch. So `sensornode.cli()` has no parameter
+to set it with: an omission you cannot forget beats a condition you can bypass.
+
+### Where the fleet credentials may go
+
+`MM_FW_NODE_USER`/`MM_FW_NODE_PASS` open **every** node, and the server sends them
+to whatever address stands in `ota_host` or `sensor_host`. `node.beheeradres` is a
+*delegatable* right, so until this was fixed the holder of that right on one node
+could enter the address of their own server and receive the fleet key — SSRF and a
+credential leak in one text field.
+
+"Refuse private addresses" is not the repair here: the nodes of this project *are*
+on 192.168.x. The distinction is **who recorded the address**. Filling one in
+requires a server administrator; clearing it does not. At connect time
+`firmware.check_target` verifies the address really was recorded that way
+(`repeaters.host_admin`), and every outgoing connection to a node goes through
+`firmware.open_node` — the one place that attaches the `Authorization` header, and
+therefore the one place the check belongs. See
+[`node-management.md`](node-management.md) for the full reasoning.
+
 ### Changing a setting: three transports
 
 One write path, three ways for the command to travel. Everything that can refuse

@@ -588,6 +588,55 @@ dieper.
 Een leeg naamveld wist de naam. Het kanaal staat dan als "kanaal N" op de publieke
 pagina en verdwijnt **niet**: een naamloze meting is nog steeds een meting.
 
+### Beheer over IP — `#eigen-api`
+
+Voor een node die zijn eigen HTTP-API aanbiedt: een MeshUptime-sensornode. Hier
+gaat het adres in, en vanaf dan leest de server elke vijf minuten
+`/status.json` en werken de knoppen in dit blok — advert (flood of zerohop), de
+klok zetten, de regio zetten, herstarten, en de instellingen uit `/cfg.json`.
+
+**Het blok zegt ronduit dat dit over IP gaat en niet over het mesh**, en wat dat
+betekent: valt de WiFi weg, dan valt dit hele blok weg. Dat is gemeten en niet
+theoretisch, en de mesh-weg die voor dat geval bedoeld is werkt nog niet. De
+pagina zegt beide, in plaats van het tweede te verzwijgen.
+
+Een apart veld naast het *beheeradres* op de firmwarepagina, met opzet: dat veld
+betekent "daar staat onze repeaterfirmware", met een firmware-upgrade erachter, en
+deze node draait die firmware niet. Eén veld voor beide zou een image aanbieden
+aan een bord waarvan wij de bouwomgeving niet kennen.
+
+**Het adres invullen mag alleen een serverbeheerder.** Wissen niet. De server
+stuurt de inloggegevens die elke node openen naar dat adres, en `node.beheeradres`
+is per node delegeerbaar — zie
+[`security.md`](security.md#waar-de-vlootinloggegevens-heen-mogen).
+
+Het blok toont ook de **toegangslijst** van de node, alleen om te lezen. Dat is
+waar de mesh-weg op stukloopt: een monitor die inlogt en geen antwoord krijgt,
+staat meestal niet in die lijst en heeft ook het adminwachtwoord niet. Dan is
+"geen antwoord" een weigering en geen storing, en dat is een ander probleem.
+
+### Alarmen — `#alarmen`
+
+**Telemetrie is polling; een alarm is een trap.** De cijfers en grafieken van een
+node komen van een uitvraagronde: regelmatig, volledig, en blind voor wat er
+tussen twee rondes gebeurde. Een alarm komt op het moment dat er iets gebeurt,
+draagt één feit, en is er misschien niet — de sensornode stuurt het naar de
+repeaters die in zijn toegangslijst alarmrecht hebben, en die publiceren het
+meteen.
+
+Per alarm: de tijd, de tekst, de ernst waar die uit de tekst af te leiden is, en
+de bron (`mesh`, `ip` of `test`). Niet-bevestigde alarmen worden ook als badge op
+de nodelijst geteld, want het punt van een trap is dat je hem ziet zonder ernaar
+te zoeken.
+
+**Bevestigen haalt een alarm niet weg** — het legt vast dat iemand het gezien
+heeft. Er is met opzet geen knop die er een verwijdert: een melding die je zonder
+spoor kunt wegklikken, is een melding die achteraf niet meer na te vertellen is.
+Opruimen doet de bewaartermijn, samen met de rest van de historiek. Er is één knop
+voor één alarm en één voor alle openstaande van een node, want een node die een
+uur onbereikbaar was levert tientallen regels op, en die één voor één wegklikken
+betekent dat niemand het doet.
+
 ### Zichtbaarheid op de site — `#zichtbaarheid`
 
 Drie schakelaars in één blok, in afnemende zwaarte: `is_public` haalt de hele

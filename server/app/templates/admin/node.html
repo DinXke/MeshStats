@@ -72,6 +72,16 @@
   &#9203; Statusverzoek in de wachtrij gezet &mdash; de poller vraagt de repeater over LoRa
   uit; binnen &plusmn;1 minuut verschijnt een vers datapunt.
 </div>
+{% elif status == "ip" %}
+{#- Deze weg is de enige die geen "reken op een minuut" nodig heeft: het antwoord
+    is al binnen op het moment dat deze pagina getekend wordt. Dat verschil
+    benoemen is niet gedienstig maar noodzakelijk -- bij de andere drie meldingen
+    is "verstuurd" alles wat we weten. -#}
+<div class="card notice">
+  &#9989; De node is <strong>nu uitgelezen over zijn eigen API</strong>, over IP en niet
+  over het mesh. De metingen staan er al: de
+  <a href="/r/{{ rep.slug }}">publieke pagina</a> toont ze zonder wachten.
+</div>
 {% elif status == "none" %}
 <div class="card notice">
   &#9888; Er is <strong>niets verstuurd</strong> &mdash; er was op dit ogenblik geen weg
@@ -107,6 +117,12 @@
   &#9203; Opvraging in de wachtrij gezet. De poller haalt ze op, logt in op de
   repeater en vraagt de parameters over LoRa op; dat duurt
   <strong>1 à 2 minuten</strong>. Herlaad deze pagina daarna.
+</div>
+{% elif requested == "ip" %}
+<div class="card notice">
+  &#9989; De instellingen zijn <strong>nu gelezen uit de eigen API</strong> van deze node
+  (<span class="mono">/cfg.json</span>), over IP. Ze staan hieronder in de tabel; er is
+  niets onderweg en niets om op te wachten.
 </div>
 {% elif requested == "none" %}
 <div class="card notice">
@@ -154,7 +170,19 @@
       <span class="muted small">waargenomen: {{ route.level_why }}</span>
     </div>
     <p class="muted small">
-      {%- if route.level == 'full_managed' %}
+      {#- Full managed heeft twee vormen en ze verdienen niet dezelfde zin. De ene
+          is onze firmware op de broker; de andere is een node met een eigen API
+          over IP, en die kan bijna hetzelfde maar niet hetzelfde -- er gaat geen
+          firmware van ons naartoe, en de weg hangt aan de WiFi. Één zin voor
+          beide zou over de tweede iets beloven wat er niet is. -#}
+      {%- if route.level == 'full_managed' and route.ip_api.ever %}
+      Deze node biedt zijn <strong>eigen API aan over IP</strong>. Uitvragen, instellingen,
+      klok, advert, regio en herstarten kunnen alle rechtstreeks, met antwoord in hetzelfde
+      verzoek. Geen firmware-upgrade van hieraf: het is onze firmware niet, en een image voor
+      het verkeerde bord maakt een node stuk.
+      <strong>En let op wat deze weg is:</strong> dit is WiFi en niet het mesh. Valt die
+      verbinding weg, dan valt dit hele blok weg &mdash; zie <em>Beheer over IP</em> hieronder.
+      {%- elif route.level == 'full_managed' %}
       Onze firmware met MQTT-koppeling. Uitvragen, instellingen, klok en &mdash; als er ook een
       IP-pad naar dit apparaat is &mdash; een firmware-upgrade horen hier allemaal te kunnen.
       {%- elif route.level == 'semi_managed' %}
@@ -190,6 +218,17 @@
     <tr><td>Nodefirmware (MeshManager)</td><td class="mono">{{ rep.fw_meshmanager or '—' }}
       {%- if not rep.fw_meshmanager %} <span class="muted">— zonder deze versie stuurt de site
       niets naar deze node; zie de uitleg bij <em>Uitvragen</em></span>{% endif %}</td></tr>
+    {#- De derde weg, en hij staat in deze tabel omdat hij bij de IDENTITEIT hoort en
+        niet bij een handeling: of een node zijn eigen API aanbiedt, is wat hij is.
+        Alleen tonen waar er een adres staat -- op elke andere nodepagina zou het
+        een lege rij zijn die suggereert dat er iets ontbreekt. -#}
+    {% if rep.sensor_host %}
+    <tr><td>Eigen API over IP</td><td class="mono">{{ rep.sensor_host }}
+      {%- if route.ip_api.seen %} <span class="muted">&middot; laatst geantwoord
+        <time class="reltime" datetime="{{ route.ip_api.seen }}">{{ route.ip_api.seen }}</time></span>
+      {%- else %} <span class="error">— heeft nog nooit geantwoord</span>{% endif %}
+      <span class="muted">— <a href="#eigen-api">beheer over IP</a>, niet over het mesh</span></td></tr>
+    {% endif %}
   </table>
 
   <form method="post" action="/admin/repeaters/{{ rep.id }}/rename" class="rowform">
@@ -261,7 +300,29 @@
      De naam hierboven blijft staan: die is voor jou, en voor de opdrachten die deze site
      naar de node stuurt.</p>
 
-  <p class="muted small"><strong>Wat geen van deze drie knoppen verbergt:</strong> de
+  {#- De derde vlag, en ze verdient haar eigen alinea. Een kanaalnaam is nooit
+      over de radio gegaan -- anders dan de naam en de positie hierboven -- en
+      sinds hij automatisch uit de eigen API van een sensornode komt, heeft er
+      niemand per naam besloten dat hij publiek mag. -#}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="back" value="node">
+    <input type="hidden" name="what" value="channels">
+    <button type="submit" class="pill {{ 'on' if rep.show_channels else 'off' }}"{{ recht('node.zichtbaarheid') }}>
+      {{ 'kanaalnamen zichtbaar — klik om te verbergen' if rep.show_channels else 'kanaalnamen verborgen — klik om te tonen' }}</button>
+  </form>
+  <p class="muted small"><strong>Kijk hier naar voor je een sensornode publiek zet.</strong>
+     Anders dan de naam en de positie hierboven is een kanaalnaam <em>nooit uitgezonden</em>:
+     hij komt uit de eigen API van de node of uit uw toetsenbord, en hij kan een intern adres
+     bevatten &mdash; <code>hoas (hoas.scheepers.one)</code> is een naam die deze site zelf zou
+     publiceren en die over de radio nooit langskwam. Sinds de namen automatisch uit
+     <span class="mono">/status.json</span> komen, heeft niemand per naam besloten dat dat mag.
+     Staat dit uit, dan heet elk kanaal op de publieke site en in de API weer
+     &ldquo;kanaal N&rdquo; &mdash; niet de ruwe metricnaam, want die verklapt het nummer en de
+     vorm van de meting alsnog. De namen in <a href="#kanalen">Namen bij de kanalen</a> blijven
+     staan: die zijn voor u.</p>
+
+  <p class="muted small"><strong>Wat geen van deze vier knoppen verbergt:</strong> de
      sleutelprefix <code>{{ rep.pubkey_prefix }}</code>. Die zit in elke advert die deze node
      uitzendt en is voor iedereen met een radio te horen; doen alsof deze site hem geheim
      kan houden zou een belofte zijn die het apparaat zelf tegenspreekt. Hetzelfde geldt
@@ -518,6 +579,245 @@
       bezet houden.
     </p>
     {% endif %}
+  </div>
+</section>
+
+{#- ==================== Beheer over IP ====================================
+
+    Een eigen sectie en niet een paar knoppen tussen "Uitvragen", omdat dit een
+    andere WEG is en niet een andere knop. Alles hierboven loopt over het mesh of
+    over de broker; alles hieronder loopt over WiFi naar de node zelf. Dat
+    verschil bepaalt wat er gebeurt als er iets wegvalt, en wie dat niet weet
+    leest straks een lege grafiek als een stille node.
+
+    De sectie staat op elke nodepagina en niet alleen waar er een adres staat.
+    Zonder adres is ze twee zinnen en een invoerveld -- want anders is dit een
+    mogelijkheid die alleen bestaat voor wie er al van wist. -#}
+<section id="eigen-api">
+  <h2>Beheer over IP</h2>
+  <div class="card">
+
+  {% if sensor_result %}
+  <div class="notice">
+    {%- if sensor_result.soort == 'poll' and sensor_result.ok %}
+    &#9989; Uitgelezen: {{ sensor_result.metrics }} metingen,
+    {{ sensor_result.channels }} kanaalnaam/-namen bijgewerkt,
+    {{ sensor_result.neighbors }} buren.
+    {% if sensor_result.error %}<br>&#9888; {{ sensor_result.error }}{% endif %}
+    {%- elif sensor_result.soort == 'clock' and sensor_result.ok %}
+    &#9989; De klok is gezet op de tijd van deze server
+    (<span class="mono">time {{ sensor_result.epoch }}</span>). De node antwoordde:
+    <span class="mono">{{ sensor_result.reply }}</span>
+    {%- elif sensor_result.soort == 'clock' %}
+    &#9888; De klok is <strong>niet</strong> gezet: {{ sensor_result.reason }}
+    {%- elif sensor_result.soort == 'region' and sensor_result.ok %}
+    &#9989; Regio gezet en vastgelegd. <span class="mono">{{ sensor_result.set }}</span>
+    &middot; <span class="mono">{{ sensor_result.saved }}</span>
+    {%- elif sensor_result.ok %}
+    &#9989; <span class="mono">{{ sensor_result.reply }}</span>
+    {%- else %}
+    &#9888; {{ sensor_result.error or sensor_result.reply or 'niets gebeurd' }}
+    {%- endif %}
+  </div>
+  {% endif %}
+
+  {#- Dit blok staat vóór de knoppen en niet in een voetnoot erna. Wie hier komt
+      om iets te doen, hoort eerst te weten waarover hij het doet -- en de vorige
+      keer dat deze weg wegviel, viel hij helemaal weg. -#}
+  <p class="muted small"><strong>Dit gaat over IP en niet over het mesh.</strong>
+     Alles in dit blok loopt over de WiFi-verbinding van deze node naar zijn eigen
+     webserver: <span class="mono">/status.json</span> om te lezen en
+     <span class="mono">POST /cli</span> om te schrijven, achter dezelfde weblogin als de
+     firmwareweg. Dat is snel en het antwoord komt in hetzelfde verzoek terug &mdash; en het
+     is precies zo betrouwbaar als die WiFi.</p>
+
+  <p class="error small"><strong>Valt de WiFi weg, dan valt dit hele blok weg.</strong>
+     Dat is geen theoretische kanttekening. In de voedingsmeting van 19 augustus 2026 gaf
+     deze node op batterij eerst met tussenpozen geen antwoord (vier van de eerste vijftien
+     pollingen) en daarna veertien pollingen op rij niets, terwijl hij over LoRa gewoon
+     bestond. Het <strong>mesh</strong> is de weg die voor dat geval bedoeld is, en die werkt
+     op dit ogenblik <strong>niet</strong>: de uitvraagronde begint met een login die geen
+     antwoord krijgt, en de ronde is bovendien op een repeater afgestemd &mdash; een
+     sensornode implementeert het statusverzoek niet en antwoordt op een burenverzoek
+     letterlijk &ldquo;not supported&rdquo;. Zolang dat zo is, is dit blok de enige beheerweg
+     naar deze node, en niet de snelste van twee.</p>
+
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="sensor_host" value="{{ rep.sensor_host or '' }}"
+           placeholder="192.168.0.10" spellcheck="false" autocomplete="off"
+           aria-label="Adres van de eigen API van deze node"{{ recht('node.beheeradres') }}>
+    <button type="submit"{{ recht('node.beheeradres') }}>Adres opslaan</button>
+  </form>
+  {{ waarom('node.beheeradres') }}
+  <p class="muted small">Een apart veld naast het <em>beheeradres</em> op de firmwarepagina, en
+     met opzet: dat veld betekent &ldquo;daar staat onze repeaterfirmware&rdquo;, met een
+     firmware-upgrade erachter. Deze node draait die firmware niet. Eén veld voor beide zou een
+     image aanbieden aan een bord waarvan wij de bouwomgeving niet kennen. Leegmaken wist ook de
+     waarneming hieronder &mdash; dan is er geen weg meer, en dan zegt de pagina dat ook.</p>
+
+  {% if not sensor_route %}
+  <p class="muted small">Er staat nog geen adres, dus er is langs deze weg niets te doen. Dit is
+     alleen zinvol voor een node die zelf een API aanbiedt (een MeshUptime-sensornode); voor
+     onze eigen repeaterfirmware is het beheeradres op de firmwarepagina de juiste plek.</p>
+  {% else %}
+
+  <table>
+    <tr><td>Adres</td><td class="mono">{{ sensor_route.host }}</td></tr>
+    <tr><td>Laatst geantwoord</td><td>
+      {%- if route.ip_api.seen %}<time class="reltime" datetime="{{ route.ip_api.seen }}">{{ route.ip_api.seen }}</time>
+      {%- if not route.ip_api.fresh %} <span class="error">&mdash; ouder dan
+        {{ (route.ip_api.stale_after_s // 60) }} minuten; deze weg draagt op dit ogenblik
+        waarschijnlijk niet</span>{% endif %}
+      {%- else %}<span class="error">nooit</span>{% endif %}</td></tr>
+    <tr><td>Firmware van de node</td><td class="mono">{{ route.ip_api.fw or '—' }}</td></tr>
+    <tr><td>Uitleesronde</td><td>
+      {%- if sensor_enabled %}elke {{ sensor_interval_s }} s
+      {%- else %}<span class="error">staat uit op deze server (MM_SENSOR_POLL_ENABLED)</span>{% endif %}</td></tr>
+    {% if sensor_last.at %}
+    <tr><td>Vorige ronde</td><td>
+      {%- if sensor_last.ok %}{{ sensor_last.metrics }} metingen, {{ sensor_last.neighbors }} buren
+      {%- else %}<span class="error">mislukt</span>{% endif %}
+      {%- if sensor_last.error %} <span class="muted">&mdash; {{ sensor_last.error }}</span>{% endif %}</td></tr>
+    {% endif %}
+  </table>
+
+  {% if not sensor_route.can %}
+  <p class="error small">Deze weg kan nu niets:
+     {{ cfg_blocker_text.get(sensor_route.blocker, sensor_route.blocker) }}.
+     De knoppen hieronder staan daarom uit.</p>
+  {% endif %}
+
+  {#- Vier handelingen naast elkaar, in stijgende merkbaarheid: lezen, een pakket
+      de lucht in, de klok, en een herstart. Elk met zijn eigen recht, want ze
+      zijn niet van dezelfde soort -- en de laatste vraagt de naam, omdat de fout
+      die je daar maakt niet twijfel is maar de verkeerde node. -#}
+  <h3>Handelingen</h3>
+  <div class="rowform">
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/poll">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
+        &#128260; Nu uitlezen</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/advert">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
+        &#128225; Advert (flood)</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/advert">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="zerohop" value="1">
+      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
+        &#128225; Advert (zerohop)</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/clock">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.klok') }}>
+        &#128336; Klok zetten</button>
+    </form>
+  </div>
+  {{ waarom('node.uitvragen') }}
+  {{ waarom('node.klok') }}
+  <p class="muted small"><strong>De klok is hier geen luxe.</strong> Deze node heeft geen
+     batterijgevoede klok: na elke herstart staat hij op 15 mei 2024, en alles wat hij daarna
+     zegt draagt die datum mee. Of deze server mag zeggen hoe laat het is, wordt met dezelfde
+     controle beoordeeld als bij de dagelijkse ronde over het mesh &mdash; er is geen tweede
+     oordeel. Anders dan daar geldt er geen wachttijd tussen twee keer: dit kost geen zendtijd,
+     en een node die net herstartte heeft het meteen nodig.</p>
+  <p class="muted small">Een <em>zerohop</em>-advert gaat alleen naar wie hem direct hoort; een
+     gewone advert gaat als flood het hele mesh over. Wie wil weten of zijn buren hem nog horen,
+     heeft de eerste nodig en betaalt daar geen mesh-brede flood voor.</p>
+
+  <h3>Regio <span class="pill">bevestigen</span></h3>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/region" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <select name="veld" aria-label="Welk regioveld"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      {% for sleutel, uitleg in sensor_region_fields.items() %}
+      <option value="{{ sleutel }}">{{ sleutel }} &mdash; {{ uitleg }}</option>
+      {% endfor %}
+    </select>
+    <input name="naam" placeholder="eu be" spellcheck="false" autocomplete="off"
+           aria-label="Regionaam"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+    <input name="confirm" placeholder="typ: ja" autocomplete="off"
+           aria-label="Bevestiging"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+    <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      Regio zetten en vastleggen</button>
+  </form>
+  {{ waarom('node.instelling.merkbaar') }}
+  <p class="muted small">Twee opdrachten achter elkaar: <span class="mono">region &lt;veld&gt;
+     &lt;naam&gt;</span> zet het, en <span class="mono">region save</span> legt het vast op flash.
+     Zonder dat tweede is de instelling weg bij de eerstvolgende herstart, en dat merk je dan
+     pas. Een scope bepaalt wie dit verkeer doorstuurt, dus een verkeerde waarde kan deze node
+     stil buiten het bereik van zijn buren zetten &mdash; het verschil met de radio is dat dit
+     van hieraf terug te draaien is, want deze weg blijft bestaan. Vandaar een bevestiging en
+     geen weigering.</p>
+
+  <h3>Herstarten <span class="pill">naam overtypen</span></h3>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/reboot" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="confirm" placeholder="typ: {{ rep.name }}" autocomplete="off"
+           aria-label="Naam van de node overtypen"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.herstart') }}>
+    <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.herstart') }}>
+      &#9888; Herstarten</button>
+  </form>
+  {{ waarom('node.herstart') }}
+  <p class="muted small">De node is na ongeveer twintig seconden weer bereikbaar. Wat er wél
+     verloren gaat: de gemeten toestanden beginnen weer op &ldquo;?&rdquo;, en de klok staat weer
+     op 15 mei 2024 tot iemand hem zet. De naam overtypen vangt een andere fout dan twijfel
+     &mdash; ze vangt de klik op de verkeerde node, en daar helpt een ja/nee-vraag niet tegen.</p>
+
+  {#- De toegangslijst, en waarom die hier staat en niet op een subpagina: ze
+      bevat het antwoord op de vraag waarom de mesh-weg naar deze node niet
+      werkt. Alleen lezen -- rechten uitdelen op andermans node hoort op de
+      pagina van die node en niet hier. -#}
+  <h3>Toegangslijst en gehoorde buren <span class="pill">alleen lezen</span></h3>
+  {% if not sensor_acl.ok %}
+  <p class="muted small">{{ sensor_acl.error or 'niet opgehaald' }}</p>
+  {% else %}
+  <p class="muted small">Wie mag inloggen op deze node, en wie hij hoort. Dit is de plek waar de
+     mesh-weg op stukloopt: een monitor die inlogt en geen antwoord krijgt, staat meestal niet in
+     deze lijst en heeft ook het adminwachtwoord niet. Dan is &ldquo;geen antwoord&rdquo; geen
+     storing maar een weigering, en dat is een heel ander probleem.</p>
+  <table>
+    <thead><tr><th>Sleutel</th><th>Naam</th><th>Rechten</th><th>Laatst actief</th></tr></thead>
+    <tbody>
+    {% for c in sensor_acl.data.acl or [] %}
+      <tr><td class="mono">{{ c.k[:12] }}</td><td>{{ c.n or '—' }}</td>
+          <td class="mono">{{ c.p }}</td><td class="muted">{{ c.a }} s</td></tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">de lijst is leeg &mdash; geen enkele node mag inloggen</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <table>
+    <thead><tr><th>Gehoorde buur</th><th>Naam</th><th>SNR</th><th>Hops</th><th>Gehoord</th><th>In de lijst</th></tr></thead>
+    <tbody>
+    {% for n in sensor_acl.data.nb or [] %}
+      <tr><td class="mono">{{ n.k[:12] }}</td><td>{{ n.n or '—' }}</td>
+          <td>{{ n.s }}</td><td>{{ n.h }}</td><td class="muted">{{ n.a }} s</td>
+          <td>{{ 'ja' if n['in'] else 'nee' }}</td></tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">nog niemand gehoord</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <p class="muted small"><strong>Wat er langs deze weg niet gezet wordt.</strong> De
+     radio-instellingen: frequentie, bandbreedte, spreidingsfactor en coderingssnelheid. Die
+     weigering staat in <span class="mono">nodeconfig.NO_REMOTE</span> en geldt voor élke weg,
+     ook deze &mdash; het is één lijst en geen tweede. De node dwingt het bovendien zelf af: zijn
+     <span class="mono">POST /cli</span> weigert <span class="mono">set radio</span> en
+     <span class="mono">set freq</span> zonder een bevestigingsparameter, en die parameter stuurt
+     deze site nooit mee. Het zendvermogen (<span class="mono">tx</span>) kan wel: een node die
+     te zwak zendt blijft bereikbaar, een node op de verkeerde frequentie niet.
+     {%- if sensor_no_readback %} Ook niet aangeboden, om een andere reden:
+     {% for sleutel, waarom_niet in sensor_no_readback.items() %}<span class="mono">{{ sleutel }}</span>
+     ({{ waarom_niet }}){{ '; ' if not loop.last else '.' }}{% endfor %}
+     Zonder terugleesbaar veld zou de pagina &ldquo;gelukt&rdquo; melden op het woord van de
+     node, en dat is precies wat deze site niet doet.{% endif %}</p>
+
+  {% endif %}
   </div>
 </section>
 
@@ -957,14 +1257,32 @@
 <section id="kanalen">
   <h2>Namen bij de kanalen</h2>
 
-  <p class="muted small"><strong>Waarom dit met de hand moet.</strong> Een sensornode
+  <p class="muted small"><strong>Waarom deze tabel bestaat.</strong> Een sensornode
      antwoordt op een telemetrieverzoek in <strong>CayenneLPP</strong>, en dat formaat is een
      reeks drietallen: kanaalnummer, type, waarde. Er is <strong>geen naamveld</strong> — niet
      in het formaat en niet in MeshCore, dat alleen een oplopende kanaalteller kent. Wat er van
      de radio komt is dus letterlijk <span class="mono">kanaal 6, switch, 1</span> en niet
      “google is bereikbaar”. De koppeling van nummer naar dienst is een eigenschap van de
      antwoordende node, en de enige plek waar ze bewaard kan worden is hier, aan de ontvangende
-     kant. Dit formulier is dus geen gemak; het is de enige weg.</p>
+     kant.</p>
+
+  {#- Sinds de eigen API is dit niet meer per definitie handwerk, en dat verschil
+      hoort te staan waar de namen staan -- niet in de documentatie. De herkomst
+      per rij staat in de tabel om dezelfde reden: zonder die kolom ziet een
+      beheerder een naam zonder te weten of hij hem morgen nog terugvindt. -#}
+  <p class="muted small"><strong>Wat er automatisch komt, en wat niet.</strong> Van een node die
+     zijn <a href="#eigen-api">eigen API over IP</a> aanbiedt, worden deze namen overgenomen uit
+     <span class="mono">/status.json</span>: dat antwoord draagt per kanaal een naam, een adres
+     en het soort meting, en bij een responstijd ook de eenheid — dat het milliseconden zijn,
+     weet die API en het telemetriepakket niet. Van een node die alleen over het mesh binnenkomt
+     komt niets van dat alles mee, en dan is dit formulier de enige weg.</p>
+
+  <p class="muted small"><strong>Wat u typt, wint altijd.</strong> Een naam die u zelf invult,
+     wordt nooit door een uitleesronde overschreven — ook niet als de node iets anders meldt. U
+     heeft er een reden voor gehad; de node kent alleen zijn eigen afkorting. Een leeg veld
+     bewaren is ook een keuze en blijft ook staan: dan blijft het kanaal als “kanaal N” op de
+     statistiekpagina staan en vult de volgende ronde het niet opnieuw in. Wilt u de naam van de
+     node terug, maak het veld dan leeg, bewaar, en laat één ronde langskomen.</p>
 
   <p class="muted small"><strong>Waarom hier en niet op de repeater.</strong> De repeater die
      deze node uitleest is een doorgeefluik met beperkte flash. Een naam die daar staat is weg
@@ -985,12 +1303,16 @@
   <form method="post" action="/admin/repeaters/{{ rep.id }}/channels">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <table>
-      <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Naam</th><th>Eenheid</th></tr></thead>
+      <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Herkomst</th><th>Naam</th><th>Eenheid</th></tr></thead>
       <tbody>
       {% for c in channels %}
         <tr>
           <td class="mono">{{ c.channel }}</td>
           <td class="muted">{{ c.kind_labels | join(' + ') }}</td>
+          <td class="muted small">
+            {%- if c.herkomst == 'auto' %}van de node
+            {%- elif c.herkomst == 'user' %}door u gezet
+            {%- else %}—{% endif %}</td>
           <td><input type="text" name="ch_naam_{{ c.channel }}" value="{{ c.name }}"
                      maxlength="64" autocomplete="off"
                      placeholder="kanaal {{ c.channel }}"></td>
@@ -1012,16 +1334,22 @@
   </form>
 
   <p class="muted small">Een leeg naamveld wist de naam. Het kanaal blijft dan als
-     “kanaal N” op de statistiekpagina staan en verdwijnt niet: een naamloze meting is nog
-     steeds een meting.</p>
+     “kanaal N” op de statistiekpagina staan en verdwijnt niet: een naamloze meting is nog steeds
+     een meting. Bewaren zet de herkomst van elke rij die u meestuurt op “door u gezet”, ook als
+     u de naam van de node letterlijk laat staan — wie een overgenomen naam bevestigt, heeft er
+     daarmee zijn eigen naam van gemaakt.</p>
   {% else %}
   <table>
-    <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Naam</th></tr></thead>
+    <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Herkomst</th><th>Naam</th></tr></thead>
     <tbody>
     {% for c in channels %}
       <tr>
         <td class="mono">{{ c.channel }}</td>
         <td class="muted">{{ c.kind_labels | join(' + ') }}</td>
+        <td class="muted small">
+          {%- if c.herkomst == 'auto' %}van de node
+          {%- elif c.herkomst == 'user' %}gezet door een beheerder
+          {%- else %}—{% endif %}</td>
         <td>{% if c.name %}{{ c.name }}{% else %}<span class="muted">kanaal {{ c.channel }}</span>{% endif %}</td>
       </tr>
     {% endfor %}
@@ -1512,6 +1840,85 @@
     </form>
     {{ waarom('node.verwijderen') }}
   </div>
+  </div>
+</section>
+
+{#- ==================== Alarmen ============================================
+
+    TELEMETRIE IS SNMP-POLLING, EEN ALERT IS EEN SNMP-TRAP. Die ene zin verklaart
+    waarom dit blok bestaat en waarom het niet bij de metingen staat: een poll is
+    regelmatig, volledig en blind voor wat er tussen twee rondes gebeurde; een
+    trap komt op het moment dat er iets gebeurt, draagt één feit, en arriveert
+    misschien niet. De grafieken hierboven zijn het eerste, dit is het tweede.
+
+    Een eigen sectie en geen regel in het audittrail onderaan. Die twee lijken op
+    elkaar en ze zijn het tegenovergestelde: het trail zegt wat WIJ met deze node
+    gedaan hebben, dit zegt wat DE NODE ons gemeld heeft. -#}
+<section id="alarmen">
+  <h2>Alarmen
+    {%- if alerts_open %} <span class="pill off">{{ alerts_open }} niet bevestigd</span>{% endif %}</h2>
+  <div class="card tablecard">
+
+  <p class="muted small"><strong>Telemetrie is polling; een alarm is een trap.</strong>
+     De cijfers en grafieken van deze node komen van een uitvraagronde: regelmatig,
+     volledig, en zonder weet van wat er tussen twee rondes gebeurde. Een alarm komt op
+     het moment dat er iets gebeurt, draagt één feit, en is er misschien niet — de
+     sensornode stuurt het als bericht naar de repeaters die in zijn toegangslijst met
+     alarmrecht staan, en die zetten het meteen door. Daarom staan ze hier apart en niet
+     als meetreeks: je hebt ze beide nodig, want het alarm zegt <em>wanneer</em> en de
+     uitvraging zegt <em>wat</em>.</p>
+
+  {% if not alerts %}
+  <p class="muted small">Nog geen alarmen van deze node. Dat kan twee dingen betekenen, en
+     ze zijn niet hetzelfde: er is niets aan de hand, of deze node kent geen enkele
+     repeater met alarmrecht en zijn meldingen komen nergens aan. Het tweede is te zien in
+     zijn <a href="#eigen-api">toegangslijst</a> — een repeater die daar niet in staat, kan
+     geen alarm doorgeven.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Wanneer</th><th>Melding</th><th>Ernst</th><th>Bron</th><th></th></tr></thead>
+    <tbody>
+    {% for a in alerts %}
+      <tr{% if not a.acked %} class="warnrow"{% endif %}>
+        <td><time class="reltime" datetime="{{ a.ts }}">{{ a.ts }}</time></td>
+        <td>{{ a.text }}
+          {%- if a.channel %} <span class="muted small">· kanaal {{ a.channel }}</span>{% endif %}</td>
+        <td class="small">
+          {%- if a.severity == 'hoog' %}<span class="error">hoog</span>
+          {%- elif a.severity == 'laag' %}<span class="muted">laag</span>
+          {%- else %}<span class="muted" title="Niet uit de tekst af te leiden; een verzonnen ernst is erger dan geen">—</span>{% endif %}</td>
+        <td class="small muted">
+          {%- if a.source == 'mesh' %}over het mesh, via een repeater
+          {%- elif a.source == 'ip' %}over IP
+          {%- else %}{{ a.source }}{% endif %}</td>
+        <td>
+          {% if a.acked %}<span class="muted small">bevestigd</span>
+          {% else %}
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/alerts/ack" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="alert_id" value="{{ a.id }}">
+            <button type="submit" class="mini"{{ recht('node.uitvragen') }}>bevestigen</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% if alerts_open %}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/alerts/ack" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit"{{ recht('node.uitvragen') }}>
+      &#10003; Alle {{ alerts_open }} bevestigen</button>
+  </form>
+  {% endif %}
+  {{ waarom('node.uitvragen') }}
+  <p class="muted small">Bevestigen haalt een alarm niet weg — het zegt dat iemand het
+     gezien heeft. Er is met opzet geen knop die er een verwijdert: een melding die je
+     zonder spoor kunt wegklikken is een melding die achteraf niet meer na te vertellen is.
+     Opruimen doet de bewaartermijn, samen met de rest van de historiek.</p>
+  {% endif %}
   </div>
 </section>
 

@@ -11,8 +11,8 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import (auth, clocksync, db, limits, meshmoni, mqtt_ingest, rbac,
-               retention, routes_admin, routes_api, routes_public, sweepsched,
-               tsdb, webpush)
+               retention, routes_admin, routes_api, routes_public, sensornode,
+               sweepsched, tsdb, webpush)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -96,6 +96,12 @@ def bootstrap():
     # -- maar de volgorde hier maakt dat niet toevallig goed.
     clocksync.start()     # en krijgen van ons periodiek de juiste tijd terug
     sweepsched.start()    # en worden volgens hun eigen schema uitgevraagd
+    # En de nodes die niet over MQTT binnenkomen maar hun eigen API over IP
+    # aanbieden, worden op hun eigen ritme uitgelezen. Deze weg raakt de broker
+    # niet, dus hij hangt niet aan de client hierboven -- hij staat er toch onder,
+    # omdat de opstartvolgorde daarmee de leesbare volgorde blijft: eerst de weg
+    # waar dit project rond gebouwd is, dan de weg ernaast.
+    sensornode.start()
 
 
 def set_password():

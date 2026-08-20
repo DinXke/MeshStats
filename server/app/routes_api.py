@@ -195,28 +195,26 @@ def list_repeaters():
 def repeater_detail(slug: str):
     r = _public_repeater(slug)
     latest = db.latest_for(r["id"])
-    # De namen die een beheerder bij de kanalen van deze node zette. Het
-    # telemetrieformaat draagt er geen, dus zonder deze tabel heet een kanaal ook
-    # hier in de API alleen naar zijn nummer. Zie db.channel_names_for.
-    ch_names = db.channel_names_for(r["id"])
+    # De namen bij de kanalen van deze node. Het telemetrieformaat draagt er geen,
+    # dus zonder deze tabel heet een kanaal ook hier in de API alleen naar zijn
+    # nummer. ``public=True``: dit antwoord is voor iedereen, en de vlag
+    # ``show_channels`` beslist. Zie db.channel_names_for.
+    ch_names = db.channel_names_for(r["id"], public=True)
     mets = {}
     for name, row in latest.items():
-        section, label, unit, sort = metrics.metric_info(name)
+        # Eén functie maakt het label en de eenheid, met de namen erbij. Dit
+        # endpoint had daar zijn eigen paar regels voor, en de tegels op de
+        # publieke pagina ook -- twee plaatsen die hetzelfde moeten zeggen.
+        section, label, unit, sort = metrics.metric_info(name, ch_names)
         entry = {
             "value": row["value"] if row["value"] is not None else row["value_str"],
             "ts": row["ts"], "label": label, "unit": unit, "section": section, "sort": sort,
         }
         ch = metrics.channel_metric(name)
         if ch is not None:
-            channel, kind = ch
-            named = ch_names.get(channel)
-            entry["label"] = metrics.channel_label(
-                channel, kind, named["name"] if named else None)
-            entry["unit"] = metrics.channel_unit(
-                kind, named["unit"] if named else None)
             # Kanaalnummer en LPP-soort apart, zodat een client niet aan de
             # metricnaam hoeft te parsen wat hier al bekend is.
-            entry["channel"], entry["kind"] = channel, kind
+            entry["channel"], entry["kind"] = ch
         mets[name] = entry
     neighbors = [
         {"prefix": n["prefix"], "name": n["name"], "snr": n["snr"], "last_seen": n["last_seen"]}
@@ -963,7 +961,15 @@ def repeater_history(
     hours: int = Query(24, ge=1, le=2160),
 ):
     r = _public_repeater(slug)
-    return {"metric": metric, "hours": hours,
+    # Het label en de eenheid gaan mee, en dat is meer dan gemak: een reeks die
+    # ``ch6_generic`` heet en 412 teruggeeft is voor de lezer een getal zonder
+    # betekenis. Wie deze reeks tekent, hoort de as te kunnen benoemen zonder
+    # eerst het detailendpoint erbij te halen. Dezelfde naamtabel en dezelfde
+    # zichtbaarheidsvlag als daar.
+    section, label, unit, _ = metrics.metric_info(
+        metric, db.channel_names_for(r["id"], public=True))
+    return {"metric": metric, "hours": hours, "label": label, "unit": unit,
+            "section": section,
             "points": db.metric_history(r, metric, hours)}
 
 

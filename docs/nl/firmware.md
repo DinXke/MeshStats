@@ -599,6 +599,7 @@ is het deel dat telt wanneer beslist moet worden of er iets gewijzigd wordt.
 
 | *(2.0.0 – 2.8.2)* | Hier niet uitgesplitst — de module is bij 1.12.0 hernoemd en de 2.x-historiek staat alleen in het blokcommentaar bovenaan `MeshManagerNet.cpp`, en dat is de gezaghebbende changelog | Deze tabel is bij 1.11.0 gestopt met bijgehouden worden; hij is een leeshulp, het commentaar is de vastlegging |
 | **2.9.0** | Telemetriedecodering kreeg `LPP_SWITCH` → `ch<N>_switch` en `LPP_GENERIC_SENSOR` → `ch<N>_generic`; `MON_TELEM_MAX` 6 → 40; een onbeantwoord statusverzoek beëindigt de ronde niet meer; sensornodes verschijnen in de lijst met monitorkandidaten | Drie onafhankelijke redenen waarom de telemetrie van een **sensornode** de site nooit kon bereiken, elk op zich al genoeg — zie hieronder |
+| **2.10.0** | De kandidatenlijst filtert niet meer op adverttype; `ADV_F_TELEM` onthoudt wat telemetrie geantwoord heeft; alarmen gaan naar `<prefix>/<node>/alert` en trekken de volgende ronde naar voren | Telemetrie is een **vermogen** en geen **rol** — en een alarm is een trap en geen meting. Zie hieronder |
 
 ### Waarom een sensornode vóór 2.9.0 niets rapporteerde
 
@@ -649,6 +650,73 @@ ze zijn de reden dat verschillende van de regels hieronder bestaan:
   planner die niet ingepland is, zegt dat (1.7.1), en de pollvolgorde houdt een
   trace bij (1.3.1). Een node op een dak diagnosticeren mag geen seriële kabel
   vereisen.
+
+### Waarom het adverttype het verkeerde filter was (2.10.0)
+
+Tot 2.10.0 liet de kandidatenlijst voor monitoring `ADV_TYPE_REPEATER` toe, en
+sinds 2.9.0 ook `ADV_TYPE_SENSOR`. Dat tweede was de eerste fout met een
+uitzondering erop geplakt, en de fout zelf bleef staan: **telemetrie is een
+vermogen en geen rol.**
+
+Het adverttype is de bewering van een node over waarvoor hij *bedoeld* is. Of hij
+`REQ_TYPE_GET_TELEMETRY_DATA` antwoordt is een andere vraag, en de
+companion-firmware in `examples/companion_radio` antwoordt hem terwijl hij als
+`ADV_TYPE_CHAT` adverteert. Het eerste gebruiken om het tweede te filteren sluit
+precies de nodes uit die je wilt uitlezen.
+
+Het geval dat het onontkoombaar maakte: de MeshUptime-sensornode wordt mogelijk
+omgezet naar `ADV_TYPE_CHAT`, omdat een telefoon alleen bij een *chat*contact een
+tekstvenster geeft — en zijn DM-opdrachten (`list`, `get`, `status`) zijn een
+gebouwde functie die anders onbereikbaar is. Met het oude filter zou juist die
+wijziging de node waar deze hele monitorweg voor bestaat uit de lijst hebben laten
+verdwijnen. Twee gewenste dingen, elkaar uitsluitend door een filter dat er niet
+hoort te zijn.
+
+Het ruisprobleem is echt: zonder filter is elke telefoon in de buurt een
+kandidaat. Het wordt op de juiste as opgelost — **onthouden wat er geantwoord
+heeft.** `ADV_F_TELEM` staat in de advertcache, wordt gezet vanuit de ronde zelf,
+overleeft een herstart en gaat nooit meer uit: een node die ooit telemetrie gaf,
+is voorgoed een goede kandidaat. De rol blijft, als *label* en als
+*sorteersleutel* (infrastructuur bovenaan). Per regel staat erbij waarom hij in de
+lijst staat: nu gehoord, uit een bewaarde advert, of al eens geantwoord.
+
+`MON_CACHED_MAX` (24) is een gevolg en geen detail. Zonder filter kan die lijst
+voorbij één JSON-body groeien, en een afgekapte body is geen kortere lijst maar
+een pagina die leeg blijft zonder iets in het logboek. Er wordt daarom eerst
+gesorteerd en dan afgekapt, zodat wat afvalt altijd het minst interessante is.
+
+### Alarmen: telemetrie is polling, een alarm is een trap (2.10.0)
+
+De vergelijking komt uit SNMP en ze klopt tot in de details. **Pollen** is
+regelmatig, betaalbaar en volledig, en weet niets van wat er tussen twee rondes
+gebeurde. **Een trap** komt op het moment dat er iets gebeurt, draagt één feit, en
+arriveert misschien niet. Je hebt ze beide nodig: de trap zegt *wanneer*, de poll
+zegt *wat*.
+
+Een sensornode stuurt zijn alarmen als DM naar de contacten met
+`PERM_RECV_ALERTS_*`. Staat deze repeater in die lijst, dan komt zo'n DM hier
+binnen als een `TXT_MSG` van een gemonitorde node — en tot 2.10.0 kwam die in het
+logboek terecht als "reply type genegeerd" en verdween hij. Nu gaat hij meteen
+naar de broker, op een eigen topic (`<prefix>/<node>/alert`), met de sleutel van
+het **onderwerp** in de payload en die van de doorgever in het topic. Hem in het
+statistiekenbericht proppen zou een trap precies zo traag maken als het pollen dat
+hij moet aanvullen.
+
+En de reflex: een alarm trekt de volgende uitvraagronde naar voren. Bewust de
+*ronde* en niet één node — de eenheid van werk hier is een ronde, er is één
+toestandsmachine en één radio, en een gerichte poll zou een tweede planner zijn
+naast degene die de radio al bezet houdt. Wat dat kost staat er ronduit bij: de
+andere gemonitorde nodes worden dan ook eerder uitgevraagd dan hun interval zei.
+
+Drie remmen, elk voor iets anders: `MON_ALERT_DEDUP_MS` tegen de herhalingen (de
+node stuurt opnieuw tot hij een ACK krijgt, en een monitorbericht wordt niet
+bevestigd), `MON_ALERT_POLL_GAP_MS` per node, en `MON_ALERT_ROUND_GAP_MS` over
+alle nodes samen — want de eerste is per node en tien alarmerende nodes zouden er
+tien rondes van maken.
+
+De tijdstempel in het bericht is die van **deze repeater** en niet die uit het
+alertpakket: een sensornode heeft geen batterijgevoede klok en staat na elke
+herstart op 15 mei 2024, en dat is precies het apparaat dat deze alarmen stuurt.
 
 ### 4.2 WiFi met AP-fallback
 

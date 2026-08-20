@@ -145,6 +145,50 @@ vóór 2.6.0 draait hééft `radio` in zijn tabel en zou hem aannemen. De regel 
 aan de handeling en niet aan de firmwareversie van de node die hem toevallig
 krijgt.
 
+**Vijf namen op die lijst en niet één.** `radio` is de vorm waarin *onze*
+repeaterfirmware die vier getallen aanbiedt: één parameter, vier waarden, één naam
+om te weigeren. Een node met een eigen API draait dezelfde CommonCLI maar biedt de
+vier los aan, en zijn `POST /cli` neemt `set freq` als apart woord aan. Eén naam
+weigeren terwijl er vijf woorden hetzelfde doen, is een regel die alleen op papier
+klopt. `bw`, `sf` en `cr` bestaan vandaag niet als los `set`-woord in MeshCore, en
+ze staan er toch bij — deze lijst is wat de *server* weigert, en de dag dat een
+firmware ze los aanbiedt hoort de weigering er al te staan in plaats van dan pas
+geschreven te worden. Een weigeringslijst die achterloopt op de CLI is precies één
+node te laat.
+
+Wat er met opzet **niet** op staat: `radio.rxgain` en `radio.fem.rxgain`. Die
+beginnen met hetzelfde woord en doen iets anders — ze zetten de
+ontvangstversterking, en dat maakt een node hooguit dover terwijl hij op hetzelfde
+kanaal blijft. Dat is de kant van de asymmetrie waar `tx` ook staat. Vandaar dat er
+op de *exacte* sleutel getoetst wordt en nooit op een voorvoegsel;
+`sensornode.radio_refusal` past dezelfde toets toe op een hele CLI-regel, en de
+node zelf gebruikt exact dezelfde grens (`cmdIs(cmd, "set radio ")`, met een
+spatie).
+
+**En de bevestigingsparameter gaat nooit mee.** De `POST /cli` van een sensornode
+weigert `set radio`/`set freq` zonder `confirm=radio` en `erase` zonder
+`confirm=erase` — sloten die er zijn tegen een losse fetch, een bookmarklet of een
+voorgeladen link. Deze site is zo'n fetch. Daarom heeft `sensornode.cli()` geen
+parameter om hem mee te zetten: een weglating die je niet kunt vergeten is beter
+dan een voorwaarde die je kunt omzeilen.
+
+### Waar de vlootinloggegevens heen mogen
+
+`MM_FW_NODE_USER`/`MM_FW_NODE_PASS` openen **elke** node, en de server stuurt ze
+naar het adres dat in `ota_host` of `sensor_host` staat. `node.beheeradres` is een
+*delegeerbaar* recht, dus tot deze reparatie kon wie dat recht op één node had het
+adres van zijn eigen server invullen en de vlootsleutel ontvangen — SSRF en een
+credential-lek in één tekstveld.
+
+"Weiger private adressen" is hier niet de reparatie: de nodes van dit project
+*staan* op 192.168.x. Het onderscheid is **wie het adres vastlegde**. Invullen mag
+alleen een serverbeheerder; wissen niet. Bij het verbinden toetst
+`firmware.check_target` of het adres werkelijk zo vastgelegd is
+(`repeaters.host_admin`), en elke uitgaande verbinding naar een node loopt door
+`firmware.open_node` — de enige plek die de `Authorization`-header zet, en dus de
+enige plek waar die toets hoort. Zie [`node-management.md`](node-management.md)
+voor de volledige redenering.
+
 ### Een instelling wijzigen: drie vervoermiddelen
 
 Eén schrijfweg, drie manieren waarop het commando kan reizen. Alles wat een

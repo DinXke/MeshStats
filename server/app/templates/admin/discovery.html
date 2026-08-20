@@ -117,8 +117,21 @@
     {% elif not heard.entries %}
     <p class="muted small">Deze afzender heeft nog geen andere repeaters gehoord.</p>
     {% else %}
+    {#- Waarom deze lijst nu álles bevat. Tot firmware 2.10.0 liet ze alleen
+        repeaters door (en sinds 2.9.0 ook sensors), en dat filterde op de
+        verkeerde as: telemetrie is een VERMOGEN en geen ROL. Een node die zich
+        als chat aankondigt antwoordt net zo goed op een telemetrieverzoek — de
+        companion-firmware doet dat aantoonbaar — en een sensornode kan morgen als
+        chat adverteren omdat een telefoon alleen bij een chatcontact een
+        tekstvenster geeft. Dat filter sloot dus precies de nodes uit die je wilt
+        uitlezen. De rol staat er nu als label en als sorteersleutel. -#}
+    <p class="muted small"><strong>De rol bepaalt de volgorde en niet wie er in staat.</strong>
+       Wat een node over zichzelf zegt (“repeater”, “chat”) is een bewering over waarvoor hij
+       bedoeld is; of hij telemetrie antwoordt is iets anders. Daarom staat alles hier, met
+       infrastructuur bovenaan — en bovenop dat alles: <em>wie ooit telemetrie geantwoord heeft</em>.
+       Dat is de enige meting in deze tabel, en de node onthoudt hem over een herstart heen.</p>
     <table>
-      <thead><tr><th>Node</th><th>Sleutel</th><th>Gehoord</th><th></th></tr></thead>
+      <thead><tr><th>Node</th><th>Sleutel</th><th>Gehoord</th><th>Rol</th><th>Waarom in de lijst</th><th></th></tr></thead>
       <tbody>
       {% for h in heard.entries %}
       <tr>
@@ -128,6 +141,13 @@
           {%- if h.cached %}<span class="muted" title="Uit een bewaarde advert; niet deze keer gehoord">uit advert</span>
           {%- elif h.snr is not none %}SNR {{ h.snr }}
           {%- else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="small">{% if h.role %}{{ h.role }}{% else %}<span class="muted">onbekend</span>{% endif %}</td>
+        <td class="small">
+          {%- if h.telemetry %}<strong>heeft al telemetrie geantwoord</strong><br>
+          {%- endif %}
+          {%- if h.why == 'heard' %}<span class="muted">nu gehoord</span>
+          {%- else %}<span class="muted">uit een bewaarde advert</span>{% endif %}
         </td>
         <td>
           {% if h.already %}

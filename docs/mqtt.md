@@ -55,6 +55,12 @@ someone's head. See [`migration.md`](migration.md).
 
 All of them are subscribed at **QoS 0**.
 
+Since firmware 2.10.0 there is a third leaf, `<prefix>/+/alert`. It has no
+environment variable of its own, unlike the two above: those have one because they
+existed before the prefix rule and there are installations using a topic of their
+own. This one is new and has no such history, and a variable for it would be a
+setting nobody ever changes.
+
 The last two used to hold the full topic and are now empty by default: the
 prefixes cover it. A value set there is added to the subscriptions rather
 than replacing them, so an installation running under its own branch on a
@@ -979,6 +985,68 @@ The shared rules:
 On the repeater, forwarding is additionally gated on the battery: above
 `bat_live` percent a received packet goes out immediately, below it the node
 waits. See [`firmware.md`](firmware.md#43-power-management).
+
+## Payload: `alert` — a fault, the moment it happens
+
+**Telemetry is SNMP polling; an alert is an SNMP trap.** That one sentence is the
+design. Polling is regular, affordable and complete, and knows nothing about what
+happened between two rounds. A trap arrives the moment something happens, carries
+one fact, and may not arrive at all. You need both: the trap says *when*, the poll
+says *what*.
+
+A sensor node sends its alerts as a DM to the contacts holding
+`PERM_RECV_ALERTS_*`. A repeater that stands in that list receives such a DM as a
+`TXT_MSG` and — since firmware 2.10.0 — publishes it immediately on
+`<prefix>/<node>/alert`:
+
+```json
+{
+  "alert": {
+    "pubkey_prefix": "48d7aade232b",
+    "name": "MeshUptime",
+    "text": "hoas onbereikbaar (hoas.scheepers.one)",
+    "ts": 1755691200,
+    "snr": 8.50
+  },
+  "via": "aabbccddeeff"
+}
+```
+
+| Field | Type | Contents |
+|---|---|---|
+| `alert.pubkey_prefix` | string | The node the alert is **about**: 6 bytes of its public key, hex |
+| `alert.name` | string | That node's name as the relayer knows it, JSON-escaped |
+| `alert.text` | string | The message as the node wrote it |
+| `alert.ts` | int | Epoch seconds **from the relaying repeater**, omitted when its clock is unset |
+| `alert.snr` | float | Signal of that node's last advert, omitted when unknown |
+| `via` | string | The relaying repeater — same value as in the topic |
+
+**A topic of its own, and not a field in `stats`.** A trap must not wait for the
+next round, and the statistics message *is* that round. Folding it in would make an
+alert exactly as slow as the polling it exists to complement — and it would give a
+message about *measurements* a second meaning.
+
+**The subject is in the payload, the relayer in the topic.** Along this route those
+two differ by definition: a sensor node does not publish at all. Keying on the
+topic would hang every fault on the repeater instead of on the node that went
+quiet.
+
+**The timestamp is the relayer's, never the sensor node's.** A sensor node has no
+battery-backed clock and sits at 15 May 2024 after every restart — precisely the
+device sending these alerts. The server refuses anything before 2025 and stamps its
+own receipt time instead, which is under every other row in the list otherwise,
+where nobody sees it.
+
+**Repeats are normal.** The node re-sends until it receives an ACK, and a monitor
+message is not acknowledged, so one fault produces a handful of identical DMs. The
+repeater brakes that on its side (`MON_ALERT_DEDUP_MS`) and the server again
+(`db.ALERT_DEDUP_S`, 300 s) — the first brake lives in RAM and does not survive a
+restart, and two repeaters hearing the same node would each send one.
+
+**And the reflex:** an alert pulls the next poll round forward on the relaying
+repeater, so the figures that go with the fault follow within seconds instead of
+at the next interval. Bounded by three brakes; see
+[`firmware.md`](firmware.md).
 
 ## Retention and QoS
 

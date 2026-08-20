@@ -325,9 +325,14 @@ def probe(host: str, timeout: int = PROBE_TIMEOUT_S) -> dict:
         out["error"] = "geen adres"
         return out
     try:
-        req = urllib.request.Request(_url(host, "/api/fw"), headers=_auth_header())
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_node(host, "/api/fw", timeout=timeout) as resp:
             data = json.loads(resp.read())
+    except TargetRefused as exc:
+        # Vóór de andere gevallen, want dit is geen storing: er is niets
+        # geprobeerd. "Niet bereikbaar" zou iemand naar het netwerk laten kijken
+        # voor een probleem dat op deze server zit.
+        out["error"] = f"adres geweigerd: {exc}"
+        return out
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
             out["error"] = "aanmelden geweigerd door de node"
@@ -358,6 +363,11 @@ def _url(host: str, path: str) -> str:
     in een hostveld een manier om deze server zijn eigen bestanden te laten
     lezen, en dit veld staat achter een login maar wordt wel door een mens
     getypt.
+
+    Dit is de VORMcontrole en niet de DOELcontrole. Of de server dit adres mag
+    benaderen, en of de vlootinloggegevens mee mogen, staat in
+    :func:`check_target` -- en die vraag hangt niet aan de vorm van de tekst maar
+    aan wie het adres heeft vastgelegd.
     """
     host = (host or "").strip()
     if not host:
@@ -370,6 +380,228 @@ def _url(host: str, path: str) -> str:
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
+# --- welk doel mag de server benaderen ---------------------------------------
+#
+# HET GAT DAT HIER DICHTGAAT, en het zijn er twee tegelijk.
+#
+# ``ota_host`` en ``sensor_host`` worden door een mens ingetypt, en tot nu toe
+# werd alleen het SCHEMA gecontroleerd. Er staat een recht op dat veld
+# (``node.beheeradres``) en dat recht is DELEGEERBAAR: een beheerder kan het per
+# node aan iemand anders geven. Zet die iemand er het adres van zijn eigen server
+# in, dan gebeurt dit:
+#
+#   1. deze server maakt een verbinding naar een doel dat de gebruiker koos --
+#      dat is SSRF, en op een machine die op een LAN staat is dat al erg genoeg;
+#   2. en hij stuurt ``MM_FW_NODE_USER``/``MM_FW_NODE_PASS`` mee in de
+#      Authorization-header. Dat zijn de inloggegevens waarmee firmware en
+#      instellingen naar ELKE node geschreven worden. Eén ingevuld tekstveld en
+#      de vloot is weg.
+#
+# DE SPANNING DIE DIT MOEILIJK MAAKT. De gebruikelijke reparatie is "weiger
+# private adressen": 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, ::1,
+# fc00::/7. Maar de nodes van dit project STAAN op 192.168.x -- dat IS wat een
+# beheeradres is. Die lijst zou de functie dus afschaffen in plaats van
+# beveiligen.
+#
+# DE OPLOSSING: het onderscheid zit niet in het ADRES maar in WIE HET VASTLEGDE.
+# Een LAN-adres opgeven is inherent een beheerdersdaad -- de server moet het
+# kunnen bereiken, en wie weet welk adres dat is, kent het netwerk waar de server
+# op staat. Dus:
+#
+#   * een adres INVULLEN mag alleen een serverbeheerder (afgedwongen in
+#     routes_admin.save_ota en save_sensor_host). WISSEN mag ieder die het recht
+#     heeft: een adres weghalen sluit een weg en kan er nooit een openen.
+#   * bij het VERBINDEN wordt getoetst of dit adres werkelijk zo vastgelegd is
+#     (``repeaters.host_admin``). Dat is de toegestane-lijst, en de databank is de
+#     enige plek waar ze kan staan -- want ze moet ook kloppen voor een rij die er
+#     al stond, en na een herstart.
+#
+# Waarom de toets bij het VERBINDEN staat en niet alleen bij het invullen: dat is
+# hetzelfde argument als bij ``nodeconfig.NO_REMOTE``. Een controle die alleen in
+# het formulier zit, is met een aangepast verzoek te omzeilen; een controle op de
+# plek waar de handeling werkelijk gebeurt, niet. En net als daar staat ze NAAST
+# de eerste en niet in plaats ervan -- twee sloten voor één regel, waarvan de
+# tweede degene is die telt.
+#
+# De resolutie hoort erbij: de toets kijkt naar het OPGELOSTE adres en niet naar
+# de tekst, want een naam die naar 127.0.0.1 wijst is geen publiek adres. Dat is
+# hier geen poort meer -- de toegestane-lijst is de poort -- maar het bepaalt wél
+# wat de melding zegt, en het weigert de bereiken die nooit een node kunnen zijn.
+
+
+def _is_private(ip) -> bool:
+    """Of dit een adres uit een eigen netwerk is.
+
+    Loopback, link-local, unique-local en de RFC1918-bereiken. Precies de
+    adressen waar de nodes van dit project op staan -- en precies de adressen
+    waarheen een SSRF-poging het meest waard is. Vandaar dat dit een vaststelling
+    is en geen weigering.
+    """
+    return bool(ip.is_private or ip.is_loopback or ip.is_link_local)
+
+
+def _never_a_node(ip) -> str:
+    """Bereiken die nooit een beheeradres kunnen zijn, wie ze ook invult.
+
+    Geen toegestane-lijst omheen: een verbinding naar 0.0.0.0 of naar een
+    multicastadres is geen node maar een vergissing of een poging, en in beide
+    gevallen is weigeren het juiste antwoord.
+
+    ``is_reserved`` staat ACHTER de private-toets en niet ervoor, en dat is geen
+    volgorde-detail. Python rekent ``::1`` tot de gereserveerde bereiken, dus
+    andersom zou IPv6-loopback hier als "nooit een node" eindigen terwijl het
+    gewoon een privaat adres is -- en dan zou de melding iets anders zeggen dan
+    er aan de hand is. Wat hier overblijft zijn de bereiken die noch privaat noch
+    routeerbaar zijn.
+    """
+    if ip.is_unspecified:
+        return "0.0.0.0 is geen adres van een node"
+    if ip.is_multicast:
+        return "een multicastadres is geen adres van een node"
+    if not _is_private(ip) and getattr(ip, "is_reserved", False):
+        return "dat adres valt in een gereserveerd bereik"
+    return ""
+
+
+def resolve_target(host: str) -> dict:
+    """Het adres achter een hostveld opzoeken, met de aard ervan erbij.
+
+    ``{"ok", "error", "host", "ip", "private"}``. ``private`` is waar voor
+    loopback, link-local, unique-local en de RFC1918-bereiken -- precies de
+    adressen waar de nodes van dit project op staan, en precies de adressen
+    waarheen een SSRF-poging het meest waard is. Het is dus geen weigering maar
+    een vaststelling; wie beslist is ``check_target``.
+
+    Opzoeken en niet raden: een naam die naar 127.0.0.1 wijst is loopback, hoe
+    publiek hij ook klinkt.
+    """
+    import ipaddress
+    import socket
+
+    out = {"ok": False, "error": "", "host": "", "ip": "", "private": False}
+    try:
+        url = _url(host, "/")
+    except ValueError as exc:
+        out["error"] = str(exc)
+        return out
+    naam = urllib.parse.urlsplit(url).hostname or ""
+    out["host"] = naam
+    try:
+        # Het EERSTE antwoord, want dat is het adres waarheen de verbinding gaat.
+        # Alle antwoorden toetsen zou strenger lijken en iets anders meten.
+        info = socket.getaddrinfo(naam, None)
+    except OSError as exc:
+        out["error"] = f"adres niet op te zoeken ({type(exc).__name__})"
+        return out
+    if not info:
+        out["error"] = "adres niet op te zoeken"
+        return out
+    try:
+        ip = ipaddress.ip_address(info[0][4][0])
+    except ValueError:
+        out["error"] = "opgezocht adres is geen IP-adres"
+        return out
+
+    out["ip"] = str(ip)
+    weigering = _never_a_node(ip)
+    if weigering:
+        out["error"] = weigering
+        return out
+    out["private"] = _is_private(ip)
+    out["ok"] = True
+    return out
+
+
+def trusted_hosts() -> set:
+    """De adressen die een serverbeheerder heeft vastgelegd.
+
+    De toegestane-lijst. Ze staat in de databank omdat dat de enige plek is waar
+    ze een herstart overleeft en waar ook een rij in past die er al stond.
+    Letterlijk vergeleken en niet genormaliseerd: wat er in het veld staat is wat
+    er benaderd wordt, en twee vormen van hetzelfde adres zouden betekenen dat de
+    lijst iets anders toestaat dan wat er gebeurt.
+    """
+    uit = set()
+    for kolom in ("ota_host", "sensor_host"):
+        for r in db.q(f"SELECT {kolom} AS h FROM repeaters "
+                      f"WHERE host_admin=1 AND {kolom} IS NOT NULL "
+                      f"AND TRIM({kolom}) <> ''"):
+            uit.add(str(r["h"]).strip())
+    return uit
+
+
+def check_target(host: str) -> dict:
+    """Mag de server dit adres benaderen, mét de vlootinloggegevens?
+
+    ``{"ok", "error", "ip", "private"}``. Dit is de enige plek waar dat besloten
+    wordt, en elke uitgaande verbinding naar een node loopt erlangs -- zie
+    ``open_node``, waar ``nodeconfig._open``, ``probe`` en ``push`` op uitkomen.
+
+    De regel in één zin: een adres dat een serverbeheerder niet heeft vastgelegd,
+    krijgt geen verbinding en dus ook geen wachtwoord. Niet "geen privaat adres"
+    -- dat zou de nodes van dit project uitsluiten -- en niet "wel als het in de
+    databank staat", want dat veld is met een gedelegeerd recht te vullen. Wat
+    telt is dat een serverbeheerder het gezet heeft.
+
+    Waarom de weigering ook voor een PUBLIEK adres geldt. Het lek is niet dat de
+    server een LAN aanraakt; het lek is dat er een wachtwoord in de header staat.
+    Naar de server van een aanvaller op een publiek adres is dat precies zo erg,
+    en "alleen private adressen toetsen" zou het gat openlaten aan de kant waar
+    het het makkelijkst te misbruiken is.
+    """
+    adres = (host or "").strip()
+    out = {"ok": False, "error": "", "ip": "", "private": False}
+    if not adres:
+        out["error"] = "leeg adres"
+        return out
+    if adres not in trusted_hosts():
+        out["error"] = (
+            "dit adres is niet door een serverbeheerder vastgelegd. De server "
+            "verbindt er daarom niet naartoe en stuurt er geen inloggegevens "
+            "naartoe: MM_FW_NODE_USER/MM_FW_NODE_PASS openen elke node, en een "
+            "adres dat langs een gedelegeerd recht ingevuld is, is geen adres "
+            "waar dat wachtwoord heen mag")
+        return out
+    doel = resolve_target(adres)
+    if not doel["ok"]:
+        out["error"] = doel["error"]
+        return out
+    out.update(ok=True, ip=doel["ip"], private=doel["private"])
+    return out
+
+
+class TargetRefused(ValueError):
+    """Het doel mag niet benaderd worden. Zie ``check_target``.
+
+    Een eigen soort en geen kale ValueError, zodat een aanroeper het verschil kan
+    maken tussen "dat adres is onbruikbaar van vorm" en "dat adres mag niet" --
+    en die tweede hoort op het scherm een andere zin te krijgen, want er valt
+    niets aan te repareren door de tekst te verbeteren.
+    """
+
+
+def open_node(host: str, path: str, data: bytes | None = None,
+              timeout: int = PROBE_TIMEOUT_S, content_type: str | None = None):
+    """Eén verbinding naar een node, met de doelcontrole ervoor.
+
+    ELKE uitgaande verbinding naar een node hoort hier langs te komen. Niet uit
+    netheid: dit is de plek waar de vlootinloggegevens aan het verzoek gehangen
+    worden, en de controle hoort te staan waar het geheim de deur uit gaat. Een
+    tweede plek die zelf een socket opent, is een tweede plek waar de controle
+    kan ontbreken -- dezelfde regel als "één schrijfweg" in nodeconfig.py.
+    """
+    toets = check_target(host)
+    if not toets["ok"]:
+        raise TargetRefused(toets["error"])
+    url = _url(host, path)
+    headers = dict(_auth_header())
+    if content_type:
+        headers["Content-Type"] = content_type
+    req = urllib.request.Request(url, data=data, headers=headers,
+                                 method="POST" if data is not None else "GET")
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 def push(host: str, blob: bytes, digest: str, version: str,
          timeout: int = PUSH_TIMEOUT_S) -> dict:
     """Het image naar de node schrijven en zijn antwoord teruggeven.
@@ -379,13 +611,16 @@ def push(host: str, blob: bytes, digest: str, version: str,
     dezelfde reden: er is verder nergens in deze module een socket.
     """
     query = urllib.parse.urlencode({"sha256": digest, "size": len(blob), "ver": version})
-    url = _url(host, "/api/fw") + "?" + query
-    headers = dict(_auth_header())
-    headers["Content-Type"] = "application/octet-stream"
-    req = urllib.request.Request(url, data=blob, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_node(host, "/api/fw?" + query, data=blob, timeout=timeout,
+                       content_type="application/octet-stream") as resp:
             return json.loads(resp.read())
+    except TargetRefused as exc:
+        # Eigen stap, want dit is de enige fout in deze functie waarbij er
+        # gegarandeerd niets naar de node is gegaan -- en bij een image van ruim
+        # een megabyte is dat het verschil tussen "opnieuw proberen" en "eerst
+        # gaan kijken wat er half op staat".
+        return {"ok": 0, "step": "adres", "msg": f"adres geweigerd: {exc}"}
     except urllib.error.HTTPError as exc:
         # De node antwoordt met JSON, óók bij een fout, en juist dan staat er in
         # welke stap faalde. Die tekst is het enige wat dit hele ontwerp de

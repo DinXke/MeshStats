@@ -577,6 +577,7 @@ deciding whether to change something.
 
 | *(2.0.0 – 2.8.2)* | Not itemised here — the module was renamed at 1.12.0 and the 2.x history lives only in the block comment at the top of `MeshManagerNet.cpp`, which is the authoritative changelog | This table stopped being maintained at 1.11.0; it is a reading aid, and the comment is the record |
 | **2.9.0** | Telemetry decoding gained `LPP_SWITCH` → `ch<N>_switch` and `LPP_GENERIC_SENSOR` → `ch<N>_generic`; `MON_TELEM_MAX` 6 → 40; an unanswered status request no longer ends the round; sensor nodes appear in the monitor candidate list | Three independent reasons a **sensor node's** telemetry could never reach the site, each of them sufficient on its own — see below |
+| **2.10.0** | The candidate list no longer filters on advert type; `ADV_F_TELEM` remembers what has answered telemetry; alerts are published on `<prefix>/<node>/alert` and pull the next round forward | Telemetry is a **capability**, not a **role** — and an alert is a trap, not a measurement. See below |
 
 ### Why a sensor node reported nothing before 2.9.0
 
@@ -625,6 +626,69 @@ reason several of the rules below exist:
   not answer goes out as `null` (1.9.0), a scheduler that is not scheduled says
   so (1.7.1), and the poll sequence keeps a trace (1.3.1). Diagnosing a node on a
   roof must not require a serial cable.
+
+### Why the advert type was the wrong filter (2.10.0)
+
+Until 2.10.0 the monitor candidate list admitted `ADV_TYPE_REPEATER`, and from
+2.9.0 also `ADV_TYPE_SENSOR`. That second change was the first mistake with an
+exception bolted on, and the mistake itself stayed: **telemetry is a capability,
+not a role.**
+
+The advert type is a node's own claim about what it is *for*. Whether it answers
+`REQ_TYPE_GET_TELEMETRY_DATA` is a different question, and the companion firmware
+in `examples/companion_radio` answers it while advertising as `ADV_TYPE_CHAT`.
+Using the first to filter the second excludes exactly the nodes you want to read.
+
+The case that made it undeniable: the MeshUptime sensor node may be re-advertised
+as `ADV_TYPE_CHAT`, because a phone only gives a *chat* contact a text window —
+and its DM commands (`list`, `get`, `status`) are a built feature that is
+otherwise unreachable. With the old filter, that one change would have removed
+the node this whole monitor path exists for. Two wanted things, made mutually
+exclusive by a filter that should not be there.
+
+The noise problem is real: without a filter, every phone in range is a candidate.
+It is solved on the right axis — **remember what answered.** `ADV_F_TELEM` lives
+in the advert cache, is set from the round itself, survives a restart, and never
+clears again: a node that once answered telemetry is a good candidate for good.
+The role stays, as a *label* and as a *sort key* (infrastructure first). Each row
+carries why it is listed: heard just now, from a stored advert, or has answered
+before.
+
+`MON_CACHED_MAX` (24) is a consequence and not a detail. Without a filter this
+list can outgrow one JSON body, and a truncated body is not a shorter list — it is
+a page that stays blank with nothing in the log. So the rows are sorted first and
+capped second, and what falls off the end is always the least interesting.
+
+### Alerts: telemetry is polling, an alert is a trap (2.10.0)
+
+The comparison is SNMP's and it holds to the details. **Polling** is regular,
+affordable and complete, and knows nothing about what happened between two
+rounds. **A trap** arrives the moment something happens, carries one fact, and
+may not arrive at all. You need both: the trap says *when*, the poll says *what*.
+
+A sensor node sends its alerts as a DM to the contacts holding
+`PERM_RECV_ALERTS_*`. When this repeater is in that list, such a DM arrives here
+as a `TXT_MSG` from a monitored node — and until 2.10.0 it was logged as "reply
+type ignored" and dropped. It now goes to the broker immediately, on a topic of
+its own (`<prefix>/<node>/alert`), with the **subject's** key in the payload and
+the relayer's key in the topic. Folding it into the statistics message would make
+a trap exactly as slow as the polling it exists to complement.
+
+And the reflex: an alert pulls the next poll round forward. Deliberately the
+*round* and not one node — the unit of work here is a round, there is one state
+machine and one radio, and a targeted poll would be a second scheduler beside the
+one that already holds the radio. What that costs is stated plainly: the other
+monitored nodes are then polled earlier than their interval said.
+
+Three brakes, each for something different: `MON_ALERT_DEDUP_MS` against the
+repeats (the node re-sends until it gets an ACK, and a monitor message is not
+acknowledged), `MON_ALERT_POLL_GAP_MS` per node, and `MON_ALERT_ROUND_GAP_MS`
+across all nodes together — because the first is per node and ten alerting nodes
+would make ten rounds of it.
+
+The timestamp in the message is **this repeater's** and not the one from the alert
+packet: a sensor node has no battery-backed clock and sits at 15 May 2024 after
+every restart, and that is precisely the device sending these alerts.
 
 ### 4.2 WiFi with AP fallback
 
