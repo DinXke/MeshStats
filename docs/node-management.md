@@ -325,7 +325,15 @@ What the server does with it:
   road is up to one poll interval (default 300 s) behind the fact, where the mesh
   road would be seconds — the alert list says so per row. If the mesh road ever
   starts working, the same event arriving twice is caught by the cross-source
-  de-duplication on (node, kind, service) — see [`mqtt.md`](mqtt.md);
+  de-duplication on (node, kind, service) — see [`mqtt.md`](mqtt.md). A
+  **forced** state (the node's simulation button; `sm` in `/status.json`) is
+  labelled "(simulatie)" in the alert text — including the artificial "recovery"
+  when the forcing expires — with the severity left untouched: the button exists
+  to test whether a *high* alert gets through. Such rows carry `kind=NULL`, the
+  same choice the mesh path makes for TEST texts, so a drill never suppresses a
+  real fault in the de-duplication window or vice versa; and when a forcing
+  expires while the service turns out genuinely down, that unmasking is reported
+  as the real alert it is;
 - **manages**: advert (flood or zerohop), the clock, the region, a restart, and the
   settings from `/cfg.json`. Settings go through `nodeconfig.write()` like every
   other transport, with every threshold intact.

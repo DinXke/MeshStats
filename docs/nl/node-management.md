@@ -332,7 +332,14 @@ Wat de server ermee doet:
   is dat een storing die al bestond vóór de herstart pas bij haar volgende
   overgang gemeld wordt. Per kanaal wordt de laatst *bekende* toestand bewaard,
   zodat een node-herstart (`?` op elk kanaal) een `op → neer` eromheen niet
-  opslokt. **De latentie is de eerlijke kanttekening:** deze weg loopt tot een
+  opslokt. Een **geforceerde** toestand (de simulatieknop van de node; `sm` in
+  `/status.json`) krijgt "(simulatie)" in de alerttekst — ook het kunstmatige
+  "herstel" wanneer de forcering afloopt — met de ernst onaangetast: die knop
+  bestaat om te testen of een *hoge* melding doorkomt. Zulke rijen dragen
+  `kind=NULL`, dezelfde keuze die het mesh-pad voor TEST-teksten maakt, zodat een
+  oefening in het ontdubbelvenster nooit een echte storing onderdrukt of
+  andersom; en loopt een forcering af terwijl de dienst écht neer blijkt, dan
+  wordt die ontmaskering gemeld als de echte storing die ze is. **De latentie is de eerlijke kanttekening:** deze weg loopt tot een
   pollinterval (standaard 300 s) achter op het feit, waar de mesh-weg seconden
   zou zijn — de alertenlijst zegt dat per regel. Gaat de mesh-weg ooit werken, dan
   vangt de kruisontdubbeling op (node, soort, dienst) de dubbele binnenkomst af —

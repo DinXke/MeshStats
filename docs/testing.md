@@ -175,7 +175,7 @@ the area under test.
 | `test_nodes.py` | 16 | `/api/v1/nodes/{prefix}` | A panel assembled almost entirely from things no column holds |
 | `test_kanalen.py` | 42 | `app/metrics.py`, `channel_names`, the node page | The CayenneLPP wire contract, two LPP types on one channel, and the per-node channel naming |
 | `test_sensornode.py` | 55 | `app/sensornode.py`, the fourth transport in `nodeconfig`, `firmware.check_target` | One namespace for the metric names, one refusal list for the radio, one parameter table mirrored against the C source, and which addresses the server may connect to |
-| `test_alerts.py` | 42 | `alerts`, the `alert` topic, the acked flow | Telemetry is polling, an alert is a trap: the subject versus the relayer, repeats, a clock from 2024, and why nothing deletes an alert |
+| `test_alerts.py` | 48 | `alerts`, the `alert` topic, the acked flow | Telemetry is polling, an alert is a trap: the subject versus the relayer, repeats, a clock from 2024, and why nothing deletes an alert |
 | `test_retention.py` | 15 | Pruning | Not "something is deleted" but the **order** in which it is |
 | `test_settings_chain.py` | 25 | button → queue → poller → storage | The clear-on-read queue, which fails without producing any error |
 | `test_zichtbaarheid.py` | 18 | `show_position` / `show_name` across every public route | Not "the switch flips" but **that no route leaks past it**, plus that the defaults change nothing |

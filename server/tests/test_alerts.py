@@ -577,3 +577,112 @@ def test_poll_neemt_de_afleiding_mee(db, schone_toestand, monkeypatch):
     uit = sensornode.poll(rep)
     assert uit["ok"] is True and uit["alerts"] == 1
     assert db.alerts_for(node["id"])[0]["source"] == "ip"
+
+
+# --- simulaties in de afleiding --------------------------------------------------
+#
+# Gevonden bij de eerste end-to-end-test: een via de simulatieknop geforceerde
+# 'neer' werd een kale echte melding, ernst hoog, zonder enig teken dat het een
+# oefening was. De afleiding werkt uit de TOESTAND en omzeilde daarmee de
+# tekstmarkering die het mesh-pad wel heeft (de firmware zet TEST/SIMULATIE in
+# het bericht zelf). De node meldt de forcering in /status.json (sm per regel),
+# en deze reeks legt vast wat de afleiding daarmee hoort te doen: labelen zonder
+# de ernst te verlagen, buiten de kruisontdubbeling blijven, en het einde van een
+# oefening niet als echt herstel verkopen.
+
+
+def test_een_gesimuleerde_neer_wordt_gelabeld_en_blijft_hoog(db, schone_toestand):
+    """De tekst zegt dat het een oefening is; de ernst blijft staan.
+
+    Dat tweede is geen slordigheid maar het punt van de knop: de gebruiker test
+    juist of een HOGE melding doorkomt, en een oefening die als 'laag'
+    binnenkomt test iets anders dan het echte geval.
+    """
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    aantal = sensornode._derive_alerts(node["id"], _status(mon=[
+        dict(_mon(5, "neer"), sm="down")]))
+    assert aantal == 1
+    rij = db.alerts_for(node["id"])[0]
+    assert rij["text"] == "google onbereikbaar (google.com) (simulatie)"
+    assert rij["severity"] == "hoog"
+    # kind=None: dezelfde keuze als mqtt_ingest.alert_kind voor TEST-teksten,
+    # zodat een oefening nooit aan de kruisontdubbeling meedoet.
+    assert rij["kind"] is None
+
+
+def test_een_echte_neer_vlak_na_een_gesimuleerde_wordt_niet_onderdrukt(db, schone_toestand):
+    """De reden dat een simulatie kind=None krijgt.
+
+    Oefening om 10:00, echte storing om 10:05: met kind='neer' op de oefenrij
+    zou de kruisontdubbeling de echte melding als herhaling aanzien -- en dan
+    heeft de test het alarmkanaal zelf onklaar gemaakt. Volgorde hier: sim neer,
+    sim af (herstel-artefact), echte neer. Drie rijen, waarvan alleen de laatste
+    een echte 'neer' met kind is.
+    """
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    sensornode._derive_alerts(node["id"], _status(mon=[
+        dict(_mon(5, "neer"), sm="down")]))
+    sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "op")]))
+    assert sensornode._derive_alerts(
+        node["id"], _status(mon=[_mon(5, "neer")])) == 1
+    rijen = db.alerts_for(node["id"])
+    assert len(rijen) == 3
+    assert rijen[0]["text"] == "google onbereikbaar (google.com)"
+    assert rijen[0]["kind"] == "neer" and "simulatie" not in rijen[0]["text"]
+
+
+def test_het_einde_van_een_simulatie_is_geen_echt_herstel(db, schone_toestand):
+    """De spiegel van het label: loopt de forcering af en blijkt de dienst
+    gewoon op, dan is dat "herstel" een artefact van de oefening. Een kaal
+    "weer bereikbaar" voor iets dat nooit stuk was, leert de lezer het verkeerde."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    sensornode._derive_alerts(node["id"], _status(mon=[
+        dict(_mon(5, "neer"), sm="down")]))
+    assert sensornode._derive_alerts(
+        node["id"], _status(mon=[_mon(5, "op")])) == 1
+    rij = db.alerts_for(node["id"])[0]
+    assert rij["text"] == "google weer bereikbaar (simulatie)"
+    assert rij["severity"] == "laag" and rij["kind"] is None
+
+
+def test_een_simulatie_die_een_echte_storing_maskeerde_meldt_alsnog(db, schone_toestand):
+    """Forcering op 'neer' terwijl de dienst ONDERTUSSEN echt neerging: als de
+    forcering afloopt verandert de toestand niet ('neer' blijft 'neer') maar de
+    herkomst wel -- van beweerd naar gemeten. Dat is het moment waarop we leren
+    dat het geen oefening meer is, en dat verdient een echte melding."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    sensornode._derive_alerts(node["id"], _status(mon=[
+        dict(_mon(5, "neer"), sm="down")]))
+    assert sensornode._derive_alerts(
+        node["id"], _status(mon=[_mon(5, "neer")])) == 1
+    rij = db.alerts_for(node["id"])[0]
+    assert rij["text"] == "google onbereikbaar (google.com)"
+    assert rij["kind"] == "neer" and rij["severity"] == "hoog"
+
+
+def test_een_forcering_zonder_zichtbare_overgang_meldt_niets(db, schone_toestand):
+    """Forceren naar de toestand die er al was, verandert niets observeerbaars."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    sensornode._derive_alerts(node["id"], _status())
+    assert sensornode._derive_alerts(node["id"], _status(mon=[
+        dict(_mon(5, "op"), sm="up")])) == 0
+    assert sensornode._derive_alerts(node["id"], _status(mon=[_mon(5, "op")])) == 0
+
+
+def test_een_gesimuleerde_netvoedingsuitval_wordt_ook_gelabeld(db, schone_toestand):
+    """Dezelfde regels voor het vaste kanaal. De forcering is aan het kale
+    mains-veld niet te zien; hij staat in de sm van de vaste kanaalregels."""
+    node = db.get_or_create_repeater(ONDERWERP, "MeshUptime")
+    vast = {"ch": 2, "n": "netvoeding", "h": "klemspanning", "st": "uit",
+            "k": "vast", "sm": "down"}
+    sensornode._derive_alerts(node["id"], _status())
+    aantal = sensornode._derive_alerts(node["id"], _status(
+        mains=0, mon=[vast, _mon(5, "op")]))
+    assert aantal == 1
+    rij = db.alerts_for(node["id"])[0]
+    assert rij["text"] == "netvoeding weg, node op batterij (simulatie)"
+    assert rij["severity"] == "hoog" and rij["kind"] is None

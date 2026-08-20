@@ -724,12 +724,24 @@ _DEFINITE = ("op", "neer", "stil")
 def _state_from_status(data: dict) -> dict:
     """De toestand van één ronde, teruggebracht tot wat de vergelijking nodig heeft.
 
-    ``{"mains": 0|1|None, "mon": {kanaal: {"st","naam","host","soort"}}}``.
-    Alleen de monitorkanalen (ping/gemeld): de vaste kanalen herhalen mains en
-    wifi, en wifi is over deze weg per definitie 'online' -- wij praten erover
-    met de node. Mains komt uit het veld zelf; -1 (geen sensorlaag) wordt None.
+    ``{"mains": 0|1|None, "mains_sim": bool, "mon": {kanaal: {"st","naam",
+    "host","soort","sim"}}}``. Alleen de monitorkanalen (ping/gemeld): de vaste
+    kanalen herhalen mains en wifi, en wifi is over deze weg per definitie
+    'online' -- wij praten erover met de node. Mains komt uit het veld zelf; -1
+    (geen sensorlaag) wordt None.
+
+    ``sim`` is het simulatieveld van de node (``sm``: off/up/down). Het reist
+    mee omdat de afleiding uit de TOESTAND werkt en daarmee de tekstmarkering
+    zou omzeilen die het mesh-pad wél heeft: de firmware zet TEST/SIMULATIE in
+    het bericht zelf, maar een geforceerd vakje ziet er in ``st`` precies zo uit
+    als een echte storing. Zonder deze vlag maakt de oefenknop dus een kale
+    echte melding -- en dat is bij de eerste end-to-end-test ook gebeurd.
+
+    ``mains_sim`` komt uit de vaste kanalen (netvoeding en batterijvoeding
+    dragen hetzelfde sensornummer en dezelfde ``sm``): aan het kale
+    ``mains``-veld is niet te zien of de waarde geforceerd is.
     """
-    uit: dict = {"mains": None, "mon": {}}
+    uit: dict = {"mains": None, "mains_sim": False, "mon": {}}
     if not isinstance(data, dict):
         return uit
     mains = data.get("mains")
@@ -739,6 +751,11 @@ def _state_from_status(data: dict) -> dict:
         if not isinstance(entry, dict):
             continue
         soort = str(entry.get("k") or "")
+        sim = str(entry.get("sm") or "off").strip().lower() not in ("", "off")
+        if soort == KIND_FIXED:
+            if sim and str(entry.get("st") or "").strip() in ("aan", "uit"):
+                uit["mains_sim"] = True
+            continue
         if soort not in (KIND_PING, KIND_PUSH):
             continue
         try:
@@ -750,6 +767,7 @@ def _state_from_status(data: dict) -> dict:
             "naam": str(entry.get("n") or "").strip(),
             "host": str(entry.get("h") or "").strip(),
             "soort": soort,
+            "sim": sim,
         }
     return uit
 
@@ -762,31 +780,75 @@ def _transition_alert(prev: dict, cur: dict, channel: int) -> dict | None:
     ontdubbeling: komt hetzelfde feit ooit alsnog over het mesh binnen, dan
     begint dat bericht met dezelfde dienstnaam -- en (node, soort, naam) is de
     sleutel waarop db.add_alert de tweede melding herkent.
+
+    EEN GEFORCEERDE TOESTAND IS EEN OEFENING, en dat hoort de melding te zeggen.
+    De afleiding werkt uit de toestand en zou anders de tekstmarkering omzeilen
+    die het mesh-pad heeft (de firmware zet TEST/SIMULATIE in het bericht zelf).
+    Dus: raakt een simulatie aan de overgang -- aan de kant waar hij heen gaat óf
+    waar hij vandaan komt -- dan krijgt de tekst "(simulatie)" en de rij
+    ``kind=None``. Die twee zijn elk de helft van het gedrag:
+
+    * de TEKST, omdat wie op een pushmelding kijkt zonder nadenken moet zien of
+      zijn router echt uit staat. De ernst blijft wél staan: de gebruiker test
+      juist of een hoge melding doorkomt, en een oefening die als 'laag' binnen
+      zou komen test iets anders dan het echte geval;
+    * ``kind=None``, omdat een oefening buiten de kruisontdubbeling hoort te
+      vallen -- precies de keuze die mqtt_ingest.alert_kind voor de
+      TEST-teksten van het mesh ook maakt, en om dezelfde reden: een
+      gesimuleerde 'neer' mag een ECHTE 'neer' die er kort na komt nooit
+      onderdrukken, en andersom ook niet. De prijs is dat twee oefeningen kort
+      na elkaar twee rijen geven; dat is bij oefenen eerder informatie dan ruis.
+
+    De prev-kant telt mee omdat het einde van een simulatie anders een kale
+    echte melding wordt: valt de forcering af en blijkt de dienst gewoon op, dan
+    is dat "herstel" een artefact van de oefening en geen dienst die terugkwam.
+
+    En de spiegel dáárvan: valt de forcering af en is de dienst ÉCHT neer, dan
+    verandert ``st`` niet ('neer' blijft 'neer') maar verandert de herkomst wel
+    -- van beweerd naar gemeten. Dat is het moment waarop we leren dat het geen
+    oefening meer is, en dat is een echte melding waard; de simulatie heeft de
+    werkelijke storing tot dan gemaskeerd.
     """
     was, nu = prev["st"], cur["st"]
-    if nu == was or was not in _DEFINITE or nu not in _DEFINITE:
+    if was not in _DEFINITE or nu not in _DEFINITE:
         return None
+    sim_was = bool(prev.get("sim"))
+    sim_nu = bool(cur.get("sim"))
     naam = cur["naam"] or f"kanaal {channel}"
     push = cur["soort"] == KIND_PUSH
 
+    if nu == was:
+        # Geen overgang in de toestand -- maar mogelijk wel in de HERKOMST.
+        if sim_was and not sim_nu and nu == "neer":
+            return {"kind": "neer", "severity": "hoog", "channel": channel,
+                    "text": (f"{naam} gemeld als neer" if push
+                             else f"{naam} onbereikbaar ({cur['host']})")}
+        return None
+
     if nu == "neer":
-        return {"kind": "neer", "severity": "hoog", "channel": channel,
-                "text": (f"{naam} gemeld als neer" if push
-                         else f"{naam} onbereikbaar ({cur['host']})")}
-    if nu == "stil":
+        alert = {"kind": "neer", "severity": "hoog", "channel": channel,
+                 "text": (f"{naam} gemeld als neer" if push
+                          else f"{naam} onbereikbaar ({cur['host']})")}
+    elif nu == "stil":
         # Een heel andere boodschap dan 'neer', en het verschil is voor de
         # lezer het halve bericht: hier is de MELDER stil en weten wij niets.
-        return {"kind": "stil", "severity": "hoog", "channel": channel,
-                "text": f"{naam}: geen melding meer"}
+        alert = {"kind": "stil", "severity": "hoog", "channel": channel,
+                 "text": f"{naam}: geen melding meer"}
     # nu == "op": het herstel. Lagere ernst, zoals de firmware dat ook doet --
     # en na een stilte een andere zin, want dan is er geen dienst hersteld
     # waarvan we weten dat hij plat lag.
-    if was == "stil":
-        return {"kind": "op", "severity": "laag", "channel": channel,
-                "text": f"{naam} meldt weer"}
-    return {"kind": "op", "severity": "laag", "channel": channel,
-            "text": (f"{naam} weer op gemeld" if push
-                     else f"{naam} weer bereikbaar")}
+    elif was == "stil":
+        alert = {"kind": "op", "severity": "laag", "channel": channel,
+                 "text": f"{naam} meldt weer"}
+    else:
+        alert = {"kind": "op", "severity": "laag", "channel": channel,
+                 "text": (f"{naam} weer op gemeld" if push
+                          else f"{naam} weer bereikbaar")}
+
+    if sim_was or sim_nu:
+        alert["text"] += " (simulatie)"
+        alert["kind"] = None
+    return alert
 
 
 def _derive_alerts(rid: int, data: dict) -> int:
@@ -808,6 +870,7 @@ def _derive_alerts(rid: int, data: dict) -> int:
         # verwijderde monitor is geen storing.
         bewaard: dict = {"mains": nieuw["mains"] if nieuw["mains"] is not None
                                   else vorig.get("mains"),
+                         "mains_sim": nieuw.get("mains_sim", False),
                          "mon": {}}
         overgangen = []
         for channel, cur in nieuw["mon"].items():
@@ -826,16 +889,28 @@ def _derive_alerts(rid: int, data: dict) -> int:
                 bewaard["mon"][channel] = cur
             else:
                 bewaard["mon"][channel] = prev
-        if vorig.get("mains") is not None and nieuw["mains"] is not None \
-                and nieuw["mains"] != vorig["mains"]:
-            if nieuw["mains"] == 0:
+        # De netvoeding, met dezelfde simulatieregels als de monitorkanalen:
+        # raakt de forcering aan de overgang, dan "(simulatie)" en kind=None;
+        # valt de forcering af terwijl de voeding echt weg blijkt, dan is dát de
+        # echte melding die de oefening tot nu toe maskeerde.
+        mains_sim_was = bool(vorig.get("mains_sim"))
+        mains_sim_nu = bool(nieuw.get("mains_sim"))
+        if vorig.get("mains") is not None and nieuw["mains"] is not None:
+            if nieuw["mains"] != vorig["mains"]:
+                if nieuw["mains"] == 0:
+                    alert = {"kind": "neer", "severity": "hoog", "channel": None,
+                             "text": "netvoeding weg, node op batterij"}
+                else:
+                    alert = {"kind": "op", "severity": "laag", "channel": None,
+                             "text": "netvoeding terug"}
+                if mains_sim_was or mains_sim_nu:
+                    alert["text"] += " (simulatie)"
+                    alert["kind"] = None
+                overgangen.append(alert)
+            elif mains_sim_was and not mains_sim_nu and nieuw["mains"] == 0:
                 overgangen.append({"kind": "neer", "severity": "hoog",
                                    "channel": None,
                                    "text": "netvoeding weg, node op batterij"})
-            else:
-                overgangen.append({"kind": "op", "severity": "laag",
-                                   "channel": None,
-                                   "text": "netvoeding terug"})
         _toestand[rid] = bewaard
 
     aantal = 0
