@@ -10,8 +10,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, clocksync, db, limits, mqtt_ingest, rbac, retention,
-               routes_admin, routes_api, routes_public, sweepsched, tsdb)
+from . import (auth, clocksync, db, limits, meshmoni, mqtt_ingest, rbac,
+               retention, routes_admin, routes_api, routes_public, sweepsched,
+               tsdb, webpush)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -54,6 +55,7 @@ async def security_headers(request, call_next):
 app.include_router(routes_api.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_public.router)
+app.include_router(meshmoni.router)   # de PWA-subsite voor op de telefoon
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
 
 
@@ -75,6 +77,9 @@ def bootstrap():
     # a container that runs for months never threw anything away, and the first
     # sign of that is a full disk. See retention.py.
     retention.start()
+    # Webpush kijkt periodiek in de alerts-tabel, zoals retention in de zijne;
+    # zonder VAPID-sleutels start hij niet en zegt hij waarom (zie webpush.py).
+    webpush.start()
     # Contacts stored before this column existed, or while borders.json was
     # missing, are classified here rather than never: ingest only classifies a
     # position when it changes, and most nodes never move.

@@ -1,0 +1,26 @@
+{% extends "meshmoni/base.html" %}
+{% block title %}{{ node_naam }} — MeshMoni{% endblock %}
+{% block kop %}<a class="brand" href="/meshmoni">&#8592;</a><span class="moni-titel">{{ node_naam }}</span>{% endblock %}
+{#- Eén node: de kanalen als tegels, en per aangetikt kanaal de historiek als
+    grafiek met min/gemiddelde/max en een histogram. De opvraagknop loopt
+    langs dezelfde weg als die in de beheer-UI; staat hij uit, dan staat de
+    reden erop -- een knop die er werkend uitziet voor wie hem niet mag
+    indrukken is een belofte die de server gaat breken. -#}
+{% block content %}
+<section class="moni-acties">
+  <button type="button" id="moni-uitvragen" class="moni-actie"
+          {% if not boot.node.mag_uitvragen %}disabled title="{{ boot.node.uitvraag_reden }}"{% endif %}>
+    Nu uitvragen</button>
+  <span id="moni-uitvraag-uitkomst" class="moni-leeg"></span>
+</section>
+
+<section id="moni-kanalen" aria-label="Kanalen"></section>
+
+<section id="moni-historiek" aria-label="Historiek" hidden>
+  <h2 id="moni-historiek-titel"></h2>
+  <div class="moni-venster" id="moni-vensters"></div>
+  <div class="card moni-kaart"><canvas id="moni-grafiek" height="180"></canvas></div>
+  <div class="moni-statrij" id="moni-statrij"></div>
+  <div class="card moni-kaart"><canvas id="moni-histogram" height="120"></canvas></div>
+</section>
+{% endblock %}

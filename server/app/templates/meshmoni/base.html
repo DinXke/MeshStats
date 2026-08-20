@@ -1,0 +1,40 @@
+<!doctype html>
+{#- De schil van MeshMoni. Bewust een eigen basis en geen uitbreiding van
+    base.html: de topbar, de taalwissel en de voettekst van de site zijn voor
+    een groot scherm gemaakt, en een PWA op een telefoon heeft een andere kop
+    (terugknop, alertenteller) en een manifest in de head nodig. De
+    designtokens komen wél gewoon uit style.css, zodat het familie blijft. -#}
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script>(function () { var t = localStorage.getItem("mcs-theme"); if (t === "light") document.documentElement.setAttribute("data-theme", "light"); })();</script>
+<title>{% block title %}MeshMoni{% endblock %}</title>
+<link rel="manifest" href="/meshmoni/manifest.webmanifest">
+<meta name="theme-color" content="#0b0f14">
+<link rel="apple-touch-icon" href="/static/meshmoni/icon-192.png">
+<link rel="icon" href="/static/meshmoni/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
+<link rel="stylesheet" href="/static/meshmoni/moni.css?v={{ asset_v }}">
+</head>
+<body class="moni">
+<header class="topbar moni-top">
+  {% block kop %}<a class="brand" href="/meshmoni">&#128225; MeshMoni</a>{% endblock %}
+  <nav>
+    <a href="/meshmoni#alerts" id="moni-alertlink" class="moni-alertlink">&#9888;<span id="moni-alertbadge" class="moni-badge" hidden></span></a>
+    <button type="button" id="theme-toggle" title="Wissel licht/donker thema">&#9788;</button>
+  </nav>
+</header>
+<main class="moni-main">
+{% block content %}{% endblock %}
+</main>
+{#- De eerlijkheidsstempel: elke pagina zegt wanneer haar cijfers voor het
+    laatst van de server kwamen. Metingen uit een cache zonder die stempel
+    zouden liegen met een stellig gezicht. -#}
+<footer class="moni-voet">
+  <span id="moni-stempel" data-state="nooit">nog niets opgehaald</span>
+</footer>
+<script>window.MONI = {{ boot|tojson }};</script>
+<script src="/static/meshmoni/moni.js?v={{ asset_v }}"></script>
+</body>
+</html>

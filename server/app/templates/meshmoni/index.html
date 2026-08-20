@@ -1,0 +1,22 @@
+{% extends "meshmoni/base.html" %}
+{#- Het overzicht: alle sensornodes met hun kanalen, en daaronder de alerts.
+    De inhoud komt per fetch uit /meshmoni/api/... en wordt door moni.js
+    getekend: dezelfde data-endpoints die de tests afdekken, en de pagina
+    zelf blijft een schil die de service worker gerust mag bewaren. -#}
+{% block content %}
+<section id="moni-nodes" aria-label="Sensornodes">
+  <p class="moni-leeg" id="moni-nodes-leeg" hidden>Geen sensornodes gevonden.
+    Een node hoort hier zodra er kanaalmetingen van binnenkomen.</p>
+</section>
+
+<section id="alerts" aria-label="Alerts">
+  <h2>Alerts <button type="button" id="moni-alles" class="moni-klein">ook bevestigde</button></h2>
+  <div id="moni-alertlijst"></div>
+</section>
+
+<section id="moni-push" aria-label="Pushmeldingen">
+  <h2>Meldingen op dit toestel</h2>
+  <p id="moni-push-uitleg" class="moni-leeg"></p>
+  <button type="button" id="moni-push-knop" class="moni-actie" hidden></button>
+</section>
+{% endblock %}

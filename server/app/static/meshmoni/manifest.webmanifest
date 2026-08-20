@@ -1,0 +1,17 @@
+{
+  "name": "MeshMoni — MeshManager monitoring",
+  "short_name": "MeshMoni",
+  "description": "Sensornodes, historiek en alerts van MeshManager, op de telefoon.",
+  "lang": "nl",
+  "start_url": "/meshmoni",
+  "scope": "/meshmoni",
+  "display": "standalone",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "icons": [
+    { "src": "/static/meshmoni/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/meshmoni/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/meshmoni/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/static/meshmoni/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
