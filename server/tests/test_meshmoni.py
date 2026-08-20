@@ -336,6 +336,8 @@ def test_abonneren_terwijl_push_uitstaat_geeft_de_reden_terug(db, monkeypatch):
     from app import meshmoni, webpush
     monkeypatch.setattr(webpush, "VAPID_PUBLIC", "")
     monkeypatch.setattr(webpush, "VAPID_PRIVATE", "")
+    # Bibliotheek 'aanwezig': de test gaat over de sleutels, niet de installatie.
+    monkeypatch.setattr(webpush, "_pywebpush", lambda **kw: None)
     req = _ingelogd(db, body=_abonnement())
     with pytest.raises(HTTPException) as e:
         asyncio.run(meshmoni.api_push_subscribe(req))
@@ -370,6 +372,8 @@ def test_pushstatus_zegt_waarom_push_uitstaat(db, monkeypatch):
     from app import meshmoni, webpush
     monkeypatch.setattr(webpush, "VAPID_PUBLIC", "")
     monkeypatch.setattr(webpush, "VAPID_PRIVATE", "")
+    # Bibliotheek 'aanwezig': de test gaat over de sleutels, niet de installatie.
+    monkeypatch.setattr(webpush, "_pywebpush", lambda **kw: None)
     data = _data(meshmoni.api_push_status(_ingelogd(db)))
     assert data["enabled"] is False
     assert "MM_VAPID_PUBLIC" in data["reason"]

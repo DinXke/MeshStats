@@ -61,7 +61,12 @@ except ImportError:  # pragma: no cover - hangt af van de omgeving
     _pywebpush = None
 
     class WebPushException(Exception):
-        """Vervanger zodat de except-tak hieronder blijft bestaan."""
+        """Vervanger met dezelfde vorm als het origineel (bericht + response),
+        zodat de except-tak hieronder en de tests hem net zo kunnen gebruiken."""
+
+        def __init__(self, message, response=None):
+            super().__init__(message)
+            self.response = response
 
 
 VAPID_PUBLIC = config.env("VAPID_PUBLIC", "").strip()

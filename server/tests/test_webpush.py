@@ -69,6 +69,9 @@ def test_zonder_sleutels_staat_push_uit_en_zegt_de_status_waarom(db, monkeypatch
     from app import webpush
     monkeypatch.setattr(webpush, "VAPID_PUBLIC", "")
     monkeypatch.setattr(webpush, "VAPID_PRIVATE", "")
+    # De bibliotheek 'aanwezig' maken, wat er lokaal ook geïnstalleerd staat:
+    # deze test gaat over de sleutels, niet over de installatie.
+    monkeypatch.setattr(webpush, "_pywebpush", lambda **kw: None)
     st = webpush.status()
     assert st["enabled"] is False
     assert "MM_VAPID_PUBLIC" in st["reason"]
