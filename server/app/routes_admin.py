@@ -26,8 +26,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
                discovery, firmware, metrics, monitors, mqtt_ingest, nodeconfig,
-               pktfilter, ratelimit, rbac, retention, sensornode, sweepsched,
-               tsdb)
+               pktfilter, ratelimit, rbac, retention, sensornode, sensorpush,
+               sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -1222,6 +1222,11 @@ def _node_page(request: Request, rid: int, **extra):
         # routes geven de pagina terug met hun antwoord erin in plaats van een
         # 303 die het kwijt is. Zelfde opzet als bij ``cfg_result``.
         "sensor_result": None,
+        # De gebeurtenis-push: staat de weg open op deze server, en acht de
+        # stiltebewaking deze node op dit moment stil. De waarnemingen zelf
+        # (laatste push, hartslag, tellers) staan als push_*-kolommen in ``rep``.
+        "push_enabled": sensorpush.enabled(),
+        "push_stil": sensorpush.is_stil(rid),
         "mijn_rol": rbac.rol_op_node(user, rep),
         "serverrechten": rbac.serverrechten(user),
         # De alarmen van deze node, en hoeveel er nog openstaan. Een eigen lijst

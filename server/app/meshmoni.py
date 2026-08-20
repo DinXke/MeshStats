@@ -35,7 +35,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-from . import audit, auth, db, metrics, rbac, routes_admin, sensornode, webpush
+from . import (audit, auth, db, metrics, rbac, routes_admin, sensornode,
+               sensorpush, webpush)
 from .templating import templates
 
 router = APIRouter(prefix="/meshmoni")
@@ -151,6 +152,15 @@ def _sensornodes() -> list[dict]:
             "online": online is not None and online["value"] == 1.0,
             "battery": battery["value"] if battery else None,
             "channels": kanalen,
+            # De gebeurtenis-push, als deze node hem gebruikt: wanneer voor het
+            # laatst, welke hartslag hij belooft, hoeveel al, en of de
+            # stiltebewaking hem op dit moment stil acht. None voor een node
+            # die nooit pushte -- dan tekent de app er niets voor, in plaats
+            # van een lege regel op elke kaart.
+            "push": None if not r["push_seen"] else {
+                "seen": r["push_seen"], "hb_s": r["push_hb_s"],
+                "count": r["push_count"], "stil": sensorpush.is_stil(r["id"]),
+            },
         })
     return out
 

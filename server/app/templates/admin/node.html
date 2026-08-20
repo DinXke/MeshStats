@@ -821,6 +821,60 @@
   </div>
 </section>
 
+{#- ==================== Gebeurtenis-push ====================================
+
+    De omgekeerde richting van het blok hierboven: daar haalt de server op, hier
+    komt de node zelf brengen. Een eigen sectie omdat het een eigen weg is met
+    een eigen belofte (seconden na het feit, zolang de WiFi er is) en een eigen
+    bewaking (de stiltegrens van drie hartslagen). Alles hier is WAARNEMING:
+    er valt niets in te stellen behalve MM_PUSH_TOKEN op de server. -#}
+<section id="push">
+  <h2>Gebeurtenis-push</h2>
+  <div class="card">
+  <p class="muted small">De node meldt zijn gebeurtenissen zelf, over IP, op
+     <span class="mono">POST /api/sensorpush</span> &mdash; seconden na het feit, waar de
+     uitleesronde hierboven er tot een heel pollinterval naast kan zitten. Hij belooft daarbij
+     een hartslag; blijft hij langer dan drie keer die belofte stil, dan maakt de server daar
+     een alarm van (&ldquo;node stil (push)&rdquo;), en een herstelmelding zodra hij terug is.</p>
+
+  {% if not push_enabled %}
+  <p class="muted small">Deze weg staat <strong>uit</strong> op deze server:
+     <span class="mono">MM_PUSH_TOKEN</span> is leeg. Zet hem in de
+     <span class="mono">.env</span> (en in de firmware van de node) om hem te openen; het
+     endpoint antwoordt tot die tijd 503 met deze reden.</p>
+  {% endif %}
+
+  {% if rep.push_seen %}
+  <table>
+    <tr><td>Laatste push</td><td>
+      <time class="reltime" datetime="{{ rep.push_seen }}">{{ rep.push_seen }}</time>
+      {%- if push_stil %} <span class="error">&mdash; stil: langer dan
+        {{ [90, 3 * (rep.push_hb_s or 0)] | max }} s geen push</span>{% endif %}</td></tr>
+    <tr><td>Beloofde hartslag</td><td>elke {{ rep.push_hb_s }} s
+      <span class="muted small">&mdash; de stiltegrens is drie keer dit, met een ondergrens
+      van 90 s</span></td></tr>
+    <tr><td>Aantal pushes</td><td>{{ rep.push_count or 0 }}
+      <span class="muted small">sinds de eerste; volgnummer van de laatste:
+      {{ rep.push_seq }}</span></td></tr>
+    {% if rep.push_boot_at %}
+    <tr><td>Laatste herstart</td><td>
+      <time class="reltime" datetime="{{ rep.push_boot_at }}">{{ rep.push_boot_at }}</time>
+      <span class="muted small">&mdash; de bootteller versprong naar {{ rep.push_boot }}.
+      Geen alarm: een herstart is een gebeurtenis om te zien, geen storing om iemand voor
+      te wekken.</span></td></tr>
+    {% elif rep.push_boot is not none %}
+    <tr><td>Bootteller</td><td>{{ rep.push_boot }}
+      <span class="muted small">&mdash; nog geen herstart gezien sinds de eerste push</span></td></tr>
+    {% endif %}
+  </table>
+  {% elif push_enabled %}
+  <p class="muted small">Nog nooit een push van deze node ontvangen. Dat kan betekenen dat zijn
+     firmware deze weg niet heeft, dat het token aan zijn kant niet gezet is, of dat hij deze
+     server niet bereikt &mdash; het endpoint zelf staat open.</p>
+  {% endif %}
+  </div>
+</section>
+
 <section>
   <h2>Instellingen schrijven</h2>
 
@@ -1890,6 +1944,7 @@
         <td class="small muted">
           {%- if a.source == 'mesh' %}over het mesh, via een repeater
           {%- elif a.source == 'ip' %}over IP
+          {%- elif a.source == 'push' %}gepusht door de node zelf
           {%- else %}{{ a.source }}{% endif %}</td>
         <td>
           {% if a.acked %}<span class="muted small">bevestigd</span>

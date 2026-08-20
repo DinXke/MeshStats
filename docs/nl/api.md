@@ -122,6 +122,45 @@ geleegd is, en zolang er niets pollde, bleef de pagina het tweede beloven. Een
 niet-lege uitreiking wordt bovendien gelogd, want na deze aanroep staat het
 verzoek nergens anders meer.
 
+### `POST /api/sensorpush`
+
+Gebeurtenis-push van een sensornode: de node meldt zijn eigen overgangen op het
+moment dat ze gebeuren, in plaats van te wachten tot de IP-poll ze een ronde
+later opmerkt. Een machine-endpoint met een eigen bearer-token
+(`MM_PUSH_TOKEN`, leeg = de route antwoordt 503 met die reden), met opzet
+buiten elk sessie-/CSRF-mechanisme — de aanroeper is een microcontroller. Let
+op het pad: **niet** onder `/api/v1`, en het token is geen API-token van de
+beheerpagina.
+
+```json
+{"node": "aabbccddeeff", "seq": 17, "boot": 3, "hb_s": 60,
+ "events": [{"ch": 6, "kind": "neer", "text": "hoas gemeld als neer",
+             "sev": "hoog", "sim": 0}],
+ "acked": [5]}
+```
+
+* `node` is de 12-hex `pubkey_prefix` van een repeaterrij; een onbekende node
+  is een 404 (deze route maakt nooit rijen aan). Vormfouten zijn een 400 met de
+  veldnaam in het antwoord; een fout of ontbrekend token is een 401.
+* `events` worden alarmen met `source='push'`, over wegen heen ontdubbeld met
+  hetzelfde (node, soort, kanaal)-venster dat het mesh en de IP-poll al met
+  elkaar verzoent. `sim: 1` markeert een oefening exact zoals de IP-afleiding
+  dat doet: "(simulatie)" in de tekst, `kind` NULL.
+* `acked` bevestigt de eigen alarmen van de node per kanaal — hetzelfde effect
+  als de ack-knop, met een auditregel waarvan de actor de node is.
+* Het `200`-antwoord is `{"ok": 1, "ack": [<kanalen>]}`: de kanalen waarvan
+  alarmen **aan de serverkant** bevestigd zijn sinds de node er voor het laatst
+  van hoorde. Eenmalig geleverd; de afleverstand staat in de databank
+  (`alerts.ack_pushed`) en overleeft dus een herstart, en een herhaling van
+  dezelfde push (zelfde `boot` en `seq`) krijgt het identieke antwoord terug.
+* `hb_s` is de hartslag die de node belooft. Blijft een pushende node langer
+  dan 3× die belofte stil (ondergrens 90 s), dan maakt de server een alarm
+  "node stil (push)" (soort `stil`, ernst `hoog` — een stille melder betekent
+  dat we niets weten) en een herstelmelding zodra hij terug is. Een
+  serverherstart ijkt opnieuw in plaats van te alarmeren. Een veranderde
+  `boot`-teller is een herstart van de node: geen alarm, wel zichtbaar op de
+  nodepagina.
+
 ## Publieke data-endpoints
 
 Alles hieronder is beperkt tot repeaters met `is_public=1`, en wordt daarnaast

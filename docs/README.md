@@ -107,6 +107,7 @@ cover.
 | Document | What you will find |
 |---|---|
 | [`deployment.md`](deployment.md) | Environment variables, reverse proxies, automatic upgrades, backups, disk usage, logs, and the time-series database |
+| [`backup.md`](backup.md) | The backup script: a consistent SQLite copy plus a VictoriaMetrics snapshot, the cron line, rotation, restoring, and the honest note that offsite is the operator's step |
 | [`admin.md`](admin.md) | The operator's view of `/admin`: accounts, API tokens, sessions, and every form behind the login |
 | [`retention.md`](retention.md) | How long the site keeps things, what stops the disk filling up, and why the admin page says so out loud when the configured period is not being met |
 | [`security.md`](security.md) | The threat model, what is protected and how, and — as importantly — what is not |
@@ -143,6 +144,7 @@ cover.
 | Why does the site say "unknown" here? | [`candidates.md`](candidates.md), [`decoder.md`](decoder.md) |
 | Why is this button greyed out? | [`commanding.md`](commanding.md) |
 | Where did my old packets go? | [`retention.md`](retention.md) |
+| How do I make backups? | [`backup.md`](backup.md) |
 | How do I manage accounts and tokens? | [`admin.md`](admin.md) |
 | How do I get my node publishing? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
 | How do I upgrade a node from the site? | [`firmware-upgrade.md`](firmware-upgrade.md) |

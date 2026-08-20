@@ -106,6 +106,7 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | Document | Wat je er vindt |
 |---|---|
 | [`deployment.md`](deployment.md) | Omgevingsvariabelen, reverse proxies, automatische upgrades, back-ups, schijfgebruik, logs, en de tijdreeksdatabase |
+| [`backup.md`](backup.md) | Het back-upscript: een consistente SQLite-kopie plus een VictoriaMetrics-snapshot, de cronregel, de rotatie, het terugzetten, en de eerlijke noot dat offsite de stap van de beheerder is |
 | [`admin.md`](admin.md) | Het beheerdersperspectief op `/admin`: accounts, API-tokens, sessies, en elk formulier achter de inlog |
 | [`retention.md`](retention.md) | Hoelang de site dingen bewaart, wat verhindert dat de schijf volloopt, en waarom de beheerpagina het hardop zegt als de ingestelde termijn niet gehaald wordt |
 | [`security.md`](security.md) | Het dreigingsmodel, wat er hoe beschermd wordt, en — minstens zo belangrijk — wat niet |
@@ -141,6 +142,7 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | Waarom zegt de site hier "onbekend"? | [`candidates.md`](candidates.md), [`decoder.md`](decoder.md) |
 | Waarom staat deze knop uit? | [`commanding.md`](commanding.md) |
 | Waar zijn mijn oude pakketten gebleven? | [`retention.md`](retention.md) |
+| Hoe maak ik back-ups? | [`backup.md`](backup.md) |
 | Hoe beheer ik accounts en tokens? | [`admin.md`](admin.md) |
 | Hoe krijg ik mijn node aan het publiceren? | [`mqtt.md`](mqtt.md), [`firmware.md`](firmware.md) |
 | Hoe upgrade ik een node vanaf de site? | [`firmware-upgrade.md`](firmware-upgrade.md) |

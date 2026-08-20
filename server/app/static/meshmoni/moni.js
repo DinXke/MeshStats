@@ -96,6 +96,18 @@
         var meta = el("span", "moni-meta", node.battery != null ? Math.round(node.battery) + " %" : "");
         kop.appendChild(meta);
         kaart.appendChild(kop);
+        // De vlag dat deze node zijn gebeurtenissen zelf komt brengen. Alleen
+        // als hij dat doet: een regel "pusht niet" onder elke node zou de
+        // uitzondering tot ruis maken. Stil is rood, want dan is de melder weg
+        // en weten we niets -- dezelfde weging als het alarm erachter.
+        if (node.push) {
+          var push = el("div", "moni-push" + (node.push.stil ? " stil" : ""),
+            node.push.stil
+              ? "pusht zelf · STIL sinds " + tijdKort(node.push.seen)
+              : "pusht zelf · " + tijdKort(node.push.seen) +
+                " · elke " + node.push.hb_s + " s · " + node.push.count + "×");
+          kaart.appendChild(push);
+        }
         var tegels = el("div", "moni-tegels");
         node.channels.forEach(function (k) {
           var t = el("span", "moni-tegel");
@@ -140,6 +152,9 @@
           bron = "IP-poll · tot " + min + " min na het feit";
         } else if (a.source === "mesh") {
           bron = "via het mesh";
+        } else if (a.source === "push") {
+          // De node bracht het zelf: seconden na het feit, geen pollatentie.
+          bron = "gepusht door de node zelf";
         }
         t.appendChild(el("small", "", tijdKort(a.ts) + " · " + bron));
         rij.appendChild(t);

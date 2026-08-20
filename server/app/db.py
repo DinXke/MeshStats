@@ -214,6 +214,13 @@ CREATE TABLE IF NOT EXISTS channel_names(
 -- nét verschillen, dus de tekst is geen sleutel; de soort wel. NULL betekent
 -- "niet af te leiden" en zet de kruisontdubbeling voor die rij uit -- een
 -- verzonnen soort is erger dan geen, om dezelfde reden als bij severity.
+--
+-- ``ack_pushed`` is de afleverstand van de gebeurtenis-push (sensorpush.py):
+-- 1 betekent dat de node al gehoord heeft dat dit alarm bevestigd is -- omdat
+-- hij het zelf bevestigde, of omdat het kanaal in het ``ack``-antwoord van een
+-- push gezeten heeft. In de databank en niet in het geheugen, want "eenmalig
+-- melden" moet een serverherstart overleven: anders krijgt de node na elke
+-- deploy dezelfde kanalen opnieuw.
 CREATE TABLE IF NOT EXISTS alerts(
   id INTEGER PRIMARY KEY,
   repeater_id INTEGER,
@@ -223,7 +230,8 @@ CREATE TABLE IF NOT EXISTS alerts(
   ts TEXT NOT NULL,
   source TEXT NOT NULL,
   acked INTEGER DEFAULT 0,
-  kind TEXT
+  kind TEXT,
+  ack_pushed INTEGER NOT NULL DEFAULT 0
 );
 -- De twee vragen die deze tabel krijgt: "wat is er met deze node gebeurd" (op de
 -- nodepagina, nieuwste eerst) en "hoeveel staat er nog open" (de badge). Beide
@@ -348,12 +356,35 @@ COLUMN_MIGRATIONS = [
     ("repeaters", "sensor_host", "TEXT"),
     ("repeaters", "sensor_seen", "TEXT"),
     ("repeaters", "sensor_fw", "TEXT"),
+    # De gebeurtenis-push van een sensornode (sensorpush.py): wanneer hij voor
+    # het laatst pushte, welke hartslag hij daarbij beloofde, en zijn tellers.
+    # WAARNEMINGEN, net als sensor_seen -- niets hiervan wordt ingetypt. In de
+    # databank en niet alleen in het geheugen, omdat de nodepagina en /meshmoni
+    # ze tonen en een serverherstart dat beeld niet mag wissen; de
+    # stiltebewaking zelf ijkt na een herstart opnieuw (zie sensorpush._seed).
+    #
+    # ``push_boot`` is de bootteller die de node meestuurt; verandert hij, dan
+    # is de node herstart -- geen alarm, wel ``push_boot_at`` bijgewerkt zodat
+    # de nodepagina het moment kan noemen.
+    ("repeaters", "push_seen", "TEXT"),
+    ("repeaters", "push_hb_s", "INTEGER"),
+    ("repeaters", "push_seq", "INTEGER"),
+    ("repeaters", "push_boot", "INTEGER"),
+    ("repeaters", "push_boot_at", "TEXT"),
+    ("repeaters", "push_count", "INTEGER"),
     # De soort overgang van een alarm, voor de kruisontdubbeling. Zie het
     # schema hierboven. Als migratie omdat de tabel op twee plekken aangemaakt
     # wordt (hier en in webpush.ensure_schema) en een databank van vóór deze
     # kolom hem langs geen van beide krijgt: CREATE TABLE IF NOT EXISTS raakt
     # een bestaande tabel niet aan.
     ("alerts", "kind", "TEXT"),
+    # De afleverstand van de gebeurtenis-push; zie het schema hierboven. DEFAULT
+    # 0 zou bij de migratie elk HISTORISCH bevestigd alarm als "nog te melden"
+    # aanmerken, en dan krijgt een node bij zijn allereerste push de kanalen van
+    # maanden oude storingen -- vandaar de POST_MIGRATION die alles wat al
+    # bevestigd is als gemeld beschouwt: de node heeft er nooit een alarm voor
+    # open staan gehad.
+    ("alerts", "ack_pushed", "INTEGER NOT NULL DEFAULT 0"),
     # Wie deze kanaalnaam gezet heeft: 'user' of 'auto'. De standaard is 'user'
     # en dat is geen slordigheid maar de enige juiste keuze: ALTER TABLE ADD
     # COLUMN vult bestaande rijen met de standaard, en élke rij die er nu staat
@@ -568,6 +599,11 @@ POST_MIGRATIONS = [
      "UPDATE repeaters SET host_admin=1 "
      "WHERE (ota_host IS NOT NULL AND TRIM(ota_host) <> '') "
      "   OR (sensor_host IS NOT NULL AND TRIM(sensor_host) <> '')"),
+    # Elk alarm dat vóór de gebeurtenis-push bestond en al bevestigd was, geldt
+    # als gemeld: de node heeft er nooit iets voor open staan gehad, en het bij
+    # de eerste push alsnog aanleveren zou hem kanalen laten "sluiten" van
+    # storingen die maanden terug zijn. Zie de kolomtoelichting.
+    ("alerts", "ack_pushed", "UPDATE alerts SET ack_pushed=1 WHERE acked=1"),
 ]
 
 
@@ -2794,6 +2830,82 @@ def sensor_nodes() -> list:
     """
     return q("SELECT * FROM repeaters WHERE sensor_host IS NOT NULL "
              "AND TRIM(sensor_host) <> '' ORDER BY id")
+
+
+def record_push_seen(repeater_id: int, hb_s: int, seq: int, boot: int) -> bool:
+    """Onthoud dat deze node zojuist gepusht heeft. True als de node herstart is.
+
+    "Herstart" is hier een WAARNEMING aan de bootteller: de node stuurt bij elke
+    push mee hoe vaak hij opgestart is, en een andere waarde dan de vorige keer
+    betekent dat hij tussendoor herstart is. Dat is geen alarm -- een herstart
+    kan een firmware-update zijn, of de watchdog die zijn werk deed -- maar het
+    hoort wel op de nodepagina te staan, en daarvoor wordt het moment in
+    ``push_boot_at`` gezet. De allereerste push van een node telt niet als
+    herstart: er is dan geen vorige waarde om van te verschillen.
+    """
+    rij = qone("SELECT push_boot FROM repeaters WHERE id=?", (repeater_id,))
+    vorig = rij["push_boot"] if rij else None
+    herstart = vorig is not None and int(vorig) != int(boot)
+    execute(
+        "UPDATE repeaters SET push_seen=?, push_hb_s=?, push_seq=?, push_boot=?, "
+        "push_count=COALESCE(push_count,0)+1"
+        + (", push_boot_at=?" if herstart else "")
+        + " WHERE id=?",
+        ((utcnow(), int(hb_s), int(seq), int(boot), utcnow(), repeater_id)
+         if herstart else
+         (utcnow(), int(hb_s), int(seq), int(boot), repeater_id)))
+    return herstart
+
+
+def push_nodes() -> list:
+    """Elke node die ooit gepusht heeft, voor het ijken van de stiltebewaking.
+
+    Op ``push_seen`` en niet op een vlag: pushen is een waarneming, geen
+    instelling. Een node die ermee stopt blijft in deze lijst staan -- juist
+    die node is degene waar de stiltebewaking voor bestaat.
+    """
+    return q("SELECT * FROM repeaters WHERE push_seen IS NOT NULL ORDER BY id")
+
+
+def ack_alerts_from_node(repeater_id: int, channel: int) -> int:
+    """De node bevestigt zijn eigen alarmen op één kanaal. Geeft het aantal terug.
+
+    Zelfde effect als de ack-knop (``acked=1``, de rijen blijven bestaan), plus
+    ``ack_pushed=1``: wat de node zelf bevestigde hoeft hem in het
+    ``ack``-antwoord van een volgende push niet nog eens gemeld te worden --
+    hij weet het al, hij zei het zelf.
+    """
+    return execute_rowcount(
+        "UPDATE alerts SET acked=1, ack_pushed=1 "
+        "WHERE repeater_id=? AND channel=? AND acked=0",
+        (repeater_id, int(channel)))
+
+
+def pop_acked_channels(repeater_id: int) -> list[int]:
+    """De kanalen waarvan de node nog niet weet dat hun alarm bevestigd is.
+
+    Eén keer: de rijen worden in dezelfde greep als gemeld aangemerkt, zodat een
+    kanaal nooit twee keer in een ``ack``-antwoord zit. Onder het schrijfslot,
+    want lezen en aanmerken moeten samenvallen -- twee pushes vlak na elkaar
+    mogen niet allebei hetzelfde kanaal meekrijgen.
+
+    Alleen rijen MET een kanaal: het antwoord aan de node is per kanaal, en een
+    alarm zonder kanaal (de netvoeding, een stiltemelding) heeft aan de kant van
+    de node niets om te sluiten.
+    """
+    with _lock:
+        conn = get_conn()
+        kanalen = sorted({int(r["channel"]) for r in conn.execute(
+            "SELECT DISTINCT channel FROM alerts WHERE repeater_id=? "
+            "AND acked=1 AND ack_pushed=0 AND channel IS NOT NULL",
+            (repeater_id,))})
+        if kanalen:
+            conn.execute(
+                "UPDATE alerts SET ack_pushed=1 WHERE repeater_id=? "
+                "AND acked=1 AND ack_pushed=0 AND channel IS NOT NULL",
+                (repeater_id,))
+            conn.commit()
+        return kanalen
 
 
 # When the Home Assistant poller last emptied the command queue. The queue is

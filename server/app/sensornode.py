@@ -772,6 +772,31 @@ def _state_from_status(data: dict) -> dict:
     return uit
 
 
+def mark_simulation(alert: dict) -> dict:
+    """Eén alarm als oefening aanmerken: "(simulatie)" in de tekst, soort NULL.
+
+    DE ENIGE SPELLING. De IP-afleiding hieronder gebruikt hem, en de
+    gebeurtenis-push (sensorpush.py) gebruikt exact dezelfde functie -- niet een
+    kopie -- want deze twee woorden zijn de helft van twee gedragingen die over
+    alle wegen gelijk moeten zijn:
+
+    * de TEKST, omdat wie op een pushmelding kijkt zonder nadenken moet zien of
+      zijn router echt uit staat. De ernst blijft wél staan: de gebruiker test
+      juist of een hoge melding doorkomt;
+    * ``kind=None``, omdat een oefening buiten de kruisontdubbeling hoort te
+      vallen -- dezelfde keuze die mqtt_ingest.alert_kind voor de TEST-teksten
+      van het mesh maakt, en om dezelfde reden: een gesimuleerde 'neer' mag een
+      ECHTE 'neer' die er kort na komt nooit onderdrukken, en andersom ook niet.
+
+    Een tweede spelling ("(test)", "(oefening)") zou de ontdubbeling niet raken
+    maar wel de lezer: twee wegen die hetzelfde feit anders aankleden, lezen als
+    twee verschillende feiten.
+    """
+    alert["text"] += " (simulatie)"
+    alert["kind"] = None
+    return alert
+
+
 def _transition_alert(prev: dict, cur: dict, channel: int) -> dict | None:
     """Het alarm bij één kanaalovergang, of None als er niets te melden is.
 
@@ -846,8 +871,7 @@ def _transition_alert(prev: dict, cur: dict, channel: int) -> dict | None:
                           else f"{naam} weer bereikbaar")}
 
     if sim_was or sim_nu:
-        alert["text"] += " (simulatie)"
-        alert["kind"] = None
+        mark_simulation(alert)
     return alert
 
 
@@ -904,8 +928,7 @@ def _derive_alerts(rid: int, data: dict) -> int:
                     alert = {"kind": "op", "severity": "laag", "channel": None,
                              "text": "netvoeding terug"}
                 if mains_sim_was or mains_sim_nu:
-                    alert["text"] += " (simulatie)"
-                    alert["kind"] = None
+                    mark_simulation(alert)
                 overgangen.append(alert)
             elif mains_sim_was and not mains_sim_nu and nieuw["mains"] == 0:
                 overgangen.append({"kind": "neer", "severity": "hoog",

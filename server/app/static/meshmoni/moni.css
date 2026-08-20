@@ -25,6 +25,10 @@ body.moni { overflow-x: hidden; }
 .moni-dot { width: .6em; height: .6em; border-radius: 50%; background: var(--red); flex: none; }
 .moni-dot.aan { background: var(--accent); }
 .moni-node .moni-meta { color: var(--muted); font-size: .78rem; margin-left: auto; }
+/* De pushregel: alleen op nodes die zelf pushen. Stil = rood, want dan is de
+   melder weg -- dezelfde weging als het alarm dat de server ervan maakt. */
+.moni-push { color: var(--muted); font-size: .78rem; margin: 0 0 .4rem; }
+.moni-push.stil { color: var(--red); font-weight: 600; }
 
 /* Kanaaltegels: twee per rij, groot genoeg voor een duim */
 .moni-tegels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }

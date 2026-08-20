@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import (auth, clocksync, db, limits, meshmoni, mqtt_ingest, rbac,
                retention, routes_admin, routes_api, routes_public, sensornode,
-               sweepsched, tsdb, webpush)
+               sensorpush, sweepsched, tsdb, webpush)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -56,6 +56,7 @@ app.include_router(routes_api.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_public.router)
 app.include_router(meshmoni.router)   # de PWA-subsite voor op de telefoon
+app.include_router(sensorpush.router)  # gebeurtenis-push van sensornodes
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
 
 
@@ -102,6 +103,10 @@ def bootstrap():
     # omdat de opstartvolgorde daarmee de leesbare volgorde blijft: eerst de weg
     # waar dit project rond gebouwd is, dan de weg ernaast.
     sensornode.start()
+    # De stiltebewaking van de gebeurtenis-push. Na sensornode.start() om
+    # dezelfde leesvolgorde-reden; hij doet zelf niets zolang MM_PUSH_TOKEN
+    # leeg is, en ijkt zijn startpunt op nu -- zie sensorpush._seed.
+    sensorpush.start()
 
 
 def set_password():

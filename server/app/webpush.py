@@ -96,7 +96,8 @@ WATERMERK = "push_last_alert_id"
 _SCHEMA = (
     """CREATE TABLE IF NOT EXISTS alerts(id INTEGER PRIMARY KEY, repeater_id INTEGER, channel INTEGER,
        text TEXT NOT NULL, severity TEXT, ts TEXT NOT NULL,
-       source TEXT NOT NULL, acked INTEGER DEFAULT 0, kind TEXT)""",
+       source TEXT NOT NULL, acked INTEGER DEFAULT 0, kind TEXT,
+       ack_pushed INTEGER NOT NULL DEFAULT 0)""",
     # Eén rij per browser die meldingen wil. ``endpoint`` is de identiteit die
     # de pushdienst uitdeelt en dus de natuurlijke unieke sleutel; ``username``
     # zegt wie het abonnement nam, zodat een beheerder kan zien welke rijen van

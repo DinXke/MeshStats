@@ -118,6 +118,43 @@ nothing was polling, the page kept promising the second. A non-empty hand-out is
 additionally logged, because after this call there is no record of the request
 anywhere else.
 
+### `POST /api/sensorpush`
+
+Event push from a sensor node: the node reports its own transitions the moment
+they happen, instead of waiting for the IP poll to notice them a round later.
+A machine endpoint with its own bearer token (`MM_PUSH_TOKEN`, empty = the
+route answers 503 with that reason), deliberately outside every session/CSRF
+mechanism — the caller is a microcontroller. Note the path: **not** under
+`/api/v1`, and the token is not an API token from the admin page.
+
+```json
+{"node": "aabbccddeeff", "seq": 17, "boot": 3, "hb_s": 60,
+ "events": [{"ch": 6, "kind": "neer", "text": "hoas gemeld als neer",
+             "sev": "hoog", "sim": 0}],
+ "acked": [5]}
+```
+
+* `node` is the 12-hex `pubkey_prefix` of a repeater row; an unknown node is a
+  404 (this route never creates rows). Malformed requests are a 400 with the
+  field name in the answer; a wrong or missing token is a 401.
+* `events` become alerts with `source='push'`, deduplicated across paths with
+  the same (node, kind, channel) window that already reconciles the mesh and
+  the IP poll. `sim: 1` marks a drill exactly like the IP derivation does:
+  "(simulatie)" in the text, `kind` NULL.
+* `acked` confirms the node's own alerts per channel — same effect as the ack
+  button, with an audit line whose actor is the node.
+* The `200` answer is `{"ok": 1, "ack": [<channels>]}`: the channels whose
+  alerts were acknowledged **server-side** since the node last heard about
+  them. Delivered once; the delivery state is stored in the database
+  (`alerts.ack_pushed`) so it survives restarts, and a retry of the same push
+  (same `boot` and `seq`) gets the identical answer back.
+* `hb_s` is the heartbeat the node promises. Stays a pushing node silent for
+  longer than 3× that promise (floor 90 s), the server raises a
+  "node stil (push)" alert (kind `stil`, severity `hoog` — a silent monitor
+  means we know nothing) and a recovery alert when it returns. A server
+  restart recalibrates instead of alerting. A changed `boot` counter is a node
+  restart: no alert, visible on the node page.
+
 ## Public data endpoints
 
 Everything below is limited to repeaters with `is_public=1`, and additionally

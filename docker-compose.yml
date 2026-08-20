@@ -105,6 +105,10 @@ services:
       MM_VAPID_PUBLIC: "${MM_VAPID_PUBLIC-${MCS_VAPID_PUBLIC-}}"
       MM_VAPID_PRIVATE: "${MM_VAPID_PRIVATE-${MCS_VAPID_PRIVATE-}}"
       MM_VAPID_SUBJECT: "${MM_VAPID_SUBJECT-${MCS_VAPID_SUBJECT-}}"
+      # Gebeurtenis-push van sensornodes: het bearer-token voor POST
+      # /api/sensorpush. Bewust leeg als standaard: leeg zet die weg uit (503
+      # met reden), zoals de VAPID-sleutels hierboven. Zie .env.example.
+      MM_PUSH_TOKEN: "${MM_PUSH_TOKEN-${MCS_PUSH_TOKEN-}}"
     volumes:
       # Zelfde reden als de projectnaam hierboven: de sleutel van dit volume
       # is de naam waaronder de databank op schijf staat. Hernoemen levert
