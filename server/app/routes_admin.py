@@ -1704,14 +1704,16 @@ def sensor_room_add(request: Request, rid: int, name: str = Form(""),
 @router.post("/repeaters/{rid}/sensor/room/edit")
 def sensor_room_edit(request: Request, rid: int, idx: int = Form(...),
                      name: str = Form(""), room_pass: str = Form(""),
-                     guest: str = Form(""), stealth: str = Form(""),
-                     csrf: str = Form(...)):
-    """Een room bewerken: naam, wachtwoord, gast- en stealth-vlag.
+                     guest_pass: str = Form(""), guest_clear: str = Form(""),
+                     stealth: str = Form(""), csrf: str = Form(...)):
+    """Een room bewerken: naam, roomwachtwoord, gastwachtwoord en stealth-vlag.
 
-    Lege ``name``/``room_pass`` betekenen "niet wijzigen"; de vlaggen komen als
-    aparte checkbox-waarden binnen en worden altijd meegestuurd, zodat uitzetten
-    ook echt uitzetten is. Zie ``rooms.edit_room`` -- een veld dat None blijft gaat
-    niet de deur uit.
+    Lege ``name``/``room_pass``/``guest_pass`` betekenen "niet wijzigen": een leeg
+    veld wist niets. Het gastwachtwoord heeft een aparte WIS-schakelaar
+    (``guest_clear``), want een leeg gastveld mag bij een deelbewerking het
+    bestaande gastwachtwoord niet wegvegen -- de node maakt datzelfde onderscheid.
+    De stealth-vlag komt als checkbox binnen en wordt altijd meegestuurd, zodat
+    uitzetten ook echt uitzetten is. Zie ``rooms.edit_room``.
     """
     rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.instelling.merkbaar", rep)
@@ -1720,7 +1722,8 @@ def sensor_room_edit(request: Request, rid: int, idx: int = Form(...),
         rep, idx,
         name=(name.strip() or None),
         password=(room_pass or None),
-        guest=(guest.strip() == "1"),
+        guest=(guest_pass or None),
+        guest_clear=(guest_clear.strip() == "1"),
         stealth=(stealth.strip() == "1"))
     _noteer(request, user, "node.instelling.merkbaar", rep=rep,
             detail=(f"room {idx} bewerkt" if uitslag["ok"]

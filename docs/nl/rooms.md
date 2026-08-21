@@ -27,10 +27,13 @@ achtergrond.
 ## Toevoegen, bewerken en verwijderen
 
 Toevoegen vraagt een naam; de node bakt de sleutel. Bewerken verandert alleen de
-velden die je opgeeft — laat de naam of het wachtwoord leeg en die blijven staan;
-de gast- en stealth-vlag zijn aankruisvakjes en gaan altijd mee. Verwijderen
-vraagt een getypte bevestiging, want de sleutel van de room gaat mee weg. Alle
-drie vragen het recht `node.instelling.merkbaar`, dezelfde klasse als het zetten
+velden die je opgeeft — laat een naam, roomwachtwoord of gastwachtwoord leeg en
+die blijven staan. Het gastwachtwoord wissen is een aparte schakelaar ("gast
+wissen"), zodat een deelbewerking met een leeg gastveld een bestaand
+gastwachtwoord nooit wegveegt; de stealth-vlag is een aankruisvakje en gaat altijd
+mee. Verwijderen vraagt een getypte bevestiging, want de sleutel van de room gaat
+mee weg. Alle drie vragen het recht `node.instelling.merkbaar`, dezelfde klasse
+als het zetten
 van een regio.
 
 ## De join-link en QR
@@ -70,10 +73,11 @@ zodra een room van de node verdwijnt.
 
 ## Het nodecontract en de aannames
 
-De site spreekt `GET /rooms.json`, `POST /room/add|edit|del`, `GET /rooms/backup`
-en `POST /rooms/restore` aan. Het zetten van de alarmroute van een sensor heeft
-nog geen vaste setter-URL in het contract; die ene aanname staat geïsoleerd
-achter `MON_ALARM_PATH` en `set_alarm` in `server/app/rooms.py`, zodat een
-afwijkend contract een wijziging van één regel is. De netwerkgrens zelf blijft in
+De site spreekt `GET /rooms.json`, `POST /room/add|edit|del`, `POST /mon/alarm`,
+`GET /rooms/backup` en `POST /rooms/restore` aan. De alarmroute wordt
+kanaal-gebaseerd gezet via `POST /mon/alarm` (formvelden `ch`/`am`/`rm`, waarbij
+`ch` het kanaalnummer uit `mon[].ch` is en op de node wint); die vorm staat
+geïsoleerd achter `MON_ALARM_PATH` en `set_alarm` in `server/app/rooms.py`, zodat
+een afwijkend contract een kleine wijziging is. De netwerkgrens zelf blijft in
 `sensornode.py`, achter dezelfde doelcontrole en vloot-/per-node-credential als
 elke andere aanroep naar een node.

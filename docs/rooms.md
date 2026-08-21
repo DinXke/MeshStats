@@ -26,8 +26,10 @@ the background.
 ## Adding, editing and deleting
 
 Adding takes a name; the node bakes the key. Editing changes only the fields you
-give — leave the name or password blank and it is left untouched; the guest and
-stealth flags are checkboxes and are always sent. Deleting asks for a typed
+give — leave a name, room password or guest password blank and it is left
+untouched. Clearing the guest password is a separate switch ("gast wissen"), so a
+partial edit with an empty guest field never wipes an existing guest password;
+the stealth flag is a checkbox and is always sent. Deleting asks for a typed
 confirmation, because the room's key goes with it. All three need the
 `node.instelling.merkbaar` right, the same class as setting a region.
 
@@ -67,10 +69,11 @@ removed from the node.
 
 ## The node contract and its assumptions
 
-The site talks to `GET /rooms.json`, `POST /room/add|edit|del`, `GET
-/rooms/backup` and `POST /rooms/restore`. Setting a sensor's alarm route has no
-fixed setter URL in the contract yet; that one assumption lives isolated behind
-`MON_ALARM_PATH` and `set_alarm` in `server/app/rooms.py`, so a differing
-contract is a one-line change. The network boundary itself stays in
-`sensornode.py`, behind the same target check and fleet/per-node credential as
-every other call to a node.
+The site talks to `GET /rooms.json`, `POST /room/add|edit|del`, `POST
+/mon/alarm`, `GET /rooms/backup` and `POST /rooms/restore`. The alarm route is
+set channel-based via `POST /mon/alarm` (form `ch`/`am`/`rm`, where `ch` is the
+monitor's channel from `mon[].ch` and wins on the node); that form lives isolated
+behind `MON_ALARM_PATH` and `set_alarm` in `server/app/rooms.py`, so a differing
+contract is a small change. The network boundary itself stays in `sensornode.py`,
+behind the same target check and fleet/per-node credential as every other call to
+a node.

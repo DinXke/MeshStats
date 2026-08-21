@@ -909,10 +909,13 @@
         <input type="hidden" name="idx" value="{{ kamer.idx }}">
         <input name="name" value="{{ kamer.name }}" placeholder="naam" maxlength="40"
                spellcheck="false" autocomplete="off" aria-label="Naam van de room"{{ recht('node.instelling.merkbaar') }}>
-        <input name="room_pass" type="password" placeholder="nieuw wachtwoord (leeg = ongewijzigd)"
+        <input name="room_pass" type="password" placeholder="roomwachtwoord (leeg = ongewijzigd)"
                autocomplete="new-password" aria-label="Wachtwoord van de room"{{ recht('node.instelling.merkbaar') }}>
-        <label class="check"><input type="checkbox" name="guest" value="1"
-               {% if kamer.guest %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> gast</label>
+        <input name="guest_pass" type="password"
+               placeholder="gastwachtwoord{{ ' (gezet)' if kamer.guest else '' }} (leeg = ongewijzigd)"
+               autocomplete="new-password" aria-label="Gastwachtwoord van de room"{{ recht('node.instelling.merkbaar') }}>
+        <label class="check"><input type="checkbox" name="guest_clear" value="1"
+               {{ recht('node.instelling.merkbaar') }}> gast wissen</label>
         <label class="check"><input type="checkbox" name="stealth" value="1"
                {% if kamer.stealth %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> stealth</label>
         <button type="submit"{{ recht('node.instelling.merkbaar') }}>Opslaan</button>

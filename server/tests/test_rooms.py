@@ -128,40 +128,65 @@ def test_edit_room_laat_onopgegeven_velden_weg(db, monkeypatch):
     monkeypatch.setattr(sensornode, "post_form",
                         lambda host, path, fields, t=None: gezien.update(fields=fields)
                         or {"ok": True, "error": "", "data": {}})
-    rooms.edit_room(_rep(db), 1, name="X", guest=True)
-    # idx, name en guest gaan mee; pass en stealth niet (die waren None).
-    assert gezien["fields"] == {"idx": 1, "name": "X", "guest": "1"}
+    rooms.edit_room(_rep(db), 1, name="X", stealth=False)
+    # idx, name en stealth gaan mee; pass en guest niet (die waren None).
+    assert gezien["fields"] == {"idx": 1, "name": "X", "stealth": "0"}
 
 
-def test_set_alarm_zet_am_en_rm_via_de_web_cli_kanaal_gebaseerd(db, monkeypatch):
+def test_edit_room_zet_een_gastwachtwoord(db, monkeypatch):
     from app import rooms, sensornode
-    opdrachten = []
-    monkeypatch.setattr(sensornode, "cli",
-                        lambda host, cmd, t=None: opdrachten.append(cmd)
-                        or {"ok": True, "error": "", "reply": "ok", "cmd": cmd})
-    # ch=5 (kanaalnummer, niet de positie), am=3 -> both, rm=5 -> rooms 0 en 2.
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(fields=fields)
+                        or {"ok": True, "error": "", "data": {}})
+    rooms.edit_room(_rep(db), 1, guest="hunter2")
+    assert gezien["fields"] == {"idx": 1, "guest": "hunter2"}
+
+
+def test_edit_room_wist_het_gastwachtwoord_alleen_expliciet(db, monkeypatch):
+    """Een leeg gastveld laat het gastwachtwoord staan; wissen gaat via
+    guest_clear, en dan gaat er GEEN guest mee (anders weet de node niet of het om
+    zetten of wissen gaat). Zo veegt een deelbewerking het gastwachtwoord niet weg.
+    """
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(fields=fields)
+                        or {"ok": True, "error": "", "data": {}})
+    # Alleen de naam wijzigen, gastveld leeg -> guest gaat NIET mee.
+    rooms.edit_room(_rep(db), 1, name="X", guest=None)
+    assert "guest" not in gezien["fields"] and "guest_clear" not in gezien["fields"]
+    # Expliciet wissen -> guest_clear=1, en geen guest ernaast.
+    rooms.edit_room(_rep(db), 1, guest="genegeerd", guest_clear=True)
+    assert gezien["fields"] == {"idx": 1, "guest_clear": "1"}
+
+
+def test_set_alarm_zet_am_en_rm_via_mon_alarm(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
+                        or {"ok": True, "error": "", "data": {"ok": True, "ch": 5, "am": 3, "rm": 5}})
+    # ch=5 is het kanaalnummer (mon[].ch), niet de positie; am=3, rm=5 (bitmasker).
     uit = rooms.set_alarm(_rep(db), 5, am=3, rm=5)
     assert uit["ok"]
-    assert opdrachten == ["sensor set mon.5.alert both",
-                          "sensor set mon.5.rooms 0,2"]
+    assert gezien["path"] == rooms.MON_ALARM_PATH
+    assert gezien["fields"] == {rooms.MON_ALARM_CH: 5,
+                                rooms.MON_ALARM_AM: 3, rooms.MON_ALARM_RM: 5}
 
 
-def test_set_alarm_stopt_als_de_cli_een_fout_teruggeeft(db, monkeypatch):
-    """Een 'Error ...' of 4xx uit de web-CLI-zeef is geen succes, ook al kwam er
-    een 200; en de tweede opdracht mag dan niet meer vertrekken."""
+def test_set_alarm_geeft_de_fout_van_de_node_door(db, monkeypatch):
+    """Een 4xx/500 van /mon/alarm is geen succes; de tekst komt door post_form."""
     from app import rooms, sensornode
-    opdrachten = []
-    monkeypatch.setattr(sensornode, "cli",
-                        lambda host, cmd, t=None: opdrachten.append(cmd)
-                        or {"ok": True, "error": "", "reply": "Error: onbekend kanaal", "cmd": cmd})
-    uit = rooms.set_alarm(_rep(db), 5, am=2, rm=1)
-    assert not uit["ok"] and "Error" in uit["error"]
-    assert opdrachten == ["sensor set mon.5.alert room"]   # gestopt na de eerste
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: {"ok": False, "error": "onbekend kanaal", "data": {}})
+    uit = rooms.set_alarm(_rep(db), 9, am=2, rm=1)
+    assert not uit["ok"] and uit["error"] == "onbekend kanaal"
 
 
 def test_set_alarm_weigert_een_onbekende_modus(db, monkeypatch):
     from app import rooms, sensornode
-    monkeypatch.setattr(sensornode, "cli",
+    monkeypatch.setattr(sensornode, "post_form",
                         lambda *a, **k: pytest.fail("mocht niet versturen"))
     uit = rooms.set_alarm(_rep(db), 5, am=9)
     assert not uit["ok"] and "dm/room/both" in uit["error"]

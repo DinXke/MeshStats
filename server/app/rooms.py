@@ -15,18 +15,18 @@ De node (parallel gebouwd) biedt aan, achter dezelfde Basic-auth:
 
 * ``GET  /rooms.json``   -> ``{"max","active","rooms":[{idx,name,stealth,guest,posts,pub,uri}]}``
 * ``POST /room/add``     (form ``name``)                       -> ``{"ok",... ,"idx","uri"}``
-* ``POST /room/edit``    (form ``idx`` [,``name``,``pass``,``guest``,``stealth``]) -> ``{"ok"}``
+* ``POST /room/edit``    (form ``idx`` [,``name``,``pass``,``guest``,``guest_clear``,``stealth``]) -> ``{"ok"}``
 * ``POST /room/del``     (form ``idx``)                        -> ``{"ok"}``
+* ``POST /mon/alarm``    (form ``ch``,``am``,``rm``)           -> ``{"ok",ch,am,rm}``
 * ``GET  /rooms/backup`` -> volledige room-config incl. sleutels (GEVOELIG)
 * ``POST /rooms/restore``(JSON-body)                           -> ``{"ok"}``
 
-De per-sensor alarmroute staat in ``/status.json`` als ``mon[].am`` (1=dm, 2=room,
-3=both) en ``mon[].rm`` (roombitmasker). Het ZETTEN gebeurt niet via een apart
-endpoint -- de node heeft dat niet -- maar via de bestaande web-CLI (``POST
-/cli``), kanaal-gebaseerd, met twee opdrachten: ``sensor set mon.<ch>.alert
-<dm|room|both>`` en ``sensor set mon.<ch>.rooms <csv>``. Die vorm staat
-geïsoleerd in de ``MON_ALARM_*``-constanten en ``set_alarm`` hieronder -- wijkt de
-CLI-vorm af, dan is dat de enige plek die aangepast hoeft te worden.
+Twee bijzonderheden van het contract, elk om per ongeluk wissen te voorkomen:
+een leeg of afwezig ``guest``-veld op ``/room/edit`` laat het gastwachtwoord
+ONGEWIJZIGD; wissen gaat expliciet via ``guest_clear=1``. En ``/mon/alarm`` is
+KANAAL-gebaseerd (``ch`` uit ``mon[].ch``, de node laat ``ch`` winnen), met
+``am`` (1=dm, 2=room, 3=both) en ``rm`` (roombitmasker). Die vorm staat
+geïsoleerd in de ``MON_ALARM_*``-constanten en ``set_alarm`` hieronder.
 
 Gevoelige sleutels
 ------------------
@@ -46,15 +46,18 @@ from . import db, nodecred, sensornode
 
 log = logging.getLogger("meshmanager.rooms")
 
-# De adapterlaag voor de per-sensor alarmroute. De node heeft GEEN apart
-# alarm-endpoint: am/rm worden gezet via de bestaande web-CLI (POST /cli), met
-# twee KANAAL-gebaseerde opdrachten. Deze constanten zijn de enige plek die mee
-# hoeft als de CLI-vorm ooit afwijkt.
-MON_ALARM_PATH = "/cli"
-MON_ALARM_MODE_CMD = "sensor set mon.{ch}.alert {mode}"
-MON_ALARM_ROOMS_CMD = "sensor set mon.{ch}.rooms {csv}"
+# De adapterlaag voor de per-sensor alarmroute. De node heeft een dedicated
+# ``POST /mon/alarm`` met formvelden ``ch`` (kanaalnummer -- de node laat ch
+# winnen), ``am`` (1/2/3) en ``rm`` (roombitmasker). Deze constanten zijn de enige
+# plek die mee hoeft als die vorm ooit afwijkt.
+MON_ALARM_PATH = "/mon/alarm"
+MON_ALARM_CH = "ch"
+MON_ALARM_AM = "am"
+MON_ALARM_RM = "rm"
 
-# am (1/2/3) -> het CLI-woord voor de modus.
+# De geldige alarmmodi (1=dm, 2=room, 3=both). Voor de validatie en voor de
+# keuzelijst in de UI; ``am=0`` ("uit", zie AM_LABELS) is een toestand die
+# /status.json kan melden maar die deze setter niet aanbiedt.
 AM_MODES = {1: "dm", 2: "room", 3: "both"}
 
 # Wat mon[].am betekent, voor het scherm. am=0 ("uit") is een toestand die
@@ -129,13 +132,22 @@ def add_room(rep, name: str) -> dict:
 
 
 def edit_room(rep, idx: int, name: str | None = None, password: str | None = None,
-              guest: bool | None = None, stealth: bool | None = None) -> dict:
+              guest: str | None = None, guest_clear: bool = False,
+              stealth: bool | None = None) -> dict:
     """``POST /room/edit``. Alleen de meegegeven velden veranderen.
 
     Een veld dat ``None`` blijft, gaat niet mee de deur uit (zie
-    ``sensornode.post_form``): zo overschrijft "alleen de gast-vlag omzetten" geen
-    naam of wachtwoord. Het wachtwoord gaat als ``pass`` mee -- de node bakt er
-    zelf de sleutel van; deze server bewaart het niet.
+    ``sensornode.post_form``): zo overschrijft "alleen de stealth-vlag omzetten"
+    geen naam of wachtwoord. Zowel ``pass`` (het roomwachtwoord) als ``guest``
+    (het gastwachtwoord) worden door de node zelf tot een sleutel gebakken; deze
+    server bewaart ze niet.
+
+    Het gastwachtwoord heeft een aparte WIS-weg, en dat is met opzet: de node laat
+    een leeg of afwezig ``guest``-veld ONGEWIJZIGD, en wissen gaat expliciet met
+    ``guest_clear=1``. Zonder dat onderscheid zou een deelbewerking (bv. alleen de
+    naam) met een leeg gastveld het gastwachtwoord per ongeluk wissen. Vandaar:
+    ``guest_clear`` heeft voorrang op ``guest``, en een leeg ``guest`` laat het
+    gastwachtwoord staan.
     """
     out = {"ok": False, "error": ""}
     velden: dict = {"idx": int(idx)}
@@ -147,8 +159,12 @@ def edit_room(rep, idx: int, name: str | None = None, password: str | None = Non
         velden["name"] = naam
     if password is not None:
         velden["pass"] = str(password)
-    if guest is not None:
-        velden["guest"] = "1" if guest else "0"
+    if guest_clear:
+        # Expliciet wissen -- en dan gaat er geen gastwachtwoord mee, anders zou de
+        # node niet weten of het om wissen of om zetten gaat.
+        velden["guest_clear"] = "1"
+    elif guest is not None:
+        velden["guest"] = str(guest)
     if stealth is not None:
         velden["stealth"] = "1" if stealth else "0"
     ant = sensornode.post_form(_host(rep), "/room/edit", velden)
@@ -167,51 +183,37 @@ def set_alarm(rep, ch: int, am: int | None = None,
               rm: int | None = None) -> dict:
     """De alarmroute van sensor ``ch`` zetten: ``am`` (1/2/3) en/of ``rm`` (bitmasker).
 
-    De adapterlaag. De node heeft geen apart alarm-endpoint; dit vertaalt naar
-    KANAAL-gebaseerde web-CLI-opdrachten (``POST /cli``), en dat is precies wat de
-    ``MON_ALARM_*``-constanten bovenaan isoleren. ``ch`` is het kanaalnummer uit
-    ``/status.json`` (``mon[].ch``), niet de positie in de ``mon[]``-lijst.
+    De adapterlaag. De node heeft een dedicated ``POST /mon/alarm`` met formvelden
+    ``ch``, ``am`` en ``rm``; die staan geïsoleerd in de ``MON_ALARM_*``-constanten
+    bovenaan. ``ch`` is het KANAALnummer uit ``/status.json`` (``mon[].ch``), niet
+    de positie in de ``mon[]``-lijst -- de node laat ``ch`` winnen. ``rm`` gaat als
+    bitmasker de deur uit; de omzetting van aangevinkte rooms naar dat masker
+    gebeurt in de route.
 
-    Twee opdrachten waar nodig -- de modus en de roomlijst zijn twee CLI-sleutels
-    -- en ze falen elk apart: gaat de modus goed maar de roomlijst niet, dan is dat
-    geen "gelukt". Het roembitmasker wordt hier naar de CSV van room-indexen die de
-    node verwacht omgezet (rm=3 -> "0,1", rm=5 -> "0,2", rm=0 -> "" oftewel geen).
+    De node antwoordt ``{"ok",ch,am,rm}`` bij succes, of 4xx/500 bij een fout; die
+    fout komt als leesbare tekst terug uit ``sensornode.post_form``.
     """
-    out = {"ok": False, "error": "", "reply": ""}
+    out = {"ok": False, "error": "", "data": {}}
     if am is None and rm is None:
         out["error"] = "niets te zetten: geef am, rm of allebei"
         return out
     if am is not None and int(am) not in AM_MODES:
-        out["error"] = (f"alarmroute {am} is niet via de CLI te zetten "
+        out["error"] = (f"alarmroute {am} kan niet gezet worden "
                         f"(kies dm/room/both = 1/2/3)")
         return out
     if rm is not None and int(rm) < 0:
         out["error"] = "een roombitmasker kan niet negatief zijn"
         return out
 
-    host = _host(rep)
-    opdrachten = []
+    velden: dict = {MON_ALARM_CH: int(ch)}
     if am is not None:
-        opdrachten.append(MON_ALARM_MODE_CMD.format(
-            ch=int(ch), mode=AM_MODES[int(am)]))
+        velden[MON_ALARM_AM] = int(am)
     if rm is not None:
-        csv = ",".join(str(b) for b in range(int(rm).bit_length())
-                       if int(rm) & (1 << b))
-        opdrachten.append(MON_ALARM_ROOMS_CMD.format(ch=int(ch), csv=csv))
-
-    antwoorden = []
-    for cmd in opdrachten:
-        ant = sensornode.cli(host, cmd)
-        antwoorden.append(ant["reply"] or ant["error"])
-        # /cli antwoordt met platte tekst; een 4xx uit de web-CLI-zeef of een
-        # "Error ..." is geen succes, ook al kwam er een 200. Zelfde toets als
-        # set_region.
-        if not ant["ok"] or sensornode.is_error(ant["reply"]):
-            out["error"] = ant["error"] or ant["reply"] or "de node weigerde de opdracht"
-            out["reply"] = " / ".join(antwoorden)
-            return out
-    out["ok"] = True
-    out["reply"] = " / ".join(antwoorden)
+        velden[MON_ALARM_RM] = int(rm)
+    ant = sensornode.post_form(_host(rep), MON_ALARM_PATH, velden)
+    out["ok"] = ant["ok"]
+    out["error"] = ant["error"]
+    out["data"] = ant["data"]
     return out
 
 
