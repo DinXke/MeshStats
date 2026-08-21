@@ -82,6 +82,20 @@ STATUS_MET_MON = {
     ],
 }
 
+BOT_JSON = {
+    "active": True, "name": "MeldBot", "pub": "bb" * 32,
+    "uri": "meshcore://contact/add?name=MeldBot&public_key=" + "bb" * 32 + "&type=4",
+    "max": 8, "recips": [{"k": "ff" * 32, "l": 1}],
+}
+
+CONTACTS_JSON = {
+    "max": 100,
+    "contacts": [
+        {"k": "ab" * 32, "n": "DinX-Home", "t": 1, "h": 1, "s": "8.5", "a": 60, "c": 3},
+        {"k": "short", "n": "kapot"},   # halve sleutel -> moet weggefilterd worden
+    ],
+}
+
 
 def _rep(db, host="192.168.110.160", seen="2026-08-20T10:00:00Z"):
     rep = db.get_or_create_repeater("48d7aade232b", "MeshUptime")
@@ -442,6 +456,112 @@ def test_snode_acl_gaat_naar_het_snode_pad(db, monkeypatch):
     assert paden == [rooms.SNODE_ACL_PATH, rooms.SNODE_ACL_PATH]
 
 
+# --- SNMP-monitors ------------------------------------------------------------
+
+def test_add_snmp_monitor_stuurt_de_velden_en_plukt_ch(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_text",
+                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
+                        or {"ok": True, "error": "", "text": "ok ups -> kanaal 9"})
+    uit = rooms.add_snmp_monitor(_rep(db), "ups", "1.2.3.4", "1.3.6.1.2.1.33.1.2.3",
+                                 "numeric", "geheim123", snmparg="1", interval=60)
+    assert uit["ok"] and uit["ch"] == 9
+    assert gezien["path"] == rooms.SNMP_MONITOR_PATH
+    assert gezien["fields"] == {
+        "name": "ups", "host": "1.2.3.4", "oid": "1.3.6.1.2.1.33.1.2.3",
+        "interp": "numeric", "community": "geheim123", "snmparg": "1", "int": 60}
+
+
+def test_add_snmp_monitor_weigert_een_onbekende_interpretatie(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "post_text",
+                        lambda *a, **k: pytest.fail("mocht niet versturen"))
+    uit = rooms.add_snmp_monitor(_rep(db), "x", "h", "1.2.3", "raar", "c")
+    assert not uit["ok"] and "interpretatie" in uit["error"]
+
+
+def test_snmp_presets_dragen_een_oid_en_een_geldige_interpretatie():
+    from app import rooms
+    assert "if_in" in rooms.SNMP_PRESET_BY_KEY and "ups_batt" in rooms.SNMP_PRESET_BY_KEY
+    for p in rooms.SNMP_PRESETS:
+        assert p["oid"] and p["interp"] in rooms.SNMP_INTERPS, p["key"]
+
+
+# --- de notifier-bot ----------------------------------------------------------
+
+def test_bot_parseert_naam_pubkey_en_ontvangers(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "_json",
+                        lambda host, path, t=None: {"ok": True, "error": "", "data": BOT_JSON})
+    uit = rooms.bot(_rep(db))
+    assert uit["ok"] and uit["active"] and uit["name"] == "MeldBot"
+    assert uit["pub"] == "bb" * 32 and uit["max"] == 8
+    assert uit["recips"][0]["k"] == "ff" * 32 and uit["recips"][0]["l"] == 1
+
+
+def test_add_bot_recipient_valideert_de_pubkey(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
+                        or {"ok": True, "error": "", "data": {}})
+    goed = rooms.add_bot_recipient(_rep(db), "ab" * 32)
+    assert goed["ok"] and gezien["path"] == rooms.BOT_RECIPIENT_PATH
+    assert gezien["fields"] == {"key": "ab" * 32}
+    fout = rooms.add_bot_recipient(_rep(db), "abcd")
+    assert not fout["ok"] and "64 hex" in fout["error"]
+
+
+def test_del_bot_recipient_gebruikt_del_en_valideert_prefix(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(fields=fields)
+                        or {"ok": True, "error": "", "data": {}})
+    rooms.del_bot_recipient(_rep(db), "ffffffffffff")
+    assert gezien["fields"] == {"del": "ffffffffffff"}
+    kort = rooms.del_bot_recipient(_rep(db), "ffff")
+    assert not kort["ok"] and "12 hex" in kort["error"]
+
+
+def test_bot_sendto_en_post_valideren_en_versturen(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = []
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.append((path, fields))
+                        or {"ok": True, "error": "", "data": {}})
+    rooms.bot_sendto(_rep(db), "ab" * 32, "hoi")
+    rooms.bot_post(_rep(db), "iedereen")
+    assert gezien[0] == (rooms.BOT_SENDTO_PATH, {"key": "ab" * 32, "msg": "hoi"})
+    assert gezien[1] == (rooms.BOT_POST_PATH, {"msg": "iedereen"})
+    # Leeg bericht en halve sleutel worden geweigerd vóór het net.
+    assert not rooms.bot_post(_rep(db), "  ")["ok"]
+    assert not rooms.bot_sendto(_rep(db), "ab" * 32, "")["ok"]
+    assert not rooms.bot_sendto(_rep(db), "abcd", "hoi")["ok"]
+
+
+def test_bot_advert_stuurt_flood(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
+                        or {"ok": True, "error": "", "data": {}})
+    rooms.bot_advert(_rep(db), flood=False)
+    assert gezien["path"] == rooms.BOT_ADVERT_PATH and gezien["fields"] == {"flood": "0"}
+
+
+# --- de ontdekte contacten ----------------------------------------------------
+
+def test_contacts_filtert_halve_sleutels_weg(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "_json",
+                        lambda host, path, t=None: {"ok": True, "error": "", "data": CONTACTS_JSON})
+    uit = rooms.contacts(_rep(db))
+    assert uit["ok"] and len(uit["contacts"]) == 1
+    assert uit["contacts"][0]["k"] == "ab" * 32 and uit["contacts"][0]["n"] == "DinX-Home"
+
+
 # --- de netwerkprimitieven (post_form / post_json) ----------------------------
 
 def test_post_form_bouwt_een_form_body(db, monkeypatch):
@@ -565,19 +685,21 @@ def test_restore_stored_stuurt_de_bewaarde_config_naar_de_node(db, monkeypatch):
 
 # --- de mapping room-pubkey -> fysieke node -----------------------------------
 
-def test_record_owners_koppelt_rooms_en_snodes_en_snoeit(db):
+def test_record_owners_koppelt_rooms_snodes_en_bot_en_snoeit(db):
     from app import rooms
     rep = _rep(db)
-    aantal = rooms.record_owners(rep, ROOMS_JSON["rooms"], ROOMS_JSON["snodes"])
-    assert aantal == 3
+    bot_ent = {"pub": BOT_JSON["pub"], "name": BOT_JSON["name"], "idx": 0}
+    aantal = rooms.record_owners(rep, ROOMS_JSON["rooms"], ROOMS_JSON["snodes"], bot_ent)
+    assert aantal == 4
     rijen = {r["room_key"]: r["kind"] for r in db.room_owners_for(rep["id"])}
     assert rijen == {
         db.node_key("48d7aade232b" + "00" * 10): "room",
         db.node_key("aa" * 16): "room",
         db.node_key("cc" * 32): "sensor",
+        db.node_key("bb" * 32): "bot",
     }
-    # Een volgende ronde waarin room 1 en de sensor-node weg zijn, snoeit ze weg.
-    rooms.record_owners(rep, [ROOMS_JSON["rooms"][0]], [])
+    # Een volgende ronde waarin room 1, de sensor-node en de bot weg zijn, snoeit ze weg.
+    rooms.record_owners(rep, [ROOMS_JSON["rooms"][0]], [], None)
     keys = {r["room_key"] for r in db.room_owners_for(rep["id"])}
     assert keys == {db.node_key("48d7aade232b" + "00" * 10)}
 
@@ -593,10 +715,11 @@ def test_de_nodelijst_koppelt_losse_rooms_en_snodes_aan_hun_eigenaar(db, monkeyp
                         is_superuser=True)
     rep = _rep(db)
     # De losse entries zoals ze op het mesh binnenkwamen: eigen pubkeys.
-    for sleutel in ("aaaaaaaaaaaa", "cccccccccccc"):
+    for sleutel in ("aaaaaaaaaaaa", "cccccccccccc", "bbbbbbbbbbbb"):
         r = db.get_or_create_repeater(sleutel, "onbekend")
         db.execute("UPDATE repeaters SET is_public=1 WHERE id=?", (r["id"],))
-    rooms.record_owners(rep, ROOMS_JSON["rooms"], ROOMS_JSON["snodes"])
+    bot_ent = {"pub": BOT_JSON["pub"], "name": BOT_JSON["name"], "idx": 0}
+    rooms.record_owners(rep, ROOMS_JSON["rooms"], ROOMS_JSON["snodes"], bot_ent)
 
     cookie = auth.make_session("admin")
     req = Request({"type": "http", "http_version": "1.1", "method": "GET",
@@ -606,7 +729,8 @@ def test_de_nodelijst_koppelt_losse_rooms_en_snodes_aan_hun_eigenaar(db, monkeyp
     html = routes_admin.nodes_page(req).body.decode()
     assert "room op MeshUptime" in html
     assert "sensor-node op MeshUptime" in html
-    assert "host van 1 room + 1 sensor-node" in html
+    assert "bot op MeshUptime" in html
+    assert "host van 1 room + 1 sensor-node + 1 bot" in html
 
 
 def test_de_room_en_sensornode_secties_renderen(db, monkeypatch):
@@ -625,6 +749,10 @@ def test_de_room_en_sensornode_secties_renderen(db, monkeypatch):
             return _Antwoord(json.dumps(STATUS_MET_MON).encode())
         if path == "/acl.json":
             return _Antwoord(json.dumps({"acl": [], "nb": []}).encode())
+        if path == "/bot.json":
+            return _Antwoord(json.dumps(BOT_JSON).encode())
+        if path == "/contacts.json":
+            return _Antwoord(json.dumps(CONTACTS_JSON).encode())
         return _Antwoord(b"{}")
 
     monkeypatch.setattr(nodeconfig, "_open", nep_open)
@@ -654,7 +782,16 @@ def test_de_room_en_sensornode_secties_renderen(db, monkeypatch):
     assert "Sleutel toevoegen" in html
     # De "?"-help-popovers (instellingen-eerst, uitleg erachter).
     assert 'class="help-pop"' in html and 'class="help-btn"' in html
-    # De mapping is bij het renderen vastgelegd: twee rooms + één sensor-node.
+    # De SNMP-monitorsectie met de preset-bibliotheek.
+    assert "SNMP-monitor toevoegen" in html and "ifHCInOctets" in html
+    assert 'name="community"' in html and 'type="password"' in html
+    # De notifier-bot: naam, contact-QR/link, en de ontvangerslijst.
+    assert "Notifier-bot" in html and "MeldBot" in html
+    assert "Test-DM sturen" in html and ("ff" * 32)[:16] in html
+    # De contactenkiezer (datalist) voedt de pubkey-velden.
+    assert 'id="mm-contacts"' in html and "DinX-Home" in html
+    # De mapping is bij het renderen vastgelegd: 2 rooms + 1 sensor-node + 1 bot.
     rijen = {r["room_key"]: r["kind"] for r in db.room_owners_for(rep["id"])}
     assert rijen[db.node_key("cc" * 32)] == "sensor"
-    assert len(rijen) == 3
+    assert rijen[db.node_key("bb" * 32)] == "bot"
+    assert len(rijen) == 4

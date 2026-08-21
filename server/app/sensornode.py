@@ -1132,9 +1132,13 @@ def poll(rep, timeout: int | None = None) -> dict:
         from . import rooms
         ov = rooms.overview(rep, timeout)
         if ov["ok"]:
-            rooms.record_owners(rep, ov["rooms"]["rooms"], ov["snodes"]["snodes"])
+            bt = rooms.bot(rep, timeout)
+            bot_ent = ({"pub": bt["pub"], "name": bt["name"], "idx": 0}
+                       if bt["ok"] and bt["pub"] else None)
+            rooms.record_owners(rep, ov["rooms"]["rooms"], ov["snodes"]["snodes"],
+                                bot_ent)
     except Exception:  # noqa: BLE001 -- de mapping mag de ronde nooit breken
-        log.debug("Room-/sensor-node-eigenaarschap niet bijgewerkt tijdens de ronde",
+        log.debug("Room-/sensor-node-/bot-eigenaarschap niet bijgewerkt tijdens de ronde",
                   exc_info=True)
 
     out["ok"] = True

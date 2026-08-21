@@ -83,6 +83,54 @@ ACL_LEVEL_GLOSS = {
     "admin": "volledig beheer van dit slot",
 }
 
+# --- SNMP-monitors ------------------------------------------------------------
+# Een SNMP-monitor is een nieuwe monitorsoort op de node: ``POST /monitor/snmp``
+# met ``name``/``host``/``int``/``community``/``oid``/``interp``/``snmparg``. Net
+# als ``/monitor`` antwoordt hij met platte tekst (``ok <naam> -> kanaal <N>``).
+# De COMMUNITY is een geheim: hij gaat de deur uit maar wordt NOOIT teruggetoond
+# of gelogd -- /status.json meldt per SNMP-monitor alleen knd/itp/oid.
+SNMP_MONITOR_PATH = "/monitor/snmp"
+SNMP_INTERPS = ("numeric", "rate", "status")
+
+# De preset-OID-bibliotheek, zodat de gebruiker uit een lijst kiest in plaats van
+# OIDs over te typen. Elk preset draagt de OID, de standaardinterpretatie, en of
+# er een index (``snmparg``) bij hoort (een interface- of UPS-lijn-index).
+SNMP_PRESETS = [
+    {"key": "if_in", "label": "Interface — inkomende octetten (ifHCInOctets)",
+     "oid": "1.3.6.1.2.1.31.1.1.1.6", "interp": "rate",
+     "arg": True, "arg_hint": "interface-index (bv. 1)"},
+    {"key": "if_out", "label": "Interface — uitgaande octetten (ifHCOutOctets)",
+     "oid": "1.3.6.1.2.1.31.1.1.1.10", "interp": "rate",
+     "arg": True, "arg_hint": "interface-index (bv. 1)"},
+    {"key": "if_status", "label": "Interface — operationele status (ifOperStatus)",
+     "oid": "1.3.6.1.2.1.2.2.1.8", "interp": "status",
+     "arg": True, "arg_hint": "interface-index (bv. 1)"},
+    {"key": "ups_batt", "label": "UPS — batterijstatus (upsBatteryStatus)",
+     "oid": "1.3.6.1.2.1.33.1.2.1", "interp": "status",
+     "arg": False, "arg_hint": ""},
+    {"key": "ups_min", "label": "UPS — resterende minuten (upsEstimatedMinutesRemaining)",
+     "oid": "1.3.6.1.2.1.33.1.2.3", "interp": "numeric",
+     "arg": False, "arg_hint": ""},
+    {"key": "ups_load", "label": "UPS — belasting % (upsOutputPercentLoad)",
+     "oid": "1.3.6.1.2.1.33.1.4.4.1.5", "interp": "numeric",
+     "arg": True, "arg_hint": "lijn-index (bv. 1)"},
+    {"key": "ups_vin", "label": "UPS — ingangsspanning (upsInputVoltage)",
+     "oid": "1.3.6.1.2.1.33.1.3.3.1.3", "interp": "numeric",
+     "arg": True, "arg_hint": "lijn-index (bv. 1)"},
+    {"key": "ups_vout", "label": "UPS — uitgangsspanning (upsOutputVoltage)",
+     "oid": "1.3.6.1.2.1.33.1.4.4.1.2", "interp": "numeric",
+     "arg": True, "arg_hint": "lijn-index (bv. 1)"},
+]
+SNMP_PRESET_BY_KEY = {p["key"]: p for p in SNMP_PRESETS}
+
+# --- de notifier-bot en de ontdekte contacten ---------------------------------
+BOT_JSON_PATH = "/bot.json"
+BOT_RECIPIENT_PATH = "/bot/recipient"
+BOT_ADVERT_PATH = "/bot/advert"
+BOT_SENDTO_PATH = "/bot/sendto"
+BOT_POST_PATH = "/bot/post"
+CONTACTS_PATH = "/contacts.json"
+
 # De geldige alarmmodi (1=dm, 2=room, 3=both). Voor de validatie en voor de
 # keuzelijst in de UI; ``am=0`` ("uit", zie AM_LABELS) is een toestand die
 # /status.json kan melden maar die deze setter niet aanbiedt.
@@ -500,6 +548,53 @@ def add_monitor(rep, name: str, host: str = "", kind: str = "",
     return out
 
 
+def add_snmp_monitor(rep, name: str, host: str, oid: str, interp: str,
+                     community: str, snmparg: str = "",
+                     interval: int | None = None) -> dict:
+    """Een SNMP-monitor aanmaken via ``POST /monitor/snmp``. Zelfde tekstantwoord
+    als ``/monitor`` (``ok <naam> -> kanaal <N>``); daaruit komt het kanaalnummer.
+
+    De ``community`` is een GEHEIM: hij gaat mee de deur uit maar wordt hier niet
+    onthouden, niet teruggegeven en niet gelogd -- de aanroepende route zet hem
+    ook niet in het audittrail. ``interp`` is een van ``SNMP_INTERPS``.
+    """
+    out = {"ok": False, "error": "", "ch": None}
+    naam = str(name or "").strip()
+    if not naam:
+        out["error"] = "een SNMP-monitor heeft een naam nodig"
+        return out
+    if not str(host or "").strip():
+        out["error"] = "een SNMP-monitor heeft een host nodig"
+        return out
+    if not str(oid or "").strip():
+        out["error"] = "kies een preset of vul een OID in"
+        return out
+    if str(interp) not in SNMP_INTERPS:
+        out["error"] = f"onbekende interpretatie (kies {', '.join(SNMP_INTERPS)})"
+        return out
+    velden: dict = {"name": naam, "host": str(host).strip(),
+                    "oid": str(oid).strip(), "interp": str(interp),
+                    "community": str(community or "")}
+    if str(snmparg or "").strip():
+        velden["snmparg"] = str(snmparg).strip()
+    if interval is not None:
+        velden["int"] = int(interval)
+    ant = sensornode.post_text(_host(rep), SNMP_MONITOR_PATH, velden)
+    if not ant["ok"]:
+        out["error"] = ant["error"]
+        return out
+    if sensornode.is_error(ant["text"]):
+        out["error"] = ant["text"]
+        return out
+    match = MONITOR_CH_RE.search(ant["text"])
+    if not match:
+        out["error"] = f"onverwacht antwoord van de node: {ant['text'][:120] or '(leeg)'}"
+        return out
+    out["ch"] = int(match.group(1))
+    out["ok"] = True
+    return out
+
+
 def room_advert(rep, idx: int, flood: bool = True) -> dict:
     """Een room zich laten melden op het mesh: flood (mesh-breed) of zerohop.
 
@@ -593,6 +688,127 @@ def del_snode_acl(rep, idx: int, prefix: str) -> dict:
     return _del_acl(rep, SNODE_ACL_PATH, idx, prefix)
 
 
+# --- de notifier-bot ----------------------------------------------------------
+#
+# Een bot-identiteit op de node die meldingen als DM aan een ontvangerslijst
+# stuurt en/of op zijn eigen kanaal post. De ontvangers zijn publieke sleutels
+# (mogen getoond); er is geen geheim aan de leeslijst. ``GET /bot.json`` leest de
+# stand; de mutaties gaan via ``/bot/*``.
+
+def bot(rep, timeout: int | None = None) -> dict:
+    """``GET /bot.json`` -> de bot en zijn ontvangerslijst, of een reden waarom niet.
+
+    ``{"ok","error","active","name","pub","uri","max","recips":[{k,l}]}``. ``recips``
+    is defensief genormaliseerd: ``k`` de pubkey, ``l`` het (optionele) niveau/label.
+    """
+    out = {"ok": False, "error": "", "active": False, "name": "", "pub": "",
+           "uri": "", "max": 0, "recips": []}
+    got = sensornode._json(_host(rep), BOT_JSON_PATH, timeout)
+    if not got["ok"]:
+        out["error"] = got["error"]
+        return out
+    data = got["data"] if isinstance(got["data"], dict) else {}
+    out["active"] = bool(data.get("active"))
+    out["name"] = str(data.get("name") or "")
+    out["pub"] = str(data.get("pub") or "")
+    out["uri"] = str(data.get("uri") or "")
+    out["max"] = int(data.get("max") or 0)
+    out["recips"] = [{"k": str(r.get("k") or ""), "l": r.get("l")}
+                     for r in (data.get("recips") or []) if isinstance(r, dict)]
+    out["ok"] = True
+    return out
+
+
+def add_bot_recipient(rep, pubkey: str) -> dict:
+    """Een ontvanger (volledige pubkey) aan de botlijst toevoegen."""
+    out = {"ok": False, "error": ""}
+    sleutel = str(pubkey or "").strip()
+    if len(sleutel) != 64 or not _is_hex(sleutel):
+        out["error"] = "een volledige pubkey van 64 hex-tekens is vereist"
+        return out
+    ant = sensornode.post_form(_host(rep), BOT_RECIPIENT_PATH, {"key": sleutel})
+    out["ok"], out["error"] = ant["ok"], ant["error"]
+    return out
+
+
+def del_bot_recipient(rep, prefix: str) -> dict:
+    """Een ontvanger (op prefix, >= 12 hex) uit de botlijst verwijderen."""
+    out = {"ok": False, "error": ""}
+    korte = str(prefix or "").strip()
+    if len(korte) < 12 or not _is_hex(korte):
+        out["error"] = "een prefix van minstens 12 hex-tekens is vereist om te verwijderen"
+        return out
+    ant = sensornode.post_form(_host(rep), BOT_RECIPIENT_PATH, {"del": korte})
+    out["ok"], out["error"] = ant["ok"], ant["error"]
+    return out
+
+
+def bot_advert(rep, flood: bool = True) -> dict:
+    """De bot zich laten melden op het mesh: flood of zerohop."""
+    ant = sensornode.post_form(_host(rep), BOT_ADVERT_PATH,
+                               {"flood": "1" if flood else "0"})
+    return {"ok": ant["ok"], "error": ant["error"]}
+
+
+def bot_sendto(rep, pubkey: str, msg: str) -> dict:
+    """Een test-DM van de bot naar één pubkey sturen."""
+    out = {"ok": False, "error": ""}
+    sleutel = str(pubkey or "").strip()
+    if len(sleutel) != 64 or not _is_hex(sleutel):
+        out["error"] = "een volledige pubkey van 64 hex-tekens is vereist"
+        return out
+    if not str(msg or "").strip():
+        out["error"] = "een bericht mag niet leeg zijn"
+        return out
+    ant = sensornode.post_form(_host(rep), BOT_SENDTO_PATH,
+                               {"key": sleutel, "msg": str(msg)})
+    out["ok"], out["error"] = ant["ok"], ant["error"]
+    return out
+
+
+def bot_post(rep, msg: str) -> dict:
+    """Een bericht op het eigen kanaal van de bot posten (naar de hele lijst)."""
+    out = {"ok": False, "error": ""}
+    if not str(msg or "").strip():
+        out["error"] = "een bericht mag niet leeg zijn"
+        return out
+    ant = sensornode.post_form(_host(rep), BOT_POST_PATH, {"msg": str(msg)})
+    out["ok"], out["error"] = ant["ok"], ant["error"]
+    return out
+
+
+# --- de ontdekte contacten (een kiezer voor pubkey-velden) --------------------
+
+def contacts(rep, timeout: int | None = None) -> dict:
+    """``GET /contacts.json`` -> de door de node ontdekte contacten.
+
+    ``{"ok","error","max","contacts":[{k,n,t,h,s,a,c}]}``. Publieke sleutels mogen
+    getoond; ze voeden een naam->pubkey-kiezer naast de handmatige pubkey-velden.
+    Alleen contacten met een 64-hex-sleutel komen door -- een kiezer die een halve
+    sleutel invult is erger dan geen kiezer.
+    """
+    out = {"ok": False, "error": "", "max": 0, "contacts": []}
+    got = sensornode._json(_host(rep), CONTACTS_PATH, timeout)
+    if not got["ok"]:
+        out["error"] = got["error"]
+        return out
+    data = got["data"] if isinstance(got["data"], dict) else {}
+    out["max"] = int(data.get("max") or 0)
+    schoon = []
+    for c in (data.get("contacts") or []):
+        if not isinstance(c, dict):
+            continue
+        k = str(c.get("k") or "").strip()
+        if len(k) != 64 or not _is_hex(k):
+            continue
+        schoon.append({"k": k, "n": str(c.get("n") or ""),
+                       "t": c.get("t"), "h": c.get("h"), "s": c.get("s"),
+                       "a": c.get("a"), "c": c.get("c")})
+    out["contacts"] = schoon
+    out["ok"] = True
+    return out
+
+
 # --- de koppeling room <-> sensoren -------------------------------------------
 
 def sensor_in_room(mon: dict, room_idx: int) -> bool:
@@ -628,16 +844,17 @@ def couple(rooms: list[dict], mon: list[dict]) -> list[dict]:
 # --- welke rooms op welke fysieke node draaien --------------------------------
 
 def record_owners(rep, room_lijst: list[dict] | None = None,
-                  snode_lijst: list[dict] | None = None) -> int:
-    """De koppeling pubkey -> deze node persisteren, uit ``/rooms.json``.
+                  snode_lijst: list[dict] | None = None,
+                  bot_ent: dict | None = None) -> int:
+    """De koppeling pubkey -> deze node persisteren, uit ``/rooms.json``/``/bot.json``.
 
     Een room-server-node host meerdere virtuele entiteiten met elk een eigen
-    sleutel -- rooms én sensor-nodes; op het mesh zijn dat losse entries. Dit legt
-    vast dat ze bij één toestel horen (met hun ``kind``), zodat de nodelijst ze kan
-    groeperen in plaats van als anonieme unmanaged nodes te tonen. De node zelf is
-    de schone bron -- ``/rooms.json`` noemt al zijn pubkeys -- dus dit wordt
-    bijgewerkt telkens die lijst opgehaald is, en entries die eruit verdwenen zijn
-    worden opgeruimd (``prune_room_owners``, over de vereniging van beide soorten).
+    sleutel -- rooms, sensor-nodes én een notifier-bot; op het mesh zijn dat losse
+    entries. Dit legt vast dat ze bij één toestel horen (met hun ``kind``), zodat
+    de nodelijst ze kan groeperen in plaats van als anonieme unmanaged nodes te
+    tonen. De node zelf is de schone bron, dus dit wordt bijgewerkt telkens die
+    lijsten opgehaald zijn, en entries die eruit verdwenen zijn worden opgeruimd
+    (``prune_room_owners``, over de vereniging van alle soorten).
 
     Geeft het aantal vastgelegde entiteiten terug. Faalt de databank, dan is dat
     geen reden om de pagina of de pollronde te laten stranden: de mapping is een
@@ -646,10 +863,13 @@ def record_owners(rep, room_lijst: list[dict] | None = None,
     rid = int(sensornode.firmware._field(rep, "id") or 0)
     if not rid:
         return 0
+    lijsten = [("room", room_lijst or []), ("sensor", snode_lijst or [])]
+    # De bot is één identiteit, geen lijst; alleen meenemen als hij een pubkey heeft.
+    if bot_ent and str(bot_ent.get("pub") or "").strip():
+        lijsten.append(("bot", [bot_ent]))
     behouden = []
     try:
-        for kind, lijst in (("room", room_lijst or []),
-                            ("sensor", snode_lijst or [])):
+        for kind, lijst in lijsten:
             for ent in lijst:
                 pub = str(ent.get("pub") or "").strip()
                 if not pub:

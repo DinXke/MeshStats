@@ -61,6 +61,32 @@ sends only the channel numbers and the site fills in their names from its own
 channel-name data. The alarm routing above decides which sensor's reading goes to
 which sensor-node.
 
+## SNMP monitors
+
+A node can also monitor an external device over SNMP: it polls an OID on a host
+at an interval. The site adds one through `POST /monitor/snmp` (fields
+`name`/`host`/`int`/`community`/`oid`/`interp`/`snmparg`), with a **preset OID
+library** so nobody types raw OIDs — interface counters (ifHCInOctets,
+ifHCOutOctets), ifOperStatus, and UPS-MIB (battery status, estimated minutes
+remaining, load, input/output voltage). A manual OID plus interpretation
+(`numeric`/`rate`/`status`) is there for anything the presets do not cover, and
+an index field fills `snmparg` for per-interface or per-UPS-line OIDs. The
+**community is a secret**: it is sent to the node but write-only on the site —
+never shown back and never logged, and `/status.json` reports only `knd`/`itp`/
+`oid` for an SNMP monitor. A new SNMP channel can be coupled to a room or
+sensor-node in the same step, and afterwards routes like any other channel.
+
+## The notifier bot
+
+A node can run a *notifier bot*: an identity that sends alerts as a direct
+message to a recipient list, or posts them on its own channel. The site shows the
+bot's name, public key and a contact QR + link (`GET /bot.json`), and manages the
+recipient list — add a full public key or remove one on a prefix
+(`POST /bot/recipient`). Buttons send an advert (`POST /bot/advert`), a test DM to
+one key (`POST /bot/sendto`), or a post to the whole list (`POST /bot/post`).
+Recipients are public keys; there is no secret in the list. Message bodies are not
+written to the audit trail — only who a DM went to.
+
 ## Access control (ACL)
 
 Each room and each sensor-node slot carries a per-key access list: which public
@@ -71,7 +97,10 @@ password. The site reads the list from the `acl` array of `/rooms.json` (never a
 secret, only public keys and levels) and shows it per room/sensor-node. Adding
 requires the full 64-hex public key; removing works on a prefix of at least 12
 hex; changing a level re-adds the key at the new level. All of it runs through
-`POST /room/acl` and `POST /snode/acl`.
+`POST /room/acl` and `POST /snode/acl`. Everywhere a public key is entered — the
+ACL grants and the bot recipient list — the node's **discovered contacts**
+(`GET /contacts.json`) feed a name→key chooser next to the manual field, so you
+pick a contact by name and the full key is filled in.
 
 ## Backup and restore
 
@@ -84,29 +113,32 @@ typed confirmation; it can take a stored backup or pasted JSON.
 
 ## Grouping: many entities, one node
 
-Because rooms and sensor-nodes each advertise their own keys, they appear on the
-mesh as separate node entries. The site persists which key belongs to which
-physical node, with its kind (room or sensor) — learned from `/rooms.json` — so
-the node list marks a loose entry as "room on node X" or "sensor-node on node X"
-and marks its owner as "host of N rooms + M sensor-nodes", instead of leaving them
-floating as anonymous unmanaged nodes. The mapping is pruned when an entity is
-removed from the node.
+Because rooms, sensor-nodes and the notifier bot each advertise their own keys,
+they appear on the mesh as separate node entries. The site persists which key
+belongs to which physical node, with its kind (room, sensor or bot) — learned from
+`/rooms.json` and `/bot.json` — so the node list marks a loose entry as "room on
+node X", "sensor-node on node X" or "bot on node X" and marks its owner as "host
+of N rooms + M sensor-nodes + a bot", instead of leaving them floating as
+anonymous unmanaged nodes. The mapping is pruned when an entity is removed from
+the node.
 
 ## The node contract and its assumptions
 
 The site talks to `GET /rooms.json`, `POST /room/add|edit|del`, `POST
 /snode/add|edit|del`, `POST /room/acl` and `POST /snode/acl` (form `idx`/`pubkey`/
-`level`, or `del=1` with a prefix), `POST /mon/alarm`, `GET /rooms/backup` and
-`POST /rooms/restore`. The alarm route is set channel-based via `POST /mon/alarm`
-(form
-`ch`/`am`/`rm`, optionally `sn`, where `ch` is the monitor's channel from
-`mon[].ch` and wins on the node). The node-centric channel panel reuses that same
-setter — checking a channel on a room/sensor-node only flips that entity's `rm`
-resp. `sn` bit, leaving the other masks alone. Creating a channel goes through the
-existing `POST /monitor` (form `name`/`host`/`int`), which replies in plain text
-(`ok <name> -> kanaal <N>`) — the site parses the channel number out and couples
-it. Adverts use `POST /room/advert` / `POST /snode/advert` (form `idx`/`flood`).
-All of these live isolated behind the `MON_ALARM_*`/`MONITOR_ADD_PATH`/`*_ADVERT_PATH` constants and
-their functions in `server/app/rooms.py`, so a differing contract is a small
-change. The network boundary itself stays in `sensornode.py`, behind the same
-target check and fleet/per-node credential as every other call to a node.
+`level`, or `del=1` with a prefix), `POST /mon/alarm`, `POST /monitor/snmp`,
+`GET /bot.json`, `POST /bot/recipient|advert|sendto|post`, `GET /contacts.json`,
+`GET /rooms/backup` and `POST /rooms/restore`. The alarm route is set
+channel-based via `POST /mon/alarm` (form `ch`/`am`/`rm`, optionally `sn`, where
+`ch` is the monitor's channel from `mon[].ch` and wins on the node). The
+node-centric channel panel reuses that same setter — checking a channel on a
+room/sensor-node only flips that entity's `rm` resp. `sn` bit, leaving the other
+masks alone. Creating a channel goes through the existing `POST /monitor` (form
+`name`/`host`/`int`), and an SNMP channel through `POST /monitor/snmp`; both reply
+in plain text (`ok <name> -> kanaal <N>`) — the site parses the channel number out
+and couples it. Adverts use `POST /room/advert` / `POST /snode/advert` (form
+`idx`/`flood`). All of these live isolated behind the `MON_ALARM_*`/
+`MONITOR_ADD_PATH`/`SNMP_MONITOR_PATH`/`*_ADVERT_PATH`/`BOT_*`/`CONTACTS_PATH`
+constants and their functions in `server/app/rooms.py`, so a differing contract is
+a small change. The network boundary itself stays in `sensornode.py`, behind the
+same target check and fleet/per-node credential as every other call to a node.

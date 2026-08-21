@@ -65,6 +65,34 @@ gekoppeld zijn; de node stuurt alleen de kanaalnummers en de site vult de namen
 aan uit zijn eigen kanaalnaam-gegevens. De alarmroute hierboven bepaalt welke
 meting van welke sensor naar welke sensor-node gaat.
 
+## SNMP-monitors
+
+Een node kan ook een extern apparaat over SNMP bewaken: hij vraagt periodiek een
+OID op bij een host. De site voegt er een toe via `POST /monitor/snmp` (velden
+`name`/`host`/`int`/`community`/`oid`/`interp`/`snmparg`), met een
+**preset-OID-bibliotheek** zodat niemand OIDs hoeft over te typen —
+interface-tellers (ifHCInOctets, ifHCOutOctets), ifOperStatus, en UPS-MIB
+(batterijstatus, resterende minuten, belasting, in-/uitgangsspanning). Een
+handmatige OID plus interpretatie (`numeric`/`rate`/`status`) staat er voor wat de
+presets niet dekken, en een indexveld vult `snmparg` voor per-interface- of
+per-UPS-lijn-OIDs. De **community is een geheim**: hij gaat naar de node maar is
+op de site write-only — nooit teruggetoond en nooit gelogd, en `/status.json`
+meldt per SNMP-monitor alleen `knd`/`itp`/`oid`. Een nieuw SNMP-kanaal kan in
+dezelfde stap aan een room/sensor-node gekoppeld worden en routeert daarna als elk
+ander kanaal.
+
+## De notifier-bot
+
+Een node kan een *notifier-bot* draaien: een identiteit die meldingen als direct
+bericht naar een ontvangerslijst stuurt, of ze op zijn eigen kanaal post. De site
+toont de naam, publieke sleutel en een contact-QR + link van de bot
+(`GET /bot.json`) en beheert de ontvangerslijst — een volledige pubkey toevoegen
+of er een op prefix verwijderen (`POST /bot/recipient`). Knoppen sturen een advert
+(`POST /bot/advert`), een test-DM naar één sleutel (`POST /bot/sendto`) of een
+post naar de hele lijst (`POST /bot/post`). Ontvangers zijn publieke sleutels; er
+zit geen geheim in de lijst. De inhoud van berichten komt niet in het audittrail —
+alleen naar wie een DM ging.
+
 ## Toegang (ACL)
 
 Elk room- en elk sensor-node-slot draagt een per-sleutel-toegangslijst: welke
@@ -76,7 +104,10 @@ komt op zijn niveau binnen zonder wachtwoord. De site leest de lijst uit de
 niveaus) en toont hem per room/sensor-node. Toevoegen vereist de volledige
 64-hex-sleutel; verwijderen mag op een prefix van minstens 12 hex; een niveau
 wijzigen zet de sleutel opnieuw op het nieuwe niveau. Dit loopt via `POST
-/room/acl` en `POST /snode/acl`.
+/room/acl` en `POST /snode/acl`. Overal waar je een publieke sleutel invult — de
+ACL-grants en de bot-ontvangerslijst — voeden de door de node **ontdekte
+contacten** (`GET /contacts.json`) een naam→sleutel-kiezer naast het handmatige
+veld: je kiest een contact op naam en de volledige sleutel wordt ingevuld.
 
 ## Backup en terugzetten
 
@@ -90,30 +121,33 @@ geplakte JSON.
 
 ## Groeperen: veel entiteiten, één node
 
-Omdat rooms én sensor-nodes elk hun eigen sleutel adverteren, verschijnen ze op
-het mesh als losse node-entries. De site legt vast welke sleutel bij welke fysieke
-node hoort, met de soort (room of sensor) — geleerd uit `/rooms.json` — zodat de
-nodelijst een losse entry markeert als "room op node X" of "sensor-node op node X"
-en zijn eigenaar als "host van N rooms + M sensor-nodes", in plaats van ze als
-anonieme unmanaged nodes te laten rondzweven. De koppeling wordt gesnoeid zodra
-een entiteit van de node verdwijnt.
+Omdat rooms, sensor-nodes én de notifier-bot elk hun eigen sleutel adverteren,
+verschijnen ze op het mesh als losse node-entries. De site legt vast welke sleutel
+bij welke fysieke node hoort, met de soort (room, sensor of bot) — geleerd uit
+`/rooms.json` en `/bot.json` — zodat de nodelijst een losse entry markeert als
+"room op node X", "sensor-node op node X" of "bot op node X" en zijn eigenaar als
+"host van N rooms + M sensor-nodes + een bot", in plaats van ze als anonieme
+unmanaged nodes te laten rondzweven. De koppeling wordt gesnoeid zodra een
+entiteit van de node verdwijnt.
 
 ## Het nodecontract en de aannames
 
 De site spreekt `GET /rooms.json`, `POST /room/add|edit|del`, `POST
 /snode/add|edit|del`, `POST /room/acl` en `POST /snode/acl` (form `idx`/`pubkey`/
-`level`, of `del=1` met een prefix), `POST /mon/alarm`, `GET /rooms/backup` en
-`POST /rooms/restore` aan. De alarmroute wordt kanaal-gebaseerd gezet via `POST
-/mon/alarm` (formvelden `ch`/`am`/`rm`, optioneel `sn`, waarbij `ch` het
-kanaalnummer uit `mon[].ch` is en op de node wint). Het node-centrische
-kanaalpanel gebruikt diezelfde setter — een kanaal aan-/afvinken op een
-room/sensor-node zet alleen de `rm`- resp. `sn`-bit van die entiteit en laat de
-andere maskers met rust. Een kanaal aanmaken loopt via het bestaande `POST
-/monitor` (formvelden `name`/`host`/`int`), dat platte tekst teruggeeft (`ok
-<naam> -> kanaal <N>`) — de site plukt het kanaalnummer eruit en koppelt het.
-Adverts gaan via `POST /room/advert` / `POST /snode/advert` (formvelden
-`idx`/`flood`). Dit alles staat geïsoleerd achter de
-`MON_ALARM_*`/`MONITOR_ADD_PATH`/`*_ADVERT_PATH`-constanten en hun functies in
+`level`, of `del=1` met een prefix), `POST /mon/alarm`, `POST /monitor/snmp`,
+`GET /bot.json`, `POST /bot/recipient|advert|sendto|post`, `GET /contacts.json`,
+`GET /rooms/backup` en `POST /rooms/restore` aan. De alarmroute wordt
+kanaal-gebaseerd gezet via `POST /mon/alarm` (formvelden `ch`/`am`/`rm`, optioneel
+`sn`, waarbij `ch` het kanaalnummer uit `mon[].ch` is en op de node wint). Het
+node-centrische kanaalpanel gebruikt diezelfde setter — een kanaal aan-/afvinken
+op een room/sensor-node zet alleen de `rm`- resp. `sn`-bit van die entiteit en
+laat de andere maskers met rust. Een kanaal aanmaken loopt via het bestaande `POST
+/monitor` (formvelden `name`/`host`/`int`), en een SNMP-kanaal via `POST
+/monitor/snmp`; beide geven platte tekst terug (`ok <naam> -> kanaal <N>`) — de
+site plukt het kanaalnummer eruit en koppelt het. Adverts gaan via `POST
+/room/advert` / `POST /snode/advert` (formvelden `idx`/`flood`). Dit alles staat
+geïsoleerd achter de `MON_ALARM_*`/`MONITOR_ADD_PATH`/`SNMP_MONITOR_PATH`/
+`*_ADVERT_PATH`/`BOT_*`/`CONTACTS_PATH`-constanten en hun functies in
 `server/app/rooms.py`, zodat een afwijkend contract een kleine wijziging is. De
 netwerkgrens zelf blijft in `sensornode.py`, achter dezelfde doelcontrole en
 vloot-/per-node-credential als elke andere aanroep naar een node.

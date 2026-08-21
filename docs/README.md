@@ -36,7 +36,7 @@ describes the job.
 | Document | What you will find |
 |---|---|
 | **[`node-management.md`](node-management.md)** | **The walkthrough.** The three management levels and how to see which one a node has, bringing a node under management, reading and writing its settings with the three risk tiers, setting the clock, upgrading and rolling back firmware, and what to do when a node does not come back — with screenshots of the admin pages |
-| [`rooms.md`](rooms.md) | Managing a MeshUptime room-server node over its own HTTP API: reading and managing rooms and virtual sensor-nodes, the join/contact QR and link, per-key access control (ACL), node-centric channel management, manual adverts, server-side backups, and how loose room/sensor-node entries are grouped back onto their physical node |
+| [`rooms.md`](rooms.md) | Managing a MeshUptime room-server node over its own HTTP API: reading and managing rooms, virtual sensor-nodes and the notifier bot, the join/contact QR and link, per-key access control (ACL), node-centric channel management including SNMP monitors with a preset-OID library, a discovered-contacts chooser, manual adverts, server-side backups, and how loose room/sensor-node/bot entries are grouped back onto their physical node |
 
 Read that one first. It links onward to the pages that go deeper on a single
 step: [`admin.md`](admin.md) for every field and form,

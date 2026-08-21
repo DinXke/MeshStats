@@ -313,8 +313,9 @@ def nodes_page(request: Request):
         eig = by_id.get(rij["owner_repeater_id"])
         if eig and rij["room_key"] != db.node_key(eig["pubkey_prefix"]):
             tel = hosts_rooms.setdefault(rij["owner_repeater_id"],
-                                         {"room": 0, "sensor": 0})
-            tel["sensor" if rij["kind"] == "sensor" else "room"] += 1
+                                         {"room": 0, "sensor": 0, "bot": 0})
+            soort = rij["kind"] if rij["kind"] in ("sensor", "bot") else "room"
+            tel[soort] += 1
     return templates.TemplateResponse(request, "admin/nodes.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes",
         "repeaters": repeaters, "routes": routes,
@@ -1124,11 +1125,20 @@ def _node_page(request: Request, rid: int, **extra):
                      else {"ok": False, "error": "", "data": {}})
     sensor_mon_ruw = (sensor_status["data"].get("mon") or []
                       if sensor_status.get("ok") else [])
+    # De notifier-bot en de ontdekte contacten, elk uit hun eigen lichte GET. Ze
+    # falen apart: een node zonder bot of zonder contacten laat de rest staan.
+    sensor_bot = (rooms.bot(rep) if kan_sensor
+                  else {"ok": False, "error": "", "active": False, "name": "",
+                        "pub": "", "uri": "", "max": 0, "recips": []})
+    _contacts = rooms.contacts(rep) if kan_sensor else {"ok": False, "contacts": []}
+    sensor_contacts = _contacts["contacts"] if _contacts["ok"] else []
     if sensor_ov["ok"]:
-        # De koppeling pubkey -> deze node vastleggen uit de verse lijsten (rooms
-        # én sensor-nodes), zodat de nodelijst de losse entries aan hun eigenaar
-        # kan koppelen.
-        rooms.record_owners(rep, sensor_rooms["rooms"], sensor_snodes["snodes"])
+        # De koppeling pubkey -> deze node vastleggen uit de verse lijsten (rooms,
+        # sensor-nodes én de bot), zodat de nodelijst de losse entries aan hun
+        # eigenaar kan koppelen.
+        bot_ent = ({"pub": sensor_bot["pub"], "name": sensor_bot["name"], "idx": 0}
+                   if sensor_bot.get("ok") and sensor_bot.get("pub") else None)
+        rooms.record_owners(rep, sensor_rooms["rooms"], sensor_snodes["snodes"], bot_ent)
         sensor_rooms["rooms"] = rooms.couple(sensor_rooms["rooms"], sensor_mon_ruw)
     # De virtuele sensor-nodes verrijkt met de NAMEN bij hun kanaalnummers. De node
     # stuurt alleen de nummers; de namen staan al in channel_names_for (ch_names).
@@ -1172,6 +1182,14 @@ def _node_page(request: Request, rid: int, **extra):
                         snode["uri"], titel=f"contact {snode['name']}")
                 except ValueError:
                     pass
+    # De join-/contact-QR van de bot, als hij een uri meegaf.
+    sensor_bot_qr = ""
+    if sensor_bot.get("ok") and sensor_bot.get("uri"):
+        try:
+            sensor_bot_qr = qrsvg.svg(sensor_bot["uri"],
+                                      titel=f"contact {sensor_bot['name']}")
+        except ValueError:
+            pass
     return templates.TemplateResponse(request, "admin/node.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
         "settings_rows": rows,
@@ -1327,6 +1345,13 @@ def _node_page(request: Request, rid: int, **extra):
         # De ACL-niveaus voor de keuzelijst en hun leesbare uitleg.
         "sensor_acl_levels": rooms.ACL_LEVELS,
         "sensor_acl_gloss": rooms.ACL_LEVEL_GLOSS,
+        # De notifier-bot, zijn QR, de SNMP-presets, en de ontdekte contacten die
+        # de pubkey-velden voeden (naam -> volledige sleutel).
+        "sensor_bot": sensor_bot,
+        "sensor_bot_qr": sensor_bot_qr,
+        "sensor_snmp_presets": rooms.SNMP_PRESETS,
+        "sensor_snmp_interps": rooms.SNMP_INTERPS,
+        "sensor_contacts": sensor_contacts,
         "sensor_mon": sensor_mon,
         "sensor_am_labels": rooms.AM_LABELS,
         # De zetbare modi (dm/room/both = 1/2/3); "uit" (0) is een toestand die de
@@ -2085,6 +2110,135 @@ def sensor_snode_acl(request: Request, rid: int, idx: int = Form(...),
         uitslag["_detail_ok"] = f"sensor-node {idx}: sleutel {pubkey.strip()[:12]} op {uitslag.get('level')}"
         uitslag["_msg_ok"] = f"sleutel {pubkey.strip()[:12]} op {uitslag.get('level')} in sensor-node {idx}"
     return _acl_do(request, rid, rep, user, "sensor-node", uitslag)
+
+
+# --- SNMP-monitors -----------------------------------------------------------
+#
+# Een SNMP-monitor toevoegen: preset OF een handmatige OID + interpretatie. De
+# COMMUNITY is een geheim en komt NIET in het trail of in de teruggegeven uitslag.
+# Na het aanmaken meteen koppelen aan een room/sensor-node zoals bij een gewoon
+# kanaal (rm/sn-bit); am blijft de node-standaard.
+
+@router.post("/repeaters/{rid}/sensor/monitor/snmp")
+def sensor_monitor_snmp(request: Request, rid: int, name: str = Form(""),
+                        host: str = Form(""), interval: str = Form(""),
+                        community: str = Form(""), preset: str = Form(""),
+                        oid: str = Form(""), interp: str = Form("numeric"),
+                        snmparg: str = Form(""), room_idx: int = Form(default=-1),
+                        snode_idx: int = Form(default=-1), csrf: str = Form(...)):
+    """Een SNMP-monitor aanmaken (via preset of handmatige OID) en desgewenst koppelen."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    # Preset heeft voorrang op het handmatige veld: uit de bibliotheek komt de OID
+    # en de standaardinterpretatie.
+    p = rooms.SNMP_PRESET_BY_KEY.get(preset.strip())
+    gebruikt_oid = p["oid"] if p else oid
+    gebruikt_interp = p["interp"] if p else interp
+    gemaakt = rooms.add_snmp_monitor(
+        rep, name, host, gebruikt_oid, gebruikt_interp, community,
+        snmparg=snmparg,
+        interval=(int(interval) if str(interval).strip() else None))
+    # Koppelen aan een room of sensor-node als er een gekozen is (>= 0).
+    koppel = {"ok": True, "error": ""}
+    if gemaakt["ok"] and gemaakt["ch"] is not None:
+        if room_idx >= 0:
+            koppel = rooms.set_alarm(rep, int(gemaakt["ch"]), rm=(1 << room_idx))
+        elif snode_idx >= 0:
+            koppel = rooms.set_alarm(rep, int(gemaakt["ch"]), sn=(1 << snode_idx))
+    ok = gemaakt["ok"] and koppel["ok"]
+    # NB: de community staat NIET in het detail -- alleen de OID (geen geheim).
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"SNMP-monitor {name.strip()!r} aangemaakt (ch {gemaakt['ch']}, oid {gebruikt_oid})"
+                    if ok else f"SNMP-monitor mislukt: {gemaakt['error'] or koppel['error']}"),
+            outcome=audit.OK if ok else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "monitor", "ok": ok,
+        "error": gemaakt["error"] or koppel["error"],
+        "msg": (f"SNMP-monitor aangemaakt (ch {gemaakt['ch']})" if ok else "")})
+
+
+# --- de notifier-bot ---------------------------------------------------------
+#
+# Toon-mag: naam en pubkey van de bot en zijn ontvangers zijn publiek. De mutaties
+# gaan achter dezelfde poort; een test-DM/-post is een bewuste klik van de
+# beheerder en gaat door hetzelfde recht.
+
+@router.post("/repeaters/{rid}/sensor/bot/recipient")
+def sensor_bot_recipient(request: Request, rid: int, pubkey: str = Form(""),
+                         delete: str = Form("", alias="del"), csrf: str = Form(...)):
+    """Een ontvanger aan de botlijst toevoegen (volledige pubkey) of verwijderen (prefix)."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    if delete.strip():
+        uitslag = rooms.del_bot_recipient(rep, delete)
+        detail = f"botontvanger {delete.strip()[:12]} verwijderd"
+        msg = f"ontvanger {delete.strip()[:12]} verwijderd"
+    else:
+        uitslag = rooms.add_bot_recipient(rep, pubkey)
+        detail = f"botontvanger {pubkey.strip()[:12]} toegevoegd"
+        msg = f"ontvanger {pubkey.strip()[:12]} toegevoegd"
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(detail if uitslag["ok"] else f"botontvanger mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "bot", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (msg if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/bot/advert")
+def sensor_bot_advert(request: Request, rid: int, flood: str = Form("1"),
+                      csrf: str = Form(...)):
+    """De bot zich laten melden op het mesh (flood of zerohop)."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    is_flood = flood.strip() != "0"
+    uitslag = rooms.bot_advert(rep, flood=is_flood)
+    soort_t = "flood" if is_flood else "zerohop"
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"bot advert ({soort_t})" if uitslag["ok"]
+                    else f"bot advert mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "bot", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"bot-advert verstuurd ({soort_t})" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/bot/sendto")
+def sensor_bot_sendto(request: Request, rid: int, pubkey: str = Form(""),
+                      msg: str = Form(""), csrf: str = Form(...)):
+    """Een test-DM van de bot naar één pubkey sturen."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.bot_sendto(rep, pubkey, msg)
+    # De inhoud van het bericht staat niet in het trail -- alleen naar wie.
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"bot-DM naar {pubkey.strip()[:12]}" if uitslag["ok"]
+                    else f"bot-DM mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "bot", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"test-DM verstuurd naar {pubkey.strip()[:12]}" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/bot/post")
+def sensor_bot_post(request: Request, rid: int, msg: str = Form(""),
+                    csrf: str = Form(...)):
+    """Een bericht op het eigen kanaal van de bot posten (naar de hele lijst)."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.bot_post(rep, msg)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=("bot-post geplaatst" if uitslag["ok"]
+                    else f"bot-post mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "bot", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": ("bericht op het botkanaal geplaatst" if uitslag["ok"] else "")})
 
 
 @router.post("/repeaters/{rid}/sensor/rooms/backup")

@@ -2988,13 +2988,13 @@ def set_room_owner(room_key: str, owner_repeater_id: int, room_pubkey: str,
     ``room_key`` hoort al genormaliseerd te zijn op ``NODE_KEY_HEX`` (zie
     ``rooms.record_owners``), zodat hij op ``repeaters.pubkey_prefix`` aansluit en
     de nodelijst een losse entry aan zijn eigenaar kan koppelen. ``kind`` is
-    'room' of 'sensor' -- dezelfde koppeling, twee soorten virtuele entiteit die
-    op één fysieke node draaien.
+    'room', 'sensor' of 'bot' -- dezelfde koppeling, meerdere soorten virtuele
+    entiteit die op één fysieke node draaien.
     """
     key = node_key(room_key)
     if not key:
         return
-    soort = "sensor" if str(kind) == "sensor" else "room"
+    soort = str(kind) if str(kind) in ("sensor", "bot") else "room"
     execute(
         "INSERT INTO room_owners(room_key, owner_repeater_id, room_pubkey, "
         "room_idx, room_name, kind, updated) VALUES(?,?,?,?,?,?,?) "

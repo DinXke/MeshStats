@@ -629,9 +629,9 @@
     {%- elif sensor_result.soort == 'rotate' %}
     &#9888; De weblogin is <strong>niet</strong> geroteerd: {{ sensor_result.error }}.
     Er is niets aan de opslag veranderd &mdash; de node blijft op de vorige login.
-    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'backup', 'restore') and sensor_result.ok %}
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'bot', 'backup', 'restore') and sensor_result.ok %}
     &#9989; {{ sensor_result.msg }}.
-    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'backup', 'restore') %}
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'bot', 'backup', 'restore') %}
     &#9888; {{ sensor_result.error or 'niets gebeurd' }}.
     {%- elif sensor_result.ok %}
     &#9989; <span class="mono">{{ sensor_result.reply }}</span>
@@ -859,6 +859,18 @@
   </table>
   {% endif %}
 
+  {#- De ontdekte contacten als kiezer: één datalist, gekoppeld aan elk
+      pubkey-veld hieronder (list="mm-contacts"). De gebruiker kiest een naam en de
+      volledige pubkey komt in het veld -- naast het handmatig typen. Publieke
+      sleutels mogen getoond; er zit geen geheim in deze lijst. -#}
+  {% if sensor_contacts %}
+  <datalist id="mm-contacts">
+    {% for c in sensor_contacts %}
+    <option value="{{ c.k }}" label="{{ c.n or c.k[:12] }}{% if c.t is not none %} (type {{ c.t }}){% endif %}"></option>
+    {% endfor %}
+  </datalist>
+  {% endif %}
+
   {#- ==================== Rooms ============================================
 
       Het volledige room-beheer van een room-server-node: lezen, toevoegen,
@@ -987,7 +999,8 @@
       <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="rowform">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="idx" value="{{ kamer.idx }}">
-        <input name="pubkey" placeholder="volledige pubkey (64 hex)" maxlength="64" minlength="64"
+        <input name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
+               maxlength="64" minlength="64" list="mm-contacts"
                spellcheck="false" autocomplete="off" aria-label="Volledige pubkey om toe te voegen"{{ recht('node.instelling.merkbaar') }}>
         <select name="level" aria-label="Niveau van de nieuwe sleutel"{{ recht('node.instelling.merkbaar') }}>
           {% for getal, woord in sensor_acl_levels.items() %}
@@ -1179,7 +1192,8 @@
       <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="rowform">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="idx" value="{{ snode.idx }}">
-        <input name="pubkey" placeholder="volledige pubkey (64 hex)" maxlength="64" minlength="64"
+        <input name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
+               maxlength="64" minlength="64" list="mm-contacts"
                spellcheck="false" autocomplete="off" aria-label="Volledige pubkey om toe te voegen"{{ recht('node.instelling.merkbaar') }}>
         <select name="level" aria-label="Niveau van de nieuwe sleutel"{{ recht('node.instelling.merkbaar') }}>
           {% for getal, woord in sensor_acl_levels.items() %}
@@ -1238,6 +1252,159 @@
   <p class="muted small">Alle {{ sensor_snodes.max }} sensor-node-plekken zijn in gebruik; verwijder er eerst een.</p>
   {% endif %}
   {% endif %}{#- sensor_snodes.ok -#}
+
+  {#- ==================== SNMP-monitors ====================================
+
+      Een SNMP-monitor is een nieuwe monitorsoort: de node vraagt periodiek een
+      OID op bij een host. Kies uit de preset-bibliotheek zodat je geen OIDs hoeft
+      over te typen. De community is een geheim (write-only): hij gaat mee maar
+      wordt nooit teruggetoond. Na het aanmaken verschijnt het kanaal in de
+      alarmroute hieronder; je kunt het hier meteen aan een room/sensor-node
+      koppelen. -#}
+  <h4>SNMP-monitor toevoegen {{ hulp('De node vraagt periodiek een OID op bij een host over SNMP.
+    Kies een preset (interface-octetten, ifOperStatus, of UPS-MIB: batterij, resterende minuten,
+    belasting, in-/uitgangsspanning) of vul een eigen OID in. De community is een wachtwoord en
+    wordt nooit teruggetoond.') }}</h4>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/monitor/snmp">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="rowform">
+      <input name="name" placeholder="naam" maxlength="40" spellcheck="false" autocomplete="off"
+             aria-label="Naam van de SNMP-monitor"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      <input name="host" placeholder="host/ip" spellcheck="false" autocomplete="off"
+             aria-label="Host van de SNMP-monitor"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      <input name="community" type="password" placeholder="community (write-only)"
+             autocomplete="new-password" aria-label="SNMP-community"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      <input name="interval" placeholder="interval s" inputmode="numeric" autocomplete="off"
+             aria-label="Interval in seconden"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+    </div>
+    <div class="rowform">
+      <select name="preset" aria-label="Preset-OID"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+        <option value="">— preset kiezen —</option>
+        {% for p in sensor_snmp_presets %}
+        <option value="{{ p.key }}">{{ p.label }}</option>
+        {% endfor %}
+      </select>
+      <input name="snmparg" placeholder="index (bij interface/UPS-lijn)" spellcheck="false"
+             autocomplete="off" aria-label="SNMP-index"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      {{ hulp('Sommige OIDs zijn per interface of per UPS-lijn geïndexeerd (bv. interface 1). Vul dan
+        hier de index in. Scalars zoals batterijstatus hebben er geen nodig.') }}
+    </div>
+    <details class="chan-panel">
+      <summary>Handmatige OID (in plaats van een preset)</summary>
+      <div class="rowform">
+        <input name="oid" placeholder="1.3.6.1.2.1..." spellcheck="false" autocomplete="off"
+               class="mono" aria-label="Eigen OID"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+        <select name="interp" aria-label="Interpretatie"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+          {% for itp in sensor_snmp_interps %}
+          <option value="{{ itp }}">{{ itp }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </details>
+    <div class="rowform">
+      <label class="muted small">Koppelen aan room
+        <select name="room_idx" aria-label="Koppelen aan room"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+          <option value="-1">— geen —</option>
+          {% for kamer in sensor_rooms.rooms %}<option value="{{ kamer.idx }}">{{ kamer.name or ('room ' ~ kamer.idx) }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="muted small">of sensor-node
+        <select name="snode_idx" aria-label="Koppelen aan sensor-node"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+          <option value="-1">— geen —</option>
+          {% for snode in sensor_snodes.snodes %}<option value="{{ snode.idx }}">{{ snode.name or ('sn ' ~ snode.idx) }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>SNMP-monitor toevoegen</button>
+    </div>
+  </form>
+
+  {#- ==================== Notifier-bot ====================================
+
+      Een bot-identiteit op de node die meldingen als DM aan een ontvangerslijst
+      stuurt en/of op zijn eigen kanaal post. Naam en pubkey zijn publiek; de
+      ontvangers zijn publieke sleutels. -#}
+  <h3>Notifier-bot {{ hulp('Een bot-identiteit op de node die meldingen als direct bericht naar
+    een ontvangerslijst stuurt, of op zijn eigen kanaal post. Voeg ontvangers toe met hun pubkey
+    (of kies een ontdekt contact), en test met een DM of een post.') }}</h3>
+  {% if not sensor_route.can %}
+  <p class="muted small">De weg naar deze node kan nu niets; de botknoppen staan daarom uit.</p>
+  {% elif not sensor_bot.ok %}
+  <p class="muted small">Geen bot opgehaald: {{ sensor_bot.error or 'onbekende reden' }}.</p>
+  {% elif not sensor_bot.active %}
+  <p class="muted small">Deze node heeft geen actieve notifier-bot.</p>
+  {% else %}
+  <div class="room-head">
+    <h4>{{ sensor_bot.name or 'bot' }}</h4>
+    <span class="muted small">sleutel <span class="mono">{{ sensor_bot.pub[:16] or '—' }}</span> &middot;
+      {{ sensor_bot.recips | length }} van {{ sensor_bot.max }} ontvangers</span>
+  </div>
+  {% if sensor_bot.uri %}
+  <div class="room-join">
+    {% if sensor_bot_qr %}<div class="qr">{{ sensor_bot_qr | safe }}</div>{% endif %}
+    <div class="room-join-link">
+      <label class="muted small" for="boturi">Contact-link</label>
+      <input id="boturi" class="mono" readonly value="{{ sensor_bot.uri }}"
+             onclick="this.select()" aria-label="Contact-link van de bot">
+    </div>
+  </div>
+  {% endif %}
+
+  <h4>Ontvangers</h4>
+  {% if sensor_bot.recips %}
+  <table>
+    <thead><tr><th>Sleutel</th><th></th></tr></thead>
+    <tbody>
+    {% for r in sensor_bot.recips %}
+      <tr>
+        <td class="mono">{{ r.k[:16] }}{% if r.l is not none %} <span class="muted small">(niveau {{ r.l }})</span>{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/recipient" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="del" value="{{ r.k[:16] }}">
+            <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted small">Nog geen ontvangers in de botlijst.</p>
+  {% endif %}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/recipient" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
+           maxlength="64" minlength="64" list="mm-contacts" spellcheck="false"
+           autocomplete="off" aria-label="Pubkey van de ontvanger"{{ recht('node.instelling.merkbaar') }}>
+    <button type="submit"{% if sensor_bot.recips | length >= sensor_bot.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>Ontvanger toevoegen</button>
+  </form>
+
+  <h4>Melden en testen</h4>
+  <div class="rowform">
+    {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/advert" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="flood" value="{{ vlag }}">
+      <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
+    </form>
+    {% endfor %}
+  </div>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/sendto" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="pubkey" placeholder="pubkey van de ontvanger" maxlength="64" minlength="64"
+           list="mm-contacts" spellcheck="false" autocomplete="off"
+           aria-label="Pubkey voor de test-DM"{{ recht('node.instelling.merkbaar') }}>
+    <input name="msg" placeholder="test-DM" maxlength="200" autocomplete="off"
+           aria-label="Bericht van de test-DM"{{ recht('node.instelling.merkbaar') }}>
+    <button type="submit"{{ recht('node.instelling.merkbaar') }}>Test-DM sturen</button>
+  </form>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/post" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="msg" placeholder="bericht op het botkanaal (naar de hele lijst)" maxlength="200"
+           autocomplete="off" aria-label="Bericht op het botkanaal"{{ recht('node.instelling.merkbaar') }}>
+    <button type="submit"{{ recht('node.instelling.merkbaar') }}>Posten</button>
+  </form>
+  {% endif %}
 
   {#- De per-sensor alarmroute. am = 1 (dm), 2 (room), 3 (beide); rm is het
       bitmasker van rooms en sn dat van sensor-nodes waar het alarm heen gaat. De

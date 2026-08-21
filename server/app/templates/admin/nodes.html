@@ -131,18 +131,19 @@
             sensor-node op een ander toestel: koppel hem aan zijn eigenaar in
             plaats van hem als losse unmanaged node te tonen. -#}
         {% if is_room_of and is_room_of.get(rep.id) %}
-        {%- set soort = 'sensor-node' if is_room_of[rep.id].kind == 'sensor' else 'room' %}
+        {%- set soort = {'sensor': 'sensor-node', 'bot': 'bot'}.get(is_room_of[rep.id].kind, 'room') %}
         <a class="pill" href="/admin/repeaters/{{ is_room_of[rep.id].owner_id }}#eigen-api"
-           title="Deze entry is een virtuele {{ soort }} (idx {{ is_room_of[rep.id].room_idx }}) op een andere fysieke node">
+           title="Deze entry is een virtuele {{ soort }} op een andere fysieke node">
           &#8618; {{ soort }} op {{ is_room_of[rep.id].owner_name or ('node ' ~ is_room_of[rep.id].owner_id) }}</a>
         {% endif %}
         {% if hosts_rooms and hosts_rooms.get(rep.id) %}
-        {%- set telr = hosts_rooms[rep.id].room %}{% set tels = hosts_rooms[rep.id].sensor %}
+        {%- set telr = hosts_rooms[rep.id].room %}{% set tels = hosts_rooms[rep.id].sensor %}{% set telb = hosts_rooms[rep.id].bot %}
         {%- set delen = [] %}
         {%- if telr %}{% set _ = delen.append(telr ~ ' room' ~ ('s' if telr != 1 else '')) %}{% endif %}
         {%- if tels %}{% set _ = delen.append(tels ~ ' sensor-node' ~ ('s' if tels != 1 else '')) %}{% endif %}
+        {%- if telb %}{% set _ = delen.append(telb ~ ' bot') %}{% endif %}
         <a class="pill on" href="/admin/repeaters/{{ rep.id }}#eigen-api"
-           title="Deze node host virtuele rooms en/of sensor-nodes; klik voor het beheer">
+           title="Deze node host virtuele rooms, sensor-nodes en/of een bot; klik voor het beheer">
           host van {{ delen | join(' + ') }}</a>
         {% endif %}
       </div>
