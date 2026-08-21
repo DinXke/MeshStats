@@ -36,6 +36,7 @@ het werk.
 | Document | Wat je er vindt |
 |---|---|
 | **[`node-management.md`](node-management.md)** | **De handleiding.** De drie beheerniveaus en hoe je ziet welk niveau een node heeft, een node onder beheer brengen, zijn instellingen lezen en schrijven met de drie risicocategorieën, de klok zetten, firmware upgraden en terugrollen, en wat je doet als een node niet terugkomt — met schermafbeeldingen van de beheerpagina's |
+| [`rooms.md`](rooms.md) | Een MeshUptime-room-server-node beheren over zijn eigen HTTP-API: rooms en virtuele sensor-nodes lezen en beheren, de join-/contact-QR en link, per-sleutel-toegangsbeheer (ACL), node-centrisch kanaalbeheer, handmatige adverts, serverzijde backups, en hoe losse room-/sensor-node-entries teruggekoppeld worden aan hun fysieke node |
 
 Lees die eerst. Hij verwijst door naar de pagina's die op één stap dieper ingaan:
 [`admin.md`](admin.md) voor elk veld en elk formulier,

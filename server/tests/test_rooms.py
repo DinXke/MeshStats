@@ -652,6 +652,8 @@ def test_de_room_en_sensornode_secties_renderen(db, monkeypatch):
     assert "Toegang (ACL)" in html and "zonder wachtwoord" in html
     assert ("dd" * 32)[:16] in html            # de room-ACL-sleutel, ingekort
     assert "Sleutel toevoegen" in html
+    # De "?"-help-popovers (instellingen-eerst, uitleg erachter).
+    assert 'class="help-pop"' in html and 'class="help-btn"' in html
     # De mapping is bij het renderen vastgelegd: twee rooms + één sensor-node.
     rijen = {r["room_key"]: r["kind"] for r in db.room_owners_for(rep["id"])}
     assert rijen[db.node_key("cc" * 32)] == "sensor"

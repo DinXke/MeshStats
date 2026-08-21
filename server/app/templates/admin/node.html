@@ -25,6 +25,14 @@
 {%- set besluit = rechten[sleutel] -%}
 {%- if not besluit.allowed %}<p class="muted small">&#128274; {{ besluit.reason }}.</p>{% endif %}
 {%- endmacro -%}
+{#- Een compacte "?"-popover: de instelling staat vooraan, de uitleg zit erachter
+    en verschijnt bij hover of toetsenbordfocus. Puur CSS (zie .help in style.css),
+    geen JavaScript en geen externe assets, en zonder animatie -- dus ook goed
+    onder prefers-reduced-motion. De tekst staat in de DOM (role="note"), zodat een
+    schermlezer hem bereikt en hij niet verdwijnt voor wie niet kan hoveren. -#}
+{%- macro hulp(tekst) -%}
+<span class="help"><button type="button" class="help-btn" aria-label="Uitleg tonen">?</button><span class="help-pop" role="note">{{ tekst }}</span></span>
+{%- endmacro -%}
 
 {#- De kop is hier geen versiering. Elke knop op deze pagina raakt één bepaald
     apparaat, en de duurste fout die je op deze site kunt maken is dezelfde
@@ -859,16 +867,15 @@
       er niet, dan zegt /rooms.json dat (een 404) en tonen we die reden in plaats
       van een leeg blok. Alles hier loopt over dezelfde IP-weg als de rest van dit
       blok en staat of valt dus met dezelfde WiFi. -#}
-  <h3>Rooms</h3>
+  <h3>Rooms {{ hulp('Een room is een gedeeld kanaal op de node; sensoren kunnen hun alarm erin
+    posten (zie de alarmroute hieronder). De join-link en QR openen de room in een MeshCore-client.') }}</h3>
   {% if not sensor_route.can %}
   <p class="muted small">De weg naar deze node kan nu niets; de roomknoppen staan daarom uit.</p>
   {% elif not sensor_rooms.ok %}
   <p class="muted small">Geen rooms opgehaald: {{ sensor_rooms.error or 'onbekende reden' }}.
      Dit is alleen een room-server-node als <span class="mono">/rooms.json</span> antwoordt.</p>
   {% else %}
-  <p class="muted small">{{ sensor_rooms.active }} van {{ sensor_rooms.max }} rooms in gebruik.
-     Een room is een gedeeld kanaal op de node; sensoren kunnen hun alarm erin posten (zie de
-     alarmroute hieronder). De join-link en QR openen de room in een MeshCore-client.</p>
+  <p class="muted small">{{ sensor_rooms.active }} van {{ sensor_rooms.max }} rooms in gebruik.</p>
 
   {% for kamer in sensor_rooms.rooms %}
   <div class="card room">
@@ -938,11 +945,9 @@
         WACHTWOORDLOOS binnen op zijn niveau. Toevoegen vraagt de volledige pubkey;
         verwijderen mag op een prefix (>= 12 hex). -#}
     <details class="chan-panel">
-      <summary>Toegang (ACL) &mdash; {{ kamer.acl | length }} sleutel(s)</summary>
-      <p class="muted small">Een sleutel in deze lijst mag <strong>zonder wachtwoord</strong> binnen op
-         zijn niveau: <span class="mono">read</span> = joinen/lezen (de posts),
-         <span class="mono">readwrite</span> = ook schrijven, <span class="mono">admin</span> = beheer
-         van dit slot.</p>
+      <summary>Toegang (ACL) &mdash; {{ kamer.acl | length }} sleutel(s)
+        {{ hulp('Een sleutel in deze lijst mag zonder wachtwoord binnen op zijn niveau:
+          read = joinen/lezen (de posts), readwrite = ook schrijven, admin = beheer van dit slot.') }}</summary>
       {% if kamer.acl %}
       <table>
         <thead><tr><th>Sleutel</th><th>Niveau</th><th></th></tr></thead>
@@ -1057,15 +1062,15 @@
       Spiegel van het roomblok -- lijst, add/edit/del, contact-QR + link -- met
       als extra de gekoppelde kanalen (met hun naam). De alarmroute hieronder
       bepaalt WELKE sensor zijn meting naar WELKE sensor-node stuurt. -#}
-  <h3>Sensor-nodes</h3>
+  <h3>Sensor-nodes {{ hulp('Een sensor-node is een eigen contact-identiteit op deze node; de
+    MeshCore-app toont de telemetrie van de gekoppelde kanalen eronder. Scan het contact-QR of open
+    de link om hem toe te voegen.') }}</h3>
   {% if not sensor_route.can %}
   <p class="muted small">De weg naar deze node kan nu niets; de knoppen staan daarom uit.</p>
   {% elif not sensor_snodes.ok %}
   <p class="muted small">Geen sensor-nodes opgehaald: {{ sensor_snodes.error or 'onbekende reden' }}.</p>
   {% else %}
-  <p class="muted small">{{ sensor_snodes.active }} van {{ sensor_snodes.max }} sensor-nodes in gebruik.
-     Een sensor-node is een eigen contact-identiteit op deze node; de MeshCore-app toont de
-     telemetrie van de gekoppelde kanalen eronder. Scan het contact-QR of open de link om hem toe te voegen.</p>
+  <p class="muted small">{{ sensor_snodes.active }} van {{ sensor_snodes.max }} sensor-nodes in gebruik.</p>
 
   {% for snode in sensor_snodes.snodes %}
   <div class="card room">
@@ -1132,11 +1137,9 @@
     {#- De per-sleutel-ACL van deze sensor-node. Wachtwoordloos: een sleutel in de
         lijst mag binnen op zijn niveau (read = telemetrie lezen). -#}
     <details class="chan-panel">
-      <summary>Toegang (ACL) &mdash; {{ snode.acl | length }} sleutel(s)</summary>
-      <p class="muted small">Een sleutel in deze lijst mag <strong>zonder wachtwoord</strong> binnen op
-         zijn niveau: <span class="mono">read</span> = de telemetrie lezen,
-         <span class="mono">readwrite</span> = ook schrijven, <span class="mono">admin</span> = beheer
-         van dit slot.</p>
+      <summary>Toegang (ACL) &mdash; {{ snode.acl | length }} sleutel(s)
+        {{ hulp('Een sleutel in deze lijst mag zonder wachtwoord binnen op zijn niveau:
+          read = de telemetrie lezen, readwrite = ook schrijven, admin = beheer van dit slot.') }}</summary>
       {% if snode.acl %}
       <table>
         <thead><tr><th>Sleutel</th><th>Niveau</th><th></th></tr></thead>
@@ -1240,10 +1243,9 @@
       bitmasker van rooms en sn dat van sensor-nodes waar het alarm heen gaat. De
       checkboxes bouwen die maskers serverzijde op -- zie sensor_room_alarm. -#}
   {% if sensor_mon %}
-  <h4>Alarmroute per sensor</h4>
-  <p class="muted small">Waar het alarm van elke sensor heen gaat: als direct bericht, in een room,
-     of beide. Kies bij &ldquo;room&rdquo; of &ldquo;beide&rdquo; ook welke rooms, en desgewenst naar
-     welke sensor-nodes de meting gaat.</p>
+  <h4>Alarmroute per sensor {{ hulp('Waar het alarm van elke sensor heen gaat: als direct bericht,
+    in een room, of beide. Kies bij "room" of "beide" ook welke rooms, en desgewenst naar welke
+    sensor-nodes de meting gaat.') }}</h4>
   {% for m in sensor_mon %}
   <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/alarm" class="rowform room-alarm">
     <input type="hidden" name="csrf" value="{{ csrf }}">

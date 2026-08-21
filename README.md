@@ -65,6 +65,14 @@ reachable over the mesh CLI, because a filter is the one setting that makes a
 node useless without making it unreachable. See
 [`docs/packet-filter.md`](docs/packet-filter.md).
 
+**Room-server nodes.** A MeshUptime room-server node — one that offers its own
+HTTP API — is read and fully managed from the node page: its rooms and virtual
+sensor-nodes (add, edit, delete, with a join/contact QR and link), per-key access
+control at read/readwrite/admin levels, node-centric channel management, manual
+adverts, and server-side room backups with version history. Loose room and
+sensor-node entries on the mesh are grouped back onto the physical node that hosts
+them. See [`docs/rooms.md`](docs/rooms.md).
+
 **Clock synchronisation.** The site can set a node's clock over MQTT, and a
 monitoring node can set the clocks of the repeaters it looks after over LoRa.
 Only forwards, never backwards, because a node that sets its clock back

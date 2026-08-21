@@ -67,6 +67,14 @@ grafiek gezet. `filter off` blijft bereikbaar over de mesh-CLI, want een filter
 is de ene instelling die een node nutteloos maakt zonder hem onbereikbaar te
 maken. Zie [`docs/nl/packet-filter.md`](docs/nl/packet-filter.md).
 
+**Room-server-nodes.** Een MeshUptime-room-server-node — een node met een eigen
+HTTP-API — wordt vanaf de nodepagina gelezen en volledig beheerd: zijn rooms en
+virtuele sensor-nodes (toevoegen, bewerken, verwijderen, met een join-/contact-QR
+en link), per-sleutel-toegangsbeheer op niveaus read/readwrite/admin,
+node-centrisch kanaalbeheer, handmatige adverts, en serverzijde room-backups met
+versiehistoriek. Losse room- en sensor-node-entries op het mesh worden
+teruggekoppeld aan de fysieke node die ze host. Zie [`docs/rooms.md`](docs/rooms.md).
+
 **Kloksynchronisatie.** De site kan de klok van een node over MQTT zetten, en een
 monitorende node kan over LoRa de klok zetten van de repeaters waar hij naar
 omkijkt. Alleen vooruit, nooit achteruit, want een node die zijn klok terugzet
