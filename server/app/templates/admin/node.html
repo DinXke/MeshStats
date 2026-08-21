@@ -1256,12 +1256,120 @@
   {#- ==================== SNMP-monitors ====================================
 
       Een SNMP-monitor is een nieuwe monitorsoort: de node vraagt periodiek een
-      OID op bij een host. Kies uit de preset-bibliotheek zodat je geen OIDs hoeft
-      over te typen. De community is een geheim (write-only): hij gaat mee maar
-      wordt nooit teruggetoond. Na het aanmaken verschijnt het kanaal in de
-      alarmroute hieronder; je kunt het hier meteen aan een room/sensor-node
-      koppelen. -#}
-  <h4>SNMP-monitor toevoegen {{ hulp('De node vraagt periodiek een OID op bij een host over SNMP.
+      OID op bij een host. Twee wegen: SNMP-DISCOVERY (de server tast het apparaat
+      af en biedt een kieslijst) en de handmatige preset-bibliotheek daaronder. De
+      community is een geheim (write-only): hij gaat mee maar wordt nooit
+      teruggetoond. -#}
+  <h3>SNMP-monitors {{ hulp('De node pollt periodiek een OID over SNMP. Laat de server het
+    apparaat aftasten (discovery) en kies uit een lijst, of vul handmatig een preset/OID in. De
+    community is een wachtwoord en wordt nooit teruggetoond of gelogd.') }}</h3>
+
+  <h4>Ontdekken (discovery) {{ hulp('De SERVER doet de SNMP-walk (hij heeft de rijke stack) en
+    toont welke waarden er te monitoren zijn: verkeer in/uit per interface, oper-status, en UPS-MIB.
+    Je vinkt aan wat je wilt; de server maakt er node-monitors van die de node daarna zelf pollt. De
+    server moet het apparaat over UDP/161 kunnen bereiken.') }}</h4>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/discover" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="host" placeholder="IP of hostnaam" spellcheck="false" autocomplete="off"
+           value="{{ snmp_discovery.host if snmp_discovery else '' }}"
+           aria-label="IP van het SNMP-apparaat"{{ recht('node.instelling.merkbaar') }}>
+    <input name="port" type="number" value="{{ snmp_discovery.port if snmp_discovery else 161 }}"
+           min="1" max="65535" aria-label="SNMP-poort"{{ recht('node.instelling.merkbaar') }}>
+    <input name="community" type="password" placeholder="community (v2c)" autocomplete="new-password"
+           aria-label="SNMP-community"{{ recht('node.instelling.merkbaar') }}>
+    <button type="submit"{{ recht('node.instelling.merkbaar') }}>Ontdekken</button>
+  </form>
+
+  {% if snmp_discovery %}
+  {% if not snmp_discovery.ok %}
+  <p class="error small">Discovery mislukt: {{ snmp_discovery.error }}</p>
+  {% else %}
+  <div class="card">
+    <p class="muted small">Gevonden op <span class="mono">{{ snmp_discovery.host }}</span>:
+      {% if snmp_discovery.system.name %}<strong>{{ snmp_discovery.system.name }}</strong>{% endif %}
+      {% if snmp_discovery.system.descr %}&mdash; {{ snmp_discovery.system.descr[:80] }}{% endif %}
+      {% if snmp_discovery.ups %}&middot; UPS: {{ snmp_discovery.ups.model or 'ja' }}{% endif %}.</p>
+    {% if snmp_discovery['items'] %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/discover/create">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="host" value="{{ snmp_discovery.host }}">
+      <p class="muted small">Vink aan wat je wilt monitoren. Vul de community opnieuw in (die wordt
+         nooit bewaard) en kies desgewenst een room/sensor-node om alles aan te koppelen.</p>
+      <table>
+        <thead><tr><th></th><th>Waarde</th><th>Nu gemeten</th><th>Interpretatie</th></tr></thead>
+        <tbody>
+        {% for it in snmp_discovery['items'] %}
+          <tr>
+            <td><input type="checkbox" name="pick"
+                       value="{{ it.name }}|{{ it.oid }}|{{ it.interp }}|{{ it.snmparg }}"
+                       aria-label="Monitor {{ it.label }}"{{ recht('node.instelling.merkbaar') }}></td>
+            <td>{{ it.label }}</td>
+            <td class="mono">{{ it.preview }}</td>
+            <td class="mono">{{ it.interp }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="rowform">
+        <input name="community" type="password" placeholder="community opnieuw" autocomplete="new-password"
+               aria-label="Community opnieuw"{{ recht('node.instelling.merkbaar') }}>
+        <input name="interval" placeholder="interval s" inputmode="numeric" autocomplete="off"
+               aria-label="Interval in seconden"{{ recht('node.instelling.merkbaar') }}>
+        <label class="muted small">room
+          <select name="room_idx" aria-label="Koppelen aan room"{{ recht('node.instelling.merkbaar') }}>
+            <option value="-1">— geen —</option>
+            {% for kamer in sensor_rooms.rooms %}<option value="{{ kamer.idx }}">{{ kamer.name or ('room ' ~ kamer.idx) }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="muted small">of sensor-node
+          <select name="snode_idx" aria-label="Koppelen aan sensor-node"{{ recht('node.instelling.merkbaar') }}>
+            <option value="-1">— geen —</option>
+            {% for snode in sensor_snodes.snodes %}<option value="{{ snode.idx }}">{{ snode.name or ('sn ' ~ snode.idx) }}</option>{% endfor %}
+          </select>
+        </label>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Geselecteerde monitors aanmaken</button>
+      </div>
+    </form>
+    {% else %}
+    <p class="muted small">Geen monitorbare waarden gevonden (geen interfaces of UPS-MIB).</p>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  <details class="chan-panel">
+    <summary>Geavanceerd: generieke snmpwalk</summary>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/walk" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input name="host" placeholder="IP of hostnaam" spellcheck="false" autocomplete="off"
+             aria-label="IP voor de walk"{{ recht('node.instelling.merkbaar') }}>
+      <input name="port" type="number" value="161" min="1" max="65535"
+             aria-label="Poort voor de walk"{{ recht('node.instelling.merkbaar') }}>
+      <input name="community" type="password" placeholder="community" autocomplete="new-password"
+             aria-label="Community voor de walk"{{ recht('node.instelling.merkbaar') }}>
+      <input name="subtree" placeholder="subtree-OID (bv. 1.3.6.1.2.1)" class="mono" spellcheck="false"
+             autocomplete="off" aria-label="Subtree-OID"{{ recht('node.instelling.merkbaar') }}>
+      <button type="submit"{{ recht('node.instelling.merkbaar') }}>Walk</button>
+    </form>
+    {% if snmp_walk %}
+    {% if not snmp_walk.ok %}
+    <p class="error small">Walk mislukt: {{ snmp_walk.error }}</p>
+    {% else %}
+    <p class="muted small">{{ snmp_walk.rows | length }} rijen onder
+      <span class="mono">{{ snmp_walk.subtree }}</span> op <span class="mono">{{ snmp_walk.host }}</span>:</p>
+    <table>
+      <thead><tr><th>OID</th><th>Waarde</th></tr></thead>
+      <tbody>
+      {% for oid, waarde in snmp_walk.rows[:200] %}
+        <tr><td class="mono">{{ oid }}</td><td class="mono">{{ waarde[:80] }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+  </details>
+
+  <h4>Handmatig toevoegen {{ hulp('De node vraagt periodiek een OID op bij een host over SNMP.
     Kies een preset (interface-octetten, ifOperStatus, of UPS-MIB: batterij, resterende minuten,
     belasting, in-/uitgangsspanning) of vul een eigen OID in. De community is een wachtwoord en
     wordt nooit teruggetoond.') }}</h4>

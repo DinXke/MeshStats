@@ -7,6 +7,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# net-snmp voor de serverzijde SNMP-discovery (snmpget/snmpbulkwalk). Een klein
+# OS-pakket, bewust geen Python-SNMP-dependency -- zie app/snmp.py voor de
+# afweging. Ontbreekt het toch, dan meldt de discovery-pagina dat netjes.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends snmp \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

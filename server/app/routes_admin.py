@@ -29,7 +29,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from . import (audit, auth, clocksync, commanding, compare, config, db,
                discovery, firmware, hadiscovery, metrics, monitors, mqtt_ingest,
                nodeconfig, nodecred, pktfilter, qrsvg, ratelimit, rbac, retention,
-               rooms, sensornode, sensorpush, sweepsched, tsdb)
+               rooms, sensornode, sensorpush, snmp, sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -1352,6 +1352,11 @@ def _node_page(request: Request, rid: int, **extra):
         "sensor_snmp_presets": rooms.SNMP_PRESETS,
         "sensor_snmp_interps": rooms.SNMP_INTERPS,
         "sensor_contacts": sensor_contacts,
+        # Leeg tenzij er zojuist een SNMP-discovery of -walk vanaf deze pagina
+        # vertrok; die routes geven de pagina terug met hun uitslag erin (zoals
+        # sensor_result). ``**extra`` overschrijft deze standaardwaarden.
+        "snmp_discovery": None,
+        "snmp_walk": None,
         "sensor_mon": sensor_mon,
         "sensor_am_labels": rooms.AM_LABELS,
         # De zetbare modi (dm/room/both = 1/2/3); "uit" (0) is een toestand die de
@@ -2156,6 +2161,96 @@ def sensor_monitor_snmp(request: Request, rid: int, name: str = Form(""),
         "soort": "monitor", "ok": ok,
         "error": gemaakt["error"] or koppel["error"],
         "msg": (f"SNMP-monitor aangemaakt (ch {gemaakt['ch']})" if ok else "")})
+
+
+# --- SNMP-discovery (serverzijde) --------------------------------------------
+#
+# De SERVER tast het apparaat af (rijke SNMP-stack) en toont de monitorbare
+# waarden als kieslijst; op bevestigen maakt hij de NODE-monitors aan. De
+# community is een geheim: hij gaat niet in het trail en wordt bij de tweede stap
+# opnieuw gevraagd in plaats van in de pagina meegedragen.
+
+@router.post("/repeaters/{rid}/sensor/snmp/discover")
+def sensor_snmp_discover(request: Request, rid: int, host: str = Form(""),
+                         port: int = Form(default=161), community: str = Form(""),
+                         csrf: str = Form(...)):
+    """Een SNMP-apparaat aftasten en de kieslijst tonen (stap 1)."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    result = snmp.discover(host, community, int(port))
+    # De community staat NIET in het detail -- alleen het adres.
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"SNMP-discovery op {host.strip()}:{port} "
+                    f"({len(result['items'])} waarden)" if result["ok"]
+                    else f"SNMP-discovery mislukt: {result['error']}"),
+            outcome=audit.OK if result["ok"] else audit.MISLUKT)
+    return _node_page(request, rid,
+                      snmp_discovery=dict(result, host=host.strip(), port=int(port)))
+
+
+@router.post("/repeaters/{rid}/sensor/snmp/discover/create")
+def sensor_snmp_discover_create(request: Request, rid: int, host: str = Form(""),
+                                community: str = Form(""), interval: str = Form(""),
+                                room_idx: int = Form(default=-1),
+                                snode_idx: int = Form(default=-1),
+                                pick: list[str] = Form(default=[]),
+                                csrf: str = Form(...)):
+    """De gekozen ontdekte waarden als node-monitors aanmaken (stap 2).
+
+    Elk aangevinkt item komt binnen als ``name|oid|interp|snmparg``; daaruit maakt
+    deze route via ``rooms.add_snmp_monitor`` een monitor en koppelt hem meteen aan
+    de gekozen room/sensor-node. De community wordt hier opnieuw meegegeven (een
+    wachtwoordveld, niet uit de pagina) en gaat niet in het trail.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    interval_v = int(interval) if str(interval).strip() else None
+    gemaakt, mislukt = 0, []
+    for enc in pick:
+        deel = str(enc).split("|", 3)
+        if len(deel) != 4:
+            continue
+        naam, oid, interp, snmparg = deel
+        res = rooms.add_snmp_monitor(rep, naam, host, oid, interp, community,
+                                     snmparg=snmparg, interval=interval_v)
+        if res["ok"] and res["ch"] is not None:
+            if room_idx >= 0:
+                rooms.set_alarm(rep, int(res["ch"]), rm=(1 << room_idx))
+            elif snode_idx >= 0:
+                rooms.set_alarm(rep, int(res["ch"]), sn=(1 << snode_idx))
+            gemaakt += 1
+        else:
+            mislukt.append(f"{naam}: {res['error']}")
+    ok = gemaakt > 0 and not mislukt
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"{gemaakt} SNMP-monitor(s) aangemaakt uit discovery"
+                    + (f", {len(mislukt)} mislukt" if mislukt else "")),
+            outcome=audit.OK if ok else (audit.DEELS if gemaakt else audit.MISLUKT))
+    return _node_page(request, rid, sensor_result={
+        "soort": "monitor", "ok": bool(gemaakt),
+        "error": "; ".join(mislukt),
+        "msg": (f"{gemaakt} SNMP-monitor(s) aangemaakt uit discovery" if gemaakt else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/snmp/walk")
+def sensor_snmp_walk(request: Request, rid: int, host: str = Form(""),
+                     port: int = Form(default=161), community: str = Form(""),
+                     subtree: str = Form(""), csrf: str = Form(...)):
+    """Een generieke snmpwalk voor power-users: de ruwe OID/waarde-paren tonen."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    result = snmp.walk(host, community, subtree.strip() or "1.3.6.1.2.1", int(port))
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"snmpwalk {subtree.strip()} op {host.strip()} "
+                    f"({len(result['rows'])} rijen)" if result["ok"]
+                    else f"snmpwalk mislukt: {result['error']}"),
+            outcome=audit.OK if result["ok"] else audit.MISLUKT)
+    return _node_page(request, rid,
+                      snmp_walk=dict(result, host=host.strip(),
+                                     subtree=subtree.strip() or "1.3.6.1.2.1"))
 
 
 # --- de notifier-bot ---------------------------------------------------------

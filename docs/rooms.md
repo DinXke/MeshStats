@@ -76,6 +76,26 @@ never shown back and never logged, and `/status.json` reports only `knd`/`itp`/
 `oid` for an SNMP monitor. A new SNMP channel can be coupled to a room or
 sensor-node in the same step, and afterwards routes like any other channel.
 
+**Discovery** removes the OID typing entirely. The **server** (which has a rich
+SNMP stack) walks the device and offers a checklist of what is monitorable; on
+confirm it creates the matching node monitors, which the node then polls. It
+walks the system group (sysName/sysDescr/sysUpTime/sysObjectID), the interface
+tables (per interface: in/out traffic as a rate from the 64-bit HC octet
+counters, and oper-status up/down), and UPS-MIB when present (battery status,
+minutes remaining, charge %, load, input/output voltage); a generic
+`snmpwalk <subtree>` is there for power users. Each checked item becomes a node
+monitor with the right OID + interpretation and is coupled to a chosen
+room/sensor-node in the same step. The **community is re-entered** on the confirm
+step rather than carried in the page — write-only, never rendered or logged.
+
+The SNMP stack is **net-snmp** (`snmpget`/`snmpbulkwalk`), a small OS package in
+the image (`snmp`) rather than a Python dependency — see `server/app/snmp.py` for
+the reasoning; if it is missing, discovery says so instead of failing. Discovery
+runs from the **server**, so the server must reach the device over UDP/161 (fine
+on a LAN). A device reachable only from the node is a known limitation —
+node-side discovery is a later option. The preset-OID library above stays as the
+quick manual path next to discovery.
+
 ## The notifier bot
 
 A node can run a *notifier bot*: an identity that sends alerts as a direct
@@ -142,3 +162,8 @@ and couples it. Adverts use `POST /room/advert` / `POST /snode/advert` (form
 constants and their functions in `server/app/rooms.py`, so a differing contract is
 a small change. The network boundary itself stays in `sensornode.py`, behind the
 same target check and fleet/per-node credential as every other call to a node.
+
+SNMP **discovery** is the one part that does not talk to the node: it talks to the
+target device directly over SNMP from the server (`server/app/snmp.py`, net-snmp),
+and then feeds its results back into `POST /monitor/snmp` — so it adds no new node
+contract.

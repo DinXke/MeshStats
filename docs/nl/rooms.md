@@ -81,6 +81,28 @@ meldt per SNMP-monitor alleen `knd`/`itp`/`oid`. Een nieuw SNMP-kanaal kan in
 dezelfde stap aan een room/sensor-node gekoppeld worden en routeert daarna als elk
 ander kanaal.
 
+**Discovery** haalt het OID-typen er helemaal uit. De **server** (die de rijke
+SNMP-stack heeft) tast het apparaat af en biedt een kieslijst van wat er te
+monitoren valt; op bevestigen maakt hij de bijbehorende node-monitors aan, die de
+node daarna pollt. Hij walkt de systeemgroep
+(sysName/sysDescr/sysUpTime/sysObjectID), de interface-tabellen (per interface:
+verkeer in/uit als rate uit de 64-bit HC-octet-tellers, en oper-status up/down) en
+UPS-MIB indien aanwezig (batterijstatus, resterende minuten, lading %, belasting,
+in-/uitgangsspanning); een generieke `snmpwalk <subtree>` is er voor power-users.
+Elk aangevinkt item wordt een node-monitor met de juiste OID + interpretatie en
+wordt in dezelfde stap aan een gekozen room/sensor-node gekoppeld. De **community
+wordt opnieuw ingevuld** bij de bevestiging in plaats van in de pagina meegedragen
+— write-only, nooit getoond of gelogd.
+
+De SNMP-stack is **net-snmp** (`snmpget`/`snmpbulkwalk`), een klein OS-pakket in
+het image (`snmp`) in plaats van een Python-dependency — zie `server/app/snmp.py`
+voor de afweging; ontbreekt het, dan zegt de discovery dat in plaats van te
+crashen. Discovery draait op de **server**, dus die moet het apparaat over UDP/161
+kunnen bereiken (op een LAN meestal prima). Een apparaat dat alleen vanaf de node
+bereikbaar is, is een bekende beperking — node-side discovery is een latere optie.
+De preset-OID-bibliotheek hierboven blijft de snelle handmatige weg naast de
+discovery.
+
 ## De notifier-bot
 
 Een node kan een *notifier-bot* draaien: een identiteit die meldingen als direct
@@ -151,3 +173,8 @@ geïsoleerd achter de `MON_ALARM_*`/`MONITOR_ADD_PATH`/`SNMP_MONITOR_PATH`/
 `server/app/rooms.py`, zodat een afwijkend contract een kleine wijziging is. De
 netwerkgrens zelf blijft in `sensornode.py`, achter dezelfde doelcontrole en
 vloot-/per-node-credential als elke andere aanroep naar een node.
+
+SNMP-**discovery** is het enige stuk dat niet met de node praat: het praat vanaf
+de server rechtstreeks over SNMP met het doelapparaat (`server/app/snmp.py`,
+net-snmp) en voert de uitkomst daarna in `POST /monitor/snmp` — er komt dus geen
+nieuw node-contract bij.

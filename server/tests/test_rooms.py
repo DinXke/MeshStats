@@ -488,6 +488,40 @@ def test_snmp_presets_dragen_een_oid_en_een_geldige_interpretatie():
         assert p["oid"] and p["interp"] in rooms.SNMP_INTERPS, p["key"]
 
 
+def test_snmp_discovery_create_maakt_monitors_en_koppelt(db, monkeypatch):
+    """Stap 2 van de discovery: de aangevinkte items worden node-monitors, met de
+    community (opnieuw ingevoerd) mee naar de node en meteen aan een room gekoppeld."""
+    from app import rooms, routes_admin
+    rep = _rep(db)
+    monkeypatch.setattr(routes_admin, "_rep_or_404", lambda req, rid: rep)
+    monkeypatch.setattr(routes_admin, "require_perm", lambda req, action, r=None: "admin")
+    monkeypatch.setattr(routes_admin, "check_csrf", lambda req, csrf: None)
+    monkeypatch.setattr(routes_admin, "_node_page", lambda req, rid, **extra: extra)
+    gemaakt, gekoppeld = [], []
+    monkeypatch.setattr(
+        rooms, "add_snmp_monitor",
+        lambda rep, name, host, oid, interp, community, snmparg="", interval=None:
+        gemaakt.append((name, host, oid, interp, community, snmparg, interval))
+        or {"ok": True, "error": "", "ch": len(gemaakt)})
+    monkeypatch.setattr(
+        rooms, "set_alarm",
+        lambda rep, ch, am=None, rm=None, sn=None:
+        gekoppeld.append((ch, rm, sn)) or {"ok": True, "error": ""})
+    picks = ["sw1 eth0 in|1.3.6.1.2.1.31.1.1.1.6|rate|2",
+             "sw1 UPS batt|1.3.6.1.2.1.33.1.2.1|status|"]
+    uit = routes_admin.sensor_snmp_discover_create(
+        None, rep["id"], host="10.0.0.1", community="publiek", interval="60",
+        room_idx=0, snode_idx=-1, pick=picks, csrf="x")
+    res = uit["sensor_result"]
+    assert res["ok"] and "2 SNMP-monitor(s)" in res["msg"]
+    # De juiste velden (incl. community, die naar de node moet) en interval=60.
+    assert gemaakt[0] == ("sw1 eth0 in", "10.0.0.1", "1.3.6.1.2.1.31.1.1.1.6",
+                          "rate", "publiek", "2", 60)
+    assert gemaakt[1][2:] == ("1.3.6.1.2.1.33.1.2.1", "status", "publiek", "", 60)
+    # Allebei gekoppeld aan room 0 (rm-bit 1).
+    assert gekoppeld == [(1, 1, None), (2, 1, None)]
+
+
 # --- de notifier-bot ----------------------------------------------------------
 
 def test_bot_parseert_naam_pubkey_en_ontvangers(db, monkeypatch):
@@ -782,8 +816,9 @@ def test_de_room_en_sensornode_secties_renderen(db, monkeypatch):
     assert "Sleutel toevoegen" in html
     # De "?"-help-popovers (instellingen-eerst, uitleg erachter).
     assert 'class="help-pop"' in html and 'class="help-btn"' in html
-    # De SNMP-monitorsectie met de preset-bibliotheek.
-    assert "SNMP-monitor toevoegen" in html and "ifHCInOctets" in html
+    # De SNMP-monitorsectie met discovery én de preset-bibliotheek.
+    assert "SNMP-monitors" in html and "Ontdekken (discovery)" in html
+    assert "Handmatig toevoegen" in html and "ifHCInOctets" in html
     assert 'name="community"' in html and 'type="password"' in html
     # De notifier-bot: naam, contact-QR/link, en de ontvangerslijst.
     assert "Notifier-bot" in html and "MeldBot" in html
