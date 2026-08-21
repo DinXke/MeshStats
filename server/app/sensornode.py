@@ -1294,11 +1294,16 @@ def rotate_cred(rep) -> dict:
         return out
 
     new_user, new_pass = nodecred.generate()
-    body = json.dumps({"user": new_user, "pass": new_pass}).encode()
+    # Form-urlencoded, NIET json: de node parseert /web/cred met dezelfde
+    # form-arg-lezer als al zijn andere routes (/hook, /wifi, /sim, /cli) en ziet
+    # een json-body als "geen user". Gemeten: json gaf 400 "user ontbreekt". De
+    # node is de eenvoudigste, gedeelde conventie; de server past zich aan.
+    from urllib.parse import urlencode
+    body = urlencode({"user": new_user, "pass": new_pass}).encode()
     try:
         with firmware.open_node(host, "/web/cred", data=body,
                                 timeout=TIMEOUT_S,
-                                content_type="application/json") as resp:
+                                content_type="application/x-www-form-urlencoded") as resp:
             antwoord = json.loads(resp.read() or b"{}")
     except firmware.TargetRefused as exc:
         out["error"] = str(exc)

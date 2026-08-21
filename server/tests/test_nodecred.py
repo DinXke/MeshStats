@@ -243,7 +243,9 @@ def test_rotatie_bootstrapt_met_de_vloot_en_bewaart_de_nieuwe(db, monkeypatch):
     # eigen login toen het verzoek vertrok.
     assert verstuurd[0]["url"].endswith("/web/cred")
     assert _decode_auth(verstuurd[0]["auth"]) == ("vloot", "vlootww")
-    body = json.loads(verstuurd[0]["body"])
+    # Form-urlencoded, zoals de node zijn andere routes ook leest.
+    from urllib.parse import parse_qs
+    body = {k: v[0] for k, v in parse_qs(verstuurd[0]["body"]).items()}
     assert body["user"] == uit["user"] and body["pass"]
     # En de nieuwe login is nu opgeslagen, geobfusceerd.
     cred = nodecred.for_host("192.168.110.160")
