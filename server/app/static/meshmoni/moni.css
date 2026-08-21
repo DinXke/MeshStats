@@ -86,3 +86,17 @@ button.moni-tegel[data-actief="1"] { border-color: var(--accent); }
   background: var(--topbar-bg); backdrop-filter: blur(8px); border-top: 1px solid var(--border);
   color: var(--muted); font-size: .74rem; }
 #moni-stempel[data-state="oud"] { color: var(--amber); }
+
+
+/* Bewegingsgevoeligheid: wie in zijn systeem 'verminder beweging' aan heeft,
+   krijgt geen pulserende bolletjes of inschuivende panelen. De eindstand
+   (o.a. de glow van een 'on'-bolletje) blijft; alleen de beweging valt weg.
+   Toegankelijkheid op de publieke site -- zie docs/ui-review-2026-08-21.md. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

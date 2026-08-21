@@ -1297,3 +1297,17 @@ td.cmp-off { border-left: 2px solid var(--red); }
 .cmp-col { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; }
 .cmp-edit { margin-left: .3rem; opacity: .45; text-decoration: none; font-size: .85em; }
 .cmp-edit:hover { opacity: 1; }
+
+
+/* Bewegingsgevoeligheid: wie in zijn systeem 'verminder beweging' aan heeft,
+   krijgt geen pulserende bolletjes of inschuivende panelen. De eindstand
+   (o.a. de glow van een 'on'-bolletje) blijft; alleen de beweging valt weg.
+   Toegankelijkheid op de publieke site -- zie docs/ui-review-2026-08-21.md. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

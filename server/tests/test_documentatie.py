@@ -35,12 +35,29 @@ IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^(#{2,3}) ", re.M)
 
 
+# Interne analyses -- reviews en audits -- vallen BUITEN de tweetaligheidsregel.
+# Het zijn gedateerde, eentalige momentopnames (een UI-review, een
+# security-audit), geen productdocumentatie die een gebruiker leest en die
+# daarom in beide talen moet bestaan. Ze wonen onder docs/reviews/ en worden
+# hieronder overal overgeslagen -- de afbeeldings- en alt-tekst-invarianten
+# blijven wel gelden (die staan los van de taal). Zie contributing.md §10.
+INTERN = "reviews"
+
+
+def _niet_intern(p: Path) -> bool:
+    return INTERN not in p.parts
+
+
 def engelse_docs() -> list[Path]:
-    return sorted(DOCS.glob("*.md"))
+    return sorted(p for p in DOCS.glob("*.md") if _niet_intern(p))
 
 
 def alle_docs() -> list[Path]:
     return sorted(DOCS.rglob("*.md"))
+
+
+def tweetalige_docs() -> list[Path]:
+    return sorted(p for p in DOCS.rglob("*.md") if _niet_intern(p))
 
 
 @pytest.mark.parametrize("doc", engelse_docs(), ids=lambda p: p.name)
@@ -56,7 +73,7 @@ def test_elk_nederlands_document_heeft_een_engelse_helft(doc):
         f"nl/{doc.name} bestaat alleen in het Nederlands; zie contributing.md §10")
 
 
-@pytest.mark.parametrize("doc", alle_docs(), ids=lambda p: str(p.relative_to(DOCS)))
+@pytest.mark.parametrize("doc", tweetalige_docs(), ids=lambda p: str(p.relative_to(DOCS)))
 def test_de_taalwissel_staat_op_regel_drie(doc):
     """Kop, lege regel, taalwissel. De lezer moet hem op elke pagina op dezelfde
     plek vinden, anders zoekt hij hem niet meer."""
