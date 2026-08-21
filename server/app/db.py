@@ -3182,17 +3182,53 @@ def history(repeater_id: int, metric: str, hours: int) -> list[tuple[str, float]
     return [(r["bucket"], round(r["value"], 3)) for r in rows]
 
 
+# De twee benuttingsreeksen zijn AFGELEID, geen opgeslagen metric: de node stuurt
+# een oplopende airtime-teller (in minuten), en de benutting is de helling ervan.
+# De tegel rekent dat live uit (computed_utilization); de GRAFIEK moet hetzelfde
+# per interval doen, anders vraagt hij een reeks "airtime_utilization" op die
+# nergens bestaat en blijft leeg -- precies de "waarde wel, grafiek niet"-klacht.
+_UTIL_BASIS = {"airtime_utilization": "airtime", "rx_airtime_utilization": "rx_airtime"}
+
+
 def metric_history(repeater, metric: str, hours: int) -> list[tuple[str, float]]:
     """History for a chart, from wherever it actually lives.
 
-    VictoriaMetrics when it answers, SQLite when it does not. The fallback is
-    silent on purpose: a visitor looking at a chart cannot act on which database
-    served it, and the admin page reports the health.
+    VictoriaMetrics when it answers, SQLite when it does not. De twee
+    benuttingsmetrics worden afgeleid uit hun airtime-teller (zie _UTIL_BASIS).
     """
+    basis = _UTIL_BASIS.get(metric)
+    if basis is not None:
+        return _utilisatie_reeks(repeater, basis, hours)
     points = tsdb.history(repeater["slug"], metric, hours)
     if points is None:
         return history(repeater["id"], metric, hours)
     return points
+
+
+def _utilisatie_reeks(repeater, basis_metric: str, hours: int) -> list[tuple[str, float]]:
+    """Benutting (%) per interval uit de oplopende airtime-teller.
+
+    Zelfde rekensom als computed_utilization, maar tussen elk opeenvolgend paar
+    punten in plaats van over het hele venster: delta-airtime (min) gedeeld door
+    delta-wandtijd (min), maal 100. Een tellerreset (negatieve delta) of een
+    niet-oplopende tijd wordt overgeslagen -- geen valse piek, geen deling door
+    nul. Het tijdstip van het TWEEDE punt draagt de waarde, want dat is het einde
+    van het interval waarover gemeten is.
+    """
+    raw = metric_history(repeater, basis_metric, hours)
+    uit: list[tuple[str, float]] = []
+    for (t0, v0), (t1, v1) in zip(raw, raw[1:]):
+        try:
+            d0 = datetime.strptime(t0, "%Y-%m-%dT%H:%M:%SZ")
+            d1 = datetime.strptime(t1, "%Y-%m-%dT%H:%M:%SZ")
+        except (TypeError, ValueError):
+            continue
+        dt_min = (d1 - d0).total_seconds() / 60
+        dv = v1 - v0
+        if dt_min <= 0 or dv < 0:
+            continue
+        uit.append((t1, round(dv / dt_min * 100, 2)))
+    return uit
 
 
 def computed_utilization(repeater, total_metric: str, window_min: int = 90) -> float | None:
