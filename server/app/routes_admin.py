@@ -1298,6 +1298,9 @@ def _node_page(request: Request, rid: int, **extra):
         "sensor_room_qrs": sensor_room_qrs,
         "sensor_mon": sensor_mon,
         "sensor_am_labels": rooms.AM_LABELS,
+        # De zetbare modi (dm/room/both = 1/2/3); "uit" (0) is een toestand die de
+        # node kan melden maar die de CLI niet als modus zet.
+        "sensor_am_modes": rooms.AM_MODES,
         "sensor_room_backups": (rooms.list_stored(rep) if sensor_route is not None
                                 else []),
         # Zit deze node nog op de GEDEELDE vlootsleutel (zwakte) of heeft hij een
@@ -1757,15 +1760,18 @@ def sensor_room_del(request: Request, rid: int, idx: int = Form(...),
 
 
 @router.post("/repeaters/{rid}/sensor/room/alarm")
-def sensor_room_alarm(request: Request, rid: int, idx: int = Form(...),
+def sensor_room_alarm(request: Request, rid: int, ch: int = Form(...),
                       am: int = Form(...), room: list[int] = Form(default=[]),
                       csrf: str = Form(...)):
     """De alarmroute van één sensor zetten: dm/room/both plus welke rooms.
 
-    De rooms komen als losse checkbox-waarden (elk een room-index) binnen; het
-    ``rm``-bitmasker wordt hier samengesteld. Zo hoeft de pagina geen bitrekenkunde
-    in JavaScript te doen en staat de betekenis (welke rooms staan aan) recht in
-    het formulier.
+    ``ch`` is het KANAALnummer van de monitor (``mon[].ch`` uit /status.json),
+    want de node zet dit kanaal-gebaseerd via zijn web-CLI -- niet op de positie in
+    de mon[]-lijst. De rooms komen als losse checkbox-waarden (elk een room-index)
+    binnen; het ``rm``-bitmasker wordt hier samengesteld en door ``set_alarm`` naar
+    de CSV vertaald die de CLI verwacht. Zo hoeft de pagina geen bitrekenkunde in
+    JavaScript te doen en staat de betekenis (welke rooms staan aan) recht in het
+    formulier.
     """
     rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.instelling.merkbaar", rep)
@@ -1773,14 +1779,14 @@ def sensor_room_alarm(request: Request, rid: int, idx: int = Form(...),
     rm = 0
     for i in room:
         rm |= 1 << int(i)
-    uitslag = rooms.set_alarm(rep, idx, am=am, rm=rm)
+    uitslag = rooms.set_alarm(rep, ch, am=am, rm=rm)
     _noteer(request, user, "node.instelling.merkbaar", rep=rep,
-            detail=(f"alarmroute sensor {idx}: am={am} rm={rm}" if uitslag["ok"]
-                    else f"alarmroute sensor {idx} mislukt: {uitslag['error']}"),
+            detail=(f"alarmroute kanaal {ch}: am={am} rm={rm}" if uitslag["ok"]
+                    else f"alarmroute kanaal {ch} mislukt: {uitslag['error']}"),
             outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
     return _node_page(request, rid, sensor_result={
         "soort": "alarm", "ok": uitslag["ok"], "error": uitslag["error"],
-        "msg": (f"alarmroute van sensor {idx} gezet" if uitslag["ok"] else "")})
+        "msg": (f"alarmroute van kanaal {ch} gezet" if uitslag["ok"] else "")})
 
 
 @router.post("/repeaters/{rid}/sensor/rooms/backup")

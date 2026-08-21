@@ -133,25 +133,38 @@ def test_edit_room_laat_onopgegeven_velden_weg(db, monkeypatch):
     assert gezien["fields"] == {"idx": 1, "name": "X", "guest": "1"}
 
 
-def test_set_alarm_bouwt_am_en_rm_achter_een_adapter(db, monkeypatch):
+def test_set_alarm_zet_am_en_rm_via_de_web_cli_kanaal_gebaseerd(db, monkeypatch):
     from app import rooms, sensornode
-    gezien = {}
-    monkeypatch.setattr(sensornode, "post_form",
-                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
-                        or {"ok": True, "error": "", "data": {}})
-    uit = rooms.set_alarm(_rep(db), 2, am=3, rm=5)
+    opdrachten = []
+    monkeypatch.setattr(sensornode, "cli",
+                        lambda host, cmd, t=None: opdrachten.append(cmd)
+                        or {"ok": True, "error": "", "reply": "ok", "cmd": cmd})
+    # ch=5 (kanaalnummer, niet de positie), am=3 -> both, rm=5 -> rooms 0 en 2.
+    uit = rooms.set_alarm(_rep(db), 5, am=3, rm=5)
     assert uit["ok"]
-    assert gezien["path"] == rooms.MON_ALARM_PATH
-    assert gezien["fields"] == {rooms.MON_ALARM_IDX: 2,
-                                rooms.MON_ALARM_AM: 3, rooms.MON_ALARM_RM: 5}
+    assert opdrachten == ["sensor set mon.5.alert both",
+                          "sensor set mon.5.rooms 0,2"]
 
 
-def test_set_alarm_weigert_een_onbekende_route(db, monkeypatch):
+def test_set_alarm_stopt_als_de_cli_een_fout_teruggeeft(db, monkeypatch):
+    """Een 'Error ...' of 4xx uit de web-CLI-zeef is geen succes, ook al kwam er
+    een 200; en de tweede opdracht mag dan niet meer vertrekken."""
     from app import rooms, sensornode
-    monkeypatch.setattr(sensornode, "post_form",
+    opdrachten = []
+    monkeypatch.setattr(sensornode, "cli",
+                        lambda host, cmd, t=None: opdrachten.append(cmd)
+                        or {"ok": True, "error": "", "reply": "Error: onbekend kanaal", "cmd": cmd})
+    uit = rooms.set_alarm(_rep(db), 5, am=2, rm=1)
+    assert not uit["ok"] and "Error" in uit["error"]
+    assert opdrachten == ["sensor set mon.5.alert room"]   # gestopt na de eerste
+
+
+def test_set_alarm_weigert_een_onbekende_modus(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "cli",
                         lambda *a, **k: pytest.fail("mocht niet versturen"))
-    uit = rooms.set_alarm(_rep(db), 2, am=9)
-    assert not uit["ok"] and "alarmroute" in uit["error"]
+    uit = rooms.set_alarm(_rep(db), 5, am=9)
+    assert not uit["ok"] and "dm/room/both" in uit["error"]
 
 
 # --- de netwerkprimitieven (post_form / post_json) ----------------------------

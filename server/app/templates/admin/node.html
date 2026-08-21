@@ -954,12 +954,12 @@
   {% for m in sensor_mon %}
   <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/alarm" class="rowform room-alarm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="idx" value="{{ m.mi }}">
+    <input type="hidden" name="ch" value="{{ m.ch }}">
     <span class="room-alarm-name"><span class="mono">{{ m.n }}</span>
-      <span class="muted small">({{ m.st }})</span></span>
+      <span class="muted small">(kanaal {{ m.ch }} &middot; {{ m.st }})</span></span>
     <select name="am" aria-label="Alarmroute van {{ m.n }}"{{ recht('node.instelling.merkbaar') }}>
-      {% for waarde, label in sensor_am_labels.items() %}
-      <option value="{{ waarde }}"{% if m.am_v == waarde %} selected{% endif %}>{{ label }}</option>
+      {% for waarde, woord in sensor_am_modes.items() %}
+      <option value="{{ waarde }}"{% if m.am_v == waarde %} selected{% endif %}>{{ woord }}</option>
       {% endfor %}
     </select>
     {% for kamer in sensor_rooms.rooms %}

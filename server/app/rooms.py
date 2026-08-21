@@ -21,10 +21,12 @@ De node (parallel gebouwd) biedt aan, achter dezelfde Basic-auth:
 * ``POST /rooms/restore``(JSON-body)                           -> ``{"ok"}``
 
 De per-sensor alarmroute staat in ``/status.json`` als ``mon[].am`` (1=dm, 2=room,
-3=both) en ``mon[].rm`` (roombitmasker). Het ZETTEN daarvan heeft nog geen vaste
-setter-URL in het contract; die aanname staat daarom geïsoleerd in
-``MON_ALARM_PATH`` en ``set_alarm`` hieronder -- wijkt het contract af, dan is dat
-de enige plek die aangepast hoeft te worden.
+3=both) en ``mon[].rm`` (roombitmasker). Het ZETTEN gebeurt niet via een apart
+endpoint -- de node heeft dat niet -- maar via de bestaande web-CLI (``POST
+/cli``), kanaal-gebaseerd, met twee opdrachten: ``sensor set mon.<ch>.alert
+<dm|room|both>`` en ``sensor set mon.<ch>.rooms <csv>``. Die vorm staat
+geïsoleerd in de ``MON_ALARM_*``-constanten en ``set_alarm`` hieronder -- wijkt de
+CLI-vorm af, dan is dat de enige plek die aangepast hoeft te worden.
 
 Gevoelige sleutels
 ------------------
@@ -44,16 +46,19 @@ from . import db, nodecred, sensornode
 
 log = logging.getLogger("meshmanager.rooms")
 
-# De setter voor de per-sensor alarmroute. Eén constante, want dit is het enige
-# stuk contract dat nog niet vaststaat -- zie de moduledocstring. De veldnamen
-# staan er los naast, zodat een node die andere namen verwacht met één regel
-# meegaat.
-MON_ALARM_PATH = "/mon/alarm"
-MON_ALARM_IDX = "idx"
-MON_ALARM_AM = "am"
-MON_ALARM_RM = "rm"
+# De adapterlaag voor de per-sensor alarmroute. De node heeft GEEN apart
+# alarm-endpoint: am/rm worden gezet via de bestaande web-CLI (POST /cli), met
+# twee KANAAL-gebaseerde opdrachten. Deze constanten zijn de enige plek die mee
+# hoeft als de CLI-vorm ooit afwijkt.
+MON_ALARM_PATH = "/cli"
+MON_ALARM_MODE_CMD = "sensor set mon.{ch}.alert {mode}"
+MON_ALARM_ROOMS_CMD = "sensor set mon.{ch}.rooms {csv}"
 
-# Wat mon[].am betekent, voor het scherm en voor de validatie in één.
+# am (1/2/3) -> het CLI-woord voor de modus.
+AM_MODES = {1: "dm", 2: "room", 3: "both"}
+
+# Wat mon[].am betekent, voor het scherm. am=0 ("uit") is een toestand die
+# /status.json kan melden maar die deze CLI niet als modus zet -- zie AM_MODES.
 AM_LABELS = {0: "uit", 1: "alleen dm", 2: "alleen room", 3: "dm + room"}
 
 
@@ -158,33 +163,55 @@ def del_room(rep, idx: int) -> dict:
     return {"ok": ant["ok"], "error": ant["error"]}
 
 
-def set_alarm(rep, idx: int, am: int | None = None,
+def set_alarm(rep, ch: int, am: int | None = None,
               rm: int | None = None) -> dict:
-    """De per-sensor alarmroute zetten: ``am`` (0-3) en/of ``rm`` (roombitmasker).
+    """De alarmroute van sensor ``ch`` zetten: ``am`` (1/2/3) en/of ``rm`` (bitmasker).
 
-    De adapterlaag over het enige nog niet vaststaande stuk contract. Wat hier
-    verandert als de node een andere setter blijkt te hebben, staat helemaal in de
-    ``MON_ALARM_*``-constanten bovenaan -- de rest van de server en het sjabloon
-    hoeven het niet te weten.
+    De adapterlaag. De node heeft geen apart alarm-endpoint; dit vertaalt naar
+    KANAAL-gebaseerde web-CLI-opdrachten (``POST /cli``), en dat is precies wat de
+    ``MON_ALARM_*``-constanten bovenaan isoleren. ``ch`` is het kanaalnummer uit
+    ``/status.json`` (``mon[].ch``), niet de positie in de ``mon[]``-lijst.
+
+    Twee opdrachten waar nodig -- de modus en de roomlijst zijn twee CLI-sleutels
+    -- en ze falen elk apart: gaat de modus goed maar de roomlijst niet, dan is dat
+    geen "gelukt". Het roembitmasker wordt hier naar de CSV van room-indexen die de
+    node verwacht omgezet (rm=3 -> "0,1", rm=5 -> "0,2", rm=0 -> "" oftewel geen).
     """
-    out = {"ok": False, "error": ""}
-    velden: dict = {MON_ALARM_IDX: int(idx)}
-    if am is not None:
-        if int(am) not in AM_LABELS:
-            out["error"] = f"onbekende alarmroute {am} (kies 0-3)"
-            return out
-        velden[MON_ALARM_AM] = int(am)
-    if rm is not None:
-        if int(rm) < 0:
-            out["error"] = "een roombitmasker kan niet negatief zijn"
-            return out
-        velden[MON_ALARM_RM] = int(rm)
-    if len(velden) == 1:
+    out = {"ok": False, "error": "", "reply": ""}
+    if am is None and rm is None:
         out["error"] = "niets te zetten: geef am, rm of allebei"
         return out
-    ant = sensornode.post_form(_host(rep), MON_ALARM_PATH, velden)
-    out["ok"] = ant["ok"]
-    out["error"] = ant["error"]
+    if am is not None and int(am) not in AM_MODES:
+        out["error"] = (f"alarmroute {am} is niet via de CLI te zetten "
+                        f"(kies dm/room/both = 1/2/3)")
+        return out
+    if rm is not None and int(rm) < 0:
+        out["error"] = "een roombitmasker kan niet negatief zijn"
+        return out
+
+    host = _host(rep)
+    opdrachten = []
+    if am is not None:
+        opdrachten.append(MON_ALARM_MODE_CMD.format(
+            ch=int(ch), mode=AM_MODES[int(am)]))
+    if rm is not None:
+        csv = ",".join(str(b) for b in range(int(rm).bit_length())
+                       if int(rm) & (1 << b))
+        opdrachten.append(MON_ALARM_ROOMS_CMD.format(ch=int(ch), csv=csv))
+
+    antwoorden = []
+    for cmd in opdrachten:
+        ant = sensornode.cli(host, cmd)
+        antwoorden.append(ant["reply"] or ant["error"])
+        # /cli antwoordt met platte tekst; een 4xx uit de web-CLI-zeef of een
+        # "Error ..." is geen succes, ook al kwam er een 200. Zelfde toets als
+        # set_region.
+        if not ant["ok"] or sensornode.is_error(ant["reply"]):
+            out["error"] = ant["error"] or ant["reply"] or "de node weigerde de opdracht"
+            out["reply"] = " / ".join(antwoorden)
+            return out
+    out["ok"] = True
+    out["reply"] = " / ".join(antwoorden)
     return out
 
 
