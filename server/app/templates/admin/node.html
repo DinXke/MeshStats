@@ -621,6 +621,10 @@
     {%- elif sensor_result.soort == 'rotate' %}
     &#9888; De weblogin is <strong>niet</strong> geroteerd: {{ sensor_result.error }}.
     Er is niets aan de opslag veranderd &mdash; de node blijft op de vorige login.
+    {%- elif sensor_result.soort in ('room', 'alarm', 'backup', 'restore') and sensor_result.ok %}
+    &#9989; {{ sensor_result.msg }}.
+    {%- elif sensor_result.soort in ('room', 'alarm', 'backup', 'restore') %}
+    &#9888; {{ sensor_result.error or 'niets gebeurd' }}.
     {%- elif sensor_result.ok %}
     &#9989; <span class="mono">{{ sensor_result.reply }}</span>
     {%- else %}
@@ -846,6 +850,186 @@
     </tbody>
   </table>
   {% endif %}
+
+  {#- ==================== Rooms ============================================
+
+      Het volledige room-beheer van een room-server-node: lezen, toevoegen,
+      bewerken, verwijderen, de join-QR + link, de per-sensor alarmroute, en de
+      serverzijde backup. Alleen zinvol als de node een room-API aanbiedt; is die
+      er niet, dan zegt /rooms.json dat (een 404) en tonen we die reden in plaats
+      van een leeg blok. Alles hier loopt over dezelfde IP-weg als de rest van dit
+      blok en staat of valt dus met dezelfde WiFi. -#}
+  <h3>Rooms</h3>
+  {% if not sensor_route.can %}
+  <p class="muted small">De weg naar deze node kan nu niets; de roomknoppen staan daarom uit.</p>
+  {% elif not sensor_rooms.ok %}
+  <p class="muted small">Geen rooms opgehaald: {{ sensor_rooms.error or 'onbekende reden' }}.
+     Dit is alleen een room-server-node als <span class="mono">/rooms.json</span> antwoordt.</p>
+  {% else %}
+  <p class="muted small">{{ sensor_rooms.active }} van {{ sensor_rooms.max }} rooms in gebruik.
+     Een room is een gedeeld kanaal op de node; sensoren kunnen hun alarm erin posten (zie de
+     alarmroute hieronder). De join-link en QR openen de room in een MeshCore-client.</p>
+
+  {% for kamer in sensor_rooms.rooms %}
+  <div class="card room">
+    <div class="room-head">
+      <h4>{{ kamer.name or ('room ' ~ kamer.idx) }}
+        <span class="pill">idx {{ kamer.idx }}</span>
+        {% if kamer.stealth %}<span class="pill">stealth</span>{% endif %}
+        {% if kamer.guest %}<span class="pill">gast</span>{% endif %}
+      </h4>
+      <span class="muted small">{{ kamer.posts }} posts &middot;
+        sleutel <span class="mono">{{ kamer.pub[:16] or '—' }}</span></span>
+    </div>
+
+    {% if kamer.uri %}
+    <div class="room-join">
+      {% if sensor_room_qrs.get(kamer.idx) %}
+      <div class="qr" aria-hidden="false">{{ sensor_room_qrs[kamer.idx] | safe }}</div>
+      {% endif %}
+      <div class="room-join-link">
+        <label class="muted small" for="uri-{{ kamer.idx }}">Join-link</label>
+        <input id="uri-{{ kamer.idx }}" class="mono" readonly value="{{ kamer.uri }}"
+               onclick="this.select()" aria-label="Join-link van {{ kamer.name }}">
+      </div>
+    </div>
+    {% endif %}
+
+    {% if kamer.sensoren %}
+    <p class="muted small">Sensoren die hun alarm in deze room posten:
+      {% for s in kamer.sensoren %}<span class="mono">{{ s.n }}</span>
+      ({{ s.st }}){{ ', ' if not loop.last else '' }}{% endfor %}.</p>
+    {% else %}
+    <p class="muted small">Nog geen sensor stuurt zijn alarm naar deze room.</p>
+    {% endif %}
+
+    <div class="rowform">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/edit" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ kamer.idx }}">
+        <input name="name" value="{{ kamer.name }}" placeholder="naam" maxlength="40"
+               spellcheck="false" autocomplete="off" aria-label="Naam van de room"{{ recht('node.instelling.merkbaar') }}>
+        <input name="room_pass" type="password" placeholder="nieuw wachtwoord (leeg = ongewijzigd)"
+               autocomplete="new-password" aria-label="Wachtwoord van de room"{{ recht('node.instelling.merkbaar') }}>
+        <label class="check"><input type="checkbox" name="guest" value="1"
+               {% if kamer.guest %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> gast</label>
+        <label class="check"><input type="checkbox" name="stealth" value="1"
+               {% if kamer.stealth %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> stealth</label>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Opslaan</button>
+      </form>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/del" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ kamer.idx }}">
+        <input name="confirm" placeholder="typ: ja" autocomplete="off"
+               aria-label="Bevestig verwijderen"{{ recht('node.instelling.merkbaar') }}>
+        <button type="submit" class="danger"{{ recht('node.instelling.merkbaar') }}>&#9888; Verwijderen</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted small">Er zijn nog geen rooms op deze node.</p>
+  {% endfor %}
+
+  <h4>Room toevoegen</h4>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/add" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="name" placeholder="naam van de nieuwe room" maxlength="40"
+           spellcheck="false" autocomplete="off" aria-label="Naam van de nieuwe room"
+           {% if sensor_rooms.active >= sensor_rooms.max %}disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+    <button type="submit"{% if sensor_rooms.active >= sensor_rooms.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      Room toevoegen</button>
+  </form>
+  {% if sensor_rooms.active >= sensor_rooms.max %}
+  <p class="muted small">Alle {{ sensor_rooms.max }} roomplekken zijn in gebruik; verwijder er eerst een.</p>
+  {% endif %}
+  {{ waarom('node.instelling.merkbaar') }}
+
+  {#- De per-sensor alarmroute. am = 1 (dm), 2 (room), 3 (beide); rm is het
+      bitmasker van rooms waar het alarm heen gaat. De checkboxes bouwen dat
+      masker serverzijde op -- zie sensor_room_alarm. -#}
+  {% if sensor_mon %}
+  <h4>Alarmroute per sensor</h4>
+  <p class="muted small">Waar het alarm van elke sensor heen gaat: als direct bericht, in een room,
+     of beide. Kies bij &ldquo;room&rdquo; of &ldquo;beide&rdquo; ook welke rooms.</p>
+  {% for m in sensor_mon %}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/alarm" class="rowform room-alarm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="idx" value="{{ m.mi }}">
+    <span class="room-alarm-name"><span class="mono">{{ m.n }}</span>
+      <span class="muted small">({{ m.st }})</span></span>
+    <select name="am" aria-label="Alarmroute van {{ m.n }}"{{ recht('node.instelling.merkbaar') }}>
+      {% for waarde, label in sensor_am_labels.items() %}
+      <option value="{{ waarde }}"{% if m.am_v == waarde %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {% for kamer in sensor_rooms.rooms %}
+    <label class="check"><input type="checkbox" name="room" value="{{ kamer.idx }}"
+           {% if kamer.idx in m.rooms_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      {{ kamer.name or ('r' ~ kamer.idx) }}</label>
+    {% endfor %}
+    <button type="submit"{{ recht('node.instelling.merkbaar') }}>Zetten</button>
+  </form>
+  {% endfor %}
+  {% endif %}
+
+  {#- De serverzijde backup: een bewaarplaats met versiehistoriek. De inhoud
+      bevat de privésleutels van de rooms en gaat daarom alleen open voor een
+      serverbeheerder; zie sensor_rooms_backup. -#}
+  <h4>Backup <span class="pill">gevoelig</span></h4>
+  <p class="muted small">Een backup bevat de <strong>privésleutels</strong> van de rooms. De server
+     bewaart hem geobfusceerd als bewaarplaats (versiehistoriek) en stuurt hem nooit naar buiten.
+     Ophalen en downloaden kan alleen een serverbeheerder.</p>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rooms/backup" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit"{% if not is_superuser or not sensor_route.can %} disabled{% endif %}>
+      &#128190; Backup maken en bewaren</button>
+  </form>
+  {% if not is_superuser %}
+  <p class="muted small">Alleen een serverbeheerder maakt of downloadt een backup met sleutels erin.</p>
+  {% endif %}
+  {% if sensor_room_backups %}
+  <table>
+    <thead><tr><th>Wanneer</th><th>Door</th><th>Rooms</th><th>Downloaden</th></tr></thead>
+    <tbody>
+    {% for b in sensor_room_backups %}
+      <tr>
+        <td><time class="reltime" datetime="{{ b.created }}">{{ b.created }}</time></td>
+        <td>{{ b.actor or '—' }}</td>
+        <td>{{ b.rooms if b.rooms is not none else '—' }}</td>
+        <td>{% if is_superuser %}<a href="/admin/repeaters/{{ rep.id }}/sensor/rooms/backup/{{ b.id }}.json">#{{ b.id }} .json</a>
+            {% else %}<span class="muted">alleen serverbeheerder</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted small">Nog geen backup bewaard.</p>
+  {% endif %}
+
+  <h4>Terugzetten <span class="pill">bevestigen</span></h4>
+  <p class="muted small">Een restore <strong>overschrijft</strong> de rooms die er nu staan. Kies een
+     bewaarde backup, of plak een room-config als JSON.</p>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rooms/restore">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="rowform">
+      <select name="backup_id" aria-label="Bewaarde backup om terug te zetten"
+              {% if not is_superuser %}disabled{% endif %}>
+        <option value="0">— geplakte JSON hieronder —</option>
+        {% for b in sensor_room_backups %}
+        <option value="{{ b.id }}">#{{ b.id }} &middot; {{ b.created }} &middot;
+          {{ b.rooms if b.rooms is not none else '?' }} rooms</option>
+        {% endfor %}
+      </select>
+      <input name="confirm" placeholder="typ: ja" autocomplete="off"
+             aria-label="Bevestig terugzetten"{% if not is_superuser %} disabled{% endif %}>
+      <button type="submit"{% if not is_superuser or not sensor_route.can %} disabled{% endif %}>
+        Terugzetten</button>
+    </div>
+    <textarea name="payload" rows="3" class="mono" spellcheck="false"
+              placeholder='{"rooms": [...]}  (alleen gebruikt als er geen bewaarde backup gekozen is)'
+              aria-label="Room-config als JSON"{% if not is_superuser %} disabled{% endif %}></textarea>
+  </form>
+  {% endif %}{#- sensor_rooms.ok -#}
 
   <p class="muted small"><strong>Wat er langs deze weg niet gezet wordt.</strong> De
      radio-instellingen: frequentie, bandbreedte, spreidingsfactor en coderingssnelheid. Die

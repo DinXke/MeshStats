@@ -21,13 +21,15 @@ De POST-routes zijn gebleven waar ze stonden. Dat is geen luiheid maar het
 voorkomt dat een beheerpagina die al in een tabblad openstond bij het volgende
 klikken een 404 oplevert. Waar een GET-URL wél verhuisde staat een omleiding.
 """
+import json
+
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
                discovery, firmware, hadiscovery, metrics, monitors, mqtt_ingest,
-               nodeconfig, nodecred, pktfilter, ratelimit, rbac, retention,
-               sensornode, sensorpush, sweepsched, tsdb)
+               nodeconfig, nodecred, pktfilter, qrsvg, ratelimit, rbac, retention,
+               rooms, sensornode, sensorpush, sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -287,9 +289,36 @@ def nodes_page(request: Request):
     groups = [{"level": level,
                "reps": [r for r in repeaters if routes[r["id"]]["level"] == level]}
               for level in LEVEL_ORDER]
+    # Welke van deze nodes zijn in werkelijkheid een VIRTUELE ROOM op een andere,
+    # fysieke node? De mapping komt uit /rooms.json (zie rooms.record_owners): een
+    # room-server-node host meerdere rooms met elk een eigen sleutel, en die
+    # verschijnen op het mesh als losse entries. ``is_room_of`` koppelt zo'n entry
+    # aan zijn eigenaar zodat de lijst hem niet als anonieme unmanaged node toont;
+    # ``hosts_rooms`` telt per eigenaar hoeveel rooms erop draaien (de eigen
+    # hoofdidentiteit, room 0, telt niet als aparte room mee).
+    owners = db.room_owner_map()
+    by_id = {r["id"]: r for r in alle}
+    is_room_of, hosts_rooms = {}, {}
+    for r in repeaters:
+        rij = owners.get(db.node_key(r["pubkey_prefix"]))
+        if rij and rij["owner_repeater_id"] != r["id"]:
+            eig = by_id.get(rij["owner_repeater_id"])
+            is_room_of[r["id"]] = {
+                "owner_id": rij["owner_repeater_id"],
+                "owner_name": eig["name"] if eig else "",
+                "room_idx": rij["room_idx"], "room_name": rij["room_name"]}
+    for rij in owners.values():
+        eig = by_id.get(rij["owner_repeater_id"])
+        if eig and rij["room_key"] != db.node_key(eig["pubkey_prefix"]):
+            hosts_rooms[rij["owner_repeater_id"]] = \
+                hosts_rooms.get(rij["owner_repeater_id"], 0) + 1
     return templates.TemplateResponse(request, "admin/nodes.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes",
         "repeaters": repeaters, "routes": routes,
+        # De room-groepering: welke node een virtuele room op een andere is, en
+        # hoeveel rooms elke eigenaar host. Zie de opbouw hierboven.
+        "is_room_of": is_room_of,
+        "hosts_rooms": hosts_rooms,
         "rollen": {r["id"]: rbac.rol_op_node(ik, r) for r in repeaters},
         "serverrechten": rbac.serverrechten(ik),
         # Hoeveel nodes er zijn waar deze gebruiker niets over mag weten. Niet
@@ -1074,6 +1103,51 @@ def _node_page(request: Request, rid: int, **extra):
     sensor_acl = (sensornode.acl(sensor_route["host"])
                   if sensor_route is not None and sensor_route["can"]
                   else {"ok": False, "error": "", "data": {}})
+    # De rooms van deze node, en de sensoren die eraan hangen. Alleen ophalen als
+    # de weg er is -- net als de ACL hierboven -- want anders staat elke
+    # paginaweergave op een node te wachten die er niet is. De monitoren met hun
+    # ``am``/``rm`` komen uit /status.json (de koppeling room<->sensor); de
+    # roomlijst zelf uit /rooms.json. Twee lichte GET's op het lokale net, en ze
+    # falen elk apart: een node zonder room-API laat de rest van de pagina staan.
+    kan_sensor = sensor_route is not None and sensor_route["can"]
+    sensor_rooms = (rooms.list_rooms(rep) if kan_sensor
+                    else {"ok": False, "error": "", "max": 0, "active": 0, "rooms": []})
+    sensor_status = (sensornode.status(sensor_route["host"]) if kan_sensor
+                     else {"ok": False, "error": "", "data": {}})
+    sensor_mon_ruw = (sensor_status["data"].get("mon") or []
+                      if sensor_status.get("ok") else [])
+    if sensor_rooms["ok"]:
+        # De koppeling room-pubkey -> deze node vastleggen uit de verse lijst,
+        # zodat de nodelijst de losse room-entries aan hun eigenaar kan koppelen.
+        rooms.record_owners(rep, sensor_rooms["rooms"])
+        sensor_rooms["rooms"] = rooms.couple(sensor_rooms["rooms"], sensor_mon_ruw)
+    # De monitoren verrijkt voor het alarmformulier: een index om aan de node door
+    # te geven (de positie in de lijst -- zie rooms.set_alarm voor die aanname),
+    # de alarmroute als getal, en welke room-bits aanstaan als kant-en-klare lijst,
+    # zodat het sjabloon geen bitrekenkunde hoeft te doen (Jinja heeft die niet).
+    sensor_mon = []
+    for i, m in enumerate(sensor_mon_ruw):
+        if not isinstance(m, dict):
+            continue
+        rm = int(m.get("rm") or 0)
+        sensor_mon.append(dict(
+            m, mi=i, am_v=int(m.get("am") or 0),
+            rooms_on=[b for b in range(sensor_rooms.get("max") or 8)
+                      if rm & (1 << b)]))
+    # De join-QR serverzijde uit het ``uri``-veld, als inline-SVG. Geen extern
+    # pakket en geen CDN (zie qrsvg.py en de CSP in main.py): de code staat in de
+    # pagina. Alleen voor rooms die een uri meegaven.
+    sensor_room_qrs = {}
+    if sensor_rooms["ok"]:
+        for kamer in sensor_rooms["rooms"]:
+            if kamer.get("uri"):
+                try:
+                    sensor_room_qrs[kamer["idx"]] = qrsvg.svg(
+                        kamer["uri"], titel=f"join {kamer['name']}")
+                except ValueError:
+                    # Een uri die niet in een QR tot versie 10 past: de link staat
+                    # er sowieso als tekst naast, dus dit is geen storing.
+                    pass
     return templates.TemplateResponse(request, "admin/node.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
         "settings_rows": rows,
@@ -1217,6 +1291,15 @@ def _node_page(request: Request, rid: int, **extra):
         "sensor_route": sensor_route,
         "sensor_last": sensornode.last(rid),
         "sensor_acl": sensor_acl,
+        # De rooms van een room-server-node, elk gekoppeld aan de sensoren die
+        # eraan hangen; de join-QR's serverzijde; de monitoren met hun alarmroute;
+        # en de serverzijde bewaarde backups (versiehistoriek, zonder de blob).
+        "sensor_rooms": sensor_rooms,
+        "sensor_room_qrs": sensor_room_qrs,
+        "sensor_mon": sensor_mon,
+        "sensor_am_labels": rooms.AM_LABELS,
+        "sensor_room_backups": (rooms.list_stored(rep) if sensor_route is not None
+                                else []),
         # Zit deze node nog op de GEDEELDE vlootsleutel (zwakte) of heeft hij een
         # eigen weblogin? Alleen zinvol als er een adres is; anders is er geen weg
         # om over in te loggen. ``shared`` True is de waarschuwing -- net als een
@@ -1581,6 +1664,217 @@ def sensor_rotate_cred(request: Request, rid: int, csrf: str = Form(...)):
                     else f"rotatie van de weblogin mislukt: {uitslag['error']}"),
             outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
     return _node_page(request, rid, sensor_result={"soort": "rotate", **uitslag})
+
+
+# --- de rooms van een room-server-node ---------------------------------------
+#
+# Dezelfde weg als de andere sensor-handelingen hierboven -- HTTP naar de eigen
+# API van de node -- en dus dezelfde poort: ingelogd, bevoegd, CSRF. Het beheren
+# van een room (toevoegen, bewerken, verwijderen) en de alarmroute van een sensor
+# zetten veranderen merkbaar hoe de node zich gedraagt, dus ``node.instelling.
+# merkbaar``, dezelfde klasse als het regioveld.
+#
+# De backup en de restore staan een trap hoger: hun inhoud bevat de PRIVÉSLEUTELS
+# van de rooms. Ze gaan daarom achter ``require_server_admin`` (zoals de rotatie
+# van een weblogin), met daarnaast het gewone node-recht zodat de vangnettest in
+# test_rechten.py ze ziet. De opslag is geobfusceerd en verlaat de server nooit;
+# zie rooms.py.
+
+@router.post("/repeaters/{rid}/sensor/room/add")
+def sensor_room_add(request: Request, rid: int, name: str = Form(""),
+                    csrf: str = Form(...)):
+    """Een room toevoegen op de node."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.add_room(rep, name)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"room toegevoegd: {name.strip()!r} (idx {uitslag['idx']})"
+                    if uitslag["ok"] else f"room toevoegen mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "room", "ok": uitslag["ok"],
+        "error": uitslag["error"],
+        "msg": (f"room toegevoegd (idx {uitslag['idx']})" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/room/edit")
+def sensor_room_edit(request: Request, rid: int, idx: int = Form(...),
+                     name: str = Form(""), room_pass: str = Form(""),
+                     guest: str = Form(""), stealth: str = Form(""),
+                     csrf: str = Form(...)):
+    """Een room bewerken: naam, wachtwoord, gast- en stealth-vlag.
+
+    Lege ``name``/``room_pass`` betekenen "niet wijzigen"; de vlaggen komen als
+    aparte checkbox-waarden binnen en worden altijd meegestuurd, zodat uitzetten
+    ook echt uitzetten is. Zie ``rooms.edit_room`` -- een veld dat None blijft gaat
+    niet de deur uit.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.edit_room(
+        rep, idx,
+        name=(name.strip() or None),
+        password=(room_pass or None),
+        guest=(guest.strip() == "1"),
+        stealth=(stealth.strip() == "1"))
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"room {idx} bewerkt" if uitslag["ok"]
+                    else f"room {idx} bewerken mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "room", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"room {idx} bijgewerkt" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/room/del")
+def sensor_room_del(request: Request, rid: int, idx: int = Form(...),
+                    confirm: str = Form(""), csrf: str = Form(...)):
+    """Een room verwijderen. Met een bevestiging, want de sleutel gaat mee weg.
+
+    ``node.instelling.merkbaar`` en een bevestiging in plaats van een weigering,
+    dezelfde afweging als bij het regioveld: een verkeerde verwijdering is van
+    hieraf terug te zetten uit een serverbackup, maar de bevestiging vangt de klik
+    op de verkeerde room.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    if confirm.strip() != "ja":
+        return _node_page(request, rid, sensor_result={
+            "soort": "room", "ok": False,
+            "error": "een room verwijderen moet bevestigd worden (typ: ja)",
+            "msg": ""})
+    uitslag = rooms.del_room(rep, idx)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"room {idx} verwijderd" if uitslag["ok"]
+                    else f"room {idx} verwijderen mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "room", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"room {idx} verwijderd" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/room/alarm")
+def sensor_room_alarm(request: Request, rid: int, idx: int = Form(...),
+                      am: int = Form(...), room: list[int] = Form(default=[]),
+                      csrf: str = Form(...)):
+    """De alarmroute van één sensor zetten: dm/room/both plus welke rooms.
+
+    De rooms komen als losse checkbox-waarden (elk een room-index) binnen; het
+    ``rm``-bitmasker wordt hier samengesteld. Zo hoeft de pagina geen bitrekenkunde
+    in JavaScript te doen en staat de betekenis (welke rooms staan aan) recht in
+    het formulier.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    rm = 0
+    for i in room:
+        rm |= 1 << int(i)
+    uitslag = rooms.set_alarm(rep, idx, am=am, rm=rm)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"alarmroute sensor {idx}: am={am} rm={rm}" if uitslag["ok"]
+                    else f"alarmroute sensor {idx} mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "alarm", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"alarmroute van sensor {idx} gezet" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/rooms/backup")
+def sensor_rooms_backup(request: Request, rid: int, csrf: str = Form(...)):
+    """Een room-backup ophalen bij de node en serverzijde bewaren (GEVOELIG).
+
+    Achter ``require_server_admin`` want de inhoud bevat de privésleutels van de
+    rooms -- dezelfde grens als de rotatie van een weblogin. De blob gaat
+    geobfusceerd de bewaarplaats in en komt niet in het trail of een log terecht;
+    alleen dát er een backup gemaakt is, en hoeveel rooms erin zaten.
+    """
+    rep = _rep_or_404(request, rid)
+    require_server_admin(request, "een room-backup met sleutels maken")
+    user = require_perm(request, "node.beheeradres", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.backup_and_store(rep, actor=user)
+    _noteer(request, user, "node.beheeradres", rep=rep,
+            detail=(f"room-backup bewaard (#{uitslag['id']}, {uitslag['rooms']} rooms)"
+                    if uitslag["ok"] else f"room-backup mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "backup", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"backup bewaard als #{uitslag['id']}" if uitslag["ok"] else "")})
+
+
+@router.get("/repeaters/{rid}/sensor/rooms/backup/{backup_id}.json")
+def sensor_rooms_backup_download(request: Request, rid: int, backup_id: int):
+    """Een bewaarde room-backup downloaden (GEVOELIG, alleen serverbeheerder).
+
+    Uit de bewaarplaats en niet vers van de node: downloaden is een leeshandeling
+    op iets dat er al is, en zo blijft deze GET zonder neveneffect. De sleutels
+    verlaten de server alleen hierlangs, naar de browser van een ingelogde
+    serverbeheerder -- vandaar ``require_server_admin`` en geen cache.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_server_admin(request, "een room-backup met sleutels downloaden")
+    geladen = rooms.load_stored(rep, backup_id)
+    if not geladen["ok"]:
+        raise HTTPException(404, geladen["error"])
+    _noteer(request, user, "node.beheeradres", rep=rep,
+            detail=f"room-backup #{backup_id} gedownload")
+    body = json.dumps(geladen["data"], indent=2, ensure_ascii=False)
+    return Response(
+        body, media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="rooms-{rid}-{backup_id}.json"',
+                 "Cache-Control": "no-store"})
+
+
+@router.post("/repeaters/{rid}/sensor/rooms/restore")
+def sensor_rooms_restore(request: Request, rid: int, backup_id: int = Form(default=0),
+                         payload: str = Form(""), confirm: str = Form(""),
+                         csrf: str = Form(...)):
+    """Een room-config terugzetten op de node: uit de bewaarplaats of geüpload.
+
+    Achter ``require_server_admin`` (sleutels) plus ``node.instelling.merkbaar``
+    (het verandert de node). Een bevestiging, want een restore overschrijft de
+    rooms die er nu staan. Bron: ``backup_id`` uit de bewaarplaats, of anders de
+    geplakte JSON in ``payload`` -- de bewaarplaats gaat voor, zodat niemand de
+    gevoelige JSON door de browser hoeft te halen als het niet hoeft.
+    """
+    rep = _rep_or_404(request, rid)
+    require_server_admin(request, "een room-config met sleutels terugzetten")
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    if confirm.strip() != "ja":
+        return _node_page(request, rid, sensor_result={
+            "soort": "restore", "ok": False,
+            "error": "een restore overschrijft de huidige rooms en moet bevestigd worden (typ: ja)",
+            "msg": ""})
+    if backup_id:
+        uitslag = rooms.restore_stored(rep, backup_id)
+        bron = f"bewaarde backup #{backup_id}"
+    elif payload.strip():
+        try:
+            data = json.loads(payload)
+        except (TypeError, ValueError) as exc:
+            return _node_page(request, rid, sensor_result={
+                "soort": "restore", "ok": False,
+                "error": f"de geplakte tekst is geen geldige JSON ({type(exc).__name__})",
+                "msg": ""})
+        uitslag = rooms.restore(rep, data)
+        bron = "geüploade JSON"
+    else:
+        return _node_page(request, rid, sensor_result={
+            "soort": "restore", "ok": False,
+            "error": "geen bron: kies een bewaarde backup of plak een JSON-config",
+            "msg": ""})
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"room-config teruggezet uit {bron}" if uitslag["ok"]
+                    else f"restore uit {bron} mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "restore", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"room-config teruggezet uit {bron}" if uitslag["ok"] else "")})
 
 
 # --- alarmen ------------------------------------------------------------------

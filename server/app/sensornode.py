@@ -192,6 +192,91 @@ def _json(host: str, path: str, timeout: int | None = None) -> dict:
     return out
 
 
+def _post(host: str, path: str, body: bytes, content_type: str,
+          timeout: int | None = None) -> dict:
+    """Eén POST naar de node, met zijn JSON-antwoord of een reden waarom niet.
+
+    De tegenhanger van ``_json`` voor de schrijvende roomroutes van de node
+    (``/room/add``, ``/room/edit``, ``/room/del``, ``/rooms/restore``). Dezelfde
+    afspraak en dezelfde vorm van het antwoord -- ``{"ok", "error", "data"}`` --
+    zodat de laag erboven niet hoeft te weten of het een GET of een POST was, en
+    de fouttekst hier Nederlands en voor het scherm bedoeld is. Eén plek waar er
+    een socket opengaat blijft één plek: dit gaat net als ``_json`` langs
+    ``nodeconfig._open`` en dus langs de doelcontrole.
+
+    Anders dan ``cli`` is er hier geen radioweigering: deze paden zetten geen
+    radio-instelling en dragen geen CLI-regel. En anders dan ``cli`` wordt het
+    antwoord als JSON gelezen, want dat is wat de roomroutes teruggeven.
+    """
+    out = {"ok": False, "error": "", "data": {}}
+    if not (host or "").strip():
+        out["error"] = "geen adres voor de eigen API van deze node"
+        return out
+    if not firmware.NODE_USER:
+        out["error"] = ("geen weblogin voor de nodes (MM_FW_NODE_USER/"
+                        "MM_FW_NODE_PASS)")
+        return out
+    try:
+        with firmware.open_node(host, path, data=body,
+                                timeout=timeout or TIMEOUT_S,
+                                content_type=content_type) as resp:
+            rauw = resp.read()
+        out["data"] = json.loads(rauw or b"{}")
+        # De node antwoordt op deze paden met ``{"ok":true, ...}``; een 200 met
+        # ``ok`` op false is geen storing van de verbinding maar een weigering van
+        # de handeling, en die tekst hoort op het scherm.
+        if isinstance(out["data"], dict) and out["data"].get("ok") is False:
+            out["error"] = str(out["data"].get("error")
+                               or "de node weigerde de handeling")
+        else:
+            out["ok"] = True
+    except firmware.TargetRefused as exc:
+        out["error"] = str(exc)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            out["error"] = "aanmelden geweigerd door de node"
+        elif exc.code == 404:
+            out["error"] = (f"deze node kent {path} niet; dit is geen node met "
+                            f"een eigen room-API")
+        else:
+            try:
+                melding = exc.read().decode("utf-8", "replace").strip()[:200]
+            except OSError:
+                melding = ""
+            out["error"] = melding or f"node antwoordde HTTP {exc.code}"
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        out["error"] = f"niet bereikbaar ({type(exc).__name__})"
+    return out
+
+
+def post_form(host: str, path: str, fields: dict,
+              timeout: int | None = None) -> dict:
+    """``POST`` met een form-body naar de node. Zie ``_post``.
+
+    Form-urlencoded en geen JSON, om dezelfde reden als in ``rotate_cred``: de
+    node leest zijn schrijvende routes met dezelfde form-arg-lezer als de rest
+    (``/cli``, ``/wifi``, ...) en ziet een JSON-body als "leeg". Waarden die None
+    zijn gaan niet mee -- zo blijft ``/room/edit`` een gedeeltelijke wijziging en
+    overschrijft een leeg veld geen bestaande waarde.
+    """
+    schoon = {k: v for k, v in fields.items() if v is not None}
+    body = urllib.parse.urlencode(schoon).encode()
+    return _post(host, path, body,
+                 "application/x-www-form-urlencoded", timeout)
+
+
+def post_json(host: str, path: str, obj, timeout: int | None = None) -> dict:
+    """``POST`` met een JSON-body naar de node. Zie ``_post``.
+
+    Voor ``/rooms/restore``, waar een hele room-config in één keer teruggezet
+    wordt en een form-body dat niet draagt. De node moet deze ene route dus als
+    JSON lezen -- dat is de aanname over het contract, en ze staat hier zodat een
+    afwijking op één plek aangepast wordt.
+    """
+    body = json.dumps(obj).encode()
+    return _post(host, path, body, "application/json", timeout)
+
+
 def status(host: str, timeout: int | None = None) -> dict:
     """``GET /status.json``: de toestand plus de volledige kanaalkaart."""
     return _json(host, "/status.json", timeout)
@@ -997,6 +1082,20 @@ def poll(rep, timeout: int | None = None) -> dict:
         # vermelden, want een lege burenlijst en een burenlijst die niet
         # opgehaald kon worden zien er op de kaart identiek uit.
         out["error"] = f"buren niet opgehaald: {buren['error']}"
+
+    # De koppeling room-pubkey -> node bijwerken uit /rooms.json, zodat de
+    # nodelijst de virtuele rooms aan hun fysieke node koppelt ook zonder dat
+    # iemand de nodepagina opent. Lokale import om het kringetje rooms<->sensornode
+    # te vermijden (rooms leunt op deze module). Non-fataal: een node zonder
+    # room-API antwoordt hier gewoon niet en de ronde is al geslaagd.
+    try:
+        from . import rooms
+        kamers = rooms.list_rooms(rep, timeout)
+        if kamers["ok"]:
+            rooms.record_owners(rep, kamers["rooms"])
+    except Exception:  # noqa: BLE001 -- de mapping mag de ronde nooit breken
+        log.debug("Room-eigenaarschap niet bijgewerkt tijdens de ronde",
+                  exc_info=True)
 
     out["ok"] = True
     _note(rid, out)

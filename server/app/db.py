@@ -243,6 +243,41 @@ CREATE TABLE IF NOT EXISTS repeater_filter(
   updated TEXT NOT NULL,
   source TEXT
 );
+-- De room-backups die de server als bewaarplaats aanhoudt. Een rij per keer dat
+-- iemand een backup van de node ophaalt: een versiehistoriek, niet één plek die
+-- overschreven wordt -- want de reden dat je een backup wilt, is juist de vórige
+-- toestand terug kunnen halen. De blob is GEVOELIG (hij bevat de sleutels van de
+-- rooms) en gaat daarom geobfusceerd naar binnen (rooms.py, dezelfde laag als
+-- nodecred): geen platte sleutels in een databankdump. ON DELETE CASCADE zodat
+-- een verwijderde node zijn backups meeneemt.
+CREATE TABLE IF NOT EXISTS sensor_room_backups(
+  id INTEGER PRIMARY KEY,
+  repeater_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
+  created TEXT NOT NULL,
+  actor TEXT,
+  rooms INTEGER,
+  blob TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_backups_rep
+  ON sensor_room_backups(repeater_id, created);
+-- Welke room-pubkey op WELKE fysieke node draait. Een room-server-node host
+-- meerdere virtuele rooms, elk met een eigen keypair (room 0 = de hoofdidentiteit
+-- van de node, rooms 1+ eigen sleutels). Op het mesh verschijnen die als LOSSE
+-- entries met verschillende sleutels, terwijl het één toestel is. /rooms.json van
+-- de node is de schone bron: het noemt al zijn room-pubkeys. Deze tabel legt de
+-- koppeling vast zodat de site kan tonen "deze N rooms draaien op node X", en een
+-- room niet als anonieme unmanaged node blijft rondzweven. ``room_key`` is de
+-- pubkey genormaliseerd op NODE_KEY_HEX, zodat hij op ``repeaters.pubkey_prefix``
+-- aansluit. ON DELETE CASCADE: verdwijnt de eigenaar, dan verdwijnt de koppeling.
+CREATE TABLE IF NOT EXISTS room_owners(
+  room_key TEXT PRIMARY KEY,
+  owner_repeater_id INTEGER NOT NULL REFERENCES repeaters(id) ON DELETE CASCADE,
+  room_pubkey TEXT,
+  room_idx INTEGER,
+  room_name TEXT,
+  updated TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_owners_owner ON room_owners(owner_repeater_id);
 CREATE TABLE IF NOT EXISTS packets(
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL,
@@ -2898,6 +2933,101 @@ def sensor_nodes() -> list:
     """
     return q("SELECT * FROM repeaters WHERE sensor_host IS NOT NULL "
              "AND TRIM(sensor_host) <> '' ORDER BY id")
+
+
+def save_room_backup(repeater_id: int, blob: str, actor: str = "",
+                     rooms: int | None = None) -> int:
+    """Eén room-backup bijschrijven en zijn id teruggeven.
+
+    ``blob`` is al geobfusceerd door de laag erboven (rooms.py); deze functie ziet
+    de sleutels nooit in platte tekst, net als ``set_node_web_cred``. Een rij per
+    keer -- de historiek is de bedoeling, niet een enkele plek die overschreven
+    wordt.
+    """
+    return execute(
+        "INSERT INTO sensor_room_backups(repeater_id, created, actor, rooms, blob) "
+        "VALUES(?,?,?,?,?)",
+        (repeater_id, utcnow(), str(actor or "")[:64] or None,
+         rooms if rooms is None else int(rooms), blob))
+
+
+def room_backups_for(repeater_id: int, limit: int = 50) -> list:
+    """De backups van deze node, nieuwste eerst, ZONDER de blob.
+
+    De blob blijft hier met opzet buiten: de lijst is er om te tonen wélke
+    versies er zijn (wanneer, door wie, hoeveel rooms), en de gevoelige inhoud
+    hoort niet in een lijst-render terecht te komen. Wie de inhoud nodig heeft,
+    vraagt één rij op met ``room_backup``.
+    """
+    return q("SELECT id, repeater_id, created, actor, rooms "
+             "FROM sensor_room_backups WHERE repeater_id=? "
+             "ORDER BY created DESC, id DESC LIMIT ?",
+             (repeater_id, int(limit)))
+
+
+def room_backup(backup_id: int, repeater_id: int):
+    """Eén backup mét blob, of None. De ``repeater_id`` moet kloppen.
+
+    Het id én de node samen: zo kan een backup-id van node A niet via de route van
+    node B opgevraagd worden, ook al zou de rechtencontrole daar al langs zijn.
+    """
+    return qone("SELECT * FROM sensor_room_backups WHERE id=? AND repeater_id=?",
+                (int(backup_id), int(repeater_id)))
+
+
+def set_room_owner(room_key: str, owner_repeater_id: int, room_pubkey: str,
+                   room_idx: int | None, room_name: str) -> None:
+    """Vastleggen dat één room-pubkey op deze node draait (upsert).
+
+    ``room_key`` hoort al genormaliseerd te zijn op ``NODE_KEY_HEX`` (zie
+    ``rooms.record_owners``), zodat hij op ``repeaters.pubkey_prefix`` aansluit en
+    de nodelijst een losse room-entry aan zijn eigenaar kan koppelen.
+    """
+    key = node_key(room_key)
+    if not key:
+        return
+    execute(
+        "INSERT INTO room_owners(room_key, owner_repeater_id, room_pubkey, "
+        "room_idx, room_name, updated) VALUES(?,?,?,?,?,?) "
+        "ON CONFLICT(room_key) DO UPDATE SET owner_repeater_id=excluded.owner_repeater_id, "
+        "room_pubkey=excluded.room_pubkey, room_idx=excluded.room_idx, "
+        "room_name=excluded.room_name, updated=excluded.updated",
+        (key, owner_repeater_id, str(room_pubkey or ""),
+         room_idx if room_idx is None else int(room_idx),
+         str(room_name or "")[:64], utcnow()))
+
+
+def prune_room_owners(owner_repeater_id: int, keep_keys: list[str]) -> int:
+    """De rooms van deze eigenaar opruimen die niet meer in ``keep_keys`` staan.
+
+    Zo verdwijnt een koppeling zodra een room van de node verwijderd is: de
+    volgende /rooms.json noemt hem niet meer, en dan hoort de mapping hem ook niet
+    meer te noemen. Alleen binnen DEZE eigenaar -- een room-key die intussen naar
+    een andere node verhuisde, is daar al bijgewerkt door ``set_room_owner``.
+    """
+    schoon = [node_key(k) for k in keep_keys if node_key(k)]
+    rijen = q("SELECT room_key FROM room_owners WHERE owner_repeater_id=?",
+              (owner_repeater_id,))
+    weg = [r["room_key"] for r in rijen if r["room_key"] not in schoon]
+    for key in weg:
+        execute("DELETE FROM room_owners WHERE room_key=?", (key,))
+    return len(weg)
+
+
+def room_owners_for(owner_repeater_id: int) -> list:
+    """De rooms die op deze node draaien, op index gesorteerd."""
+    return q("SELECT * FROM room_owners WHERE owner_repeater_id=? "
+             "ORDER BY room_idx", (owner_repeater_id,))
+
+
+def room_owner_map() -> dict:
+    """``{room_key: rij}`` voor de hele installatie, om de nodelijst te annoteren.
+
+    De sleutel is genormaliseerd, dus een repeaterrij matcht met
+    ``node_key(rij['pubkey_prefix'])``. Klein genoeg om in één keer op te halen:
+    er zijn hooguit een handvol rooms per node.
+    """
+    return {r["room_key"]: r for r in q("SELECT * FROM room_owners")}
 
 
 def record_push_seen(repeater_id: int, hb_s: int, seq: int, boot: int) -> bool:
