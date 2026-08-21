@@ -662,4 +662,32 @@
      geen metingen. Instellen met <code>MM_TSDB_URL</code> (leeg = alles in SQLite).</p>
   </div>
 </section>
+
+<section id="hadiscovery">
+  <h2>Home Assistant (MQTT-discovery)</h2>
+  <div class="card">
+  {% if not hadiscovery.enabled %}
+  <p class="muted"><strong>Uit.</strong> {{ hadiscovery.reason }}</p>
+  {% endif %}
+  <table>
+    <tr><td>Publiceren naar HA</td><td>
+      {%- if hadiscovery.enabled and hadiscovery.connected %}<span class="ok">aan &mdash; verbonden</span>
+      {%- elif hadiscovery.enabled %}<span class="bad">aan, maar niet verbonden</span>
+        {% if hadiscovery.last_error %}<span class="muted">&middot; {{ hadiscovery.last_error }}</span>{% endif %}
+      {%- else %}<span class="muted">uit &mdash; {{ hadiscovery.reason }}</span>{% endif %}</td></tr>
+    <tr><td>HA-broker</td><td class="mono">{{ hadiscovery.broker or 'niet ingesteld' }}</td></tr>
+    <tr><td>Discovery-voorvoegsel</td><td class="mono">{{ hadiscovery.discovery_prefix }}</td></tr>
+    <tr><td>State-voorvoegsel</td><td class="mono">{{ hadiscovery.state_prefix }}</td></tr>
+    <tr><td>Scope</td><td class="mono">{{ hadiscovery.scope }} &middot; stilte-drempel {{ hadiscovery.stale_min }} min</td></tr>
+    <tr><td>Gepubliceerd</td><td class="mono">{{ hadiscovery.published_entities }} entiteiten over {{ hadiscovery.published_nodes }} node(s)</td></tr>
+    <tr><td>Berichten</td><td class="mono">{{ hadiscovery.config_msgs }} config &middot; {{ hadiscovery.state_msgs }} state &middot; {{ hadiscovery.removed }} opgeruimd{% if hadiscovery.last_publish %} &middot; <span class="muted">laatste <time class="reltime" datetime="{{ hadiscovery.last_publish }}">{{ hadiscovery.last_publish }}</time></span>{% endif %}</td></tr>
+  </table>
+  <p class="muted small">Onze nodes verschijnen vanzelf als HA-entiteiten, zonder custom component &mdash; net zoals
+     Uptime&nbsp;Kuma dat al doet op deze broker. Dit is een aparte verbinding naar de broker van Home Assistant
+     (niet de eigen ingest-broker hierboven). Aanzetten: zet <code>MM_HA_MQTT_HOST</code> en
+     <code>MM_HA_DISCOVERY_ENABLED=1</code> en maak een EMQX-gebruiker met een ACL onder
+     <code>{{ hadiscovery.discovery_prefix }}/#</code> en <code>{{ hadiscovery.state_prefix }}/#</code>.
+     Zie <code>docs/ha-integratie.md</code>.</p>
+  </div>
+</section>
 {% endblock %}

@@ -10,9 +10,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, clocksync, db, limits, meshmoni, mqtt_ingest, rbac,
-               retention, routes_admin, routes_api, routes_public, sensornode,
-               sensorpush, sweepsched, tsdb, webpush)
+from . import (auth, clocksync, db, hadiscovery, limits, meshmoni, mqtt_ingest,
+               rbac, retention, routes_admin, routes_api, routes_public,
+               sensornode, sensorpush, sweepsched, tsdb, webpush)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -107,6 +107,11 @@ def bootstrap():
     # dezelfde leesvolgorde-reden; hij doet zelf niets zolang MM_PUSH_TOKEN
     # leeg is, en ijkt zijn startpunt op nu -- zie sensorpush._seed.
     sensorpush.start()
+    # En als laatste de weg naar buiten: onze telemetrie als HA-entiteiten op de
+    # broker van Home Assistant. Hij hangt een haak in db.ingest (zie
+    # register_ingest_hook), dus hij moet ná de ingest-wegen starten -- en zonder
+    # MM_HA_MQTT_HOST + MM_HA_DISCOVERY_ENABLED start hij niet en zegt hij waarom.
+    hadiscovery.start()
 
 
 def set_password():

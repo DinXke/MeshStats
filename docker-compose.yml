@@ -109,6 +109,20 @@ services:
       # /api/sensorpush. Bewust leeg als standaard: leeg zet die weg uit (503
       # met reden), zoals de VAPID-sleutels hierboven. Zie .env.example.
       MM_PUSH_TOKEN: "${MM_PUSH_TOKEN-${MCS_PUSH_TOKEN-}}"
+      # Home Assistant MQTT-discovery: onze telemetrie als HA-entiteiten op de
+      # broker van Home Assistant (een ANDERE broker dan de ingest-broker
+      # hierboven). Bewust leeg/uit als standaard -- leeg host óf schakelaar uit
+      # zet deze weg uit met die reden zichtbaar in de UI, zoals de
+      # VAPID-sleutels. Aanmaken van de EMQX-gebruiker: zie docs/nl/ha-integratie.md.
+      MM_HA_MQTT_HOST: "${MM_HA_MQTT_HOST-${MCS_HA_MQTT_HOST-}}"
+      MM_HA_MQTT_PORT: "${MM_HA_MQTT_PORT:-${MCS_HA_MQTT_PORT:-1883}}"
+      MM_HA_MQTT_USER: "${MM_HA_MQTT_USER-${MCS_HA_MQTT_USER-}}"
+      MM_HA_MQTT_PASS: "${MM_HA_MQTT_PASS-${MCS_HA_MQTT_PASS-}}"
+      MM_HA_DISCOVERY_ENABLED: "${MM_HA_DISCOVERY_ENABLED-${MCS_HA_DISCOVERY_ENABLED-}}"
+      MM_HA_DISCOVERY_PREFIX: "${MM_HA_DISCOVERY_PREFIX:-${MCS_HA_DISCOVERY_PREFIX:-homeassistant}}"
+      MM_HA_STATE_PREFIX: "${MM_HA_STATE_PREFIX:-${MCS_HA_STATE_PREFIX:-meshmanager/ha}}"
+      MM_HA_SCOPE: "${MM_HA_SCOPE:-${MCS_HA_SCOPE:-monitored}}"
+      MM_HA_STALE_MIN: "${MM_HA_STALE_MIN:-${MCS_HA_STALE_MIN:-20}}"
     volumes:
       # Zelfde reden als de projectnaam hierboven: de sleutel van dit volume
       # is de naam waaronder de databank op schijf staat. Hernoemen levert

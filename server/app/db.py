@@ -3015,6 +3015,43 @@ def spill_samples(items) -> None:
 tsdb.register_spill(spill_samples)
 
 
+# --- ingest-haken ------------------------------------------------------------
+#
+# Wie een verse meting wil zien op het moment dat ze binnenkomt, hangt hier een
+# functie in. ``ingest`` roept elke haak aan NADAT de meting bewaard is en
+# BUITEN het schrijfslot, met alleen het ``repeater_id`` -- de haak leest zelf
+# terug wat hij nodig heeft. Dat is met opzet: db bezit de opslag en hoort niet
+# te weten wie er meeluistert (Home Assistant, straks iets anders), en een haak
+# die zelf terugleest kan nooit een half bericht meekrijgen.
+#
+# Dezelfde filosofie als de alerts-tabel: een tabel -- of hier een lijst met
+# haken -- is het koppelvlak, en de schrijver hoeft de lezer niet te kennen. De
+# haak MOET niet-blokkerend zijn en mag nooit opwerpen: hij draait in het
+# ingest-pad, en dat pad staat nergens op een socket te wachten (zie de
+# toelichting bij tsdb.record hieronder). Een haak die dat toch doet, wordt hier
+# afgevangen en gelogd zodat één stukke luisteraar de ingest niet plat legt.
+_ingest_hooks: list = []
+
+
+def register_ingest_hook(fn) -> None:
+    """Hang een functie ``fn(repeater_id)`` in die na elke ingest wordt geroepen.
+
+    Idempotent: dezelfde functie tweemaal registreren voegt haar één keer toe,
+    zodat een module die bij een herstart opnieuw ``start()`` doet geen dubbele
+    meldingen krijgt.
+    """
+    if fn not in _ingest_hooks:
+        _ingest_hooks.append(fn)
+
+
+def _run_ingest_hooks(repeater_id: int) -> None:
+    for fn in _ingest_hooks:
+        try:
+            fn(repeater_id)
+        except Exception:  # noqa: BLE001 - een luisteraar mag de ingest niet breken
+            log.exception("ingest-haak %r mislukt voor repeater %s", fn, repeater_id)
+
+
 def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
            force: bool = False):
     """Store a snapshot.
@@ -3161,6 +3198,11 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
     # they come straight back to spill_samples above.
     if slug and to_tsdb:
         tsdb.record(repeater_id, slug, ts, to_tsdb)
+
+    # Idem: buiten het slot en niet-blokkerend. De haken (nu: Home Assistant)
+    # zetten de verse meting op hun eigen weg voort. Ze lezen zelf terug wat ze
+    # nodig hebben; hier gaat alleen het id mee.
+    _run_ingest_hooks(repeater_id)
 
 
 def history(repeater_id: int, metric: str, hours: int) -> list[tuple[str, float]]:

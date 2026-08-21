@@ -25,9 +25,9 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
-               discovery, firmware, metrics, monitors, mqtt_ingest, nodeconfig,
-               nodecred, pktfilter, ratelimit, rbac, retention, sensornode,
-               sensorpush, sweepsched, tsdb)
+               discovery, firmware, hadiscovery, metrics, monitors, mqtt_ingest,
+               nodeconfig, nodecred, pktfilter, ratelimit, rbac, retention,
+               sensornode, sensorpush, sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -763,6 +763,9 @@ def server_page(request: Request):
         # van te moeten gokken. Zie mqtt_ingest.LEGACY_PREFIX.
         "topic_prefixes": db.topic_prefix_counts(),
         "tsdb": tsdb.status(),
+        # De weg naar Home Assistant: onze telemetrie als HA-entiteiten. Uit tot
+        # de HA-broker gezet is; de reden staat in de status. Zie hadiscovery.py.
+        "hadiscovery": hadiscovery.status(),
         "clocksync": clocksync.status(),
         # De uitleesronde voor sensornodes. Zichtbaar hier en niet alleen in het
         # logboek, om dezelfde reden als bij de kloksynchronisatie hieronder: een
