@@ -613,6 +613,14 @@
     {%- elif sensor_result.soort == 'region' and sensor_result.ok %}
     &#9989; Regio gezet en vastgelegd. <span class="mono">{{ sensor_result.set }}</span>
     &middot; <span class="mono">{{ sensor_result.saved }}</span>
+    {%- elif sensor_result.soort == 'rotate' and sensor_result.ok %}
+    &#9989; Deze node heeft nu een <strong>eigen weblogin</strong>
+    (gebruiker <span class="mono">{{ sensor_result.user }}</span>). Het wachtwoord is
+    door de server gezet en bewaard; het staat nergens leesbaar, ook niet in het
+    audittrail. De node gebruikt het vanaf zijn volgende verzoek.
+    {%- elif sensor_result.soort == 'rotate' %}
+    &#9888; De weblogin is <strong>niet</strong> geroteerd: {{ sensor_result.error }}.
+    Er is niets aan de opslag veranderd &mdash; de node blijft op de vorige login.
     {%- elif sensor_result.ok %}
     &#9989; <span class="mono">{{ sensor_result.reply }}</span>
     {%- else %}
@@ -681,6 +689,42 @@
       {%- if sensor_last.error %} <span class="muted">&mdash; {{ sensor_last.error }}</span>{% endif %}</td></tr>
     {% endif %}
   </table>
+
+  {#- De weblogin van deze node. Een node op de GEDEELDE vlootsleutel is een
+      zwakte in dezelfde geest als een leeg mesh-wachtwoord: het werkt, maar één
+      lek opent dan de hele vloot in plaats van deze ene node. Vandaar een
+      waarschuwing met de knop ernaast, en niet in een voetnoot. -#}
+  {% if sensor_cred %}
+  <h3>Weblogin</h3>
+  {% if sensor_cred.shared %}
+  <p class="error small">&#9888; <strong>Deze node deelt de vlootsleutel</strong>
+     (<span class="mono">MM_FW_NODE_USER</span>/<span class="mono">MM_FW_NODE_PASS</span>).
+     Dat is dezelfde login als op elke andere node en gelijk aan de sleutel waarmee
+     de server firmware schrijft: lekt deze node, dan lekt de hele vloot mee. Roteer
+     hem naar een eigen login om die schade tot deze ene node te beperken.</p>
+  {% else %}
+  <p class="muted small">&#9989; Deze node heeft een <strong>eigen weblogin</strong>
+     (gebruiker <span class="mono">{{ sensor_cred.user }}</span>), los van de
+     vlootsleutel. Een lek van deze node opent geen andere node.</p>
+  {% endif %}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rotate-cred"
+        class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit"{% if not is_superuser %} disabled{% endif %}>
+      &#128273; {{ 'Eigen login instellen' if sensor_cred.shared else 'Login opnieuw roteren' }}</button>
+  </form>
+  {% if not is_superuser %}
+  <p class="muted small">Alleen een serverbeheerder kan roteren: de rotatie meldt
+     zich bij de node aan met de sleutel die elke node opent, en dat is geen recht
+     dat per node uitgedeeld wordt.</p>
+  {% else %}
+  <p class="muted small">Roteren maakt een sterke, willekeurige login, zet die bij
+     de node, en bewaart hem pas als de node bevestigt. Lukt de node niet, dan
+     verandert er niets &mdash; je sluit jezelf er niet mee buiten. Let op: Basic-auth
+     over HTTP stuurt ook een eigen login nog leesbaar over het LAN; dit beperkt de
+     schade van een lek, maar vervangt geen TLS of een apart netwerk.</p>
+  {% endif %}
+  {% endif %}
 
   {% if not sensor_route.can %}
   <p class="error small">Deze weg kan nu niets:

@@ -356,6 +356,25 @@ COLUMN_MIGRATIONS = [
     ("repeaters", "sensor_host", "TEXT"),
     ("repeaters", "sensor_seen", "TEXT"),
     ("repeaters", "sensor_fw", "TEXT"),
+    # De EIGEN weblogin van deze sensornode, los van de vlootsleutel
+    # (MM_FW_NODE_USER/MM_FW_NODE_PASS). Zonder deze twee kolommen deelt elke node
+    # één credential met de hele vloot, gelijk aan de vlootsleutel: één lek opent
+    # dan alles. Met een eigen login per node beperkt een lek zich tot die ene node.
+    #
+    # ``web_user`` staat in platte tekst -- een gebruikersnaam is geen geheim en
+    # de kolom moet doorzoekbaar zijn om bij een adres de juiste rij te vinden.
+    # ``web_pass_enc`` is het wachtwoord, GEOBFUSCEERD met de installatiesleutel
+    # (config.SECRET); zie nodecred.py voor het formaat en de eerlijke noot dat
+    # dit geen echte versleuteling is, alleen bescherming tegen een terloopse
+    # blik in de databank of een back-up.
+    #
+    # Allebei NULL zolang een node nog niet geroteerd is, en NULL betekent precies
+    # "gebruik de vlootsleutel". Dat is de terugval die bestaande nodes laat
+    # blijven werken tot ze geroteerd zijn -- additief, en dus veilig voor de
+    # deploy-gate die oude code op een al-gemigreerde databank kan terugzetten:
+    # oude code die deze kolommen niet kent, laat ze gewoon liggen.
+    ("repeaters", "web_user", "TEXT"),
+    ("repeaters", "web_pass_enc", "TEXT"),
     # De gebeurtenis-push van een sensornode (sensorpush.py): wanneer hij voor
     # het laatst pushte, welke hartslag hij daarbij beloofde, en zijn tellers.
     # WAARNEMINGEN, net als sensor_seen -- niets hiervan wordt ingetypt. In de
@@ -2819,6 +2838,55 @@ def record_sensor_seen(repeater_id: int, fw: str = "") -> None:
                 (utcnow(), text, repeater_id))
         return
     execute("UPDATE repeaters SET sensor_seen=? WHERE id=?", (utcnow(), repeater_id))
+
+
+def set_node_web_cred(repeater_id: int, user: str, pass_enc: str) -> None:
+    """De eigen weblogin van deze node opslaan.
+
+    Alleen aanroepen NA een geslaagde rotatie bij de node: eerst moet de node de
+    nieuwe login aanvaard hebben, pas dan mag de server hem als de waarheid
+    bewaren. Andersom -- eerst opslaan, dan proberen -- sluit je jezelf buiten als
+    de node niet meebeweegt. Zie nodecred.rotate en sensornode.rotate_cred.
+
+    ``pass_enc`` is al geobfusceerd (nodecred.obfuscate); deze laag ziet het
+    wachtwoord nooit in leesbare vorm, net als set-methoden elders in dit bestand.
+    """
+    execute("UPDATE repeaters SET web_user=?, web_pass_enc=? WHERE id=?",
+            (str(user or "").strip()[:64] or None, pass_enc or None, repeater_id))
+
+
+def clear_node_web_cred(repeater_id: int) -> None:
+    """De eigen weblogin wissen, zodat deze node terugvalt op de vlootsleutel.
+
+    Bestaat voor het geval een node opnieuw opgezet is en zijn login weer op de
+    fabrieks- of vlootwaarde staat: dan is de opgeslagen credential een leugen en
+    moet hij weg, anders blijft de server met een dood wachtwoord kloppen.
+    """
+    execute("UPDATE repeaters SET web_user=NULL, web_pass_enc=NULL WHERE id=?",
+            (repeater_id,))
+
+
+def node_web_cred_for_host(host: str):
+    """De opgeslagen weblogin bij een beheeradres, of None.
+
+    Zoekt op ``sensor_host`` of ``ota_host`` -- de twee velden waarheen de server
+    over IP verbindt en die firmware.check_target als toegestane-lijst gebruikt.
+    Letterlijk vergeleken (getrimd), net als firmware.trusted_hosts: wat er in het
+    veld staat is wat benaderd wordt, en normaliseren zou de lijst iets anders
+    laten toestaan dan wat gebeurt.
+
+    Alleen rijen mét een ``web_user``: een lege login is geen login, en dan is het
+    juiste antwoord de vlootsleutel (de terugval), niet een half ingevulde rij.
+    """
+    key = str(host or "").strip()
+    if not key:
+        return None
+    return qone(
+        "SELECT id, web_user, web_pass_enc FROM repeaters "
+        "WHERE web_user IS NOT NULL AND TRIM(web_user) <> '' "
+        "  AND (TRIM(COALESCE(sensor_host,'')) = ? "
+        "       OR TRIM(COALESCE(ota_host,'')) = ?) "
+        "ORDER BY id LIMIT 1", (key, key))
 
 
 def sensor_nodes() -> list:

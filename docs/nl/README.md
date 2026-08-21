@@ -110,6 +110,7 @@ Geen van beide is nodig. Ze bestaan voor situaties die de hoofdweg niet dekt.
 | [`admin.md`](admin.md) | Het beheerdersperspectief op `/admin`: accounts, API-tokens, sessies, en elk formulier achter de inlog |
 | [`retention.md`](retention.md) | Hoelang de site dingen bewaart, wat verhindert dat de schijf volloopt, en waarom de beheerpagina het hardop zegt als de ingestelde termijn niet gehaald wordt |
 | [`security.md`](security.md) | Het dreigingsmodel, wat er hoe beschermd wordt, en — minstens zo belangrijk — wat niet |
+| [`per-node-credentials.md`](per-node-credentials.md) | Elke sensornode zijn eigen weblogin geven in plaats van de gedeelde vlootsleutel: het model, hoe rotatie werkt, de bootstrap, en de eerlijke grens dat Basic-auth over HTTP nog leesbaar over het LAN reist |
 | [`privacy.md`](privacy.md) | Wat de site toont over nodes van anderen en waarom dat mag, de drie zichtbaarheidsschakelaars per node, en wat geen enkele schakelaar verbergt |
 
 ---

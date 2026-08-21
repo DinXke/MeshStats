@@ -26,8 +26,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import (audit, auth, clocksync, commanding, compare, config, db,
                discovery, firmware, metrics, monitors, mqtt_ingest, nodeconfig,
-               pktfilter, ratelimit, rbac, retention, sensornode, sensorpush,
-               sweepsched, tsdb)
+               nodecred, pktfilter, ratelimit, rbac, retention, sensornode,
+               sensorpush, sweepsched, tsdb)
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
@@ -1214,6 +1214,16 @@ def _node_page(request: Request, rid: int, **extra):
         "sensor_route": sensor_route,
         "sensor_last": sensornode.last(rid),
         "sensor_acl": sensor_acl,
+        # Zit deze node nog op de GEDEELDE vlootsleutel (zwakte) of heeft hij een
+        # eigen weblogin? Alleen zinvol als er een adres is; anders is er geen weg
+        # om over in te loggen. ``shared`` True is de waarschuwing -- net als een
+        # leeg mesh-wachtwoord: het werkt, maar één lek opent dan de hele vloot.
+        # De rotatieknop hangt aan ``is_superuser`` en niet aan een node-recht,
+        # want roteren praat langs de vlootsleutel; zie require_server_admin.
+        "sensor_cred": ({"shared": not nodecred.has_own(sensor_route["host"]),
+                         "user": (nodecred.for_host(sensor_route["host"]) or ("", ""))[0]}
+                        if sensor_route is not None else None),
+        "is_superuser": rbac.load(user).is_superuser,
         "sensor_interval_s": sensornode.INTERVAL_S,
         "sensor_enabled": sensornode.ENABLED,
         "sensor_region_fields": sensornode.REGION_FIELDS,
@@ -1538,6 +1548,36 @@ def sensor_region(request: Request, rid: int, veld: str = Form(""),
             detail=f"regio {veld.strip()} -> {naam.strip()} over de eigen API",
             outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
     return _node_page(request, rid, sensor_result={"soort": "region", **uitslag})
+
+
+@router.post("/repeaters/{rid}/sensor/rotate-cred")
+def sensor_rotate_cred(request: Request, rid: int, csrf: str = Form(...)):
+    """Deze node een eigen weblogin geven, weg van de gedeelde vlootsleutel.
+
+    Achter dezelfde grens als het invullen van een beheeradres: alleen een
+    SERVERbeheerder (``require_server_admin``), want de rotatie praat met de node
+    langs de credential die ELKE node opent, en wie die mag omleiden is geen
+    gedelegeerd recht. Daarnaast het gewone ``node.beheeradres`` op deze node.
+
+    De rotatie zelf staat in ``sensornode.rotate_cred``: genereren, bij de node
+    aanmelden met de HUIDIGE login, en pas na een 200 bewaren. Faalt de node, dan
+    verandert er niets aan de opslag -- dat is wat voorkomt dat je jezelf
+    buitensluit. Zie daar.
+
+    Het nieuwe wachtwoord komt niet in het trail en niet in de URL; alleen dát er
+    geroteerd is, en de nieuwe (niet-geheime) gebruikersnaam.
+    """
+    rep = _rep_or_404(request, rid)
+    require_server_admin(request, "een eigen weblogin voor de node roteren")
+    user = require_perm(request, "node.beheeradres", rep)
+    check_csrf(request, csrf)
+    uitslag = sensornode.rotate_cred(rep)
+    _noteer(request, user, "node.beheeradres", rep=rep,
+            detail=(f"eigen weblogin geroteerd (gebruiker {uitslag['user']})"
+                    if uitslag["ok"]
+                    else f"rotatie van de weblogin mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={"soort": "rotate", **uitslag})
 
 
 # --- alarmen ------------------------------------------------------------------

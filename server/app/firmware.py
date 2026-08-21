@@ -298,15 +298,30 @@ def release_by_tag(tag: str) -> dict | None:
 
 # --- de node ------------------------------------------------------------------
 
-def _auth_header() -> dict:
-    """Basic, preventief meegestuurd.
+def _auth_header(host: str | None = None) -> dict:
+    """Basic, preventief meegestuurd, met de juiste credential voor dit adres.
 
     De firmware aanvaardt zowel Basic als Digest (``req->authenticate()`` kijkt
     naar allebei). Preventief Basic bespaart een extra ronde -- en die ronde is
     hier duurder dan hij lijkt: bij een 401 op een POST met 1,3 MB body heeft de
     client die body al verstuurd.
+
+    WELKE credential: heeft dit adres een eigen weblogin (nodecred.for_host), dan
+    die; anders de vlootsleutel MM_FW_NODE_USER/MM_FW_NODE_PASS. Die terugval is
+    wat een node die nog niet geroteerd is bereikbaar houdt. Zo beperkt één
+    gelekte node zich tot zichzelf in plaats van de hele vloot -- de reden dat de
+    per-node-login bestaat; zie nodecred.py.
+
+    De import van ``nodecred`` staat in de functie en niet bovenaan, en dat is met
+    opzet: ``nodecred`` leunt niet op ``firmware`` maar dit bestand wordt door veel
+    geladen, en een importvolgorde die per ongeluk omdraait mag hier geen
+    kringetje worden. Op belverzoeksnelheid is die import gratis (Python cachet de
+    module na de eerste keer).
     """
-    token = base64.b64encode(f"{NODE_USER}:{NODE_PASS}".encode()).decode()
+    from . import nodecred
+    cred = nodecred.for_host(host) if host else None
+    user, pw = cred if cred else (NODE_USER, NODE_PASS)
+    token = base64.b64encode(f"{user}:{pw}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
 
@@ -594,7 +609,11 @@ def open_node(host: str, path: str, data: bytes | None = None,
     if not toets["ok"]:
         raise TargetRefused(toets["error"])
     url = _url(host, path)
-    headers = dict(_auth_header())
+    # De credential hangt aan het ADRES, niet aan de vloot: heeft dit adres een
+    # eigen weblogin, dan gaat die mee; anders de vlootsleutel. Dit is de ene plek
+    # waar het geheim de deur uit gaat -- net als de doelcontrole hierboven -- dus
+    # ook de ene plek waar de keuze tussen per-node en vloot valt.
+    headers = dict(_auth_header(host))
     if content_type:
         headers["Content-Type"] = content_type
     req = urllib.request.Request(url, data=data, headers=headers,

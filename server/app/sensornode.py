@@ -1253,3 +1253,79 @@ def set_region(rep, veld: str, naam: str) -> dict:
 
 def _host(rep) -> str:
     return str(firmware._field(rep, "sensor_host") or "").strip()
+
+
+def rotate_cred(rep) -> dict:
+    """Deze node een verse, eigen weblogin geven, los van de vlootsleutel.
+
+    De volgorde is de hele veiligheid van deze functie:
+
+    1.  Genereer een sterke ``user`` + ``pass`` (nodecred.generate).
+    2.  Roep de node aan met de HUIDIGE credential -- dat is de per-node-login als
+        die er al is, en anders de vlootsleutel (de bootstrap). Die keuze valt
+        vanzelf goed: firmware._auth_header kijkt naar wat er NU opgeslagen is, en
+        dat is de oude waarde zolang stap 3 niet gedaan is.
+    3.  Bewaar de nieuwe login PAS na een 200 van de node.
+
+    Faalt de aanroep -- adres geweigerd, geen antwoord, een HTTP-fout, of een
+    antwoord dat geen ``{"ok":1}`` is -- dan verandert er NIETS aan de opslag. Dat
+    is geen nette bijkomstigheid maar het punt: eerst opslaan en dan proberen zou
+    je buitensluiten zodra de node niet meebeweegt, want dan klopt de server met
+    een wachtwoord dat de node nooit aangenomen heeft.
+
+    Het nieuwe wachtwoord komt NERGENS terug uit deze functie en in geen enkel log
+    -- alleen dát het gelukt is, en de (niet-geheime) gebruikersnaam. Dezelfde
+    regel als in audit.py: een geheim hoort niet in een log en niet in een URL.
+    """
+    from . import nodecred
+
+    out = {"ok": False, "error": "", "user": ""}
+    rid = int(firmware._field(rep, "id") or 0)
+    host = _host(rep)
+    if not host:
+        out["error"] = "geen adres voor de eigen API van deze node"
+        return out
+    # Is er een credential om de wijziging mee AAN TE MELDEN? Bij de bootstrap is
+    # dat de vlootsleutel; is die er niet en is er ook nog geen per-node-login,
+    # dan valt er niets aan te melden en zou de aanroep sowieso op een 401 stuiten.
+    if nodecred.for_host(host) is None and not firmware.NODE_USER:
+        out["error"] = ("geen huidige weblogin om de wijziging mee aan te melden "
+                        "(MM_FW_NODE_USER/MM_FW_NODE_PASS)")
+        return out
+
+    new_user, new_pass = nodecred.generate()
+    body = json.dumps({"user": new_user, "pass": new_pass}).encode()
+    try:
+        with firmware.open_node(host, "/web/cred", data=body,
+                                timeout=TIMEOUT_S,
+                                content_type="application/json") as resp:
+            antwoord = json.loads(resp.read() or b"{}")
+    except firmware.TargetRefused as exc:
+        out["error"] = str(exc)
+        return out
+    except urllib.error.HTTPError as exc:
+        # De node antwoordt bij een weigering met tekst; die is bruikbaarder dan
+        # "HTTP 400". 400 hoort hier niet voor te komen -- we sturen nooit een
+        # leeg wachtwoord -- maar als het toch gebeurt, zeg dan wat de node zei.
+        try:
+            melding = exc.read().decode("utf-8", "replace").strip()[:200]
+        except OSError:
+            melding = ""
+        out["error"] = melding or f"node antwoordde HTTP {exc.code}"
+        return out
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        out["error"] = f"niet bereikbaar ({type(exc).__name__})"
+        return out
+
+    if not (isinstance(antwoord, dict) and antwoord.get("ok")):
+        # Geen 200-met-ok: de node heeft de nieuwe login NIET aangenomen. Niets
+        # opslaan -- zie de docstring.
+        out["error"] = "de node bevestigde de nieuwe weblogin niet"
+        return out
+
+    # Pas hier bewaren, want pas hier is het waar. Vanaf het volgende verzoek
+    # gebruikt firmware._auth_header deze nieuwe login voor dit adres.
+    nodecred.store(rid, new_user, new_pass)
+    out["ok"] = True
+    out["user"] = new_user
+    return out
