@@ -1,0 +1,79 @@
+# Bewaakt een SERVER-release: op een tag v* draaien de servertests en wordt het
+# image gebouwd. Slaagt dat, dan -- en pas dan -- geldt die tag als "klaar om te
+# deployen" met scripts/deploy.sh op de host.
+#
+# Waarom dit bestaat. De oude uitrol (deploy/autoupdate.sh) rolde elke commit op
+# main uit, ongezien en ongetoetst, en heeft zo twee keer productie omgelegd. De
+# nieuwe uitrol gebeurt op een TAG. Deze workflow is de betekenis van die tag:
+# een tag zonder groene tests is geen release, en scripts/deploy.sh op de server
+# vertrouwt erop dat wie een tag maakt, hem eerst hier langs heeft zien komen.
+#
+# GEEN registry, en dat is bewust. In deze repo staat nergens een image-registry
+# (geen login, geen push in de compose of de deploy-scripts): de host bouwt zelf
+# uit de uitgecheckte tag, zoals scripts/deploy.sh doet. Deze workflow PUSHT dus
+# niets -- ze bewijst dat de tag bouwt en dat de tests groen zijn. Komt er ooit
+# een registry, dan is hier één push-stap bij te zetten; tot dan is "tests groen
+# en het image bouwt" precies wat de tag belooft en niet meer.
+#
+# TAGGEN. `git tag v1.4.0 && git push origin v1.4.0`. Semver met een v ervoor,
+# zodat scripts/deploy.sh de nieuwste met `git tag -l 'v*' --sort=-v:refname`
+# vindt. (De firmware heeft een eigen reeks fw-v* met een eigen workflow; die
+# twee raken elkaar niet.)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag of ref om te toetsen, bijv. v1.4.0'
+        required: true
+
+jobs:
+  # De poort. Dezelfde 1307 tests die lokaal groen moeten blijven, hier op de
+  # tag. Faalt er één, dan stopt de workflow en bouwt 'image' niet -- de tag
+  # haalt dan de status "klaar om te deployen" niet.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12, gelijk aan de FROM in server/Dockerfile: de tests horen te
+          # draaien op de Python waarop de container straks draait.
+          python-version: '3.12'
+
+      - name: Afhankelijkheden
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          # requirements-dev.txt trekt requirements.txt mee en voegt pytest toe.
+          pip install -r requirements-dev.txt
+
+      - name: Servertests
+        working-directory: server
+        # -q en niets slims: dit is de poort, de uitvoer hoort leesbaar te zijn
+        # en een rode test hoort de stap te laten falen (pytest geeft dan niet-nul).
+        run: python -m pytest -q
+
+  # Bewijst dat de tag ook echt tot een image te bouwen is -- een groene testrun
+  # zegt niets over een Dockerfile die niet meer bouwt. Hangt aan 'test', zodat
+  # een tag met rode tests hier niet eens aan toe komt. Geen push: zie de kop.
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Image bouwen (niet pushen)
+        # Precies wat scripts/deploy.sh op de host doet: build de app-image uit
+        # de uitgecheckte boom. De tag hier is puur een label voor de logregel.
+        run: docker build -t "meshmanager:${{ github.ref_name }}" server
