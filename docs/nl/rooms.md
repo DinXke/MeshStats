@@ -108,9 +108,11 @@ De site spreekt `GET /rooms.json`, `POST /room/add|edit|del`, `POST
 kanaalnummer uit `mon[].ch` is en op de node wint). Het node-centrische
 kanaalpanel gebruikt diezelfde setter — een kanaal aan-/afvinken op een
 room/sensor-node zet alleen de `rm`- resp. `sn`-bit van die entiteit en laat de
-andere maskers met rust. Een kanaal aanmaken (`POST /mon/add`) en adverts (`POST
-/room/advert` / `POST /snode/advert`, formvelden `idx`/`flood`) zijn aannames
-zolang hun contract nog niet vaststaat. Dit alles staat geïsoleerd achter de
+andere maskers met rust. Een kanaal aanmaken loopt via het bestaande `POST
+/monitor` (formvelden `name`/`host`/`int`), dat platte tekst teruggeeft (`ok
+<naam> -> kanaal <N>`) — de site plukt het kanaalnummer eruit en koppelt het.
+Adverts gaan via `POST /room/advert` / `POST /snode/advert` (formvelden
+`idx`/`flood`). Dit alles staat geïsoleerd achter de
 `MON_ALARM_*`/`MONITOR_ADD_PATH`/`*_ADVERT_PATH`-constanten en hun functies in
 `server/app/rooms.py`, zodat een afwijkend contract een kleine wijziging is. De
 netwerkgrens zelf blijft in `sensornode.py`, achter dezelfde doelcontrole en

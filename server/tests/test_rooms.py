@@ -338,16 +338,27 @@ def test_apply_channels_laat_ongewijzigde_kanalen_met_rust(db, monkeypatch):
     assert uit["ok"] and uit["changed"] == 0 and calls == []
 
 
-def test_add_monitor_geeft_het_nieuwe_kanaalnummer_terug(db, monkeypatch):
+def test_add_monitor_plukt_het_kanaalnummer_uit_de_tekst(db, monkeypatch):
+    """POST /monitor antwoordt met platte tekst 'ok <naam> -> kanaal <N>'."""
     from app import rooms, sensornode
     gezien = {}
-    monkeypatch.setattr(sensornode, "post_form",
+    monkeypatch.setattr(sensornode, "post_text",
                         lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
-                        or {"ok": True, "error": "", "data": {"ok": True, "ch": 7}})
+                        or {"ok": True, "error": "", "text": "ok Nieuw -> kanaal 7"})
     uit = rooms.add_monitor(_rep(db), "Nieuw", host="1.1.1.1", interval=60)
     assert uit["ok"] and uit["ch"] == 7
     assert gezien["path"] == rooms.MONITOR_ADD_PATH
-    assert gezien["fields"] == {"name": "Nieuw", "host": "1.1.1.1", "interval": 60}
+    # Formveld voor het interval heet 'int', geen 'kind' meegestuurd.
+    assert gezien["fields"] == {"name": "Nieuw", "host": "1.1.1.1", "int": 60}
+
+
+def test_add_monitor_vangt_een_onverwacht_antwoord_af(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "post_text",
+                        lambda host, path, fields, t=None:
+                        {"ok": True, "error": "", "text": "Error: geen ruimte"})
+    uit = rooms.add_monitor(_rep(db), "Nieuw")
+    assert not uit["ok"] and "Error" in uit["error"] and uit["ch"] is None
 
 
 def test_room_en_snode_advert_sturen_idx_en_flood(db, monkeypatch):

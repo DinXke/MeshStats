@@ -102,10 +102,11 @@ The site talks to `GET /rooms.json`, `POST /room/add|edit|del`, `POST
 `ch`/`am`/`rm`, optionally `sn`, where `ch` is the monitor's channel from
 `mon[].ch` and wins on the node). The node-centric channel panel reuses that same
 setter — checking a channel on a room/sensor-node only flips that entity's `rm`
-resp. `sn` bit, leaving the other masks alone. Creating a channel (`POST
-/mon/add`) and adverts (`POST /room/advert` / `POST /snode/advert`, form
-`idx`/`flood`) are assumptions while their contract settles. All of these live
-isolated behind the `MON_ALARM_*`/`MONITOR_ADD_PATH`/`*_ADVERT_PATH` constants and
+resp. `sn` bit, leaving the other masks alone. Creating a channel goes through the
+existing `POST /monitor` (form `name`/`host`/`int`), which replies in plain text
+(`ok <name> -> kanaal <N>`) — the site parses the channel number out and couples
+it. Adverts use `POST /room/advert` / `POST /snode/advert` (form `idx`/`flood`).
+All of these live isolated behind the `MON_ALARM_*`/`MONITOR_ADD_PATH`/`*_ADVERT_PATH` constants and
 their functions in `server/app/rooms.py`, so a differing contract is a small
 change. The network boundary itself stays in `sensornode.py`, behind the same
 target check and fleet/per-node credential as every other call to a node.

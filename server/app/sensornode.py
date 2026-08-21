@@ -277,6 +277,45 @@ def post_json(host: str, path: str, obj, timeout: int | None = None) -> dict:
     return _post(host, path, body, "application/json", timeout)
 
 
+def post_text(host: str, path: str, fields: dict,
+              timeout: int | None = None) -> dict:
+    """``POST`` met een form-body naar een route die PLATTE TEKST teruggeeft.
+
+    ``{"ok": bool, "error": str, "text": str}``. Voor node-routes die geen JSON
+    maar een regel tekst antwoorden -- zoals ``/monitor`` (``ok <naam> -> kanaal
+    <N>``). Dezelfde netwerkgrens en foutafhandeling als ``cli``: een 4xx komt met
+    de reden van de node als tekst terug, en die tekst is het enige bruikbare aan
+    zo'n antwoord.
+    """
+    out = {"ok": False, "error": "", "text": ""}
+    if not (host or "").strip():
+        out["error"] = "geen adres voor de eigen API van deze node"
+        return out
+    if not firmware.NODE_USER:
+        out["error"] = ("geen weblogin voor de nodes (MM_FW_NODE_USER/"
+                        "MM_FW_NODE_PASS)")
+        return out
+    schoon = {k: v for k, v in fields.items() if v is not None}
+    body = urllib.parse.urlencode(schoon).encode()
+    try:
+        with firmware.open_node(host, path, data=body,
+                                timeout=timeout or TIMEOUT_S,
+                                content_type="application/x-www-form-urlencoded") as resp:
+            out["text"] = resp.read().decode("utf-8", "replace").strip()
+        out["ok"] = True
+    except firmware.TargetRefused as exc:
+        out["error"] = str(exc)
+    except urllib.error.HTTPError as exc:
+        try:
+            out["text"] = exc.read().decode("utf-8", "replace").strip()
+        except OSError:
+            out["text"] = ""
+        out["error"] = out["text"] or f"node antwoordde HTTP {exc.code}"
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+        out["error"] = f"niet bereikbaar ({type(exc).__name__})"
+    return out
+
+
 def status(host: str, timeout: int | None = None) -> dict:
     """``GET /status.json``: de toestand plus de volledige kanaalkaart."""
     return _json(host, "/status.json", timeout)

@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from . import db, nodecred, sensornode
 
@@ -59,12 +60,13 @@ MON_ALARM_SN = "sn"
 
 # De adapterlaag voor de overige node-endpoints die de UI aanspreekt. Ze staan
 # hier bij elkaar zodat een afwijkend contract op één plek aangepast wordt.
-#   - een nieuwe monitor (kanaal) aanmaken op de node;
+#   - een nieuwe monitor (kanaal) aanmaken op de node (``/monitor``, geverifieerd);
 #   - een room of sensor-node zich laten melden op het mesh (flood of zerohop).
-# ``MONITOR_ADD_PATH`` is een AANNAME zolang het node-contract niet vaststaat:
-# een node die dit pad niet kent, antwoordt 404 en de fout komt netjes op het
-# scherm -- de rest van het panel blijft werken.
-MONITOR_ADD_PATH = "/mon/add"
+# ``/monitor`` antwoordt met PLATTE TEKST (``ok <naam> -> kanaal <N>``), vandaar
+# dat ``add_monitor`` via ``sensornode.post_text`` gaat en het kanaalnummer uit
+# die regel plukt. De veldnaam voor het interval is ``int``.
+MONITOR_ADD_PATH = "/monitor"
+MONITOR_CH_RE = re.compile(r"kanaal\s+(\d+)")
 ROOM_ADVERT_PATH = "/room/advert"
 SNODE_ADVERT_PATH = "/snode/advert"
 ROOM_ACL_PATH = "/room/acl"
@@ -461,13 +463,16 @@ def apply_snode_channels(rep, snode_idx: int, checked,
 
 def add_monitor(rep, name: str, host: str = "", kind: str = "",
                 interval: int | None = None) -> dict:
-    """Een nieuwe monitor (kanaal) aanmaken op de node. Adapterlaag.
+    """Een nieuwe monitor (kanaal) aanmaken op de node via ``POST /monitor``.
 
-    Het node-contract hiervoor staat nog niet vast; deze functie pos't naar
-    ``MONITOR_ADD_PATH`` en gaat ervan uit dat de node het nieuwe kanaalnummer
-    teruggeeft als ``{"ok",ch}`` zodat de aanroeper het meteen aan een room of
-    sensor-node kan koppelen. Kent de node dit pad niet, dan komt er een 404 en
-    een leesbare fout -- de rest van het panel blijft werken.
+    De node antwoordt met PLATTE TEKST in de vorm ``ok <naam> -> kanaal <N>``;
+    daaruit plukt deze functie het nieuwe kanaalnummer, zodat de aanroeper het
+    meteen aan een room of sensor-node kan koppelen. Formvelden: ``name``,
+    ``host`` en ``int`` (interval). ``kind`` hoort NIET bij het ``/monitor``-
+    contract en wordt genegeerd -- de parameter blijft voor de aanroepende route.
+
+    Een 4xx of een antwoord waar geen kanaalnummer in staat komt als leesbare
+    NL-tekst terug; de rest van het kanaalpanel blijft werken.
     """
     out = {"ok": False, "error": "", "ch": None}
     naam = str(name or "").strip()
@@ -477,16 +482,20 @@ def add_monitor(rep, name: str, host: str = "", kind: str = "",
     velden: dict = {"name": naam}
     if host:
         velden["host"] = str(host).strip()
-    if kind:
-        velden["kind"] = str(kind).strip()
     if interval is not None:
-        velden["interval"] = int(interval)
-    ant = sensornode.post_form(_host(rep), MONITOR_ADD_PATH, velden)
+        velden["int"] = int(interval)
+    ant = sensornode.post_text(_host(rep), MONITOR_ADD_PATH, velden)
     if not ant["ok"]:
         out["error"] = ant["error"]
         return out
-    data = ant["data"] if isinstance(ant["data"], dict) else {}
-    out["ch"] = data.get("ch")
+    if sensornode.is_error(ant["text"]):
+        out["error"] = ant["text"]
+        return out
+    match = MONITOR_CH_RE.search(ant["text"])
+    if not match:
+        out["error"] = f"onverwacht antwoord van de node: {ant['text'][:120] or '(leeg)'}"
+        return out
+    out["ch"] = int(match.group(1))
     out["ok"] = True
     return out
 
