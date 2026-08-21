@@ -1324,6 +1324,9 @@ def _node_page(request: Request, rid: int, **extra):
         # gekoppelde kanalen (naam erbij) en hun contact-QR's.
         "sensor_snodes": sensor_snodes,
         "sensor_snode_qrs": sensor_snode_qrs,
+        # De ACL-niveaus voor de keuzelijst en hun leesbare uitleg.
+        "sensor_acl_levels": rooms.ACL_LEVELS,
+        "sensor_acl_gloss": rooms.ACL_LEVEL_GLOSS,
         "sensor_mon": sensor_mon,
         "sensor_am_labels": rooms.AM_LABELS,
         # De zetbare modi (dm/room/both = 1/2/3); "uit" (0) is een toestand die de
@@ -2026,6 +2029,62 @@ def sensor_snode_advert(request: Request, rid: int, idx: int = Form(...),
     return _node_page(request, rid, sensor_result={
         "soort": "advert", "ok": uitslag["ok"], "error": uitslag["error"],
         "msg": (f"advert van sensor-node {idx} verstuurd ({soort_t})" if uitslag["ok"] else "")})
+
+
+# --- de per-sleutel-ACL van een room / sensor-node ---------------------------
+#
+# Toevoegen/wijzigen (pubkey + niveau) en verwijderen (prefix + del=1) in één
+# route per soort; het formveld ``del`` bepaalt welke. Dezelfde poort en klasse
+# als de rest van het roombeheer. Een sleutel in de ACL mag WACHTWOORDLOOS binnen
+# op zijn niveau -- dat staat bij de knoppen in de UI.
+
+def _acl_do(request, rid, rep, user, soort_naam, uitslag):
+    """Gedeelde afronding van een ACL-mutatie: trail + pagina met de uitslag."""
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(uitslag.get("_detail_ok") if uitslag["ok"]
+                    else f"{soort_naam}-ACL mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "acl", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (uitslag.get("_msg_ok", "") if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/room/acl")
+def sensor_room_acl(request: Request, rid: int, idx: int = Form(...),
+                    pubkey: str = Form(""), level: str = Form(""),
+                    delete: str = Form("", alias="del"), csrf: str = Form(...)):
+    """Een pubkey in de ACL van een room zetten (met niveau) of verwijderen (prefix)."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    if delete.strip() == "1":
+        uitslag = rooms.del_room_acl(rep, idx, pubkey)
+        uitslag["_detail_ok"] = f"room {idx}: sleutel {pubkey.strip()[:12]} uit de ACL"
+        uitslag["_msg_ok"] = f"sleutel {pubkey.strip()[:12]} verwijderd uit room {idx}"
+    else:
+        uitslag = rooms.set_room_acl(rep, idx, pubkey, level)
+        uitslag["_detail_ok"] = f"room {idx}: sleutel {pubkey.strip()[:12]} op {uitslag.get('level')}"
+        uitslag["_msg_ok"] = f"sleutel {pubkey.strip()[:12]} op {uitslag.get('level')} in room {idx}"
+    return _acl_do(request, rid, rep, user, "room", uitslag)
+
+
+@router.post("/repeaters/{rid}/sensor/snode/acl")
+def sensor_snode_acl(request: Request, rid: int, idx: int = Form(...),
+                     pubkey: str = Form(""), level: str = Form(""),
+                     delete: str = Form("", alias="del"), csrf: str = Form(...)):
+    """Een pubkey in de ACL van een sensor-node zetten of verwijderen."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    if delete.strip() == "1":
+        uitslag = rooms.del_snode_acl(rep, idx, pubkey)
+        uitslag["_detail_ok"] = f"sensor-node {idx}: sleutel {pubkey.strip()[:12]} uit de ACL"
+        uitslag["_msg_ok"] = f"sleutel {pubkey.strip()[:12]} verwijderd uit sensor-node {idx}"
+    else:
+        uitslag = rooms.set_snode_acl(rep, idx, pubkey, level)
+        uitslag["_detail_ok"] = f"sensor-node {idx}: sleutel {pubkey.strip()[:12]} op {uitslag.get('level')}"
+        uitslag["_msg_ok"] = f"sleutel {pubkey.strip()[:12]} op {uitslag.get('level')} in sensor-node {idx}"
+    return _acl_do(request, rid, rep, user, "sensor-node", uitslag)
 
 
 @router.post("/repeaters/{rid}/sensor/rooms/backup")

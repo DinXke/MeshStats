@@ -67,6 +67,19 @@ MON_ALARM_SN = "sn"
 MONITOR_ADD_PATH = "/mon/add"
 ROOM_ADVERT_PATH = "/room/advert"
 SNODE_ADVERT_PATH = "/snode/advert"
+ROOM_ACL_PATH = "/room/acl"
+SNODE_ACL_PATH = "/snode/acl"
+
+# De ACL-niveaus van een room/sensor-node-slot. Een pubkey in de lijst mag
+# WACHTWOORDLOOS binnen op zijn niveau: read = joinen/lezen (room: posts,
+# sensor-node: telemetrie), readwrite = +schrijven, admin = +beheer van dat slot.
+ACL_LEVELS = {1: "read", 2: "readwrite", 3: "admin"}
+ACL_LEVEL_NUM = {woord: getal for getal, woord in ACL_LEVELS.items()}
+ACL_LEVEL_GLOSS = {
+    "read": "lezen/joinen",
+    "readwrite": "lezen + schrijven",
+    "admin": "volledig beheer van dit slot",
+}
 
 # De geldige alarmmodi (1=dm, 2=room, 3=both). Voor de validatie en voor de
 # keuzelijst in de UI; ``am=0`` ("uit", zie AM_LABELS) is een toestand die
@@ -84,6 +97,21 @@ def _host(rep) -> str:
 
 # --- lezen --------------------------------------------------------------------
 
+def _acl_uit(ruw: dict) -> list[dict]:
+    """De per-sleutel-ACL van een room/sensor-node normaliseren.
+
+    ``[{pub, level, level_name}]``. Nooit een geheim -- alleen de publieke sleutel
+    en het niveau. Een onbekend niveau krijgt "?" zodat een node die ooit een
+    vierde niveau meldt de pagina niet laat struikelen.
+    """
+    return [
+        {"pub": str(a.get("pub") or ""),
+         "level": int(a.get("level") or 0),
+         "level_name": ACL_LEVELS.get(int(a.get("level") or 0), "?")}
+        for a in (ruw.get("acl") or []) if isinstance(a, dict)
+    ]
+
+
 def _room_uit(ruw: dict) -> dict:
     """Eén roomrij uit ``/rooms.json`` normaliseren tot vaste, veilige velden.
 
@@ -98,6 +126,7 @@ def _room_uit(ruw: dict) -> dict:
         "posts": int(ruw.get("posts") or 0),
         "pub": str(ruw.get("pub") or ""),
         "uri": str(ruw.get("uri") or ""),
+        "acl": _acl_uit(ruw),
     }
 
 
@@ -117,6 +146,7 @@ def _snode_uit(ruw: dict) -> dict:
         "uri": str(ruw.get("uri") or ""),
         "channels": [int(c) for c in kanalen if isinstance(c, (int, float))]
                     if isinstance(kanalen, list) else [],
+        "acl": _acl_uit(ruw),
     }
 
 
@@ -481,6 +511,77 @@ def snode_advert(rep, idx: int, flood: bool = True) -> dict:
     ant = sensornode.post_form(_host(rep), SNODE_ADVERT_PATH,
                                {"idx": int(idx), "flood": "1" if flood else "0"})
     return {"ok": ant["ok"], "error": ant["error"]}
+
+
+# --- de per-sleutel-ACL van een room / sensor-node ----------------------------
+#
+# Een room- en een sensor-node-slot dragen elk een toegangslijst: welke pubkey
+# mag binnen, op welk niveau (read/readwrite/admin). WACHTWOORDLOOS -- een sleutel
+# in de lijst krijgt toegang zonder wachtwoord. De bestaande grants komen uit de
+# ``acl``-array van /rooms.json (zie ``_acl_uit``); zetten en verwijderen gaat via
+# ``POST /room/acl`` resp. ``POST /snode/acl``, en die staan achter de
+# ``*_ACL_PATH``-constanten zodat een afwijkend contract op één plek meegaat.
+
+def _is_hex(tekst: str) -> bool:
+    t = str(tekst or "")
+    return bool(t) and all(c in "0123456789abcdefABCDEF" for c in t)
+
+
+def _set_acl(rep, path: str, idx: int, pubkey: str, level: str) -> dict:
+    out = {"ok": False, "error": "", "level": ""}
+    sleutel = str(pubkey or "").strip()
+    # Toevoegen/wijzigen vraagt de VOLLEDIGE sleutel: op een prefix zou je niet
+    # weten wie je binnenlaat, en de node bakt er de identiteit van.
+    if len(sleutel) != 64 or not _is_hex(sleutel):
+        out["error"] = "een volledige pubkey van 64 hex-tekens is vereist"
+        return out
+    woord = str(level or "").strip().lower()
+    if woord not in ACL_LEVEL_NUM:
+        out["error"] = "kies een niveau: read, readwrite of admin"
+        return out
+    ant = sensornode.post_form(_host(rep), path,
+                               {"idx": int(idx), "pubkey": sleutel, "level": woord})
+    out["ok"] = ant["ok"]
+    out["error"] = ant["error"]
+    if ant["ok"]:
+        data = ant["data"] if isinstance(ant["data"], dict) else {}
+        out["level"] = str(data.get("level") or woord)
+    return out
+
+
+def _del_acl(rep, path: str, idx: int, prefix: str) -> dict:
+    out = {"ok": False, "error": ""}
+    korte = str(prefix or "").strip()
+    # Verwijderen mag op een PREFIX, maar niet op een handvol tekens: onder de
+    # twaalf hex raak je te makkelijk de verkeerde sleutel.
+    if len(korte) < 12 or not _is_hex(korte):
+        out["error"] = "een prefix van minstens 12 hex-tekens is vereist om te verwijderen"
+        return out
+    ant = sensornode.post_form(_host(rep), path,
+                               {"idx": int(idx), "pubkey": korte, "del": "1"})
+    out["ok"] = ant["ok"]
+    out["error"] = ant["error"]
+    return out
+
+
+def set_room_acl(rep, idx: int, pubkey: str, level: str) -> dict:
+    """Een pubkey op een niveau (read/readwrite/admin) in de room-ACL zetten."""
+    return _set_acl(rep, ROOM_ACL_PATH, idx, pubkey, level)
+
+
+def del_room_acl(rep, idx: int, prefix: str) -> dict:
+    """Een pubkey (op prefix) uit de room-ACL verwijderen."""
+    return _del_acl(rep, ROOM_ACL_PATH, idx, prefix)
+
+
+def set_snode_acl(rep, idx: int, pubkey: str, level: str) -> dict:
+    """Een pubkey op een niveau in de sensor-node-ACL zetten."""
+    return _set_acl(rep, SNODE_ACL_PATH, idx, pubkey, level)
+
+
+def del_snode_acl(rep, idx: int, prefix: str) -> dict:
+    """Een pubkey (op prefix) uit de sensor-node-ACL verwijderen."""
+    return _del_acl(rep, SNODE_ACL_PATH, idx, prefix)
 
 
 # --- de koppeling room <-> sensoren -------------------------------------------

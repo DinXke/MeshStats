@@ -65,6 +65,19 @@ gekoppeld zijn; de node stuurt alleen de kanaalnummers en de site vult de namen
 aan uit zijn eigen kanaalnaam-gegevens. De alarmroute hierboven bepaalt welke
 meting van welke sensor naar welke sensor-node gaat.
 
+## Toegang (ACL)
+
+Elk room- en elk sensor-node-slot draagt een per-sleutel-toegangslijst: welke
+publieke sleutel binnen mag, op welk niveau — `read` (joinen en lezen: de posts
+van een room, de telemetrie van een sensor-node), `readwrite` (ook schrijven) of
+`admin` (beheer van dat slot). Het is **wachtwoordloos**: een sleutel in de lijst
+komt op zijn niveau binnen zonder wachtwoord. De site leest de lijst uit de
+`acl`-array van `/rooms.json` (nooit een geheim, alleen publieke sleutels en
+niveaus) en toont hem per room/sensor-node. Toevoegen vereist de volledige
+64-hex-sleutel; verwijderen mag op een prefix van minstens 12 hex; een niveau
+wijzigen zet de sleutel opnieuw op het nieuwe niveau. Dit loopt via `POST
+/room/acl` en `POST /snode/acl`.
+
 ## Backup en terugzetten
 
 Een backup bevat de **privésleutels** van de rooms. De server bewaart backups als
@@ -88,8 +101,9 @@ een entiteit van de node verdwijnt.
 ## Het nodecontract en de aannames
 
 De site spreekt `GET /rooms.json`, `POST /room/add|edit|del`, `POST
-/snode/add|edit|del`, `POST /mon/alarm`, `GET /rooms/backup` en `POST
-/rooms/restore` aan. De alarmroute wordt kanaal-gebaseerd gezet via `POST
+/snode/add|edit|del`, `POST /room/acl` en `POST /snode/acl` (form `idx`/`pubkey`/
+`level`, of `del=1` met een prefix), `POST /mon/alarm`, `GET /rooms/backup` en
+`POST /rooms/restore` aan. De alarmroute wordt kanaal-gebaseerd gezet via `POST
 /mon/alarm` (formvelden `ch`/`am`/`rm`, optioneel `sn`, waarbij `ch` het
 kanaalnummer uit `mon[].ch` is en op de node wint). Het node-centrische
 kanaalpanel gebruikt diezelfde setter — een kanaal aan-/afvinken op een

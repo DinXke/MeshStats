@@ -55,16 +55,18 @@ ROOMS_JSON = {
     "rooms": [
         {"idx": 0, "name": "Storingen", "stealth": False, "guest": True,
          "posts": 12, "pub": "48d7aade232b" + "00" * 10, "uri": "meshcore://join/0",
-         "kind": "room"},
+         "kind": "room", "acl": [{"pub": "dd" * 32, "level": 2}]},
         {"idx": 1, "name": "Alarm", "stealth": True, "guest": False,
-         "posts": 3, "pub": "aa" * 16, "uri": "meshcore://join/1", "kind": "room"},
+         "posts": 3, "pub": "aa" * 16, "uri": "meshcore://join/1", "kind": "room",
+         "acl": []},
     ],
     "snode_max": 2, "snode_active": 1,
     "snodes": [
         {"idx": 0, "name": "Weerstation", "stealth": False, "pub": "cc" * 32,
          "uri": "meshcore://contact/add?name=Weerstation&public_key="
                 + "cc" * 32 + "&type=4",
-         "kind": "sensor", "channels": [1, 5]},
+         "kind": "sensor", "channels": [1, 5],
+         "acl": [{"pub": "ee" * 32, "level": 1}]},
     ],
 }
 
@@ -360,6 +362,75 @@ def test_room_en_snode_advert_sturen_idx_en_flood(db, monkeypatch):
     assert gezien[1] == (rooms.SNODE_ADVERT_PATH, {"idx": 1, "flood": "0"})
 
 
+# --- de per-sleutel-ACL van een room / sensor-node ----------------------------
+
+def test_de_acl_wordt_uit_rooms_json_gelezen(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "_json",
+                        lambda host, path, t=None: {"ok": True, "error": "", "data": ROOMS_JSON})
+    ov = rooms.overview(_rep(db))
+    room0 = ov["rooms"]["rooms"][0]
+    assert room0["acl"][0]["pub"] == "dd" * 32
+    assert room0["acl"][0]["level"] == 2 and room0["acl"][0]["level_name"] == "readwrite"
+    snode0 = ov["snodes"]["snodes"][0]
+    assert snode0["acl"][0]["level_name"] == "read"
+
+
+def test_set_room_acl_stuurt_pubkey_en_niveau(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
+                        or {"ok": True, "error": "", "data": {"ok": True, "level": "admin"}})
+    uit = rooms.set_room_acl(_rep(db), 0, "ab" * 32, "admin")
+    assert uit["ok"] and uit["level"] == "admin"
+    assert gezien["path"] == rooms.ROOM_ACL_PATH
+    assert gezien["fields"] == {"idx": 0, "pubkey": "ab" * 32, "level": "admin"}
+
+
+def test_set_acl_weigert_een_onvolledige_pubkey_of_fout_niveau(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda *a, **k: pytest.fail("mocht niet versturen"))
+    # Te korte sleutel.
+    kort = rooms.set_room_acl(_rep(db), 0, "abcd", "read")
+    assert not kort["ok"] and "64 hex" in kort["error"]
+    # Onbekend niveau.
+    fout = rooms.set_room_acl(_rep(db), 0, "ab" * 32, "superuser")
+    assert not fout["ok"] and "read, readwrite of admin" in fout["error"]
+
+
+def test_del_room_acl_stuurt_del_en_prefix(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
+                        or {"ok": True, "error": "", "data": {}})
+    uit = rooms.del_room_acl(_rep(db), 0, "abcdef012345")
+    assert uit["ok"]
+    assert gezien["path"] == rooms.ROOM_ACL_PATH
+    assert gezien["fields"] == {"idx": 0, "pubkey": "abcdef012345", "del": "1"}
+
+
+def test_del_acl_weigert_een_te_korte_prefix(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda *a, **k: pytest.fail("mocht niet versturen"))
+    uit = rooms.del_room_acl(_rep(db), 0, "abcdef")   # < 12 hex
+    assert not uit["ok"] and "12 hex" in uit["error"]
+
+
+def test_snode_acl_gaat_naar_het_snode_pad(db, monkeypatch):
+    from app import rooms, sensornode
+    paden = []
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: paden.append(path)
+                        or {"ok": True, "error": "", "data": {"ok": True, "level": "read"}})
+    rooms.set_snode_acl(_rep(db), 1, "cd" * 32, "read")
+    rooms.del_snode_acl(_rep(db), 1, "cdcdcdcdcdcd")
+    assert paden == [rooms.SNODE_ACL_PATH, rooms.SNODE_ACL_PATH]
+
+
 # --- de netwerkprimitieven (post_form / post_json) ----------------------------
 
 def test_post_form_bouwt_een_form_body(db, monkeypatch):
@@ -566,6 +637,10 @@ def test_de_room_en_sensornode_secties_renderen(db, monkeypatch):
     # Het node-centrische kanaalbeheer-panel en de advert-knoppen.
     assert "Kanalen beheren" in html and "Kanaal toevoegen" in html
     assert "Advert (flood)" in html and "Advert (zerohop)" in html
+    # Het ACL-panel: kop, de wachtwoordloze uitleg, en de bestaande grant.
+    assert "Toegang (ACL)" in html and "zonder wachtwoord" in html
+    assert ("dd" * 32)[:16] in html            # de room-ACL-sleutel, ingekort
+    assert "Sleutel toevoegen" in html
     # De mapping is bij het renderen vastgelegd: twee rooms + één sensor-node.
     rijen = {r["room_key"]: r["kind"] for r in db.room_owners_for(rep["id"])}
     assert rijen[db.node_key("cc" * 32)] == "sensor"

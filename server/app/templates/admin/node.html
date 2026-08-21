@@ -621,9 +621,9 @@
     {%- elif sensor_result.soort == 'rotate' %}
     &#9888; De weblogin is <strong>niet</strong> geroteerd: {{ sensor_result.error }}.
     Er is niets aan de opslag veranderd &mdash; de node blijft op de vorige login.
-    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'backup', 'restore') and sensor_result.ok %}
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'backup', 'restore') and sensor_result.ok %}
     &#9989; {{ sensor_result.msg }}.
-    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'backup', 'restore') %}
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'backup', 'restore') %}
     &#9888; {{ sensor_result.error or 'niets gebeurd' }}.
     {%- elif sensor_result.ok %}
     &#9989; <span class="mono">{{ sensor_result.reply }}</span>
@@ -934,6 +934,65 @@
     </details>
     {% endif %}
 
+    {#- De per-sleutel-ACL van deze room. Een sleutel in de lijst mag
+        WACHTWOORDLOOS binnen op zijn niveau. Toevoegen vraagt de volledige pubkey;
+        verwijderen mag op een prefix (>= 12 hex). -#}
+    <details class="chan-panel">
+      <summary>Toegang (ACL) &mdash; {{ kamer.acl | length }} sleutel(s)</summary>
+      <p class="muted small">Een sleutel in deze lijst mag <strong>zonder wachtwoord</strong> binnen op
+         zijn niveau: <span class="mono">read</span> = joinen/lezen (de posts),
+         <span class="mono">readwrite</span> = ook schrijven, <span class="mono">admin</span> = beheer
+         van dit slot.</p>
+      {% if kamer.acl %}
+      <table>
+        <thead><tr><th>Sleutel</th><th>Niveau</th><th></th></tr></thead>
+        <tbody>
+        {% for a in kamer.acl %}
+          <tr>
+            <td class="mono">{{ a.pub[:16] }}</td>
+            <td>
+              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="idx" value="{{ kamer.idx }}">
+                <input type="hidden" name="pubkey" value="{{ a.pub }}">
+                <select name="level" aria-label="Niveau van {{ a.pub[:12] }}"{{ recht('node.instelling.merkbaar') }}>
+                  {% for getal, woord in sensor_acl_levels.items() %}
+                  <option value="{{ woord }}"{% if a.level == getal %} selected{% endif %}>{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>Wijzig</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="idx" value="{{ kamer.idx }}">
+                <input type="hidden" name="pubkey" value="{{ a.pub[:16] }}">
+                <input type="hidden" name="del" value="1">
+                <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted small">Nog geen sleutel in de ACL van deze room.</p>
+      {% endif %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ kamer.idx }}">
+        <input name="pubkey" placeholder="volledige pubkey (64 hex)" maxlength="64" minlength="64"
+               spellcheck="false" autocomplete="off" aria-label="Volledige pubkey om toe te voegen"{{ recht('node.instelling.merkbaar') }}>
+        <select name="level" aria-label="Niveau van de nieuwe sleutel"{{ recht('node.instelling.merkbaar') }}>
+          {% for getal, woord in sensor_acl_levels.items() %}
+          <option value="{{ woord }}">{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Sleutel toevoegen</button>
+      </form>
+    </details>
+
     {#- Advert: laat deze room zich melden op het mesh. Flood gaat mesh-breed,
         zerohop alleen naar wie hem direct hoort. -#}
     <div class="rowform">
@@ -1069,6 +1128,64 @@
       </form>
     </details>
     {% endif %}
+
+    {#- De per-sleutel-ACL van deze sensor-node. Wachtwoordloos: een sleutel in de
+        lijst mag binnen op zijn niveau (read = telemetrie lezen). -#}
+    <details class="chan-panel">
+      <summary>Toegang (ACL) &mdash; {{ snode.acl | length }} sleutel(s)</summary>
+      <p class="muted small">Een sleutel in deze lijst mag <strong>zonder wachtwoord</strong> binnen op
+         zijn niveau: <span class="mono">read</span> = de telemetrie lezen,
+         <span class="mono">readwrite</span> = ook schrijven, <span class="mono">admin</span> = beheer
+         van dit slot.</p>
+      {% if snode.acl %}
+      <table>
+        <thead><tr><th>Sleutel</th><th>Niveau</th><th></th></tr></thead>
+        <tbody>
+        {% for a in snode.acl %}
+          <tr>
+            <td class="mono">{{ a.pub[:16] }}</td>
+            <td>
+              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="idx" value="{{ snode.idx }}">
+                <input type="hidden" name="pubkey" value="{{ a.pub }}">
+                <select name="level" aria-label="Niveau van {{ a.pub[:12] }}"{{ recht('node.instelling.merkbaar') }}>
+                  {% for getal, woord in sensor_acl_levels.items() %}
+                  <option value="{{ woord }}"{% if a.level == getal %} selected{% endif %}>{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>Wijzig</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="idx" value="{{ snode.idx }}">
+                <input type="hidden" name="pubkey" value="{{ a.pub[:16] }}">
+                <input type="hidden" name="del" value="1">
+                <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted small">Nog geen sleutel in de ACL van deze sensor-node.</p>
+      {% endif %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ snode.idx }}">
+        <input name="pubkey" placeholder="volledige pubkey (64 hex)" maxlength="64" minlength="64"
+               spellcheck="false" autocomplete="off" aria-label="Volledige pubkey om toe te voegen"{{ recht('node.instelling.merkbaar') }}>
+        <select name="level" aria-label="Niveau van de nieuwe sleutel"{{ recht('node.instelling.merkbaar') }}>
+          {% for getal, woord in sensor_acl_levels.items() %}
+          <option value="{{ woord }}">{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Sleutel toevoegen</button>
+      </form>
+    </details>
 
     {#- Advert: laat deze sensor-node zich melden op het mesh (flood of zerohop). -#}
     <div class="rowform">

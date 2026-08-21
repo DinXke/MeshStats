@@ -61,6 +61,18 @@ sends only the channel numbers and the site fills in their names from its own
 channel-name data. The alarm routing above decides which sensor's reading goes to
 which sensor-node.
 
+## Access control (ACL)
+
+Each room and each sensor-node slot carries a per-key access list: which public
+key may enter, at which level — `read` (join and read: a room's posts, a
+sensor-node's telemetry), `readwrite` (also write), or `admin` (manage that
+slot). It is **password-free**: a key on the list gets in at its level without a
+password. The site reads the list from the `acl` array of `/rooms.json` (never a
+secret, only public keys and levels) and shows it per room/sensor-node. Adding
+requires the full 64-hex public key; removing works on a prefix of at least 12
+hex; changing a level re-adds the key at the new level. All of it runs through
+`POST /room/acl` and `POST /snode/acl`.
+
 ## Backup and restore
 
 A backup contains the rooms' **private keys**. The server keeps backups as a
@@ -83,8 +95,10 @@ removed from the node.
 ## The node contract and its assumptions
 
 The site talks to `GET /rooms.json`, `POST /room/add|edit|del`, `POST
-/snode/add|edit|del`, `POST /mon/alarm`, `GET /rooms/backup` and `POST
-/rooms/restore`. The alarm route is set channel-based via `POST /mon/alarm` (form
+/snode/add|edit|del`, `POST /room/acl` and `POST /snode/acl` (form `idx`/`pubkey`/
+`level`, or `del=1` with a prefix), `POST /mon/alarm`, `GET /rooms/backup` and
+`POST /rooms/restore`. The alarm route is set channel-based via `POST /mon/alarm`
+(form
 `ch`/`am`/`rm`, optionally `sn`, where `ch` is the monitor's channel from
 `mon[].ch` and wins on the node). The node-centric channel panel reuses that same
 setter — checking a channel on a room/sensor-node only flips that entity's `rm`
