@@ -1,0 +1,352 @@
+"""Het room-beheer van een room-server-node.
+
+Wat hier bewaakt wordt:
+
+* **Eén netwerkgrens.** De roomfuncties openen zelf geen socket; ze gaan langs
+  ``sensornode`` (``_json`` om te lezen, ``post_form``/``post_json`` om te
+  schrijven), en die gaan weer langs ``firmware.open_node`` -- de doelcontrole en
+  de vlootsleutel/per-node-login. De tests vervangen die grens en wegen op de
+  bytes die eruit gaan, niet op een node die toevallig aanstaat.
+* **Een gedeeltelijke wijziging is gedeeltelijk.** ``/room/edit`` mag een leeg
+  veld niet als "wis dit" lezen; wat None is, gaat niet mee.
+* **Gevoelige sleutels.** Een backup bevat de privésleutels van de rooms. Hij
+  gaat geobfusceerd de bewaarplaats in -- niet leesbaar in een databankdump -- en
+  opent niet meer met een andere ``secret.key``.
+* **Eén toestel, meerdere rooms.** /rooms.json is de bron voor de koppeling
+  room-pubkey -> node, zodat losse room-entries op het mesh aan hun eigenaar
+  hangen in plaats van als anonieme unmanaged node rond te zweven.
+* **De adapterlaag.** De setter voor de alarmroute staat achter één functie met
+  configureerbare paden, zodat een afwijkend contract triviaal aan te passen is.
+"""
+import json
+
+import pytest
+
+from app import config
+
+
+@pytest.fixture
+def db(tmp_path, monkeypatch):
+    from app import db as db_module
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.sqlite3")
+    db_module._conn = None
+    yield db_module
+    if db_module._conn is not None:
+        db_module._conn.close()
+        db_module._conn = None
+
+
+class _Antwoord:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+ROOMS_JSON = {
+    "max": 4, "active": 2,
+    "rooms": [
+        {"idx": 0, "name": "Storingen", "stealth": False, "guest": True,
+         "posts": 12, "pub": "48d7aade232b" + "00" * 10, "uri": "meshcore://join/0"},
+        {"idx": 1, "name": "Alarm", "stealth": True, "guest": False,
+         "posts": 3, "pub": "aa" * 16, "uri": "meshcore://join/1"},
+    ],
+}
+
+STATUS_MET_MON = {
+    "fw": "1.4.0", "wifi": "verbonden",
+    "mon": [
+        {"ch": 5, "n": "google", "h": "google.com", "st": "op", "am": 2, "rm": 0b10},
+        {"ch": 1, "n": "batterij", "h": "spanning", "st": "4.1 V", "am": 1, "rm": 0b11},
+        {"ch": 4, "n": "wifi", "h": "deze node", "st": "online", "am": 3, "rm": 0b01},
+    ],
+}
+
+
+def _rep(db, host="192.168.110.160", seen="2026-08-20T10:00:00Z"):
+    rep = db.get_or_create_repeater("48d7aade232b", "MeshUptime")
+    db.execute("UPDATE repeaters SET is_public=1 WHERE id=?", (rep["id"],))
+    db.set_sensor_host(rep["id"], host, by_admin=True)
+    if seen:
+        db.execute("UPDATE repeaters SET sensor_seen=?, sensor_fw=? WHERE id=?",
+                   (seen, "1.4.0", rep["id"]))
+    return db.qone("SELECT * FROM repeaters WHERE id=?", (rep["id"],))
+
+
+# --- lezen en beheren ---------------------------------------------------------
+
+def test_list_rooms_parseert_de_velden(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "_json",
+                        lambda host, path, t=None: {"ok": True, "error": "", "data": ROOMS_JSON})
+    uit = rooms.list_rooms(_rep(db))
+    assert uit["ok"] and uit["max"] == 4 and uit["active"] == 2
+    assert uit["rooms"][0]["name"] == "Storingen" and uit["rooms"][0]["guest"] is True
+    assert uit["rooms"][1]["stealth"] is True
+
+
+def test_list_rooms_geeft_de_reden_bij_een_node_zonder_room_api(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "_json",
+                        lambda host, path, t=None: {"ok": False, "error": "kent /rooms.json niet", "data": {}})
+    uit = rooms.list_rooms(_rep(db))
+    assert not uit["ok"] and "rooms.json" in uit["error"]
+
+
+def test_add_room_stuurt_de_naam(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+
+    def nep(host, path, fields, t=None):
+        gezien["path"], gezien["fields"] = path, fields
+        return {"ok": True, "error": "", "data": {"idx": 2, "uri": "meshcore://join/2"}}
+
+    monkeypatch.setattr(sensornode, "post_form", nep)
+    uit = rooms.add_room(_rep(db), "Nieuw")
+    assert uit["ok"] and uit["idx"] == 2 and uit["uri"].endswith("/2")
+    assert gezien["path"] == "/room/add" and gezien["fields"] == {"name": "Nieuw"}
+
+
+def test_add_room_zonder_naam_gaat_niet_de_deur_uit(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda *a, **k: pytest.fail("er had niets verstuurd mogen worden"))
+    uit = rooms.add_room(_rep(db), "   ")
+    assert not uit["ok"] and "naam" in uit["error"]
+
+
+def test_edit_room_laat_onopgegeven_velden_weg(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(fields=fields)
+                        or {"ok": True, "error": "", "data": {}})
+    rooms.edit_room(_rep(db), 1, name="X", guest=True)
+    # idx, name en guest gaan mee; pass en stealth niet (die waren None).
+    assert gezien["fields"] == {"idx": 1, "name": "X", "guest": "1"}
+
+
+def test_set_alarm_bouwt_am_en_rm_achter_een_adapter(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
+                        or {"ok": True, "error": "", "data": {}})
+    uit = rooms.set_alarm(_rep(db), 2, am=3, rm=5)
+    assert uit["ok"]
+    assert gezien["path"] == rooms.MON_ALARM_PATH
+    assert gezien["fields"] == {rooms.MON_ALARM_IDX: 2,
+                                rooms.MON_ALARM_AM: 3, rooms.MON_ALARM_RM: 5}
+
+
+def test_set_alarm_weigert_een_onbekende_route(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda *a, **k: pytest.fail("mocht niet versturen"))
+    uit = rooms.set_alarm(_rep(db), 2, am=9)
+    assert not uit["ok"] and "alarmroute" in uit["error"]
+
+
+# --- de netwerkprimitieven (post_form / post_json) ----------------------------
+
+def test_post_form_bouwt_een_form_body(db, monkeypatch):
+    from app import firmware, sensornode
+    gezien = {}
+    monkeypatch.setattr(firmware, "NODE_USER", "admin")
+
+    def nep(host, path, data=None, timeout=None, content_type=None):
+        gezien.update(path=path, data=data, ct=content_type)
+        return _Antwoord(b'{"ok":true,"idx":2}')
+
+    monkeypatch.setattr(firmware, "open_node", nep)
+    uit = sensornode.post_form("host", "/room/add", {"name": "X"})
+    assert uit["ok"] and uit["data"]["idx"] == 2
+    assert gezien["ct"] == "application/x-www-form-urlencoded"
+    assert gezien["data"].decode() == "name=X"
+
+
+def test_post_json_stuurt_een_json_body(db, monkeypatch):
+    from app import firmware, sensornode
+    gezien = {}
+    monkeypatch.setattr(firmware, "NODE_USER", "admin")
+
+    def nep(host, path, data=None, timeout=None, content_type=None):
+        gezien.update(data=data, ct=content_type)
+        return _Antwoord(b'{"ok":true}')
+
+    monkeypatch.setattr(firmware, "open_node", nep)
+    uit = sensornode.post_json("host", "/rooms/restore", {"rooms": []})
+    assert uit["ok"]
+    assert gezien["ct"] == "application/json"
+    assert json.loads(gezien["data"]) == {"rooms": []}
+
+
+def test_post_leest_een_geweigerde_handeling_uit_ok_false(db, monkeypatch):
+    from app import firmware, sensornode
+    monkeypatch.setattr(firmware, "NODE_USER", "admin")
+    monkeypatch.setattr(firmware, "open_node",
+                        lambda *a, **k: _Antwoord(b'{"ok":false,"error":"rooms vol"}'))
+    uit = sensornode.post_form("host", "/room/add", {"name": "X"})
+    assert not uit["ok"] and uit["error"] == "rooms vol"
+
+
+def test_post_zonder_weblogin_stuurt_niets(db, monkeypatch):
+    from app import firmware, sensornode
+    monkeypatch.setattr(firmware, "NODE_USER", "")
+    monkeypatch.setattr(firmware, "open_node",
+                        lambda *a, **k: pytest.fail("er mag geen verbinding open zonder login"))
+    uit = sensornode.post_form("host", "/room/add", {"name": "X"})
+    assert not uit["ok"] and "weblogin" in uit["error"]
+
+
+# --- de koppeling room <-> sensor ---------------------------------------------
+
+def test_couple_koppelt_de_juiste_sensoren_aan_elke_room():
+    from app import rooms
+    kamers = [{"idx": 0, "name": "a"}, {"idx": 1, "name": "b"}]
+    gekoppeld = rooms.couple(kamers, STATUS_MET_MON["mon"])
+    namen0 = {s["n"] for s in gekoppeld[0]["sensoren"]}
+    namen1 = {s["n"] for s in gekoppeld[1]["sensoren"]}
+    # room 0 (bit 0): wifi (rm=0b01, am=3). batterij staat op am=1 en telt niet mee.
+    assert namen0 == {"wifi"}
+    # room 1 (bit 1): google (rm=0b10, am=2).
+    assert namen1 == {"google"}
+
+
+def test_een_sensor_op_alleen_dm_hoort_bij_geen_enkele_room():
+    from app import rooms
+    assert not rooms.sensor_in_room({"am": 1, "rm": 0b11}, 0)
+    assert rooms.sensor_in_room({"am": 3, "rm": 0b01}, 0)
+
+
+# --- backup: gevoelige sleutels -----------------------------------------------
+
+def test_backup_wordt_geobfusceerd_bewaard_en_teruggelezen(db):
+    from app import rooms
+    rep = _rep(db)
+    geheim = {"rooms": [{"idx": 0, "pub": "48d7", "priv": "ZEERGEHEIMESLEUTEL"}]}
+    opslag = rooms.store_backup(rep, geheim, actor="admin")
+    assert opslag["ok"]
+    rij = db.room_backup(opslag["id"], rep["id"])
+    # De platte sleutel staat NIET leesbaar in de opgeslagen blob.
+    assert "ZEERGEHEIMESLEUTEL" not in rij["blob"]
+    assert rij["rooms"] == 1 and rij["actor"] == "admin"
+    # En hij is wél terug te lezen met dezelfde secret.key.
+    terug = rooms.load_stored(rep, opslag["id"])
+    assert terug["ok"] and terug["data"] == geheim
+
+
+def test_een_backup_opent_niet_met_een_andere_secret_key(db, monkeypatch):
+    from app import rooms
+    rep = _rep(db)
+    opslag = rooms.store_backup(rep, {"rooms": []}, actor="admin")
+    monkeypatch.setattr(config, "SECRET", b"een-heel-andere-sleutel-dan-net")
+    terug = rooms.load_stored(rep, opslag["id"])
+    assert not terug["ok"] and "secret.key" in terug["error"]
+
+
+def test_backup_and_store_bewaart_niets_als_het_ophalen_faalt(db, monkeypatch):
+    from app import rooms
+    rep = _rep(db)
+    monkeypatch.setattr(rooms, "fetch_backup",
+                        lambda rep, timeout=None: {"ok": False, "error": "node weg", "data": {}})
+    uit = rooms.backup_and_store(rep, actor="admin")
+    assert not uit["ok"] and uit["error"] == "node weg"
+    assert rooms.list_stored(rep) == []
+
+
+def test_restore_stored_stuurt_de_bewaarde_config_naar_de_node(db, monkeypatch):
+    from app import rooms, sensornode
+    rep = _rep(db)
+    opslag = rooms.store_backup(rep, {"rooms": [{"idx": 0}]}, actor="admin")
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_json",
+                        lambda host, path, obj, t=None: gezien.update(path=path, obj=obj)
+                        or {"ok": True, "error": "", "data": {}})
+    uit = rooms.restore_stored(rep, opslag["id"])
+    assert uit["ok"]
+    assert gezien["path"] == "/rooms/restore" and gezien["obj"] == {"rooms": [{"idx": 0}]}
+
+
+# --- de mapping room-pubkey -> fysieke node -----------------------------------
+
+def test_record_owners_koppelt_en_snoeit(db):
+    from app import rooms
+    rep = _rep(db)
+    aantal = rooms.record_owners(rep, ROOMS_JSON["rooms"])
+    assert aantal == 2
+    keys = {r["room_key"] for r in db.room_owners_for(rep["id"])}
+    assert keys == {db.node_key("48d7aade232b" + "00" * 10), db.node_key("aa" * 16)}
+    # Een volgende ronde waarin room 1 weg is, snoeit hem uit de mapping.
+    rooms.record_owners(rep, [ROOMS_JSON["rooms"][0]])
+    keys = {r["room_key"] for r in db.room_owners_for(rep["id"])}
+    assert keys == {db.node_key("48d7aade232b" + "00" * 10)}
+
+
+def test_de_nodelijst_koppelt_een_losse_room_aan_zijn_eigenaar(db, monkeypatch):
+    """De virtuele room verschijnt op het mesh als losse node; de lijst koppelt
+    hem aan zijn eigenaar in plaats van hem als anonieme unmanaged node te tonen."""
+    from app import auth, mqtt_ingest, rbac, rooms, routes_admin
+    from starlette.requests import Request
+
+    monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: False)
+    rbac.maak_gebruiker("admin", auth.hash_password("wachtwoord123"),
+                        is_superuser=True)
+    rep = _rep(db)
+    # De losse room-entry zoals hij op het mesh binnenkwam: eigen pubkey.
+    kamer = db.get_or_create_repeater("aaaaaaaaaaaa", "onbekend")
+    db.execute("UPDATE repeaters SET is_public=1 WHERE id=?", (kamer["id"],))
+    rooms.record_owners(rep, ROOMS_JSON["rooms"])
+
+    cookie = auth.make_session("admin")
+    req = Request({"type": "http", "http_version": "1.1", "method": "GET",
+                   "scheme": "http", "server": ("test", 80), "path": "/admin",
+                   "query_string": b"",
+                   "headers": [(b"cookie", f"mm_session={cookie}".encode())]})
+    html = routes_admin.nodes_page(req).body.decode()
+    assert "room op MeshUptime" in html
+    assert "host van 1 room" in html
+
+
+def test_de_roomsectie_rendert_met_qr_en_alarmroute(db, monkeypatch):
+    """De hele Rooms-sectie op de nodepagina, door de echte Jinja-omgeving."""
+    from app import (auth, firmware, mqtt_ingest, nodeconfig, rbac,
+                     routes_admin)
+    from starlette.requests import Request
+
+    monkeypatch.setattr(mqtt_ingest, "can_publish", lambda: False)
+    monkeypatch.setattr(firmware, "NODE_USER", "admin")
+
+    def nep_open(host, path, data=None, timeout=None):
+        if path == "/rooms.json":
+            return _Antwoord(json.dumps(ROOMS_JSON).encode())
+        if path == "/status.json":
+            return _Antwoord(json.dumps(STATUS_MET_MON).encode())
+        if path == "/acl.json":
+            return _Antwoord(json.dumps({"acl": [], "nb": []}).encode())
+        return _Antwoord(b"{}")
+
+    monkeypatch.setattr(nodeconfig, "_open", nep_open)
+    rbac.maak_gebruiker("admin", auth.hash_password("wachtwoord123"),
+                        is_superuser=True)
+    rep = _rep(db)
+
+    cookie = auth.make_session("admin")
+    req = Request({"type": "http", "http_version": "1.1", "method": "GET",
+                   "scheme": "http", "server": ("test", 80),
+                   "path": f"/admin/repeaters/{rep['id']}", "query_string": b"",
+                   "headers": [(b"cookie", f"mm_session={cookie}".encode())]})
+    html = routes_admin.node_page(req, rep["id"]).body.decode()
+    assert "Rooms" in html
+    assert "Storingen" in html and "meshcore://join/0" in html
+    assert "<svg" in html                      # de join-QR, serverzijde
+    assert "Alarmroute per sensor" in html
+    # En de mapping is bij het renderen vastgelegd.
+    assert len(db.room_owners_for(rep["id"])) == 2
