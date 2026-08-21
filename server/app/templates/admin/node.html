@@ -621,9 +621,9 @@
     {%- elif sensor_result.soort == 'rotate' %}
     &#9888; De weblogin is <strong>niet</strong> geroteerd: {{ sensor_result.error }}.
     Er is niets aan de opslag veranderd &mdash; de node blijft op de vorige login.
-    {%- elif sensor_result.soort in ('room', 'alarm', 'backup', 'restore') and sensor_result.ok %}
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'backup', 'restore') and sensor_result.ok %}
     &#9989; {{ sensor_result.msg }}.
-    {%- elif sensor_result.soort in ('room', 'alarm', 'backup', 'restore') %}
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'backup', 'restore') %}
     &#9888; {{ sensor_result.error or 'niets gebeurd' }}.
     {%- elif sensor_result.ok %}
     &#9989; <span class="mono">{{ sensor_result.reply }}</span>
@@ -947,13 +947,99 @@
   {% endif %}
   {{ waarom('node.instelling.merkbaar') }}
 
+  {#- ==================== Sensor-nodes ====================================
+
+      Naast rooms host een room-server-node ook virtuele SENSOR-nodes: aparte
+      contact-identiteiten waaronder telemetrie in de MeshCore-app verschijnt.
+      Spiegel van het roomblok -- lijst, add/edit/del, contact-QR + link -- met
+      als extra de gekoppelde kanalen (met hun naam). De alarmroute hieronder
+      bepaalt WELKE sensor zijn meting naar WELKE sensor-node stuurt. -#}
+  <h3>Sensor-nodes</h3>
+  {% if not sensor_route.can %}
+  <p class="muted small">De weg naar deze node kan nu niets; de knoppen staan daarom uit.</p>
+  {% elif not sensor_snodes.ok %}
+  <p class="muted small">Geen sensor-nodes opgehaald: {{ sensor_snodes.error or 'onbekende reden' }}.</p>
+  {% else %}
+  <p class="muted small">{{ sensor_snodes.active }} van {{ sensor_snodes.max }} sensor-nodes in gebruik.
+     Een sensor-node is een eigen contact-identiteit op deze node; de MeshCore-app toont de
+     telemetrie van de gekoppelde kanalen eronder. Scan het contact-QR of open de link om hem toe te voegen.</p>
+
+  {% for snode in sensor_snodes.snodes %}
+  <div class="card room">
+    <div class="room-head">
+      <h4>{{ snode.name or ('sensor-node ' ~ snode.idx) }}
+        <span class="pill">idx {{ snode.idx }}</span>
+        {% if snode.stealth %}<span class="pill">stealth</span>{% endif %}
+      </h4>
+      <span class="muted small">sleutel <span class="mono">{{ snode.pub[:16] or '—' }}</span></span>
+    </div>
+
+    {% if snode.uri %}
+    <div class="room-join">
+      {% if sensor_snode_qrs.get(snode.idx) %}
+      <div class="qr">{{ sensor_snode_qrs[snode.idx] | safe }}</div>
+      {% endif %}
+      <div class="room-join-link">
+        <label class="muted small" for="snuri-{{ snode.idx }}">Contact-link</label>
+        <input id="snuri-{{ snode.idx }}" class="mono" readonly value="{{ snode.uri }}"
+               onclick="this.select()" aria-label="Contact-link van {{ snode.name }}">
+      </div>
+    </div>
+    {% endif %}
+
+    {% if snode.channel_names %}
+    <p class="muted small">Gekoppelde kanalen:
+      {% for c in snode.channel_names %}<span class="mono">{{ c.name }}</span>
+      (kanaal {{ c.ch }}){{ ', ' if not loop.last else '' }}{% endfor %}.</p>
+    {% else %}
+    <p class="muted small">Nog geen kanaal aan deze sensor-node gekoppeld.</p>
+    {% endif %}
+
+    <div class="rowform">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/edit" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ snode.idx }}">
+        <input name="name" value="{{ snode.name }}" placeholder="naam" maxlength="40"
+               spellcheck="false" autocomplete="off" aria-label="Naam van de sensor-node"{{ recht('node.instelling.merkbaar') }}>
+        <label class="check"><input type="checkbox" name="stealth" value="1"
+               {% if snode.stealth %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> stealth</label>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Opslaan</button>
+      </form>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/del" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ snode.idx }}">
+        <input name="confirm" placeholder="typ: ja" autocomplete="off"
+               aria-label="Bevestig verwijderen"{{ recht('node.instelling.merkbaar') }}>
+        <button type="submit" class="danger"{{ recht('node.instelling.merkbaar') }}>&#9888; Verwijderen</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted small">Er zijn nog geen sensor-nodes op deze node.</p>
+  {% endfor %}
+
+  <h4>Sensor-node toevoegen</h4>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/add" class="rowform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="name" placeholder="naam van de nieuwe sensor-node" maxlength="40"
+           spellcheck="false" autocomplete="off" aria-label="Naam van de nieuwe sensor-node"
+           {% if sensor_snodes.active >= sensor_snodes.max %}disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+    <button type="submit"{% if sensor_snodes.active >= sensor_snodes.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      Sensor-node toevoegen</button>
+  </form>
+  {% if sensor_snodes.active >= sensor_snodes.max %}
+  <p class="muted small">Alle {{ sensor_snodes.max }} sensor-node-plekken zijn in gebruik; verwijder er eerst een.</p>
+  {% endif %}
+  {% endif %}{#- sensor_snodes.ok -#}
+
   {#- De per-sensor alarmroute. am = 1 (dm), 2 (room), 3 (beide); rm is het
-      bitmasker van rooms waar het alarm heen gaat. De checkboxes bouwen dat
-      masker serverzijde op -- zie sensor_room_alarm. -#}
+      bitmasker van rooms en sn dat van sensor-nodes waar het alarm heen gaat. De
+      checkboxes bouwen die maskers serverzijde op -- zie sensor_room_alarm. -#}
   {% if sensor_mon %}
   <h4>Alarmroute per sensor</h4>
   <p class="muted small">Waar het alarm van elke sensor heen gaat: als direct bericht, in een room,
-     of beide. Kies bij &ldquo;room&rdquo; of &ldquo;beide&rdquo; ook welke rooms.</p>
+     of beide. Kies bij &ldquo;room&rdquo; of &ldquo;beide&rdquo; ook welke rooms, en desgewenst naar
+     welke sensor-nodes de meting gaat.</p>
   {% for m in sensor_mon %}
   <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/alarm" class="rowform room-alarm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -969,6 +1055,11 @@
     <label class="check"><input type="checkbox" name="room" value="{{ kamer.idx }}"
            {% if kamer.idx in m.rooms_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
       {{ kamer.name or ('r' ~ kamer.idx) }}</label>
+    {% endfor %}
+    {% for snode in sensor_snodes.snodes %}
+    <label class="check"><input type="checkbox" name="snode" value="{{ snode.idx }}"
+           {% if snode.idx in m.snodes_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
+      &#9737; {{ snode.name or ('sn' ~ snode.idx) }}</label>
     {% endfor %}
     <button type="submit"{{ recht('node.instelling.merkbaar') }}>Zetten</button>
   </form>

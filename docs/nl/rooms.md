@@ -46,11 +46,24 @@ naast de QR zodat het ook zonder camera werkt.
 ## De alarmroute per sensor
 
 Elke bewaakte sensor heeft een alarmroute: direct bericht, in een room, of beide
-(`am` = 1/2/3), plus welke rooms hij aanspreekt (`rm`, een bitmasker). Het
-formulier toont een keuzelijst voor de route en een aankruisvakje per room; de
-server bouwt het bitmasker. De huidige stand komt uit `/status.json`, die de
-site toch al ophaalt, dus er gaat geen extra verzoek de deur uit. Onder elke room
-zie je bovendien welke sensoren hun alarm erin posten.
+(`am` = 1/2/3), plus welke rooms hij aanspreekt (`rm`, een bitmasker) en naar
+welke virtuele sensor-nodes zijn telemetrie gaat (`sn`, een bitmasker). Het
+formulier toont een keuzelijst voor de route, een aankruisvakje per room en een
+per sensor-node; de server bouwt de bitmaskers en stuurt `am`/`rm`/`sn` samen. De
+huidige stand komt uit `/status.json`, die de site toch al ophaalt, dus er gaat
+geen extra verzoek de deur uit. Onder elke room zie je bovendien welke sensoren
+hun alarm erin posten.
+
+## Virtuele sensor-nodes
+
+Dezelfde node host ook virtuele *sensor-nodes*: aparte contact-identiteiten
+waaronder telemetrie in de MeshCore-app verschijnt. Ze komen uit dezelfde
+`/rooms.json`-call (`snode_max`/`snode_active`/`snodes`) en worden symmetrisch met
+de rooms beheerd — toevoegen, bewerken (naam en stealth), verwijderen, en een
+contact-QR + link uit het `uri`-veld. Elke sensor-node toont de kanalen die eraan
+gekoppeld zijn; de node stuurt alleen de kanaalnummers en de site vult de namen
+aan uit zijn eigen kanaalnaam-gegevens. De alarmroute hierboven bepaalt welke
+meting van welke sensor naar welke sensor-node gaat.
 
 ## Backup en terugzetten
 
@@ -62,22 +75,24 @@ en terugzetten kan alleen een serverbeheerder. Een restore overschrijft de
 huidige rooms en vraagt een getypte bevestiging; hij neemt een bewaarde backup of
 geplakte JSON.
 
-## Groeperen: veel rooms, één node
+## Groeperen: veel entiteiten, één node
 
-Omdat rooms 1+ hun eigen sleutel adverteren, verschijnen ze op het mesh als losse
-node-entries. De site legt vast welke room-sleutel bij welke fysieke node hoort —
-geleerd uit `/rooms.json` — zodat de nodelijst een losse room-entry markeert als
-"room op node X" en zijn eigenaar als "host van N rooms", in plaats van de rooms
-als anonieme unmanaged nodes te laten rondzweven. De koppeling wordt gesnoeid
-zodra een room van de node verdwijnt.
+Omdat rooms én sensor-nodes elk hun eigen sleutel adverteren, verschijnen ze op
+het mesh als losse node-entries. De site legt vast welke sleutel bij welke fysieke
+node hoort, met de soort (room of sensor) — geleerd uit `/rooms.json` — zodat de
+nodelijst een losse entry markeert als "room op node X" of "sensor-node op node X"
+en zijn eigenaar als "host van N rooms + M sensor-nodes", in plaats van ze als
+anonieme unmanaged nodes te laten rondzweven. De koppeling wordt gesnoeid zodra
+een entiteit van de node verdwijnt.
 
 ## Het nodecontract en de aannames
 
-De site spreekt `GET /rooms.json`, `POST /room/add|edit|del`, `POST /mon/alarm`,
-`GET /rooms/backup` en `POST /rooms/restore` aan. De alarmroute wordt
-kanaal-gebaseerd gezet via `POST /mon/alarm` (formvelden `ch`/`am`/`rm`, waarbij
-`ch` het kanaalnummer uit `mon[].ch` is en op de node wint); die vorm staat
-geïsoleerd achter `MON_ALARM_PATH` en `set_alarm` in `server/app/rooms.py`, zodat
-een afwijkend contract een kleine wijziging is. De netwerkgrens zelf blijft in
+De site spreekt `GET /rooms.json`, `POST /room/add|edit|del`, `POST
+/snode/add|edit|del`, `POST /mon/alarm`, `GET /rooms/backup` en `POST
+/rooms/restore` aan. De alarmroute wordt kanaal-gebaseerd gezet via `POST
+/mon/alarm` (formvelden `ch`/`am`/`rm`, optioneel `sn`, waarbij `ch` het
+kanaalnummer uit `mon[].ch` is en op de node wint); die vorm staat geïsoleerd
+achter `MON_ALARM_PATH` en `set_alarm` in `server/app/rooms.py`, zodat een
+afwijkend contract een kleine wijziging is. De netwerkgrens zelf blijft in
 `sensornode.py`, achter dezelfde doelcontrole en vloot-/per-node-credential als
 elke andere aanroep naar een node.

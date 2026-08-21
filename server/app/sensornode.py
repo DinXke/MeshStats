@@ -1083,18 +1083,19 @@ def poll(rep, timeout: int | None = None) -> dict:
         # opgehaald kon worden zien er op de kaart identiek uit.
         out["error"] = f"buren niet opgehaald: {buren['error']}"
 
-    # De koppeling room-pubkey -> node bijwerken uit /rooms.json, zodat de
-    # nodelijst de virtuele rooms aan hun fysieke node koppelt ook zonder dat
-    # iemand de nodepagina opent. Lokale import om het kringetje rooms<->sensornode
-    # te vermijden (rooms leunt op deze module). Non-fataal: een node zonder
-    # room-API antwoordt hier gewoon niet en de ronde is al geslaagd.
+    # De koppeling pubkey -> node bijwerken uit /rooms.json (rooms én virtuele
+    # sensor-nodes), zodat de nodelijst die losse entries aan hun fysieke node
+    # koppelt ook zonder dat iemand de nodepagina opent. Lokale import om het
+    # kringetje rooms<->sensornode te vermijden (rooms leunt op deze module).
+    # Non-fataal: een node zonder deze API antwoordt hier gewoon niet en de ronde
+    # is al geslaagd.
     try:
         from . import rooms
-        kamers = rooms.list_rooms(rep, timeout)
-        if kamers["ok"]:
-            rooms.record_owners(rep, kamers["rooms"])
+        ov = rooms.overview(rep, timeout)
+        if ov["ok"]:
+            rooms.record_owners(rep, ov["rooms"]["rooms"], ov["snodes"]["snodes"])
     except Exception:  # noqa: BLE001 -- de mapping mag de ronde nooit breken
-        log.debug("Room-eigenaarschap niet bijgewerkt tijdens de ronde",
+        log.debug("Room-/sensor-node-eigenaarschap niet bijgewerkt tijdens de ronde",
                   exc_info=True)
 
     out["ok"] = True

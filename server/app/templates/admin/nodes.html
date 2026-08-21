@@ -127,18 +127,23 @@
            title="Publiek, maar niet volledig — klik voor de schakelaars en wat ze betekenen">
           {{ verborgen | join(' en ') }} verborgen</a>
         {% endif %}
-        {#- Room-groepering. Deze entry is in werkelijkheid een virtuele room op
-            een ander toestel: koppel hem aan zijn eigenaar in plaats van hem als
-            losse unmanaged node te tonen. -#}
+        {#- Groepering. Deze entry is in werkelijkheid een virtuele room of
+            sensor-node op een ander toestel: koppel hem aan zijn eigenaar in
+            plaats van hem als losse unmanaged node te tonen. -#}
         {% if is_room_of and is_room_of.get(rep.id) %}
+        {%- set soort = 'sensor-node' if is_room_of[rep.id].kind == 'sensor' else 'room' %}
         <a class="pill" href="/admin/repeaters/{{ is_room_of[rep.id].owner_id }}#eigen-api"
-           title="Deze entry is een virtuele room (idx {{ is_room_of[rep.id].room_idx }}) op een andere fysieke node">
-          &#8618; room op {{ is_room_of[rep.id].owner_name or ('node ' ~ is_room_of[rep.id].owner_id) }}</a>
+           title="Deze entry is een virtuele {{ soort }} (idx {{ is_room_of[rep.id].room_idx }}) op een andere fysieke node">
+          &#8618; {{ soort }} op {{ is_room_of[rep.id].owner_name or ('node ' ~ is_room_of[rep.id].owner_id) }}</a>
         {% endif %}
         {% if hosts_rooms and hosts_rooms.get(rep.id) %}
+        {%- set telr = hosts_rooms[rep.id].room %}{% set tels = hosts_rooms[rep.id].sensor %}
+        {%- set delen = [] %}
+        {%- if telr %}{% set _ = delen.append(telr ~ ' room' ~ ('s' if telr != 1 else '')) %}{% endif %}
+        {%- if tels %}{% set _ = delen.append(tels ~ ' sensor-node' ~ ('s' if tels != 1 else '')) %}{% endif %}
         <a class="pill on" href="/admin/repeaters/{{ rep.id }}#eigen-api"
-           title="Deze node host meerdere virtuele rooms; klik voor het roombeheer">
-          host van {{ hosts_rooms[rep.id] }} room{{ 's' if hosts_rooms[rep.id] != 1 else '' }}</a>
+           title="Deze node host virtuele rooms en/of sensor-nodes; klik voor het beheer">
+          host van {{ delen | join(' + ') }}</a>
         {% endif %}
       </div>
 

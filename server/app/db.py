@@ -275,6 +275,7 @@ CREATE TABLE IF NOT EXISTS room_owners(
   room_pubkey TEXT,
   room_idx INTEGER,
   room_name TEXT,
+  kind TEXT NOT NULL DEFAULT 'room',
   updated TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_room_owners_owner ON room_owners(owner_repeater_id);
@@ -312,6 +313,10 @@ CREATE INDEX IF NOT EXISTS idx_packets_sender ON packets(sender);
 # SQLite has no ADD COLUMN IF NOT EXISTS, so existing tables need the explicit
 # check below. Dropping a live database is not an option here.
 COLUMN_MIGRATIONS = [
+    # De soort virtuele entiteit die op deze eigenaar draait: 'room' of 'sensor'.
+    # Erbij gekomen toen een room-server-node naast rooms ook virtuele
+    # sensor-nodes ging aanbieden; bestaande rijen zijn rooms, vandaar de default.
+    ("room_owners", "kind", "TEXT NOT NULL DEFAULT 'room'"),
     # Which node published this repeater's last statistics, and when. A node
     # relaying figures about a repeater it monitors is legitimate, so the two
     # identities differ on purpose -- see mqtt_ingest for the reasoning.
@@ -2976,25 +2981,29 @@ def room_backup(backup_id: int, repeater_id: int):
 
 
 def set_room_owner(room_key: str, owner_repeater_id: int, room_pubkey: str,
-                   room_idx: int | None, room_name: str) -> None:
-    """Vastleggen dat één room-pubkey op deze node draait (upsert).
+                   room_idx: int | None, room_name: str,
+                   kind: str = "room") -> None:
+    """Vastleggen dat één room- of sensor-node-pubkey op deze node draait (upsert).
 
     ``room_key`` hoort al genormaliseerd te zijn op ``NODE_KEY_HEX`` (zie
     ``rooms.record_owners``), zodat hij op ``repeaters.pubkey_prefix`` aansluit en
-    de nodelijst een losse room-entry aan zijn eigenaar kan koppelen.
+    de nodelijst een losse entry aan zijn eigenaar kan koppelen. ``kind`` is
+    'room' of 'sensor' -- dezelfde koppeling, twee soorten virtuele entiteit die
+    op één fysieke node draaien.
     """
     key = node_key(room_key)
     if not key:
         return
+    soort = "sensor" if str(kind) == "sensor" else "room"
     execute(
         "INSERT INTO room_owners(room_key, owner_repeater_id, room_pubkey, "
-        "room_idx, room_name, updated) VALUES(?,?,?,?,?,?) "
+        "room_idx, room_name, kind, updated) VALUES(?,?,?,?,?,?,?) "
         "ON CONFLICT(room_key) DO UPDATE SET owner_repeater_id=excluded.owner_repeater_id, "
         "room_pubkey=excluded.room_pubkey, room_idx=excluded.room_idx, "
-        "room_name=excluded.room_name, updated=excluded.updated",
+        "room_name=excluded.room_name, kind=excluded.kind, updated=excluded.updated",
         (key, owner_repeater_id, str(room_pubkey or ""),
          room_idx if room_idx is None else int(room_idx),
-         str(room_name or "")[:64], utcnow()))
+         str(room_name or "")[:64], soort, utcnow()))
 
 
 def prune_room_owners(owner_repeater_id: int, keep_keys: list[str]) -> int:

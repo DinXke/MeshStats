@@ -289,13 +289,14 @@ def nodes_page(request: Request):
     groups = [{"level": level,
                "reps": [r for r in repeaters if routes[r["id"]]["level"] == level]}
               for level in LEVEL_ORDER]
-    # Welke van deze nodes zijn in werkelijkheid een VIRTUELE ROOM op een andere,
-    # fysieke node? De mapping komt uit /rooms.json (zie rooms.record_owners): een
-    # room-server-node host meerdere rooms met elk een eigen sleutel, en die
-    # verschijnen op het mesh als losse entries. ``is_room_of`` koppelt zo'n entry
-    # aan zijn eigenaar zodat de lijst hem niet als anonieme unmanaged node toont;
-    # ``hosts_rooms`` telt per eigenaar hoeveel rooms erop draaien (de eigen
-    # hoofdidentiteit, room 0, telt niet als aparte room mee).
+    # Welke van deze nodes zijn in werkelijkheid een VIRTUELE ROOM of SENSOR-NODE
+    # op een andere, fysieke node? De mapping komt uit /rooms.json (zie
+    # rooms.record_owners): een room-server-node host meerdere virtuele entiteiten
+    # met elk een eigen sleutel, en die verschijnen op het mesh als losse entries.
+    # ``is_room_of`` koppelt zo'n entry aan zijn eigenaar (met de soort) zodat de
+    # lijst hem niet als anonieme unmanaged node toont; ``hosts_rooms`` telt per
+    # eigenaar hoeveel rooms en sensor-nodes erop draaien (de eigen hoofdidentiteit
+    # telt niet als aparte entiteit mee).
     owners = db.room_owner_map()
     by_id = {r["id"]: r for r in alle}
     is_room_of, hosts_rooms = {}, {}
@@ -306,17 +307,19 @@ def nodes_page(request: Request):
             is_room_of[r["id"]] = {
                 "owner_id": rij["owner_repeater_id"],
                 "owner_name": eig["name"] if eig else "",
+                "kind": rij["kind"],
                 "room_idx": rij["room_idx"], "room_name": rij["room_name"]}
     for rij in owners.values():
         eig = by_id.get(rij["owner_repeater_id"])
         if eig and rij["room_key"] != db.node_key(eig["pubkey_prefix"]):
-            hosts_rooms[rij["owner_repeater_id"]] = \
-                hosts_rooms.get(rij["owner_repeater_id"], 0) + 1
+            tel = hosts_rooms.setdefault(rij["owner_repeater_id"],
+                                         {"room": 0, "sensor": 0})
+            tel["sensor" if rij["kind"] == "sensor" else "room"] += 1
     return templates.TemplateResponse(request, "admin/nodes.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes",
         "repeaters": repeaters, "routes": routes,
-        # De room-groepering: welke node een virtuele room op een andere is, en
-        # hoeveel rooms elke eigenaar host. Zie de opbouw hierboven.
+        # De groepering: welke node een virtuele room/sensor-node op een andere is,
+        # en hoeveel van elk elke eigenaar host. Zie de opbouw hierboven.
         "is_room_of": is_room_of,
         "hosts_rooms": hosts_rooms,
         "rollen": {r["id"]: rbac.rol_op_node(ik, r) for r in repeaters},
@@ -1103,42 +1106,56 @@ def _node_page(request: Request, rid: int, **extra):
     sensor_acl = (sensornode.acl(sensor_route["host"])
                   if sensor_route is not None and sensor_route["can"]
                   else {"ok": False, "error": "", "data": {}})
-    # De rooms van deze node, en de sensoren die eraan hangen. Alleen ophalen als
-    # de weg er is -- net als de ACL hierboven -- want anders staat elke
-    # paginaweergave op een node te wachten die er niet is. De monitoren met hun
-    # ``am``/``rm`` komen uit /status.json (de koppeling room<->sensor); de
-    # roomlijst zelf uit /rooms.json. Twee lichte GET's op het lokale net, en ze
-    # falen elk apart: een node zonder room-API laat de rest van de pagina staan.
+    # De rooms EN de virtuele sensor-nodes van deze node, plus de sensoren die aan
+    # de rooms hangen. Alleen ophalen als de weg er is -- net als de ACL hierboven
+    # -- want anders staat elke paginaweergave op een node te wachten die er niet
+    # is. Rooms en sensor-nodes komen uit ÉÉN /rooms.json-call (rooms.overview); de
+    # monitoren met hun ``am``/``rm``/``sn`` uit /status.json. Twee lichte GET's op
+    # het lokale net, en ze falen elk apart: een node zonder deze API laat de rest
+    # van de pagina staan.
     kan_sensor = sensor_route is not None and sensor_route["can"]
-    sensor_rooms = (rooms.list_rooms(rep) if kan_sensor
-                    else {"ok": False, "error": "", "max": 0, "active": 0, "rooms": []})
+    _leeg_lijst = {"max": 0, "active": 0, "rooms": [], "snodes": []}
+    sensor_ov = (rooms.overview(rep) if kan_sensor
+                 else {"ok": False, "error": "", "rooms": dict(_leeg_lijst),
+                       "snodes": dict(_leeg_lijst)})
+    sensor_rooms = dict(sensor_ov["rooms"], ok=sensor_ov["ok"], error=sensor_ov["error"])
+    sensor_snodes = dict(sensor_ov["snodes"], ok=sensor_ov["ok"], error=sensor_ov["error"])
     sensor_status = (sensornode.status(sensor_route["host"]) if kan_sensor
                      else {"ok": False, "error": "", "data": {}})
     sensor_mon_ruw = (sensor_status["data"].get("mon") or []
                       if sensor_status.get("ok") else [])
-    if sensor_rooms["ok"]:
-        # De koppeling room-pubkey -> deze node vastleggen uit de verse lijst,
-        # zodat de nodelijst de losse room-entries aan hun eigenaar kan koppelen.
-        rooms.record_owners(rep, sensor_rooms["rooms"])
+    if sensor_ov["ok"]:
+        # De koppeling pubkey -> deze node vastleggen uit de verse lijsten (rooms
+        # én sensor-nodes), zodat de nodelijst de losse entries aan hun eigenaar
+        # kan koppelen.
+        rooms.record_owners(rep, sensor_rooms["rooms"], sensor_snodes["snodes"])
         sensor_rooms["rooms"] = rooms.couple(sensor_rooms["rooms"], sensor_mon_ruw)
-    # De monitoren verrijkt voor het alarmformulier: een index om aan de node door
-    # te geven (de positie in de lijst -- zie rooms.set_alarm voor die aanname),
-    # de alarmroute als getal, en welke room-bits aanstaan als kant-en-klare lijst,
+    # De virtuele sensor-nodes verrijkt met de NAMEN bij hun kanaalnummers. De node
+    # stuurt alleen de nummers; de namen staan al in channel_names_for (ch_names).
+    for snode in sensor_snodes["snodes"]:
+        snode["channel_names"] = [
+            {"ch": c, "name": (ch_names[c]["name"] if c in ch_names
+                               and ch_names[c]["name"] else f"kanaal {c}")}
+            for c in snode.get("channels") or []]
+    # De monitoren verrijkt voor het alarmformulier: het KANAALnummer om aan de
+    # node door te geven (mon[].ch -- de node laat ch winnen), de alarmroute als
+    # getal, en welke room- en sensor-node-bits aanstaan als kant-en-klare lijsten,
     # zodat het sjabloon geen bitrekenkunde hoeft te doen (Jinja heeft die niet).
     sensor_mon = []
-    for i, m in enumerate(sensor_mon_ruw):
+    for m in sensor_mon_ruw:
         if not isinstance(m, dict):
             continue
         rm = int(m.get("rm") or 0)
+        sn = int(m.get("sn") or 0)
         sensor_mon.append(dict(
-            m, mi=i, am_v=int(m.get("am") or 0),
-            rooms_on=[b for b in range(sensor_rooms.get("max") or 8)
-                      if rm & (1 << b)]))
+            m, am_v=int(m.get("am") or 0),
+            rooms_on=[b for b in range(sensor_rooms.get("max") or 8) if rm & (1 << b)],
+            snodes_on=[b for b in range(sensor_snodes.get("max") or 8) if sn & (1 << b)]))
     # De join-QR serverzijde uit het ``uri``-veld, als inline-SVG. Geen extern
     # pakket en geen CDN (zie qrsvg.py en de CSP in main.py): de code staat in de
-    # pagina. Alleen voor rooms die een uri meegaven.
-    sensor_room_qrs = {}
-    if sensor_rooms["ok"]:
+    # pagina. Voor elke room en elke sensor-node die een uri meegaf.
+    sensor_room_qrs, sensor_snode_qrs = {}, {}
+    if sensor_ov["ok"]:
         for kamer in sensor_rooms["rooms"]:
             if kamer.get("uri"):
                 try:
@@ -1147,6 +1164,13 @@ def _node_page(request: Request, rid: int, **extra):
                 except ValueError:
                     # Een uri die niet in een QR tot versie 10 past: de link staat
                     # er sowieso als tekst naast, dus dit is geen storing.
+                    pass
+        for snode in sensor_snodes["snodes"]:
+            if snode.get("uri"):
+                try:
+                    sensor_snode_qrs[snode["idx"]] = qrsvg.svg(
+                        snode["uri"], titel=f"contact {snode['name']}")
+                except ValueError:
                     pass
     return templates.TemplateResponse(request, "admin/node.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes", "rep": rep,
@@ -1296,6 +1320,10 @@ def _node_page(request: Request, rid: int, **extra):
         # en de serverzijde bewaarde backups (versiehistoriek, zonder de blob).
         "sensor_rooms": sensor_rooms,
         "sensor_room_qrs": sensor_room_qrs,
+        # De virtuele sensor-nodes van dezelfde node (kind "sensor"), met hun
+        # gekoppelde kanalen (naam erbij) en hun contact-QR's.
+        "sensor_snodes": sensor_snodes,
+        "sensor_snode_qrs": sensor_snode_qrs,
         "sensor_mon": sensor_mon,
         "sensor_am_labels": rooms.AM_LABELS,
         # De zetbare modi (dm/room/both = 1/2/3); "uit" (0) is een toestand die de
@@ -1765,16 +1793,15 @@ def sensor_room_del(request: Request, rid: int, idx: int = Form(...),
 @router.post("/repeaters/{rid}/sensor/room/alarm")
 def sensor_room_alarm(request: Request, rid: int, ch: int = Form(...),
                       am: int = Form(...), room: list[int] = Form(default=[]),
-                      csrf: str = Form(...)):
-    """De alarmroute van één sensor zetten: dm/room/both plus welke rooms.
+                      snode: list[int] = Form(default=[]), csrf: str = Form(...)):
+    """De alarmroute van één sensor zetten: dm/room/both plus welke rooms/sensor-nodes.
 
-    ``ch`` is het KANAALnummer van de monitor (``mon[].ch`` uit /status.json),
-    want de node zet dit kanaal-gebaseerd via zijn web-CLI -- niet op de positie in
-    de mon[]-lijst. De rooms komen als losse checkbox-waarden (elk een room-index)
-    binnen; het ``rm``-bitmasker wordt hier samengesteld en door ``set_alarm`` naar
-    de CSV vertaald die de CLI verwacht. Zo hoeft de pagina geen bitrekenkunde in
-    JavaScript te doen en staat de betekenis (welke rooms staan aan) recht in het
-    formulier.
+    ``ch`` is het KANAALnummer van de monitor (``mon[].ch`` uit /status.json) -- de
+    node laat ``ch`` winnen. De rooms komen als losse ``room``-checkboxwaarden
+    binnen (elk een room-index), de sensor-nodes als ``snode``-checkboxwaarden; de
+    ``rm``- en ``sn``-bitmaskers worden hier samengesteld en via ``set_alarm`` naar
+    ``POST /mon/alarm`` gestuurd. Zo hoeft de pagina geen bitrekenkunde in
+    JavaScript te doen en staat de betekenis recht in het formulier.
     """
     rep = _rep_or_404(request, rid)
     user = require_perm(request, "node.instelling.merkbaar", rep)
@@ -1782,14 +1809,86 @@ def sensor_room_alarm(request: Request, rid: int, ch: int = Form(...),
     rm = 0
     for i in room:
         rm |= 1 << int(i)
-    uitslag = rooms.set_alarm(rep, ch, am=am, rm=rm)
+    sn = 0
+    for i in snode:
+        sn |= 1 << int(i)
+    uitslag = rooms.set_alarm(rep, ch, am=am, rm=rm, sn=sn)
     _noteer(request, user, "node.instelling.merkbaar", rep=rep,
-            detail=(f"alarmroute kanaal {ch}: am={am} rm={rm}" if uitslag["ok"]
+            detail=(f"alarmroute kanaal {ch}: am={am} rm={rm} sn={sn}" if uitslag["ok"]
                     else f"alarmroute kanaal {ch} mislukt: {uitslag['error']}"),
             outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
     return _node_page(request, rid, sensor_result={
         "soort": "alarm", "ok": uitslag["ok"], "error": uitslag["error"],
         "msg": (f"alarmroute van kanaal {ch} gezet" if uitslag["ok"] else "")})
+
+
+# --- de virtuele sensor-nodes van een room-server-node -----------------------
+#
+# De spiegel van de room-routes hierboven: dezelfde poort (ingelogd, bevoegd,
+# CSRF), dezelfde klasse ``node.instelling.merkbaar``. Een sensor-node heeft geen
+# wachtwoord, dus bewerken gaat over naam en stealth.
+
+@router.post("/repeaters/{rid}/sensor/snode/add")
+def sensor_snode_add(request: Request, rid: int, name: str = Form(""),
+                     csrf: str = Form(...)):
+    """Een virtuele sensor-node toevoegen op de node."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.add_snode(rep, name)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"sensor-node toegevoegd: {name.strip()!r} (idx {uitslag['idx']})"
+                    if uitslag["ok"] else f"sensor-node toevoegen mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "snode", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"sensor-node toegevoegd (idx {uitslag['idx']})" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/snode/edit")
+def sensor_snode_edit(request: Request, rid: int, idx: int = Form(...),
+                      name: str = Form(""), stealth: str = Form(""),
+                      csrf: str = Form(...)):
+    """Een virtuele sensor-node bewerken: naam en stealth-vlag.
+
+    Lege ``name`` betekent "niet wijzigen"; de stealth-vlag komt als checkbox
+    binnen en wordt altijd meegestuurd. Zie ``rooms.edit_snode``.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.edit_snode(rep, idx, name=(name.strip() or None),
+                               stealth=(stealth.strip() == "1"))
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"sensor-node {idx} bewerkt" if uitslag["ok"]
+                    else f"sensor-node {idx} bewerken mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "snode", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"sensor-node {idx} bijgewerkt" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/snode/del")
+def sensor_snode_del(request: Request, rid: int, idx: int = Form(...),
+                     confirm: str = Form(""), csrf: str = Form(...)):
+    """Een virtuele sensor-node verwijderen. Met een bevestiging, want de sleutel
+    gaat mee weg -- dezelfde afweging als bij een room."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    if confirm.strip() != "ja":
+        return _node_page(request, rid, sensor_result={
+            "soort": "snode", "ok": False,
+            "error": "een sensor-node verwijderen moet bevestigd worden (typ: ja)",
+            "msg": ""})
+    uitslag = rooms.del_snode(rep, idx)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"sensor-node {idx} verwijderd" if uitslag["ok"]
+                    else f"sensor-node {idx} verwijderen mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "snode", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"sensor-node {idx} verwijderd" if uitslag["ok"] else "")})
 
 
 @router.post("/repeaters/{rid}/sensor/rooms/backup")
