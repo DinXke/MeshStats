@@ -57,6 +57,17 @@ MON_ALARM_AM = "am"
 MON_ALARM_RM = "rm"
 MON_ALARM_SN = "sn"
 
+# De adapterlaag voor de overige node-endpoints die de UI aanspreekt. Ze staan
+# hier bij elkaar zodat een afwijkend contract op één plek aangepast wordt.
+#   - een nieuwe monitor (kanaal) aanmaken op de node;
+#   - een room of sensor-node zich laten melden op het mesh (flood of zerohop).
+# ``MONITOR_ADD_PATH`` is een AANNAME zolang het node-contract niet vaststaat:
+# een node die dit pad niet kent, antwoordt 404 en de fout komt netjes op het
+# scherm -- de rest van het panel blijft werken.
+MONITOR_ADD_PATH = "/mon/add"
+ROOM_ADVERT_PATH = "/room/advert"
+SNODE_ADVERT_PATH = "/snode/advert"
+
 # De geldige alarmmodi (1=dm, 2=room, 3=both). Voor de validatie en voor de
 # keuzelijst in de UI; ``am=0`` ("uit", zie AM_LABELS) is een toestand die
 # /status.json kan melden maar die deze setter niet aanbiedt.
@@ -357,6 +368,119 @@ def set_alarm(rep, ch: int, am: int | None = None,
     out["error"] = ant["error"]
     out["data"] = ant["data"]
     return out
+
+
+# --- node-centrisch kanaalbeheer: kanalen aan/af een room of sensor-node ------
+#
+# Dezelfde onderliggende maskers als ``set_alarm`` (``rm`` voor rooms, ``sn`` voor
+# sensor-nodes), maar node-centrisch gepresenteerd: "welke kanalen horen bij deze
+# room/sensor-node". Aan-/afvinken zet ALLEEN de bit van DEZE room/sensor-node op
+# elke monitor; ``am`` en het andere masker blijven ongemoeid (``set_alarm``
+# stuurt alleen wat het meekrijgt). Er verandert alleen wat verandert -- een
+# monitor die al goed staat wordt niet aangeraakt.
+
+def _apply_channel_bit(rep, veld: str, ent_idx: int, checked,
+                       timeout: int | None = None) -> dict:
+    """De bit ``ent_idx`` in ``veld`` (``rm``/``sn``) op elke monitor gelijkzetten
+    aan de vinkjes. Leest de huidige stand uit ``/status.json`` zodat de andere
+    bits behouden blijven."""
+    out = {"ok": False, "error": "", "changed": 0}
+    st = sensornode.status(_host(rep), timeout)
+    if not st["ok"]:
+        out["error"] = st["error"]
+        return out
+    mon = st["data"].get("mon") or []
+    bit = 1 << int(ent_idx)
+    gewenst = {int(c) for c in checked}
+    fouten = []
+    for m in mon:
+        if not isinstance(m, dict):
+            continue
+        ch = int(m.get("ch") or 0)
+        huidig = int(m.get(veld) or 0)
+        moet = ch in gewenst
+        heeft = bool(huidig & bit)
+        if moet == heeft:
+            continue
+        nieuw = (huidig | bit) if moet else (huidig & ~bit)
+        res = (set_alarm(rep, ch, rm=nieuw) if veld == "rm"
+               else set_alarm(rep, ch, sn=nieuw))
+        if res["ok"]:
+            out["changed"] += 1
+        else:
+            fouten.append(f"kanaal {ch}: {res['error']}")
+    if fouten:
+        out["error"] = "; ".join(fouten)
+        out["ok"] = out["changed"] > 0   # deels gelukt telt als gelukt-met-melding
+    else:
+        out["ok"] = True
+    return out
+
+
+def apply_room_channels(rep, room_idx: int, checked,
+                        timeout: int | None = None) -> dict:
+    """De kanalen die bij room ``room_idx`` horen gelijkzetten aan de vinkjes."""
+    return _apply_channel_bit(rep, "rm", room_idx, checked, timeout)
+
+
+def apply_snode_channels(rep, snode_idx: int, checked,
+                         timeout: int | None = None) -> dict:
+    """De kanalen die bij sensor-node ``snode_idx`` horen gelijkzetten."""
+    return _apply_channel_bit(rep, "sn", snode_idx, checked, timeout)
+
+
+def add_monitor(rep, name: str, host: str = "", kind: str = "",
+                interval: int | None = None) -> dict:
+    """Een nieuwe monitor (kanaal) aanmaken op de node. Adapterlaag.
+
+    Het node-contract hiervoor staat nog niet vast; deze functie pos't naar
+    ``MONITOR_ADD_PATH`` en gaat ervan uit dat de node het nieuwe kanaalnummer
+    teruggeeft als ``{"ok",ch}`` zodat de aanroeper het meteen aan een room of
+    sensor-node kan koppelen. Kent de node dit pad niet, dan komt er een 404 en
+    een leesbare fout -- de rest van het panel blijft werken.
+    """
+    out = {"ok": False, "error": "", "ch": None}
+    naam = str(name or "").strip()
+    if not naam:
+        out["error"] = "een kanaal heeft een naam nodig"
+        return out
+    velden: dict = {"name": naam}
+    if host:
+        velden["host"] = str(host).strip()
+    if kind:
+        velden["kind"] = str(kind).strip()
+    if interval is not None:
+        velden["interval"] = int(interval)
+    ant = sensornode.post_form(_host(rep), MONITOR_ADD_PATH, velden)
+    if not ant["ok"]:
+        out["error"] = ant["error"]
+        return out
+    data = ant["data"] if isinstance(ant["data"], dict) else {}
+    out["ch"] = data.get("ch")
+    out["ok"] = True
+    return out
+
+
+def room_advert(rep, idx: int, flood: bool = True) -> dict:
+    """Een room zich laten melden op het mesh: flood (mesh-breed) of zerohop.
+
+    Adapterlaag over ``ROOM_ADVERT_PATH`` (form ``idx``, ``flood``=0/1). Symmetrisch
+    met ``snode_advert``. Kent de node het pad nog niet, dan komt er een leesbare
+    fout op het scherm.
+    """
+    ant = sensornode.post_form(_host(rep), ROOM_ADVERT_PATH,
+                               {"idx": int(idx), "flood": "1" if flood else "0"})
+    return {"ok": ant["ok"], "error": ant["error"]}
+
+
+def snode_advert(rep, idx: int, flood: bool = True) -> dict:
+    """Een sensor-node zich laten melden op het mesh: flood of zerohop.
+
+    Adapterlaag over ``SNODE_ADVERT_PATH`` (form ``idx``, ``flood``=0/1).
+    """
+    ant = sensornode.post_form(_host(rep), SNODE_ADVERT_PATH,
+                               {"idx": int(idx), "flood": "1" if flood else "0"})
+    return {"ok": ant["ok"], "error": ant["error"]}
 
 
 # --- de koppeling room <-> sensoren -------------------------------------------

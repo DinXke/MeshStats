@@ -91,8 +91,13 @@ De site spreekt `GET /rooms.json`, `POST /room/add|edit|del`, `POST
 /snode/add|edit|del`, `POST /mon/alarm`, `GET /rooms/backup` en `POST
 /rooms/restore` aan. De alarmroute wordt kanaal-gebaseerd gezet via `POST
 /mon/alarm` (formvelden `ch`/`am`/`rm`, optioneel `sn`, waarbij `ch` het
-kanaalnummer uit `mon[].ch` is en op de node wint); die vorm staat geïsoleerd
-achter `MON_ALARM_PATH` en `set_alarm` in `server/app/rooms.py`, zodat een
-afwijkend contract een kleine wijziging is. De netwerkgrens zelf blijft in
-`sensornode.py`, achter dezelfde doelcontrole en vloot-/per-node-credential als
-elke andere aanroep naar een node.
+kanaalnummer uit `mon[].ch` is en op de node wint). Het node-centrische
+kanaalpanel gebruikt diezelfde setter — een kanaal aan-/afvinken op een
+room/sensor-node zet alleen de `rm`- resp. `sn`-bit van die entiteit en laat de
+andere maskers met rust. Een kanaal aanmaken (`POST /mon/add`) en adverts (`POST
+/room/advert` / `POST /snode/advert`, formvelden `idx`/`flood`) zijn aannames
+zolang hun contract nog niet vaststaat. Dit alles staat geïsoleerd achter de
+`MON_ALARM_*`/`MONITOR_ADD_PATH`/`*_ADVERT_PATH`-constanten en hun functies in
+`server/app/rooms.py`, zodat een afwijkend contract een kleine wijziging is. De
+netwerkgrens zelf blijft in `sensornode.py`, achter dezelfde doelcontrole en
+vloot-/per-node-credential als elke andere aanroep naar een node.

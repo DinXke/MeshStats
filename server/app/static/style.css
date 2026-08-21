@@ -318,6 +318,13 @@ label.check { display: inline-flex; align-items: center; gap: .35rem; margin: 0;
 label.check input { width: auto; margin: 0; }
 .room-alarm { align-items: center; }
 .room-alarm-name { min-width: 140px; }
+/* Het kanaalbeheer-panel per room/sensor-node: inklapbaar zodat de kaart niet
+   uitdijt. Geen animatie -- respecteert prefers-reduced-motion vanzelf. */
+details.chan-panel { margin: .4rem 0; }
+details.chan-panel > summary { cursor: pointer; color: var(--muted);
+  font-size: .82rem; padding: .2rem 0; }
+details.chan-panel > summary:hover { color: var(--accent); }
+details.chan-panel[open] > summary { color: var(--accent); }
 
 .loginbox { max-width: 360px; margin: 3rem auto; }
 .notice { border-color: var(--accent-dim); margin-bottom: 1rem; }

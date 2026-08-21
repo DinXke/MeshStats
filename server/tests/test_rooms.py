@@ -277,6 +277,89 @@ def test_del_snode_stuurt_de_index(db, monkeypatch):
     assert gezien["path"] == "/snode/del" and gezien["fields"] == {"idx": 1}
 
 
+# --- node-centrisch kanaalbeheer + advert -------------------------------------
+
+_STATUS_KANALEN = {
+    "fw": "1.4.0",
+    "mon": [
+        {"ch": 5, "n": "google", "rm": 0b10, "sn": 0b00},
+        {"ch": 1, "n": "batterij", "rm": 0b01, "sn": 0b01},
+        {"ch": 4, "n": "wifi", "rm": 0b00, "sn": 0b00},
+    ],
+}
+
+
+def test_apply_room_channels_zet_alleen_de_eigen_rm_bit(db, monkeypatch):
+    """Room 0 (bit 0): kanalen 5 en 4 aan, kanaal 1 uit. Alleen rm verandert, en
+    alleen op de kanalen die echt wisselen -- am en sn blijven ongemoeid."""
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "status",
+                        lambda host, t=None: {"ok": True, "error": "", "data": _STATUS_KANALEN})
+    calls = []
+    monkeypatch.setattr(rooms, "set_alarm",
+                        lambda rep, ch, am=None, rm=None, sn=None:
+                        calls.append((ch, am, rm, sn)) or {"ok": True, "error": "", "data": {}})
+    uit = rooms.apply_room_channels(_rep(db), 0, {5, 4})
+    assert uit["ok"] and uit["changed"] == 3
+    # ch5: 0b10 -> 0b11; ch1: 0b01 -> 0b00; ch4: 0b00 -> 0b01. Alleen rm meegegeven.
+    assert (5, None, 0b11, None) in calls
+    assert (1, None, 0b00, None) in calls
+    assert (4, None, 0b01, None) in calls
+
+
+def test_apply_snode_channels_zet_alleen_de_sn_bit(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "status",
+                        lambda host, t=None: {"ok": True, "error": "", "data": _STATUS_KANALEN})
+    calls = []
+    monkeypatch.setattr(rooms, "set_alarm",
+                        lambda rep, ch, am=None, rm=None, sn=None:
+                        calls.append((ch, rm, sn)) or {"ok": True, "error": "", "data": {}})
+    # sensor-node 0 (bit 0): alleen kanaal 5 aan. ch1 heeft sn-bit 0 al -> uit.
+    uit = rooms.apply_snode_channels(_rep(db), 0, {5})
+    assert uit["ok"]
+    assert (5, None, 0b01) in calls          # ch5 sn 0 -> 1
+    assert (1, None, 0b00) in calls          # ch1 sn 1 -> 0
+    # ch4 stond al op 0 en is niet gevraagd: niet aangeraakt.
+    assert all(c[0] != 4 for c in calls)
+
+
+def test_apply_channels_laat_ongewijzigde_kanalen_met_rust(db, monkeypatch):
+    from app import rooms, sensornode
+    monkeypatch.setattr(sensornode, "status",
+                        lambda host, t=None: {"ok": True, "error": "", "data": _STATUS_KANALEN})
+    calls = []
+    monkeypatch.setattr(rooms, "set_alarm",
+                        lambda rep, ch, **k: calls.append(ch) or {"ok": True, "error": "", "data": {}})
+    # Room 1 (bit 1) exact zoals het al staat: alleen ch5 heeft bit1. Niets wijzigt.
+    uit = rooms.apply_room_channels(_rep(db), 1, {5})
+    assert uit["ok"] and uit["changed"] == 0 and calls == []
+
+
+def test_add_monitor_geeft_het_nieuwe_kanaalnummer_terug(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = {}
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.update(path=path, fields=fields)
+                        or {"ok": True, "error": "", "data": {"ok": True, "ch": 7}})
+    uit = rooms.add_monitor(_rep(db), "Nieuw", host="1.1.1.1", interval=60)
+    assert uit["ok"] and uit["ch"] == 7
+    assert gezien["path"] == rooms.MONITOR_ADD_PATH
+    assert gezien["fields"] == {"name": "Nieuw", "host": "1.1.1.1", "interval": 60}
+
+
+def test_room_en_snode_advert_sturen_idx_en_flood(db, monkeypatch):
+    from app import rooms, sensornode
+    gezien = []
+    monkeypatch.setattr(sensornode, "post_form",
+                        lambda host, path, fields, t=None: gezien.append((path, fields))
+                        or {"ok": True, "error": "", "data": {}})
+    rooms.room_advert(_rep(db), 2, flood=True)
+    rooms.snode_advert(_rep(db), 1, flood=False)
+    assert gezien[0] == (rooms.ROOM_ADVERT_PATH, {"idx": 2, "flood": "1"})
+    assert gezien[1] == (rooms.SNODE_ADVERT_PATH, {"idx": 1, "flood": "0"})
+
+
 # --- de netwerkprimitieven (post_form / post_json) ----------------------------
 
 def test_post_form_bouwt_een_form_body(db, monkeypatch):
@@ -480,6 +563,9 @@ def test_de_room_en_sensornode_secties_renderen(db, monkeypatch):
     # De Sensor-nodes-sectie: naam, contact-link en de gekoppelde kanalen.
     assert "Sensor-nodes" in html and "Weerstation" in html
     assert "type=4" in html                     # de contact-URI van de sensor-node
+    # Het node-centrische kanaalbeheer-panel en de advert-knoppen.
+    assert "Kanalen beheren" in html and "Kanaal toevoegen" in html
+    assert "Advert (flood)" in html and "Advert (zerohop)" in html
     # De mapping is bij het renderen vastgelegd: twee rooms + één sensor-node.
     rijen = {r["room_key"]: r["kind"] for r in db.room_owners_for(rep["id"])}
     assert rijen[db.node_key("cc" * 32)] == "sensor"

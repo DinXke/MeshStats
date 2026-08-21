@@ -621,9 +621,9 @@
     {%- elif sensor_result.soort == 'rotate' %}
     &#9888; De weblogin is <strong>niet</strong> geroteerd: {{ sensor_result.error }}.
     Er is niets aan de opslag veranderd &mdash; de node blijft op de vorige login.
-    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'backup', 'restore') and sensor_result.ok %}
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'backup', 'restore') and sensor_result.ok %}
     &#9989; {{ sensor_result.msg }}.
-    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'backup', 'restore') %}
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'backup', 'restore') %}
     &#9888; {{ sensor_result.error or 'niets gebeurd' }}.
     {%- elif sensor_result.ok %}
     &#9989; <span class="mono">{{ sensor_result.reply }}</span>
@@ -903,6 +903,50 @@
     <p class="muted small">Nog geen sensor stuurt zijn alarm naar deze room.</p>
     {% endif %}
 
+    {#- Node-centrisch kanaalbeheer: welke kanalen horen bij DEZE room. Aanvinken
+        zet de rm-bit van deze room op dat kanaal, afvinken haalt hem eruit
+        (alleen ontkoppelen); am en het sensor-node-masker blijven ongemoeid. -#}
+    {% if sensor_mon %}
+    <details class="chan-panel">
+      <summary>Kanalen beheren</summary>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/channels" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="room_idx" value="{{ kamer.idx }}">
+        {% for m in sensor_mon %}
+        <label class="check"><input type="checkbox" name="ch" value="{{ m.ch }}"
+               {% if kamer.idx in m.rooms_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
+          {{ m.n }} <span class="muted small">(kanaal {{ m.ch }})</span></label>
+        {% endfor %}
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanalen bijwerken</button>
+      </form>
+      <p class="muted small">Afvinken haalt een kanaal uit deze room (ontkoppelen), het wordt niet globaal verwijderd.</p>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/channel/add" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="room_idx" value="{{ kamer.idx }}">
+        <input name="name" placeholder="nieuw kanaal: naam" maxlength="40" spellcheck="false"
+               autocomplete="off" aria-label="Naam van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
+        <input name="host" placeholder="host (optioneel)" spellcheck="false"
+               autocomplete="off" aria-label="Host van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
+        <input name="interval" placeholder="interval s (optioneel)" inputmode="numeric"
+               autocomplete="off" aria-label="Interval in seconden"{{ recht('node.instelling.merkbaar') }}>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanaal toevoegen</button>
+      </form>
+    </details>
+    {% endif %}
+
+    {#- Advert: laat deze room zich melden op het mesh. Flood gaat mesh-breed,
+        zerohop alleen naar wie hem direct hoort. -#}
+    <div class="rowform">
+      {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/advert" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ kamer.idx }}">
+        <input type="hidden" name="flood" value="{{ vlag }}">
+        <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
+      </form>
+      {% endfor %}
+    </div>
+
     <div class="rowform">
       <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/edit" class="rowform">
         <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -994,6 +1038,49 @@
     {% else %}
     <p class="muted small">Nog geen kanaal aan deze sensor-node gekoppeld.</p>
     {% endif %}
+
+    {#- Node-centrisch kanaalbeheer: welke kanalen horen bij DEZE sensor-node
+        (sn-bit). Aanvinken zet de sn-bit, afvinken haalt hem eruit; am en het
+        room-masker blijven ongemoeid. -#}
+    {% if sensor_mon %}
+    <details class="chan-panel">
+      <summary>Kanalen beheren</summary>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/channels" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="snode_idx" value="{{ snode.idx }}">
+        {% for m in sensor_mon %}
+        <label class="check"><input type="checkbox" name="ch" value="{{ m.ch }}"
+               {% if snode.idx in m.snodes_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
+          {{ m.n }} <span class="muted small">(kanaal {{ m.ch }})</span></label>
+        {% endfor %}
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanalen bijwerken</button>
+      </form>
+      <p class="muted small">Afvinken haalt een kanaal uit deze sensor-node (ontkoppelen), het wordt niet globaal verwijderd.</p>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/channel/add" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="snode_idx" value="{{ snode.idx }}">
+        <input name="name" placeholder="nieuw kanaal: naam" maxlength="40" spellcheck="false"
+               autocomplete="off" aria-label="Naam van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
+        <input name="host" placeholder="host (optioneel)" spellcheck="false"
+               autocomplete="off" aria-label="Host van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
+        <input name="interval" placeholder="interval s (optioneel)" inputmode="numeric"
+               autocomplete="off" aria-label="Interval in seconden"{{ recht('node.instelling.merkbaar') }}>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanaal toevoegen</button>
+      </form>
+    </details>
+    {% endif %}
+
+    {#- Advert: laat deze sensor-node zich melden op het mesh (flood of zerohop). -#}
+    <div class="rowform">
+      {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/advert" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ snode.idx }}">
+        <input type="hidden" name="flood" value="{{ vlag }}">
+        <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
+      </form>
+      {% endfor %}
+    </div>
 
     <div class="rowform">
       <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/edit" class="rowform">

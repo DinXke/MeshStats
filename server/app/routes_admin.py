@@ -1891,6 +1891,143 @@ def sensor_snode_del(request: Request, rid: int, idx: int = Form(...),
         "msg": (f"sensor-node {idx} verwijderd" if uitslag["ok"] else "")})
 
 
+# --- node-centrisch kanaalbeheer + advert ------------------------------------
+#
+# Dezelfde poort en klasse als de rest van het roombeheer. Het kanaalpanel toont
+# per room/sensor-node welke kanalen eraan hangen; aan-/afvinken zet alleen de bit
+# van DIE room/sensor-node (rm resp. sn), zonder de andere maskers te verstoren
+# (zie rooms.apply_*). Een kanaal aanmaken loopt via de adapterlaag; advert laat
+# een room/sensor-node zich melden op het mesh (flood of zerohop).
+
+@router.post("/repeaters/{rid}/sensor/room/channels")
+def sensor_room_channels(request: Request, rid: int, room_idx: int = Form(...),
+                         ch: list[int] = Form(default=[]), csrf: str = Form(...)):
+    """De kanalen die bij één room horen gelijkzetten aan de aangevinkte vakjes."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.apply_room_channels(rep, room_idx, ch)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"kanalen van room {room_idx} bijgewerkt ({uitslag['changed']})"
+                    if uitslag["ok"] else f"kanalen room {room_idx} mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "channels", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"{uitslag['changed']} kanaal/kanalen van room {room_idx} bijgewerkt"
+                if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/snode/channels")
+def sensor_snode_channels(request: Request, rid: int, snode_idx: int = Form(...),
+                          ch: list[int] = Form(default=[]), csrf: str = Form(...)):
+    """De kanalen die bij één sensor-node horen gelijkzetten aan de vakjes."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    uitslag = rooms.apply_snode_channels(rep, snode_idx, ch)
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"kanalen van sensor-node {snode_idx} bijgewerkt ({uitslag['changed']})"
+                    if uitslag["ok"] else f"kanalen sensor-node {snode_idx} mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "channels", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"{uitslag['changed']} kanaal/kanalen van sensor-node {snode_idx} bijgewerkt"
+                if uitslag["ok"] else "")})
+
+
+def _channel_add(request, rid, rep, user, veld, ent_idx, name, host, kind, interval):
+    """Gedeelde afhandeling van 'nieuw kanaal + koppel aan deze room/sensor-node'.
+
+    De poort (``require_perm`` + ``check_csrf``) staat in de aanroepende routes
+    zelf -- zodat de vangnettest in test_rechten.py de controle per route ziet --
+    en deze helper krijgt de al-gecontroleerde ``rep``/``user`` binnen.
+    """
+    gemaakt = rooms.add_monitor(rep, name, host=host, kind=kind,
+                                interval=(int(interval) if str(interval).strip() else None))
+    if not gemaakt["ok"]:
+        _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+                detail=f"kanaal aanmaken mislukt: {gemaakt['error']}", outcome=audit.MISLUKT)
+        return _node_page(request, rid, sensor_result={
+            "soort": "monitor", "ok": False, "error": gemaakt["error"], "msg": ""})
+    # Koppelen aan deze room/sensor-node: alleen de eigen bit zetten.
+    koppel = {"ok": True, "error": ""}
+    if gemaakt["ch"] is not None:
+        bit = 1 << int(ent_idx)
+        koppel = (rooms.set_alarm(rep, int(gemaakt["ch"]), rm=bit) if veld == "rm"
+                  else rooms.set_alarm(rep, int(gemaakt["ch"]), sn=bit))
+    ok = koppel["ok"]
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"kanaal {name.strip()!r} aangemaakt (ch {gemaakt['ch']}) en gekoppeld"
+                    if ok else f"kanaal aangemaakt maar koppelen mislukt: {koppel['error']}"),
+            outcome=audit.OK if ok else audit.DEELS)
+    return _node_page(request, rid, sensor_result={
+        "soort": "monitor", "ok": ok,
+        "error": koppel["error"],
+        "msg": (f"kanaal aangemaakt (ch {gemaakt['ch']}) en gekoppeld" if ok else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/room/channel/add")
+def sensor_room_channel_add(request: Request, rid: int, room_idx: int = Form(...),
+                            name: str = Form(""), host: str = Form(""),
+                            kind: str = Form(""), interval: str = Form(""),
+                            csrf: str = Form(...)):
+    """Een nieuw kanaal aanmaken op de node en aan deze room koppelen."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    return _channel_add(request, rid, rep, user, "rm", room_idx, name, host, kind, interval)
+
+
+@router.post("/repeaters/{rid}/sensor/snode/channel/add")
+def sensor_snode_channel_add(request: Request, rid: int, snode_idx: int = Form(...),
+                             name: str = Form(""), host: str = Form(""),
+                             kind: str = Form(""), interval: str = Form(""),
+                             csrf: str = Form(...)):
+    """Een nieuw kanaal aanmaken op de node en aan deze sensor-node koppelen."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    return _channel_add(request, rid, rep, user, "sn", snode_idx, name, host, kind, interval)
+
+
+@router.post("/repeaters/{rid}/sensor/room/advert")
+def sensor_room_advert(request: Request, rid: int, idx: int = Form(...),
+                       flood: str = Form("1"), csrf: str = Form(...)):
+    """Een room zich laten melden op het mesh: flood (mesh-breed) of zerohop."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    is_flood = flood.strip() != "0"
+    uitslag = rooms.room_advert(rep, idx, flood=is_flood)
+    soort_t = "flood" if is_flood else "zerohop"
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"room {idx} advert ({soort_t})" if uitslag["ok"]
+                    else f"room {idx} advert mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "advert", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"advert van room {idx} verstuurd ({soort_t})" if uitslag["ok"] else "")})
+
+
+@router.post("/repeaters/{rid}/sensor/snode/advert")
+def sensor_snode_advert(request: Request, rid: int, idx: int = Form(...),
+                        flood: str = Form("1"), csrf: str = Form(...)):
+    """Een sensor-node zich laten melden op het mesh: flood of zerohop."""
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.instelling.merkbaar", rep)
+    check_csrf(request, csrf)
+    is_flood = flood.strip() != "0"
+    uitslag = rooms.snode_advert(rep, idx, flood=is_flood)
+    soort_t = "flood" if is_flood else "zerohop"
+    _noteer(request, user, "node.instelling.merkbaar", rep=rep,
+            detail=(f"sensor-node {idx} advert ({soort_t})" if uitslag["ok"]
+                    else f"sensor-node {idx} advert mislukt: {uitslag['error']}"),
+            outcome=audit.OK if uitslag["ok"] else audit.MISLUKT)
+    return _node_page(request, rid, sensor_result={
+        "soort": "advert", "ok": uitslag["ok"], "error": uitslag["error"],
+        "msg": (f"advert van sensor-node {idx} verstuurd ({soort_t})" if uitslag["ok"] else "")})
+
+
 @router.post("/repeaters/{rid}/sensor/rooms/backup")
 def sensor_rooms_backup(request: Request, rid: int, csrf: str = Form(...)):
     """Een room-backup ophalen bij de node en serverzijde bewaren (GEVOELIG).

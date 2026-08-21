@@ -86,7 +86,12 @@ The site talks to `GET /rooms.json`, `POST /room/add|edit|del`, `POST
 /snode/add|edit|del`, `POST /mon/alarm`, `GET /rooms/backup` and `POST
 /rooms/restore`. The alarm route is set channel-based via `POST /mon/alarm` (form
 `ch`/`am`/`rm`, optionally `sn`, where `ch` is the monitor's channel from
-`mon[].ch` and wins on the node); that form lives isolated behind `MON_ALARM_PATH`
-and `set_alarm` in `server/app/rooms.py`, so a differing contract is a small
+`mon[].ch` and wins on the node). The node-centric channel panel reuses that same
+setter — checking a channel on a room/sensor-node only flips that entity's `rm`
+resp. `sn` bit, leaving the other masks alone. Creating a channel (`POST
+/mon/add`) and adverts (`POST /room/advert` / `POST /snode/advert`, form
+`idx`/`flood`) are assumptions while their contract settles. All of these live
+isolated behind the `MON_ALARM_*`/`MONITOR_ADD_PATH`/`*_ADVERT_PATH` constants and
+their functions in `server/app/rooms.py`, so a differing contract is a small
 change. The network boundary itself stays in `sensornode.py`, behind the same
 target check and fleet/per-node credential as every other call to a node.
