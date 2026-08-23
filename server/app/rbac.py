@@ -198,6 +198,15 @@ ACTIONS = {
                                    "gebruikers en groepen beheren"),
     "server.audit": Handeling("server", KLASSE_KIJKEN,
                               "het volledige audittrail lezen"),
+    # De lijst met beheerde companions (T1000-E e.d.) muteren. Een
+    # serverhandeling en geen node-handeling: een companion is geen apparaat op
+    # een dak dat aan iemand toegewezen wordt, maar een installatiebrede
+    # bestemmingslijst -- wie een bestemming toevoegt of verwijdert, raakt wat
+    # ELKE afzender-node naartoe kan sturen. Het DM VERSTUREN zelf blijft wél een
+    # node-handeling (node.instelling.merkbaar op de afzender), want dat kost
+    # zendtijd op een bepaalde node; zie de Send-DM-routes.
+    "server.companions": Handeling("server", KLASSE_INGRIJPEND,
+                                   "de lijst met companions beheren"),
     "server.firmwarelijst": Handeling("server", KLASSE_GEWOON,
                                       "de releaselijst verversen"),
 }

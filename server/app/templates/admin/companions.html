@@ -1,0 +1,101 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Companions — beheer — {{ site_name }}{% endblock %}
+{% block admin %}
+
+{#- De beheerde companions: handzenders (T1000-E e.d.) waar we DM-commando's
+    naartoe sturen. Een companion is geen node -- hij publiceert niets en wordt
+    niet uitgevraagd -- maar een BESTEMMING. Deze pagina is de volledige CRUD,
+    gebouwd voor tientallen; per companion is er een eigen pagina met de
+    commando-knoppen en de seriële CLI. -#}
+<h1>Companions</h1>
+
+<p class="muted">
+  Een <strong>companion</strong> is een handzender (bijvoorbeeld een T1000-E) die
+  we over het mesh commando's sturen — laten piepen om hem terug te vinden,
+  dempen, het volume zetten, enzovoort. Hij verschijnt met opzet niet in de
+  nodelijst: hij publiceert geen statistieken en wordt niet uitgevraagd. Elk
+  commando is een DM naar zijn pubkey, verstuurd vanaf een
+  <strong>afzender-node</strong> (de bot van bijvoorbeeld de MeshUptime-node); het
+  lokale mesh routeert de DM daarna via de repeater verder.
+</p>
+
+{% if result %}
+<div class="card notice">
+  {% if result.ok %}<strong>Gelukt.</strong>{% else %}<strong>Niet gelukt.</strong>{% endif %}
+  {{ result.msg }}
+</div>
+{% endif %}
+
+{% if not mag_beheren.allowed %}
+<p class="muted small">&#128274; {{ mag_beheren.reason }}. U kunt de lijst wel bekijken en
+  companions een commando sturen (dat mag per afzender-node), maar de lijst zelf
+  wijzigen is voorbehouden aan een serverbeheerder.</p>
+{% endif %}
+
+{% if companions %}
+<table>
+  <thead>
+    <tr><th>Naam</th><th>Type</th><th>Pubkey</th><th>Standaardafzender</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for c in companions %}
+    <tr>
+      <td><a href="/admin/companions/{{ c.id }}">{{ c.name }}</a></td>
+      <td>{{ c.type or '—' }}</td>
+      <td class="mono">{{ c.pubkey[:16] }}…</td>
+      <td>
+        {%- set s = rep_by_id.get(c.sender_repeater_id) -%}
+        {{ s.name if s else '— geen —' }}
+      </td>
+      <td><a href="/admin/companions/{{ c.id }}">beheren &rarr;</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">Nog geen companions. Voeg er hieronder een toe.</p>
+{% endif %}
+
+{#- ==================== Toevoegen / bewerken =================================
+    Eén formulier, voor toevoegen. Bewerken en verwijderen zit op de pagina van de
+    companion zelf, zodat deze lijst een lijst blijft en niet een lange reeks
+    open formulieren wordt bij tientallen companions. -#}
+{% if mag_beheren.allowed %}
+<section class="card" style="margin-top:1.2rem">
+  <h2>Companion toevoegen</h2>
+  <form method="post" action="/admin/companions/add">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p>
+      <label>Naam<br><input name="name" maxlength="64" required
+             placeholder="bv. Björn — T1000-E"></label>
+    </p>
+    <p>
+      <label>Pubkey (64 hex)<br>
+        <input name="pubkey" class="mono" pattern="[0-9a-fA-F]{64}" maxlength="64" required
+               style="width:min(100%,42rem)"
+               placeholder="volledige publieke sleutel van 64 hex-tekens"></label>
+    </p>
+    <p>
+      <label>Type<br><input name="type" maxlength="32" placeholder="T1000-E"></label>
+    </p>
+    <p>
+      <label>Standaardafzender (node die de DM verstuurt)<br>
+        <select name="sender">
+          <option value="">— geen —</option>
+          {% for s in senders %}
+          <option value="{{ s.id }}">{{ s.name }}</option>
+          {% endfor %}
+        </select></label>
+      {% if not senders %}<span class="muted small">Geen enkele node heeft nu een
+        bereikbare eigen API met een bot. U kunt later een afzender kiezen.</span>{% endif %}
+    </p>
+    <p>
+      <label>Notities<br><textarea name="notes" maxlength="500" rows="2"
+             style="width:min(100%,42rem)"></textarea></label>
+    </p>
+    <button type="submit">Toevoegen</button>
+  </form>
+</section>
+{% endif %}
+
+{% endblock %}

@@ -63,7 +63,7 @@
     bordje erop. Binnen een pagina waar je wél iets mag, blijft de regel omgekeerd
     -- daar staan knoppen uitgeschakeld met de reden erbij. -#}
 <nav class="adminnav" aria-label="Beheeronderdelen">
-  <a href="/admin"{% if world == 'nodes' and not firmware_tab and not compare_tab and not discovery_tab and not monitors_tab %} class="on" aria-current="page"{% endif %}>
+  <a href="/admin"{% if world == 'nodes' and not firmware_tab and not compare_tab and not discovery_tab and not monitors_tab and not companions_tab and not senddm_tab %} class="on" aria-current="page"{% endif %}>
     &#128225; Nodes en repeaters</a>
   <a href="/admin/compare"{% if compare_tab %} class="on" aria-current="page"{% endif %}>
     &#9707; Vergelijken</a>
@@ -71,6 +71,13 @@
     &#128225; Uitvragen</a>
   <a href="/admin/monitors"{% if monitors_tab %} class="on" aria-current="page"{% endif %}>
     &#128100; Beheerders</a>
+  {#- Companions en Send-DM staan in de apparaat-wereld: ze sturen iets een radio
+      op. Companions is de lijst + de commando-knoppen; Send-DM is de generieke
+      "kies afzender, kies bestemming, verstuur". -#}
+  <a href="/admin/companions"{% if companions_tab %} class="on" aria-current="page"{% endif %}>
+    &#128241; Companions</a>
+  <a href="/admin/senddm"{% if senddm_tab %} class="on" aria-current="page"{% endif %}>
+    &#9993; Send-DM</a>
   <a href="/admin/firmware"{% if firmware_tab %} class="on" aria-current="page"{% endif %}>
     &#8679; Firmware</a>
   {% if serverrechten and serverrechten['server.instellingen'].allowed %}

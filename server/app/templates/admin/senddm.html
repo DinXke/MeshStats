@@ -1,0 +1,87 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Send-DM — beheer — {{ site_name }}{% endblock %}
+{% block admin %}
+
+{#- De generieke Send-DM-tab. Herbruikbaar en niet aan één companion gebonden:
+    kies WELKE node de DM verstuurt, kies een bestemming (een companion óf een
+    contact van die node), typ een tekst, verstuur. Het vervoer is de bot van de
+    afzender-node (rooms.bot_sendto); het mesh routeert verder via de repeater. -#}
+<h1>Send-DM</h1>
+
+<p class="muted">
+  Stuur een direct bericht het mesh op. Kies eerst welke <strong>node</strong> de
+  DM verstuurt — bijvoorbeeld de bot van de MeshUptime-node — en dan de
+  <strong>bestemming</strong>: een beheerde companion, of een contact dat die node
+  kent. De DM vertrekt bij de gekozen node en het lokale mesh brengt hem via de
+  repeater verder.
+</p>
+
+{% if result %}
+<div class="card notice">
+  {% if result.ok %}<strong>Verstuurd.</strong>{% else %}<strong>Niet verstuurd.</strong>{% endif %}
+  {{ result.msg }}
+</div>
+{% endif %}
+
+{% if not senders %}
+<p class="muted small">&#9888; Geen enkele node heeft nu een bereikbare eigen API met
+  een bot om vanaf te versturen. Zet het adres van de eigen API van een node
+  (sensor-host) en zorg dat er een botidentiteit op draait.</p>
+{% endif %}
+
+{#- De companions als datalist, serverzijde — zo werkt de kiezer ook zonder
+    JavaScript. De contacten van de gekozen node komen er met JavaScript bij
+    (companions.js haalt /admin/senddm/contacts/{rid}.json op). -#}
+<datalist id="dm-dests">
+  {% for c in companions %}
+  <option value="{{ c.pubkey }}" label="{{ c.name }} (companion)"></option>
+  {% endfor %}
+</datalist>
+
+<form method="post" action="/admin/senddm/send" id="senddm-form" class="card" style="margin-top:1rem">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p>
+    <label>Afzender-node (verstuurt de DM)<br>
+      <select name="sender" id="dm-sender" required data-contacts="/admin/senddm/contacts/">
+        <option value="">— kies een node —</option>
+        {% for s in senders %}
+        <option value="{{ s.id }}"{% set b = mag_versturen[s.id] %}
+          {% if not b.allowed %} disabled title="{{ b.reason }}"{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+      </select></label>
+  </p>
+
+  {#- Twee wegen naar dezelfde pubkey: een keuzelijst die met JavaScript gevuld
+      wordt zodra er een afzender gekozen is (bestemming -> vult het veld), en het
+      veld zelf, waarin een pubkey ook met de hand of via de datalist kan. -#}
+  <p>
+    <label>Bestemming kiezen<br>
+      <select id="dm-dest-pick">
+        <option value="">— kies een afzender om contacten te laden —</option>
+        {% for c in companions %}
+        <option value="{{ c.pubkey }}">{{ c.name }} (companion)</option>
+        {% endfor %}
+      </select></label>
+    <span class="muted small" id="dm-dest-note"></span>
+  </p>
+  <p>
+    <label>Bestemming-pubkey (64 hex)<br>
+      <input name="pubkey" id="dm-pubkey" class="mono" list="dm-dests"
+             pattern="[0-9a-fA-F]{64}" maxlength="64" required
+             style="width:min(100%,42rem)"
+             placeholder="volledige pubkey, of kies hierboven"></label>
+  </p>
+  <p>
+    <label>Bericht<br>
+      <input name="msg" required style="width:min(100%,42rem)"
+             placeholder="het bericht (voor een T1000-E-commando: !find, !vol 2, …)"></label>
+  </p>
+  <button type="submit">Versturen</button>
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_v }}"></script>
+<script src="/static/companions.js?v={{ asset_v }}"></script>
+{% endblock %}

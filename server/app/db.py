@@ -279,6 +279,34 @@ CREATE TABLE IF NOT EXISTS room_owners(
   updated TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_room_owners_owner ON room_owners(owner_repeater_id);
+-- De MeshCore-COMPANIONS (T1000-E en soortgelijke handzenders) die deze
+-- installatie beheert. Bewust een eigen tabel en geen ``repeaters``-rij: een
+-- companion is geen node die statistieken publiceert of uitgevraagd wordt -- hij
+-- is een BESTEMMING waar we DM-commando's naartoe sturen. Hem in ``repeaters``
+-- persen zou hem in elke nodelijst, elke grafiek en elke pollronde laten
+-- opduiken als een node die nooit iets terugzegt, precies het soort halve
+-- waarheid dat dit project elders opruimt.
+--
+-- ``pubkey`` is de VOLLEDIGE 64-hex publieke sleutel: een DM wordt op de sleutel
+-- gericht (rooms.bot_sendto), en een halve sleutel is geen bestemming. UNIQUE,
+-- want twee rijen met dezelfde sleutel zijn twee namen voor één toestel en de
+-- tweede zou alleen verwarren wie een commando naar wie stuurt.
+--
+-- ``sender_repeater_id`` is de node die standaard de DM's naar deze companion
+-- verstuurt (de MeshUptime-bot als vertrekpunt; het mesh routeert verder). Het
+-- is een VOORKEUR en geen dwang -- de Send-DM-tab laat een andere afzender kiezen
+-- -- vandaar ON DELETE SET NULL: verdwijnt die node, dan verliest de companion
+-- zijn standaardafzender maar niet zijn identiteit.
+CREATE TABLE IF NOT EXISTS companions(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  pubkey TEXT UNIQUE NOT NULL,
+  type TEXT,
+  notes TEXT,
+  sender_repeater_id INTEGER REFERENCES repeaters(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS packets(
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL,
@@ -3037,6 +3065,66 @@ def room_owner_map() -> dict:
     er zijn hooguit een handvol rooms per node.
     """
     return {r["room_key"]: r for r in q("SELECT * FROM room_owners")}
+
+
+# --- companions: de beheerde handzenders (T1000-E e.d.) -----------------------
+#
+# Volwaardige CRUD, ontworpen voor tientallen: de admin-UI lijst/voegt toe/
+# bewerkt/verwijdert, en niets hier hardcodeert één toestel. De pubkey wordt op
+# de VOLLEDIGE 64-hex-vorm bewaard (een DM richt zich op de sleutel), en de
+# controle daarop staat in ``companions.py`` zodat de route en de databank
+# dezelfde regel gebruiken.
+
+def list_companions() -> list:
+    """Alle companions, op naam gesorteerd. Klein genoeg om in één keer te lezen."""
+    return q("SELECT * FROM companions ORDER BY name COLLATE NOCASE, id")
+
+
+def companion(cid: int) -> sqlite3.Row | None:
+    return qone("SELECT * FROM companions WHERE id=?", (int(cid),))
+
+
+def companion_by_pubkey(pubkey: str) -> sqlite3.Row | None:
+    """Een companion op zijn volledige sleutel, voor de omgekeerde opzoeking
+    (een binnenkomende DM, of het labelen van een bestemming in de Send-DM-tab)."""
+    key = str(pubkey or "").strip().lower()
+    return qone("SELECT * FROM companions WHERE lower(pubkey)=?", (key,))
+
+
+def add_companion(name: str, pubkey: str, type_: str = "", notes: str = "",
+                  sender_repeater_id: int | None = None) -> int:
+    """Een companion toevoegen. Geeft het nieuwe id terug.
+
+    De aanroeper (companions.create) heeft de sleutel al gekeurd; hier gaat hij
+    genormaliseerd (lowercase) de databank in zodat ``companion_by_pubkey`` en de
+    UNIQUE-index consistent zijn.
+    """
+    now = utcnow()
+    return execute(
+        "INSERT INTO companions(name, pubkey, type, notes, sender_repeater_id, "
+        "created_at, updated) VALUES(?,?,?,?,?,?,?)",
+        (str(name).strip()[:64], str(pubkey).strip().lower(),
+         str(type_ or "").strip()[:32] or None, str(notes or "").strip()[:500] or None,
+         sender_repeater_id if sender_repeater_id else None, now, now))
+
+
+def update_companion(cid: int, name: str, pubkey: str, type_: str = "",
+                     notes: str = "", sender_repeater_id: int | None = None) -> None:
+    """Een companion bijwerken. Alle bewerkbare velden tegelijk -- het formulier
+    stuurt ze samen terug, dus een deelupdate zou hier alleen kunnen liegen over
+    wat er niet meegekomen is."""
+    execute(
+        "UPDATE companions SET name=?, pubkey=?, type=?, notes=?, "
+        "sender_repeater_id=?, updated=? WHERE id=?",
+        (str(name).strip()[:64], str(pubkey).strip().lower(),
+         str(type_ or "").strip()[:32] or None, str(notes or "").strip()[:500] or None,
+         sender_repeater_id if sender_repeater_id else None, utcnow(), int(cid)))
+
+
+def delete_companion(cid: int) -> int:
+    """Een companion verwijderen. Geeft het aantal verwijderde rijen terug, zodat
+    de route "onbekende companion" van "verwijderd" kan onderscheiden."""
+    return execute_rowcount("DELETE FROM companions WHERE id=?", (int(cid),))
 
 
 def record_push_seen(repeater_id: int, hb_s: int, seq: int, boot: int) -> bool:
