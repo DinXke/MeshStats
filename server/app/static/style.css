@@ -383,6 +383,13 @@ details.chan-panel[open] > summary { color: var(--accent); }
   color: var(--accent); background: var(--card);
   border-color: var(--card-edge); margin-bottom: -1px;
 }
+/* De sub-navigatie van een top-level onderdeel (nu: Companions). Ondergeschikt en
+   compacter dan de hoofdbalk, zodat de twee balken niet als gelijkwaardig lezen. */
+.adminnav.subnav {
+  margin-top: .3rem; border-bottom: 0; gap: .2rem;
+}
+.adminnav.subnav a { font-size: .74rem; padding: .3rem .7rem; border-radius: 8px; }
+.adminnav.subnav a.on { margin-bottom: 0; }
 
 /* Groen/rood los van de pillenknoppen: dit zijn mededelingen, geen knoppen, en
    ze stonden eerder als losse style="" in vier templates. */

@@ -11,8 +11,8 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import (auth, clocksync, db, hadiscovery, limits, meshmoni, mqtt_ingest,
-               rbac, retention, routes_admin, routes_api, routes_public,
-               sensornode, sensorpush, sweepsched, tsdb, webpush)
+               rbac, retention, routes_admin, routes_api, routes_companions,
+               routes_public, sensornode, sensorpush, sweepsched, tsdb, webpush)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -54,6 +54,9 @@ async def security_headers(request, call_next):
 
 app.include_router(routes_api.router)
 app.include_router(routes_admin.router)
+# Companion-beheer als eigen module met eigen router (zelfde /admin-prefix, eigen
+# top-level navigatie-onderdeel). Zie routes_companions.py.
+app.include_router(routes_companions.router)
 app.include_router(routes_public.router)
 app.include_router(meshmoni.router)   # de PWA-subsite voor op de telefoon
 app.include_router(sensorpush.router)  # gebeurtenis-push van sensornodes

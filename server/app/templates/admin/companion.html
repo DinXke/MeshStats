@@ -83,37 +83,46 @@
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Volume</strong></div>
+    <div class="card-head"><strong>Volume per ernst</strong></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="vol">
+      <label class="small muted">ernst
+        <select name="slot">{% for s in severities %}<option>{{ s }}</option>{% endfor %}</select></label>
       <label class="small muted">niveau
-        <select name="level"><option>0</option><option>1</option><option selected>2</option><option>3</option></select></label>
+        <select name="level">{% for v in vol_levels %}<option{% if v == '2' %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
       {{ afzender() }}
-      <button type="submit">Zetten</button>
+      <button type="submit">Zetten (!vol)</button>
     </form>
   </div>
 
+  {#- Beltoon per ernst: kies een ingebouwde beltoon uit de firmware-bibliotheek,
+      luister eerst (▶ Afspelen -> !play <naam>), en wijs hem dan aan een
+      ernst-slot toe (Toewijzen -> !tune <slot> preset <naam>). Twee submit-knoppen
+      met name="cmd" in één formulier: de aangeklikte bepaalt welk commando de
+      route bouwt. -#}
   <div class="card">
     <div class="card-head"><strong>Beltoon per ernst</strong></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="tune">
       <label class="small muted">ernst
-        <select name="sev">{% for s in severities %}<option>{{ s }}</option>{% endfor %}</select></label>
-      <input name="rtttl" class="mono" placeholder="RTTTL, bv. two:d=4,o=5,b=100:c,e,g"
-             style="width:min(100%,22rem)">
+        <select name="slot">{% for s in severities %}<option>{{ s }}</option>{% endfor %}</select></label>
+      <label class="small muted">beltoon
+        <select name="name">{% for t in tune_library %}<option>{{ t }}</option>{% endfor %}</select></label>
       {{ afzender() }}
-      <button type="submit">Zetten (!tune)</button>
+      <button type="submit" name="cmd" value="play">&#9654; Afspelen</button>
+      <button type="submit" name="cmd" value="tune">Toewijzen (!tune)</button>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Stille uren</strong></div>
+    <div class="card-head"><strong>Stille periode</strong></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="quiet">
-      <input name="range" placeholder="22-7 of off" style="width:8rem">
+      <input name="range" placeholder="22-7" style="width:6rem">
+      <label class="small muted">actie
+        <select name="action">{% for a in quiet_actions %}<option>{{ a }}</option>{% endfor %}</select></label>
       {{ afzender() }}
       <button type="submit">Zetten (!quiet)</button>
     </form>
@@ -226,9 +235,16 @@
   </div>
   <div id="serial-io" hidden style="margin-top:.7rem">
     <div class="serial-quick" style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.4rem">
-      {% for q in ["find", "findstop", "loc", "cfg", "ping", "mute on", "mute off", "vol 2"] %}
+      {% for q in ["find", "findstop", "loc", "cfg", "ping", "mute on", "mute off"] %}
       <button type="button" class="pill serial-fill" data-cmd="{{ q }}">{{ q }}</button>
       {% endfor %}
+    </div>
+    {#- Dezelfde beltoon-bibliotheek als de mesh-knoppen, maar serieel: de knop
+        stuurt ``play <naam>`` (zonder ``!``) rechtstreeks over de poort. -#}
+    <div class="serial-tune" style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin-bottom:.4rem">
+      <label class="small muted">beltoon
+        <select id="serial-tune">{% for t in tune_library %}<option>{{ t }}</option>{% endfor %}</select></label>
+      <button type="button" class="pill" id="serial-tune-play">&#9654; Afspelen (serieel)</button>
     </div>
     <pre id="serial-log" class="mono"
          style="height:16rem;overflow:auto;background:var(--card-bg,rgba(0,0,0,.2));padding:.6rem;border-radius:6px;white-space:pre-wrap"></pre>

@@ -152,6 +152,13 @@
         if (input) { input.value = b.getAttribute("data-cmd") || ""; input.focus(); }
       });
     });
+    // De beltoon-preview over serieel: dezelfde bibliotheek als de mesh-knoppen,
+    // maar hier als `play <naam>` (zonder !), meteen over de poort verstuurd.
+    var tuneSel = document.getElementById("serial-tune");
+    var tunePlay = document.getElementById("serial-tune-play");
+    if (tunePlay && tuneSel) tunePlay.addEventListener("click", function () {
+      send("play " + tuneSel.value);
+    });
     // Een tab die weggaat terwijl de poort nog open is, laat het toestel anders
     // vastzitten voor de volgende pagina.
     window.addEventListener("beforeunload", function () { if (port) disconnect(); });

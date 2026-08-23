@@ -42,17 +42,33 @@ from . import db, nodeconfig, rooms
 # Elk commando: de sleutel (zoals de route/UI hem noemt), een label voor het
 # scherm, en de argumentvorm. De bouwer hieronder is de enige die deze vorm tot
 # een DM-tekst maakt; de UI toont ``label`` en levert de argumenten aan.
+# De SLOTS waarop een beltoon en een volume gezet worden: de ernstniveaus. De
+# firmware kent per ernst een eigen beltoon en volume, dus ``!tune`` en ``!vol``
+# nemen allebei een slot -- dat is precies waar de gebruiker de knip wil ("harde
+# waarschuwing luid, gewoon bericht zacht").
 SEVERITIES = ("H", "M", "L", "find", "msg")
 GPS_MODES = ("on", "off", "ondemand")
 ONOFF = ("on", "off")
+VOL_LEVELS = ("0", "1", "2", "3")
+
+# De ingebouwde beltoon-bibliotheek van de firmware. LETTERLIJK deze namen -- ze
+# staan zo in de firmware en zijn geen tekst om te vertalen. Ze voeden zowel de
+# keuzelijst als de validatie: een beltoon die de firmware niet kent, hoort niet
+# de band op gestuurd te worden.
+TUNE_LIBRARY = ("mario-main", "mario-die", "mario-1up", "coin", "powerup",
+                "warning", "chime", "alert", "beep")
+
+# De actie bij een stille periode: dempen, een vast volume (0-3), of uit.
+QUIET_ACTIONS = ("mute", "0", "1", "2", "3", "off")
 
 COMMANDS = {
     "find":     {"label": "Find-me (laten piepen/knipperen)", "args": []},
     "findstop": {"label": "Find-me stoppen", "args": []},
     "mute":     {"label": "Dempen", "args": ["state"]},          # on|off
-    "vol":      {"label": "Volume", "args": ["level"]},          # 0..3
-    "tune":     {"label": "Beltoon per ernst", "args": ["sev", "rtttl"]},
-    "quiet":    {"label": "Stille uren", "args": ["range"]},     # "sH-eH" of "off"
+    "vol":      {"label": "Volume per ernst", "args": ["slot", "level"]},  # <slot> <0-3>
+    "tune":     {"label": "Beltoon per ernst", "args": ["slot", "name"]},  # <slot> preset <name>
+    "play":     {"label": "Beltoon afspelen (preview)", "args": ["name"]},  # <name>
+    "quiet":    {"label": "Stille periode", "args": ["range", "action"]},   # <sH>-<eH> mute|<0-3>|off
     "gps":      {"label": "GPS", "args": ["mode"]},              # on|off|ondemand
     "loc":      {"label": "Locatie opvragen", "args": []},
     "cfg":      {"label": "Configuratie opvragen", "args": []},
@@ -100,11 +116,15 @@ def build(cmd: str, args: dict | None = None) -> dict:
             return out
         body = f"!{cmd} {state}"
     elif cmd == "vol":
+        slot = val("slot")
         lvl = val("level")
-        if lvl not in ("0", "1", "2", "3"):
+        if slot not in SEVERITIES:
+            out["error"] = f"slot moet een van {', '.join(SEVERITIES)} zijn"
+            return out
+        if lvl not in VOL_LEVELS:
             out["error"] = "volume is 0 t/m 3"
             return out
-        body = f"!vol {lvl}"
+        body = f"!vol {slot} {lvl}"
     elif cmd == "gps":
         mode = val("mode").lower()
         if mode not in GPS_MODES:
@@ -112,21 +132,36 @@ def build(cmd: str, args: dict | None = None) -> dict:
             return out
         body = f"!gps {mode}"
     elif cmd == "tune":
-        sev = val("sev")
-        rtttl = val("rtttl")
-        if sev not in SEVERITIES:
-            out["error"] = f"ernst moet een van {', '.join(SEVERITIES)} zijn"
+        slot = val("slot")
+        name = val("name")
+        if slot not in SEVERITIES:
+            out["error"] = f"slot moet een van {', '.join(SEVERITIES)} zijn"
             return out
-        if not rtttl:
-            out["error"] = "een RTTTL-melodie mag niet leeg zijn"
+        if name not in TUNE_LIBRARY:
+            out["error"] = f"onbekende beltoon (kies uit {', '.join(TUNE_LIBRARY)})"
             return out
-        body = f"!tune {sev} {rtttl}"
+        body = f"!tune {slot} preset {name}"
+    elif cmd == "play":
+        name = val("name")
+        if name not in TUNE_LIBRARY:
+            out["error"] = f"onbekende beltoon (kies uit {', '.join(TUNE_LIBRARY)})"
+            return out
+        body = f"!play {name}"
     elif cmd == "quiet":
         rng = val("range").lower()
-        if rng != "off" and not _QUIET.match(rng):
-            out["error"] = "stille uren als <startuur>-<einduur> (bv. 22-7) of 'off'"
+        action = val("action").lower()
+        # ``off`` schakelt de hele stille periode uit; dan is er geen bereik en
+        # geen actie -- ``!quiet off``. Anders horen bereik én actie er allebei bij.
+        if rng in ("", "off") or action == "off":
+            body = "!quiet off"
+        elif not _QUIET.match(rng):
+            out["error"] = "stille periode als <startuur>-<einduur> (bv. 22-7) of 'off'"
             return out
-        body = f"!quiet {rng}"
+        elif action not in QUIET_ACTIONS:
+            out["error"] = "actie is mute, 0 t/m 3, of off"
+            return out
+        else:
+            body = f"!quiet {rng} {action}"
     elif cmd == "allow":
         sub = val("sub").lower()
         value = val("value")

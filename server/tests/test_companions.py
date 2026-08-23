@@ -104,11 +104,20 @@ def test_valid_pubkey():
     ("cfg", {}, "!cfg"),
     ("mute", {"state": "on"}, "!mute on"),
     ("mute", {"state": "off"}, "!mute off"),
-    ("vol", {"level": "3"}, "!vol 3"),
+    ("vol", {"slot": "H", "level": "3"}, "!vol H 3"),
+    ("vol", {"slot": "msg", "level": "0"}, "!vol msg 0"),
     ("gps", {"mode": "ondemand"}, "!gps ondemand"),
-    ("tune", {"sev": "H", "rtttl": "two:d=4,o=5,b=100:c"}, "!tune H two:d=4,o=5,b=100:c"),
-    ("quiet", {"range": "22-7"}, "!quiet 22-7"),
+    # Beltoon per ernst: slot + een ingebouwde beltoon uit de firmware-bibliotheek.
+    ("tune", {"slot": "H", "name": "coin"}, "!tune H preset coin"),
+    ("tune", {"slot": "msg", "name": "beep"}, "!tune msg preset beep"),
+    # Beltoon-preview: alleen een naam.
+    ("play", {"name": "mario-1up"}, "!play mario-1up"),
+    ("play", {"name": "warning"}, "!play warning"),
+    # Stille periode: bereik + actie (mute/0-3/off), of gewoon uit.
+    ("quiet", {"range": "22-7", "action": "mute"}, "!quiet 22-7 mute"),
+    ("quiet", {"range": "22-7", "action": "2"}, "!quiet 22-7 2"),
     ("quiet", {"range": "off"}, "!quiet off"),
+    ("quiet", {"range": "22-7", "action": "off"}, "!quiet off"),
     ("fall", {"state": "on"}, "!fall on"),
     ("preset", {"slot": "2", "text": "onderweg"}, "!preset 2 onderweg"),
     ("allow", {"sub": "list"}, "!allow list"),
@@ -123,13 +132,25 @@ def test_build_ok(cmd, args, body):
     assert out["body"] == body
 
 
+def test_tune_library_is_de_firmwarelijst():
+    """De keuzelijst is precies de ingebouwde firmware-bibliotheek -- letterlijk."""
+    from app import companions
+    assert companions.TUNE_LIBRARY == (
+        "mario-main", "mario-die", "mario-1up", "coin", "powerup",
+        "warning", "chime", "alert", "beep")
+
+
 @pytest.mark.parametrize("cmd,args", [
     ("mute", {"state": "aan"}),
-    ("vol", {"level": "4"}),
+    ("vol", {"slot": "H", "level": "4"}),
+    ("vol", {"slot": "X", "level": "2"}),
     ("gps", {"mode": "sometimes"}),
-    ("tune", {"sev": "X", "rtttl": "abc"}),
-    ("tune", {"sev": "H", "rtttl": ""}),
-    ("quiet", {"range": "avond"}),
+    ("tune", {"slot": "X", "name": "coin"}),
+    ("tune", {"slot": "H", "name": "onbekende-toon"}),
+    ("play", {"name": "onbekende-toon"}),
+    ("play", {"name": ""}),
+    ("quiet", {"range": "avond", "action": "mute"}),
+    ("quiet", {"range": "22-7", "action": "hard"}),
     ("preset", {"slot": "9", "text": "x"}),
     ("preset", {"slot": "1", "text": ""}),
     ("allow", {"sub": "add", "value": "tekort"}),
@@ -157,10 +178,10 @@ def test_send_command_bouwt_en_verstuurt(db, monkeypatch):
 
     monkeypatch.setattr(rooms, "bot_sendto", nep_bot_sendto)
     rep = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
-    out = companions.send_command(rep, VALID, "vol", {"level": "2"})
+    out = companions.send_command(rep, VALID, "vol", {"slot": "H", "level": "2"})
     assert out["ok"]
-    assert out["body"] == "!vol 2"
-    assert gezien == {"pubkey": VALID, "msg": "!vol 2"}
+    assert out["body"] == "!vol H 2"
+    assert gezien == {"pubkey": VALID, "msg": "!vol H 2"}
 
 
 def test_send_command_verstuurt_niets_bij_fout(db, monkeypatch):
@@ -169,37 +190,77 @@ def test_send_command_verstuurt_niets_bij_fout(db, monkeypatch):
     monkeypatch.setattr(rooms, "bot_sendto",
                         lambda *a, **k: pytest.fail("mocht niet versturen"))
     rep = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
-    out = companions.send_command(rep, VALID, "vol", {"level": "9"})
+    out = companions.send_command(rep, VALID, "vol", {"slot": "H", "level": "9"})
     assert not out["ok"]
     assert out["body"] == ""
 
 
-# --- 3. de routes: rechten en renderen ---------------------------------------
+# --- 3. de routes: eigen module, rechten en renderen -------------------------
+#
+# De companion-routes leven in hun EIGEN module (routes_companions) met een eigen
+# router. Deze sectie roept ze rechtstreeks daar aan, en dwingt bovendien af dat
+# elke schrijvende route van die router door de rechtenpoort gaat -- de vangnettest
+# van test_rechten kijkt alleen naar routes_admin.router, dus die van dit onderdeel
+# hoort hier.
 
 def _sessie(naam):
     from app import auth
     return auth.make_session(naam)
 
 
+def test_elke_schrijvende_companionroute_gaat_door_de_poort():
+    """De vangnettest voor de eigen router: elke POST roept require_perm aan.
+
+    Zonder deze test zou een route in de nieuwe module de rechtencontrole kunnen
+    missen zonder dat iets het merkt -- hij werkt, hij werkt alleen voor iedereen.
+    """
+    import inspect
+    from app import routes_companions
+
+    vergeten = []
+    for route in routes_companions.router.routes:
+        if "POST" not in getattr(route, "methods", set()):
+            continue
+        if "require_perm(" not in inspect.getsource(route.endpoint):
+            vergeten.append(route.endpoint.__name__)
+    assert vergeten == [], f"zonder rechtencontrole: {vergeten}"
+
+
+def test_companionroutes_noemen_alleen_bestaande_handelingen():
+    """Een tikfout in een handelingsnaam is een dichte deur; hier valt hij op."""
+    import re
+    from app import rbac, routes_companions
+
+    bron = inspect_source(routes_companions)
+    genoemd = set(re.findall(r'require_perm\(\s*request,\s*"([^"]+)"', bron))
+    assert genoemd, "geen enkele aanroep gevonden -- verkeerde vorm"
+    assert genoemd - set(rbac.ACTIONS) == set()
+
+
+def inspect_source(module):
+    import inspect
+    return inspect.getsource(module)
+
+
 def test_companion_toevoegen_vereist_serverbeheerder(db):
     """Een gewone gebruiker mag de lijst niet muteren -- de grens die geen
     gedragstest vangt."""
-    from app import routes_admin
+    from app import routes_companions
     maak_gebruiker("gewoon", superuser=False)
     req = verzoek(_sessie("gewoon"), method="POST")
     with pytest.raises(HTTPException) as fout:
-        routes_admin.companion_add(req, name="X", pubkey=VALID, type="", notes="",
-                                   sender="", csrf="x")
+        routes_companions.companion_add(req, name="X", pubkey=VALID, type="",
+                                        notes="", sender="", csrf="x")
     assert fout.value.status_code == 403
 
 
 def test_companion_toevoegen_als_serverbeheerder(db):
     """De serverbeheerder voegt toe; de rij staat erna in de databank."""
-    from app import auth, routes_admin
+    from app import auth, routes_companions
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     req = verzoek(cookie, method="POST")
-    resp = routes_admin.companion_add(
+    resp = routes_companions.companion_add(
         req, name="Björn", pubkey=VALID, type="T1000-E", notes="",
         sender="", csrf=auth.csrf_token(cookie))
     assert resp.status_code == 200
@@ -208,20 +269,39 @@ def test_companion_toevoegen_als_serverbeheerder(db):
 
 def test_paginas_renderen(db):
     """companions, companion-detail en senddm door de echte Jinja-omgeving."""
-    from app import routes_admin
+    from app import routes_companions
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
-    for resp in (routes_admin.companions_page(verzoek(cookie)),
-                 routes_admin.companion_page(verzoek(cookie), cid),
-                 routes_admin.senddm_page(verzoek(cookie))):
+    for resp in (routes_companions.companions_page(verzoek(cookie)),
+                 routes_companions.companion_page(verzoek(cookie), cid),
+                 routes_companions.senddm_page(verzoek(cookie))):
         assert resp.status_code == 200
+
+
+def test_companion_cmd_bouwt_tune_en_verstuurt(db, monkeypatch):
+    """De commando-route bouwt de nieuwe !tune-vorm en verstuurt hem vanaf de
+    standaardafzender van de companion."""
+    from app import auth, rooms, routes_companions
+    gezien = {}
+    monkeypatch.setattr(rooms, "bot_sendto",
+                        lambda rep, pk, msg: gezien.update(pk=pk, msg=msg) or {"ok": True, "error": ""})
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", node["id"])
+    req = verzoek(cookie, method="POST")
+    resp = routes_companions.companion_cmd(
+        req, cid, cmd="tune", sender="", slot="H", name="coin",
+        csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 200
+    assert gezien == {"pk": VALID, "msg": "!tune H preset coin"}
 
 
 def test_senddm_send_langs_afzenderrechten(db, monkeypatch):
     """Versturen is een node-handeling op de afzender: de serverbeheerder mag,
     en het vervoer krijgt de juiste pubkey."""
-    from app import auth, rooms, routes_admin
+    from app import auth, rooms, routes_companions
     gezien = {}
     monkeypatch.setattr(rooms, "bot_sendto",
                         lambda rep, pk, msg: gezien.update(pk=pk, msg=msg) or {"ok": True, "error": ""})
@@ -229,18 +309,18 @@ def test_senddm_send_langs_afzenderrechten(db, monkeypatch):
     cookie = _sessie("baas")
     node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
     req = verzoek(cookie, method="POST")
-    resp = routes_admin.senddm_send(req, sender=str(node["id"]), pubkey=VALID,
-                                    msg="!find", csrf=auth.csrf_token(cookie))
+    resp = routes_companions.senddm_send(req, sender=str(node["id"]), pubkey=VALID,
+                                         msg="!find", csrf=auth.csrf_token(cookie))
     assert resp.status_code == 200
     assert gezien == {"pk": VALID, "msg": "!find"}
 
 
 def test_senddm_send_zonder_afzender_meldt_het(db):
     """Geen afzender is geen 500 maar een nette melding."""
-    from app import auth, routes_admin
+    from app import auth, routes_companions
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     req = verzoek(cookie, method="POST")
-    resp = routes_admin.senddm_send(req, sender="", pubkey=VALID, msg="hoi",
-                                    csrf=auth.csrf_token(cookie))
+    resp = routes_companions.senddm_send(req, sender="", pubkey=VALID, msg="hoi",
+                                         csrf=auth.csrf_token(cookie))
     assert resp.status_code == 200
