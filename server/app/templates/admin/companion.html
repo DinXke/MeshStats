@@ -21,6 +21,7 @@
   <div class="pagehead-top">
     <h1>{{ comp.name }}</h1>
     <span class="badge on">companion{% if comp.type %} · {{ comp.type }}{% endif %}</span>
+    {% if fall_recent %}<span class="badge off">&#9888; recente val{% if comp.last_fall_kind %} ({{ comp.last_fall_kind }}){% endif %}</span>{% endif %}
   </div>
   <div class="muted mono-line">
     <span class="chip">{{ comp.pubkey[:24] }}…</span>
@@ -210,6 +211,98 @@
     </form>
   </div>
 
+</div>
+
+{#- ==================== Valdetectie & escalatie ==============================
+    Twee losse dingen op één plek: WAT er het laatst gemeld is (companions.py
+    slaat alleen de laatste VERWERKTE val op, geen volledige geschiedenis --
+    zie de kolomtoelichting bij companions.last_escalated_fall_ts in db.py) en
+    WIE er een DM krijgt zodra er een nieuwe val is. De ontvangerslijst is een
+    serverhandeling (server.companions), net als de rest van de companion-CRUD
+    -- er wordt hier nog niets verstuurd, alleen bijgehouden wie het zou moeten
+    krijgen. -#}
+<h2 style="margin-top:1.4rem">Valdetectie &amp; escalatie</h2>
+
+<div class="card">
+  <div class="card-head"><strong>Laatst verwerkte val</strong></div>
+  {% if last_fall_iso %}
+  <p class="small">
+    {% if fall_recent %}&#9888;{% else %}&#8505;{% endif %}
+    {{ comp.last_fall_kind or 'onbekend' }} —
+    <time class="reltime" datetime="{{ last_fall_iso }}">{{ last_fall_iso }}</time>
+    {% if comp.last_lat is not none and comp.last_lon is not none %}
+    — <a href="/admin/companions/kaart">op de kaart</a>
+    {% endif %}
+  </p>
+  <p class="muted small">
+    Dit is de LAATSTE val die deze installatie zag, niet noodzakelijk de enige
+    ooit -- er wordt geen volledige geschiedenis bijgehouden. Zonder toegewezen
+    ontvanger hieronder is hij wel VASTGELEGD (om een oude val bij het
+    toevoegen van een ontvanger niet alsnog te melden) maar is er geen DM voor
+    verstuurd.
+  </p>
+  {% else %}
+  <p class="muted small">Nog geen val gemeld voor deze companion.</p>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top:.8rem">
+  <div class="card-head"><strong>Toegewezen ontvangers</strong></div>
+  <p class="muted small">Elke rij hieronder krijgt bij een NIEUWE val een DM,
+    verstuurd vanaf de gekozen afzender-node (of de standaardafzender van deze
+    companion als er geen eigen afzender gekozen is). Geen ontvangers hier
+    betekent: de val wordt gezien en vastgelegd, maar niemand krijgt een DM.</p>
+  {% if alerts %}
+  <table>
+    <thead><tr><th>Ontvanger</th><th>Label</th><th>Afzender</th><th></th></tr></thead>
+    <tbody>
+      {% for a in alerts %}
+      <tr>
+        <td class="mono">{{ a.recipient_pubkey[:16] }}…</td>
+        <td>{{ a.label or '—' }}</td>
+        <td>
+          {%- set s = rep_by_id.get(a.sender_repeater_id) -%}
+          {% if s %}{{ s.name }}{% elif default_sender %}standaard ({{ default_sender.name }}){% else %}— geen —{% endif %}
+        </td>
+        <td>
+          {% if mag_beheren.allowed %}
+          <form method="post" action="/admin/companions/{{ comp.id }}/alerts/{{ a.id }}/delete"
+                onsubmit="return confirm('Deze ontvanger verwijderen?');">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger small">Verwijderen</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted small">Nog geen ontvangers toegewezen.</p>
+  {% endif %}
+
+  {% if mag_beheren.allowed %}
+  <form method="post" action="/admin/companions/{{ comp.id }}/alerts/add" class="rowform"
+        style="margin-top:.8rem">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="small muted">ontvanger (pubkey, 64 hex)<br>
+      <input name="recipient" class="mono" pattern="[0-9a-fA-F]{64}" maxlength="64" required
+             style="width:min(100%,32rem)" placeholder="volledige pubkey van de ontvanger"></label>
+    <label class="small muted">label<br>
+      <input name="label" maxlength="64" placeholder="bv. dochter, meldkamer"></label>
+    <label class="small muted">afzender (relayt de DM)<br>
+      <select name="sender">
+        <option value="">{% if default_sender %}standaard ({{ default_sender.name }}){% else %}— kies —{% endif %}</option>
+        {% for s in senders %}
+        <option value="{{ s.id }}">{{ s.name }}</option>
+        {% endfor %}
+      </select></label>
+    <button type="submit">Toevoegen</button>
+  </form>
+  {% elif not alerts %}
+  <p class="muted small">&#128274; Ontvangers toewijzen is voorbehouden aan een
+    serverbeheerder.</p>
+  {% endif %}
 </div>
 
 {#- ==================== Vrije DM ============================================

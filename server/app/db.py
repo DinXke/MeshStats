@@ -307,6 +307,36 @@ CREATE TABLE IF NOT EXISTS companions(
   created_at TEXT NOT NULL,
   updated TEXT NOT NULL
 );
+-- Wie een VALALARM van een companion krijgt: toegewezen ontvangers, met via
+-- welke afzender-node de DM naar hen vertrekt. Een companion kan méér dan één
+-- ontvanger hebben -- de drager zelf wil weten dat zijn handzender een val
+-- meldde, en een meldkamer-contact wil dat ook, en dat zijn twee losse rijen
+-- en geen kommagescheiden veld in ``companions``.
+--
+-- ``recipient_pubkey`` is de VOLLEDIGE 64-hex sleutel van de ontvanger,
+-- dezelfde regel als bij ``companions.pubkey``: een DM richt zich op de
+-- sleutel. Geen UNIQUE op (companion_id, recipient_pubkey): dezelfde
+-- ontvanger tweemaal toevoegen met een andere afzender-node is een bewust
+-- reservepad en geen fout om tegen te houden.
+--
+-- ``sender_repeater_id`` is de node die DEZE ontvanger relayt -- niet per se
+-- dezelfde als ``companions.sender_repeater_id``: de companion en zijn
+-- ontvanger hangen niet noodzakelijk aan dezelfde kant van het mesh.
+-- ON DELETE CASCADE op companion_id (verdwijnt de companion, dan verdwijnt
+-- ook wie voor hem gealarmeerd zou worden) en ON DELETE SET NULL op
+-- sender_repeater_id (verdwijnt de afzender-node, dan verliest de ontvanger
+-- zijn afzender maar niet zijn plek in de lijst) -- dezelfde twee keuzes als
+-- bij ``companions.sender_repeater_id`` hierboven en om dezelfde reden.
+CREATE TABLE IF NOT EXISTS companion_alerts(
+  id INTEGER PRIMARY KEY,
+  companion_id INTEGER NOT NULL REFERENCES companions(id) ON DELETE CASCADE,
+  recipient_pubkey TEXT NOT NULL,
+  sender_repeater_id INTEGER REFERENCES repeaters(id) ON DELETE SET NULL,
+  label TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_companion_alerts_companion
+  ON companion_alerts(companion_id);
 CREATE TABLE IF NOT EXISTS packets(
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL,
@@ -678,6 +708,22 @@ COLUMN_MIGRATIONS = [
     ("companions", "last_lat", "REAL"),
     ("companions", "last_lon", "REAL"),
     ("companions", "last_seen", "INTEGER"),
+    # De valdetectie-escalatie. ``last_escalated_fall_ts`` is de EPOCH (zelfde
+    # klok-omrekening als ``last_seen`` hierboven, zie
+    # companions._secs_to_epoch) van de LAATSTE val waarvoor al een alarm de
+    # deur uit ging -- de sleutel waarop poll_locations ontdubbelt: een
+    # ``fall_ts`` die niet strikt NIEUWER is dan deze waarde is een val die al
+    # gemeld is (of, bij een companion zonder toegewezen ontvangers, een val
+    # die al GEZIEN is) en escaleert niet nogmaals.
+    #
+    # ``last_fall_kind`` staat ernaast voor de weergave op de companion-pagina
+    # en de kaart ("VAL", "geen beweging", "sos") -- zonder een eigen kolom zou
+    # de pagina alleen een tijdstip kunnen tonen en niet WAT er gemeld werd.
+    # Allebei blijven staan na de allereerste val: een pagina die na verloop
+    # van tijd weer "geen val bekend" zou tonen omdat er ondertussen geen
+    # nieuwe was, zou net zo oneerlijk zijn als sensor_seen laten verlopen.
+    ("companions", "last_escalated_fall_ts", "INTEGER"),
+    ("companions", "last_fall_kind", "TEXT"),
 ]
 
 
@@ -3163,6 +3209,62 @@ def set_companion_location(pubkey: str, lat: float, lon: float,
         (float(lat), float(lon),
          int(seen_epoch) if seen_epoch is not None else None,
          utcnow(), key)) > 0
+
+
+def set_companion_fall(cid: int, fall_epoch: int, kind: str) -> None:
+    """De laatst VERWERKTE val van een companion vastleggen -- of hij nu
+    daadwerkelijk ontvangers had om te alarmeren of niet (zie de toelichting
+    bij de kolom hierboven: "alleen zien" telt ook als verwerkt, anders zou een
+    latere ontvanger een oude val alsnog krijgen).
+
+    Losse functie van ``set_companion_location``: een val komt niet elke ronde
+    voor en hoort niet aan de locatie-update vast te zitten -- een companion
+    kan zijn positie melden zonder dat er iets gevallen is, en dan mag deze
+    kolom niet aangeraakt worden.
+    """
+    execute("UPDATE companions SET last_escalated_fall_ts=?, last_fall_kind=?, "
+           "updated=? WHERE id=?",
+           (int(fall_epoch), str(kind or "")[:32] or None, utcnow(), int(cid)))
+
+
+def add_companion_alert(companion_id: int, recipient_pubkey: str,
+                        sender_repeater_id: int | None = None,
+                        label: str = "") -> int:
+    """Eén toegewezen ontvanger voor het valalarm van een companion toevoegen.
+
+    Geeft het nieuwe id terug. De aanroeper (routes_companions) heeft de
+    pubkey al gekeurd, net als bij ``add_companion``.
+    """
+    return execute(
+        "INSERT INTO companion_alerts(companion_id, recipient_pubkey, "
+        "sender_repeater_id, label, created_at) VALUES(?,?,?,?,?)",
+        (int(companion_id), str(recipient_pubkey).strip().lower(),
+         sender_repeater_id if sender_repeater_id else None,
+         str(label or "").strip()[:64] or None, utcnow()))
+
+
+def list_companion_alerts(companion_id: int) -> list:
+    """De toegewezen ontvangers van één companion, op aanmaakvolgorde -- wie
+    het eerst is toegevoegd staat bovenaan, net als bij een gewone lijst."""
+    return q("SELECT * FROM companion_alerts WHERE companion_id=? ORDER BY id",
+             (int(companion_id),))
+
+
+def companion_alert(alert_id: int) -> sqlite3.Row | None:
+    return qone("SELECT * FROM companion_alerts WHERE id=?", (int(alert_id),))
+
+
+def delete_companion_alert(alert_id: int, companion_id: int) -> int:
+    """Eén ontvanger verwijderen, geschaald op ZIJN EIGEN companion.
+
+    ``companion_id`` gaat mee in de WHERE en niet als losse controle na een
+    lookup: dat sluit uit dat iemand die de ene companion mag beheren via een
+    geraden alert-id een ontvanger van een ANDERE companion verwijdert. Geeft
+    het aantal verwijderde rijen terug, dezelfde vorm als ``delete_companion``.
+    """
+    return execute_rowcount(
+        "DELETE FROM companion_alerts WHERE id=? AND companion_id=?",
+        (int(alert_id), int(companion_id)))
 
 
 def companions_with_location() -> list:

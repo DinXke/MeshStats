@@ -14,6 +14,8 @@ Drie dingen kunnen hier stuk zonder een foutmelding:
    test_beheerpaginas_renderen: een sjabloonfout is een lege beheerpagina en geen
    testfout.
 """
+import time
+
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -334,17 +336,17 @@ def test_location_nodes_alleen_de_ingestelde_afzenders(db):
     assert [r["id"] for r in companions.location_nodes()] == [node["id"]]
 
 
-def test_seen_to_epoch_onderscheidt_ouderdom_en_absolute_tijd():
-    """De heuristiek uit companions._seen_to_epoch: een klein getal is een
+def test_secs_to_epoch_onderscheidt_ouderdom_en_absolute_tijd():
+    """De heuristiek uit companions._secs_to_epoch: een klein getal is een
     ouderdom in seconden (onbetrouwbare RTC van dit nodetype), een groot getal
-    is al een epoch."""
+    is al een epoch. Gedeeld door ``seen`` en ``fall_ts``."""
     from app import companions
     now = 2_000_000_000.0  # ruim na 2001
-    assert companions._seen_to_epoch(120, now) == int(now) - 120
-    assert companions._seen_to_epoch(1_999_999_000, now) == 1_999_999_000
-    assert companions._seen_to_epoch(None, now) is None
-    assert companions._seen_to_epoch(-5, now) is None
-    assert companions._seen_to_epoch("120", now) is None
+    assert companions._secs_to_epoch(120, now) == int(now) - 120
+    assert companions._secs_to_epoch(1_999_999_000, now) == 1_999_999_000
+    assert companions._secs_to_epoch(None, now) is None
+    assert companions._secs_to_epoch(-5, now) is None
+    assert companions._secs_to_epoch("120", now) is None
 
 
 def test_poll_locations_werkt_companion_bij_op_pubkey(db, monkeypatch):
@@ -364,7 +366,8 @@ def test_poll_locations_werkt_companion_bij_op_pubkey(db, monkeypatch):
 
     monkeypatch.setattr(sensornode, "_json", nep_json)
     uit = companions.poll_locations()
-    assert uit == {"nodes": 1, "updated": 1, "errors": []}
+    assert uit == {"nodes": 1, "updated": 1, "errors": [],
+                   "falls": 0, "fall_alerts_sent": 0, "fall_alerts_failed": 0}
     rij = db.companion_by_pubkey(VALID)
     assert rij["last_lat"] == 51.2
     assert rij["last_lon"] == 5.4
@@ -420,7 +423,9 @@ def test_poll_locations_ene_node_faalt_de_andere_niet(db, monkeypatch):
 
 def test_poll_locations_zonder_afzenders_doet_niets(db):
     from app import companions
-    assert companions.poll_locations() == {"nodes": 0, "updated": 0, "errors": []}
+    assert companions.poll_locations() == {
+        "nodes": 0, "updated": 0, "errors": [],
+        "falls": 0, "fall_alerts_sent": 0, "fall_alerts_failed": 0}
 
 
 def test_companion_cmd_bouwt_tune_en_verstuurt(db, monkeypatch):
@@ -468,3 +473,320 @@ def test_senddm_send_zonder_afzender_meldt_het(db):
     resp = routes_companions.senddm_send(req, sender="", pubkey=VALID, msg="hoi",
                                          csrf=auth.csrf_token(cookie))
     assert resp.status_code == 200
+
+
+# --- 5. valalarm-ontvangers: databanklaag en routes --------------------------
+
+def test_companion_alert_crud(db):
+    """Toevoegen, lezen, en verwijderen -- geschaald op de EIGEN companion."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    aid = db.add_companion_alert(cid, "1" * 64, node["id"], "dochter")
+    rij = db.companion_alert(aid)
+    assert rij["companion_id"] == cid
+    assert rij["recipient_pubkey"] == "1" * 64
+    assert rij["sender_repeater_id"] == node["id"]
+    assert rij["label"] == "dochter"
+    assert [r["id"] for r in db.list_companion_alerts(cid)] == [aid]
+
+    # Verwijderen scoped op companion_id: een andere companion mag hem niet
+    # raken via een geraden alert-id.
+    andere_cid = db.add_companion("Ander", "9" * 64, "", "", None)
+    assert db.delete_companion_alert(aid, andere_cid) == 0
+    assert db.companion_alert(aid) is not None
+    assert db.delete_companion_alert(aid, cid) == 1
+    assert db.companion_alert(aid) is None
+    assert db.delete_companion_alert(aid, cid) == 0
+
+
+def test_companion_alert_cascade_bij_verwijderde_companion(db):
+    """ON DELETE CASCADE: verdwijnt de companion, dan verdwijnt ook zijn
+    ontvangerslijst -- geen wees-rij die naar een niet-bestaande companion wijst."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    aid = db.add_companion_alert(cid, "1" * 64)
+    db.delete_companion(cid)
+    assert db.companion_alert(aid) is None
+
+
+def test_companion_alert_sender_set_null_bij_verwijderde_node(db):
+    """ON DELETE SET NULL op sender_repeater_id: de ontvanger blijft staan,
+    alleen zijn afzender verdwijnt -- dezelfde lijn als companions.sender_repeater_id."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    aid = db.add_companion_alert(cid, "1" * 64, node["id"])
+    db.execute("DELETE FROM repeaters WHERE id=?", (node["id"],))
+    assert db.companion_alert(aid)["sender_repeater_id"] is None
+
+
+def test_set_companion_fall(db):
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    db.set_companion_fall(cid, 12345, "val")
+    rij = db.companion(cid)
+    assert rij["last_escalated_fall_ts"] == 12345
+    assert rij["last_fall_kind"] == "val"
+
+
+def test_companion_alert_add_vereist_serverbeheerder(db):
+    from app import routes_companions
+    maak_gebruiker("gewoon", superuser=False)
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    req = verzoek(_sessie("gewoon"), method="POST")
+    with pytest.raises(HTTPException) as fout:
+        routes_companions.companion_alert_add(
+            req, cid, recipient="1" * 64, sender="", label="", csrf="x")
+    assert fout.value.status_code == 403
+    assert db.list_companion_alerts(cid) == []
+
+
+def test_companion_alert_add_als_serverbeheerder(db):
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    req = verzoek(cookie, method="POST")
+    resp = routes_companions.companion_alert_add(
+        req, cid, recipient="1" * 64, sender="", label="dochter",
+        csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 200
+    rijen = db.list_companion_alerts(cid)
+    assert len(rijen) == 1
+    assert rijen[0]["recipient_pubkey"] == "1" * 64
+    assert rijen[0]["label"] == "dochter"
+
+
+def test_companion_alert_add_valideert_pubkey(db):
+    """Een halve of onzinnige sleutel wordt geweigerd, niet stilzwijgend
+    opgeslagen -- dezelfde regel als companion_add."""
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    req = verzoek(cookie, method="POST")
+    resp = routes_companions.companion_alert_add(
+        req, cid, recipient="kort", sender="", label="",
+        csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 200
+    assert db.list_companion_alerts(cid) == []
+
+
+def test_companion_alert_delete_als_serverbeheerder(db):
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    aid = db.add_companion_alert(cid, "1" * 64)
+    req = verzoek(cookie, method="POST")
+    resp = routes_companions.companion_alert_delete(
+        req, cid, aid, csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 200
+    assert db.companion_alert(aid) is None
+
+
+def test_companion_alert_delete_vereist_serverbeheerder(db):
+    from app import routes_companions
+    maak_gebruiker("gewoon", superuser=False)
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    aid = db.add_companion_alert(cid, "1" * 64)
+    req = verzoek(_sessie("gewoon"), method="POST")
+    with pytest.raises(HTTPException) as fout:
+        routes_companions.companion_alert_delete(req, cid, aid, csrf="x")
+    assert fout.value.status_code == 403
+    assert db.companion_alert(aid) is not None
+
+
+def test_companion_pagina_rendert_met_val_en_ontvangers(db):
+    """De nieuwe secties (laatste val, ontvangerslijst) door de echte
+    Jinja-omgeving -- een sjabloonfout is een lege pagina en geen testfout."""
+    from app import routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    db.add_companion_alert(cid, "1" * 64, None, "dochter")
+    db.set_companion_location(VALID, 51.2, 5.4, int(time.time()))
+    db.set_companion_fall(cid, int(time.time()) - 10, "val")
+    resp = routes_companions.companion_page(verzoek(cookie), cid)
+    assert resp.status_code == 200
+
+
+def test_companions_map_pagina_rendert_met_recente_val(db):
+    """De kaart met een fall_recent-marker door de echte Jinja-omgeving."""
+    from app import routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    db.set_companion_location(VALID, 51.2, 5.4, int(time.time()))
+    db.set_companion_fall(cid, int(time.time()) - 10, "val")
+    resp = routes_companions.companions_map_page(verzoek(cookie))
+    assert resp.status_code == 200
+
+
+# --- 6. valescalatie: de pollronde --------------------------------------------
+
+def test_poll_locations_escaleert_nieuwe_val_naar_ontvanger(db, monkeypatch):
+    """De hoofdweg: een NIEUWE fall_ts levert een DM op naar de toegewezen
+    ontvanger, en de val wordt vastgelegd."""
+    from app import companions, rooms, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    db.add_companion_alert(cid, "1" * 64, node["id"])
+
+    gezien = {}
+
+    def nep_bot_sendto(rep, pubkey, msg):
+        gezien["pubkey"] = pubkey
+        gezien["msg"] = msg
+        return {"ok": True, "error": ""}
+
+    monkeypatch.setattr(rooms, "bot_sendto", nep_bot_sendto)
+
+    def nep_json(host, path, timeout=None):
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 51.2, "lon": 5.4,
+             "seen": 5, "fall_ts": 100, "fall_kind": "val"},
+        ]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    uit = companions.poll_locations()
+    assert uit["falls"] == 1
+    assert uit["fall_alerts_sent"] == 1
+    assert uit["fall_alerts_failed"] == 0
+    assert gezien["pubkey"] == "1" * 64
+    assert "VAL" in gezien["msg"] and "Björn" in gezien["msg"]
+    assert "51.2" in gezien["msg"] and "5.4" in gezien["msg"]
+    assert "openstreetmap.org" in gezien["msg"]
+
+    comp = db.companion(cid)
+    assert comp["last_escalated_fall_ts"] is not None
+    assert comp["last_fall_kind"] == "val"
+
+
+def test_poll_locations_ontdubbelt_op_fall_ts(db, monkeypatch):
+    """Dezelfde val (zelfde fall_ts) mag over twee rondes maar één keer een
+    alarm opleveren -- de kern van de escalatie-eis.
+
+    ``fall_ts`` is hier bewust een grote, absolute epoch (na 2001) en geen
+    kleine 'ouderdom': bij een ouderdom verandert de omgerekende epoch met de
+    kloktijd van elke aanroep mee, en dat zou deze test laten hangen van de
+    exacte timing tussen de twee pollrondes in plaats van van de ontdubbeling
+    zelf. Zie companions._secs_to_epoch.
+    """
+    from app import companions, rooms, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    db.add_companion_alert(cid, "1" * 64, node["id"])
+
+    verstuurd = []
+    monkeypatch.setattr(
+        rooms, "bot_sendto",
+        lambda rep, pk, msg: verstuurd.append(msg) or {"ok": True, "error": ""})
+
+    def nep_json(host, path, timeout=None):
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 1.0, "lon": 2.0,
+             "seen": 5, "fall_ts": 2_000_000_000, "fall_kind": "nomotion"},
+        ]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    eerste = companions.poll_locations()
+    tweede = companions.poll_locations()
+    assert eerste["falls"] == 1 and eerste["fall_alerts_sent"] == 1
+    assert tweede["falls"] == 0 and tweede["fall_alerts_sent"] == 0
+    assert len(verstuurd) == 1
+
+
+def test_poll_locations_val_zonder_ontvangers_alleen_vastleggen(db, monkeypatch):
+    """Geen toegewezen ontvanger: de val wordt gezien en vastgelegd, maar er
+    gaat geen DM de deur uit -- letterlijk de eis uit de opdracht."""
+    from app import companions, rooms, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    # Expres geen db.add_companion_alert().
+
+    monkeypatch.setattr(rooms, "bot_sendto",
+                        lambda *a, **k: pytest.fail("mocht niet versturen"))
+
+    def nep_json(host, path, timeout=None):
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 1.0, "lon": 2.0,
+             "seen": 5, "fall_ts": 2_000_000_500, "fall_kind": "sos"},
+        ]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    uit = companions.poll_locations()
+    assert uit["falls"] == 1
+    assert uit["fall_alerts_sent"] == 0
+    assert uit["fall_alerts_failed"] == 0
+    comp = db.companion(cid)
+    assert comp["last_escalated_fall_ts"] == 2_000_000_500
+    assert comp["last_fall_kind"] == "sos"
+
+    # Een ontvanger die LATER wordt toegevoegd, krijgt deze oude val niet
+    # alsnog: dezelfde fall_ts komt gewoon weer binnen bij de volgende ronde.
+    db.add_companion_alert(cid, "1" * 64, node["id"])
+    uit2 = companions.poll_locations()
+    assert uit2["falls"] == 0
+    assert uit2["fall_alerts_sent"] == 0
+
+
+def test_poll_locations_escalatie_faalt_niet_op_één_ontvanger(db, monkeypatch):
+    """Twee ontvangers; het versturen naar de ene mislukt, de andere krijgt
+    zijn alarm gewoon -- dezelfde lijn als bij een node die niet antwoordt."""
+    from app import companions, rooms, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    afz1 = db.get_or_create_repeater("aabbccddeeff", "Afzender1")
+    afz2 = db.get_or_create_repeater("112233445566", "Afzender2")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    r1, r2 = "1" * 64, "2" * 64
+    db.add_companion_alert(cid, r1, afz1["id"])
+    db.add_companion_alert(cid, r2, afz2["id"])
+
+    gezien = []
+
+    def nep_bot_sendto(rep, pubkey, msg):
+        gezien.append((rep["id"], pubkey))
+        if rep["id"] == afz1["id"]:
+            return {"ok": False, "error": "geen antwoord"}
+        return {"ok": True, "error": ""}
+
+    monkeypatch.setattr(rooms, "bot_sendto", nep_bot_sendto)
+
+    def nep_json(host, path, timeout=None):
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 1.0, "lon": 2.0,
+             "seen": 5, "fall_ts": 2_000_000_000, "fall_kind": "val"},
+        ]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    uit = companions.poll_locations()
+    assert uit["falls"] == 1
+    assert uit["fall_alerts_sent"] == 1
+    assert uit["fall_alerts_failed"] == 1
+    # Allebei geprobeerd, en niet gestopt bij de eerste die faalde.
+    assert {pk for _, pk in gezien} == {r1, r2}
+    comp = db.companion(cid)
+    assert comp["last_escalated_fall_ts"] == 2_000_000_000
+
+
+def test_poll_locations_geen_fall_ts_doet_niets_met_valstaat(db, monkeypatch):
+    """Een normale locatiemelding zonder fall_ts/fall_kind raakt de valstaat
+    niet -- geen val is geen val, niet een val met een lege naam."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+
+    def nep_json(host, path, timeout=None):
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 1.0, "lon": 2.0, "seen": 5},
+        ]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    uit = companions.poll_locations()
+    assert uit["falls"] == 0
+    comp = db.companion(cid)
+    assert comp["last_escalated_fall_ts"] is None
+    assert comp["last_fall_kind"] is None

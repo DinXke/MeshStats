@@ -23,6 +23,8 @@ dit een veilige verplaatsing is:
 Het vervoer zit in ``companions.send_dm`` (nu de bot van de afzender-node) en
 nergens hier: deze routes geven een afzender-node en een tekst.
 """
+import time
+
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -35,6 +37,14 @@ from .routes_admin import (_noteer, _rep_or_404, check_csrf, require_login,
 from .templating import templates
 
 router = APIRouter(prefix="/admin")
+
+# Hoe lang een val als "recent" telt op de kaart en de detailpagina -- een
+# eigen marker/badge die na een dag nog steeds de allereerste val van een
+# companion toont, zou een oefening of een oude melding laten doorgaan voor
+# een actuele noodsituatie. Vierentwintig uur is ruim genoeg om "iemand is
+# gevallen en er is nog niemand wezen kijken" zichtbaar te houden zonder een
+# handzender die zes maanden geleden één keer viel voor altijd rood te kleuren.
+FALL_RECENT_S = 24 * 3600
 
 
 def _keuze_id(waarde) -> int | None:
@@ -111,15 +121,24 @@ def _companions_map_page(request: Request, extra: dict | None = None):
     user = require_login(request)
     ik = rbac.load(user)
     locaties = db.companions_with_location()
+    now = time.time()
+
+    def _loc(c):
+        fall_ts = c["last_escalated_fall_ts"]
+        out = {"id": c["id"], "name": c["name"], "type": c["type"],
+               "lat": c["last_lat"], "lon": c["last_lon"],
+               "seen_iso": db.iso_from_epoch(c["last_seen"]),
+               # Alleen een recente val kleurt de marker anders -- zie
+               # FALL_RECENT_S hierboven voor waarom een val van maanden terug
+               # niet voor altijd rood moet blijven.
+               "fall_recent": bool(fall_ts) and (now - fall_ts) < FALL_RECENT_S,
+               "fall_kind": c["last_fall_kind"], "fall_iso": db.iso_from_epoch(fall_ts)}
+        return out
+
     ctx = {
         "site_name": config.SITE_NAME, "user": user, "world": "companions",
         "companions_map_tab": True,
-        "locations": [
-            {"id": c["id"], "name": c["name"], "type": c["type"],
-             "lat": c["last_lat"], "lon": c["last_lon"],
-             "seen_iso": db.iso_from_epoch(c["last_seen"])}
-            for c in locaties
-        ],
+        "locations": [_loc(c) for c in locaties],
         "serverrechten": rbac.serverrechten(ik),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "result": None,
@@ -145,6 +164,8 @@ def _companion_page(request: Request, cid: int, extra: dict | None = None):
     senders = _sender_reps(ik)
     default_sender = db.qone("SELECT * FROM repeaters WHERE id=?",
                              (comp["sender_repeater_id"],)) if comp["sender_repeater_id"] else None
+    reps = db.q("SELECT * FROM repeaters")
+    fall_ts = comp["last_escalated_fall_ts"]
     ctx = {
         "site_name": config.SITE_NAME, "user": user, "world": "companions",
         "companions_tab": True,
@@ -153,8 +174,19 @@ def _companion_page(request: Request, cid: int, extra: dict | None = None):
         # <time class="reltime">-machinerie kan gebruiken als de rest van de
         # site in plaats van zelf een "geleden"-tekst te bouwen.
         "last_seen_iso": db.iso_from_epoch(comp["last_seen"]),
+        # Idem voor de laatst VERWERKTE val (companions.set_companion_fall) --
+        # "verwerkt" en niet "gemeld", want zonder toegewezen ontvanger wordt
+        # een val hier ook vastgelegd zonder dat er een alarm uitging.
+        "last_fall_iso": db.iso_from_epoch(fall_ts),
+        "fall_recent": bool(fall_ts) and (time.time() - fall_ts) < FALL_RECENT_S,
         "senders": senders,
         "default_sender": default_sender,
+        # De toegewezen valalarm-ontvangers van deze companion, met de naam van
+        # hun afzender-node erbij (of "— standaard —" als er geen eigen
+        # afzender gekozen is en companions._escalate_fall op de
+        # standaardafzender van de companion terugvalt).
+        "alerts": db.list_companion_alerts(cid),
+        "rep_by_id": {r["id"]: r for r in reps},
         "mag_versturen": _mag_versturen(ik, senders),
         "mag_beheren": rbac.decide(ik, "server.companions"),
         # De keuzelijsten voor de commando-UI, uit companions.py zodat de UI en de
@@ -251,6 +283,51 @@ def companion_delete(request: Request, cid: int, csrf: str = Form(...)):
             detail=f"companion verwijderd: {naam}")
     return _companions_page(request, {"result": {
         "ok": True, "msg": f"companion '{naam}' verwijderd"}})
+
+
+@router.post("/companions/{cid}/alerts/add")
+def companion_alert_add(request: Request, cid: int, recipient: str = Form(""),
+                        sender: str = Form(""), label: str = Form(""),
+                        csrf: str = Form(...)):
+    """Eén valalarm-ontvanger toevoegen. Serverhandeling en geen node-handeling
+    ondanks de gekozen afzender: hier wordt nog niets verstuurd, alleen de
+    LIJST met wie een toekomstig valalarm krijgt uitgebreid -- dezelfde lijn
+    als companion-CRUD hierboven."""
+    user = require_perm(request, "server.companions")
+    check_csrf(request, csrf)
+    comp = db.companion(cid)
+    if not comp:
+        raise HTTPException(404, "Onbekende companion")
+    sleutel = str(recipient or "").strip()
+    if not companions.valid_pubkey(sleutel):
+        return _companion_page(request, cid, {"result": {
+            "ok": False,
+            "msg": "een volledige pubkey van 64 hex-tekens is vereist voor de ontvanger"}})
+    aid = db.add_companion_alert(cid, sleutel, _keuze_id(sender), label)
+    _noteer(request, user, "server.companions",
+            detail=f"valalarm-ontvanger toegevoegd bij {comp['name']}: {sleutel[:12]}")
+    return _companion_page(request, cid, {"result": {
+        "ok": True, "msg": "ontvanger toegevoegd", "aid": aid}})
+
+
+@router.post("/companions/{cid}/alerts/{aid}/delete")
+def companion_alert_delete(request: Request, cid: int, aid: int,
+                           csrf: str = Form(...)):
+    """Eén valalarm-ontvanger verwijderen. Raakt alleen de lijst -- geen DM, geen
+    apparaat, dus dezelfde serverrechten als toevoegen."""
+    user = require_perm(request, "server.companions")
+    check_csrf(request, csrf)
+    comp = db.companion(cid)
+    if not comp:
+        raise HTTPException(404, "Onbekende companion")
+    verwijderd = db.delete_companion_alert(aid, cid)
+    _noteer(request, user, "server.companions",
+            detail=(f"valalarm-ontvanger verwijderd bij {comp['name']} (id {aid})"
+                    if verwijderd else
+                    f"valalarm-ontvanger niet gevonden bij {comp['name']} (id {aid})"))
+    return _companion_page(request, cid, {"result": {
+        "ok": bool(verwijderd),
+        "msg": "ontvanger verwijderd" if verwijderd else "onbekende ontvanger"}})
 
 
 @router.post("/companions/{cid}/cmd")

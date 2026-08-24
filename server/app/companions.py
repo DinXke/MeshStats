@@ -17,6 +17,11 @@ BESTEMMING. Deze module kent drie dingen en niets daarbuiten:
     periodieke GET van ``/companions.json`` op de afzender-node, die vertelt
     waar elke companion die hij kent laatst gezien is. Zie ``poll_locations``
     onderaan dit bestand voor de aannames over dat endpoint.
+4.  De **valescalatie**. Dezelfde ronde leest ook ``fall_ts``/``fall_kind`` uit
+    ``/companions.json`` en stuurt bij een NIEUWE val een DM naar elke
+    toegewezen ontvanger van die companion (``companion_alerts``, beheerd op de
+    companion-pagina). Ontdubbeld op ``fall_ts``, zodat één val nooit twee keer
+    alarmeert -- zie ``_escalate_fall``.
 
 Waarom het vervoer pluggable blijft
 -----------------------------------
@@ -42,7 +47,7 @@ import re
 import threading
 import time
 
-from . import config, db, nodeconfig, rooms, sensornode
+from . import audit, config, db, nodeconfig, rooms, sensornode
 
 log = logging.getLogger("meshmanager.companions")
 
@@ -278,10 +283,14 @@ def sender_candidates(reps) -> list:
 #
 # AANNAME over de vorm van het antwoord (er was geen levende node met dit
 # endpoint beschikbaar tijdens het bouwen hiervan):
-#   {"companions": [{"name", "pubkey" (64 hex), "lat", "lon", "seen"}, ...]}
-# Ontbreekt het endpoint (oudere firmware) of geeft de node een lege lijst
-# terug, dan degradeert dit naar niets bijwerken -- geen fout die de rest van
-# de pollronde raakt, zie ``poll_locations``.
+#   {"companions": [{"name", "pubkey" (64 hex), "lat", "lon", "seen",
+#                     "fall_ts", "fall_kind"}, ...]}
+# ``fall_ts``/``fall_kind`` zijn optioneel: een companion die nooit gevallen
+# is, hoort ze gewoon niet te hebben, en dat degradeert naar "geen val om te
+# verwerken" -- zie ``_secs_to_epoch`` en de valafhandeling in
+# ``poll_locations``. Ontbreekt het endpoint zelf (oudere firmware) of geeft de
+# node een lege lijst terug, dan degradeert dit naar niets bijwerken -- geen
+# fout die de rest van de pollronde raakt.
 
 def location_nodes() -> list:
     """De nodes waar minstens één companion zijn afzender op heeft staan.
@@ -304,27 +313,104 @@ def location_nodes() -> list:
 # seconden na 1 januari 2001) en niet als een ouderdom in seconden. De reden om
 # hier een gok te MOETEN doen staat in de kolomtoelichting bij
 # ``companions.last_seen`` in db.py: dit nodetype heeft na een herstart een
-# RTC die op 15 mei 2024 staat, dus "seen" kan zowel een epoch als een
-# ouderdom betekenen en er is geen vlag die het zegt.
+# RTC die op 15 mei 2024 staat, dus zo'n veld kan zowel een epoch als een
+# ouderdom betekenen en er is geen vlag die het zegt. Dezelfde heuristiek geldt
+# voor ``fall_ts``, en om een andere maar even dwingende reden: een ouderdom
+# die bij elke ronde OPLOOPT (zoals bij "seen") zou als RUWE waarde nooit twee
+# keer hetzelfde getal geven, en dan zou de ontdubbeling hieronder een val bij
+# elke volgende ronde als "nieuw" blijven zien -- de escalatie zou nooit
+# stoppen. Omgerekend naar een epoch met déze servers klok blijft de waarde
+# stabiel zolang het om dezelfde gebeurtenis gaat, of de node hem nu als
+# ouderdom of als absolute tijd meestuurt.
 _EPOCH_2001 = 978307200
 
 
-def _seen_to_epoch(seen, now: float) -> int | None:
-    """``seen`` uit /companions.json naar een epoch met DEZE servers klok.
+def _secs_to_epoch(secs, now: float) -> int | None:
+    """Een secondenveld uit /companions.json (``seen`` of ``fall_ts``) naar een
+    epoch met DEZE servers klok.
 
     Zie ``_EPOCH_2001`` hierboven voor de heuristiek. Alles wat geen bruikbaar
     getal is (ontbrekend, negatief, een string) levert None op -- geen gok
     beter dan een verkeerde gok die er hetzelfde uitziet als een echte tijd.
     """
-    if not isinstance(seen, (int, float)) or isinstance(seen, bool) or seen < 0:
+    if not isinstance(secs, (int, float)) or isinstance(secs, bool) or secs < 0:
         return None
-    seen = int(seen)
-    return seen if seen >= _EPOCH_2001 else int(now) - seen
+    secs = int(secs)
+    return secs if secs >= _EPOCH_2001 else int(now) - secs
+
+
+# De ronde kende de kind-woorden nog niet toen ``fall`` als commando bijkwam
+# (zie COMMANDS hierboven, dat de companion vertelt of hij valdetectie AANZET);
+# dit zijn de kinds die de node meldt ALS hij een val ziet. Geen validatie die
+# een onbekend woord weggooit: een firmware-update die een vierde soort
+# toevoegt, hoort een alarm te blijven opleveren met dat woord erin -- gewoon
+# niet vertaald -- in plaats van stilzwijgend te verdwijnen.
+
+def _fall_text(name: str, kind: str, lat, lon) -> str:
+    """De tekst van een valalarm. ``kind`` gaat ONVERTAALD mee (``val``,
+    ``nomotion``, ``sos``, of wat de node ook meldt) -- een ontvanger die de
+    firmwaretekst al kent, hoeft geen tweede vertaling te krijgen die net iets
+    anders zegt. De OSM-link staat er alleen bij als er een positie is: een val
+    zonder bekende locatie levert dan geen kapotte link op.
+    """
+    kind_txt = str(kind or "").strip() or "onbekend"
+    if lat is not None and lon is not None:
+        plek = f"{lat},{lon}"
+        link = (f" — https://www.openstreetmap.org/?mlat={lat}&mlon={lon}"
+               f"#map=17/{lat}/{lon}")
+    else:
+        plek = "positie onbekend"
+        link = ""
+    return f"⚠️ VAL ({kind_txt}): {name} @ {plek}{link}"
+
+
+def _escalate_fall(comp_row, kind: str, lat, lon) -> dict:
+    """Naar elke toegewezen ontvanger van deze companion (``companion_alerts``)
+    een valalarm sturen. ``{"sent", "failed"}``.
+
+    Geen toegewezen ontvangers is geen fout: de aanroeper (``poll_locations``)
+    legt de val hoe dan ook vast, zodat er later -- als iemand alsnog een
+    ontvanger toevoegt -- geen OUDE val alsnog afgaat. Deze functie doet dan
+    gewoon niets en meldt ``{"sent": 0, "failed": 0}``.
+
+    Eén ontvanger die niet te bereiken is (geen afzender-node, of het versturen
+    zelf mislukt) mag de andere ontvangers niet raken -- dezelfde lijn als
+    ``poll_locations`` voor nodes en ``sensornode.run_once`` voor nodes:
+    een lus over onafhankelijke bestemmingen stopt niet bij de eerste die stuk
+    is.
+    """
+    out = {"sent": 0, "failed": 0}
+    tekst = _fall_text(comp_row["name"], kind, lat, lon)
+    actor = "systeem (valdetectie)"
+    for ontv in db.list_companion_alerts(comp_row["id"]):
+        rid = ontv["sender_repeater_id"] or comp_row["sender_repeater_id"]
+        rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,)) if rid else None
+        kort = ontv["recipient_pubkey"][:12]
+        if rep is None:
+            out["failed"] += 1
+            audit.log(actor, "node.instelling.merkbaar", outcome=audit.MISLUKT,
+                      detail=f"valalarm {comp_row['name']} niet verstuurd naar "
+                             f"{kort}: geen afzender-node ingesteld")
+            continue
+        res = send_dm(rep, ontv["recipient_pubkey"], tekst)
+        if res["ok"]:
+            out["sent"] += 1
+        else:
+            out["failed"] += 1
+        audit.log(actor, "node.instelling.merkbaar", rep=rep,
+                  outcome=audit.OK if res["ok"] else audit.MISLUKT,
+                  detail=(f"valalarm ({kind}) van {comp_row['name']} naar {kort}"
+                          if res["ok"] else
+                          f"valalarm ({kind}) van {comp_row['name']} mislukt naar "
+                          f"{kort}: {res['error']}"))
+    return out
 
 
 def poll_locations(timeout: int | None = None) -> dict:
-    """Elke afzender-node om ``/companions.json`` vragen en de locaties van de
-    beheerde companions bijwerken. ``{"nodes", "updated", "errors"}``.
+    """Elke afzender-node om ``/companions.json`` vragen: de locaties van de
+    beheerde companions bijwerken én een NIEUWE val escaleren.
+    ``{"nodes", "updated", "errors", "falls", "fall_alerts_sent",
+    "fall_alerts_failed"}``.
 
     Matcht op PUBKEY en niet op de node waarachter het antwoord vandaan kwam:
     ``sender_repeater_id`` is een VOORKEUR voor het versturen (zie companions.py
@@ -335,9 +421,15 @@ def poll_locations(timeout: int | None = None) -> dict:
     Eén node die niet antwoordt (oude firmware zonder dit endpoint, of gewoon
     onbereikbaar) mag de ronde voor de andere nodes niet breken -- dezelfde
     lijn als ``sensornode.run_once``.
+
+    De valherkenning ONTDUBBELT STRIKT op ``fall_ts``: alleen een epoch die
+    ECHT nieuwer is dan ``companions.last_escalated_fall_ts`` telt als een
+    nieuwe val. Dat tijdstip wordt hoe dan ook bijgewerkt (``db.set_companion_fall``),
+    ook als er geen ontvanger toegewezen is -- zie ``_escalate_fall``.
     """
     now = time.time()
-    out = {"nodes": 0, "updated": 0, "errors": []}
+    out = {"nodes": 0, "updated": 0, "errors": [],
+           "falls": 0, "fall_alerts_sent": 0, "fall_alerts_failed": 0}
     for rep in location_nodes():
         host = str(rep["sensor_host"] or "").strip()
         if not host:
@@ -351,16 +443,39 @@ def poll_locations(timeout: int | None = None) -> dict:
             if not isinstance(c, dict):
                 continue
             pubkey = str(c.get("pubkey") or "").strip()
+            if not valid_pubkey(pubkey):
+                continue
+            # Een node kan companions kennen die WIJ nog niet beheren (nog niet
+            # toegevoegd op de companions-pagina); daar valt niets bij te
+            # werken en niets te escaleren, dus overslaan zonder fout.
+            comp_row = db.companion_by_pubkey(pubkey)
+            if comp_row is None:
+                continue
+
             lat, lon = c.get("lat"), c.get("lon")
-            if not valid_pubkey(pubkey) or lat is None or lon is None:
+            lat_f = lon_f = None
+            if lat is not None and lon is not None:
+                try:
+                    lat_f, lon_f = float(lat), float(lon)
+                except (TypeError, ValueError):
+                    lat_f = lon_f = None
+            if lat_f is not None:
+                seen_epoch = _secs_to_epoch(c.get("seen"), now)
+                if db.set_companion_location(pubkey, lat_f, lon_f, seen_epoch):
+                    out["updated"] += 1
+
+            fall_epoch = _secs_to_epoch(c.get("fall_ts"), now)
+            if fall_epoch is None:
                 continue
-            try:
-                lat_f, lon_f = float(lat), float(lon)
-            except (TypeError, ValueError):
-                continue
-            seen_epoch = _seen_to_epoch(c.get("seen"), now)
-            if db.set_companion_location(pubkey, lat_f, lon_f, seen_epoch):
-                out["updated"] += 1
+            vorige = comp_row["last_escalated_fall_ts"]
+            if vorige is not None and fall_epoch <= int(vorige):
+                continue  # deze val is al verwerkt -- geen tweede alarm.
+            kind = str(c.get("fall_kind") or "").strip().lower()
+            esc = _escalate_fall(comp_row, kind, lat_f, lon_f)
+            db.set_companion_fall(comp_row["id"], fall_epoch, kind)
+            out["falls"] += 1
+            out["fall_alerts_sent"] += esc["sent"]
+            out["fall_alerts_failed"] += esc["failed"]
     return out
 
 
@@ -400,6 +515,13 @@ def _loc_run() -> None:
             else:
                 _loc_state["last_result"] = (
                     f"{uit['updated']} locatie(s) bijgewerkt van {uit['nodes']} node(s)")
+                if uit["falls"]:
+                    _loc_state["last_result"] += (
+                        f"; {uit['falls']} val(len) gemeld, "
+                        f"{uit['fall_alerts_sent']} alarm(en) verstuurd")
+                    if uit["fall_alerts_failed"]:
+                        _loc_state["last_result"] += (
+                            f" ({uit['fall_alerts_failed']} mislukt)")
                 if uit["errors"]:
                     _loc_state["last_result"] += f"; {len(uit['errors'])} node(s) gaven een fout"
         except Exception:                   # noqa: BLE001 -- zie sensornode._run

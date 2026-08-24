@@ -45,15 +45,32 @@
     attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19,
   }).addTo(map);
 
+  // Een companion met een RECENTE val (fall_recent, gezet door routes_companions
+  // op basis van FALL_RECENT_S) krijgt een eigen icoon in plaats van de gewone
+  // Leaflet-pin -- dezelfde reden als de rode badge op de detailpagina: wie deze
+  // kaart in één oogopslag scant, moet een noodgeval niet hoeven op te zoeken
+  // tussen tientallen gelijke bolletjes.
+  var fallIcon = L.divIcon({
+    className: "companion-fall-icon",
+    html: "<div style=\"font-size:22px;line-height:22px\">&#9888;&#65039;</div>",
+    iconSize: [24, 24], iconAnchor: [12, 20], popupAnchor: [0, -18],
+  });
+
   var bounds = [];
   points.forEach(function (c) {
-    var marker = L.marker([c.lat, c.lon]).addTo(map);
+    var marker = c.fall_recent
+      ? L.marker([c.lat, c.lon], { icon: fallIcon }).addTo(map)
+      : L.marker([c.lat, c.lon]).addTo(map);
     var label = esc(c.name || "companion") + (c.type ? " · " + esc(c.type) : "");
-    marker.bindPopup(
-      "<strong>" + label + "</strong><br>" +
-      esc(ageText(c.seen_iso)) + "<br>" +
-      "<a href=\"/admin/companions/" + encodeURIComponent(c.id) + "\">beheren &rarr;</a>"
-    );
+    var popup = "<strong>" + label + "</strong><br>" + esc(ageText(c.seen_iso));
+    if (c.fall_recent) {
+      var kind = esc(c.fall_kind || "onbekend");
+      popup += "<br><strong style=\"color:var(--red)\">&#9888; val (" + kind + "): " +
+        esc(ageText(c.fall_iso)) + "</strong>";
+    }
+    popup += "<br><a href=\"/admin/companions/" + encodeURIComponent(c.id) +
+      "\">beheren &rarr;</a>";
+    marker.bindPopup(popup);
     bounds.push([c.lat, c.lon]);
   });
 
