@@ -173,6 +173,8 @@ def _companion_result(request: Request, comp) -> dict | None:
                        f"{request.query_params.get('b', '')}"}
     if r == "cmd_err":
         return {"ok": False, "msg": f"niet verstuurd — {request.query_params.get('e', '')}"}
+    if r == "bot_saved":
+        return {"ok": True, "msg": "bot-voorkeur opgeslagen"}
     return None
 
 
@@ -337,6 +339,8 @@ def _companion_page(request: Request, cid: int, extra: dict | None = None):
         "tune_library": companions.TUNE_LIBRARY,
         "vol_levels": companions.VOL_LEVELS,
         "quiet_actions": companions.QUIET_ACTIONS,
+        "rxps_modes": companions.RXPS_MODES,
+        "radio_fields": companions.RADIO_FIELDS,
         "serverrechten": rbac.serverrechten(ik),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "result": _companion_result(request, comp),
@@ -477,7 +481,9 @@ def companion_cmd(request: Request, cid: int, cmd: str = Form(""),
                   level: str = Form(""), slot: str = Form(""),
                   name: str = Form(""), range: str = Form(""),
                   action: str = Form(""), mode: str = Form(""), sub: str = Form(""),
-                  value: str = Form(""), text: str = Form(""), csrf: str = Form(...)):
+                  value: str = Form(""), text: str = Form(""),
+                  followapp: str = Form(""), field: str = Form(""),
+                  bot: str = Form(""), csrf: str = Form(...)):
     """Een T1000-E-commando naar deze companion sturen, via de Send-DM-weg.
 
     De knoppen op de companionpagina posten hierheen met ``cmd`` en de bijhorende
@@ -509,8 +515,12 @@ def companion_cmd(request: Request, cid: int, cmd: str = Form(""),
     check_csrf(request, csrf)
     args = {"state": state, "level": level, "slot": slot, "name": name,
             "range": range, "action": action, "mode": mode, "sub": sub,
-            "value": value, "text": text}
-    res = companions.send_command(rep, comp["pubkey"], cmd, args)
+            "value": value, "text": text, "followapp": followapp, "field": field}
+    # Welke bot-identiteit verstuurt: een expliciete keuze op dit formulier
+    # wint, dan de bewaarde voorkeur van de companion, dan de MGMT-standaard
+    # van de gekozen afzender-node. Zie companions.resolve_bot.
+    bot_keuze = companions.resolve_bot(rep, bot, comp["preferred_bot"])
+    res = companions.send_command(rep, comp["pubkey"], cmd, args, bot=bot_keuze)
     _noteer(request, user, "node.instelling.merkbaar", rep=rep,
             detail=(f"companion {comp['name']}: {res['body']} verstuurd"
                     if res["ok"] else f"companion-commando mislukt: {res['error']}"),
@@ -575,6 +585,39 @@ def senddm_contacts(request: Request, rid: int):
                          "contacts": node_contacts, "companions": comps})
 
 
+@router.get("/companions/bots/{rid}.json")
+def companion_bots(request: Request, rid: int):
+    """De bot-identiteiten van een afzender-node (``/bots.json``), voor de
+    bot-kiezer bij de commando-knoppen en 'Vrij bericht'. Een aparte GET, net
+    als ``senddm_contacts`` hierboven: dit gaat het netwerk op (of leest de
+    korte cache, zie ``companions.cached_bots``), dus pas ophalen zodra er
+    een afzender gekozen is."""
+    rep = _rep_or_404(request, rid)
+    require_perm(request, "node.bekijken", rep)
+    data = companions.cached_bots(rep)
+    return JSONResponse({"ok": data["ok"], "error": data["error"],
+                         "bots": data["bots"],
+                         "default": companions.default_bot_for(rep)})
+
+
+@router.post("/companions/{cid}/bot")
+def companion_bot_set(request: Request, cid: int, bot: str = Form(""),
+                      csrf: str = Form(...)):
+    """De bewaarde bot-voorkeur van deze companion zetten (of wissen met een
+    lege keuze). Serverhandeling zoals de rest van de companion-CRUD: dit
+    raakt alleen de LIJST-rij, er wordt hier nog niets verstuurd."""
+    user = require_perm(request, "server.companions")
+    check_csrf(request, csrf)
+    comp = db.companion(cid)
+    if not comp:
+        raise HTTPException(404, "Onbekende companion")
+    db.set_companion_bot(cid, bot or None)
+    _noteer(request, user, "server.companions",
+            detail=f"bot-voorkeur van {comp['name']} gezet op "
+                   f"{bot.strip() or '— standaard —'}")
+    return _redirect(f"/admin/companions/{cid}", r="bot_saved")
+
+
 def _back_target(back: str) -> str:
     """Waarheen een POST-formulier terugkeert na ``senddm_send``.
 
@@ -607,7 +650,8 @@ def _back_target(back: str) -> str:
 
 @router.post("/senddm/send")
 def senddm_send(request: Request, sender: str = Form(""), pubkey: str = Form(""),
-                msg: str = Form(""), back: str = Form(""), csrf: str = Form(...)):
+                msg: str = Form(""), back: str = Form(""), bot: str = Form(""),
+                csrf: str = Form(...)):
     """Een DM versturen vanaf de gekozen afzender-node naar de gekozen pubkey.
 
     De bestemming komt als volledige pubkey binnen (de kiezer vult hem in, of hij
@@ -638,8 +682,11 @@ def senddm_send(request: Request, sender: str = Form(""), pubkey: str = Form("")
         return _redirect(doel, r="cmd_nosender")
     user = require_perm(request, "node.instelling.merkbaar", rep)
     check_csrf(request, csrf)
-    res = companions.send_dm(rep, pubkey, msg)
     naar = db.companion_by_pubkey(pubkey)
+    # Is de bestemming een beheerde companion, dan telt zijn bewaarde
+    # bot-voorkeur mee -- dezelfde volgorde als companion_cmd hierboven.
+    bot_keuze = companions.resolve_bot(rep, bot, naar["preferred_bot"] if naar else None)
+    res = companions.send_dm(rep, pubkey, msg, bot=bot_keuze)
     label = naar["name"] if naar else (str(pubkey or "").strip()[:12] or "?")
     # Alleen naar wie, nooit de inhoud -- dezelfde regel als bij bot_sendto.
     _noteer(request, user, "node.instelling.merkbaar", rep=rep,

@@ -267,6 +267,13 @@
     form.appendChild(note);
     form.addEventListener("submit", function (e) {
       e.preventDefault();
+      // De RADIO-waarschuwing: een formulier met ``data-confirm`` (het
+      // "Radioparameter zetten"-formulier op de companion-pagina) mag pas de
+      // deur uit ná een expliciete bevestiging -- bovenop de rode
+      // waarschuwingstekst in de kaart zelf, niet in plaats ervan. Annuleren
+      // stuurt niets: geen fetch, geen commando, geen note-tekst.
+      var confirmText = form.getAttribute("data-confirm");
+      if (confirmText && !window.confirm(confirmText)) return;
       var fd = new FormData(form);
       // Een formulier met twee submit-knoppen (bv. "Afspelen" vs "Toewijzen",
       // allebei name="cmd" met een andere value) laat FormData(form) NIET zien
@@ -275,6 +282,11 @@
       // van het formulier sturen, ongeacht de aangeklikte knop.
       var inzender = e.submitter;
       if (inzender && inzender.name) fd.set(inzender.name, inzender.value);
+      // De bot-kiezer (zie wireBotPicker hieronder) mag meesturen welke
+      // bot-identiteit deze DM verstuurt -- alleen als de pagina er een heeft
+      // én er iets anders dan "standaard" gekozen is.
+      document.dispatchEvent(new CustomEvent("cmd-ajax:before-send",
+        { detail: { formData: fd, form: form } }));
       note.className = "muted small cmd-note";
       note.textContent = "bezig…";
       fetch(form.action, {
@@ -290,6 +302,65 @@
           note.className = "bad cmd-note";
           note.textContent = "kon niet versturen (netwerkfout) — probeer opnieuw";
         });
+    });
+  }
+
+  // --- 3b. De bot-kiezer: welke bot-identiteit commando's verstuurt ----------
+  //
+  // Alleen op de companion-pagina (die het #bot-picker-anker rendert): de
+  // Send-DM-tab en de kaart hebben geen commando-knoppen en dus niets om een
+  // bot voor te kiezen. Eén kiezer per pagina en niet één per formulier: elk
+  // formulier heeft al zijn eigen afzender-select, en een bot-select
+  // ernaast op elk van de tien+ kaartjes zou de pagina onleesbaar maken voor
+  // wat in de praktijk zelden verandert. De LAATST aangeraakte afzender-select
+  // bepaalt welke bots hier staan; wisselt iemand van afzender in één
+  // formulier zonder de bot-kiezer bij te werken, dan blijft de server toch
+  // correct -- companions.resolve_bot valt terug op zijn eigen standaard voor
+  // de node waarnaar dat formulier ECHT verstuurt.
+  var botPicker = document.getElementById("bot-picker");
+  if (botPicker) wireBotPicker(botPicker);
+
+  function wireBotPicker(el) {
+    var select = document.getElementById("bot-choice");
+    var note = document.getElementById("bot-note");
+    if (!select) return;
+    var standaardOptie = select.innerHTML;   // de server-gerenderde "— standaard —"
+
+    function loadFor(rid) {
+      select.innerHTML = standaardOptie;
+      if (!rid) { if (note) note.textContent = ""; return; }
+      if (note) note.textContent = "bots laden…";
+      fetch("/admin/companions/bots/" + encodeURIComponent(rid) + ".json",
+            { credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          (data.bots || []).forEach(function (b) {
+            var o = document.createElement("option");
+            o.value = b.name || String(b.idx);
+            o.textContent = (b.name || ("bot " + b.idx)) + (b.alert ? " (alarm)" : "");
+            select.appendChild(o);
+          });
+          if (note) {
+            note.textContent = data.ok
+              ? (data.bots.length + " bot(s) gevonden op deze node")
+              : ("bots niet opgehaald: " + (data.error || "onbekende fout") +
+                 " (standaard blijft werken)");
+          }
+        })
+        .catch(function () { if (note) note.textContent = "kon bots niet laden"; });
+    }
+
+    loadFor(el.getAttribute("data-rep"));
+
+    // Elke afzender-select op de pagina (één per commando-formulier) ververst
+    // deze lijst zodra hij verandert.
+    Array.prototype.forEach.call(document.querySelectorAll('select[name="sender"]'),
+      function (s) {
+        s.addEventListener("change", function () { loadFor(s.value); });
+      });
+
+    document.addEventListener("cmd-ajax:before-send", function (e) {
+      if (select.value) e.detail.formData.set("bot", select.value);
     });
   }
 

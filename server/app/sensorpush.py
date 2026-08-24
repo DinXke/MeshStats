@@ -234,6 +234,27 @@ def _parse(body) -> dict:
     return uit
 
 
+# --- de bearer-controle, herbruikbaar voor verwante node-push-endpoints ---------
+#
+# ``/api/companion`` (companions.py, de instant-push van locatie/valmeldingen)
+# deelt dezelfde vertrouwde afzender als deze push -- de MeshUptime-node -- en
+# hoort dus dezelfde deur te delen: één token, één 401/503-vorm, niet een tweede
+# kopie die later uiteen kan lopen. Vandaar dat deze controle hier een eigen,
+# los aanroepbare functie is en niet alleen inline in ``sensorpush`` hieronder.
+
+def require_push_token(authorization: str | None) -> None:
+    """De bearer-controle van dit endpoint. Werpt HTTPException (503 als de weg
+    dicht staat, 401 bij een ontbrekend of fout token); geeft niets terug bij
+    een geldig token."""
+    if not TOKEN:
+        raise HTTPException(503, "gebeurtenis-push staat uit op deze server "
+                                 "(MM_PUSH_TOKEN is leeg)")
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Bearer-token vereist")
+    if not hmac.compare_digest(authorization.split(" ", 1)[1].strip(), TOKEN):
+        raise HTTPException(401, "Ongeldig token")
+
+
 # --- de begrenzing ---------------------------------------------------------------
 
 def _rate_check(adres: str) -> bool:
@@ -256,6 +277,14 @@ def _rate_check(adres: str) -> bool:
                                      )[:len(_rate) - _RATE_MAX_KEYS]:
                 del _rate[sleutel]
         return True
+
+
+def check_rate(request: Request) -> None:
+    """De begrenzing van dit endpoint, herbruikbaar voor verwante node-push-
+    endpoints (zie ``require_push_token`` hierboven voor dezelfde reden). Werpt
+    429 als het venster vol is."""
+    if not _rate_check(ratelimit.client_ip(request)):
+        raise HTTPException(429, "Te veel pushes; probeer het zo terug")
 
 
 # --- de stiltebewaking -----------------------------------------------------------
@@ -364,15 +393,8 @@ async def sensorpush(request: Request,
                      authorization: str | None = Header(default=None)):
     """Eén push van één node: events erin, ack-kanalen eruit. Zie het contract
     in de moduletekst; de volgorde van verwerken staat daar ook, met redenen."""
-    if not TOKEN:
-        raise HTTPException(503, "gebeurtenis-push staat uit op deze server "
-                                 "(MM_PUSH_TOKEN is leeg)")
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(401, "Bearer-token vereist")
-    if not hmac.compare_digest(authorization.split(" ", 1)[1].strip(), TOKEN):
-        raise HTTPException(401, "Ongeldig token")
-    if not _rate_check(ratelimit.client_ip(request)):
-        raise HTTPException(429, "Te veel pushes; probeer het zo terug")
+    require_push_token(authorization)
+    check_rate(request)
 
     try:
         body = await request.json()

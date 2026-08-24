@@ -25,9 +25,14 @@ from app import config
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
-    from app import db as db_module
+    from app import companions, db as db_module
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.sqlite3")
     db_module._conn = None
+    # Elke test krijgt verse repeater-id's die weer bij 1 beginnen -- zonder
+    # deze reset zou de bot-cache (companions._bots_cache, zie
+    # companions.reset_bots_cache) een node-id uit een VORIGE test kunnen
+    # laten doorwerken in deze test.
+    companions.reset_bots_cache()
     yield db_module
     if db_module._conn is not None:
         db_module._conn.close()
@@ -110,10 +115,19 @@ def test_valid_pubkey():
     ("ping", {}, "!ping"),
     ("loc", {}, "!loc"),
     ("cfg", {}, "!cfg"),
+    ("status", {}, "!status"),
+    ("tunes", {}, "!tunes"),
     ("mute", {"state": "on"}, "!mute on"),
     ("mute", {"state": "off"}, "!mute off"),
+    # De "followapp"-uitbreiding: alleen aangehangen als expliciet gevraagd.
+    ("mute", {"state": "on", "followapp": "1"}, "!mute on followapp"),
+    ("mute", {"state": "off", "followapp": "0"}, "!mute off"),
     ("vol", {"slot": "H", "level": "3"}, "!vol H 3"),
     ("vol", {"slot": "msg", "level": "0"}, "!vol msg 0"),
+    # Globaal volume: geen slot (leeg, of het woord 'global').
+    ("vol", {"slot": "", "level": "1"}, "!vol 1"),
+    ("vol", {"level": "2"}, "!vol 2"),
+    ("vol", {"slot": "global", "level": "3"}, "!vol 3"),
     ("gps", {"mode": "ondemand"}, "!gps ondemand"),
     # Beltoon per ernst: slot + een ingebouwde beltoon uit de firmware-bibliotheek.
     ("tune", {"slot": "H", "name": "coin"}, "!tune H preset coin"),
@@ -126,11 +140,37 @@ def test_valid_pubkey():
     ("quiet", {"range": "22-7", "action": "2"}, "!quiet 22-7 2"),
     ("quiet", {"range": "off"}, "!quiet off"),
     ("quiet", {"range": "22-7", "action": "off"}, "!quiet off"),
+    # Valdetectie: de OUDE vorm (geen sub) blijft werken...
     ("fall", {"state": "on"}, "!fall on"),
+    ("fall", {"state": "off"}, "!fall off"),
+    # ...naast de volledige subopdrachtenset uit de firmware-CLI.
+    ("fall", {"sub": "on"}, "!fall on"),
+    ("fall", {"sub": "off"}, "!fall off"),
+    ("fall", {"sub": "sens", "level": "low"}, "!fall sens low"),
+    ("fall", {"sub": "sens", "level": "high"}, "!fall sens high"),
+    ("fall", {"sub": "nomotion", "state": "on"}, "!fall nomotion on"),
+    ("fall", {"sub": "prealarm", "state": "off"}, "!fall prealarm off"),
+    ("fall", {"sub": "mm", "state": "on"}, "!fall mm on"),
+    ("fall", {"sub": "test"}, "!fall test"),
+    ("fall", {"sub": "status"}, "!fall status"),
+    ("fall", {"sub": "target", "action": "list"}, "!fall target list"),
+    ("fall", {"sub": "target", "action": "add", "value": VALID},
+     "!fall target add " + VALID),
+    ("fall", {"sub": "target", "action": "del", "value": "abcdef"},
+     "!fall target del abcdef"),
     ("preset", {"slot": "2", "text": "onderweg"}, "!preset 2 onderweg"),
     ("allow", {"sub": "list"}, "!allow list"),
     ("allow", {"sub": "add", "value": VALID}, "!allow add " + VALID),
     ("allow", {"sub": "del", "value": "abcdef"}, "!allow del abcdef"),
+    ("rxps", {"mode": "off"}, "!rxps off"),
+    ("rxps", {"mode": "conservative"}, "!rxps conservative"),
+    ("rxps", {"mode": "balanced"}, "!rxps balanced"),
+    ("radioshow", {}, "!radio show"),
+    ("radio", {"field": "freq", "value": "869.525"}, "!radio freq 869.525 confirm"),
+    ("radio", {"field": "bw", "value": "250"}, "!radio bw 250 confirm"),
+    ("radio", {"field": "sf", "value": "11"}, "!radio sf 11 confirm"),
+    ("radio", {"field": "cr", "value": "5"}, "!radio cr 5 confirm"),
+    ("radio", {"field": "tx-power", "value": "-9"}, "!radio tx-power -9 confirm"),
 ])
 def test_build_ok(cmd, args, body):
     """De mesh-vorm draagt de ``!`` en precies de verwachte tekst."""
@@ -163,6 +203,19 @@ def test_tune_library_is_de_firmwarelijst():
     ("preset", {"slot": "1", "text": ""}),
     ("allow", {"sub": "add", "value": "tekort"}),
     ("allow", {"sub": "del", "value": "abc"}),
+    ("vol", {"slot": "bogus", "level": "1"}),
+    ("vol", {"slot": "H", "level": "9"}),
+    ("fall", {"state": "misschien"}),
+    ("fall", {"sub": "onbekend"}),
+    ("fall", {"sub": "sens", "level": "extreme"}),
+    ("fall", {"sub": "nomotion", "state": "misschien"}),
+    ("fall", {"sub": "target", "action": "add", "value": "kort"}),
+    ("fall", {"sub": "target", "action": "del", "value": "abc"}),
+    ("fall", {"sub": "target", "action": "onbekend"}),
+    ("rxps", {"mode": "turbo"}),
+    ("radio", {"field": "freq", "value": "niet-numeriek"}),
+    ("radio", {"field": "onbekend-veld", "value": "1"}),
+    ("radio", {"field": "freq", "value": ""}),
     ("onbekend", {}),
 ])
 def test_build_weigert(cmd, args):
@@ -179,7 +232,7 @@ def test_send_command_bouwt_en_verstuurt(db, monkeypatch):
     from app import companions, rooms
     gezien = {}
 
-    def nep_bot_sendto(rep, pubkey, msg):
+    def nep_bot_sendto(rep, pubkey, msg, bot=None):
         gezien["pubkey"] = pubkey
         gezien["msg"] = msg
         return {"ok": True, "error": ""}
@@ -568,7 +621,7 @@ def test_companion_cmd_bouwt_tune_en_verstuurt(db, monkeypatch):
     from app import auth, rooms, routes_companions
     gezien = {}
     monkeypatch.setattr(rooms, "bot_sendto",
-                        lambda rep, pk, msg: gezien.update(pk=pk, msg=msg) or {"ok": True, "error": ""})
+                        lambda rep, pk, msg, bot=None: gezien.update(pk=pk, msg=msg) or {"ok": True, "error": ""})
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
@@ -589,7 +642,7 @@ def test_companion_cmd_met_json_accept_geeft_json_zonder_redirect(db, monkeypatc
     docstring van companion_cmd)."""
     from app import auth, rooms, routes_companions
     monkeypatch.setattr(rooms, "bot_sendto",
-                        lambda rep, pk, msg: {"ok": True, "error": ""})
+                        lambda rep, pk, msg, bot=None: {"ok": True, "error": ""})
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
@@ -612,7 +665,7 @@ def test_senddm_send_langs_afzenderrechten(db, monkeypatch):
     from app import auth, rooms, routes_companions
     gezien = {}
     monkeypatch.setattr(rooms, "bot_sendto",
-                        lambda rep, pk, msg: gezien.update(pk=pk, msg=msg) or {"ok": True, "error": ""})
+                        lambda rep, pk, msg, bot=None: gezien.update(pk=pk, msg=msg) or {"ok": True, "error": ""})
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
@@ -630,7 +683,7 @@ def test_senddm_send_met_back_keert_terug_naar_companionpagina(db, monkeypatch):
     concrete bug: elke inzending van dat formulier stuurde de bezoeker weg van
     de pagina waar hij op stond."""
     from app import auth, rooms, routes_companions
-    monkeypatch.setattr(rooms, "bot_sendto", lambda rep, pk, msg: {"ok": True, "error": ""})
+    monkeypatch.setattr(rooms, "bot_sendto", lambda rep, pk, msg, bot=None: {"ok": True, "error": ""})
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
@@ -656,7 +709,7 @@ def test_senddm_send_met_json_accept_geeft_json_zonder_redirect(db, monkeypatch)
     Send-DM-formulier (senddm.html en het 'Vrij bericht'-formulier delen de
     ``cmd-ajax``-klasse in companions.js)."""
     from app import auth, rooms, routes_companions
-    monkeypatch.setattr(rooms, "bot_sendto", lambda rep, pk, msg: {"ok": True, "error": ""})
+    monkeypatch.setattr(rooms, "bot_sendto", lambda rep, pk, msg, bot=None: {"ok": True, "error": ""})
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
@@ -842,7 +895,7 @@ def test_poll_locations_escaleert_nieuwe_val_naar_ontvanger(db, monkeypatch):
 
     gezien = {}
 
-    def nep_bot_sendto(rep, pubkey, msg):
+    def nep_bot_sendto(rep, pubkey, msg, bot=None):
         gezien["pubkey"] = pubkey
         gezien["msg"] = msg
         return {"ok": True, "error": ""}
@@ -889,7 +942,7 @@ def test_poll_locations_ontdubbelt_op_fall_ts(db, monkeypatch):
     verstuurd = []
     monkeypatch.setattr(
         rooms, "bot_sendto",
-        lambda rep, pk, msg: verstuurd.append(msg) or {"ok": True, "error": ""})
+        lambda rep, pk, msg, bot=None: verstuurd.append(msg) or {"ok": True, "error": ""})
 
     def nep_json(host, path, timeout=None):
         return {"ok": True, "error": "", "data": {"companions": [
@@ -955,7 +1008,7 @@ def test_poll_locations_escalatie_faalt_niet_op_één_ontvanger(db, monkeypatch)
 
     gezien = []
 
-    def nep_bot_sendto(rep, pubkey, msg):
+    def nep_bot_sendto(rep, pubkey, msg, bot=None):
         gezien.append((rep["id"], pubkey))
         if rep["id"] == afz1["id"]:
             return {"ok": False, "error": "geen antwoord"}
@@ -999,3 +1052,455 @@ def test_poll_locations_geen_fall_ts_doet_niets_met_valstaat(db, monkeypatch):
     comp = db.companion(cid)
     assert comp["last_escalated_fall_ts"] is None
     assert comp["last_fall_kind"] is None
+
+
+# --- 7. bot-selectie: /bots.json, cache, en de voorrangsorde -----------------
+#
+# Een afzender-node kan meer dan één bot-identiteit hosten (de MGMT-uitbreiding
+# van de firmware). Deze sectie dekt de node-kant (rooms.bots), de cache
+# (companions.cached_bots) en de voorrangsorde (resolve_bot/default_bot_for) --
+# en dat een commando ook echt met de gekozen bot vertrekt.
+
+def test_rooms_bots_normaliseert_en_markeert_de_alarmbot(db, monkeypatch):
+    from app import rooms, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+
+    def nep_json(host, path, timeout=None):
+        assert path == "/bots.json"
+        return {"ok": True, "error": "", "data": {
+            "alert": 0,
+            "bots": [
+                {"idx": 0, "name": "BE-HSS-DinX-ALERT", "pub": "a" * 64},
+                {"idx": 1, "name": "BE-HSS-DinX-MGMT", "pub": "b" * 64},
+                "rommel",              # geen dict: overgeslagen
+                {"name": "geen idx"},  # geen bruikbare idx: overgeslagen
+            ],
+        }}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    uit = rooms.bots(node)
+    assert uit["ok"] and uit["alert"] == 0
+    assert [b["idx"] for b in uit["bots"]] == [0, 1]
+    assert uit["bots"][0]["alert"] is True
+    assert uit["bots"][1]["alert"] is False
+
+
+def test_rooms_bots_degradeert_zonder_fout_op_oudere_firmware(db, monkeypatch):
+    """Geen /bots.json (404 of onbereikbaar): lege lijst, geen crash -- de
+    aanroeper valt terug op "geen bot=", het gedrag van vóór deze uitbreiding."""
+    from app import rooms, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    monkeypatch.setattr(sensornode, "_json",
+                        lambda host, path, timeout=None: {"ok": False, "error": "404", "data": {}})
+    uit = rooms.bots(node)
+    assert not uit["ok"]
+    assert uit["bots"] == []
+
+
+def test_rooms_bot_sendto_stuurt_bot_veld_alleen_als_gekozen(db, monkeypatch):
+    from app import rooms, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    gezien = {}
+
+    def nep_post_form(host, path, fields):
+        gezien.update(fields)
+        return {"ok": True, "error": "", "data": {}}
+
+    monkeypatch.setattr(sensornode, "post_form", nep_post_form)
+    rooms.bot_sendto(node, VALID, "hoi")
+    assert "bot" not in gezien
+    rooms.bot_sendto(node, VALID, "hoi", bot="BE-HSS-DinX-MGMT")
+    assert gezien["bot"] == "BE-HSS-DinX-MGMT"
+
+
+def test_cached_bots_hergebruikt_binnen_de_levensduur(db, monkeypatch):
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    aanroepen = []
+
+    def nep_json(host, path, timeout=None):
+        aanroepen.append(path)
+        return {"ok": True, "error": "", "data": {"alert": 0, "bots": [
+            {"idx": 0, "name": "ALERT"}]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    companions.cached_bots(node)
+    companions.cached_bots(node)
+    assert len(aanroepen) == 1
+    # ``max_age=0`` forceert een verse ophaling.
+    companions.cached_bots(node, max_age=0)
+    assert len(aanroepen) == 2
+
+
+def test_default_bot_for_kiest_de_niet_alarmbot(db, monkeypatch):
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"alert": 0, "bots": [
+            {"idx": 0, "name": "BE-HSS-DinX-ALERT"},
+            {"idx": 1, "name": "BE-HSS-DinX-MGMT"},
+        ]}})
+    assert companions.default_bot_for(node) == "BE-HSS-DinX-MGMT"
+
+
+def test_default_bot_for_valt_terug_op_alarmbot_zonder_alternatief(db, monkeypatch):
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"alert": 0, "bots": [
+            {"idx": 0, "name": "BE-HSS-DinX-ALERT"}]}})
+    assert companions.default_bot_for(node) == "BE-HSS-DinX-ALERT"
+
+
+def test_default_bot_for_none_zonder_bots_json(db, monkeypatch):
+    """Oudere firmware zonder /bots.json: geen bot= meesturen, de node gebruikt
+    vanzelf zijn ene bot -- exact het gedrag van vóór deze uitbreiding."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    monkeypatch.setattr(sensornode, "_json",
+                        lambda host, path, timeout=None: {"ok": False, "error": "404", "data": {}})
+    assert companions.default_bot_for(node) is None
+
+
+def test_resolve_bot_volgorde_override_dan_voorkeur_dan_standaard(db, monkeypatch):
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"alert": 0, "bots": [
+            {"idx": 0, "name": "ALERT"}, {"idx": 1, "name": "MGMT"}]}})
+    assert companions.resolve_bot(node, "expliciet", "voorkeur") == "expliciet"
+    assert companions.resolve_bot(node, "", "voorkeur") == "voorkeur"
+    assert companions.resolve_bot(node, "", "") == "MGMT"
+    assert companions.resolve_bot(node, None, None) == "MGMT"
+
+
+def test_companion_cmd_stuurt_de_bewaarde_bot_voorkeur_mee(db, monkeypatch):
+    """Zonder expliciete keuze op het formulier wint de bewaarde voorkeur van
+    de companion (companions.preferred_bot) op de MGMT-standaard van de node."""
+    from app import auth, companions, rooms, routes_companions, sensornode
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"alert": 0, "bots": [
+            {"idx": 0, "name": "ALERT"}, {"idx": 1, "name": "MGMT"}]}})
+    gezien = {}
+    monkeypatch.setattr(
+        rooms, "bot_sendto",
+        lambda rep, pk, msg, bot=None: gezien.update(bot=bot) or {"ok": True, "error": ""})
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", node["id"])
+    db.set_companion_bot(cid, "eigen-voorkeur")
+    # ``bot=""`` expliciet meegeven: dit roept de route rechtstreeks aan (geen
+    # TestClient/ASGI), en zonder expliciete waarde blijft een Form-veld het
+    # FastAPI-``Form(...)``-sentinelobject in plaats van de lege string die een
+    # echt verzoek zou geven -- dezelfde reden waarom elke andere route-test in
+    # dit bestand alle relevante formuliervelden expliciet meegeeft.
+    req = verzoek(cookie, method="POST")
+    routes_companions.companion_cmd(req, cid, cmd="find", sender="", bot="",
+                                    csrf=auth.csrf_token(cookie))
+    assert gezien["bot"] == "eigen-voorkeur"
+
+    # Een expliciete keuze op het formulier wint alsnog van die voorkeur.
+    req2 = verzoek(cookie, method="POST")
+    routes_companions.companion_cmd(req2, cid, cmd="find", sender="", bot="ANDERS",
+                                    csrf=auth.csrf_token(cookie))
+    assert gezien["bot"] == "ANDERS"
+
+    # Geen voorkeur en geen expliciete keuze: de MGMT-standaard van de node.
+    db.set_companion_bot(cid, None)
+    req3 = verzoek(cookie, method="POST")
+    routes_companions.companion_cmd(req3, cid, cmd="find", sender="", bot="",
+                                    csrf=auth.csrf_token(cookie))
+    assert gezien["bot"] == "MGMT"
+
+
+def test_companion_bot_set_vereist_serverbeheerder(db):
+    from app import routes_companions
+    maak_gebruiker("gewoon", superuser=False)
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    req = verzoek(_sessie("gewoon"), method="POST")
+    with pytest.raises(HTTPException) as fout:
+        routes_companions.companion_bot_set(req, cid, bot="x", csrf="x")
+    assert fout.value.status_code == 403
+
+
+def test_companion_bot_set_bewaart_en_wist(db):
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    resp = routes_companions.companion_bot_set(
+        verzoek(cookie, method="POST"), cid, bot="BE-HSS-DinX-MGMT",
+        csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 303
+    assert "r=bot_saved" in resp.headers["location"]
+    assert db.companion(cid)["preferred_bot"] == "BE-HSS-DinX-MGMT"
+    # Een lege keuze wist de voorkeur weer.
+    routes_companions.companion_bot_set(
+        verzoek(cookie, method="POST"), cid, bot="",
+        csrf=auth.csrf_token(cookie))
+    assert db.companion(cid)["preferred_bot"] is None
+
+
+def test_companion_bots_json_route(db, monkeypatch):
+    from app import companions, routes_companions, sensornode
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"alert": 0, "bots": [
+            {"idx": 0, "name": "ALERT"}, {"idx": 1, "name": "MGMT"}]}})
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    resp = routes_companions.companion_bots(verzoek(cookie), node["id"])
+    assert resp.status_code == 200
+    import json
+    data = json.loads(resp.body)
+    assert data["ok"] is True
+    assert data["default"] == "MGMT"
+    assert [b["name"] for b in data["bots"]] == ["ALERT", "MGMT"]
+
+
+# --- 8. de instant-push: POST /api/companion ---------------------------------
+#
+# Dezelfde deur als /api/sensorpush (sensorpush.require_push_token/check_rate)
+# en dezelfde escalatie-functie als de pollronde (companions._handle_fall_report)
+# -- deze sectie bewaakt dat allebei kloppen, plus het eigen deel: de
+# body-vorm, "skip een foute rij, ga door met de rest", en dat een val
+# ONMIDDELLIJK escaleert in plaats van te wachten op de volgende pollronde.
+
+class _PushRequest:
+    """Het minimum dat companion_push van een Request aanraakt: headers (voor
+    het clientadres van de begrenzing) en de JSON-body. Dezelfde soort fake als
+    test_sensorpush.py._Request, en om dezelfde reden: geen TestClient nodig
+    om het GEDRAG van het endpoint te bewaken."""
+
+    def __init__(self, body=None, ip=None):
+        self.headers = {"x-forwarded-for": ip} if ip else {}
+        self.client = None
+        self._body = body
+
+    async def json(self):
+        if self._body is None:
+            raise ValueError("geen body")
+        return self._body
+
+
+@pytest.fixture
+def push_open(monkeypatch):
+    """De push-deur open (token gezet) en het gedeelde sensorpush-geheugen
+    (hartslagtabel, herhalingscache, begrenzing) schoon per test."""
+    from app import sensorpush
+    monkeypatch.setattr(sensorpush, "TOKEN", "geheim")
+    sensorpush.reset()
+    yield
+    sensorpush.reset()
+
+
+def _push(body, token="Bearer geheim", ip=None):
+    import asyncio
+    from app import companions
+    return asyncio.run(companions.companion_push(_PushRequest(body, ip=ip),
+                                                  authorization=token))
+
+
+def test_companion_push_zonder_token_op_de_server_is_503(db, push_open, monkeypatch):
+    from app import sensorpush
+    monkeypatch.setattr(sensorpush, "TOKEN", "")
+    with pytest.raises(HTTPException) as fout:
+        _push({"companions": [{"pubkey": VALID}]})
+    assert fout.value.status_code == 503
+
+
+def test_companion_push_zonder_of_met_fout_token_is_401(db, push_open):
+    for token in (None, "geheim", "Bearer verkeerd", "Basic geheim"):
+        with pytest.raises(HTTPException) as fout:
+            _push({"companions": [{"pubkey": VALID}]}, token=token)
+        assert fout.value.status_code == 401
+
+
+def test_companion_push_reuses_hetzelfde_token_als_sensorpush(db, push_open, monkeypatch):
+    """LETTERLIJK dezelfde deur: een token dat sensorpush accepteert, accepteert
+    dit endpoint ook, en omgekeerd -- ze delen ÉÉN TOKEN-variabele."""
+    from app import sensorpush
+    monkeypatch.setattr(sensorpush, "TOKEN", "ander-token")
+    with pytest.raises(HTTPException):
+        _push({"companions": [{"pubkey": VALID}]}, token="Bearer geheim")
+    db.add_companion("Björn", VALID, "", "", None)
+    uit = _push({"companions": [{"pubkey": VALID}]}, token="Bearer ander-token")
+    assert uit["ok"] is True
+
+
+def test_companion_push_geen_json_is_400(db, push_open):
+    with pytest.raises(HTTPException) as fout:
+        _push(None)
+    assert fout.value.status_code == 400
+
+
+@pytest.mark.parametrize("kapot", [
+    {},                            # geen "companions"-sleutel
+    {"companions": []},            # leeg
+    {"companions": "niet-een-lijst"},
+    {"companions": [{"pubkey": VALID}] * 65},   # boven MAX_COMPANIONS_PUSH
+])
+def test_companion_push_vormfouten_op_het_toplevel_zijn_400(db, push_open, kapot):
+    from app import companions
+    with pytest.raises(HTTPException) as fout:
+        _push(kapot)
+    assert fout.value.status_code == 400
+
+
+def test_companion_push_werkt_locatie_bij(db, push_open):
+    db.add_companion("Björn", VALID, "T1000-E", "", None)
+    uit = _push({"companions": [
+        {"pubkey": VALID, "lat": 51.2, "lon": 5.4, "seen": 42},
+    ]})
+    assert uit == {"ok": True, "updated": 1, "falls": 0, "fall_alerts_sent": 0,
+                   "fall_alerts_failed": 0, "skipped": 0}
+    rij = db.companion_by_pubkey(VALID)
+    assert rij["last_lat"] == 51.2 and rij["last_lon"] == 5.4
+
+
+def test_companion_push_onbekende_of_halve_pubkey_wordt_geskipt(db, push_open):
+    """Een companion die de node kent maar wij niet (nog) beheren, of een halve
+    sleutel: overgeslagen, geen fout, en de rest van de push gaat door."""
+    db.add_companion("Bekend", VALID, "", "", None)
+    uit = _push({"companions": [
+        {"pubkey": "f" * 64, "lat": 1.0, "lon": 2.0},   # niet beheerd
+        {"pubkey": "kort", "lat": 1.0, "lon": 2.0},     # halve sleutel
+        {"pubkey": VALID, "lat": 51.2, "lon": 5.4},     # wel geldig
+    ]})
+    assert uit["skipped"] == 2
+    assert uit["updated"] == 1
+
+
+def test_companion_push_zonder_lat_lon_werkt_alleen_de_val_bij(db, push_open, monkeypatch):
+    """lat/lon mogen ontbreken (contract): dan blijft de locatie ongemoeid maar
+    de val wordt wel gezien en verwerkt."""
+    from app import rooms
+    monkeypatch.setattr(rooms, "bot_sendto", lambda *a, **k: {"ok": True, "error": ""})
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    uit = _push({"companions": [
+        {"pubkey": VALID, "fall_ts": 2_000_000_000, "fall_kind": "sos"},
+    ]})
+    assert uit["updated"] == 0
+    assert uit["falls"] == 1
+    comp = db.companion(cid)
+    assert comp["last_lat"] is None
+    assert comp["last_escalated_fall_ts"] == 2_000_000_000
+    assert comp["last_fall_kind"] == "sos"
+
+
+def test_companion_push_escaleert_meteen_naar_toegewezen_ontvanger(db, push_open, monkeypatch):
+    """De kern van de opdracht: een val komt via de push ONMIDDELLIJK aan bij de
+    ontvanger, zonder op de 60s-achtergrondronde te wachten."""
+    from app import rooms
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    db.add_companion_alert(cid, "1" * 64, node["id"])
+    gezien = {}
+    monkeypatch.setattr(
+        rooms, "bot_sendto",
+        lambda rep, pk, msg, bot=None: gezien.update(pk=pk, msg=msg) or {"ok": True, "error": ""})
+
+    uit = _push({"companions": [
+        {"pubkey": VALID, "lat": 51.2, "lon": 5.4, "seen": 3,
+         "fall_ts": 100, "fall_kind": "val"},
+    ]})
+    assert uit["falls"] == 1
+    assert uit["fall_alerts_sent"] == 1
+    assert uit["fall_alerts_failed"] == 0
+    assert gezien["pk"] == "1" * 64
+    assert "VAL" in gezien["msg"] and "Björn" in gezien["msg"]
+    comp = db.companion(cid)
+    assert comp["last_escalated_fall_ts"] is not None
+    assert comp["last_fall_kind"] == "val"
+
+
+def test_companion_push_fall_ts_nul_is_geen_val(db, push_open, monkeypatch):
+    """Het contract: fall_ts van 0 (of afwezig) betekent 'geen val' -- en niet
+    'een val van net nu', wat _secs_to_epoch(0, now) zonder deze regel zou
+    opleveren (0 leest onder de epoch-grens als een ouderdom van 0 seconden)."""
+    from app import rooms
+    monkeypatch.setattr(rooms, "bot_sendto",
+                        lambda *a, **k: pytest.fail("mocht niet versturen"))
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    uit = _push({"companions": [{"pubkey": VALID, "fall_ts": 0}]})
+    assert uit["falls"] == 0
+    assert db.companion(cid)["last_escalated_fall_ts"] is None
+
+
+def test_companion_push_val_zonder_ontvangers_alleen_vastleggen(db, push_open, monkeypatch):
+    from app import rooms
+    monkeypatch.setattr(rooms, "bot_sendto",
+                        lambda *a, **k: pytest.fail("mocht niet versturen"))
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    # Een grote, ABSOLUTE epoch (na 2001) en geen kleine 'ouderdom': zie
+    # companions._secs_to_epoch -- een klein getal zou hier gelezen worden als
+    # "zoveel seconden geleden" en dus als een epoch rond NU, niet als 500.
+    uit = _push({"companions": [
+        {"pubkey": VALID, "fall_ts": 2_000_000_500, "fall_kind": "nomotion"},
+    ]})
+    assert uit["falls"] == 1
+    assert uit["fall_alerts_sent"] == 0
+    comp = db.companion(cid)
+    assert comp["last_escalated_fall_ts"] == 2_000_000_500
+
+
+def test_companion_push_en_pollronde_delen_de_ontdubbeling(db, push_open, monkeypatch):
+    """De EIS achter het delen van _handle_fall_report: een val die al via de
+    push binnenkwam, escaleert niet nogmaals wanneer de achtergrondronde
+    dezelfde fall_ts daarna ook nog ziet op /companions.json -- en omgekeerd."""
+    from app import companions, rooms, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    db.add_companion_alert(cid, "1" * 64, node["id"])
+    verstuurd = []
+    monkeypatch.setattr(
+        rooms, "bot_sendto",
+        lambda rep, pk, msg, bot=None: verstuurd.append(msg) or {"ok": True, "error": ""})
+
+    # 1) De push komt eerst binnen en escaleert.
+    uit1 = _push({"companions": [
+        {"pubkey": VALID, "lat": 1.0, "lon": 2.0, "fall_ts": 2_000_000_000,
+         "fall_kind": "val"},
+    ]})
+    assert uit1["falls"] == 1 and uit1["fall_alerts_sent"] == 1
+
+    # 2) De achtergrondronde ziet dezelfde val op /companions.json: geen tweede
+    #    alarm, dezelfde ontdubbeling als hierboven.
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 1.0, "lon": 2.0,
+             "fall_ts": 2_000_000_000, "fall_kind": "val"},
+        ]}})
+    uit2 = companions.poll_locations()
+    assert uit2["falls"] == 0
+    assert len(verstuurd) == 1
+
+    # 3) En omgekeerd: een tweede push met dezelfde fall_ts escaleert ook niet
+    #    nogmaals.
+    uit3 = _push({"companions": [
+        {"pubkey": VALID, "fall_ts": 2_000_000_000, "fall_kind": "val"},
+    ]})
+    assert uit3["falls"] == 0
+    assert len(verstuurd) == 1
+
+
+def test_companion_push_rate_limit_429(db, push_open, monkeypatch):
+    from app import sensorpush
+    monkeypatch.setattr(sensorpush, "RATE_MAX", 3)
+    db.add_companion("Björn", VALID, "", "", None)
+    for _ in range(3):
+        _push({"companions": [{"pubkey": VALID}]}, ip="203.0.113.9")
+    with pytest.raises(HTTPException) as fout:
+        _push({"companions": [{"pubkey": VALID}]}, ip="203.0.113.9")
+    assert fout.value.status_code == 429

@@ -155,6 +155,44 @@ mechanism — the caller is a microcontroller. Note the path: **not** under
   restart recalibrates instead of alerting. A changed `boot` counter is a node
   restart: no alert, visible on the node page.
 
+### `POST /api/companion`
+
+Instant push of companion location/fall reports, from the same trusted
+MeshUptime node as `/api/sensorpush` above — and deliberately behind the
+**same** door: `Authorization: Bearer {MM_PUSH_TOKEN}`, the same 503/401/429
+shape. This is one more report from one and the same device, not a second
+trusted party that would deserve its own token.
+
+```json
+{"companions": [
+  {"pubkey": "<64 hex>", "lat": 51.2, "lon": 5.4, "seen": 42,
+   "fall_ts": 1755000000, "fall_kind": "val"}
+]}
+```
+
+* `pubkey` is the companion's full 64-hex key (`companions.pubkey`); an entry
+  whose key is not managed here (not yet added on the companions page) is
+  skipped, not an error — counted in the response's `skipped`.
+* `lat`/`lon` may be absent (a companion without a GPS fix reporting only a
+  fall); `seen` is the node's own "how long ago" field, read with the same
+  epoch-vs-age heuristic as the 60 s poll (`companions._secs_to_epoch`).
+* `fall_ts` of `0` or absent means "no fall" — explicitly, not merely "older
+  than the last one". `fall_kind` travels untranslated (`val`, `nomotion`,
+  `sos`, or whatever the firmware reports).
+* A fall is escalated **immediately**, through the exact same function the
+  60 s background poll uses (`companions._handle_fall_report`, wrapping
+  `_escalate_fall`): deduplicated on `companions.last_escalated_fall_ts`, sent
+  to every assigned recipient (`companion_alerts`) via the sender node's bot.
+  The background poll keeps running as a fallback/reconciliation path for a
+  node that misses this push (no Wi-Fi at that moment, older firmware).
+* One bad entry in the list does not fail the rest: an unmanaged or malformed
+  pubkey, or a non-numeric `lat`/`lon`, is skipped and counted, same honesty
+  rule as the rest of this codebase.
+* `200`: `{"ok": true, "updated": <n>, "falls": <n>, "fall_alerts_sent": <n>,
+  "fall_alerts_failed": <n>, "skipped": <n>}`. `400` for a body that is not
+  JSON, or whose `companions` field is not a non-empty list (or exceeds the
+  per-push cap).
+
 ## Public data endpoints
 
 Everything below is limited to repeaters with `is_public=1`, and additionally

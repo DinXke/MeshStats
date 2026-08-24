@@ -47,7 +47,9 @@ import re
 import threading
 import time
 
-from . import audit, config, db, nodeconfig, rooms, sensornode
+from fastapi import APIRouter, Header, HTTPException, Request
+
+from . import audit, config, db, nodeconfig, rooms, sensornode, sensorpush
 
 log = logging.getLogger("meshmanager.companions")
 
@@ -75,20 +77,53 @@ TUNE_LIBRARY = ("mario-main", "mario-die", "mario-1up", "coin", "powerup",
 # De actie bij een stille periode: dempen, een vast volume (0-3), of uit.
 QUIET_ACTIONS = ("mute", "0", "1", "2", "3", "off")
 
+# De gevoeligheidsniveaus van de valdetectie (``!fall sens <niveau>``).
+FALL_SENS_LEVELS = ("low", "med", "high")
+
+# De ontvangststand van de radio (``!rxps <stand>``): uit, of een van twee
+# vaste afwegingen tussen ontvangstkans en stroomverbruik. LETTERLIJK de
+# firmwarewoorden, net als TUNE_LIBRARY hierboven.
+RXPS_MODES = ("off", "conservative", "balanced")
+
+# De radioparameters die met een expliciete ``confirm`` gezet mogen worden --
+# zie ``build`` en de RADIO-waarschuwing in companions.js/companion.html. Een
+# verkeerde waarde op één van deze vijf kan de companion van het mesh laten
+# vallen (een andere frequentie/bandbreedte/spreidingsfactor/coderatio/
+# zendvermogen dan de rest van het mesh spreekt niemand meer aan zonder een
+# fysieke, seriële herstelsessie) -- vandaar de aparte, opzichtige weg in
+# plaats van gewoon nog een regel in ``COMMANDS``.
+RADIO_FIELDS = ("freq", "bw", "sf", "cr", "tx-power")
+# Elk van de vijf velden is in de firmware-CLI een kaal getal (Hz/kHz al naar
+# gelang het veld, geen eenheid erbij) -- deze validatie weert alleen tekst die
+# duidelijk geen getal is (spaties, letters, een tweede ``confirm``); ze kent
+# geen bereik per veld, want dat hoort bij de firmware en niet hier verzonnen
+# te worden.
+_RADIO_VALUE_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
 COMMANDS = {
     "find":     {"label": "Find-me (laten piepen/knipperen)", "args": []},
     "findstop": {"label": "Find-me stoppen", "args": []},
-    "mute":     {"label": "Dempen", "args": ["state"]},          # on|off
-    "vol":      {"label": "Volume per ernst", "args": ["slot", "level"]},  # <slot> <0-3>
+    "mute":     {"label": "Dempen", "args": ["state", "followapp"]},  # on|off [followapp]
+    "vol":      {"label": "Volume (per ernst of globaal)", "args": ["slot", "level"]},  # <slot|leeg> <0-3>
     "tune":     {"label": "Beltoon per ernst", "args": ["slot", "name"]},  # <slot> preset <name>
+    "tunes":    {"label": "Beltoon-bibliotheek opvragen", "args": []},
     "play":     {"label": "Beltoon afspelen (preview)", "args": ["name"]},  # <name>
     "quiet":    {"label": "Stille periode", "args": ["range", "action"]},   # <sH>-<eH> mute|<0-3>|off
     "gps":      {"label": "GPS", "args": ["mode"]},              # on|off|ondemand
     "loc":      {"label": "Locatie opvragen", "args": []},
     "cfg":      {"label": "Configuratie opvragen", "args": []},
+    "status":   {"label": "Status opvragen", "args": []},
     "allow":    {"label": "Toegestane-lijst", "args": ["sub", "value"]},
     "preset":   {"label": "Snelbericht-preset", "args": ["slot", "text"]},
-    "fall":     {"label": "Valdetectie", "args": ["state"]},     # on|off
+    # ``sub`` kiest de valdetectie-subopdracht; ``state``/``level``/``action``/
+    # ``value`` zijn er naar gelang die keuze bij nodig -- zie ``build``.
+    # Zonder ``sub`` (leeg) blijft de OUDE vorm werken: alleen ``state``
+    # (on/off), zodat bestaande aanroepers dit commando ongewijzigd gebruiken.
+    "fall":     {"label": "Valdetectie", "args": ["sub", "state", "level", "action", "value"]},
+    "rxps":     {"label": "Radio-ontvangststand (rxps)", "args": ["mode"]},
+    # De WAARSCHUWINGS-commando's: zie RADIO_FIELDS hierboven.
+    "radio":     {"label": "Radioparameter zetten (WAARSCHUWING)", "args": ["field", "value"]},
+    "radioshow": {"label": "Radioparameters tonen (alleen-lezen)", "args": []},
     "ping":     {"label": "Ping", "args": []},
 }
 
@@ -102,6 +137,25 @@ def valid_pubkey(pubkey: str) -> bool:
     de sleutel, dus een halve sleutel is geen bestemming -- dezelfde regel als bij
     de bot-ontvangers en de ACL in ``rooms.py``."""
     return bool(_HEX64.match(str(pubkey or "").strip()))
+
+
+def _add_del_list(prefix: str, sub: str, value: str) -> tuple[str, str]:
+    """De gedeelde add/del/list-vorm: ``allow`` en ``fall target`` delen hem
+    letterlijk in de firmware-CLI, en een tweede kopie van dezelfde drie
+    regels zou op den duur uiteen kunnen lopen. Geeft ``(body, error)`` terug;
+    bij een fout is ``body`` leeg en hoort de aanroeper te stoppen.
+    """
+    if sub == "list":
+        return f"!{prefix} list", ""
+    if sub == "add":
+        if not _HEX64.match(value):
+            return "", f"{prefix} add verwacht een volledige pubkey van 64 hex-tekens"
+        return f"!{prefix} add {value}", ""
+    if sub == "del":
+        if len(value) < 6 or not _HEXPREFIX.match(value):
+            return "", f"{prefix} del verwacht een prefix van minstens 6 hex-tekens"
+        return f"!{prefix} del {value}", ""
+    return "", f"{prefix} verwacht add, list of del"
 
 
 def build(cmd: str, args: dict | None = None) -> dict:
@@ -121,24 +175,94 @@ def build(cmd: str, args: dict | None = None) -> dict:
     def val(name: str) -> str:
         return str(a.get(name) or "").strip()
 
-    if cmd in ("find", "findstop", "loc", "cfg", "ping"):
+    if cmd in ("find", "findstop", "loc", "cfg", "status", "tunes", "ping"):
         body = f"!{cmd}"
-    elif cmd in ("mute", "fall"):
+    elif cmd == "mute":
         state = val("state").lower()
         if state not in ONOFF:
-            out["error"] = f"{cmd} verwacht 'on' of 'off'"
+            out["error"] = "mute verwacht 'on' of 'off'"
             return out
-        body = f"!{cmd} {state}"
+        # AANNAME: "followapp" is een optionele derde token die het dempen aan
+        # de stand van de companion-APP koppelt in plaats van een vaste
+        # on/off -- er was geen levende firmware met deze optie beschikbaar om
+        # tegen te toetsen, dit is de meest voor de hand liggende lezing van de
+        # opdracht ("mute[ followapp]"). Wijkt de firmware af, dan is dit de
+        # ene plek die mee moet.
+        followapp = val("followapp").lower() in ("1", "true", "on", "yes")
+        body = f"!mute {state} followapp" if followapp else f"!mute {state}"
+    elif cmd == "fall":
+        sub = val("sub").lower()
+        if not sub:
+            # De OUDE, eenvoudige vorm blijft werken (alleen state): bestaande
+            # aanroepers (en hun tests) geven geen ``sub`` mee.
+            state = val("state").lower()
+            if state not in ONOFF:
+                out["error"] = "fall verwacht 'on' of 'off'"
+                return out
+            body = f"!fall {state}"
+        elif sub in ONOFF:
+            body = f"!fall {sub}"
+        elif sub == "sens":
+            level = val("level").lower()
+            if level not in FALL_SENS_LEVELS:
+                out["error"] = f"fall sens verwacht {', '.join(FALL_SENS_LEVELS)}"
+                return out
+            body = f"!fall sens {level}"
+        elif sub in ("nomotion", "prealarm", "mm"):
+            state = val("state").lower()
+            if state not in ONOFF:
+                out["error"] = f"fall {sub} verwacht 'on' of 'off'"
+                return out
+            body = f"!fall {sub} {state}"
+        elif sub == "target":
+            tbody, err = _add_del_list("fall target", val("action").lower(), val("value"))
+            if err:
+                out["error"] = err
+                return out
+            body = tbody
+        elif sub in ("test", "status"):
+            body = f"!fall {sub}"
+        else:
+            out["error"] = ("fall verwacht (leeg voor) on/off, of sens, "
+                            "nomotion, prealarm, target, mm, test of status")
+            return out
     elif cmd == "vol":
         slot = val("slot")
         lvl = val("level")
-        if slot not in SEVERITIES:
-            out["error"] = f"slot moet een van {', '.join(SEVERITIES)} zijn"
-            return out
         if lvl not in VOL_LEVELS:
             out["error"] = "volume is 0 t/m 3"
             return out
-        body = f"!vol {slot} {lvl}"
+        if not slot or slot.lower() == "global":
+            # Globaal volume: één niveau voor alle ernsten, geen slot in de body.
+            body = f"!vol {lvl}"
+        elif slot in SEVERITIES:
+            body = f"!vol {slot} {lvl}"
+        else:
+            out["error"] = (f"slot moet een van {', '.join(SEVERITIES)} zijn, "
+                            "of leeg/'global' voor het globale volume")
+            return out
+    elif cmd == "rxps":
+        mode = val("mode").lower()
+        if mode not in RXPS_MODES:
+            out["error"] = f"rxps verwacht {', '.join(RXPS_MODES)}"
+            return out
+        body = f"!rxps {mode}"
+    elif cmd == "radioshow":
+        body = "!radio show"
+    elif cmd == "radio":
+        field = val("field").lower()
+        value = val("value")
+        if field not in RADIO_FIELDS:
+            out["error"] = f"radio verwacht een van {', '.join(RADIO_FIELDS)}"
+            return out
+        if not _RADIO_VALUE_RE.match(value):
+            out["error"] = "radio verwacht een numerieke waarde"
+            return out
+        # ``confirm`` staat vast mee: de firmware eist het kennelijk zelf al
+        # (vandaar de eis in de opdracht), en deze server voegt hem hoe dan ook
+        # toe zodat een operator hem niet kan vergeten -- de WAARSCHUWING in de
+        # UI is de échte rem, niet dit token.
+        body = f"!radio {field} {value} confirm"
     elif cmd == "gps":
         mode = val("mode").lower()
         if mode not in GPS_MODES:
@@ -177,22 +301,9 @@ def build(cmd: str, args: dict | None = None) -> dict:
         else:
             body = f"!quiet {rng} {action}"
     elif cmd == "allow":
-        sub = val("sub").lower()
-        value = val("value")
-        if sub == "list":
-            body = "!allow list"
-        elif sub == "add":
-            if not _HEX64.match(value):
-                out["error"] = "allow add verwacht een volledige pubkey van 64 hex-tekens"
-                return out
-            body = f"!allow add {value}"
-        elif sub == "del":
-            if len(value) < 6 or not _HEXPREFIX.match(value):
-                out["error"] = "allow del verwacht een prefix van minstens 6 hex-tekens"
-                return out
-            body = f"!allow del {value}"
-        else:
-            out["error"] = "allow verwacht add, list of del"
+        body, err = _add_del_list("allow", val("sub").lower(), val("value"))
+        if err:
+            out["error"] = err
             return out
     elif cmd == "preset":
         slot = val("slot")
@@ -215,35 +326,110 @@ def build(cmd: str, args: dict | None = None) -> dict:
 
 # --- de weg naar buiten (het enige dat weet HOE) ------------------------------
 
-def send_dm(sender_rep, dest_pubkey: str, msg: str) -> dict:
+def send_dm(sender_rep, dest_pubkey: str, msg: str, bot=None) -> dict:
     """Een DM van een afzender-node naar een companion-pubkey sturen.
 
     De ene plek die het vervoer kent. Nu: de bot van de afzender-node
     (``rooms.bot_sendto`` -> ``POST /bot/sendto``), waarna het mesh de DM via de
     lokale repeater verder routeert. Een toekomstige oorsprong (MQTT ->
     repeater) hoort HIER een tweede tak te krijgen en nergens anders.
+
+    ``bot`` kiest WELKE bot-identiteit van de afzender-node de DM verstuurt op
+    een node met meerdere bots (zie ``resolve_bot``/``default_bot_for``
+    hieronder) -- leeg laat de node zijn standaardbot gebruiken.
     """
     if not valid_pubkey(dest_pubkey):
         return {"ok": False, "error": "een volledige pubkey van 64 hex-tekens is vereist"}
     if not str(msg or "").strip():
         return {"ok": False, "error": "een bericht mag niet leeg zijn"}
-    return rooms.bot_sendto(sender_rep, dest_pubkey, msg)
+    return rooms.bot_sendto(sender_rep, dest_pubkey, msg, bot=bot)
 
 
 def send_command(sender_rep, dest_pubkey: str, cmd: str,
-                 args: dict | None = None) -> dict:
+                 args: dict | None = None, bot=None) -> dict:
     """Een companion-commando bouwen én versturen. ``{"ok","error","body"}``.
 
     De bouwvalidatie eerst, zodat een fout commando nooit als lege of halve DM de
     band op gaat. De ``body`` komt mee terug zodat de pagina kan tonen wat er
     precies verstuurd is -- op een gedeelde band is "wat ging er de deur uit" geen
-    detail.
+    detail. ``bot`` gaat ongewijzigd door naar ``send_dm``.
     """
     gebouwd = build(cmd, args)
     if not gebouwd["ok"]:
         return {"ok": False, "error": gebouwd["error"], "body": ""}
-    res = send_dm(sender_rep, dest_pubkey, gebouwd["body"])
+    res = send_dm(sender_rep, dest_pubkey, gebouwd["body"], bot=bot)
     return {"ok": res["ok"], "error": res["error"], "body": gebouwd["body"]}
+
+
+# --- welke BOT-IDENTITEIT van de afzender-node verstuurt ----------------------
+#
+# Een afzender-node kan meer dan één bot hosten (``rooms.bots``): de ALARM-bot
+# voor zijn eigen sensoren, en -- sinds de MGMT-uitbreiding van de firmware --
+# een aparte BEHEER-bot die companion-commando's verstuurt (bv.
+# "BE-HSS-DinX-MGMT"). Companion-verkeer hoort NIET over de alarm-bot te lopen
+# als er een aparte beheer-bot bestaat: dat mengt twee soorten verkeer op één
+# identiteit, en de ontvanger kan niet meer zien welke van de twee een DM stuurde.
+#
+# Kort gecached en niet in de databank: dit is ontdekte informatie van het mesh
+# (net als rooms.contacts), niet iets deze server invoert of beheert. Eén regel
+# per node, met een korte levensduur zodat een nieuw geadverteerde bot niet
+# urenlang onzichtbaar blijft, terwijl een pagina die na elkaar meerdere
+# commando's verstuurt niet bij elke knop opnieuw hoeft te pollen.
+_BOTS_CACHE_TTL_S = 30
+_bots_cache: dict[int, dict] = {}   # rep_id -> {"at": monotonic, "data": rooms.bots()}
+
+
+def reset_bots_cache() -> None:
+    """De bot-cache leegmaken. Alleen voor de tests (zelfde soort functie als
+    ``sensorpush.reset``): elke test krijgt een verse databank met IDs die
+    weer bij 1 beginnen, en zonder deze reset zou een node-id uit een VORIGE
+    test binnen ``_BOTS_CACHE_TTL_S`` de bots van een heel andere node uit de
+    HUIDIGE test kunnen serveren."""
+    _bots_cache.clear()
+
+
+def cached_bots(rep, timeout: int | None = None,
+                max_age: float = _BOTS_CACHE_TTL_S) -> dict:
+    """``rooms.bots(rep)``, met een korte cache per node-id. ``max_age=0``
+    forceert een verse ophaling."""
+    rid = int(rep["id"])
+    hit = _bots_cache.get(rid)
+    now = time.monotonic()
+    if hit is not None and now - hit["at"] < max_age:
+        return hit["data"]
+    data = rooms.bots(rep, timeout)
+    _bots_cache[rid] = {"at": now, "data": data}
+    return data
+
+
+def default_bot_for(rep, timeout: int | None = None) -> str | None:
+    """Welke bot een companion-commando standaard verstuurt vanaf ``rep``: de
+    NIET-alarm-bot als de node er een heeft (de beheer-bot), anders de
+    alarm-bot, anders ``None`` -- geen ``/bots.json`` (oudere firmware met
+    maar één, naamloze bot) betekent geen ``bot=`` meesturen, en dan gebruikt
+    de node vanzelf zijn ene bot, precies het gedrag van vóór deze uitbreiding.
+
+    Geeft de NAAM terug als de node er een meldt (leesbaarder in het
+    audittrail en de UI), anders de index als tekst.
+    """
+    data = cached_bots(rep, timeout)
+    if not data["ok"] or not data["bots"]:
+        return None
+    niet_alarm = [b for b in data["bots"] if not b["alert"]]
+    keuze = niet_alarm[0] if niet_alarm else data["bots"][0]
+    return keuze["name"] or str(keuze["idx"])
+
+
+def resolve_bot(rep, override: str | None = None, preferred: str | None = None,
+                timeout: int | None = None) -> str | None:
+    """Welke bot-waarde een verzending vanaf ``rep`` moet dragen: een expliciete
+    keuze op het formulier (``override``) wint, dan de bewaarde voorkeur van de
+    companion (``preferred``, ``companions.preferred_bot``), dan de
+    MGMT-standaard van de node (``default_bot_for``)."""
+    for keuze in (override, preferred):
+        if keuze and str(keuze).strip():
+            return str(keuze).strip()
+    return default_bot_for(rep, timeout)
 
 
 # --- welke nodes een DM kunnen versturen --------------------------------------
@@ -399,7 +585,10 @@ def _escalate_fall(comp_row, kind: str, lat, lon) -> dict:
                       detail=f"valalarm {comp_row['name']} niet verstuurd naar "
                              f"{kort}: geen afzender-node ingesteld")
             continue
-        res = send_dm(rep, ontv["recipient_pubkey"], tekst)
+        # Dezelfde bot-keuze als een gewoon commando naar deze companion: de
+        # bewaarde voorkeur wint, anders de MGMT-standaard van de afzender.
+        bot = resolve_bot(rep, preferred=comp_row["preferred_bot"])
+        res = send_dm(rep, ontv["recipient_pubkey"], tekst, bot=bot)
         if res["ok"]:
             out["sent"] += 1
         else:
@@ -410,6 +599,43 @@ def _escalate_fall(comp_row, kind: str, lat, lon) -> dict:
                           if res["ok"] else
                           f"valalarm ({kind}) van {comp_row['name']} mislukt naar "
                           f"{kort}: {res['error']}"))
+    return out
+
+
+def _handle_fall_report(comp_row, fall_ts_raw, fall_kind, lat, lon, now: float) -> dict:
+    """Eén valmelding verwerken: ontdubbelen op ``fall_ts``, escaleren als hij
+    ECHT nieuw is, en de laatst-verwerkte-val bijwerken. ``{"is_fall","sent",
+    "failed"}``.
+
+    GEDEELD door de achtergrondpoll (``poll_locations``, uit
+    ``/companions.json``) en de instant-push (``companion_push`` hieronder,
+    uit ``POST /api/companion``) -- allebei geven ze hetzelfde soort
+    ruwe ``fall_ts``/``fall_kind`` door, en een tweede kopie van deze
+    ontdubbeling zou op den duur een andere grens kunnen gaan hanteren (bv. de
+    ene ``>=`` en de andere ``>``) zonder dat iemand het merkt.
+
+    ``fall_ts_raw`` van ``0`` of afwezig betekent "geen val" -- dat is het
+    PUSH-contract expliciet (zie de moduletekst bij ``companion_push``), en
+    het voorkomt bovendien dat ``_secs_to_epoch(0, now)`` een letterlijke 0
+    als "ouderdom nul seconden" zou lezen en zo een valse escalatie op NU zou
+    bouwen. Dezelfde regel geldt hier voor de pollronde: een node die ooit
+    ``fall_ts: 0`` zou sturen voor "geen val" wordt nu op dezelfde manier
+    gelezen, in plaats van op de vorige, striktere ``_secs_to_epoch``-uitkomst
+    te vertrouwen die dat geval niet apart ving.
+    """
+    out = {"is_fall": False, "sent": 0, "failed": 0}
+    if not fall_ts_raw:
+        return out
+    fall_epoch = _secs_to_epoch(fall_ts_raw, now)
+    if fall_epoch is None:
+        return out
+    vorige = comp_row["last_escalated_fall_ts"]
+    if vorige is not None and fall_epoch <= int(vorige):
+        return out  # deze val is al verwerkt -- geen tweede alarm.
+    kind = str(fall_kind or "").strip().lower()
+    esc = _escalate_fall(comp_row, kind, lat, lon)
+    db.set_companion_fall(comp_row["id"], fall_epoch, kind)
+    out.update(is_fall=True, sent=esc["sent"], failed=esc["failed"])
     return out
 
 
@@ -474,18 +700,12 @@ def poll_locations(timeout: int | None = None, only_rep_id: int | None = None) -
                 if db.set_companion_location(pubkey, lat_f, lon_f, seen_epoch):
                     out["updated"] += 1
 
-            fall_epoch = _secs_to_epoch(c.get("fall_ts"), now)
-            if fall_epoch is None:
-                continue
-            vorige = comp_row["last_escalated_fall_ts"]
-            if vorige is not None and fall_epoch <= int(vorige):
-                continue  # deze val is al verwerkt -- geen tweede alarm.
-            kind = str(c.get("fall_kind") or "").strip().lower()
-            esc = _escalate_fall(comp_row, kind, lat_f, lon_f)
-            db.set_companion_fall(comp_row["id"], fall_epoch, kind)
-            out["falls"] += 1
-            out["fall_alerts_sent"] += esc["sent"]
-            out["fall_alerts_failed"] += esc["failed"]
+            val = _handle_fall_report(comp_row, c.get("fall_ts"), c.get("fall_kind"),
+                                      lat_f, lon_f, now)
+            if val["is_fall"]:
+                out["falls"] += 1
+                out["fall_alerts_sent"] += val["sent"]
+                out["fall_alerts_failed"] += val["failed"]
     return out
 
 
@@ -621,3 +841,120 @@ def start_location_poll() -> None:
         return
     _loc_thread = threading.Thread(target=_loc_run, name="companion-loc", daemon=True)
     _loc_thread.start()
+
+
+# --- de instant-push: POST /api/companion --------------------------------------
+#
+# De achtergrondronde hierboven (``poll_locations``) is een POLL: een val kan
+# tot ``LOC_INTERVAL_S`` (standaard 60s) blijven liggen voordat een DRAAIENDE
+# achtergrondronde hem ziet, en zelfs de ONDEMAND-poll wacht op iemand die
+# toevallig een companion-pagina open heeft staan. Dit endpoint is de andere
+# kant op: de MeshUptime-node PUSHT zelf, zodra hij een locatie of een val
+# ziet, in plaats van te wachten tot hij ernaar gevraagd wordt. De 60s-poll
+# BLIJFT bestaan als FALLBACK/reconciliatie -- een node die deze weg niet
+# (meer) haalt (geen WiFi op dat moment, een oude firmware zonder deze push)
+# wordt hoe dan ook binnen het pollinterval alsnog gezien.
+#
+# Authenticatie: LETTERLIJK dezelfde deur als ``POST /api/sensorpush``
+# (``sensorpush.require_push_token``/``check_rate``) en niet een tweede
+# kopie ervan. Dat is inhoudelijk juist en niet alleen gemakzuchtig: de
+# afzender is dezelfde vertrouwde node (de MeshUptime-bewakingsnode), dus
+# verdient hij hetzelfde ene token (``MM_PUSH_TOKEN``) en dezelfde
+# begrenzing, niet een eigen ``MM_COMPANION_PUSH_TOKEN`` die er in de praktijk
+# toch aan gelijk gezet zou worden. Wijkt de node-push-kant hier ooit van af
+# (een ander toestel, een ander token), dan is dit de ene regel die moet
+# veranderen (``require_push_token`` aanroepen met een ander token) -- zie de
+# opdracht-toelichting voor deze keuze.
+#
+# Het contract::
+#
+#     POST /api/companion
+#     Authorization: Bearer {MM_PUSH_TOKEN}
+#     {"companions": [{"pubkey": "<64 hex>", "lat": <float>, "lon": <float>,
+#                       "seen": <uint>, "fall_ts": <uint>, "fall_kind": "val|nomotion|sos|"}, ...]}
+#
+#     200: {"ok": true, "updated": <n>, "falls": <n>, "fall_alerts_sent": <n>,
+#           "fall_alerts_failed": <n>, "skipped": <n>}
+#     401 bij een fout of ontbrekend token; 503 zolang MM_PUSH_TOKEN leeg is;
+#     429 bij te veel pushes; 400 bij een vormfout in de BODY zelf (geen
+#     JSON, of geen niet-lege ``companions``-lijst).
+#
+# ``lat``/``lon`` mogen ontbreken (een companion zonder GPS-fix meldt dan
+# alleen zijn val); ``fall_ts`` van 0 of afwezig is "geen val" (zie
+# ``_handle_fall_report``). Net als ``poll_locations`` is een ENKELE foute
+# rij in de lijst geen reden om de hele push te weigeren: een companion-
+# pubkey die hier nog niet beheerd wordt (nog niet toegevoegd op de
+# companions-pagina), een halve pubkey, of een niet-numerieke lat/lon wordt
+# overgeslagen (geteld in ``skipped``) en de rest van de push gaat gewoon door
+# -- dezelfde eerlijkheid als de rest van deze module.
+router = APIRouter()
+
+# Ruim boven wat één bewakingsnode ooit eerlijk in één push meestuurt (hij
+# kent een handvol companions), ver onder wat iemand met een gestolen token de
+# companions-tabel mee zou willen bestoken. Dezelfde soort grens als
+# sensorpush.MAX_EVENTS, om dezelfde reden.
+MAX_COMPANIONS_PUSH = 64
+
+
+@router.post("/api/companion")
+async def companion_push(request: Request,
+                         authorization: str | None = Header(default=None)):
+    """Eén push van de bewakingsnode: locaties/vallen erin, een korte telling
+    eruit. Zie de moduletekst hierboven voor het volledige contract."""
+    sensorpush.require_push_token(authorization)
+    sensorpush.check_rate(request)
+
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Geen geldige JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "de body moet een JSON-object zijn")
+    items = body.get("companions")
+    if not isinstance(items, list) or not items:
+        raise HTTPException(400, "companions moet een niet-lege lijst zijn")
+    if len(items) > MAX_COMPANIONS_PUSH:
+        raise HTTPException(400, f"companions: hoogstens {MAX_COMPANIONS_PUSH} per push")
+
+    now = time.time()
+    out = {"ok": True, "updated": 0, "falls": 0, "fall_alerts_sent": 0,
+           "fall_alerts_failed": 0, "skipped": 0}
+    for item in items:
+        if not isinstance(item, dict):
+            out["skipped"] += 1
+            continue
+        pubkey = str(item.get("pubkey") or "").strip().lower()
+        if not valid_pubkey(pubkey):
+            out["skipped"] += 1
+            continue
+        # Dezelfde overslag-zonder-fout als poll_locations: een companion die
+        # de node kent maar wij hier nog niet beheren, valt niets bij te
+        # werken en niets te escaleren.
+        comp_row = db.companion_by_pubkey(pubkey)
+        if comp_row is None:
+            out["skipped"] += 1
+            continue
+
+        lat, lon = item.get("lat"), item.get("lon")
+        lat_f = lon_f = None
+        if lat is not None and lon is not None:
+            try:
+                lat_f, lon_f = float(lat), float(lon)
+            except (TypeError, ValueError):
+                lat_f = lon_f = None
+            if lat_f is not None:
+                seen_epoch = _secs_to_epoch(item.get("seen"), now)
+                if db.set_companion_location(pubkey, lat_f, lon_f, seen_epoch):
+                    out["updated"] += 1
+
+        # De ESCALATIE, meteen en niet pas bij de volgende pollronde -- dat is
+        # het hele punt van deze push. Gedeelde functie met poll_locations
+        # (zie ``_handle_fall_report``): dezelfde ontdubbeling op
+        # ``last_escalated_fall_ts``, dezelfde ontvangerslijst, dezelfde DM.
+        val = _handle_fall_report(comp_row, item.get("fall_ts"), item.get("fall_kind"),
+                                  lat_f, lon_f, now)
+        if val["is_fall"]:
+            out["falls"] += 1
+            out["fall_alerts_sent"] += val["sent"]
+            out["fall_alerts_failed"] += val["failed"]
+    return out

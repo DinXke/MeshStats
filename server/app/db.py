@@ -724,6 +724,17 @@ COLUMN_MIGRATIONS = [
     # nieuwe was, zou net zo oneerlijk zijn als sensor_seen laten verlopen.
     ("companions", "last_escalated_fall_ts", "INTEGER"),
     ("companions", "last_fall_kind", "TEXT"),
+    # Welke BOT-IDENTITEIT van de afzender-node commando's naar deze companion
+    # verstuurt, op een node die er meerdere host (zie rooms.bots): de naam
+    # (bv. "BE-HSS-DinX-MGMT") of anders de index, uit /bots.json. NULL is de
+    # normale stand -- geen eigen voorkeur, dan kiest
+    # companions.default_bot_for de niet-alarm-bot van de node zelf (of, op
+    # oudere firmware zonder /bots.json, gaat er geen ``bot=`` mee en gebruikt
+    # de node zijn enige bot). Een eigen kolom en geen uitbreiding van
+    # ``sender_repeater_id``: de afzender-NODE en de bot-IDENTITEIT op die node
+    # zijn twee losse keuzes, en een companion kan zijn afzender houden terwijl
+    # alleen de bot verandert (bv. de node krijgt er een tweede bot bij).
+    ("companions", "preferred_bot", "TEXT"),
 ]
 
 
@@ -3188,6 +3199,17 @@ def delete_companion(cid: int) -> int:
     """Een companion verwijderen. Geeft het aantal verwijderde rijen terug, zodat
     de route "onbekende companion" van "verwijderd" kan onderscheiden."""
     return execute_rowcount("DELETE FROM companions WHERE id=?", (int(cid),))
+
+
+def set_companion_bot(cid: int, bot: str | None) -> None:
+    """De bewaarde bot-voorkeur van een companion zetten (of wissen met een lege
+    waarde/None). Een eigen functie en geen extra parameter op
+    ``update_companion``: dat formulier en zijn aanroepers (en hun tests)
+    blijven zo ongemoeid, en deze voorkeur wordt sowieso apart bewerkt (de
+    bot-kiezer bij de commando's, niet het beheer-formulier)."""
+    schoon = (str(bot).strip()[:64] or None) if bot is not None else None
+    execute("UPDATE companions SET preferred_bot=?, updated=? WHERE id=?",
+           (schoon, utcnow(), int(cid)))
 
 
 def set_companion_location(pubkey: str, lat: float, lon: float,

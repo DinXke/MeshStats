@@ -61,6 +61,7 @@ app.include_router(routes_companions.router)
 app.include_router(routes_public.router)
 app.include_router(meshmoni.router)   # de PWA-subsite voor op de telefoon
 app.include_router(sensorpush.router)  # gebeurtenis-push van sensornodes
+app.include_router(companions.router)  # instant-push van companion-locatie/-val (POST /api/companion)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
 
 

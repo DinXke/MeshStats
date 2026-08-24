@@ -83,6 +83,20 @@
   verstuurd vanaf de gekozen afzender-node. Op het mesh dragen ze een <code>!</code>
   vooraan; dat regelt de server.</p>
 
+{#- De bot-kiezer: op een afzender-node met meer dan één bot-identiteit (de
+    MGMT-uitbreiding) kiest dit WELKE bot de DM verstuurt. Eén kiezer voor de
+    hele pagina (niet per formulier): companions.js vult hem op basis van de
+    LAATST gekozen afzender en stuurt de keuze mee bij elke commando-fetch.
+    Leeg (het gebruikelijke geval) laat de server zelf kiezen -- de
+    niet-alarm/MGMT-bot als de node er een heeft, zie companions.default_bot_for. -#}
+<div class="rowform" id="bot-picker" data-rep="{{ comp.sender_repeater_id or '' }}">
+  <label class="small muted">verstuurt via (bot)
+    <select id="bot-choice">
+      <option value="">— standaard{% if comp.preferred_bot %} ({{ comp.preferred_bot }}){% endif %} —</option>
+    </select></label>
+  <span class="muted small" id="bot-note"></span>
+</div>
+
 <div class="cardgrid">
 
   <div class="card">
@@ -108,18 +122,19 @@
       <input type="hidden" name="cmd" value="mute">
       <label class="small muted">stand
         <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
+      <label class="small muted"><input type="checkbox" name="followapp" value="1"> volg de app</label>
       {{ afzender() }}
       <button type="submit">Zetten</button>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Volume per ernst</strong></div>
+    <div class="card-head"><strong>Volume</strong></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="vol">
       <label class="small muted">ernst
-        <select name="slot">{% for s in severities %}<option>{{ s }}</option>{% endfor %}</select></label>
+        <select name="slot"><option value="">— globaal —</option>{% for s in severities %}<option>{{ s }}</option>{% endfor %}</select></label>
       <label class="small muted">niveau
         <select name="level">{% for v in vol_levels %}<option{% if v == '2' %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
       {{ afzender() }}
@@ -184,6 +199,113 @@
   </div>
 
   <div class="card">
+    <div class="card-head"><strong>Valdetectie — gevoeligheid</strong></div>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="sens">
+      <select name="level"><option value="low">laag</option><option value="med" selected>gemiddeld</option><option value="high">hoog</option></select>
+      {{ afzender() }}
+      <button type="submit">Zetten (!fall sens)</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><strong>Valdetectie — extra opties</strong></div>
+    {#- Drie eenvoudige aan/uit-schakelaars die dezelfde ``!fall <sub> <state>``-vorm
+        delen; ``sub`` verschilt per formulier (hidden). -#}
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="nomotion">
+      <label class="small muted">geen-beweging-alarm
+        <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
+      {{ afzender() }}
+      <button type="submit">Zetten</button>
+    </form>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="prealarm">
+      <label class="small muted">vooralarm
+        <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
+      {{ afzender() }}
+      <button type="submit">Zetten</button>
+    </form>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="mm">
+      <label class="small muted">motion-monitor
+        <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
+      {{ afzender() }}
+      <button type="submit">Zetten</button>
+    </form>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="fall">
+      <input type="hidden" name="sub" value="test">
+      {{ afzender() }}<button type="submit">Test (!fall test)</button>
+    </form>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="fall">
+      <input type="hidden" name="sub" value="status">
+      {{ afzender() }}<button type="submit">Status (!fall status)</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><strong>Valdetectie — doelen (target)</strong></div>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="target">
+      <label class="small muted">actie
+        <select name="action"><option value="list">list</option><option value="add">add</option><option value="del">del</option></select></label>
+      <input name="value" class="mono" placeholder="pubkey (add) of prefix (del)"
+             style="width:min(100%,22rem)">
+      {{ afzender() }}
+      <button type="submit">Uitvoeren (!fall target)</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><strong>Radio-ontvangststand (rxps)</strong></div>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="rxps">
+      <select name="mode">{% for m in rxps_modes %}<option>{{ m }}</option>{% endfor %}</select>
+      {{ afzender() }}
+      <button type="submit">Zetten (!rxps)</button>
+    </form>
+  </div>
+
+  {#- ================ Radioparameters: alleen-lezen + WAARSCHUWING ============
+      Een verkeerde freq/bw/sf/cr/tx-power laat de companion van het mesh
+      vallen -- alleen fysieke, seriële recovery brengt hem dan terug. Vandaar
+      de rode waarschuwing ÉN de client-side confirm() (``data-confirm`` op het
+      formulier, afgedwongen in companions.js) BOVENOP de gewone
+      rechtencontrole -- geen van beide vervangt de andere. -#}
+  <div class="card">
+    <div class="card-head"><strong>Radio — alleen-lezen</strong></div>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="radioshow">
+      {{ afzender() }}<button type="submit">Tonen (!radio show)</button>
+    </form>
+  </div>
+
+  <div class="card" style="border-color:var(--danger,#c0392b)">
+    <div class="card-head"><strong>&#9888; Radioparameter zetten</strong></div>
+    <p class="small" style="color:var(--danger,#c0392b)">
+      <strong>Waarschuwing:</strong> een verkeerde waarde kan de companion van de
+      mesh doen vallen; herstel vereist dan een fysieke, seriële verbinding met
+      het toestel. Wijzig dit alleen als u zeker weet wat u doet.
+    </p>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax"
+          data-confirm="Radioparameter wijzigen op {{ comp.name }}? Dit kan de companion van de mesh doen vallen; herstel vereist dan een fysieke, seriële verbinding.">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="radio">
+      <label class="small muted">veld
+        <select name="field">{% for f in radio_fields %}<option>{{ f }}</option>{% endfor %}</select></label>
+      <input name="value" class="mono" placeholder="waarde" style="width:8rem">
+      {{ afzender() }}
+      <button type="submit" class="danger">Zetten (!radio … confirm)</button>
+    </form>
+  </div>
+
+  <div class="card">
     <div class="card-head"><strong>Opvragen</strong></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="loc">
@@ -192,6 +314,14 @@
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="cfg">
       {{ afzender() }}<button type="submit">Configuratie (!cfg)</button>
+    </form>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="status">
+      {{ afzender() }}<button type="submit">Status (!status)</button>
+    </form>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="tunes">
+      {{ afzender() }}<button type="submit">Beltoon-bibliotheek (!tunes)</button>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="ping">
@@ -407,6 +537,19 @@
     <p><label>Notities<br><textarea name="notes" maxlength="500" rows="2"
        style="width:min(100%,42rem)">{{ comp.notes or '' }}</textarea></label></p>
     <button type="submit">Opslaan</button>
+  </form>
+  {#- De bot-VOORKEUR staat los van het formulier hierboven (een eigen route,
+      db.set_companion_bot) en niet als extra veld erin: dit is geen
+      companion-CRUD-veld maar het onthouden welke bot-identiteit van de
+      afzender-node deze companion standaard krijgt -- zie
+      companions.resolve_bot. Leeg = geen eigen voorkeur, dan kiest de server
+      zelf (de MGMT-bot als de node er een heeft). -#}
+  <form method="post" action="/admin/companions/{{ comp.id }}/bot" style="margin-top:.8rem">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="small muted">Bot-voorkeur (naam of index uit /bots.json, leeg = standaard)<br>
+      <input name="bot" maxlength="64" value="{{ comp.preferred_bot or '' }}"
+             placeholder="bv. BE-HSS-DinX-MGMT" style="width:min(100%,24rem)"></label>
+    <button type="submit">Bot-voorkeur opslaan</button>
   </form>
   <form method="post" action="/admin/companions/{{ comp.id }}/delete" style="margin-top:.8rem"
         onsubmit="return confirm('Companion {{ comp.name }} verwijderen? Dit raakt alleen de lijst, niet het toestel.');">

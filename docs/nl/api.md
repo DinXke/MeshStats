@@ -161,6 +161,47 @@ beheerpagina.
   `boot`-teller is een herstart van de node: geen alarm, wel zichtbaar op de
   nodepagina.
 
+### `POST /api/companion`
+
+De instant-push van companion-locatie/-valmeldingen, van dezelfde vertrouwde
+MeshUptime-node als `/api/sensorpush` hierboven — en met opzet achter
+DEZELFDE deur: `Authorization: Bearer {MM_PUSH_TOKEN}`, dezelfde
+503/401/429-vorm. Dit is nog een melding van hetzelfde toestel, geen tweede
+vertrouwde partij die een eigen token zou verdienen.
+
+```json
+{"companions": [
+  {"pubkey": "<64 hex>", "lat": 51.2, "lon": 5.4, "seen": 42,
+   "fall_ts": 1755000000, "fall_kind": "val"}
+]}
+```
+
+* `pubkey` is de volledige 64-hex sleutel van de companion
+  (`companions.pubkey`); een sleutel die hier nog niet beheerd wordt (nog niet
+  toegevoegd op de companions-pagina) wordt overgeslagen en niet als fout
+  gemeld -- geteld in `skipped` van het antwoord.
+* `lat`/`lon` mogen ontbreken (een companion zonder GPS-fix die alleen een val
+  meldt); `seen` is het eigen "hoelang geleden"-veld van de node, gelezen met
+  dezelfde epoch-versus-ouderdom-heuristiek als de 60s-poll
+  (`companions._secs_to_epoch`).
+* `fall_ts` van `0` of afwezig betekent expliciet "geen val" -- en niet
+  slechts "niet nieuwer dan de vorige". `fall_kind` reist onvertaald mee
+  (`val`, `nomotion`, `sos`, of wat de firmware ook meldt).
+* Een val wordt METEEN geëscaleerd, via precies dezelfde functie als de
+  60s-achtergrondpoll (`companions._handle_fall_report`, die
+  `_escalate_fall` aanroept): ontdubbeld op
+  `companions.last_escalated_fall_ts`, verstuurd naar elke toegewezen
+  ontvanger (`companion_alerts`) via de bot van de afzender-node. De
+  achtergrondpoll blijft bestaan als fallback/reconciliatie voor een node die
+  deze push mist (geen WiFi op dat moment, oudere firmware).
+* Eén foute rij in de lijst laat de rest niet stranden: een niet-beheerde of
+  halve pubkey, of een niet-numerieke `lat`/`lon`, wordt overgeslagen en
+  geteld -- dezelfde eerlijkheidsregel als de rest van deze codebase.
+* `200`: `{"ok": true, "updated": <n>, "falls": <n>, "fall_alerts_sent": <n>,
+  "fall_alerts_failed": <n>, "skipped": <n>}`. `400` voor een body die geen
+  JSON is, of waarvan `companions` geen niet-lege lijst is (of de grens per
+  push overschrijdt).
+
 ## Publieke data-endpoints
 
 Alles hieronder is beperkt tot repeaters met `is_public=1`, en wordt daarnaast

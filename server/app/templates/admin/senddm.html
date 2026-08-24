@@ -76,6 +76,17 @@
       <input name="msg" required style="width:min(100%,42rem)"
              placeholder="het bericht (voor een T1000-E-commando: !find, !vol 2, …)"></label>
   </p>
+  {#- Dezelfde bot-kiezer als de companion-pagina (companions.js: wireBotPicker),
+      hier zonder ``data-rep`` -- er is nog geen afzender gekozen bij het laden
+      van deze pagina, dus de lijst vult zich pas zodra de select hierboven
+      verandert. Leeg laat de server zelf kiezen. -#}
+  <div id="bot-picker" data-rep="">
+    <label class="small muted">verstuurt via (bot)
+      <select id="bot-choice" name="bot">
+        <option value="">— standaard (MGMT, indien aanwezig) —</option>
+      </select></label>
+    <span class="muted small" id="bot-note"></span>
+  </div>
   <button type="submit">Versturen</button>
 </form>
 

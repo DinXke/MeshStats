@@ -130,6 +130,13 @@ BOT_ADVERT_PATH = "/bot/advert"
 BOT_SENDTO_PATH = "/bot/sendto"
 BOT_POST_PATH = "/bot/post"
 CONTACTS_PATH = "/contacts.json"
+# De MEERVOUDIGE-bot-uitbreiding: een node kan meer dan één bot-identiteit
+# hosten (de ALARM-bot voor zijn eigen sensoren, plus -- sinds de
+# MGMT-uitbreiding van de firmware -- een aparte BEHEER-bot die
+# companion-commando's verstuurt, bv. "BE-HSS-DinX-MGMT"). ``/bot.json``
+# hierboven blijft de vorm voor de ENE bot van oudere firmware; ``/bots.json``
+# is het nieuwe, aparte endpoint voor de lijst. Zie ``bots()`` hieronder.
+BOTS_JSON_PATH = "/bots.json"
 
 # De geldige alarmmodi (1=dm, 2=room, 3=both). Voor de validatie en voor de
 # keuzelijst in de UI; ``am=0`` ("uit", zie AM_LABELS) is een toestand die
@@ -750,8 +757,60 @@ def bot_advert(rep, flood: bool = True) -> dict:
     return {"ok": ant["ok"], "error": ant["error"]}
 
 
-def bot_sendto(rep, pubkey: str, msg: str) -> dict:
-    """Een test-DM van de bot naar één pubkey sturen."""
+def bots(rep, timeout: int | None = None) -> dict:
+    """``GET /bots.json`` -> alle bot-identiteiten op deze node, en welke daarvan
+    de ALARM-bot is.
+
+    ``{"ok","error","alert":idx|None,"bots":[{"idx","name","pub","alert"}]}``.
+    ``alert`` op het toplevel is de index van de alarm-bot (of None, meldt de
+    node hem niet); ``alert`` op elke bot-rij is dezelfde vlag al uitgerekend,
+    zodat de aanroeper niet zelf tegen het toplevel-veld hoeft te vergelijken.
+
+    Ontbreekt dit endpoint (oudere firmware met maar één, naamloze bot via
+    ``/bot.json`` hierboven) of geeft de node iets onbruikbaars terug, dan is
+    dat GEEN fout die de rest van de pagina raakt: het levert gewoon een lege
+    lijst op, en ``companions.default_bot_for`` valt terug op "geen ``bot=``
+    meesturen" -- de node gebruikt dan vanzelf zijn ene bot, zoals voorheen.
+    """
+    out = {"ok": False, "error": "", "alert": None, "bots": []}
+    got = sensornode._json(_host(rep), BOTS_JSON_PATH, timeout)
+    if not got["ok"]:
+        out["error"] = got["error"]
+        return out
+    data = got["data"] if isinstance(got["data"], dict) else {}
+    ruwe_alert = data.get("alert")
+    alert_idx = (int(ruwe_alert)
+                if isinstance(ruwe_alert, (int, float)) and not isinstance(ruwe_alert, bool)
+                else None)
+    out["alert"] = alert_idx
+    schoon = []
+    for b in (data.get("bots") or []):
+        if not isinstance(b, dict):
+            continue
+        idx = b.get("idx")
+        if not isinstance(idx, (int, float)) or isinstance(idx, bool):
+            continue
+        idx = int(idx)
+        schoon.append({
+            "idx": idx, "name": str(b.get("name") or ""),
+            "pub": str(b.get("pub") or ""),
+            # De node mag "alert" zelf al per bot meesturen; ontbreekt dat,
+            # dan volgt het uit het toplevel-veld.
+            "alert": bool(b.get("alert")) if "alert" in b else (idx == alert_idx),
+        })
+    out["bots"] = schoon
+    out["ok"] = True
+    return out
+
+
+def bot_sendto(rep, pubkey: str, msg: str, bot=None) -> dict:
+    """Een DM van de bot naar één pubkey sturen.
+
+    ``bot`` kiest WELKE bot-identiteit stuurt op een node met meerdere bots
+    (naam of index, uit ``bots()`` hierboven) -- leeg (het gebruikelijke geval,
+    en de enige mogelijkheid op oudere firmware) laat de node zijn eigen
+    standaardbot gebruiken, precies het gedrag van vóór deze uitbreiding.
+    """
     out = {"ok": False, "error": ""}
     sleutel = str(pubkey or "").strip()
     if len(sleutel) != 64 or not _is_hex(sleutel):
@@ -760,8 +819,10 @@ def bot_sendto(rep, pubkey: str, msg: str) -> dict:
     if not str(msg or "").strip():
         out["error"] = "een bericht mag niet leeg zijn"
         return out
-    ant = sensornode.post_form(_host(rep), BOT_SENDTO_PATH,
-                               {"key": sleutel, "msg": str(msg)})
+    velden: dict = {"key": sleutel, "msg": str(msg)}
+    if bot not in (None, ""):
+        velden["bot"] = str(bot)
+    ant = sensornode.post_form(_host(rep), BOT_SENDTO_PATH, velden)
     out["ok"], out["error"] = ant["ok"], ant["error"]
     return out
 
