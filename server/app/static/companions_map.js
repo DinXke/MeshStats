@@ -1,20 +1,22 @@
 /* Companions — kaart. Puur weergave: een marker per companion met een bekende
- * laatste locatie (window.COMPANION_LOCATIONS, gezet door companions_map.html),
- * met naam + type + hoe oud de melding is in de popup. Geen afhankelijkheid van
- * app.js's relTime() -- die is intern aan zijn eigen IIFE en zou een popup die
- * pas na het laden ingevoegd wordt hooguit bij de eerstvolgende 30s-tik
- * bijwerken. Deze pagina rekent de ouderdom zelf uit, één keer bij het bouwen
- * van de marker -- prima voor een achtergrondronde die om de paar minuten
- * ververst en niet om de seconde.
+ * laatste locatie, met naam + type + hoe oud de melding is in de popup. Geen
+ * afhankelijkheid van app.js's relTime() -- die is intern aan zijn eigen IIFE
+ * en zou een popup die pas na het laden ingevoegd wordt hooguit bij de
+ * eerstvolgende 30s-tik bijwerken. Dit bestand rekent de ouderdom zelf uit.
+ *
+ * De EERSTE tekening komt uit window.COMPANION_LOCATIONS (door de server
+ * meegegeven, zodat de kaart er meteen staat zonder op een fetch te wachten).
+ * Daarna ververst een periodieke aanroep van /admin/companions/status.json de
+ * MARKERS -- niet de kaart zelf: een refresh die fitBounds() opnieuw zou
+ * aanroepen, zou het pan/zoom van de bezoeker onderuit halen bij elke tik. Die
+ * route doet er ook een ONDEMAND-poll bij (companions.poll_now, met een eigen
+ * hamerbescherming): wie deze kaart open heeft staan, ziet zo de actuele
+ * locatie in plaats van te wachten op de achtergrondronde.
  */
 (function () {
   "use strict";
   var mapEl = document.getElementById("companion-map");
-  if (!mapEl || typeof L === "undefined") return;
 
-  // Zelfde thema-detectie en tegel-URL als app.js (CartoDB, licht/donker naar
-  // data-theme). Geen import nodig: het thema staat al op <html> vóór dit
-  // script draait (zie het inline scriptje in base.html).
   var THEME = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
   var TILE_URL = "https://{s}.basemaps.cartocdn.com/" +
     (THEME === "light" ? "light_all" : "dark_all") + "/{z}/{x}/{y}{r}.png";
@@ -35,10 +37,33 @@
     return String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;");
   }
 
-  var points = (window.COMPANION_LOCATIONS || []).filter(function (c) {
-    return typeof c.lat === "number" && typeof c.lon === "number";
-  });
-  if (!points.length) return;
+  function withLocation(list) {
+    return (list || []).filter(function (c) {
+      return typeof c.lat === "number" && typeof c.lon === "number";
+    });
+  }
+
+  // Geen enkele companion heeft ooit een locatie gemeld: de server tekent dan
+  // geen #companion-map (zie companions_map.html), alleen de uitlegtekst. Zodra
+  // er tijdens het kijken alsnog een EERSTE locatie binnenkomt, is een volledige
+  // herlading eenvoudiger en betrouwbaarder dan een kaart met tegels en
+  // legenda die deze pagina dan alsnog met JavaScript zou moeten optuigen --
+  // en er staat hier geen formulier dat een herlading zou kunnen verstoren.
+  if (!mapEl || typeof L === "undefined") {
+    if (!window.fetch) return;
+    var poller = setInterval(function () {
+      fetch("/admin/companions/status.json", { credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (withLocation(data.companions).length) {
+            clearInterval(poller);
+            location.reload();
+          }
+        })
+        .catch(function () { /* volgende tik probeert het opnieuw */ });
+    }, 20000);
+    return;
+  }
 
   var map = L.map(mapEl, { scrollWheelZoom: false });
   L.tileLayer(TILE_URL, {
@@ -56,27 +81,59 @@
     iconSize: [24, 24], iconAnchor: [12, 20], popupAnchor: [0, -18],
   });
 
-  var bounds = [];
-  points.forEach(function (c) {
-    var marker = c.fall_recent
-      ? L.marker([c.lat, c.lon], { icon: fallIcon }).addTo(map)
-      : L.marker([c.lat, c.lon]).addTo(map);
-    var label = esc(c.name || "companion") + (c.type ? " · " + esc(c.type) : "");
-    var popup = "<strong>" + label + "</strong><br>" + esc(ageText(c.seen_iso));
-    if (c.fall_recent) {
-      var kind = esc(c.fall_kind || "onbekend");
-      popup += "<br><strong style=\"color:var(--red)\">&#9888; val (" + kind + "): " +
-        esc(ageText(c.fall_iso)) + "</strong>";
-    }
-    popup += "<br><a href=\"/admin/companions/" + encodeURIComponent(c.id) +
-      "\">beheren &rarr;</a>";
-    marker.bindPopup(popup);
-    bounds.push([c.lat, c.lon]);
-  });
+  // Eén laag met alle markers, zodat een ververs-tik hem in zijn geheel kan
+  // vervangen (removeLayer + addLayer) zonder de kaart zelf (view, zoom) aan
+  // te raken -- dat laatste zou het pan/zoom van de bezoeker bij elke tik
+  // resetten, wat een auto-ververs juist NIET moet doen.
+  var markerLayer = null;
 
+  function buildMarkers(points) {
+    var layer = L.layerGroup();
+    points.forEach(function (c) {
+      var marker = c.fall_recent
+        ? L.marker([c.lat, c.lon], { icon: fallIcon })
+        : L.marker([c.lat, c.lon]);
+      var label = esc(c.name || "companion") + (c.type ? " · " + esc(c.type) : "");
+      var popup = "<strong>" + label + "</strong><br>" + esc(ageText(c.seen_iso));
+      if (c.fall_recent) {
+        var kind = esc(c.fall_kind || "onbekend");
+        popup += "<br><strong style=\"color:var(--red)\">&#9888; val (" + kind + "): " +
+          esc(ageText(c.fall_iso)) + "</strong>";
+      }
+      popup += "<br><a href=\"/admin/companions/" + encodeURIComponent(c.id) +
+        "\">beheren &rarr;</a>";
+      marker.bindPopup(popup);
+      layer.addLayer(marker);
+    });
+    return layer;
+  }
+
+  function showMarkers(points) {
+    var nieuw = buildMarkers(points);
+    if (markerLayer) map.removeLayer(markerLayer);
+    markerLayer = nieuw;
+    markerLayer.addTo(map);
+  }
+
+  var eerstePunten = withLocation(window.COMPANION_LOCATIONS);
+  showMarkers(eerstePunten);
+
+  var bounds = eerstePunten.map(function (c) { return [c.lat, c.lon]; });
   if (bounds.length === 1) {
     map.setView(bounds[0], 14);
-  } else {
+  } else if (bounds.length > 1) {
     map.fitBounds(bounds, { padding: [30, 30] });
+  }
+
+  // toggleable SNR-achtige labels bestaan hier niet (dat is de linkkaart in
+  // app.js); wél dezelfde periodieke ververs als de lijst en de detailpagina
+  // (companions.js), via dezelfde route.
+  if (window.fetch) {
+    setInterval(function () {
+      fetch("/admin/companions/status.json", { credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (data) { showMarkers(withLocation(data.companions)); })
+        .catch(function () { /* volgende tik probeert het opnieuw */ });
+    }, 20000);
   }
 })();

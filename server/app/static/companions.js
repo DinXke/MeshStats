@@ -239,4 +239,183 @@
       if (pick.value && pubkey) pubkey.value = pick.value;
     });
   }
+
+  // --- 3. Commando's en Send-DM: fetch in plaats van een volledige page-load -
+  //
+  // Elke commando-knop en het 'Vrij bericht'/Send-DM-formulier posten naar een
+  // FIRE-AND-FORGET DM: het versturen lukt of niet, maar het mesh-antwoord (als
+  // er een komt) loopt niet via deze respons terug -- zie de docstring van
+  // companion_cmd in routes_companions.py. Een volledige paginaherlading na elke
+  // druk op zo'n knop is dus meer dan nodig, en had een echt gevolg: ververste
+  // iemand de pagina uit gewoonte (de browser biedt dat aan na een POST-zonder-
+  // redirect), dan ging de DM een TWEEDE keer de mesh op. Met JavaScript wordt
+  // de submit onderschept en gaat het verzoek via fetch met
+  // ``Accept: application/json``; de route herkent dat (``_wants_json``) en
+  // geeft een korte ``{ok, msg}`` terug in plaats van de volledige pagina.
+  //
+  // Zonder fetch/FormData (of zonder JavaScript) blijft het formulier gewoon
+  // werken: dan komt er geen JSON-Accept binnen en valt de route terug op zijn
+  // PRG-redirect, met dezelfde tekst in de resultaatbanner van de doelpagina.
+  var ajaxForms = document.querySelectorAll("form.cmd-ajax");
+  if (ajaxForms.length && window.fetch && window.FormData) {
+    Array.prototype.forEach.call(ajaxForms, wireAjaxForm);
+  }
+
+  function wireAjaxForm(form) {
+    var note = document.createElement("span");
+    note.className = "muted small cmd-note";
+    form.appendChild(note);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var fd = new FormData(form);
+      // Een formulier met twee submit-knoppen (bv. "Afspelen" vs "Toewijzen",
+      // allebei name="cmd" met een andere value) laat FormData(form) NIET zien
+      // welke knop is ingedrukt -- dat weet alleen het submit-event zelf, via
+      // ``submitter``. Zonder dit zou de fetch-weg altijd het EERSTE commando
+      // van het formulier sturen, ongeacht de aangeklikte knop.
+      var inzender = e.submitter;
+      if (inzender && inzender.name) fd.set(inzender.name, inzender.value);
+      note.className = "muted small cmd-note";
+      note.textContent = "bezig…";
+      fetch(form.action, {
+        method: "POST", body: fd, credentials: "same-origin",
+        headers: { "Accept": "application/json" },
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          note.className = (data.ok ? "ok" : "bad") + " cmd-note";
+          note.textContent = data.msg || (data.ok ? "gelukt" : "niet gelukt");
+        })
+        .catch(function () {
+          note.className = "bad cmd-note";
+          note.textContent = "kon niet versturen (netwerkfout) — probeer opnieuw";
+        });
+    });
+  }
+
+  // --- 4. Live gegevens: locatie/gezien/val, elke 15-20s ververst -------------
+  //
+  // Gedeeld met companions_map.js (dezelfde /admin/companions/status.json), maar
+  // hier voor de LIJST (de "laatst gezien"-kolom) en de DETAILPAGINA (de
+  // valbadge en de locatieregel bovenaan). Elke tik roept dezelfde route aan,
+  // die op zijn beurt een ONDEMAND-poll probeert (companions.poll_now, met een
+  // eigen hamerbescherming) zodat een pagina die je ECHT bekijkt de actuele
+  // locatie/val te zien krijgt in plaats van te wachten op de achtergrondronde.
+
+  // Dezelfde "hoe lang geleden"-tekst als companions_map.js. Bewust hier
+  // gekopieerd en niet gedeeld met app.js's interne relTime(): die is intern
+  // aan zijn eigen IIFE, en deze twee bestanden draaien onafhankelijk van
+  // elkaar (companions.html laadt companions_map.js niet, en omgekeerd).
+  function ageText(iso) {
+    if (!iso) return "onbekend";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "onbekend";
+    var s = Math.round((Date.now() - d.getTime()) / 1000);
+    if (s < 0) s = 0;
+    if (s < 60) return "zojuist";
+    if (s < 3600) return Math.round(s / 60) + " min geleden";
+    if (s < 86400) return Math.round(s / 3600) + " uur geleden";
+    return Math.round(s / 86400) + " dag(en) geleden";
+  }
+
+  function statusUrl(repId) {
+    return "/admin/companions/status.json" + (repId ? "?rep=" + encodeURIComponent(repId) : "");
+  }
+
+  // 4a. De companions-lijst: "laatst gezien" + val-badge per rij.
+  var compTable = document.getElementById("companions-table");
+  if (compTable) wireLiveList(compTable);
+
+  function wireLiveList(table) {
+    var body = table.querySelector("tbody");
+
+    function fillCell(cell, c) {
+      cell.textContent = "";
+      if (c.seen_iso) {
+        var t = document.createElement("time");
+        t.className = "reltime";
+        t.setAttribute("datetime", c.seen_iso);
+        t.textContent = ageText(c.seen_iso);
+        t.title = new Date(c.seen_iso).toLocaleString();
+        cell.appendChild(t);
+      } else {
+        var span = document.createElement("span");
+        span.className = "muted";
+        span.textContent = "— onbekend —";
+        cell.appendChild(span);
+      }
+      cell.appendChild(document.createTextNode(" "));
+      var pill = document.createElement("span");
+      pill.className = "bad live-fall-pill";
+      pill.hidden = !c.fall_recent;
+      pill.textContent = "⚠ val";
+      cell.appendChild(pill);
+    }
+
+    function tick() {
+      fetch(statusUrl(), { credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          (data.companions || []).forEach(function (c) {
+            var row = body.querySelector('tr[data-id="' + c.id + '"]');
+            var cell = row && row.querySelector(".live-seen");
+            if (cell) fillCell(cell, c);
+          });
+        })
+        .catch(function () { /* volgende tik probeert het opnieuw */ });
+    }
+    tick();
+    setInterval(tick, 20000);
+  }
+
+  // 4b. De companion-detailpagina: de valbadge bovenaan en de locatieregel.
+  var compHead = document.getElementById("companion-head");
+  if (compHead) wireLiveDetail(compHead);
+
+  function wireLiveDetail(head) {
+    var cid = parseInt(head.getAttribute("data-cid"), 10);
+    var repId = head.getAttribute("data-rep") || "";
+    var updated = document.getElementById("live-updated");
+
+    function applyFall(c) {
+      var badge = document.getElementById("live-fall-badge");
+      var kind = document.getElementById("live-fall-kind");
+      if (!badge) return;
+      badge.hidden = !c.fall_recent;
+      if (kind) kind.textContent = c.fall_kind ? " (" + c.fall_kind + ")" : "";
+    }
+
+    function applyLocation(c) {
+      var known = document.getElementById("live-loc-known");
+      var unknown = document.getElementById("live-loc-unknown");
+      if (!known || !unknown) return;
+      var heeft = typeof c.lat === "number" && typeof c.lon === "number";
+      known.hidden = !heeft;
+      unknown.hidden = heeft;
+      if (!heeft) return;
+      var coords = document.getElementById("live-loc-coords");
+      if (coords) coords.textContent = c.lat.toFixed(5) + ", " + c.lon.toFixed(5);
+      var seen = document.getElementById("live-loc-seen");
+      if (seen && c.seen_iso) {
+        seen.setAttribute("datetime", c.seen_iso);
+        seen.textContent = ageText(c.seen_iso);
+        seen.title = new Date(c.seen_iso).toLocaleString();
+      }
+    }
+
+    function tick() {
+      fetch(statusUrl(repId), { credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var c = (data.companions || []).filter(function (x) { return x.id === cid; })[0];
+          if (!c) return;
+          applyFall(c);
+          applyLocation(c);
+          if (updated) updated.textContent = "· ververst " + new Date().toLocaleTimeString();
+        })
+        .catch(function () { /* volgende tik probeert het opnieuw */ });
+    }
+    tick();
+    setInterval(tick, 15000);
+  }
 })();

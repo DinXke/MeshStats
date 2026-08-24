@@ -38,7 +38,7 @@
   {% endfor %}
 </datalist>
 
-<form method="post" action="/admin/senddm/send" id="senddm-form" class="card" style="margin-top:1rem">
+<form method="post" action="/admin/senddm/send" id="senddm-form" class="card cmd-ajax" style="margin-top:1rem">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <p>
     <label>Afzender-node (verstuurt de DM)<br>

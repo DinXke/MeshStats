@@ -40,12 +40,18 @@ def maak_gebruiker(naam, superuser=False):
                                is_superuser=superuser)
 
 
-def verzoek(cookie: str = "", method: str = "GET") -> Request:
+def verzoek(cookie: str = "", method: str = "GET", accept: str = "",
+           qs: str = "") -> Request:
     headers = [(b"cookie", f"mm_session={cookie}".encode())] if cookie else []
+    if accept:
+        # De fetch-weg van companions.js zet Accept: application/json op de
+        # commando-knoppen, zodat companion_cmd JSON teruggeeft in plaats van
+        # de PRG-redirect -- zie _wants_json in routes_companions.py.
+        headers.append((b"accept", accept.encode()))
     return Request({
         "type": "http", "http_version": "1.1", "method": method,
         "scheme": "http", "server": ("test", 80), "path": "/x",
-        "query_string": b"", "headers": headers,
+        "query_string": qs.encode(), "headers": headers,
     })
 
 
@@ -257,7 +263,10 @@ def test_companion_toevoegen_vereist_serverbeheerder(db):
 
 
 def test_companion_toevoegen_als_serverbeheerder(db):
-    """De serverbeheerder voegt toe; de rij staat erna in de databank."""
+    """De serverbeheerder voegt toe; de rij staat erna in de databank, en de
+    route redirect (PRG) naar de lijst in plaats van de pagina zelf te
+    renderen -- zie de toelichting bij ``_redirect`` in routes_companions.py
+    voor waarom (het is de root cause van de "ververst niet" klacht)."""
     from app import auth, routes_companions
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
@@ -265,8 +274,62 @@ def test_companion_toevoegen_als_serverbeheerder(db):
     resp = routes_companions.companion_add(
         req, name="Björn", pubkey=VALID, type="T1000-E", notes="",
         sender="", csrf=auth.csrf_token(cookie))
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/admin/companions?")
+    assert "r=added" in resp.headers["location"]
     assert db.companion_by_pubkey(VALID) is not None
+
+    # De doelpagina zelf leest die code terug en toont dezelfde melding als
+    # vroeger rechtstreeks in de POST-respons stond.
+    resp2 = routes_companions.companions_page(verzoek(cookie, qs="r=added&n=Bj%C3%B6rn"))
+    assert resp2.status_code == 200
+    assert "toegevoegd" in resp2.body.decode("utf-8")
+
+
+def test_companion_toevoegen_fout_redirect_met_reden(db):
+    """Een validatiefout is ook een redirect, met een foutcode -- geen 200 met
+    de fout meteen op de POST-respons zelf (dat was het oude patroon)."""
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    resp = routes_companions.companion_add(
+        verzoek(cookie, method="POST"), name="", pubkey=VALID, type="",
+        notes="", sender="", csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 303
+    assert "r=err_name" in resp.headers["location"]
+
+
+def test_companion_bewerken_redirect_naar_eigen_pagina(db):
+    """Bewerken redirect naar de companion-pagina zelf (niet de lijst): daar
+    staat het bewerkte resultaat, en het formulier stond daar ook."""
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    resp = routes_companions.companion_edit(
+        verzoek(cookie, method="POST"), cid, name="Björn 2", pubkey=VALID,
+        type="", notes="", sender="", csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/admin/companions/{cid}?r=edited"
+    assert db.companion(cid)["name"] == "Björn 2"
+
+    # De pagina zelf leest de code terug in de melding.
+    pagina = routes_companions.companion_page(verzoek(cookie, qs="r=edited"), cid)
+    assert "bijgewerkt" in pagina.body.decode("utf-8")
+
+
+def test_companion_verwijderen_redirect_naar_lijst(db):
+    """Verwijderen redirect naar de LIJST (de detailpagina van deze companion
+    bestaat na de mutatie niet meer)."""
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    resp = routes_companions.companion_delete(
+        verzoek(cookie, method="POST"), cid, csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/admin/companions?r=deleted&n=Bj%C3%B6rn"
+    assert db.companion(cid) is None
 
 
 def test_paginas_renderen(db):
@@ -281,6 +344,35 @@ def test_paginas_renderen(db):
                  routes_companions.senddm_page(verzoek(cookie)),
                  routes_companions.companions_map_page(verzoek(cookie))):
         assert resp.status_code == 200
+
+
+def test_companions_status_json_bevat_alle_companions_en_pollt_ondemand(db, monkeypatch):
+    """De verversings-route achter companions.js/companions_map.js: geeft de
+    actuele locatie/val van elke companion terug, en heeft er ONDERWEG een
+    ondemand-poll voor gedraaid (companions.poll_now) -- dit is de "een pagina
+    die bekeken wordt, ziet meteen verse data"-eis."""
+    from app import companions, routes_companions, sensornode
+    monkeypatch.setattr(companions, "_ondemand_last_ts", 0.0)
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    db.add_companion("Björn", VALID, "T1000-E", "", node["id"])
+    db.add_companion("Zonder locatie", "c" * 64, "", "", None)
+
+    def nep_json(host, path, timeout=None):
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 51.2, "lon": 5.4, "seen": 3}]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    resp = routes_companions.companions_status_json(verzoek(cookie))
+    assert resp.status_code == 200
+    import json
+    data = json.loads(resp.body)
+    bij_pubkey = {c["name"]: c for c in data["companions"]}
+    assert len(bij_pubkey) == 2
+    assert bij_pubkey["Björn"]["lat"] == 51.2
+    assert bij_pubkey["Zonder locatie"]["lat"] is None
 
 
 def test_companions_map_pagina_rendert_ook_met_een_locatie(db):
@@ -334,6 +426,46 @@ def test_location_nodes_alleen_de_ingestelde_afzenders(db):
     db.get_or_create_repeater("aabbccddeeff", "Ongebruikte node")
     db.add_companion("Björn", VALID, "", "", node["id"])
     assert [r["id"] for r in companions.location_nodes()] == [node["id"]]
+
+
+def test_location_nodes_only_rep_id_beperkt_tot_die_ene_node(db):
+    """De detailpagina van één companion mag alleen ZIJN afzender pollen, niet
+    de andere -- zie companions.poll_now."""
+    from app import companions
+    a = db.get_or_create_repeater("e3d3f4d7edd0", "A")
+    b = db.get_or_create_repeater("aabbccddeeff", "B")
+    db.add_companion("Björn", VALID, "", "", a["id"])
+    db.add_companion("Ander", "b" * 64, "", "", b["id"])
+    assert {r["id"] for r in companions.location_nodes()} == {a["id"], b["id"]}
+    assert [r["id"] for r in companions.location_nodes(only_rep_id=a["id"])] == [a["id"]]
+    # Een node-id die geen enkele companion als afzender heeft: lege lijst, geen
+    # crash op een "onbestaande" filter.
+    assert companions.location_nodes(only_rep_id=999999) == []
+
+
+def test_poll_now_hamerbescherming(db, monkeypatch):
+    """Twee ondemand-pollrondes vlak na elkaar: de tweede slaat over (cooldown),
+    de eerste heeft het werk al gedaan. Zonder dit zou een pagina die elke
+    15-20s ververst (of meerdere open tabbladen) bij elke tik alle
+    afzender-nodes lastigvallen."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    db.add_companion("Björn", VALID, "", "", node["id"])
+    aanroepen = []
+
+    def nep_json(host, path, timeout=None):
+        aanroepen.append(host)
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 1.0, "lon": 2.0, "seen": 1}]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    monkeypatch.setattr(companions, "_ondemand_last_ts", 0.0)
+    eerste = companions.poll_now()
+    tweede = companions.poll_now()
+    assert eerste is not None and eerste["updated"] == 1
+    assert tweede is None
+    assert len(aanroepen) == 1
 
 
 def test_secs_to_epoch_onderscheidt_ouderdom_en_absolute_tijd():
@@ -430,7 +562,9 @@ def test_poll_locations_zonder_afzenders_doet_niets(db):
 
 def test_companion_cmd_bouwt_tune_en_verstuurt(db, monkeypatch):
     """De commando-route bouwt de nieuwe !tune-vorm en verstuurt hem vanaf de
-    standaardafzender van de companion."""
+    standaardafzender van de companion. Zonder JSON-Accept (het kale formulier,
+    geen JavaScript) is de respons een PRG-redirect terug naar de
+    companion-pagina, met de verstuurde body in de querystring."""
     from app import auth, rooms, routes_companions
     gezien = {}
     monkeypatch.setattr(rooms, "bot_sendto",
@@ -443,13 +577,38 @@ def test_companion_cmd_bouwt_tune_en_verstuurt(db, monkeypatch):
     resp = routes_companions.companion_cmd(
         req, cid, cmd="tune", sender="", slot="H", name="coin",
         csrf=auth.csrf_token(cookie))
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/admin/companions/{cid}?r=cmd_ok&b=%21tune+H+preset+coin"
     assert gezien == {"pk": VALID, "msg": "!tune H preset coin"}
+
+
+def test_companion_cmd_met_json_accept_geeft_json_zonder_redirect(db, monkeypatch):
+    """companions.js onderschept de commando-knoppen met fetch en zet
+    Accept: application/json -- dan komt er GEEN navigatie, alleen een korte
+    bevestiging, want het mesh-antwoord komt toch niet synchroon terug (zie de
+    docstring van companion_cmd)."""
+    from app import auth, rooms, routes_companions
+    monkeypatch.setattr(rooms, "bot_sendto",
+                        lambda rep, pk, msg: {"ok": True, "error": ""})
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", node["id"])
+    req = verzoek(cookie, method="POST", accept="application/json")
+    resp = routes_companions.companion_cmd(
+        req, cid, cmd="find", sender="", csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 200
+    import json
+    data = json.loads(resp.body)
+    assert data["ok"] is True
+    assert "Björn" in data["msg"] and "!find" in data["msg"]
+    assert data["body"] == "!find"
 
 
 def test_senddm_send_langs_afzenderrechten(db, monkeypatch):
     """Versturen is een node-handeling op de afzender: de serverbeheerder mag,
-    en het vervoer krijgt de juiste pubkey."""
+    en het vervoer krijgt de juiste pubkey. Zonder ``back`` redirect dit naar de
+    generieke Send-DM-tab, zoals voorheen."""
     from app import auth, rooms, routes_companions
     gezien = {}
     monkeypatch.setattr(rooms, "bot_sendto",
@@ -460,19 +619,66 @@ def test_senddm_send_langs_afzenderrechten(db, monkeypatch):
     req = verzoek(cookie, method="POST")
     resp = routes_companions.senddm_send(req, sender=str(node["id"]), pubkey=VALID,
                                          msg="!find", csrf=auth.csrf_token(cookie))
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/admin/senddm?")
     assert gezien == {"pk": VALID, "msg": "!find"}
 
 
+def test_senddm_send_met_back_keert_terug_naar_companionpagina(db, monkeypatch):
+    """Het 'Vrij bericht'-formulier op de companion-pagina stuurt ``back`` mee
+    en komt daar ook op terug -- niet op de generieke Send-DM-tab. Dit was de
+    concrete bug: elke inzending van dat formulier stuurde de bezoeker weg van
+    de pagina waar hij op stond."""
+    from app import auth, rooms, routes_companions
+    monkeypatch.setattr(rooms, "bot_sendto", lambda rep, pk, msg: {"ok": True, "error": ""})
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", node["id"])
+    req = verzoek(cookie, method="POST")
+    resp = routes_companions.senddm_send(
+        req, sender=str(node["id"]), pubkey=VALID, msg="hoi",
+        back=f"companion:{cid}", csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith(f"/admin/companions/{cid}?")
+    assert "r=cmd_ok" in resp.headers["location"]
+
+    # Een onbekende companion in ``back`` is geen open redirect: terug naar de
+    # generieke tab.
+    resp2 = routes_companions.senddm_send(
+        verzoek(cookie, method="POST"), sender=str(node["id"]), pubkey=VALID,
+        msg="hoi", back="companion:999999", csrf=auth.csrf_token(cookie))
+    assert resp2.headers["location"].startswith("/admin/senddm?")
+
+
+def test_senddm_send_met_json_accept_geeft_json_zonder_redirect(db, monkeypatch):
+    """Dezelfde fetch-onderschepping als bij companion_cmd, nu voor het
+    Send-DM-formulier (senddm.html en het 'Vrij bericht'-formulier delen de
+    ``cmd-ajax``-klasse in companions.js)."""
+    from app import auth, rooms, routes_companions
+    monkeypatch.setattr(rooms, "bot_sendto", lambda rep, pk, msg: {"ok": True, "error": ""})
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    req = verzoek(cookie, method="POST", accept="application/json")
+    resp = routes_companions.senddm_send(req, sender=str(node["id"]), pubkey=VALID,
+                                         msg="hoi", csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 200
+    import json
+    data = json.loads(resp.body)
+    assert data["ok"] is True and "hoi" not in data["msg"]  # inhoud gaat niet mee in de melding
+
+
 def test_senddm_send_zonder_afzender_meldt_het(db):
-    """Geen afzender is geen 500 maar een nette melding."""
+    """Geen afzender is geen 500 maar een nette melding, via redirect."""
     from app import auth, routes_companions
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     req = verzoek(cookie, method="POST")
     resp = routes_companions.senddm_send(req, sender="", pubkey=VALID, msg="hoi",
                                          csrf=auth.csrf_token(cookie))
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert "r=nosender" in resp.headers["location"]
 
 
 # --- 5. valalarm-ontvangers: databanklaag en routes --------------------------
@@ -547,7 +753,8 @@ def test_companion_alert_add_als_serverbeheerder(db):
     resp = routes_companions.companion_alert_add(
         req, cid, recipient="1" * 64, sender="", label="dochter",
         csrf=auth.csrf_token(cookie))
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/admin/companions/{cid}?r=alert_added"
     rijen = db.list_companion_alerts(cid)
     assert len(rijen) == 1
     assert rijen[0]["recipient_pubkey"] == "1" * 64
@@ -565,7 +772,8 @@ def test_companion_alert_add_valideert_pubkey(db):
     resp = routes_companions.companion_alert_add(
         req, cid, recipient="kort", sender="", label="",
         csrf=auth.csrf_token(cookie))
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert "r=alert_err_pubkey" in resp.headers["location"]
     assert db.list_companion_alerts(cid) == []
 
 
@@ -578,7 +786,8 @@ def test_companion_alert_delete_als_serverbeheerder(db):
     req = verzoek(cookie, method="POST")
     resp = routes_companions.companion_alert_delete(
         req, cid, aid, csrf=auth.csrf_token(cookie))
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/admin/companions/{cid}?r=alert_deleted"
     assert db.companion_alert(aid) is None
 
 

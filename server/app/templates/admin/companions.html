@@ -33,19 +33,29 @@
 {% endif %}
 
 {% if companions %}
-<table>
+{#- ``id="companions-table"`` + ``data-id`` per rij: companions.js ververst
+    hierna alleen de "gezien"/val-cel, om de paar seconden, zonder de hele
+    tabel (en zeker niet de pagina) te herladen -- zie wireLiveList. -#}
+<table id="companions-table">
   <thead>
-    <tr><th>Naam</th><th>Type</th><th>Pubkey</th><th>Standaardafzender</th><th></th></tr>
+    <tr><th>Naam</th><th>Type</th><th>Pubkey</th><th>Standaardafzender</th>
+        <th>Laatst gezien</th><th></th></tr>
   </thead>
   <tbody>
     {% for c in companions %}
-    <tr>
+    {%- set loc = loc_by_id.get(c.id) -%}
+    <tr data-id="{{ c.id }}">
       <td><a href="/admin/companions/{{ c.id }}">{{ c.name }}</a></td>
       <td>{{ c.type or '—' }}</td>
       <td class="mono">{{ c.pubkey[:16] }}…</td>
       <td>
         {%- set s = rep_by_id.get(c.sender_repeater_id) -%}
         {{ s.name if s else '— geen —' }}
+      </td>
+      <td class="live-seen">
+        {% if loc and loc.seen_iso %}<time class="reltime" datetime="{{ loc.seen_iso }}">{{ loc.seen_iso }}</time>
+        {%- else %}<span class="muted">— onbekend —</span>{% endif %}
+        <span class="bad live-fall-pill"{% if not (loc and loc.fall_recent) %} hidden{% endif %}>&#9888; val</span>
       </td>
       <td><a href="/admin/companions/{{ c.id }}">beheren &rarr;</a></td>
     </tr>
@@ -98,4 +108,12 @@
 </section>
 {% endif %}
 
+{% endblock %}
+
+{#- companions.js voor de auto-ververs van de "laatst gezien"/val-kolom
+    (wireLiveList). Geen commando-knoppen op deze pagina, maar wel dezelfde
+    live-databron als de detailpagina en de kaart. -#}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_v }}"></script>
+<script src="/static/companions.js?v={{ asset_v }}"></script>
 {% endblock %}

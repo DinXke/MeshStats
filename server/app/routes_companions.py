@@ -24,9 +24,10 @@ Het vervoer zit in ``companions.send_dm`` (nu de bot van de afzender-node) en
 nergens hier: deze routes geven een afzender-node en een tekst.
 """
 import time
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from . import audit, auth, companions, config, db, rbac, rooms
 # De poort en haar helpers staan in routes_admin en worden hier hergebruikt, niet
@@ -35,6 +36,35 @@ from . import audit, auth, companions, config, db, rbac, rooms
 from .routes_admin import (_noteer, _rep_or_404, check_csrf, require_login,
                            require_perm)
 from .templating import templates
+
+# --- na-een-mutatie: redirect (PRG) en niet een 200 op de POST zelf ----------
+#
+# Elke schrijvende route hieronder eindigde vroeger met het rechtstreeks
+# terugrenderen van de doelpagina (een 200 op de POST). Dat is precies het
+# patroon dat de rest van de admin-UI (routes_admin.py) NERGENS gebruikt --
+# daar eindigt iedere schrijvende route met een 303-redirect naar een GET. Het
+# verschil is niet cosmetisch: een 200 op een POST betekent dat de browser die
+# pagina onthoudt als "bereikt via POST", en drukt de bezoeker daarna op
+# verversen (of navigeert terug), dan biedt de browser "verzoek opnieuw
+# verzenden" aan -- bevestigt iemand dat uit gewoonte, dan gaat bijvoorbeeld
+# een companion-commando een TWEEDE keer de mesh op. Wie annuleert, blijft naar
+# een niet-verversende pagina kijken en denkt dat de knop het niet deed. Dat is
+# de kern van de klacht "de beheer-UI ververst niet altijd na een actie".
+#
+# De oplossing is dezelfde als overal elders: Post/Redirect/Get. De uitslag
+# (gelukt/niet gelukt, en de tekst) reist niet in een sessie-flash mee -- die
+# machinerie bestaat hier nergens -- maar als een kort resultaatcode in de
+# querystring van de redirect, precies zoals ``routes_admin.refresh_repeater``
+# al ``?status=<woord>`` gebruikt. De GET-route zet die code om in dezelfde
+# Nederlandse tekst die hier vroeger rechtstreeks gerenderd werd.
+def _redirect(url: str, **params) -> RedirectResponse:
+    """Een 303-redirect naar ``url``, met de gegeven parameters als querystring
+    (lege waarden worden weggelaten). 303 en niet 302: dwingt de browser de
+    volgende stap als GET te doen, ongeacht wat de browser van de oorspronkelijke
+    methode zou onthouden -- exact de PRG-eis hierboven."""
+    schoon = {k: v for k, v in params.items() if v not in (None, "")}
+    qs = ("?" + urlencode(schoon)) if schoon else ""
+    return RedirectResponse(url + qs, status_code=303)
 
 router = APIRouter(prefix="/admin")
 
@@ -67,11 +97,94 @@ def _sender_reps(user) -> list:
     return companions.sender_candidates(zichtbaar)
 
 
+def _loc(c, now: float) -> dict:
+    """Eén companion-rij naar de vorm die de kaart, de detailpagina-verversing
+    en de lijst-verversing allemaal delen (zie ``companions_status_json``
+    hieronder). Eén functie en geen drie keer dezelfde velden opnieuw uitrekenen
+    -- een latere vierde afnemer zou anders licht kunnen verschillen van de
+    andere drie zonder dat iemand het merkt."""
+    fall_ts = c["last_escalated_fall_ts"]
+    return {"id": c["id"], "name": c["name"], "type": c["type"],
+            "lat": c["last_lat"], "lon": c["last_lon"],
+            "seen_iso": db.iso_from_epoch(c["last_seen"]),
+            # Alleen een recente val kleurt de marker/badge anders -- zie
+            # FALL_RECENT_S hierboven voor waarom een val van maanden terug
+            # niet voor altijd rood moet blijven.
+            "fall_recent": bool(fall_ts) and (now - fall_ts) < FALL_RECENT_S,
+            "fall_kind": c["last_fall_kind"], "fall_iso": db.iso_from_epoch(fall_ts)}
+
+
 def _mag_versturen(user, reps) -> dict:
     """Per afzender-rid of deze gebruiker er een DM vanaf mag sturen. Zo kan de
     keuzelijst een node tonen maar de knop uitschakelen met de reden erbij --
     dezelfde lijn als overal: niet verbergen, uitleggen."""
     return {r["id"]: rbac.decide(user, "node.instelling.merkbaar", r) for r in reps}
+
+
+# --- de resultaatbanner na een redirect: code -> Nederlandse tekst -----------
+#
+# Elke pagina hieronder heeft zijn EIGEN codelijst (dezelfde code kan op de ene
+# pagina iets anders betekenen dan op de andere -- ze delen geen namespace,
+# want elke pagina leest alleen zijn eigen ``?r=``). ``n``/``b``/``e`` zijn de
+# enige vrije tekst die meereist (naam, DM-body, foutmelding); Jinja's
+# auto-escape maakt die net zo veilig als toen ze nog rechtstreeks in de
+# gerenderde pagina stonden.
+
+def _companions_result(request: Request) -> dict | None:
+    r = request.query_params.get("r", "")
+    n = request.query_params.get("n", "")
+    if r == "added":
+        return {"ok": True, "msg": f"companion '{n}' toegevoegd"}
+    if r == "deleted":
+        return {"ok": True, "msg": f"companion '{n}' verwijderd"}
+    if r == "err_name":
+        return {"ok": False, "msg": "een companion heeft een naam nodig"}
+    if r == "err_pubkey":
+        return {"ok": False, "msg": "een volledige pubkey van 64 hex-tekens is vereist"}
+    if r == "err_dup":
+        return {"ok": False, "msg": "die pubkey staat al in de lijst"}
+    return None
+
+
+def _companion_result(request: Request, comp) -> dict | None:
+    r = request.query_params.get("r", "")
+    if r == "edited":
+        return {"ok": True, "msg": f"companion '{comp['name']}' bijgewerkt"}
+    if r == "err_name":
+        return {"ok": False, "msg": "een companion heeft een naam nodig"}
+    if r == "err_pubkey":
+        return {"ok": False, "msg": "een volledige pubkey van 64 hex-tekens is vereist"}
+    if r == "err_dup":
+        return {"ok": False, "msg": "die pubkey staat al bij een andere companion"}
+    if r == "alert_added":
+        return {"ok": True, "msg": "ontvanger toegevoegd"}
+    if r == "alert_err_pubkey":
+        return {"ok": False,
+                "msg": "een volledige pubkey van 64 hex-tekens is vereist voor de ontvanger"}
+    if r == "alert_deleted":
+        return {"ok": True, "msg": "ontvanger verwijderd"}
+    if r == "alert_notfound":
+        return {"ok": False, "msg": "onbekende ontvanger"}
+    if r == "cmd_nosender":
+        return {"ok": False, "msg": "kies eerst een afzender-node (die de DM verstuurt)"}
+    if r == "cmd_ok":
+        return {"ok": True,
+                "msg": f"commando verzonden naar {comp['name']}: "
+                       f"{request.query_params.get('b', '')}"}
+    if r == "cmd_err":
+        return {"ok": False, "msg": f"niet verstuurd — {request.query_params.get('e', '')}"}
+    return None
+
+
+def _senddm_result(request: Request) -> dict | None:
+    r = request.query_params.get("r", "")
+    if r == "nosender":
+        return {"ok": False, "msg": "kies eerst een afzender-node"}
+    if r == "sent":
+        return {"ok": True, "msg": f"DM verstuurd naar {request.query_params.get('t', '')}"}
+    if r == "err":
+        return {"ok": False, "msg": f"niet verstuurd — {request.query_params.get('e', '')}"}
+    return None
 
 
 # --- de companions-lijst + CRUD ----------------------------------------------
@@ -81,16 +194,22 @@ def _companions_page(request: Request, extra: dict | None = None):
     ik = rbac.load(user)
     senders = _sender_reps(ik)
     reps = db.q("SELECT * FROM repeaters")
+    comps = db.list_companions()
+    now = time.time()
     ctx = {
         "site_name": config.SITE_NAME, "user": user, "world": "companions",
         "companions_tab": True,
-        "companions": db.list_companions(),
+        "companions": comps,
+        # "Laatst gezien" + val-badge in de tabel, en het startpunt voor de
+        # auto-ververs (companions.js leest dezelfde velden terug uit
+        # /admin/companions/status.json) -- zie ``_loc`` hierboven.
+        "loc_by_id": {c["id"]: _loc(c, now) for c in comps},
         "rep_by_id": {r["id"]: r for r in reps},
         "senders": senders,
         "mag_beheren": rbac.decide(ik, "server.companions"),
         "serverrechten": rbac.serverrechten(ik),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
-        "result": None,
+        "result": _companions_result(request),
     }
     ctx.update(extra or {})
     return templates.TemplateResponse(request, "admin/companions.html", ctx)
@@ -123,22 +242,10 @@ def _companions_map_page(request: Request, extra: dict | None = None):
     locaties = db.companions_with_location()
     now = time.time()
 
-    def _loc(c):
-        fall_ts = c["last_escalated_fall_ts"]
-        out = {"id": c["id"], "name": c["name"], "type": c["type"],
-               "lat": c["last_lat"], "lon": c["last_lon"],
-               "seen_iso": db.iso_from_epoch(c["last_seen"]),
-               # Alleen een recente val kleurt de marker anders -- zie
-               # FALL_RECENT_S hierboven voor waarom een val van maanden terug
-               # niet voor altijd rood moet blijven.
-               "fall_recent": bool(fall_ts) and (now - fall_ts) < FALL_RECENT_S,
-               "fall_kind": c["last_fall_kind"], "fall_iso": db.iso_from_epoch(fall_ts)}
-        return out
-
     ctx = {
         "site_name": config.SITE_NAME, "user": user, "world": "companions",
         "companions_map_tab": True,
-        "locations": [_loc(c) for c in locaties],
+        "locations": [_loc(c, now) for c in locaties],
         "serverrechten": rbac.serverrechten(ik),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "result": None,
@@ -153,6 +260,39 @@ def companions_map_page(request: Request):
     companion die er een heeft. Puur weergave -- geen CRUD, geen commando's,
     dus geen ``mag_beheren`` nodig zoals de andere twee sub-items."""
     return _companions_map_page(request)
+
+
+# --- live gegevens: locatie/gezien/val, voor de auto-ververs op alle drie ----
+#
+# Vóór ``/companions/{cid}`` gedefinieerd, om dezelfde reden als ``/kaart``
+# hierboven: "status.json" is geen geldig getal en zou anders op ``{cid}``
+# botsen.
+#
+# Deze ene route bedient alle drie de pagina's (companions.js/companions_map.js
+# roepen hem periodiek aan): de lijst, de detailpagina en de kaart tonen elk hun
+# eigen deel van dezelfde ``companions``-tabel, en delen daarom ook dezelfde
+# ONDEMAND-poll -- zie companions.poll_now. Die poll is een EXTRA verzoek aan de
+# afzender-node, gedaan op het moment dat iemand ECHT naar de data kijkt (een
+# open pagina, of zijn auto-ververs-tik), in plaats van te wachten op de
+# achtergrondronde van maximaal ``companions.LOC_INTERVAL_S`` oud. De
+# hamerbescherming zit in ``poll_now`` zelf: bij meerdere tabbladen of een korte
+# ververs-cyclus wordt de meeste van deze aanroepen overgeslagen (ze lezen dan
+# gewoon de -- nog steeds vrij verse -- databank).
+@router.get("/companions/status.json")
+def companions_status_json(request: Request, rep: int | None = None):
+    """De actuele locatie/gezien/val van elke companion, als JSON.
+
+    ``rep`` beperkt de ONDEMAND-poll tot die ene afzender-node (de
+    companion-detailpagina kent haar eigen node en hoeft de andere niet te
+    storen); zonder ``rep`` (lijst, kaart) gaat de poll langs alle
+    afzender-nodes, net als de achtergrondronde. De JSON zelf bevat in beide
+    gevallen ALLE companions -- de query kost niets en de aanroeper filtert zelf
+    op het id dat hem aangaat.
+    """
+    require_login(request)
+    companions.poll_now(only_rep_id=rep)
+    now = time.time()
+    return JSONResponse({"companions": [_loc(c, now) for c in db.list_companions()]})
 
 
 def _companion_page(request: Request, cid: int, extra: dict | None = None):
@@ -199,7 +339,7 @@ def _companion_page(request: Request, cid: int, extra: dict | None = None):
         "quiet_actions": companions.QUIET_ACTIONS,
         "serverrechten": rbac.serverrechten(ik),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
-        "result": None,
+        "result": _companion_result(request, comp),
     }
     ctx.update(extra or {})
     return templates.TemplateResponse(request, "admin/companion.html", ctx)
@@ -223,19 +363,15 @@ def companion_add(request: Request, name: str = Form(""), pubkey: str = Form("")
     naam = str(name or "").strip()
     sleutel = str(pubkey or "").strip()
     if not naam:
-        return _companions_page(request, {"result": {
-            "ok": False, "msg": "een companion heeft een naam nodig"}})
+        return _redirect("/admin/companions", r="err_name")
     if not companions.valid_pubkey(sleutel):
-        return _companions_page(request, {"result": {
-            "ok": False, "msg": "een volledige pubkey van 64 hex-tekens is vereist"}})
+        return _redirect("/admin/companions", r="err_pubkey")
     if db.companion_by_pubkey(sleutel):
-        return _companions_page(request, {"result": {
-            "ok": False, "msg": "die pubkey staat al in de lijst"}})
-    cid = db.add_companion(naam, sleutel, type, notes, _keuze_id(sender))
+        return _redirect("/admin/companions", r="err_dup")
+    db.add_companion(naam, sleutel, type, notes, _keuze_id(sender))
     _noteer(request, user, "server.companions",
             detail=f"companion toegevoegd: {naam} ({sleutel[:12]})")
-    return _companions_page(request, {"result": {
-        "ok": True, "msg": f"companion '{naam}' toegevoegd", "cid": cid}})
+    return _redirect("/admin/companions", r="added", n=naam)
 
 
 @router.post("/companions/{cid}/edit")
@@ -252,20 +388,16 @@ def companion_edit(request: Request, cid: int, name: str = Form(""),
     naam = str(name or "").strip()
     sleutel = str(pubkey or "").strip()
     if not naam:
-        return _companions_page(request, {"result": {
-            "ok": False, "msg": "een companion heeft een naam nodig"}})
+        return _redirect(f"/admin/companions/{cid}", r="err_name")
     if not companions.valid_pubkey(sleutel):
-        return _companions_page(request, {"result": {
-            "ok": False, "msg": "een volledige pubkey van 64 hex-tekens is vereist"}})
+        return _redirect(f"/admin/companions/{cid}", r="err_pubkey")
     andere = db.companion_by_pubkey(sleutel)
     if andere and andere["id"] != int(cid):
-        return _companions_page(request, {"result": {
-            "ok": False, "msg": "die pubkey staat al bij een andere companion"}})
+        return _redirect(f"/admin/companions/{cid}", r="err_dup")
     db.update_companion(cid, naam, sleutel, type, notes, _keuze_id(sender))
     _noteer(request, user, "server.companions",
             detail=f"companion bijgewerkt: {naam} ({sleutel[:12]})")
-    return _companions_page(request, {"result": {
-        "ok": True, "msg": f"companion '{naam}' bijgewerkt"}})
+    return _redirect(f"/admin/companions/{cid}", r="edited")
 
 
 @router.post("/companions/{cid}/delete")
@@ -281,8 +413,7 @@ def companion_delete(request: Request, cid: int, csrf: str = Form(...)):
     db.delete_companion(cid)
     _noteer(request, user, "server.companions",
             detail=f"companion verwijderd: {naam}")
-    return _companions_page(request, {"result": {
-        "ok": True, "msg": f"companion '{naam}' verwijderd"}})
+    return _redirect("/admin/companions", r="deleted", n=naam)
 
 
 @router.post("/companions/{cid}/alerts/add")
@@ -300,14 +431,11 @@ def companion_alert_add(request: Request, cid: int, recipient: str = Form(""),
         raise HTTPException(404, "Onbekende companion")
     sleutel = str(recipient or "").strip()
     if not companions.valid_pubkey(sleutel):
-        return _companion_page(request, cid, {"result": {
-            "ok": False,
-            "msg": "een volledige pubkey van 64 hex-tekens is vereist voor de ontvanger"}})
-    aid = db.add_companion_alert(cid, sleutel, _keuze_id(sender), label)
+        return _redirect(f"/admin/companions/{cid}", r="alert_err_pubkey")
+    db.add_companion_alert(cid, sleutel, _keuze_id(sender), label)
     _noteer(request, user, "server.companions",
             detail=f"valalarm-ontvanger toegevoegd bij {comp['name']}: {sleutel[:12]}")
-    return _companion_page(request, cid, {"result": {
-        "ok": True, "msg": "ontvanger toegevoegd", "aid": aid}})
+    return _redirect(f"/admin/companions/{cid}", r="alert_added")
 
 
 @router.post("/companions/{cid}/alerts/{aid}/delete")
@@ -325,9 +453,22 @@ def companion_alert_delete(request: Request, cid: int, aid: int,
             detail=(f"valalarm-ontvanger verwijderd bij {comp['name']} (id {aid})"
                     if verwijderd else
                     f"valalarm-ontvanger niet gevonden bij {comp['name']} (id {aid})"))
-    return _companion_page(request, cid, {"result": {
-        "ok": bool(verwijderd),
-        "msg": "ontvanger verwijderd" if verwijderd else "onbekende ontvanger"}})
+    return _redirect(f"/admin/companions/{cid}",
+                     r="alert_deleted" if verwijderd else "alert_notfound")
+
+
+def _wants_json(request: Request) -> bool:
+    """Of de aanroeper JSON verwacht in plaats van de volledige pagina.
+
+    De commando-knoppen zijn fire-and-forget: companions.js onderschept hun
+    submit en post via ``fetch`` met ``Accept: application/json``, zodat de
+    knop een korte bevestiging kan tonen ZONDER de pagina te herladen (het
+    mesh-antwoord komt toch niet synchroon terug -- zie de commandodocumentatie
+    in companions.py). Zonder JavaScript (of een browser die fetch niet doet)
+    blijft het gewone formulier werken: dan komt hier geen JSON-Accept binnen en
+    valt de route terug op de PRG-redirect hieronder, met dezelfde tekst in de
+    resultaatbanner."""
+    return "application/json" in request.headers.get("accept", "")
 
 
 @router.post("/companions/{cid}/cmd")
@@ -343,7 +484,14 @@ def companion_cmd(request: Request, cid: int, cmd: str = Form(""),
     argumenten; ``companions.send_command`` bouwt de DM-tekst (mét ``!``) en
     verstuurt hem vanaf de gekozen afzender. Zonder gekozen afzender valt hij terug
     op de standaardafzender van de companion.
+
+    Dit is een FIRE-AND-FORGET DM: het versturen lukt of niet, maar een eventueel
+    antwoord van de companion komt niet via deze route terug (dat loopt via de
+    locatie-/valpoll, zie companions.poll_locations). De melding hier gaat dus
+    alleen over "is de DM de deur uit", nooit over wat de companion ermee deed --
+    zie ``_wants_json`` voor hoe dat met en zonder JavaScript getoond wordt.
     """
+    json_out = _wants_json(request)
     comp = db.companion(cid)
     if not comp:
         raise HTTPException(404, "Onbekende companion")
@@ -353,8 +501,10 @@ def companion_cmd(request: Request, cid: int, cmd: str = Form(""),
         # Geen afzender: geen require_perm mogelijk, en dus ook niet versturen.
         # Een eerlijke melding in plaats van een 500 op een lege keuze.
         require_login(request)
-        return _companion_page(request, cid, {"result": {
-            "ok": False, "msg": "kies eerst een afzender-node (die de DM verstuurt)"}})
+        if json_out:
+            return JSONResponse({"ok": False,
+                                 "msg": "kies eerst een afzender-node (die de DM verstuurt)"})
+        return _redirect(f"/admin/companions/{cid}", r="cmd_nosender")
     user = require_perm(request, "node.instelling.merkbaar", rep)
     check_csrf(request, csrf)
     args = {"state": state, "level": level, "slot": slot, "name": name,
@@ -365,10 +515,13 @@ def companion_cmd(request: Request, cid: int, cmd: str = Form(""),
             detail=(f"companion {comp['name']}: {res['body']} verstuurd"
                     if res["ok"] else f"companion-commando mislukt: {res['error']}"),
             outcome=audit.OK if res["ok"] else audit.MISLUKT)
-    return _companion_page(request, cid, {"result": {
-        "ok": res["ok"],
-        "msg": (f"verstuurd: {res['body']}" if res["ok"]
-                else f"niet verstuurd — {res['error']}")}})
+    msg = (f"commando verzonden naar {comp['name']}: {res['body']}" if res["ok"]
+          else f"niet verstuurd — {res['error']}")
+    if json_out:
+        return JSONResponse({"ok": res["ok"], "msg": msg, "body": res["body"]})
+    if res["ok"]:
+        return _redirect(f"/admin/companions/{cid}", r="cmd_ok", b=res["body"])
+    return _redirect(f"/admin/companions/{cid}", r="cmd_err", e=res["error"])
 
 
 # --- de generieke Send-DM-tab (tweede sub-item) -------------------------------
@@ -385,7 +538,7 @@ def _senddm_page(request: Request, extra: dict | None = None):
         "companions": db.list_companions(),
         "serverrechten": rbac.serverrechten(ik),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
-        "result": None,
+        "result": _senddm_result(request),
     }
     ctx.update(extra or {})
     return templates.TemplateResponse(request, "admin/senddm.html", ctx)
@@ -422,20 +575,67 @@ def senddm_contacts(request: Request, rid: int):
                          "contacts": node_contacts, "companions": comps})
 
 
+def _back_target(back: str) -> str:
+    """Waarheen een POST-formulier terugkeert na ``senddm_send``.
+
+    ``back`` zegt WAAR het formulier stond en niet waarheen omgeleid moet
+    worden -- dezelfde regel als ``routes_admin.refresh_repeater``: een veld
+    met een kant-en-klare URL zou een open redirect zijn zodra iemand het
+    formulier naar zijn eigen adres laat wijzen, en dit formulier staat achter
+    een login die dat de moeite waard maakt. Hier komen dus alleen de twee
+    bestemmingen uit die deze functie zelf kent: de generieke Send-DM-tab (geen
+    ``back``, of een onherkenbare waarde), of de companion-pagina waar het
+    'Vrij bericht'-formulier vandaan kwam (``companion:<id>``, en alleen als die
+    companion ook echt bestaat).
+
+    Zonder deze functie stuurde ELKE inzending van het 'Vrij bericht'-formulier
+    op de companion-pagina de bezoeker naar de Send-DM-tab -- weg van de pagina
+    waar hij net op stond, zonder dat de nieuwe toestand (er staat hier niets
+    te wijzigen, maar wél de bevestiging) op de plek verscheen waar hij hem
+    verwachtte.
+    """
+    back = str(back or "").strip()
+    if back.startswith("companion:"):
+        try:
+            cid = int(back.split(":", 1)[1])
+        except ValueError:
+            cid = None
+        if cid is not None and db.companion(cid):
+            return f"/admin/companions/{cid}"
+    return "/admin/senddm"
+
+
 @router.post("/senddm/send")
 def senddm_send(request: Request, sender: str = Form(""), pubkey: str = Form(""),
-                msg: str = Form(""), csrf: str = Form(...)):
+                msg: str = Form(""), back: str = Form(""), csrf: str = Form(...)):
     """Een DM versturen vanaf de gekozen afzender-node naar de gekozen pubkey.
 
     De bestemming komt als volledige pubkey binnen (de kiezer vult hem in, of hij
     is met de hand getypt). Versturen is een node-handeling op de afzender, want
-    het kost zendtijd op díe node -- vandaar require_perm op de afzender-rij."""
+    het kost zendtijd op díe node -- vandaar require_perm op de afzender-rij.
+
+    ``back`` (zie ``_back_target``) bepaalt de redirect: de generieke Send-DM-tab
+    zelf stuurt geen ``back`` mee en komt op zichzelf terug; het 'Vrij
+    bericht'-formulier op de companion-pagina stuurt ``companion:<id>`` mee en
+    komt op DIE pagina terug, met dezelfde melding als de commando-knoppen
+    (``cmd_ok``/``cmd_err``) -- het is tenslotte dezelfde soort DM naar
+    dezelfde companion.
+
+    Net als ``companion_cmd`` geeft deze route JSON in plaats van een redirect
+    als de aanroeper dat vraagt (``_wants_json``) -- beide formulieren staan in
+    companions.js achter dezelfde ``cmd-ajax``-onderschepping.
+    """
+    json_out = _wants_json(request)
+    doel = _back_target(back)
     rid = _keuze_id(sender)
     rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,)) if rid else None
     if rep is None:
         require_login(request)
-        return _senddm_page(request, {"result": {
-            "ok": False, "msg": "kies eerst een afzender-node"}})
+        if json_out:
+            return JSONResponse({"ok": False, "msg": "kies eerst een afzender-node"})
+        if doel == "/admin/senddm":
+            return _redirect(doel, r="nosender")
+        return _redirect(doel, r="cmd_nosender")
     user = require_perm(request, "node.instelling.merkbaar", rep)
     check_csrf(request, csrf)
     res = companions.send_dm(rep, pubkey, msg)
@@ -446,7 +646,14 @@ def senddm_send(request: Request, sender: str = Form(""), pubkey: str = Form("")
             detail=(f"DM naar {label} vanaf {rep['name']}" if res["ok"]
                     else f"DM mislukt: {res['error']}"),
             outcome=audit.OK if res["ok"] else audit.MISLUKT)
-    return _senddm_page(request, {"result": {
-        "ok": res["ok"],
-        "msg": (f"DM verstuurd naar {label}" if res["ok"]
-                else f"niet verstuurd — {res['error']}")}})
+    if json_out:
+        msg_out = (f"DM verstuurd naar {label}" if res["ok"]
+                  else f"niet verstuurd — {res['error']}")
+        return JSONResponse({"ok": res["ok"], "msg": msg_out})
+    if doel == "/admin/senddm":
+        if res["ok"]:
+            return _redirect(doel, r="sent", t=label)
+        return _redirect(doel, r="err", e=res["error"])
+    if res["ok"]:
+        return _redirect(doel, r="cmd_ok", b=msg)
+    return _redirect(doel, r="cmd_err", e=res["error"])

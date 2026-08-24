@@ -292,7 +292,7 @@ def sender_candidates(reps) -> list:
 # node een lege lijst terug, dan degradeert dit naar niets bijwerken -- geen
 # fout die de rest van de pollronde raakt.
 
-def location_nodes() -> list:
+def location_nodes(only_rep_id: int | None = None) -> list:
     """De nodes waar minstens één companion zijn afzender op heeft staan.
 
     Dat zijn de enige nodes waarvoor ``/companions.json`` zinvol is: een node
@@ -300,9 +300,16 @@ def location_nodes() -> list:
     aankloppen zou voor niets 404's opleveren op nodes die dit onderdeel niet
     kennen. ``sender_repeater_id`` is hier de aanwijzing WELKE node de
     companion aan het mesh hangt, niet alleen een voorkeur voor het versturen.
+
+    ``only_rep_id`` beperkt de ronde tot precies die ene node -- gebruikt door
+    de pagina-gedreven ONDEMAND-poll (``poll_now``) op de companion-detailpagina,
+    waar maar één node relevant is en de andere niet gestoord hoeven te worden
+    voor een klik op één pagina.
     """
     ids = sorted({int(c["sender_repeater_id"]) for c in db.list_companions()
                   if c["sender_repeater_id"]})
+    if only_rep_id is not None:
+        ids = [i for i in ids if i == int(only_rep_id)]
     if not ids:
         return []
     marks = ",".join("?" * len(ids))
@@ -406,11 +413,14 @@ def _escalate_fall(comp_row, kind: str, lat, lon) -> dict:
     return out
 
 
-def poll_locations(timeout: int | None = None) -> dict:
+def poll_locations(timeout: int | None = None, only_rep_id: int | None = None) -> dict:
     """Elke afzender-node om ``/companions.json`` vragen: de locaties van de
     beheerde companions bijwerken én een NIEUWE val escaleren.
     ``{"nodes", "updated", "errors", "falls", "fall_alerts_sent",
     "fall_alerts_failed"}``.
+
+    ``only_rep_id`` -- zie ``location_nodes`` -- beperkt de ronde tot één node.
+    Standaard (``None``) is dit de volledige achtergrondronde.
 
     Matcht op PUBKEY en niet op de node waarachter het antwoord vandaan kwam:
     ``sender_repeater_id`` is een VOORKEUR voor het versturen (zie companions.py
@@ -430,7 +440,7 @@ def poll_locations(timeout: int | None = None) -> dict:
     now = time.time()
     out = {"nodes": 0, "updated": 0, "errors": [],
            "falls": 0, "fall_alerts_sent": 0, "fall_alerts_failed": 0}
-    for rep in location_nodes():
+    for rep in location_nodes(only_rep_id):
         host = str(rep["sensor_host"] or "").strip()
         if not host:
             continue
@@ -489,13 +499,78 @@ def poll_locations(timeout: int | None = None) -> dict:
 # zendtijdbudget te bewaken zoals bij sweepsched -- dit is een gewoon
 # HTTP-verzoek over het lokale net, net als sensornode.poll.
 
-LOC_INTERVAL_S = max(30, int(config.env("COMPANION_LOC_POLL_S", "300") or 300))
+# Was 300s (5 minuten). Een companion die zijn locatie meteen aan zijn afzender-
+# node meldt, verscheen daardoor tot vijf minuten later pas hier -- vandaar de
+# ONDEMAND-poll (``poll_now`` hieronder) voor het moment dat iemand ECHT naar
+# een companion-pagina kijkt. Zestig seconden is de achtergrondbodem voor
+# wanneer er NIEMAND kijkt (geen open pagina die de ondemand-weg raakt): ruim
+# genoeg boven de vloer van 30s om geen node te bestoken, kort genoeg om een
+# val binnen een minuut zonder open pagina alsnog te escaleren.
+LOC_INTERVAL_S = max(30, int(config.env("COMPANION_LOC_POLL_S", "60") or 60))
 LOC_ENABLED = config.env("COMPANION_LOC_POLL_ENABLED", "1").strip().lower() not in (
     "0", "false", "no", "nee", "off", "")
 LOC_FIRST_RUN_DELAY_S = 25
 
 _loc_thread = None
 _loc_state = {"last_run": None, "last_result": "nog niet gedraaid"}
+
+# --- de ONDEMAND-poll: een pagina die ECHT bekeken wordt, niet wachten -------
+#
+# De achtergrondronde hierboven is er voor als er niemand kijkt. Zodra iemand
+# wél kijkt -- de companions-lijst, één companion-pagina, of de kaart opent, of
+# de auto-ververs-timer van die pagina's tikt -- wil die persoon de ECHTE
+# actuele locatie zien en niet wachten tot de volgende achtergrondronde. Deze
+# functie is de ene plek die dat doet: een korte, ongeblokkeerde extra
+# ``poll_locations``-ronde, met een eigen hamerbescherming zodat een pagina die
+# elke 15-20s ververst (of meerdere open tabbladen tegelijk) niet bij elke tik
+# opnieuw alle afzender-nodes lastigvalt. ``_ondemand_lock`` met
+# ``blocking=False`` zorgt dat twee gelijktijdige verzoeken (twee tabbladen die
+# toevallig samenvallen) niet allebei tegelijk pollen; de tweede ziet gewoon de
+# cooldown en slaat over -- de eerste ronde werkt toch voor allebei.
+ONDEMAND_MIN_GAP_S = 8
+_ondemand_lock = threading.Lock()
+_ondemand_last_ts = 0.0
+
+
+def poll_now(timeout: int = 4, only_rep_id: int | None = None) -> dict | None:
+    """Een ONDEMAND-ronde, uitgelokt door een pagina die net bekeken wordt.
+
+    ``None`` als er te kort geleden al gepolld is (achtergrond of ondemand,
+    zie ``ONDEMAND_MIN_GAP_S``) of als er al een ondemand-ronde bezig is --
+    geen fout, gewoon "de data die er al is, is recent genoeg". De aanroeper
+    (de JSON-route) leest daarna sowieso de databank opnieuw, dus een
+    overgeslagen poll levert nooit een lege of foute pagina op, hooguit een
+    paar seconden minder vers dan het zou kunnen zijn.
+
+    ``timeout`` staat hier standaard KORTER dan de achtergrondronde
+    (``sensornode.TIMEOUT_S``, doorgaans 8s): dit loopt in de request van een
+    pagina die iemand open heeft staan, en een trage of onbereikbare node mag
+    dat verzoek niet nodeloos lang laten hangen. ``only_rep_id`` beperkt de
+    ronde tot de ene node die voor de bekeken pagina relevant is (zie
+    ``location_nodes``); zonder waarde (kaart, lijst) gaat de ronde langs alle
+    afzender-nodes, net als de achtergrondronde.
+    """
+    global _ondemand_last_ts
+    if time.time() - _ondemand_last_ts < ONDEMAND_MIN_GAP_S:
+        return None
+    if not _ondemand_lock.acquire(blocking=False):
+        return None
+    try:
+        if time.time() - _ondemand_last_ts < ONDEMAND_MIN_GAP_S:
+            return None  # een andere thread was net vóór ons
+        uit = poll_locations(timeout=timeout, only_rep_id=only_rep_id)
+        _ondemand_last_ts = time.time()
+        if uit["nodes"]:
+            _loc_state["last_run"] = db.utcnow()
+            _loc_state["last_result"] = (
+                f"{uit['updated']} locatie(s) bijgewerkt van {uit['nodes']} node(s) "
+                "(ondemand, pagina bekeken)")
+        return uit
+    except Exception:                       # noqa: BLE001 -- zie _loc_run
+        log.exception("Ondemand companion-poll afgebroken")
+        return None
+    finally:
+        _ondemand_lock.release()
 
 
 def location_status() -> dict:
