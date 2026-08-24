@@ -3,7 +3,7 @@
 Waar dit past
 -------------
 Een companion is geen node die publiceert of uitgevraagd wordt -- hij is een
-BESTEMMING. Deze module kent twee dingen en niets daarbuiten:
+BESTEMMING. Deze module kent drie dingen en niets daarbuiten:
 
 1.  De **commandotaal** van de companion (de T1000-E-DM-commando's). Die staat
     hier geïsoleerd, op één plek, precies zoals de room-API-vorm in ``rooms.py``
@@ -13,6 +13,10 @@ BESTEMMING. Deze module kent twee dingen en niets daarbuiten:
     companion, en die DM vertrekt bij een AFZENDER-node via ``rooms.bot_sendto``
     (``POST /bot/sendto`` op die node). Het lokale mesh routeert de DM daarna
     vanzelf verder via de repeater -- daar hoeft deze module niets voor te doen.
+3.  De **locatie**, de andere kant op: geen commando naar de companion maar een
+    periodieke GET van ``/companions.json`` op de afzender-node, die vertelt
+    waar elke companion die hij kent laatst gezien is. Zie ``poll_locations``
+    onderaan dit bestand voor de aannames over dat endpoint.
 
 Waarom het vervoer pluggable blijft
 -----------------------------------
@@ -33,9 +37,14 @@ kunnen lopen.
 """
 from __future__ import annotations
 
+import logging
 import re
+import threading
+import time
 
-from . import db, nodeconfig, rooms
+from . import config, db, nodeconfig, rooms, sensornode
+
+log = logging.getLogger("meshmanager.companions")
 
 # --- de commandotaal, op één plek ---------------------------------------------
 #
@@ -250,3 +259,168 @@ def sender_candidates(reps) -> list:
     de aanroeper (op naam), zodat tientallen kandidaten voorspelbaar staan.
     """
     return [r for r in reps if can_send_from(r)]
+
+
+# --- de locatie van companions, uit /companions.json van hun afzender --------
+#
+# Waarom dit hier staat en niet in sensornode.py: die module kent de NODE-kant
+# van dit soort endpoints (adres, weblogin, foutafhandeling over HTTP) en
+# levert de kale GET (``sensornode._json``); WELKE pubkeys daarna companions
+# zijn en welke rij in DEZE tabel ze bijwerken is companion-kennis, en die
+# hoort bij de rest van de companion-laag. Dezelfde scheiding als bij
+# ``send_dm``: sensornode.py weet HOE er een verzoek de deur uit gaat, deze
+# module weet WAT ermee gebeurt.
+#
+# ``/companions.json`` is een derde route op dezelfde eigen API als
+# ``/status.json``, ``/cfg.json`` en ``/acl.json`` -- vandaar dat het adres
+# hetzelfde veld is (``repeaters.sensor_host``) en geen nieuw veld: het is de
+# node die zijn HTTP-API aanbiedt, niet een derde soort adres.
+#
+# AANNAME over de vorm van het antwoord (er was geen levende node met dit
+# endpoint beschikbaar tijdens het bouwen hiervan):
+#   {"companions": [{"name", "pubkey" (64 hex), "lat", "lon", "seen"}, ...]}
+# Ontbreekt het endpoint (oudere firmware) of geeft de node een lege lijst
+# terug, dan degradeert dit naar niets bijwerken -- geen fout die de rest van
+# de pollronde raakt, zie ``poll_locations``.
+
+def location_nodes() -> list:
+    """De nodes waar minstens één companion zijn afzender op heeft staan.
+
+    Dat zijn de enige nodes waarvoor ``/companions.json`` zinvol is: een node
+    zonder companion hoeft dat endpoint niet te hebben, en bij elke sensornode
+    aankloppen zou voor niets 404's opleveren op nodes die dit onderdeel niet
+    kennen. ``sender_repeater_id`` is hier de aanwijzing WELKE node de
+    companion aan het mesh hangt, niet alleen een voorkeur voor het versturen.
+    """
+    ids = sorted({int(c["sender_repeater_id"]) for c in db.list_companions()
+                  if c["sender_repeater_id"]})
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    return db.q(f"SELECT * FROM repeaters WHERE id IN ({marks})", tuple(ids))
+
+
+# Een waarde vanaf deze grens lezen we als een absoluut tijdstip (epoch-
+# seconden na 1 januari 2001) en niet als een ouderdom in seconden. De reden om
+# hier een gok te MOETEN doen staat in de kolomtoelichting bij
+# ``companions.last_seen`` in db.py: dit nodetype heeft na een herstart een
+# RTC die op 15 mei 2024 staat, dus "seen" kan zowel een epoch als een
+# ouderdom betekenen en er is geen vlag die het zegt.
+_EPOCH_2001 = 978307200
+
+
+def _seen_to_epoch(seen, now: float) -> int | None:
+    """``seen`` uit /companions.json naar een epoch met DEZE servers klok.
+
+    Zie ``_EPOCH_2001`` hierboven voor de heuristiek. Alles wat geen bruikbaar
+    getal is (ontbrekend, negatief, een string) levert None op -- geen gok
+    beter dan een verkeerde gok die er hetzelfde uitziet als een echte tijd.
+    """
+    if not isinstance(seen, (int, float)) or isinstance(seen, bool) or seen < 0:
+        return None
+    seen = int(seen)
+    return seen if seen >= _EPOCH_2001 else int(now) - seen
+
+
+def poll_locations(timeout: int | None = None) -> dict:
+    """Elke afzender-node om ``/companions.json`` vragen en de locaties van de
+    beheerde companions bijwerken. ``{"nodes", "updated", "errors"}``.
+
+    Matcht op PUBKEY en niet op de node waarachter het antwoord vandaan kwam:
+    ``sender_repeater_id`` is een VOORKEUR voor het versturen (zie companions.py
+    hierboven) en mag veranderen zonder dat een companion zijn geschiedenis
+    verliest, dus een companion die zijn locatie via een andere node meldt dan
+    de ingestelde voorkeur wordt hier gewoon bijgewerkt.
+
+    Eén node die niet antwoordt (oude firmware zonder dit endpoint, of gewoon
+    onbereikbaar) mag de ronde voor de andere nodes niet breken -- dezelfde
+    lijn als ``sensornode.run_once``.
+    """
+    now = time.time()
+    out = {"nodes": 0, "updated": 0, "errors": []}
+    for rep in location_nodes():
+        host = str(rep["sensor_host"] or "").strip()
+        if not host:
+            continue
+        out["nodes"] += 1
+        got = sensornode._json(host, "/companions.json", timeout)
+        if not got["ok"]:
+            out["errors"].append(f"{rep['name']}: {got['error']}")
+            continue
+        for c in (got["data"].get("companions") or []):
+            if not isinstance(c, dict):
+                continue
+            pubkey = str(c.get("pubkey") or "").strip()
+            lat, lon = c.get("lat"), c.get("lon")
+            if not valid_pubkey(pubkey) or lat is None or lon is None:
+                continue
+            try:
+                lat_f, lon_f = float(lat), float(lon)
+            except (TypeError, ValueError):
+                continue
+            seen_epoch = _seen_to_epoch(c.get("seen"), now)
+            if db.set_companion_location(pubkey, lat_f, lon_f, seen_epoch):
+                out["updated"] += 1
+    return out
+
+
+# --- de achtergrondronde -------------------------------------------------------
+#
+# Een eigen klein schema en geen haakje in sensornode._run: die module kent
+# companions niet (en zou dat ook niet moeten -- zie de toelichting hierboven),
+# en dit bestand hangt al van sensornode af voor de kale GET. Andersom zou een
+# kringverwijzing zijn. Dus: hetzelfde patroon (thread, interval, eerste-ronde-
+# vertraging, aan/uit via de omgeving) maar in het klein, want er is hier geen
+# zendtijdbudget te bewaken zoals bij sweepsched -- dit is een gewoon
+# HTTP-verzoek over het lokale net, net als sensornode.poll.
+
+LOC_INTERVAL_S = max(30, int(config.env("COMPANION_LOC_POLL_S", "300") or 300))
+LOC_ENABLED = config.env("COMPANION_LOC_POLL_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "nee", "off", "")
+LOC_FIRST_RUN_DELAY_S = 25
+
+_loc_thread = None
+_loc_state = {"last_run": None, "last_result": "nog niet gedraaid"}
+
+
+def location_status() -> dict:
+    """Wat de serverpagina over de laatste locatieronde te melden heeft."""
+    return {"enabled": LOC_ENABLED, "interval_s": LOC_INTERVAL_S,
+            "last_run": _loc_state["last_run"], "last_result": _loc_state["last_result"]}
+
+
+def _loc_run() -> None:
+    time.sleep(LOC_FIRST_RUN_DELAY_S)
+    while True:
+        try:
+            uit = poll_locations()
+            _loc_state["last_run"] = db.utcnow()
+            if not uit["nodes"]:
+                _loc_state["last_result"] = "geen afzender-node met companions"
+            else:
+                _loc_state["last_result"] = (
+                    f"{uit['updated']} locatie(s) bijgewerkt van {uit['nodes']} node(s)")
+                if uit["errors"]:
+                    _loc_state["last_result"] += f"; {len(uit['errors'])} node(s) gaven een fout"
+        except Exception:                   # noqa: BLE001 -- zie sensornode._run
+            log.exception("Companion-locatieronde afgebroken")
+            _loc_state["last_result"] = "onverwachte fout"
+        time.sleep(LOC_INTERVAL_S)
+
+
+def start_location_poll() -> None:
+    """De locatieronde starten, tenzij ze uitstaat.
+
+    Uit zetten is een geldige keuze: geen companion met GPS aan, of een
+    installatie die deze weg simpelweg niet gebruikt, hoort er geen periodiek
+    HTTP-verzoek bij te krijgen dat nooit iets oplevert.
+    """
+    global _loc_thread
+    if not LOC_ENABLED:
+        log.info("Companion-locatiepoll staat uit (MM_COMPANION_LOC_POLL_ENABLED)")
+        _loc_state["last_result"] = "uitgeschakeld"
+        return
+    if _loc_thread is not None:
+        return
+    _loc_thread = threading.Thread(target=_loc_run, name="companion-loc", daemon=True)
+    _loc_thread.start()

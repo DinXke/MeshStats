@@ -27,6 +27,21 @@
     <a href="/admin/companions">&larr; alle companions</a>
   </div>
   {% if comp.notes %}<p class="muted small">{{ comp.notes }}</p>{% endif %}
+  {#- Locatie uit /companions.json van de afzender-node (companions.poll_locations),
+      niet uit een !loc-commando: dat commando stuurt de companion alleen een DM
+      om zijn positie te MELDEN, het antwoord komt niet via deze route terug. -#}
+  {% if comp.last_lat is not none and comp.last_lon is not none %}
+  <p class="muted small">
+    &#128205; Laatst gemelde locatie:
+    <span class="mono">{{ "%.5f"|format(comp.last_lat) }}, {{ "%.5f"|format(comp.last_lon) }}</span>
+    {% if last_seen_iso %}
+    (<time class="reltime" datetime="{{ last_seen_iso }}">{{ last_seen_iso }}</time>)
+    {% endif %}
+    — <a href="/admin/companions/kaart">op de kaart</a>
+  </p>
+  {% else %}
+  <p class="muted small">Nog geen locatie bekend voor deze companion.</p>
+  {% endif %}
 </div>
 
 {% if result %}

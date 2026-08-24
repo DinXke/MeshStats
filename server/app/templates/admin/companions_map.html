@@ -1,0 +1,41 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Companions — kaart — {{ site_name }}{% endblock %}
+{% block admin %}
+
+{#- Het derde sub-item van de Companions-module: puur weergave. Geen CRUD, geen
+    commando's -- alleen de laatst gemelde locatie van elke companion die er een
+    heeft, uit /companions.json op zijn afzender-node (zie
+    companions.poll_locations). Wie hier een bolletje wil aanklikken voor een
+    commando, gaat naar de companion-pagina zelf via de popup-link. -#}
+<h1>Companions — kaart</h1>
+
+<p class="muted">
+  De laatst gemelde locatie van elke companion, opgehaald bij zijn
+  <strong>afzender-node</strong> (<code>/companions.json</code>). Dit is een
+  periodieke achtergrondronde en geen live volgspoor: hoe oud een punt is staat
+  in de popup.
+</p>
+
+{% if locations %}
+<div id="companion-map"></div>
+{% else %}
+<p class="muted map-missing">
+  &#128205; Nog geen locaties bekend. Dat kan zijn omdat er nog geen companion
+  ooit een positie meldde, of omdat de afzender-node(s) <code>/companions.json</code>
+  nog niet aanbieden. Zodra een ronde een locatie oplevert, verschijnt hier een
+  kaart.
+</p>
+{% endif %}
+
+<script>window.COMPANION_LOCATIONS = {{ locations|tojson }};</script>
+{% endblock %}
+
+{#- Leaflet van dezelfde CDN als de publieke kaarten (index.html/repeater.html):
+    dit is de beheer-UI, met internet op de plek waar hij draait -- zie de
+    projectafspraak daarover. -#}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_v }}"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/companions_map.js?v={{ asset_v }}"></script>
+{% endblock %}

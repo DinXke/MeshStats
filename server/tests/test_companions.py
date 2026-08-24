@@ -268,15 +268,159 @@ def test_companion_toevoegen_als_serverbeheerder(db):
 
 
 def test_paginas_renderen(db):
-    """companions, companion-detail en senddm door de echte Jinja-omgeving."""
+    """companions, companion-detail, senddm en de kaart door de echte
+    Jinja-omgeving."""
     from app import routes_companions
     maak_gebruiker("baas", superuser=True)
     cookie = _sessie("baas")
     cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
     for resp in (routes_companions.companions_page(verzoek(cookie)),
                  routes_companions.companion_page(verzoek(cookie), cid),
-                 routes_companions.senddm_page(verzoek(cookie))):
+                 routes_companions.senddm_page(verzoek(cookie)),
+                 routes_companions.companions_map_page(verzoek(cookie))):
         assert resp.status_code == 200
+
+
+def test_companions_map_pagina_rendert_ook_met_een_locatie(db):
+    """De kaart-pagina met minstens één bekende locatie -- de andere aanroep
+    hierboven dekt alleen het lege geval."""
+    from app import routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    db.add_companion("Björn", VALID, "T1000-E", "", None)
+    db.set_companion_location(VALID, 51.2, 5.4, 1000)
+    resp = routes_companions.companions_map_page(verzoek(cookie))
+    assert resp.status_code == 200
+
+
+# --- 4. companion-locaties: databank, vertaling van 'seen', en de poll -------
+
+def test_set_companion_location_matcht_op_pubkey_ongeacht_hoofdletters(db):
+    """De update gaat op de sleutel, niet op een id -- dezelfde normalisatie als
+    companion_by_pubkey."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    assert db.set_companion_location(VALID.upper(), 51.2, 5.4, 1000)
+    rij = db.companion(cid)
+    assert rij["last_lat"] == 51.2
+    assert rij["last_lon"] == 5.4
+    assert rij["last_seen"] == 1000
+    # Een pubkey die niet in de lijst staat: stilzwijgend niets, geen crash.
+    assert db.set_companion_location("f" * 64, 0.0, 0.0, 0) is False
+
+
+def test_companions_with_location_alleen_wie_een_positie_heeft(db):
+    a = db.add_companion("A", VALID, "", "", None)
+    db.add_companion("B", "b" * 64, "", "", None)
+    db.set_companion_location(VALID, 1.0, 2.0, 100)
+    assert [r["id"] for r in db.companions_with_location()] == [a]
+
+
+def test_iso_from_epoch():
+    # Geen ``db``-fixture nodig (geen databank geraakt) -- rechtstreeks de
+    # module, want de naam ``db`` op moduleniveau is hier de FIXTURE-functie.
+    from app import db as db_module
+    assert db_module.iso_from_epoch(None) is None
+    assert db_module.iso_from_epoch("rommel") is None
+    assert db_module.iso_from_epoch(0) == "1970-01-01T00:00:00Z"
+
+
+def test_location_nodes_alleen_de_ingestelde_afzenders(db):
+    """Een node zonder companion hoort niet in de lijst -- overal aankloppen
+    zou voor niets 404's opleveren op nodes die /companions.json niet kennen."""
+    from app import companions
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.get_or_create_repeater("aabbccddeeff", "Ongebruikte node")
+    db.add_companion("Björn", VALID, "", "", node["id"])
+    assert [r["id"] for r in companions.location_nodes()] == [node["id"]]
+
+
+def test_seen_to_epoch_onderscheidt_ouderdom_en_absolute_tijd():
+    """De heuristiek uit companions._seen_to_epoch: een klein getal is een
+    ouderdom in seconden (onbetrouwbare RTC van dit nodetype), een groot getal
+    is al een epoch."""
+    from app import companions
+    now = 2_000_000_000.0  # ruim na 2001
+    assert companions._seen_to_epoch(120, now) == int(now) - 120
+    assert companions._seen_to_epoch(1_999_999_000, now) == 1_999_999_000
+    assert companions._seen_to_epoch(None, now) is None
+    assert companions._seen_to_epoch(-5, now) is None
+    assert companions._seen_to_epoch("120", now) is None
+
+
+def test_poll_locations_werkt_companion_bij_op_pubkey(db, monkeypatch):
+    """De hoofdweg: de afzender-node antwoordt met een locatie, en de companion
+    met die pubkey wordt bijgewerkt."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    db.add_companion("Björn", VALID, "", "", node["id"])
+
+    def nep_json(host, path, timeout=None):
+        assert host == "10.0.0.5"
+        assert path == "/companions.json"
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 51.2, "lon": 5.4, "seen": 42},
+        ]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    uit = companions.poll_locations()
+    assert uit == {"nodes": 1, "updated": 1, "errors": []}
+    rij = db.companion_by_pubkey(VALID)
+    assert rij["last_lat"] == 51.2
+    assert rij["last_lon"] == 5.4
+    assert rij["last_seen"] is not None
+
+
+def test_poll_locations_negeert_ongeldige_entries(db, monkeypatch):
+    """Geen pubkey, een halve pubkey, of geen positie: overgeslagen en niet een
+    halve of foute rij in de databank."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    db.add_companion("Björn", VALID, "", "", node["id"])
+
+    def nep_json(host, path, timeout=None):
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "halve sleutel", "pubkey": "kort", "lat": 1, "lon": 2},
+            {"name": "geen positie", "pubkey": VALID},
+        ]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    uit = companions.poll_locations()
+    assert uit["updated"] == 0
+    assert db.companion_by_pubkey(VALID)["last_lat"] is None
+
+
+def test_poll_locations_ene_node_faalt_de_andere_niet(db, monkeypatch):
+    """Eén afzender die niet antwoordt mag de ronde voor de andere niet breken --
+    dezelfde lijn als sensornode.run_once."""
+    from app import companions, sensornode
+    stuk = db.get_or_create_repeater("e3d3f4d7edd0", "Stuk")
+    werkt = db.get_or_create_repeater("aabbccddeeff", "Werkt")
+    db.set_sensor_host(stuk["id"], "10.0.0.5", by_admin=True)
+    db.set_sensor_host(werkt["id"], "10.0.0.6", by_admin=True)
+    db.add_companion("A", VALID, "", "", stuk["id"])
+    db.add_companion("B", "b" * 64, "", "", werkt["id"])
+
+    def nep_json(host, path, timeout=None):
+        if host == "10.0.0.5":
+            return {"ok": False, "error": "niet bereikbaar", "data": {}}
+        return {"ok": True, "error": "", "data": {"companions": [
+            {"name": "B", "pubkey": "b" * 64, "lat": 1.0, "lon": 2.0, "seen": 10},
+        ]}}
+
+    monkeypatch.setattr(sensornode, "_json", nep_json)
+    uit = companions.poll_locations()
+    assert uit["nodes"] == 2
+    assert uit["updated"] == 1
+    assert len(uit["errors"]) == 1
+    assert db.companion_by_pubkey("b" * 64)["last_lat"] == 1.0
+    assert db.companion_by_pubkey(VALID)["last_lat"] is None
+
+
+def test_poll_locations_zonder_afzenders_doet_niets(db):
+    from app import companions
+    assert companions.poll_locations() == {"nodes": 0, "updated": 0, "errors": []}
 
 
 def test_companion_cmd_bouwt_tune_en_verstuurt(db, monkeypatch):

@@ -661,6 +661,23 @@ COLUMN_MIGRATIONS = [
     # Wie dit token heeft aangemaakt. Zonder deze kolom is een token een sleutel
     # zonder eigenaar zodra er meer dan één beheerder is.
     ("tokens", "created_by", "TEXT"),
+    # De laatst gemelde locatie van een companion, en wanneer. Een WAARNEMING
+    # zoals sensor_seen: niets hiervan wordt ingetypt, het komt uit
+    # ``GET /companions.json`` op de afzender-node (zie companions.poll_locations)
+    # en ontbreekt totdat die node ooit een locatie voor deze companion gemeld
+    # heeft.
+    #
+    # ``last_seen`` is een EPOCH in seconden en geen letterlijke kopie van het
+    # ``seen``-veld dat de node teruggeeft: dat veld is voor dit nodetype
+    # onbetrouwbaar als absoluut tijdstip (zie de toelichting bij
+    # ``neighbors_from_acl`` in sensornode.py -- de RTC staat na een herstart op
+    # 15 mei 2024) en kan dus net zo goed een OUDERDOM in seconden zijn.
+    # ``poll_locations`` rekent dat om naar een epoch met de klok van DEZE
+    # server, zodat de kolom hier altijd hetzelfde soort waarde draagt,
+    # ongeacht wat de node meestuurde.
+    ("companions", "last_lat", "REAL"),
+    ("companions", "last_lon", "REAL"),
+    ("companions", "last_seen", "INTEGER"),
 ]
 
 
@@ -3125,6 +3142,52 @@ def delete_companion(cid: int) -> int:
     """Een companion verwijderen. Geeft het aantal verwijderde rijen terug, zodat
     de route "onbekende companion" van "verwijderd" kan onderscheiden."""
     return execute_rowcount("DELETE FROM companions WHERE id=?", (int(cid),))
+
+
+def set_companion_location(pubkey: str, lat: float, lon: float,
+                           seen_epoch: int | None) -> bool:
+    """De laatst gemelde locatie van een companion bijwerken, gevonden op zijn
+    PUBKEY (companions.poll_locations matcht op de sleutel uit
+    ``/companions.json`` en niet op de node waar het antwoord vandaan kwam).
+
+    True als er een rij geraakt is. Een pubkey die niet in de lijst staat --
+    de node kan companions kennen die hier nog niet toegevoegd zijn -- levert
+    stilzwijgend niets op: dit is geen plek om ongevraagd rijen aan te maken.
+    """
+    key = str(pubkey or "").strip().lower()
+    if not key:
+        return False
+    return execute_rowcount(
+        "UPDATE companions SET last_lat=?, last_lon=?, last_seen=?, updated=? "
+        "WHERE lower(pubkey)=?",
+        (float(lat), float(lon),
+         int(seen_epoch) if seen_epoch is not None else None,
+         utcnow(), key)) > 0
+
+
+def companions_with_location() -> list:
+    """Companions met een bekende laatste locatie, op naam gesorteerd.
+
+    Voor de kaart: een companion zonder lat/lon is geen bolletje maar een rij
+    die de kaart niets te tekenen geeft. Klein genoeg om in één keer te lezen,
+    net als ``list_companions``.
+    """
+    return q("SELECT * FROM companions WHERE last_lat IS NOT NULL "
+             "AND last_lon IS NOT NULL ORDER BY name COLLATE NOCASE, id")
+
+
+def iso_from_epoch(ts) -> str | None:
+    """Een epoch-tijd in seconden als ISO-tijdstempel, in dezelfde vorm als
+    ``utcnow()``. Voor kolommen die als INTEGER-epoch opgeslagen zijn (zoals
+    ``companions.last_seen``) maar op het scherm via dezelfde
+    ``<time class="reltime">``-machinerie als relatieve tijd moeten
+    verschijnen als de rest van de site."""
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
 
 
 def record_push_seen(repeater_id: int, hb_s: int, seq: int, boot: int) -> bool:

@@ -10,9 +10,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, clocksync, db, hadiscovery, limits, meshmoni, mqtt_ingest,
-               rbac, retention, routes_admin, routes_api, routes_companions,
-               routes_public, sensornode, sensorpush, sweepsched, tsdb, webpush)
+from . import (auth, clocksync, companions, db, hadiscovery, limits, meshmoni,
+               mqtt_ingest, rbac, retention, routes_admin, routes_api,
+               routes_companions, routes_public, sensornode, sensorpush,
+               sweepsched, tsdb, webpush)
 
 app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -110,6 +111,13 @@ def bootstrap():
     # dezelfde leesvolgorde-reden; hij doet zelf niets zolang MM_PUSH_TOKEN
     # leeg is, en ijkt zijn startpunt op nu -- zie sensorpush._seed.
     sensorpush.start()
+    # De locatie van de beheerde companions, uit /companions.json op hun
+    # afzender-node -- dezelfde soort weg als sensornode.start() hierboven
+    # (een periodieke GET over het lokale net) maar met zijn eigen klein
+    # schema, want companions.py kent de sensornode-laag al en andersom zou een
+    # kringverwijzing zijn. Zie companions.py voor de aannames over dat
+    # endpoint.
+    companions.start_location_poll()
     # En als laatste de weg naar buiten: onze telemetrie als HA-entiteiten op de
     # broker van Home Assistant. Hij hangt een haak in db.ingest (zie
     # register_ingest_hook), dus hij moet ná de ingest-wegen starten -- en zonder

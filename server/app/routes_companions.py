@@ -97,6 +97,45 @@ def companions_page(request: Request):
     return _companions_page(request)
 
 
+# --- de kaart (derde sub-item) -------------------------------------------------
+#
+# Vóór ``/companions/{cid}`` gedefinieerd en niet erna, en dat is geen
+# schoonheidskeuze: FastAPI/Starlette matcht routes in registratievolgorde, en
+# ``{cid}`` is getypeerd als ``int``. Stond deze route erachter, dan zou
+# ``/companions/kaart`` eerst op ``{cid}`` botsen -- "kaart" is geen geldig
+# getal -- en een 422 krijgen in plaats van deze pagina. Dezelfde volgorde-eis
+# geldt al her en der in routes_admin.py (``/repeaters/{rid}/settings`` vóór
+# ``/repeaters/{rid}``).
+
+def _companions_map_page(request: Request, extra: dict | None = None):
+    user = require_login(request)
+    ik = rbac.load(user)
+    locaties = db.companions_with_location()
+    ctx = {
+        "site_name": config.SITE_NAME, "user": user, "world": "companions",
+        "companions_map_tab": True,
+        "locations": [
+            {"id": c["id"], "name": c["name"], "type": c["type"],
+             "lat": c["last_lat"], "lon": c["last_lon"],
+             "seen_iso": db.iso_from_epoch(c["last_seen"])}
+            for c in locaties
+        ],
+        "serverrechten": rbac.serverrechten(ik),
+        "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+        "result": None,
+    }
+    ctx.update(extra or {})
+    return templates.TemplateResponse(request, "admin/companions_map.html", ctx)
+
+
+@router.get("/companions/kaart", response_class=HTMLResponse)
+def companions_map_page(request: Request):
+    """Het derde sub-item: een kaart met de laatst gemelde locatie van elke
+    companion die er een heeft. Puur weergave -- geen CRUD, geen commando's,
+    dus geen ``mag_beheren`` nodig zoals de andere twee sub-items."""
+    return _companions_map_page(request)
+
+
 def _companion_page(request: Request, cid: int, extra: dict | None = None):
     user = require_login(request)
     ik = rbac.load(user)
@@ -110,6 +149,10 @@ def _companion_page(request: Request, cid: int, extra: dict | None = None):
         "site_name": config.SITE_NAME, "user": user, "world": "companions",
         "companions_tab": True,
         "comp": comp,
+        # Epoch (companions.last_seen) naar ISO, zodat de pagina dezelfde
+        # <time class="reltime">-machinerie kan gebruiken als de rest van de
+        # site in plaats van zelf een "geleden"-tekst te bouwen.
+        "last_seen_iso": db.iso_from_epoch(comp["last_seen"]),
         "senders": senders,
         "default_sender": default_sender,
         "mag_versturen": _mag_versturen(ik, senders),

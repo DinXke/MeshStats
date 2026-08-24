@@ -555,6 +555,9 @@ button:focus-visible, .noderow-name:focus-visible {
 }
 #linkmap { height: 440px; border-radius: 8px; background: var(--bg-grid); }
 
+/* --- companion-locatiekaart (beheer) ------------------------------------------ */
+#companion-map { height: 480px; border-radius: 8px; background: var(--bg-grid); }
+
 /* --- live packet map --------------------------------------------------------- */
 #livemap { height: 420px; border-radius: 8px; background: var(--bg-grid); }
 .mapwrap { position: relative; }
