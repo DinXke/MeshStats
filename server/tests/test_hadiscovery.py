@@ -65,6 +65,7 @@ def hd(monkeypatch):
     monkeypatch.setattr(hadiscovery, "HA_MQTT_HOST", "10.10.10.100")
     monkeypatch.setattr(hadiscovery, "HA_DISCOVERY_ENABLED", True)
     hadiscovery._config_sig.clear()
+    hadiscovery._companion_config_sig.clear()
     fake = FakeClient()
     monkeypatch.setattr(hadiscovery, "_client", fake)
     return hadiscovery, fake
@@ -310,3 +311,134 @@ def test_scope_monitored_neemt_ook_meldende_repeaters(db, hd, monkeypatch):
     _repeater(db)
     prefixes = {rep["pubkey_prefix"] for rep, _ in hadiscovery._in_scope_nodes()}
     assert prefixes == {"48d7aade232b", "e3d3f4d7edd0"}
+
+
+# --- companions als device_tracker -------------------------------------------
+#
+# Dezelfde brug, maar nu een companion (opt-in via companions.ha_publish) die
+# als device_tracker op de HA-kaart hoort te verschijnen. Het bewaken waard:
+# alleen wie de opt-in aan heeft ÉN een positie kent wordt gepubliceerd; de
+# positie reist via de json-attributen (het MQTT-device_tracker-contract); en
+# een opt-in die uit gaat (of een companion die verdwijnt) laat geen spook
+# achter -- retained "" op zijn config-topic.
+
+COMP_KEY = "aabbccddeeff" + "0" * 52  # 64 hex; prefix = aabbccddeeff
+
+
+def _opt_in_companion(db, key=COMP_KEY, lat=51.2, lon=5.4, batt=77):
+    """Een companion met de HA-opt-in aan en een bekende positie."""
+    import time as _t
+    cid = db.add_companion("Björn T1000", key, "T1000-E", "", None)
+    db.set_companion_location(key, lat, lon, int(_t.time()))
+    if batt is not None:
+        db.set_companion_batt(key, batt)
+    db.set_companion_ha_publish(cid, True)
+    return cid
+
+
+def test_opt_in_companion_wordt_een_device_tracker(db, hd):
+    hadiscovery, fake = hd
+    _opt_in_companion(db)
+    hadiscovery._sweep()
+
+    oid = "meshmanager_companion_aabbccddeeff"
+    cfg = fake.by_topic(f"homeassistant/device_tracker/{oid}/config")
+    assert cfg is not None and cfg[1] is True          # retained
+    conf = json.loads(cfg[0])
+    assert conf["unique_id"] == oid and conf["object_id"] == oid
+    assert conf["source_type"] == "gps"
+    assert conf["device"]["identifiers"] == [oid]
+    assert conf["device"]["name"] == "Björn T1000"
+    assert conf["device"]["model"] == "T1000-E"
+    # De positie reist via de attributen, niet de kale state.
+    attrs = fake.by_topic(conf["json_attributes_topic"])
+    assert attrs is not None and attrs[1] is True
+    payload = json.loads(attrs[0])
+    assert payload["latitude"] == 51.2 and payload["longitude"] == 5.4
+    assert payload["gps_accuracy"] == hadiscovery.COMPANION_GPS_ACCURACY
+    assert payload["battery_level"] == 77
+    assert payload["last_seen"]                          # ISO, niet leeg
+    # De kale state en de beschikbaarheid.
+    st = fake.by_topic(conf["state_topic"])
+    assert st is not None and st[0] == hadiscovery.COMPANION_STATE
+    av = fake.by_topic("meshmanager/ha/companion_aabbccddeeff/availability")
+    assert av is not None and av[0] == "online"
+    assert hadiscovery._state["published_companions"] == 1
+
+
+def test_zonder_batterij_geen_battery_level_attribuut(db, hd):
+    hadiscovery, fake = hd
+    _opt_in_companion(db, batt=None)
+    hadiscovery._sweep()
+    oid = "meshmanager_companion_aabbccddeeff"
+    conf = json.loads(fake.by_topic(f"homeassistant/device_tracker/{oid}/config")[0])
+    payload = json.loads(fake.by_topic(conf["json_attributes_topic"])[0])
+    assert "battery_level" not in payload
+    assert payload["latitude"] == 51.2
+
+
+def test_alleen_opt_in_companions_worden_gepubliceerd(db, hd):
+    """Een companion zonder opt-in, en een met opt-in maar zonder positie:
+    allebei GEEN device_tracker -- de kern van de per-companion-toestemming."""
+    import time as _t
+    hadiscovery, fake = hd
+    # Wel opt-in, wel positie: publiceren.
+    _opt_in_companion(db, key="a" * 64)
+    # Opt-in maar GEEN positie: overslaan (geen kapotte tracker).
+    cid2 = db.add_companion("Geen fix", "b" * 64, "", "", None)
+    db.set_companion_ha_publish(cid2, True)
+    # Positie maar GEEN opt-in: overslaan (persoonlijk, niet vanzelf op de kaart).
+    cid3 = db.add_companion("Geen opt-in", "c" * 64, "", "", None)
+    db.set_companion_location("c" * 64, 1.0, 2.0, int(_t.time()))
+
+    hadiscovery._sweep()
+    assert hadiscovery._state["published_companions"] == 1
+    # Alleen de eerste heeft een config-topic gekregen.
+    assert fake.by_topic("homeassistant/device_tracker/meshmanager_companion_"
+                         + "a" * 12 + "/config") is not None
+    assert fake.by_topic("homeassistant/device_tracker/meshmanager_companion_"
+                         + "b" * 12 + "/config") is None
+    assert fake.by_topic("homeassistant/device_tracker/meshmanager_companion_"
+                         + "c" * 12 + "/config") is None
+
+
+def test_opt_in_uit_ruimt_de_tracker_op(db, hd):
+    """Opt-in uit (of positie/companion weg): de eerstvolgende ronde legt een
+    retained "" op het config-topic zodat HA de entiteit weggooit."""
+    hadiscovery, fake = hd
+    cid = _opt_in_companion(db)
+    oid = "meshmanager_companion_aabbccddeeff"
+    hadiscovery._sweep()
+    assert fake.by_topic(f"homeassistant/device_tracker/{oid}/config")[0] != ""
+
+    # Opt-in uit -> volgende ronde ruimt op.
+    db.set_companion_ha_publish(cid, False)
+    hadiscovery._sweep()
+    leeg = fake.by_topic(f"homeassistant/device_tracker/{oid}/config")
+    assert leeg is not None and leeg[0] == "" and leeg[1] is True
+    av = fake.by_topic("meshmanager/ha/companion_aabbccddeeff/availability")
+    assert av is not None and av[0] == "offline"
+    assert hadiscovery._state["published_companions"] == 0
+
+
+def test_verwijderde_companion_wordt_opgeruimd(db, hd):
+    """Een companion die uit de lijst verdwijnt (dus ook uit de gewenste set),
+    laat geen spook-tracker achter."""
+    hadiscovery, fake = hd
+    cid = _opt_in_companion(db)
+    oid = "meshmanager_companion_aabbccddeeff"
+    hadiscovery._sweep()
+    db.delete_companion(cid)
+    hadiscovery._sweep()
+    leeg = fake.by_topic(f"homeassistant/device_tracker/{oid}/config")
+    assert leeg is not None and leeg[0] == ""
+
+
+def test_companion_config_niet_elke_ronde_opnieuw(db, hd):
+    hadiscovery, fake = hd
+    _opt_in_companion(db)
+    hadiscovery._sweep()
+    na_eerste = hadiscovery._state["config_msgs"]
+    assert na_eerste > 0
+    hadiscovery._sweep()
+    assert hadiscovery._state["config_msgs"] == na_eerste

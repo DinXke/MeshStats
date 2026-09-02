@@ -110,6 +110,25 @@ SWEEP_SECS = 60
 
 CLIENT_ID = "meshmanager-hadiscovery"
 
+# --- companion-device_trackers -----------------------------------------------
+# De vaste GPS-nauwkeurigheid (meter) die we op elke companion-tracker meesturen.
+# De companions (T1000-E e.d.) melden hun fix zonder een nauwkeurigheidscijfer,
+# dus HA krijgt hier een verstandige, eerlijke schatting in plaats van een
+# verzonnen-precieze 0: HA tekent er een cirkeltje mee op de kaart en dat hoort
+# niet te suggereren dat de positie op de meter klopt.
+COMPANION_GPS_ACCURACY = 20
+# Wat er op het STATE-topic van een companion-tracker staat. Een device_tracker
+# in HA houdt een korte tekst-state; de POSITIE komt niet daaruit maar uit de
+# json-attributen (lat/lon, ``source_type: gps``). Deze retained, niet-lege
+# tekst houdt de entiteit "aanwezig" terwijl het bolletje op de kaart volledig
+# door de attributen gestuurd wordt -- "see" (gezien) en niet "home", want we
+# rekenen hier geen HA-zones uit en willen niet liegen dat de handzender in de
+# thuiszone staat.
+COMPANION_STATE = "see"
+# Het model dat HA onder het companion-device toont als de companion zelf geen
+# type meldt. De beheerde handzenders zijn doorgaans T1000-E's.
+COMPANION_DEFAULT_MODEL = "T1000-E"
+
 # Telemetrie die een gewone (niet-sensor) repeater tot een HA-entiteit maakt, en
 # meteen wat het voor entiteit wordt. Bewust een KORTE, betekenisvolle selectie
 # en niet de hele catalogus: HA volstoppen met tientallen tellers die niemand in
@@ -137,7 +156,7 @@ TELEMETRY_MARKERS = ("bat", "battery_percentage", "airtime_utilization",
 # --- leefstatus van de module ------------------------------------------------
 _state = {
     "connected": False, "connects": 0, "refusals": 0,
-    "published_entities": 0, "published_nodes": 0,
+    "published_entities": 0, "published_nodes": 0, "published_companions": 0,
     "state_msgs": 0, "config_msgs": 0, "removed": 0,
     "last_error": "", "last_publish": None, "started": None,
 }
@@ -148,6 +167,10 @@ _thread = None
 # retained config-topics niet elke ronde opnieuw schrijven maar alleen als er
 # een entiteit bij komt, weg gaat of van vorm verandert.
 _config_sig: dict = {}
+# Idem voor de companion-device_trackers, apart gehouden van de node-set zodat
+# de twee elkaars handtekeningen niet kunnen overschrijven (ze delen dezelfde
+# publiceer-cadans maar niet dezelfde sleutels).
+_companion_config_sig: dict = {}
 
 
 # --- status voor de serverpagina ---------------------------------------------
@@ -200,6 +223,29 @@ def _config_topic(component: str, object_id: str) -> str:
 
 def _object_id(node: str, key: str) -> str:
     return f"meshmanager_{node}_{key}"
+
+
+# --- companion-topics/-ids ---------------------------------------------------
+# Alles hangt aan de PUBKEY-PREFIX van de companion en niet aan zijn rij-id: het
+# id in de databank verandert als iemand een companion weggooit en opnieuw
+# toevoegt, en dan zou HA een tweede tracker aanmaken naast een spook van de
+# eerste. De pubkey is de stabiele identiteit van de handzender -- dezelfde
+# keuze als ``pubkey_prefix`` bij de nodes.
+def _companion_prefix(comp) -> str:
+    return str(comp["pubkey"] or "").strip().lower()[:12]
+
+
+def _companion_node(comp) -> str:
+    """De 'node'-naam waaronder de state-/availability-topics van een companion
+    wonen (``meshmanager/ha/companion_<prefix>/...``)."""
+    return f"companion_{_companion_prefix(comp)}"
+
+
+def _companion_object_id(comp) -> str:
+    """Het HA object-/unique-id van de companion-tracker. Het ``meshmanager_``
+    voorvoegsel houdt hem uit de buurt van andere entiteiten, ``companion_``
+    onderscheidt hem van de node-entiteiten met dezelfde prefix."""
+    return f"meshmanager_companion_{_companion_prefix(comp)}"
 
 
 # --- scope -------------------------------------------------------------------
@@ -493,6 +539,162 @@ def forget_node(node: str) -> None:
     _config_sig.pop(node, None)
 
 
+# --- companions als device_tracker -------------------------------------------
+#
+# Zelfde brug, zelfde conventies als de nodes hierboven -- alleen is de entiteit
+# nu een ``device_tracker`` in plaats van een sensor, en hangt hij aan een
+# companion (opt-in via ``companions.ha_publish``) in plaats van aan een node.
+# De POSITIE reist via een json-attributen-topic (lat/lon/nauwkeurigheid/
+# batterij), niet via de kale state: dat is het MQTT-device_tracker-contract van
+# HA (``source_type: gps`` + ``json_attributes_topic``). De kale state draagt
+# alleen een korte, retained tekst (:data:`COMPANION_STATE`) die de entiteit
+# aanwezig houdt.
+def _companion_attr_topic(node: str) -> str:
+    return _state_topic(node, "attributes")
+
+
+def _companion_state_topic(node: str) -> str:
+    return _state_topic(node, "state")
+
+
+def _companion_pub_key(object_id: str) -> str:
+    return f"ha_pub_companion:{object_id}"
+
+
+def _companion_config(comp) -> dict:
+    """Het discovery-bericht (retained) van één companion-tracker."""
+    object_id = _companion_object_id(comp)
+    node = _companion_node(comp)
+    model = (str(comp["type"] or "").strip() or COMPANION_DEFAULT_MODEL)
+    return {
+        "unique_id": object_id,
+        "object_id": object_id,
+        "name": comp["name"],
+        "source_type": "gps",
+        "state_topic": _companion_state_topic(node),
+        "json_attributes_topic": _companion_attr_topic(node),
+        "device": {
+            "identifiers": [object_id],
+            "name": comp["name"],
+            "manufacturer": "MeshManager",
+            "model": model,
+            # Onder dezelfde brug als de nodes, zodat companions en nodes in HA
+            # bij elkaar onder MeshManager staan.
+            "via_device": "meshmanager_bridge",
+        },
+        "availability": _availability_block(node),
+        "availability_mode": "all",
+    }
+
+
+def _companion_attributes(comp) -> dict:
+    """De json-attributen die HA op de kaart zetten. ``battery_level`` alleen als
+    de companion zijn batterij meldt -- een onbekende stand hoort niet als 0 op
+    de kaart te verschijnen (zie companions._valid_batt)."""
+    from . import db
+    attrs = {
+        "latitude": comp["last_lat"],
+        "longitude": comp["last_lon"],
+        "gps_accuracy": COMPANION_GPS_ACCURACY,
+        "last_seen": db.iso_from_epoch(comp["last_seen"]),
+    }
+    if comp["batt"] is not None:
+        attrs["battery_level"] = comp["batt"]
+    return attrs
+
+
+def _publish_companion(comp, now=None) -> None:
+    """Config (als die veranderde), attributen, state en beschikbaarheid van één
+    companion-tracker publiceren. Onthoudt in ``settings`` dat deze tracker
+    bestaat (over een herstart heen), zodat de ronde hem later kan opruimen als
+    de opt-in uit gaat of de companion verdwijnt."""
+    from . import db
+    object_id = _companion_object_id(comp)
+    node = _companion_node(comp)
+    cfg = _companion_config(comp)
+
+    # Config alleen (her)schrijven als de vorm veranderde -- retained, net als bij
+    # de nodes; elke ronde opnieuw schrijven zou alleen verkeer kosten.
+    sig = json.dumps(cfg, sort_keys=True)
+    if _companion_config_sig.get(object_id) != sig:
+        if _publish(_config_topic("device_tracker", object_id), json.dumps(cfg),
+                    retain=True):
+            _state["config_msgs"] += 1
+        _companion_config_sig[object_id] = sig
+        db.set_setting(_companion_pub_key(object_id), node)
+
+    # Attributen (de positie) en de state: retained, zodat HA ze na een
+    # herverbinding meteen terugziet.
+    if _publish(_companion_attr_topic(node), json.dumps(_companion_attributes(comp)),
+                retain=True):
+        _state["state_msgs"] += 1
+    _publish(_companion_state_topic(node), COMPANION_STATE, retain=True)
+
+    # Beschikbaarheid: online zolang de fix niet te oud is, anders offline --
+    # dezelfde stiltedrempel als de nodes, zodat een companion die dagen geleden
+    # voor het laatst gezien werd in HA grijs staat in plaats van vers te lijken.
+    online = True
+    if now is not None:
+        mins = _minutes_since(db.iso_from_epoch(comp["last_seen"]), now)
+        if mins is not None and mins >= STALE_MIN:
+            online = False
+    _publish(_node_availability_topic(node), "online" if online else "offline",
+             retain=True)
+    _state["last_publish"] = db.utcnow()
+
+
+def _forget_companion(object_id: str, node: str) -> None:
+    """Eén companion-tracker uit HA verwijderen: retained "" op zijn config-topic
+    (de standaard MQTT-discovery-opruiming) en de beschikbaarheid op offline.
+    Gebruikt door de ronde voor companions waarvan de opt-in uit ging, die geen
+    positie meer hebben, of die uit de lijst verdwenen."""
+    from . import db
+    if _publish(_config_topic("device_tracker", object_id), "", retain=True):
+        _state["removed"] += 1
+    if node:
+        _publish(_node_availability_topic(node), "offline", retain=True)
+    # De onthoud-rij weg (en niet leeggemaakt zoals forget_node bij de nodes):
+    # een companion-tracker is een op zichzelf staande entiteit, dus zodra hij
+    # opgeruimd is hoeft de ronde er niet elke keer opnieuw een retained "" op te
+    # blijven schrijven -- weghalen maakt de opruiming eenmalig.
+    db.execute("DELETE FROM settings WHERE key=?", (_companion_pub_key(object_id),))
+    _companion_config_sig.pop(object_id, None)
+
+
+def _sweep_companions(now) -> int:
+    """De companion-kant van de ronde: elke opt-in companion met een positie als
+    device_tracker publiceren, en trackers opruimen die niet meer horen te
+    bestaan (opt-in uit, positie weg, of companion verwijderd). Geeft het aantal
+    gepubliceerde companion-trackers terug.
+
+    De opruiming loopt via ``settings`` (net als ``forget_node`` voor de nodes):
+    wat we ooit publiceerden onthouden we daar, en wat nu niet meer in de
+    gewenste set zit, krijgt een retained "". Zo wordt een opt-in die uit gaat
+    vanzelf bij de eerstvolgende ronde opgeruimd -- de toggle-route hoeft niets
+    naar de broker te doen en blijft een gewone databankmutatie, precies zoals
+    de node-kant scope-veranderingen in de ronde afhandelt en niet op de plek
+    van de mutatie."""
+    from . import db
+    gewenst = {}
+    published = 0
+    for comp in db.companions_for_ha_publish():
+        object_id = _companion_object_id(comp)
+        gewenst[object_id] = _companion_node(comp)
+        _publish_companion(comp, now)
+        published += 1
+    # Trackers die eerder gepubliceerd werden maar nu niet meer gewenst zijn.
+    for row in db.q("SELECT DISTINCT key FROM settings "
+                    "WHERE key LIKE 'ha_pub_companion:%'"):
+        object_id = row["key"].split(":", 1)[1]
+        if object_id not in gewenst:
+            # De 'node' (voor het availability-topic) staat als waarde bewaard;
+            # is die er niet, dan kan de config-opruiming nog steeds door.
+            node = db.get_setting(row["key"], "") or ""
+            _forget_companion(object_id, node)
+    _state["published_companions"] = published
+    return published
+
+
 def _minutes_since(ts, now) -> float | None:
     from datetime import datetime
     try:
@@ -531,6 +733,10 @@ def _sweep() -> None:
             forget_node(node)
     _state["published_nodes"] = published
     _state["published_entities"] = entities
+    # De companions als device_tracker: opt-in met een bekende positie erop,
+    # opt-in die uit ging (of positie/companion weg) eraf. Dezelfde ronde en
+    # dezelfde retained-config-/opruim-conventies als de nodes hierboven.
+    _sweep_companions(now)
 
 
 # --- achtergronddraad --------------------------------------------------------

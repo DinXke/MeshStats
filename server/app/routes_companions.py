@@ -183,6 +183,11 @@ def _companion_result(request: Request, comp) -> dict | None:
         return {"ok": True, "msg": "publieke deel-link aangemaakt"}
     if r == "share_off":
         return {"ok": True, "msg": "publieke deel-link ingetrokken"}
+    if r == "ha_on":
+        return {"ok": True,
+                "msg": "publicatie naar Home Assistant aangezet (device_tracker)"}
+    if r == "ha_off":
+        return {"ok": True, "msg": "publicatie naar Home Assistant uitgezet"}
     return None
 
 
@@ -389,6 +394,10 @@ def _companion_page(request: Request, cid: int, extra: dict | None = None):
         # de reverse proxy af (meshmanager.net), en het pad is genoeg om er op de
         # pagina een klikbare, kopieerbare link van te maken.
         "share_url": f"/loc/{comp['share_token']}" if comp["share_token"] else "",
+        # De Home-Assistant-opt-in (companions.ha_publish), NULL-veilig gelezen
+        # zodat de sjabloon niet zelf 0/NULL hoeft te onderscheiden -- zie
+        # db.companion_ha_publish_on.
+        "ha_publish_on": db.companion_ha_publish_on(comp),
         # De tijdvensters voor het spoor op de kaart, uit companions.py zodat de
         # UI en de server dezelfde bron delen.
         "track_windows": companions.track_windows_for_ui(),
@@ -700,6 +709,37 @@ def companion_share_set(request: Request, cid: int, action: str = Form(""),
     _noteer(request, user, "server.companions",
             detail=f"publieke deel-link aangemaakt voor {comp['name']}")
     return _redirect(f"/admin/companions/{cid}", r="share_on")
+
+
+@router.post("/companions/{cid}/ha")
+def companion_ha_set(request: Request, cid: int, action: str = Form(""),
+                     csrf: str = Form(...)):
+    """De Home-Assistant-opt-in van een companion aan- of uitzetten. Zet je hem
+    aan, dan publiceert hadiscovery deze companion als ``device_tracker`` op de
+    HA-kaart (met de batterij als attribuut) zodra hij een positie heeft; zet je
+    hem uit, dan ruimt de eerstvolgende hadiscovery-ronde die entiteit weer op
+    (retained "" op het config-topic).
+
+    Serverhandeling zoals de rest van de companion-CRUD: dit raakt alleen de
+    LIJST-rij (``companions.ha_publish``), er wordt HIER niets naar de HA-broker
+    verstuurd -- het publiceren én het opruimen gebeuren in de hadiscovery-ronde,
+    precies zoals de node-kant een scope-verandering daar afhandelt en niet op de
+    plek van de mutatie. Staat de HA-brug uit (MM_HA_MQTT_HOST/
+    MM_HA_DISCOVERY_ENABLED), dan blijft de vlag gewoon in de databank staan en
+    gebeurt er niets tot de brug aangezet wordt.
+
+    ``action`` is 'on' (opt-in aan) of 'off' (uit)."""
+    user = require_perm(request, "server.companions")
+    check_csrf(request, csrf)
+    comp = db.companion(cid)
+    if not comp:
+        raise HTTPException(404, "Onbekende companion")
+    aan = str(action or "").strip().lower() == "on"
+    db.set_companion_ha_publish(cid, aan)
+    _noteer(request, user, "server.companions",
+            detail=(f"Home Assistant-publicatie aangezet voor {comp['name']}" if aan
+                    else f"Home Assistant-publicatie uitgezet voor {comp['name']}"))
+    return _redirect(f"/admin/companions/{cid}", r="ha_on" if aan else "ha_off")
 
 
 def _back_target(back: str) -> str:
