@@ -142,6 +142,30 @@
     </form>
   </div>
 
+  <div class="card">
+    <div class="card-head"><strong>Auto-locatie-push</strong></div>
+    <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="locpush">
+      <label class="small muted">interval
+        <select name="min">
+          <option value="0">uit</option>
+          <option value="1">1 min</option>
+          <option value="5" selected>5 min</option>
+          <option value="10">10 min</option>
+          <option value="15">15 min</option>
+          <option value="30">30 min</option>
+          <option value="60">60 min</option>
+        </select></label>
+      {{ afzender() }}
+      <button type="submit">Zetten (!locpush)</button>
+    </form>
+    <p class="muted small">De companion stuurt dan zelf elke X min zijn locatie
+      (<code>#LOC</code>) naar de ingestelde node, zodat kaart/spoor vers blijven
+      zonder handmatige <code>!loc</code>. Het <em>doel</em> staat op de companion
+      zelf ingesteld (via serieel/menu); hier zet je enkel het interval.</p>
+  </div>
+
   {#- Beltoon per ernst: kies een ingebouwde beltoon uit de firmware-bibliotheek,
       luister eerst (▶ Afspelen -> !play <naam>), en wijs hem dan aan een
       ernst-slot toe (Toewijzen -> !tune <slot> preset <naam>). Twee submit-knoppen

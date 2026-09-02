@@ -111,6 +111,7 @@ COMMANDS = {
     "quiet":    {"label": "Stille periode", "args": ["range", "action"]},   # <sH>-<eH> mute|<0-3>|off
     "gps":      {"label": "GPS", "args": ["mode"]},              # on|off|ondemand
     "loc":      {"label": "Locatie opvragen", "args": []},
+    "locpush":  {"label": "Auto-locatie-push interval (min, 0=uit)", "args": ["min"]},
     "cfg":      {"label": "Configuratie opvragen", "args": []},
     "status":   {"label": "Status opvragen", "args": []},
     "allow":    {"label": "Toegestane-lijst", "args": ["sub", "value"]},
@@ -348,6 +349,21 @@ def build(cmd: str, args: dict | None = None) -> dict:
             out["error"] = "een preset-tekst mag niet leeg zijn"
             return out
         body = f"!preset {slot} {text}"
+    elif cmd == "locpush":
+        # Stelt de frequentie van de auto-locatie-push in (`!locpush <min>`); het
+        # doel is al op de companion gezet. 0/off = uit. De companion houdt het
+        # bestaande doel wanneer je enkel het interval meegeeft.
+        m = val("min").lower()
+        if m in ("off", "uit"):
+            body = "!locpush off"
+        elif not m.isdigit():
+            out["error"] = "locpush verwacht minuten (0=uit) of 'off'"
+            return out
+        elif int(m) > 1440:
+            out["error"] = "locpush: minuten 0 t/m 1440"
+            return out
+        else:
+            body = "!locpush off" if int(m) == 0 else f"!locpush {int(m)}"
     else:  # pragma: no cover -- COMMANDS en deze takken lopen synchroon
         out["error"] = f"commando {cmd} nog niet ondersteund"
         return out

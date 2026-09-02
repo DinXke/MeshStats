@@ -532,6 +532,7 @@ def companion_cmd(request: Request, cid: int, cmd: str = Form(""),
                   action: str = Form(""), mode: str = Form(""), sub: str = Form(""),
                   value: str = Form(""), text: str = Form(""),
                   followapp: str = Form(""), field: str = Form(""),
+                  min: str = Form(""),
                   bot: str = Form(""), csrf: str = Form(...)):
     """Een T1000-E-commando naar deze companion sturen, via de Send-DM-weg.
 
@@ -564,7 +565,8 @@ def companion_cmd(request: Request, cid: int, cmd: str = Form(""),
     check_csrf(request, csrf)
     args = {"state": state, "level": level, "slot": slot, "name": name,
             "range": range, "action": action, "mode": mode, "sub": sub,
-            "value": value, "text": text, "followapp": followapp, "field": field}
+            "value": value, "text": text, "followapp": followapp, "field": field,
+            "min": min}
     # Welke bot-identiteit verstuurt: een expliciete keuze op dit formulier
     # wint, dan de bewaarde voorkeur van de companion, dan de MGMT-standaard
     # van de gekozen afzender-node. Zie companions.resolve_bot.
