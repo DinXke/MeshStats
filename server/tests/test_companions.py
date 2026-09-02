@@ -1504,3 +1504,217 @@ def test_companion_push_rate_limit_429(db, push_open, monkeypatch):
     with pytest.raises(HTTPException) as fout:
         _push({"companions": [{"pubkey": VALID}]}, ip="203.0.113.9")
     assert fout.value.status_code == 429
+
+
+# --- 9. locatie-spoor: het logboek onder de laatste positie ------------------
+#
+# companion_track legt ELK gemeld punt vast (niet alleen de laatste positie in
+# companions.last_lat/last_lon), gehaakt in db.set_companion_location zodat zowel
+# de poll- als de push-weg er vanzelf een spoorpunt bij aanleggen. Deze sectie
+# bewaakt: dat het punt er komt, de ontdubbeling op (companion_id, ts), de
+# vensterquery, en het snoeien.
+
+def test_set_companion_location_legt_spoorpunt_aan(db):
+    """Elke opgeslagen positie is óók een spoorpunt -- de ene haak die beide
+    wegen (poll én push) dekt."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    assert db.set_companion_location(VALID, 51.2, 5.4, 1000)
+    punten = db.companion_track_since(cid, 0)
+    assert len(punten) == 1
+    assert punten[0]["lat"] == 51.2 and punten[0]["lon"] == 5.4
+    assert punten[0]["ts"] == 1000
+    # Een pubkey die niemand beheert levert geen spoorpunt op -- geen wees-rij.
+    assert db.set_companion_location("f" * 64, 0.0, 0.0, 5) is False
+    assert db.companion_track_since(cid, 0) == db.companion_track_since(cid, 0)
+
+
+def test_spoorpunt_ontdubbelt_op_companion_en_ts(db):
+    """Exact hetzelfde punt (zelfde companion, zelfde ts) twee keer -- bv. de
+    poll en de push die dezelfde melding zien -- levert maar één rij op; een
+    ander ts is een nieuw punt."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    db.set_companion_location(VALID, 1.0, 2.0, 1000)
+    db.set_companion_location(VALID, 1.0, 2.0, 1000)   # exact duplicaat
+    db.set_companion_location(VALID, 1.1, 2.1, 1001)   # ander tijdstip
+    assert len(db.companion_track_since(cid, 0)) == 2
+
+
+def test_companion_track_since_venster_en_volgorde(db):
+    """De vensterquery geeft alleen punten vanaf ``since_epoch``, op tijd
+    oplopend -- precies wat een polyline nodig heeft."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    db.set_companion_location(VALID, 1.0, 2.0, 100)
+    db.set_companion_location(VALID, 1.1, 2.1, 300)
+    db.set_companion_location(VALID, 1.2, 2.2, 200)
+    ts = [p["ts"] for p in db.companion_track_since(cid, 150)]
+    assert ts == [200, 300]
+
+
+def test_poll_locations_legt_spoor_aan(db, monkeypatch):
+    """De achtergrondronde (poll) legt via set_companion_location ook een
+    spoorpunt aan."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 51.2, "lon": 5.4, "seen": 42},
+        ]}})
+    companions.poll_locations()
+    assert len(db.companion_track_since(cid, 0)) == 1
+
+
+def test_companion_push_legt_spoor_aan(db, push_open):
+    """De instant-push (POST /api/companion) legt via dezelfde haak ook een
+    spoorpunt aan."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    _push({"companions": [{"pubkey": VALID, "lat": 1.0, "lon": 2.0, "seen": 7}]})
+    assert len(db.companion_track_since(cid, 0)) == 1
+
+
+def test_prune_companion_track(db):
+    """Snoeien gooit alleen punten ouder dan de grens weg."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    db.set_companion_location(VALID, 1.0, 2.0, 100)
+    db.set_companion_location(VALID, 1.1, 2.1, 5000)
+    weg = db.prune_companion_track(1000)
+    assert weg == 1
+    ts = [p["ts"] for p in db.companion_track_since(cid, 0)]
+    assert ts == [5000]
+
+
+def test_spoor_verdwijnt_met_de_companion(db):
+    """ON DELETE CASCADE: een verwijderde companion neemt zijn spoor mee."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    db.set_companion_location(VALID, 1.0, 2.0, 100)
+    db.delete_companion(cid)
+    assert db.companion_track_since(cid, 0) == []
+
+
+def test_track_window_seconds():
+    """De vensters staan op één plek en vallen netjes terug op de standaard."""
+    from app import companions
+    assert companions.track_window_seconds("1h") == 3600
+    assert companions.track_window_seconds("7d") == 7 * 24 * 3600
+    # Onbekend of leeg -> de standaard (24h).
+    assert companions.track_window_seconds("bogus") == 24 * 3600
+    assert companions.track_window_seconds("") == 24 * 3600
+
+
+# --- 10. publieke deel-link: token, /loc/<token> en het spoor-endpoint -------
+
+def test_companion_by_share_token(db):
+    """De omgekeerde opzoeking voor /loc/<token>; leeg/onbekend -> None."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    db.set_companion_share_token(cid, "geheimtoken")
+    assert db.companion_by_share_token("geheimtoken")["id"] == cid
+    assert db.companion_by_share_token("") is None
+    assert db.companion_by_share_token("anders") is None
+    # Intrekken (None) maakt de link per direct dood.
+    db.set_companion_share_token(cid, None)
+    assert db.companion_by_share_token("geheimtoken") is None
+
+
+def test_share_token_aanmaken_en_intrekken_als_serverbeheerder(db):
+    """De route maakt een token (redirect met share_on) en trekt het weer in."""
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    resp = routes_companions.companion_share_set(
+        verzoek(cookie, method="POST"), cid, action="on",
+        csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/admin/companions/{cid}?r=share_on"
+    token = db.companion(cid)["share_token"]
+    assert token
+    # Intrekken wist het token.
+    resp2 = routes_companions.companion_share_set(
+        verzoek(cookie, method="POST"), cid, action="off",
+        csrf=auth.csrf_token(cookie))
+    assert "r=share_off" in resp2.headers["location"]
+    assert db.companion(cid)["share_token"] is None
+
+
+def test_share_token_vereist_serverbeheerder(db):
+    """Een gewone gebruiker mag geen deel-link aanmaken -- serverhandeling."""
+    from app import routes_companions
+    maak_gebruiker("gewoon", superuser=False)
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    req = verzoek(_sessie("gewoon"), method="POST")
+    with pytest.raises(HTTPException) as fout:
+        routes_companions.companion_share_set(req, cid, action="on", csrf="x")
+    assert fout.value.status_code == 403
+    assert db.companion(cid)["share_token"] is None
+
+
+def test_loc_pagina_rendert_zonder_login(db):
+    """De publieke deel-pagina rendert zonder cookie -- het token is de sleutel."""
+    from app import routes_public
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    db.set_companion_share_token(cid, "geheimtoken")
+    db.set_companion_location(VALID, 51.2, 5.4, 1000)
+    resp = routes_public.companion_share_page(verzoek(), "geheimtoken")
+    assert resp.status_code == 200
+    assert "Björn" in resp.body.decode("utf-8")
+
+
+def test_loc_onbekend_token_is_404(db):
+    from app import routes_public
+    with pytest.raises(HTTPException) as fout:
+        routes_public.companion_share_page(verzoek(), "bestaatniet")
+    assert fout.value.status_code == 404
+
+
+def test_loc_track_json_venster_en_404(db):
+    """Het publieke spoor-endpoint filtert op venster en geeft 404 bij een
+    onbekend token."""
+    import json
+    from app import routes_public
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    db.set_companion_share_token(cid, "geheimtoken")
+    now = int(time.time())
+    db.set_companion_location(VALID, 1.0, 2.0, now - 100)        # binnen 1u
+    db.set_companion_location(VALID, 1.1, 2.1, now - 100_000)    # buiten 1u
+    resp = routes_public.companion_share_track(verzoek(), "geheimtoken", window="1h")
+    data = json.loads(resp.body)
+    assert len(data["points"]) == 1
+    assert data["window"] == "1h"
+    # Zonder venster -> de standaard (24h) en dan valt het oude punt (100 000 s)
+    # er nog steeds buiten, maar het verse erbinnen.
+    resp2 = routes_public.companion_share_track(verzoek(), "geheimtoken")
+    assert len(json.loads(resp2.body)["points"]) == 1
+    with pytest.raises(HTTPException) as fout:
+        routes_public.companion_share_track(verzoek(), "bestaatniet")
+    assert fout.value.status_code == 404
+
+
+def test_admin_track_json_en_404(db):
+    """De beheerkaart-tegenhanger van het spoor-endpoint (achter login)."""
+    import json
+    from app import routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    now = int(time.time())
+    db.set_companion_location(VALID, 1.0, 2.0, now - 100)
+    resp = routes_companions.companion_track_json(verzoek(cookie), cid, window="24h")
+    data = json.loads(resp.body)
+    assert len(data["points"]) == 1 and data["points"][0][0] == 1.0
+    with pytest.raises(HTTPException) as fout:
+        routes_companions.companion_track_json(verzoek(cookie), 999999)
+    assert fout.value.status_code == 404
+
+
+def test_companion_pagina_rendert_met_deel_link(db):
+    """De companion-detailpagina met een actieve deel-link door de echte
+    Jinja-omgeving -- een sjabloonfout is een lege pagina en geen testfout."""
+    from app import routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    db.set_companion_share_token(cid, "geheimtoken")
+    resp = routes_companions.companion_page(verzoek(cookie), cid)
+    assert resp.status_code == 200
+    assert "/loc/geheimtoken" in resp.body.decode("utf-8")

@@ -1,9 +1,11 @@
 """Public HTML pages."""
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+import time
 
-from . import (auth, commanding, config, db, metrics, pktfilter, rbac,
-               retention, search)
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from . import (auth, commanding, companions, config, db, metrics, pktfilter,
+               rbac, retention, search)
 from .templating import templates
 
 router = APIRouter()
@@ -229,6 +231,63 @@ def repeater_page(request: Request, slug: str):
             m: {"min": cfg[0], "max": cfg[1], "segments": cfg[2]}
             for m, cfg in {**metrics.GAUGES, **metrics.THERMOMETERS}.items()
         },
+    })
+
+
+# --- de publieke deel-link van een companion: /loc/<token> --------------------
+#
+# GEEN authenticatie -- het token ís de sleutel (companions.share_token, gezet en
+# ingetrokken op de companion-beheerpagina). Een onbekend of ingetrokken token
+# geeft een nette 404: een ingetrokken link hoort per direct dood te zijn.
+# Alleen-lezen en licht: de naam, hoe lang geleden gezien, de batterij als die
+# bekend is, en een Leaflet-kaart met de laatste positie plus het recente spoor.
+# De kaart en het spoor laden client-side (static/loc.js) via de track-JSON
+# hieronder, met een venster-keuze (1u/6u/24u/7d) die het spoor herlaadt.
+
+
+@router.get("/loc/{token}", response_class=HTMLResponse)
+def companion_share_page(request: Request, token: str):
+    """De publieke deel-pagina van één companion. Onbekend token -> 404."""
+    comp = db.companion_by_share_token(token)
+    if not comp:
+        raise HTTPException(404, "Onbekende of ingetrokken deel-link")
+    heeft_locatie = comp["last_lat"] is not None and comp["last_lon"] is not None
+    return templates.TemplateResponse(request, "loc.html", {
+        "site_name": config.SITE_NAME,
+        "token": token,
+        "comp_name": comp["name"],
+        "comp_type": comp["type"],
+        "last_seen_iso": db.iso_from_epoch(comp["last_seen"]),
+        # De companion-tabel kent (nog) geen batterijstand -- /companions.json en
+        # de instant-push dragen die niet -- dus dit is voorlopig altijd None en
+        # de sjabloon laat het weg. Het staat in de context zodat de dag dat er
+        # wél een batterijveld bijkomt, alleen deze regel hoeft te veranderen.
+        "battery": None,
+        "has_location": heeft_locatie,
+        # Het startpunt (laatste positie) meegeven zodat de kaart er meteen staat
+        # zonder op de eerste fetch te wachten -- dezelfde lijn als
+        # window.COMPANION_LOCATIONS op de beheerkaart.
+        "last_point": ([comp["last_lat"], comp["last_lon"]] if heeft_locatie else None),
+        "windows": companions.track_windows_for_ui(),
+        "default_window": companions.TRACK_WINDOW_DEFAULT,
+    })
+
+
+@router.get("/loc/{token}/track.json")
+def companion_share_track(request: Request, token: str, window: str = ""):
+    """Het spoor achter een deel-link, als JSON. Onbekend token -> 404.
+
+    Deelt via companions.TRACK_WINDOWS dezelfde vensters als de beheerkaart
+    (companion_track_json), zodat de publieke kant en de beheerkant voor dezelfde
+    keuze hetzelfde spoor tekenen."""
+    comp = db.companion_by_share_token(token)
+    if not comp:
+        raise HTTPException(404, "Onbekende of ingetrokken deel-link")
+    since = int(time.time()) - companions.track_window_seconds(window)
+    punten = db.companion_track_since(comp["id"], since)
+    return JSONResponse({
+        "window": window or companions.TRACK_WINDOW_DEFAULT,
+        "points": [[p["lat"], p["lon"], p["ts"]] for p in punten],
     })
 
 

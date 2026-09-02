@@ -67,6 +67,13 @@ log = logging.getLogger("meshmanager.retention")
 # Minuten tussen twee rondes. Zie hierboven waarom een uur ruim is.
 INTERVAL_MIN = max(1, int(config.PRUNE_MINUTES))
 
+# Hoe lang companion-spoorpunten (companion_track) bewaard blijven. Een eigen,
+# veel kortere termijn dan de metingen -- die tabel groeit met één rij per gemeld
+# punt per companion en heeft geen tegenwaarde na een week of twee. Hier gesnoeid
+# en niet in db.prune(): net als het audittrail is dit een eigen soort gegeven
+# met een eigen termijn, en die functie gaat over de meet- en pakketgegevens.
+COMPANION_TRACK_DAYS = max(1, int(config.COMPANION_TRACK_DAYS))
+
 # Hoe lang na het opstarten de eerste periodieke ronde volgt. Het opstarten zelf
 # snoeit al één keer (main.bootstrap), dus deze wachttijd hoeft niets in te
 # halen; hij houdt alleen de eerste minuten na een herstart vrij, wanneer de
@@ -116,6 +123,12 @@ def run_once() -> dict:
     # trail is geen meetgegeven maar het geheugen van wie wat deed. Zie
     # audit.DEFAULT_AUDIT_DAYS voor waarom die termijn in jaren staat.
     report["audit"] = audit.prune()
+    # Companion-spoorpunten hebben hun eigen, kortere termijn (COMPANION_TRACK_DAYS),
+    # om dezelfde reden als het audittrail hierboven een eigene heeft: het is een
+    # ander soort gegeven dan de metingen die db.prune() beheert. Epoch-grens,
+    # want companion_track.ts is een INTEGER-epoch en geen ISO-tekst.
+    report["companion_track"] = db.prune_companion_track(
+        int(time.time()) - COMPANION_TRACK_DAYS * 86400)
     report["vacuum"] = db.maybe_vacuum()
     _state["runs"] += 1
     _state["last_run"] = report["at"]

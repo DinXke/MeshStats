@@ -131,6 +131,39 @@ _HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 _HEXPREFIX = re.compile(r"^[0-9a-fA-F]+$")
 _QUIET = re.compile(r"^\d{1,2}-\d{1,2}$")
 
+# --- de tijdvensters van het locatie-spoor ------------------------------------
+#
+# Op één plek, want ze voeden ZOWEL de publieke deel-link (/loc/<token> in
+# routes_public) ALS de beheerkaart (routes_companions): sleutel -> venster in
+# seconden, plus een leesbaar label voor de knoppen. Twee kopieën zouden vroeg
+# of laat uiteenlopen (de ene "7d", de andere "week"), en dan tekent de
+# publieke kant een ander spoor dan de beheerkant voor dezelfde keuze. De
+# volgorde is de knopvolgorde (kort -> lang); ``TRACK_WINDOW_DEFAULT`` is wat
+# een pagina zonder (of met een onbekende) keuze toont.
+TRACK_WINDOWS = (
+    ("1h", 3600, "1 u"),
+    ("6h", 6 * 3600, "6 u"),
+    ("24h", 24 * 3600, "24 u"),
+    ("7d", 7 * 24 * 3600, "7 d"),
+)
+TRACK_WINDOW_DEFAULT = "24h"
+
+
+def track_window_seconds(key: str) -> int:
+    """Het venster in seconden voor een venstersleutel; een onbekende of lege
+    sleutel valt terug op ``TRACK_WINDOW_DEFAULT`` -- een verzonnen querystring
+    hoort een nette standaard te geven, geen fout."""
+    for k, secs, _label in TRACK_WINDOWS:
+        if k == str(key or "").strip():
+            return secs
+    return track_window_seconds(TRACK_WINDOW_DEFAULT)
+
+
+def track_windows_for_ui() -> list:
+    """De vensters als lijst van ``{"key","label"}`` voor de knoppen in de
+    sjablonen -- de seconden blijven serverzijde."""
+    return [{"key": k, "label": label} for k, _secs, label in TRACK_WINDOWS]
+
 
 def valid_pubkey(pubkey: str) -> bool:
     """Een volledige companion-sleutel: precies 64 hex-tekens. Een DM richt zich op
