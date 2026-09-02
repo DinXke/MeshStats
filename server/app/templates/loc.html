@@ -14,7 +14,7 @@
     {% if last_seen_iso %}
     <time class="reltime" datetime="{{ last_seen_iso }}">{{ last_seen_iso }}</time>
     {% else %}<span class="muted">onbekend</span>{% endif %}
-    {% if battery is not none %} &middot; batterij {{ battery }}%{% endif %}
+    {% if battery is not none %} &middot; <span class="badge">&#128267; {{ battery }}%</span>{% endif %}
   </p>
 
   {#- De venster-keuze voor het spoor. Altijd zichtbaar (ook zonder locatie is de

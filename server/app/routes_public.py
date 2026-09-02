@@ -258,11 +258,11 @@ def companion_share_page(request: Request, token: str):
         "comp_name": comp["name"],
         "comp_type": comp["type"],
         "last_seen_iso": db.iso_from_epoch(comp["last_seen"]),
-        # De companion-tabel kent (nog) geen batterijstand -- /companions.json en
-        # de instant-push dragen die niet -- dus dit is voorlopig altijd None en
-        # de sjabloon laat het weg. Het staat in de context zodat de dag dat er
-        # wél een batterijveld bijkomt, alleen deze regel hoeft te veranderen.
-        "battery": None,
+        # De laatst gemelde batterijstand (percent), of None wanneer onbekend --
+        # gevuld uit ``companions.batt``, dat /companions.json en de instant-push
+        # bijwerken (companions.set_companion_batt). None laat de sjabloon het
+        # batterij-onderdeel weg; een bekende stand toont een 🔋-chip.
+        "battery": comp["batt"],
         "has_location": heeft_locatie,
         # Het startpunt (laatste positie) meegeven zodat de kaart er meteen staat
         # zonder op de eerste fetch te wachten -- dezelfde lijn als

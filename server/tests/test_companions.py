@@ -1718,3 +1718,149 @@ def test_companion_pagina_rendert_met_deel_link(db):
     resp = routes_companions.companion_page(verzoek(cookie), cid)
     assert resp.status_code == 200
     assert "/loc/geheimtoken" in resp.body.decode("utf-8")
+
+
+# --- 11. batterij: keuring, databank, ingest (poll + push) en weergave -------
+#
+# De MeshUptime-node meldt per companion een optioneel batterijpercentage
+# (``batt``, 0-100). Deze sectie bewaakt: de keuring (_valid_batt), de
+# databanklaag (set_companion_batt), dat beide ingestwegen (poll én push) hem
+# oppikken, dat een rapport ZONDER batterij een bekende stand niet wist, en dat
+# hij op de kaart-JSON (_loc) en de publieke deel-pagina verschijnt.
+
+def test_valid_batt_keurt_bereik_en_soort():
+    """0-100 als heel percentage; alles daarbuiten (of geen getal) -> None."""
+    from app import companions
+    assert companions._valid_batt(0) == 0
+    assert companions._valid_batt(100) == 100
+    assert companions._valid_batt(73) == 73
+    assert companions._valid_batt(73.6) == 73          # naar heel percentage
+    assert companions._valid_batt(None) is None
+    assert companions._valid_batt(-1) is None
+    assert companions._valid_batt(101) is None
+    assert companions._valid_batt("80") is None        # geen string
+    assert companions._valid_batt(True) is None        # geen bool
+
+
+def test_set_companion_batt_databanklaag(db):
+    """Zetten op de PUBKEY, ongeacht hoofdletters; een onbekende pubkey levert
+    stilzwijgend niets op (geen wees-rij), net als set_companion_location."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    assert db.companion(cid)["batt"] is None            # standaard: onbekend
+    assert db.set_companion_batt(VALID.upper(), 55) is True
+    assert db.companion(cid)["batt"] == 55
+    assert db.set_companion_batt("f" * 64, 40) is False
+    assert db.set_companion_batt("", 40) is False
+
+
+def test_poll_locations_werkt_batterij_bij(db, monkeypatch):
+    """De achtergrondronde pikt ``batt`` uit /companions.json op."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 51.2, "lon": 5.4,
+             "seen": 42, "batt": 88}]}})
+    companions.poll_locations()
+    assert db.companion(cid)["batt"] == 88
+
+
+def test_poll_locations_batterij_zonder_locatie(db, monkeypatch):
+    """Batterij zonder GPS-fix (geen lat/lon): de stand wordt toch bijgewerkt,
+    los van de locatie."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "batt": 47}]}})
+    uit = companions.poll_locations()
+    assert uit["updated"] == 0                           # geen locatie
+    assert db.companion(cid)["batt"] == 47
+
+
+def test_poll_locations_zonder_batterij_wist_bekende_stand_niet(db, monkeypatch):
+    """Een rapport zonder ``batt`` laat een reeds bekende stand staan -- absent
+    betekent 'geen nieuws', niet 'wis de batterij'."""
+    from app import companions, sensornode
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    db.set_sensor_host(node["id"], "10.0.0.5", by_admin=True)
+    cid = db.add_companion("Björn", VALID, "", "", node["id"])
+    db.set_companion_batt(VALID, 60)
+    monkeypatch.setattr(sensornode, "_json", lambda host, path, timeout=None: {
+        "ok": True, "error": "", "data": {"companions": [
+            {"name": "Björn", "pubkey": VALID, "lat": 1.0, "lon": 2.0, "seen": 5}]}})
+    companions.poll_locations()
+    assert db.companion(cid)["batt"] == 60
+
+
+def test_companion_push_werkt_batterij_bij(db, push_open):
+    """De instant-push pikt ``batt`` op, ook zonder locatie."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    _push({"companions": [{"pubkey": VALID, "batt": 91}]})
+    assert db.companion(cid)["batt"] == 91
+
+
+def test_companion_push_zonder_batterij_wist_bekende_stand_niet(db, push_open):
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    db.set_companion_batt(VALID, 30)
+    _push({"companions": [{"pubkey": VALID, "lat": 1.0, "lon": 2.0}]})
+    assert db.companion(cid)["batt"] == 30
+
+
+def test_companion_push_ongeldige_batterij_wordt_genegeerd(db, push_open):
+    """Een batterij buiten 0-100 (of geen getal) wordt niet opgeslagen -- de
+    keuring uit _valid_batt geldt op de push-weg net zo goed."""
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    _push({"companions": [{"pubkey": VALID, "batt": 250}]})
+    assert db.companion(cid)["batt"] is None
+
+
+def test_status_json_bevat_batterij(db, monkeypatch):
+    """De kaart-/lijst-JSON (_loc) draagt de batterij mee: bekend als getal,
+    onbekend als None."""
+    import json
+    from app import companions, routes_companions
+    monkeypatch.setattr(companions, "_ondemand_last_ts", 0.0)
+    monkeypatch.setattr(companions, "poll_now", lambda *a, **k: None)
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    db.add_companion("Met", VALID, "", "", None)
+    db.add_companion("Zonder", "c" * 64, "", "", None)
+    db.set_companion_batt(VALID, 42)
+    resp = routes_companions.companions_status_json(verzoek(cookie))
+    data = {c["name"]: c for c in json.loads(resp.body)["companions"]}
+    assert data["Met"]["batt"] == 42
+    assert data["Zonder"]["batt"] is None
+
+
+def test_loc_pagina_toont_batterij_als_bekend(db):
+    """De publieke deel-pagina toont de batterij zodra companions.batt bekend is,
+    en laat hem weg als hij onbekend is."""
+    from app import routes_public
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    db.set_companion_share_token(cid, "geheimtoken")
+    # Zonder bekende stand: geen batterij-chip (&#128267;) op de pagina.
+    resp = routes_public.companion_share_page(verzoek(), "geheimtoken")
+    assert "&#128267;" not in resp.body.decode("utf-8")
+    # Met bekende stand: de chip met het percentage verschijnt.
+    db.set_companion_batt(VALID, 77)
+    resp2 = routes_public.companion_share_page(verzoek(), "geheimtoken")
+    body = resp2.body.decode("utf-8")
+    assert "&#128267;" in body and "77%" in body
+
+
+def test_companion_detailpagina_rendert_met_batterij(db):
+    """De detailpagina met een bekende batterij door de echte Jinja-omgeving --
+    een sjabloonfout is een lege pagina en geen testfout."""
+    from app import routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    db.set_companion_batt(VALID, 64)
+    resp = routes_companions.companion_page(verzoek(cookie), cid)
+    assert resp.status_code == 200
+    assert 'id="live-batt-pct">64<' in resp.body.decode("utf-8")
