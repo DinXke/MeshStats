@@ -95,6 +95,11 @@
         : L.marker([c.lat, c.lon]);
       var label = esc(c.name || "companion") + (c.type ? " · " + esc(c.type) : "");
       var popup = "<strong>" + label + "</strong><br>" + esc(ageText(c.seen_iso));
+      // De batterij alleen als de node hem meldde (companions.batt); een companion
+      // zonder bekende stand toont niets -- geen "0%" of "onbekend" verzinnen.
+      if (typeof c.batt === "number") {
+        popup += "<br>&#128267; " + esc(c.batt) + "%";
+      }
       if (c.fall_recent) {
         var kind = esc(c.fall_kind || "onbekend");
         popup += "<br><strong style=\"color:var(--red)\">&#9888; val (" + kind + "): " +

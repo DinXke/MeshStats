@@ -456,6 +456,18 @@
       if (kind) kind.textContent = c.fall_kind ? " (" + c.fall_kind + ")" : "";
     }
 
+    function applyBatt(c) {
+      // De batterij-chip alleen tonen als de laatste ronde een stand kende
+      // (companions.batt, via _loc); onbekend blijft verborgen -- geen "0%".
+      var chip = document.getElementById("live-batt");
+      if (!chip) return;
+      var heeft = typeof c.batt === "number";
+      chip.hidden = !heeft;
+      if (!heeft) return;
+      var pct = document.getElementById("live-batt-pct");
+      if (pct) pct.textContent = c.batt;
+    }
+
     function applyLocation(c) {
       var known = document.getElementById("live-loc-known");
       var unknown = document.getElementById("live-loc-unknown");
@@ -481,6 +493,7 @@
           var c = (data.companions || []).filter(function (x) { return x.id === cid; })[0];
           if (!c) return;
           applyFall(c);
+          applyBatt(c);
           applyLocation(c);
           if (updated) updated.textContent = "· ververst " + new Date().toLocaleTimeString();
         })

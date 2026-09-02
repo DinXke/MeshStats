@@ -775,6 +775,16 @@ COLUMN_MIGRATIONS = [
     # handeling van een beheerder, niet iets dat elke companion vanzelf krijgt.
     # Intrekken zet de kolom terug op NULL, waarna de oude link meteen dood is.
     ("companions", "share_token", "TEXT"),
+    # De laatst gemelde BATTERIJSTAND van een companion, in procent (0-100). Een
+    # WAARNEMING zoals ``last_lat``/``last_seen`` hierboven: niets hiervan wordt
+    # ingetypt, het komt uit ``/companions.json`` op de afzender-node
+    # (companions.poll_locations) of uit de instant-push (companion_push), en het
+    # is optioneel -- een companion die zijn batterij (nog) niet meldt houdt hier
+    # NULL. Een INTEGER en geen REAL: het veld draagt een heel percentage, en
+    # ``companions._valid_batt`` weert alles wat geen 0-100 is voordat het hier
+    # belandt. NULL wordt nooit teruggeschreven over een bekende stand -- zie
+    # ``set_companion_batt``, dat alleen met een gekeurde waarde aangeroepen wordt.
+    ("companions", "batt", "INTEGER"),
 ]
 
 
@@ -3285,6 +3295,27 @@ def set_companion_location(pubkey: str, lat: float, lon: float,
             int(datetime.now(timezone.utc).timestamp())
         add_companion_track_point(key, float(lat), float(lon), ts)
     return geraakt
+
+
+def set_companion_batt(pubkey: str, batt: int) -> bool:
+    """De laatst gemelde batterijstand (percent) van een companion bijwerken,
+    gevonden op zijn PUBKEY -- dezelfde normalisatie en stille overslag als
+    ``set_companion_location``.
+
+    True als er een rij geraakt is. Alleen aangeroepen MET een bekende waarde
+    (companions._valid_batt heeft hem al tot een int 0-100 gekeurd): een
+    ontbrekende batterij komt hier niet langs, en zo kan een rapport zonder
+    batterij een reeds bekende stand nooit stilzwijgend op NULL zetten. Een
+    losse functie van ``set_companion_location`` omdat de batterij ook ZONDER
+    positie gemeld kan worden (een companion zonder GPS-fix), en dan hoort hij
+    hoe dan ook bijgewerkt te worden.
+    """
+    key = str(pubkey or "").strip().lower()
+    if not key:
+        return False
+    return execute_rowcount(
+        "UPDATE companions SET batt=?, updated=? WHERE lower(pubkey)=?",
+        (int(batt), utcnow(), key)) > 0
 
 
 def add_companion_track_point(pubkey: str, lat: float, lon: float, ts: int) -> None:

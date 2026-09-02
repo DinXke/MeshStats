@@ -519,7 +519,10 @@ def sender_candidates(reps) -> list:
 # AANNAME over de vorm van het antwoord (er was geen levende node met dit
 # endpoint beschikbaar tijdens het bouwen hiervan):
 #   {"companions": [{"name", "pubkey" (64 hex), "lat", "lon", "seen",
-#                     "fall_ts", "fall_kind"}, ...]}
+#                     "fall_ts", "fall_kind", "batt" (0-100)}, ...]}
+# ``batt`` is optioneel op dezelfde manier als ``fall_ts``/``fall_kind``: een
+# companion die zijn batterij niet meldt, laat het veld weg, en dan blijft de
+# kolom NULL en toont de UI niets (zie ``_valid_batt``).
 # ``fall_ts``/``fall_kind`` zijn optioneel: een companion die nooit gevallen
 # is, hoort ze gewoon niet te hebben, en dat degradeert naar "geen val om te
 # verwerken" -- zie ``_secs_to_epoch`` en de valafhandeling in
@@ -579,6 +582,24 @@ def _secs_to_epoch(secs, now: float) -> int | None:
         return None
     secs = int(secs)
     return secs if secs >= _EPOCH_2001 else int(now) - secs
+
+
+def _valid_batt(value) -> int | None:
+    """Een batterijveld uit /companions.json of de instant-push naar een heel
+    percentage (0-100), of None.
+
+    Optioneel overal: een companion die zijn batterij niet meldt, laat dit veld
+    weg, en dat degradeert naar "geen batterij om bij te werken" -- de kolom
+    blijft dan NULL en de UI toont niets. Alles wat geen bruikbaar getal in het
+    bereik 0-100 is (ontbrekend, een string, een bool, buiten bereik) levert
+    None op, net als ``_secs_to_epoch``: geen gok beter dan een verkeerde gok
+    die er als een echte stand uitziet. De keuring staat HIER, op één plek,
+    zodat db.set_companion_batt en beide ingestwegen erop kunnen leunen.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    pct = int(value)
+    return pct if 0 <= pct <= 100 else None
 
 
 # De ronde kende de kind-woorden nog niet toen ``fall`` als commando bijkwam
@@ -748,6 +769,15 @@ def poll_locations(timeout: int | None = None, only_rep_id: int | None = None) -
                 seen_epoch = _secs_to_epoch(c.get("seen"), now)
                 if db.set_companion_location(pubkey, lat_f, lon_f, seen_epoch):
                     out["updated"] += 1
+
+            # De batterij, los van de locatie: een companion kan zijn batterij
+            # melden zonder GPS-fix, en een rapport zonder batterij mag een
+            # bekende stand niet wissen -- vandaar alleen bijwerken als er een
+            # gekeurde waarde is (_valid_batt), nooit met None. Zie
+            # db.set_companion_batt.
+            batt = _valid_batt(c.get("batt"))
+            if batt is not None:
+                db.set_companion_batt(pubkey, batt)
 
             val = _handle_fall_report(comp_row, c.get("fall_ts"), c.get("fall_kind"),
                                       lat_f, lon_f, now)
@@ -920,7 +950,8 @@ def start_location_poll() -> None:
 #     POST /api/companion
 #     Authorization: Bearer {MM_PUSH_TOKEN}
 #     {"companions": [{"pubkey": "<64 hex>", "lat": <float>, "lon": <float>,
-#                       "seen": <uint>, "fall_ts": <uint>, "fall_kind": "val|nomotion|sos|"}, ...]}
+#                       "seen": <uint>, "fall_ts": <uint>, "fall_kind": "val|nomotion|sos|",
+#                       "batt": <0-100>}, ...]}
 #
 #     200: {"ok": true, "updated": <n>, "falls": <n>, "fall_alerts_sent": <n>,
 #           "fall_alerts_failed": <n>, "skipped": <n>}
@@ -929,7 +960,9 @@ def start_location_poll() -> None:
 #     JSON, of geen niet-lege ``companions``-lijst).
 #
 # ``lat``/``lon`` mogen ontbreken (een companion zonder GPS-fix meldt dan
-# alleen zijn val); ``fall_ts`` van 0 of afwezig is "geen val" (zie
+# alleen zijn val en/of ``batt``); ``batt`` (0-100) is eveneens optioneel en
+# wordt alleen bijgewerkt als hij meekomt -- afwezig laat een bekende stand
+# staan; ``fall_ts`` van 0 of afwezig is "geen val" (zie
 # ``_handle_fall_report``). Net als ``poll_locations`` is een ENKELE foute
 # rij in de lijst geen reden om de hele push te weigeren: een companion-
 # pubkey die hier nog niet beheerd wordt (nog niet toegevoegd op de
@@ -995,6 +1028,13 @@ async def companion_push(request: Request,
                 seen_epoch = _secs_to_epoch(item.get("seen"), now)
                 if db.set_companion_location(pubkey, lat_f, lon_f, seen_epoch):
                     out["updated"] += 1
+
+        # De batterij, los van de locatie (zie poll_locations): een push kan een
+        # batterij dragen zonder positie, en een push zonder batterij mag een
+        # bekende stand niet wissen -- alleen bijwerken met een gekeurde waarde.
+        batt = _valid_batt(item.get("batt"))
+        if batt is not None:
+            db.set_companion_batt(pubkey, batt)
 
         # De ESCALATIE, meteen en niet pas bij de volgende pollronde -- dat is
         # het hele punt van deze push. Gedeelde functie met poll_locations

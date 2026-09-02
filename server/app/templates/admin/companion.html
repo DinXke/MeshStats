@@ -33,6 +33,11 @@
         JavaScript niet alsnog toevoegen zonder de tekst zelf te verzinnen. -#}
     <span class="badge off" id="live-fall-badge"{% if not fall_recent %} hidden{% endif %}>
       &#9888; recente val<span id="live-fall-kind">{% if comp.last_fall_kind %} ({{ comp.last_fall_kind }}){% endif %}</span></span>
+    {#- De laatst gemelde batterijstand. ``hidden`` en niet ``{% if %}`` errond,
+        om dezelfde reden als het val-badge: companions.js zet hem bij een verse
+        ronde aan/uit en vult het percentage, en moet daarvoor een element
+        vinden dat er altijd staat. Onbekend (NULL) = verborgen, geen "0%". -#}
+    <span class="badge" id="live-batt"{% if comp.batt is none %} hidden{% endif %}>&#128267; <span id="live-batt-pct">{% if comp.batt is not none %}{{ comp.batt }}{% endif %}</span>%</span>
   </div>
   <div class="muted mono-line">
     <span class="chip">{{ comp.pubkey[:24] }}…</span>

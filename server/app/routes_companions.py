@@ -107,6 +107,9 @@ def _loc(c, now: float) -> dict:
     fall_ts = c["last_escalated_fall_ts"]
     return {"id": c["id"], "name": c["name"], "type": c["type"],
             "lat": c["last_lat"], "lon": c["last_lon"],
+            # De laatst gemelde batterijstand (percent) of None wanneer onbekend
+            # -- de kaart-popup en de live-ververs tonen hem alleen als hij er is.
+            "batt": c["batt"],
             "seen_iso": db.iso_from_epoch(c["last_seen"]),
             # Alleen een recente val kleurt de marker/badge anders -- zie
             # FALL_RECENT_S hierboven voor waarom een val van maanden terug
