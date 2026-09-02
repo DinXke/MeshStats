@@ -123,4 +123,98 @@
   // Zachtjes bijhouden: elke 30s het spoor opnieuw ophalen zodat een open pagina
   // meebeweegt zonder de view te resetten.
   if (window.fetch) setInterval(load, 30000);
+
+  // --- de "Vraag locatie op"-knop -------------------------------------------
+  //
+  // Post naar /loc/<token>/request (fetch, Accept: application/json), toon de
+  // melding van de server, en schakel de knop uit voor de afkoeltijd -- de
+  // ECHTE rem staat serverzijde, dit is alleen de bijpassende terugkoppeling.
+  // Na een gelukte opvraag komt het antwoord van de companion niet synchroon
+  // terug (het loopt via de locatie-poll), dus verversen we het spoor nog een
+  // halve minuut wat vaker, zodat de nieuwe positie op de kaart verschijnt
+  // zodra hij binnen is. Zonder fetch (of JS) blijft het gewone formulier de
+  // POST doen en valt de server terug op een redirect naar deze pagina.
+  var form = document.getElementById("loc-request-form");
+  var btn = document.getElementById("loc-request-btn");
+  var msgEl = document.getElementById("loc-request-msg");
+  var COOLDOWN = parseInt(window.LOC_REQUEST_COOLDOWN, 10) || 90;
+  var LABEL = btn ? btn.innerHTML : "";
+  var cooldownTimer = null;
+
+  function setMsg(text, ok) {
+    if (!msgEl) return;
+    msgEl.textContent = text || "";
+    msgEl.className = "small " + (ok ? "ok" : "muted");
+  }
+
+  // De knop uitschakelen en aftellen; na afloop weer inschakelen met zijn
+  // oorspronkelijke tekst. ``secs`` is het aantal seconden dat hij uit moet.
+  function disableFor(secs) {
+    if (!btn) return;
+    if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; }
+    var left = Math.max(1, Math.round(secs));
+    btn.disabled = true;
+    var tick = function () {
+      btn.innerHTML = "&#9203; nog " + left + "s";
+      left -= 1;
+      if (left < 0) {
+        clearInterval(cooldownTimer); cooldownTimer = null;
+        btn.disabled = false;
+        btn.innerHTML = LABEL;
+      }
+    };
+    tick();
+    cooldownTimer = setInterval(tick, 1000);
+  }
+
+  // Na een gelukte opvraag: een tijdje wat vaker het spoor ophalen (bovenop de
+  // vaste 30s-tik), zodat de nieuwe positie snel op de kaart komt. Stopt na
+  // ~60s vanzelf.
+  function refreshBurst() {
+    var n = 0;
+    var burst = setInterval(function () {
+      load();
+      n += 1;
+      if (n >= 12) clearInterval(burst);   // 12 x 5s ~ 60s
+    }, 5000);
+  }
+
+  // Uit de rate-limit-melding ("even wachten — nog <N>s") het aantal seconden
+  // vissen, met de volledige afkoeltijd als terugval.
+  function waitSecs(msg) {
+    var m = /(\d+)\s*s/.exec(msg || "");
+    return m ? parseInt(m[1], 10) : COOLDOWN;
+  }
+
+  if (form && btn && window.fetch) {
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      setMsg("bezig…", true);
+      fetch(form.action, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Accept": "application/json" },
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          setMsg(data.msg || "", !!data.ok);
+          if (data.ok) {
+            disableFor(COOLDOWN);
+            refreshBurst();
+          } else {
+            // Een rem-melding houdt de knop uit tot de rem afloopt; een andere
+            // weigering (geen afzender) laat hem meteen weer bruikbaar.
+            var w = waitSecs(data.msg);
+            if (/wachten/.test(data.msg || "")) disableFor(w);
+            else { btn.disabled = false; }
+          }
+        })
+        .catch(function () {
+          setMsg("kon de opvraag niet versturen", false);
+          btn.disabled = false;
+        });
+    });
+  }
 })();

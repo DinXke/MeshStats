@@ -25,7 +25,7 @@ from app import config
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
-    from app import companions, db as db_module
+    from app import companions, db as db_module, routes_public
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.sqlite3")
     db_module._conn = None
     # Elke test krijgt verse repeater-id's die weer bij 1 beginnen -- zonder
@@ -33,6 +33,9 @@ def db(tmp_path, monkeypatch):
     # companions.reset_bots_cache) een node-id uit een VORIGE test kunnen
     # laten doorwerken in deze test.
     companions.reset_bots_cache()
+    # Om dezelfde reden de opvraag-rem van de publieke deel-link leegmaken: die
+    # is per companion-id, en die id's beginnen elke test weer bij 1.
+    routes_public.reset_loc_request_throttle()
     yield db_module
     if db_module._conn is not None:
         db_module._conn.close()
@@ -1864,3 +1867,99 @@ def test_companion_detailpagina_rendert_met_batterij(db):
     resp = routes_companions.companion_page(verzoek(cookie), cid)
     assert resp.status_code == 200
     assert 'id="live-batt-pct">64<' in resp.body.decode("utf-8")
+
+
+# --- 8. de publieke locatie-opvraag: POST /loc/<token>/request ---------------
+#
+# GEEN login: het deel-token is de enige sleutel. De beveiliging tegen misbruik
+# is (a) het token dat exact één companion aanwijst, (b) het vaste, enkele
+# commando (!loc en niets anders -- nooit een cmd uit de body), en (c) de
+# server-side snelheidsrem per companion. Deze sectie dwingt die drie af.
+
+def test_loc_request_onbekend_token_404(db):
+    """Een onbekend of ingetrokken token geeft een 404, net als de pagina zelf --
+    er is niets om op te vragen."""
+    from app import routes_public
+    with pytest.raises(HTTPException) as fout:
+        routes_public.companion_share_request(
+            verzoek(accept="application/json", method="POST"), "bestaatniet")
+    assert fout.value.status_code == 404
+
+
+def test_loc_request_zonder_afzender_weigert_netjes_en_verstuurt_niets(db, monkeypatch):
+    """Een companion zonder ingestelde afzender-node kan niets versturen: een
+    nette JSON-melding en géén DM de band op -- geen 500."""
+    from app import rooms, routes_public
+    monkeypatch.setattr(rooms, "bot_sendto",
+                        lambda *a, **k: pytest.fail("mocht niet versturen"))
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)  # geen afzender
+    db.set_companion_share_token(cid, "tok-geen-afzender")
+    resp = routes_public.companion_share_request(
+        verzoek(accept="application/json", method="POST"), "tok-geen-afzender")
+    import json
+    data = json.loads(resp.body)
+    assert data["ok"] is False
+    assert "afzender" in data["msg"]
+
+
+def test_loc_request_verstuurt_alleen_loc_naar_de_juiste_pubkey(db, monkeypatch):
+    """De gelukte weg: het vaste !loc-commando gaat naar de pubkey van DEZE
+    companion, en niets anders -- de body is letterlijk '!loc'."""
+    from app import rooms, routes_public
+    gezien = {}
+
+    def nep_bot_sendto(rep, pubkey, msg, bot=None):
+        gezien["pubkey"] = pubkey
+        gezien["msg"] = msg
+        return {"ok": True, "error": ""}
+
+    monkeypatch.setattr(rooms, "bot_sendto", nep_bot_sendto)
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", node["id"])
+    db.set_companion_share_token(cid, "tok-ok")
+    resp = routes_public.companion_share_request(
+        verzoek(accept="application/json", method="POST"), "tok-ok")
+    import json
+    data = json.loads(resp.body)
+    assert data["ok"] is True
+    # Precies !loc naar de eigen pubkey -- nooit iets anders.
+    assert gezien == {"pubkey": VALID, "msg": "!loc"}
+
+
+def test_loc_request_rem_blokkeert_tweede_directe_opvraag(db, monkeypatch):
+    """De server-side rem: een tweede opvraag meteen na de eerste wordt geweigerd
+    ZONDER iets te versturen -- de kern van de abuse-bescherming."""
+    from app import rooms, routes_public
+    verstuurd = []
+    monkeypatch.setattr(
+        rooms, "bot_sendto",
+        lambda rep, pk, msg, bot=None: verstuurd.append(msg) or {"ok": True, "error": ""})
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", node["id"])
+    db.set_companion_share_token(cid, "tok-rem")
+
+    eerste = routes_public.companion_share_request(
+        verzoek(accept="application/json", method="POST"), "tok-rem")
+    tweede = routes_public.companion_share_request(
+        verzoek(accept="application/json", method="POST"), "tok-rem")
+    import json
+    d1, d2 = json.loads(eerste.body), json.loads(tweede.body)
+    assert d1["ok"] is True
+    assert d2["ok"] is False and "wachten" in d2["msg"]
+    # De tweede opvraag heeft NIETS de band op gestuurd -- maar één DM totaal.
+    assert verstuurd == ["!loc"]
+
+
+def test_loc_request_zonder_json_valt_terug_op_redirect(db, monkeypatch):
+    """Zonder JavaScript (geen JSON-Accept) doet het gewone formulier een POST en
+    valt de route terug op een 303-redirect naar de pagina zelf, zodat er niets
+    vreemds op het scherm verschijnt."""
+    from app import rooms, routes_public
+    monkeypatch.setattr(rooms, "bot_sendto", lambda *a, **k: {"ok": True, "error": ""})
+    node = db.get_or_create_repeater("e3d3f4d7edd0", "Dakrepeater")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", node["id"])
+    db.set_companion_share_token(cid, "tok-noscript")
+    resp = routes_public.companion_share_request(
+        verzoek(method="POST"), "tok-noscript")
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/loc/tok-noscript"

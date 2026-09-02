@@ -28,6 +28,19 @@
     {% endfor %}
   </div>
 
+  {#- De opvraag-knop: vraagt de companion over het mesh om een verse locatie
+      (het !loc-commando). Een gewoon formulier zodat het zonder JavaScript nog
+      een nette POST doet (de server valt dan terug op een redirect naar deze
+      pagina); loc.js onderschept het, post via fetch en toont de melding, en
+      schakelt de knop uit voor de afkoeltijd. De rem staat serverzijde -- deze
+      knop is enkel de bijpassende terugkoppeling. -#}
+  <div class="loc-request">
+    <form method="post" action="/loc/{{ token }}/request" id="loc-request-form">
+      <button type="submit" class="pill" id="loc-request-btn">&#128225; Vraag locatie op</button>
+    </form>
+    <span class="muted small" id="loc-request-msg" role="status" aria-live="polite"></span>
+  </div>
+
   {% if has_location %}
   <div id="loc-map"></div>
   {% else %}
@@ -42,6 +55,7 @@
   window.LOC_TOKEN = {{ token|tojson }};
   window.LOC_DEFAULT_WINDOW = {{ default_window|tojson }};
   window.LOC_LAST = {{ last_point|tojson }};
+  window.LOC_REQUEST_COOLDOWN = {{ loc_request_cooldown|tojson }};
 </script>
 {% endblock %}
 

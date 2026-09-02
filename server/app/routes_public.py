@@ -1,8 +1,9 @@
 """Public HTML pages."""
+import threading
 import time
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse)
 
 from . import (auth, commanding, companions, config, db, metrics, pktfilter,
                rbac, retention, search)
@@ -270,6 +271,11 @@ def companion_share_page(request: Request, token: str):
         "last_point": ([comp["last_lat"], comp["last_lon"]] if heeft_locatie else None),
         "windows": companions.track_windows_for_ui(),
         "default_window": companions.TRACK_WINDOW_DEFAULT,
+        # De afkoeltijd van de "Vraag locatie op"-knop (zie de POST-route en de
+        # rem hieronder), zodat de knop zichzelf net zo lang uitschakelt als de
+        # server hem toch zou weigeren -- de rem staat serverzijde, dit is enkel
+        # de bijpassende UI-terugkoppeling.
+        "loc_request_cooldown": LOC_REQUEST_MIN_GAP_S,
     })
 
 
@@ -289,6 +295,99 @@ def companion_share_track(request: Request, token: str, window: str = ""):
         "window": window or companions.TRACK_WINDOW_DEFAULT,
         "points": [[p["lat"], p["lon"], p["ts"]] for p in punten],
     })
+
+
+# --- de publieke locatie-opvraag: POST /loc/<token>/request -------------------
+#
+# GEEN authenticatie -- net als de deel-pagina zelf is het token de enige
+# sleutel. Deze POST is de ENIGE schrijvende weg achter een deel-link, en hij kan
+# maar één ding: de companion om zijn locatie vragen (``!loc``). Omdat er geen
+# login is, zijn dit -- en niet een CSRF-token -- de beveiligingen:
+#
+#   1.  het token bepaalt EXACT welke companion (``companion_by_share_token``);
+#   2.  het commando staat HIER VAST op "loc" -- er wordt nooit een ``cmd`` of
+#       argument uit de body gelezen, dus deze weg kan nooit iets anders
+#       versturen dan ``!loc``;
+#   3.  een server-side snelheidsrem per companion (``LOC_REQUEST_MIN_GAP_S``),
+#       zodat een open deel-link niet als hamer op de mesh gebruikt kan worden.
+#
+# Ten hoogste één opvraag per companion per dit aantal seconden. In-process en
+# NIET in de databank: het is vluchtige toestand van dezelfde soort als
+# companions._ondemand_last_ts en de bot-cache -- een herstart die de rem wist
+# betekent hooguit dat de eerstvolgende opvraag meteen mag, en dat is
+# onschadelijk (het is een rem tegen misbruik, geen boeking die moet kloppen).
+# Een databankkolom zou er een migratie en een schrijf-per-klik bij halen voor
+# toestand die een herstart net zo goed mag vergeten.
+LOC_REQUEST_MIN_GAP_S = 90
+_loc_request_lock = threading.Lock()
+_loc_request_ts: dict[int, float] = {}   # companion-id -> monotonic van laatste opvraag
+
+
+def reset_loc_request_throttle() -> None:
+    """De opvraag-rem leegmaken. Alleen voor de tests (zoals
+    companions.reset_bots_cache): elke test krijgt verse companion-id's die weer
+    bij 1 beginnen, en zonder deze reset zou een id uit een VORIGE test de rem
+    van een heel andere companion in de HUIDIGE test kunnen zetten."""
+    with _loc_request_lock:
+        _loc_request_ts.clear()
+
+
+@router.post("/loc/{token}/request")
+def companion_share_request(request: Request, token: str):
+    """Een verse locatie opvragen bij de companion achter deze deel-link.
+
+    Onbekend of ingetrokken token -> 404, net als de pagina zelf. Zonder een
+    ingestelde afzender-node een nette weigering (geen 500). Anders precies één
+    ding: ``!loc`` naar de pubkey van DEZE companion, via zijn standaardafzender.
+    De snelheidsrem (``LOC_REQUEST_MIN_GAP_S``) staat serverzijde en niet alleen
+    in de knop -- zie de toelichting hierboven.
+
+    Antwoordt met JSON (de knop in loc.js post via fetch met Accept:
+    application/json en toont de melding); zonder JavaScript valt een gewone
+    formulier-POST terug op een 303-redirect naar de pagina zelf, zodat er ook
+    dan niets vreemds op het scherm verschijnt.
+    """
+    wil_json = "application/json" in request.headers.get("accept", "")
+
+    def antwoord(ok: bool, msg: str):
+        if wil_json:
+            return JSONResponse({"ok": ok, "msg": msg})
+        # Zonder JS: terug naar de pagina (PRG), de kaart staat er dan gewoon.
+        return RedirectResponse(f"/loc/{token}", status_code=303)
+
+    comp = db.companion_by_share_token(token)
+    if not comp:
+        raise HTTPException(404, "Onbekende of ingetrokken deel-link")
+
+    # De afzender-node van deze companion: zonder afzender kan er niets de deur
+    # uit, en dat is een nette melding en geen fout. Dit verbruikt de rem NIET --
+    # er wordt toch niets verstuurd, dus er valt niets te misbruiken.
+    rid = comp["sender_repeater_id"]
+    rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,)) if rid else None
+    if rep is None:
+        return antwoord(False, "geen afzender-node ingesteld voor deze companion")
+
+    # De snelheidsrem, per companion en serverzijde. De klok wordt binnen het
+    # slot gezet ZODRA we besluiten te versturen, zodat twee gelijktijdige
+    # verzoeken (twee open tabbladen) niet allebei door de rem glippen -- en op
+    # het VERSTUUR-moment, niet pas na afloop, want elke poging kost zendtijd op
+    # de afzender-node ongeacht of de bot uiteindelijk 'ok' teruggeeft.
+    now = time.monotonic()
+    with _loc_request_lock:
+        laatst = _loc_request_ts.get(comp["id"])
+        if laatst is not None and now - laatst < LOC_REQUEST_MIN_GAP_S:
+            nog = int(LOC_REQUEST_MIN_GAP_S - (now - laatst)) + 1
+            return antwoord(False, f"even wachten — nog {nog}s")
+        _loc_request_ts[comp["id"]] = now
+
+    # Precies één commando, hier vast: nooit iets uit de body. De bot-keuze is
+    # dezelfde volgorde als de beheerweg (companion_cmd): geen expliciete keuze
+    # ("") -> de bewaarde voorkeur van de companion -> de MGMT-standaard.
+    bot = companions.resolve_bot(rep, "", comp["preferred_bot"])
+    res = companions.send_command(rep, comp["pubkey"], "loc", {}, bot=bot)
+    if res["ok"]:
+        return antwoord(True, "locatie opgevraagd — de kaart werkt zich zo bij")
+    return antwoord(False, f"niet verstuurd — {res['error']}")
 
 
 def _channel_tile(metric: str, label: str, unit: str | None, row) -> dict:
