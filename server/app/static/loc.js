@@ -81,6 +81,15 @@
     if (latlngs.length > 1) {
       L.polyline(latlngs, { color: "#3aa76d", weight: 3, opacity: 0.8 }).addTo(layer);
     }
+    // Een puntje op ELK doorgegeven locatiepunt (elke #LOC-doorgifte), niet enkel
+    // de verbindingslijn -- zo zie je waar de companion telkens gemeld heeft.
+    (points || []).forEach(function (p) {
+      var pIso = p[2] ? new Date(p[2] * 1000).toISOString() : null;
+      L.circleMarker([p[0], p[1]], {
+        radius: 3, color: "#2f7d54", weight: 1,
+        fillColor: "#3aa76d", fillOpacity: 0.9
+      }).bindTooltip(ageText(pIso)).addTo(layer);
+    });
     // De marker staat op het NIEUWSTE spoorpunt als er een spoor is, anders op
     // de door de server meegegeven laatste positie.
     var here = latlngs.length ? latlngs[latlngs.length - 1] : last;

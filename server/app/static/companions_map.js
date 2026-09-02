@@ -145,9 +145,22 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         clearTrack();
-        var pts = (data.points || []).map(function (p) { return [p[0], p[1]]; });
-        if (pts.length > 1) {
-          trackLayer = L.polyline(pts, { color: "#3aa76d", weight: 3, opacity: 0.8 });
+        var raw = data.points || [];
+        var pts = raw.map(function (p) { return [p[0], p[1]]; });
+        if (pts.length) {
+          // Laaggroep: de verbindingslijn PLUS een puntje op ELK doorgegeven
+          // locatiepunt (elke #LOC-doorgifte), zodat het hele tracé zichtbaar is.
+          trackLayer = L.layerGroup();
+          if (pts.length > 1) {
+            L.polyline(pts, { color: "#3aa76d", weight: 3, opacity: 0.8 }).addTo(trackLayer);
+          }
+          raw.forEach(function (p) {
+            var tip = p[2] ? new Date(p[2] * 1000).toLocaleString() : "";
+            L.circleMarker([p[0], p[1]], {
+              radius: 3, color: "#2f7d54", weight: 1,
+              fillColor: "#3aa76d", fillOpacity: 0.9
+            }).bindTooltip(tip).addTo(trackLayer);
+          });
           trackLayer.addTo(map);
         }
       })
