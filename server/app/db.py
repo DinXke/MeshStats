@@ -337,6 +337,37 @@ CREATE TABLE IF NOT EXISTS companion_alerts(
 );
 CREATE INDEX IF NOT EXISTS idx_companion_alerts_companion
   ON companion_alerts(companion_id);
+-- Het volle SPOOR van een companion: één rij per gemeld locatiepunt, in plaats
+-- van alleen de LAATSTE positie in ``companions.last_lat``/``last_lon``. Bewust
+-- een eigen tabel: ``companions`` houdt de huidige toestand (de kaart-marker en
+-- de detailregel lezen daaruit), en dit is de geschiedenis eronder -- die groeit
+-- onbeperkt en heeft dus een eigen, kortere bewaartermijn (COMPANION_TRACK_DAYS,
+-- standaard 30 dagen; zie retention.py) los van de metingen en de pakketten.
+--
+-- ``companion_id`` en niet de pubkey, precies zoals ``companion_alerts``
+-- hierboven: het spoor hoort bij de beheerde rij, en ON DELETE CASCADE zodat een
+-- verwijderde companion zijn spoor meeneemt. Geschreven op de PUBKEY (want
+-- ``set_companion_location`` matcht daarop), maar bewaard op het id -- de
+-- vertaling gebeurt in ``add_companion_track_point`` met een subquery, zodat een
+-- punt voor een pubkey die wij niet beheren stilzwijgend nergens belandt (net als
+-- ``set_companion_location`` zelf).
+--
+-- ``ts`` is een EPOCH in seconden, dezelfde soort waarde als
+-- ``companions.last_seen`` (zie de kolomtoelichting daar en
+-- companions._secs_to_epoch voor de klok-omrekening). De UNIQUE-index op
+-- (companion_id, ts) is de ontdubbeling: exact hetzelfde punt (dezelfde
+-- companion, hetzelfde tijdstip) dat langs twee wegen binnenkomt -- de poll én de
+-- instant-push zien dezelfde melding -- levert dankzij INSERT OR IGNORE maar één
+-- spoorpunt op. Dezelfde index bedient ook de vensterquery (companion_track_since).
+CREATE TABLE IF NOT EXISTS companion_track(
+  id INTEGER PRIMARY KEY,
+  companion_id INTEGER NOT NULL REFERENCES companions(id) ON DELETE CASCADE,
+  lat REAL NOT NULL,
+  lon REAL NOT NULL,
+  ts INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_companion_track_uniq
+  ON companion_track(companion_id, ts);
 CREATE TABLE IF NOT EXISTS packets(
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL,
@@ -735,6 +766,15 @@ COLUMN_MIGRATIONS = [
     # zijn twee losse keuzes, en een companion kan zijn afzender houden terwijl
     # alleen de bot verandert (bv. de node krijgt er een tweede bot bij).
     ("companions", "preferred_bot", "TEXT"),
+    # Het publieke DEEL-token van een companion: een URL-veilige willekeurige
+    # reeks (secrets.token_urlsafe(16), gezet in routes_companions) waarmee
+    # /loc/<token> de laatste positie en het recente spoor toont ZONDER login.
+    # NULL is de normale stand -- geen deel-link -- en dan bestaat /loc/<token>
+    # voor deze companion niet (een onbekend of ingetrokken token geeft een
+    # nette 404). Nullable en geen default: een deel-link is een bewuste
+    # handeling van een beheerder, niet iets dat elke companion vanzelf krijgt.
+    # Intrekken zet de kolom terug op NULL, waarna de oude link meteen dood is.
+    ("companions", "share_token", "TEXT"),
 ]
 
 
@@ -3225,12 +3265,92 @@ def set_companion_location(pubkey: str, lat: float, lon: float,
     key = str(pubkey or "").strip().lower()
     if not key:
         return False
-    return execute_rowcount(
+    geraakt = execute_rowcount(
         "UPDATE companions SET last_lat=?, last_lon=?, last_seen=?, updated=? "
         "WHERE lower(pubkey)=?",
         (float(lat), float(lon),
          int(seen_epoch) if seen_epoch is not None else None,
          utcnow(), key)) > 0
+    # Elk gemeld punt óók als spoorpunt vastleggen (companion_track). Hier en niet
+    # in de twee aanroepers (poll_locations én de instant-push): dit is de ENE
+    # plek waar een companion-locatie wordt opgeslagen, dus beide wegen leggen zo
+    # vanzelf een spoorpunt aan zonder dat een van de twee het kan vergeten. Alleen
+    # als de UPDATE een beheerde companion raakte -- een pubkey die wij niet kennen
+    # levert net als hierboven stilzwijgend niets op.
+    if geraakt:
+        # ``seen_epoch`` is het tijdstip van de MELDING; ontbreekt het (de node gaf
+        # geen bruikbare ``seen`` mee, zie companions._secs_to_epoch), dan is het
+        # tijdstip van vastleggen het eerlijkste dat we hebben.
+        ts = int(seen_epoch) if seen_epoch is not None else \
+            int(datetime.now(timezone.utc).timestamp())
+        add_companion_track_point(key, float(lat), float(lon), ts)
+    return geraakt
+
+
+def add_companion_track_point(pubkey: str, lat: float, lon: float, ts: int) -> None:
+    """Eén spoorpunt van een companion vastleggen, gevonden op zijn PUBKEY.
+
+    INSERT OR IGNORE tegen de UNIQUE-index (companion_id, ts): exact hetzelfde
+    punt dat twee keer binnenkomt -- de poll en de instant-push die dezelfde
+    melding zien -- levert maar één rij op. De subquery vertaalt de pubkey naar
+    het companion-id en levert geen rijen (dus geen insert) voor een pubkey die
+    wij niet beheren, dezelfde stille overslag als ``set_companion_location``.
+    """
+    key = str(pubkey or "").strip().lower()
+    if not key:
+        return
+    execute(
+        "INSERT OR IGNORE INTO companion_track(companion_id, lat, lon, ts) "
+        "SELECT id, ?, ?, ? FROM companions WHERE lower(pubkey)=?",
+        (float(lat), float(lon), int(ts), key))
+
+
+def companion_track_since(companion_id: int, since_epoch: int) -> list:
+    """De spoorpunten van één companion vanaf ``since_epoch`` (epoch-seconden),
+    op tijd oplopend -- de vorm die een polyline op de kaart nodig heeft.
+
+    Op oplopende tijd zodat de lijn de volgorde van het pad volgt, en begrensd op
+    een venster (companions.TRACK_WINDOWS) omdat een spoor van 30 dagen niemand
+    op één kaart wil -- de publieke deel-link en de beheerkaart kiezen allebei
+    1u/6u/24u/7d."""
+    return q("SELECT lat, lon, ts FROM companion_track "
+             "WHERE companion_id=? AND ts>=? ORDER BY ts",
+             (int(companion_id), int(since_epoch)))
+
+
+def prune_companion_track(before_epoch: int) -> int:
+    """Spoorpunten ouder dan ``before_epoch`` (epoch-seconden) weggooien; geeft
+    het aantal verwijderde rijen terug.
+
+    Een eigen, kortere bewaartermijn dan de metingen en de pakketten (zie de
+    kolomtoelichting bij companion_track): dit is de tabel die het snelst en
+    onbegrensd groeit, één rij per gemeld punt per companion. Gesnoeid vanuit de
+    retentie-lus (retention.run_once), naast het snoeien van het audittrail dat
+    daar om dezelfde reden -- een eigen termijn -- apart staat."""
+    return execute_rowcount("DELETE FROM companion_track WHERE ts<?",
+                            (int(before_epoch),))
+
+
+def companion_by_share_token(token: str) -> sqlite3.Row | None:
+    """Een companion op zijn publieke deel-token, voor /loc/<token>.
+
+    Een leeg of onbekend token levert None (de route maakt daar een nette 404
+    van): een deel-link die ingetrokken is (``share_token`` weer NULL) hoort per
+    direct dood te zijn."""
+    t = str(token or "").strip()
+    if not t:
+        return None
+    return qone("SELECT * FROM companions WHERE share_token=?", (t,))
+
+
+def set_companion_share_token(cid: int, token: str | None) -> None:
+    """Het publieke deel-token van een companion zetten (een nieuw token) of
+    wissen (None = intrekken). Een eigen functie en geen veld op
+    ``update_companion``: dit is geen CRUD-veld maar een aparte, bewuste
+    handeling -- dezelfde lijn als ``set_companion_bot``."""
+    schoon = (str(token).strip() or None) if token is not None else None
+    execute("UPDATE companions SET share_token=?, updated=? WHERE id=?",
+            (schoon, utcnow(), int(cid)))
 
 
 def set_companion_fall(cid: int, fall_epoch: int, kind: str) -> None:

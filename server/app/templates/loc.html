@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ comp_name }} — locatie — {{ site_name }}{% endblock %}
+
+{#- De publieke deel-pagina van een companion (/loc/<token>). GEEN login: het
+    token in de URL is de sleutel. Alleen-lezen -- naam, laatst gezien, batterij
+    (als bekend) en een kaart met de laatste positie plus het recente spoor. De
+    kaart en het spoor laden client-side via static/loc.js; de venster-knoppen
+    (1u/6u/24u/7d) herladen alleen het spoor, niet de kaart. -#}
+{% block content %}
+<section class="loc-share">
+  <h1>&#128205; {{ comp_name }}{% if comp_type %} <span class="badge on">{{ comp_type }}</span>{% endif %}</h1>
+  <p class="muted">
+    Laatst gezien:
+    {% if last_seen_iso %}
+    <time class="reltime" datetime="{{ last_seen_iso }}">{{ last_seen_iso }}</time>
+    {% else %}<span class="muted">onbekend</span>{% endif %}
+    {% if battery is not none %} &middot; batterij {{ battery }}%{% endif %}
+  </p>
+
+  {#- De venster-keuze voor het spoor. Altijd zichtbaar (ook zonder locatie is de
+      keuze zinvol zodra er een eerste punt binnenkomt); loc.js leest
+      data-window en herlaadt alleen de polyline. -#}
+  <div class="loc-windows" id="loc-windows" role="group" aria-label="Tijdvenster van het spoor">
+    <span class="muted small">Spoor:</span>
+    {% for w in windows %}
+    <button type="button" class="pill{% if w.key == default_window %} on{% else %} off{% endif %}"
+            data-window="{{ w.key }}">{{ w.label }}</button>
+    {% endfor %}
+  </div>
+
+  {% if has_location %}
+  <div id="loc-map"></div>
+  {% else %}
+  <p class="muted map-missing">
+    &#128205; Nog geen locatie bekend voor deze companion. Zodra er een positie
+    binnenkomt, verschijnt hier een kaart.
+  </p>
+  {% endif %}
+</section>
+
+<script>
+  window.LOC_TOKEN = {{ token|tojson }};
+  window.LOC_DEFAULT_WINDOW = {{ default_window|tojson }};
+  window.LOC_LAST = {{ last_point|tojson }};
+</script>
+{% endblock %}
+
+{#- Leaflet van dezelfde CDN als de andere kaarten (binnen de CSP: unpkg voor
+    Leaflet, cartocdn voor de tegels). app.js voor thema + relatieve tijden. -#}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_v }}"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/loc.js?v={{ asset_v }}"></script>
+{% endblock %}

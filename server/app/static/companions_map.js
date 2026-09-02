@@ -103,9 +103,68 @@
       popup += "<br><a href=\"/admin/companions/" + encodeURIComponent(c.id) +
         "\">beheren &rarr;</a>";
       marker.bindPopup(popup);
+      // Klik op een marker tekent het SPOOR van díe companion binnen het gekozen
+      // venster (zie hieronder). De popup opent ook -- de twee bijten elkaar niet.
+      marker.on("click", function () { loadTrack(c.id); });
       layer.addLayer(marker);
     });
     return layer;
+  }
+
+  // --- het SPOOR per companion (1u/6u/24u/7d) --------------------------------
+  //
+  // Een aparte laag naast markerLayer, zodat de 20s-ververs de markers kan
+  // vervangen zonder het getoonde spoor te wissen -- en zodat "wis spoor" en een
+  // venster-wissel alleen dit aanraken. De venster-knoppen staan in
+  // companions_map.html; de laatst aangeklikte companion bepaalt WELK spoor een
+  // venster-wissel opnieuw ophaalt.
+  var trackLayer = null;
+  var trackCompanionId = null;
+  var trackWindows = document.getElementById("track-windows");
+  var currentWindow = "24h";
+  if (trackWindows) {
+    var on = trackWindows.querySelector("button.pill.on[data-window]");
+    if (on) currentWindow = on.getAttribute("data-window") || currentWindow;
+  }
+
+  function clearTrack() {
+    if (trackLayer) { map.removeLayer(trackLayer); trackLayer = null; }
+  }
+
+  function loadTrack(id) {
+    if (!window.fetch || id == null) return;
+    trackCompanionId = id;
+    fetch("/admin/companions/" + encodeURIComponent(id) +
+          "/track.json?window=" + encodeURIComponent(currentWindow),
+          { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        clearTrack();
+        var pts = (data.points || []).map(function (p) { return [p[0], p[1]]; });
+        if (pts.length > 1) {
+          trackLayer = L.polyline(pts, { color: "#3aa76d", weight: 3, opacity: 0.8 });
+          trackLayer.addTo(map);
+        }
+      })
+      .catch(function () { /* een mislukte ophaling laat de kaart met rust */ });
+  }
+
+  if (trackWindows) {
+    Array.prototype.forEach.call(trackWindows.querySelectorAll("button[data-window]"),
+      function (b) {
+        b.addEventListener("click", function () {
+          currentWindow = b.getAttribute("data-window") || currentWindow;
+          Array.prototype.forEach.call(
+            trackWindows.querySelectorAll("button[data-window]"),
+            function (x) { x.className = "pill" + (x === b ? " on" : " off"); });
+          if (trackCompanionId != null) loadTrack(trackCompanionId);
+        });
+      });
+    var clearBtn = document.getElementById("track-clear");
+    if (clearBtn) clearBtn.addEventListener("click", function () {
+      trackCompanionId = null;
+      clearTrack();
+    });
   }
 
   function showMarkers(points) {

@@ -551,6 +551,44 @@
              placeholder="bv. BE-HSS-DinX-MGMT" style="width:min(100%,24rem)"></label>
     <button type="submit">Bot-voorkeur opslaan</button>
   </form>
+  {#- ==================== Publieke deel-link ================================
+      Een openbare, login-vrije pagina (/loc/<token>) met de laatste positie en
+      het recente spoor van deze companion. Het token is de sleutel: wie de link
+      heeft, ziet de kaart. "Vervangen" maakt een NIEUW token en maakt de oude
+      link daarmee meteen dood -- de weg om een gelekte link ongeldig te maken.
+      "Intrekken" wist het token; daarna geeft /loc/<oude token> een 404. -#}
+  <div class="card" style="margin-top:.8rem">
+    <div class="card-head"><strong>&#128279; Publieke deel-link</strong></div>
+    {% if share_url %}
+    <p class="small">Actieve deel-link (geen login nodig):<br>
+      <a href="{{ share_url }}" class="mono" target="_blank" rel="noopener">{{ share_url }}</a></p>
+    <p class="muted small">Iedereen met deze link ziet de laatste positie en het
+      recente spoor van deze companion. Deel hem alleen met wie dat mag zien.</p>
+    <div class="rowform">
+      <form method="post" action="/admin/companions/{{ comp.id }}/share">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="on">
+        <button type="submit"
+                onclick="return confirm('Een nieuw token maken? De huidige deel-link werkt daarna niet meer.');">Vervangen (nieuw token)</button>
+      </form>
+      <form method="post" action="/admin/companions/{{ comp.id }}/share">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="action" value="off">
+        <button type="submit" class="danger"
+                onclick="return confirm('De deel-link intrekken? De huidige link werkt daarna niet meer.');">Intrekken</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="muted small">Nog geen deel-link. Maak er een aan om de laatste
+      positie en het recente spoor van deze companion publiek (zonder login)
+      te tonen op <code>/loc/&lt;token&gt;</code>.</p>
+    <form method="post" action="/admin/companions/{{ comp.id }}/share">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="on">
+      <button type="submit">Deel-link aanmaken</button>
+    </form>
+    {% endif %}
+  </div>
   <form method="post" action="/admin/companions/{{ comp.id }}/delete" style="margin-top:.8rem"
         onsubmit="return confirm('Companion {{ comp.name }} verwijderen? Dit raakt alleen de lijst, niet het toestel.');">
     <input type="hidden" name="csrf" value="{{ csrf }}">

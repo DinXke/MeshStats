@@ -104,6 +104,12 @@ DB_MAX_MB = int(env("DB_MAX_MB", "512"))
 # Minutes between two retention passes. Pruning only at startup means a server
 # that runs for months never prunes at all -- see retention.py.
 PRUNE_MINUTES = int(env("PRUNE_MINUTES", "60"))
+# Hoeveel dagen companion-spoorpunten (companion_track) bewaard blijven. Een
+# eigen, veel kortere termijn dan de metingen: dit is één rij per gemeld
+# locatiepunt per companion en groeit dus het snelst. De deel-link en de
+# beheerkaart tonen hoogstens een venster van 7 dagen, dus 30 dagen bewaren is
+# ruim. Gesnoeid vanuit de retentie-lus -- zie retention.py.
+COMPANION_TRACK_DAYS = int(env("COMPANION_TRACK_DAYS", "30"))
 SITE_NAME = env("SITE_NAME", "MeshManager")
 # Heartbeat: also store a sample when the value did not change but the previous
 # one is older than this many minutes, so charts keep running.

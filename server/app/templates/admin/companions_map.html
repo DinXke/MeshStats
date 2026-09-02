@@ -18,6 +18,19 @@
 </p>
 
 {% if locations %}
+{#- De venster-keuze voor het SPOOR. Klik een marker om het spoor van die
+    companion binnen het gekozen venster te tekenen; de knop bepaalt het venster
+    (1u/6u/24u/7d), companions_map.js haalt het spoor op via
+    /admin/companions/<id>/track.json. Dezelfde vensters als de publieke
+    deel-link, uit companions.TRACK_WINDOWS. -#}
+<div class="track-windows" id="track-windows" role="group" aria-label="Tijdvenster van het spoor">
+  <span class="muted small">Spoor bij klik op een marker:</span>
+  {% for w in track_windows %}
+  <button type="button" class="pill{% if w.key == track_window_default %} on{% else %} off{% endif %}"
+          data-window="{{ w.key }}">{{ w.label }}</button>
+  {% endfor %}
+  <button type="button" class="pill off" id="track-clear">wis spoor</button>
+</div>
 <div id="companion-map"></div>
 {% else %}
 <p class="muted map-missing">

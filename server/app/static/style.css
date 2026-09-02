@@ -558,6 +558,14 @@ button:focus-visible, .noderow-name:focus-visible {
 /* --- companion-locatiekaart (beheer) ------------------------------------------ */
 #companion-map { height: 480px; border-radius: 8px; background: var(--bg-grid); }
 
+/* --- companion-spoor: venster-knoppen op kaart en deel-link ------------------- */
+.loc-windows, .track-windows {
+  display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: .6rem 0;
+}
+/* --- publieke deel-pagina /loc/<token> ---------------------------------------- */
+#loc-map { height: 480px; border-radius: 8px; background: var(--bg-grid); }
+.loc-share h1 { margin-bottom: .2rem; }
+
 /* --- live packet map --------------------------------------------------------- */
 #livemap { height: 420px; border-radius: 8px; background: var(--bg-grid); }
 .mapwrap { position: relative; }

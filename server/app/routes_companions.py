@@ -23,6 +23,7 @@ dit een veilige verplaatsing is:
 Het vervoer zit in ``companions.send_dm`` (nu de bot van de afzender-node) en
 nergens hier: deze routes geven een afzender-node en een tekst.
 """
+import secrets
 import time
 from urllib.parse import urlencode
 
@@ -175,6 +176,10 @@ def _companion_result(request: Request, comp) -> dict | None:
         return {"ok": False, "msg": f"niet verstuurd — {request.query_params.get('e', '')}"}
     if r == "bot_saved":
         return {"ok": True, "msg": "bot-voorkeur opgeslagen"}
+    if r == "share_on":
+        return {"ok": True, "msg": "publieke deel-link aangemaakt"}
+    if r == "share_off":
+        return {"ok": True, "msg": "publieke deel-link ingetrokken"}
     return None
 
 
@@ -248,6 +253,11 @@ def _companions_map_page(request: Request, extra: dict | None = None):
         "site_name": config.SITE_NAME, "user": user, "world": "companions",
         "companions_map_tab": True,
         "locations": [_loc(c, now) for c in locaties],
+        # De tijdvensters voor het spoor per companion op de kaart, uit
+        # companions.py zodat de knoppen en de server-validatie dezelfde bron
+        # delen (zie companion_track_json en companions.TRACK_WINDOWS).
+        "track_windows": companions.track_windows_for_ui(),
+        "track_window_default": companions.TRACK_WINDOW_DEFAULT,
         "serverrechten": rbac.serverrechten(ik),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "result": None,
@@ -297,6 +307,35 @@ def companions_status_json(request: Request, rep: int | None = None):
     return JSONResponse({"companions": [_loc(c, now) for c in db.list_companions()]})
 
 
+# --- het locatie-spoor voor de beheerkaart ------------------------------------
+#
+# Vóór ``/companions/{cid}`` gedefinieerd is niet nodig (dit pad heeft een extra
+# segment en botst dus niet met ``{cid}``), maar het staat hier bij de andere
+# JSON-route omdat het dezelfde soort weg is: een aparte GET die de kaart met
+# fetch aanroept. De publieke tegenhanger (/loc/<token>/track.json, zonder login)
+# staat in routes_public en deelt via companions.TRACK_WINDOWS dezelfde vensters,
+# zodat de beheerkant en de deel-link niet uiteen kunnen lopen.
+@router.get("/companions/{cid}/track.json")
+def companion_track_json(request: Request, cid: int, window: str = ""):
+    """De spoorpunten van één companion binnen het gekozen tijdvenster, als JSON.
+
+    Voor de beheerkaart (companions_map.js): klik een marker, kies een venster
+    (1u/6u/24u/7d), en de kaart tekent de polyline. Alleen-lezen en achter de
+    gewone login -- ``require_login`` en niet ``require_perm``, net als
+    ``companions_status_json`` hierboven, want er wordt niets gemuteerd en de
+    kaart toont sowieso alleen wat deze installatie al beheert."""
+    require_login(request)
+    comp = db.companion(cid)
+    if not comp:
+        raise HTTPException(404, "Onbekende companion")
+    since = int(time.time()) - companions.track_window_seconds(window)
+    punten = db.companion_track_since(cid, since)
+    return JSONResponse({
+        "window": window or companions.TRACK_WINDOW_DEFAULT,
+        "points": [[p["lat"], p["lon"], p["ts"]] for p in punten],
+    })
+
+
 def _companion_page(request: Request, cid: int, extra: dict | None = None):
     user = require_login(request)
     ik = rbac.load(user)
@@ -341,6 +380,16 @@ def _companion_page(request: Request, cid: int, extra: dict | None = None):
         "quiet_actions": companions.QUIET_ACTIONS,
         "rxps_modes": companions.RXPS_MODES,
         "radio_fields": companions.RADIO_FIELDS,
+        # De publieke deel-link (companions.share_token): het pad zelf wordt hier
+        # opgebouwd zodat de sjabloon alleen hoeft te tonen wat er staat -- leeg
+        # betekent "geen link". Een pad en geen volledige URL: de host hangt van
+        # de reverse proxy af (meshmanager.net), en het pad is genoeg om er op de
+        # pagina een klikbare, kopieerbare link van te maken.
+        "share_url": f"/loc/{comp['share_token']}" if comp["share_token"] else "",
+        # De tijdvensters voor het spoor op de kaart, uit companions.py zodat de
+        # UI en de server dezelfde bron delen.
+        "track_windows": companions.track_windows_for_ui(),
+        "track_window_default": companions.TRACK_WINDOW_DEFAULT,
         "serverrechten": rbac.serverrechten(ik),
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
         "result": _companion_result(request, comp),
@@ -616,6 +665,36 @@ def companion_bot_set(request: Request, cid: int, bot: str = Form(""),
             detail=f"bot-voorkeur van {comp['name']} gezet op "
                    f"{bot.strip() or '— standaard —'}")
     return _redirect(f"/admin/companions/{cid}", r="bot_saved")
+
+
+@router.post("/companions/{cid}/share")
+def companion_share_set(request: Request, cid: int, action: str = Form(""),
+                        csrf: str = Form(...)):
+    """De publieke deel-link van een companion aan- of uitzetten. Serverhandeling
+    zoals de rest van de companion-CRUD: dit raakt alleen de LIJST-rij
+    (``companions.share_token``), er wordt niets naar een node verstuurd.
+
+    ``action`` is 'on' (een NIEUW token maken -- ook als er al een was, wat de
+    oude link meteen ongeldig maakt: dat is de weg om een gelekte link te
+    vervangen) of 'off' (intrekken, token terug op NULL). Het token zelf wordt
+    HIER gemaakt (``secrets.token_urlsafe(16)``, URL-veilig en niet te raden) en
+    niet in de databanklaag, zodat db.py geen kennis van tokenformaat hoeft te
+    hebben -- dezelfde lijn als waar de andere geheimen van deze site gemaakt
+    worden."""
+    user = require_perm(request, "server.companions")
+    check_csrf(request, csrf)
+    comp = db.companion(cid)
+    if not comp:
+        raise HTTPException(404, "Onbekende companion")
+    if str(action or "").strip().lower() == "off":
+        db.set_companion_share_token(cid, None)
+        _noteer(request, user, "server.companions",
+                detail=f"publieke deel-link ingetrokken voor {comp['name']}")
+        return _redirect(f"/admin/companions/{cid}", r="share_off")
+    db.set_companion_share_token(cid, secrets.token_urlsafe(16))
+    _noteer(request, user, "server.companions",
+            detail=f"publieke deel-link aangemaakt voor {comp['name']}")
+    return _redirect(f"/admin/companions/{cid}", r="share_on")
 
 
 def _back_target(back: str) -> str:
