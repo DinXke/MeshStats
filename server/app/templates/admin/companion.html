@@ -618,6 +618,41 @@
     </form>
     {% endif %}
   </div>
+
+  {#- ==================== Home Assistant device_tracker =====================
+      Een OPT-IN per companion: staat hij aan, dan publiceert hadiscovery deze
+      companion als device_tracker naar Home Assistant (op de HA-kaart, met de
+      batterij als attribuut) zodra hij een positie heeft. Dezelfde HA-MQTT-
+      discovery-brug als de nodes; de opt-in raakt alleen de databankrij, het
+      publiceren én het opruimen gebeuren in de hadiscovery-ronde. Twee kleine
+      POST-formulieren (aan/uit) in dezelfde stijl als de deel-link hierboven. -#}
+  <div class="card" style="margin-top:.8rem">
+    <div class="card-head"><strong>&#127968; Home Assistant</strong></div>
+    {% if ha_publish_on %}
+    <p class="small">Publicatie naar Home Assistant staat <strong>aan</strong>:
+      deze companion verschijnt als <code>device_tracker</code> op de HA-kaart
+      (met de batterij als attribuut) zodra hij een positie heeft gemeld.</p>
+    <form method="post" action="/admin/companions/{{ comp.id }}/ha">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="off">
+      <button type="submit" class="danger"
+              onclick="return confirm('Publicatie naar Home Assistant uitzetten? De device_tracker-entiteit wordt uit HA verwijderd.');">Naar Home Assistant publiceren uitzetten</button>
+    </form>
+    {% else %}
+    <p class="muted small">Zet dit aan om deze companion als
+      <code>device_tracker</code> naar Home Assistant te publiceren (op de
+      HA-kaart, met de batterij als attribuut). Uit tenzij je het bewust
+      aanzet — een handzender hoort niet vanzelf op iemands HA-kaart. De
+      HA-MQTT-brug moet aanstaan (zie de serverpagina); zolang die uit is,
+      gebeurt er niets.</p>
+    <form method="post" action="/admin/companions/{{ comp.id }}/ha">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="on">
+      <button type="submit">Naar Home Assistant publiceren (device_tracker)</button>
+    </form>
+    {% endif %}
+  </div>
+
   <form method="post" action="/admin/companions/{{ comp.id }}/delete" style="margin-top:.8rem"
         onsubmit="return confirm('Companion {{ comp.name }} verwijderen? Dit raakt alleen de lijst, niet het toestel.');">
     <input type="hidden" name="csrf" value="{{ csrf }}">

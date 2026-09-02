@@ -785,6 +785,18 @@ COLUMN_MIGRATIONS = [
     # belandt. NULL wordt nooit teruggeschreven over een bekende stand -- zie
     # ``set_companion_batt``, dat alleen met een gekeurde waarde aangeroepen wordt.
     ("companions", "batt", "INTEGER"),
+    # Of deze companion zijn live GPS-positie naar Home Assistant gepubliceerd
+    # mag worden als ``device_tracker`` (op de HA-kaart, met de batterij als
+    # attribuut). Een OPT-IN per companion: 0/NULL = uit (de standaard, want een
+    # handzender is persoonlijk en zijn positie hoort niet vanzelf op iemands
+    # HA-kaart te belanden), 1 = aan. De publicatie zelf loopt over dezelfde
+    # HA-MQTT-discovery-brug als de nodes (hadiscovery), en staat hoe dan ook
+    # stil zolang die brug uit is (MM_HA_MQTT_HOST/MM_HA_DISCOVERY_ENABLED).
+    # Een INTEGER-vlag en geen aparte tabel: het is één bit per companion, in de
+    # geest van ``show_position`` op de nodes. NULL leest als uit -- zie het
+    # LEESPAD (``companion_ha_publish_on`` / ``companions_for_ha_publish``), dat
+    # de vlag nergens als "gezet" behandelt zonder een expliciete 1.
+    ("companions", "ha_publish", "INTEGER"),
 ]
 
 
@@ -3382,6 +3394,40 @@ def set_companion_share_token(cid: int, token: str | None) -> None:
     schoon = (str(token).strip() or None) if token is not None else None
     execute("UPDATE companions SET share_token=?, updated=? WHERE id=?",
             (schoon, utcnow(), int(cid)))
+
+
+def set_companion_ha_publish(cid: int, on: bool) -> None:
+    """De Home-Assistant-opt-in van een companion zetten (1 = publiceren als
+    ``device_tracker``, 0 = niet). Een eigen functie en geen veld op
+    ``update_companion``: dit is geen CRUD-veld maar een aparte, bewuste
+    handeling -- dezelfde lijn als ``set_companion_bot`` en
+    ``set_companion_share_token``. Slaat 0/1 op zodat het LEESPAD nooit hoeft te
+    raden of NULL 'aan' of 'uit' betekent."""
+    execute("UPDATE companions SET ha_publish=?, updated=? WHERE id=?",
+            (1 if on else 0, utcnow(), int(cid)))
+
+
+def companion_ha_publish_on(comp) -> bool:
+    """Of een companion-rij (of dict) HA-publicatie aan heeft staan. Op één
+    plek zodat elke afnemer -- de route, de sjabloon-context en hadiscovery --
+    NULL en 0 hetzelfde (uit) leest en alleen een expliciete 1 als aan telt."""
+    try:
+        waarde = comp["ha_publish"]
+    except (KeyError, IndexError, TypeError):
+        waarde = None
+    return bool(waarde)
+
+
+def companions_for_ha_publish() -> list:
+    """De companions die naar Home Assistant gepubliceerd mogen worden ÉN al een
+    bekende laatste positie hebben -- de enige die hadiscovery als
+    ``device_tracker`` op de HA-kaart kan zetten. Een companion met de opt-in aan
+    maar zonder positie levert geen (kapotte) tracker op en hoort hier dus niet
+    bij; zie de toelichting in hadiscovery. Op naam gesorteerd, klein genoeg om
+    in één keer te lezen net als ``companions_with_location``."""
+    return q("SELECT * FROM companions "
+             "WHERE ha_publish = 1 AND last_lat IS NOT NULL AND last_lon IS NOT NULL "
+             "ORDER BY name COLLATE NOCASE, id")
 
 
 def set_companion_fall(cid: int, fall_epoch: int, kind: str) -> None:

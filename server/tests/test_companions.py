@@ -431,6 +431,66 @@ def test_companions_status_json_bevat_alle_companions_en_pollt_ondemand(db, monk
     assert bij_pubkey["Zonder locatie"]["lat"] is None
 
 
+def test_ha_publish_db_laag(db):
+    """De opt-in-vlag: default uit (NULL leest als uit), aan/uit te zetten, en
+    het gefilterde leespad voor hadiscovery."""
+    import time as _t
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    comp = db.companion(cid)
+    # Vers: NULL, en dat leest als uit.
+    assert db.companion_ha_publish_on(comp) is False
+    # Aan zetten.
+    db.set_companion_ha_publish(cid, True)
+    assert db.companion_ha_publish_on(db.companion(cid)) is True
+    # Zonder positie hoort hij nog NIET in het hadiscovery-leespad (geen kapotte
+    # tracker).
+    assert db.companions_for_ha_publish() == []
+    # Met een positie erbij wel.
+    db.set_companion_location(VALID, 51.2, 5.4, int(_t.time()))
+    assert [r["id"] for r in db.companions_for_ha_publish()] == [cid]
+    # Uit zetten haalt hem er weer uit.
+    db.set_companion_ha_publish(cid, False)
+    assert db.companion_ha_publish_on(db.companion(cid)) is False
+    assert db.companions_for_ha_publish() == []
+
+
+def test_companion_ha_toggle_vereist_serverbeheerder(db):
+    """De opt-in muteren is een serverhandeling -- een gewone gebruiker mag niet."""
+    from app import routes_companions
+    maak_gebruiker("gewoon", superuser=False)
+    cid = db.add_companion("Björn", VALID, "", "", None)
+    req = verzoek(_sessie("gewoon"), method="POST")
+    with pytest.raises(HTTPException) as fout:
+        routes_companions.companion_ha_set(req, cid, action="on", csrf="x")
+    assert fout.value.status_code == 403
+    assert db.companion_ha_publish_on(db.companion(cid)) is False
+
+
+def test_companion_ha_toggle_aan_en_uit_als_serverbeheerder(db):
+    """Aan en uit zetten via de route: PRG-redirect met de juiste code, en de
+    vlag staat erna in de databank."""
+    from app import auth, routes_companions
+    maak_gebruiker("baas", superuser=True)
+    cookie = _sessie("baas")
+    cid = db.add_companion("Björn", VALID, "T1000-E", "", None)
+    resp = routes_companions.companion_ha_set(
+        verzoek(cookie, method="POST"), cid, action="on",
+        csrf=auth.csrf_token(cookie))
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/admin/companions/{cid}?r=ha_on"
+    assert db.companion_ha_publish_on(db.companion(cid)) is True
+
+    resp2 = routes_companions.companion_ha_set(
+        verzoek(cookie, method="POST"), cid, action="off",
+        csrf=auth.csrf_token(cookie))
+    assert resp2.headers["location"] == f"/admin/companions/{cid}?r=ha_off"
+    assert db.companion_ha_publish_on(db.companion(cid)) is False
+
+    # De pagina zelf leest de code terug in de melding.
+    pagina = routes_companions.companion_page(verzoek(cookie, qs="r=ha_on"), cid)
+    assert "Home Assistant" in pagina.body.decode("utf-8")
+
+
 def test_companions_map_pagina_rendert_ook_met_een_locatie(db):
     """De kaart-pagina met minstens één bekende locatie -- de andere aanroep
     hierboven dekt alleen het lege geval."""
