@@ -9,3 +9,6 @@ server/data/
 server/tools/_ne_*.geojson
 .venv/
 venv/
+# Zelf-gehoste kaart-assets: door pmtiles-extract/Protomaps gegenereerd, ~1,5 GB.
+# Leeft als read-only bind-mount op de server (docker-compose /tiles), niet in git.
+tiles/

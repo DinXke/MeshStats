@@ -128,6 +128,11 @@ services:
       # is de naam waaronder de databank op schijf staat. Hernoemen levert
       # een leeg volume op naast een vol volume dat niemand meer opent.
       - meshstats-data:/data
+      # Zelf-gehoste kaart-assets (vector-tiles pmtiles + glyph-fonts + sprites).
+      # Read-only bind-mount i.p.v. een genoemd volume: het is statische, van
+      # buiten gegenereerde data (basemap.pmtiles ~1,5 GB), die bewust NIET in
+      # git of de image zit. Wordt geserveerd op /tiles (zie app/main.py).
+      - ./tiles:/tiles:ro
     depends_on:
       - mosquitto
       - victoria

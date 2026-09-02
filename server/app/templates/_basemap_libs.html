@@ -1,0 +1,12 @@
+{#- Zelf-gehoste vector-basislaag voor alle kaarten. Laadt maplibre-gl, de
+    pmtiles-protocolhandler en de Leaflet<->maplibre-brug, plus onze basemap.js
+    (met de light/dark Protomaps-lagen ingebakken). Vervangt de CARTO-rastertegels
+    die sinds sep 2026 een API-sleutel eisen; tiles/fonts/sprites komen van deze
+    server (/tiles/...), geen externe kaartdienst meer.
+
+    MOET ná Leaflet en vóór de kaart-JS (app.js/loc.js/companions_map.js) komen. -#}
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
+<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+<script src="/static/basemap.js?v={{ asset_v }}"></script>

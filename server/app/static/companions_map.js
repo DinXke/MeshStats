@@ -18,8 +18,6 @@
   var mapEl = document.getElementById("companion-map");
 
   var THEME = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
-  var TILE_URL = "https://{s}.basemaps.cartocdn.com/" +
-    (THEME === "light" ? "light_all" : "dark_all") + "/{z}/{x}/{y}{r}.png";
 
   function ageText(iso) {
     if (!iso) return "tijdstip onbekend";
@@ -65,10 +63,15 @@
     return;
   }
 
-  var map = L.map(mapEl, { scrollWheelZoom: false });
-  L.tileLayer(TILE_URL, {
-    attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19,
-  }).addTo(map);
+  var map = L.map(mapEl, { scrollWheelZoom: true });
+  // Zelf-gehoste vector-basislaag (Protomaps/pmtiles) i.p.v. CARTO-raster; valt
+  // terug op OSM-raster mocht de vector-brug onverhoopt niet geladen zijn.
+  if (window.MMBasemap && MMBasemap.available()) {
+    MMBasemap.baseLayer(THEME !== "light").addTo(map);
+  } else {
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { attribution: "&copy; OpenStreetMap", maxZoom: 19 }).addTo(map);
+  }
 
   // Een companion met een RECENTE val (fall_recent, gezet door routes_companions
   // op basis van FALL_RECENT_S) krijgt een eigen icoon in plaats van de gewone

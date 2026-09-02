@@ -215,6 +215,7 @@
 {% if has_livemap %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% include "_basemap_libs.html" %}
 {% endif %}
 <script src="/static/app.js?v={{ asset_v }}"></script>
 {% endblock %}

@@ -526,8 +526,16 @@
   var TEXT = cssVar("--text", "#d7e2ea");
   var TEXT_MUTED = cssVar("--muted", "#7d8fa0");
   var GRID = cssVar("--chart-grid", "rgba(125, 143, 160, .12)");
-  var TILE_URL = "https://{s}.basemaps.cartocdn.com/" +
-    (THEME === "light" ? "light_all" : "dark_all") + "/{z}/{x}/{y}{r}.png";
+  // Basislaag voor alle kaarten: zelf-gehoste vector-tiles (Protomaps/pmtiles via
+  // MMBasemap, zie static/basemap.js) i.p.v. CARTO-raster, dat sinds sep 2026 een
+  // API-sleutel eist. Valt terug op OSM-raster als de vector-libs niet laadden.
+  function addBase(m) {
+    if (window.MMBasemap && MMBasemap.available()) {
+      return MMBasemap.baseLayer(THEME !== "light").addTo(m);
+    }
+    return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { attribution: "&copy; OpenStreetMap", maxZoom: 19 }).addTo(m);
+  }
 
   if (typeof Chart !== "undefined") {
     Chart.defaults.color = TEXT_MUTED;
@@ -1001,10 +1009,8 @@
         linkmapEl.firstChild.textContent = t("map.nolocation");
         return;
       }
-      var map = L.map(linkmapEl, { scrollWheelZoom: false });
-      L.tileLayer(TILE_URL, {
-        attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19,
-      }).addTo(map);
+      var map = L.map(linkmapEl, { scrollWheelZoom: true });
+      addBase(map);
       var home = [d.repeater.lat, d.repeater.lon];
       L.circleMarker(home, { radius: 8, color: "#4cc9f0", weight: 2, fillColor: "#4cc9f0", fillOpacity: 1 })
         .addTo(map).bindTooltip(d.repeater.name, { direction: "top" });
@@ -1365,7 +1371,7 @@
 
   var livemapEl = document.getElementById("livemap");
   if (livemapEl && typeof L !== "undefined") {
-    var lmap = L.map(livemapEl, { scrollWheelZoom: false });
+    var lmap = L.map(livemapEl, { scrollWheelZoom: true });
     // A view immediately, before a single layer is added, and this is load
     // bearing. Leaflet queues a layer's onAdd until the map has a centre and a
     // zoom. With several layers waiting, they run in the order they were asked
@@ -1384,8 +1390,7 @@
     // placeholder and not an answer, everything that reads the current view
     // waits for that framing rather than acting on this -- see viewSet.
     lmap.setView([0, 0], 2);
-    L.tileLayer(TILE_URL, { attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19 })
-      .addTo(lmap);
+    addBase(lmap);
     var feedEl = document.getElementById("livefeed");
     var feedEmptyEl = document.getElementById("livefeed-empty");
     var liveCardEl = document.getElementById("livecard");
@@ -3194,10 +3199,8 @@
       var link = d.links.find(function (l) { return l.prefix === m[1]; });
       if (!link) return;
       modalMapEl.hidden = false;
-      modalMap = L.map(modalMapEl, { scrollWheelZoom: false, zoomControl: false });
-      L.tileLayer(TILE_URL, {
-        attribution: "&copy; OSM &copy; CARTO", maxZoom: 19,
-      }).addTo(modalMap);
+      modalMap = L.map(modalMapEl, { scrollWheelZoom: true, zoomControl: false });
+      addBase(modalMap);
       var home = [d.repeater.lat, d.repeater.lon];
       var there = [link.lat, link.lon];
       var color = snrColor(link.snr);

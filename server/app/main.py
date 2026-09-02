@@ -38,8 +38,12 @@ async def security_headers(request, call_next):
     # not forbid storing; it forces revalidation, and StaticFiles already
     # answers those with a cheap 304 via ETag/Last-Modified. Hash-versioned
     # filenames were rejected: they need a build step, and this site
-    # deliberately has none.
-    if request.url.path.startswith("/static"):
+    # deliberately has none. /tiles krijgt dezelfde behandeling: de vector-tiles
+    # (basemap.pmtiles) worden per byte-range opgehaald, en bij een wissel van
+    # dekkingsgebied verandert de hele indeling -- zonder revalidatie zou een
+    # browser oude en nieuwe ranges kunnen mengen en de kaart beschadigen. De
+    # ETag verandert mee, dus revalidatie is een goedkope 304 zolang niets wijzigt.
+    if request.url.path.startswith("/static") or request.url.path.startswith("/tiles"):
         h.setdefault("Cache-Control", "no-cache")
     h.setdefault(
         "Content-Security-Policy",
@@ -47,8 +51,12 @@ async def security_headers(request, call_next):
         "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; "
         "font-src https://fonts.gstatic.com; "
-        "img-src 'self' data: https://unpkg.com https://*.basemaps.cartocdn.com; "
+        "img-src 'self' data: https://unpkg.com; "
         "connect-src 'self'; "
+        # MapLibre GL maakt zijn tegel-worker als blob-URL aan; zonder deze regel
+        # blokkeert default-src 'self' hem. De vector-tiles, fonts en sprites zelf
+        # zijn same-origin (/tiles/...) en vallen onder connect-src 'self'.
+        "worker-src blob:; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
     )
     return resp
@@ -63,6 +71,12 @@ app.include_router(meshmoni.router)   # de PWA-subsite voor op de telefoon
 app.include_router(sensorpush.router)  # gebeurtenis-push van sensornodes
 app.include_router(companions.router)  # instant-push van companion-locatie/-val (POST /api/companion)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
+# Zelf-gehoste kaart-assets: vector-tiles (basemap.pmtiles), glyph-fonts en sprites,
+# als read-only volume gemount op /tiles (zie docker-compose.yml). Starlette's
+# StaticFiles ondersteunt Range-requests, wat pmtiles nodig heeft om alleen de
+# bekeken tegels op te halen. check_dir=False zodat de app ook zonder het volume
+# opstart -- de kaarten vallen dan terug op OSM-raster (zie static/basemap.js).
+app.mount("/tiles", StaticFiles(directory="/tiles", check_dir=False), name="tiles")
 
 
 @app.on_event("startup")
