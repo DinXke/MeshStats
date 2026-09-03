@@ -52,9 +52,12 @@ same time.
 
 ### Via a poller
 
-The Home Assistant integration fetches `GET /api/v1/commands`, asks the repeater
-over LoRa and POSTs the answer back. That route still exists, but it is now the
-last choice instead of the only one.
+A poller fetches `GET /api/v1/commands`, asks the repeater over LoRa and POSTs
+the answer back to `/api/v1/repeater_settings`. *Who* polls is not part of the
+route: it used to be the Home Assistant integration alone, and it is now the
+MeshUptime node (or both — every poller carries its own token, and the page shows
+the name of the one it last saw as `poller_name`). That route still exists, but
+it is the last choice instead of the only one.
 
 ## `route_for()` — what comes back
 
@@ -79,7 +82,7 @@ without an MQTT client or a database anywhere near.
 | `node_seen`, `node_stale` | When that node last published, and whether that is too long ago |
 | `level` | The management level of this node: `unmanaged`, `semi_managed` or `full_managed` |
 | `level_why` | What that level is seen by, naming the node that makes it possible |
-| `ha`, `poller_seen` | Whether a poller has been seen within `POLLER_STALE_SECS` |
+| `poller`, `poller_seen`, `poller_name` | Whether a poller has been seen within `POLLER_STALE_SECS`, when, and which one (the token's name). The key was called `ha` until the poller stopped being Home Assistant by definition. |
 
 **`commands` is not a formality.** A monitor can be asked to fetch somebody
 else's settings, but not to publish their statistics — it already forwards those
@@ -103,7 +106,7 @@ not know it is exactly the kind of promise this module had to clear away:
 
 ### The management level
 
-`_level()` answers a different question from `mqtt`/`ha`: not "can something be
+`_level()` answers a different question from `mqtt`/`poller`: not "can something be
 sent right now" but "what is this node". Three answers, in the order they are
 tested:
 
@@ -122,8 +125,9 @@ broker is still full managed — there is just no route at this moment, which is
 what `mqtt` is for. Letting the level swing with the server's network would make
 it a statement about us rather than about the node.
 
-The poller is not in the level names, and it counts anyway: the Home Assistant
-integration logs in with the repeater password and reads and writes the same CLI.
+The poller is not in the level names, and it counts anyway: a poller (the
+MeshUptime node, or the Home Assistant integration before it) logs in with the
+repeater password and reads and writes the same CLI.
 Leaving it out would call a repeater that only arrives that way "unmanaged" while
 the button next to it works. That evidence is more brittle than a monitor — it
 lapses once the poller has been quiet for fifteen minutes — and `level_why` says
@@ -188,9 +192,9 @@ happen. It travels in the redirect's query string, and the old form `?refresh=1`
 is still read as `both` so a page still open in a tab does not break on it.
 
 For `settings` the queue is filled **only when a poller has actually been seen**.
-Queueing anyway would leave a request that a freshly installed Home Assistant
-picks up months later, and would make `pending_settings_request()` stop meaning
-what it says.
+Queueing anyway would leave a request that a poller connected months later picks
+up out of nowhere, and would make `pending_settings_request()` stop meaning what
+it says.
 
 ## `publish_command()` — the only thing the site publishes
 

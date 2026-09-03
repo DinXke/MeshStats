@@ -12,6 +12,16 @@ middle. This document exists because the integration still does two things the
 MQTT path does not, and because plenty of installations were built on it before
 MQTT existed.
 
+**Status (September 2026): the reference installation no longer uses it as a
+transport.** The two jobs it did — collecting the command queue
+(`GET /api/v1/commands`) and pushing CLI answers back
+(`POST /api/v1/repeater_settings`) — are now done by the MeshUptime node itself,
+over LoRa, with its own token. Home Assistant stays a *consumer* of MeshManager's
+data through [MQTT discovery](ha-integratie.md); nothing in MeshManager depends on
+this integration any more, and `route_for()` no longer even has a key named after
+it (it is `poller` / `poller_name` — see [commanding.md](commanding.md)). The
+integration keeps working for installations that still rely on it.
+
 ---
 
 ## Contents

@@ -1,4 +1,5 @@
-"""JSON API: ingest from Home Assistant plus the public data endpoints."""
+"""JSON API: ingest from pollers and nodes, plus the public data endpoints."""
+import hmac
 import logging
 import re
 import time
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from . import (auth, candidates, config, countries, db, metrics, packets,
-               pfstock, pktfilter, search)
+               pfstock, pktfilter, search, sensorpush)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -21,6 +22,35 @@ def require_token(authorization: str | None):
         raise HTTPException(401, "Bearer-token vereist")
     if not auth.check_token(authorization.split(" ", 1)[1].strip()):
         raise HTTPException(403, "Ongeldig of ingetrokken token")
+
+
+def require_poller_token(authorization: str | None) -> str:
+    """Wie er pollt: de NAAM van een geldig beheer-token, of ``node-push-token``.
+
+    Twee sleutels openen de pollerwachtrij, en dat is een keuze, geen
+    slordigheid. Een token uit de tokens-tabel is de weg voor een losse poller
+    (Home Assistant had er een). Het vloot-pushtoken (``MM_PUSH_TOKEN``) is de
+    sleutel waarmee onze eigen nodes al hun metingen afleveren op
+    ``/api/sensorpush`` -- en de MeshUptime-node die de wachtrij bedient IS zo'n
+    node. Hem een tweede token laten dragen voor hetzelfde adres zou een tweede
+    veld op de node, een tweede geheim in de keten en een tweede ding dat kan
+    verlopen betekenen, zonder dat er iets extra door beschermd wordt: de
+    wachtrij geeft alleen "vraag X aan Y" uit, en wat er terugkomt gaat door
+    dezelfde keuring als elke andere ingest.
+
+    De naam gaat het grootboek in (``db.note_poller_seen``) zodat de beheerpagina
+    kan zeggen wie er pollde. Het pushtoken heeft geen naam; "node-push-token"
+    zegt dan tenminste welke sleutel het was.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Bearer-token vereist")
+    token = authorization.split(" ", 1)[1].strip()
+    naam = auth.token_name(token)
+    if naam:
+        return naam
+    if sensorpush.TOKEN and hmac.compare_digest(token, sensorpush.TOKEN):
+        return "node-push-token"
+    raise HTTPException(403, "Ongeldig of ingetrokken token")
 
 
 def limit_body(request: Request, max_bytes: int = config.MAX_BODY_BYTES):
@@ -75,10 +105,9 @@ def commands(authorization: str | None = Header(default=None)):
     at all: an unpolled queue looks exactly like one that was emptied a second
     ago, and while nothing was polling, the page kept promising the second.
     """
-    require_token(authorization)
     # Wie er pollt, naast dat er gepold wordt: MeshUptime en Home Assistant
-    # gebruiken dezelfde wachtrij met elk een eigen token.
-    db.note_poller_seen(auth.token_name(authorization.split(" ", 1)[1].strip()))
+    # gebruiken dezelfde wachtrij met elk een eigen sleutel.
+    db.note_poller_seen(require_poller_token(authorization))
     refresh = db.pop_refresh_requests()
     settings = db.pop_settings_requests()
     if refresh or settings:
@@ -101,7 +130,7 @@ async def repeater_settings(request: Request, authorization: str | None = Header
     node also reports over MQTT, throwing away a settings sweep that costs one
     to two minutes of LoRa airtime to produce.
     """
-    require_token(authorization)
+    require_poller_token(authorization)
     limit_body(request)
     body = await request.json()
     prefix = str((body.get("repeater") or {}).get("pubkey_prefix", "")).lower().strip()

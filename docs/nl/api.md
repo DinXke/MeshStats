@@ -31,7 +31,8 @@ door `limits.BodySizeLimitMiddleware`, geteld tijdens het lezen.
 
 ### `GET /api/v1/ping`
 
-Verbindingstest voor de Home Assistant-integratie.
+Verbindingstest voor een poller of integratie (de Home Assistant-integratie
+roept hem aan bij het instellen; de MeshUptime-node heeft hem niet nodig).
 
 ```json
 {"ok": true, "app": "meshmanager", "version": 1}
@@ -93,13 +94,32 @@ CLI-instellingen van één repeater, gepusht door een poller.
 
 ```json
 {"repeater": {"pubkey_prefix": "e3d3f4d7ed"},
- "settings": {"name": "…", "role": "repeater", "freq": "869.525", "lat": null}}
+ "settings": {"name": "…", "role": "repeater", "freq": "869.525", "lat": null,
+              "cmd:filter count": "> Filter off: Blocked [ Hops: 4 | … ]"}}
 ```
+
+Een sleutel van de vorm `cmd:<commando>` draagt het letterlijke antwoord op dat
+CLI-commando in plaats van een `get <naam>`-opvraging. `cmd:filter count` wordt
+apart behandeld: `pfstock.apply_cli_filter()` vertaalt het naar dezelfde
+filterstand en metrics die een node met MeshManager-firmware over MQTT
+publiceert, zodat een stock-repeater met filterpatch dezelfde tegels en
+grafieken vult.
+
+**Authenticatie — dit endpoint en `GET /api/v1/commands` aanvaarden twee soorten
+bearer:** een token uit de tokens-tabel (een losse poller zoals de Home
+Assistant-integratie; zijn *naam* wordt als `poller_name` vastgelegd), **of het
+vloot-pushtoken `MM_PUSH_TOKEN`** (vastgelegd als `node-push-token`). Dat tweede
+bestaat omdat de MeshUptime-node die de wachtrij leegmaakt hetzelfde toestel is
+dat zijn metingen al met dat token op `/api/sensorpush` aflevert; een tweede
+geheim voor hetzelfde toestel zou niets extra beschermen — de wachtrij geeft
+alleen "vraag X aan Y" uit, en elk antwoord gaat door dezelfde keuring als elke
+andere ingest.
 
 `null` betekent "gevraagd, geen antwoord" en wordt als zodanig bewaard. De
 opzoeking loopt via `db.find_repeater()` en niet via een gelijkheidstest, want
-een strikte match begint 404 te antwoorden aan Home Assistant zodra dezelfde
-node ook over MQTT rapporteert onder een langere sleutel — en gooit daarmee een
+een strikte match begint 404 te antwoorden aan een poller (Home Assistant stuurt
+vijf sleutelbytes) zodra dezelfde node ook over MQTT rapporteert onder een
+langere sleutel — en gooit daarmee een
 instellingenronde weg die een tot twee minuten LoRa-zendtijd kost om te maken.
 404 als er geen repeater past; 422 zonder prefix of instellingenobject.
 

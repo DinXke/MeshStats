@@ -90,6 +90,24 @@ knop uit en zegt waarom wanneer geen van beide dat is — want een tijdlang deed
 het omgekeerde: opvragingen in een wachtrij zetten voor een poller die
 uitgeschakeld was, en elk ervan als gestart melden.
 
+**De poller hoeft geen Home Assistant meer te zijn.** Sinds september 2026 draait
+de referentie-installatie de pollerrol op de MeshUptime-node zelf (`RepeaterCli`
+in de nodefirmware): die haalt `GET /api/v1/commands` op met het vloot-pushtoken,
+logt over LoRa in op de doelrepeater met diens beheerderswachtwoord, voert de
+opdrachten uit de wachtrij uit (`get <naam>`, of het letterlijke commando achter
+een `cmd:`-parameter) en POSTt de antwoorden naar `/api/v1/repeater_settings`.
+Daarmee verdwijnen de companion-node, de TCP-koppeling en de toestandsmachine van
+Home Assistant uit de keten:
+
+```
+  Repeater  <--LoRa-->  MeshUptime-node  --HTTPS POST + Bearer-->  /api/v1/repeater_settings
+                              ^-- GET /api/v1/commands (de wachtrij)
+```
+
+`route_for()` meldt dit als `poller` / `poller_name` (de sleutel heette `ha`); de
+Home Assistant-integratie blijft werken als tweede poller met een eigen token,
+zie [homeassistant.md](homeassistant.md).
+
 Beide wegen komen samen bij dezelfde aanroep van `db.ingest()` en leveren
 identieke rijen op. Je mag ze allebei tegelijk draaien; wat het laatst binnenkomt
 wint.

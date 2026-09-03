@@ -54,9 +54,12 @@ onbruikbaar tegelijk.
 
 ### Via een poller
 
-De Home Assistant-integratie haalt `GET /api/v1/commands` op, vraagt de repeater
-over LoRa uit en POST het antwoord terug. Die weg blijft bestaan, maar is nu de
-laatste keuze in plaats van de enige.
+Een poller haalt `GET /api/v1/commands` op, vraagt de repeater over LoRa uit en
+POST het antwoord terug naar `/api/v1/repeater_settings`. *Wie* er pollt hoort
+niet bij de weg: dat was lang alleen de Home Assistant-integratie, en het is nu
+de MeshUptime-node (of allebei — elke poller draagt zijn eigen token, en de
+pagina toont de naam van de laatst geziene als `poller_name`). Die weg blijft
+bestaan, maar is de laatste keuze in plaats van de enige.
 
 ## `route_for()` — wat er terugkomt
 
@@ -81,7 +84,7 @@ die te testen blijft zonder een MQTT-client of een databank in de buurt.
 | `node_seen`, `node_stale` | Wanneer die node het laatst publiceerde, en of dat te lang geleden is |
 | `level` | Het beheerniveau van deze node: `unmanaged`, `semi_managed` of `full_managed` |
 | `level_why` | Waaraan dat niveau te zien is, met de node erbij die het mogelijk maakt |
-| `ha`, `poller_seen` | Of er binnen `POLLER_STALE_SECS` een poller gezien is |
+| `poller`, `poller_seen`, `poller_name` | Of er binnen `POLLER_STALE_SECS` een poller gezien is, wanneer, en welke (de naam van het token). De sleutel heette `ha` tot de poller niet meer per definitie Home Assistant was. |
 
 **`commands` is geen formaliteit.** Een monitor kan gevraagd worden de
 instellingen van een ander op te halen, maar niet om diens statistieken te
@@ -106,7 +109,7 @@ deze module moest wegwerken:
 
 ### Het beheerniveau
 
-`_level()` beantwoordt een andere vraag dan `mqtt`/`ha`: niet "kan er nu iets
+`_level()` beantwoordt een andere vraag dan `mqtt`/`poller`: niet "kan er nu iets
 vertrekken" maar "wat is deze node". Drie antwoorden, in de volgorde waarin ze
 getoetst worden:
 
@@ -126,9 +129,9 @@ weggevallen broker blijft full managed — er is alleen op dit ogenblik geen weg
 en daar is `mqtt` voor. Het niveau laten meebewegen met het netwerk van de server
 zou er een uitspraak over ons van maken in plaats van over de node.
 
-De poller staat niet in de namen van de niveaus, en telt toch mee: de Home
-Assistant-integratie logt met het repeaterwachtwoord in en leest en schrijft
-dezelfde CLI. Hem weglaten zou een repeater die alleen zo binnenkomt "unmanaged"
+De poller staat niet in de namen van de niveaus, en telt toch mee: een poller
+(de MeshUptime-node, of daarvóór de Home Assistant-integratie) logt met het
+repeaterwachtwoord in en leest en schrijft dezelfde CLI. Hem weglaten zou een repeater die alleen zo binnenkomt "unmanaged"
 noemen terwijl de knop ernaast werkt. Dat bewijs is brozer dan een monitor — het
 vervalt zodra de poller een kwartier zwijgt — en `level_why` zegt dat erbij.
 
@@ -194,8 +197,8 @@ de oude vorm `?refresh=1` wordt nog steeds als `both` gelezen zodat een pagina d
 nog in een tabblad openstaat er niet op stukvalt.
 
 Bij `settings` wordt de wachtrij **alleen gevuld als er werkelijk een poller
-gezien is**. Toch in de wachtrij zetten zou een verzoek achterlaten dat een net
-geïnstalleerde Home Assistant maanden later oppikt, en zou
+gezien is**. Toch in de wachtrij zetten zou een verzoek achterlaten dat een
+poller die maanden later aangesloten wordt uit het niets oppikt, en zou
 `pending_settings_request()` laten ophouden te betekenen wat het zegt.
 
 ## `publish_command()` — het enige dat de site publiceert

@@ -88,6 +88,24 @@ available, and the admin page disables the button and says why when neither is â
 because for a while it did the opposite, queueing look-ups for a poller that had
 been switched off, and reporting each one as started.
 
+**The poller no longer has to be Home Assistant.** Since September 2026 the
+reference installation runs the poller role on the MeshUptime node itself
+(`RepeaterCli` in the node firmware): it fetches `GET /api/v1/commands` with the
+fleet push token, logs in to the target repeater over LoRa with that repeater's
+admin password, runs the queued commands (`get <name>`, or the literal command
+behind a `cmd:` parameter) and POSTs the answers to `/api/v1/repeater_settings`.
+That removes the companion node, the TCP link and the Home Assistant state
+machine from the chain:
+
+```
+  Repeater  <--LoRa-->  MeshUptime node  --HTTPS POST + Bearer-->  /api/v1/repeater_settings
+                              ^-- GET /api/v1/commands (the queue)
+```
+
+`route_for()` reports this as `poller` / `poller_name` (the key used to be `ha`);
+the Home Assistant integration keeps working as a second poller with its own
+token, see [homeassistant.md](homeassistant.md).
+
 Both paths converge on the same `db.ingest()` call and produce identical rows.
 You can run both at once; whichever arrives most recently wins.
 

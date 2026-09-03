@@ -12,6 +12,17 @@ Dit document bestaat omdat de integratie nog twee dingen doet die de MQTT-weg
 niet doet, en omdat er heel wat installaties op gebouwd zijn van vóór MQTT
 bestond.
 
+**Stand (september 2026): de referentie-installatie gebruikt hem niet meer als
+transport.** De twee taken die hij deed — de opdrachtwachtrij leegmaken
+(`GET /api/v1/commands`) en CLI-antwoorden terugsturen
+(`POST /api/v1/repeater_settings`) — doet de MeshUptime-node nu zelf, over LoRa,
+met zijn eigen sleutel. Home Assistant blijft een *afnemer* van MeshManagers
+gegevens via [MQTT-discovery](ha-integratie.md); niets in MeshManager hangt nog
+van deze integratie af, en `route_for()` heeft zelfs geen sleutel meer die naar
+hem genoemd is (het is `poller` / `poller_name`, zie
+[commanding.md](commanding.md)). De integratie blijft werken voor installaties
+die er nog op steunen.
+
 ---
 
 ## Inhoud

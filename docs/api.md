@@ -29,7 +29,8 @@ Every method and route is additionally capped at `MM_MAX_BODY_BYTES` (2 MB) by
 
 ### `GET /api/v1/ping`
 
-Connection test for the Home Assistant integration.
+Connection test for a poller or integration (the Home Assistant integration
+calls it during setup; the MeshUptime node does not need it).
 
 ```json
 {"ok": true, "app": "meshmanager", "version": 1}
@@ -89,13 +90,30 @@ CLI settings of one repeater, pushed by a poller.
 
 ```json
 {"repeater": {"pubkey_prefix": "e3d3f4d7ed"},
- "settings": {"name": "…", "role": "repeater", "freq": "869.525", "lat": null}}
+ "settings": {"name": "…", "role": "repeater", "freq": "869.525", "lat": null,
+              "cmd:filter count": "> Filter off: Blocked [ Hops: 4 | … ]"}}
 ```
+
+A key of the form `cmd:<command>` carries the literal answer to that CLI
+command rather than a `get <name>` look-up. `cmd:filter count` is special-cased:
+`pfstock.apply_cli_filter()` parses it into the same filter state and metrics a
+MeshManager-firmware node publishes over MQTT, so a stock repeater with the
+filter patch fills the same tiles and graphs.
+
+**Authentication — this endpoint and `GET /api/v1/commands` accept two kinds of
+bearer:** a token from the tokens table (a stand-alone poller such as the Home
+Assistant integration; its *name* is recorded as `poller_name`), **or the fleet
+push token `MM_PUSH_TOKEN`** (recorded as `node-push-token`). The second exists
+because the MeshUptime node that empties the queue is the same device that
+already delivers its measurements to `/api/sensorpush` with that token; a second
+secret for the same device would protect nothing extra — the queue only hands
+out "ask X of Y", and every answer goes through the same validation as any other
+ingest.
 
 `null` means "asked, no answer" and is stored as such. The look-up goes through
 `db.find_repeater()` rather than an equality test, because a strict match starts
-answering 404 to Home Assistant the moment the same node also reports over MQTT
-under a longer key — throwing away a settings sweep that costs one to two
+answering 404 to a poller (Home Assistant sends five key bytes) the moment the
+same node also reports over MQTT under a longer key — throwing away a settings sweep that costs one to two
 minutes of LoRa airtime to produce. 404 when no repeater matches; 422 without a
 prefix or a settings object.
 
