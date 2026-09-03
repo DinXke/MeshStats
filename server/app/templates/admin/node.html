@@ -2333,6 +2333,80 @@
   {% else %}
   {% set f = filter_live.filter %}
 
+  {#- Aanbevolen instellingen als REFERENTIE en niet als knop. Eén klik die vijf
+      regels zet, zou precies de risicoweging en de bevestiging omzeilen die
+      hieronder per regel gelden -- en dat is de drempel die dit scherm heeft.
+      Dus: wat we aanraden, waarom, en waar je nu van afwijkt. De lezer beslist.
+
+      Alles hier is onderbouwd uit docs/packet-filter.md, de firmware zelf of een
+      meting op dit mesh. Waar er geen vastgestelde afspraak is, staat dat er --
+      een verzonnen aanbeveling is hier schadelijker dan geen aanbeveling. -#}
+  <div class="card">
+    <h3>Aanbevolen instellingen</h3>
+    <p class="muted small">
+      Referentie, geen knoppen: elke regel hieronder heeft zijn eigen
+      risicoweging en bevestiging, en die horen per wijziging te gelden.
+    </p>
+    <table class="cfgtable">
+      <thead><tr><th>Regel</th><th>Aanbevolen</th><th>Nu</th><th>Waarom</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="mono">malformed</td>
+          <td class="mono">aan</td>
+          <td class="mono">{% if f.malformed %}aan{% else %}<strong>uit</strong> — wijkt af{% endif %}</td>
+          <td class="small">Gooit alleen pakketten weg die nooit een geldig
+            groepsbericht kunnen zijn geweest: te kort voor kanaalhash + MAC + één
+            cipherblok, of een ciphertext die geen veelvoud van 16 byte is. Er valt
+            geen legitiem verkeer onder.</td>
+        </tr>
+        <tr>
+          <td class="mono">hash</td>
+          <td class="mono">wat je mesh afsprak</td>
+          <td class="mono">{{ f.hash }} byte</td>
+          <td class="small">Hier is geen technisch optimum — dit is een
+            netwerkafspraak. Wat het kost is wél meetbaar: op dit mesh draagt het
+            meeste flood-verkeer één byte, en op 2 zetten betekent dat deze node
+            dat niet meer doorstuurt. Trek eerst je companion en de betrokken
+            nodes gelijk; anders worden nodes áchter dit knooppunt onbereikbaar.
+            De schrijfweg meet dat en vraagt boven een kwart de nodenaam.</td>
+        </tr>
+        <tr>
+          <td class="mono">hops/rate op 00, 01</td>
+          <td class="mono">0 (geen limiet)</td>
+          <td class="small">zie de tabel hieronder</td>
+          <td class="small">REQ en RESPONSE is beheerverkeer. Je eigen toegang tot
+            déze node loopt niet langs het filter, maar het beheerverkeer dat deze
+            node voor <em>andere</em> operatoren doorstuurt wel — daarmee kan
+            iemand anders zijn eigen repeater niet meer bereiken via dit punt.</td>
+        </tr>
+        <tr>
+          <td class="mono">rate op 04, 09</td>
+          <td class="mono">veiligste kandidaten</td>
+          <td class="small">zie de tabel hieronder</td>
+          <td class="small">Moet je iets afknijpen, dan zijn ADVERT en TRACE de
+            minst schadelijke: één gemiste advert of traceroute kost weinig en komt
+            terug. ACK, RESPONSE en TXT_MSG zijn dat niet — daar breekt een gemist
+            pakket een gesprek.</td>
+        </tr>
+        <tr>
+          <td class="mono">hoofdschakelaar</td>
+          <td class="mono">alleen aan met een regel die je wil</td>
+          <td class="mono">{% if f.on %}aan{% else %}uit{% endif %}</td>
+          <td class="small">Uit laat de regels staan en handhaaft ze niet: dat is de
+            goedkoopste weg terug als iets onverwacht uitpakt. Een filter aanzetten
+            terwijl er al een categorale regel klaarstaat, is de klik die het
+            verkeer stilzet — niet de klik die de regel maakte.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted small">
+      Geen van deze regels kan <em>deze</em> node onbereikbaar maken: het filter
+      wordt alleen gevraagd over pakketten die hij voor anderen zou doorsturen.
+      Verkeer aan deze node, direct gerouteerd verkeer en verkeer van of naar een
+      client in de access list gaan er nooit langs.
+    </p>
+  </div>
+
   <div class="card">
     <h3>Aan of uit</h3>
     <p class="muted small">
