@@ -409,3 +409,54 @@ def capabilities(variant_naam) -> dict:
     Een KOPIE, zodat een aanroeper die er iets in zet de tabel niet vergiftigt.
     """
     return dict(_CAPABILITIES.get(variant_naam, _CAPABILITIES_LEEG))
+
+
+# --- de brug naar de rest van de site ----------------------------------------
+
+def apply_cli_filter(repeater_id: int, values: dict, source: str = "") -> bool:
+    """Een `cmd:filter ...`-antwoord uit een CLI-sweep als filterstand opslaan.
+
+    Waarom dit hier staat en niet in de ingest-route: het is dezelfde vertaalslag
+    als ``mqtt_ingest._handle_filter`` doet voor nodes die hun filterstand zelf
+    meepubliceren, alleen komt de tekst hier langs de trage weg binnen -- een
+    sweep over LoRa. De rest van de site hoort daarna niet te kunnen zien welke
+    van de twee wegen het was: dezelfde blobvorm, dezelfde metricnamen, dezelfde
+    tegels.
+
+    Zonder deze brug bleef de parser een parser: `cmd:filter count` landde als
+    tekst in ``repeater_cli`` en er gebeurde niets zichtbaars. Dat was precies de
+    klacht -- "ik zie geen verschil" -- en het lag niet aan de radio.
+
+    Geeft True terug als er werkelijk iets weggeschreven is, zodat de aanroeper
+    het kan loggen zonder zelf te hoeven raden of er een filterantwoord in zat.
+    """
+    from . import db
+
+    ruw = None
+    for sleutel, waarde in (values or {}).items():
+        if str(sleutel).strip().lower().startswith("cmd:filter") and waarde:
+            ruw = str(waarde)
+            break
+    if not ruw:
+        return False
+
+    blob = parse_filter_count(ruw)
+    if not blob:
+        return False
+
+    db.upsert_filter_state(repeater_id, blob, source)
+
+    # Dezelfde tellers ook als gewone metrics, want dat is wat de tegels en de
+    # grafieken lezen. De import staat in de functie: mqtt_ingest trekt de halve
+    # app mee en dit bestand hoort een tabel te blijven die je los kunt draaien.
+    try:
+        from .mqtt_ingest import _filter_metrics
+        metrics = _filter_metrics(blob)
+    except Exception:
+        metrics = {}
+    if metrics:
+        # force=True: een sweep komt hooguit een paar keer per dag langs, en dan
+        # is "de waarde veranderde niet" geen reden om het punt weg te laten --
+        # anders staat er een gat in de grafiek waar wel gemeten is.
+        db.ingest(repeater_id, db.utcnow(), metrics, None, force=True)
+    return True

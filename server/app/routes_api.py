@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from . import (auth, candidates, config, countries, db, metrics, packets,
-               pktfilter, search)
+               pfstock, pktfilter, search)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -114,6 +114,13 @@ async def repeater_settings(request: Request, authorization: str | None = Header
     log.info("Instellingen ontvangen voor %s: %s van %s parameters beantwoord",
              row["slug"], answered, len(values))
     db.upsert_cli_settings(row["id"], values)
+    # Zat er een `cmd:filter ...`-antwoord bij, dan is dat geen gewone
+    # instelling maar een filterstand: doorvertalen zodat hij dezelfde tegels en
+    # grafieken vult als bij een node die zijn filter zelf meepubliceert. Zonder
+    # deze regel bleef het antwoord als tekst in repeater_cli staan en gebeurde
+    # er niets zichtbaars -- zie pfstock.apply_cli_filter.
+    if pfstock.apply_cli_filter(row["id"], values, source="cli"):
+        log.info("Filterstand van %s uit de CLI-sweep overgenomen", row["slug"])
     return {"ok": True, "count": len(values)}
 
 
