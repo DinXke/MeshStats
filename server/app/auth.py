@@ -80,6 +80,22 @@ def create_token(name: str, door: str = "") -> str:
     return token
 
 
+def token_name(token: str) -> str | None:
+    """De NAAM van een geldig token, of None.
+
+    Alleen voor weergave en het grootboek: "wie kwam de wachtrij leegmaken".
+    Er hangt geen enkel recht aan -- zie check_token hieronder voor waarom een
+    token geen gebruiker is. Nu MeshUptime en Home Assistant dezelfde wachtrij
+    kunnen bedienen, is dit het verschil tussen "er pollt iemand" en "MeshUptime
+    pollt", en dat tweede is wat op de beheerpagina hoort te staan.
+    """
+    if not token:
+        return None
+    h = hashlib.sha256(token.encode()).hexdigest()
+    row = db.qone("SELECT name FROM tokens WHERE token_hash=? AND revoked=0", (h,))
+    return (str(row["name"]) or None) if row else None
+
+
 def check_token(token: str) -> bool:
     """Of dit Bearer-token geldig is. Meer zegt het niet, en dat is met opzet.
 

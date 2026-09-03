@@ -526,7 +526,7 @@ def _render(**over):
                   "commands": ("settings", "status"), "via_monitor": False,
                   "blocker": "", "node": "55d9", "subject": "55d9",
                   "fw_meshmanager": "2.1.0", "min_fw": "1.8.0", "node_seen": None,
-                  "node_stale": False, "ha": False, "poller_seen": None,
+                  "node_stale": False, "poller": False, "poller_name": None, "poller_seen": None,
                   # De eigen API van de node. Hier: die heeft hij niet -- deze
                   # reeks gaat over een node met onze firmware op de broker.
                   "ip_api": {"host": "", "seen": None, "fw": "", "ever": False,

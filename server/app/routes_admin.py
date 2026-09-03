@@ -949,13 +949,13 @@ def _dispatch(rep, command: str) -> str:
     sent = open_for_this and mqtt_ingest.publish_command(
         route["node"], command,
         subject=route["subject"] if route["via_monitor"] else None)
-    queued = route["ha"]
+    queued = route["poller"]
     if command == "settings":
         raw = db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS)
         params = [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()][:40]
         # Ook zonder poller in zicht in de wachtrij zetten zou een verzoek
-        # achterlaten dat maanden later door een net geïnstalleerde Home
-        # Assistant wordt opgepikt. Alleen zetten als er iemand is om het op te
+        # achterlaten dat maanden later door een net aangesloten poller wordt
+        # opgepikt. Alleen zetten als er iemand is om het op te
         # halen, zodat pending_settings_request() blijft betekenen wat het zegt.
         if queued:
             db.request_settings(rep["pubkey_prefix"], params)

@@ -2085,7 +2085,7 @@ DEFAULT_CLI_PARAMS = ("name,role,radio,freq,tx,af,repeat,advert.interval,"
 
 
 def request_settings(prefix: str, params: list[str]) -> None:
-    """Queue a CLI settings request for a polling client (Home Assistant today).
+    """Queue a CLI settings request for a polling client (MeshUptime or Home Assistant).
 
     The second route, not the first. A node that publishes over MQTT is asked
     directly (see mqtt_ingest.publish_command); this queue is for repeaters that
@@ -2647,7 +2647,7 @@ def cli_settings_all() -> list:
 
 
 def request_refresh(prefix: str) -> None:
-    """Queue a manual status request for a polling client (Home Assistant today)."""
+    """Queue a manual status request for a polling client (MeshUptime or Home Assistant)."""
     import json
     d = {}
     try:
@@ -3603,8 +3603,24 @@ def pop_acked_channels(repeater_id: int) -> list[int]:
 POLLER_SEEN_KEY = "poller_seen"
 
 
-def note_poller_seen() -> None:
+POLLER_NAME_KEY = "poller_name"
+
+
+def note_poller_seen(name: str | None = None) -> None:
+    """Er heeft zojuist een poller de wachtrij opgehaald -- en welke.
+
+    De naam erbij sinds MeshUptime dezelfde wachtrij kan bedienen als Home
+    Assistant: "een poller is vers" zei niet meer wie, en op de beheerpagina is
+    dat juist de vraag. Geen naam bekend, dan blijft de oude staan: liever een
+    verouderde naam met een verse tijd dan een lege naam die als "niemand" leest.
+    """
     set_setting(POLLER_SEEN_KEY, utcnow())
+    if name:
+        set_setting(POLLER_NAME_KEY, str(name)[:64])
+
+
+def poller_last_name() -> str | None:
+    return get_setting(POLLER_NAME_KEY, "") or None
 
 
 def poller_last_seen() -> str | None:

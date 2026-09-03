@@ -62,7 +62,7 @@ async def contacts(request: Request, authorization: str | None = Header(default=
 
 @router.get("/commands")
 def commands(authorization: str | None = Header(default=None)):
-    """Pending commands for a polling client -- Home Assistant today (clear on read):
+    """Pending commands for a polling client -- MeshUptime or Home Assistant (clear on read):
     refresh = manual status requests, settings = CLI settings look-ups.
 
     Handing work out is logged, because this is a clear-on-read queue: once the
@@ -76,7 +76,9 @@ def commands(authorization: str | None = Header(default=None)):
     ago, and while nothing was polling, the page kept promising the second.
     """
     require_token(authorization)
-    db.note_poller_seen()
+    # Wie er pollt, naast dat er gepold wordt: MeshUptime en Home Assistant
+    # gebruiken dezelfde wachtrij met elk een eigen token.
+    db.note_poller_seen(auth.token_name(authorization.split(" ", 1)[1].strip()))
     refresh = db.pop_refresh_requests()
     settings = db.pop_settings_requests()
     if refresh or settings:

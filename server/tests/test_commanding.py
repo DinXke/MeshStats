@@ -167,9 +167,9 @@ def test_broker_weg_blokkeert_maar_overschaduwt_niets():
 
 
 def test_poller_telt_alleen_als_hij_recent_gepold_heeft():
-    assert route(poller_seen=stamp(1))["ha"] is True
-    assert route(poller_seen=stamp(60))["ha"] is False
-    assert route(poller_seen=None)["ha"] is False
+    assert route(poller_seen=stamp(1))["poller"] is True
+    assert route(poller_seen=stamp(60))["poller"] is False
+    assert route(poller_seen=None)["poller"] is False
 
 
 def test_node_die_lang_zweeg_wordt_gemeld_maar_niet_geweigerd():
@@ -185,7 +185,7 @@ def test_node_die_lang_zweeg_wordt_gemeld_maar_niet_geweigerd():
 def test_onleesbare_tijdstempel_maakt_niets_stuk():
     r = route(rep_row=rep(source_seen="ooit"), poller_seen="gisteren")
     assert r["node_stale"] is True
-    assert r["ha"] is False
+    assert r["poller"] is False
 
 
 def test_parse_version_op_rommel():

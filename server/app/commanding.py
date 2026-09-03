@@ -151,7 +151,7 @@ def is_relayed(rep) -> bool:
 
 
 def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
-              relay=None) -> dict:
+              relay=None, poller_name=None) -> dict:
     """Wat kan er met deze repeater, nu meteen.
 
     ``blocker`` zegt waarom de MQTT-weg dicht is; de beheerpagina zet dat om in
@@ -234,7 +234,11 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
         "min_fw": ".".join(str(n) for n in needed),
         "node_seen": _field(rep, "source_seen"),
         "node_stale": not _fresh(_field(rep, "source_seen"), NODE_STALE_SECS, now),
-        "ha": poller_fresh,
+        # Heette "ha", naar de enige poller die er toen was. Nu MeshUptime de
+        # wachtrij ook kan bedienen zegt die naam iets wat niet meer klopt; de
+        # eigenschap is "er is een verse poller", welke dan ook.
+        "poller": poller_fresh,
+        "poller_name": poller_name,
         "poller_seen": poller_seen,
         # De eigen API van de node, als waarneming en naast het niveau. Het
         # niveau zegt wat deze node IS; dit zegt of die weg NU nog draagt, en dat
@@ -393,6 +397,7 @@ def describe(rep, **kwargs) -> dict:
     from . import db, mqtt_ingest
     kwargs.setdefault("broker_connected", mqtt_ingest.can_publish())
     kwargs.setdefault("poller_seen", db.poller_last_seen())
+    kwargs.setdefault("poller_name", db.poller_last_name())
     if "relay" not in kwargs:
         # Alleen opzoeken als het écht een andere node is. find_repeater matcht
         # sleutels van verschillende lengte tegen elkaar, dus een node die

@@ -372,9 +372,9 @@
       <span class="act-tag">kost zendtijd</span>
     </div>
     <p class="muted small">
-      {%- if route.mqtt and route.ha %}
+      {%- if route.mqtt and route.poller %}
       Beschikbaar: rechtstreeks aan node <span class="mono">{{ route.node }}</span> over MQTT,
-      én via de poller over LoRa.
+      én via de poller{% if route.poller_name %} (<span class="mono">{{ route.poller_name }}</span>){% endif %} over LoRa.
       {%- elif route.mqtt and route.via_monitor %}
       Deze repeater publiceert zelf niet, maar node <span class="mono">{{ route.node }}</span>
       monitort hem en kan hem over LoRa uitvragen (nodefirmware {{ route.fw_meshmanager }}).
@@ -386,15 +386,15 @@
       De site vraagt het rechtstreeks aan node <span class="mono">{{ route.node }}</span> over
       MQTT (nodefirmware {{ route.fw_meshmanager }}). Die leest zijn eigen CLI uit en stuurt de
       waarden mee met zijn eerstvolgende statistiekbericht.
-      {%- elif route.ha %}
-      De rechtstreekse weg is dicht, dus dit loopt via de wachtrij en de poller.
+      {%- elif route.poller %}
+      De rechtstreekse weg is dicht, dus dit loopt via de wachtrij en de poller{% if route.poller_name %} (<span class="mono">{{ route.poller_name }}</span>){% endif %}.
       {%- else %}
       Geen van beide wegen staat open, en daarom doet de knop niets.
       {%- endif %}
     </p>
     <form method="post" action="/admin/repeaters/{{ rep.id }}/settings/refresh">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      {% if route.mqtt or route.ha %}
+      {% if route.mqtt or route.poller %}
       <button type="submit"{{ recht('node.uitvragen') }}>&#128225; Instellingen nu opvragen</button>
       {% else %}
       <button type="submit" disabled title="Er is op dit ogenblik geen weg naar deze repeater">
@@ -417,7 +417,7 @@
     <form method="post" action="/admin/repeaters/{{ rep.id }}/refresh">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="back" value="node">
-      {% if ('status' in route.commands and route.mqtt) or route.ha %}
+      {% if ('status' in route.commands and route.mqtt) or route.poller %}
       <button type="submit"{{ recht('node.uitvragen') }}>&#8635; Status nu opvragen</button>
       {% else %}
       <button type="submit" disabled title="Er is op dit ogenblik geen weg om dit te vragen">
@@ -470,7 +470,7 @@
 
   <p class="muted small">
     <strong>Poller (Home Assistant):</strong>
-    {%- if route.ha %}
+    {%- if route.poller %}
     aanwezig, laatste poll
     <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
     Vereist wel dat het repeater-wachtwoord in de integratie ingevuld staat.
