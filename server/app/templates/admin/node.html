@@ -510,19 +510,32 @@
 
     <form method="post" action="/admin/repeaters/{{ rep.id }}/schedule" class="rowform">
       <input type="hidden" name="csrf" value="{{ csrf }}">
+      {#- Vrij getal plus eenheid in plaats van een keuzelijst, zodat ook 5 minuten
+          kan. 0 blijft uit. De keuzelijst had alleen hele uren en kon dus niet
+          uitdrukken wat hier gevraagd werd. -#}
       <label>Elke
-        <select name="sweep_hours">
-          <option value="0"{% if not sweep_hours %} selected{% endif %}>— uit —</option>
-          <option value="6"{% if sweep_hours == 6 %} selected{% endif %}>6 uur</option>
-          <option value="12"{% if sweep_hours == 12 %} selected{% endif %}>12 uur</option>
-          <option value="24"{% if sweep_hours == 24 %} selected{% endif %}>dag</option>
-          <option value="72"{% if sweep_hours == 72 %} selected{% endif %}>3 dagen</option>
-          <option value="168"{% if sweep_hours == 168 %} selected{% endif %}>week</option>
-          <option value="720"{% if sweep_hours == 720 %} selected{% endif %}>maand</option>
+        <input type="number" name="sweep_value" min="0" max="43200" step="1"
+               style="width:5.5em"
+               value="{{ (sweep_minutes // 60) if sweep_minutes and sweep_minutes % 60 == 0 else sweep_minutes }}">
+        <select name="sweep_unit">
+          <option value="m"{% if sweep_minutes and sweep_minutes % 60 != 0 %} selected{% endif %}>minuten</option>
+          <option value="h"{% if not sweep_minutes or sweep_minutes % 60 == 0 %} selected{% endif %}>uur</option>
         </select>
       </label>
       <button type="submit">Opslaan</button>
+      <span class="muted small">0 = uit</span>
     </form>
+
+    {#- De wens staat hierboven; dit is wat de globale grenzen ervan maken. Zie de
+        toelichting bij set_schedule: de wens stil bijstellen zou een instelling
+        tonen die niet klopt. -#}
+    {% if sweep_minutes and sweep_minutes < sweep_gap_min %}
+    <p class="small"><strong>Let op:</strong> de wachtrij houdt minimaal
+      {{ sweep_gap_min }} minuten tussen twee rondes aan, en er gaan maximaal
+      {{ sweep_max_day }} rondes per etmaal over álle nodes samen. Een interval van
+      {{ sweep_minutes }} minuten betekent hier dus &laquo;zo vaak als mag&raquo;,
+      niet letterlijk elke {{ sweep_minutes }} minuten.</p>
+    {% endif %}
 
     <p class="small">
       {%- if not sweep_hours %}
@@ -2364,10 +2377,13 @@
             <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
               <input type="hidden" name="csrf" value="{{ csrf }}">
               <input type="hidden" name="cmd" value="hash">
+              {#- Voorgeselecteerd op wat er NU staat, uit de live opgehaalde stand.
+                  Zonder dat begint de lijst altijd op '1 byte' en is één
+                  onoplettende klik op 'Zet' een wijziging die je niet wilde. -#}
               <select name="arg1">
-                <option value="1">1 byte — alles door</option>
-                <option value="2">2 byte — oudere nodes vallen af</option>
-                <option value="3">3 byte — vrijwel alles valt af</option>
+                <option value="1"{% if f.hash == 1 %} selected{% endif %}>1 byte — alles door</option>
+                <option value="2"{% if f.hash == 2 %} selected{% endif %}>2 byte — oudere nodes vallen af</option>
+                <option value="3"{% if f.hash == 3 %} selected{% endif %}>3 byte — vrijwel alles valt af</option>
               </select>
               <label class="cfgconfirm">bevestig
                 <input name="confirm" placeholder="ja / {{ rep.name }}" autocomplete="off"
@@ -2384,8 +2400,8 @@
               <input type="hidden" name="csrf" value="{{ csrf }}">
               <input type="hidden" name="cmd" value="malformed">
               <select name="arg1">
-                <option value="on">aan</option>
-                <option value="off">uit</option>
+                <option value="on"{% if f.malformed %} selected{% endif %}>aan</option>
+                <option value="off"{% if not f.malformed %} selected{% endif %}>uit</option>
               </select>
               <label class="cfgconfirm">bevestig
                 <input name="confirm" placeholder="ja" autocomplete="off"></label>

@@ -570,6 +570,14 @@ COLUMN_MIGRATIONS = [
     # node twee straten verderop bijna gratis is. Eén interval voor allemaal
     # betekent dat je de duurste node bepaalt of de goedkoopste verwaarloost.
     ("repeaters", "sweep_hours", "INTEGER"),
+    # Hetzelfde interval, maar in MINUTEN, en dit is sinds 2026-09 het veld dat
+    # telt. Waarom een tweede kolom en niet de oude hergebruiken: `sweep_hours`
+    # staat in bestaande installaties gevuld, en die stil als minuten gaan lezen
+    # zou een node die op 12 uur stond op 12 MINUTEN zetten -- een zendtijdfout
+    # van factor zestig, op een band die van iedereen is. Additief dus, met
+    # sweepsched.interval_minutes() als enige lezer: die neemt dit veld en valt
+    # terug op sweep_hours * 60 zolang een rij nog niet is overgezet.
+    ("repeaters", "sweep_minutes", "INTEGER"),
     # Het middenstuk van het topic waarop deze node zich meldt, LETTERLIJK zoals
     # het langskwam. Niet hetzelfde als pubkey_prefix: dat is genormaliseerd naar
     # kleine letters, en MQTT-topics zijn hoofdlettergevoelig.

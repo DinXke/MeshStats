@@ -238,13 +238,41 @@ def entry(prefix: str) -> dict:
 
 # --- wanneer is een node aan de beurt -----------------------------------------
 
+def interval_minutes(rep) -> int:
+    """Het ingestelde interval in MINUTEN, of 0 voor uit.
+
+    Dit is de enige plek die de twee kolommen kent. ``sweep_minutes`` wint;
+    staat die leeg, dan geldt het oude ``sweep_hours`` maal zestig. Zo blijft een
+    bestaande installatie draaien zoals hij stond, zonder migratiescript en
+    zonder dat een node die op twaalf uur staat plots op twaalf minuten gaat.
+
+    Wat hier NIET gebeurt is de wens begrenzen. Een interval van vijf minuten
+    mag ingesteld worden en betekent "zo vaak als mag": de wachtrij houdt
+    MIN_GAP_MIN aan en MAX_PER_DAY is het dak over alle nodes samen. Die twee
+    grenzen hier nog eens overdoen zou de bovengrens op twee plaatsen zetten, en
+    dan is het een kwestie van tijd voor ze verschillen.
+    """
+    for veld, factor in (("sweep_minutes", 1), ("sweep_hours", 60)):
+        try:
+            waarde = int(rep[veld] or 0)
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if waarde > 0:
+            return waarde * factor
+    return 0
+
+
 def interval_hours(rep) -> int:
-    """Het ingestelde interval, of 0 voor uit. Nooit korter dan de minimumafstand."""
-    try:
-        uren = int(rep["sweep_hours"] or 0)
-    except (KeyError, IndexError, TypeError, ValueError):
-        uren = 0
-    return max(0, uren)
+    """Het interval in hele uren, afgerond naar boven. 0 blijft 0.
+
+    Blijft bestaan omdat de beheerpagina en oudere aanroepers in uren denken.
+    Naar BOVEN afronden zodat een interval van tien minuten niet als "0 uur"
+    leest -- dat zou als 'uit' overkomen terwijl er een schema staat.
+    """
+    minuten = interval_minutes(rep)
+    if not minuten:
+        return 0
+    return max(1, -(-minuten // 60))
 
 
 def due_at(rep, now: float | None = None) -> float | None:
@@ -254,8 +282,8 @@ def due_at(rep, now: float | None = None) -> float | None:
     opzet: het alternatief -- een vol interval wachten na het instellen -- laat
     iemand die net een schema aanzette een dag in het ongewisse over of het werkt.
     """
-    uren = interval_hours(rep)
-    if not uren:
+    minuten = interval_minutes(rep)
+    if not minuten:
         return None
     regel = entry(rep["pubkey_prefix"])
     laatst = regel.get("at")
@@ -275,7 +303,7 @@ def due_at(rep, now: float | None = None) -> float | None:
     # band die van iedereen is.
     if regel.get("result") == RESULT_SILENT and int(regel.get("cursor") or 0) > 0:
         return now if now is not None else time.time()
-    return float(laatst) + uren * 3600
+    return float(laatst) + minuten * 60
 
 
 def next_due_secs(rep, now: float | None = None) -> int | None:

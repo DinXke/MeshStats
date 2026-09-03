@@ -85,11 +85,45 @@
          {%- if t.hint %} title="{{ t.hint }}" data-i18n-title="{{ t.hint_key }}"{% endif %}>
       <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
       <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
+      {#- Alleen filtertegels krijgen dit: de instelling die dit cijfer veroorzaakt,
+          waar hij nu op staat, en een '?' met wat die regel doet. Zichtbaar en niet
+          alleen als title-attribuut, want een tooltip zonder affordance vindt
+          niemand. De teksten komen per firmwarevariant uit pfhelp -- zie de
+          toelichting bij de verrijking in routes_public.py. -#}
+      {%- if t.pf_help %}
+      <div class="tile-setting">
+        {%- if t.pf_setting %}<code class="pf-rule"{% if t.pf_setting_key %} data-i18n="{{ t.pf_setting_key }}"{% endif %}>{{ t.pf_setting }}</code>{% endif %}
+        {%- if t.pf_value is not none %}<span class="pf-val">= {{ t.pf_value }}</span>{% endif %}
+        {%- if t.pf_value_on is not none %}<span class="pf-val" data-i18n="{{ 'state.on' if t.pf_value_on else 'state.off' }}">{{ 'aan' if t.pf_value_on else 'uit' }}</span>{% endif %}
+        <span class="pf-help" role="note" title="{{ t.pf_help }}"
+              data-i18n-title="{{ t.pf_help_key }}">?</span>
+        {%- if t.pf_warn %}<span class="pf-warn" role="note" title="{{ t.pf_warn }}"
+              data-i18n-title="{{ t.pf_warn_key }}">!</span>{% endif %}
+      </div>
+      {%- endif %}
     </div>
     {% endif %}
   {% endfor %}
   </div>
   </div>
+</section>
+
+{% elif b.type == "filternote" %}
+{#- Deze node draait firmware MET een pakketfilter, maar heeft er nog nooit een
+    cijfer over gemeld. Dat expliciet zeggen in plaats van de sectie weglaten:
+    een ontbrekend blok is niet te onderscheiden van "hier staat geen filter aan",
+    en dat is juist de vraag waar dit scherm voor bestaat. Zie de toelichting bij
+    het filternote-blok in routes_public.py. -#}
+<section>
+  <h2><span data-i18n="block.filter">Pakketfilter</span></h2>
+  <p class="muted small">
+    <span data-i18n="filternote.variant">Deze node draait firmware met een pakketfilter</span>
+    (<code data-i18n="pfvariant.{{ b.variant }}">{{ b.naam }}</code>),
+    <span data-i18n="filternote.none">maar heeft er nog geen enkele meting over gemeld.</span>
+    {% if b.cli_only %}
+    <span data-i18n="filternote.cliOnly">De statistieken van deze variant zijn voor iedereen leesbaar, maar de filtertellers zijn alleen via de admin-CLI over de radio op te halen — en die weg antwoordt niet altijd.</span>
+    {% endif %}
+  </p>
 </section>
 
 {% elif b.type == "filterstats" %}

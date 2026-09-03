@@ -5,8 +5,8 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse)
 
-from . import (auth, commanding, companions, config, db, metrics, pktfilter,
-               rbac, retention, search)
+from . import (auth, commanding, companions, config, db, metrics, pfhelp,
+               pfstock, pktfilter, rbac, retention, search)
 from .templating import templates
 
 router = APIRouter()
@@ -132,6 +132,75 @@ def repeater_page(request: Request, slug: str):
         if tiles:
             sections[key] = {"key": key, "title": title, "tiles": tiles}
 
+    # Bij een filtertegel hoort de INSTELLING die het cijfer veroorzaakt, plus een
+    # uitleg van wat die doet. "Weg: padhash te klein -- 535" is als los getal
+    # onbruikbaar: je kunt er geen besluit op nemen zonder te weten dat het de
+    # regel `filter hash` is, waar die nu op staat, en wat hij wegknipt.
+    #
+    # Waarom dit per VARIANT verschilt en niet één vaste tekst mag zijn: dezelfde
+    # commandoregel betekent bij de twee filterimplementaties in dit mesh soms het
+    # tegendeel. `filter hops <type> 0` is bij de stock-build "geen limiet" en bij
+    # onze eigen firmware "dit type helemaal dicht"; `filter channel` is daar een
+    # witte lijst en hier een zwarte. Eén gedeelde uitleg zou dus precies bij de
+    # gevaarlijke gevallen liegen. Zie pfhelp.py en pfstock.variant().
+    if sections.get("filter"):
+        fvariant = pfstock.variant(r)
+        fstate = db.filter_state_for(r["id"])
+        for t in sections["filter"]["tiles"]:
+            hulp = pfhelp.help_for(t["metric"], fvariant)
+            if not hulp:
+                continue
+            t["pf_variant"] = fvariant
+            t["pf_setting"] = hulp.get("instelling") or ""
+            # Ook de REGELNAAM moet mee kunnen in de taalwissel; zonder sleutel
+            # stond er "hoplimiet per pakkettype" op een Engelse pagina.
+            t["pf_setting_key"] = (f"pfrule.{fvariant}.{t['metric']}"
+                                   if hulp.get("instelling") else "")
+            t["pf_syntax"] = hulp.get("syntax") or ""
+            t["pf_supported"] = bool(hulp.get("ondersteund"))
+            # De Nederlandse tekst staat inline als no-JS-terugval, precies zoals
+            # de tegellabels dat doen; i18n.js wisselt hem via de sleutel. De
+            # samenstelling (wat het GETAL betekent + wat de REGEL doet) komt uit
+            # pfhelp.tooltip, zodat deze inline tekst en de gegenereerde vertaling
+            # per definitie dezelfde zijn en het tooltip niet verspringt.
+            t["pf_help"] = pfhelp.tooltip(t["metric"], fvariant, "nl")
+            # De sleutel draagt de VARIANT mee: de uitleg verschilt per
+            # implementatie, dus één sleutel per metric zou bij de ene of de
+            # andere de verkeerde tekst tonen -- en juist bij `hops` en `channel`
+            # is dat het tegenovergestelde van de waarheid.
+            t["pf_help_key"] = f"pfhelp.{fvariant}.{t['metric']}"
+            t["pf_warn"] = hulp.get("waarschuwing_nl") or ""
+            t["pf_warn_key"] = (f"pfwarn.{fvariant}.{t['metric']}"
+                                if hulp.get("waarschuwing_nl") else "")
+            # Drieledig en niet tweeledig: "de node zei hier nog niets over" is
+            # iets anders dan "deze firmware draagt dit niet in zijn antwoord".
+            huidig = pfhelp.current_value(fstate, t["metric"], fvariant)
+            rauw = huidig.get("waarde") if huidig.get("bekend") else None
+            # De waarde moet als TEKST de template in, en niet als Python-object:
+            # een bool werd anders letterlijk "True" op het scherm en een tabel
+            # per pakkettype een uitgeprinte dict. Drie gevallen dus:
+            #
+            # - een aan/uit-stand hoort alleen bij de schakelaar zelf. Bij
+            #   `filter_dropped` en `filter_passed` is de "instelling" ook de
+            #   hoofdschakelaar, en daar drie keer dezelfde stand herhalen zegt
+            #   niets over dát cijfer.
+            # - een tabel per pakkettype hoort in de uitsplitsing eronder, waar
+            #   hij per type met vensters en piek staat -- niet samengeperst op
+            #   een tegel van 155 pixels.
+            # - een getal is het enige dat hier wél op zijn plek is.
+            t["pf_value"] = None
+            t["pf_value_on"] = None
+            if isinstance(rauw, bool):
+                if t["metric"] == "filter_on":
+                    t["pf_value_on"] = rauw
+            elif isinstance(rauw, dict):
+                pass
+            elif isinstance(rauw, (int, float)):
+                t["pf_value"] = f"{rauw:g}"
+            elif rauw is not None:
+                t["pf_value"] = str(rauw)[:40]
+            t["pf_value_why"] = "" if huidig.get("bekend") else (huidig.get("waarom") or "")
+
     # name from the neighbour sensor, falling back to the contacts table
     # (adverts) -- en met de zichtbaarheidskeuze erboven; zie db.neighbor_rows.
     neighbors = db.neighbor_rows(r["id"])
@@ -197,6 +266,30 @@ def repeater_page(request: Request, slug: str):
         # slepen zouden die samenhang alleen maar kunnen breken.
         if key == "filter" and filter_stats["bekend"]:
             blocks.append({"type": "filterstats", "stats": filter_stats})
+        elif key == "filter" and key not in sections:
+            # Deze node heeft nog NOOIT een filtercijfer gemeld. Dat is iets
+            # anders dan "er staat geen filter aan", en dat verschil hoort op het
+            # scherm -- anders is "loopt er ergens een filter dat ik vergeten
+            # ben" een onbeantwoordbare vraag, precies waar pktfilter.summarise
+            # zijn drie toestanden voor heeft.
+            #
+            # Of we het mogen VERWACHTEN hangt aan de variant: draait er firmware
+            # met een filtersubsysteem, dan is stilte een gat dat uitgelegd moet
+            # worden; draait er firmware zonder, dan is er niets te melden en
+            # zwijgen we ook.
+            fv = pfstock.variant(r)
+            caps = pfstock.capabilities(fv)
+            if caps.get("drop_per_reden"):
+                blocks.append({
+                    "type": "filternote",
+                    "variant": fv,
+                    "naam": caps.get("naam") or fv,
+                    # De reden is variant-specifiek en feitelijk: bij de
+                    # stock-build zijn de statistieken gast-leesbaar terwijl de
+                    # filtertellers alleen via de admin-CLI te halen zijn, en die
+                    # weg antwoordt niet altijd.
+                    "cli_only": fv == "meshcore_filter",
+                })
 
     online_row = latest.get("online")
     # De opvraagknop staat op deze publieke pagina voor wie ingelogd is. Sinds

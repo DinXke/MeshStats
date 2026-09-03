@@ -223,6 +223,33 @@ a.settingslink:hover { color: var(--text); border-color: var(--text); text-shado
 .tile-value { font-family: var(--mono); font-size: 1.18rem; font-weight: 700; letter-spacing: -.01em; }
 .tile-label { font-size: .72rem; color: var(--muted); margin-top: .18rem;
               text-transform: uppercase; letter-spacing: .08em; }
+/* Alleen bij filtertegels: de REGEL die dit cijfer veroorzaakt, waar hij nu op
+   staat, en een '?' met de uitleg. Zichtbaar en niet enkel als title-attribuut --
+   een tooltip zonder affordance wordt nooit gevonden. Bewust klein en gedempt:
+   het getal blijft de hoofdzaak, dit is de context eronder. */
+.tile-setting {
+  display: flex; align-items: center; gap: .3rem; flex-wrap: wrap;
+  margin-top: .3rem; font-size: .68rem; line-height: 1.3;
+}
+.pf-rule {
+  font-family: var(--mono); font-size: .66rem; color: var(--muted);
+  background: rgba(125, 143, 160, .12); border-radius: 4px; padding: .05rem .28rem;
+}
+.pf-val { font-family: var(--mono); font-size: .66rem; color: var(--text); opacity: .85; }
+/* Het vraagteken en het uitroepteken zijn ronde, aanwijsbare badges. `help` als
+   cursor omdat de browser dan zelf zegt dat er iets te lezen valt. */
+.pf-help, .pf-warn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.05em; height: 1.05em; border-radius: 50%;
+  font-size: .66rem; font-weight: 700; cursor: help; user-select: none;
+}
+.pf-help { color: var(--muted); border: 1px solid var(--card-edge); }
+.pf-help:hover { color: var(--accent); border-color: var(--accent-dim); }
+/* Rood, want hier staat een lockout-risico in -- dat mag niet lezen als een
+   gewone voetnoot. */
+.pf-warn { color: var(--red); border: 1px solid var(--red); opacity: .8; }
+.pf-warn:hover { opacity: 1; }
+
 .tile.online::before { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .tile.online .tile-value { color: var(--accent); text-shadow: 0 0 10px rgba(53, 224, 140, .4); }
 .tile.offline::before { background: var(--red); }

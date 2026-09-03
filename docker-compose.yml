@@ -49,6 +49,12 @@ services:
     ports:
       - "${MESHMANAGER_PORT:-${MESHSTATS_PORT:-8080}}:8080"
     environment:
+      # Tijdzone voor LOGREGELS. De opgeslagen tijdstempels blijven UTC: db.utcnow()
+      # is expliciet timezone-aware (datetime.now(timezone.utc)) en er staat geen
+      # enkele naïeve datetime.now() in de code, dus dit raakt de data niet. De
+      # website rendert al in de tijdzone van de bezoeker. Europe/Brussels en niet
+      # "CET": die laatste kent geen zomertijd en zou 's zomers een uur mis staan.
+      TZ: "${TZ:-Europe/Brussels}"
       # Weergave en bewaartermijn (ook aanpasbaar via /admin)
       MM_SITE_NAME: "${MM_SITE_NAME:-${MCS_SITE_NAME:-MeshManager}}"
       MM_RETENTION_DAYS: "${MM_RETENTION_DAYS:-${MCS_RETENTION_DAYS:-180}}"
@@ -145,6 +151,9 @@ services:
     image: victoriametrics/victoria-metrics:v1.102.1
     container_name: meshmanager-tsdb
     restart: unless-stopped
+    # Alleen voor de logregels; VictoriaMetrics bewaart zijn punten in UTC.
+    environment:
+      TZ: "${TZ:-Europe/Brussels}"
     command:
       - "-storageDataPath=/victoria-metrics-data"
       - "-retentionPeriod=${MM_TSDB_RETENTION:-${MCS_TSDB_RETENTION:-180d}}"
@@ -163,6 +172,9 @@ services:
     image: eclipse-mosquitto:2
     container_name: meshmanager-mqtt
     restart: unless-stopped
+    # Alleen voor de logregels van de broker.
+    environment:
+      TZ: "${TZ:-Europe/Brussels}"
     ports:
       - "${MQTT_PORT:-1883}:1883"
     volumes:

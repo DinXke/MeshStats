@@ -30,7 +30,14 @@ COMPOSE = Path(__file__).resolve().parent.parent.parent / "docker-compose.yml"
 ANDERE_NAMEN = {"MESHMANAGER_PORT": "MESHSTATS_PORT"}
 
 # Namen die nooit hernoemd zijn en dus geen terugval nodig hebben.
-NOOIT_HERNOEMD = {"MQTT_PORT"}
+#
+# ``TZ`` krijgt met opzet GEEN ``MM_``-voorvoegsel: dat is de naam die de
+# container-runtime en glibc zelf honoreren, en een eigen naam ervoor zetten zou
+# precies het effect wegnemen waar hij voor bestaat. Hij regelt alleen de
+# weergave van LOGREGELS; de opgeslagen tijdstempels blijven UTC omdat
+# db.utcnow() expliciet timezone-aware is en er geen naïeve datetime in de code
+# staat. Zie de toelichting bij de variabele in docker-compose.yml.
+NOOIT_HERNOEMD = {"MQTT_PORT", "TZ"}
 
 # ``${NAAM:-standaard}`` of ``${NAAM-standaard}``, met een standaard die zelf
 # weer zo'n constructie mag zijn.

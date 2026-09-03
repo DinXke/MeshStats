@@ -233,14 +233,32 @@ def test_het_schema_wordt_geklemd_in_plaats_van_geweigerd(db, monkeypatch):
     monkeypatch.setattr(routes_admin, "check_csrf", lambda request, csrf: None)
     rep = _node(db, "55d9a320a4e3", "DinX-Home", uren=None)
 
+    # Sinds 2026-09 rekent dit veld in MINUTEN (kolom sweep_minutes) en wordt de
+    # oude urenkolom leeggemaakt, zodat er geen twee waarheden naast elkaar staan.
+    # Wat deze test beschermt blijft hetzelfde: klemmen in plaats van weigeren, en
+    # 'uit' als één toestand.
     routes_admin.set_schedule(None, rep["id"], sweep_hours=99999, csrf="x")
-    assert db.qone("SELECT sweep_hours FROM repeaters WHERE id=?",
-                   (rep["id"],))["sweep_hours"] == 24 * 30
+    rij = db.qone("SELECT sweep_minutes, sweep_hours FROM repeaters WHERE id=?",
+                  (rep["id"],))
+    assert rij["sweep_minutes"] == 24 * 30 * 60
+    assert rij["sweep_hours"] is None
 
     routes_admin.set_schedule(None, rep["id"], sweep_hours=0, csrf="x")
     # 0 wordt NULL: 'uit' is één toestand en niet twee.
-    assert db.qone("SELECT sweep_hours FROM repeaters WHERE id=?",
-                   (rep["id"],))["sweep_hours"] is None
+    assert db.qone("SELECT sweep_minutes FROM repeaters WHERE id=?",
+                   (rep["id"],))["sweep_minutes"] is None
+
+    # De reden dat dit veld op minuten overging: vijf minuten moet kunnen. Bewust
+    # NIET stil verhoogd naar de minimumafstand -- de wens blijft staan zoals
+    # ingevuld, en de wachtrij is wat er werkelijk gebeurt (zie set_schedule).
+    routes_admin.set_schedule(None, rep["id"], sweep_value=5, sweep_unit="m", csrf="x")
+    assert db.qone("SELECT sweep_minutes FROM repeaters WHERE id=?",
+                   (rep["id"],))["sweep_minutes"] == 5
+
+    # Uren blijven werken langs de nieuwe weg.
+    routes_admin.set_schedule(None, rep["id"], sweep_value=6, sweep_unit="h", csrf="x")
+    assert db.qone("SELECT sweep_minutes FROM repeaters WHERE id=?",
+                   (rep["id"],))["sweep_minutes"] == 360
 
 
 # --- 'gevraagd' is geen uitkomst ----------------------------------------------

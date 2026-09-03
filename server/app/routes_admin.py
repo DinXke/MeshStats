@@ -26,7 +26,7 @@ import json
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from . import (audit, auth, clocksync, commanding, compare, config, db,
+from . import (audit, auth, clocksync, commanding, compare, config, db, pfguard,
                discovery, firmware, hadiscovery, metrics, monitors, mqtt_ingest,
                nodeconfig, nodecred, pktfilter, qrsvg, ratelimit, rbac, retention,
                rooms, sensornode, sensorpush, snmp, sweepsched, tsdb)
@@ -1272,6 +1272,15 @@ def _node_page(request: Request, rid: int, **extra):
         # celtoestanden erbij is "nooit gevraagd" straks iets anders dan "het
         # schema staat uit".
         "sweep_hours": sweepsched.interval_hours(rep),
+        # In minuten erbij, want dat is sinds 2026-09 wat er werkelijk staat en
+        # het formulier moet 5 minuten kunnen tonen zonder naar 0 uur af te ronden.
+        "sweep_minutes": sweepsched.interval_minutes(rep),
+        # Wat de globale grenzen van die wens maken. Op het scherm zetten in
+        # plaats van de wens stil bij te stellen: anders lijkt een node die op 5
+        # staat elke vijf minuten bevraagd te worden terwijl de wachtrij een
+        # kwartier aanhoudt en er een dagplafond over alle nodes samen ligt.
+        "sweep_gap_min": sweepsched.MIN_GAP_MIN,
+        "sweep_max_day": sweepsched.MAX_PER_DAY,
         "sweep_next": sweepsched.next_due_secs(rep),
         "sweep_last": sweepsched.entry(rep["pubkey_prefix"]),
         "sweep_status": sweepsched.status(),
@@ -1473,7 +1482,34 @@ def write_filter(request: Request, rid: int, cmd: str = Form(""),
         pktfilter.RISK_PLAIN: "node.filter.gewoon",
         pktfilter.RISK_WRITES: "node.filter.merkbaar",
     }.get(pktfilter.risk_of(cmd, huidig), "node.filter.ingrijpend")
+
+    # Naast wat de risicoklasse van deze regel VINDT, wat hij volgens de meting
+    # DOET. De repeater zelf kan niet onbereikbaar worden -- drie vrijstellingen
+    # in de firmware zorgen daarvoor, zie pfguard -- maar de nodes áchter hem wel,
+    # en dat is aan een commandoregel niet te zien. Een gemeten percentage is het
+    # enige wat die fout tegenhoudt zonder een gevaar te verzinnen dat niet
+    # bestaat; vandaar dat dit de klasse mag verzwaren maar niets mag verzinnen.
+    meting = pfguard.check(cmd, rep)
+    if meting["zwaar"]:
+        _risk_perm = "node.filter.ingrijpend"
     user = require_perm(request, _risk_perm, rep)
+
+    if meting["zwaar"] and confirm.strip() != str(rep["name"] or ""):
+        # Zelfde drempel als de zwaarste klasse van nodeconfig: de naam
+        # overtypen. Die vangt hier hetzelfde als daar -- niet twijfel, maar de
+        # klik op de verkeerde node -- en de gemeten zin zegt waarom het erom gaat.
+        result = {
+            "ok": False, "step": "meting", "cmd": cmd, "state": {},
+            "risk": pktfilter.RISK_CUTOFF,
+            "wat": pktfilter.describe(pktfilter.normalise(cmd)),
+            "msg": (meting["tekst_nl"] + " Typ de naam van de node over om dit "
+                    "alsnog te zetten."),
+        }
+        _noteer(request, user, _risk_perm, rep=rep, outcome=audit.MISLUKT,
+                detail=f"{result['wat']} -- geweigerd op meting: "
+                       f"{round(meting['aandeel'] * 100, 1)}% van het "
+                       f"flood-verkeer zou wegvallen"[:400])
+        return _node_page(request, rid, filter_result=result)
 
     result = pktfilter.write(rep, cmd, confirm, huidig)
     # In het audittrail de zin en niet de commandoregel: "GRP_TXT (05) helemaal
@@ -1486,13 +1522,18 @@ def write_filter(request: Request, rid: int, cmd: str = Form(""),
 
 @router.post("/repeaters/{rid}/schedule")
 def set_schedule(request: Request, rid: int, sweep_hours: int = Form(0),
+                 sweep_value: int = Form(0), sweep_unit: str = Form("h"),
                  csrf: str = Form(...)):
-    """Het uitvraagschema van één node zetten. 0 is uit.
+    """Het uitvraagschema van één node zetten, in minuten of uren. 0 is uit.
 
     Een klasse zwaarder dan de knop die één ronde start, en dat is geen
     strengheid om de strengheid: die knop kost één keer zendtijd, dit kost hem
     elke dag opnieuw op een band die van iedereen is. Wie het aanzet legt een
     terugkerende last op andermans mesh.
+
+    ``sweep_value`` + ``sweep_unit`` is de weg sinds 2026-09; ``sweep_hours``
+    blijft aanvaard zodat een oud formulier of een bookmark niet stilletjes een
+    schema uitzet.
     """
     rep = db.qone("SELECT * FROM repeaters WHERE id=?", (rid,))
     if not rep:
@@ -1500,15 +1541,48 @@ def set_schedule(request: Request, rid: int, sweep_hours: int = Form(0),
     user = require_perm(request, "node.schema", rep)
     check_csrf(request, csrf)
 
-    # Eén uur is de ondergrens en een maand de bovengrens. Korter dan een uur
-    # heeft geen betekenis naast een minimumafstand van kwartieren, en langer dan
-    # een maand is hetzelfde als uit -- met het verschil dat 'uit' eerlijk is over
-    # wat het is. Klemmen en niet weigeren: dit veld komt uit een keuzelijst, en
-    # een 422 op een waarde die niemand kan typen is een foutmelding voor niemand.
-    uren = max(0, min(24 * 30, int(sweep_hours or 0)))
-    db.execute("UPDATE repeaters SET sweep_hours=? WHERE id=?", (uren or None, rid))
-    audit.log(user, "node.schema", rep=rep,
-              detail=f"uitvraagschema op {uren} uur" if uren else "uitvraagschema uit")
+    # Minuten worden de eenheid waarin dit veld rekent, en de oude ondergrens van
+    # één uur verdwijnt: vijf minuten mag ingesteld worden.
+    #
+    # Bewust GEEN vloer op de minimumafstand. Dit veld is een wens, precies zoals
+    # sweepsched het in zijn kop beschrijft, en de wachtrij is wat er werkelijk
+    # gebeurt: MIN_GAP_MIN tussen twee rondes en MAX_PER_DAY over alle nodes
+    # samen. Wie hier 5 invult krijgt dus niet elke vijf minuten een ronde, maar
+    # wel "zo vaak als mag" -- en dat is een eerlijker antwoord dan zijn getal
+    # stil naar een kwartier verhogen en doen alsof dat zijn keuze was. De
+    # beheerpagina zegt erbij wat de caps ervan maken.
+    #
+    # Klemmen en niet weigeren, om dezelfde reden als voorheen: een 422 op een
+    # getal dat iemand net intypte is een foutmelding voor niemand.
+    # Coërceren en niet blind int()'en: deze functie wordt in de tests ook
+    # RECHTSTREEKS aangeroepen, en dan staan de niet-meegegeven parameters nog op
+    # hun Form(...)-sentinel. Een Form-object is truthy, dus zonder deze guard
+    # koos de code die tak en klapte op int(). Wat niet als getal leesbaar is,
+    # geldt als niet opgegeven.
+    def _getal(waarde) -> int:
+        try:
+            return int(waarde)
+        except (TypeError, ValueError):
+            return 0
+
+    waarde = _getal(sweep_value)
+    if waarde:
+        eenheid = sweep_unit if isinstance(sweep_unit, str) else "h"
+        minuten = waarde * (60 if eenheid.lower().startswith("h") else 1)
+    else:
+        minuten = _getal(sweep_hours) * 60
+    minuten = max(0, min(24 * 30 * 60, minuten))
+    # Beide kolommen zetten: de oude leegmaken zodat er niet twee waarheden
+    # naast elkaar staan die interval_minutes stil moet wegstrepen.
+    db.execute("UPDATE repeaters SET sweep_minutes=?, sweep_hours=NULL WHERE id=?",
+               (minuten or None, rid))
+    if not minuten:
+        detail = "uitvraagschema uit"
+    elif minuten % 60 == 0:
+        detail = f"uitvraagschema op {minuten // 60} uur"
+    else:
+        detail = f"uitvraagschema op {minuten} minuten"
+    audit.log(user, "node.schema", rep=rep, detail=detail)
     return RedirectResponse(f"/admin/repeaters/{rid}", status_code=303)
 
 
