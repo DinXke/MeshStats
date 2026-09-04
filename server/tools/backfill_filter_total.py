@@ -46,6 +46,19 @@ def punten(slug, metric, uren):
     return {p[0]: p[1] for p in reeks if p and p[1] is not None}
 
 
+def _wacht_leeg(seconden=60):
+    """Wachten tot de schrijfwachtrij leeg is (of tot de tijd om is)."""
+    eind = time.time() + seconden
+    while time.time() < eind:
+        wacht = tsdb.status().get("queued", 0)
+        if not wacht:
+            time.sleep(1.5)      # één flush-interval marge
+            return True
+        time.sleep(0.5)
+    print("  !! wachtrij niet leeg na %ds -- niet alles is weggeschreven" % seconden)
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--uren", type=int, default=168,
@@ -53,6 +66,14 @@ def main():
     ap.add_argument("--doen", action="store_true",
                     help="werkelijk wegschrijven; zonder dit alleen rekenen")
     args = ap.parse_args()
+
+    # De schrijfdraad wordt normaal door de app gestart (main.py). In een los
+    # script draait die niet, en dan vult record() alleen een wachtrij die
+    # niemand leest -- de eerste versie van dit script schreef zo 336 punten
+    # nergens naartoe. Zelf starten, en aan het eind wachten tot de wachtrij
+    # leeg is voordat het proces eindigt (de draad is een daemon en wordt bij
+    # het afsluiten niet afgemaakt).
+    tsdb.start()
 
     if not tsdb.enabled():
         print("Geen tijdreeksdatabank ingesteld (MM_TSDB_URL leeg). Dit script "
@@ -93,12 +114,13 @@ def main():
         for ts, waarde in sorted(nieuw.items()):
             tsdb.record(rep["id"], slug, ts, {DOEL: waarde})
             totaal_geschreven += 1
-        # De schrijfweg is een wachtrij met een eigen draad; even wachten zodat
-        # hij leeg is voordat het proces eindigt.
-        time.sleep(2)
+        _wacht_leeg()
 
     if args.doen:
-        print("weggeschreven: %d punten" % totaal_geschreven)
+        _wacht_leeg()
+        stand = tsdb.status()
+        print("weggeschreven: %d punten (wachtrij nu %s, laatste fout: %s)"
+              % (totaal_geschreven, stand.get("queued"), stand.get("error") or "geen"))
     else:
         print("niets geschreven (geef --doen om het echt te doen)")
     return 0
