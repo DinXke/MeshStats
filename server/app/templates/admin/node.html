@@ -2443,6 +2443,67 @@
         pakketten die geen meerbytepad gebruiken — zet dat pas als je mesh mee is.
       </p>
     </details>
+    {#- Het kanaalfilter. Eigen kaartje binnen dit blok, want het is de enige
+        regel met een vrije naam erin en de enige die maar EEN pakkettype raakt.
+        Toevoegen en verwijderen zijn de twee handelingen; een aparte aan/uit
+        bestaat op deze firmware niet -- de lijst IS de stand, en de
+        hoofdschakelaar hierboven geldt voor het hele filter. -#}
+    <h4>Kanalen niet doorsturen</h4>
+    <p class="muted small">
+      Raakt alleen groepstekst (<span class="mono">05 GRP_TXT</span>) op dat kanaal, en
+      alleen het DOORSTUREN: de repeater blijft die berichten zelf ontvangen. Hoogstens
+      zestien kanalen. Een naam is <span class="mono">#naam</span> of
+      <span class="mono">Public</span>, zonder spaties — de server weigert de rest voordat
+      het zendtijd kost.
+    </p>
+    {% if filter_state.channels %}
+    <table class="cfgtable">
+      <thead><tr><th>Kanaal</th><th>Hash</th><th></th></tr></thead>
+      <tbody>
+        {% for c in filter_state.channels %}
+        <tr>
+          <td class="mono">{{ c.label }}</td>
+          <td class="mono">{% if c.hash %}#{{ c.hash }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>
+            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="cmd" value="channel">
+              <input type="hidden" name="arg1" value="remove">
+              <input type="hidden" name="arg2" value="{{ c.label }}">
+              <button type="submit">weer doorlaten</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted small">
+      Geen kanaal in de lijst. Let op de kleine lettertjes van deze firmware: op een
+      <em>lege</em> lijst antwoordt hij helemaal niet, dus "niets geblokkeerd" en "geen
+      antwoord op de vraag" komen hier als hetzelfde aan. De teller
+      <span class="mono">Channel</span> in de statusregel is het onafhankelijke bewijs:
+      staat die boven nul, dan is er wél iets geblokkeerd.
+    </p>
+    {% endif %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="channel">
+      <input type="hidden" name="arg1" value="add">
+      <input name="arg2" maxlength="32" placeholder="#naam of Public" required autocomplete="off"
+             pattern="#?[A-Za-z0-9][A-Za-z0-9._\-]{0,31}"
+             title="De kanaalnaam zoals deze firmware hem aanvaardt: #naam of Public, zonder spaties">
+      <label class="cfgconfirm">bevestig
+        <input name="confirm" placeholder="ja" autocomplete="off" required></label>
+      <button type="submit">niet meer doorsturen</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="channel">
+      <input type="hidden" name="arg1" value="list">
+      <button type="submit">lijst opnieuw ophalen</button>
+    </form>
+
     <p class="muted small">
       Syntaxis van deze firmware (<span class="mono">filter help</span>):
       <span class="mono">on | off | reset | hash &lt;bytes&gt; | hops &lt;type&gt; &lt;max&gt; |

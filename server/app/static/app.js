@@ -1424,8 +1424,52 @@
     // drives every dot (not a timer each), the number in flight is capped, the
     // oldest is dropped rather than queued, and a hidden tab runs nothing at all.
     var MOTION_KEY = "mcs-pktmotion";
-    var TRAVEL_MS = 2800;        // sender to observer, whole route
     var MAX_TRAVELERS = 18;
+
+    // How long a packet really takes, instead of one fixed duration for every
+    // route. Two things make up that time, and neither of them is distance:
+    //
+    //   airtime     the packet is actually in the air. Depends on its LENGTH and
+    //               the radio settings, not on how far it flies -- radio waves
+    //               cross 30 km in a tenth of a millisecond.
+    //   hop dwell   every repeater in between receives the packet, waits out its
+    //               backoff and only then retransmits. That wait dwarfs the
+    //               flight time and is what a multi-hop route mostly consists of.
+    //
+    // So the dot MOVES during the airtime of a leg and WAITS at each hop, which
+    // is what happens. It also makes a one-hop packet quicker than the old flat
+    // 2.8 s, and an eight-hop packet honestly slower.
+    //
+    // The radio settings are this mesh's (SF 8, BW 62.5 kHz, CR 4/8, explicit
+    // header, 8 preamble symbols) and are not in the packet row, so they are
+    // constants here. Change them and the animation stays proportional; these
+    // numbers only set the scale.
+    var LORA_SF = 8, LORA_BW_KHZ = 62.5, LORA_CR = 4, LORA_PREAMBLE = 8;
+    var HOP_DWELL_MS = 350;      // backoff before a repeater passes it on
+    var TRAVEL_MAX_MS = 5000;    // ceiling, so a long route stays watchable
+    var TRAVEL_MIN_MS = 260;     // floor, so a tiny packet is not a blink
+
+    // What a finished packet leaves behind: the route stays, faintly, and dims
+    // away while the next packets fly. Without it every route vanished the
+    // instant its dot arrived, so a map watched for a minute showed one packet
+    // at a time and never the pattern -- which paths are busy, which node
+    // everything goes through. With it, the last half-minute of traffic is
+    // readable at a glance, and it is still honest: a fading line is a packet
+    // that HAS arrived, not one in flight.
+    var GHOST_MS = 30000;        // from handover to gone
+    var GHOST_OP = 0.3;          // opacity right after the dot arrives
+    var MAX_GHOSTS = 40;         // oldest out first, same as the dots
+
+    // The standard LoRa time-on-air formula. Kept whole rather than reduced to a
+    // ms-per-byte guess: symbol time doubles with every SF step, so a guess that
+    // fits this mesh would be wrong by 8x on the next one.
+    function airtimeMs(bytes) {
+      var pl = Math.max(1, Math.min(255, bytes || 16));
+      var ts = Math.pow(2, LORA_SF) / (LORA_BW_KHZ * 1000);   // seconds per symbol
+      var num = 8 * pl - 4 * LORA_SF + 28 + 16;               // explicit header, CRC on
+      var sym = 8 + Math.max(0, Math.ceil(num / (4 * LORA_SF)) * (LORA_CR + 4));
+      return ((LORA_PREAMBLE + 4.25) + sym) * ts * 1000;
+    }
     var motionEl = document.getElementById("pkt-motion");
     var reduceMotion = window.matchMedia &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1452,6 +1496,7 @@
     function animating() { return motionWanted && !reduceMotion; }
 
     var travelers = [];
+    var ghosts = [];
     var travelRaf = null;
 
     // Route for the dot: the stops we can actually place, in order. ``certain``
@@ -1480,55 +1525,106 @@
     function clearTravelers() {
       travelers.forEach(dropTraveler);
       travelers = [];
+      ghosts.forEach(function (g) { lmap.removeLayer(g.line); });
+      ghosts = [];
       if (travelRaf !== null) { cancelAnimationFrame(travelRaf); travelRaf = null; }
+    }
+
+    // The dot is done; hand its line over to the fading set instead of taking it
+    // off the map. Oldest out first, so a burst cannot grow the layer count --
+    // the same rule the dots follow.
+    function toGhost(tr, now) {
+      lmap.removeLayer(tr.dot);
+      while (ghosts.length >= MAX_GHOSTS) lmap.removeLayer(ghosts.shift().line);
+      tr.line.setStyle({ opacity: GHOST_OP });
+      ghosts.push({ line: tr.line, start: now });
     }
 
     function travelStep(now) {
       travelRaf = null;
       for (var i = travelers.length - 1; i >= 0; i--) {
         var tr = travelers[i];
-        var k = (now - tr.start) / TRAVEL_MS;
-        if (k >= 1) {
-          dropTraveler(tr);
+        var el = now - tr.start;
+        if (el >= tr.dur) {
+          toGhost(tr, now);
           travelers.splice(i, 1);
           continue;
         }
-        // Walk the cumulative segment lengths so the dot keeps a steady speed
-        // over the whole route instead of racing through the short legs.
-        var want = k * tr.total, acc = 0, j = 0;
-        while (j < tr.legs.length - 1 && acc + tr.legs[j] < want) { acc += tr.legs[j]; j++; }
-        var f = tr.legs[j] ? (want - acc) / tr.legs[j] : 0;
-        var a = tr.pts[j], b = tr.pts[j + 1];
-        tr.dot.setLatLng([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
-        tr.line.setStyle({ opacity: (tr.certain ? 0.5 : 0.35) * (1 - k) });
+        // Which phase: in the air over leg j, or waiting at the hop that ends it?
+        // A handful of phases per packet, so a linear walk is cheaper than the
+        // bookkeeping needed to avoid one.
+        var ph = tr.phases[tr.phases.length - 1];
+        for (var q = 0; q < tr.phases.length; q++) {
+          if (el < tr.phases[q].t1) { ph = tr.phases[q]; break; }
+        }
+        var a = tr.pts[ph.j], b = tr.pts[ph.j + 1];
+        if (ph.move) {
+          var f = (el - ph.t0) / Math.max(1, ph.t1 - ph.t0);
+          tr.dot.setLatLng([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+          if (tr.waiting) { tr.dot.setRadius(5); tr.waiting = false; }
+        } else {
+          // Sitting at the repeater that is about to pass it on. A slightly
+          // bigger dot, because "held here for a moment" is the part of a
+          // multi-hop route a reader never gets to see otherwise.
+          tr.dot.setLatLng(b);
+          if (!tr.waiting) { tr.dot.setRadius(6.5); tr.waiting = true; }
+        }
+        // The trail fades, but to a floor rather than to nothing: it is the only
+        // thing showing which way the packet came, and fading it out completely
+        // left the map blank while the dot was still moving.
+        tr.line.setStyle({ opacity: tr.op * (1 - 0.45 * (el / tr.dur)) });
       }
-      if (travelers.length) travelRaf = requestAnimationFrame(travelStep);
+      // The trails keep dimming after the last dot has arrived, so the loop runs
+      // for them too -- otherwise a quiet minute would freeze the fade halfway.
+      for (var g = ghosts.length - 1; g >= 0; g--) {
+        var age = (now - ghosts[g].start) / GHOST_MS;
+        if (age >= 1) {
+          lmap.removeLayer(ghosts[g].line);
+          ghosts.splice(g, 1);
+          continue;
+        }
+        ghosts[g].line.setStyle({ opacity: GHOST_OP * (1 - age) });
+      }
+      if (travelers.length || ghosts.length) travelRaf = requestAnimationFrame(travelStep);
     }
 
     function travel(p, color) {
       var route = travelRoute(p);
       if (!route) return false;
-      var pts = route.pts, legs = [], total = 0;
+      var pts = route.pts;
+      // The schedule: airtime over each leg, then the dwell at the hop that
+      // retransmits it. No dwell after the last leg -- the observer is where the
+      // packet was heard, it does not pass it on again.
+      var air = airtimeMs(p.len), phases = [], t = 0;
       for (var i = 0; i + 1 < pts.length; i++) {
-        // Plain planar distance in degrees: at mesh scale it is only used to
-        // share the duration between legs, so a projection would buy nothing.
-        var dy = pts[i + 1][0] - pts[i][0], dx = pts[i + 1][1] - pts[i][1];
-        var d = Math.sqrt(dy * dy + dx * dx) || 1e-9;
-        legs.push(d);
-        total += d;
+        phases.push({ j: i, move: true, t0: t, t1: t + air });
+        t += air;
+        if (i + 2 < pts.length) {
+          phases.push({ j: i, move: false, t0: t, t1: t + HOP_DWELL_MS });
+          t += HOP_DWELL_MS;
+        }
+      }
+      // Scaled as a whole when it would outstay its welcome (or be a blink), so
+      // the shape of the route -- which leg took longest -- survives the bound.
+      var dur = t, scale = 1;
+      if (dur > TRAVEL_MAX_MS) scale = TRAVEL_MAX_MS / dur;
+      else if (dur > 0 && dur < TRAVEL_MIN_MS) scale = TRAVEL_MIN_MS / dur;
+      if (scale !== 1) {
+        phases.forEach(function (ph) { ph.t0 *= scale; ph.t1 *= scale; });
+        dur *= scale;
       }
       // Oldest out first: a burst must not be able to grow the layer count.
       while (travelers.length >= MAX_TRAVELERS) dropTraveler(travelers.shift());
+      var op = route.certain ? 0.85 : 0.6;
       travelers.push({
-        pts: pts, legs: legs, total: total, certain: route.certain,
-        start: performance.now(),
+        pts: pts, phases: phases, dur: Math.max(1, dur), certain: route.certain,
+        op: op, waiting: false, start: performance.now(),
         line: L.polyline(pts, {
-          color: color, weight: route.certain ? 2 : 1.5,
-          opacity: route.certain ? 0.5 : 0.35,
+          color: color, weight: route.certain ? 2.5 : 1.8, opacity: op,
           dashArray: route.certain ? null : "5 7",
         }).addTo(lmap),
         dot: L.circleMarker(pts[0], {
-          radius: 5, color: color, weight: 2, fillColor: color, fillOpacity: 0.95,
+          radius: 5, color: color, weight: 2, fillColor: color, fillOpacity: 1,
         }).addTo(lmap),
       });
       if (travelRaf === null) travelRaf = requestAnimationFrame(travelStep);

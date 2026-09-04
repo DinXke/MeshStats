@@ -41,6 +41,7 @@ De echte terugvalweg loopt trouwens niet langs deze module. ``filter off`` en
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 
@@ -404,6 +405,11 @@ def write(rep, cmd: str, confirm: str = "", current: dict | None = None) -> dict
 # komt terug als "command error" na een LoRa-sessie die niets deed.
 STOCK_COMMANDS = ("on", "off", "reset", "hash", "hops", "rate", "malformed", "channel")
 
+# Een kanaalnaam zoals die firmware ze aanvaardt: ``#naam`` of ``Public``.
+# Dezelfde vorm als pfstock._CHAN_NAAM; daar om te LEZEN, hier om te weigeren
+# voor er zendtijd aan opgaat.
+_CHANNEL_NAAM = re.compile(r"^#?[A-Za-z0-9][A-Za-z0-9._\-]{0,31}$")
+
 
 def queue_route(rep) -> dict:
     """Kan het filter van deze repeater via de pollerwachtrij gezet worden?
@@ -455,7 +461,32 @@ def queue_write(rep, cmd: str, confirm: str = "", current: dict | None = None) -
     if not schoon:
         out.update(step="commando", msg="geen filtercommando opgegeven")
         return out
-    kop = schoon.split()[0]
+    delen = schoon.split()
+    kop = delen[0]
+    # ``channel add|remove <naam>`` is de enige regel met een vrije tekst erin, en
+    # de firmware leest daar precies EEN woord. Een naam met een spatie zou
+    # stilletjes op het eerste woord geblokkeerd worden -- dus hier weigeren, niet
+    # daar. ``channel list`` heeft geen naam nodig.
+    if kop == "channel":
+        if len(delen) < 2 or delen[1] not in ("add", "remove", "list"):
+            out.update(step="commando",
+                       msg="channel kan alleen add, remove of list")
+            return out
+        if delen[1] == "list" and len(delen) != 2:
+            out.update(step="commando", msg="channel list neemt geen naam")
+            return out
+        if delen[1] in ("add", "remove"):
+            if len(delen) != 3:
+                out.update(step="commando",
+                           msg="channel %s vraagt EEN kanaalnaam zonder spaties "
+                               "(bv. #dutch of Public)" % delen[1])
+                return out
+            if not _CHANNEL_NAAM.match(delen[2]):
+                out.update(step="commando",
+                           msg="'%s' is geen kanaalnaam die deze firmware "
+                               "aanvaardt (#naam of Public, letters, cijfers, "
+                               ". _ -)" % delen[2])
+                return out
     if kop not in STOCK_COMMANDS:
         out.update(step="commando",
                    msg=f"deze firmware kent geen filterregel '{kop}' "

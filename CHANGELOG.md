@@ -10,6 +10,30 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.13.0 - 2026-09-04
+
+- **Kanaalfilter te beheren vanaf de site.** In het pollerblok op de nodepagina:
+  de geblokkeerde kanalen als lijst met een knop per kanaal om ze weer door te
+  laten, een formulier om er een toe te voegen, en een knop om de lijst opnieuw
+  op te halen. `filter channel list` staat in de standaard parameterlijst en
+  `pfstock.parse_filter_channels` leest hem.
+  Een aparte aan/uit bestaat op die firmware niet: de lijst IS de stand.
+  Kanaalnamen worden op de server getoetst (`#naam` of `Public`, geen spaties)
+  voor er zendtijd aan opgaat -- de firmware leest er precies een woord, dus een
+  naam met een spatie zou een ander kanaal blokkeren dan bedoeld.
+  Eerlijk gemeld op de pagina: op een lege lijst antwoordt die firmware niet, dus
+  "niets geblokkeerd" en "geen antwoord" komen als hetzelfde aan; de teller
+  `Channel` in de statusregel is het onafhankelijke bewijs.
+- **Live pakketten: een echte tijd in plaats van een vaste 2,8 seconde.** De stip
+  beweegt nu tijdens de zendtijd van elke hop (LoRa time-on-air uit de
+  pakketlengte) en WACHT bij elke repeater die hem doorstuurt -- want daar zit de
+  tijd, niet in de afstand. Een pakket van een hop is daarmee merkbaar sneller,
+  een pakket van acht hops eerlijk langzamer.
+- **Sporen feller en ze blijven nagloeien.** Een afgeronde route verdwijnt niet
+  meer meteen maar dimt een halve minuut weg. Daardoor is niet alleen het ene
+  pakket van nu te zien maar het patroon: welke paden druk zijn en welke node
+  alles doorgeeft.
+
 ## 2.12.0 — 2026-09-04
 
 - **`filter count` betekende iets anders dan gedacht.** Volgens de

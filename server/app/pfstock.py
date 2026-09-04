@@ -360,6 +360,63 @@ def parse_filter_types(text) -> dict | None:
     return uit or None
 
 
+# ``filter channel list``: één naam per geblokkeerd kanaal, mogelijk met de hash
+# tussen haakjes -- de firmwarestring ``%s (%s)`` staat pal naast de kanaalcode,
+# dus dat is vrijwel zeker "naam (hash)". VRIJWEL: met een lege lijst stuurt deze
+# firmware helemaal geen bericht (handleCommand zet reply_len 0 en dan gaat er
+# niets de lucht in), dus we hebben de niet-lege vorm nog niet op de lucht
+# gezien. Vandaar een tolerante parser die op beide vormen werkt en die bij
+# twijfel niets teruggeeft in plaats van een verzonnen kanaal.
+_CHAN_MET_HASH = re.compile(r"([^\s()]{1,32})\s*\(\s*([0-9A-Fa-f#]{1,8})\s*\)")
+# Een kanaalnaam zoals de firmware ze aanvaardt: ``#naam`` of ``Public``.
+_CHAN_NAAM = re.compile(r"^#?[A-Za-z0-9][A-Za-z0-9._\-]{0,31}$")
+# Woorden die in een antwoord staan maar geen kanaalnaam zijn.
+_CHAN_RUIS = {"filter", "channel", "list", "add", "remove", "blocked", "channels",
+              "none", "empty", "ok"}
+
+
+def parse_filter_channels(text):
+    """De geblokkeerde kanalen uit ``filter channel list``, of None.
+
+    None betekent "hier valt niets uit te lezen" en NIET "geen kanalen": op deze
+    firmware levert een lege lijst geen bericht op, dus stilte en een lege lijst
+    zien er van hier af hetzelfde uit. Die twee mogen niet in één antwoord
+    samenvallen -- de pagina moet kunnen zeggen welke van de twee het is.
+
+    Een lijst met kanalen levert een lijst dicts ``{"label": ..., "hash": ...}``,
+    dezelfde vorm die onze eigen firmware in zijn statistiekenbericht publiceert
+    (mqtt_ingest), zodat de pagina er één weergave voor heeft.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    # Een foutmelding of de usage-regel is geen lijst.
+    if "syntax error" in text.lower() or "command error" in text.lower():
+        return None
+    if text.lstrip().startswith("> filter channel"):
+        return None
+
+    uit = []
+    gezien = set()
+    for naam, h in _CHAN_MET_HASH.findall(text):
+        if naam.lower() in _CHAN_RUIS or not _CHAN_NAAM.match(naam):
+            continue
+        if naam not in gezien:
+            gezien.add(naam)
+            uit.append({"label": naam, "hash": h.lstrip("#").lower()[:2]})
+    if uit:
+        return uit
+
+    # Geen haakjesvorm: dan losse namen, gescheiden door komma's of witruimte.
+    schoon = text.replace(">", " ").replace(",", " ").replace(":", " ")
+    for woord in schoon.split():
+        if woord.lower() in _CHAN_RUIS or not _CHAN_NAAM.match(woord):
+            continue
+        if woord not in gezien:
+            gezien.add(woord)
+            uit.append({"label": woord, "hash": ""})
+    return uit or None
+
+
 def variant(rep) -> str:
     """Welke filterimplementatie er op deze node praat.
 
@@ -539,6 +596,15 @@ def apply_cli_filter(repeater_id: int, values: dict, source: str = "") -> bool:
     for sleutel, waarde in (values or {}).items():
         naam = str(sleutel).strip().lower()
         if not naam.startswith("cmd:filter") or not isinstance(waarde, str) or not waarde.strip():
+            continue
+        # De kanaallijst is geen tabel met een marker maar losse namen, dus een
+        # eigen parser. Hij staat vóór parse_filter_count omdat die op deze tekst
+        # None geeft (geen kopregel, geen marker) en het antwoord dan stil zou
+        # verdwijnen.
+        if naam.startswith("cmd:filter channel"):
+            kanalen = parse_filter_channels(waarde)
+            if kanalen is not None:
+                nieuw["channels"] = kanalen
             continue
         deel = parse_filter_count(waarde)
         if not deel:

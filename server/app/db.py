@@ -2087,7 +2087,8 @@ def classify_countries(force: bool = False) -> int:
 DEFAULT_CLI_PARAMS = ("name,role,radio,freq,tx,af,repeat,advert.interval,"
                       "flood.advert.interval,flood.max,flood.max.unscoped,"
                       "allow.read.only,rxdelay,txdelay,lat,lon,cmd:region,"
-                      "cmd:filter,cmd:filter count,cmd:filter hops,cmd:filter rate")
+                      "cmd:filter,cmd:filter count,cmd:filter hops,cmd:filter rate,"
+                      "cmd:filter channel list")
 
 
 def request_settings(prefix: str, params: list[str]) -> None:
