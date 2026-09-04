@@ -2079,9 +2079,15 @@ def classify_countries(force: bool = False) -> int:
 # own CLI works from its own table (SET_PARAMS in the firmware) and never sees
 # this one. Keep the two in step, or a parameter will exist for one kind of node
 # and be missing for the other.
+#
+# ``cmd:filter`` en ``cmd:filter count`` zijn er allebei, met opzet: op een stock
+# repeater met filterpatch geeft het kale ``filter`` de statusregel met de
+# tellers en ``filter count`` alleen de limiettabel (gemeten op JessaZH). Eén van
+# de twee is een halve filterstand -- zie pfstock.apply_cli_filter.
 DEFAULT_CLI_PARAMS = ("name,role,radio,freq,tx,af,repeat,advert.interval,"
                       "flood.advert.interval,flood.max,flood.max.unscoped,"
-                      "allow.read.only,rxdelay,txdelay,lat,lon,cmd:region")
+                      "allow.read.only,rxdelay,txdelay,lat,lon,cmd:region,"
+                      "cmd:filter,cmd:filter count")
 
 
 def request_settings(prefix: str, params: list[str]) -> None:

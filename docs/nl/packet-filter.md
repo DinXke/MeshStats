@@ -348,6 +348,37 @@ De klasse wordt bepaald uit de handeling en zijn argumenten, op de server, vóó
 er iets verstuurd wordt — en nog een keer bij de bevestigingscontrole, zodat een
 zelfgebouwd formulier hem niet kan overslaan.
 
+## Een stock-repeater met filterpatch
+
+Niet elke repeater draait onze firmware. JessaZH draait de stock-firmware met
+de filterpatch (`v1.17.1-PS+filter+rollback`, dutchmeshcore): geen IP-pad, geen
+`/api/filter`, alleen de mesh-CLI. Sinds site-versie 2.11.0 kan de site daar
+toch mee werken, langs de pollerwachtrij (zie [`commanding.md`](commanding.md)):
+de MeshUptime-node haalt de opdracht op, logt als beheerder in op de repeater en
+voert hem over LoRa uit.
+
+**Lezen kost twee commando's**, en dat is gemeten, niet aangenomen. Het kale
+`filter` geeft de statusregel — `> Filter off: Blocked [ Hops: 0 | Rate: 0 |
+Channel: 0 | Hash: 0 | Malformed: 0 ]` — en `filter count` geeft alléén de
+limiettabel — `[TYPE: HOPS,RATE] 00: 0,0 01: 0,0 …`. Elk antwoord is één
+LoRa-pakket, en de node die het doorgeeft vlakt regeleindes tot spaties. Beide
+staan als `cmd:filter` en `cmd:filter count` in de standaard parameterlijst;
+`pfstock.apply_cli_filter` voegt ze cumulatief samen tot dezelfde filterstand
+als bij onze eigen firmware. Wat deze variant niet meldt (doorgelaten,
+vrijgesteld, per type) ontbreekt — het wordt geen nul.
+
+**Zetten** gaat via het formulier *Zetten via de poller* op de nodepagina. Dat
+verschijnt alleen als de repeater doorgestuurd wordt, de filterpatch draait én
+er een verse poller is. Elke regel gaat als `cmd:filter …` de wachtrij in, met
+erachter `filter` en `filter count`, zodat de nieuwe stand in dezelfde
+LoRa-sessie terugkomt (één tot twee minuten; ververs dan de pagina). Dezelfde
+risicoklassen, bevestiging en meting als hierboven; alleen de syntaxis van die
+firmware wordt aanvaard — `on | off | reset | hash <bytes> | hops <type> <max> |
+rate <type> <limit> <secs> | malformed on|off | channel add|remove <#naam>` —
+en een `type`-regel bestaat er niet. De node zelf weigert bovendien elk
+gevaarlijk commando uit de wachtrij (`clkreboot`, `reboot`, `erase`, …); zie de
+MeshUptime-changelog v2.6.0.
+
 ## Beheren vanaf de eigen pagina van de node
 
 Sinds firmware **2.5.0** staat het volledige filter ook op de eigen beheerpagina

@@ -11,8 +11,12 @@ Er lopen twee filterimplementaties in hetzelfde mesh, en dat gaat niet meer weg:
 ``meshcore_filter``   een stock MeshCore-repeater waar iemand een filterpatch in
                       heeft gezet (kolom ``fw``, bv. ``v1.17.1-PS+filter``).
                       Die publiceert helemaal niets: je krijgt zijn stand alleen
-                      door ``filter count`` over de CLI te vragen en de TEKST te
-                      lezen die eruit komt.
+                      door hem over de CLI te vragen en de TEKST te lezen die
+                      eruit komt -- en dat zijn TWEE commando's (gemeten op
+                      JessaZH, 2026-09-04): het kale ``filter`` geeft de
+                      statusregel met hoofdschakelaar en tellers, ``filter count``
+                      geeft alleen de limiettabel. Elk antwoord is één pakket, en
+                      de node die het doorgeeft vlakt regeleindes tot spaties.
 
 Andere commando's, andere tekst, en -- dat is het punt van deze module -- een
 KLEINERE set cijfers. De stock-variant heeft geen ``passed``, geen ``exempt`` en
@@ -107,7 +111,14 @@ _HEADER = re.compile(r"filter\s+(on|off)\s*:", re.IGNORECASE)
 # ``Hops: 12`` binnen het Blocked-blok. Het minteken wordt MEEGELEZEN zodat een
 # negatief getal een geweigerde waarde is en niet een half gelukte match.
 _COUNTER = re.compile(r"([A-Za-z]+)\s*:\s*(-?\d+)")
-# ``04: 3,20`` -- de limiettabel, één regel per pakkettype.
+# ``04: 3,20`` -- de limiettabel, één paar per pakkettype. Niet regelgebonden:
+# de node die het antwoord doorgeeft maakt er één regel van, dus de paren staan
+# achter elkaar achter de marker ``[TYPE: HOPS,RATE]``. Het minteken wordt
+# MEEGELEZEN zodat een negatief getal een geweigerde waarde is.
+_LIMIT_MARKER = re.compile(r"\[TYPE:\s*HOPS\s*,\s*RATE\]", re.IGNORECASE)
+_LIMIT_PAIR = re.compile(r"(\d{1,3})\s*:\s*(-?\d+)\s*,\s*(-?\d+)(?=\s|$|[^\d,])")
+# Zonder marker maar mét kopregel: dan telt alleen een HELE regel ``04: 3,20`` --
+# de vorm waarin een repeater die regeleindes wél bewaart de tabel geeft.
 _LIMIT_LINE = re.compile(r"^\s*(\d{1,3})\s*:\s*(-?\d+)\s*,\s*(-?\d+)\s*$")
 # ``00=REQ`` uit ``filter types``, dat als één lange regel of als twaalf regels
 # kan aankomen.
@@ -186,82 +197,96 @@ def parse_filter_count(text, *, names: dict | None = None) -> dict | None:
     sleutel: ``pktfilter.summarise`` leest een ontbrekende ``drop`` als 'niets
     weggegooid gemeld' en dat is wat het is.
 
-    None komt eruit bij tekst die geen filterantwoord is -- een foutmelding van
-    een node die het commando niet kent, een leeg antwoord, een stuk van een
-    ander commando. Dat onderscheid is de reden dat de hoofdschakelaar verplicht
-    is: zonder ``Filter on:`` of ``Filter off:`` weten we niet eens of we naar
-    het goede antwoord kijken, en dan is een half gevulde blob erger dan niets.
+    De twee blokken komen in de praktijk als TWEE antwoorden binnen: het kale
+    ``filter`` geeft de kopregel, ``filter count`` alleen de tabel (gemeten op
+    JessaZH). Elk van beide mag hier dus alleen staan; ``on`` ontbreekt dan bij
+    een tabel-antwoord, en ``apply_cli_filter`` voegt de twee samen. Ook zijn ze
+    niet regelgebonden: de node die het antwoord doorgeeft maakt er één regel
+    van, dus de tabel wordt herkend aan zijn marker en zijn paren, niet aan
+    regeleindes.
+
+    None komt eruit bij tekst die geen van beide is -- een foutmelding van een
+    node die het commando niet kent, een leeg antwoord, een stuk van een ander
+    commando. Zonder kopregel én zonder limiettabel weten we niet eens of we
+    naar het goede antwoord kijken, en dan is een half gevulde blob erger dan
+    niets.
     """
     if not isinstance(text, str) or not text.strip():
         return None
 
-    regels = text.replace("\r", "\n").split("\n")
+    tekst = text.replace("\r", "\n")
+    uit: dict = {"variant": "meshcore_filter"}
 
-    kop = None
-    kopregel = ""
-    for regel in regels:
-        m = _HEADER.search(regel)
-        if m:
-            kop = m
-            kopregel = regel
-            break
-    if kop is None:
-        return None
+    # De KOPREGEL: hoofdschakelaar plus weggegooide aantallen. Alleen wat tussen
+    # de blokhaken achter de schakelaar staat wordt op tellers afgezocht; zou dit
+    # over de hele tekst lopen, dan zou een limietpaar als ``05: 3,20`` of een
+    # losse zin uit een ander commando er tellers bij verzinnen.
+    kop = _HEADER.search(tekst)
+    if kop is not None:
+        uit["on"] = kop.group(1).lower() == "on"
+        rest = tekst[kop.end():]
+        haakjes = re.search(r"\[([^\]]*)\]", rest)
+        blok = haakjes.group(1) if haakjes else rest.split("\n", 1)[0]
+        drop: dict = {}
+        for naam, waarde in _COUNTER.findall(blok):
+            sleutel = STOCK_DROP_KEYS.get(naam.lower())
+            if sleutel is None:
+                # Een categorie die wij niet kennen. Negeren en niet doorgeven: de
+                # namen in de blob zijn de namen waar labels en metrics aan hangen.
+                continue
+            getal = _counter(waarde)
+            if getal is None:
+                # Eén onzinnige waarde maakt de andere vier niet onbetrouwbaar; die
+                # zijn gemeten en staan er los van. Alleen deze reden valt af, en
+                # die is dan afwezig in plaats van nul -- zie de kop van dit bestand.
+                continue
+            drop[sleutel] = getal
+        if drop:
+            uit["drop"] = drop
 
-    uit: dict = {"on": kop.group(1).lower() == "on", "variant": "meshcore_filter"}
-
-    # Alleen de KOPREGEL wordt op tellers afgezocht, en het liefst alleen wat
-    # tussen de blokhaken staat. Zou dit over de hele tekst lopen, dan zou een
-    # limietregel als ``05: 3,20`` of een losse zin uit een ander commando er
-    # tellers bij verzinnen.
-    haakjes = re.search(r"\[([^\]]*)\]", kopregel[kop.end():])
-    blok = haakjes.group(1) if haakjes else kopregel[kop.end():]
-    drop: dict = {}
-    for naam, waarde in _COUNTER.findall(blok):
-        sleutel = STOCK_DROP_KEYS.get(naam.lower())
-        if sleutel is None:
-            # Een categorie die wij niet kennen. Negeren en niet doorgeven: de
-            # namen in de blob zijn de namen waar labels en metrics aan hangen.
-            continue
-        getal = _counter(waarde)
-        if getal is None:
-            # Eén onzinnige waarde maakt de andere vier niet onbetrouwbaar; die
-            # zijn gemeten en staan er los van. Alleen deze reden valt af, en
-            # die is dan afwezig in plaats van nul -- zie de kop van dit bestand.
-            continue
-        drop[sleutel] = getal
-    if drop:
-        uit["drop"] = drop
-
+    # De LIMIETTABEL: alles achter de marker tot aan een volgend blok. Zonder
+    # marker geen tabel -- een los paar ``12: 3,4`` in een ander antwoord is geen
+    # limiet.
     limieten: dict = {}
-    for regel in regels:
-        m = _LIMIT_LINE.match(regel)
-        if not m:
-            # Ook de afgekapte laatste regel van een ingekort antwoord komt hier
-            # terecht (``10: 0,``), en dat is de bedoeling: een half getal is
-            # geen limiet.
-            continue
-        nummer = int(m.group(1))
-        if nummer > MAX_LIMIT_TYPE_NUMBER:
-            continue
-        hops = _limit(m.group(2), MAX_HOP_LIMIT)
-        rate = _limit(m.group(3), MAX_RATE_LIMIT)
-        if hops is None or rate is None:
-            # Hier wél de hele regel weigeren en niet één veld: de twee getallen
-            # komen uit hetzelfde paar, en 'hoplimiet 3, snelheidslimiet
-            # onbekend' is geen toestand die de node kan hebben.
-            continue
-        naam = _type_name(nummer, names)
-        if not naam:
-            continue
-        # ``0,0`` blijft staan. Het is de gemelde configuratie 'voor dit type
-        # geldt geen limiet', en dat is iets anders dan een type dat niet in het
-        # antwoord voorkwam -- precies het onderscheid dat een formulier straks
-        # nodig heeft om te weten of het een veld leeg mag laten.
-        limieten[naam] = {"hops": hops, "rate": rate}
+    marker = _LIMIT_MARKER.search(tekst)
+    paren: list = []
+    if marker is not None:
+        segment = tekst[marker.end():]
+        volgend = re.search(r"\[|Filter\s+(on|off)\s*:", segment, re.IGNORECASE)
+        if volgend:
+            segment = segment[:volgend.start()]
+        paren = _LIMIT_PAIR.findall(segment)
+    elif kop is not None:
+        # Geen marker, wel een kopregel: de tabel als losse regels, zoals een
+        # repeater hem geeft die zijn regeleindes bewaart. Alleen hele regels;
+        # een afgekapte (``10: 0,``) of te lange (``04: 2,20,30``) valt af.
+        paren = [m.groups() for m in (_LIMIT_LINE.match(r) for r in tekst.split("\n")) if m]
+    if paren:
+        for nummer_s, hops_s, rate_s in paren:
+            nummer = int(nummer_s)
+            if nummer > MAX_LIMIT_TYPE_NUMBER:
+                continue
+            hops = _limit(hops_s, MAX_HOP_LIMIT)
+            rate = _limit(rate_s, MAX_RATE_LIMIT)
+            if hops is None or rate is None:
+                # Hier wél het hele paar weigeren en niet één veld: de twee getallen
+                # komen uit hetzelfde paar, en 'hoplimiet 3, snelheidslimiet
+                # onbekend' is geen toestand die de node kan hebben.
+                continue
+            naam = _type_name(nummer, names)
+            if not naam:
+                continue
+            # ``0,0`` blijft staan. Het is de gemelde configuratie 'voor dit type
+            # geldt geen limiet', en dat is iets anders dan een type dat niet in het
+            # antwoord voorkwam -- precies het onderscheid dat een formulier nodig
+            # heeft om te weten of het een veld leeg mag laten. Een afgekapt paar
+            # (``10: 0,``) matcht niet en valt dus weg: een half getal is geen limiet.
+            limieten[naam] = {"hops": hops, "rate": rate}
     if limieten:
         uit["limits"] = limieten
 
+    if kop is None and not limieten:
+        return None
     return uit
 
 
@@ -432,26 +457,40 @@ def apply_cli_filter(repeater_id: int, values: dict, source: str = "") -> bool:
     """
     from . import db
 
-    ruw = None
+    # ALLE filterantwoorden in deze push, niet het eerste: de statusregel komt
+    # van `cmd:filter`, de limiettabel van `cmd:filter count`, en een volledige
+    # ronde levert ze samen af. `cmd:filter help` en `cmd:filter types` komen
+    # ook langs; die leveren geen blob en vallen er zo uit.
+    nieuw: dict = {}
     for sleutel, waarde in (values or {}).items():
-        if str(sleutel).strip().lower().startswith("cmd:filter") and waarde:
-            ruw = str(waarde)
-            break
-    if not ruw:
+        naam = str(sleutel).strip().lower()
+        if not naam.startswith("cmd:filter") or not isinstance(waarde, str) or not waarde.strip():
+            continue
+        deel = parse_filter_count(waarde)
+        if deel:
+            nieuw.update(deel)
+    if not nieuw:
         return False
 
-    blob = parse_filter_count(ruw)
-    if not blob:
-        return False
-
+    # Samenvoegen met wat er al lag. De twee antwoorden komen soms in twee
+    # pushes (een losse `filter` na een losse `filter count`), en geen van beide
+    # mag de ander wissen: wat deze push niet noemt blijft staan zoals het was.
+    # De stand is dus 'het laatst gemelde per veld' -- en `updated` zegt wanneer
+    # er voor het laatst íets gemeld werd.
+    oud = db.filter_state_for(repeater_id) or {}
+    blob = dict(oud)
+    blob.update(nieuw)
+    blob["variant"] = "meshcore_filter"
     db.upsert_filter_state(repeater_id, blob, source)
 
     # Dezelfde tellers ook als gewone metrics, want dat is wat de tegels en de
-    # grafieken lezen. De import staat in de functie: mqtt_ingest trekt de halve
-    # app mee en dit bestand hoort een tabel te blijven die je los kunt draaien.
+    # grafieken lezen -- maar alleen uit wat NU gemeld is: een tabel-antwoord
+    # mag de oude tellers niet als vers meetpunt herhalen. De import staat in de
+    # functie: mqtt_ingest trekt de halve app mee en dit bestand hoort een tabel
+    # te blijven die je los kunt draaien.
     try:
         from .mqtt_ingest import _filter_metrics
-        metrics = _filter_metrics(blob)
+        metrics = _filter_metrics(nieuw)
     except Exception:
         metrics = {}
     if metrics:

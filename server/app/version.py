@@ -35,7 +35,7 @@ from pathlib import Path
 # hier telt de server zelfstandig: MINOR bij een merkbare functie, PATCH bij een
 # fix, MAJOR bij een breuk in de API of de databank. Elke stap krijgt een regel
 # in CHANGELOG.md.
-VERSION = "2.10.0"
+VERSION = "2.11.0"
 
 # Alleen hex en een redelijke lengte: de waarde komt uit de omgeving van de
 # container en gaat de HTML in. Niets anders dan een commit-hash hoort daar.

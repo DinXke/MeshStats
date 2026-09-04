@@ -336,6 +336,36 @@ The tier is decided from the action and its arguments, on the server, before
 anything is sent — and again in the confirmation check, so a hand-built form
 cannot skip it.
 
+## A stock repeater with the filter patch
+
+Not every repeater runs our firmware. JessaZH runs stock firmware with the
+filter patch (`v1.17.1-PS+filter+rollback`, dutchmeshcore): no IP path, no
+`/api/filter`, mesh CLI only. Since site version 2.11.0 the site can still work
+with it, through the poller queue (see [`commanding.md`](commanding.md)): the
+MeshUptime node collects the request, logs in to the repeater as admin and runs
+it over LoRa.
+
+**Reading takes two commands**, and that was measured rather than assumed. Bare
+`filter` returns the status line — `> Filter off: Blocked [ Hops: 0 | Rate: 0 |
+Channel: 0 | Hash: 0 | Malformed: 0 ]` — and `filter count` returns *only* the
+limit table — `[TYPE: HOPS,RATE] 00: 0,0 01: 0,0 …`. Each answer is one LoRa
+packet, and the node relaying it flattens line breaks to spaces. Both are in the
+default parameter list as `cmd:filter` and `cmd:filter count`;
+`pfstock.apply_cli_filter` merges them cumulatively into the same filter state
+our own firmware publishes. What this variant does not report (passed, exempt,
+per type) is absent — it does not become a zero.
+
+**Writing** goes through the *Zetten via de poller* form on the node page, shown
+only when the repeater is relayed, runs the filter patch and a fresh poller
+exists. Every rule enters the queue as `cmd:filter …`, followed by `filter` and
+`filter count` so the new state comes back in the same LoRa session (one to two
+minutes; then reload). Same risk tiers, confirmation and measurement as above;
+only that firmware's syntax is accepted — `on | off | reset | hash <bytes> |
+hops <type> <max> | rate <type> <limit> <secs> | malformed on|off | channel
+add|remove <#name>` — and there is no `type` rule. The node itself additionally
+refuses any dangerous command from the queue (`clkreboot`, `reboot`, `erase`,
+…); see the MeshUptime changelog v2.6.0.
+
 ## Managing it from the node's own page
 
 Since firmware **2.5.0** the whole filter is also on the node's own admin page

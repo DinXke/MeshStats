@@ -383,7 +383,15 @@ def parse_ranges(raw: str | None) -> list[int]:
 
 
 def parse_layout(raw: str | None) -> list[dict]:
-    """Valideert de opgeslagen indeling; ontbrekende blokken komen achteraan."""
+    """Valideert de opgeslagen indeling; ontbrekende blokken komen op hun
+    standaardplek.
+
+    Niet achteraan, en dat is een correctie: een blok dat later bijkwam (het
+    pakketfilter) belandde bij elke installatie met een oudere opgeslagen
+    indeling automatisch ónder "Overig", omdat de indeling van vóór dat blok
+    dateerde -- niet omdat iemand dat zo koos. Een ontbrekend blok gaat nu vóór
+    het eerste blok dat er in de standaardvolgorde ná hoort te komen.
+    """
     import json
     layout = []
     if raw:
@@ -394,7 +402,10 @@ def parse_layout(raw: str | None) -> list[dict]:
                     layout.append({"key": key, "visible": bool(item.get("visible", True))})
         except (ValueError, AttributeError, TypeError):
             layout = []
-    for block in DEFAULT_LAYOUT:
-        if not any(b["key"] == block["key"] for b in layout):
-            layout.append(dict(block))
+    for idx, block in enumerate(DEFAULT_LAYOUT):
+        if any(b["key"] == block["key"] for b in layout):
+            continue
+        erna = {b["key"] for b in DEFAULT_LAYOUT[idx + 1:]}
+        plek = next((i for i, b in enumerate(layout) if b["key"] in erna), len(layout))
+        layout.insert(plek, dict(block))
     return layout

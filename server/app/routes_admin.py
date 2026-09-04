@@ -1087,6 +1087,10 @@ def _node_page(request: Request, rid: int, **extra):
     # passen. Wie iets gaat wijzigen krijgt de tweede te zien; wie alleen kijkt
     # heeft aan de eerste genoeg en hoeft er geen node voor wakker te maken.
     froute = pktfilter.filter_route(rep)
+    # De tweede schrijfweg, alleen relevant als de eerste dicht is omdat de node
+    # doorgestuurd wordt: dan beslist de wachtrij of er een formulier komt.
+    fqueue = (pktfilter.queue_route(rep)
+              if (not froute["can"] and froute["blocker"] == "relayed_only") else None)
     fstate = db.filter_state_for(rid)
     flive = (pktfilter.state(froute["host"], pktfilter.FILTER_PEEK_TIMEOUT_S)
              if froute["can"] else {"ok": False, "error": "", "filter": {}})
@@ -1258,6 +1262,8 @@ def _node_page(request: Request, rid: int, **extra):
         # elkaar halen levert precies één soort fout op: een pagina die beweert
         # dat er geen filter aanstaat omdat de node net niet antwoordde.
         "filter_route": froute,
+        "filter_queue": fqueue,
+        "filter_state": fstate or {},
         "filter_live": flive,
         "filter_seen": pktfilter.summarise(fstate),
         "filter_types": pktfilter.TYPE_NAMES,
@@ -1452,7 +1458,7 @@ def write_config(request: Request, rid: int, key: str = Form(...),
 
 @router.post("/repeaters/{rid}/filter")
 def write_filter(request: Request, rid: int, cmd: str = Form(""),
-                 arg1: str = Form(""), arg2: str = Form(""),
+                 arg1: str = Form(""), arg2: str = Form(""), arg3: str = Form(""),
                  confirm: str = Form(""), csrf: str = Form(...)):
     """Eén filterregel van deze node zetten en de nieuwe stand teruglezen.
 
@@ -1475,9 +1481,20 @@ def write_filter(request: Request, rid: int, cmd: str = Form(""),
     # formulier geen tekstveld waarin je een hele commandoregel kunt typen --
     # dat zou een CLI op een webpagina zijn, en dan is de risicoweging een
     # kwestie van hoe iemand toevallig spelt.
-    cmd = " ".join(deel.strip() for deel in (cmd, arg1, arg2) if deel.strip())
+    # arg3 bestaat voor de stock-syntaxis `rate <type> <limit> <secs>`; bij de
+    # eigen firmware blijft hij leeg.
+    cmd = " ".join(deel.strip() for deel in (cmd, arg1, arg2, arg3) if deel.strip())
     route = pktfilter.filter_route(rep)
-    huidig = (pktfilter.state(route["host"]).get("filter") or {}) if route["can"] else {}
+    # Twee schrijfwegen. De IP-weg (onze firmware, /api/filter) antwoordt
+    # meteen met de nieuwe stand; de wachtrij-weg (stock-repeater met
+    # filterpatch, via de poller over LoRa) antwoordt pas na de sessie. De
+    # weging hieronder is voor beide dezelfde -- alleen de 'huidige stand' waarop
+    # gewogen wordt verschilt: vers van de node, of de laatst gemelde.
+    via_wachtrij = (not route["can"]) and route["blocker"] == "relayed_only"
+    if via_wachtrij:
+        huidig = db.filter_state_for(rid) or {}
+    else:
+        huidig = (pktfilter.state(route["host"]).get("filter") or {}) if route["can"] else {}
     _risk_perm = {
         pktfilter.RISK_PLAIN: "node.filter.gewoon",
         pktfilter.RISK_WRITES: "node.filter.merkbaar",
@@ -1511,7 +1528,10 @@ def write_filter(request: Request, rid: int, cmd: str = Form(""),
                        f"flood-verkeer zou wegvallen"[:400])
         return _node_page(request, rid, filter_result=result)
 
-    result = pktfilter.write(rep, cmd, confirm, huidig)
+    if via_wachtrij:
+        result = pktfilter.queue_write(rep, cmd, confirm, huidig)
+    else:
+        result = pktfilter.write(rep, cmd, confirm, huidig)
     # In het audittrail de zin en niet de commandoregel: "GRP_TXT (05) helemaal
     # niet meer doorsturen" is over een half jaar nog te lezen, "hops 05 0" niet.
     _noteer(request, user, _risk_perm, rep=rep,

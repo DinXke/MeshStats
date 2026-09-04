@@ -2297,11 +2297,95 @@
     {% endif %}
   </div>
 
-  {% if not filter_route.can %}
+  {% if not filter_route.can and filter_queue and filter_queue.can %}
+  {#- De tweede schrijfweg: stock-repeater met filterpatch, geen IP-pad, maar
+      een verse poller die de wachtrij leegmaakt. Elke regel gaat als
+      `cmd:filter ...` de wachtrij in en wordt door de node als beheerder over
+      LoRa uitgevoerd; daarna leest hij `filter` en `filter count` terug. Zelfde
+      weging en bevestiging als de IP-weg (routes_admin.write_filter). Geen vrij
+      tekstveld, om dezelfde reden als daar. -#}
+  {% set fs = filter_state %}
+  <div class="card">
+    <h3>Zetten via de poller</h3>
+    <p class="muted small">
+      Deze repeater draait de stock-firmware met filterpatch en heeft geen IP-pad. Elke
+      regel hieronder gaat in de wachtrij; <span class="mono">{{ filter_queue.poller_name or "de poller" }}</span>
+      logt over LoRa in op de repeater, voert hem uit en leest daarna de stand terug — reken
+      op één tot twee minuten en ververs dan deze pagina. Laatst gemeld:
+      hoofdschakelaar <strong>{% if fs.on is defined %}{% if fs.on %}aan{% else %}uit{% endif %}{% else %}onbekend{% endif %}</strong>{% if fs.limits %},
+      {{ fs.limits|length }} type(s) met een limietregel{% endif %}.
+      Geen enkele regel kan <em>deze</em> repeater onbereikbaar maken: het filter geldt alleen
+      voor pakketten die hij voor anderen doorstuurt.
+    </p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="off">
+      <button type="submit">Filter uit</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="reset">
+      <button type="submit">Alles terug naar standaard</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="on">
+      <label class="cfgconfirm">bevestig
+        <input name="confirm" placeholder="ja" autocomplete="off" required
+               title="Typ ja. Snijdt de regel volgens de meting meer dan een kwart van het flood-verkeer weg, dan vraagt de server de naam van de node."></label>
+      <button type="submit" class="danger">Filter aan</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="hash">
+      <label>minimale padhash
+        <select name="arg1"><option value="1">1 byte</option><option value="2">2 byte</option></select></label>
+      <label class="cfgconfirm">bevestig <input name="confirm" placeholder="ja" autocomplete="off"
+             title="Op 2 zetten wordt gemeten: snijdt het meer dan een kwart van het flood-verkeer weg, dan vraagt de server de naam van de node."></label>
+      <button type="submit">Zet padhash</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="malformed">
+      <label>structuurcontrole groepstekst
+        <select name="arg1"><option value="on">aan</option><option value="off">uit</option></select></label>
+      <button type="submit">Zet malformed</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="hops">
+      <label>type <select name="arg1">{% for naam in filter_types[:11] %}<option value="{{ '%02d'|format(loop.index0) }}">{{ '%02d'|format(loop.index0) }} {{ naam }}</option>{% endfor %}</select></label>
+      <label>max hops <input name="arg2" type="number" min="0" max="64" value="0" required
+             title="0 = geen hoplimiet voor dit type"></label>
+      <button type="submit">Zet hoplimiet</button>
+    </form>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="cmd" value="rate">
+      <label>type <select name="arg1">{% for naam in filter_types[:11] %}<option value="{{ '%02d'|format(loop.index0) }}">{{ '%02d'|format(loop.index0) }} {{ naam }}</option>{% endfor %}</select></label>
+      <label>max pakketten <input name="arg2" type="number" min="0" max="65535" value="0" required
+             title="0 = geen snelheidslimiet voor dit type"></label>
+      <label>per seconden <input name="arg3" type="number" min="1" max="3600" value="60" required></label>
+      <button type="submit">Zet snelheidslimiet</button>
+    </form>
+    <p class="muted small">
+      Syntaxis van deze firmware (<span class="mono">filter help</span>):
+      <span class="mono">on | off | reset | hash &lt;bytes&gt; | hops &lt;type&gt; &lt;max&gt; |
+      rate &lt;type&gt; &lt;limit&gt; &lt;secs&gt; | malformed on|off | channel add|remove &lt;#naam&gt;</span>.
+      Een regel <span class="mono">type</span> (heel pakkettype dicht) bestaat hier niet.
+      De weg terug (<span class="mono">filter off</span>, <span class="mono">filter reset</span>) werkt
+      ook zonder deze site, over de mesh-CLI.
+    </p>
+  </div>
+  {% elif not filter_route.can %}
   <div class="card">
     <p class="muted small">
       <strong>Niet te zetten vanaf hier:</strong>
-      {%- if filter_route.blocker == "relayed_only" %}
+      {%- if filter_route.blocker == "relayed_only" and filter_queue and filter_queue.blocker == "no_poller" %}
+      deze repeater draait de stock-firmware met filterpatch en heeft geen IP-pad; de weg is
+      de pollerwachtrij, maar er is nu geen verse poller (de MeshUptime-node pollt niet, of
+      niet recent). Zodra hij pollt verschijnt hier het formulier.
+      {%- elif filter_route.blocker == "relayed_only" %}
       deze repeater draait onze firmware niet en heeft geen IP-pad. Voor hem loopt de weg
       over de mesh-CLI: <code>filter</code>, <code>filter off</code>,
       <code>filter reset</code>.

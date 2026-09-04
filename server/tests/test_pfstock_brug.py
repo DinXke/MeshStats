@@ -104,3 +104,38 @@ def test_sleutel_wordt_ongeacht_hoofdletters_herkend(db):
     rid = _rep(db)
     assert pfstock.apply_cli_filter(rid, {"CMD:Filter count": ANTWOORD}) is True
     assert db.filter_state_for(rid)["drop"]["hash"] == 1
+
+
+# --- twee antwoorden, één stand (zoals JessaZH ze werkelijk geeft) -------------
+
+JESSA_TABEL = ("[TYPE: HOPS,RATE] 00: 0,0 01: 0,0 02: 0,0 03: 0,0 04: 0,0 05: 0,0 "
+               "06: 0,0 07: 0,0 08: 0,0 09: 0,0 10: 0,0 11: 0,0")
+JESSA_STATUS = "> Filter off: Blocked [ Hops: 3 | Rate: 0 | Channel: 0 | Hash: 1 | Malformed: 0 ]"
+
+
+def test_tabel_en_status_in_twee_pushes_worden_een_stand(db):
+    """`filter count` en `filter` komen als aparte pushes; geen van beide mag de
+    ander wissen, en alleen de statusregel levert een meetpunt."""
+    rid = _rep(db)
+    assert pfstock.apply_cli_filter(rid, {"cmd:filter count": JESSA_TABEL}, "cli") is True
+    stand = db.filter_state_for(rid)
+    assert "on" not in stand and len(stand["limits"]) == 11
+    # Een tabel is configuratie, geen meting: geen filter_on/filter_dropped-punt.
+    assert not {"filter_on", "filter_dropped"} & set(db.latest_for(rid))
+
+    assert pfstock.apply_cli_filter(rid, {"cmd:filter": JESSA_STATUS}, "cli") is True
+    stand = db.filter_state_for(rid)
+    assert stand["on"] is False and stand["drop"]["hops"] == 3
+    assert len(stand["limits"]) == 11            # de tabel van de vorige push staat er nog
+    assert {"filter_on", "filter_dropped", "filter_drop_hops"} <= set(db.latest_for(rid))
+
+
+def test_help_en_status_in_dezelfde_push(db):
+    """Een volledige ronde levert ook `cmd:filter help`; die mag de stand niet
+    storen en de statusregel ernaast moet gewoon landen."""
+    rid = _rep(db)
+    values = {"cmd:filter help": "> filter [ help | on | off | reset | types | count ]",
+              "cmd:filter": JESSA_STATUS, "cmd:filter count": JESSA_TABEL}
+    assert pfstock.apply_cli_filter(rid, values, "cli") is True
+    stand = db.filter_state_for(rid)
+    assert stand["on"] is False and stand["drop"]["hash"] == 1 and len(stand["limits"]) == 11

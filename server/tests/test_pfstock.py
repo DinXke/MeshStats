@@ -170,8 +170,46 @@ def test_afgekapte_laatste_regel_wordt_niet_half_gelezen():
 
 
 def test_afgekapt_midden_in_de_kopregel_is_geen_filterantwoord():
-    # Zonder hoofdschakelaar weten we niet of we naar het goede antwoord kijken.
+    # Zonder hoofdschakelaar én zonder tabel weten we niet of we naar het goede
+    # antwoord kijken.
     assert pfstock.parse_filter_count("> Filter") is None
+
+
+# --- de twee antwoorden zoals JessaZH ze werkelijk geeft (2026-09-04) ----------
+#
+# Gemeten via de MeshUptime-node: `filter count` is alleen de tabel, het kale
+# `filter` is alleen de statusregel, en de node vlakt regeleindes tot spaties.
+
+JESSA_TABEL = ("[TYPE: HOPS,RATE] 00: 0,0 01: 0,0 02: 0,0 03: 0,0 04: 0,0 05: 0,0 "
+               "06: 0,0 07: 0,0 08: 0,0 09: 0,0 10: 0,0 11: 0,0")
+JESSA_STATUS = "> Filter off: Blocked [ Hops: 0 | Rate: 0 | Channel: 0 | Hash: 0 | Malformed: 0 ]"
+
+
+def test_alleen_de_tabel_op_een_regel_zoals_de_node_hem_doorgeeft():
+    blob = pfstock.parse_filter_count(JESSA_TABEL)
+    assert "on" not in blob and "drop" not in blob
+    # Elf types (00-10): 11 = CONTROL valt buiten wat de limiettabel kan zetten.
+    assert len(blob["limits"]) == 11
+    assert blob["limits"]["REQ"] == {"hops": 0, "rate": 0}
+    assert blob["limits"]["MULTIPART"] == {"hops": 0, "rate": 0}
+    assert "CONTROL" not in blob["limits"]
+
+
+def test_alleen_de_statusregel_van_het_kale_filter():
+    blob = pfstock.parse_filter_count(JESSA_STATUS)
+    assert blob["on"] is False
+    assert blob["drop"] == {"hops": 0, "rate": 0, "kanaal": 0, "hash": 0, "misvormd": 0}
+    assert "limits" not in blob
+
+
+def test_filter_help_is_geen_filterstand():
+    assert pfstock.parse_filter_count(
+        "> filter [ help | on | off | reset | types | count | hops <args> | rate <args> ]") is None
+
+
+def test_een_los_paar_zonder_marker_is_geen_limiet():
+    # `12: 3,4` in de uitvoer van een ander commando mag geen limiettabel worden.
+    assert pfstock.parse_filter_count("> clock 12: 3,4") is None
 
 
 def test_onbekende_categorie_wordt_genegeerd_en_niet_doorgegeven():

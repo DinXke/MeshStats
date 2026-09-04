@@ -388,6 +388,97 @@ def write(rep, cmd: str, confirm: str = "", current: dict | None = None) -> dict
     return out
 
 
+# --- de tweede schrijfweg: via de pollerwachtrij ------------------------------
+#
+# Een stock-repeater met filterpatch (JessaZH) heeft geen IP-pad en geen
+# /api/filter. Zijn filter is wél te zetten: over de mesh-CLI, en sinds de
+# MeshUptime-node de opdrachtwachtrij bedient (routes_api /api/v1/commands) kan
+# deze site daar een `cmd:filter ...` in leggen die de node als beheerder op de
+# repeater uitvoert. Dezelfde risicoweging, dezelfde bevestiging en dezelfde
+# meting (pfguard) als bij de IP-weg -- alleen komt het antwoord niet meteen
+# terug maar na de LoRa-sessie, als `cmd:filter` / `cmd:filter count` die we
+# meteen achter de wijziging in de wachtrij zetten.
+
+# Wat de stock-variant kent (`filter help` op JessaZH, 2026-09-04). Bewust GEEN
+# `type`: die regel bestaat daar niet, en een commando dat de tegenkant niet kent
+# komt terug als "command error" na een LoRa-sessie die niets deed.
+STOCK_COMMANDS = ("on", "off", "reset", "hash", "hops", "rate", "malformed", "channel")
+
+
+def queue_route(rep) -> dict:
+    """Kan het filter van deze repeater via de pollerwachtrij gezet worden?
+
+    Drie voorwaarden, in de volgorde waarin ze getoetst worden: hij wordt
+    doorgestuurd (geen IP-pad, anders is er een betere weg), hij draait de
+    filterpatch (anders valt er niets te zetten), en er is een verse poller die
+    de wachtrij komt leegmaken (anders ligt de opdracht er tot sint-juttemis).
+    """
+    from . import pfstock
+    out = {"can": False, "blocker": "", "poller_name": None,
+           "variant": pfstock.variant(rep)}
+    if not commanding.is_relayed(rep):
+        out["blocker"] = "not_relayed"
+        return out
+    if out["variant"] != "meshcore_filter":
+        out["blocker"] = "no_filter_patch"
+        return out
+    croute = commanding.describe(rep)
+    if not croute.get("poller"):
+        out["blocker"] = "no_poller"
+        return out
+    out["can"] = True
+    out["poller_name"] = croute.get("poller_name")
+    return out
+
+
+def queue_write(rep, cmd: str, confirm: str = "", current: dict | None = None) -> dict:
+    """Eén filtercommando in de wachtrij zetten voor de poller, plus het
+    teruglezen van de stand erachter.
+
+    Dezelfde vorm als ``write()`` zodat de pagina één soort antwoord kent. Het
+    verschil zit in ``step="queued"`` en een lege ``state``: er is nog niets
+    gebeurd, en dat hoort er ook te staan. ``current`` is hier de laatst
+    GEMELDE stand (db.filter_state_for), niet een verse -- een verse bestaat
+    voor deze node niet.
+    """
+    from . import db
+    schoon = normalise(cmd)
+    route = queue_route(rep)
+    out = {"ok": False, "step": "", "msg": "", "cmd": schoon,
+           "wat": describe(schoon), "risk": risk_of(schoon, current),
+           "state": {}, "queued": True}
+
+    if not route["can"]:
+        out.update(step="route",
+                   msg=f"het filter van deze node is niet via de wachtrij te zetten ({route['blocker']})")
+        return out
+    if not schoon:
+        out.update(step="commando", msg="geen filtercommando opgegeven")
+        return out
+    kop = schoon.split()[0]
+    if kop not in STOCK_COMMANDS:
+        out.update(step="commando",
+                   msg=f"deze firmware kent geen filterregel '{kop}' "
+                       f"(wel: {', '.join(STOCK_COMMANDS)})")
+        return out
+    probleem = confirmation_for(schoon, rep, confirm, current)
+    if probleem:
+        out.update(step="bevestiging", msg=probleem)
+        return out
+
+    prefix = str(_field(rep, "pubkey_prefix") or "").lower()
+    # De wijziging, en meteen erachter de twee leescommando's waaruit
+    # pfstock.apply_cli_filter de stand samenstelt -- in deze volgorde, één
+    # LoRa-sessie. Zo staat de nieuwe stand op de pagina zonder tweede klik.
+    db.request_settings(prefix, ["cmd:filter " + schoon, "cmd:filter", "cmd:filter count"])
+    wie = route["poller_name"] or "de poller"
+    out.update(ok=True, step="queued",
+               msg=f"in de wachtrij voor {wie}: de node logt over LoRa in op de repeater, "
+                   f"voert `filter {schoon}` uit en leest daarna de stand terug "
+                   f"(reken op één tot twee minuten; ververs dan deze pagina)")
+    return out
+
+
 # --- tonen --------------------------------------------------------------------
 
 def summarise(state_dict: dict | None) -> dict:
