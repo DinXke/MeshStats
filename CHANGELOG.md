@@ -10,6 +10,18 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.16.0 - 2026-09-04
+
+- **`/api/v1/ingest` aanvaardt nu ook het vloot-pushtoken.** De MeshUptime-node
+  levert daar sinds nodefirmware 2.7.0 de STATUS van een andere repeater af, die
+  hij over LoRa is gaan vragen omdat die zelf niets publiceert. Dat is precies
+  wat een monitor vandaag al over MQTT doet (Home publiceert de cijfers van
+  JessaZH), dus geeft dit token er geen bevoegdheid die het toestel niet al had.
+  Zonder deze regel kwam elke statusronde binnen met een 403 die alleen in het
+  serverlog stond -- de node meldde "gelukt" (de LoRa-ronde wás gelukt) en de
+  pagina bleef leeg. Een test bewaakt nu dat alle drie de pollerendpoints
+  dezelfde sleutel aanvaarden.
+
 ## 2.15.3 - 2026-09-04
 
 - **De rollen op een echte pagina getest, per variant en per rol.** De ratel uit

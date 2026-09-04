@@ -182,7 +182,18 @@ async def ingest(request: Request, authorization: str | None = Header(default=No
       "neighbors": [{"prefix": "2ae7af", "name": "...", "snr": -4.25}, ...]  # optional
     }
     """
-    require_token(authorization)
+    # Ook het vloot-pushtoken, en om dezelfde reden als bij de pollerwachtrij:
+    # de MeshUptime-node levert hier de STATUS van een ANDERE repeater af, die hij
+    # over LoRa is gaan vragen omdat die zelf niets publiceert. Dat is precies wat
+    # een monitor vandaag al over MQTT doet -- Home publiceert de cijfers van
+    # JessaZH -- dus geeft dit token hier geen bevoegdheid die het toestel niet al
+    # had. Een tweede geheim op datzelfde toestel zou een tweede veld, een tweede
+    # ding dat verloopt en niets extra's aan bescherming zijn.
+    #
+    # Wat er binnenkomt gaat hierna door check_snapshot, net als elk ander
+    # bericht: de sleutel wordt gekeurd, de aantallen begrensd, en een nieuwe
+    # repeater komt verborgen binnen.
+    require_poller_token(authorization)
     limit_body(request)
     body = await request.json()
     rep = body.get("repeater") or {}

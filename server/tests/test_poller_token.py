@@ -11,6 +11,9 @@ toont als "wie pollde"), dat het pushtoken NIET meetelt zolang de push-weg
 uitstaat (leeg ``MM_PUSH_TOKEN``), en dat een ingetrokken token dicht blijft --
 ook al lijkt het op niets anders.
 """
+
+import inspect
+
 import pytest
 from fastapi import HTTPException
 
@@ -65,3 +68,21 @@ def test_zonder_bearer_401(db):
     with pytest.raises(HTTPException) as fout:
         routes_api.require_poller_token("Basic abc")
     assert fout.value.status_code == 401
+
+
+# --- de drie endpoints die de poller gebruikt --------------------------------
+
+@pytest.mark.parametrize("route", ["commands", "repeater_settings", "ingest"])
+def test_elk_pollerendpoint_aanvaardt_het_vloottoken(db, monkeypatch, route):
+    """De poller gebruikt drie adressen: de wachtrij, de instellingen en -- sinds
+    de statusverzoeken -- de metingen. Ze horen dezelfde sleutel te aanvaarden;
+    de eerste versie liet ingest eruit en dan verdween een statusronde met een
+    403 die alleen in het serverlog stond."""
+    monkeypatch.setattr(sensorpush, "TOKEN", "vloot-geheim")
+    bron = inspect.getsource(getattr(routes_api, {"commands": "commands",
+                                                  "repeater_settings": "repeater_settings",
+                                                  "ingest": "ingest"}[route]))
+    assert "require_poller_token" in bron, (
+        "%s eist nog het beheer-token; de poller komt er dan niet in" % route)
+    assert "require_token(" not in bron.replace("require_poller_token(", ""), (
+        "%s eist er twee -- dat is een van de twee te veel" % route)
