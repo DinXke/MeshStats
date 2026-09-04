@@ -512,6 +512,30 @@ def queue_write(rep, cmd: str, confirm: str = "", current: dict | None = None) -
 
 # --- tonen --------------------------------------------------------------------
 
+def _aantal(waarde, leeg: int = 0) -> int:
+    """Een AANTAL uit een veld dat een aantal of een lijst kan zijn.
+
+    Bestaat omdat de filterstand langs twee wegen binnenkomt en dezelfde sleutel
+    dan een andere vorm heeft. ``channels`` is in het statistiekenbericht van
+    onze eigen firmware een LIJST van geblokkeerde kanalen ({label, hash}), en
+    op andere plaatsen een geteld aantal. ``int()`` op zo'n lijst gooit een
+    TypeError, en die nam de hele nodepagina EN /api/v1/repeaters mee -- niet
+    bij het instellen van een filter, maar pas op het moment dat er werkelijk
+    een kanaal geblokkeerd werd. Precies het soort fout dat maanden ongezien
+    blijft en dan afgaat op de dag dat iemand de functie gebruikt.
+
+    Vandaar hier één plek die beide vormen aankan in plaats van een aanname over
+    welke vorm het is: een lijst telt zijn lengte, een getal is het getal, en
+    alles wat geen van beide is telt als ``leeg``.
+    """
+    if isinstance(waarde, (list, tuple, set, dict)):
+        return len(waarde)
+    try:
+        return int(waarde) if waarde is not None else leeg
+    except (TypeError, ValueError):
+        return leeg
+
+
 def summarise(state_dict: dict | None) -> dict:
     """De filterstand als iets wat een pagina of een tabel kan tonen.
 
@@ -538,8 +562,8 @@ def summarise(state_dict: dict | None) -> dict:
         ((DROP_LABELS.get(k, k), int(v or 0)) for k, v in drops.items()
          if isinstance(v, (int, float)) and v),
         key=lambda p: -p[1])
-    regels = int(state_dict.get("channels") or 0) + int(state_dict.get("blocked_types") or 0)
-    if int(state_dict.get("hash") or 1) > 1:
+    regels = _aantal(state_dict.get("channels")) + _aantal(state_dict.get("blocked_types"))
+    if _aantal(state_dict.get("hash"), leeg=1) > 1:
         regels += 1
     if state_dict.get("malformed"):
         regels += 1

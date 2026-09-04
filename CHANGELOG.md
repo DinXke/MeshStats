@@ -10,6 +10,18 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.15.1 - 2026-09-04
+
+- **De nodepagina en `/api/v1/repeaters/<slug>` gaven 500 zodra er werkelijk een
+  kanaal geblokkeerd was.** `pktfilter.summarise` deed `int()` op `channels`,
+  en dat veld is in het statistiekenbericht van onze eigen firmware een LIJST
+  van geblokkeerde kanalen (`{label, hash}`) en elders een geteld aantal. Een
+  sluimerende fout van maanden: zolang er nergens een kanaal geblokkeerd was,
+  deed `int(None or 0)` gewoon zijn werk. Nu één plek (`_aantal`) die beide
+  vormen aankan, voor `channels`, `blocked_types` en `hash`. De nieuwe tests
+  leggen niet één vorm vast maar bewijzen dat geen enkele vorm nog een pagina
+  kan neerhalen -- de blob komt van een node, dus alles kan erin staan.
+
 ## 2.15.0 - 2026-09-04
 
 - **Beheerpagina's herverdeeld op één stramien.** De nodepagina is opgesplitst
