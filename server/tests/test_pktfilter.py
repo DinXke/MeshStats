@@ -17,7 +17,7 @@ import urllib.error
 
 import pytest
 
-from app import firmware, nodeconfig, pktfilter
+from app import firmware, nodeconfig, pfstock, pktfilter
 
 
 @pytest.fixture
@@ -444,9 +444,67 @@ def _render(**over):
                                             "drop": {"rate": 4}}),
         "filter_types": pktfilter.TYPE_NAMES,
         "filter_result": None,
+        # De tweede schrijfweg (stock-repeater via de poller) staat standaard
+        # uit; test_de_pollertabel_* hieronder zet hem aan.
+        "filter_queue": None,
+        "filter_state": {},
+        "filter_defaults": pfstock.STOCK_DEFAULTS,
+        "filter_presets": pfstock.STOCK_PRESETS,
     }
     ctx.update(over)
     return templates.env.get_template("admin/node.html").render(ctx)
+
+
+# --- de tweede schrijfweg: de tabel voor een stock-repeater --------------------
+
+def _pollerrender(**over):
+    """De nodepagina voor een DOORGESTUURDE repeater met filterpatch: geen
+    IP-weg, wel een verse poller. Dat is de tak met de tabel."""
+    basis = {
+        "filter_route": {"can": False, "blocker": "relayed_only", "host": "",
+                         "fw": "", "min_fw": "2.3.0", "relayed": True},
+        "filter_queue": {"can": True, "blocker": "", "poller_name": "node-push-token",
+                         "variant": "meshcore_filter"},
+        "filter_state": {"on": False, "variant": "meshcore_filter",
+                         "limits": {"GRP_TXT": {"hops": 32, "rate": 20, "window": 60},
+                                    "TXT_MSG": {"hops": 8}},
+                         "drop_types": {"GRP_TXT": {"hops": 2, "rate": 10}}},
+    }
+    basis.update(over)
+    return _render(**basis)
+
+
+def test_de_pollertabel_vult_in_wat_de_repeater_meldde():
+    html = _pollerrender()
+    assert "Zetten via de poller" in html
+    assert "node-push-token" in html
+    # De gemelde waarden staan als waarde in de velden, niet als tekst erbij.
+    assert 'value="32"' in html and 'value="60"' in html
+    # De standaard van die firmware staat ernaast, en de tellers per type erbij.
+    assert "32 / 20 / 60" in html          # GRP_TXT-standaard uit de gids
+    assert "2 hops" in html                # weggegooid op de hoplimiet
+    # De voorbeeldopstellingen, letterlijk.
+    assert "filter rate 05 20 60" in html
+
+
+def test_wat_niet_gemeld_is_blijft_leeg_en_wordt_geen_nul():
+    """De kern van dit scherm. Een veld dat we niet weten mag geen 0 tonen: dan
+    zou de tabel beweren dat er geen limiet staat."""
+    html = _pollerrender(filter_state={"on": False, "variant": "meshcore_filter",
+                                       "limits": {"TXT_MSG": {"hops": 8}}})
+    # TXT_MSG kent alleen zijn hoplimiet; de snelheidsvelden blijven leeg.
+    assert 'placeholder="onbekend"' in html
+    assert "nog niet gemeld" in html
+
+
+def test_zonder_poller_geen_formulier_maar_een_reden():
+    html = _pollerrender(filter_queue={"can": False, "blocker": "no_poller",
+                                       "poller_name": None,
+                                       "variant": "meshcore_filter"})
+    assert "Zetten via de poller" not in html
+    assert "geen verse poller" in html
+    # De weg terug blijft staan: die heeft deze site niet nodig.
+    assert "mesh-CLI" in html
 
 
 def test_de_regeltabellen_worden_getekend_als_de_node_antwoordt():
