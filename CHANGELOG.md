@@ -10,6 +10,28 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.17.0 - 2026-09-04
+
+- **De klok van een repeater die VOORLOOPT is nu vanaf de site recht te zetten**
+  ("Klok rechtzetten" in de kloksectie). Dat kon niet: zijn firmware weigert een
+  klok achteruit (`ERR: clock cannot go backwards`), dus kost het een
+  `clkreboot` -- een HERSTART -- en tussen die herstart en het gezette uur
+  negeren andere nodes zijn adverts. Vandaag met de hand gedaan op JessaZH (18
+  minuten voor, in één poging goed), en dat is precies waarom de site het niet
+  zelf uitvoert: tussen de twee stappen mag geen netwerkronde zitten. De node
+  doet de hele reeks als één job; MeshManager zet `cmd:clockfix` in de wachtrij.
+- **Een eigen recht in de zwaarste klasse** (`node.klokherstel`), met de naam van
+  de node overtypen als drempel -- zelfde niveau als firmware schrijven en
+  verwijderen. Wie de klok mag bijstellen (`node.klok`) mag daarmee niet ook een
+  repeater op een dak herstarten.
+- **De knop verschijnt alleen als de poller zegt dat hij het kan**
+  (`?caps=…,clockfix`), en `clockfix` staat MET OPZET niet bij de capaciteiten
+  die een zwijgende poller krijgt: `settings` en `refresh` deed de Home
+  Assistant-integratie, een node herstarten deed hij nooit.
+- De pagina zegt wat het kost: de herstart, de filtertellers op nul, en dat
+  andere nodes zijn adverts blijven negeren zolang zijn oude tijdstempel in de
+  toekomst lag (liep hij 18 minuten voor, dan nog ~18 minuten).
+
 ## 2.16.0 - 2026-09-04
 
 - **`/api/v1/ingest` aanvaardt nu ook het vloot-pushtoken.** De MeshUptime-node

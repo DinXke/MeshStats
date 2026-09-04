@@ -138,6 +138,49 @@
     </form>
   </div>
 
+  {#- De klok van een node die VOORLOOPT. Eigen kaart en niet een variant van de
+      knop hierboven, want het is een andere handeling met een ander gevolg: zijn
+      firmware weigert een klok achteruit te zetten, dus dit HERSTART hem, en tot
+      het uur gezet is negeren andere nodes zijn adverts. Alleen zichtbaar als de
+      poller zegt dat hij het kan (?caps=...,clockfix) -- een knop die op een
+      node wacht die het niet kan, is een belofte. -#}
+  {% if route.poller_clockfix %}
+  <div class="act risk-ingrijpend">
+    <div class="act-head"><h3>Klok rechtzetten (herstart de node)</h3></div>
+    <p class="card-desc">
+      Voor een repeater die <strong>vóór</strong>loopt is dit de enige weg: zijn firmware
+      weigert een klok achteruit te zetten, dus zet
+      <span class="mono">{{ route.poller_name or "de poller" }}</span> hem terug naar 2024
+      met een <span class="mono">clkreboot</span> en daarna meteen op de juiste tijd.
+      De node doet die twee stappen zelf achter elkaar, want tussen die twee mag geen
+      netwerkronde zitten.
+    </p>
+    <p class="card-desc">
+      <strong>Wat het kost.</strong> De repeater herstart (~20 s) en zijn filtertellers
+      beginnen weer op nul. Tot het uur gezet is dragen zijn adverts een tijdstempel uit
+      2024; andere nodes gooien die weg. En daarna nog zolang zijn oude tijdstempel in de
+      toekomst lag — liep hij achttien minuten voor, dan negeren nodes die dat onthielden
+      zijn adverts nog ongeveer achttien minuten. Dat herstelt zichzelf; er is niets te doen
+      behalve wachten. Zijn cijfers op deze site komen ondertussen gewoon binnen, want die
+      lopen niet over adverts.
+    </p>
+    {% if clockfix_result %}
+    <p class="{{ 'ok' if clockfix_result.ok else 'bad' }}">
+      {{ '&#10003;'|safe if clockfix_result.ok else '&#10005;'|safe }} {{ clockfix_result.msg }}</p>
+    {% endif %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/clockfix" class="frm">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <fieldset{{ recht('node.klokherstel') }}>
+        <label>Typ de naam van de node over
+          <input name="confirm" autocomplete="off" placeholder="{{ rep.name }}" required>
+          <span class="hint">Zelfde drempel als firmware schrijven en verwijderen: de duurste
+            fout hier is deze knop op de verkeerde node.</span></label>
+        <button type="submit" class="danger">&#128340; Klok rechtzetten</button>
+      </fieldset>
+    </form>
+  </div>
+  {% endif %}
+
   <details class="uitleg">
     <summary>Wat deze pagina wel en niet weet over de klok</summary>
     <p>Hierboven staat wanneer <em>deze
@@ -147,7 +190,9 @@
        met <code>wifi clock</code> op de node zelf (serieel, telnet of over de mesh-CLI).
        Een node die <em>vóór</em> loopt wordt daar gemeld en met rust gelaten: adverts dragen
        de klok van hun afzender mee en worden geweigerd als die tijdstempel niet stijgt, dus
-       een klok terugzetten zou die repeater even lang onzichtbaar maken als de stap groot is.</p>
+       een klok terugzetten zou die repeater even lang onzichtbaar maken als de stap groot is.
+       Wie dat wél wil, doet het met de knop <em>Klok rechtzetten</em> hierboven — die staat er
+       alleen als de poller de hele reeks in één keer kan uitvoeren, en hij zegt wat het kost.</p>
   </details>
   </div>
 </section>

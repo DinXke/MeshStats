@@ -1580,6 +1580,53 @@ def write_filter(request: Request, rid: int, cmd: str = Form(""),
     return _node_page(request, rid, filter_result=result)
 
 
+@router.post("/repeaters/{rid}/clockfix")
+def queue_clockfix(request: Request, rid: int, confirm: str = Form(""),
+                   csrf: str = Form(...)):
+    """De klok van een doorgestuurde repeater laten rechtzetten door de poller.
+
+    Waarom dit een eigen route is en niet een variant van ``/clocksync``: die
+    stuurt een tijd naar een node die zijn eigen klok mag bijstellen. Dit is een
+    node die zijn klok NIET achteruit kan zetten (de firmware weigert het), dus
+    kost het een herstart -- en tussen die herstart en het gezette uur is hij
+    onzichtbaar voor elke node die zijn oude, in de toekomst liggende tijdstempel
+    onthield. Dat is een andere handeling met een ander gevolg, en dus een eigen
+    knop met een eigen drempel.
+
+    De site voert hem niet zelf uit. De node doet de hele reeks als één job,
+    omdat alleen hij dicht genoeg bij de radio staat om er in de twintig seconden
+    na de herstart op te hameren; een HTTP-ronde of een clear-on-read-wachtrij
+    tussen de twee stappen is precies wat je daar niet wil.
+    """
+    rep = _rep_or_404(request, rid)
+    # Ingrijpend: het herstart een node die ergens op een dak staat. Zelfde
+    # klasse als firmware schrijven en verwijderen, met dezelfde drempel.
+    user = require_perm(request, "node.klokherstel", rep)
+    check_csrf(request, csrf)
+
+    route = commanding.describe(rep)
+    if not route.get("poller_clockfix"):
+        return _node_page(request, rid, clockfix_result={
+            "ok": False,
+            "msg": "de poller kan dit niet (hij meldt geen clockfix-capaciteit)"})
+    if confirm.strip() != str(rep["name"] or ""):
+        return _node_page(request, rid, clockfix_result={
+            "ok": False,
+            "msg": "typ de naam van de node over: dit HERSTART hem, en tot het "
+                   "uur gezet is negeren andere nodes zijn adverts"})
+
+    db.request_settings(str(rep["pubkey_prefix"]).lower(), ["cmd:clockfix"])
+    _noteer(request, user, "node.klokherstel", rep=rep, outcome=audit.OK,
+            detail="klokherstel in de wachtrij gezet (herstart + tijd zetten)")
+    return _node_page(request, rid, clockfix_result={
+        "ok": True,
+        "msg": "in de wachtrij voor %s. De node herstart de repeater en zet daarna "
+               "het uur; reken op twee tot drie minuten. Let op: tot het uur "
+               "gezet is negeren andere nodes zijn adverts, en daarna nog zolang "
+               "zijn oude tijdstempel in de toekomst lag."
+               % (route.get("poller_name") or "de poller")})
+
+
 @router.post("/repeaters/{rid}/schedule")
 def set_schedule(request: Request, rid: int, sweep_hours: int = Form(0),
                  sweep_value: int = Form(0), sweep_unit: str = Form("h"),

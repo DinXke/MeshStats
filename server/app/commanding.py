@@ -153,6 +153,10 @@ def is_relayed(rep) -> bool:
 # Wat een poller kan als hij het zelf niet zegt: allebei. Dat is wat de Home
 # Assistant-integratie deed toen dit veld nog niet bestond, en een oudere poller
 # mag door een nieuw veld niet stilletjes de helft van zijn werk verliezen.
+# "clockfix" staat er MET OPZET niet bij. De andere twee gelden voor een
+# poller die zwijgt omdat de Home Assistant-integratie ze deed; een klok
+# rechtzetten deed die nooit, en het HERSTART de node. Wie zwijgt krijgt dus geen
+# knop die een repeater op een dak opnieuw opstart.
 DEFAULT_POLLER_CAPS = ("settings", "refresh")
 
 
@@ -296,6 +300,13 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
         # precies de belofte die deze module moest wegwerken. De poller zegt zelf
         # wat hij kan (``?caps=`` op /api/v1/commands).
         "poller_refresh": poller_fresh and "refresh" in caps,
+        # De klok rechtzetten van een node die VOORLOOPT kost een herstart (zijn
+        # firmware weigert een klok achteruit), en die reeks moet ONGEBROKEN
+        # doorlopen: tussen de herstart en het gezette uur is de node onzichtbaar
+        # voor iedereen die zijn oude tijdstempel onthield. Daarom doet de node
+        # het als één job en biedt deze site het alleen aan als hij zegt dat hij
+        # het kan.
+        "poller_clockfix": poller_fresh and "clockfix" in caps,
         "poller_settings": poller_fresh and "settings" in caps,
         "poller_caps": sorted(caps),
         # WAAROM een statusbericht niet te vragen is, als zin. Leeg betekent dat

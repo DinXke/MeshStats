@@ -189,6 +189,14 @@ ACTIONS = {
         "een filterregel zetten die al het verkeer van een soort kan blokkeren"),
     "node.verwijderen": Handeling("node", KLASSE_INGRIJPEND,
                                   "deze node verwijderen"),
+    # De klok rechtzetten van een node die VOORLOOPT. Een eigen handeling naast
+    # node.klok, en een klasse zwaarder: node.klok stuurt een tijd naar een node
+    # die hem aanneemt, dit HERSTART een node omdat zijn firmware een klok niet
+    # achteruit zet -- en tussen de herstart en het gezette uur negeren andere
+    # nodes zijn adverts. Wie de klok mag bijstellen, mag daarmee niet ook een
+    # repeater op een dak opnieuw opstarten.
+    "node.klokherstel": Handeling("node", KLASSE_INGRIJPEND,
+                                  "de klok van deze node rechtzetten met een herstart"),
     # -- deze installatie
     "server.instellingen": Handeling("server", KLASSE_INGRIJPEND,
                                      "de serverinstellingen wijzigen"),

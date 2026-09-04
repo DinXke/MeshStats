@@ -127,6 +127,7 @@ RECHT_PER_STAART = {
     "config": "node.instelling.gewoon",
     "filter": "node.filter.gewoon",
     "clocksync": "node.klok",
+    "clockfix": "node.klokherstel",
     "sensor/clock": "node.klok",
     "toggle": "node.zichtbaarheid",
     "visibility": "node.zichtbaarheid",

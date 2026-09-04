@@ -3618,7 +3618,7 @@ POLLER_CAPS_KEY = "poller_caps"
 # laat statusverzoeken vallen. Namen die we niet kennen worden genegeerd, zodat
 # een nieuwere poller er iets bij kan verzinnen zonder dat dit veld rommel gaat
 # bewaren.
-POLLER_CAPS = ("settings", "refresh")
+POLLER_CAPS = ("settings", "refresh", "clockfix")
 
 
 def note_poller_seen(name: str | None = None, caps=None) -> None:
