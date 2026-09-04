@@ -210,10 +210,16 @@ def seed() -> None:
     # Een vast wachtwoord, want de afbeeldingen worden achter de login gemaakt
     # en een wachtwoord dat elke start verandert maakt dat onnodig omslachtig.
     # Dit account bestaat alleen in een wegwerpmap die na afloop weg mag.
-    from app import auth
+    from app import auth, rbac
     db.execute("DELETE FROM admins")
-    db.execute("INSERT INTO admins(username, pw_hash) VALUES(?,?)",
-               ("admin", auth.hash_password("demo-wachtwoord")))
+    # Serverbeheerder, en niet een gewoon account: sinds het rechtenmodel mag
+    # een gewone gebruiker niets tot hem per node iets toegekend is, dus een
+    # demo-admin zonder deze vlag krijgt 403 op elke nodepagina en op de
+    # serverpagina. Dat was precies het gedrag waar dit script op stukliep --
+    # de schermafbeeldingen zouden een installatie tonen waar de beheerder
+    # nergens in mag.
+    rbac.maak_gebruiker("admin", auth.hash_password("demo-wachtwoord"),
+                        is_superuser=True, door="demo_data.py")
 
     db.execute("DELETE FROM repeater_cli")
     db.execute("DELETE FROM repeaters")

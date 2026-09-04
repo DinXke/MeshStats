@@ -10,6 +10,25 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.15.3 - 2026-09-04
+
+- **De rollen op een echte pagina getest, per variant en per rol.** De ratel uit
+  2.15.0 telt of er een poort OP een formulier staat; dat is niet hetzelfde als
+  de JUISTE poort (een pagina waar alles voor iedereen uitstaat haalt die ratel
+  ook). `tests/test_rollen_op_de_nodepagina.py` bouwt vier gebruikers met elk een
+  rol op een echte node, rendert de echte route, en legt twee dingen vast: de
+  ORDENING (ruimere rol = nooit meer uitgeschakeld) en het PLAFOND (elk formulier
+  dat aanstaat hoort bij een handeling onder het plafond van die rol). Een
+  formulier zonder vermelding in de rechtentabel van die test laat de laatste
+  test falen, zodat een nieuw formulier niet stil buiten de controle valt.
+  Gemeten op de vijf nodevarianten van `tools/demo_data.py`: lezer 11 van 12
+  knoppen uit, bediener 8, technicus 1, beheerder 0 -- en elke knop die aanstaat
+  valt binnen het plafond.
+- **`tools/demo_data.py` maakte een admin zonder serverbeheerdersrecht**, dus gaf
+  de demo-installatie 403 op elke nodepagina en op de serverpagina. Sinds het
+  rechtenmodel mag een gewone gebruiker niets tot hem per node iets toegekend is;
+  een demo waarin de beheerder nergens in mag toont het verkeerde.
+
 ## 2.15.2 - 2026-09-04
 
 - **"Er is geen weg naar deze repeater" was onwaar bij JessaZH.** Zijn
