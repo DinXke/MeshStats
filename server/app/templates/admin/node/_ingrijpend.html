@@ -1,0 +1,61 @@
+{% from "admin/_macros.html" import recht, waarom with context %}
+{#- De twee ingrijpende handelingen op één plek, ingeklapt en rood.
+
+    Firmware en verwijderen stonden als twee losse secties tussen de rest, met
+    dezelfde kop en dezelfde kaart als het naamveld. Ze zijn het tegendeel
+    daarvan: de ene schrijft het hele apparaat, de andere wist de historiek. Ze
+    staan nu samen achteraan, in de kleur van de risicoklasse `ingrijpend`
+    (docs/nl/beheer-ux.md), en de sectie is ingeklapt -- niet om ze te
+    verstoppen, maar omdat een rode knop die je elke keer voorbijscrolt op den
+    duur een gewone knop wordt.
+
+    De firmware-upgradeweg zelf staat op zijn eigen pagina: welke release waar
+    draait is een vraag die je over alle nodes tegelijk stelt. Hier staat de weg
+    ernaartoe. Wat hier bewust NIET herhaald wordt: de versie die er nu op staat.
+    Die staat in het overzicht bovenaan, en twee plaatsen die hetzelfde getal
+    tonen zijn twee plaatsen die het een keer oneens worden.
+
+    En let op bij het niveau: of een upgrade kán is niet af te leiden uit
+    ``route.level``. Een full managed node zonder IP-pad neemt commando's aan
+    maar geen image van ruim een megabyte, en een node waarvan we de
+    bouwomgeving niet kennen mag er sowieso geen krijgen -- verkeerd board is een
+    kapotte node. Die afweging maakt firmware.ota_route(), en de firmwarepagina
+    toont hem per node. -#}
+<details class="sec risk-ingrijpend" id="ingrijpend">
+  <summary>
+    <h2>Firmware en verwijderen</h2>
+    <span class="sec-hint">ingrijpend: schrijft het hele apparaat, of wist alle historiek van deze node</span>
+  </summary>
+  <div class="card">
+  <div class="act risk-ingrijpend act--danger">
+    <div class="act-head">
+      <h3>Een image naar dit apparaat schrijven</h3>
+      <span class="act-tag">schrijft firmware</span>
+    </div>
+    <p class="muted small">De upgrade zelf staat op de firmwarepagina: daar zie je naast elkaar
+       welke versie op elke node draait, welke releases er zijn met hun release notes, en per
+       node of er een weg naartoe is. Van deze node staat de versie hierboven bij
+       <a href="#overzicht">Overzicht</a>.</p>
+    <div class="actions"><a class="button" href="/admin/firmware">&#8679; Naar firmware &rarr;</a></div>
+    {{ waarom('node.firmware') }}
+  </div>
+
+  <div class="act risk-ingrijpend act--danger">
+    <div class="act-head">
+      <h3>Deze repeater en al zijn historiek wissen</h3>
+      <span class="act-tag">onomkeerbaar</span>
+    </div>
+    <p class="muted small">Weg zijn: alle metingen, de actuele waarden en de burenlijst van
+       <strong>{{ rep.name }}</strong> (<span class="mono">{{ rep.pubkey_prefix }}</span>).
+       Dit stopt niets op het apparaat zelf &mdash; blijft de node publiceren, dan staat hij er
+       binnen enkele minuten weer bij, leeg. Wil je hem alleen van de publieke site af, gebruik
+       dan <em>verbergen</em> bij <a href="#zichtbaarheid">Zichtbaarheid</a>.</p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/delete" class="actions"
+          onsubmit="return confirm('{{ rep.name }} ({{ rep.pubkey_prefix }}) en alle historiek verwijderen?\n\nDit is niet ongedaan te maken.')">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="danger"{{ recht('node.verwijderen') }}>&#128465;&#65039; Verwijderen</button>
+    </form>
+    {{ waarom('node.verwijderen') }}
+  </div>
+  </div>
+</details>

@@ -1408,6 +1408,10 @@ def _node_page(request: Request, rid: int, **extra):
         "push_enabled": sensorpush.enabled(),
         "push_stil": sensorpush.is_stil(rid),
         "mijn_rol": rbac.rol_op_node(user, rep),
+        # De zin bij die rol ("mag kijken en uitvragen"), zodat de pagina één
+        # keer bovenaan zegt wat de rol betekent in plaats van dat elke
+        # uitgeschakelde knop het apart in zijn tooltip moet uitleggen.
+        "rol_uitleg": rbac.ROL_UITLEG,
         "serverrechten": rbac.serverrechten(user),
         # De alarmen van deze node, en hoeveel er nog openstaan. Een eigen lijst
         # naast het audittrail hieronder, want ze antwoorden op twee

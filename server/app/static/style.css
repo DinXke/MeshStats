@@ -653,6 +653,22 @@ table.kv { width: 100%; }
   .frm-actions { justify-content: flex-start; }
 }
 
+/* De rechtenpoort op een formulier: <fieldset{{ recht('…') }}> zet velden én
+   knop in één keer uit voor wie de handeling niet mag, met de reden in de
+   tooltip -- zonder JavaScript, want `disabled` op een fieldset geldt voor alles
+   erin. Een veld dat je kunt vullen naast een knop die uitstaat is nog steeds
+   een leugen; vandaar de hele groep en niet alleen de knop. De browserrand en
+   -marge van een fieldset gaan weg: het is hier een groep en geen kader. */
+fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset:disabled { opacity: .55; cursor: not-allowed; }
+fieldset:disabled input, fieldset:disabled select, fieldset:disabled textarea,
+fieldset:disabled label { cursor: not-allowed; }
+/* Binnen een uitgeschakelde groep hoeft de knop niet nog eens te vervagen. */
+fieldset:disabled button:disabled { opacity: 1; }
+input:disabled, select:disabled, textarea:disabled { opacity: .55; cursor: not-allowed; }
+fieldset:disabled input:disabled, fieldset:disabled select:disabled,
+fieldset:disabled textarea:disabled { opacity: 1; }
+
 /* Risicoklassen. Drie, en ze liggen op de klassen in de code
    (nodeconfig.RISK_PLAIN/WRITES/CUTOFF, de rollen bediener/technicus/beheerder
    in rbac.py), zodat het woord in de code en de kleur op het scherm hetzelfde

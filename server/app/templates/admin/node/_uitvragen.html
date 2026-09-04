@@ -1,0 +1,268 @@
+{% from "admin/_macros.html" import recht, waarom with context %}
+{#- Uitvragen: wat de node het laatst over zijn CLI-instellingen meldde, en de
+    twee knoppen om er nu een verse ronde voor te vragen. Ze lezen alleen -- er
+    verandert niets op het apparaat -- maar ze kosten wél zendtijd op een band
+    die iedereen deelt, en dat is de reden dat ze de klasse `gewoon` met het
+    etiket "kost zendtijd" dragen. Een bevestigingsvraag staat er niet op: wat
+    je hier fout kunt doen kost een halve minuut lucht en is met niets meer
+    terug te draaien dan geduld.
+
+    Het uitvraagschema staat als tweede kaart in dezelfde sectie: het is
+    dezelfde handeling, alleen dan gepland in plaats van nu. -#}
+<section id="uitvragen">
+  <h2>Uitvragen</h2>
+  <div class="card tablecard">
+  <p class="card-desc">De CLI-instellingen zoals de node ze het laatst meldde. Wélke parameters er
+     opgevraagd worden staat niet hier maar bij
+     <a href="/admin/server#cli-params">Server, gebruikers en site</a>: het is één lijst voor alle repeaters.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Parameter</th><th>Waarde</th><th>Opgehaald</th></tr></thead>
+    <tbody>
+    {% for row in settings_rows %}
+      <tr>
+        <td class="mono">{{ row.param }}</td>
+        <td class="mono prewrap">{% if row.value is not none %}{{ row.value }}{% else %}<span class="muted">(geen antwoord)</span>{% endif %}</td>
+        <td>{% if row.updated %}<time class="reltime" datetime="{{ row.updated }}">{{ row.updated }}</time>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">Nog niets opgehaald. Een node met de nodefirmware
+        leest zijn eigen instellingen één keer per dag uit en stuurt ze mee met zijn
+        statistieken; met de knop hieronder vraag je er nu een.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <div class="act risk-gewoon act--read">
+    <div class="act-head">
+      <h3>Instellingen nu opvragen</h3>
+      <span class="act-tag">kost zendtijd</span>
+    </div>
+    <p class="muted small">
+      {%- if route.mqtt and route.poller %}
+      Beschikbaar: rechtstreeks aan node <span class="mono">{{ route.node }}</span> over MQTT,
+      én via de poller{% if route.poller_name %} (<span class="mono">{{ route.poller_name }}</span>){% endif %} over LoRa.
+      {%- elif route.mqtt and route.via_monitor %}
+      Deze repeater publiceert zelf niet, maar node <span class="mono">{{ route.node }}</span>
+      monitort hem en kan hem over LoRa uitvragen (nodefirmware {{ route.fw_meshmanager }}).
+      De site vraagt het aan die node; die logt in bij deze repeater, stelt de parameters
+      één voor één en publiceert de antwoorden onder deze repeater. Wat onbeantwoord
+      blijft komt hierboven als “(geen antwoord)” te staan in plaats van als een oude
+      waarde die vers lijkt.
+      {%- elif route.mqtt %}
+      De site vraagt het rechtstreeks aan node <span class="mono">{{ route.node }}</span> over
+      MQTT (nodefirmware {{ route.fw_meshmanager }}). Die leest zijn eigen CLI uit en stuurt de
+      waarden mee met zijn eerstvolgende statistiekbericht.
+      {%- elif route.poller %}
+      De rechtstreekse weg is dicht, dus dit loopt via de wachtrij en de poller{% if route.poller_name %} (<span class="mono">{{ route.poller_name }}</span>){% endif %}.
+      {%- else %}
+      Geen van beide wegen staat open, en daarom doet de knop niets.
+      {%- endif %}
+    </p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/settings/refresh" class="actions">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if route.mqtt or route.poller %}
+      <button type="submit"{{ recht('node.uitvragen') }}>&#128225; Instellingen nu opvragen</button>
+      {% else %}
+      <button type="submit" disabled title="Er is op dit ogenblik geen weg naar deze repeater">
+        &#128225; Opvragen kan nu niet</button>
+      {% endif %}
+    </form>
+  </div>
+
+  <div class="act risk-gewoon act--read">
+    <div class="act-head">
+      <h3>Nu een verse status vragen</h3>
+      <span class="act-tag">kost zendtijd</span>
+    </div>
+    <p class="muted small">Vraagt om één statusbericht (batterij, uptime, buren) in plaats van te
+       wachten op het eerstvolgende. Het datapunt verschijnt op de
+       <a href="/r/{{ rep.slug }}">publieke pagina</a> van deze repeater.
+       {%- if route.via_monitor %} Deze repeater publiceert zelf niet; zijn cijfers komen van de
+       node die hem monitort, en die stuurt ze op zijn eigen rondes &mdash; hem hierom vragen kan
+       niet, dus als er nog een poller is loopt dit langs die weg.{% endif %}</p>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/refresh" class="actions">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="back" value="node">
+      {% if ('status' in route.commands and route.mqtt) or route.poller_refresh %}
+      <button type="submit"{{ recht('node.uitvragen') }}>&#8635; Status nu opvragen</button>
+      {% else %}
+      <button type="submit" disabled title="Er is op dit ogenblik geen weg om dit te vragen">
+        &#8635; Status opvragen kan nu niet</button>
+      {% endif %}
+    </form>
+  </div>
+
+  {#- Welke wegen er zijn en waarom ze dicht staan. Open als er geen weg is --
+      dan is dit de reden dat de knoppen hierboven niets doen en hoort ze niet
+      achter een klik -- en ingeklapt als het gewoon werkt. -#}
+  <details class="uitleg"{% if not route.mqtt %} open{% endif %}>
+    <summary>De wegen naar deze repeater, en waarom ze open of dicht staan</summary>
+  {% if not route.mqtt %}
+  <p>
+    <strong>Rechtstreeks (MQTT):</strong>
+    {%- if route.blocker == "no_source" %}
+    er is nog geen enkel bericht van deze repeater binnengekomen, dus is niet bekend
+    welke node ervoor publiceert.
+    {%- elif route.blocker == "http_source" %}
+    deze repeater komt binnen via de HTTP-API en niet via MQTT; langs die weg valt een
+    node niets te vragen.
+    {%- elif route.blocker == "relay_unknown" %}
+    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
+    en die node is hier zelf geen bekende repeater. Van zijn firmware weten we dus niets,
+    en een opdracht sturen zou neerkomen op hopen dat hij hem kent.
+    {%- elif route.blocker == "no_fw" and route.via_monitor %}
+    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
+    en die meldt geen firmwareversie. Alleen een monitor die de sweep kent kan deze
+    repeater over LoRa uitvragen, en of dat zo is valt niet vast te stellen.
+    {%- elif route.blocker == "no_fw" %}
+    de node meldt geen firmwareversie, dus valt niet vast te stellen of hij opdrachten
+    aanneemt. Publiceren zou hier neerkomen op hopen.
+    {%- elif route.blocker == "old_fw" and route.via_monitor %}
+    deze repeater publiceert zelf niet; node <span class="mono">{{ route.node }}</span>
+    stuurt zijn cijfers door en draait nodefirmware {{ route.fw_meshmanager }}. Een gemonitorde
+    repeater over LoRa uitvragen kan pas vanaf {{ route.min_fw }} — oudere firmware weigert
+    het argument en telt de opdracht als geweigerd.
+    {%- elif route.blocker == "old_fw" %}
+    de node draait nodefirmware {{ route.fw_meshmanager }}. Opdrachten over MQTT bestaan pas
+    vanaf {{ route.min_fw }}; oudere firmware schrijft zich niet in op het cmd-topic, dus de
+    broker gooit het bericht weg zonder dat iemand het merkt.
+    {%- elif route.blocker == "broker_down" %}
+    de site heeft op dit ogenblik geen verbinding met de MQTT-broker.
+    {%- endif %}
+  </p>
+  {% elif route.node_stale %}
+  <p>
+    &#9888; De laatste statistieken van deze node kwamen
+    <time class="reltime" datetime="{{ route.node_seen }}">{{ route.node_seen }}</time> binnen.
+    Een opdracht wordt niet bewaard voor een node die offline is: staat zijn WiFi in zuinige
+    modus uit, dan komt ze niet aan en verschijnt hier gewoon niets.
+  </p>
+  {% endif %}
+
+  <p>
+    <strong>Poller (Home Assistant):</strong>
+    {%- if route.poller %}
+    aanwezig, laatste poll
+    <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
+    Vereist wel dat het repeater-wachtwoord in de integratie ingevuld staat.
+    {%- elif route.poller_seen %}
+    niets meer opgehaald sinds
+    <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
+    De integratie geldt als afwezig, dus er wordt niets meer in de wachtrij gelegd.
+    {%- else %}
+    er heeft nog nooit iemand <span class="mono">/api/v1/commands</span> opgehaald. Deze weg
+    is optioneel — zonder poller doet de node het zelf.
+    {%- endif %}
+  </p>
+  </details>
+  </div>
+
+  {#- Het schema. De wens staat in het formulier; wat de globale grenzen ervan
+      maken staat eronder als toestand. Zie de toelichting bij set_schedule: de
+      wens stil bijstellen zou een instelling tonen die niet klopt. -#}
+  <div class="card" id="schema">
+    <div class="card-head"><h3>Uitvraagschema</h3></div>
+    <p class="card-desc">Hoe vaak deze node zijn CLI-instellingen opnieuw laat uitvragen. Standaard
+      <strong>uit</strong>: een node die erbij komt hoort niet ongevraagd zendtijd te gaan kosten.</p>
+
+    {#- De poort op dit formulier: een schema is node.schema en niet
+        node.uitvragen -- het legt een terugkerende last op andermans mesh (zie
+        rbac.ACTIONS). De fieldset zet velden én knop uit voor wie het niet mag,
+        met de reden in de tooltip; de route weigert het daarna nog een keer. -#}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/schedule" class="frm">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="frm-label" for="sweep_value">Elke</label>
+      <fieldset class="frm-field"{{ recht('node.schema') }}>
+        {#- Vrij getal plus eenheid in plaats van een keuzelijst, zodat ook 5 minuten
+            kan. 0 blijft uit. De keuzelijst had alleen hele uren en kon dus niet
+            uitdrukken wat hier gevraagd werd. -#}
+        <div class="frm-row">
+          <input type="number" id="sweep_value" name="sweep_value" min="0" max="43200" step="1"
+                 value="{{ (sweep_minutes // 60) if sweep_minutes and sweep_minutes % 60 == 0 else sweep_minutes }}">
+          <select name="sweep_unit" aria-label="Eenheid">
+            <option value="m"{% if sweep_minutes and sweep_minutes % 60 != 0 %} selected{% endif %}>minuten</option>
+            <option value="h"{% if not sweep_minutes or sweep_minutes % 60 == 0 %} selected{% endif %}>uur</option>
+          </select>
+        </div>
+        <p class="frm-hint">0 = uit. Eén ronde is twintig vragen en twintig antwoorden over LoRa, en bij
+          een gemonitorde node betaalt een repeater op een dak dat.</p>
+      </fieldset>
+      <div class="frm-actions"><button type="submit"{{ recht('node.schema') }}>Opslaan</button></div>
+    </form>
+    {{ waarom('node.schema') }}
+
+    {% if sweep_minutes and sweep_minutes < sweep_gap_min %}
+    <p class="small waarschuwing waarschuwing--amber"><strong>Let op:</strong> de wachtrij houdt minimaal
+      {{ sweep_gap_min }} minuten tussen twee rondes aan, en er gaan maximaal
+      {{ sweep_max_day }} rondes per etmaal over álle nodes samen. Een interval van
+      {{ sweep_minutes }} minuten betekent hier dus &laquo;zo vaak als mag&raquo;,
+      niet letterlijk elke {{ sweep_minutes }} minuten.</p>
+    {% endif %}
+
+    <p class="small">
+      {%- if not sweep_hours %}
+      <strong>Uit.</strong> Deze node wordt alleen uitgevraagd als iemand op de knop
+      hierboven drukt. Dat is geen storing — maar het betekent wel dat de waarden
+      blijven staan zoals ze waren, hoe oud ze ook worden.
+      {%- elif sweep_next is none %}
+      <strong>Ingesteld op elke {{ sweep_hours }} uur.</strong>
+      {%- elif sweep_next == 0 %}
+      <strong>Elke {{ sweep_hours }} uur.</strong> Deze node is nu aan de beurt; de
+      planner pakt hem zodra de minimumafstand van {{ sweep_status.min_gap_min }} minuten
+      sinds de vorige ronde verstreken is.
+      {%- else %}
+      <strong>Elke {{ sweep_hours }} uur.</strong> Volgende ronde over ongeveer
+      {% if sweep_next >= 3600 %}{{ (sweep_next // 3600) }} uur{% else %}{{ (sweep_next // 60) }} minuten{% endif %}.
+      {%- endif %}
+    </p>
+
+    {% if sweep_last %}
+    {#- Drie uitkomsten en niet één, en dat is de reden dat dit blok bestaat.
+        'Gevraagd' was te optimistisch: publiceren lukt zodra de broker de bytes
+        aanneemt, en een geslaagde ronde zag er identiek uit aan een verdwenen
+        ronde. Daarom staat 'geen antwoord' hier als een probleem en niet als een
+        mededeling. -#}
+    <p class="small{% if sweep_last.result == 'gevraagd, geen antwoord' %} cmp-off{% endif %}"
+       {%- if sweep_last.result == 'gevraagd, geen antwoord' %} style="padding:.4rem .5rem"{% endif %}>
+      <strong>Laatst gevraagd:</strong> {{ sweep_last.result }} —
+      <time class="reltime" datetime="{{ sweep_last.asked }}">{{ sweep_last.asked }}</time>.
+      {%- if sweep_last.result.startswith("geen weg") %}
+      Er was toen geen weg naar deze node. De planner heeft dat opgeschreven in plaats
+      van het elke minuut opnieuw te proberen, anders zou hij de wachtrij blokkeren.
+      {%- elif sweep_last.result == "gevraagd, geen antwoord" %}
+      <strong>Het verzoek vertrok en er kwam niets terug.</strong> De waarden hierboven
+      zijn dus niet verser geworden. Mogelijke oorzaken: de monitor sliep op zijn
+      zonnebudget, hij weigerde omdat er net een andere ronde liep, of deze node staat
+      niet in zijn monitorlijst. Kijk bij <a href="#instellingen">Instellingen schrijven</a> hoe zijn
+      monitor bij hem binnenkomt.
+      {%- elif sweep_last.result == "versturen mislukt" %}
+      Er is niets vertrokken — geen brokerverbinding op dat moment.
+      {%- elif sweep_last.result == "gevraagd, antwoord binnen" %}
+      De waarden hierboven zijn daarna verser geworden, dus de ronde is gelopen.
+      {%- else %}
+      Het verzoek is verstuurd; of de ronde ook gelopen heeft, staat er over enkele
+      minuten bij — de planner kijkt dan of de waarden verser geworden zijn.
+      {%- endif %}
+    </p>
+    {% endif %}
+
+    {% if not sweep_status.enabled %}
+    <p class="muted small"><strong>De planner staat uit</strong> op deze server
+      (<code>MM_SWEEP_ENABLED</code>), dus dit schema doet voorlopig niets.</p>
+    {% elif sweep_status.today >= sweep_status.max_per_day %}
+    <p class="muted small"><strong>Het dagbudget is op.</strong> Er zijn vandaag al
+      {{ sweep_status.today }} rondes gestart en de bovengrens staat op
+      {{ sweep_status.max_per_day }}. Schema's schuiven dan op — het interval is een
+      wens, dit is wat er werkelijk gebeurt.</p>
+    {% else %}
+    <p class="muted small">
+      Vandaag {{ sweep_status.today }} van hoogstens {{ sweep_status.max_per_day }} rondes
+      gestart, met minstens {{ sweep_status.min_gap_min }} minuten ertussen — over alle
+      nodes samen, zodat tien schema's die op hetzelfde uur vallen de band niet een uur
+      bezet houden.
+    </p>
+    {% endif %}
+  </div>
+</section>
