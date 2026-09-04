@@ -327,6 +327,11 @@ button.danger:hover { background: var(--red); color: #140606; box-shadow: 0 0 12
 button.pill { padding: .2rem .7rem; border-radius: 99px; font-size: .75rem; }
 button.pill.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 button.pill.on:hover { background: var(--accent); color: #06130c; }
+/* In het lichte thema zijn --accent (#0e9c60) en --accent-dim (#0b7a4b) twee
+   groenen die vlak bij elkaar liggen: groene tekst op een groene pil haalde
+   geen 1,5:1. Wit op #0b7a4b haalt ruim 5:1. Alleen hier, want in het donkere
+   thema is het felle groen op donkergroen wél leesbaar. */
+:root[data-theme="light"] button.pill.on { color: #ffffff; }
 button.pill.off { background: transparent; border-color: var(--muted); color: var(--muted); }
 form.inline { display: inline-flex; gap: .3rem; align-items: center; }
 form.rowform { display: flex; gap: .5rem; margin-top: .8rem; flex-wrap: wrap; }
