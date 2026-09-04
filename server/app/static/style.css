@@ -110,7 +110,14 @@ a { color: var(--cyan); text-decoration: none; }
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 10;
 }
-.topbar nav { display: flex; gap: .9rem; align-items: center; }
+.topbar nav { display: flex; gap: .9rem; align-items: center; flex-wrap: wrap; }
+/* Op een telefoon staan er in beheer drie links plus een knop naast het merk;
+   zonder omklappen schoven die over elkaar. De publieke site heeft er minder en
+   merkt hier niets van. */
+@media (max-width: 480px) {
+  .topbar { flex-wrap: wrap; gap: .3rem .8rem; }
+  .topbar nav { gap: .6rem; }
+}
 #theme-toggle, #lang-toggle {
   background: transparent; border: 1px solid var(--card-edge); color: var(--muted);
   border-radius: 99px; padding: .2rem .55rem; font-size: .9rem; line-height: 1;
@@ -327,10 +334,14 @@ label { display: block; margin-bottom: .8rem; }
 label input { width: 100%; margin-top: .25rem; }
 
 /* Formulierelementen die de rest van de site nog niet had: select en textarea
-   krijgen dezelfde vorm als input, zodat het roomblok niet uit de toon valt. */
+   krijgen dezelfde vorm als input, zodat het roomblok niet uit de toon valt.
+   max-width op de select: een keuzelijst neemt de breedte van zijn langste
+   optie en krimpt uit zichzelf niet, dus een optie als "eu be — de regio van
+   het land" liep op 375 px 150 px de kaart uit. */
 select, textarea {
   font: inherit; padding: .45rem .7rem; border-radius: 7px;
   border: 1px solid var(--card-edge); background: var(--bg-grid); color: var(--text);
+  max-width: 100%;
 }
 textarea { width: 100%; resize: vertical; font-family: var(--mono); margin-top: .6rem; }
 select:focus, textarea:focus { outline: 1px solid var(--accent-dim); border-color: var(--accent-dim); }

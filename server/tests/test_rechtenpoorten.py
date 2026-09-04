@@ -109,7 +109,7 @@ RATEL = {
     "discovery.html": 4,
     "monitors.html": 2,
     "node.html": 0,
-    "server.html": 17,
+    "server.html": 0,
 }
 
 
