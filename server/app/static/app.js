@@ -1460,6 +1460,60 @@
     var GHOST_OP = 0.3;          // opacity right after the dot arrives
     var MAX_GHOSTS = 40;         // oldest out first, same as the dots
 
+    // Pac-Man mode. Same packets, same routes, same timings -- only the dot
+    // changes, and the trail is drawn as pellets it eats on the way. Nothing
+    // about the data is different, which is the whole point: it is a costume,
+    // not a second version of the truth.
+    var PACMAN_KEY = "mcs-pktpacman";
+    var PELLET_STEP_PX = 26;     // spacing along a leg, in screen pixels
+    var PELLETS_PER_LEG_MAX = 14;
+    var pacmanWanted = false;
+    try {
+      pacmanWanted = localStorage.getItem(PACMAN_KEY) === "1";
+    } catch (e) { /* blocked */ }
+    var pacmanEl = document.getElementById("pkt-pacman");
+    if (pacmanEl) {
+      pacmanEl.checked = pacmanWanted;
+      pacmanEl.addEventListener("change", function () {
+        pacmanWanted = pacmanEl.checked;
+        try { localStorage.setItem(PACMAN_KEY, pacmanWanted ? "1" : "0"); } catch (e) { /* blocked */ }
+        // The packets in flight keep the shape they started with; switching
+        // mid-flight would leave half-eaten pellets behind with nothing coming
+        // to eat them.
+        clearTravelers();
+      });
+    }
+    function pacman() { return pacmanWanted && animating(); }
+
+    // Where the pellets go on one leg: every PELLET_STEP_PX of SCREEN distance,
+    // so a short leg gets a few and a long one a row -- and the spacing stays
+    // even when the reader zooms. Capped per leg, because a burst of long routes
+    // would otherwise put hundreds of layers on the map.
+    function pelletFractions(a, b) {
+      var pa = lmap.latLngToLayerPoint(a), pb = lmap.latLngToLayerPoint(b);
+      var px = Math.sqrt((pb.x - pa.x) * (pb.x - pa.x) + (pb.y - pa.y) * (pb.y - pa.y));
+      var n = Math.min(PELLETS_PER_LEG_MAX, Math.floor(px / PELLET_STEP_PX));
+      var out = [];
+      for (var i = 1; i <= n; i++) out.push(i / (n + 1));
+      return out;
+    }
+
+    // The angle the mouth points, in screen space -- so it follows the drawn
+    // line and not the geography (Mercator squeezes longitude, and a wedge
+    // pointing "north-east on the globe" would visibly miss the line).
+    function legAngle(a, b) {
+      var pa = lmap.latLngToLayerPoint(a), pb = lmap.latLngToLayerPoint(b);
+      return Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180 / Math.PI;
+    }
+
+    function pacIcon(color, angle) {
+      return L.divIcon({
+        className: "pacwrap", iconSize: [20, 20], iconAnchor: [10, 10],
+        html: '<div class="pacman" style="color:' + color +
+              ';transform:rotate(' + angle.toFixed(0) + 'deg)"></div>',
+      });
+    }
+
     // The standard LoRa time-on-air formula. Kept whole rather than reduced to a
     // ms-per-byte guess: symbol time doubles with every SF step, so a guess that
     // fits this mesh would be wrong by 8x on the next one.
@@ -1520,6 +1574,11 @@
     function dropTraveler(tr) {
       lmap.removeLayer(tr.dot);
       lmap.removeLayer(tr.line);
+      if (tr.pellets) {
+        tr.pellets.forEach(function (pl) {
+          if (pl.marker) lmap.removeLayer(pl.marker);
+        });
+      }
     }
 
     function clearTravelers() {
@@ -1535,6 +1594,13 @@
     // the same rule the dots follow.
     function toGhost(tr, now) {
       lmap.removeLayer(tr.dot);
+      // Anything not eaten goes with it: a pellet nobody is coming for is a
+      // promise the animation cannot keep.
+      if (tr.pellets) {
+        tr.pellets.forEach(function (pl) {
+          if (pl.marker) { lmap.removeLayer(pl.marker); pl.marker = null; }
+        });
+      }
       while (ghosts.length >= MAX_GHOSTS) lmap.removeLayer(ghosts.shift().line);
       tr.line.setStyle({ opacity: GHOST_OP });
       ghosts.push({ line: tr.line, start: now });
@@ -1558,16 +1624,37 @@
           if (el < tr.phases[q].t1) { ph = tr.phases[q]; break; }
         }
         var a = tr.pts[ph.j], b = tr.pts[ph.j + 1];
+        var fr = 0;
         if (ph.move) {
-          var f = (el - ph.t0) / Math.max(1, ph.t1 - ph.t0);
-          tr.dot.setLatLng([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
-          if (tr.waiting) { tr.dot.setRadius(5); tr.waiting = false; }
+          fr = (el - ph.t0) / Math.max(1, ph.t1 - ph.t0);
+          tr.dot.setLatLng([a[0] + (b[0] - a[0]) * fr, a[1] + (b[1] - a[1]) * fr]);
+          if (tr.pac) {
+            // The mouth turns at the start of each leg, not every frame: a
+            // divIcon rewrite is DOM work, and the angle only changes there.
+            if (tr.legShown !== ph.j) {
+              tr.legShown = ph.j;
+              tr.dot.setIcon(pacIcon(tr.color, legAngle(a, b)));
+            }
+          } else if (tr.waiting) {
+            tr.dot.setRadius(5); tr.waiting = false;
+          }
         } else {
           // Sitting at the repeater that is about to pass it on. A slightly
           // bigger dot, because "held here for a moment" is the part of a
           // multi-hop route a reader never gets to see otherwise.
           tr.dot.setLatLng(b);
-          if (!tr.waiting) { tr.dot.setRadius(6.5); tr.waiting = true; }
+          fr = 1;
+          if (!tr.pac && !tr.waiting) { tr.dot.setRadius(6.5); tr.waiting = true; }
+        }
+        // Eaten: every pellet the dot has passed. A pointer instead of a scan,
+        // because the pellets are in route order and the dot never goes back.
+        if (tr.pellets) {
+          while (tr.pellIdx < tr.pellets.length) {
+            var pl = tr.pellets[tr.pellIdx];
+            if (pl.j > ph.j || (pl.j === ph.j && pl.f > fr)) break;
+            if (pl.marker) { lmap.removeLayer(pl.marker); pl.marker = null; }
+            tr.pellIdx++;
+          }
         }
         // The trail fades, but to a floor rather than to nothing: it is the only
         // thing showing which way the packet came, and fading it out completely
@@ -1616,16 +1703,47 @@
       // Oldest out first: a burst must not be able to grow the layer count.
       while (travelers.length >= MAX_TRAVELERS) dropTraveler(travelers.shift());
       var op = route.certain ? 0.85 : 0.6;
+      var pac = pacman();
+      // The pellets: the trail, as something to eat. Placed per leg so a pellet
+      // knows which leg it is on -- that is what makes "has the dot passed me"
+      // a comparison and not a distance calculation every frame.
+      var pellets = null;
+      if (pac) {
+        pellets = [];
+        for (var g = 0; g + 1 < pts.length; g++) {
+          var a0 = pts[g], b0 = pts[g + 1];
+          pelletFractions(a0, b0).forEach(function (f) {
+            pellets.push({
+              j: g, f: f,
+              marker: L.circleMarker(
+                [a0[0] + (b0[0] - a0[0]) * f, a0[1] + (b0[1] - a0[1]) * f],
+                { radius: 2.5, color: color, weight: 0, fillColor: color,
+                  fillOpacity: 0.9, interactive: false }).addTo(lmap),
+            });
+          });
+        }
+      }
       travelers.push({
         pts: pts, phases: phases, dur: Math.max(1, dur), certain: route.certain,
         op: op, waiting: false, start: performance.now(),
+        pac: pac, color: color, legShown: -1,
+        pellets: pellets, pellIdx: 0,
         line: L.polyline(pts, {
-          color: color, weight: route.certain ? 2.5 : 1.8, opacity: op,
+          color: color, weight: route.certain ? 2.5 : 1.8,
+          // In Pac-Man mode the pellets ARE the trail, so the line steps back to
+          // a hint of where the route goes; the fading ghost afterwards is the
+          // same in both modes.
+          opacity: pac ? op * 0.28 : op,
           dashArray: route.certain ? null : "5 7",
         }).addTo(lmap),
-        dot: L.circleMarker(pts[0], {
-          radius: 5, color: color, weight: 2, fillColor: color, fillOpacity: 1,
-        }).addTo(lmap),
+        dot: pac
+          ? L.marker(pts[0], {
+              icon: pacIcon(color, legAngle(pts[0], pts[1])),
+              interactive: false, keyboard: false,
+            }).addTo(lmap)
+          : L.circleMarker(pts[0], {
+              radius: 5, color: color, weight: 2, fillColor: color, fillOpacity: 1,
+            }).addTo(lmap),
       });
       if (travelRaf === null) travelRaf = requestAnimationFrame(travelStep);
       return true;

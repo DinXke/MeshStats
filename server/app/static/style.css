@@ -1428,3 +1428,30 @@ td.cmp-off { border-left: 2px solid var(--red); }
     scroll-behavior: auto !important;
   }
 }
+
+/* Pacman-modus op de live kaart (app.js, pkt-pacman). Een Leaflet-divIcon: de
+   buitenste laag draait mee met de richting, de binnenste hapt. Twee lagen en
+   niet een, omdat een element niet tegelijk kan roteren en van clip-path
+   wisselen zonder dat de hap meedraait.
+
+   Met opzet CSS en geen afbeelding: hij moet de kleur van het pakkettype kunnen
+   aannemen (currentColor), en dat kan een plaatje niet. */
+.pacwrap { will-change: transform; }
+.pacman {
+  width: 100%; height: 100%; border-radius: 50%;
+  background: currentColor;
+  animation: pacchomp .32s steps(1, end) infinite;
+}
+/* De hap: een wig uit de cirkel geknipt, wijd en dicht om en om. Dicht is een
+   volle cirkel (geen wig), zodat hij tussen twee happen even heel is. */
+@keyframes pacchomp {
+  0%   { clip-path: polygon(100% 35%, 50% 50%, 100% 65%, 100% 0, 0 0, 0 100%, 100% 100%); }
+  50%  { clip-path: polygon(100% 50%, 50% 50%, 100% 50%, 100% 0, 0 0, 0 100%, 100% 100%); }
+  100% { clip-path: polygon(100% 35%, 50% 50%, 100% 65%, 100% 0, 0 0, 0 100%, 100% 100%); }
+}
+/* Wie minder beweging vroeg krijgt geen kauwende stip. De modus zelf staat dan
+   toch al uit (animating() is false), maar een los draaiend icoon op een
+   herladen pagina zou daar alsnog door de mazen glippen. */
+@media (prefers-reduced-motion: reduce) {
+  .pacman { animation: none; }
+}

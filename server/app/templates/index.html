@@ -104,6 +104,12 @@
           <label class="maptoggle" data-i18n-title="live.motion_title" title="Toon elk pakket als een stipje dat van de afzender via elke hop naar de waarnemende node reist">
             <input type="checkbox" id="pkt-motion"> <span data-i18n="live.motion">Pakketten laten bewegen</span>
           </label>
+          <!-- Onzin met een doel: dezelfde route, dezelfde tijden, alleen een
+               andere stip. Staat naast de bewegingsschakelaar omdat hij er
+               niets van overneemt -- zonder beweging is er niets te eten. -->
+          <label class="maptoggle" data-i18n-title="live.pacman_title" title="Zelfde pakketten, zelfde tijden: de stip wordt een hongerige bol die de bolletjes van zijn eigen spoor opeet">
+            <input type="checkbox" id="pkt-pacman"> <span data-i18n="live.pacman">Pacman-modus</span>
+          </label>
           <label class="maptoggle" data-i18n-title="live.heat_title" title="Tekent elke verbinding waarover in de hele bewaarde periode pakketten reisden; hoe drukker bereisd ten opzichte van de rest, hoe warmer en dikker de lijn. Alleen stukken tussen twee eenduidig geplaatste nodes tellen mee.">
             <input type="checkbox" id="pkt-heat"> <span data-i18n="live.heat">Drukte op paden tonen</span>
           </label>
