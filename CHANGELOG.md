@@ -10,6 +10,19 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.17.1 - 2026-09-04
+
+- **"0 geweigerd" kon een oud cijfer zijn zonder dat het opviel.** Een
+  doorgestuurde repeater publiceert zijn filterstand nergens: wat op de pagina
+  staat is zo oud als de laatste keer dat iemand het vroeg. Na een herstart
+  stonden de tellers op nul, en wie daarna berichten stuurde zag die nul staan --
+  wat leest als "het filter werkt niet" terwijl het "we hebben het sindsdien
+  niet gevraagd" betekende. Twee wijzigingen: de ouderdom staat er nu als
+  RELATIEVE tijd ("gemeten 3 uur geleden") in plaats van als ISO-tijdstempel, en
+  er is een knop **Filterstand nu ophalen** die de vijf leescommando's in één
+  LoRa-sessie in de wachtrij zet. Een leesactie (`node.uitvragen`): hij verandert
+  niets aan de repeater.
+
 ## 2.17.0 - 2026-09-04
 
 - **De klok van een repeater die VOORLOOPT is nu vanaf de site recht te zetten**

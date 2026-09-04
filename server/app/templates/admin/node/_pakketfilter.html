@@ -53,8 +53,13 @@
     {% else %}
     <p>
       <strong>{{ filter_seen.tekst }}</strong>
-      {% if filter_seen.updated %}<span class="muted small">— volgens het bericht van
-        {{ filter_seen.updated }}</span>{% endif %}
+      {#- De OUDERDOM en niet een tijdstempel. Een node die zelf niets publiceert
+          heeft een filterstand die zo oud is als de laatste keer dat iemand hem
+          vroeg -- en "0 geblokkeerd" van drie uur geleden leest als "hij
+          blokkeert niets", terwijl het "we hebben het sinds toen niet gevraagd"
+          betekent. Precies die verwarring kostte een middag zoeken. -#}
+      {% if filter_seen.updated %}<span class="muted small">— gemeten
+        <time class="reltime" datetime="{{ filter_seen.updated }}">{{ filter_seen.updated }}</time></span>{% endif %}
     </p>
     {% if filter_seen.disarmed %}
     <p class="muted small">
@@ -103,6 +108,29 @@
       voor pakketten die hij voor anderen doorstuurt.
     </p>
     {{ waarom('node.filter.gewoon') }}
+
+    {#- EERST OPHALEN, dan zetten. Deze repeater publiceert zijn filter nergens,
+        dus elk cijfer hierboven is zo oud als de laatste keer dat iemand het
+        vroeg. Dat is de val die een middag kostte: "0 geweigerd" van drie uur
+        geleden leest als "het werkt niet", en het betekende "we hebben het
+        sindsdien niet gevraagd". Vandaar deze knop, bovenaan en niet onderaan. -#}
+    {% if filter_refresh_result %}
+    <p class="{{ 'ok' if filter_refresh_result.ok else 'bad' }}">
+      {{ '&#10003;'|safe if filter_refresh_result.ok else '&#10005;'|safe }} {{ filter_refresh_result.msg }}</p>
+    {% endif %}
+    <div class="frm frm--nolabel">
+      <div class="frm-field">
+        <p class="frm-hint"><strong>De stand ophalen.</strong> Vijf leescommando's in één
+          LoRa-sessie: de statusregel met de tellers, de tellers per pakkettype, de twee
+          limiettabellen en de kanaallijst. Verandert niets aan de repeater.</p>
+      </div>
+      <div class="frm-actions">
+        <form method="post" action="/admin/repeaters/{{ rep.id }}/filter/refresh" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit"{{ recht('node.uitvragen') }}>&#128225; Filterstand nu ophalen</button>
+        </form>
+      </div>
+    </div>
 
     <div class="frm frm--nolabel">
       <div class="frm-field">

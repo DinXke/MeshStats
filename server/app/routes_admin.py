@@ -1580,6 +1580,44 @@ def write_filter(request: Request, rid: int, cmd: str = Form(""),
     return _node_page(request, rid, filter_result=result)
 
 
+@router.post("/repeaters/{rid}/filter/refresh")
+def queue_filter_refresh(request: Request, rid: int, csrf: str = Form(...)):
+    """De filterstand van een doorgestuurde repeater nu laten ophalen.
+
+    Bestaat omdat zo'n node zijn filter NERGENS publiceert: wat hier staat is zo
+    oud als de laatste keer dat iemand het vroeg. Een eigenaar die net een kanaal
+    blokkeerde en dan "0 geweigerd" ziet staan, leest dat als "het werkt niet" --
+    en het betekende "we hebben het sinds toen niet meer gevraagd". Dat is precies
+    de soort stilte waar deze site tegen ontworpen is, dus hoort er een knop bij.
+
+    Een LEESactie (node.uitvragen), en dat is geen slordigheid: hij verandert
+    niets aan de repeater. Wat hij wel kost is zendtijd -- vijf commando's in één
+    sessie -- en dat staat bij de knop.
+    """
+    rep = _rep_or_404(request, rid)
+    user = require_perm(request, "node.uitvragen", rep)
+    check_csrf(request, csrf)
+
+    route = commanding.describe(rep)
+    if not route.get("poller_settings"):
+        return _node_page(request, rid, filter_refresh_result={
+            "ok": False, "msg": "er is geen poller die de wachtrij komt leegmaken"})
+
+    # Alle vijf, in de volgorde waarin pfstock ze samenvoegt: de statusregel met
+    # de tellers, de tellertabel per type, de twee limiettabellen en de
+    # kanaallijst. Eén sessie, dus één login.
+    db.request_settings(str(rep["pubkey_prefix"]).lower(),
+                        ["cmd:filter", "cmd:filter count", "cmd:filter hops",
+                         "cmd:filter rate", "cmd:filter channel list"])
+    _noteer(request, user, "node.uitvragen", rep=rep, outcome=audit.OK,
+            detail="filterstand opgevraagd (5 commando's in één sessie)")
+    return _node_page(request, rid, filter_refresh_result={
+        "ok": True,
+        "msg": "in de wachtrij voor %s: hij logt in op de repeater en leest de "
+               "filterstand terug. Reken op één tot twee minuten en ververs dan "
+               "deze pagina." % (route.get("poller_name") or "de poller")})
+
+
 @router.post("/repeaters/{rid}/clockfix")
 def queue_clockfix(request: Request, rid: int, confirm: str = Form(""),
                    csrf: str = Form(...)):
