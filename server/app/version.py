@@ -28,7 +28,14 @@ import re
 import subprocess
 from pathlib import Path
 
-VERSION = "1.0.0"
+# Begonnen op 2.10.0 (2026-09-04), niet op 1.0.0: de site en de node-firmware
+# (MeshManagerNet, toen ook 2.10.0) komen uit dezelfde repo en dezelfde
+# generatie -- de "2" is MeshManager sinds de hernoeming van MeshStats, en de
+# site heeft elke firmware-stap sinds 2026-08-14 meegemaakt (200 commits). Vanaf
+# hier telt de server zelfstandig: MINOR bij een merkbare functie, PATCH bij een
+# fix, MAJOR bij een breuk in de API of de databank. Elke stap krijgt een regel
+# in CHANGELOG.md.
+VERSION = "2.10.0"
 
 # Alleen hex en een redelijke lengte: de waarde komt uit de omgeving van de
 # container en gaat de HTML in. Niets anders dan een commit-hash hoort daar.

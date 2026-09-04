@@ -145,13 +145,18 @@ version.
 
 ### Which version is running?
 
-Every page carries a stamp in its footer — `v1.0.0 · fee27ba · 2026-09-04` —
+Every page carries a stamp in its footer — `v2.10.0 · 399de16 · 2026-09-04` —
 and `GET /api/v1/ping` returns the same as `app_version` and `build`. The
 container's journal opens with it as well. Two numbers, on purpose
 (`server/app/version.py`):
 
 - **`VERSION`** is the site's semantic version, bumped by hand for a change a
-  user notices. It is the number for people.
+  user notices (MINOR), a fix (PATCH) or a break in the API or database
+  (MAJOR), each with a line in [`CHANGELOG.md`](../CHANGELOG.md). It started at
+  2.10.0 rather than 1.0.0: the site and the node firmware in this repository
+  are one generation ("2" = MeshManager, since the rename from MeshStats) and
+  were at the same number when the stamp was introduced. It is the number for
+  people.
 - **commit · date** is what the image was actually built from. Two sites at the
   same `VERSION` can run different commits, and then the commit is the only thing
   that tells them apart. It is the number for finding a bug.

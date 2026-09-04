@@ -148,13 +148,18 @@ volgende hoofdversie.
 
 ### Welke versie draait er?
 
-Elke pagina draagt een stempel in de footer — `v1.0.0 · fee27ba · 2026-09-04` —
+Elke pagina draagt een stempel in de footer — `v2.10.0 · 399de16 · 2026-09-04` —
 en `GET /api/v1/ping` geeft hetzelfde terug als `app_version` en `build`. Het
 journal van de container opent er ook mee. Twee getallen, met opzet
 (`server/app/version.py`):
 
 - **`VERSION`** is de semantische versie van de site, met de hand opgehoogd bij
-  een wijziging die een gebruiker merkt. Het getal voor mensen.
+  een merkbare functie (MINOR), een fix (PATCH) of een breuk in de API of de
+  databank (MAJOR), elk met een regel in [`CHANGELOG.md`](../../CHANGELOG.md).
+  Begonnen op 2.10.0 en niet op 1.0.0: de site en de node-firmware in deze
+  repository zijn één generatie ("2" = MeshManager, sinds de hernoeming van
+  MeshStats) en stonden op hetzelfde getal toen de stempel kwam. Het getal voor
+  mensen.
 - **commit · datum** is waar het image echt van gebouwd is. Twee sites op
   dezelfde `VERSION` kunnen een andere commit draaien, en dan is de commit het
   enige dat ze uit elkaar houdt. Het getal om een fout te vinden.

@@ -53,7 +53,15 @@ def _tekst() -> str:
 
 
 def _oude_naam(naam: str):
-    """De naam die deze variabele vóór de hernoeming had, of None."""
+    """De naam die deze variabele vóór de hernoeming had, of None.
+
+    Wie in NOOIT_HERNOEMD staat, heeft er geen -- ook niet als de naam met
+    ``MM_`` begint. Zonder deze regel zou elke NIEUWE MM_-variabele een
+    verzonnen MCS_-voorganger krijgen en een terugval moeten dragen naar een
+    naam die nooit bestaan heeft.
+    """
+    if naam in NOOIT_HERNOEMD:
+        return None
     if naam in ANDERE_NAMEN:
         return ANDERE_NAMEN[naam]
     if naam.startswith("MM_"):
