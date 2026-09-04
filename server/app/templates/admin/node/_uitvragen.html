@@ -88,8 +88,9 @@
       {% if ('status' in route.commands and route.mqtt) or route.poller_refresh %}
       <button type="submit"{{ recht('node.uitvragen') }}>&#8635; Status nu opvragen</button>
       {% else %}
-      <button type="submit" disabled title="Er is op dit ogenblik geen weg om dit te vragen">
-        &#8635; Status opvragen kan nu niet</button>
+      <button type="submit" disabled
+              title="{{ route.refresh_why or 'Er is op dit ogenblik geen weg om dit te vragen' }}">
+        &#8635; Status opvragen kan niet</button>
       {% endif %}
     </form>
   </div>

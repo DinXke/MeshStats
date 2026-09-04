@@ -10,6 +10,17 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.15.2 - 2026-09-04
+
+- **"Er is geen weg naar deze repeater" was onwaar bij JessaZH.** Zijn
+  instellingen zijn prima op te vragen (de MeshUptime-node doet dat over LoRa);
+  alleen een statusbericht niet, want dat gaat over een protocol dat de poller
+  nog niet kent. De server bouwt nu de echte zin (`route["refresh_why"]`), die
+  de poller bij naam noemt, zegt wat er wél werkt en niet beweert dat er geen
+  weg is. Zowel op de nodepagina als op de publieke repeaterpagina. Een reden
+  die niet klopt is erger dan een uitgeschakelde knop: hij stuurt de lezer naar
+  de netwerkkabel in plaats van naar de knop ernaast die het wel doet.
+
 ## 2.15.1 - 2026-09-04
 
 - **De nodepagina en `/api/v1/repeaters/<slug>` gaven 500 zodra er werkelijk een

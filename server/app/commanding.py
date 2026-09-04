@@ -156,6 +156,46 @@ def is_relayed(rep) -> bool:
 DEFAULT_POLLER_CAPS = ("settings", "refresh")
 
 
+def _refresh_why(*, open_, blocker, via_monitor, node, poller_fresh,
+                 poller_name, poller_refresh, poller_settings) -> str:
+    """De zin bij een uitgeschakelde knop 'status opvragen'. Leeg = het kan wel.
+
+    Nederlands en geen i18n-sleutel, om dezelfde reden als bij de weigering van
+    een recht (zie repeater.html): dit is een gebouwde zin uit de toestand van
+    deze ene node, en die vertaalt zich niet in een sleutel.
+
+    De volgorde is de volgorde waarin een lezer het wil weten: eerst wat er WEL
+    kan, dan waarom dit niet kan.
+    """
+    # Rechtstreeks over MQTT aan de node zelf: dan kan het gewoon.
+    if open_ and not via_monitor:
+        return ""
+    if poller_refresh:
+        return ""
+
+    # De twee gevallen waarin er wél een weg is, maar niet deze.
+    if via_monitor and open_:
+        zin = ("deze repeater publiceert zelf niet; node %s leest hem uit. Die kan "
+               "zijn INSTELLINGEN opvragen, maar geen statusbericht namens hem "
+               "sturen -- die cijfers stuurt hij zelf al door, elke ronde."
+               % (node or "die hem monitort"))
+        return zin
+    if poller_fresh and poller_settings:
+        return ("de poller (%s) voert instellingenopvragingen uit en laat "
+                "statusverzoeken vallen: die gaan over een ander protocol dat hij "
+                "nog niet kent. Gebruik 'Instellingen nu opvragen' -- dat werkt "
+                "wel." % (poller_name or "onbekend"))
+
+    # En de gevallen waarin er werkelijk geen weg is.
+    if poller_fresh:
+        return ("de poller (%s) meldt dat hij niets van de wachtrij uitvoert"
+                % (poller_name or "onbekend"))
+    if blocker:
+        return ("er is geen verse poller, en de rechtstreekse weg is dicht (%s)"
+                % blocker)
+    return "er is geen verse poller die de wachtrij komt leegmaken"
+
+
 def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
               relay=None, poller_name=None, poller_caps=None) -> dict:
     """Wat kan er met deze repeater, nu meteen.
@@ -258,6 +298,21 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
         "poller_refresh": poller_fresh and "refresh" in caps,
         "poller_settings": poller_fresh and "settings" in caps,
         "poller_caps": sorted(caps),
+        # WAAROM een statusbericht niet te vragen is, als zin. Leeg betekent dat
+        # het wel kan.
+        #
+        # Dit veld bestaat omdat de pagina hier "er is op dit ogenblik geen weg
+        # naar deze repeater" zei, en dat is bij een doorgestuurde node met een
+        # verse poller gewoon niet waar: zijn INSTELLINGEN zijn prima op te
+        # vragen, alleen een statusbericht niet. Een reden die niet klopt is
+        # erger dan een knop die uitstaat, want hij stuurt de lezer de verkeerde
+        # kant op -- naar de netwerkkabel in plaats van naar de knop ernaast die
+        # het wel doet.
+        "refresh_why": _refresh_why(
+            open_=open_, blocker=blocker, via_monitor=via_monitor, node=node,
+            poller_fresh=poller_fresh, poller_name=poller_name,
+            poller_refresh=poller_fresh and "refresh" in caps,
+            poller_settings=poller_fresh and "settings" in caps),
         # De eigen API van de node, als waarneming en naast het niveau. Het
         # niveau zegt wat deze node IS; dit zegt of die weg NU nog draagt, en dat
         # is een ander antwoord -- precies de tweedeling die ``mqtt`` naast
