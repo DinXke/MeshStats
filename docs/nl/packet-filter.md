@@ -357,15 +357,39 @@ toch mee werken, langs de pollerwachtrij (zie [`commanding.md`](commanding.md)):
 de MeshUptime-node haalt de opdracht op, logt als beheerder in op de repeater en
 voert hem over LoRa uit.
 
-**Lezen kost twee commando's**, en dat is gemeten, niet aangenomen. Het kale
-`filter` geeft de statusregel — `> Filter off: Blocked [ Hops: 0 | Rate: 0 |
-Channel: 0 | Hash: 0 | Malformed: 0 ]` — en `filter count` geeft alléén de
-limiettabel — `[TYPE: HOPS,RATE] 00: 0,0 01: 0,0 …`. Elk antwoord is één
-LoRa-pakket, en de node die het doorgeeft vlakt regeleindes tot spaties. Beide
-staan als `cmd:filter` en `cmd:filter count` in de standaard parameterlijst;
-`pfstock.apply_cli_filter` voegt ze cumulatief samen tot dezelfde filterstand
-als bij onze eigen firmware. Wat deze variant niet meldt (doorgelaten,
-vrijgesteld, per type) ontbreekt — het wordt geen nul.
+**Lezen kost vier commando's**, en welke wat geeft is gemeten en nagelezen in de
+[DutchMeshCore-filtergids](https://toolbox.dutchmeshcore.nl/#/filter-guide):
+
+| Commando | Antwoord | Wat het is |
+|---|---|---|
+| `filter` | `> Filter off: Blocked [ Hops: 0 \| Rate: 0 \| Channel: 0 \| Hash: 0 \| Malformed: 0 ]` | hoofdschakelaar + **totalen** per reden |
+| `filter count` | `[TYPE: HOPS,RATE] 00: 0,0 01: 3,20 …` | **tellers** per type: weggegooid op de hoplimiet, weggegooid op de snelheidslimiet |
+| `filter hops` | `[TYPE: MAX_HOPS] 00: 8 … 05: 32` | de **hoplimiet** per type |
+| `filter rate` | `[TYPE: LIMIT,SECS] 00: 5,60 … 05: 20,60` | de **snelheidslimiet** en het **venster** per type |
+
+De valkuil zit in de eerste twee tabellen: `[TYPE: HOPS,RATE]` en
+`[TYPE: LIMIT,SECS]` hebben dezelfde vorm en een andere betekenis. `05: 2,10` uit
+`filter count` betekent "van type 05 gingen er 2 weg op de hoplimiet en 10 op de
+snelheidslimiet" — geen instelling. Alleen de marker scheidt ze, en een tabel
+zonder marker is geen tabel. De eerste versie van deze parser las `filter count`
+als de limiettabel; dat gaf een scherm vol nullen die eruitzagen als "geen enkele
+limiet gezet" terwijl het "nog niets weggegooid" betekende.
+
+Elk antwoord is één LoRa-pakket, en de node die het doorgeeft vlakt regeleindes
+tot spaties. Alle vier staan in de standaard parameterlijst;
+`pfstock.apply_cli_filter` voegt ze cumulatief samen — per type, zodat
+`filter hops` en `filter rate` elkaars kolom niet wissen. Wat deze variant niet
+meldt (doorgelaten, vrijgesteld, en de andere drie redenen per type) ontbreekt —
+het wordt geen nul.
+
+**De standaardwaarden** staan in `pfstock.STOCK_DEFAULTS`, overgenomen uit die
+gids: hoplimiet 8 voor elk type behalve `05 GRP_TXT` (32); snelheidslimiet 5 per
+60 s, behalve `02 TXT_MSG` en `05 GRP_TXT` (20/60 s) en `04 ADVERT` (10/60 s);
+`hash` 1; `malformed` uit; het filter zelf uit. Ze staan op de beheerpagina
+náást de gemelde stand en vullen nooit een leeg veld: "we weten het niet" is iets
+anders dan "hij staat op de standaard". De twee voorbeeldopstellingen uit de gids
+(gewone en drukke repeater) staan er als referentie bij, letterlijk en zonder
+knop die ze in één klik zet.
 
 **Zetten** gaat via het formulier *Zetten via de poller* op de nodepagina. Dat
 verschijnt alleen als de repeater doorgestuurd wordt, de filterpatch draait én

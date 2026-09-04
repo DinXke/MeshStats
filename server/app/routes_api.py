@@ -99,7 +99,8 @@ async def contacts(request: Request, authorization: str | None = Header(default=
 
 
 @router.get("/commands")
-def commands(authorization: str | None = Header(default=None)):
+def commands(caps: str | None = Query(default=None),
+             authorization: str | None = Header(default=None)):
     """Pending commands for a polling client -- MeshUptime or Home Assistant (clear on read):
     refresh = manual status requests, settings = CLI settings look-ups.
 
@@ -114,8 +115,16 @@ def commands(authorization: str | None = Header(default=None)):
     ago, and while nothing was polling, the page kept promising the second.
     """
     # Wie er pollt, naast dat er gepold wordt: MeshUptime en Home Assistant
-    # gebruiken dezelfde wachtrij met elk een eigen sleutel.
-    db.note_poller_seen(require_poller_token(authorization))
+    # gebruiken dezelfde wachtrij met elk een eigen sleutel. En WAT hij aankan,
+    # als hij het zegt (``?caps=settings`` of ``?caps=settings,refresh``): de
+    # MeshUptime-node voert instellingenopvragingen uit maar laat statusverzoeken
+    # vallen, en dan hoort de knop "status opvragen" niet te beloven dat er iets
+    # gebeurt. Zwijgt de poller, dan blijft de vorige opgave staan en gelden de
+    # standaardrechten -- zie commanding.DEFAULT_POLLER_CAPS.
+    gemeld = None
+    if caps is not None:
+        gemeld = [c.strip().lower() for c in caps.replace(";", ",").split(",") if c.strip()][:8]
+    db.note_poller_seen(require_poller_token(authorization), gemeld)
     refresh = db.pop_refresh_requests()
     settings = db.pop_settings_requests()
     if refresh or settings:

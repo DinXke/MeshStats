@@ -2087,7 +2087,7 @@ def classify_countries(force: bool = False) -> int:
 DEFAULT_CLI_PARAMS = ("name,role,radio,freq,tx,af,repeat,advert.interval,"
                       "flood.advert.interval,flood.max,flood.max.unscoped,"
                       "allow.read.only,rxdelay,txdelay,lat,lon,cmd:region,"
-                      "cmd:filter,cmd:filter count")
+                      "cmd:filter,cmd:filter count,cmd:filter hops,cmd:filter rate")
 
 
 def request_settings(prefix: str, params: list[str]) -> None:
@@ -3610,9 +3610,17 @@ POLLER_SEEN_KEY = "poller_seen"
 
 
 POLLER_NAME_KEY = "poller_name"
+POLLER_CAPS_KEY = "poller_caps"
+
+# Wat een poller van de wachtrij aankan. Twee soorten verzoeken, en een poller
+# mag er één van doen: de MeshUptime-node voert instellingenopvragingen uit en
+# laat statusverzoeken vallen. Namen die we niet kennen worden genegeerd, zodat
+# een nieuwere poller er iets bij kan verzinnen zonder dat dit veld rommel gaat
+# bewaren.
+POLLER_CAPS = ("settings", "refresh")
 
 
-def note_poller_seen(name: str | None = None) -> None:
+def note_poller_seen(name: str | None = None, caps=None) -> None:
     """Er heeft zojuist een poller de wachtrij opgehaald -- en welke.
 
     De naam erbij sinds MeshUptime dezelfde wachtrij kan bedienen als Home
@@ -3623,10 +3631,24 @@ def note_poller_seen(name: str | None = None) -> None:
     set_setting(POLLER_SEEN_KEY, utcnow())
     if name:
         set_setting(POLLER_NAME_KEY, str(name)[:64])
+    # Alleen zetten als de poller het zei. Een poller die zwijgt laat het veld
+    # staan zoals het was; wat "zwijgen" betekent staat in
+    # commanding.DEFAULT_POLLER_CAPS en niet hier -- dit is de opslag.
+    if caps is not None:
+        schoon = [c for c in caps if c in POLLER_CAPS]
+        set_setting(POLLER_CAPS_KEY, ",".join(sorted(set(schoon))))
 
 
 def poller_last_name() -> str | None:
     return get_setting(POLLER_NAME_KEY, "") or None
+
+
+def poller_last_caps():
+    """Wat de laatste poller zei te kunnen, of None als hij niets zei."""
+    ruw = get_setting(POLLER_CAPS_KEY, None)
+    if ruw is None:
+        return None
+    return [c for c in ruw.split(",") if c in POLLER_CAPS]
 
 
 def poller_last_seen() -> str | None:

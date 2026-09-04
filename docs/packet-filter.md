@@ -345,15 +345,39 @@ with it, through the poller queue (see [`commanding.md`](commanding.md)): the
 MeshUptime node collects the request, logs in to the repeater as admin and runs
 it over LoRa.
 
-**Reading takes two commands**, and that was measured rather than assumed. Bare
-`filter` returns the status line — `> Filter off: Blocked [ Hops: 0 | Rate: 0 |
-Channel: 0 | Hash: 0 | Malformed: 0 ]` — and `filter count` returns *only* the
-limit table — `[TYPE: HOPS,RATE] 00: 0,0 01: 0,0 …`. Each answer is one LoRa
-packet, and the node relaying it flattens line breaks to spaces. Both are in the
-default parameter list as `cmd:filter` and `cmd:filter count`;
-`pfstock.apply_cli_filter` merges them cumulatively into the same filter state
-our own firmware publishes. What this variant does not report (passed, exempt,
-per type) is absent — it does not become a zero.
+**Reading takes four commands**, and which gives what was measured and then
+checked against the
+[DutchMeshCore filter guide](https://toolbox.dutchmeshcore.nl/#/filter-guide):
+
+| Command | Answer | What it is |
+|---|---|---|
+| `filter` | `> Filter off: Blocked [ Hops: 0 \| Rate: 0 \| Channel: 0 \| Hash: 0 \| Malformed: 0 ]` | main switch + **totals** per reason |
+| `filter count` | `[TYPE: HOPS,RATE] 00: 0,0 01: 3,20 …` | **counters** per type: dropped by the hop limit, dropped by the rate limit |
+| `filter hops` | `[TYPE: MAX_HOPS] 00: 8 … 05: 32` | the **hop limit** per type |
+| `filter rate` | `[TYPE: LIMIT,SECS] 00: 5,60 … 05: 20,60` | the **rate limit** and **window** per type |
+
+The trap is in the first two tables: `[TYPE: HOPS,RATE]` and `[TYPE: LIMIT,SECS]`
+share a shape and mean different things. `05: 2,10` from `filter count` means "of
+type 05, two were dropped by the hop limit and ten by the rate limit" — not a
+setting. Only the marker separates them, and a table without a marker is not a
+table. The first version of this parser read `filter count` as the limit table,
+producing a screen full of zeroes that looked like "no limit set anywhere" while
+it meant "nothing dropped yet".
+
+Each answer is one LoRa packet, and the node relaying it flattens line breaks to
+spaces. All four are in the default parameter list;
+`pfstock.apply_cli_filter` merges them cumulatively — per type, so `filter hops`
+and `filter rate` do not wipe each other's column. What this variant does not
+report (passed, exempt, the other three reasons per type) is absent — it does not
+become a zero.
+
+**The defaults** live in `pfstock.STOCK_DEFAULTS`, taken from that guide: hop
+limit 8 for every type except `05 GRP_TXT` (32); rate limit 5 per 60 s, except
+`02 TXT_MSG` and `05 GRP_TXT` (20/60 s) and `04 ADVERT` (10/60 s); `hash` 1;
+`malformed` off; the filter itself off. They sit next to the reported state on the
+admin page and never fill an empty field: "we do not know" is not "it is on the
+default". The guide's two example set-ups (typical and busy repeater) are shown
+verbatim as reference, without a button that applies them in one click.
 
 **Writing** goes through the *Zetten via de poller* form on the node page, shown
 only when the repeater is relayed, runs the filter patch and a fresh poller

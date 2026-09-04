@@ -10,6 +10,28 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.12.0 — 2026-09-04
+
+- **`filter count` betekende iets anders dan gedacht.** Volgens de
+  [DutchMeshCore-filtergids](https://toolbox.dutchmeshcore.nl/#/filter-guide) zijn
+  `[TYPE: HOPS,RATE]`-regels **tellers** per type (weggegooid op de hoplimiet,
+  weggegooid op de snelheidslimiet), geen instellingen. Ze stonden als limieten
+  op het scherm: een tabel vol nullen die "geen limiet gezet" leek te zeggen
+  terwijl er "nog niets weggegooid" stond. De instellingen komen nu uit
+  `filter hops` (`[TYPE: MAX_HOPS]`) en `filter rate` (`[TYPE: LIMIT,SECS]`),
+  allebei toegevoegd aan de standaard parameterlijst.
+- **Regels per pakkettype als tabel** op de nodepagina, voorgevuld met de
+  gemelde waarden, met de standaard van die firmware ernaast en de weggegooide
+  aantallen per type erbij. Leeg betekent "nog niet gemeld", nooit nul. Plus de
+  twee voorbeeldopstellingen uit de gids, als referentie.
+- **De knop "status opvragen" belooft niets meer dat niet gebeurt.** Een poller
+  zegt nu met `?caps=` op `/api/v1/commands` wat hij waarmaakt; de MeshUptime-node
+  meldt `settings` en laat statusverzoeken vallen, dus de knop staat uit met die
+  reden erbij. Een poller die niets zegt kan alles, zoals voorheen.
+- Twee sjablonen verwezen nog naar `route.ha`, dat sinds 2.10.0 `route.poller`
+  heet. Daardoor stond de knop op de publieke repeaterpagina uit en meldde de
+  nodelijst "geen weg" waar er een poller was.
+
 ## 2.11.0 — 2026-09-04
 
 Het filter van een **stock-repeater met filterpatch** (JessaZH) is nu vanuit de

@@ -130,6 +130,12 @@ footer { text-align: center; color: var(--muted); font-size: .78rem; padding: 1.
    blikvanger voor wie het niet zoekt. */
 footer .build { display: block; margin-top: .35rem; font-size: .7rem; opacity: .75; letter-spacing: .02em; }
 
+/* De filterregels per pakkettype: smalle getalvelden zodat de tabel op een
+   telefoon niet uit elkaar valt, en de rijformulieren zonder eigen marge. */
+.pftable input[type="number"] { width: 5.5rem; }
+.pftable .rowform { margin: 0; display: inline; }
+.pftable td { vertical-align: middle; }
+
 h1 { font-family: var(--sans); font-weight: 700; font-size: 1.7rem; margin: 0; letter-spacing: -.01em; }
 h2 {
   font-family: var(--mono); font-size: .82rem; margin: 2rem 0 .7rem;

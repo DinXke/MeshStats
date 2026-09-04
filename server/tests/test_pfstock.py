@@ -107,20 +107,22 @@ def test_de_regelvelden_blijven_leeg(sleutel):
     assert sleutel not in blob
 
 
-def test_limieten_zijn_configuratie_en_staan_niet_bij_de_tellers():
+def test_de_tellers_per_type_staan_los_van_de_totalen():
+    """``filter count`` telt per type af op twee redenen. Die tellers horen NIET
+    in ``limits``: het zijn metingen, geen instellingen (zie de kop van
+    pfstock)."""
     blob = pfstock.parse_filter_count(AAN)
-    assert blob["limits"]["TXT_MSG"] == {"hops": 3, "rate": 0}
-    assert blob["limits"]["ADVERT"] == {"hops": 2, "rate": 20}
-    # En vooral: niet in drop, want ze lopen nooit op.
-    assert set(blob["drop"]) & set(blob["limits"]) == set()
+    assert blob["drop_types"]["TXT_MSG"] == {"hops": 3, "rate": 0}
+    assert blob["drop_types"]["ADVERT"] == {"hops": 2, "rate": 20}
+    assert "limits" not in blob
 
 
-def test_nul_komma_nul_is_geen_limiet_maar_wel_een_melding():
-    # 'voor dit type geldt geen limiet' is iets anders dan 'dit type stond niet
-    # in het antwoord'; een formulier moet die twee kunnen onderscheiden.
-    limits = pfstock.parse_filter_count(UIT)["limits"]
-    assert len(limits) == 11
-    assert limits["REQ"] == {"hops": 0, "rate": 0}
+def test_nul_komma_nul_is_geen_teller_maar_wel_een_melding():
+    # 'van dit type ging er niets weg' is iets anders dan 'dit type stond niet
+    # in het antwoord'; de pagina moet die twee kunnen onderscheiden.
+    tellers = pfstock.parse_filter_count(UIT)["drop_types"]
+    assert len(tellers) == 11
+    assert tellers["REQ"] == {"hops": 0, "rate": 0}
 
 
 def test_variantmerk_staat_in_de_blob():
@@ -135,36 +137,36 @@ def test_nummering_van_de_node_krijgt_voorrang():
     """
     namen = {2: "GROEPSTEKST"}
     blob = pfstock.parse_filter_count(AAN, names=namen)
-    assert "GROEPSTEKST" in blob["limits"]
-    assert "TXT_MSG" not in blob["limits"]
+    assert "GROEPSTEKST" in blob["drop_types"]
+    assert "TXT_MSG" not in blob["drop_types"]
     # De rest valt terug op onze lijst.
-    assert blob["limits"]["ADVERT"] == {"hops": 2, "rate": 20}
+    assert blob["drop_types"]["ADVERT"] == {"hops": 2, "rate": 20}
 
 
 # --- ontbrekende en afgekapte blokken -----------------------------------------
 
-def test_alleen_de_kopregel_levert_geen_lege_limiettabel():
+def test_alleen_de_kopregel_levert_geen_lege_tabel():
     blob = pfstock.parse_filter_count(
         "Filter on: Blocked [ Hops: 4 | Rate: 0 | Channel: 0 | Hash: 0 | Malformed: 0 ]")
     assert blob["on"] is True
     assert blob["drop"]["hops"] == 4
     # Geen lege dict maar geen sleutel: 'niet gemeld' en 'leeg' zijn niet
     # hetzelfde, en de pagina zegt die twee anders.
-    assert "limits" not in blob
+    assert "drop_types" not in blob and "limits" not in blob
 
 
-def test_alleen_de_limiettabel_levert_geen_tellers():
+def test_alleen_de_tellertabel_levert_geen_totalen():
     blob = pfstock.parse_filter_count("Filter off:\n[TYPE: HOPS,RATE]\n04: 2,20\n")
     assert blob["on"] is False
     assert "drop" not in blob
-    assert blob["limits"] == {"ADVERT": {"hops": 2, "rate": 20}}
+    assert blob["drop_types"] == {"ADVERT": {"hops": 2, "rate": 20}}
 
 
 def test_afgekapte_laatste_regel_wordt_niet_half_gelezen():
     tekst = AAN[:AAN.index("04: 2,20")] + "04: 2,"
     blob = pfstock.parse_filter_count(tekst)
-    assert "ADVERT" not in blob["limits"]
-    assert blob["limits"]["TXT_MSG"] == {"hops": 3, "rate": 0}
+    assert "ADVERT" not in blob["drop_types"]
+    assert blob["drop_types"]["TXT_MSG"] == {"hops": 3, "rate": 0}
     # De tellers uit de kopregel staan er nog: die regel was compleet.
     assert blob["drop"]["hash"] == 535
 
@@ -185,14 +187,50 @@ JESSA_TABEL = ("[TYPE: HOPS,RATE] 00: 0,0 01: 0,0 02: 0,0 03: 0,0 04: 0,0 05: 0,
 JESSA_STATUS = "> Filter off: Blocked [ Hops: 0 | Rate: 0 | Channel: 0 | Hash: 0 | Malformed: 0 ]"
 
 
-def test_alleen_de_tabel_op_een_regel_zoals_de_node_hem_doorgeeft():
+def test_filter_count_geeft_tellers_per_type_en_geen_limieten():
+    """De valkuil van deze firmware. ``05: 2,10`` betekent 'van type 05 gingen er
+    2 weg op de hoplimiet en 10 op de snelheidslimiet' -- niet 'hoplimiet 2,
+    snelheidslimiet 10'. De vorm is identiek aan die van ``filter rate``, waar
+    dezelfde twee getallen wél instellingen zijn; alleen de marker scheidt ze."""
     blob = pfstock.parse_filter_count(JESSA_TABEL)
     assert "on" not in blob and "drop" not in blob
-    # Elf types (00-10): 11 = CONTROL valt buiten wat de limiettabel kan zetten.
-    assert len(blob["limits"]) == 11
-    assert blob["limits"]["REQ"] == {"hops": 0, "rate": 0}
-    assert blob["limits"]["MULTIPART"] == {"hops": 0, "rate": 0}
-    assert "CONTROL" not in blob["limits"]
+    assert "limits" not in blob                      # NOOIT als instelling lezen
+    # Elf types (00-10): 11 = CONTROL valt buiten wat hops/rate kunnen zetten.
+    assert len(blob["drop_types"]) == 11
+    assert blob["drop_types"]["REQ"] == {"hops": 0, "rate": 0}
+    assert "CONTROL" not in blob["drop_types"]
+
+    druk = pfstock.parse_filter_count("[TYPE: HOPS,RATE] 05: 2,10")
+    assert druk["drop_types"]["GRP_TXT"] == {"hops": 2, "rate": 10}
+
+
+def test_filter_hops_geeft_de_hoplimiet_per_type():
+    blob = pfstock.parse_filter_count("[TYPE: MAX_HOPS] 00: 8 04: 8 05: 32")
+    assert blob["limits"]["REQ"] == {"hops": 8}
+    assert blob["limits"]["GRP_TXT"] == {"hops": 32}
+    assert "drop_types" not in blob
+
+
+def test_filter_rate_geeft_limiet_en_venster():
+    blob = pfstock.parse_filter_count("[TYPE: LIMIT,SECS] 02: 20,60 05: 10,60")
+    assert blob["limits"]["TXT_MSG"] == {"rate": 20, "window": 60}
+    assert blob["limits"]["GRP_TXT"] == {"rate": 10, "window": 60}
+    assert "drop_types" not in blob
+
+
+def test_de_standaarden_uit_de_gids_staan_erin():
+    """Alleen om naast de gemelde stand te tonen wat de standaard IS; ze mogen
+    nooit een leeg veld vullen. Waarden uit de DMC-filtergids."""
+    s = pfstock.STOCK_DEFAULTS
+    assert s["hash"] == 1 and s["malformed"] is False and s["on"] is False
+    assert s["types"]["GRP_TXT"] == (32, 20, 60)
+    assert s["types"]["TXT_MSG"] == (8, 20, 60)
+    assert s["types"]["ADVERT"] == (8, 10, 60)
+    assert s["types"]["REQ"] == (8, 5, 60)
+    assert len(s["types"]) == 12                     # inclusief CONTROL
+    assert [t for t, _ in pfstock.STOCK_PRESETS]
+    for _, regels in pfstock.STOCK_PRESETS:
+        assert all(r.startswith("filter ") for r in regels)
 
 
 def test_alleen_de_statusregel_van_het_kale_filter():
@@ -243,30 +281,39 @@ def test_onmogelijke_teller_valt_af_zonder_de_rest_mee_te_nemen(waarde):
     assert blob["drop"]["rate"] == 7
 
 
-@pytest.mark.parametrize("regel", ["04: -1,20", "04: 2,-1", "04: 999,20",
-                                   "04: 2,99999", "04: 2", "04: 2,20,30",
-                                   "04: a,b"])
-def test_onmogelijke_limietregel_valt_helemaal_af(regel):
+@pytest.mark.parametrize("regel", ["04: -1,20", "04: 2,-1", "04: 2",
+                                   "04: 2,20,30", "04: a,b"])
+def test_onmogelijke_tellerregel_valt_helemaal_af(regel):
     """Hier de hele regel en niet één veld.
 
-    De twee getallen komen uit hetzelfde paar; 'hoplimiet 2, snelheidslimiet
-    onbekend' is geen toestand die de node kan hebben, en hem half opslaan zou
-    een formulier een verzonnen waarde laten terugschrijven.
+    De twee getallen komen uit hetzelfde paar; 'weg op hops 2, weg op rate
+    onbekend' is geen toestand die de node kan hebben, en half opslaan zou een
+    tabel een verzonnen getal laten tonen.
     """
     blob = pfstock.parse_filter_count(f"Filter on:\n{regel}\n05: 1,10\n")
-    assert blob.get("limits", {}) == {"GRP_TXT": {"hops": 1, "rate": 10}}
+    assert blob.get("drop_types", {}) == {"GRP_TXT": {"hops": 1, "rate": 10}}
 
 
-def test_limiet_voor_een_type_dat_niet_gezet_kan_worden_valt_af():
+@pytest.mark.parametrize("regel", ["04: -1,20", "04: 999999999999,20", "04: 2,-1"])
+def test_onmogelijke_limietregel_valt_helemaal_af(regel):
+    """Dezelfde regel voor de INSTELLINGEN, die uit een andere tabel komen: een
+    hoplimiet boven MAX_HOP_LIMIT of een negatieve waarde is een leesfout."""
+    blob = pfstock.parse_filter_count(f"[TYPE: LIMIT,SECS] {regel} 05: 1,10")
+    assert blob.get("limits", {}) == {"GRP_TXT": {"rate": 1, "window": 10}}
+
+
+def test_regel_voor_een_type_dat_niet_gezet_kan_worden_valt_af():
     # `filter types` toont t/m 11, maar `filter hops`/`filter rate` aanvaarden
-    # alleen 0-10. Een limiet voor 11 kan dus nergens vandaan komen.
+    # alleen 0-10. Een regel voor 11 kan dus nergens vandaan komen.
     blob = pfstock.parse_filter_count("Filter on:\n10: 1,1\n11: 3,30\n")
-    assert set(blob["limits"]) == {"MULTIPART"}
+    assert set(blob["drop_types"]) == {"MULTIPART"}
+    limiet = pfstock.parse_filter_count("[TYPE: MAX_HOPS] 10: 8 11: 8")
+    assert set(limiet["limits"]) == {"MULTIPART"}
 
 
-def test_limietregels_verzinnen_geen_tellers():
+def test_de_tellertabel_verzint_geen_totalen():
     # De regel ``04: 2,20`` bevat een dubbele punt en cijfers. Zou de
-    # tellerparser over de hele tekst lopen, dan zou hij er een reden bij maken.
+    # totalenparser over de hele tekst lopen, dan zou hij er een reden bij maken.
     blob = pfstock.parse_filter_count("Filter off:\n00: 0,0\n04: 2,20\n")
     assert "drop" not in blob
 
@@ -382,10 +429,12 @@ def test_de_stock_variant_kan_minder_en_zegt_dat():
     assert stock["aan_uit"] is True
     assert stock["drop_per_reden"] is True
     assert stock["limieten"] is True
+    # Tellers per type kan hij wél, maar op TWEE redenen -- niet op zes.
+    assert stock["drop_per_type"] is True
+    assert set(stock["drop_per_type_redenen"]) == {"hops", "rate"}
     # En dit is waar het om gaat: een leeg vak dat uitgelegd kan worden.
     assert stock["passed"] is False
     assert stock["exempt"] is False
-    assert stock["drop_per_type"] is False
     assert stock["snelheidsdruk"] is False
     assert stock["kanalen"] is False
 
@@ -397,6 +446,7 @@ def test_onze_eigen_firmware_kan_alles_wat_de_stock_variant_kan():
         if waarde is True:
             assert mm[sleutel] is True, sleutel
     assert set(stock["drop_redenen"]) < set(mm["drop_redenen"])
+    assert set(stock["drop_per_type_redenen"]) < set(mm["drop_per_type_redenen"])
 
 
 def test_de_redenen_horen_bij_de_sleutels_die_de_parser_oplevert():

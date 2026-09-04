@@ -174,9 +174,9 @@
         <div><dt>Weg nu</dt><dd>
           {%- if route.mqtt and route.via_monitor %}<span class="ok">via monitor</span>
             <span class="muted mono">{{ route.node }}</span>
-          {%- elif route.mqtt and route.ha %}<span class="ok">MQTT + poller</span>
+          {%- elif route.mqtt and route.poller %}<span class="ok">MQTT + poller</span>
           {%- elif route.mqtt %}<span class="ok">MQTT</span>
-          {%- elif route.ha %}<span class="ok">poller</span>
+          {%- elif route.poller %}<span class="ok">poller</span>
           {%- else %}<span class="muted">geen</span>{% endif %}</dd></div>
       </dl>
 

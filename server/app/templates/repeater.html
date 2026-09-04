@@ -25,7 +25,7 @@
           rest van deze pagina is tweetalig, de weigering is dat niet. -#}
       {% if mag_uitvragen and not mag_uitvragen.allowed %}
       <button type="submit" class="pill refreshbtn" disabled title="{{ mag_uitvragen.reason }}">&#10005; Opvragen mag niet</button>
-      {% elif ("status" in route.commands and route.mqtt) or route.ha %}
+      {% elif ("status" in route.commands and route.mqtt) or route.poller_refresh %}
       <button type="submit" class="pill refreshbtn" data-i18n="rep.refresh" data-i18n-title="rep.refresh_title" title="Vraag nu een verse status: rechtstreeks aan de node, of via een poller over LoRa">&#8635; Status opvragen</button>
       {% else %}
       <button type="submit" class="pill refreshbtn" disabled data-i18n="rep.refresh_off" data-i18n-title="rep.refresh_off_title" title="Er is op dit ogenblik geen weg naar deze repeater — zie de instellingenpagina">&#10005; Opvragen kan nu niet</button>

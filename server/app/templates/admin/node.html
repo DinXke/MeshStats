@@ -417,7 +417,7 @@
     <form method="post" action="/admin/repeaters/{{ rep.id }}/refresh">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="back" value="node">
-      {% if ('status' in route.commands and route.mqtt) or route.poller %}
+      {% if ('status' in route.commands and route.mqtt) or route.poller_refresh %}
       <button type="submit"{{ recht('node.uitvragen') }}>&#8635; Status nu opvragen</button>
       {% else %}
       <button type="submit" disabled title="Er is op dit ogenblik geen weg om dit te vragen">
@@ -2351,23 +2351,98 @@
         <select name="arg1"><option value="on">aan</option><option value="off">uit</option></select></label>
       <button type="submit">Zet malformed</button>
     </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="hops">
-      <label>type <select name="arg1">{% for naam in filter_types[:11] %}<option value="{{ '%02d'|format(loop.index0) }}">{{ '%02d'|format(loop.index0) }} {{ naam }}</option>{% endfor %}</select></label>
-      <label>max hops <input name="arg2" type="number" min="0" max="64" value="0" required
-             title="0 = geen hoplimiet voor dit type"></label>
-      <button type="submit">Zet hoplimiet</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="rate">
-      <label>type <select name="arg1">{% for naam in filter_types[:11] %}<option value="{{ '%02d'|format(loop.index0) }}">{{ '%02d'|format(loop.index0) }} {{ naam }}</option>{% endfor %}</select></label>
-      <label>max pakketten <input name="arg2" type="number" min="0" max="65535" value="0" required
-             title="0 = geen snelheidslimiet voor dit type"></label>
-      <label>per seconden <input name="arg3" type="number" min="1" max="3600" value="60" required></label>
-      <button type="submit">Zet snelheidslimiet</button>
-    </form>
+    {#- De regels per pakkettype als TABEL, met de gemelde waarden al ingevuld.
+        Twee formulieren per rij en niet één: een hoplimiet en een
+        snelheidslimiet zijn twee handelingen met elk hun eigen risicoweging en
+        hun eigen bevestiging, en één knop die ze samen verstuurt zou die weging
+        laten slaan op iets anders dan wat er gebeurt.
+
+        Een leeg veld betekent hier "de node heeft dit nog niet gemeld" en niet
+        "nul" -- vandaar de placeholder in plaats van een voorgevulde 0. De
+        vensterlengte komt alleen uit `filter rate`; heeft die ronde nog niet
+        gelopen, dan staat die kolom leeg en moet je hem invullen. -#}
+    <table class="cfgtable pftable">
+      <thead>
+        <tr>
+          <th>Pakkettype</th>
+          <th>Max hops</th><th></th>
+          <th>Max pakketten</th><th>per seconden</th><th></th>
+          <th title="Standaard van deze firmware: hops / pakketten / venster">Standaard</th>
+          <th title="Weggegooid door de hoplimiet en door de snelheidslimiet, sinds de laatste herstart van de repeater">Weggegooid</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for naam in filter_types[:11] %}
+        {% set nr = '%02d'|format(loop.index0) %}
+        {% set L = (filter_state.limits or {}).get(naam) or {} %}
+        {% set D = (filter_state.drop_types or {}).get(naam) %}
+        {% set S = filter_defaults.types.get(naam) %}
+        <tr>
+          <td class="mono">{{ nr }} {{ naam }}</td>
+          <td>
+            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform" id="hops-{{ nr }}">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="cmd" value="hops">
+              <input type="hidden" name="arg1" value="{{ nr }}">
+              <input name="arg2" type="number" min="0" max="64" required
+                     value="{{ L.hops if L.hops is defined else '' }}"
+                     placeholder="{{ '' if L.hops is defined else 'onbekend' }}"
+                     title="0 = geen hoplimiet voor dit type. Een 0 zetten blokkeert dit type volledig en vraagt de naam van de node.">
+            </form>
+          </td>
+          <td><button type="submit" form="hops-{{ nr }}">zet</button></td>
+          <td>
+            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform" id="rate-{{ nr }}">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="cmd" value="rate">
+              <input type="hidden" name="arg1" value="{{ nr }}">
+              <input name="arg2" type="number" min="0" max="65535" required
+                     value="{{ L.rate if L.rate is defined else '' }}"
+                     placeholder="{{ '' if L.rate is defined else 'onbekend' }}"
+                     title="0 = geen snelheidslimiet voor dit type">
+            </form>
+          </td>
+          <td>
+            <input name="arg3" type="number" min="1" max="86400" required form="rate-{{ nr }}"
+                   value="{{ L.window if L.window is defined else '' }}"
+                   placeholder="{{ '' if L.window is defined else 'onbekend' }}"
+                   title="De vensterlengte. Die staat alleen in het antwoord op `filter rate`; is die ronde nog niet gelopen, dan is hij hier onbekend.">
+          </td>
+          <td><button type="submit" form="rate-{{ nr }}">zet</button></td>
+          <td class="mono small">{% if S %}{{ S[0] }} / {{ S[1] }} / {{ S[2] }}{% endif %}</td>
+          <td class="mono small">{% if D %}{{ D.hops }} hops &middot; {{ D.rate }} rate{% else %}&mdash;{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted small">
+      Ingevuld met wat de repeater zelf meldde. <strong>Leeg = nog niet gemeld</strong>, niet nul —
+      de hoplimiet komt uit <span class="mono">filter hops</span>, de snelheidslimiet en het venster
+      uit <span class="mono">filter rate</span>. Staat er iets leeg, laat dan eerst een
+      instellingenronde lopen (&#128225; Instellingen nu opvragen hierboven).
+      De kolom <em>Weggegooid</em> komt uit <span class="mono">filter count</span> en telt sinds de
+      laatste herstart van de repeater; dat zijn <strong>tellers, geen instellingen</strong>.
+      Type <span class="mono">11 CONTROL</span> staat er niet bij: die firmware aanvaardt in
+      <span class="mono">hops</span> en <span class="mono">rate</span> alleen 0&#8209;10.
+    </p>
+
+    {#- De twee opstellingen uit de filtergids van deze firmware, letterlijk en als
+        REFERENTIE. Geen knop die ze in één klik zet: elke regel heeft zijn eigen
+        risicoweging en bevestiging, en dat is de drempel van dit scherm. -#}
+    <details class="pfpresets">
+      <summary>Voorbeeldopstellingen uit de filtergids van deze firmware</summary>
+      {% for titel, regels in filter_presets %}
+      <p class="small"><strong>{{ titel }}</strong></p>
+      <pre class="mono small">{% for r in regels %}{{ r }}
+{% endfor %}</pre>
+      {% endfor %}
+      <p class="muted small">
+        Overgenomen uit de DutchMeshCore-filtergids
+        (<span class="mono">toolbox.dutchmeshcore.nl/#/filter-guide</span>, gelezen 4 september 2026).
+        <span class="mono">filter hash 2</span> blokkeert daar met zoveel woorden alle oudere
+        pakketten die geen meerbytepad gebruiken — zet dat pas als je mesh mee is.
+      </p>
+    </details>
     <p class="muted small">
       Syntaxis van deze firmware (<span class="mono">filter help</span>):
       <span class="mono">on | off | reset | hash &lt;bytes&gt; | hops &lt;type&gt; &lt;max&gt; |

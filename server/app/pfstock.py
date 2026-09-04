@@ -105,6 +105,9 @@ MAX_COUNTER = 4_000_000_000
 # een miljard is geen limiet maar een leesfout.
 MAX_HOP_LIMIT = 255
 MAX_RATE_LIMIT = 65535
+# De vensterlengte van een snelheidsregel, in seconden. Een dag is al absurd
+# lang voor een limiet die per pakkettype geldt; alles daarboven is een leesfout.
+MAX_WINDOW_SECS = 86400
 
 # ``> Filter off: Blocked [ ... ]`` -- de prompt-echo ervoor mag er staan of niet.
 _HEADER = re.compile(r"filter\s+(on|off)\s*:", re.IGNORECASE)
@@ -115,8 +118,27 @@ _COUNTER = re.compile(r"([A-Za-z]+)\s*:\s*(-?\d+)")
 # de node die het antwoord doorgeeft maakt er één regel van, dus de paren staan
 # achter elkaar achter de marker ``[TYPE: HOPS,RATE]``. Het minteken wordt
 # MEEGELEZEN zodat een negatief getal een geweigerde waarde is.
-_LIMIT_MARKER = re.compile(r"\[TYPE:\s*HOPS\s*,\s*RATE\]", re.IGNORECASE)
+# De drie tabellen die deze firmware kan geven, elk met hun eigen kopmarker:
+#
+#   filter count  ->  [TYPE: HOPS,RATE]    NN: <weg door hops>,<weg door rate>
+#   filter hops   ->  [TYPE: MAX_HOPS]     NN: <hoplimiet>
+#   filter rate   ->  [TYPE: LIMIT,SECS]   NN: <limiet>,<venster in s>
+#
+# LET OP -- dit is de valkuil van deze firmware, en hij is de moeite waard om
+# hier uit te schrijven: de eerste tabel bevat TELLERS en niet de instellingen.
+# "05: 2,10" betekent van type 05 zijn er 2 weggegooid op de hoplimiet en 10 op
+# de snelheidslimiet (de DMC-filtergids zegt het met zoveel woorden). De vorm is
+# identiek aan die van `filter rate`, waar dezelfde twee getallen de LIMIET en
+# het VENSTER zijn. Ze uit elkaar houden kan dus alleen aan de marker.
+#
+# De eerste versie van deze parser las `filter count` als de limiettabel. Dat gaf
+# een scherm vol nullen die eruitzagen als "geen enkele limiet gezet" terwijl het
+# "nog niets weggegooid" betekende -- precies de stille leugen waar de rest van
+# dit bestand tegen ontworpen is. Vandaar dat de instellingen nu alleen uit
+# `filter hops` en `filter rate` komen, en nergens anders vandaan.
+_LIMIT_MARKER = re.compile(r"\[TYPE:\s*(HOPS\s*,\s*RATE|MAX_HOPS|LIMIT\s*,\s*SECS)\]", re.IGNORECASE)
 _LIMIT_PAIR = re.compile(r"(\d{1,3})\s*:\s*(-?\d+)\s*,\s*(-?\d+)(?=\s|$|[^\d,])")
+_LIMIT_ONE = re.compile(r"(\d{1,3})\s*:\s*(-?\d+)(?=\s|$|[^\d,])")
 # Zonder marker maar mét kopregel: dan telt alleen een HELE regel ``04: 3,20`` --
 # de vorm waarin een repeater die regeleindes wél bewaart de tabel geeft.
 _LIMIT_LINE = re.compile(r"^\s*(\d{1,3})\s*:\s*(-?\d+)\s*,\s*(-?\d+)\s*$")
@@ -248,44 +270,62 @@ def parse_filter_count(text, *, names: dict | None = None) -> dict | None:
     # marker geen tabel -- een los paar ``12: 3,4`` in een ander antwoord is geen
     # limiet.
     limieten: dict = {}
+    drop_types: dict = {}
     marker = _LIMIT_MARKER.search(tekst)
+    soort = ""
     paren: list = []
     if marker is not None:
+        soort = re.sub(r"\s+", "", marker.group(1).upper())
         segment = tekst[marker.end():]
         volgend = re.search(r"\[|Filter\s+(on|off)\s*:", segment, re.IGNORECASE)
         if volgend:
             segment = segment[:volgend.start()]
-        paren = _LIMIT_PAIR.findall(segment)
+        if soort == "MAX_HOPS":
+            paren = [(n, h, None) for n, h in _LIMIT_ONE.findall(segment)]
+        else:
+            paren = [(n, a, b) for n, a, b in _LIMIT_PAIR.findall(segment)]
     elif kop is not None:
-        # Geen marker, wel een kopregel: de tabel als losse regels, zoals een
-        # repeater hem geeft die zijn regeleindes bewaart. Alleen hele regels;
-        # een afgekapte (``10: 0,``) of te lange (``04: 2,20,30``) valt af.
+        # Geen marker, wel een kopregel: dezelfde tellertabel als losse regels,
+        # zoals een repeater hem geeft die zijn regeleindes bewaart. Alleen hele
+        # regels; een afgekapte (``10: 0,``) of te lange (``04: 2,20,30``) valt af.
+        soort = "HOPS,RATE"
         paren = [m.groups() for m in (_LIMIT_LINE.match(r) for r in tekst.split("\n")) if m]
-    if paren:
-        for nummer_s, hops_s, rate_s in paren:
-            nummer = int(nummer_s)
-            if nummer > MAX_LIMIT_TYPE_NUMBER:
+    for nummer_s, een_s, twee_s in paren:
+        nummer = int(nummer_s)
+        if nummer > MAX_LIMIT_TYPE_NUMBER:
+            continue
+        naam = _type_name(nummer, names)
+        if not naam:
+            continue
+        if soort == "MAX_HOPS":
+            hops = _limit(een_s, MAX_HOP_LIMIT)
+            if hops is None:
                 continue
-            hops = _limit(hops_s, MAX_HOP_LIMIT)
-            rate = _limit(rate_s, MAX_RATE_LIMIT)
-            if hops is None or rate is None:
-                # Hier wél het hele paar weigeren en niet één veld: de twee getallen
-                # komen uit hetzelfde paar, en 'hoplimiet 3, snelheidslimiet
-                # onbekend' is geen toestand die de node kan hebben.
+            limieten[naam] = {"hops": hops}
+            continue
+        # Twee getallen uit hetzelfde paar: allebei of geen van beide. 'limiet 3,
+        # venster onbekend' is geen toestand die de node kan hebben, en half
+        # opslaan zou een formulier een verzonnen waarde laten terugschrijven.
+        if soort == "LIMIT,SECS":
+            rate = _limit(een_s, MAX_RATE_LIMIT)
+            venster = _limit(twee_s, MAX_WINDOW_SECS)
+            if rate is None or venster is None:
                 continue
-            naam = _type_name(nummer, names)
-            if not naam:
-                continue
-            # ``0,0`` blijft staan. Het is de gemelde configuratie 'voor dit type
-            # geldt geen limiet', en dat is iets anders dan een type dat niet in het
-            # antwoord voorkwam -- precies het onderscheid dat een formulier nodig
-            # heeft om te weten of het een veld leeg mag laten. Een afgekapt paar
-            # (``10: 0,``) matcht niet en valt dus weg: een half getal is geen limiet.
-            limieten[naam] = {"hops": hops, "rate": rate}
+            limieten[naam] = {"rate": rate, "window": venster}
+            continue
+        # HOPS,RATE = TELLERS per type: weggegooid op de hoplimiet, weggegooid op
+        # de snelheidslimiet. Geen configuratie -- zie de kop van dit bestand.
+        weg_hops = _counter(een_s)
+        weg_rate = _counter(twee_s)
+        if weg_hops is None or weg_rate is None:
+            continue
+        drop_types[naam] = {"hops": weg_hops, "rate": weg_rate}
     if limieten:
         uit["limits"] = limieten
+    if drop_types:
+        uit["drop_types"] = drop_types
 
-    if kop is None and not limieten:
+    if kop is None and not limieten and not drop_types:
         return None
     return uit
 
@@ -373,6 +413,7 @@ _CAPABILITIES: dict = {
         "limieten": True,            # hop- en snelheidslimiet per type
         "drop_per_reden": True,      # drop{}: zes redenen
         "drop_per_type": True,       # stats.xr: type x reden
+        "drop_per_type_redenen": ("type", "hops", "rate", "hash", "kanaal", "misvormd"),
         "snelheidsdruk": True,       # stats.rate: seen/cap/peak/lim
         "passed": True,
         "exempt": True,
@@ -391,10 +432,11 @@ _CAPABILITIES: dict = {
         "regeltabellen": False,
         "limieten": True,
         "drop_per_reden": True,
-        # Geen dropteller per pakkettype: de patch telt per REDEN en houdt geen
-        # kruistabel bij. Dit is de sectie die op de pagina het vaakst als 'gat'
-        # gelezen zou worden, en dat is precies waarom deze tabel bestaat.
-        "drop_per_type": False,
+        # Wél een dropteller per pakkettype, maar alleen voor TWEE redenen: de
+        # hoplimiet en de snelheidslimiet (`filter count`). De andere drie redenen
+        # (kanaal, padhash, misvormd) staan alleen in het totaal.
+        "drop_per_type": True,
+        "drop_per_type_redenen": ("hops", "rate"),
         "snelheidsdruk": False,
         "passed": False,
         "exempt": False,
@@ -412,12 +454,44 @@ _CAPABILITIES_LEEG: dict = {
     "limieten": False,
     "drop_per_reden": False,
     "drop_per_type": False,
+    "drop_per_type_redenen": (),
     "snelheidsdruk": False,
     "passed": False,
     "exempt": False,
     "kanalen": False,
     "drop_redenen": (),
 }
+
+# De fabrieksinstellingen van deze firmware, uit de DutchMeshCore-filtergids
+# (toolbox.dutchmeshcore.nl/#/filter-guide, gelezen 2026-09-04). Hier alleen om
+# naast de gemelde stand te kunnen tonen wat de standaard IS -- nooit om een
+# leeg veld mee te vullen: wat de node niet meldde blijft leeg, want "we weten
+# het niet" is iets anders dan "hij staat op de standaard".
+STOCK_DEFAULTS = {
+    "hash": 1,
+    "malformed": False,
+    "on": False,
+    # (hoplimiet, snelheidslimiet, venster in seconden) per pakkettype.
+    "types": {
+        "REQ": (8, 5, 60), "RESPONSE": (8, 5, 60), "TXT_MSG": (8, 20, 60),
+        "ACK": (8, 5, 60), "ADVERT": (8, 10, 60), "GRP_TXT": (32, 20, 60),
+        "GRP_DATA": (8, 5, 60), "ANON_REQ": (8, 5, 60), "PATH": (8, 5, 60),
+        "TRACE": (8, 5, 60), "MULTIPART": (8, 5, 60), "CONTROL": (8, 5, 60),
+    },
+}
+
+# De twee voorbeeldopstellingen uit diezelfde gids, letterlijk. Als referentie op
+# het scherm en niet als knop: elke regel heeft zijn eigen risicoweging, en één
+# klik die er zes zet zou precies die drempel omzeilen.
+STOCK_PRESETS = (
+    ("Gewone publieke repeater",
+     ("filter on", "filter hash 1", "filter malformed on", "filter rate 05 20 60",
+      "filter rate 02 20 60", "filter hops 05 32")),
+    ("Drukke of misbruikte repeater",
+     ("filter on", "filter hash 2", "filter malformed on", "filter rate 05 10 60",
+      "filter rate 02 5 60", "filter rate 04 5 60", "filter hops 05 16",
+      "filter hops 02 16", "filter hops 04 8")),
+)
 
 
 def capabilities(variant_naam) -> dict:
@@ -467,8 +541,22 @@ def apply_cli_filter(repeater_id: int, values: dict, source: str = "") -> bool:
         if not naam.startswith("cmd:filter") or not isinstance(waarde, str) or not waarde.strip():
             continue
         deel = parse_filter_count(waarde)
-        if deel:
-            nieuw.update(deel)
+        if not deel:
+            continue
+        # De tabellen PER TYPE samenvoegen en niet overschrijven, ook binnen deze
+        # ene push: `filter hops` en `filter rate` dragen elk een deel van
+        # dezelfde regel, en een platte update zou de kolom van het antwoord dat
+        # toevallig eerder langskwam wissen.
+        for tabel in ("limits", "drop_types"):
+            if tabel not in deel:
+                continue
+            samen = dict(nieuw.get(tabel) or {})
+            for typenaam, waarden in deel.pop(tabel).items():
+                rij = dict(samen.get(typenaam) or {})
+                rij.update(waarden)
+                samen[typenaam] = rij
+            nieuw[tabel] = samen
+        nieuw.update(deel)
     if not nieuw:
         return False
 
@@ -480,6 +568,18 @@ def apply_cli_filter(repeater_id: int, values: dict, source: str = "") -> bool:
     oud = db.filter_state_for(repeater_id) or {}
     blob = dict(oud)
     blob.update(nieuw)
+    # Dezelfde samenvoeging nog eens, nu met wat er al opgeslagen lag: de
+    # antwoorden komen soms in twee pushes (een `filter rate` na een eerdere
+    # `filter hops`), en geen van beide mag de kolom van de ander wissen.
+    for tabel in ("limits", "drop_types"):
+        if tabel not in nieuw:
+            continue
+        samen = dict(oud.get(tabel) or {})
+        for naam, waarden in nieuw[tabel].items():
+            rij = dict(samen.get(naam) or {})
+            rij.update(waarden)
+            samen[naam] = rij
+        blob[tabel] = samen
     blob["variant"] = "meshcore_filter"
     db.upsert_filter_state(repeater_id, blob, source)
 

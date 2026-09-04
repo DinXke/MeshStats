@@ -150,8 +150,14 @@ def is_relayed(rep) -> bool:
     return not same_key(source, _field(rep, "pubkey_prefix"))
 
 
+# Wat een poller kan als hij het zelf niet zegt: allebei. Dat is wat de Home
+# Assistant-integratie deed toen dit veld nog niet bestond, en een oudere poller
+# mag door een nieuw veld niet stilletjes de helft van zijn werk verliezen.
+DEFAULT_POLLER_CAPS = ("settings", "refresh")
+
+
 def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
-              relay=None, poller_name=None) -> dict:
+              relay=None, poller_name=None, poller_caps=None) -> dict:
     """Wat kan er met deze repeater, nu meteen.
 
     ``blocker`` zegt waarom de MQTT-weg dicht is; de beheerpagina zet dat om in
@@ -217,6 +223,7 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
 
     open_ = blocker == ""
     poller_fresh = _fresh(poller_seen, POLLER_STALE_SECS, now)
+    caps = set(poller_caps if poller_caps is not None else DEFAULT_POLLER_CAPS)
     level, level_why = _level(rep, via_monitor=via_monitor, relay=relay,
                               poller_fresh=poller_fresh)
     return {
@@ -240,6 +247,17 @@ def route_for(rep, *, broker_connected: bool, poller_seen=None, now=None,
         "poller": poller_fresh,
         "poller_name": poller_name,
         "poller_seen": poller_seen,
+        # Wat die poller ook WAARMAAKT. De wachtrij draagt twee soorten
+        # verzoeken, en niet elke poller doet ze allebei: de MeshUptime-node
+        # voert instellingenopvragingen uit maar laat statusverzoeken vallen (die
+        # gaan over REQ_TYPE_GET_STATUS, een ander protocol -- zie de
+        # MeshUptime-changelog v2.6.0). Een knop "status opvragen" die een
+        # verzoek in een wachtrij legt dat gegarandeerd weggegooid wordt, is
+        # precies de belofte die deze module moest wegwerken. De poller zegt zelf
+        # wat hij kan (``?caps=`` op /api/v1/commands).
+        "poller_refresh": poller_fresh and "refresh" in caps,
+        "poller_settings": poller_fresh and "settings" in caps,
+        "poller_caps": sorted(caps),
         # De eigen API van de node, als waarneming en naast het niveau. Het
         # niveau zegt wat deze node IS; dit zegt of die weg NU nog draagt, en dat
         # is een ander antwoord -- precies de tweedeling die ``mqtt`` naast
@@ -398,6 +416,7 @@ def describe(rep, **kwargs) -> dict:
     kwargs.setdefault("broker_connected", mqtt_ingest.can_publish())
     kwargs.setdefault("poller_seen", db.poller_last_seen())
     kwargs.setdefault("poller_name", db.poller_last_name())
+    kwargs.setdefault("poller_caps", db.poller_last_caps())
     if "relay" not in kwargs:
         # Alleen opzoeken als het écht een andere node is. find_repeater matcht
         # sleutels van verschillende lengte tegen elkaar, dus een node die

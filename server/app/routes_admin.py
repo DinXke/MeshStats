@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from . import (audit, auth, clocksync, commanding, compare, config, db, pfguard,
                discovery, firmware, hadiscovery, metrics, monitors, mqtt_ingest,
-               nodeconfig, nodecred, pktfilter, qrsvg, ratelimit, rbac, retention,
+               nodeconfig, nodecred, pfstock, pktfilter, qrsvg, ratelimit, rbac, retention,
                rooms, sensornode, sensorpush, snmp, sweepsched, tsdb)
 from .templating import templates
 
@@ -1264,6 +1264,11 @@ def _node_page(request: Request, rid: int, **extra):
         "filter_route": froute,
         "filter_queue": fqueue,
         "filter_state": fstate or {},
+        # De fabrieksinstellingen en de voorbeeldopstellingen van de
+        # stock-firmware, om naast de gemelde stand te kunnen tonen. Nooit om een
+        # leeg veld mee te vullen -- zie pfstock.STOCK_DEFAULTS.
+        "filter_defaults": pfstock.STOCK_DEFAULTS,
+        "filter_presets": pfstock.STOCK_PRESETS,
         "filter_live": flive,
         "filter_seen": pktfilter.summarise(fstate),
         "filter_types": pktfilter.TYPE_NAMES,

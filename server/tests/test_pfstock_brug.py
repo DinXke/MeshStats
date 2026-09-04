@@ -74,9 +74,11 @@ def test_filterantwoord_landt_als_stand_en_als_metrics(db):
     assert stand["on"] is False
     assert stand["variant"] == "meshcore_filter"
     assert stand["drop"] == {"hops": 4, "rate": 0, "kanaal": 0, "hash": 1, "misvormd": 2}
-    # De limiettabel is configuratie, geen teller: apart, en 0,0 blijft staan.
-    assert stand["limits"]["REQ"] == {"hops": 0, "rate": 0}
-    assert stand["limits"]["RESPONSE"] == {"hops": 3, "rate": 20}
+    # De tabel onder de kopregel telt per type af, en 0,0 blijft staan: 'van dit
+    # type ging er niets weg' is een meting.
+    assert stand["drop_types"]["REQ"] == {"hops": 0, "rate": 0}
+    assert stand["drop_types"]["RESPONSE"] == {"hops": 3, "rate": 20}
+    assert "limits" not in stand
 
     # Dezelfde metricnamen als de MQTT-weg (mqtt_ingest.FILTER_DROP_METRICS),
     # zodat tegels en grafieken er zonder tweede codepad iets van maken.
@@ -94,7 +96,7 @@ def test_stock_variant_verzint_geen_passed_of_exempt(db):
     assert "passed" not in stand and "exempt" not in stand
     namen = set(db.latest_for(rid))
     assert "filter_passed" not in namen and "filter_exempt" not in namen
-    # En geen dropteller per TYPE: de patch telt per reden, niet in een kruistabel.
+    # En geen reden 'type': die regel bestaat op deze firmware niet.
     assert "type" not in stand["drop"]
     assert "filter_drop_type" not in namen
 
@@ -113,29 +115,52 @@ JESSA_TABEL = ("[TYPE: HOPS,RATE] 00: 0,0 01: 0,0 02: 0,0 03: 0,0 04: 0,0 05: 0,
 JESSA_STATUS = "> Filter off: Blocked [ Hops: 3 | Rate: 0 | Channel: 0 | Hash: 1 | Malformed: 0 ]"
 
 
-def test_tabel_en_status_in_twee_pushes_worden_een_stand(db):
+JESSA_HOPS = "[TYPE: MAX_HOPS] 00: 8 01: 8 02: 8 03: 8 04: 8 05: 32 06: 8 07: 8 08: 8 09: 8 10: 8"
+JESSA_RATE = ("[TYPE: LIMIT,SECS] 00: 5,60 01: 5,60 02: 20,60 03: 5,60 04: 10,60 "
+              "05: 20,60 06: 5,60 07: 5,60 08: 5,60 09: 5,60 10: 5,60")
+
+
+def test_tellers_en_status_in_twee_pushes_worden_een_stand(db):
     """`filter count` en `filter` komen als aparte pushes; geen van beide mag de
     ander wissen, en alleen de statusregel levert een meetpunt."""
     rid = _rep(db)
     assert pfstock.apply_cli_filter(rid, {"cmd:filter count": JESSA_TABEL}, "cli") is True
     stand = db.filter_state_for(rid)
-    assert "on" not in stand and len(stand["limits"]) == 11
-    # Een tabel is configuratie, geen meting: geen filter_on/filter_dropped-punt.
+    assert "on" not in stand and len(stand["drop_types"]) == 11
+    assert "limits" not in stand                 # tellers zijn geen instellingen
+    # De tellers per type leveren (nog) geen eigen metriek: de reeksen die de
+    # grafieken lezen komen uit de statusregel.
     assert not {"filter_on", "filter_dropped"} & set(db.latest_for(rid))
 
     assert pfstock.apply_cli_filter(rid, {"cmd:filter": JESSA_STATUS}, "cli") is True
     stand = db.filter_state_for(rid)
     assert stand["on"] is False and stand["drop"]["hops"] == 3
-    assert len(stand["limits"]) == 11            # de tabel van de vorige push staat er nog
+    assert len(stand["drop_types"]) == 11        # de tabel van de vorige push staat er nog
     assert {"filter_on", "filter_dropped", "filter_drop_hops"} <= set(db.latest_for(rid))
 
 
-def test_help_en_status_in_dezelfde_push(db):
-    """Een volledige ronde levert ook `cmd:filter help`; die mag de stand niet
-    storen en de statusregel ernaast moet gewoon landen."""
+def test_de_twee_limiettabellen_vullen_elkaar_aan(db):
+    """De hoplimiet komt uit `filter hops`, de snelheidslimiet en het venster uit
+    `filter rate`. Geen van beide mag de kolom van de ander wissen."""
+    rid = _rep(db)
+    pfstock.apply_cli_filter(rid, {"cmd:filter hops": JESSA_HOPS}, "cli")
+    assert db.filter_state_for(rid)["limits"]["GRP_TXT"] == {"hops": 32}
+
+    pfstock.apply_cli_filter(rid, {"cmd:filter rate": JESSA_RATE}, "cli")
+    limieten = db.filter_state_for(rid)["limits"]
+    assert limieten["GRP_TXT"] == {"hops": 32, "rate": 20, "window": 60}
+    assert limieten["TXT_MSG"] == {"hops": 8, "rate": 20, "window": 60}
+
+
+def test_een_volledige_ronde_in_een_push(db):
+    """Een sweep levert alle vier de antwoorden tegelijk, plus `filter help` dat
+    geen stand is."""
     rid = _rep(db)
     values = {"cmd:filter help": "> filter [ help | on | off | reset | types | count ]",
-              "cmd:filter": JESSA_STATUS, "cmd:filter count": JESSA_TABEL}
+              "cmd:filter": JESSA_STATUS, "cmd:filter count": JESSA_TABEL,
+              "cmd:filter hops": JESSA_HOPS, "cmd:filter rate": JESSA_RATE}
     assert pfstock.apply_cli_filter(rid, values, "cli") is True
     stand = db.filter_state_for(rid)
-    assert stand["on"] is False and stand["drop"]["hash"] == 1 and len(stand["limits"]) == 11
+    assert stand["on"] is False and stand["drop"]["hash"] == 1
+    assert len(stand["drop_types"]) == 11
+    assert stand["limits"]["ADVERT"] == {"hops": 8, "rate": 10, "window": 60}

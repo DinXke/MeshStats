@@ -172,6 +172,29 @@ def test_poller_telt_alleen_als_hij_recent_gepold_heeft():
     assert route(poller_seen=None)["poller"] is False
 
 
+def test_wat_de_poller_kan_hangt_aan_wat_hij_zelf_zei():
+    """De wachtrij draagt twee soorten verzoeken en niet elke poller doet ze
+    allebei. Een knop die er één belooft, hoort te weten of die waargemaakt
+    wordt -- zie route_for("poller_refresh")."""
+    vers = stamp(1)
+    beide = route(poller_seen=vers)                       # niets gezegd
+    assert beide["poller_refresh"] is True and beide["poller_settings"] is True
+
+    node = route(poller_seen=vers, poller_caps=["settings"])
+    assert node["poller"] is True
+    assert node["poller_settings"] is True
+    assert node["poller_refresh"] is False                # MeshUptime laat die vallen
+
+    # Een poller die niets kan is er nog steeds, en dat blijft twee antwoorden.
+    leeg = route(poller_seen=vers, poller_caps=[])
+    assert leeg["poller"] is True and leeg["poller_refresh"] is False
+
+
+def test_zonder_verse_poller_kan_hij_ook_niets():
+    oud = route(poller_seen=stamp(60), poller_caps=["settings", "refresh"])
+    assert oud["poller_refresh"] is False and oud["poller_settings"] is False
+
+
 def test_node_die_lang_zweeg_wordt_gemeld_maar_niet_geweigerd():
     # Een opdracht wordt nergens bewaard voor een node die offline is, maar
     # "waarschijnlijk niet aangekomen" is iets anders dan "kan niet". De knop
