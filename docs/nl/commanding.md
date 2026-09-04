@@ -55,7 +55,9 @@ onbruikbaar tegelijk.
 ### Via een poller
 
 Een poller haalt `GET /api/v1/commands` op, vraagt de repeater over LoRa uit en
-POST het antwoord terug naar `/api/v1/repeater_settings`. *Wie* er pollt hoort
+POST het antwoord terug: instellingen naar `/api/v1/repeater_settings`, een
+statusbericht als metingen naar `/api/v1/ingest`. Wat een poller waarmaakt zegt
+hij zelf met `?caps=` op de wachtrij; zwijgt hij, dan gelden beide soorten. *Wie* er pollt hoort
 niet bij de weg: dat was lang alleen de Home Assistant-integratie, en het is nu
 de MeshUptime-node (of allebei — elke poller draagt zijn eigen token, en de
 pagina toont de naam van de laatst geziene als `poller_name`). Die weg blijft

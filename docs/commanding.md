@@ -53,7 +53,9 @@ same time.
 ### Via a poller
 
 A poller fetches `GET /api/v1/commands`, asks the repeater over LoRa and POSTs
-the answer back to `/api/v1/repeater_settings`. *Who* polls is not part of the
+the answer back: settings to `/api/v1/repeater_settings`, a status reply as
+metrics to `/api/v1/ingest`. What a poller actually delivers it states itself
+with `?caps=` on the queue; when it says nothing, both kinds apply. *Who* polls is not part of the
 route: it used to be the Home Assistant integration alone, and it is now the
 MeshUptime node (or both — every poller carries its own token, and the page shows
 the name of the one it last saw as `poller_name`). That route still exists, but
