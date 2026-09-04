@@ -1,38 +1,26 @@
 {% extends "admin/_layout.html" %}
+{% from "admin/_macros.html" import recht, waarom with context %}
 {% block title %}{{ rep.name }} — beheer — {{ site_name }}{% endblock %}
 {% block admin %}
 
-{#- Twee vragen per knop, en pas als ze allebei ja zeggen werkt hij.
+{#- De pagina van één node. Sinds de herindeling (docs/nl/beheer-ux.md) is dit
+    bestand de kapstok: de kop, de sectienavigatie, de meldingen van een net
+    uitgevoerde handeling, en de eerste twee secties. De rest staat per sectie
+    in admin/node/_*.html, in dezelfde volgorde als de navigatie -- oplopende
+    onomkeerbaarheid, met de zeldzame en ingrijpende blokken achteraan en
+    ingeklapt.
 
-    ``route``   wat er KÁN -- firmware, brokerverbinding, wie er publiceert.
-                Komt uit commanding.route_for.
-    ``rechten`` wat deze gebruiker MAG. Komt uit rbac.decide.
+    Waarom includes en niet één bestand: dit was 3100 regels, en de vraag "waar
+    staat het filter" kostte een zoekopdracht. Nu heet het bestand zo. De
+    macro's recht/waarom/hulp staan in admin/_macros.html, omdat een include
+    de macro's van zijn ouder niet ziet.
 
-    Deze macro zet de tweede om in de attributen van een knop. Een handeling die
-    niet mag verdwijnt niet: ze staat er uitgeschakeld, met de reden in de
-    tooltip -- dezelfde lijn die deze pagina overal aanhoudt voor knoppen die
-    niet kúnnen. Een knop die stilletjes weg is, laat iemand denken dat de site
-    stuk is; een knop die zegt waarom hij uit staat, laat hem weten wie hij moet
-    aanspreken.
-
-    Waarom een macro en niet per knop uitgeschreven: dertien knoppen die allemaal
-    hetzelfde `{% if %}` herhalen, zijn dertien plaatsen om er één te vergeten. -#}
-{%- macro recht(sleutel) -%}
-{%- set besluit = rechten[sleutel] -%}
-{%- if not besluit.allowed %} disabled title="{{ besluit.reason }}"{% endif %}
-{%- endmacro -%}
-{%- macro waarom(sleutel) -%}
-{%- set besluit = rechten[sleutel] -%}
-{%- if not besluit.allowed %}<p class="muted small">&#128274; {{ besluit.reason }}.</p>{% endif %}
-{%- endmacro -%}
-{#- Een compacte "?"-popover: de instelling staat vooraan, de uitleg zit erachter
-    en verschijnt bij hover of toetsenbordfocus. Puur CSS (zie .help in style.css),
-    geen JavaScript en geen externe assets, en zonder animatie -- dus ook goed
-    onder prefers-reduced-motion. De tekst staat in de DOM (role="note"), zodat een
-    schermlezer hem bereikt en hij niet verdwijnt voor wie niet kan hoveren. -#}
-{%- macro hulp(tekst) -%}
-<span class="help"><button type="button" class="help-btn" aria-label="Uitleg tonen">?</button><span class="help-pop" role="note">{{ tekst }}</span></span>
-{%- endmacro -%}
+    Twee vragen per knop, overal op deze pagina, en pas als ze allebei ja zeggen
+    werkt hij: ``route`` zegt wat er KÁN (commanding.route_for), ``rechten`` wat
+    deze gebruiker MAG (rbac.decide). Een knop die niet mag verdwijnt niet, maar
+    staat uit met de reden in de tooltip -- en sinds de herindeling geldt dat
+    voor de velden erbij ook (fieldset disabled), want een veld dat je kunt
+    vullen naast een knop die weigert is nog steeds een leugen. -#}
 
 {#- De kop is hier geen versiering. Elke knop op deze pagina raakt één bepaald
     apparaat, en de duurste fout die je op deze site kunt maken is dezelfde
@@ -53,17 +41,38 @@
     <a href="/r/{{ rep.slug }}">&rarr; publieke pagina</a>
     <a href="/admin">&larr; alle nodes</a>
   </div>
-  {#- Wat u hier mag, één keer bovenaan. Zonder die zin is elke uitgeschakelde
-      knop hieronder een losse verrassing. -#}
-  <p class="muted small">Uw rol op deze node: <strong>{{ mijn_rol or 'geen' }}</strong>.
-     Knoppen die uw rol niet toestaat staan uit, met de reden erbij.</p>
+  {#- Wat u hier mag, één keer bovenaan, mét de zin die bij de rol hoort
+      (rbac.ROL_UITLEG). Zonder die zin is elke uitgeschakelde knop hieronder
+      een losse verrassing; met die zin is het één regel die alles verklaart.
+      ``rol_uitleg`` ontbreekt in sommige testcontexten, vandaar de bewaking. -#}
+  <p class="muted small">Uw rol op deze node: <strong>{{ mijn_rol or 'geen' }}</strong>
+     {%- if mijn_rol and rol_uitleg is defined and rol_uitleg.get(mijn_rol) %} &mdash; {{ rol_uitleg[mijn_rol] }}{% endif %}.
+     Velden en knoppen die uw rol niet toestaat staan uit, met de reden in de tooltip.</p>
 </div>
+
+{#- De inhoudsopgave van deze pagina: gewone ankers, plakkend onder de topbar,
+    en zonder JavaScript compleet. Het script onderaan markeert alleen welke
+    sectie in beeld is. Volgorde = volgorde op de pagina = oplopende
+    onomkeerbaarheid. -#}
+<nav class="secnav" aria-label="Onderdelen van deze nodepagina" id="secnav">
+  <a href="#overzicht">Overzicht</a>
+  <a href="#zichtbaarheid">Zichtbaarheid</a>
+  <a href="#uitvragen">Uitvragen</a>
+  <a href="#instellingen">Instellingen</a>
+  <a href="#pakketfilter">Pakketfilter</a>
+  <a href="#klok">Klok</a>
+  <a href="#eigen-api">Beheer over IP</a>
+  {% if channels %}<a href="#kanalen">Kanalen</a>{% endif %}
+  <a href="#alarmen">Alarmen{% if alerts_open %} <span class="pill off">{{ alerts_open }}</span>{% endif %}</a>
+  <a href="#ingrijpend" class="risk-ingrijpend">Firmware en verwijderen</a>
+  <a href="#trail">Geschiedenis</a>
+</nav>
 
 {#- Waarom deze meldingen zo uitgebreid zijn: een opvraging loopt over een radio
     en kan op vier plaatsen doodlopen zonder ergens een fout op te leveren. De
     pagina meldde vroeger in álle gevallen "Opvraging gestart", ook toen er al
     dagen niemand meer was om ze te starten. Wat hier staat is wat er werkelijk
-    gebeurd is. -#}
+    gebeurd is. Ze staan bovenaan, want daar kijkt de pagina na een klik naartoe. -#}
 {% if status == "both" %}
 <div class="card notice">
   &#9203; Statusverzoek verstuurd naar de node <em>én</em> in de wachtrij gezet;
@@ -93,7 +102,7 @@
 {% elif status == "none" %}
 <div class="card notice">
   &#9888; Er is <strong>niets verstuurd</strong> &mdash; er was op dit ogenblik geen weg
-  naar deze repeater. De uitleg staat bij het blok <em>Uitvragen</em> hieronder.
+  naar deze repeater. De uitleg staat bij het blok <a href="#uitvragen">Uitvragen</a>.
 </div>
 {% endif %}
 
@@ -129,13 +138,13 @@
 {% elif requested == "ip" %}
 <div class="card notice">
   &#9989; De instellingen zijn <strong>nu gelezen uit de eigen API</strong> van deze node
-  (<span class="mono">/cfg.json</span>), over IP. Ze staan hieronder in de tabel; er is
-  niets onderweg en niets om op te wachten.
+  (<span class="mono">/cfg.json</span>), over IP. Ze staan bij <a href="#uitvragen">Uitvragen</a>
+  in de tabel; er is niets onderweg en niets om op te wachten.
 </div>
 {% elif requested == "none" %}
 <div class="card notice">
   &#9888; Er is <strong>niets verstuurd</strong> — er was op dit ogenblik geen weg
-  naar deze repeater. De uitleg staat bij de knop hieronder.
+  naar deze repeater. De uitleg staat bij <a href="#uitvragen">Uitvragen</a>.
 </div>
 {% elif queued_since %}
 <div class="card notice">
@@ -148,21 +157,21 @@
 {% elif delivery_unanswered %}
 {#- Het derde geval, en het gemeenste: de poller hééft het verzoek meegenomen
     en er is daarna niets teruggekomen. Een lege wachtrij ziet er dan uit als
-    een geslaagde opvraging, en de tabel hieronder toont ongewijzigd wat er al
-    stond. Alleen het uitreikingsmoment naast de ouderdom van de waarden maakt
-    dat zichtbaar. -#}
+    een geslaagde opvraging, en de tabel toont ongewijzigd wat er al stond.
+    Alleen het uitreikingsmoment naast de ouderdom van de waarden maakt dat
+    zichtbaar. -#}
 <div class="card notice">
   &#9888; Een poller heeft de laatste opvraging
   <time class="reltime" datetime="{{ delivered_since }}">{{ delivered_since }}</time>
   meegenomen, en sindsdien is er geen enkel antwoord binnengekomen. De wachtrij is
   dus wél leeggehaald; wat erna moest gebeuren — inloggen op de repeater en de
   parameters over LoRa opvragen — is niet gelukt of niet geprobeerd. De waarden
-  hieronder zijn ouder dan dat.
+  bij <a href="#uitvragen">Uitvragen</a> zijn ouder dan dat.
 </div>
 {% endif %}
 
-<section>
-  <h2>Identiteit en versies</h2>
+<section id="overzicht">
+  <h2>Overzicht</h2>
   <div class="card">
   {#- Het beheerniveau staat bovenaan en niet onderaan, omdat het de vraag
       beantwoordt die je hebt vóór je naar beneden scrolt: wat kan ik hier
@@ -189,7 +198,7 @@
       verzoek. Geen firmware-upgrade van hieraf: het is onze firmware niet, en een image voor
       het verkeerde bord maakt een node stuk.
       <strong>En let op wat deze weg is:</strong> dit is WiFi en niet het mesh. Valt die
-      verbinding weg, dan valt dit hele blok weg &mdash; zie <em>Beheer over IP</em> hieronder.
+      verbinding weg, dan valt dit hele blok weg &mdash; zie <a href="#eigen-api">Beheer over IP</a>.
       {%- elif route.level == 'full_managed' %}
       Onze firmware met MQTT-koppeling. Uitvragen, instellingen, klok en &mdash; als er ook een
       IP-pad naar dit apparaat is &mdash; een firmware-upgrade horen hier allemaal te kunnen.
@@ -206,7 +215,7 @@
     </p>
   </div>
 
-  <table>
+  <table class="kv">
     <tr><td>Sleutelprefix</td><td class="mono">{{ rep.pubkey_prefix }}</td></tr>
     <tr><td>Slug (URL)</td><td class="mono"><a href="/r/{{ rep.slug }}">{{ rep.slug }}</a></td></tr>
     <tr><td>Bron van de cijfers</td><td>
@@ -225,7 +234,7 @@
         zich afvraagt waarom een knop uit staat, kijkt eerst hier. #}
     <tr><td>Nodefirmware (MeshManager)</td><td class="mono">{{ rep.fw_meshmanager or '—' }}
       {%- if not rep.fw_meshmanager %} <span class="muted">— zonder deze versie stuurt de site
-      niets naar deze node; zie de uitleg bij <em>Uitvragen</em></span>{% endif %}</td></tr>
+      niets naar deze node; zie de uitleg bij <a href="#uitvragen">Uitvragen</a></span>{% endif %}</td></tr>
     {#- De derde weg, en hij staat in deze tabel omdat hij bij de IDENTITEIT hoort en
         niet bij een handeling: of een node zijn eigen API aanbiedt, is wat hij is.
         Alleen tonen waar er een adres staat -- op elke andere nodepagina zou het
@@ -239,2883 +248,201 @@
     {% endif %}
   </table>
 
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/rename" class="rowform">
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/rename" class="frm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="name" value="{{ rep.name }}" aria-label="Naam van deze repeater"
-           {{- recht('node.hernoemen') }}>
-    <button type="submit"{{ recht('node.hernoemen') }}>Naam opslaan</button>
+    <label class="frm-label" for="node-name">Naam op deze site</label>
+    <fieldset class="frm-field"{{ recht('node.hernoemen') }}>
+      <input id="node-name" name="name" value="{{ rep.name }}" aria-label="Naam van deze repeater">
+      <p class="frm-hint">De naam is alleen van deze site: hij verandert niets op het apparaat en
+         is zo weer terug te zetten. Een node die zichzelf anders noemt, overschrijft hem wél &mdash;
+         zijn eigen naam wint bij het volgende bericht.</p>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ recht('node.hernoemen') }}>Naam opslaan</button></div>
   </form>
   {{ waarom('node.hernoemen') }}
-  <p class="muted small">De naam is alleen van deze site: hij verandert niets op het apparaat en
-     is zo weer terug te zetten. Een node die zichzelf anders noemt, overschrijft hem wél &mdash;
-     zijn eigen naam wint bij het volgende bericht.</p>
-
   </div>
 </section>
 
 <section id="zichtbaarheid">
   <h2>Zichtbaarheid op de site</h2>
   <div class="card">
+  {#- Vier schakelaars in één blok en niet in vier secties: het is één vraag --
+      wat ziet een bezoeker van deze node -- met vier antwoorden. Ze staan in
+      afnemende zwaarte: de eerste haalt de hele node weg, de andere halen er
+      één ding uit.
 
-  {#- Drie knoppen in één blok en niet in drie secties: het is één vraag -- wat
-      ziet een bezoeker van deze node -- met drie antwoorden. Ze staan in
-      afnemende zwaarte: de eerste haalt de hele node weg, de andere twee halen
-      er één ding uit.
+      Elke schakelaar staat naast wat hij werkelijk doet, in één zin; de rest
+      van de uitleg staat in een uitklapper eronder. De handhaving zelf zit in
+      db.visible_contacts en db.public_name; als je die tekst wijzigt, controleer
+      dan eerst of de code nog doet wat er komt te staan. Een schakelaar die
+      belooft iets te verbergen terwijl één endpoint het nog uitlevert, is erger
+      dan geen schakelaar.
 
-      Elke knop staat naast wat hij werkelijk doet, en dat is hier het hele
-      punt. De handhaving zelf zit in db.visible_contacts en db.public_name;
-      als je die tekst wijzigt, controleer dan eerst of de code nog doet wat er
-      komt te staan. Een schakelaar die belooft iets te verbergen terwijl één
-      endpoint het nog uitlevert, is erger dan geen schakelaar. -#}
+      De pillen zijn de knop: één klik, omkeerbaar met dezelfde klik, geen
+      bevestiging. Ze staan rechts, waar op elke andere formulierrij de knop
+      staat. -#}
+  <p class="card-desc">Wat een bezoeker van deze node te zien krijgt. Elke schakelaar is met
+     dezelfde klik terug te draaien; vandaar geen bevestigingsvraag.</p>
+  {{ waarom('node.zichtbaarheid') }}
 
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="back" value="node">
-    <input type="hidden" name="what" value="public">
-    <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}"{{ recht('node.zichtbaarheid') }}>
-      {{ 'publiek — klik om te verbergen' if rep.is_public else 'verborgen — klik om publiek te maken' }}</button>
-  </form>
-  <p class="muted small">Verborgen betekent: niet op de startpagina, en <code>/r/{{ rep.slug }}</code>
-     geeft 404 voor bezoekers. De gegevens blijven staan en de node blijft gewoon binnenkomen.
-     Omkeerbaar met dezelfde klik &mdash; vandaar geen bevestigingsvraag.</p>
-
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="back" value="node">
-    <input type="hidden" name="what" value="position">
-    <button type="submit" class="pill {{ 'on' if rep.show_position else 'off' }}"{{ recht('node.zichtbaarheid') }}>
-      {{ 'positie zichtbaar — klik om te verbergen' if rep.show_position else 'positie verborgen — klik om te tonen' }}</button>
-  </form>
-  <p class="muted small">Staat dit uit, dan gedraagt de site zich alsof ze van deze node
-     nooit een locatie gehoord heeft. Geen bolletje op de live kaart, geen plek in de
-     kaart van een repeater die hem als buur ziet, geen coördinaat in een pakket of in
-     de zoekresultaten, en geen eindpunt van een lijn in de drukte-heatmap &mdash; die
-     lijn breekt daar, net zoals bij een hop die op meer dan één node past. Het land
-     gaat mee weg: dat is uit de coördinaten berekend en dus niets anders dan een grove
-     vorm ervan. Wat blijft: de naam, alle cijfers, de burenlijst en de SNR&rsquo;s.</p>
-
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="back" value="node">
-    <input type="hidden" name="what" value="name">
-    <button type="submit" class="pill {{ 'on' if rep.show_name else 'off' }}"{{ recht('node.zichtbaarheid') }}>
-      {{ 'naam zichtbaar — klik om te verbergen' if rep.show_name else 'naam verborgen — klik om te tonen' }}</button>
-  </form>
-  <p class="muted small">Staat dit uit, dan heet deze node overal op de publieke site
-     <code>{{ '0x' ~ rep.pubkey_prefix[:2]|upper }}</code> &mdash; de adreshash, precies wat de
-     pakkettenlijst al toont voor een afzender die ze niet kan noemen. Ook in de burenlijst
-     van een ándere repeater, en de zoekfunctie vindt hem niet meer op zijn echte naam.
-     De naam hierboven blijft staan: die is voor jou, en voor de opdrachten die deze site
-     naar de node stuurt.</p>
-
-  {#- De derde vlag, en ze verdient haar eigen alinea. Een kanaalnaam is nooit
-      over de radio gegaan -- anders dan de naam en de positie hierboven -- en
-      sinds hij automatisch uit de eigen API van een sensornode komt, heeft er
-      niemand per naam besloten dat hij publiek mag. -#}
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="back" value="node">
-    <input type="hidden" name="what" value="channels">
-    <button type="submit" class="pill {{ 'on' if rep.show_channels else 'off' }}"{{ recht('node.zichtbaarheid') }}>
-      {{ 'kanaalnamen zichtbaar — klik om te verbergen' if rep.show_channels else 'kanaalnamen verborgen — klik om te tonen' }}</button>
-  </form>
-  <p class="muted small"><strong>Kijk hier naar voor je een sensornode publiek zet.</strong>
-     Anders dan de naam en de positie hierboven is een kanaalnaam <em>nooit uitgezonden</em>:
-     hij komt uit de eigen API van de node of uit uw toetsenbord, en hij kan een intern adres
-     bevatten &mdash; <code>hoas (hoas.scheepers.one)</code> is een naam die deze site zelf zou
-     publiceren en die over de radio nooit langskwam. Sinds de namen automatisch uit
-     <span class="mono">/status.json</span> komen, heeft niemand per naam besloten dat dat mag.
-     Staat dit uit, dan heet elk kanaal op de publieke site en in de API weer
-     &ldquo;kanaal N&rdquo; &mdash; niet de ruwe metricnaam, want die verklapt het nummer en de
-     vorm van de meting alsnog. De namen in <a href="#kanalen">Namen bij de kanalen</a> blijven
-     staan: die zijn voor u.</p>
-
-  <p class="muted small"><strong>Wat geen van deze vier knoppen verbergt:</strong> de
-     sleutelprefix <code>{{ rep.pubkey_prefix }}</code>. Die zit in elke advert die deze node
-     uitzendt en is voor iedereen met een radio te horen; doen alsof deze site hem geheim
-     kan houden zou een belofte zijn die het apparaat zelf tegenspreekt. Hetzelfde geldt
-     voor <code>/r/{{ rep.slug }}</code>: de slug is ooit uit de naam gemaakt en verandert niet
-     mee. Wil je die ook kwijt, verwijder de node dan hieronder en laat hem opnieuw
-     aanmelden onder de naam die je wél kwijt kunt.</p>
-  </div>
-</section>
-
-<section>
-  <h2>Uitvragen</h2>
-  <div class="card tablecard">
-  <table>
-    <thead><tr><th>Parameter</th><th>Waarde</th><th>Opgehaald</th></tr></thead>
-    <tbody>
-    {% for row in settings_rows %}
-      <tr>
-        <td class="mono">{{ row.param }}</td>
-        <td class="mono prewrap">{% if row.value is not none %}{{ row.value }}{% else %}<span class="muted">(geen antwoord)</span>{% endif %}</td>
-        <td>{% if row.updated %}<time class="reltime" datetime="{{ row.updated }}">{{ row.updated }}</time>{% endif %}</td>
-      </tr>
-    {% else %}
-      <tr><td colspan="3" class="muted">Nog niets opgehaald. Een node met de nodefirmware
-        leest zijn eigen instellingen één keer per dag uit en stuurt ze mee met zijn
-        statistieken; met de knop hieronder vraag je er nu een.</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-
-  {#- Twee handelingen, allebei in een act-blok en niet als kale knop tussen de
-      tekst. Ze lezen alleen -- er verandert niets op het apparaat -- maar ze
-      kosten wél zendtijd op een band die iedereen deelt, en dat is de reden dat
-      ze zwaarder ogen dan het vinkje hierboven. Een bevestigingsvraag staat er
-      niet op: wat je hier fout kunt doen kost een halve minuut lucht en is met
-      niets meer terug te draaien dan geduld. -#}
-  <div class="act act--read">
-    <div class="act-head">
-      <h3>Instellingen nu opvragen</h3>
-      <span class="act-tag">kost zendtijd</span>
+  <div class="frm frm-first">
+    <span class="frm-label">Op de site</span>
+    <div class="frm-field">
+      <p class="frm-hint">Verborgen betekent: niet op de startpagina, en <code>/r/{{ rep.slug }}</code>
+         geeft 404 voor bezoekers. De gegevens blijven staan en de node blijft gewoon binnenkomen.</p>
     </div>
-    <p class="muted small">
-      {%- if route.mqtt and route.poller %}
-      Beschikbaar: rechtstreeks aan node <span class="mono">{{ route.node }}</span> over MQTT,
-      én via de poller{% if route.poller_name %} (<span class="mono">{{ route.poller_name }}</span>){% endif %} over LoRa.
-      {%- elif route.mqtt and route.via_monitor %}
-      Deze repeater publiceert zelf niet, maar node <span class="mono">{{ route.node }}</span>
-      monitort hem en kan hem over LoRa uitvragen (nodefirmware {{ route.fw_meshmanager }}).
-      De site vraagt het aan die node; die logt in bij deze repeater, stelt de parameters
-      één voor één en publiceert de antwoorden onder deze repeater. Wat onbeantwoord
-      blijft komt hierboven als “(geen antwoord)” te staan in plaats van als een oude
-      waarde die vers lijkt.
-      {%- elif route.mqtt %}
-      De site vraagt het rechtstreeks aan node <span class="mono">{{ route.node }}</span> over
-      MQTT (nodefirmware {{ route.fw_meshmanager }}). Die leest zijn eigen CLI uit en stuurt de
-      waarden mee met zijn eerstvolgende statistiekbericht.
-      {%- elif route.poller %}
-      De rechtstreekse weg is dicht, dus dit loopt via de wachtrij en de poller{% if route.poller_name %} (<span class="mono">{{ route.poller_name }}</span>){% endif %}.
-      {%- else %}
-      Geen van beide wegen staat open, en daarom doet de knop niets.
-      {%- endif %}
-    </p>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/settings/refresh">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      {% if route.mqtt or route.poller %}
-      <button type="submit"{{ recht('node.uitvragen') }}>&#128225; Instellingen nu opvragen</button>
-      {% else %}
-      <button type="submit" disabled title="Er is op dit ogenblik geen weg naar deze repeater">
-        &#128225; Opvragen kan nu niet</button>
-      {% endif %}
-    </form>
-  </div>
-
-  <div class="act act--read">
-    <div class="act-head">
-      <h3>Nu een verse status vragen</h3>
-      <span class="act-tag">kost zendtijd</span>
-    </div>
-    <p class="muted small">Vraagt om één statusbericht (batterij, uptime, buren) in plaats van te
-       wachten op het eerstvolgende. Het datapunt verschijnt op de
-       <a href="/r/{{ rep.slug }}">publieke pagina</a> van deze repeater.
-       {%- if route.via_monitor %} Deze repeater publiceert zelf niet; zijn cijfers komen van de
-       node die hem monitort, en die stuurt ze op zijn eigen rondes &mdash; hem hierom vragen kan
-       niet, dus als er nog een poller is loopt dit langs die weg.{% endif %}</p>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/refresh">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="back" value="node">
-      {% if ('status' in route.commands and route.mqtt) or route.poller_refresh %}
-      <button type="submit"{{ recht('node.uitvragen') }}>&#8635; Status nu opvragen</button>
-      {% else %}
-      <button type="submit" disabled title="Er is op dit ogenblik geen weg om dit te vragen">
-        &#8635; Status opvragen kan nu niet</button>
-      {% endif %}
-    </form>
-  </div>
-
-  {% if not route.mqtt %}
-  <p class="muted small">
-    <strong>Rechtstreeks (MQTT):</strong>
-    {%- if route.blocker == "no_source" %}
-    er is nog geen enkel bericht van deze repeater binnengekomen, dus is niet bekend
-    welke node ervoor publiceert.
-    {%- elif route.blocker == "http_source" %}
-    deze repeater komt binnen via de HTTP-API en niet via MQTT; langs die weg valt een
-    node niets te vragen.
-    {%- elif route.blocker == "relay_unknown" %}
-    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
-    en die node is hier zelf geen bekende repeater. Van zijn firmware weten we dus niets,
-    en een opdracht sturen zou neerkomen op hopen dat hij hem kent.
-    {%- elif route.blocker == "no_fw" and route.via_monitor %}
-    deze cijfers worden doorgestuurd door node <span class="mono">{{ route.node }}</span>,
-    en die meldt geen firmwareversie. Alleen een monitor die de sweep kent kan deze
-    repeater over LoRa uitvragen, en of dat zo is valt niet vast te stellen.
-    {%- elif route.blocker == "no_fw" %}
-    de node meldt geen firmwareversie, dus valt niet vast te stellen of hij opdrachten
-    aanneemt. Publiceren zou hier neerkomen op hopen.
-    {%- elif route.blocker == "old_fw" and route.via_monitor %}
-    deze repeater publiceert zelf niet; node <span class="mono">{{ route.node }}</span>
-    stuurt zijn cijfers door en draait nodefirmware {{ route.fw_meshmanager }}. Een gemonitorde
-    repeater over LoRa uitvragen kan pas vanaf {{ route.min_fw }} — oudere firmware weigert
-    het argument en telt de opdracht als geweigerd.
-    {%- elif route.blocker == "old_fw" %}
-    de node draait nodefirmware {{ route.fw_meshmanager }}. Opdrachten over MQTT bestaan pas
-    vanaf {{ route.min_fw }}; oudere firmware schrijft zich niet in op het cmd-topic, dus de
-    broker gooit het bericht weg zonder dat iemand het merkt.
-    {%- elif route.blocker == "broker_down" %}
-    de site heeft op dit ogenblik geen verbinding met de MQTT-broker.
-    {%- endif %}
-  </p>
-  {% elif route.node_stale %}
-  <p class="muted small">
-    &#9888; De laatste statistieken van deze node kwamen
-    <time class="reltime" datetime="{{ route.node_seen }}">{{ route.node_seen }}</time> binnen.
-    Een opdracht wordt niet bewaard voor een node die offline is: staat zijn WiFi in zuinige
-    modus uit, dan komt ze niet aan en verschijnt hier gewoon niets.
-  </p>
-  {% endif %}
-
-  <p class="muted small">
-    <strong>Poller (Home Assistant):</strong>
-    {%- if route.poller %}
-    aanwezig, laatste poll
-    <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
-    Vereist wel dat het repeater-wachtwoord in de integratie ingevuld staat.
-    {%- elif route.poller_seen %}
-    niets meer opgehaald sinds
-    <time class="reltime" datetime="{{ route.poller_seen }}">{{ route.poller_seen }}</time>.
-    De integratie geldt als afwezig, dus er wordt niets meer in de wachtrij gelegd.
-    {%- else %}
-    er heeft nog nooit iemand <span class="mono">/api/v1/commands</span> opgehaald. Deze weg
-    is optioneel — zonder poller doet de node het zelf.
-    {%- endif %}
-  </p>
-  <p class="muted small">Wélke parameters er opgevraagd worden, staat niet hier maar bij
-     <a href="/admin/server#cli-params">Server en site</a>: het is één lijst voor alle repeaters.</p>
-  </div>
-</section>
-
-{#- De klok. Eigen sectie en niet een knop bij het uitvragen, omdat het een
-    andere handeling is met een andere prijs: instellingen opvragen leest, dit
-    schrijft, en het schrijft op een node die je daarna niet meer kunt
-    terugdraaien. Wat er hieronder zo uitgebreid staat, staat er om dezelfde
-    reden als bij de opvraagknop hierboven: dit loopt over een radio en kan op
-    meer dan één plaats doodlopen zonder ergens een fout op te leveren. -#}
-{#- Instellingen schrijven. Bewust ná "Uitvragen" en vóór "Klok": lezen is
-    gratis en onschuldig, dit niet. De parameterlijst, hun types, grenzen en
-    risicoklasse komen van de node zelf, want de firmware is er de baas over.
-    Een tweede lijst hier zou vroeg of laat iets aanbieden dat de node weigert. -#}
-<section>
-  <h2>Uitvraagschema</h2>
-  <div class="card">
-    <p class="muted small">
-      Hoe vaak deze node zijn CLI-instellingen opnieuw laat uitvragen. Standaard
-      <strong>uit</strong>: een node die erbij komt hoort niet ongevraagd zendtijd te
-      gaan kosten. Eén ronde is twintig vragen en twintig antwoorden over LoRa, en bij
-      een gemonitorde node betaalt een repeater op een dak dat.
-    </p>
-
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/schedule" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      {#- Vrij getal plus eenheid in plaats van een keuzelijst, zodat ook 5 minuten
-          kan. 0 blijft uit. De keuzelijst had alleen hele uren en kon dus niet
-          uitdrukken wat hier gevraagd werd. -#}
-      <label>Elke
-        <input type="number" name="sweep_value" min="0" max="43200" step="1"
-               style="width:5.5em"
-               value="{{ (sweep_minutes // 60) if sweep_minutes and sweep_minutes % 60 == 0 else sweep_minutes }}">
-        <select name="sweep_unit">
-          <option value="m"{% if sweep_minutes and sweep_minutes % 60 != 0 %} selected{% endif %}>minuten</option>
-          <option value="h"{% if not sweep_minutes or sweep_minutes % 60 == 0 %} selected{% endif %}>uur</option>
-        </select>
-      </label>
-      <button type="submit">Opslaan</button>
-      <span class="muted small">0 = uit</span>
-    </form>
-
-    {#- De wens staat hierboven; dit is wat de globale grenzen ervan maken. Zie de
-        toelichting bij set_schedule: de wens stil bijstellen zou een instelling
-        tonen die niet klopt. -#}
-    {% if sweep_minutes and sweep_minutes < sweep_gap_min %}
-    <p class="small"><strong>Let op:</strong> de wachtrij houdt minimaal
-      {{ sweep_gap_min }} minuten tussen twee rondes aan, en er gaan maximaal
-      {{ sweep_max_day }} rondes per etmaal over álle nodes samen. Een interval van
-      {{ sweep_minutes }} minuten betekent hier dus &laquo;zo vaak als mag&raquo;,
-      niet letterlijk elke {{ sweep_minutes }} minuten.</p>
-    {% endif %}
-
-    <p class="small">
-      {%- if not sweep_hours %}
-      <strong>Uit.</strong> Deze node wordt alleen uitgevraagd als iemand op de knop
-      hierboven drukt. Dat is geen storing — maar het betekent wel dat de waarden
-      blijven staan zoals ze waren, hoe oud ze ook worden.
-      {%- elif sweep_next is none %}
-      <strong>Ingesteld op elke {{ sweep_hours }} uur.</strong>
-      {%- elif sweep_next == 0 %}
-      <strong>Elke {{ sweep_hours }} uur.</strong> Deze node is nu aan de beurt; de
-      planner pakt hem zodra de minimumafstand van {{ sweep_status.min_gap_min }} minuten
-      sinds de vorige ronde verstreken is.
-      {%- else %}
-      <strong>Elke {{ sweep_hours }} uur.</strong> Volgende ronde over ongeveer
-      {% if sweep_next >= 3600 %}{{ (sweep_next // 3600) }} uur{% else %}{{ (sweep_next // 60) }} minuten{% endif %}.
-      {%- endif %}
-    </p>
-
-    {% if sweep_last %}
-    {#- Drie uitkomsten en niet één, en dat is de reden dat dit blok bestaat.
-        'Gevraagd' was te optimistisch: publiceren lukt zodra de broker de bytes
-        aanneemt, en een geslaagde ronde zag er identiek uit aan een verdwenen
-        ronde. Daarom staat 'geen antwoord' hier als een probleem en niet als een
-        mededeling. -#}
-    <p class="small{% if sweep_last.result == 'gevraagd, geen antwoord' %} cmp-off{% endif %}"
-       {%- if sweep_last.result == 'gevraagd, geen antwoord' %} style="padding:.4rem .5rem"{% endif %}>
-      <strong>Laatst gevraagd:</strong> {{ sweep_last.result }} —
-      <time class="reltime" datetime="{{ sweep_last.asked }}">{{ sweep_last.asked }}</time>.
-      {%- if sweep_last.result.startswith("geen weg") %}
-      Er was toen geen weg naar deze node. De planner heeft dat opgeschreven in plaats
-      van het elke minuut opnieuw te proberen, anders zou hij de wachtrij blokkeren.
-      {%- elif sweep_last.result == "gevraagd, geen antwoord" %}
-      <strong>Het verzoek vertrok en er kwam niets terug.</strong> De waarden hierboven
-      zijn dus niet verser geworden. Mogelijke oorzaken: de monitor sliep op zijn
-      zonnebudget, hij weigerde omdat er net een andere ronde liep, of deze node staat
-      niet in zijn monitorlijst. Kijk bij <em>Instellingen schrijven</em> hoe zijn
-      monitor bij hem binnenkomt.
-      {%- elif sweep_last.result == "versturen mislukt" %}
-      Er is niets vertrokken — geen brokerverbinding op dat moment.
-      {%- elif sweep_last.result == "gevraagd, antwoord binnen" %}
-      De waarden hierboven zijn daarna verser geworden, dus de ronde is gelopen.
-      {%- else %}
-      Het verzoek is verstuurd; of de ronde ook gelopen heeft, staat er over enkele
-      minuten bij — de planner kijkt dan of de waarden verser geworden zijn.
-      {%- endif %}
-    </p>
-    {% endif %}
-
-    {% if not sweep_status.enabled %}
-    <p class="muted small"><strong>De planner staat uit</strong> op deze server
-      (<code>MM_SWEEP_ENABLED</code>), dus dit schema doet voorlopig niets.</p>
-    {% elif sweep_status.today >= sweep_status.max_per_day %}
-    <p class="muted small"><strong>Het dagbudget is op.</strong> Er zijn vandaag al
-      {{ sweep_status.today }} rondes gestart en de bovengrens staat op
-      {{ sweep_status.max_per_day }}. Schema's schuiven dan op — het interval is een
-      wens, dit is wat er werkelijk gebeurt.</p>
-    {% else %}
-    <p class="muted small">
-      Vandaag {{ sweep_status.today }} van hoogstens {{ sweep_status.max_per_day }} rondes
-      gestart, met minstens {{ sweep_status.min_gap_min }} minuten ertussen — over alle
-      nodes samen, zodat tien schema's die op hetzelfde uur vallen de band niet een uur
-      bezet houden.
-    </p>
-    {% endif %}
-  </div>
-</section>
-
-{#- ==================== Beheer over IP ====================================
-
-    Een eigen sectie en niet een paar knoppen tussen "Uitvragen", omdat dit een
-    andere WEG is en niet een andere knop. Alles hierboven loopt over het mesh of
-    over de broker; alles hieronder loopt over WiFi naar de node zelf. Dat
-    verschil bepaalt wat er gebeurt als er iets wegvalt, en wie dat niet weet
-    leest straks een lege grafiek als een stille node.
-
-    De sectie staat op elke nodepagina en niet alleen waar er een adres staat.
-    Zonder adres is ze twee zinnen en een invoerveld -- want anders is dit een
-    mogelijkheid die alleen bestaat voor wie er al van wist. -#}
-<section id="eigen-api">
-  <h2>Beheer over IP</h2>
-  <div class="card">
-
-  {% if sensor_result %}
-  <div class="notice">
-    {%- if sensor_result.soort == 'poll' and sensor_result.ok %}
-    &#9989; Uitgelezen: {{ sensor_result.metrics }} metingen,
-    {{ sensor_result.channels }} kanaalnaam/-namen bijgewerkt,
-    {{ sensor_result.neighbors }} buren.
-    {% if sensor_result.error %}<br>&#9888; {{ sensor_result.error }}{% endif %}
-    {%- elif sensor_result.soort == 'clock' and sensor_result.ok %}
-    &#9989; De klok is gezet op de tijd van deze server
-    (<span class="mono">time {{ sensor_result.epoch }}</span>). De node antwoordde:
-    <span class="mono">{{ sensor_result.reply }}</span>
-    {%- elif sensor_result.soort == 'clock' %}
-    &#9888; De klok is <strong>niet</strong> gezet: {{ sensor_result.reason }}
-    {%- elif sensor_result.soort == 'region' and sensor_result.ok %}
-    &#9989; Regio gezet en vastgelegd. <span class="mono">{{ sensor_result.set }}</span>
-    &middot; <span class="mono">{{ sensor_result.saved }}</span>
-    {%- elif sensor_result.soort == 'rotate' and sensor_result.ok %}
-    &#9989; Deze node heeft nu een <strong>eigen weblogin</strong>
-    (gebruiker <span class="mono">{{ sensor_result.user }}</span>). Het wachtwoord is
-    door de server gezet en bewaard; het staat nergens leesbaar, ook niet in het
-    audittrail. De node gebruikt het vanaf zijn volgende verzoek.
-    {%- elif sensor_result.soort == 'rotate' %}
-    &#9888; De weblogin is <strong>niet</strong> geroteerd: {{ sensor_result.error }}.
-    Er is niets aan de opslag veranderd &mdash; de node blijft op de vorige login.
-    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'bot', 'backup', 'restore') and sensor_result.ok %}
-    &#9989; {{ sensor_result.msg }}.
-    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'bot', 'backup', 'restore') %}
-    &#9888; {{ sensor_result.error or 'niets gebeurd' }}.
-    {%- elif sensor_result.ok %}
-    &#9989; <span class="mono">{{ sensor_result.reply }}</span>
-    {%- else %}
-    &#9888; {{ sensor_result.error or sensor_result.reply or 'niets gebeurd' }}
-    {%- endif %}
-  </div>
-  {% endif %}
-
-  {#- Dit blok staat vóór de knoppen en niet in een voetnoot erna. Wie hier komt
-      om iets te doen, hoort eerst te weten waarover hij het doet -- en de vorige
-      keer dat deze weg wegviel, viel hij helemaal weg. -#}
-  <p class="muted small"><strong>Dit gaat over IP en niet over het mesh.</strong>
-     Alles in dit blok loopt over de WiFi-verbinding van deze node naar zijn eigen
-     webserver: <span class="mono">/status.json</span> om te lezen en
-     <span class="mono">POST /cli</span> om te schrijven, achter dezelfde weblogin als de
-     firmwareweg. Dat is snel en het antwoord komt in hetzelfde verzoek terug &mdash; en het
-     is precies zo betrouwbaar als die WiFi.</p>
-
-  <p class="error small"><strong>Valt de WiFi weg, dan valt dit hele blok weg.</strong>
-     Dat is geen theoretische kanttekening. In de voedingsmeting van 19 augustus 2026 gaf
-     deze node op batterij eerst met tussenpozen geen antwoord (vier van de eerste vijftien
-     pollingen) en daarna veertien pollingen op rij niets, terwijl hij over LoRa gewoon
-     bestond. Het <strong>mesh</strong> is de weg die voor dat geval bedoeld is, en die werkt
-     op dit ogenblik <strong>niet</strong>: de uitvraagronde begint met een login die geen
-     antwoord krijgt, en de ronde is bovendien op een repeater afgestemd &mdash; een
-     sensornode implementeert het statusverzoek niet en antwoordt op een burenverzoek
-     letterlijk &ldquo;not supported&rdquo;. Zolang dat zo is, is dit blok de enige beheerweg
-     naar deze node, en niet de snelste van twee.</p>
-
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="sensor_host" value="{{ rep.sensor_host or '' }}"
-           placeholder="192.168.0.10" spellcheck="false" autocomplete="off"
-           aria-label="Adres van de eigen API van deze node"{{ recht('node.beheeradres') }}>
-    <button type="submit"{{ recht('node.beheeradres') }}>Adres opslaan</button>
-  </form>
-  {{ waarom('node.beheeradres') }}
-  <p class="muted small">Een apart veld naast het <em>beheeradres</em> op de firmwarepagina, en
-     met opzet: dat veld betekent &ldquo;daar staat onze repeaterfirmware&rdquo;, met een
-     firmware-upgrade erachter. Deze node draait die firmware niet. Eén veld voor beide zou een
-     image aanbieden aan een bord waarvan wij de bouwomgeving niet kennen. Leegmaken wist ook de
-     waarneming hieronder &mdash; dan is er geen weg meer, en dan zegt de pagina dat ook.</p>
-
-  {% if not sensor_route %}
-  <p class="muted small">Er staat nog geen adres, dus er is langs deze weg niets te doen. Dit is
-     alleen zinvol voor een node die zelf een API aanbiedt (een MeshUptime-sensornode); voor
-     onze eigen repeaterfirmware is het beheeradres op de firmwarepagina de juiste plek.</p>
-  {% else %}
-
-  <table>
-    <tr><td>Adres</td><td class="mono">{{ sensor_route.host }}</td></tr>
-    <tr><td>Laatst geantwoord</td><td>
-      {%- if route.ip_api.seen %}<time class="reltime" datetime="{{ route.ip_api.seen }}">{{ route.ip_api.seen }}</time>
-      {%- if not route.ip_api.fresh %} <span class="error">&mdash; ouder dan
-        {{ (route.ip_api.stale_after_s // 60) }} minuten; deze weg draagt op dit ogenblik
-        waarschijnlijk niet</span>{% endif %}
-      {%- else %}<span class="error">nooit</span>{% endif %}</td></tr>
-    <tr><td>Firmware van de node</td><td class="mono">{{ route.ip_api.fw or '—' }}</td></tr>
-    <tr><td>Uitleesronde</td><td>
-      {%- if sensor_enabled %}elke {{ sensor_interval_s }} s
-      {%- else %}<span class="error">staat uit op deze server (MM_SENSOR_POLL_ENABLED)</span>{% endif %}</td></tr>
-    {% if sensor_last.at %}
-    <tr><td>Vorige ronde</td><td>
-      {%- if sensor_last.ok %}{{ sensor_last.metrics }} metingen, {{ sensor_last.neighbors }} buren
-      {%- else %}<span class="error">mislukt</span>{% endif %}
-      {%- if sensor_last.error %} <span class="muted">&mdash; {{ sensor_last.error }}</span>{% endif %}</td></tr>
-    {% endif %}
-  </table>
-
-  {#- De weblogin van deze node. Een node op de GEDEELDE vlootsleutel is een
-      zwakte in dezelfde geest als een leeg mesh-wachtwoord: het werkt, maar één
-      lek opent dan de hele vloot in plaats van deze ene node. Vandaar een
-      waarschuwing met de knop ernaast, en niet in een voetnoot. -#}
-  {% if sensor_cred %}
-  <h3>Weblogin</h3>
-  {% if sensor_cred.shared %}
-  <p class="error small">&#9888; <strong>Deze node deelt de vlootsleutel</strong>
-     (<span class="mono">MM_FW_NODE_USER</span>/<span class="mono">MM_FW_NODE_PASS</span>).
-     Dat is dezelfde login als op elke andere node en gelijk aan de sleutel waarmee
-     de server firmware schrijft: lekt deze node, dan lekt de hele vloot mee. Roteer
-     hem naar een eigen login om die schade tot deze ene node te beperken.</p>
-  {% else %}
-  <p class="muted small">&#9989; Deze node heeft een <strong>eigen weblogin</strong>
-     (gebruiker <span class="mono">{{ sensor_cred.user }}</span>), los van de
-     vlootsleutel. Een lek van deze node opent geen andere node.</p>
-  {% endif %}
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rotate-cred"
-        class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit"{% if not is_superuser %} disabled{% endif %}>
-      &#128273; {{ 'Eigen login instellen' if sensor_cred.shared else 'Login opnieuw roteren' }}</button>
-  </form>
-  {% if not is_superuser %}
-  <p class="muted small">Alleen een serverbeheerder kan roteren: de rotatie meldt
-     zich bij de node aan met de sleutel die elke node opent, en dat is geen recht
-     dat per node uitgedeeld wordt.</p>
-  {% else %}
-  <p class="muted small">Roteren maakt een sterke, willekeurige login, zet die bij
-     de node, en bewaart hem pas als de node bevestigt. Lukt de node niet, dan
-     verandert er niets &mdash; je sluit jezelf er niet mee buiten. Let op: Basic-auth
-     over HTTP stuurt ook een eigen login nog leesbaar over het LAN; dit beperkt de
-     schade van een lek, maar vervangt geen TLS of een apart netwerk.</p>
-  {% endif %}
-  {% endif %}
-
-  {% if not sensor_route.can %}
-  <p class="error small">Deze weg kan nu niets:
-     {{ cfg_blocker_text.get(sensor_route.blocker, sensor_route.blocker) }}.
-     De knoppen hieronder staan daarom uit.</p>
-  {% endif %}
-
-  {#- Vier handelingen naast elkaar, in stijgende merkbaarheid: lezen, een pakket
-      de lucht in, de klok, en een herstart. Elk met zijn eigen recht, want ze
-      zijn niet van dezelfde soort -- en de laatste vraagt de naam, omdat de fout
-      die je daar maakt niet twijfel is maar de verkeerde node. -#}
-  <h3>Handelingen</h3>
-  <div class="rowform">
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/poll">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
-        &#128260; Nu uitlezen</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/advert">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
-        &#128225; Advert (flood)</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/advert">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="zerohop" value="1">
-      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
-        &#128225; Advert (zerohop)</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/clock">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.klok') }}>
-        &#128336; Klok zetten</button>
-    </form>
-  </div>
-  {{ waarom('node.uitvragen') }}
-  {{ waarom('node.klok') }}
-  <p class="muted small"><strong>De klok is hier geen luxe.</strong> Deze node heeft geen
-     batterijgevoede klok: na elke herstart staat hij op 15 mei 2024, en alles wat hij daarna
-     zegt draagt die datum mee. Of deze server mag zeggen hoe laat het is, wordt met dezelfde
-     controle beoordeeld als bij de dagelijkse ronde over het mesh &mdash; er is geen tweede
-     oordeel. Anders dan daar geldt er geen wachttijd tussen twee keer: dit kost geen zendtijd,
-     en een node die net herstartte heeft het meteen nodig.</p>
-  <p class="muted small">Een <em>zerohop</em>-advert gaat alleen naar wie hem direct hoort; een
-     gewone advert gaat als flood het hele mesh over. Wie wil weten of zijn buren hem nog horen,
-     heeft de eerste nodig en betaalt daar geen mesh-brede flood voor.</p>
-
-  <h3>Regio <span class="pill">bevestigen</span></h3>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/region" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <select name="veld" aria-label="Welk regioveld"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      {% for sleutel, uitleg in sensor_region_fields.items() %}
-      <option value="{{ sleutel }}">{{ sleutel }} &mdash; {{ uitleg }}</option>
-      {% endfor %}
-    </select>
-    <input name="naam" placeholder="eu be" spellcheck="false" autocomplete="off"
-           aria-label="Regionaam"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-    <input name="confirm" placeholder="typ: ja" autocomplete="off"
-           aria-label="Bevestiging"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-    <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      Regio zetten en vastleggen</button>
-  </form>
-  {{ waarom('node.instelling.merkbaar') }}
-  <p class="muted small">Twee opdrachten achter elkaar: <span class="mono">region &lt;veld&gt;
-     &lt;naam&gt;</span> zet het, en <span class="mono">region save</span> legt het vast op flash.
-     Zonder dat tweede is de instelling weg bij de eerstvolgende herstart, en dat merk je dan
-     pas. Een scope bepaalt wie dit verkeer doorstuurt, dus een verkeerde waarde kan deze node
-     stil buiten het bereik van zijn buren zetten &mdash; het verschil met de radio is dat dit
-     van hieraf terug te draaien is, want deze weg blijft bestaan. Vandaar een bevestiging en
-     geen weigering.</p>
-
-  <h3>Herstarten <span class="pill">naam overtypen</span></h3>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/reboot" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="confirm" placeholder="typ: {{ rep.name }}" autocomplete="off"
-           aria-label="Naam van de node overtypen"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.herstart') }}>
-    <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.herstart') }}>
-      &#9888; Herstarten</button>
-  </form>
-  {{ waarom('node.herstart') }}
-  <p class="muted small">De node is na ongeveer twintig seconden weer bereikbaar. Wat er wél
-     verloren gaat: de gemeten toestanden beginnen weer op &ldquo;?&rdquo;, en de klok staat weer
-     op 15 mei 2024 tot iemand hem zet. De naam overtypen vangt een andere fout dan twijfel
-     &mdash; ze vangt de klik op de verkeerde node, en daar helpt een ja/nee-vraag niet tegen.</p>
-
-  {#- De toegangslijst, en waarom die hier staat en niet op een subpagina: ze
-      bevat het antwoord op de vraag waarom de mesh-weg naar deze node niet
-      werkt. Alleen lezen -- rechten uitdelen op andermans node hoort op de
-      pagina van die node en niet hier. -#}
-  <h3>Toegangslijst en gehoorde buren <span class="pill">alleen lezen</span></h3>
-  {% if not sensor_acl.ok %}
-  <p class="muted small">{{ sensor_acl.error or 'niet opgehaald' }}</p>
-  {% else %}
-  <p class="muted small">Wie mag inloggen op deze node, en wie hij hoort. Dit is de plek waar de
-     mesh-weg op stukloopt: een monitor die inlogt en geen antwoord krijgt, staat meestal niet in
-     deze lijst en heeft ook het adminwachtwoord niet. Dan is &ldquo;geen antwoord&rdquo; geen
-     storing maar een weigering, en dat is een heel ander probleem.</p>
-  <table>
-    <thead><tr><th>Sleutel</th><th>Naam</th><th>Rechten</th><th>Laatst actief</th></tr></thead>
-    <tbody>
-    {% for c in sensor_acl.data.acl or [] %}
-      <tr><td class="mono">{{ c.k[:12] }}</td><td>{{ c.n or '—' }}</td>
-          <td class="mono">{{ c.p }}</td><td class="muted">{{ c.a }} s</td></tr>
-    {% else %}
-      <tr><td colspan="4" class="muted">de lijst is leeg &mdash; geen enkele node mag inloggen</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <table>
-    <thead><tr><th>Gehoorde buur</th><th>Naam</th><th>SNR</th><th>Hops</th><th>Gehoord</th><th>In de lijst</th></tr></thead>
-    <tbody>
-    {% for n in sensor_acl.data.nb or [] %}
-      <tr><td class="mono">{{ n.k[:12] }}</td><td>{{ n.n or '—' }}</td>
-          <td>{{ n.s }}</td><td>{{ n.h }}</td><td class="muted">{{ n.a }} s</td>
-          <td>{{ 'ja' if n['in'] else 'nee' }}</td></tr>
-    {% else %}
-      <tr><td colspan="6" class="muted">nog niemand gehoord</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-
-  {#- De ontdekte contacten als kiezer: één datalist, gekoppeld aan elk
-      pubkey-veld hieronder (list="mm-contacts"). De gebruiker kiest een naam en de
-      volledige pubkey komt in het veld -- naast het handmatig typen. Publieke
-      sleutels mogen getoond; er zit geen geheim in deze lijst. -#}
-  {% if sensor_contacts %}
-  <datalist id="mm-contacts">
-    {% for c in sensor_contacts %}
-    <option value="{{ c.k }}" label="{{ c.n or c.k[:12] }}{% if c.t is not none %} (type {{ c.t }}){% endif %}"></option>
-    {% endfor %}
-  </datalist>
-  {% endif %}
-
-  {#- ==================== Rooms ============================================
-
-      Het volledige room-beheer van een room-server-node: lezen, toevoegen,
-      bewerken, verwijderen, de join-QR + link, de per-sensor alarmroute, en de
-      serverzijde backup. Alleen zinvol als de node een room-API aanbiedt; is die
-      er niet, dan zegt /rooms.json dat (een 404) en tonen we die reden in plaats
-      van een leeg blok. Alles hier loopt over dezelfde IP-weg als de rest van dit
-      blok en staat of valt dus met dezelfde WiFi. -#}
-  <h3>Rooms {{ hulp('Een room is een gedeeld kanaal op de node; sensoren kunnen hun alarm erin
-    posten (zie de alarmroute hieronder). De join-link en QR openen de room in een MeshCore-client.') }}</h3>
-  {% if not sensor_route.can %}
-  <p class="muted small">De weg naar deze node kan nu niets; de roomknoppen staan daarom uit.</p>
-  {% elif not sensor_rooms.ok %}
-  <p class="muted small">Geen rooms opgehaald: {{ sensor_rooms.error or 'onbekende reden' }}.
-     Dit is alleen een room-server-node als <span class="mono">/rooms.json</span> antwoordt.</p>
-  {% else %}
-  <p class="muted small">{{ sensor_rooms.active }} van {{ sensor_rooms.max }} rooms in gebruik.</p>
-
-  {% for kamer in sensor_rooms.rooms %}
-  <div class="card room">
-    <div class="room-head">
-      <h4>{{ kamer.name or ('room ' ~ kamer.idx) }}
-        <span class="pill">idx {{ kamer.idx }}</span>
-        {% if kamer.stealth %}<span class="pill">stealth</span>{% endif %}
-        {% if kamer.guest %}<span class="pill">gast</span>{% endif %}
-      </h4>
-      <span class="muted small">{{ kamer.posts }} posts &middot;
-        sleutel <span class="mono">{{ kamer.pub[:16] or '—' }}</span></span>
-    </div>
-
-    {% if kamer.uri %}
-    <div class="room-join">
-      {% if sensor_room_qrs.get(kamer.idx) %}
-      <div class="qr" aria-hidden="false">{{ sensor_room_qrs[kamer.idx] | safe }}</div>
-      {% endif %}
-      <div class="room-join-link">
-        <label class="muted small" for="uri-{{ kamer.idx }}">Join-link</label>
-        <input id="uri-{{ kamer.idx }}" class="mono" readonly value="{{ kamer.uri }}"
-               onclick="this.select()" aria-label="Join-link van {{ kamer.name }}">
-      </div>
-    </div>
-    {% endif %}
-
-    {% if kamer.sensoren %}
-    <p class="muted small">Sensoren die hun alarm in deze room posten:
-      {% for s in kamer.sensoren %}<span class="mono">{{ s.n }}</span>
-      ({{ s.st }}){{ ', ' if not loop.last else '' }}{% endfor %}.</p>
-    {% else %}
-    <p class="muted small">Nog geen sensor stuurt zijn alarm naar deze room.</p>
-    {% endif %}
-
-    {#- Node-centrisch kanaalbeheer: welke kanalen horen bij DEZE room. Aanvinken
-        zet de rm-bit van deze room op dat kanaal, afvinken haalt hem eruit
-        (alleen ontkoppelen); am en het sensor-node-masker blijven ongemoeid. -#}
-    {% if sensor_mon %}
-    <details class="chan-panel">
-      <summary>Kanalen beheren</summary>
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/channels" class="rowform">
+    <div class="frm-actions">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="inline">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="room_idx" value="{{ kamer.idx }}">
-        {% for m in sensor_mon %}
-        <label class="check"><input type="checkbox" name="ch" value="{{ m.ch }}"
-               {% if kamer.idx in m.rooms_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
-          {{ m.n }} <span class="muted small">(kanaal {{ m.ch }})</span></label>
-        {% endfor %}
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanalen bijwerken</button>
-      </form>
-      <p class="muted small">Afvinken haalt een kanaal uit deze room (ontkoppelen), het wordt niet globaal verwijderd.</p>
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/channel/add" class="rowform">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="room_idx" value="{{ kamer.idx }}">
-        <input name="name" placeholder="nieuw kanaal: naam" maxlength="40" spellcheck="false"
-               autocomplete="off" aria-label="Naam van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
-        <input name="host" placeholder="host (optioneel)" spellcheck="false"
-               autocomplete="off" aria-label="Host van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
-        <input name="interval" placeholder="interval s (optioneel)" inputmode="numeric"
-               autocomplete="off" aria-label="Interval in seconden"{{ recht('node.instelling.merkbaar') }}>
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanaal toevoegen</button>
-      </form>
-    </details>
-    {% endif %}
-
-    {#- De per-sleutel-ACL van deze room. Een sleutel in de lijst mag
-        WACHTWOORDLOOS binnen op zijn niveau. Toevoegen vraagt de volledige pubkey;
-        verwijderen mag op een prefix (>= 12 hex). -#}
-    <details class="chan-panel">
-      <summary>Toegang (ACL) &mdash; {{ kamer.acl | length }} sleutel(s)
-        {{ hulp('Een sleutel in deze lijst mag zonder wachtwoord binnen op zijn niveau:
-          read = joinen/lezen (de posts), readwrite = ook schrijven, admin = beheer van dit slot.') }}</summary>
-      {% if kamer.acl %}
-      <table>
-        <thead><tr><th>Sleutel</th><th>Niveau</th><th></th></tr></thead>
-        <tbody>
-        {% for a in kamer.acl %}
-          <tr>
-            <td class="mono">{{ a.pub[:16] }}</td>
-            <td>
-              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="inline">
-                <input type="hidden" name="csrf" value="{{ csrf }}">
-                <input type="hidden" name="idx" value="{{ kamer.idx }}">
-                <input type="hidden" name="pubkey" value="{{ a.pub }}">
-                <select name="level" aria-label="Niveau van {{ a.pub[:12] }}"{{ recht('node.instelling.merkbaar') }}>
-                  {% for getal, woord in sensor_acl_levels.items() %}
-                  <option value="{{ woord }}"{% if a.level == getal %} selected{% endif %}>{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
-                  {% endfor %}
-                </select>
-                <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>Wijzig</button>
-              </form>
-            </td>
-            <td>
-              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="inline">
-                <input type="hidden" name="csrf" value="{{ csrf }}">
-                <input type="hidden" name="idx" value="{{ kamer.idx }}">
-                <input type="hidden" name="pubkey" value="{{ a.pub[:16] }}">
-                <input type="hidden" name="del" value="1">
-                <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% else %}
-      <p class="muted small">Nog geen sleutel in de ACL van deze room.</p>
-      {% endif %}
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="rowform">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="idx" value="{{ kamer.idx }}">
-        <input name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
-               maxlength="64" minlength="64" list="mm-contacts"
-               spellcheck="false" autocomplete="off" aria-label="Volledige pubkey om toe te voegen"{{ recht('node.instelling.merkbaar') }}>
-        <select name="level" aria-label="Niveau van de nieuwe sleutel"{{ recht('node.instelling.merkbaar') }}>
-          {% for getal, woord in sensor_acl_levels.items() %}
-          <option value="{{ woord }}">{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
-          {% endfor %}
-        </select>
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Sleutel toevoegen</button>
-      </form>
-    </details>
-
-    {#- Advert: laat deze room zich melden op het mesh. Flood gaat mesh-breed,
-        zerohop alleen naar wie hem direct hoort. -#}
-    <div class="rowform">
-      {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/advert" class="inline">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="idx" value="{{ kamer.idx }}">
-        <input type="hidden" name="flood" value="{{ vlag }}">
-        <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
-      </form>
-      {% endfor %}
-    </div>
-
-    <div class="rowform">
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/edit" class="rowform">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="idx" value="{{ kamer.idx }}">
-        <input name="name" value="{{ kamer.name }}" placeholder="naam" maxlength="40"
-               spellcheck="false" autocomplete="off" aria-label="Naam van de room"{{ recht('node.instelling.merkbaar') }}>
-        <input name="room_pass" type="password" placeholder="roomwachtwoord (leeg = ongewijzigd)"
-               autocomplete="new-password" aria-label="Wachtwoord van de room"{{ recht('node.instelling.merkbaar') }}>
-        <input name="guest_pass" type="password"
-               placeholder="gastwachtwoord{{ ' (gezet)' if kamer.guest else '' }} (leeg = ongewijzigd)"
-               autocomplete="new-password" aria-label="Gastwachtwoord van de room"{{ recht('node.instelling.merkbaar') }}>
-        <label class="check"><input type="checkbox" name="guest_clear" value="1"
-               {{ recht('node.instelling.merkbaar') }}> gast wissen</label>
-        <label class="check"><input type="checkbox" name="stealth" value="1"
-               {% if kamer.stealth %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> stealth</label>
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Opslaan</button>
-      </form>
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/del" class="rowform">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="idx" value="{{ kamer.idx }}">
-        <input name="confirm" placeholder="typ: ja" autocomplete="off"
-               aria-label="Bevestig verwijderen"{{ recht('node.instelling.merkbaar') }}>
-        <button type="submit" class="danger"{{ recht('node.instelling.merkbaar') }}>&#9888; Verwijderen</button>
+        <input type="hidden" name="back" value="node">
+        <input type="hidden" name="what" value="public">
+        <button type="submit" class="pill {{ 'on' if rep.is_public else 'off' }}"{{ recht('node.zichtbaarheid') }}>
+          {{ 'publiek — klik om te verbergen' if rep.is_public else 'verborgen — klik om publiek te maken' }}</button>
       </form>
     </div>
   </div>
-  {% else %}
-  <p class="muted small">Er zijn nog geen rooms op deze node.</p>
-  {% endfor %}
 
-  <h4>Room toevoegen</h4>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/add" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="name" placeholder="naam van de nieuwe room" maxlength="40"
-           spellcheck="false" autocomplete="off" aria-label="Naam van de nieuwe room"
-           {% if sensor_rooms.active >= sensor_rooms.max %}disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-    <button type="submit"{% if sensor_rooms.active >= sensor_rooms.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      Room toevoegen</button>
-  </form>
-  {% if sensor_rooms.active >= sensor_rooms.max %}
-  <p class="muted small">Alle {{ sensor_rooms.max }} roomplekken zijn in gebruik; verwijder er eerst een.</p>
-  {% endif %}
-  {{ waarom('node.instelling.merkbaar') }}
-
-  {#- ==================== Sensor-nodes ====================================
-
-      Naast rooms host een room-server-node ook virtuele SENSOR-nodes: aparte
-      contact-identiteiten waaronder telemetrie in de MeshCore-app verschijnt.
-      Spiegel van het roomblok -- lijst, add/edit/del, contact-QR + link -- met
-      als extra de gekoppelde kanalen (met hun naam). De alarmroute hieronder
-      bepaalt WELKE sensor zijn meting naar WELKE sensor-node stuurt. -#}
-  <h3>Sensor-nodes {{ hulp('Een sensor-node is een eigen contact-identiteit op deze node; de
-    MeshCore-app toont de telemetrie van de gekoppelde kanalen eronder. Scan het contact-QR of open
-    de link om hem toe te voegen.') }}</h3>
-  {% if not sensor_route.can %}
-  <p class="muted small">De weg naar deze node kan nu niets; de knoppen staan daarom uit.</p>
-  {% elif not sensor_snodes.ok %}
-  <p class="muted small">Geen sensor-nodes opgehaald: {{ sensor_snodes.error or 'onbekende reden' }}.</p>
-  {% else %}
-  <p class="muted small">{{ sensor_snodes.active }} van {{ sensor_snodes.max }} sensor-nodes in gebruik.</p>
-
-  {% for snode in sensor_snodes.snodes %}
-  <div class="card room">
-    <div class="room-head">
-      <h4>{{ snode.name or ('sensor-node ' ~ snode.idx) }}
-        <span class="pill">idx {{ snode.idx }}</span>
-        {% if snode.stealth %}<span class="pill">stealth</span>{% endif %}
-      </h4>
-      <span class="muted small">sleutel <span class="mono">{{ snode.pub[:16] or '—' }}</span></span>
+  <div class="frm">
+    <span class="frm-label">Positie</span>
+    <div class="frm-field">
+      <p class="frm-hint">Staat dit uit, dan gedraagt de site zich alsof ze van deze node
+         nooit een locatie gehoord heeft: geen bolletje op de kaart, geen coördinaat in een
+         pakket, geen land.</p>
+      <details class="uitleg">
+        <summary>Wat er precies verdwijnt en wat blijft</summary>
+        <p>Geen bolletje op de live kaart, geen plek in de
+           kaart van een repeater die hem als buur ziet, geen coördinaat in een pakket of in
+           de zoekresultaten, en geen eindpunt van een lijn in de drukte-heatmap &mdash; die
+           lijn breekt daar, net zoals bij een hop die op meer dan één node past. Het land
+           gaat mee weg: dat is uit de coördinaten berekend en dus niets anders dan een grove
+           vorm ervan. Wat blijft: de naam, alle cijfers, de burenlijst en de SNR&rsquo;s.</p>
+      </details>
     </div>
-
-    {% if snode.uri %}
-    <div class="room-join">
-      {% if sensor_snode_qrs.get(snode.idx) %}
-      <div class="qr">{{ sensor_snode_qrs[snode.idx] | safe }}</div>
-      {% endif %}
-      <div class="room-join-link">
-        <label class="muted small" for="snuri-{{ snode.idx }}">Contact-link</label>
-        <input id="snuri-{{ snode.idx }}" class="mono" readonly value="{{ snode.uri }}"
-               onclick="this.select()" aria-label="Contact-link van {{ snode.name }}">
-      </div>
-    </div>
-    {% endif %}
-
-    {% if snode.channel_names %}
-    <p class="muted small">Gekoppelde kanalen:
-      {% for c in snode.channel_names %}<span class="mono">{{ c.name }}</span>
-      (kanaal {{ c.ch }}){{ ', ' if not loop.last else '' }}{% endfor %}.</p>
-    {% else %}
-    <p class="muted small">Nog geen kanaal aan deze sensor-node gekoppeld.</p>
-    {% endif %}
-
-    {#- Node-centrisch kanaalbeheer: welke kanalen horen bij DEZE sensor-node
-        (sn-bit). Aanvinken zet de sn-bit, afvinken haalt hem eruit; am en het
-        room-masker blijven ongemoeid. -#}
-    {% if sensor_mon %}
-    <details class="chan-panel">
-      <summary>Kanalen beheren</summary>
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/channels" class="rowform">
+    <div class="frm-actions">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="inline">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="snode_idx" value="{{ snode.idx }}">
-        {% for m in sensor_mon %}
-        <label class="check"><input type="checkbox" name="ch" value="{{ m.ch }}"
-               {% if snode.idx in m.snodes_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
-          {{ m.n }} <span class="muted small">(kanaal {{ m.ch }})</span></label>
-        {% endfor %}
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanalen bijwerken</button>
-      </form>
-      <p class="muted small">Afvinken haalt een kanaal uit deze sensor-node (ontkoppelen), het wordt niet globaal verwijderd.</p>
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/channel/add" class="rowform">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="snode_idx" value="{{ snode.idx }}">
-        <input name="name" placeholder="nieuw kanaal: naam" maxlength="40" spellcheck="false"
-               autocomplete="off" aria-label="Naam van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
-        <input name="host" placeholder="host (optioneel)" spellcheck="false"
-               autocomplete="off" aria-label="Host van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
-        <input name="interval" placeholder="interval s (optioneel)" inputmode="numeric"
-               autocomplete="off" aria-label="Interval in seconden"{{ recht('node.instelling.merkbaar') }}>
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanaal toevoegen</button>
-      </form>
-    </details>
-    {% endif %}
-
-    {#- De per-sleutel-ACL van deze sensor-node. Wachtwoordloos: een sleutel in de
-        lijst mag binnen op zijn niveau (read = telemetrie lezen). -#}
-    <details class="chan-panel">
-      <summary>Toegang (ACL) &mdash; {{ snode.acl | length }} sleutel(s)
-        {{ hulp('Een sleutel in deze lijst mag zonder wachtwoord binnen op zijn niveau:
-          read = de telemetrie lezen, readwrite = ook schrijven, admin = beheer van dit slot.') }}</summary>
-      {% if snode.acl %}
-      <table>
-        <thead><tr><th>Sleutel</th><th>Niveau</th><th></th></tr></thead>
-        <tbody>
-        {% for a in snode.acl %}
-          <tr>
-            <td class="mono">{{ a.pub[:16] }}</td>
-            <td>
-              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="inline">
-                <input type="hidden" name="csrf" value="{{ csrf }}">
-                <input type="hidden" name="idx" value="{{ snode.idx }}">
-                <input type="hidden" name="pubkey" value="{{ a.pub }}">
-                <select name="level" aria-label="Niveau van {{ a.pub[:12] }}"{{ recht('node.instelling.merkbaar') }}>
-                  {% for getal, woord in sensor_acl_levels.items() %}
-                  <option value="{{ woord }}"{% if a.level == getal %} selected{% endif %}>{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
-                  {% endfor %}
-                </select>
-                <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>Wijzig</button>
-              </form>
-            </td>
-            <td>
-              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="inline">
-                <input type="hidden" name="csrf" value="{{ csrf }}">
-                <input type="hidden" name="idx" value="{{ snode.idx }}">
-                <input type="hidden" name="pubkey" value="{{ a.pub[:16] }}">
-                <input type="hidden" name="del" value="1">
-                <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% else %}
-      <p class="muted small">Nog geen sleutel in de ACL van deze sensor-node.</p>
-      {% endif %}
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="rowform">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="idx" value="{{ snode.idx }}">
-        <input name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
-               maxlength="64" minlength="64" list="mm-contacts"
-               spellcheck="false" autocomplete="off" aria-label="Volledige pubkey om toe te voegen"{{ recht('node.instelling.merkbaar') }}>
-        <select name="level" aria-label="Niveau van de nieuwe sleutel"{{ recht('node.instelling.merkbaar') }}>
-          {% for getal, woord in sensor_acl_levels.items() %}
-          <option value="{{ woord }}">{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
-          {% endfor %}
-        </select>
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Sleutel toevoegen</button>
-      </form>
-    </details>
-
-    {#- Advert: laat deze sensor-node zich melden op het mesh (flood of zerohop). -#}
-    <div class="rowform">
-      {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/advert" class="inline">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="idx" value="{{ snode.idx }}">
-        <input type="hidden" name="flood" value="{{ vlag }}">
-        <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
-      </form>
-      {% endfor %}
-    </div>
-
-    <div class="rowform">
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/edit" class="rowform">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="idx" value="{{ snode.idx }}">
-        <input name="name" value="{{ snode.name }}" placeholder="naam" maxlength="40"
-               spellcheck="false" autocomplete="off" aria-label="Naam van de sensor-node"{{ recht('node.instelling.merkbaar') }}>
-        <label class="check"><input type="checkbox" name="stealth" value="1"
-               {% if snode.stealth %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> stealth</label>
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Opslaan</button>
-      </form>
-      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/del" class="rowform">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="idx" value="{{ snode.idx }}">
-        <input name="confirm" placeholder="typ: ja" autocomplete="off"
-               aria-label="Bevestig verwijderen"{{ recht('node.instelling.merkbaar') }}>
-        <button type="submit" class="danger"{{ recht('node.instelling.merkbaar') }}>&#9888; Verwijderen</button>
+        <input type="hidden" name="back" value="node">
+        <input type="hidden" name="what" value="position">
+        <button type="submit" class="pill {{ 'on' if rep.show_position else 'off' }}"{{ recht('node.zichtbaarheid') }}>
+          {{ 'positie zichtbaar — klik om te verbergen' if rep.show_position else 'positie verborgen — klik om te tonen' }}</button>
       </form>
     </div>
   </div>
-  {% else %}
-  <p class="muted small">Er zijn nog geen sensor-nodes op deze node.</p>
-  {% endfor %}
 
-  <h4>Sensor-node toevoegen</h4>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/add" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="name" placeholder="naam van de nieuwe sensor-node" maxlength="40"
-           spellcheck="false" autocomplete="off" aria-label="Naam van de nieuwe sensor-node"
-           {% if sensor_snodes.active >= sensor_snodes.max %}disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-    <button type="submit"{% if sensor_snodes.active >= sensor_snodes.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      Sensor-node toevoegen</button>
-  </form>
-  {% if sensor_snodes.active >= sensor_snodes.max %}
-  <p class="muted small">Alle {{ sensor_snodes.max }} sensor-node-plekken zijn in gebruik; verwijder er eerst een.</p>
-  {% endif %}
-  {% endif %}{#- sensor_snodes.ok -#}
-
-  {#- ==================== SNMP-monitors ====================================
-
-      Een SNMP-monitor is een nieuwe monitorsoort: de node vraagt periodiek een
-      OID op bij een host. Twee wegen: SNMP-DISCOVERY (de server tast het apparaat
-      af en biedt een kieslijst) en de handmatige preset-bibliotheek daaronder. De
-      community is een geheim (write-only): hij gaat mee maar wordt nooit
-      teruggetoond. -#}
-  <h3>SNMP-monitors {{ hulp('De node pollt periodiek een OID over SNMP. Laat de server het
-    apparaat aftasten (discovery) en kies uit een lijst, of vul handmatig een preset/OID in. De
-    community is een wachtwoord en wordt nooit teruggetoond of gelogd.') }}</h3>
-
-  <h4>Ontdekken (discovery) {{ hulp('De SERVER doet de SNMP-walk (hij heeft de rijke stack) en
-    toont welke waarden er te monitoren zijn: verkeer in/uit per interface, oper-status, en UPS-MIB.
-    Je vinkt aan wat je wilt; de server maakt er node-monitors van die de node daarna zelf pollt. De
-    server moet het apparaat over UDP/161 kunnen bereiken.') }}</h4>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/discover" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="host" placeholder="IP of hostnaam" spellcheck="false" autocomplete="off"
-           value="{{ snmp_discovery.host if snmp_discovery else '' }}"
-           aria-label="IP van het SNMP-apparaat"{{ recht('node.instelling.merkbaar') }}>
-    <input name="port" type="number" value="{{ snmp_discovery.port if snmp_discovery else 161 }}"
-           min="1" max="65535" aria-label="SNMP-poort"{{ recht('node.instelling.merkbaar') }}>
-    <input name="community" type="password" placeholder="community (v2c)" autocomplete="new-password"
-           aria-label="SNMP-community"{{ recht('node.instelling.merkbaar') }}>
-    <button type="submit"{{ recht('node.instelling.merkbaar') }}>Ontdekken</button>
-  </form>
-
-  {% if snmp_discovery %}
-  {% if not snmp_discovery.ok %}
-  <p class="error small">Discovery mislukt: {{ snmp_discovery.error }}</p>
-  {% else %}
-  <div class="card">
-    <p class="muted small">Gevonden op <span class="mono">{{ snmp_discovery.host }}</span>:
-      {% if snmp_discovery.system.name %}<strong>{{ snmp_discovery.system.name }}</strong>{% endif %}
-      {% if snmp_discovery.system.descr %}&mdash; {{ snmp_discovery.system.descr[:80] }}{% endif %}
-      {% if snmp_discovery.ups %}&middot; UPS: {{ snmp_discovery.ups.model or 'ja' }}{% endif %}.</p>
-    {% if snmp_discovery['items'] %}
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/discover/create">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="host" value="{{ snmp_discovery.host }}">
-      <p class="muted small">Vink aan wat je wilt monitoren. Vul de community opnieuw in (die wordt
-         nooit bewaard) en kies desgewenst een room/sensor-node om alles aan te koppelen.</p>
-      <table>
-        <thead><tr><th></th><th>Waarde</th><th>Nu gemeten</th><th>Interpretatie</th></tr></thead>
-        <tbody>
-        {% for it in snmp_discovery['items'] %}
-          <tr>
-            <td><input type="checkbox" name="pick"
-                       value="{{ it.name }}|{{ it.oid }}|{{ it.interp }}|{{ it.snmparg }}"
-                       aria-label="Monitor {{ it.label }}"{{ recht('node.instelling.merkbaar') }}></td>
-            <td>{{ it.label }}</td>
-            <td class="mono">{{ it.preview }}</td>
-            <td class="mono">{{ it.interp }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      <div class="rowform">
-        <input name="community" type="password" placeholder="community opnieuw" autocomplete="new-password"
-               aria-label="Community opnieuw"{{ recht('node.instelling.merkbaar') }}>
-        <input name="interval" placeholder="interval s" inputmode="numeric" autocomplete="off"
-               aria-label="Interval in seconden"{{ recht('node.instelling.merkbaar') }}>
-        <label class="muted small">room
-          <select name="room_idx" aria-label="Koppelen aan room"{{ recht('node.instelling.merkbaar') }}>
-            <option value="-1">— geen —</option>
-            {% for kamer in sensor_rooms.rooms %}<option value="{{ kamer.idx }}">{{ kamer.name or ('room ' ~ kamer.idx) }}</option>{% endfor %}
-          </select>
-        </label>
-        <label class="muted small">of sensor-node
-          <select name="snode_idx" aria-label="Koppelen aan sensor-node"{{ recht('node.instelling.merkbaar') }}>
-            <option value="-1">— geen —</option>
-            {% for snode in sensor_snodes.snodes %}<option value="{{ snode.idx }}">{{ snode.name or ('sn ' ~ snode.idx) }}</option>{% endfor %}
-          </select>
-        </label>
-        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Geselecteerde monitors aanmaken</button>
-      </div>
-    </form>
-    {% else %}
-    <p class="muted small">Geen monitorbare waarden gevonden (geen interfaces of UPS-MIB).</p>
-    {% endif %}
+  <div class="frm">
+    <span class="frm-label">Naam</span>
+    <div class="frm-field">
+      <p class="frm-hint">Staat dit uit, dan heet deze node overal op de publieke site
+         <code>{{ '0x' ~ rep.pubkey_prefix[:2]|upper }}</code> &mdash; de adreshash, precies wat de
+         pakkettenlijst al toont voor een afzender die ze niet kan noemen.</p>
+      <details class="uitleg">
+        <summary>Waar de naam dan nog wél staat</summary>
+        <p>Ook in de burenlijst van een ándere repeater heet hij zo, en de zoekfunctie vindt
+           hem niet meer op zijn echte naam. De naam hierboven blijft staan: die is voor jou,
+           en voor de opdrachten die deze site naar de node stuurt.</p>
+      </details>
+    </div>
+    <div class="frm-actions">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="back" value="node">
+        <input type="hidden" name="what" value="name">
+        <button type="submit" class="pill {{ 'on' if rep.show_name else 'off' }}"{{ recht('node.zichtbaarheid') }}>
+          {{ 'naam zichtbaar — klik om te verbergen' if rep.show_name else 'naam verborgen — klik om te tonen' }}</button>
+      </form>
+    </div>
   </div>
-  {% endif %}
-  {% endif %}
 
-  <details class="chan-panel">
-    <summary>Geavanceerd: generieke snmpwalk</summary>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/walk" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input name="host" placeholder="IP of hostnaam" spellcheck="false" autocomplete="off"
-             aria-label="IP voor de walk"{{ recht('node.instelling.merkbaar') }}>
-      <input name="port" type="number" value="161" min="1" max="65535"
-             aria-label="Poort voor de walk"{{ recht('node.instelling.merkbaar') }}>
-      <input name="community" type="password" placeholder="community" autocomplete="new-password"
-             aria-label="Community voor de walk"{{ recht('node.instelling.merkbaar') }}>
-      <input name="subtree" placeholder="subtree-OID (bv. 1.3.6.1.2.1)" class="mono" spellcheck="false"
-             autocomplete="off" aria-label="Subtree-OID"{{ recht('node.instelling.merkbaar') }}>
-      <button type="submit"{{ recht('node.instelling.merkbaar') }}>Walk</button>
-    </form>
-    {% if snmp_walk %}
-    {% if not snmp_walk.ok %}
-    <p class="error small">Walk mislukt: {{ snmp_walk.error }}</p>
-    {% else %}
-    <p class="muted small">{{ snmp_walk.rows | length }} rijen onder
-      <span class="mono">{{ snmp_walk.subtree }}</span> op <span class="mono">{{ snmp_walk.host }}</span>:</p>
-    <table>
-      <thead><tr><th>OID</th><th>Waarde</th></tr></thead>
-      <tbody>
-      {% for oid, waarde in snmp_walk.rows[:200] %}
-        <tr><td class="mono">{{ oid }}</td><td class="mono">{{ waarde[:80] }}</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-    {% endif %}
+  {#- De vierde vlag, en ze verdient haar eigen waarschuwing. Een kanaalnaam is
+      nooit over de radio gegaan -- anders dan de naam en de positie hierboven --
+      en sinds hij automatisch uit de eigen API van een sensornode komt, heeft
+      er niemand per naam besloten dat hij publiek mag. -#}
+  <div class="frm">
+    <span class="frm-label">Kanaalnamen</span>
+    <div class="frm-field">
+      <p class="frm-hint"><strong>Kijk hier naar voor je een sensornode publiek zet.</strong>
+         Een kanaalnaam is <em>nooit uitgezonden</em>: hij komt uit de eigen API van de node of
+         uit uw toetsenbord, en hij kan een intern adres bevatten.</p>
+      <details class="uitleg">
+        <summary>Waarom dit anders is dan naam en positie</summary>
+        <p>Anders dan de naam en de positie hierboven is een kanaalnaam <em>nooit uitgezonden</em>:
+           hij komt uit de eigen API van de node of uit uw toetsenbord, en hij kan een intern adres
+           bevatten &mdash; <code>hoas (hoas.scheepers.one)</code> is een naam die deze site zelf zou
+           publiceren en die over de radio nooit langskwam. Sinds de namen automatisch uit
+           <span class="mono">/status.json</span> komen, heeft niemand per naam besloten dat dat mag.
+           Staat dit uit, dan heet elk kanaal op de publieke site en in de API weer
+           &ldquo;kanaal N&rdquo; &mdash; niet de ruwe metricnaam, want die verklapt het nummer en de
+           vorm van de meting alsnog. De namen in <a href="#kanalen">Namen bij de kanalen</a> blijven
+           staan: die zijn voor u.</p>
+      </details>
+    </div>
+    <div class="frm-actions">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/toggle" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="back" value="node">
+        <input type="hidden" name="what" value="channels">
+        <button type="submit" class="pill {{ 'on' if rep.show_channels else 'off' }}"{{ recht('node.zichtbaarheid') }}>
+          {{ 'kanaalnamen zichtbaar — klik om te verbergen' if rep.show_channels else 'kanaalnamen verborgen — klik om te tonen' }}</button>
+      </form>
+    </div>
+  </div>
+
+  <details class="uitleg">
+    <summary>Wat geen van deze vier schakelaars verbergt</summary>
+    <p>De sleutelprefix <code>{{ rep.pubkey_prefix }}</code>. Die zit in elke advert die deze node
+       uitzendt en is voor iedereen met een radio te horen; doen alsof deze site hem geheim
+       kan houden zou een belofte zijn die het apparaat zelf tegenspreekt. Hetzelfde geldt
+       voor <code>/r/{{ rep.slug }}</code>: de slug is ooit uit de naam gemaakt en verandert niet
+       mee. Wil je die ook kwijt, verwijder de node dan (<a href="#ingrijpend">Firmware en
+       verwijderen</a>) en laat hem opnieuw aanmelden onder de naam die je wél kwijt kunt.</p>
   </details>
-
-  <h4>Handmatig toevoegen {{ hulp('De node vraagt periodiek een OID op bij een host over SNMP.
-    Kies een preset (interface-octetten, ifOperStatus, of UPS-MIB: batterij, resterende minuten,
-    belasting, in-/uitgangsspanning) of vul een eigen OID in. De community is een wachtwoord en
-    wordt nooit teruggetoond.') }}</h4>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/monitor/snmp">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div class="rowform">
-      <input name="name" placeholder="naam" maxlength="40" spellcheck="false" autocomplete="off"
-             aria-label="Naam van de SNMP-monitor"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      <input name="host" placeholder="host/ip" spellcheck="false" autocomplete="off"
-             aria-label="Host van de SNMP-monitor"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      <input name="community" type="password" placeholder="community (write-only)"
-             autocomplete="new-password" aria-label="SNMP-community"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      <input name="interval" placeholder="interval s" inputmode="numeric" autocomplete="off"
-             aria-label="Interval in seconden"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-    </div>
-    <div class="rowform">
-      <select name="preset" aria-label="Preset-OID"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-        <option value="">— preset kiezen —</option>
-        {% for p in sensor_snmp_presets %}
-        <option value="{{ p.key }}">{{ p.label }}</option>
-        {% endfor %}
-      </select>
-      <input name="snmparg" placeholder="index (bij interface/UPS-lijn)" spellcheck="false"
-             autocomplete="off" aria-label="SNMP-index"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      {{ hulp('Sommige OIDs zijn per interface of per UPS-lijn geïndexeerd (bv. interface 1). Vul dan
-        hier de index in. Scalars zoals batterijstatus hebben er geen nodig.') }}
-    </div>
-    <details class="chan-panel">
-      <summary>Handmatige OID (in plaats van een preset)</summary>
-      <div class="rowform">
-        <input name="oid" placeholder="1.3.6.1.2.1..." spellcheck="false" autocomplete="off"
-               class="mono" aria-label="Eigen OID"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-        <select name="interp" aria-label="Interpretatie"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-          {% for itp in sensor_snmp_interps %}
-          <option value="{{ itp }}">{{ itp }}</option>
-          {% endfor %}
-        </select>
-      </div>
-    </details>
-    <div class="rowform">
-      <label class="muted small">Koppelen aan room
-        <select name="room_idx" aria-label="Koppelen aan room"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-          <option value="-1">— geen —</option>
-          {% for kamer in sensor_rooms.rooms %}<option value="{{ kamer.idx }}">{{ kamer.name or ('room ' ~ kamer.idx) }}</option>{% endfor %}
-        </select>
-      </label>
-      <label class="muted small">of sensor-node
-        <select name="snode_idx" aria-label="Koppelen aan sensor-node"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
-          <option value="-1">— geen —</option>
-          {% for snode in sensor_snodes.snodes %}<option value="{{ snode.idx }}">{{ snode.name or ('sn ' ~ snode.idx) }}</option>{% endfor %}
-        </select>
-      </label>
-      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>SNMP-monitor toevoegen</button>
-    </div>
-  </form>
-
-  {#- ==================== Notifier-bot ====================================
-
-      Een bot-identiteit op de node die meldingen als DM aan een ontvangerslijst
-      stuurt en/of op zijn eigen kanaal post. Naam en pubkey zijn publiek; de
-      ontvangers zijn publieke sleutels. -#}
-  <h3>Notifier-bot {{ hulp('Een bot-identiteit op de node die meldingen als direct bericht naar
-    een ontvangerslijst stuurt, of op zijn eigen kanaal post. Voeg ontvangers toe met hun pubkey
-    (of kies een ontdekt contact), en test met een DM of een post.') }}</h3>
-  {% if not sensor_route.can %}
-  <p class="muted small">De weg naar deze node kan nu niets; de botknoppen staan daarom uit.</p>
-  {% elif not sensor_bot.ok %}
-  <p class="muted small">Geen bot opgehaald: {{ sensor_bot.error or 'onbekende reden' }}.</p>
-  {% elif not sensor_bot.active %}
-  <p class="muted small">Deze node heeft geen actieve notifier-bot.</p>
-  {% else %}
-  <div class="room-head">
-    <h4>{{ sensor_bot.name or 'bot' }}</h4>
-    <span class="muted small">sleutel <span class="mono">{{ sensor_bot.pub[:16] or '—' }}</span> &middot;
-      {{ sensor_bot.recips | length }} van {{ sensor_bot.max }} ontvangers</span>
-  </div>
-  {% if sensor_bot.uri %}
-  <div class="room-join">
-    {% if sensor_bot_qr %}<div class="qr">{{ sensor_bot_qr | safe }}</div>{% endif %}
-    <div class="room-join-link">
-      <label class="muted small" for="boturi">Contact-link</label>
-      <input id="boturi" class="mono" readonly value="{{ sensor_bot.uri }}"
-             onclick="this.select()" aria-label="Contact-link van de bot">
-    </div>
-  </div>
-  {% endif %}
-
-  <h4>Ontvangers</h4>
-  {% if sensor_bot.recips %}
-  <table>
-    <thead><tr><th>Sleutel</th><th></th></tr></thead>
-    <tbody>
-    {% for r in sensor_bot.recips %}
-      <tr>
-        <td class="mono">{{ r.k[:16] }}{% if r.l is not none %} <span class="muted small">(niveau {{ r.l }})</span>{% endif %}</td>
-        <td>
-          <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/recipient" class="inline">
-            <input type="hidden" name="csrf" value="{{ csrf }}">
-            <input type="hidden" name="del" value="{{ r.k[:16] }}">
-            <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
-          </form>
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted small">Nog geen ontvangers in de botlijst.</p>
-  {% endif %}
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/recipient" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
-           maxlength="64" minlength="64" list="mm-contacts" spellcheck="false"
-           autocomplete="off" aria-label="Pubkey van de ontvanger"{{ recht('node.instelling.merkbaar') }}>
-    <button type="submit"{% if sensor_bot.recips | length >= sensor_bot.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>Ontvanger toevoegen</button>
-  </form>
-
-  <h4>Melden en testen</h4>
-  <div class="rowform">
-    {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/advert" class="inline">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="flood" value="{{ vlag }}">
-      <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
-    </form>
-    {% endfor %}
-  </div>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/sendto" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="pubkey" placeholder="pubkey van de ontvanger" maxlength="64" minlength="64"
-           list="mm-contacts" spellcheck="false" autocomplete="off"
-           aria-label="Pubkey voor de test-DM"{{ recht('node.instelling.merkbaar') }}>
-    <input name="msg" placeholder="test-DM" maxlength="200" autocomplete="off"
-           aria-label="Bericht van de test-DM"{{ recht('node.instelling.merkbaar') }}>
-    <button type="submit"{{ recht('node.instelling.merkbaar') }}>Test-DM sturen</button>
-  </form>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/post" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="msg" placeholder="bericht op het botkanaal (naar de hele lijst)" maxlength="200"
-           autocomplete="off" aria-label="Bericht op het botkanaal"{{ recht('node.instelling.merkbaar') }}>
-    <button type="submit"{{ recht('node.instelling.merkbaar') }}>Posten</button>
-  </form>
-  {% endif %}
-
-  {#- De per-sensor alarmroute. am = 1 (dm), 2 (room), 3 (beide); rm is het
-      bitmasker van rooms en sn dat van sensor-nodes waar het alarm heen gaat. De
-      checkboxes bouwen die maskers serverzijde op -- zie sensor_room_alarm. -#}
-  {% if sensor_mon %}
-  <h4>Alarmroute per sensor {{ hulp('Waar het alarm van elke sensor heen gaat: als direct bericht,
-    in een room, of beide. Kies bij "room" of "beide" ook welke rooms, en desgewenst naar welke
-    sensor-nodes de meting gaat.') }}</h4>
-  {% for m in sensor_mon %}
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/alarm" class="rowform room-alarm">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="ch" value="{{ m.ch }}">
-    <span class="room-alarm-name"><span class="mono">{{ m.n }}</span>
-      <span class="muted small">(kanaal {{ m.ch }} &middot; {{ m.st }})</span></span>
-    <select name="am" aria-label="Alarmroute van {{ m.n }}"{{ recht('node.instelling.merkbaar') }}>
-      {% for waarde, woord in sensor_am_modes.items() %}
-      <option value="{{ waarde }}"{% if m.am_v == waarde %} selected{% endif %}>{{ woord }}</option>
-      {% endfor %}
-    </select>
-    {% for kamer in sensor_rooms.rooms %}
-    <label class="check"><input type="checkbox" name="room" value="{{ kamer.idx }}"
-           {% if kamer.idx in m.rooms_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      {{ kamer.name or ('r' ~ kamer.idx) }}</label>
-    {% endfor %}
-    {% for snode in sensor_snodes.snodes %}
-    <label class="check"><input type="checkbox" name="snode" value="{{ snode.idx }}"
-           {% if snode.idx in m.snodes_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
-      &#9737; {{ snode.name or ('sn' ~ snode.idx) }}</label>
-    {% endfor %}
-    <button type="submit"{{ recht('node.instelling.merkbaar') }}>Zetten</button>
-  </form>
-  {% endfor %}
-  {% endif %}
-
-  {#- De serverzijde backup: een bewaarplaats met versiehistoriek. De inhoud
-      bevat de privésleutels van de rooms en gaat daarom alleen open voor een
-      serverbeheerder; zie sensor_rooms_backup. -#}
-  <h4>Backup <span class="pill">gevoelig</span></h4>
-  <p class="muted small">Een backup bevat de <strong>privésleutels</strong> van de rooms. De server
-     bewaart hem geobfusceerd als bewaarplaats (versiehistoriek) en stuurt hem nooit naar buiten.
-     Ophalen en downloaden kan alleen een serverbeheerder.</p>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rooms/backup" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit"{% if not is_superuser or not sensor_route.can %} disabled{% endif %}>
-      &#128190; Backup maken en bewaren</button>
-  </form>
-  {% if not is_superuser %}
-  <p class="muted small">Alleen een serverbeheerder maakt of downloadt een backup met sleutels erin.</p>
-  {% endif %}
-  {% if sensor_room_backups %}
-  <table>
-    <thead><tr><th>Wanneer</th><th>Door</th><th>Rooms</th><th>Downloaden</th></tr></thead>
-    <tbody>
-    {% for b in sensor_room_backups %}
-      <tr>
-        <td><time class="reltime" datetime="{{ b.created }}">{{ b.created }}</time></td>
-        <td>{{ b.actor or '—' }}</td>
-        <td>{{ b.rooms if b.rooms is not none else '—' }}</td>
-        <td>{% if is_superuser %}<a href="/admin/repeaters/{{ rep.id }}/sensor/rooms/backup/{{ b.id }}.json">#{{ b.id }} .json</a>
-            {% else %}<span class="muted">alleen serverbeheerder</span>{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted small">Nog geen backup bewaard.</p>
-  {% endif %}
-
-  <h4>Terugzetten <span class="pill">bevestigen</span></h4>
-  <p class="muted small">Een restore <strong>overschrijft</strong> de rooms die er nu staan. Kies een
-     bewaarde backup, of plak een room-config als JSON.</p>
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rooms/restore">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div class="rowform">
-      <select name="backup_id" aria-label="Bewaarde backup om terug te zetten"
-              {% if not is_superuser %}disabled{% endif %}>
-        <option value="0">— geplakte JSON hieronder —</option>
-        {% for b in sensor_room_backups %}
-        <option value="{{ b.id }}">#{{ b.id }} &middot; {{ b.created }} &middot;
-          {{ b.rooms if b.rooms is not none else '?' }} rooms</option>
-        {% endfor %}
-      </select>
-      <input name="confirm" placeholder="typ: ja" autocomplete="off"
-             aria-label="Bevestig terugzetten"{% if not is_superuser %} disabled{% endif %}>
-      <button type="submit"{% if not is_superuser or not sensor_route.can %} disabled{% endif %}>
-        Terugzetten</button>
-    </div>
-    <textarea name="payload" rows="3" class="mono" spellcheck="false"
-              placeholder='{"rooms": [...]}  (alleen gebruikt als er geen bewaarde backup gekozen is)'
-              aria-label="Room-config als JSON"{% if not is_superuser %} disabled{% endif %}></textarea>
-  </form>
-  {% endif %}{#- sensor_rooms.ok -#}
-
-  <p class="muted small"><strong>Wat er langs deze weg niet gezet wordt.</strong> De
-     radio-instellingen: frequentie, bandbreedte, spreidingsfactor en coderingssnelheid. Die
-     weigering staat in <span class="mono">nodeconfig.NO_REMOTE</span> en geldt voor élke weg,
-     ook deze &mdash; het is één lijst en geen tweede. De node dwingt het bovendien zelf af: zijn
-     <span class="mono">POST /cli</span> weigert <span class="mono">set radio</span> en
-     <span class="mono">set freq</span> zonder een bevestigingsparameter, en die parameter stuurt
-     deze site nooit mee. Het zendvermogen (<span class="mono">tx</span>) kan wel: een node die
-     te zwak zendt blijft bereikbaar, een node op de verkeerde frequentie niet.
-     {%- if sensor_no_readback %} Ook niet aangeboden, om een andere reden:
-     {% for sleutel, waarom_niet in sensor_no_readback.items() %}<span class="mono">{{ sleutel }}</span>
-     ({{ waarom_niet }}){{ '; ' if not loop.last else '.' }}{% endfor %}
-     Zonder terugleesbaar veld zou de pagina &ldquo;gelukt&rdquo; melden op het woord van de
-     node, en dat is precies wat deze site niet doet.{% endif %}</p>
-
-  {% endif %}
   </div>
 </section>
 
-{#- ==================== Gebeurtenis-push ====================================
+{% include "admin/node/_uitvragen.html" %}
+{% include "admin/node/_instellingen.html" %}
+{% include "admin/node/_pakketfilter.html" %}
+{% include "admin/node/_klok.html" %}
+{% include "admin/node/_eigen_api.html" %}
+{% include "admin/node/_kanalen.html" %}
+{% include "admin/node/_meldingen.html" %}
+{% include "admin/node/_ingrijpend.html" %}
+{% include "admin/node/_trail.html" %}
+{% endblock %}
 
-    De omgekeerde richting van het blok hierboven: daar haalt de server op, hier
-    komt de node zelf brengen. Een eigen sectie omdat het een eigen weg is met
-    een eigen belofte (seconden na het feit, zolang de WiFi er is) en een eigen
-    bewaking (de stiltegrens van drie hartslagen). Alles hier is WAARNEMING:
-    er valt niets in te stellen behalve MM_PUSH_TOKEN op de server. -#}
-<section id="push">
-  <h2>Gebeurtenis-push</h2>
-  <div class="card">
-  <p class="muted small">De node meldt zijn gebeurtenissen zelf, over IP, op
-     <span class="mono">POST /api/sensorpush</span> &mdash; seconden na het feit, waar de
-     uitleesronde hierboven er tot een heel pollinterval naast kan zitten. Hij belooft daarbij
-     een hartslag; blijft hij langer dan drie keer die belofte stil, dan maakt de server daar
-     een alarm van (&ldquo;node stil (push)&rdquo;), en een herstelmelding zodra hij terug is.</p>
-
-  {% if not push_enabled %}
-  <p class="muted small">Deze weg staat <strong>uit</strong> op deze server:
-     <span class="mono">MM_PUSH_TOKEN</span> is leeg. Zet hem in de
-     <span class="mono">.env</span> (en in de firmware van de node) om hem te openen; het
-     endpoint antwoordt tot die tijd 503 met deze reden.</p>
-  {% endif %}
-
-  {% if rep.push_seen %}
-  <table>
-    <tr><td>Laatste push</td><td>
-      <time class="reltime" datetime="{{ rep.push_seen }}">{{ rep.push_seen }}</time>
-      {%- if push_stil %} <span class="error">&mdash; stil: langer dan
-        {{ [90, 3 * (rep.push_hb_s or 0)] | max }} s geen push</span>{% endif %}</td></tr>
-    <tr><td>Beloofde hartslag</td><td>elke {{ rep.push_hb_s }} s
-      <span class="muted small">&mdash; de stiltegrens is drie keer dit, met een ondergrens
-      van 90 s</span></td></tr>
-    <tr><td>Aantal pushes</td><td>{{ rep.push_count or 0 }}
-      <span class="muted small">sinds de eerste; volgnummer van de laatste:
-      {{ rep.push_seq }}</span></td></tr>
-    {% if rep.push_boot_at %}
-    <tr><td>Laatste herstart</td><td>
-      <time class="reltime" datetime="{{ rep.push_boot_at }}">{{ rep.push_boot_at }}</time>
-      <span class="muted small">&mdash; de bootteller versprong naar {{ rep.push_boot }}.
-      Geen alarm: een herstart is een gebeurtenis om te zien, geen storing om iemand voor
-      te wekken.</span></td></tr>
-    {% elif rep.push_boot is not none %}
-    <tr><td>Bootteller</td><td>{{ rep.push_boot }}
-      <span class="muted small">&mdash; nog geen herstart gezien sinds de eerste push</span></td></tr>
-    {% endif %}
-  </table>
-  {% elif push_enabled %}
-  <p class="muted small">Nog nooit een push van deze node ontvangen. Dat kan betekenen dat zijn
-     firmware deze weg niet heeft, dat het token aan zijn kant niet gezet is, of dat hij deze
-     server niet bereikt &mdash; het endpoint zelf staat open.</p>
-  {% endif %}
-  </div>
-</section>
-
-<section>
-  <h2>Instellingen schrijven</h2>
-
-  {% if cfg_result %}
-  <div class="card notice">
-    {% if cfg_result.busy %}
-    {#- Alleen de weg over LoRa kan hier komen. Twee pakketten over een gedeelde
-        band duren tientallen seconden, en de server wacht daar niet eindeloos
-        op. De uitslag ligt op de monitor, dus een herlading vindt hem alsnog. -#}
-    <strong>Loopt nog.</strong> {{ cfg_result.msg }}.
-    {% elif cfg_result.step == "geen_antwoord" %}
-    {#- De uitkomst die alleen bestaat op de twee wegen zonder antwoord in
-        hetzelfde verzoek — over LoRa en over de broker — en de reden dat ze een
-        eigen tekst heeft: dit is géén mislukking. -#}
-    <strong>Verstuurd, maar onbevestigd.</strong> {{ cfg_result.msg }}.
-    {% elif cfg_result.step == "geen_teruglezing" %}
-    <strong>Gezet, niet nagekeken.</strong> {{ cfg_result.msg }}.
-    {% elif cfg_result.ok and cfg_result.exact %}
-    <strong>Gezet.</strong> <span class="mono">{{ cfg_result.key }}</span> staat nu op
-    <span class="mono">{{ cfg_result.applied }}</span>.
-    {% if cfg_result.transport == "mesh" and cfg_result.applied == cfg_result.asked
-          and cfg_result.asked == cfg_now.get(cfg_result.key) %}
-    <br>Dit was de waarde die er al stond, dus er is niets veranderd — en de hele weg is
-    wel afgelegd: versturen, ontvangen, antwoord verwerken en teruglezen. Precies wat een
-    eerste beproeving hoort te doen.
-    {% endif %}
-    {% elif cfg_result.ok %}
-    {#- Het geval waar het teruglezen voor bestaat: de node zei "OK" en er staat
-        iets anders in dan er gevraagd is. -#}
-    <strong>Gezet, maar niet precies.</strong> Gevraagd
-    <span class="mono">{{ cfg_result.asked }}</span>, in de node staat nu
-    <span class="mono">{{ cfg_result.applied }}</span>. De waarde hierboven is wat er
-    werkelijk staat.
-    {% else %}
-    <strong>Niet gezet.</strong>
-    {% if cfg_result.step %}<span class="mono">[{{ cfg_result.step }}]</span>{% endif %}
-    {{ cfg_result.msg }}
-    {% endif %}
-    {% if cfg_result.ok and cfg_result.reboot %}
-    <br><strong>Nog niet actief.</strong> De node heeft dit bewaard maar past het pas toe
-    bij een herstart. Tot dan draait de radio op de oude waarden, en pas bij die herstart
-    blijkt of de nieuwe kloppen.
-    {% endif %}
-  </div>
-  {% endif %}
-
-  {#- De laatste schrijfactie zoals de monitor hem kent. Staat er ook zonder dat
-      er net iets verstuurd is: de uitslag wordt daar bewaard en niet hier, dus
-      dit is wat een herlading laat zien nadat de browser niet is blijven
-      wachten. -#}
-  {% if cfg_mesh.ok and cfg_mesh.job.seq and not cfg_result %}
-  <div class="card">
-    <h3>Laatste schrijfactie over LoRa</h3>
-    <p class="small">
-      {% if cfg_mesh.job.busy %}
-      <strong>Bezig.</strong> <span class="mono">{{ cfg_mesh.job.param }}</span> naar
-      <span class="mono">{{ cfg_mesh.job.asked }}</span> op
-      <span class="mono">{{ cfg_mesh.job.key[:12] }}</span>, {{ cfg_mesh.job.age }} seconden
-      onderweg. Herlaad deze pagina voor de uitslag.
-      {% else %}
-      <span class="mono">{{ cfg_mesh.job.param }}</span> gevraagd op
-      <span class="mono">{{ cfg_mesh.job.asked }}</span>, {{ cfg_mesh.job.age }} seconden
-      geleden.
-      {% if cfg_mesh.job.applied %}
-      Teruggelezen: <span class="mono">{{ cfg_mesh.job.applied }}</span>{% if not cfg_mesh.job.exact %}
-      — <strong>niet gelijk aan wat er gevraagd is</strong>{% endif %}.
-      {% else %}
-      Niet teruggelezen: {{ cfg_mesh_steps.get(cfg_mesh.job.step, cfg_mesh.job.end) }}.
-      {% endif %}
-      {% endif %}
-    </p>
-  </div>
-  {% endif %}
-
-  {#- En hetzelfde voor de weg over de broker. De uitslag komt daar mee in een
-      statistiekenbericht en niet in het antwoord op de klik, dus na een
-      herlading is dit wat er nog van te zien is. -#}
-  {% if cfg_mqtt.seq and not cfg_result %}
-  <div class="card">
-    <h3>Laatste schrijfactie over MQTT</h3>
-    <p class="small">
-      <span class="mono">{{ cfg_mqtt.param }}</span> gevraagd op
-      <span class="mono">{{ cfg_mqtt.asked }}</span>.
-      {% if cfg_mqtt.ok %}
-      Teruggelezen: <span class="mono">{{ cfg_mqtt.applied }}</span>{% if not cfg_mqtt.exact %}
-      — <strong>niet gelijk aan wat er gevraagd is</strong>{% endif %}.
-      {% else %}
-      <strong>Geweigerd door de node:</strong> {{ cfg_mqtt.msg }}.
-      {% endif %}
-    </p>
-  </div>
-  {% endif %}
-
-  {#- Hoe de monitor bij deze node binnenkomt. Staat buiten de weigering hieronder
-      en niet erin, want het is de vraag die er juist toe doet als het schrijven
-      wél kan: een monitor die alleen mag lezen, logt keurig in en krijgt op elk
-      commando stilte — van een afstand niet te onderscheiden van een node die er
-      niet is. -#}
-  {% if rights %}
-  <div class="card">
-    <p class="small">
-      <strong>Hoe {{ relay.name if relay else "de monitor" }} bij deze node binnenkomt:</strong>
-      {%- if not rights.ok %} onbekend — {{ rights.error }}.
-      {%- elif not rights.known %} deze node staat niet in zijn monitorlijst.
-      {%- elif rights.mode == "acl" %} via de <strong>toegangslijst</strong> van deze node,
-      zonder wachtwoord. Dat is de aanbevolen manier: niemand geeft een geheim uit
-      handen en de eigenaar aan de overkant kan het alleen intrekken.
-      {%- else %} met een <strong>wachtwoord</strong> dat de monitor bewaart. Werkt, maar
-      de toegangslijst verdient de voorkeur: <code>setperm &lt;pubkey van de monitor&gt; 3</code>
-      aan de overkant maakt het wachtwoord overbodig.
-      {%- endif %}
-    </p>
-    {% if rights.ok and rights.known %}
-    <p class="small">
-      <strong>Werkt dat?</strong>
-      {%- if rights.diagnosis == "goed" %} Ja — {{ rights.oks }} van {{ rights.polls }}
-      opvragingen kwamen terug.
-      {%- elif rights.diagnosis == "alleen_lezen" %}
-      <strong>Ingelogd, maar alles zwijgt.</strong> Dat is bijna altijd hetzelfde: de
-      monitor is binnen als lézer en niet als beheerder, en een repeater voert een
-      CLI-commando alleen uit voor een client met adminrechten. Vraag de eigenaar om
-      <code>setperm &lt;pubkey van de monitor&gt; 3</code>, of geef de monitor het
-      adminwachtwoord. Van een afstand ziet dit eruit als een node die niet
-      bereikbaar is, en dat is het niet. Voor <em>schrijven</em> geldt hetzelfde en
-      zwaarder: een <span class="mono">set</span> die zo verdwijnt, laat geen spoor na.
-      {%- elif rights.diagnosis == "geen_toegang" %}
-      <strong>Nee, en het ligt niet aan het bereik.</strong> De login wordt niet
-      beantwoord, maar we horen zijn adverts wél — dus hij is er en hij laat ons niet
-      binnen. Onze sleutel staat niet in zijn toegangslijst, of het wachtwoord klopt
-      niet.
-      {%- elif rights.diagnosis == "buiten_bereik" %}
-      <strong>Nee, en we horen hem ook niet.</strong> De login wordt niet beantwoord en
-      er komen geen adverts binnen. Dat wijst op bereik en niet op rechten.
-      {%- else %} Nog niet geprobeerd sinds de laatste herstart van de monitor.
-      {%- endif %}
-    </p>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  {% if not cfg_route.can %}
-  <div class="card">
-  <p class="muted small">
-    <strong>Niet mogelijk:</strong>
-    {%- if cfg_route.blocker == "no_credentials" and cfg_route.transport == "mesh" %}
-    de server heeft geen weblogin voor de beheerpagina van de <em>monitor</em>. Zet
-    <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in de omgeving van de
-    server. Het gaat nadrukkelijk om de login van
-    {{ relay.name if relay else "de monitor" }} en niet om een geheim van déze node:
-    die rechten horen bij de monitor, in zijn eigen monitorlijst, of ze bestaan niet
-    omdat de overkant ons in zijn toegangslijst heeft gezet.
-    {%- elif cfg_route.blocker == "no_credentials" %}
-    de server heeft geen weblogin voor de beheerpagina van <em>deze</em> node. Zet
-    <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in de omgeving van de
-    server. Let op dat dit alleen gaat over nodes van jezelf die de server over IP
-    bereikt: voor een node die alleen over LoRa te bereiken is, hoeft de server nooit
-    inloggegevens te hebben — die rechten horen bij de monitor die de opvragingen doet.
-    {%- elif cfg_route.blocker == "relay_unknown" %}
-    de cijfers van deze repeater komen binnen via
-    <span class="mono">{{ rep.source_prefix }}</span>, maar die node is hier zelf niet
-    bekend. Zonder zijn beheeradres en zijn firmwareversie valt er niets naartoe te
-    sturen.
-    {%- elif cfg_route.blocker == "no_relay_host" %}
-    deze repeater is alleen over LoRa te bereiken, dus het schrijven loopt via zijn
-    monitor {{ relay.name if relay else rep.source_prefix }} — en die heeft geen
-    beheeradres ingevuld. Dat doe je op het tabblad
-    <a href="/admin/firmware">Firmware</a>, op de rij van die monitor.
-    {%- elif cfg_route.blocker == "relay_no_fw" %}
-    het schrijven zou over LoRa lopen via {{ relay.name if relay else rep.source_prefix }},
-    maar die node meldt geen versie van onze firmware — dus draait hij hem waarschijnlijk
-    niet.
-    {%- elif cfg_route.blocker == "relay_old_fw" %}
-    het schrijven loopt over LoRa via {{ relay.name if relay else rep.source_prefix }},
-    en die draait <span class="mono">{{ cfg_route.fw }}</span>. Instellingen over LoRa
-    schrijven bestaat pas vanaf <span class="mono">{{ cfg_route.min_fw }}</span>.
-    <strong>Het is de monitor die die versie nodig heeft, niet deze repeater</strong> —
-    die draait stock MeshCore en hoeft niets te leren.
-    {%- elif cfg_route.blocker == "no_target" %}
-    van deze repeater is geen publieke sleutel bekend, en die is nodig om de monitor te
-    laten weten wie hij moet aanspreken.
-    {%- elif cfg_route.blocker == "no_host" %}
-    er is geen beheeradres ingevuld voor deze node. Dat doe je op het tabblad
-    <a href="/admin/firmware">Firmware</a>; hetzelfde adres wordt voor beide gebruikt.
-    {%- elif cfg_route.blocker == "no_fw" %}
-    deze node meldt geen versie van onze firmware, dus draait hij hem waarschijnlijk niet.
-    {%- elif cfg_route.blocker == "old_fw" %}
-    deze node draait <span class="mono">{{ cfg_route.fw }}</span>; instellingen schrijven
-    bestaat pas vanaf <span class="mono">{{ cfg_route.min_fw }}</span>.
-    {%- else %}{{ cfg_route.blocker }}.
-    {%- endif %}
-  </p>
-  {#- En wat er per weg aan ontbreekt. Zonder dit staat er één reden op het
-      scherm terwijl er drie wegen bekeken zijn, en dan is "niet mogelijk" een
-      bewering waar je niets mee kunt. Wie hier leest dat het cmd-topic klaarligt
-      op één firmwareversie na, weet meteen wat de eerstvolgende handeling is. -#}
-  <p class="muted small">
-    Alle wegen die bekeken zijn:
-  </p>
-  <ul class="muted small">
-    {% for o in cfg_route.options %}
-    <li><strong>{{ cfg_transport_text.get(o.transport, o.transport) }}</strong> —
-      {% if o.can %}beschikbaar{% else %}{{ o.blocker }}{% endif %}</li>
-    {% endfor %}
-  </ul>
-  </div>
-  {% elif not cfg_params.ok %}
-  <div class="card">
-  <p class="muted small">
-    <strong>Lijst niet op te halen:</strong> {{ cfg_params.error }}.
-    Zonder de lijst van de node zelf wordt hier niets aangeboden — een formulier uit
-    een tabel op de server zou een parameter kunnen tonen die deze node weigert.
-  </p>
-  </div>
-  {% else %}
-
-  {#- Welke van de drie wegen het geworden is, en waarom. Staat er ook als alles
-      gewoon werkt: bij één weg is "gelukt" genoeg, bij drie is het dat niet --
-      de handeling duurt anders lang, kost zendtijd of heeft een lager plafond,
-      en dat hoor je te weten vóór je klikt en niet erna. -#}
-  <p class="muted small">
-    <strong>Deze wijziging gaat {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }}.</strong>
-    {{ cfg_route.why }}.
-  </p>
-
-  {% if cfg_route.transport == "mqtt" %}
-  <div class="card notice">
-    <h3>Dit gaat over de broker <span class="pill">plafond op klasse 2</span></h3>
-    <p class="small">
-      De server heeft geen weblogin voor de beheerpagina van deze node, maar de node
-      publiceert zelf over MQTT — en dan is er wel degelijk een weg naartoe. De
-      wijziging vertrekt als <span class="mono">set &lt;parameter&gt; &lt;waarde&gt;</span>
-      op zijn <span class="mono">cmd</span>-topic. De node zoekt die parameter op in zijn
-      eigen ingebakken tabel, toetst de waarde aan zijn eigen grenzen, zet hem en leest
-      hem terug; wat hieronder als uitslag verschijnt is <em>die teruglezing</em>.
-    </p>
-    <p class="small">
-      <strong>Wat hier niet langs kan.</strong> Alles wat de bereikbaarheid van de node
-      kan afsnijden — zendvermogen, <span class="mono">repeat</span>, wie er mag
-      inloggen — wordt over deze weg geweigerd, door de server én door de node zelf.
-      De reden is wie er aan de overkant staat: bij de twee andere wegen is dat iemand
-      met een wachtwoord, hier is het iedereen die de broker binnenlaat. Draait die op
-      één gedeeld account, dan is dat elke node die eraan meepraat. Wil je zulke
-      instellingen wél van hieraf kunnen zetten, vul dan
-      <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in.
-    </p>
-    <p class="small">
-      Er is geen antwoord op een publicatie, dus de uitslag komt terug in het
-      eerstvolgende statistiekenbericht — dat de node meteen verstuurt. Reken op enkele
-      seconden. Blijft het uit, dan is dat geen mislukking maar onzekerheid: een node
-      op zonnestroom kan slapen.
-    </p>
-    <p class="small">
-      <strong>Beproef ook deze weg eerst zonder iets te veranderen.</strong> Zet een
-      parameter op de waarde die er al staat — de kolom “Nu” is voorgevuld, dus dat is
-      één klik.
-    </p>
-  </div>
-  {% endif %}
-
-  {% if cfg_route.transport == "mesh" %}
-  <div class="card notice">
-    <h3>Dit gaat over de radio <span class="pill">kost zendtijd</span></h3>
-    <p class="small">
-      Deze repeater draait onze firmware niet en heeft geen IP-pad. Het schrijven gaat
-      daarom niet naar hem toe maar naar zijn monitor
-      <strong>{{ cfg_route.monitor }}</strong>: die staat op het lokale netwerk, krijgt de
-      opdracht over HTTP, en zet <span class="mono">set &lt;parameter&gt; &lt;waarde&gt;</span>
-      over LoRa. Daarna vraagt hij dezelfde parameter opnieuw op, en wat hieronder als
-      uitslag verschijnt is <em>die teruglezing</em> — nooit wat de node op het zetten
-      antwoordde. MeshCore zegt namelijk "OK" tegen dingen die het niet overgenomen heeft,
-      en over de radio duurt het lang genoeg dat niemand het uit zichzelf natrekt.
-    </p>
-    <p class="small">
-      Twee pakketten met een adempauze ertussen: reken op tien tot negentig seconden. Er
-      loopt er één tegelijk, en tussen twee schrijfacties zit een minuut — laag gehouden
-      met opzet, want de handeling die je na een misser meteen wilt doen is de omgekeerde.
-    </p>
-    <p class="small">
-      <strong>Beproef deze weg eerst zonder iets te veranderen.</strong> Zet een parameter
-      op de waarde die er al staat — de kolom “Nu” hiernaast is al ingevuld, dus dat is
-      één klik. De hele weg wordt dan afgelegd (versturen, ontvangen, antwoord verwerken,
-      teruglezen) en er verandert niets. Mislukt het, dan is er niets stuk. Dat is ook de
-      verstandige manier om een nieuwe monitorverbinding te toetsen.
-    </p>
-    <p class="muted small">
-      De nieuwe firmware zit op de <em>monitor</em> en niet op deze repeater. Die krijgt
-      twee doodgewone CLI-commando's binnen en hoeft niets te leren — dat is precies de
-      reden dat deze weg bestaat.
-    </p>
-  </div>
-  {% endif %}
-
-  {% for risk, params in cfg_groups %}
-  {% if params %}
-  <div class="card">
-    <h3>
-      {%- if risk == 1 %}Gewoon
-      {%- elif risk == 2 %}Schrijft merkbaar
-      {%- else %}Kan de bereikbaarheid afsnijden{% endif %}
-    </h3>
-    <p class="muted small">
-      {%- if risk == 1 %}
-      Waarden die je zo weer terugzet. Opslaan volstaat.
-      {%- elif risk == 2 %}
-      Deze veranderen merkbaar hoe de node zich gedraagt op het mesh. Ze vragen een
-      bevestiging, maar ze kunnen de node niet buiten bereik brengen.
-      {%- else %}
-      Deze raken het zendvermogen, het doorgeven of wie er mag inloggen. Gaat er iets
-      mis op een node die je alleen over de radio bereikt, dan is er geen tweede weg om
-      het mee terug te draaien. Daarom moet je hier de naam van de node overtypen.
-      {%- endif %}
-    </p>
-    {% if risk == 3 and cfg_route.max_risk < 3 %}
-    <p class="muted small">
-      <strong>Niet over de weg die nu beschikbaar is.</strong> Deze klasse gaat alleen
-      over een weg met een wachtwoord ertegenover, en dat is
-      {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }} niet. De
-      velden staan er en de server weigert ze; de node weigert ze nog een keer.
-    </p>
-    {% endif %}
-    <table class="cfgtable">
-      <thead><tr><th>Parameter</th><th>Nu</th><th>Nieuwe waarde</th></tr></thead>
-      <tbody>
-      {% for p in params %}
-      <tr>
-        <td class="mono">{{ p.key }}</td>
-        <td class="mono muted">{% if p.secret %}<span title="Een geheim wordt hier niet getoond">•••</span>{% else %}{{ cfg_now.get(p.key, "—") }}{% endif %}</td>
-        <td>
-          {#- Van afstand wordt deze parameter niet gezet. Op firmware van
-              2.6.0 en hoger komt hij hier niet eens langs -- daar staat hij niet
-              meer in de tabel van de node -- maar een node die nog ouder is
-              biedt hem wél aan, en die is precies de node waarvoor deze regel
-              bestaat. Getoond en niet weggelaten, want de vraag "waarom staat de
-              radio er niet bij" stelt iedereen die de lijst kent. Dit is de
-              beleefdheid en niet de drempel: die staat in nodeconfig.write(),
-              want een vak dat hier niet getekend wordt is met een aangepast
-              verzoek alsnog te bereiken. -#}
-          {% if p.key in cfg_no_remote %}
-          <span class="muted small"><strong>Niet van afstand.</strong>
-            {{ cfg_no_remote_reason }}</span>
-          {% else %}
-          <form method="post" action="/admin/repeaters/{{ rep.id }}/config" class="rowform">
-            <input type="hidden" name="csrf" value="{{ csrf }}">
-            <input type="hidden" name="key" value="{{ p.key }}">
-
-            {#- Type stuurt de bediening. Een invoerveld waarin je een ongeldige
-                waarde kúnt typen is een invoerveld dat een node kan breken.
-
-                Voorgevuld met wat er nú in de node staat, en dat is meer dan
-                gemak. Het maakt "zet deze parameter op de waarde die hij al
-                heeft" één klik, en dat is de enige beproeving van de schrijfweg
-                die de hele weg aflegt zonder iets te veranderen — bij een node
-                die alleen over de radio te bereiken is, is dat het verschil
-                tussen toetsen en gokken. Een geheim wordt nooit voorgevuld: de
-                node geeft de gelezen waarde niet eens terug. -#}
-            {% set nu = cfg_now.get(p.key, "") %}
-            {% if p.kind == "bool" %}
-            <select name="value">
-              <option value="on" {% if nu == "on" %}selected{% endif %}>on</option>
-              <option value="off" {% if nu == "off" %}selected{% endif %}>off</option>
-            </select>
-            {% elif p.kind == "enum" %}
-            <select name="value">
-              {% for c in p.choices.split("|") if c %}
-              <option value="{{ c }}" {% if nu == c %}selected{% endif %}>{{ c }}</option>
-              {% endfor %}
-            </select>
-            {% elif p.kind == "radio" %}
-            {#- 'get radio' antwoordt met komma's, 'set radio' wil spaties. De
-                vier velden hier maken dat verschil onzichtbaar, en dat is precies
-                waarom het er vier zijn: één tekstvak waarin je "869.525 250 11 5"
-                moet typen is het vak waarin een tikfout een node kwijtmaakt. -#}
-            {% set r = nu.replace(",", " ").split() %}
-            <input type="number" name="rf" step="0.001" min="150" max="2500"
-                   value="{{ r[0] if r|length == 4 else '' }}"
-                   placeholder="freq" required title="frequentie in MHz, 150–2500">
-            <input type="number" name="rb" step="0.001" min="7" max="500"
-                   value="{{ r[1] if r|length == 4 else '' }}"
-                   placeholder="bw" required title="bandbreedte in kHz, 7–500">
-            <input type="number" name="rs" step="1" min="5" max="12"
-                   value="{{ r[2] if r|length == 4 else '' }}"
-                   placeholder="sf" required title="spreading factor, 5–12">
-            <input type="number" name="rc" step="1" min="5" max="8"
-                   value="{{ r[3] if r|length == 4 else '' }}"
-                   placeholder="cr" required title="coding rate, 5–8">
-            {% elif p.kind == "int" %}
-            <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}"
-                   value="{{ nu }}" required>
-            {% elif p.kind == "float" %}
-            <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}"
-                   value="{{ nu }}" required>
-            {% elif p.secret %}
-            {#- Een geheim: niet in beeld tijdens het typen, en de node stuurt de
-                gelezen waarde ook niet terug. Wel vergeleken, niet verklapt. -#}
-            <input type="password" name="value" maxlength="39" autocomplete="new-password" required>
-            {% else %}
-            <input name="value" maxlength="39" autocomplete="off" value="{{ nu }}" required>
-            {% endif %}
-
-            {#- De bevestiging. Ook op de server afgedwongen: een drempel die je
-                met een aangepast formulier kunt overslaan is geen drempel. -#}
-            {% if risk == 2 %}
-            <label class="cfgconfirm"><input type="checkbox" name="confirm" value="ja" required>
-              bevestig</label>
-            {% elif risk == 3 %}
-            <input name="confirm" placeholder="{{ rep.name }}" autocomplete="off" required
-                   title="Typ de naam van deze node over om te bevestigen">
-            {% endif %}
-
-            <button type="submit" {% if risk == 3 %}class="danger"{% endif %}
-                    {% if risk > cfg_route.max_risk %}disabled
-                    title="niet over {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }}"{% endif %}>Zet</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% endif %}
-  {% endfor %}
-
-  {% endif %}
-</section>
-
-{#- Namen bij kanalen. Dit blok bestaat omdat het telemetrieformaat geen naamveld
-    heeft, en die uitleg staat op de pagina zelf en niet alleen in de code: wie dit
-    formulier voor het eerst ziet, ziet anders een lijst nummers zonder te weten
-    waarom iemand die met de hand moet benoemen -- en wie later "de gaten in de
-    nummering opruimen" bedenkt, hoort hier te lezen waarom dat elke naam stil naar
-    de verkeerde dienst laat wijzen. -#}
-{% if channels %}
-<section id="kanalen">
-  <h2>Namen bij de kanalen</h2>
-
-  <p class="muted small"><strong>Waarom deze tabel bestaat.</strong> Een sensornode
-     antwoordt op een telemetrieverzoek in <strong>CayenneLPP</strong>, en dat formaat is een
-     reeks drietallen: kanaalnummer, type, waarde. Er is <strong>geen naamveld</strong> — niet
-     in het formaat en niet in MeshCore, dat alleen een oplopende kanaalteller kent. Wat er van
-     de radio komt is dus letterlijk <span class="mono">kanaal 6, switch, 1</span> en niet
-     “google is bereikbaar”. De koppeling van nummer naar dienst is een eigenschap van de
-     antwoordende node, en de enige plek waar ze bewaard kan worden is hier, aan de ontvangende
-     kant.</p>
-
-  {#- Sinds de eigen API is dit niet meer per definitie handwerk, en dat verschil
-      hoort te staan waar de namen staan -- niet in de documentatie. De herkomst
-      per rij staat in de tabel om dezelfde reden: zonder die kolom ziet een
-      beheerder een naam zonder te weten of hij hem morgen nog terugvindt. -#}
-  <p class="muted small"><strong>Wat er automatisch komt, en wat niet.</strong> Van een node die
-     zijn <a href="#eigen-api">eigen API over IP</a> aanbiedt, worden deze namen overgenomen uit
-     <span class="mono">/status.json</span>: dat antwoord draagt per kanaal een naam, een adres
-     en het soort meting, en bij een responstijd ook de eenheid — dat het milliseconden zijn,
-     weet die API en het telemetriepakket niet. Van een node die alleen over het mesh binnenkomt
-     komt niets van dat alles mee, en dan is dit formulier de enige weg.</p>
-
-  <p class="muted small"><strong>Wat u typt, wint altijd.</strong> Een naam die u zelf invult,
-     wordt nooit door een uitleesronde overschreven — ook niet als de node iets anders meldt. U
-     heeft er een reden voor gehad; de node kent alleen zijn eigen afkorting. Een leeg veld
-     bewaren is ook een keuze en blijft ook staan: dan blijft het kanaal als “kanaal N” op de
-     statistiekpagina staan en vult de volgende ronde het niet opnieuw in. Wilt u de naam van de
-     node terug, maak het veld dan leeg, bewaar, en laat één ronde langskomen.</p>
-
-  <p class="muted small"><strong>Waarom hier en niet op de repeater.</strong> De repeater die
-     deze node uitleest is een doorgeefluik met beperkte flash. Een naam die daar staat is weg
-     na een herflash of bij vervanging van het bord, moet per kanaal over de radio gezet worden,
-     en helpt de MeshCore-app niets — die vraagt de telemetrie bij de sensornode zelf op en komt
-     langs de repeater niet eens voorbij. Hier staat de naam in dezelfde databank als de
-     metingen waar ze bij hoort, en overleeft ze elke firmware-uitrol.</p>
-
-  <p class="error small"><strong>Kanaalnummers mogen nooit verschuiven.</strong> De naam hangt
-     aan het <em>nummer</em>, want dat is het enige wat het pakket draagt. Wordt aan de zendende
-     kant een dienst verwijderd en schuift de rest een plaats op, dan wijst elke naam hieronder
-     stil naar de verkeerde dienst: geen foutmelding, alleen verkeerde cijfers op een dashboard.
-     Een gat in de nummering hieronder is dus <strong>geen rommel die opgeruimd hoort te
-     worden</strong> — het is het bewijs dat er niets verschoven is. Laat gaten staan, en
-     hergebruik een vrijgekomen nummer niet.</p>
-
-  {% if rechten['node.hernoemen'].allowed %}
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/channels">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <table>
-      <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Herkomst</th><th>Naam</th><th>Eenheid</th></tr></thead>
-      <tbody>
-      {% for c in channels %}
-        <tr>
-          <td class="mono">{{ c.channel }}</td>
-          <td class="muted">{{ c.kind_labels | join(' + ') }}</td>
-          <td class="muted small">
-            {%- if c.herkomst == 'auto' %}van de node
-            {%- elif c.herkomst == 'user' %}door u gezet
-            {%- else %}—{% endif %}</td>
-          <td><input type="text" name="ch_naam_{{ c.channel }}" value="{{ c.name }}"
-                     maxlength="64" autocomplete="off"
-                     placeholder="kanaal {{ c.channel }}"></td>
-          <td>
-            {%- if c.wants_unit %}
-            {#- Alleen bij een generic sensor: die is 4 byte met vermenigvuldiger 1 en
-                belooft niets over wát er gemeten is, dus zonder eenheid is "12" een getal
-                zonder betekenis. Een spanning en een temperatuur hebben hun eenheid al uit
-                het LPP-type, en een toestand hoort er geen te hebben. -#}
-            <input type="text" name="ch_eenheid_{{ c.channel }}" value="{{ c.unit }}"
-                   maxlength="16" autocomplete="off" placeholder="bv. ms">
-            {%- else %}<span class="muted">—</span>{% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    <div class="rowform"><button type="submit">&#128190; Namen bewaren</button></div>
-  </form>
-
-  <p class="muted small">Een leeg naamveld wist de naam. Het kanaal blijft dan als
-     “kanaal N” op de statistiekpagina staan en verdwijnt niet: een naamloze meting is nog steeds
-     een meting. Bewaren zet de herkomst van elke rij die u meestuurt op “door u gezet”, ook als
-     u de naam van de node letterlijk laat staan — wie een overgenomen naam bevestigt, heeft er
-     daarmee zijn eigen naam van gemaakt.</p>
-  {% else %}
-  <table>
-    <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Herkomst</th><th>Naam</th></tr></thead>
-    <tbody>
-    {% for c in channels %}
-      <tr>
-        <td class="mono">{{ c.channel }}</td>
-        <td class="muted">{{ c.kind_labels | join(' + ') }}</td>
-        <td class="muted small">
-          {%- if c.herkomst == 'auto' %}van de node
-          {%- elif c.herkomst == 'user' %}gezet door een beheerder
-          {%- else %}—{% endif %}</td>
-        <td>{% if c.name %}{{ c.name }}{% else %}<span class="muted">kanaal {{ c.channel }}</span>{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <p class="muted small">{{ rechten['node.hernoemen'].reason }}</p>
-  {% endif %}
-</section>
-{% endif %}
-
-<section id="pakketfilter">
-  <h2>Pakketfilter</h2>
-
-  <p class="muted small">
-    Welke van <em>andermans</em> pakketten deze repeater nog doorstuurt. Staat standaard
-    uit. Pakketten aan deze node zelf en direct gerouteerde pakketten gaan er altijd
-    omheen, dus je kunt jezelf hier niet mee buitensluiten — maar je kunt de node wél
-    stilletjes nutteloos maken. Zie <code>docs/nl/packet-filter.md</code>.
-  </p>
-
-  {% if filter_result %}
-  <div class="card notice">
-    {% if filter_result.ok %}
-    <strong>Gedaan:</strong> {{ filter_result.wat }}.
-    <br><span class="mono small">{{ filter_result.msg }}</span>
-    {% else %}
-    <strong>Niet gedaan.</strong>
-    {% if filter_result.step %}<span class="mono">[{{ filter_result.step }}]</span>{% endif %}
-    {{ filter_result.msg }}
-    {% endif %}
-  </div>
-  {% endif %}
-
-  {#- Wat de node zelf meldde in zijn laatste statistiekenbericht. Altijd zichtbaar,
-      ook zonder schrijfweg: dit is het antwoord op "staat hier iets aan dat ik
-      vergeten ben", en dat hoort niet af te hangen van of de node nu toevallig over
-      IP bereikbaar is. -#}
-  <div class="card">
-    <h3>Wat de node meldt</h3>
-    {% if not filter_seen.bekend %}
-    <p class="muted small">
-      Deze node heeft nog nooit iets over een pakketfilter gemeld. Meestal betekent dat
-      firmware van vóór 2.3.0 — het is in elk geval geen bewering dat er geen filter
-      aanstaat.
-    </p>
-    {% else %}
-    <p>
-      <strong>{{ filter_seen.tekst }}</strong>
-      {% if filter_seen.updated %}<span class="muted small">— volgens het bericht van
-        {{ filter_seen.updated }}</span>{% endif %}
-    </p>
-    {% if filter_seen.disarmed %}
-    <p class="muted small">
-      De node heeft het filter zelf uit gelaten na herhaalde herstarts (veilige modus).
-      De regels staan er nog en komen terug zodra hij weer normaal opstart.
-    </p>
-    {% endif %}
-    <p class="small">
-      Doorgelaten: <span class="mono">{{ filter_seen.door }}</span> ·
-      weggegooid: <span class="mono">{{ filter_seen.weg }}</span> ·
-      vrijgesteld via de ACL: <span class="mono">{{ filter_seen.vrij }}</span>
-    </p>
-    {% if filter_seen.redenen %}
-    <table class="cfgtable">
-      <thead><tr><th>Weggegooid omdat</th><th>aantal</th></tr></thead>
-      <tbody>
-        {% for label, aantal in filter_seen.redenen %}
-        <tr><td>{{ label }}</td><td class="mono">{{ aantal }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% elif filter_seen.aan %}
-    <p class="muted small">Er staat een filter aan, en het heeft nog niets weggegooid.</p>
-    {% endif %}
-    {% endif %}
-  </div>
-
-  {% if not filter_route.can and filter_queue and filter_queue.can %}
-  {#- De tweede schrijfweg: stock-repeater met filterpatch, geen IP-pad, maar
-      een verse poller die de wachtrij leegmaakt. Elke regel gaat als
-      `cmd:filter ...` de wachtrij in en wordt door de node als beheerder over
-      LoRa uitgevoerd; daarna leest hij `filter` en `filter count` terug. Zelfde
-      weging en bevestiging als de IP-weg (routes_admin.write_filter). Geen vrij
-      tekstveld, om dezelfde reden als daar. -#}
-  {% set fs = filter_state %}
-  <div class="card">
-    <h3>Zetten via de poller</h3>
-    <p class="muted small">
-      Deze repeater draait de stock-firmware met filterpatch en heeft geen IP-pad. Elke
-      regel hieronder gaat in de wachtrij; <span class="mono">{{ filter_queue.poller_name or "de poller" }}</span>
-      logt over LoRa in op de repeater, voert hem uit en leest daarna de stand terug — reken
-      op één tot twee minuten en ververs dan deze pagina. Laatst gemeld:
-      hoofdschakelaar <strong>{% if fs.on is defined %}{% if fs.on %}aan{% else %}uit{% endif %}{% else %}onbekend{% endif %}</strong>{% if fs.limits %},
-      {{ fs.limits|length }} type(s) met een limietregel{% endif %}.
-      Geen enkele regel kan <em>deze</em> repeater onbereikbaar maken: het filter geldt alleen
-      voor pakketten die hij voor anderen doorstuurt.
-    </p>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="off">
-      <button type="submit">Filter uit</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="reset">
-      <button type="submit">Alles terug naar standaard</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="on">
-      <label class="cfgconfirm">bevestig
-        <input name="confirm" placeholder="ja" autocomplete="off" required
-               title="Typ ja. Snijdt de regel volgens de meting meer dan een kwart van het flood-verkeer weg, dan vraagt de server de naam van de node."></label>
-      <button type="submit" class="danger">Filter aan</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="hash">
-      <label>minimale padhash
-        <select name="arg1"><option value="1">1 byte</option><option value="2">2 byte</option></select></label>
-      <label class="cfgconfirm">bevestig <input name="confirm" placeholder="ja" autocomplete="off"
-             title="Op 2 zetten wordt gemeten: snijdt het meer dan een kwart van het flood-verkeer weg, dan vraagt de server de naam van de node."></label>
-      <button type="submit">Zet padhash</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="malformed">
-      <label>structuurcontrole groepstekst
-        <select name="arg1"><option value="on">aan</option><option value="off">uit</option></select></label>
-      <button type="submit">Zet malformed</button>
-    </form>
-    {#- De regels per pakkettype als TABEL, met de gemelde waarden al ingevuld.
-        Twee formulieren per rij en niet één: een hoplimiet en een
-        snelheidslimiet zijn twee handelingen met elk hun eigen risicoweging en
-        hun eigen bevestiging, en één knop die ze samen verstuurt zou die weging
-        laten slaan op iets anders dan wat er gebeurt.
-
-        Een leeg veld betekent hier "de node heeft dit nog niet gemeld" en niet
-        "nul" -- vandaar de placeholder in plaats van een voorgevulde 0. De
-        vensterlengte komt alleen uit `filter rate`; heeft die ronde nog niet
-        gelopen, dan staat die kolom leeg en moet je hem invullen. -#}
-    <table class="cfgtable pftable">
-      <thead>
-        <tr>
-          <th>Pakkettype</th>
-          <th>Max hops</th><th></th>
-          <th>Max pakketten</th><th>per seconden</th><th></th>
-          <th title="Standaard van deze firmware: hops / pakketten / venster">Standaard</th>
-          <th title="Weggegooid door de hoplimiet en door de snelheidslimiet, sinds de laatste herstart van de repeater">Weggegooid</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for naam in filter_types[:11] %}
-        {% set nr = '%02d'|format(loop.index0) %}
-        {% set L = (filter_state.limits or {}).get(naam) or {} %}
-        {% set D = (filter_state.drop_types or {}).get(naam) %}
-        {% set S = filter_defaults.types.get(naam) %}
-        <tr>
-          <td class="mono">{{ nr }} {{ naam }}</td>
-          <td>
-            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform" id="hops-{{ nr }}">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <input type="hidden" name="cmd" value="hops">
-              <input type="hidden" name="arg1" value="{{ nr }}">
-              <input name="arg2" type="number" min="0" max="64" required
-                     value="{{ L.hops if L.hops is defined else '' }}"
-                     placeholder="{{ '' if L.hops is defined else 'onbekend' }}"
-                     title="0 = geen hoplimiet voor dit type. Een 0 zetten blokkeert dit type volledig en vraagt de naam van de node.">
-            </form>
-          </td>
-          <td><button type="submit" form="hops-{{ nr }}">zet</button></td>
-          <td>
-            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform" id="rate-{{ nr }}">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <input type="hidden" name="cmd" value="rate">
-              <input type="hidden" name="arg1" value="{{ nr }}">
-              <input name="arg2" type="number" min="0" max="65535" required
-                     value="{{ L.rate if L.rate is defined else '' }}"
-                     placeholder="{{ '' if L.rate is defined else 'onbekend' }}"
-                     title="0 = geen snelheidslimiet voor dit type">
-            </form>
-          </td>
-          <td>
-            <input name="arg3" type="number" min="1" max="86400" required form="rate-{{ nr }}"
-                   value="{{ L.window if L.window is defined else '' }}"
-                   placeholder="{{ '' if L.window is defined else 'onbekend' }}"
-                   title="De vensterlengte. Die staat alleen in het antwoord op `filter rate`; is die ronde nog niet gelopen, dan is hij hier onbekend.">
-          </td>
-          <td><button type="submit" form="rate-{{ nr }}">zet</button></td>
-          <td class="mono small">{% if S %}{{ S[0] }} / {{ S[1] }} / {{ S[2] }}{% endif %}</td>
-          <td class="mono small">{% if D %}{{ D.hops }} hops &middot; {{ D.rate }} rate{% else %}&mdash;{% endif %}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <p class="muted small">
-      Ingevuld met wat de repeater zelf meldde. <strong>Leeg = nog niet gemeld</strong>, niet nul —
-      de hoplimiet komt uit <span class="mono">filter hops</span>, de snelheidslimiet en het venster
-      uit <span class="mono">filter rate</span>. Staat er iets leeg, laat dan eerst een
-      instellingenronde lopen (&#128225; Instellingen nu opvragen hierboven).
-      De kolom <em>Weggegooid</em> komt uit <span class="mono">filter count</span> en telt sinds de
-      laatste herstart van de repeater; dat zijn <strong>tellers, geen instellingen</strong>.
-      Type <span class="mono">11 CONTROL</span> staat er niet bij: die firmware aanvaardt in
-      <span class="mono">hops</span> en <span class="mono">rate</span> alleen 0&#8209;10.
-    </p>
-
-    {#- De twee opstellingen uit de filtergids van deze firmware, letterlijk en als
-        REFERENTIE. Geen knop die ze in één klik zet: elke regel heeft zijn eigen
-        risicoweging en bevestiging, en dat is de drempel van dit scherm. -#}
-    <details class="pfpresets">
-      <summary>Voorbeeldopstellingen uit de filtergids van deze firmware</summary>
-      {% for titel, regels in filter_presets %}
-      <p class="small"><strong>{{ titel }}</strong></p>
-      <pre class="mono small">{% for r in regels %}{{ r }}
-{% endfor %}</pre>
-      {% endfor %}
-      <p class="muted small">
-        Overgenomen uit de DutchMeshCore-filtergids
-        (<span class="mono">toolbox.dutchmeshcore.nl/#/filter-guide</span>, gelezen 4 september 2026).
-        <span class="mono">filter hash 2</span> blokkeert daar met zoveel woorden alle oudere
-        pakketten die geen meerbytepad gebruiken — zet dat pas als je mesh mee is.
-      </p>
-    </details>
-    {#- Het kanaalfilter. Eigen kaartje binnen dit blok, want het is de enige
-        regel met een vrije naam erin en de enige die maar EEN pakkettype raakt.
-        Toevoegen en verwijderen zijn de twee handelingen; een aparte aan/uit
-        bestaat op deze firmware niet -- de lijst IS de stand, en de
-        hoofdschakelaar hierboven geldt voor het hele filter. -#}
-    <h4>Kanalen niet doorsturen</h4>
-    <p class="muted small">
-      Raakt alleen groepstekst (<span class="mono">05 GRP_TXT</span>) op dat kanaal, en
-      alleen het DOORSTUREN: de repeater blijft die berichten zelf ontvangen. Hoogstens
-      zestien kanalen. Een naam is <span class="mono">#naam</span> of
-      <span class="mono">Public</span>, zonder spaties — de server weigert de rest voordat
-      het zendtijd kost.
-    </p>
-    {% if filter_state.channels %}
-    <table class="cfgtable">
-      <thead><tr><th>Kanaal</th><th>Hash</th><th></th></tr></thead>
-      <tbody>
-        {% for c in filter_state.channels %}
-        <tr>
-          <td class="mono">{{ c.label }}</td>
-          <td class="mono">{% if c.hash %}#{{ c.hash }}{% else %}<span class="muted">—</span>{% endif %}</td>
-          <td>
-            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <input type="hidden" name="cmd" value="channel">
-              <input type="hidden" name="arg1" value="remove">
-              <input type="hidden" name="arg2" value="{{ c.label }}">
-              <button type="submit">weer doorlaten</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p class="muted small">
-      Geen kanaal in de lijst. Let op de kleine lettertjes van deze firmware: op een
-      <em>lege</em> lijst antwoordt hij helemaal niet, dus "niets geblokkeerd" en "geen
-      antwoord op de vraag" komen hier als hetzelfde aan. De teller
-      <span class="mono">Channel</span> in de statusregel is het onafhankelijke bewijs:
-      staat die boven nul, dan is er wél iets geblokkeerd.
-    </p>
-    {% endif %}
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="channel">
-      <input type="hidden" name="arg1" value="add">
-      <input name="arg2" maxlength="32" placeholder="#naam of Public" required autocomplete="off"
-             pattern="#?[A-Za-z0-9][A-Za-z0-9._\-]{0,31}"
-             title="De kanaalnaam zoals deze firmware hem aanvaardt: #naam of Public, zonder spaties">
-      <label class="cfgconfirm">bevestig
-        <input name="confirm" placeholder="ja" autocomplete="off" required></label>
-      <button type="submit">niet meer doorsturen</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="channel">
-      <input type="hidden" name="arg1" value="list">
-      <button type="submit">lijst opnieuw ophalen</button>
-    </form>
-
-    <p class="muted small">
-      Syntaxis van deze firmware (<span class="mono">filter help</span>):
-      <span class="mono">on | off | reset | hash &lt;bytes&gt; | hops &lt;type&gt; &lt;max&gt; |
-      rate &lt;type&gt; &lt;limit&gt; &lt;secs&gt; | malformed on|off | channel add|remove &lt;#naam&gt;</span>.
-      Een regel <span class="mono">type</span> (heel pakkettype dicht) bestaat hier niet.
-      De weg terug (<span class="mono">filter off</span>, <span class="mono">filter reset</span>) werkt
-      ook zonder deze site, over de mesh-CLI.
-    </p>
-  </div>
-  {% elif not filter_route.can %}
-  <div class="card">
-    <p class="muted small">
-      <strong>Niet te zetten vanaf hier:</strong>
-      {%- if filter_route.blocker == "relayed_only" and filter_queue and filter_queue.blocker == "no_poller" %}
-      deze repeater draait de stock-firmware met filterpatch en heeft geen IP-pad; de weg is
-      de pollerwachtrij, maar er is nu geen verse poller (de MeshUptime-node pollt niet, of
-      niet recent). Zodra hij pollt verschijnt hier het formulier.
-      {%- elif filter_route.blocker == "relayed_only" %}
-      deze repeater draait onze firmware niet en heeft geen IP-pad. Voor hem loopt de weg
-      over de mesh-CLI: <code>filter</code>, <code>filter off</code>,
-      <code>filter reset</code>.
-      {%- elif filter_route.blocker == "no_credentials" %}
-      de server heeft geen weblogin voor de beheerpagina van deze node
-      (<code>MM_FW_NODE_USER</code> / <code>MM_FW_NODE_PASS</code>).
-      {%- elif filter_route.blocker == "no_host" %}
-      er staat geen beheeradres bij deze node.
-      {%- elif filter_route.blocker == "no_fw" %}
-      we weten niet welke firmware hierop draait.
-      {%- elif filter_route.blocker == "old_fw" %}
-      deze node draait <span class="mono">{{ filter_route.fw }}</span>; het pakketfilter
-      bestaat vanaf <span class="mono">{{ filter_route.min_fw }}</span>.
-      {%- else %}{{ filter_route.blocker }}.
-      {%- endif %}
-      <br>De weg terug werkt hoe dan ook over de mesh-CLI: <code>filter off</code> en
-      <code>filter reset</code> hebben geen WiFi, geen beheerpagina en deze site niet
-      nodig.
-    </p>
-  </div>
-  {% elif not filter_live.ok %}
-  <div class="card">
-    <p class="muted small">
-      <strong>Regels niet op te halen:</strong> {{ filter_live.error }}.
-      Zonder de stand van de node zelf wordt hier niets aangeboden — een formulier op een
-      gegokte stand zet regels die je niet bedoelde.
-    </p>
-  </div>
-  {% else %}
-  {% set f = filter_live.filter %}
-
-  {#- Aanbevolen instellingen als REFERENTIE en niet als knop. Eén klik die vijf
-      regels zet, zou precies de risicoweging en de bevestiging omzeilen die
-      hieronder per regel gelden -- en dat is de drempel die dit scherm heeft.
-      Dus: wat we aanraden, waarom, en waar je nu van afwijkt. De lezer beslist.
-
-      Alles hier is onderbouwd uit docs/packet-filter.md, de firmware zelf of een
-      meting op dit mesh. Waar er geen vastgestelde afspraak is, staat dat er --
-      een verzonnen aanbeveling is hier schadelijker dan geen aanbeveling. -#}
-  <div class="card">
-    <h3>Aanbevolen instellingen</h3>
-    <p class="muted small">
-      Referentie, geen knoppen: elke regel hieronder heeft zijn eigen
-      risicoweging en bevestiging, en die horen per wijziging te gelden.
-    </p>
-    <table class="cfgtable">
-      <thead><tr><th>Regel</th><th>Aanbevolen</th><th>Nu</th><th>Waarom</th></tr></thead>
-      <tbody>
-        <tr>
-          <td class="mono">malformed</td>
-          <td class="mono">aan</td>
-          <td class="mono">{% if f.malformed %}aan{% else %}<strong>uit</strong> — wijkt af{% endif %}</td>
-          <td class="small">Gooit alleen pakketten weg die nooit een geldig
-            groepsbericht kunnen zijn geweest: te kort voor kanaalhash + MAC + één
-            cipherblok, of een ciphertext die geen veelvoud van 16 byte is. Er valt
-            geen legitiem verkeer onder.</td>
-        </tr>
-        <tr>
-          <td class="mono">hash</td>
-          <td class="mono">wat je mesh afsprak</td>
-          <td class="mono">{{ f.hash }} byte</td>
-          <td class="small">Hier is geen technisch optimum — dit is een
-            netwerkafspraak. Wat het kost is wél meetbaar: op dit mesh draagt het
-            meeste flood-verkeer één byte, en op 2 zetten betekent dat deze node
-            dat niet meer doorstuurt. Trek eerst je companion en de betrokken
-            nodes gelijk; anders worden nodes áchter dit knooppunt onbereikbaar.
-            De schrijfweg meet dat en vraagt boven een kwart de nodenaam.</td>
-        </tr>
-        <tr>
-          <td class="mono">hops/rate op 00, 01</td>
-          <td class="mono">0 (geen limiet)</td>
-          <td class="small">zie de tabel hieronder</td>
-          <td class="small">REQ en RESPONSE is beheerverkeer. Je eigen toegang tot
-            déze node loopt niet langs het filter, maar het beheerverkeer dat deze
-            node voor <em>andere</em> operatoren doorstuurt wel — daarmee kan
-            iemand anders zijn eigen repeater niet meer bereiken via dit punt.</td>
-        </tr>
-        <tr>
-          <td class="mono">rate op 04, 09</td>
-          <td class="mono">veiligste kandidaten</td>
-          <td class="small">zie de tabel hieronder</td>
-          <td class="small">Moet je iets afknijpen, dan zijn ADVERT en TRACE de
-            minst schadelijke: één gemiste advert of traceroute kost weinig en komt
-            terug. ACK, RESPONSE en TXT_MSG zijn dat niet — daar breekt een gemist
-            pakket een gesprek.</td>
-        </tr>
-        <tr>
-          <td class="mono">hoofdschakelaar</td>
-          <td class="mono">alleen aan met een regel die je wil</td>
-          <td class="mono">{% if f.on %}aan{% else %}uit{% endif %}</td>
-          <td class="small">Uit laat de regels staan en handhaaft ze niet: dat is de
-            goedkoopste weg terug als iets onverwacht uitpakt. Een filter aanzetten
-            terwijl er al een categorale regel klaarstaat, is de klik die het
-            verkeer stilzet — niet de klik die de regel maakte.</td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="muted small">
-      Geen van deze regels kan <em>deze</em> node onbereikbaar maken: het filter
-      wordt alleen gevraagd over pakketten die hij voor anderen zou doorsturen.
-      Verkeer aan deze node, direct gerouteerd verkeer en verkeer van of naar een
-      client in de access list gaan er nooit langs.
-    </p>
-  </div>
-
-  <div class="card">
-    <h3>Aan of uit</h3>
-    <p class="muted small">
-      Uitzetten laat de regels staan; terugzetten wist ze én zet het filter uit. Allebei
-      lichter dan aanzetten, met opzet: herstel mag nooit strakker afgeschermd zijn dan de
-      fout die het terugdraait.
-    </p>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="off">
-      <button type="submit">Filter uit</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="reset">
-      <button type="submit">Alles terug naar standaard</button>
-    </form>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="on">
-      <label class="cfgconfirm">bevestig
-        <input name="confirm" placeholder="ja" autocomplete="off" required
-               title="Typ ja. Staat er al een regel klaar die een heel pakkettype dichtzet, dan vraagt de server de naam van de node."></label>
-      <button type="submit" class="danger">Filter aan</button>
-    </form>
-    <p class="muted small">
-      Nu volgens de node zelf: <strong>{% if f.on %}aan{% else %}uit{% endif %}</strong>,
-      minimale padhash <span class="mono">{{ f.hash }}</span>, structuurcontrole op
-      groepstekst <span class="mono">{% if f.malformed %}aan{% else %}uit{% endif %}</span>.
-    </p>
-  </div>
-
-  <div class="card">
-    <h3>Losse regels</h3>
-    <table class="cfgtable">
-      <thead><tr><th>Regel</th><th>Nu</th><th>Nieuwe waarde</th></tr></thead>
-      <tbody>
-        <tr>
-          <td>Minimale padhash</td>
-          <td class="mono">{{ f.hash }}</td>
-          <td>
-            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <input type="hidden" name="cmd" value="hash">
-              {#- Voorgeselecteerd op wat er NU staat, uit de live opgehaalde stand.
-                  Zonder dat begint de lijst altijd op '1 byte' en is één
-                  onoplettende klik op 'Zet' een wijziging die je niet wilde. -#}
-              <select name="arg1">
-                <option value="1"{% if f.hash == 1 %} selected{% endif %}>1 byte — alles door</option>
-                <option value="2"{% if f.hash == 2 %} selected{% endif %}>2 byte — oudere nodes vallen af</option>
-                <option value="3"{% if f.hash == 3 %} selected{% endif %}>3 byte — vrijwel alles valt af</option>
-              </select>
-              <label class="cfgconfirm">bevestig
-                <input name="confirm" placeholder="ja / {{ rep.name }}" autocomplete="off"
-                       title="Typ ja. Bij 3 byte vraagt de server de naam van de node, want die regel blokkeert vandaag vrijwel al het verkeer."></label>
-              <button type="submit">Zet</button>
-            </form>
-          </td>
-        </tr>
-        <tr>
-          <td>Misvormde groepstekst</td>
-          <td class="mono">{% if f.malformed %}aan{% else %}uit{% endif %}</td>
-          <td>
-            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <input type="hidden" name="cmd" value="malformed">
-              <select name="arg1">
-                <option value="on"{% if f.malformed %} selected{% endif %}>aan</option>
-                <option value="off"{% if not f.malformed %} selected{% endif %}>uit</option>
-              </select>
-              <label class="cfgconfirm">bevestig
-                <input name="confirm" placeholder="ja" autocomplete="off"></label>
-              <button type="submit">Zet</button>
-            </form>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="muted small">
-      "Misvormd" betekent hier: structureel onmogelijk (lengte en blokuitlijning). De
-      inhoud kan een repeater niet lezen — daarvoor zou hij de kanaalsleutel nodig hebben.
-    </p>
-  </div>
-
-  <div class="card">
-    <h3>Per pakkettype</h3>
-    <p class="muted small">
-      Een hoplimiet van <span class="mono">0</span> of een type op "niet doorsturen" zet
-      een hele categorie verkeer stil. Daar vraagt de server de naam van de node voor.
-      Drie losse knoppen per regel, want het zijn drie handelingen met drie
-      verschillende gewichten — in één formulier zouden ze op één bevestiging meeliften.
-    </p>
-    <table class="cfgtable">
-      <thead><tr>
-        <th>Type</th><th>Door</th><th>Max hops</th><th>Snelheid</th><th>Weg</th><th>Wijzigen</th>
-      </tr></thead>
-      <tbody>
-      {% for t in f.types %}
-      <tr>
-        <td class="mono">{{ "%02d"|format(t.id) }} {{ t.name }}</td>
-        <td class="mono">{% if t.on %}ja{% else %}<strong>nee</strong>{% endif %}</td>
-        <td class="mono">{{ t.hops }}</td>
-        <td class="mono">{% if t.limit %}{{ t.limit }}/{{ t.window }}s{% else %}—{% endif %}</td>
-        <td class="mono">{{ t.drop }}</td>
-        <td>
-          <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-            <input type="hidden" name="csrf" value="{{ csrf }}">
-            <input type="hidden" name="cmd" value="hops {{ "%02d"|format(t.id) }}">
-            <input type="number" name="arg1" min="0" max="63" value="{{ t.hops }}" required
-                   title="hoogstens zoveel hops; 0 = niets van dit type doorsturen">
-            <input name="confirm" placeholder="ja / {{ rep.name }}" autocomplete="off" required>
-            <button type="submit">hops</button>
-          </form>
-          <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-            <input type="hidden" name="csrf" value="{{ csrf }}">
-            <input type="hidden" name="cmd" value="rate {{ "%02d"|format(t.id) }}">
-            <input type="number" name="arg1" min="0" max="65535" value="{{ t.limit }}" required
-                   title="aantal pakketten; 0 = geen snelheidslimiet">
-            <input type="number" name="arg2" min="1" max="3600" value="{{ t.window }}" required
-                   title="per zoveel seconden">
-            <input name="confirm" placeholder="ja" autocomplete="off" required>
-            <button type="submit">snelheid</button>
-          </form>
-          <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-            <input type="hidden" name="csrf" value="{{ csrf }}">
-            <input type="hidden" name="cmd"
-                   value="type {{ "%02d"|format(t.id) }} {% if t.on %}off{% else %}on{% endif %}">
-            <input name="confirm" autocomplete="off" required
-                   placeholder="{% if t.on %}{{ rep.name }}{% else %}ja{% endif %}">
-            <button type="submit" {% if t.on %}class="danger"{% endif %}>{% if t.on %}dichtzetten{% else %}openzetten{% endif %}</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <h3>Geblokkeerde kanalen</h3>
-    <p class="muted small">
-      Een repeater ziet geen kanaal<em>naam</em> — alleen één byte:
-      <span class="mono">sha256(kanaalsleutel)[0]</span>. Geef daarom de sleutel (base64,
-      zoals je hem in een client plakt) of de hashbyte zelf als
-      <span class="mono">#a3</span>. Let op: ongeveer één kanaal op 256 deelt die byte met
-      een ander, en dat kanaal gaat dan mee.
-    </p>
-    {% if f.channels %}
-    <table class="cfgtable">
-      <thead><tr><th>Label</th><th>Hash</th><th></th></tr></thead>
-      <tbody>
-        {% for c in f.channels %}
-        <tr>
-          <td>{{ c.label }}</td>
-          <td class="mono">#{{ c.hash }}</td>
-          <td>
-            <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <input type="hidden" name="cmd" value="channel remove {{ c.label }}">
-              <button type="submit">weer doorlaten</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p class="muted small">Geen enkel kanaal geblokkeerd.</p>
-    {% endif %}
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/filter" class="rowform">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="cmd" value="channel add">
-      <input name="arg1" maxlength="23" placeholder="label" required autocomplete="off"
-             title="Een naam voor jezelf; de node vergelijkt op de hash">
-      <input name="arg2" maxlength="64" placeholder="psk-base64 of #a3" required
-             autocomplete="off">
-      <input name="confirm" placeholder="ja" autocomplete="off" required>
-      <button type="submit">blokkeer</button>
-    </form>
-  </div>
-
-  {% endif %}
-</section>
-
-<section>
-  <h2>Klok</h2>
-  <div class="card">
-
-  {% if clock == "sent" %}
-  <div class="card notice">
-    &#9203; De tijd is naar node <span class="mono">{{ clock_route.node }}</span> verstuurd.
-    Die zet meteen zijn eigen klok
-    {%- if clock_route.via_monitor %} en loopt daarna zijn gemonitorde repeaters af,
-    waaronder deze. Per repeater vraagt hij eerst de klok op en zet hij die alleen bij
-    als ze meer dan twee minuten afwijkt, met ademruimte ertussen omdat elk commando
-    zendtijd kost. Reken op <strong>1 à 3 minuten</strong>.
-    {%- else %}, en loopt daarna de repeaters af die hij monitort.{% endif %}
-  </div>
-  {% elif clock == "too_soon" %}
-  <div class="card notice">
-    &#9888; Er is <strong>niets verstuurd</strong>. Node <span class="mono">{{ clock_route.node }}</span>
-    kreeg minder dan {{ clock_gap_min }} minuten geleden al een tijd van deze site, en hij
-    doet de ronde langs zijn gemonitorde repeaters hoogstens één keer per uur — die zou
-    hij nu dus overslaan. Volgende synchronisatie mogelijk over
-    <strong>{{ clock_wait }} minuten</strong>.
-  </div>
-  {% elif clock == "no_clock" %}
-  <div class="card notice">
-    &#9888; Er is <strong>niets verstuurd</strong>: de klok van deze server is op dit
-    ogenblik niet als betrouwbaar vast te stellen — {{ clocksync_reason or "zie Server en site" }}.
-    Een verkeerde tijd is op een node niet meer terug te draaien (een klok kan alleen
-    vooruit), dus bij twijfel gaat er niets uit. De uitleg staat op
-    <a href="/admin/server#kloksync">Server en site</a>.
-  </div>
-  {% elif clock == "failed" %}
-  <div class="card notice">
-    &#9888; De opdracht is <strong>niet vertrokken</strong> van deze machine. Meestal is
-    de verbinding met de MQTT-broker net weggevallen; kijk op
-    <a href="/admin/server#invoer">Server en site</a>.
-  </div>
-  {% elif clock == "no_route" %}
-  <div class="card notice">
-    &#9888; Er is <strong>niets verstuurd</strong> — er was geen weg om de tijd heen te
-    brengen. De uitleg staat bij de knop hieronder.
-  </div>
-  {% elif clock == "disabled" %}
-  <div class="card notice">
-    &#9888; Kloksynchronisatie staat uit (<code>MM_CLOCKSYNC_ENABLED=0</code>).
-  </div>
-  {% endif %}
-
-  <table>
-    <tr><td>Laatst tijd gestuurd</td><td>
-      {%- if clock_sent %}<time class="reltime" datetime="{{ clock_sent }}">{{ clock_sent }}</time>
-      naar node <span class="mono">{{ clock_route.node }}</span>
-      {%- else %}<span class="muted">nog nooit door deze site</span>{% endif %}</td></tr>
-    <tr><td>Automatisch</td><td>
-      {%- if clock_enabled %}ja, de site doet dit uit zichzelf; de knop hieronder is er om niet te
-      hoeven wachten{% else %}<span class="muted">uitgeschakeld</span>{% endif %}</td></tr>
-  </table>
-
-  {#- Dit is de eerste handeling op deze pagina die iets op het apparaat
-      verándert, en de enige waarvan een fout niet vanaf hier te herstellen is.
-      Vandaar het zwaarste blok, én een bevestigingsvraag die de node bij naam
-      noemt. Verworpen alternatief: een eigen bevestigingsscherm in de pagina.
-      Dat ziet er rustiger uit, maar confirm() is wat de rest van deze site al
-      gebruikt, werkt zonder een regel extra JavaScript en is met het toetsenbord
-      te bedienen -- en de vraag is hier belangrijker dan het kader eromheen. -#}
-  <div class="act act--write">
-    <div class="act-head">
-      <h3>Klok nu synchroniseren</h3>
-      <span class="act-tag">schrijft op het apparaat</span>
-    </div>
-    <p class="muted small">
-      {%- if clock_route.ok and not broker %}
-      {#- De weg klopt, maar er is nu geen broker om hem over te bewandelen.
-          clocksync.time_route kijkt daar bewust niet naar; de knop hier wel,
-          want anders eindigt een klik op "er is niets verstuurd" en had de
-          pagina dat vooraf kunnen zeggen. -#}
-      De weg naar node <span class="mono">{{ clock_route.node }}</span> staat open, maar de site
-      heeft op dit ogenblik geen verbinding met de MQTT-broker. Er zou dus niets vertrekken.
-      {%- elif clock_route.ok and clock_route.via_monitor %}
-      Deze repeater publiceert zelf niet en heeft dus geen eigen weg naar de site. Zijn klok
-      komt van node <span class="mono">{{ clock_route.node }}</span>, die hem monitort
-      (nodefirmware {{ clock_route.fw_meshmanager }}). <strong>De knop richt zich daarom niet op
-      deze repeater alleen:</strong> de site stuurt de tijd naar die node, en die kijkt de
-      klokken na van <em>alle</em> repeaters die hij monitort. De firmware kent geen manier
-      om dat op één node toe te spitsen, en dat is geen omissie — een klokronde kost per
-      gemonitorde repeater één vraag en één antwoord, dus de hele lijst aflopen is
-      ongeveer een vijfde van wat één gewone pollronde kost.
-      {%- elif clock_route.ok %}
-      De site stuurt <code>time &lt;epoch&gt;</code> rechtstreeks naar node
-      <span class="mono">{{ clock_route.node }}</span> (nodefirmware {{ clock_route.fw_meshmanager }}).
-      Die zet zijn eigen klok en kijkt daarna over LoRa de klokken na van de repeaters die
-      hij monitort.
-      {%- elif clock_route.blocker == "no_source" %}
-      er is nog geen enkel bericht van deze repeater binnengekomen, dus is niet bekend welke
-      node ervoor publiceert.
-      {%- elif clock_route.blocker == "http_source" %}
-      deze repeater komt binnen via de HTTP-API en niet via MQTT; langs die weg valt een node
-      niets te sturen.
-      {%- elif clock_route.blocker == "relay_unknown" %}
-      de cijfers van deze repeater worden doorgestuurd door node
-      <span class="mono">{{ clock_route.node }}</span>, en die node is hier zelf geen bekende
-      repeater. Van zijn firmware weten we dus niets.
-      {%- elif clock_route.blocker == "no_fw" %}
-      de node die de tijd zou krijgen meldt geen firmwareversie, dus valt niet vast te
-      stellen of hij <code>time</code> kent. Publiceren zou hier neerkomen op hopen.
-      {%- elif clock_route.blocker == "old_fw" %}
-      de node die de tijd zou krijgen draait nodefirmware {{ clock_route.fw_meshmanager }}. Het
-      commando <code>time</code> bestaat pas vanaf {{ clock_min_fw }}; oudere firmware weigert
-      het woord en telt het als geweigerd, zonder dat iemand dat hier ziet.
-      {%- elif clock_route.blocker == "stale" %}
-      er is al te lang niets van de node gehoord die de tijd zou krijgen. Een opdracht wordt
-      niet bewaard voor een node die offline is.
-      {%- elif clock_route.blocker == "broker_down" %}
-      de site heeft op dit ogenblik geen verbinding met de MQTT-broker.
-      {%- else %}
-      {{ clock_route.why }}
-      {%- endif %}
-    </p>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/clocksync"
-          onsubmit="return confirm('De tijd van deze server naar node {{ clock_route.node or '?' }} sturen, voor {{ rep.name }} ({{ rep.pubkey_prefix }})?\n\nDit zet klokken op apparaten die je van hier niet meer kunt terugdraaien{% if clock_route.via_monitor %}, en die node kijkt meteen ook de klokken na van alle andere repeaters die hij monitort{% endif %}.')">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      {% if clock_route.ok and clock_enabled and broker %}
-      <button type="submit"{{ recht('node.klok') }}>&#128340; Klok nu synchroniseren</button>
-      {% else %}
-      <button type="submit" disabled title="Er is op dit ogenblik geen weg om de tijd heen te brengen">
-        &#128340; Synchroniseren kan nu niet</button>
-      {% endif %}
-    </form>
-  </div>
-
-  <p class="muted small">
-    <strong>Wat deze pagina wel en niet weet.</strong> Hierboven staat wanneer <em>deze
-    site</em> voor het laatst een tijd verstuurd heeft — niet of de klok daarna ook echt
-    goed stond. De node meet zelf hoeveel elke gemonitorde repeater afwijkt en corrigeert
-    alleen boven twee minuten, maar hij stuurt die meting nergens naartoe; ze is te lezen
-    met <code>wifi clock</code> op de node zelf (serieel, telnet of over de mesh-CLI).
-    Een node die <em>vóór</em> loopt wordt daar gemeld en met rust gelaten: adverts dragen
-    de klok van hun afzender mee en worden geweigerd als die tijdstempel niet stijgt, dus
-    een klok terugzetten zou die repeater even lang onzichtbaar maken als de stap groot is.
-  </p>
-  </div>
-</section>
-
-{#- De firmware-upgradeweg is er, en hij staat op zijn eigen pagina: welke
-    release waar draait is een vraag die je over alle nodes tegelijk stelt. Hier
-    staat de weg ernaartoe, op de plek waar hij hoort -- ná de klok en vóór het
-    verwijderblok, in oplopende onomkeerbaarheid. Opvragen leest, de klok
-    schrijft één getal, firmware schrijft het hele apparaat.
-
-    Wat hier bewust NIET herhaald wordt: de versie die er nu op staat. Die staat
-    in "Identiteit en versies" hierboven, en twee plaatsen die hetzelfde getal
-    tonen zijn twee plaatsen die het een keer oneens worden.
-
-    En let op bij het niveau: of een upgrade kán is niet af te leiden uit
-    ``route.level``. Een full managed node zonder IP-pad neemt commando's aan
-    maar geen image van ruim een megabyte, en een node waarvan we de
-    bouwomgeving niet kennen mag er sowieso geen krijgen -- verkeerd board is een
-    kapotte node. Die afweging maakt firmware.ota_route(), en de firmwarepagina
-    toont hem per node. -#}
-<section>
-  <h2>Firmware</h2>
-  <div class="card">
-  <div class="act act--danger">
-    <div class="act-head">
-      <h3>Een image naar dit apparaat schrijven</h3>
-      <span class="act-tag">schrijft firmware</span>
-    </div>
-    <p class="muted small">De upgrade zelf staat op de firmwarepagina: daar zie je naast elkaar
-       welke versie op elke node draait, welke releases er zijn met hun release notes, en per
-       node of er een weg naartoe is. Van deze node staat de versie hierboven bij
-       <em>Identiteit en versies</em>.</p>
-    <p><a class="linkbtn" href="/admin/firmware">&#8679; Naar firmware &rarr;</a></p>
-    {{ waarom('node.firmware') }}
-  </div>
-  </div>
-</section>
-
-<section>
-  <h2>Verwijderen</h2>
-  <div class="card">
-  <div class="act act--danger">
-    <div class="act-head">
-      <h3>Deze repeater en al zijn historiek wissen</h3>
-      <span class="act-tag">onomkeerbaar</span>
-    </div>
-    <p class="muted small">Weg zijn: alle metingen, de actuele waarden en de burenlijst van
-       <strong>{{ rep.name }}</strong> (<span class="mono">{{ rep.pubkey_prefix }}</span>).
-       Dit stopt niets op het apparaat zelf &mdash; blijft de node publiceren, dan staat hij er
-       binnen enkele minuten weer bij, leeg. Wil je hem alleen van de publieke site af, gebruik
-       dan <em>verbergen</em> hierboven.</p>
-    <form method="post" action="/admin/repeaters/{{ rep.id }}/delete"
-          onsubmit="return confirm('{{ rep.name }} ({{ rep.pubkey_prefix }}) en alle historiek verwijderen?\n\nDit is niet ongedaan te maken.')">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" class="danger"{{ recht('node.verwijderen') }}>&#128465;&#65039; Verwijderen</button>
-    </form>
-    {{ waarom('node.verwijderen') }}
-  </div>
-  </div>
-</section>
-
-{#- ==================== Alarmen ============================================
-
-    TELEMETRIE IS SNMP-POLLING, EEN ALERT IS EEN SNMP-TRAP. Die ene zin verklaart
-    waarom dit blok bestaat en waarom het niet bij de metingen staat: een poll is
-    regelmatig, volledig en blind voor wat er tussen twee rondes gebeurde; een
-    trap komt op het moment dat er iets gebeurt, draagt één feit, en arriveert
-    misschien niet. De grafieken hierboven zijn het eerste, dit is het tweede.
-
-    Een eigen sectie en geen regel in het audittrail onderaan. Die twee lijken op
-    elkaar en ze zijn het tegenovergestelde: het trail zegt wat WIJ met deze node
-    gedaan hebben, dit zegt wat DE NODE ons gemeld heeft. -#}
-<section id="alarmen">
-  <h2>Alarmen
-    {%- if alerts_open %} <span class="pill off">{{ alerts_open }} niet bevestigd</span>{% endif %}</h2>
-  <div class="card tablecard">
-
-  <p class="muted small"><strong>Telemetrie is polling; een alarm is een trap.</strong>
-     De cijfers en grafieken van deze node komen van een uitvraagronde: regelmatig,
-     volledig, en zonder weet van wat er tussen twee rondes gebeurde. Een alarm komt op
-     het moment dat er iets gebeurt, draagt één feit, en is er misschien niet — de
-     sensornode stuurt het als bericht naar de repeaters die in zijn toegangslijst met
-     alarmrecht staan, en die zetten het meteen door. Daarom staan ze hier apart en niet
-     als meetreeks: je hebt ze beide nodig, want het alarm zegt <em>wanneer</em> en de
-     uitvraging zegt <em>wat</em>.</p>
-
-  {% if not alerts %}
-  <p class="muted small">Nog geen alarmen van deze node. Dat kan twee dingen betekenen, en
-     ze zijn niet hetzelfde: er is niets aan de hand, of deze node kent geen enkele
-     repeater met alarmrecht en zijn meldingen komen nergens aan. Het tweede is te zien in
-     zijn <a href="#eigen-api">toegangslijst</a> — een repeater die daar niet in staat, kan
-     geen alarm doorgeven.</p>
-  {% else %}
-  <table>
-    <thead><tr><th>Wanneer</th><th>Melding</th><th>Ernst</th><th>Bron</th><th></th></tr></thead>
-    <tbody>
-    {% for a in alerts %}
-      <tr{% if not a.acked %} class="warnrow"{% endif %}>
-        <td><time class="reltime" datetime="{{ a.ts }}">{{ a.ts }}</time></td>
-        <td>{{ a.text }}
-          {%- if a.channel %} <span class="muted small">· kanaal {{ a.channel }}</span>{% endif %}</td>
-        <td class="small">
-          {%- if a.severity == 'hoog' %}<span class="error">hoog</span>
-          {%- elif a.severity == 'laag' %}<span class="muted">laag</span>
-          {%- else %}<span class="muted" title="Niet uit de tekst af te leiden; een verzonnen ernst is erger dan geen">—</span>{% endif %}</td>
-        <td class="small muted">
-          {%- if a.source == 'mesh' %}over het mesh, via een repeater
-          {%- elif a.source == 'ip' %}over IP
-          {%- elif a.source == 'push' %}gepusht door de node zelf
-          {%- else %}{{ a.source }}{% endif %}</td>
-        <td>
-          {% if a.acked %}<span class="muted small">bevestigd</span>
-          {% else %}
-          <form method="post" action="/admin/repeaters/{{ rep.id }}/alerts/ack" class="inline">
-            <input type="hidden" name="csrf" value="{{ csrf }}">
-            <input type="hidden" name="alert_id" value="{{ a.id }}">
-            <button type="submit" class="mini"{{ recht('node.uitvragen') }}>bevestigen</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-
-  {% if alerts_open %}
-  <form method="post" action="/admin/repeaters/{{ rep.id }}/alerts/ack" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit"{{ recht('node.uitvragen') }}>
-      &#10003; Alle {{ alerts_open }} bevestigen</button>
-  </form>
-  {% endif %}
-  {{ waarom('node.uitvragen') }}
-  <p class="muted small">Bevestigen haalt een alarm niet weg — het zegt dat iemand het
-     gezien heeft. Er is met opzet geen knop die er een verwijdert: een melding die je
-     zonder spoor kunt wegklikken is een melding die achteraf niet meer na te vertellen is.
-     Opruimen doet de bewaartermijn, samen met de rest van de historiek.</p>
-  {% endif %}
-  </div>
-</section>
-
-{#- Wat er met déze node gebeurd is, en door wie.
-
-    Op de nodepagina en niet alleen op Server en site, omdat de vraag "wie heeft
-    deze node geflasht" gesteld wordt terwijl je naar die node kijkt. Zichtbaar
-    voor iedereen die de node mag bekijken: het verbergen ervan voor wie er
-    dagelijks aan werkt zou het trail tot een controlemiddel maken in plaats van
-    tot gedeelde geschiedenis. -#}
-<section id="trail">
-  <h2>Wat er met deze node gebeurd is</h2>
-  <div class="card tablecard">
-  <table>
-    <thead><tr><th>Wanneer</th><th>Wie</th><th>Handeling</th><th>Uitkomst</th><th>Toelichting</th></tr></thead>
-    <tbody>
-    {% for r in audit %}
-      <tr>
-        <td><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
-        <td>{{ r.actor }}</td>
-        <td><code>{{ r.action }}</code></td>
-        <td>{{ r.outcome }}</td>
-        <td class="muted small">{{ r.detail }}</td>
-      </tr>
-    {% else %}
-      <tr><td colspan="5" class="muted">Nog niets vastgelegd voor deze node.</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-</section>
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_v }}"></script>
+<script>
+// Versiering, geen drager: markeert in de sectienavigatie welke sectie in beeld
+// is. Zonder dit script zijn de ankers nog steeds een werkende inhoudsopgave.
+// IntersectionObserver ontbreekt alleen in browsers die deze site verder ook
+// niet dragen; dan gebeurt er gewoon niets.
+(function () {
+  var nav = document.getElementById("secnav");
+  if (!nav || !("IntersectionObserver" in window)) return;
+  var links = nav.querySelectorAll("a[href^='#']");
+  var bijId = {};
+  for (var i = 0; i < links.length; i++) bijId[links[i].getAttribute("href").slice(1)] = links[i];
+  var zichtbaar = {};
+  function zet() {
+    var eerste = null;
+    for (var id in bijId) {
+      if (zichtbaar[id] && (eerste === null || zichtbaar[id] < zichtbaar[eerste])) eerste = id;
+    }
+    for (var k in bijId) bijId[k].classList.toggle("on", k === eerste);
+  }
+  var obs = new IntersectionObserver(function (entries) {
+    for (var j = 0; j < entries.length; j++) {
+      var e = entries[j];
+      if (e.isIntersecting) zichtbaar[e.target.id] = e.boundingClientRect.top;
+      else delete zichtbaar[e.target.id];
+    }
+    zet();
+  }, { rootMargin: "-100px 0px -55% 0px" });
+  for (var id in bijId) {
+    var el = document.getElementById(id);
+    if (el) obs.observe(el);
+  }
+})();
+</script>
 {% endblock %}

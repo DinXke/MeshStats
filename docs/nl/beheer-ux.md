@@ -1,5 +1,7 @@
 # Beheerpagina's: indeling en componenten
 
+*[English](../beheer-ux.md)*
+
 Dit document is de leidraad voor de vormgeving van alles onder `/admin`, en de
 vastlegging van de keuzes erachter. Het beschrijft *hoe* een beheerpagina is
 opgebouwd; wat er op elke pagina staat en waarom, staat in
@@ -126,6 +128,39 @@ met `.frm--noplabel`.
 
 De oude `rowform` blijft bestaan voor de plekken waar hij past — een rij losse
 knoppen, of formulieren *in* een tabelcel — maar hij is niet meer de standaard.
+
+### Rechtenpoort — `fieldset`
+
+```html
+<form class="frm" method="post" action="…">
+  <input type="hidden" name="csrf" value="…">
+  <label class="frm-label" for="x">Naam</label>
+  <fieldset class="frm-field"{{ recht('node.hernoemen') }}>
+    <input id="x" name="name" …>
+  </fieldset>
+  <div class="frm-actions"><button type="submit"{{ recht('node.hernoemen') }}>Opslaan</button></div>
+</form>
+```
+
+Elk beheerformulier staat *zichtbaar* uit voor wie de handeling niet mag: de
+velden én de knop, met de reden in de tooltip. De grendel zit op de server
+(`require_perm` in elke route) en die was al dicht; de poort in het sjabloon
+ontbrak op 86 formulieren, en dat is wat de eigenaar zag — een bediener die
+velden kon invullen en pas ná de klik een weigering kreeg. Een pagina die netjes
+is maar liegt over wat je mag, is slechter dan de rommel ervoor.
+
+De poort is `{{ recht('<handeling>') }}` op een `<fieldset>` om de velden: een
+uitgeschakelde fieldset schakelt alles erin uit, zonder JavaScript, en de
+`title` erop is de reden uit `rbac.ACTIONS`. Welke handeling bij welk formulier
+hoort staat niet in het sjabloon verzonnen maar volgt de `require_perm` van de
+bijbehorende route; waar de klasse van de ingevulde *waarde* afhangt
+(`hops 05 0`, `hash 3`) poort het scherm op de klasse van de gewone waarde en
+weegt de server de waarde nog eens. Bovenaan de nodepagina staat één keer welke
+rol de gebruiker op deze node heeft en wat die betekent (`rbac.ROL_UITLEG`),
+zodat niet elke uitgeschakelde knop dat apart hoeft te vertellen.
+
+`tests/test_rechtenpoorten.py` is de ratel: hij telt per sjabloon de
+formulieren zonder poort en faalt zodra er één bijkomt.
 
 ### Handeling — `.act` met risicoklasse
 
