@@ -1,0 +1,132 @@
+{% from "admin/_macros.html" import recht with context %}
+{#- Namen bij kanalen. Dit blok bestaat omdat het telemetrieformaat geen naamveld
+    heeft, en die uitleg staat op de pagina zelf en niet alleen in de code: wie dit
+    formulier voor het eerst ziet, ziet anders een lijst nummers zonder te weten
+    waarom iemand die met de hand moet benoemen -- en wie later "de gaten in de
+    nummering opruimen" bedenkt, hoort hier te lezen waarom dat elke naam stil naar
+    de verkeerde dienst laat wijzen.
+
+    De uitleg staat in uitklappers, op één uitzondering na: de waarschuwing over
+    verschuivende kanaalnummers blijft in beeld, want die voorkomt de fout die
+    hier het duurst is en het onschuldigst lijkt. -#}
+{% if channels %}
+<section id="kanalen">
+  <h2>Namen bij de kanalen</h2>
+  <div class="card">
+  <p class="card-desc">Een sensornode stuurt <span class="mono">kanaal 6, switch, 1</span> en
+     nooit &ldquo;google is bereikbaar&rdquo;: het formaat heeft geen naamveld. De koppeling
+     van nummer naar dienst wordt hier bewaard, aan de ontvangende kant.</p>
+
+  <details class="uitleg">
+    <summary>Waarom deze tabel bestaat, en wat er automatisch komt</summary>
+    <p><strong>Waarom deze tabel bestaat.</strong> Een sensornode
+       antwoordt op een telemetrieverzoek in <strong>CayenneLPP</strong>, en dat formaat is een
+       reeks drietallen: kanaalnummer, type, waarde. Er is <strong>geen naamveld</strong> — niet
+       in het formaat en niet in MeshCore, dat alleen een oplopende kanaalteller kent. Wat er van
+       de radio komt is dus letterlijk <span class="mono">kanaal 6, switch, 1</span> en niet
+       “google is bereikbaar”. De koppeling van nummer naar dienst is een eigenschap van de
+       antwoordende node, en de enige plek waar ze bewaard kan worden is hier, aan de ontvangende
+       kant.</p>
+    {#- Sinds de eigen API is dit niet meer per definitie handwerk, en dat verschil
+        hoort te staan waar de namen staan -- niet in de documentatie. De herkomst
+        per rij staat in de tabel om dezelfde reden: zonder die kolom ziet een
+        beheerder een naam zonder te weten of hij hem morgen nog terugvindt. -#}
+    <p><strong>Wat er automatisch komt, en wat niet.</strong> Van een node die
+       zijn <a href="#eigen-api">eigen API over IP</a> aanbiedt, worden deze namen overgenomen uit
+       <span class="mono">/status.json</span>: dat antwoord draagt per kanaal een naam, een adres
+       en het soort meting, en bij een responstijd ook de eenheid — dat het milliseconden zijn,
+       weet die API en het telemetriepakket niet. Van een node die alleen over het mesh binnenkomt
+       komt niets van dat alles mee, en dan is dit formulier de enige weg.</p>
+    <p><strong>Wat u typt, wint altijd.</strong> Een naam die u zelf invult,
+       wordt nooit door een uitleesronde overschreven — ook niet als de node iets anders meldt. U
+       heeft er een reden voor gehad; de node kent alleen zijn eigen afkorting. Een leeg veld
+       bewaren is ook een keuze en blijft ook staan: dan blijft het kanaal als “kanaal N” op de
+       statistiekpagina staan en vult de volgende ronde het niet opnieuw in. Wilt u de naam van de
+       node terug, maak het veld dan leeg, bewaar, en laat één ronde langskomen.</p>
+    <p><strong>Waarom hier en niet op de repeater.</strong> De repeater die
+       deze node uitleest is een doorgeefluik met beperkte flash. Een naam die daar staat is weg
+       na een herflash of bij vervanging van het bord, moet per kanaal over de radio gezet worden,
+       en helpt de MeshCore-app niets — die vraagt de telemetrie bij de sensornode zelf op en komt
+       langs de repeater niet eens voorbij. Hier staat de naam in dezelfde databank als de
+       metingen waar ze bij hoort, en overleeft ze elke firmware-uitrol.</p>
+  </details>
+
+  <div class="waarschuwing"><strong>Kanaalnummers mogen nooit verschuiven.</strong> De naam hangt
+     aan het <em>nummer</em>, want dat is het enige wat het pakket draagt. Wordt aan de zendende
+     kant een dienst verwijderd en schuift de rest een plaats op, dan wijst elke naam hieronder
+     stil naar de verkeerde dienst: geen foutmelding, alleen verkeerde cijfers op een dashboard.
+     Een gat in de nummering hieronder is dus <strong>geen rommel die opgeruimd hoort te
+     worden</strong> — het is het bewijs dat er niets verschoven is. Laat gaten staan, en
+     hergebruik een vrijgekomen nummer niet.</div>
+
+  {% if rechten['node.hernoemen'].allowed %}
+  {#- De poort staat ook hier, al is het blok al achter een {% if %}: de
+      alleen-lezen tak hieronder heeft geen formulier, en dit formulier zegt
+      zelf welk recht het vraagt -- dezelfde regel als op elk ander formulier,
+      zodat de rateltest (test_rechtenpoorten.py) het niet als ongepoort telt. -#}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/channels">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <fieldset{{ recht('node.hernoemen') }}>
+    <div class="tablewrap">
+    <table class="stack">
+      <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Herkomst</th><th>Naam</th><th>Eenheid</th></tr></thead>
+      <tbody>
+      {% for c in channels %}
+        <tr>
+          <td data-l="Kanaal" class="mono">{{ c.channel }}</td>
+          <td data-l="Wat er binnenkomt" class="muted">{{ c.kind_labels | join(' + ') }}</td>
+          <td data-l="Herkomst" class="muted small">
+            {%- if c.herkomst == 'auto' %}van de node
+            {%- elif c.herkomst == 'user' %}door u gezet
+            {%- else %}—{% endif %}</td>
+          <td data-l="Naam"><input type="text" name="ch_naam_{{ c.channel }}" value="{{ c.name }}"
+                     maxlength="64" autocomplete="off"
+                     placeholder="kanaal {{ c.channel }}"></td>
+          <td data-l="Eenheid">
+            {%- if c.wants_unit %}
+            {#- Alleen bij een generic sensor: die is 4 byte met vermenigvuldiger 1 en
+                belooft niets over wát er gemeten is, dus zonder eenheid is "12" een getal
+                zonder betekenis. Een spanning en een temperatuur hebben hun eenheid al uit
+                het LPP-type, en een toestand hoort er geen te hebben. -#}
+            <input type="text" name="ch_eenheid_{{ c.channel }}" value="{{ c.unit }}"
+                   maxlength="16" autocomplete="off" placeholder="bv. ms">
+            {%- else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="actions"><button type="submit"{{ recht('node.hernoemen') }}>&#128190; Namen bewaren</button></div>
+    </fieldset>
+  </form>
+
+  <p class="muted small">Een leeg naamveld wist de naam. Het kanaal blijft dan als
+     “kanaal N” op de statistiekpagina staan en verdwijnt niet: een naamloze meting is nog steeds
+     een meting. Bewaren zet de herkomst van elke rij die u meestuurt op “door u gezet”, ook als
+     u de naam van de node letterlijk laat staan — wie een overgenomen naam bevestigt, heeft er
+     daarmee zijn eigen naam van gemaakt.</p>
+  {% else %}
+  <div class="tablewrap">
+  <table class="stack">
+    <thead><tr><th>Kanaal</th><th>Wat er binnenkomt</th><th>Herkomst</th><th>Naam</th></tr></thead>
+    <tbody>
+    {% for c in channels %}
+      <tr>
+        <td data-l="Kanaal" class="mono">{{ c.channel }}</td>
+        <td data-l="Wat er binnenkomt" class="muted">{{ c.kind_labels | join(' + ') }}</td>
+        <td data-l="Herkomst" class="muted small">
+          {%- if c.herkomst == 'auto' %}van de node
+          {%- elif c.herkomst == 'user' %}gezet door een beheerder
+          {%- else %}—{% endif %}</td>
+        <td data-l="Naam">{% if c.name %}{{ c.name }}{% else %}<span class="muted">kanaal {{ c.channel }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="muted small">{{ rechten['node.hernoemen'].reason }}</p>
+  {% endif %}
+  </div>
+</section>
+{% endif %}

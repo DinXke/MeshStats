@@ -3,7 +3,11 @@
     De tweede helft is het minst vanzelfsprekende deel en het meest nuttige. Een
     uitgeschakelde knop op een nodepagina zegt waarom hij uit staat, maar dat is
     een antwoord per knop. "Waar mag ik dan wél bij" is een vraag die je één keer
-    stelt en niet twintig nodes lang. -#}
+    stelt en niet twintig nodes lang.
+
+    Het wachtwoordformulier heeft met opzet geen rechtenpoort: het is je eigen
+    wachtwoord, en de route eist het huidige wachtwoord in plaats van een recht
+    (zie GEEN_RECHT_NODIG in test_rechtenpoorten.py). -#}
 {% extends "admin/_layout.html" %}
 {% block title %}Mijn account — {{ site_name }}{% endblock %}
 {% block admin %}
@@ -19,13 +23,18 @@
 <section id="wachtwoord">
   <h2>Wachtwoord</h2>
   <div class="card">
-  <p class="muted small">Een wachtwoordwijziging maakt elke andere sessie ongeldig; dit
-     tabblad krijgt meteen een nieuwe koek en blijft dus open.</p>
-  <form method="post" action="/admin/password" class="rowform">
+  <form method="post" action="/admin/password" class="frm frm-first">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="password" name="current" placeholder="Huidig wachtwoord" autocomplete="current-password" required>
-    <input type="password" name="new" placeholder="Nieuw wachtwoord (min. 8)" autocomplete="new-password" required minlength="8">
-    <button type="submit">Wachtwoord wijzigen</button>
+    <label class="frm-label" for="pw-current">Wachtwoord wijzigen</label>
+    <div class="frm-field">
+      <div class="frm-row">
+        <input id="pw-current" type="password" name="current" placeholder="Huidig wachtwoord" autocomplete="current-password" required>
+        <input type="password" name="new" placeholder="Nieuw wachtwoord (min. 8)" autocomplete="new-password" required minlength="8">
+      </div>
+      <p class="frm-hint">Minstens 8 tekens. Een wachtwoordwijziging maakt elke andere sessie ongeldig; dit
+         tabblad krijgt meteen een nieuwe koek en blijft dus open.</p>
+    </div>
+    <div class="frm-actions"><button type="submit">Wachtwoord wijzigen</button></div>
   </form>
   </div>
 </section>
@@ -33,14 +42,15 @@
 <section id="rechten">
   <h2>Wat ik mag</h2>
   <div class="card tablecard">
-  <table>
+  <div class="tablewrap">
+  <table class="stack">
     <thead><tr><th>Node</th><th>Rol</th><th>Wat die rol mag</th></tr></thead>
     <tbody>
     {% for rij in mijn_nodes %}
       <tr>
-        <td><a href="/admin/repeaters/{{ rij.rep.id }}">{{ rij.rep.name }}</a></td>
-        <td>{{ rij.rol }}</td>
-        <td class="muted small">{{ rol_uitleg.get(rij.rol, '') }}</td>
+        <td data-l="Node"><a href="/admin/repeaters/{{ rij.rep.id }}">{{ rij.rep.name }}</a></td>
+        <td data-l="Rol">{{ rij.rol }}</td>
+        <td data-l="Wat die rol mag" class="muted small">{{ rol_uitleg.get(rij.rol, '') }}</td>
       </tr>
     {% else %}
       <tr><td colspan="3" class="muted">U hebt op geen enkele node rechten. Dat is geen
@@ -50,31 +60,34 @@
     </tbody>
   </table>
   </div>
+  </div>
 </section>
 
 <section id="mijn-trail">
   <h2>Mijn laatste handelingen</h2>
   <div class="card tablecard">
-  <p class="muted small">Alles wat u op deze site deed staat vast — wie, wat, welke node,
+  <p class="card-desc">Alles wat u op deze site deed staat vast — wie, wat, welke node,
      wanneer en hoe het afliep. Dat geldt voor iedereen en het is met opzet niet te wissen:
      een handeling op afstand die geen spoor achterlaat is precies wat je niet wilt als er
      iets misgaat.</p>
-  <table>
+  <div class="tablewrap">
+  <table class="stack">
     <thead><tr><th>Wanneer</th><th>Handeling</th><th>Node</th><th>Uitkomst</th><th>Toelichting</th></tr></thead>
     <tbody>
     {% for r in audit %}
       <tr>
-        <td><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
-        <td><code>{{ r.action }}</code></td>
-        <td>{{ r.object_name or '' }}</td>
-        <td>{{ r.outcome }}</td>
-        <td class="muted small">{{ r.detail }}</td>
+        <td data-l="Wanneer"><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
+        <td data-l="Handeling"><code>{{ r.action }}</code></td>
+        <td data-l="Node">{{ r.object_name or '' }}</td>
+        <td data-l="Uitkomst">{{ r.outcome }}</td>
+        <td data-l="Toelichting" class="muted small">{{ r.detail }}</td>
       </tr>
     {% else %}
       <tr><td colspan="5" class="muted">Nog niets.</td></tr>
     {% endfor %}
     </tbody>
   </table>
+  </div>
   </div>
 </section>
 {% endblock %}

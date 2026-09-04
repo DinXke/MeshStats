@@ -110,7 +110,14 @@ a { color: var(--cyan); text-decoration: none; }
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 10;
 }
-.topbar nav { display: flex; gap: .9rem; align-items: center; }
+.topbar nav { display: flex; gap: .9rem; align-items: center; flex-wrap: wrap; }
+/* Op een telefoon staan er in beheer drie links plus een knop naast het merk;
+   zonder omklappen schoven die over elkaar. De publieke site heeft er minder en
+   merkt hier niets van. */
+@media (max-width: 480px) {
+  .topbar { flex-wrap: wrap; gap: .3rem .8rem; }
+  .topbar nav { gap: .6rem; }
+}
 #theme-toggle, #lang-toggle {
   background: transparent; border: 1px solid var(--card-edge); color: var(--muted);
   border-radius: 99px; padding: .2rem .55rem; font-size: .9rem; line-height: 1;
@@ -320,6 +327,11 @@ button.danger:hover { background: var(--red); color: #140606; box-shadow: 0 0 12
 button.pill { padding: .2rem .7rem; border-radius: 99px; font-size: .75rem; }
 button.pill.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 button.pill.on:hover { background: var(--accent); color: #06130c; }
+/* In het lichte thema zijn --accent (#0e9c60) en --accent-dim (#0b7a4b) twee
+   groenen die vlak bij elkaar liggen: groene tekst op een groene pil haalde
+   geen 1,5:1. Wit op #0b7a4b haalt ruim 5:1. Alleen hier, want in het donkere
+   thema is het felle groen op donkergroen wél leesbaar. */
+:root[data-theme="light"] button.pill.on { color: #ffffff; }
 button.pill.off { background: transparent; border-color: var(--muted); color: var(--muted); }
 form.inline { display: inline-flex; gap: .3rem; align-items: center; }
 form.rowform { display: flex; gap: .5rem; margin-top: .8rem; flex-wrap: wrap; }
@@ -327,10 +339,14 @@ label { display: block; margin-bottom: .8rem; }
 label input { width: 100%; margin-top: .25rem; }
 
 /* Formulierelementen die de rest van de site nog niet had: select en textarea
-   krijgen dezelfde vorm als input, zodat het roomblok niet uit de toon valt. */
+   krijgen dezelfde vorm als input, zodat het roomblok niet uit de toon valt.
+   max-width op de select: een keuzelijst neemt de breedte van zijn langste
+   optie en krimpt uit zichzelf niet, dus een optie als "eu be — de regio van
+   het land" liep op 375 px 150 px de kaart uit. */
 select, textarea {
   font: inherit; padding: .45rem .7rem; border-radius: 7px;
   border: 1px solid var(--card-edge); background: var(--bg-grid); color: var(--text);
+  max-width: 100%;
 }
 textarea { width: 100%; resize: vertical; font-family: var(--mono); margin-top: .6rem; }
 select:focus, textarea:focus { outline: 1px solid var(--accent-dim); border-color: var(--accent-dim); }
@@ -562,6 +578,255 @@ button:disabled:hover { box-shadow: none; }
 button:focus-visible, .noderow-name:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
+
+/* --- admin: componenten -------------------------------------------------------
+   De bouwstenen uit docs/nl/beheer-ux.md. Waarom ze er zijn: de beheerpagina's
+   waren gegroeid door aanbouw, en elk blok had zijn eigen formuliertje
+   (.rowform: label, veld en knop op één regel) en zijn eigen plek voor de
+   uitleg. Hieronder staat één stramien voor alle beheerpagina's: een
+   sectienavigatie, een feitenlijst, een formulierrij met het label links en
+   de knop rechts, en drie risicoklassen die op de klassen in de code liggen.
+   Alles loopt over de variabelen bovenaan, dus licht en donker doen vanzelf
+   mee, en niets hieronder heeft JavaScript nodig. */
+
+/* Sectienavigatie: gewone ankers naar <section id>, plakkend onder de topbar.
+   Zijwaarts schuivend en niet omklappend, omdat tien ankers op 375 px anders
+   vijf regels innemen bóven de inhoud waar ze naar wijzen. De `top` is de
+   hoogte van .topbar; klopt die niet meer, dan schuift de balk half onder de
+   topbar en dat is meteen te zien. */
+.secnav {
+  position: sticky; top: 3.05rem; z-index: 9;
+  display: flex; gap: .2rem; overflow-x: auto; scrollbar-width: thin;
+  margin: .8rem 0 0; padding: .4rem 0;
+  background: var(--topbar-bg); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.secnav a {
+  flex: 0 0 auto; font-family: var(--mono); font-size: .74rem;
+  padding: .3rem .65rem; border-radius: 99px; white-space: nowrap;
+  color: var(--muted); border: 1px solid transparent;
+}
+.secnav a:hover { color: var(--text); border-color: var(--card-edge); }
+.secnav a.on { color: var(--accent); border-color: var(--accent-dim); background: rgba(53, 224, 140, .08); }
+.secnav a.risk-ingrijpend { color: var(--red); }
+.secnav a.risk-ingrijpend:hover { border-color: var(--red); }
+.secnav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Een anker mag niet onder de twee plakkende balken landen. */
+section[id], details.sec[id], [id].card { scroll-margin-top: 6.5rem; }
+
+/* Kop van een kaart: titel, badges, en één zin eronder. De alinea's die er
+   eerder stonden gaan naar een .uitleg (zie onder). */
+.card-head { flex-wrap: wrap; }
+.card-head h3 { margin: 0; color: var(--text); font-family: var(--sans); font-size: 1rem;
+                letter-spacing: 0; text-transform: none; }
+.card-desc { margin: 0 0 .8rem; color: var(--muted); font-size: .85rem; }
+
+/* Feitenlijst: de tabel sleutel/waarde die op veel pagina's staat. Eén breedte
+   voor de sleutelkolom, en op een smal scherm de sleutel boven de waarde in
+   plaats van in een kolom van vier letters breed. */
+table.kv { width: 100%; }
+.kv td { padding: .4rem .6rem .4rem 0; vertical-align: top; }
+.kv td:first-child { color: var(--muted); font-size: .82rem; width: 13rem; white-space: nowrap; }
+@media (max-width: 640px) {
+  .kv tr { display: block; padding: .35rem 0; border-bottom: 1px solid var(--border); }
+  .kv tr:last-child { border-bottom: 0; }
+  .kv td { display: block; border: 0; padding: .05rem 0; width: auto; white-space: normal; }
+}
+
+/* Formulierrij: label | veld + hulptekst | knop. Eén grid voor alle
+   beheerformulieren, zodat de knop altijd op dezelfde plek staat en de
+   hulptekst altijd onder het veld waar hij over gaat. Onder 640 px worden de
+   kolommen rijen. De oude .rowform blijft bestaan voor een rij losse knoppen en
+   voor formulieren in een tabelcel; hij is alleen niet meer de standaard. */
+.frm {
+  display: grid; grid-template-columns: minmax(8rem, 11rem) minmax(0, 1fr) auto;
+  gap: .3rem 1rem; align-items: start;
+  margin: 0; padding: .75rem 0; border-top: 1px solid var(--border);
+}
+.frm:first-child, .card > .frm:first-of-type, .frm-first { border-top: 0; padding-top: .2rem; }
+.frm--nolabel { grid-template-columns: minmax(0, 1fr) auto; }
+.frm-label { display: block; margin: 0; padding-top: .5rem; font-size: .88rem; font-weight: 600; }
+.frm-label .muted { font-weight: 400; }
+.frm-field { min-width: 0; display: flex; flex-direction: column; gap: .35rem; }
+.frm-field > input:not([type="checkbox"]):not([type="radio"]),
+.frm-field > select, .frm-field > textarea { width: 100%; max-width: 32rem; margin: 0; }
+/* Meerdere velden in één rij: regio (veld, naam, bevestiging), radio (vier
+   getallen). Ze delen de regel en klappen om als ze niet passen. */
+.frm-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+.frm-row > input:not([type="checkbox"]):not([type="radio"]), .frm-row > select { flex: 1 1 8rem; min-width: 0; margin: 0; }
+.frm-row > input[type="number"] { flex: 0 1 7rem; }
+.frm-row > label.check { flex: 0 0 auto; }
+.frm-hint { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.45; }
+.frm-hint code, .frm-hint .mono { font-size: .95em; }
+.frm-actions { display: flex; gap: .4rem; align-items: center; justify-content: flex-end; flex-wrap: wrap; padding-top: .05rem; }
+/* Een bevestigingsveld hoort bij de knop en niet bij het veld: het vraagt om de
+   handeling, niet om de waarde. Vandaar in .frm-actions, vóór de knop. */
+.frm-actions input:not([type="checkbox"]) { width: 9rem; margin: 0; }
+.frm-actions label.check { font-size: .8rem; color: var(--muted); }
+@media (max-width: 640px) {
+  .frm, .frm--nolabel { grid-template-columns: 1fr; gap: .35rem; }
+  .frm-label { padding-top: 0; }
+  .frm-actions { justify-content: flex-start; }
+}
+
+/* De rechtenpoort op een formulier: <fieldset{{ recht('…') }}> zet velden én
+   knop in één keer uit voor wie de handeling niet mag, met de reden in de
+   tooltip -- zonder JavaScript, want `disabled` op een fieldset geldt voor alles
+   erin. Een veld dat je kunt vullen naast een knop die uitstaat is nog steeds
+   een leugen; vandaar de hele groep en niet alleen de knop. De browserrand en
+   -marge van een fieldset gaan weg: het is hier een groep en geen kader. */
+fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset:disabled { opacity: .55; cursor: not-allowed; }
+fieldset:disabled input, fieldset:disabled select, fieldset:disabled textarea,
+fieldset:disabled label { cursor: not-allowed; }
+/* Binnen een uitgeschakelde groep hoeft de knop niet nog eens te vervagen. */
+fieldset:disabled button:disabled { opacity: 1; }
+input:disabled, select:disabled, textarea:disabled { opacity: .55; cursor: not-allowed; }
+fieldset:disabled input:disabled, fieldset:disabled select:disabled,
+fieldset:disabled textarea:disabled { opacity: 1; }
+
+/* Risicoklassen. Drie, en ze liggen op de klassen in de code
+   (nodeconfig.RISK_PLAIN/WRITES/CUTOFF, de rollen bediener/technicus/beheerder
+   in rbac.py), zodat het woord in de code en de kleur op het scherm hetzelfde
+   zeggen. De oudere .act--read/--write/--danger blijven als synoniem werken.
+   Kleur is nooit de enige drager: het etiket (.act-tag) noemt de prijs in
+   woorden, en een ingrijpende handeling vraagt bovendien de naam van de node. */
+.card.risk-gewoon, .act.risk-gewoon, details.sec.risk-gewoon > summary { border-left: 3px solid var(--cyan); }
+.card.risk-merkbaar, .act.risk-merkbaar, details.sec.risk-merkbaar > summary { border-left: 3px solid var(--amber); }
+.card.risk-ingrijpend, .act.risk-ingrijpend, details.sec.risk-ingrijpend > summary { border-left: 3px solid var(--red); }
+.risk-gewoon .act-tag, .act-tag.risk-gewoon { color: var(--cyan); }
+.risk-merkbaar .act-tag, .act-tag.risk-merkbaar { color: var(--amber); }
+.risk-ingrijpend .act-tag, .act-tag.risk-ingrijpend { color: var(--red); }
+.risk-gewoon button:not(:disabled):not(.danger):not(.secondary):not(.pill) {
+  background: transparent; border-color: var(--cyan); color: var(--cyan);
+}
+.risk-gewoon button:not(:disabled):not(.danger):not(.secondary):not(.pill):hover {
+  background: var(--cyan); color: #06131a; box-shadow: 0 0 12px rgba(76, 201, 240, .35);
+}
+.risk-merkbaar button:not(:disabled):not(.danger):not(.secondary):not(.pill) {
+  background: transparent; border-color: var(--amber); color: var(--amber);
+}
+.risk-merkbaar button:not(:disabled):not(.danger):not(.secondary):not(.pill):hover {
+  background: var(--amber); color: #1a1206; box-shadow: 0 0 12px rgba(255, 180, 84, .35);
+}
+/* De tweede knop naast de primaire: annuleren, verversen, opnieuw ophalen. */
+button.secondary { background: transparent; border-color: var(--card-edge); color: var(--muted); }
+button.secondary:hover { color: var(--text); border-color: var(--muted); background: transparent; box-shadow: none; }
+a.button { display: inline-block; font-family: var(--mono); font-size: .85rem; padding: .45rem .7rem;
+           border-radius: 7px; border: 1px solid var(--accent-dim); color: var(--accent); }
+a.button:hover { background: var(--accent); color: #06130c; }
+
+/* Uitleg: een toelichting van meer dan twee zinnen die niet nodig is om veilig
+   te handelen. Ingeklapt, met een samenvatting die zegt waarover ze gaat; de
+   tekst staat in de DOM en klapt zonder JavaScript uit. Wat wél nodig is om
+   veilig te handelen blijft zichtbaar, als .frm-hint of als .waarschuwing. */
+details.uitleg { margin: .6rem 0 .2rem; font-size: .85rem; }
+details.uitleg > summary {
+  cursor: pointer; list-style: none; display: inline-flex; gap: .4rem; align-items: center;
+  color: var(--muted); font-size: .82rem; user-select: none;
+}
+details.uitleg > summary::-webkit-details-marker { display: none; }
+details.uitleg > summary::before { content: "\25B8"; color: var(--accent-dim); transition: transform .15s; }
+details.uitleg[open] > summary::before { transform: rotate(90deg); }
+details.uitleg > summary:hover, details.uitleg[open] > summary { color: var(--text); }
+details.uitleg > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+details.uitleg > p, details.uitleg > ul { color: var(--muted); margin: .5rem 0 0; }
+
+/* Een ingeklapte sectie: de zeldzame en ingrijpende blokken onderaan een
+   pagina. De kop blijft een h2 zodat de inhoudsopgave klopt; ingeklapt staat
+   er in één zin bij wat erin zit. */
+details.sec { margin-top: 2rem; }
+details.sec > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: .7rem; flex-wrap: wrap;
+  padding: .2rem 0 .2rem .6rem; margin-left: -.6rem; border-left: 3px solid transparent;
+}
+details.sec > summary::-webkit-details-marker { display: none; }
+details.sec > summary h2 { margin: 0; }
+details.sec > summary h2::before { content: "\25B8 "; }
+details.sec[open] > summary h2::before { content: "\25BE "; }
+details.sec > summary .sec-hint { color: var(--muted); font-size: .8rem; }
+details.sec > summary:hover h2 { color: #5df0a8; }
+details.sec > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+details.sec[open] > summary { margin-bottom: .7rem; }
+details.sec.risk-ingrijpend > summary h2, details.sec.risk-ingrijpend > summary h2::before { color: var(--red); }
+
+/* Een uitklapbaar deelblok binnen een kaart (rooms, sensor-nodes, SNMP, bot op
+   de sensornode): kleiner dan details.sec, met een h3 als kop. Open als er
+   iets in staat, dicht als het leeg is -- dat beslist de template. */
+details.sub { margin: 1rem 0 0; padding-top: .7rem; border-top: 1px solid var(--border); }
+details.sub > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+}
+details.sub > summary::-webkit-details-marker { display: none; }
+details.sub > summary::before { content: "\25B8"; color: var(--accent-dim); font-size: .9rem; }
+details.sub[open] > summary::before { content: "\25BE"; }
+details.sub > summary h3 { margin: 0; color: var(--text); font-family: var(--sans); font-size: 1rem;
+                           letter-spacing: 0; text-transform: none; }
+details.sub > summary .sec-hint { color: var(--muted); font-size: .8rem; }
+details.sub > summary:hover h3 { color: var(--accent); }
+details.sub > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+details.sub[open] > summary { margin-bottom: .6rem; }
+details.sub.risk-ingrijpend > summary h3 { color: var(--red); }
+details.sub h4 { margin: 1rem 0 .4rem; font-size: .9rem; }
+
+/* Tabellen: brede schuiven binnen hun kaart (de pagina nooit), en een tabel met
+   een formulier per rij (.stack) wordt op een smal scherm een kaartje per rij
+   met de kolomkop uit data-l ervoor. */
+.tablewrap { overflow-x: auto; max-width: 100%; }
+.tablewrap > table { min-width: 100%; }
+@media (max-width: 640px) {
+  table.stack thead { display: none; }
+  table.stack tr { display: block; padding: .5rem 0; border-bottom: 1px solid var(--border); }
+  table.stack tr:last-child { border-bottom: 0; }
+  table.stack td { display: block; border: 0; padding: .15rem 0; max-width: none; text-align: left; }
+  table.stack td:empty { display: none; }
+  table.stack td[data-l]::before {
+    content: attr(data-l); display: block; font-family: var(--mono); font-size: .62rem;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: .1rem;
+  }
+}
+
+/* Waarschuwing die zichtbaar moet blijven (niet in een uitklapper): rood voor
+   wat een node kan kwijtmaken, oranje voor wat merkbaar is maar herstelbaar. */
+.waarschuwing {
+  border-left: 3px solid var(--red); border-radius: 0 6px 6px 0;
+  background: rgba(255, 92, 92, .07); padding: .5rem .75rem; margin: .6rem 0; font-size: .85rem;
+}
+.waarschuwing--amber { border-left-color: var(--amber); background: rgba(255, 180, 84, .08); }
+.waarschuwing p { margin: .3rem 0 0; }
+.waarschuwing p:first-child { margin-top: 0; }
+/* Een geweigerde regel in het audittrail (audit.html) en een onbevestigd alarm
+   (node.html): rood links, zodat het oog erop valt zonder een hele rode rij. */
+tr.warn > td:first-child, tr.warnrow > td:first-child { border-left: 2px solid var(--red); }
+
+/* Aandachtspunten bovenaan de nodelijst: één lijst en niet drie gele blokken,
+   want drie blokken lezen als drie storingen en het zijn drie besluiten die
+   nog genomen moeten worden. */
+.aandacht { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-direction: column; gap: .4rem; }
+.aandacht > li { border: 1px solid var(--accent-dim); border-radius: 6px; padding: .5rem .8rem; font-size: .88rem; }
+.aandacht > li.bad-li { border-color: rgba(255, 92, 92, .5); }
+.aandacht p { margin: .3rem 0 0; }
+
+/* Vaste veldbreedtes in de commandokaarten van een companion, in plaats van
+   style="" per veld: kort voor een uur-bereik of één waarde, breed voor een
+   pubkey. Beide krimpen mee op een smal scherm. */
+.w-short { width: 7rem; max-width: 100%; }
+.w-wide { width: min(100%, 22rem); }
+/* De seriële terminal (companion.html, companions.js): het log is een vaste
+   hoogte met eigen schuifbalk, de sneltoetsen een rij pillen. */
+.serial-quick, .serial-tune { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin-bottom: .4rem; }
+#serial-io { margin-top: .7rem; }
+#serial-log {
+  height: 16rem; overflow: auto; white-space: pre-wrap;
+  background: var(--bg); border: 1px solid var(--card-edge); border-radius: 6px; padding: .6rem;
+  font-size: .8rem;
+}
+.serial-input { flex: 1; min-width: 12rem; }
+
+/* Een rij knoppen onder een blok: rechts uitgelijnd, zoals in .frm-actions. */
+.actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: .6rem; }
+.actions form { margin: 0; }
+.actions.left { justify-content: flex-start; }
 
 /* --- admin: instellingen & indeling ----------------------------------------- */
 .settingsgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .8rem; align-items: end; }

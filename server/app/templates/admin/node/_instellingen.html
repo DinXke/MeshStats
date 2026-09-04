@@ -1,0 +1,461 @@
+{% from "admin/_macros.html" import recht, waarom with context %}
+{#- Instellingen schrijven. Bewust ná "Uitvragen" en vóór "Klok": lezen is
+    gratis en onschuldig, dit niet. De parameterlijst, hun types, grenzen en
+    risicoklasse komen van de node zelf, want de firmware is er de baas over.
+    Een tweede lijst hier zou vroeg of laat iets aanbieden dat de node weigert.
+
+    De drie risicogroepen dragen elk de kleur van hun klasse (docs/nl/beheer-ux.md)
+    en de poort van hun klasse: node.instelling.gewoon/merkbaar/ingrijpend, precies
+    de handelingen waar de route (_risk_perm in routes_admin.write_config) de
+    klik aan toetst. Een fieldset per formulier zet velden én knop uit voor wie
+    het niet mag, met de reden in de tooltip. -#}
+<section id="instellingen">
+  <h2>Instellingen schrijven</h2>
+
+  {% if cfg_result %}
+  <div class="card notice">
+    {% if cfg_result.busy %}
+    {#- Alleen de weg over LoRa kan hier komen. Twee pakketten over een gedeelde
+        band duren tientallen seconden, en de server wacht daar niet eindeloos
+        op. De uitslag ligt op de monitor, dus een herlading vindt hem alsnog. -#}
+    <strong>Loopt nog.</strong> {{ cfg_result.msg }}.
+    {% elif cfg_result.step == "geen_antwoord" %}
+    {#- De uitkomst die alleen bestaat op de twee wegen zonder antwoord in
+        hetzelfde verzoek — over LoRa en over de broker — en de reden dat ze een
+        eigen tekst heeft: dit is géén mislukking. -#}
+    <strong>Verstuurd, maar onbevestigd.</strong> {{ cfg_result.msg }}.
+    {% elif cfg_result.step == "geen_teruglezing" %}
+    <strong>Gezet, niet nagekeken.</strong> {{ cfg_result.msg }}.
+    {% elif cfg_result.ok and cfg_result.exact %}
+    <strong>Gezet.</strong> <span class="mono">{{ cfg_result.key }}</span> staat nu op
+    <span class="mono">{{ cfg_result.applied }}</span>.
+    {% if cfg_result.transport == "mesh" and cfg_result.applied == cfg_result.asked
+          and cfg_result.asked == cfg_now.get(cfg_result.key) %}
+    <br>Dit was de waarde die er al stond, dus er is niets veranderd — en de hele weg is
+    wel afgelegd: versturen, ontvangen, antwoord verwerken en teruglezen. Precies wat een
+    eerste beproeving hoort te doen.
+    {% endif %}
+    {% elif cfg_result.ok %}
+    {#- Het geval waar het teruglezen voor bestaat: de node zei "OK" en er staat
+        iets anders in dan er gevraagd is. -#}
+    <strong>Gezet, maar niet precies.</strong> Gevraagd
+    <span class="mono">{{ cfg_result.asked }}</span>, in de node staat nu
+    <span class="mono">{{ cfg_result.applied }}</span>. De waarde hierboven is wat er
+    werkelijk staat.
+    {% else %}
+    <strong>Niet gezet.</strong>
+    {% if cfg_result.step %}<span class="mono">[{{ cfg_result.step }}]</span>{% endif %}
+    {{ cfg_result.msg }}
+    {% endif %}
+    {% if cfg_result.ok and cfg_result.reboot %}
+    <br><strong>Nog niet actief.</strong> De node heeft dit bewaard maar past het pas toe
+    bij een herstart. Tot dan draait de radio op de oude waarden, en pas bij die herstart
+    blijkt of de nieuwe kloppen.
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {#- De laatste schrijfactie zoals de monitor hem kent. Staat er ook zonder dat
+      er net iets verstuurd is: de uitslag wordt daar bewaard en niet hier, dus
+      dit is wat een herlading laat zien nadat de browser niet is blijven
+      wachten. -#}
+  {% if cfg_mesh.ok and cfg_mesh.job.seq and not cfg_result %}
+  <div class="card">
+    <div class="card-head"><h3>Laatste schrijfactie over LoRa</h3></div>
+    <p class="small">
+      {% if cfg_mesh.job.busy %}
+      <strong>Bezig.</strong> <span class="mono">{{ cfg_mesh.job.param }}</span> naar
+      <span class="mono">{{ cfg_mesh.job.asked }}</span> op
+      <span class="mono">{{ cfg_mesh.job.key[:12] }}</span>, {{ cfg_mesh.job.age }} seconden
+      onderweg. Herlaad deze pagina voor de uitslag.
+      {% else %}
+      <span class="mono">{{ cfg_mesh.job.param }}</span> gevraagd op
+      <span class="mono">{{ cfg_mesh.job.asked }}</span>, {{ cfg_mesh.job.age }} seconden
+      geleden.
+      {% if cfg_mesh.job.applied %}
+      Teruggelezen: <span class="mono">{{ cfg_mesh.job.applied }}</span>{% if not cfg_mesh.job.exact %}
+      — <strong>niet gelijk aan wat er gevraagd is</strong>{% endif %}.
+      {% else %}
+      Niet teruggelezen: {{ cfg_mesh_steps.get(cfg_mesh.job.step, cfg_mesh.job.end) }}.
+      {% endif %}
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  {#- En hetzelfde voor de weg over de broker. De uitslag komt daar mee in een
+      statistiekenbericht en niet in het antwoord op de klik, dus na een
+      herlading is dit wat er nog van te zien is. -#}
+  {% if cfg_mqtt.seq and not cfg_result %}
+  <div class="card">
+    <div class="card-head"><h3>Laatste schrijfactie over MQTT</h3></div>
+    <p class="small">
+      <span class="mono">{{ cfg_mqtt.param }}</span> gevraagd op
+      <span class="mono">{{ cfg_mqtt.asked }}</span>.
+      {% if cfg_mqtt.ok %}
+      Teruggelezen: <span class="mono">{{ cfg_mqtt.applied }}</span>{% if not cfg_mqtt.exact %}
+      — <strong>niet gelijk aan wat er gevraagd is</strong>{% endif %}.
+      {% else %}
+      <strong>Geweigerd door de node:</strong> {{ cfg_mqtt.msg }}.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  {#- Hoe de monitor bij deze node binnenkomt. Staat buiten de weigering hieronder
+      en niet erin, want het is de vraag die er juist toe doet als het schrijven
+      wél kan: een monitor die alleen mag lezen, logt keurig in en krijgt op elk
+      commando stilte — van een afstand niet te onderscheiden van een node die er
+      niet is. -#}
+  {% if rights %}
+  <div class="card">
+    <div class="card-head"><h3>Hoe {{ relay.name if relay else "de monitor" }} bij deze node binnenkomt</h3></div>
+    <p class="small">
+      {%- if not rights.ok %} Onbekend — {{ rights.error }}.
+      {%- elif not rights.known %} Deze node staat niet in zijn monitorlijst.
+      {%- elif rights.mode == "acl" %} Via de <strong>toegangslijst</strong> van deze node,
+      zonder wachtwoord. Dat is de aanbevolen manier: niemand geeft een geheim uit
+      handen en de eigenaar aan de overkant kan het alleen intrekken.
+      {%- else %} Met een <strong>wachtwoord</strong> dat de monitor bewaart. Werkt, maar
+      de toegangslijst verdient de voorkeur: <code>setperm &lt;pubkey van de monitor&gt; 3</code>
+      aan de overkant maakt het wachtwoord overbodig.
+      {%- endif %}
+    </p>
+    {% if rights.ok and rights.known %}
+    <p class="small">
+      <strong>Werkt dat?</strong>
+      {%- if rights.diagnosis == "goed" %} Ja — {{ rights.oks }} van {{ rights.polls }}
+      opvragingen kwamen terug.
+      {%- elif rights.diagnosis == "alleen_lezen" %}
+      <strong>Ingelogd, maar alles zwijgt.</strong> Dat is bijna altijd hetzelfde: de
+      monitor is binnen als lézer en niet als beheerder, en een repeater voert een
+      CLI-commando alleen uit voor een client met adminrechten. Vraag de eigenaar om
+      <code>setperm &lt;pubkey van de monitor&gt; 3</code>, of geef de monitor het
+      adminwachtwoord. Van een afstand ziet dit eruit als een node die niet
+      bereikbaar is, en dat is het niet. Voor <em>schrijven</em> geldt hetzelfde en
+      zwaarder: een <span class="mono">set</span> die zo verdwijnt, laat geen spoor na.
+      {%- elif rights.diagnosis == "geen_toegang" %}
+      <strong>Nee, en het ligt niet aan het bereik.</strong> De login wordt niet
+      beantwoord, maar we horen zijn adverts wél — dus hij is er en hij laat ons niet
+      binnen. Onze sleutel staat niet in zijn toegangslijst, of het wachtwoord klopt
+      niet.
+      {%- elif rights.diagnosis == "buiten_bereik" %}
+      <strong>Nee, en we horen hem ook niet.</strong> De login wordt niet beantwoord en
+      er komen geen adverts binnen. Dat wijst op bereik en niet op rechten.
+      {%- else %} Nog niet geprobeerd sinds de laatste herstart van de monitor.
+      {%- endif %}
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if not cfg_route.can %}
+  <div class="card">
+  <p class="muted small">
+    <strong>Niet mogelijk:</strong>
+    {%- if cfg_route.blocker == "no_credentials" and cfg_route.transport == "mesh" %}
+    de server heeft geen weblogin voor de beheerpagina van de <em>monitor</em>. Zet
+    <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in de omgeving van de
+    server. Het gaat nadrukkelijk om de login van
+    {{ relay.name if relay else "de monitor" }} en niet om een geheim van déze node:
+    die rechten horen bij de monitor, in zijn eigen monitorlijst, of ze bestaan niet
+    omdat de overkant ons in zijn toegangslijst heeft gezet.
+    {%- elif cfg_route.blocker == "no_credentials" %}
+    de server heeft geen weblogin voor de beheerpagina van <em>deze</em> node. Zet
+    <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in de omgeving van de
+    server. Let op dat dit alleen gaat over nodes van jezelf die de server over IP
+    bereikt: voor een node die alleen over LoRa te bereiken is, hoeft de server nooit
+    inloggegevens te hebben — die rechten horen bij de monitor die de opvragingen doet.
+    {%- elif cfg_route.blocker == "relay_unknown" %}
+    de cijfers van deze repeater komen binnen via
+    <span class="mono">{{ rep.source_prefix }}</span>, maar die node is hier zelf niet
+    bekend. Zonder zijn beheeradres en zijn firmwareversie valt er niets naartoe te
+    sturen.
+    {%- elif cfg_route.blocker == "no_relay_host" %}
+    deze repeater is alleen over LoRa te bereiken, dus het schrijven loopt via zijn
+    monitor {{ relay.name if relay else rep.source_prefix }} — en die heeft geen
+    beheeradres ingevuld. Dat doe je op het tabblad
+    <a href="/admin/firmware">Firmware</a>, op de rij van die monitor.
+    {%- elif cfg_route.blocker == "relay_no_fw" %}
+    het schrijven zou over LoRa lopen via {{ relay.name if relay else rep.source_prefix }},
+    maar die node meldt geen versie van onze firmware — dus draait hij hem waarschijnlijk
+    niet.
+    {%- elif cfg_route.blocker == "relay_old_fw" %}
+    het schrijven loopt over LoRa via {{ relay.name if relay else rep.source_prefix }},
+    en die draait <span class="mono">{{ cfg_route.fw }}</span>. Instellingen over LoRa
+    schrijven bestaat pas vanaf <span class="mono">{{ cfg_route.min_fw }}</span>.
+    <strong>Het is de monitor die die versie nodig heeft, niet deze repeater</strong> —
+    die draait stock MeshCore en hoeft niets te leren.
+    {%- elif cfg_route.blocker == "no_target" %}
+    van deze repeater is geen publieke sleutel bekend, en die is nodig om de monitor te
+    laten weten wie hij moet aanspreken.
+    {%- elif cfg_route.blocker == "no_host" %}
+    er is geen beheeradres ingevuld voor deze node. Dat doe je op het tabblad
+    <a href="/admin/firmware">Firmware</a>; hetzelfde adres wordt voor beide gebruikt.
+    {%- elif cfg_route.blocker == "no_fw" %}
+    deze node meldt geen versie van onze firmware, dus draait hij hem waarschijnlijk niet.
+    {%- elif cfg_route.blocker == "old_fw" %}
+    deze node draait <span class="mono">{{ cfg_route.fw }}</span>; instellingen schrijven
+    bestaat pas vanaf <span class="mono">{{ cfg_route.min_fw }}</span>.
+    {%- else %}{{ cfg_route.blocker }}.
+    {%- endif %}
+  </p>
+  {#- En wat er per weg aan ontbreekt. Zonder dit staat er één reden op het
+      scherm terwijl er drie wegen bekeken zijn, en dan is "niet mogelijk" een
+      bewering waar je niets mee kunt. Wie hier leest dat het cmd-topic klaarligt
+      op één firmwareversie na, weet meteen wat de eerstvolgende handeling is. -#}
+  <details class="uitleg">
+    <summary>Alle wegen die bekeken zijn</summary>
+    <ul>
+      {% for o in cfg_route.options %}
+      <li><strong>{{ cfg_transport_text.get(o.transport, o.transport) }}</strong> —
+        {% if o.can %}beschikbaar{% else %}{{ o.blocker }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  </div>
+  {% elif not cfg_params.ok %}
+  <div class="card">
+  <p class="muted small">
+    <strong>Lijst niet op te halen:</strong> {{ cfg_params.error }}.
+    Zonder de lijst van de node zelf wordt hier niets aangeboden — een formulier uit
+    een tabel op de server zou een parameter kunnen tonen die deze node weigert.
+  </p>
+  </div>
+  {% else %}
+
+  {#- Welke van de drie wegen het geworden is, en waarom. Staat er ook als alles
+      gewoon werkt: bij één weg is "gelukt" genoeg, bij drie is het dat niet --
+      de handeling duurt anders lang, kost zendtijd of heeft een lager plafond,
+      en dat hoor je te weten vóór je klikt en niet erna. De uitgebreide uitleg
+      per weg staat in een uitklapper; de raad om de weg eerst zonder wijziging
+      te beproeven blijft zichtbaar, want die voorkomt de dure fout. -#}
+  <div class="card notice">
+    <p class="small" style="margin:0">
+      <strong>Deze wijziging gaat {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }}.</strong>
+      {{ cfg_route.why }}.
+      {% if cfg_route.transport == "mqtt" %}<span class="pill">plafond op klasse 2</span>{% endif %}
+      {% if cfg_route.transport == "mesh" %}<span class="pill">kost zendtijd</span>{% endif %}
+    </p>
+
+    {% if cfg_route.transport == "mqtt" %}
+    <p class="small">
+      <strong>Beproef ook deze weg eerst zonder iets te veranderen.</strong> Zet een
+      parameter op de waarde die er al staat — de kolom “Nu” is voorgevuld, dus dat is
+      één klik.
+    </p>
+    <details class="uitleg">
+      <summary>Hoe de weg over de broker werkt, en wat er niet langs kan</summary>
+      <p>
+        De server heeft geen weblogin voor de beheerpagina van deze node, maar de node
+        publiceert zelf over MQTT — en dan is er wel degelijk een weg naartoe. De
+        wijziging vertrekt als <span class="mono">set &lt;parameter&gt; &lt;waarde&gt;</span>
+        op zijn <span class="mono">cmd</span>-topic. De node zoekt die parameter op in zijn
+        eigen ingebakken tabel, toetst de waarde aan zijn eigen grenzen, zet hem en leest
+        hem terug; wat hieronder als uitslag verschijnt is <em>die teruglezing</em>.
+      </p>
+      <p>
+        <strong>Wat hier niet langs kan.</strong> Alles wat de bereikbaarheid van de node
+        kan afsnijden — zendvermogen, <span class="mono">repeat</span>, wie er mag
+        inloggen — wordt over deze weg geweigerd, door de server én door de node zelf.
+        De reden is wie er aan de overkant staat: bij de twee andere wegen is dat iemand
+        met een wachtwoord, hier is het iedereen die de broker binnenlaat. Draait die op
+        één gedeeld account, dan is dat elke node die eraan meepraat. Wil je zulke
+        instellingen wél van hieraf kunnen zetten, vul dan
+        <code>MM_FW_NODE_USER</code> en <code>MM_FW_NODE_PASS</code> in.
+      </p>
+      <p>
+        Er is geen antwoord op een publicatie, dus de uitslag komt terug in het
+        eerstvolgende statistiekenbericht — dat de node meteen verstuurt. Reken op enkele
+        seconden. Blijft het uit, dan is dat geen mislukking maar onzekerheid: een node
+        op zonnestroom kan slapen.
+      </p>
+    </details>
+    {% endif %}
+
+    {% if cfg_route.transport == "mesh" %}
+    <p class="small">
+      <strong>Beproef deze weg eerst zonder iets te veranderen.</strong> Zet een parameter
+      op de waarde die er al staat — de kolom “Nu” hiernaast is al ingevuld, dus dat is
+      één klik. De hele weg wordt dan afgelegd (versturen, ontvangen, antwoord verwerken,
+      teruglezen) en er verandert niets. Mislukt het, dan is er niets stuk. Dat is ook de
+      verstandige manier om een nieuwe monitorverbinding te toetsen.
+    </p>
+    <details class="uitleg">
+      <summary>Hoe de weg over de radio werkt</summary>
+      <p>
+        Deze repeater draait onze firmware niet en heeft geen IP-pad. Het schrijven gaat
+        daarom niet naar hem toe maar naar zijn monitor
+        <strong>{{ cfg_route.monitor }}</strong>: die staat op het lokale netwerk, krijgt de
+        opdracht over HTTP, en zet <span class="mono">set &lt;parameter&gt; &lt;waarde&gt;</span>
+        over LoRa. Daarna vraagt hij dezelfde parameter opnieuw op, en wat hieronder als
+        uitslag verschijnt is <em>die teruglezing</em> — nooit wat de node op het zetten
+        antwoordde. MeshCore zegt namelijk "OK" tegen dingen die het niet overgenomen heeft,
+        en over de radio duurt het lang genoeg dat niemand het uit zichzelf natrekt.
+      </p>
+      <p>
+        Twee pakketten met een adempauze ertussen: reken op tien tot negentig seconden. Er
+        loopt er één tegelijk, en tussen twee schrijfacties zit een minuut — laag gehouden
+        met opzet, want de handeling die je na een misser meteen wilt doen is de omgekeerde.
+      </p>
+      <p>
+        De nieuwe firmware zit op de <em>monitor</em> en niet op deze repeater. Die krijgt
+        twee doodgewone CLI-commando's binnen en hoeft niets te leren — dat is precies de
+        reden dat deze weg bestaat.
+      </p>
+    </details>
+    {% endif %}
+  </div>
+
+  {% for risk, params in cfg_groups %}
+  {% if params %}
+  {#- De klasse van deze groep in één woord, voor de kleur én voor de poort.
+      Hetzelfde woord als in rbac.ACTIONS ("node.instelling.<klasse>") en als
+      in de route die de klik toetst -- zodat het scherm en de server het nooit
+      oneens zijn over wat u hier mag. -#}
+  {% set klasse = 'gewoon' if risk == 1 else ('merkbaar' if risk == 2 else 'ingrijpend') %}
+  <div class="card risk-{{ klasse }}">
+    <div class="card-head">
+      <h3>
+        {%- if risk == 1 %}Gewoon
+        {%- elif risk == 2 %}Schrijft merkbaar
+        {%- else %}Kan de bereikbaarheid afsnijden{% endif %}
+      </h3>
+      <span class="act-tag">
+        {%- if risk == 1 %}gewoon &middot; opslaan volstaat
+        {%- elif risk == 2 %}merkbaar &middot; bevestigen
+        {%- else %}ingrijpend &middot; naam overtypen{% endif %}</span>
+    </div>
+    <p class="card-desc">
+      {%- if risk == 1 %}
+      Waarden die je zo weer terugzet. Opslaan volstaat.
+      {%- elif risk == 2 %}
+      Deze veranderen merkbaar hoe de node zich gedraagt op het mesh. Ze vragen een
+      bevestiging, maar ze kunnen de node niet buiten bereik brengen.
+      {%- else %}
+      Deze raken het zendvermogen, het doorgeven of wie er mag inloggen. Gaat er iets
+      mis op een node die je alleen over de radio bereikt, dan is er geen tweede weg om
+      het mee terug te draaien. Daarom moet je hier de naam van de node overtypen.
+      {%- endif %}
+    </p>
+    {% if risk == 3 and cfg_route.max_risk < 3 %}
+    <p class="muted small">
+      <strong>Niet over de weg die nu beschikbaar is.</strong> Deze klasse gaat alleen
+      over een weg met een wachtwoord ertegenover, en dat is
+      {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }} niet. De
+      velden staan er en de server weigert ze; de node weigert ze nog een keer.
+    </p>
+    {% endif %}
+    {{ waarom('node.instelling.' ~ klasse) }}
+    <div class="tablewrap">
+    <table class="cfgtable stack">
+      <thead><tr><th>Parameter</th><th>Nu</th><th>Nieuwe waarde</th></tr></thead>
+      <tbody>
+      {% for p in params %}
+      <tr>
+        <td data-l="Parameter" class="mono">{{ p.key }}</td>
+        <td data-l="Nu" class="mono muted">{% if p.secret %}<span title="Een geheim wordt hier niet getoond">•••</span>{% else %}{{ cfg_now.get(p.key, "—") }}{% endif %}</td>
+        <td data-l="Nieuwe waarde">
+          {#- Van afstand wordt deze parameter niet gezet. Op firmware van
+              2.6.0 en hoger komt hij hier niet eens langs -- daar staat hij niet
+              meer in de tabel van de node -- maar een node die nog ouder is
+              biedt hem wél aan, en die is precies de node waarvoor deze regel
+              bestaat. Getoond en niet weggelaten, want de vraag "waarom staat de
+              radio er niet bij" stelt iedereen die de lijst kent. Dit is de
+              beleefdheid en niet de drempel: die staat in nodeconfig.write(),
+              want een vak dat hier niet getekend wordt is met een aangepast
+              verzoek alsnog te bereiken. -#}
+          {% if p.key in cfg_no_remote %}
+          <span class="muted small"><strong>Niet van afstand.</strong>
+            {{ cfg_no_remote_reason }}</span>
+          {% else %}
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/config" class="rowform">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="key" value="{{ p.key }}">
+            {#- De rechtenpoort: één fieldset om veld, bevestiging en knop, uit
+                voor wie deze klasse niet mag -- zodat een bediener geen veld
+                ziet dat hij kan vullen naast een knop die het weigert. -#}
+            <fieldset class="rowform"{{ recht('node.instelling.' ~ klasse) }}>
+
+            {#- Type stuurt de bediening. Een invoerveld waarin je een ongeldige
+                waarde kúnt typen is een invoerveld dat een node kan breken.
+
+                Voorgevuld met wat er nú in de node staat, en dat is meer dan
+                gemak. Het maakt "zet deze parameter op de waarde die hij al
+                heeft" één klik, en dat is de enige beproeving van de schrijfweg
+                die de hele weg aflegt zonder iets te veranderen — bij een node
+                die alleen over de radio te bereiken is, is dat het verschil
+                tussen toetsen en gokken. Een geheim wordt nooit voorgevuld: de
+                node geeft de gelezen waarde niet eens terug. -#}
+            {% set nu = cfg_now.get(p.key, "") %}
+            {% if p.kind == "bool" %}
+            <select name="value">
+              <option value="on" {% if nu == "on" %}selected{% endif %}>on</option>
+              <option value="off" {% if nu == "off" %}selected{% endif %}>off</option>
+            </select>
+            {% elif p.kind == "enum" %}
+            <select name="value">
+              {% for c in p.choices.split("|") if c %}
+              <option value="{{ c }}" {% if nu == c %}selected{% endif %}>{{ c }}</option>
+              {% endfor %}
+            </select>
+            {% elif p.kind == "radio" %}
+            {#- 'get radio' antwoordt met komma's, 'set radio' wil spaties. De
+                vier velden hier maken dat verschil onzichtbaar, en dat is precies
+                waarom het er vier zijn: één tekstvak waarin je "869.525 250 11 5"
+                moet typen is het vak waarin een tikfout een node kwijtmaakt. -#}
+            {% set r = nu.replace(",", " ").split() %}
+            <input type="number" name="rf" step="0.001" min="150" max="2500"
+                   value="{{ r[0] if r|length == 4 else '' }}"
+                   placeholder="freq" required title="frequentie in MHz, 150–2500">
+            <input type="number" name="rb" step="0.001" min="7" max="500"
+                   value="{{ r[1] if r|length == 4 else '' }}"
+                   placeholder="bw" required title="bandbreedte in kHz, 7–500">
+            <input type="number" name="rs" step="1" min="5" max="12"
+                   value="{{ r[2] if r|length == 4 else '' }}"
+                   placeholder="sf" required title="spreading factor, 5–12">
+            <input type="number" name="rc" step="1" min="5" max="8"
+                   value="{{ r[3] if r|length == 4 else '' }}"
+                   placeholder="cr" required title="coding rate, 5–8">
+            {% elif p.kind == "int" %}
+            <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}"
+                   value="{{ nu }}" required>
+            {% elif p.kind == "float" %}
+            <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}"
+                   value="{{ nu }}" required>
+            {% elif p.secret %}
+            {#- Een geheim: niet in beeld tijdens het typen, en de node stuurt de
+                gelezen waarde ook niet terug. Wel vergeleken, niet verklapt. -#}
+            <input type="password" name="value" maxlength="39" autocomplete="new-password" required>
+            {% else %}
+            <input name="value" maxlength="39" autocomplete="off" value="{{ nu }}" required>
+            {% endif %}
+
+            {#- De bevestiging. Ook op de server afgedwongen: een drempel die je
+                met een aangepast formulier kunt overslaan is geen drempel. -#}
+            {% if risk == 2 %}
+            <label class="cfgconfirm"><input type="checkbox" name="confirm" value="ja" required>
+              bevestig</label>
+            {% elif risk == 3 %}
+            <input name="confirm" placeholder="{{ rep.name }}" autocomplete="off" required
+                   title="Typ de naam van deze node over om te bevestigen">
+            {% endif %}
+
+            <button type="submit" {% if risk == 3 %}class="danger"{% endif %}
+                    {% if risk > cfg_route.max_risk %}disabled
+                    title="niet over {{ cfg_transport_text.get(cfg_route.transport, cfg_route.transport) }}"{% endif %}>Zet</button>
+            </fieldset>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
+
+  {% endif %}
+</section>

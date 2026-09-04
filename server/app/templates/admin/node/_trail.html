@@ -1,0 +1,37 @@
+{#- Wat er met déze node gebeurd is, en door wie.
+
+    Op de nodepagina en niet alleen op Server en site, omdat de vraag "wie heeft
+    deze node geflasht" gesteld wordt terwijl je naar die node kijkt. Zichtbaar
+    voor iedereen die de node mag bekijken: het verbergen ervan voor wie er
+    dagelijks aan werkt zou het trail tot een controlemiddel maken in plaats van
+    tot gedeelde geschiedenis.
+
+    Ingeklapt onderaan (details.sec): het is geschiedenis en geen bediening, en
+    het is de vraag die je zelden stelt maar dan wél hier wilt vinden. De kop
+    blijft een h2, zodat de sectienavigatie bovenaan er gewoon naar wijst. -#}
+<details class="sec" id="trail">
+  <summary>
+    <h2>Wat er met deze node gebeurd is</h2>
+    <span class="sec-hint">{{ audit | length }} regel(s) uit het audittrail voor deze node &mdash; uitklappen om ze te lezen</span>
+  </summary>
+  <div class="card tablecard">
+  <div class="tablewrap">
+  <table class="stack">
+    <thead><tr><th>Wanneer</th><th>Wie</th><th>Handeling</th><th>Uitkomst</th><th>Toelichting</th></tr></thead>
+    <tbody>
+    {% for r in audit %}
+      <tr>
+        <td data-l="Wanneer"><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
+        <td data-l="Wie">{{ r.actor }}</td>
+        <td data-l="Handeling"><code>{{ r.action }}</code></td>
+        <td data-l="Uitkomst">{{ r.outcome }}</td>
+        <td data-l="Toelichting" class="muted small">{{ r.detail }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">Nog niets vastgelegd voor deze node.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  </div>
+</details>

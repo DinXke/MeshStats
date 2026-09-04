@@ -1,0 +1,1152 @@
+{% from "admin/_macros.html" import recht, waarom, hulp with context %}
+{#- ==================== Beheer over IP ====================================
+
+    Een eigen sectie en niet een paar knoppen tussen "Uitvragen", omdat dit een
+    andere WEG is en niet een andere knop. Alles daarboven loopt over het mesh of
+    over de broker; alles hier loopt over WiFi naar de node zelf. Dat verschil
+    bepaalt wat er gebeurt als er iets wegvalt, en wie dat niet weet leest
+    straks een lege grafiek als een stille node.
+
+    De sectie staat op elke nodepagina en niet alleen waar er een adres staat.
+    Zonder adres is ze twee zinnen en een invoerveld -- want anders is dit een
+    mogelijkheid die alleen bestaat voor wie er al van wist.
+
+    Indeling sinds de herindeling (docs/nl/beheer-ux.md): eerst het adres en de
+    toestand, dan de vier handelingen op de node zelf, en daarna de
+    deelbeheren -- rooms, sensor-nodes, SNMP-monitors, notifier-bot, backup --
+    elk als eigen uitklapbaar blok (details.sub). Die blokken zijn er alleen bij
+    een room-server-node en ze zijn lang; ingeklapt zegt de kop wat erin zit. -#}
+<section id="eigen-api">
+  <h2>Beheer over IP</h2>
+  <div class="card">
+
+  {% if sensor_result %}
+  <div class="notice">
+    {%- if sensor_result.soort == 'poll' and sensor_result.ok %}
+    &#9989; Uitgelezen: {{ sensor_result.metrics }} metingen,
+    {{ sensor_result.channels }} kanaalnaam/-namen bijgewerkt,
+    {{ sensor_result.neighbors }} buren.
+    {% if sensor_result.error %}<br>&#9888; {{ sensor_result.error }}{% endif %}
+    {%- elif sensor_result.soort == 'clock' and sensor_result.ok %}
+    &#9989; De klok is gezet op de tijd van deze server
+    (<span class="mono">time {{ sensor_result.epoch }}</span>). De node antwoordde:
+    <span class="mono">{{ sensor_result.reply }}</span>
+    {%- elif sensor_result.soort == 'clock' %}
+    &#9888; De klok is <strong>niet</strong> gezet: {{ sensor_result.reason }}
+    {%- elif sensor_result.soort == 'region' and sensor_result.ok %}
+    &#9989; Regio gezet en vastgelegd. <span class="mono">{{ sensor_result.set }}</span>
+    &middot; <span class="mono">{{ sensor_result.saved }}</span>
+    {%- elif sensor_result.soort == 'rotate' and sensor_result.ok %}
+    &#9989; Deze node heeft nu een <strong>eigen weblogin</strong>
+    (gebruiker <span class="mono">{{ sensor_result.user }}</span>). Het wachtwoord is
+    door de server gezet en bewaard; het staat nergens leesbaar, ook niet in het
+    audittrail. De node gebruikt het vanaf zijn volgende verzoek.
+    {%- elif sensor_result.soort == 'rotate' %}
+    &#9888; De weblogin is <strong>niet</strong> geroteerd: {{ sensor_result.error }}.
+    Er is niets aan de opslag veranderd &mdash; de node blijft op de vorige login.
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'bot', 'backup', 'restore') and sensor_result.ok %}
+    &#9989; {{ sensor_result.msg }}.
+    {%- elif sensor_result.soort in ('room', 'snode', 'alarm', 'channels', 'monitor', 'advert', 'acl', 'bot', 'backup', 'restore') %}
+    &#9888; {{ sensor_result.error or 'niets gebeurd' }}.
+    {%- elif sensor_result.ok %}
+    &#9989; <span class="mono">{{ sensor_result.reply }}</span>
+    {%- else %}
+    &#9888; {{ sensor_result.error or sensor_result.reply or 'niets gebeurd' }}
+    {%- endif %}
+  </div>
+  {% endif %}
+
+  {#- Dit blok staat vóór de knoppen en niet in een voetnoot erna. Wie hier komt
+      om iets te doen, hoort eerst te weten waarover hij het doet -- en de vorige
+      keer dat deze weg wegviel, viel hij helemaal weg. De kern staat zichtbaar
+      als waarschuwing; de meting die hem onderbouwt in de uitklapper. -#}
+  <p class="card-desc"><strong>Dit gaat over IP en niet over het mesh.</strong>
+     Alles in dit blok loopt over de WiFi-verbinding van deze node naar zijn eigen
+     webserver: <span class="mono">/status.json</span> om te lezen en
+     <span class="mono">POST /cli</span> om te schrijven, achter dezelfde weblogin als de
+     firmwareweg. Dat is snel en het antwoord komt in hetzelfde verzoek terug &mdash; en het
+     is precies zo betrouwbaar als die WiFi.</p>
+
+  <div class="waarschuwing"><strong>Valt de WiFi weg, dan valt dit hele blok weg.</strong>
+     Zolang de mesh-weg naar een sensornode niet werkt, is dit de enige beheerweg naar deze
+     node, en niet de snelste van twee.
+     <details class="uitleg">
+       <summary>De meting waar dat op steunt</summary>
+       <p>Dat is geen theoretische kanttekening. In de voedingsmeting van 19 augustus 2026 gaf
+          deze node op batterij eerst met tussenpozen geen antwoord (vier van de eerste vijftien
+          pollingen) en daarna veertien pollingen op rij niets, terwijl hij over LoRa gewoon
+          bestond. Het <strong>mesh</strong> is de weg die voor dat geval bedoeld is, en die werkt
+          op dit ogenblik <strong>niet</strong>: de uitvraagronde begint met een login die geen
+          antwoord krijgt, en de ronde is bovendien op een repeater afgestemd &mdash; een
+          sensornode implementeert het statusverzoek niet en antwoordt op een burenverzoek
+          letterlijk &ldquo;not supported&rdquo;. Zolang dat zo is, is dit blok de enige beheerweg
+          naar deze node, en niet de snelste van twee.</p>
+     </details>
+  </div>
+
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor" class="frm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="frm-label" for="sensor_host">Adres van de eigen API</label>
+    <fieldset class="frm-field"{{ recht('node.beheeradres') }}>
+      <input id="sensor_host" name="sensor_host" value="{{ rep.sensor_host or '' }}"
+             placeholder="192.168.0.10" spellcheck="false" autocomplete="off"
+             aria-label="Adres van de eigen API van deze node">
+      <p class="frm-hint">Alleen zinvol voor een node die zelf een API aanbiedt (een
+         MeshUptime-sensornode). Leegmaken wist ook de waarneming hieronder &mdash; dan is er geen
+         weg meer, en dan zegt de pagina dat ook.</p>
+      <details class="uitleg">
+        <summary>Waarom dit een apart veld is naast het beheeradres op de firmwarepagina</summary>
+        <p>Dat veld betekent &ldquo;daar staat onze repeaterfirmware&rdquo;, met een
+           firmware-upgrade erachter. Deze node draait die firmware niet. Eén veld voor beide zou een
+           image aanbieden aan een bord waarvan wij de bouwomgeving niet kennen. Voor onze eigen
+           repeaterfirmware is het beheeradres op de firmwarepagina de juiste plek.</p>
+      </details>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ recht('node.beheeradres') }}>Adres opslaan</button></div>
+  </form>
+  {{ waarom('node.beheeradres') }}
+
+  {% if not sensor_route %}
+  <p class="muted small">Er staat nog geen adres, dus er is langs deze weg niets te doen.</p>
+  {% else %}
+
+  <table class="kv">
+    <tr><td>Adres</td><td class="mono">{{ sensor_route.host }}</td></tr>
+    <tr><td>Laatst geantwoord</td><td>
+      {%- if route.ip_api.seen %}<time class="reltime" datetime="{{ route.ip_api.seen }}">{{ route.ip_api.seen }}</time>
+      {%- if not route.ip_api.fresh %} <span class="error">&mdash; ouder dan
+        {{ (route.ip_api.stale_after_s // 60) }} minuten; deze weg draagt op dit ogenblik
+        waarschijnlijk niet</span>{% endif %}
+      {%- else %}<span class="error">nooit</span>{% endif %}</td></tr>
+    <tr><td>Firmware van de node</td><td class="mono">{{ route.ip_api.fw or '—' }}</td></tr>
+    <tr><td>Uitleesronde</td><td>
+      {%- if sensor_enabled %}elke {{ sensor_interval_s }} s
+      {%- else %}<span class="error">staat uit op deze server (MM_SENSOR_POLL_ENABLED)</span>{% endif %}</td></tr>
+    {% if sensor_last.at %}
+    <tr><td>Vorige ronde</td><td>
+      {%- if sensor_last.ok %}{{ sensor_last.metrics }} metingen, {{ sensor_last.neighbors }} buren
+      {%- else %}<span class="error">mislukt</span>{% endif %}
+      {%- if sensor_last.error %} <span class="muted">&mdash; {{ sensor_last.error }}</span>{% endif %}</td></tr>
+    {% endif %}
+  </table>
+
+  {#- De weblogin van deze node. Een node op de GEDEELDE vlootsleutel is een
+      zwakte in dezelfde geest als een leeg mesh-wachtwoord: het werkt, maar één
+      lek opent dan de hele vloot in plaats van deze ene node. Vandaar een
+      waarschuwing met de knop ernaast, en niet in een voetnoot. -#}
+  {% if sensor_cred %}
+  <div class="act risk-merkbaar">
+    <div class="act-head"><h3>Weblogin</h3><span class="act-tag">alleen serverbeheerder</span></div>
+    {% if sensor_cred.shared %}
+    <p class="error small">&#9888; <strong>Deze node deelt de vlootsleutel</strong>
+       (<span class="mono">MM_FW_NODE_USER</span>/<span class="mono">MM_FW_NODE_PASS</span>).
+       Dat is dezelfde login als op elke andere node en gelijk aan de sleutel waarmee
+       de server firmware schrijft: lekt deze node, dan lekt de hele vloot mee. Roteer
+       hem naar een eigen login om die schade tot deze ene node te beperken.</p>
+    {% else %}
+    <p class="muted small">&#9989; Deze node heeft een <strong>eigen weblogin</strong>
+       (gebruiker <span class="mono">{{ sensor_cred.user }}</span>), los van de
+       vlootsleutel. Een lek van deze node opent geen andere node.</p>
+    {% endif %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rotate-cred"
+          class="actions">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit"{% if not is_superuser %} disabled title="Alleen een serverbeheerder kan roteren"{% endif %}>
+        &#128273; {{ 'Eigen login instellen' if sensor_cred.shared else 'Login opnieuw roteren' }}</button>
+    </form>
+    {% if not is_superuser %}
+    <p class="muted small">Alleen een serverbeheerder kan roteren: de rotatie meldt
+       zich bij de node aan met de sleutel die elke node opent, en dat is geen recht
+       dat per node uitgedeeld wordt.</p>
+    {% else %}
+    <p class="muted small">Roteren maakt een sterke, willekeurige login, zet die bij
+       de node, en bewaart hem pas als de node bevestigt. Lukt de node niet, dan
+       verandert er niets &mdash; je sluit jezelf er niet mee buiten. Let op: Basic-auth
+       over HTTP stuurt ook een eigen login nog leesbaar over het LAN; dit beperkt de
+       schade van een lek, maar vervangt geen TLS of een apart netwerk.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if not sensor_route.can %}
+  <p class="error small">Deze weg kan nu niets:
+     {{ cfg_blocker_text.get(sensor_route.blocker, sensor_route.blocker) }}.
+     De knoppen hieronder staan daarom uit.</p>
+  {% endif %}
+
+  {#- Vier handelingen naast elkaar, in stijgende merkbaarheid: lezen, een pakket
+      de lucht in, de klok, en een herstart. Elk met zijn eigen recht, want ze
+      zijn niet van dezelfde soort -- en de laatste vraagt de naam, omdat de fout
+      die je daar maakt niet twijfel is maar de verkeerde node. -#}
+  <div class="act risk-gewoon">
+    <div class="act-head"><h3>Handelingen</h3><span class="act-tag">antwoord in hetzelfde verzoek</span></div>
+    <p class="muted small">Een <em>zerohop</em>-advert gaat alleen naar wie hem direct hoort; een
+       gewone advert gaat als flood het hele mesh over. Wie wil weten of zijn buren hem nog horen,
+       heeft de eerste nodig en betaalt daar geen mesh-brede flood voor.</p>
+    <div class="actions left">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/poll">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
+          &#128260; Nu uitlezen</button>
+      </form>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/advert">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
+          &#128225; Advert (flood)</button>
+      </form>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/advert">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="zerohop" value="1">
+        <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.uitvragen') }}>
+          &#128225; Advert (zerohop)</button>
+      </form>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/clock">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit"{% if not sensor_route.can %} disabled{% endif %}{{ recht('node.klok') }}>
+          &#128336; Klok zetten</button>
+      </form>
+    </div>
+    {{ waarom('node.uitvragen') }}
+    {{ waarom('node.klok') }}
+    <details class="uitleg">
+      <summary>Waarom de klok hier geen luxe is</summary>
+      <p>Deze node heeft geen
+         batterijgevoede klok: na elke herstart staat hij op 15 mei 2024, en alles wat hij daarna
+         zegt draagt die datum mee. Of deze server mag zeggen hoe laat het is, wordt met dezelfde
+         controle beoordeeld als bij de dagelijkse ronde over het mesh &mdash; er is geen tweede
+         oordeel. Anders dan daar geldt er geen wachttijd tussen twee keer: dit kost geen zendtijd,
+         en een node die net herstartte heeft het meteen nodig.</p>
+    </details>
+  </div>
+
+  <div class="act risk-merkbaar">
+    <div class="act-head"><h3>Regio</h3><span class="act-tag">bevestigen</span></div>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/region" class="frm frm-first">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="frm-label" for="region-veld">Regio zetten</label>
+      <fieldset class="frm-field"{{ recht('node.instelling.merkbaar') }}>
+        <div class="frm-row">
+          <select name="veld" id="region-veld" aria-label="Welk regioveld"{% if not sensor_route.can %} disabled{% endif %}>
+            {% for sleutel, uitleg in sensor_region_fields.items() %}
+            <option value="{{ sleutel }}">{{ sleutel }} &mdash; {{ uitleg }}</option>
+            {% endfor %}
+          </select>
+          <input name="naam" placeholder="eu be" spellcheck="false" autocomplete="off"
+                 aria-label="Regionaam"{% if not sensor_route.can %} disabled{% endif %}>
+        </div>
+        <p class="frm-hint">Twee opdrachten achter elkaar: <span class="mono">region &lt;veld&gt;
+           &lt;naam&gt;</span> zet het, en <span class="mono">region save</span> legt het vast op flash.
+           Een scope bepaalt wie dit verkeer doorstuurt, dus een verkeerde waarde kan deze node
+           stil buiten het bereik van zijn buren zetten.</p>
+        <details class="uitleg">
+          <summary>Waarom een bevestiging en geen weigering</summary>
+          <p>Zonder <span class="mono">region save</span> is de instelling weg bij de eerstvolgende
+             herstart, en dat merk je dan pas. Het verschil met de radio-instellingen is dat dit
+             van hieraf terug te draaien is, want deze weg blijft bestaan. Vandaar een bevestiging
+             en geen weigering.</p>
+        </details>
+      </fieldset>
+      <fieldset class="frm-actions"{{ recht('node.instelling.merkbaar') }}>
+        <input name="confirm" placeholder="typ: ja" autocomplete="off"
+               aria-label="Bevestiging"{% if not sensor_route.can %} disabled{% endif %}>
+        <button type="submit"{% if not sensor_route.can %} disabled{% endif %}>
+          Regio zetten en vastleggen</button>
+      </fieldset>
+    </form>
+    {{ waarom('node.instelling.merkbaar') }}
+  </div>
+
+  <div class="act risk-merkbaar">
+    <div class="act-head"><h3>Herstarten</h3><span class="act-tag">naam overtypen</span></div>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/reboot" class="frm frm-first">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="frm-label" for="reboot-confirm">Naam van de node</label>
+      <fieldset class="frm-field"{{ recht('node.herstart') }}>
+        <input id="reboot-confirm" name="confirm" placeholder="typ: {{ rep.name }}" autocomplete="off"
+               aria-label="Naam van de node overtypen"{% if not sensor_route.can %} disabled{% endif %}>
+        <p class="frm-hint">De node is na ongeveer twintig seconden weer bereikbaar. Wat er wél
+           verloren gaat: de gemeten toestanden beginnen weer op &ldquo;?&rdquo;, en de klok staat weer
+           op 15 mei 2024 tot iemand hem zet. De naam overtypen vangt een andere fout dan twijfel
+           &mdash; ze vangt de klik op de verkeerde node, en daar helpt een ja/nee-vraag niet tegen.</p>
+      </fieldset>
+      <fieldset class="frm-actions"{{ recht('node.herstart') }}>
+        <button type="submit"{% if not sensor_route.can %} disabled{% endif %}>
+          &#9888; Herstarten</button>
+      </fieldset>
+    </form>
+    {{ waarom('node.herstart') }}
+  </div>
+
+  {#- De toegangslijst, en waarom die hier staat en niet op een subpagina: ze
+      bevat het antwoord op de vraag waarom de mesh-weg naar deze node niet
+      werkt. Alleen lezen -- rechten uitdelen op andermans node hoort op de
+      pagina van die node en niet hier. -#}
+  <details class="sub" open>
+    <summary><h3>Toegangslijst en gehoorde buren</h3> <span class="pill">alleen lezen</span></summary>
+    {% if not sensor_acl.ok %}
+    <p class="muted small">{{ sensor_acl.error or 'niet opgehaald' }}</p>
+    {% else %}
+    <p class="muted small">Wie mag inloggen op deze node, en wie hij hoort. Dit is de plek waar de
+       mesh-weg op stukloopt: een monitor die inlogt en geen antwoord krijgt, staat meestal niet in
+       deze lijst en heeft ook het adminwachtwoord niet. Dan is &ldquo;geen antwoord&rdquo; geen
+       storing maar een weigering, en dat is een heel ander probleem.</p>
+    <div class="tablewrap">
+    <table class="stack">
+      <thead><tr><th>Sleutel</th><th>Naam</th><th>Rechten</th><th>Laatst actief</th></tr></thead>
+      <tbody>
+      {% for c in sensor_acl.data.acl or [] %}
+        <tr><td data-l="Sleutel" class="mono">{{ c.k[:12] }}</td><td data-l="Naam">{{ c.n or '—' }}</td>
+            <td data-l="Rechten" class="mono">{{ c.p }}</td><td data-l="Laatst actief" class="muted">{{ c.a }} s</td></tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">de lijst is leeg &mdash; geen enkele node mag inloggen</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="tablewrap">
+    <table class="stack">
+      <thead><tr><th>Gehoorde buur</th><th>Naam</th><th>SNR</th><th>Hops</th><th>Gehoord</th><th>In de lijst</th></tr></thead>
+      <tbody>
+      {% for n in sensor_acl.data.nb or [] %}
+        <tr><td data-l="Gehoorde buur" class="mono">{{ n.k[:12] }}</td><td data-l="Naam">{{ n.n or '—' }}</td>
+            <td data-l="SNR">{{ n.s }}</td><td data-l="Hops">{{ n.h }}</td><td data-l="Gehoord" class="muted">{{ n.a }} s</td>
+            <td data-l="In de lijst">{{ 'ja' if n['in'] else 'nee' }}</td></tr>
+      {% else %}
+        <tr><td colspan="6" class="muted">nog niemand gehoord</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+  </details>
+
+  {#- De ontdekte contacten als kiezer: één datalist, gekoppeld aan elk
+      pubkey-veld hieronder (list="mm-contacts"). De gebruiker kiest een naam en de
+      volledige pubkey komt in het veld -- naast het handmatig typen. Publieke
+      sleutels mogen getoond; er zit geen geheim in deze lijst. -#}
+  {% if sensor_contacts %}
+  <datalist id="mm-contacts">
+    {% for c in sensor_contacts %}
+    <option value="{{ c.k }}" label="{{ c.n or c.k[:12] }}{% if c.t is not none %} (type {{ c.t }}){% endif %}"></option>
+    {% endfor %}
+  </datalist>
+  {% endif %}
+
+  {#- ==================== Rooms ============================================
+
+      Het volledige room-beheer van een room-server-node: lezen, toevoegen,
+      bewerken, verwijderen, de join-QR + link, de per-sensor alarmroute, en de
+      serverzijde backup. Alleen zinvol als de node een room-API aanbiedt; is die
+      er niet, dan zegt /rooms.json dat (een 404) en tonen we die reden in plaats
+      van een leeg blok. Alles hier loopt over dezelfde IP-weg als de rest van dit
+      blok en staat of valt dus met dezelfde WiFi. -#}
+  <details class="sub"{% if sensor_rooms.ok and sensor_rooms.rooms %} open{% endif %}>
+    <summary><h3>Rooms</h3>
+      <span class="sec-hint">{% if sensor_rooms.ok %}{{ sensor_rooms.active }} van {{ sensor_rooms.max }} in gebruik{% else %}niet opgehaald{% endif %}</span>
+      {{ hulp('Een room is een gedeeld kanaal op de node; sensoren kunnen hun alarm erin
+      posten (zie de alarmroute hieronder). De join-link en QR openen de room in een MeshCore-client.') }}</summary>
+  {% if not sensor_route.can %}
+  <p class="muted small">De weg naar deze node kan nu niets; de roomknoppen staan daarom uit.</p>
+  {% elif not sensor_rooms.ok %}
+  <p class="muted small">Geen rooms opgehaald: {{ sensor_rooms.error or 'onbekende reden' }}.
+     Dit is alleen een room-server-node als <span class="mono">/rooms.json</span> antwoordt.</p>
+  {% else %}
+  <p class="muted small">{{ sensor_rooms.active }} van {{ sensor_rooms.max }} rooms in gebruik.</p>
+  {{ waarom('node.instelling.merkbaar') }}
+
+  {% for kamer in sensor_rooms.rooms %}
+  <div class="card room">
+    <div class="room-head">
+      <h4>{{ kamer.name or ('room ' ~ kamer.idx) }}
+        <span class="pill">idx {{ kamer.idx }}</span>
+        {% if kamer.stealth %}<span class="pill">stealth</span>{% endif %}
+        {% if kamer.guest %}<span class="pill">gast</span>{% endif %}
+      </h4>
+      <span class="muted small">{{ kamer.posts }} posts &middot;
+        sleutel <span class="mono">{{ kamer.pub[:16] or '—' }}</span></span>
+    </div>
+
+    {% if kamer.uri %}
+    <div class="room-join">
+      {% if sensor_room_qrs.get(kamer.idx) %}
+      <div class="qr" aria-hidden="false">{{ sensor_room_qrs[kamer.idx] | safe }}</div>
+      {% endif %}
+      <div class="room-join-link">
+        <label class="muted small" for="uri-{{ kamer.idx }}">Join-link</label>
+        <input id="uri-{{ kamer.idx }}" class="mono" readonly value="{{ kamer.uri }}"
+               onclick="this.select()" aria-label="Join-link van {{ kamer.name }}">
+      </div>
+    </div>
+    {% endif %}
+
+    {% if kamer.sensoren %}
+    <p class="muted small">Sensoren die hun alarm in deze room posten:
+      {% for s in kamer.sensoren %}<span class="mono">{{ s.n }}</span>
+      ({{ s.st }}){{ ', ' if not loop.last else '' }}{% endfor %}.</p>
+    {% else %}
+    <p class="muted small">Nog geen sensor stuurt zijn alarm naar deze room.</p>
+    {% endif %}
+
+    {#- Node-centrisch kanaalbeheer: welke kanalen horen bij DEZE room. Aanvinken
+        zet de rm-bit van deze room op dat kanaal, afvinken haalt hem eruit
+        (alleen ontkoppelen); am en het sensor-node-masker blijven ongemoeid. -#}
+    {% if sensor_mon %}
+    <details class="chan-panel">
+      <summary>Kanalen beheren</summary>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/channels" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="room_idx" value="{{ kamer.idx }}">
+        {% for m in sensor_mon %}
+        <label class="check"><input type="checkbox" name="ch" value="{{ m.ch }}"
+               {% if kamer.idx in m.rooms_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
+          {{ m.n }} <span class="muted small">(kanaal {{ m.ch }})</span></label>
+        {% endfor %}
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanalen bijwerken</button>
+      </form>
+      <p class="muted small">Afvinken haalt een kanaal uit deze room (ontkoppelen), het wordt niet globaal verwijderd.</p>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/channel/add" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="room_idx" value="{{ kamer.idx }}">
+        <input name="name" placeholder="nieuw kanaal: naam" maxlength="40" spellcheck="false"
+               autocomplete="off" aria-label="Naam van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
+        <input name="host" placeholder="host (optioneel)" spellcheck="false"
+               autocomplete="off" aria-label="Host van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
+        <input name="interval" placeholder="interval s (optioneel)" inputmode="numeric"
+               autocomplete="off" aria-label="Interval in seconden"{{ recht('node.instelling.merkbaar') }}>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanaal toevoegen</button>
+      </form>
+    </details>
+    {% endif %}
+
+    {#- De per-sleutel-ACL van deze room. Een sleutel in de lijst mag
+        WACHTWOORDLOOS binnen op zijn niveau. Toevoegen vraagt de volledige pubkey;
+        verwijderen mag op een prefix (>= 12 hex). -#}
+    <details class="chan-panel">
+      <summary>Toegang (ACL) &mdash; {{ kamer.acl | length }} sleutel(s)
+        {{ hulp('Een sleutel in deze lijst mag zonder wachtwoord binnen op zijn niveau:
+          read = joinen/lezen (de posts), readwrite = ook schrijven, admin = beheer van dit slot.') }}</summary>
+      {% if kamer.acl %}
+      <table>
+        <thead><tr><th>Sleutel</th><th>Niveau</th><th></th></tr></thead>
+        <tbody>
+        {% for a in kamer.acl %}
+          <tr>
+            <td class="mono">{{ a.pub[:16] }}</td>
+            <td>
+              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="idx" value="{{ kamer.idx }}">
+                <input type="hidden" name="pubkey" value="{{ a.pub }}">
+                <select name="level" aria-label="Niveau van {{ a.pub[:12] }}"{{ recht('node.instelling.merkbaar') }}>
+                  {% for getal, woord in sensor_acl_levels.items() %}
+                  <option value="{{ woord }}"{% if a.level == getal %} selected{% endif %}>{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>Wijzig</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="idx" value="{{ kamer.idx }}">
+                <input type="hidden" name="pubkey" value="{{ a.pub[:16] }}">
+                <input type="hidden" name="del" value="1">
+                <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted small">Nog geen sleutel in de ACL van deze room.</p>
+      {% endif %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/acl" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ kamer.idx }}">
+        <input name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
+               maxlength="64" minlength="64" list="mm-contacts"
+               spellcheck="false" autocomplete="off" aria-label="Volledige pubkey om toe te voegen"{{ recht('node.instelling.merkbaar') }}>
+        <select name="level" aria-label="Niveau van de nieuwe sleutel"{{ recht('node.instelling.merkbaar') }}>
+          {% for getal, woord in sensor_acl_levels.items() %}
+          <option value="{{ woord }}">{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Sleutel toevoegen</button>
+      </form>
+    </details>
+
+    {#- Advert: laat deze room zich melden op het mesh. Flood gaat mesh-breed,
+        zerohop alleen naar wie hem direct hoort. -#}
+    <div class="rowform">
+      {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/advert" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ kamer.idx }}">
+        <input type="hidden" name="flood" value="{{ vlag }}">
+        <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
+      </form>
+      {% endfor %}
+    </div>
+
+    <div class="rowform">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/edit" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ kamer.idx }}">
+        <input name="name" value="{{ kamer.name }}" placeholder="naam" maxlength="40"
+               spellcheck="false" autocomplete="off" aria-label="Naam van de room"{{ recht('node.instelling.merkbaar') }}>
+        <input name="room_pass" type="password" placeholder="roomwachtwoord (leeg = ongewijzigd)"
+               autocomplete="new-password" aria-label="Wachtwoord van de room"{{ recht('node.instelling.merkbaar') }}>
+        <input name="guest_pass" type="password"
+               placeholder="gastwachtwoord{{ ' (gezet)' if kamer.guest else '' }} (leeg = ongewijzigd)"
+               autocomplete="new-password" aria-label="Gastwachtwoord van de room"{{ recht('node.instelling.merkbaar') }}>
+        <label class="check"><input type="checkbox" name="guest_clear" value="1"
+               {{ recht('node.instelling.merkbaar') }}> gast wissen</label>
+        <label class="check"><input type="checkbox" name="stealth" value="1"
+               {% if kamer.stealth %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> stealth</label>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Opslaan</button>
+      </form>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/del" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ kamer.idx }}">
+        <input name="confirm" placeholder="typ: ja" autocomplete="off"
+               aria-label="Bevestig verwijderen"{{ recht('node.instelling.merkbaar') }}>
+        <button type="submit" class="danger"{{ recht('node.instelling.merkbaar') }}>&#9888; Verwijderen</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted small">Er zijn nog geen rooms op deze node.</p>
+  {% endfor %}
+
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/add" class="frm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="frm-label" for="room-add">Room toevoegen</label>
+    <fieldset class="frm-field"{{ recht('node.instelling.merkbaar') }}>
+      <input id="room-add" name="name" placeholder="naam van de nieuwe room" maxlength="40"
+             spellcheck="false" autocomplete="off" aria-label="Naam van de nieuwe room"
+             {% if sensor_rooms.active >= sensor_rooms.max %}disabled{% endif %}>
+      {% if sensor_rooms.active >= sensor_rooms.max %}
+      <p class="frm-hint">Alle {{ sensor_rooms.max }} roomplekken zijn in gebruik; verwijder er eerst een.</p>
+      {% endif %}
+    </fieldset>
+    <div class="frm-actions">
+      <button type="submit"{% if sensor_rooms.active >= sensor_rooms.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+        Room toevoegen</button>
+    </div>
+  </form>
+  {% endif %}
+  </details>
+
+  {#- ==================== Sensor-nodes ====================================
+
+      Naast rooms host een room-server-node ook virtuele SENSOR-nodes: aparte
+      contact-identiteiten waaronder telemetrie in de MeshCore-app verschijnt.
+      Spiegel van het roomblok -- lijst, add/edit/del, contact-QR + link -- met
+      als extra de gekoppelde kanalen (met hun naam). De alarmroute hieronder
+      bepaalt WELKE sensor zijn meting naar WELKE sensor-node stuurt. -#}
+  <details class="sub"{% if sensor_snodes.ok and sensor_snodes.snodes %} open{% endif %}>
+    <summary><h3>Sensor-nodes</h3>
+      <span class="sec-hint">{% if sensor_snodes.ok %}{{ sensor_snodes.active }} van {{ sensor_snodes.max }} in gebruik{% else %}niet opgehaald{% endif %}</span>
+      {{ hulp('Een sensor-node is een eigen contact-identiteit op deze node; de
+      MeshCore-app toont de telemetrie van de gekoppelde kanalen eronder. Scan het contact-QR of open
+      de link om hem toe te voegen.') }}</summary>
+  {% if not sensor_route.can %}
+  <p class="muted small">De weg naar deze node kan nu niets; de knoppen staan daarom uit.</p>
+  {% elif not sensor_snodes.ok %}
+  <p class="muted small">Geen sensor-nodes opgehaald: {{ sensor_snodes.error or 'onbekende reden' }}.</p>
+  {% else %}
+  <p class="muted small">{{ sensor_snodes.active }} van {{ sensor_snodes.max }} sensor-nodes in gebruik.</p>
+
+  {% for snode in sensor_snodes.snodes %}
+  <div class="card room">
+    <div class="room-head">
+      <h4>{{ snode.name or ('sensor-node ' ~ snode.idx) }}
+        <span class="pill">idx {{ snode.idx }}</span>
+        {% if snode.stealth %}<span class="pill">stealth</span>{% endif %}
+      </h4>
+      <span class="muted small">sleutel <span class="mono">{{ snode.pub[:16] or '—' }}</span></span>
+    </div>
+
+    {% if snode.uri %}
+    <div class="room-join">
+      {% if sensor_snode_qrs.get(snode.idx) %}
+      <div class="qr">{{ sensor_snode_qrs[snode.idx] | safe }}</div>
+      {% endif %}
+      <div class="room-join-link">
+        <label class="muted small" for="snuri-{{ snode.idx }}">Contact-link</label>
+        <input id="snuri-{{ snode.idx }}" class="mono" readonly value="{{ snode.uri }}"
+               onclick="this.select()" aria-label="Contact-link van {{ snode.name }}">
+      </div>
+    </div>
+    {% endif %}
+
+    {% if snode.channel_names %}
+    <p class="muted small">Gekoppelde kanalen:
+      {% for c in snode.channel_names %}<span class="mono">{{ c.name }}</span>
+      (kanaal {{ c.ch }}){{ ', ' if not loop.last else '' }}{% endfor %}.</p>
+    {% else %}
+    <p class="muted small">Nog geen kanaal aan deze sensor-node gekoppeld.</p>
+    {% endif %}
+
+    {#- Node-centrisch kanaalbeheer: welke kanalen horen bij DEZE sensor-node
+        (sn-bit). Aanvinken zet de sn-bit, afvinken haalt hem eruit; am en het
+        room-masker blijven ongemoeid. -#}
+    {% if sensor_mon %}
+    <details class="chan-panel">
+      <summary>Kanalen beheren</summary>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/channels" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="snode_idx" value="{{ snode.idx }}">
+        {% for m in sensor_mon %}
+        <label class="check"><input type="checkbox" name="ch" value="{{ m.ch }}"
+               {% if snode.idx in m.snodes_on %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}>
+          {{ m.n }} <span class="muted small">(kanaal {{ m.ch }})</span></label>
+        {% endfor %}
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanalen bijwerken</button>
+      </form>
+      <p class="muted small">Afvinken haalt een kanaal uit deze sensor-node (ontkoppelen), het wordt niet globaal verwijderd.</p>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/channel/add" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="snode_idx" value="{{ snode.idx }}">
+        <input name="name" placeholder="nieuw kanaal: naam" maxlength="40" spellcheck="false"
+               autocomplete="off" aria-label="Naam van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
+        <input name="host" placeholder="host (optioneel)" spellcheck="false"
+               autocomplete="off" aria-label="Host van het nieuwe kanaal"{{ recht('node.instelling.merkbaar') }}>
+        <input name="interval" placeholder="interval s (optioneel)" inputmode="numeric"
+               autocomplete="off" aria-label="Interval in seconden"{{ recht('node.instelling.merkbaar') }}>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Kanaal toevoegen</button>
+      </form>
+    </details>
+    {% endif %}
+
+    {#- De per-sleutel-ACL van deze sensor-node. Wachtwoordloos: een sleutel in de
+        lijst mag binnen op zijn niveau (read = telemetrie lezen). -#}
+    <details class="chan-panel">
+      <summary>Toegang (ACL) &mdash; {{ snode.acl | length }} sleutel(s)
+        {{ hulp('Een sleutel in deze lijst mag zonder wachtwoord binnen op zijn niveau:
+          read = de telemetrie lezen, readwrite = ook schrijven, admin = beheer van dit slot.') }}</summary>
+      {% if snode.acl %}
+      <table>
+        <thead><tr><th>Sleutel</th><th>Niveau</th><th></th></tr></thead>
+        <tbody>
+        {% for a in snode.acl %}
+          <tr>
+            <td class="mono">{{ a.pub[:16] }}</td>
+            <td>
+              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="idx" value="{{ snode.idx }}">
+                <input type="hidden" name="pubkey" value="{{ a.pub }}">
+                <select name="level" aria-label="Niveau van {{ a.pub[:12] }}"{{ recht('node.instelling.merkbaar') }}>
+                  {% for getal, woord in sensor_acl_levels.items() %}
+                  <option value="{{ woord }}"{% if a.level == getal %} selected{% endif %}>{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>Wijzig</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="inline">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="idx" value="{{ snode.idx }}">
+                <input type="hidden" name="pubkey" value="{{ a.pub[:16] }}">
+                <input type="hidden" name="del" value="1">
+                <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted small">Nog geen sleutel in de ACL van deze sensor-node.</p>
+      {% endif %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/acl" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ snode.idx }}">
+        <input name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
+               maxlength="64" minlength="64" list="mm-contacts"
+               spellcheck="false" autocomplete="off" aria-label="Volledige pubkey om toe te voegen"{{ recht('node.instelling.merkbaar') }}>
+        <select name="level" aria-label="Niveau van de nieuwe sleutel"{{ recht('node.instelling.merkbaar') }}>
+          {% for getal, woord in sensor_acl_levels.items() %}
+          <option value="{{ woord }}">{{ woord }} &mdash; {{ sensor_acl_gloss[woord] }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Sleutel toevoegen</button>
+      </form>
+    </details>
+
+    {#- Advert: laat deze sensor-node zich melden op het mesh (flood of zerohop). -#}
+    <div class="rowform">
+      {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/advert" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ snode.idx }}">
+        <input type="hidden" name="flood" value="{{ vlag }}">
+        <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
+      </form>
+      {% endfor %}
+    </div>
+
+    <div class="rowform">
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/edit" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ snode.idx }}">
+        <input name="name" value="{{ snode.name }}" placeholder="naam" maxlength="40"
+               spellcheck="false" autocomplete="off" aria-label="Naam van de sensor-node"{{ recht('node.instelling.merkbaar') }}>
+        <label class="check"><input type="checkbox" name="stealth" value="1"
+               {% if snode.stealth %}checked{% endif %}{{ recht('node.instelling.merkbaar') }}> stealth</label>
+        <button type="submit"{{ recht('node.instelling.merkbaar') }}>Opslaan</button>
+      </form>
+      <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/del" class="rowform">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="idx" value="{{ snode.idx }}">
+        <input name="confirm" placeholder="typ: ja" autocomplete="off"
+               aria-label="Bevestig verwijderen"{{ recht('node.instelling.merkbaar') }}>
+        <button type="submit" class="danger"{{ recht('node.instelling.merkbaar') }}>&#9888; Verwijderen</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted small">Er zijn nog geen sensor-nodes op deze node.</p>
+  {% endfor %}
+
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snode/add" class="frm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="frm-label" for="snode-add">Sensor-node toevoegen</label>
+    <fieldset class="frm-field"{{ recht('node.instelling.merkbaar') }}>
+      <input id="snode-add" name="name" placeholder="naam van de nieuwe sensor-node" maxlength="40"
+             spellcheck="false" autocomplete="off" aria-label="Naam van de nieuwe sensor-node"
+             {% if sensor_snodes.active >= sensor_snodes.max %}disabled{% endif %}>
+      {% if sensor_snodes.active >= sensor_snodes.max %}
+      <p class="frm-hint">Alle {{ sensor_snodes.max }} sensor-node-plekken zijn in gebruik; verwijder er eerst een.</p>
+      {% endif %}
+    </fieldset>
+    <div class="frm-actions">
+      <button type="submit"{% if sensor_snodes.active >= sensor_snodes.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>
+        Sensor-node toevoegen</button>
+    </div>
+  </form>
+  {% endif %}{#- sensor_snodes.ok -#}
+  </details>
+
+  {#- ==================== SNMP-monitors ====================================
+
+      Een SNMP-monitor is een nieuwe monitorsoort: de node vraagt periodiek een
+      OID op bij een host. Twee wegen: SNMP-DISCOVERY (de server tast het apparaat
+      af en biedt een kieslijst) en de handmatige preset-bibliotheek daaronder. De
+      community is een geheim (write-only): hij gaat mee maar wordt nooit
+      teruggetoond. Open zodra er een discovery- of walk-uitslag te tonen is. -#}
+  <details class="sub"{% if snmp_discovery or snmp_walk %} open{% endif %}>
+    <summary><h3>SNMP-monitors</h3>
+      {{ hulp('De node pollt periodiek een OID over SNMP. Laat de server het
+      apparaat aftasten (discovery) en kies uit een lijst, of vul handmatig een preset/OID in. De
+      community is een wachtwoord en wordt nooit teruggetoond of gelogd.') }}</summary>
+
+  <h4>Ontdekken (discovery) {{ hulp('De SERVER doet de SNMP-walk (hij heeft de rijke stack) en
+    toont welke waarden er te monitoren zijn: verkeer in/uit per interface, oper-status, en UPS-MIB.
+    Je vinkt aan wat je wilt; de server maakt er node-monitors van die de node daarna zelf pollt. De
+    server moet het apparaat over UDP/161 kunnen bereiken.') }}</h4>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/discover" class="frm frm-first">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="frm-label" for="snmp-host">Apparaat</label>
+    <fieldset class="frm-field"{{ recht('node.instelling.merkbaar') }}>
+      <div class="frm-row">
+        <input id="snmp-host" name="host" placeholder="IP of hostnaam" spellcheck="false" autocomplete="off"
+               value="{{ snmp_discovery.host if snmp_discovery else '' }}"
+               aria-label="IP van het SNMP-apparaat">
+        <input name="port" type="number" value="{{ snmp_discovery.port if snmp_discovery else 161 }}"
+               min="1" max="65535" aria-label="SNMP-poort">
+        <input name="community" type="password" placeholder="community (v2c)" autocomplete="new-password"
+               aria-label="SNMP-community">
+      </div>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ recht('node.instelling.merkbaar') }}>Ontdekken</button></div>
+  </form>
+
+  {% if snmp_discovery %}
+  {% if not snmp_discovery.ok %}
+  <p class="error small">Discovery mislukt: {{ snmp_discovery.error }}</p>
+  {% else %}
+  <div class="card">
+    <p class="muted small">Gevonden op <span class="mono">{{ snmp_discovery.host }}</span>:
+      {% if snmp_discovery.system.name %}<strong>{{ snmp_discovery.system.name }}</strong>{% endif %}
+      {% if snmp_discovery.system.descr %}&mdash; {{ snmp_discovery.system.descr[:80] }}{% endif %}
+      {% if snmp_discovery.ups %}&middot; UPS: {{ snmp_discovery.ups.model or 'ja' }}{% endif %}.</p>
+    {% if snmp_discovery['items'] %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/discover/create">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="host" value="{{ snmp_discovery.host }}">
+      <fieldset{{ recht('node.instelling.merkbaar') }}>
+      <p class="muted small">Vink aan wat je wilt monitoren. Vul de community opnieuw in (die wordt
+         nooit bewaard) en kies desgewenst een room/sensor-node om alles aan te koppelen.</p>
+      <div class="tablewrap">
+      <table class="stack">
+        <thead><tr><th></th><th>Waarde</th><th>Nu gemeten</th><th>Interpretatie</th></tr></thead>
+        <tbody>
+        {% for it in snmp_discovery['items'] %}
+          <tr>
+            <td><input type="checkbox" name="pick"
+                       value="{{ it.name }}|{{ it.oid }}|{{ it.interp }}|{{ it.snmparg }}"
+                       aria-label="Monitor {{ it.label }}"></td>
+            <td data-l="Waarde">{{ it.label }}</td>
+            <td data-l="Nu gemeten" class="mono">{{ it.preview }}</td>
+            <td data-l="Interpretatie" class="mono">{{ it.interp }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <div class="rowform">
+        <input name="community" type="password" placeholder="community opnieuw" autocomplete="new-password"
+               aria-label="Community opnieuw">
+        <input name="interval" placeholder="interval s" inputmode="numeric" autocomplete="off"
+               aria-label="Interval in seconden">
+        <label class="muted small">room
+          <select name="room_idx" aria-label="Koppelen aan room">
+            <option value="-1">— geen —</option>
+            {% for kamer in sensor_rooms.rooms %}<option value="{{ kamer.idx }}">{{ kamer.name or ('room ' ~ kamer.idx) }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="muted small">of sensor-node
+          <select name="snode_idx" aria-label="Koppelen aan sensor-node">
+            <option value="-1">— geen —</option>
+            {% for snode in sensor_snodes.snodes %}<option value="{{ snode.idx }}">{{ snode.name or ('sn ' ~ snode.idx) }}</option>{% endfor %}
+          </select>
+        </label>
+        <button type="submit">Geselecteerde monitors aanmaken</button>
+      </div>
+      </fieldset>
+    </form>
+    {% else %}
+    <p class="muted small">Geen monitorbare waarden gevonden (geen interfaces of UPS-MIB).</p>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  <details class="chan-panel">
+    <summary>Geavanceerd: generieke snmpwalk</summary>
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/snmp/walk" class="rowform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <fieldset class="rowform"{{ recht('node.instelling.merkbaar') }}>
+      <input name="host" placeholder="IP of hostnaam" spellcheck="false" autocomplete="off"
+             aria-label="IP voor de walk">
+      <input name="port" type="number" value="161" min="1" max="65535"
+             aria-label="Poort voor de walk">
+      <input name="community" type="password" placeholder="community" autocomplete="new-password"
+             aria-label="Community voor de walk">
+      <input name="subtree" placeholder="subtree-OID (bv. 1.3.6.1.2.1)" class="mono" spellcheck="false"
+             autocomplete="off" aria-label="Subtree-OID">
+      <button type="submit">Walk</button>
+      </fieldset>
+    </form>
+    {% if snmp_walk %}
+    {% if not snmp_walk.ok %}
+    <p class="error small">Walk mislukt: {{ snmp_walk.error }}</p>
+    {% else %}
+    <p class="muted small">{{ snmp_walk.rows | length }} rijen onder
+      <span class="mono">{{ snmp_walk.subtree }}</span> op <span class="mono">{{ snmp_walk.host }}</span>:</p>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>OID</th><th>Waarde</th></tr></thead>
+      <tbody>
+      {% for oid, waarde in snmp_walk.rows[:200] %}
+        <tr><td class="mono">{{ oid }}</td><td class="mono">{{ waarde[:80] }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+    {% endif %}
+  </details>
+
+  <h4>Handmatig toevoegen {{ hulp('De node vraagt periodiek een OID op bij een host over SNMP.
+    Kies een preset (interface-octetten, ifOperStatus, of UPS-MIB: batterij, resterende minuten,
+    belasting, in-/uitgangsspanning) of vul een eigen OID in. De community is een wachtwoord en
+    wordt nooit teruggetoond.') }}</h4>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/monitor/snmp">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <fieldset{{ recht('node.instelling.merkbaar') }}>
+    <div class="rowform">
+      <input name="name" placeholder="naam" maxlength="40" spellcheck="false" autocomplete="off"
+             aria-label="Naam van de SNMP-monitor"{% if not sensor_route.can %} disabled{% endif %}>
+      <input name="host" placeholder="host/ip" spellcheck="false" autocomplete="off"
+             aria-label="Host van de SNMP-monitor"{% if not sensor_route.can %} disabled{% endif %}>
+      <input name="community" type="password" placeholder="community (write-only)"
+             autocomplete="new-password" aria-label="SNMP-community"{% if not sensor_route.can %} disabled{% endif %}>
+      <input name="interval" placeholder="interval s" inputmode="numeric" autocomplete="off"
+             aria-label="Interval in seconden"{% if not sensor_route.can %} disabled{% endif %}>
+    </div>
+    <div class="rowform">
+      <select name="preset" aria-label="Preset-OID"{% if not sensor_route.can %} disabled{% endif %}>
+        <option value="">— preset kiezen —</option>
+        {% for p in sensor_snmp_presets %}
+        <option value="{{ p.key }}">{{ p.label }}</option>
+        {% endfor %}
+      </select>
+      <input name="snmparg" placeholder="index (bij interface/UPS-lijn)" spellcheck="false"
+             autocomplete="off" aria-label="SNMP-index"{% if not sensor_route.can %} disabled{% endif %}>
+      {{ hulp('Sommige OIDs zijn per interface of per UPS-lijn geïndexeerd (bv. interface 1). Vul dan
+        hier de index in. Scalars zoals batterijstatus hebben er geen nodig.') }}
+    </div>
+    <details class="chan-panel">
+      <summary>Handmatige OID (in plaats van een preset)</summary>
+      <div class="rowform">
+        <input name="oid" placeholder="1.3.6.1.2.1..." spellcheck="false" autocomplete="off"
+               class="mono" aria-label="Eigen OID"{% if not sensor_route.can %} disabled{% endif %}>
+        <select name="interp" aria-label="Interpretatie"{% if not sensor_route.can %} disabled{% endif %}>
+          {% for itp in sensor_snmp_interps %}
+          <option value="{{ itp }}">{{ itp }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </details>
+    <div class="rowform">
+      <label class="muted small">Koppelen aan room
+        <select name="room_idx" aria-label="Koppelen aan room"{% if not sensor_route.can %} disabled{% endif %}>
+          <option value="-1">— geen —</option>
+          {% for kamer in sensor_rooms.rooms %}<option value="{{ kamer.idx }}">{{ kamer.name or ('room ' ~ kamer.idx) }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="muted small">of sensor-node
+        <select name="snode_idx" aria-label="Koppelen aan sensor-node"{% if not sensor_route.can %} disabled{% endif %}>
+          <option value="-1">— geen —</option>
+          {% for snode in sensor_snodes.snodes %}<option value="{{ snode.idx }}">{{ snode.name or ('sn ' ~ snode.idx) }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit"{% if not sensor_route.can %} disabled{% endif %}>SNMP-monitor toevoegen</button>
+    </div>
+    </fieldset>
+  </form>
+  </details>
+
+  {#- ==================== Notifier-bot ====================================
+
+      Een bot-identiteit op de node die meldingen als DM aan een ontvangerslijst
+      stuurt en/of op zijn eigen kanaal post. Naam en pubkey zijn publiek; de
+      ontvangers zijn publieke sleutels. -#}
+  <details class="sub"{% if sensor_bot.ok and sensor_bot.active %} open{% endif %}>
+    <summary><h3>Notifier-bot</h3>
+      <span class="sec-hint">{% if sensor_bot.ok and sensor_bot.active %}{{ sensor_bot.name or 'bot' }} &middot; {{ sensor_bot.recips | length }} van {{ sensor_bot.max }} ontvangers{% elif sensor_bot.ok %}geen actieve bot{% else %}niet opgehaald{% endif %}</span>
+      {{ hulp('Een bot-identiteit op de node die meldingen als direct bericht naar
+      een ontvangerslijst stuurt, of op zijn eigen kanaal post. Voeg ontvangers toe met hun pubkey
+      (of kies een ontdekt contact), en test met een DM of een post.') }}</summary>
+  {% if not sensor_route.can %}
+  <p class="muted small">De weg naar deze node kan nu niets; de botknoppen staan daarom uit.</p>
+  {% elif not sensor_bot.ok %}
+  <p class="muted small">Geen bot opgehaald: {{ sensor_bot.error or 'onbekende reden' }}.</p>
+  {% elif not sensor_bot.active %}
+  <p class="muted small">Deze node heeft geen actieve notifier-bot.</p>
+  {% else %}
+  <div class="room-head">
+    <h4>{{ sensor_bot.name or 'bot' }}</h4>
+    <span class="muted small">sleutel <span class="mono">{{ sensor_bot.pub[:16] or '—' }}</span> &middot;
+      {{ sensor_bot.recips | length }} van {{ sensor_bot.max }} ontvangers</span>
+  </div>
+  {% if sensor_bot.uri %}
+  <div class="room-join">
+    {% if sensor_bot_qr %}<div class="qr">{{ sensor_bot_qr | safe }}</div>{% endif %}
+    <div class="room-join-link">
+      <label class="muted small" for="boturi">Contact-link</label>
+      <input id="boturi" class="mono" readonly value="{{ sensor_bot.uri }}"
+             onclick="this.select()" aria-label="Contact-link van de bot">
+    </div>
+  </div>
+  {% endif %}
+
+  <h4>Ontvangers</h4>
+  {% if sensor_bot.recips %}
+  <table>
+    <thead><tr><th>Sleutel</th><th></th></tr></thead>
+    <tbody>
+    {% for r in sensor_bot.recips %}
+      <tr>
+        <td class="mono">{{ r.k[:16] }}{% if r.l is not none %} <span class="muted small">(niveau {{ r.l }})</span>{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/recipient" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="del" value="{{ r.k[:16] }}">
+            <button type="submit" class="pill danger"{{ recht('node.instelling.merkbaar') }}>Verwijder</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted small">Nog geen ontvangers in de botlijst.</p>
+  {% endif %}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/recipient" class="frm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="frm-label" for="bot-recip">Ontvanger toevoegen</label>
+    <fieldset class="frm-field"{{ recht('node.instelling.merkbaar') }}>
+      <input id="bot-recip" name="pubkey" placeholder="volledige pubkey (64 hex) of kies een contact"
+             maxlength="64" minlength="64" list="mm-contacts" spellcheck="false"
+             autocomplete="off" aria-label="Pubkey van de ontvanger">
+    </fieldset>
+    <div class="frm-actions">
+      <button type="submit"{% if sensor_bot.recips | length >= sensor_bot.max %} disabled{% endif %}{{ recht('node.instelling.merkbaar') }}>Ontvanger toevoegen</button>
+    </div>
+  </form>
+
+  <h4>Melden en testen</h4>
+  <div class="rowform">
+    {% for vlag, etiket in [('1', 'Advert (flood)'), ('0', 'Advert (zerohop)')] %}
+    <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/advert" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="flood" value="{{ vlag }}">
+      <button type="submit" class="pill"{{ recht('node.instelling.merkbaar') }}>&#128225; {{ etiket }}</button>
+    </form>
+    {% endfor %}
+  </div>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/sendto" class="frm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="frm-label" for="bot-dm-pub">Test-DM</label>
+    <fieldset class="frm-field"{{ recht('node.instelling.merkbaar') }}>
+      <div class="frm-row">
+        <input id="bot-dm-pub" name="pubkey" placeholder="pubkey van de ontvanger" maxlength="64" minlength="64"
+               list="mm-contacts" spellcheck="false" autocomplete="off"
+               aria-label="Pubkey voor de test-DM">
+        <input name="msg" placeholder="test-DM" maxlength="200" autocomplete="off"
+               aria-label="Bericht van de test-DM">
+      </div>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ recht('node.instelling.merkbaar') }}>Test-DM sturen</button></div>
+  </form>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/bot/post" class="frm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="frm-label" for="bot-post">Op het botkanaal</label>
+    <fieldset class="frm-field"{{ recht('node.instelling.merkbaar') }}>
+      <input id="bot-post" name="msg" placeholder="bericht op het botkanaal (naar de hele lijst)" maxlength="200"
+             autocomplete="off" aria-label="Bericht op het botkanaal">
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ recht('node.instelling.merkbaar') }}>Posten</button></div>
+  </form>
+  {% endif %}
+  </details>
+
+  {#- De per-sensor alarmroute. am = 1 (dm), 2 (room), 3 (beide); rm is het
+      bitmasker van rooms en sn dat van sensor-nodes waar het alarm heen gaat. De
+      checkboxes bouwen die maskers serverzijde op -- zie sensor_room_alarm.
+      Alleen bij een room-server-node met sensoren. -#}
+  {% if sensor_rooms.ok and sensor_mon %}
+  <details class="sub" open>
+    <summary><h3>Alarmroute per sensor</h3>
+      {{ hulp('Waar het alarm van elke sensor heen gaat: als direct bericht,
+      in een room, of beide. Kies bij "room" of "beide" ook welke rooms, en desgewenst naar welke
+      sensor-nodes de meting gaat.') }}</summary>
+  {% for m in sensor_mon %}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/room/alarm" class="rowform room-alarm">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="ch" value="{{ m.ch }}">
+    <span class="room-alarm-name"><span class="mono">{{ m.n }}</span>
+      <span class="muted small">(kanaal {{ m.ch }} &middot; {{ m.st }})</span></span>
+    <fieldset class="rowform"{{ recht('node.instelling.merkbaar') }}>
+    <select name="am" aria-label="Alarmroute van {{ m.n }}">
+      {% for waarde, woord in sensor_am_modes.items() %}
+      <option value="{{ waarde }}"{% if m.am_v == waarde %} selected{% endif %}>{{ woord }}</option>
+      {% endfor %}
+    </select>
+    {% for kamer in sensor_rooms.rooms %}
+    <label class="check"><input type="checkbox" name="room" value="{{ kamer.idx }}"
+           {% if kamer.idx in m.rooms_on %}checked{% endif %}>
+      {{ kamer.name or ('r' ~ kamer.idx) }}</label>
+    {% endfor %}
+    {% for snode in sensor_snodes.snodes %}
+    <label class="check"><input type="checkbox" name="snode" value="{{ snode.idx }}"
+           {% if snode.idx in m.snodes_on %}checked{% endif %}>
+      &#9737; {{ snode.name or ('sn' ~ snode.idx) }}</label>
+    {% endfor %}
+    <button type="submit">Zetten</button>
+    </fieldset>
+  </form>
+  {% endfor %}
+  </details>
+  {% endif %}
+
+  {#- De serverzijde backup: een bewaarplaats met versiehistoriek. De inhoud
+      bevat de privésleutels van de rooms en gaat daarom alleen open voor een
+      serverbeheerder; zie sensor_rooms_backup. Alleen bij een room-server-node. -#}
+  {% if sensor_rooms.ok %}
+  <details class="sub risk-ingrijpend">
+    <summary><h3>Backup en terugzetten van de rooms</h3> <span class="act-tag risk-ingrijpend">gevoelig &middot; alleen serverbeheerder</span></summary>
+  <p class="muted small">Een backup bevat de <strong>privésleutels</strong> van de rooms. De server
+     bewaart hem geobfusceerd als bewaarplaats (versiehistoriek) en stuurt hem nooit naar buiten.
+     Ophalen en downloaden kan alleen een serverbeheerder.</p>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rooms/backup" class="actions left">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit"{% if not is_superuser or not sensor_route.can %} disabled title="Alleen een serverbeheerder maakt een backup, en alleen als de weg naar de node open is"{% endif %}>
+      &#128190; Backup maken en bewaren</button>
+  </form>
+  {% if not is_superuser %}
+  <p class="muted small">Alleen een serverbeheerder maakt of downloadt een backup met sleutels erin.</p>
+  {% endif %}
+  {% if sensor_room_backups %}
+  <div class="tablewrap">
+  <table class="stack">
+    <thead><tr><th>Wanneer</th><th>Door</th><th>Rooms</th><th>Downloaden</th></tr></thead>
+    <tbody>
+    {% for b in sensor_room_backups %}
+      <tr>
+        <td data-l="Wanneer"><time class="reltime" datetime="{{ b.created }}">{{ b.created }}</time></td>
+        <td data-l="Door">{{ b.actor or '—' }}</td>
+        <td data-l="Rooms">{{ b.rooms if b.rooms is not none else '—' }}</td>
+        <td data-l="Downloaden">{% if is_superuser %}<a href="/admin/repeaters/{{ rep.id }}/sensor/rooms/backup/{{ b.id }}.json">#{{ b.id }} .json</a>
+            {% else %}<span class="muted">alleen serverbeheerder</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted small">Nog geen backup bewaard.</p>
+  {% endif %}
+
+  <h4>Terugzetten <span class="pill">bevestigen</span></h4>
+  <p class="muted small">Een restore <strong>overschrijft</strong> de rooms die er nu staan. Kies een
+     bewaarde backup, of plak een room-config als JSON.</p>
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/sensor/rooms/restore">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <fieldset{% if not is_superuser %} disabled title="Alleen een serverbeheerder zet een backup terug"{% else %}{{ recht('node.instelling.merkbaar') }}{% endif %}>
+    <div class="rowform">
+      <select name="backup_id" aria-label="Bewaarde backup om terug te zetten">
+        <option value="0">— geplakte JSON hieronder —</option>
+        {% for b in sensor_room_backups %}
+        <option value="{{ b.id }}">#{{ b.id }} &middot; {{ b.created }} &middot;
+          {{ b.rooms if b.rooms is not none else '?' }} rooms</option>
+        {% endfor %}
+      </select>
+      <input name="confirm" placeholder="typ: ja" autocomplete="off"
+             aria-label="Bevestig terugzetten">
+      <button type="submit" class="danger"{% if not sensor_route.can %} disabled{% endif %}>
+        Terugzetten</button>
+    </div>
+    <textarea name="payload" rows="3" class="mono" spellcheck="false"
+              placeholder='{"rooms": [...]}  (alleen gebruikt als er geen bewaarde backup gekozen is)'
+              aria-label="Room-config als JSON"></textarea>
+    </fieldset>
+  </form>
+  </details>
+  {% endif %}{#- sensor_rooms.ok -#}
+
+  <details class="uitleg">
+    <summary>Wat er langs deze weg niet gezet wordt</summary>
+    <p>De radio-instellingen: frequentie, bandbreedte, spreidingsfactor en coderingssnelheid. Die
+       weigering staat in <span class="mono">nodeconfig.NO_REMOTE</span> en geldt voor élke weg,
+       ook deze &mdash; het is één lijst en geen tweede. De node dwingt het bovendien zelf af: zijn
+       <span class="mono">POST /cli</span> weigert <span class="mono">set radio</span> en
+       <span class="mono">set freq</span> zonder een bevestigingsparameter, en die parameter stuurt
+       deze site nooit mee. Het zendvermogen (<span class="mono">tx</span>) kan wel: een node die
+       te zwak zendt blijft bereikbaar, een node op de verkeerde frequentie niet.
+       {%- if sensor_no_readback %} Ook niet aangeboden, om een andere reden:
+       {% for sleutel, waarom_niet in sensor_no_readback.items() %}<span class="mono">{{ sleutel }}</span>
+       ({{ waarom_niet }}){{ '; ' if not loop.last else '.' }}{% endfor %}
+       Zonder terugleesbaar veld zou de pagina &ldquo;gelukt&rdquo; melden op het woord van de
+       node, en dat is precies wat deze site niet doet.{% endif %}</p>
+  </details>
+
+  {% endif %}
+  </div>
+</section>

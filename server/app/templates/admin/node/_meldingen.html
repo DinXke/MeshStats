@@ -1,0 +1,142 @@
+{% from "admin/_macros.html" import recht, waarom with context %}
+{#- ==================== Alarmen ============================================
+
+    TELEMETRIE IS SNMP-POLLING, EEN ALERT IS EEN SNMP-TRAP. Die ene zin verklaart
+    waarom dit blok bestaat en waarom het niet bij de metingen staat: een poll is
+    regelmatig, volledig en blind voor wat er tussen twee rondes gebeurde; een
+    trap komt op het moment dat er iets gebeurt, draagt één feit, en arriveert
+    misschien niet. De grafieken zijn het eerste, dit is het tweede.
+
+    Een eigen sectie en geen regel in het audittrail onderaan. Die twee lijken op
+    elkaar en ze zijn het tegenovergestelde: het trail zegt wat WIJ met deze node
+    gedaan hebben, dit zegt wat DE NODE ons gemeld heeft.
+
+    De gebeurtenis-push staat in dezelfde sectie, als tweede kaart: het is de
+    andere weg waarlangs de node zelf iets komt brengen, met dezelfde belofte
+    (seconden na het feit, zolang de WiFi er is) en dezelfde bewaking (de
+    stiltegrens van drie hartslagen). Alles daar is WAARNEMING: er valt niets in
+    te stellen behalve MM_PUSH_TOKEN op de server. -#}
+<section id="alarmen">
+  <h2>Alarmen
+    {%- if alerts_open %} <span class="pill off">{{ alerts_open }} niet bevestigd</span>{% endif %}</h2>
+  <div class="card tablecard">
+  <p class="card-desc">Wat de node <em>zelf</em> gemeld heeft, op het moment dat het gebeurde
+     &mdash; los van de uitvraagrondes, die zeggen <em>wat</em> waar dit zegt <em>wanneer</em>.</p>
+  <details class="uitleg">
+    <summary>Waarom alarmen apart staan van de metingen</summary>
+    <p><strong>Telemetrie is polling; een alarm is een trap.</strong>
+       De cijfers en grafieken van deze node komen van een uitvraagronde: regelmatig,
+       volledig, en zonder weet van wat er tussen twee rondes gebeurde. Een alarm komt op
+       het moment dat er iets gebeurt, draagt één feit, en is er misschien niet — de
+       sensornode stuurt het als bericht naar de repeaters die in zijn toegangslijst met
+       alarmrecht staan, en die zetten het meteen door. Daarom staan ze hier apart en niet
+       als meetreeks: je hebt ze beide nodig, want het alarm zegt <em>wanneer</em> en de
+       uitvraging zegt <em>wat</em>.</p>
+    <p>Bevestigen haalt een alarm niet weg — het zegt dat iemand het
+       gezien heeft. Er is met opzet geen knop die er een verwijdert: een melding die je
+       zonder spoor kunt wegklikken is een melding die achteraf niet meer na te vertellen is.
+       Opruimen doet de bewaartermijn, samen met de rest van de historiek.</p>
+  </details>
+
+  {% if not alerts %}
+  <p class="muted small">Nog geen alarmen van deze node. Dat kan twee dingen betekenen, en
+     ze zijn niet hetzelfde: er is niets aan de hand, of deze node kent geen enkele
+     repeater met alarmrecht en zijn meldingen komen nergens aan. Het tweede is te zien in
+     zijn <a href="#eigen-api">toegangslijst</a> — een repeater die daar niet in staat, kan
+     geen alarm doorgeven.</p>
+  {% else %}
+  <div class="tablewrap">
+  <table class="stack">
+    <thead><tr><th>Wanneer</th><th>Melding</th><th>Ernst</th><th>Bron</th><th></th></tr></thead>
+    <tbody>
+    {% for a in alerts %}
+      <tr{% if not a.acked %} class="warnrow"{% endif %}>
+        <td data-l="Wanneer"><time class="reltime" datetime="{{ a.ts }}">{{ a.ts }}</time></td>
+        <td data-l="Melding">{{ a.text }}
+          {%- if a.channel %} <span class="muted small">· kanaal {{ a.channel }}</span>{% endif %}</td>
+        <td data-l="Ernst" class="small">
+          {%- if a.severity == 'hoog' %}<span class="error">hoog</span>
+          {%- elif a.severity == 'laag' %}<span class="muted">laag</span>
+          {%- else %}<span class="muted" title="Niet uit de tekst af te leiden; een verzonnen ernst is erger dan geen">—</span>{% endif %}</td>
+        <td data-l="Bron" class="small muted">
+          {%- if a.source == 'mesh' %}over het mesh, via een repeater
+          {%- elif a.source == 'ip' %}over IP
+          {%- elif a.source == 'push' %}gepusht door de node zelf
+          {%- else %}{{ a.source }}{% endif %}</td>
+        <td>
+          {% if a.acked %}<span class="muted small">bevestigd</span>
+          {% else %}
+          <form method="post" action="/admin/repeaters/{{ rep.id }}/alerts/ack" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="alert_id" value="{{ a.id }}">
+            <button type="submit" class="mini"{{ recht('node.uitvragen') }}>bevestigen</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if alerts_open %}
+  <form method="post" action="/admin/repeaters/{{ rep.id }}/alerts/ack" class="actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit"{{ recht('node.uitvragen') }}>
+      &#10003; Alle {{ alerts_open }} bevestigen</button>
+  </form>
+  {% endif %}
+  {{ waarom('node.uitvragen') }}
+  {% endif %}
+  </div>
+
+  <div class="card" id="push">
+  <div class="card-head"><h3>Gebeurtenis-push</h3></div>
+  <p class="card-desc">De node meldt zijn gebeurtenissen zelf, over IP, op
+     <span class="mono">POST /api/sensorpush</span> &mdash; seconden na het feit, waar de
+     uitleesronde er tot een heel pollinterval naast kan zitten.</p>
+  <details class="uitleg">
+    <summary>Hoe de stiltebewaking werkt</summary>
+    <p>De node belooft bij elke push een hartslag; blijft hij langer dan drie keer die
+       belofte stil, dan maakt de server daar een alarm van (&ldquo;node stil (push)&rdquo;), en
+       een herstelmelding zodra hij terug is. De ondergrens van die stiltegrens is 90 s, zodat
+       een node die om de vijf seconden pusht niet bij elke hik een alarm oplevert.</p>
+  </details>
+
+  {% if not push_enabled %}
+  <p class="muted small">Deze weg staat <strong>uit</strong> op deze server:
+     <span class="mono">MM_PUSH_TOKEN</span> is leeg. Zet hem in de
+     <span class="mono">.env</span> (en in de firmware van de node) om hem te openen; het
+     endpoint antwoordt tot die tijd 503 met deze reden.</p>
+  {% endif %}
+
+  {% if rep.push_seen %}
+  <table class="kv">
+    <tr><td>Laatste push</td><td>
+      <time class="reltime" datetime="{{ rep.push_seen }}">{{ rep.push_seen }}</time>
+      {%- if push_stil %} <span class="error">&mdash; stil: langer dan
+        {{ [90, 3 * (rep.push_hb_s or 0)] | max }} s geen push</span>{% endif %}</td></tr>
+    <tr><td>Beloofde hartslag</td><td>elke {{ rep.push_hb_s }} s
+      <span class="muted small">&mdash; de stiltegrens is drie keer dit, met een ondergrens
+      van 90 s</span></td></tr>
+    <tr><td>Aantal pushes</td><td>{{ rep.push_count or 0 }}
+      <span class="muted small">sinds de eerste; volgnummer van de laatste:
+      {{ rep.push_seq }}</span></td></tr>
+    {% if rep.push_boot_at %}
+    <tr><td>Laatste herstart</td><td>
+      <time class="reltime" datetime="{{ rep.push_boot_at }}">{{ rep.push_boot_at }}</time>
+      <span class="muted small">&mdash; de bootteller versprong naar {{ rep.push_boot }}.
+      Geen alarm: een herstart is een gebeurtenis om te zien, geen storing om iemand voor
+      te wekken.</span></td></tr>
+    {% elif rep.push_boot is not none %}
+    <tr><td>Bootteller</td><td>{{ rep.push_boot }}
+      <span class="muted small">&mdash; nog geen herstart gezien sinds de eerste push</span></td></tr>
+    {% endif %}
+  </table>
+  {% elif push_enabled %}
+  <p class="muted small">Nog nooit een push van deze node ontvangen. Dat kan betekenen dat zijn
+     firmware deze weg niet heeft, dat het token aan zijn kant niet gezet is, of dat hij deze
+     server niet bereikt &mdash; het endpoint zelf staat open.</p>
+  {% endif %}
+  </div>
+</section>

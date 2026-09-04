@@ -10,6 +10,30 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.15.0 - 2026-09-04
+
+- **Beheerpagina's herverdeeld op één stramien.** De nodepagina is opgesplitst
+  in secties met een plakkende inhoudsopgave (`admin/node/_*.html`), in
+  oplopende onomkeerbaarheid; firmware, verwijderen en het audittrail staan
+  ingeklapt achteraan. Eén formulierrij (`.frm`: label, veld met hulptekst,
+  knop rechts), feitenlijsten (`.kv`), tabellen die op 375 px kaartjes worden
+  (`.stack`), en de drie risicoklassen uit `nodeconfig`/`rbac` als kleur en
+  etiket. Lange toelichtingen zijn uitklappers; de tekst zelf is niet weg.
+  Zie `docs/nl/beheer-ux.md`.
+- **Elk beheerformulier staat zichtbaar uit voor wie het niet mag.** Een
+  `<fieldset>` met de rechtenpoort schakelt velden én knop uit, met de reden
+  in de tooltip; de nodepagina zegt bovenaan welke rol je hebt en wat die
+  betekent. De grendel op de server was al dicht (`require_perm` in elke
+  route); de poort in het sjabloon ontbrak op 86 formulieren.
+  `tests/test_rechtenpoorten.py` is de ratel die dat aantal alleen laat dalen.
+- **Vindbaarheid.** De tab *Beheerders* heet *Monitors* (dat is wat hij is),
+  de servertab *Server, gebruikers en site*, met een sub-balk naar zijn
+  secties; het aanmaken van een gebruiker is een echt formulier bovenaan, met
+  bij het vinkje serverbeheerder wat die rol mag en wat een gewone gebruiker
+  standaard mag (niets).
+- Routes, veldnamen, `csrf`- en `confirm`-velden zijn ongewijzigd; de
+  publieke pagina's zijn niet aangeraakt.
+
 ## 2.14.1 - 2026-09-04
 
 - **Een grafiek open je door op de grafiek te klikken**, niet op een knopje

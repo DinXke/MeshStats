@@ -427,9 +427,16 @@ Sinds de splitsing zijn er twee werelden, met een tabbalk ertussen:
 | `GET /admin` | **Nodes en repeaters** — alles wat een handeling op of informatie over een fysiek apparaat is |
 | `GET /admin/repeaters/{rid}` | Eén node: identiteit en versies, zichtbaarheid, uitvragen, klok, firmware, verwijderen |
 | `GET /admin/firmware` | **Firmware** — welke release waar draait, welke er zijn, en wie er een image kan krijgen |
-| `GET /admin/server` | **Server en site** — alles wat deze installatie configureert en geen apparaat raakt |
+| `GET /admin/server` | **Server en site** (in het menu: *Server, gebruikers en site*) — alles wat deze installatie configureert en geen apparaat raakt: gebruikers, groepen, toekenningen, tokens, opslag, weergave |
 | `GET /admin/account` | **Mijn account** — je eigen wachtwoord, je rollen, en je eigen auditregels |
 | `GET /admin/audit` | Het volledige audittrail (alleen serverbeheerders) |
+
+De tab heet in het menu *Server, gebruikers en site*, en binnen die wereld staat
+een sub-balk met de secties als ankers. Dat is er gekomen omdat de eigenaar van
+een installatie het gebruikersbeheer niet kon vinden achter het kale label
+*Server en site*; de tab *Monitors* (welke node welke node uitvraagt) heette
+toen nog *Beheerders*. De indeling van de beheerpagina's zelf staat in
+[`beheer-ux.md`](beheer-ux.md).
 
 **Server en site** is de ene tab die deze site *verbergt* in plaats van
 uitschakelt. Erachter zit geen enkele handeling die een gewone gebruiker mag, en

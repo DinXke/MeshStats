@@ -392,12 +392,25 @@ def _compare_page(request: Request, extra: dict | None = None):
     kolommen = compare.parse_columns(gekozen, keys)
     tabel = compare.build(repeaters, kolommen, broker_connected=broker)
 
+    bewerken = _compare_editor(request.query_params.get("edit", ""), tabel)
+    # Het besluit waar /compare/write op toetst (de klasse van de parameter, zie
+    # compare_write), zodat het formulier zichtbaar uit staat voor wie die
+    # klasse op deze node niet mag. None als er niets te bewerken valt.
+    mag_zetten = None
+    if bewerken and bewerken.get("param"):
+        klasse = {nodeconfig.RISK_PLAIN: "gewoon",
+                  nodeconfig.RISK_WRITES: "merkbaar"}.get(bewerken["param"]["risk"],
+                                                          "ingrijpend")
+        mag_zetten = rbac.decide(user, f"node.instelling.{klasse}", bewerken["rij"]["rep"])
     return templates.TemplateResponse(request, "admin/compare.html", {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes",
         "compare_tab": True,
         "tabel": tabel,
         "csrf": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
-        "bewerken": _compare_editor(request.query_params.get("edit", ""), tabel),
+        "bewerken": bewerken,
+        "mag_zetten": mag_zetten,
+        # Voor de poort op de kolomkeuze (/compare/columns is server.instellingen).
+        "serverrechten": rbac.serverrechten(user),
         # De vaste kolommen komen uit de repeatertabel en niet uit de CLI, dus
         # daar valt niets aan te zetten -- het sjabloon moet dat verschil kennen
         # om geen potloodje te tekenen bij een waarde die geen knop verdient.
@@ -532,6 +545,13 @@ def _discovery_page(request: Request, extra: dict | None = None):
         "site_name": config.SITE_NAME, "user": user, "world": "nodes",
         "discovery_tab": True,
         "sender": afzender, "sender_host": host,
+        # Het besluit waar de drie POST-routes hieronder op toetsen, één keer
+        # berekend voor de sjabloon: zo staan velden en knoppen zichtbaar uit
+        # voor wie op de afzender geen 'merkbaar' mag, in plaats van pas na de
+        # klik geweigerd te worden. None zonder afzender -- dan is er niets te
+        # poorten en toont de pagina dat er niets te versturen valt.
+        "mag": (rbac.decide(user, "node.instelling.merkbaar", afzender["rep"])
+                if afzender["rep"] is not None else None),
         "heard": lijst,
         "cost": discovery.cost(host) if host else None,
         "poll_iv": discovery.poll_interval(host) if host else None,
@@ -639,10 +659,21 @@ def _monitors_page(request: Request, extra: dict | None = None):
     mogelijk = monitors.possible(zichtbaar)
     groepen = rbac.nodegroepen()
 
+    rijen = monitors.overview(zichtbaar, mogelijk)
     ctx = {
         "site_name": config.SITE_NAME, "user": user, "world": "nodes",
         "monitors_tab": True,
-        "rows": monitors.overview(zichtbaar, mogelijk),
+        "rows": rijen,
+        # De besluiten waar de POST-routes op toetsen, per node, zodat de
+        # keuzelijsten en knoppen zichtbaar uit staan voor wie het niet mag:
+        # node.schema voor de lijst van een node (dezelfde klasse als het
+        # uitvraagschema, zie save_node_monitors), node.bekijken voor het
+        # nakijken van de rechten, server.instellingen voor een nodegroep.
+        "mag_schema": {r["rep"]["id"]: rbac.decide(user, "node.schema", r["rep"])
+                       for r in rijen},
+        "mag_bekijken": {r["rep"]["id"]: rbac.decide(user, "node.bekijken", r["rep"])
+                         for r in rijen},
+        "mag_groep": rbac.decide(user, "server.instellingen"),
         "possible": mogelijk,
         "max_candidates": monitors.MAX_CANDIDATES,
         "groups": [{"group": g,
@@ -1408,6 +1439,10 @@ def _node_page(request: Request, rid: int, **extra):
         "push_enabled": sensorpush.enabled(),
         "push_stil": sensorpush.is_stil(rid),
         "mijn_rol": rbac.rol_op_node(user, rep),
+        # De zin bij die rol ("mag kijken en uitvragen"), zodat de pagina één
+        # keer bovenaan zegt wat de rol betekent in plaats van dat elke
+        # uitgeschakelde knop het apart in zijn tooltip moet uitleggen.
+        "rol_uitleg": rbac.ROL_UITLEG,
         "serverrechten": rbac.serverrechten(user),
         # De alarmen van deze node, en hoeveel er nog openstaan. Een eigen lijst
         # naast het audittrail hieronder, want ze antwoorden op twee

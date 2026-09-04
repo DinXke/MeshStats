@@ -1,11 +1,25 @@
 {% extends "admin/_layout.html" %}
-{% block title %}Server en site — {{ site_name }}{% endblock %}
+{% block title %}Server, gebruikers en site — {{ site_name }}{% endblock %}
 {% block admin %}
+{#- Alles op deze pagina configureert deze installatie en raakt geen apparaat.
+    De sub-balk met de secties staat in _layout.html (world == 'server'), zodat
+    hij er al is vóór er gescrold wordt -- dat was het gebrek toen de eigenaar
+    het gebruikersbeheer niet kon vinden (docs/nl/beheer-ux.md, "Vindbaarheid").
+
+    Elke formulier draagt zijn rechtenpoort, ook al is deze pagina alleen voor
+    serverbeheerders te zien: de poort zegt wélk recht het formulier vraagt, en
+    de ratel (test_rechtenpoorten.py) telt een formulier zonder poort als een
+    leugen op het scherm. `serverrechten[...]|mag_attr` is dezelfde vorm als op
+    de firmwarepagina. -#}
+{%- set g = serverrechten['server.gebruikers'] -%}
+{%- set i = serverrechten['server.instellingen'] -%}
+{%- set t = serverrechten['server.tokens'] -%}
 <div class="pagehead">
-  <div class="pagehead-top"><h1>Server en site</h1></div>
+  <div class="pagehead-top"><h1>Server, gebruikers en site</h1></div>
   <p class="muted small">Alles op deze pagina configureert <em>deze installatie</em> en raakt geen
      enkel apparaat. Handelingen op een node &mdash; uitvragen, klok, firmware &mdash; staan onder
-     <a href="/admin">Nodes en repeaters</a>.</p>
+     <a href="/admin">Nodes en repeaters</a>. Ingelogd als <strong>{{ user }}</strong>, serverbeheerder;
+     uw eigen wachtwoord wijzigt u onder <a href="/admin/account">Mijn account</a>.</p>
 </div>
 
 {% if new_token %}
@@ -14,15 +28,6 @@
   <code class="tokenbox">{{ new_token }}</code>
 </div>
 {% endif %}
-
-<section id="toegang">
-  <h2>Toegang</h2>
-  <div class="card">
-  <p class="muted small">Ingelogd als <strong>{{ user }}</strong>, serverbeheerder. Uw eigen
-     wachtwoord wijzigt u onder <a href="/admin/account">Mijn account</a> &mdash; die pagina is er
-     voor iedereen die kan inloggen, ook voor wie deze pagina niet mag zien.</p>
-  </div>
-</section>
 
 {#- --- gebruikers ------------------------------------------------------------
 
@@ -33,98 +38,142 @@
 
     Waarom dit hier staat en niet op een eigen pagina: gebruikersbeheer
     configureert deze installatie en raakt geen apparaat. Dat is precies de
-    scheiding waar deze pagina op gebouwd is. -#}
+    scheiding waar deze pagina op gebouwd is. Het aanmaakformulier staat BOVEN
+    de tabel en niet eronder: wie hier komt om een account te maken, hoort het
+    formulier te zien vóór de lijst van wat er al is. -#}
 <section id="gebruikers">
   <h2>Gebruikers</h2>
-  <div class="card tablecard">
-  <p class="muted small">Wie kan inloggen, en wat hij van deze installatie mag. Een
+  <div class="card">
+  <p class="card-desc">Wie kan inloggen, en wat hij van deze installatie mag. Een
      <strong>serverbeheerder</strong> mag alles op elke node plus alles op deze pagina; een gewone
-     gebruiker mag alleen wat hem hieronder per node of per nodegroep is toegekend. De laatste
-     actieve serverbeheerder kan zichzelf niet degraderen, uitzetten of verwijderen &mdash; anders
-     is er niemand meer die deze pagina kan openen.</p>
-  <table>
+     gebruiker mag <strong>niets</strong> tot hem hieronder per node of per nodegroep een rol is
+     toegekend.</p>
+
+  <form method="post" action="/admin/users">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <fieldset{{ g|mag_attr }}>
+    <div class="frm frm-first">
+      <label class="frm-label" for="new-username">Gebruikersnaam</label>
+      <div class="frm-field">
+        <input id="new-username" name="username" placeholder="bv. jan" required maxlength="64" autocomplete="off">
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="new-password">Wachtwoord</label>
+      <div class="frm-field">
+        <input id="new-password" type="password" name="password" placeholder="minstens 8 tekens"
+               autocomplete="new-password" required minlength="8">
+        <p class="frm-hint">Minstens 8 tekens. U kunt het later voor hem opnieuw zetten, maar niet
+           teruglezen: het gaat gehasht de databank in.</p>
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <span class="frm-label">Rol op de server</span>
+      <div class="frm-field">
+        <label class="check"><input type="checkbox" name="is_superuser" value="1"> serverbeheerder</label>
+        <p class="frm-hint"><strong>Aangevinkt:</strong> mag alles op elke node, plus alles op deze
+           pagina &mdash; instellingen, tokens, gebruikers, het volledige audittrail.
+           <strong>Niet aangevinkt:</strong> een gewone gebruiker, die standaard <em>niets</em> mag en
+           zelfs geen node ziet, tot u hem bij <a href="#toekenningen">Toekenningen</a> een rol geeft op
+           een node of een nodegroep.</p>
+      </div>
+      <div class="frm-actions"><button type="submit"{{ g|mag_attr }}>Account aanmaken</button></div>
+    </div>
+    </fieldset>
+  </form>
+  </div>
+
+  <div class="card tablecard">
+  <div class="card-head"><h3>Bestaande accounts</h3></div>
+  <p class="card-desc">De laatste actieve serverbeheerder kan zichzelf niet degraderen, uitzetten of
+     verwijderen &mdash; anders is er niemand meer die deze pagina kan openen. Dat is de reden dat
+     die knoppen bij uw eigen account soms uit staan.</p>
+  <div class="tablewrap">
+  <table class="stack">
     <thead><tr><th>Naam</th><th>Rol op de server</th><th>Aangemaakt</th><th>Wachtwoord zetten</th><th></th></tr></thead>
     <tbody>
     {% for u in gebruikers %}
       <tr>
-        <td>{{ u.username }}{% if u.disabled %} <span class="muted">(uit)</span>{% endif %}</td>
-        <td>
+        <td data-l="Naam"><strong>{{ u.username }}</strong>{% if u.disabled %} <span class="muted">(uit)</span>{% endif %}</td>
+        <td data-l="Rol op de server">
           <form method="post" action="/admin/users/{{ u.id }}/flags" class="inline">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <label><input type="checkbox" name="is_superuser" value="1"
+            <fieldset class="inline"{{ g|mag_attr }}>
+            <label class="check"><input type="checkbox" name="is_superuser" value="1"
                    {% if u.is_superuser %}checked{% endif %}> serverbeheerder</label>
-            <label><input type="checkbox" name="disabled" value="1"
+            <label class="check"><input type="checkbox" name="disabled" value="1"
                    {% if u.disabled %}checked{% endif %}> uit</label>
-            <button type="submit">Opslaan</button>
+            <button type="submit" class="secondary">Opslaan</button>
+            </fieldset>
           </form>
         </td>
-        <td class="muted small">{% if u.created_at %}<time class="reltime" datetime="{{ u.created_at }}">{{ u.created_at }}</time>{% else %}&mdash;{% endif %}
+        <td data-l="Aangemaakt" class="muted small">{% if u.created_at %}<time class="reltime" datetime="{{ u.created_at }}">{{ u.created_at }}</time>{% else %}&mdash;{% endif %}
           {% if u.created_by %}<br>door {{ u.created_by }}{% endif %}</td>
-        <td>
+        <td data-l="Wachtwoord zetten">
           {#- Een beheerder zet hier een wachtwoord voor iemand anders en kan het niet
               teruglezen: het gaat gehasht de databank in en komt nergens anders terecht.
               Het huidige wachtwoord wordt niet gevraagd -- dat is het punt van deze knop. -#}
           <form method="post" action="/admin/users/{{ u.id }}/password" class="inline">
             <input type="hidden" name="csrf" value="{{ csrf }}">
+            <fieldset class="inline"{{ g|mag_attr }}>
             <input type="password" name="password" placeholder="Nieuw (min. 8)"
                    autocomplete="new-password" required minlength="8">
-            <button type="submit">Zetten</button>
+            <button type="submit" class="secondary">Zetten</button>
+            </fieldset>
           </form>
         </td>
         <td>
           <form method="post" action="/admin/users/{{ u.id }}/delete" class="inline"
                 onsubmit="return confirm('Account {{ u.username }} verwijderen? Zijn regels in het audittrail blijven staan.')">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <button type="submit" class="danger">Verwijderen</button>
+            <button type="submit" class="danger"{{ g|mag_attr }}>Verwijderen</button>
           </form>
         </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  <form method="post" action="/admin/users" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="username" placeholder="Gebruikersnaam" required maxlength="64">
-    <input type="password" name="password" placeholder="Wachtwoord (min. 8)"
-           autocomplete="new-password" required minlength="8">
-    <label><input type="checkbox" name="is_superuser" value="1"> serverbeheerder</label>
-    <button type="submit">Account aanmaken</button>
-  </form>
+  </div>
   </div>
 </section>
 
 <section id="groepen">
   <h2>Groepen</h2>
   <div class="card tablecard">
-  <p class="muted small">Rechten ken je toe aan een groep en niet aan elk paar apart. Eerst
-     groepen gebruikers, dan groepen nodes; een toekenning hieronder verbindt de twee.
-    {% if losse_nodes %}<br><strong>{{ losse_nodes|length }} node(s) zitten in geen enkele nodegroep</strong>
+  <p class="card-desc">Rechten ken je toe aan een groep en niet aan elk paar apart. Eerst
+     groepen gebruikers, dan groepen nodes; een toekenning hieronder verbindt de twee.</p>
+  {% if losse_nodes %}
+  <p class="waarschuwing waarschuwing--amber"><strong>{{ losse_nodes|length }} node(s) zitten in geen enkele nodegroep</strong>
      ({{ losse_nodes|map(attribute='name')|join(', ') }}). Ze zijn niet stuk en niet verboden, maar
      ze zijn alleen bereikbaar via een rechtstreekse toekenning of via &lsquo;alle nodes&rsquo;. Een node
-     die vanzelf uit het verkeer ontstaat begint zo, dus dit getal hoort te bewegen.{% endif %}</p>
+     die vanzelf uit het verkeer ontstaat begint zo, dus dit getal hoort te bewegen.</p>
+  {% endif %}
 
   <h3>Gebruikersgroepen</h3>
-  <table>
-    <thead><tr><th>Naam</th><th>Leden</th><th></th></tr></thead>
+  <div class="tablewrap">
+  <table class="stack">
+    <thead><tr><th>Naam</th><th>Leden <span class="muted">(klik om te wisselen)</span></th><th></th></tr></thead>
     <tbody>
-    {% for g in gebruikersgroepen %}
+    {% for gr in gebruikersgroepen %}
       <tr>
-        <td>{{ g.name }}{% if g.note %}<br><span class="muted small">{{ g.note }}</span>{% endif %}</td>
-        <td>
+        <td data-l="Naam"><strong>{{ gr.name }}</strong>{% if gr.note %}<br><span class="muted small">{{ gr.note }}</span>{% endif %}</td>
+        <td data-l="Leden">
           {% for u in gebruikers %}
-          <form method="post" action="/admin/groups/user/{{ g.id }}/members" class="inline">
+          <form method="post" action="/admin/groups/user/{{ gr.id }}/members" class="inline">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="member" value="{{ u.id }}">
-            <input type="hidden" name="lid" value="{{ '' if u.id in groepsleden[g.id] else '1' }}">
-            <button type="submit">{% if u.id in groepsleden[g.id] %}&#10003; {% endif %}{{ u.username }}</button>
+            <input type="hidden" name="lid" value="{{ '' if u.id in groepsleden[gr.id] else '1' }}">
+            <button type="submit" class="pill {{ 'on' if u.id in groepsleden[gr.id] else 'off' }}"{{ g|mag_attr }}>{% if u.id in groepsleden[gr.id] %}&#10003; {% endif %}{{ u.username }}</button>
           </form>
           {% endfor %}
         </td>
         <td>
-          <form method="post" action="/admin/groups/user/{{ g.id }}/delete" class="inline"
-                onsubmit="return confirm('Groep {{ g.name }} verwijderen? De toekenningen die erop staan gaan mee.')">
+          <form method="post" action="/admin/groups/user/{{ gr.id }}/delete" class="inline"
+                onsubmit="return confirm('Groep {{ gr.name }} verwijderen? De toekenningen die erop staan gaan mee.')">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <button type="submit" class="danger">Verwijderen</button>
+            <button type="submit" class="danger"{{ g|mag_attr }}>Verwijderen</button>
           </form>
         </td>
       </tr>
@@ -133,36 +182,43 @@
     {% endfor %}
     </tbody>
   </table>
-  <form method="post" action="/admin/groups" class="rowform">
+  </div>
+  <form method="post" action="/admin/groups" class="frm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="soort" value="user">
-    <input name="name" placeholder="Naam van de gebruikersgroep" required>
-    <input name="note" placeholder="Toelichting (optioneel)">
-    <button type="submit">Groep aanmaken</button>
+    <label class="frm-label" for="ug-name">Nieuwe gebruikersgroep</label>
+    <fieldset class="frm-field"{{ g|mag_attr }}>
+      <div class="frm-row">
+        <input id="ug-name" name="name" placeholder="Naam van de gebruikersgroep" required>
+        <input name="note" placeholder="Toelichting (optioneel)">
+      </div>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ g|mag_attr }}>Groep aanmaken</button></div>
   </form>
 
   <h3>Nodegroepen</h3>
-  <table>
-    <thead><tr><th>Naam</th><th>Nodes</th><th></th></tr></thead>
+  <div class="tablewrap">
+  <table class="stack">
+    <thead><tr><th>Naam</th><th>Nodes <span class="muted">(klik om te wisselen)</span></th><th></th></tr></thead>
     <tbody>
-    {% for g in nodegroepen %}
+    {% for gr in nodegroepen %}
       <tr>
-        <td>{{ g.name }}{% if g.note %}<br><span class="muted small">{{ g.note }}</span>{% endif %}</td>
-        <td>
+        <td data-l="Naam"><strong>{{ gr.name }}</strong>{% if gr.note %}<br><span class="muted small">{{ gr.note }}</span>{% endif %}</td>
+        <td data-l="Nodes">
           {% for r in alle_repeaters %}
-          <form method="post" action="/admin/groups/node/{{ g.id }}/members" class="inline">
+          <form method="post" action="/admin/groups/node/{{ gr.id }}/members" class="inline">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="member" value="{{ r.id }}">
-            <input type="hidden" name="lid" value="{{ '' if r.id in nodegroepsleden[g.id] else '1' }}">
-            <button type="submit">{% if r.id in nodegroepsleden[g.id] %}&#10003; {% endif %}{{ r.name }}</button>
+            <input type="hidden" name="lid" value="{{ '' if r.id in nodegroepsleden[gr.id] else '1' }}">
+            <button type="submit" class="pill {{ 'on' if r.id in nodegroepsleden[gr.id] else 'off' }}"{{ g|mag_attr }}>{% if r.id in nodegroepsleden[gr.id] %}&#10003; {% endif %}{{ r.name }}</button>
           </form>
           {% endfor %}
         </td>
         <td>
-          <form method="post" action="/admin/groups/node/{{ g.id }}/delete" class="inline"
-                onsubmit="return confirm('Groep {{ g.name }} verwijderen? De toekenningen die erop staan gaan mee.')">
+          <form method="post" action="/admin/groups/node/{{ gr.id }}/delete" class="inline"
+                onsubmit="return confirm('Groep {{ gr.name }} verwijderen? De toekenningen die erop staan gaan mee.')">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <button type="submit" class="danger">Verwijderen</button>
+            <button type="submit" class="danger"{{ g|mag_attr }}>Verwijderen</button>
           </form>
         </td>
       </tr>
@@ -171,12 +227,18 @@
     {% endfor %}
     </tbody>
   </table>
-  <form method="post" action="/admin/groups" class="rowform">
+  </div>
+  <form method="post" action="/admin/groups" class="frm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="soort" value="node">
-    <input name="name" placeholder="Naam van de nodegroep" required>
-    <input name="note" placeholder="Toelichting (optioneel)">
-    <button type="submit">Groep aanmaken</button>
+    <label class="frm-label" for="ng-name">Nieuwe nodegroep</label>
+    <fieldset class="frm-field"{{ g|mag_attr }}>
+      <div class="frm-row">
+        <input id="ng-name" name="name" placeholder="Naam van de nodegroep" required>
+        <input name="note" placeholder="Toelichting (optioneel)">
+      </div>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ g|mag_attr }}>Groep aanmaken</button></div>
   </form>
   </div>
 </section>
@@ -184,31 +246,35 @@
 <section id="toekenningen">
   <h2>Toekenningen</h2>
   <div class="card tablecard">
-  <p class="muted small">Wie mag wat, op welke nodes. Vier rollen, en elke rol is een plafond
-     op het risico van de handeling:</p>
+  <p class="card-desc">Wie mag wat, op welke nodes. Vier rollen, en elke rol is een plafond
+     op het risico van de handeling.</p>
   <ul class="muted small">
     {% for rol in rollen %}<li><strong>{{ rol }}</strong> &mdash; {{ rol_uitleg[rol] }}</li>{% endfor %}
   </ul>
-  <p class="muted small"><strong>Botsende toekenningen.</strong> Een weigering wint altijd, ook
-     van een specifiekere toestemming: wie een uitzondering intrekt, wil dat die intrekking het
-     laatste woord heeft. Onder de toestemmingen wint de ruimste, zodat iemand aan een groep
-     toevoegen zijn rechten nooit kleiner maakt. Zonder toekenning is er geen toegang &mdash; er
-     is geen stilzwijgende rol voor nodes waar niemand iets over gezegd heeft.</p>
-  <table>
+  <details class="uitleg">
+    <summary>Botsende toekenningen: welke wint</summary>
+    <p>Een weigering wint altijd, ook
+       van een specifiekere toestemming: wie een uitzondering intrekt, wil dat die intrekking het
+       laatste woord heeft. Onder de toestemmingen wint de ruimste, zodat iemand aan een groep
+       toevoegen zijn rechten nooit kleiner maakt. Zonder toekenning is er geen toegang &mdash; er
+       is geen stilzwijgende rol voor nodes waar niemand iets over gezegd heeft.</p>
+  </details>
+  <div class="tablewrap">
+  <table class="stack">
     <thead><tr><th>Wie</th><th>Waarop</th><th>Rol</th><th>Effect</th><th>Sinds</th><th></th></tr></thead>
     <tbody>
-    {% for g in toekenningen %}
+    {% for tk in toekenningen %}
       <tr>
-        <td>{{ g.subject_name or '?' }} <span class="muted small">({{ 'gebruiker' if g.subject_type == 'user' else 'gebruikersgroep' }})</span></td>
-        <td>{{ g.object_name or '?' }} <span class="muted small">({{ g.object_type }})</span></td>
-        <td>{{ g.role or '—' }}</td>
-        <td>{{ 'weigeren' if g.effect == 'deny' else 'toestaan' }}</td>
-        <td class="muted small"><time class="reltime" datetime="{{ g.created_at }}">{{ g.created_at }}</time>
-            {% if g.created_by %}<br>door {{ g.created_by }}{% endif %}</td>
+        <td data-l="Wie">{{ tk.subject_name or '?' }} <span class="muted small">({{ 'gebruiker' if tk.subject_type == 'user' else 'gebruikersgroep' }})</span></td>
+        <td data-l="Waarop">{{ tk.object_name or '?' }} <span class="muted small">({{ tk.object_type }})</span></td>
+        <td data-l="Rol">{{ tk.role or '—' }}</td>
+        <td data-l="Effect">{{ 'weigeren' if tk.effect == 'deny' else 'toestaan' }}</td>
+        <td data-l="Sinds" class="muted small"><time class="reltime" datetime="{{ tk.created_at }}">{{ tk.created_at }}</time>
+            {% if tk.created_by %}<br>door {{ tk.created_by }}{% endif %}</td>
         <td>
-          <form method="post" action="/admin/grants/{{ g.id }}/delete" class="inline">
+          <form method="post" action="/admin/grants/{{ tk.id }}/delete" class="inline">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <button type="submit" class="danger">Intrekken</button>
+            <button type="submit" class="danger"{{ g|mag_attr }}>Intrekken</button>
           </form>
         </td>
       </tr>
@@ -218,90 +284,94 @@
     {% endfor %}
     </tbody>
   </table>
-  <form method="post" action="/admin/grants" class="rowform">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <select name="subject_type" aria-label="Soort onderwerp">
-      <option value="user">gebruiker</option>
-      <option value="group">gebruikersgroep</option>
-    </select>
-    <select name="subject_id" aria-label="Wie">
-      <optgroup label="Gebruikers">
-        {% for u in gebruikers %}<option value="{{ u.id }}">{{ u.username }}</option>{% endfor %}
-      </optgroup>
-      <optgroup label="Gebruikersgroepen">
-        {% for g in gebruikersgroepen %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
-      </optgroup>
-    </select>
-    <select name="object_type" aria-label="Soort voorwerp">
-      <option value="node">node</option>
-      <option value="nodegroup">nodegroep</option>
-      <option value="all">alle nodes</option>
-    </select>
-    <select name="object_id" aria-label="Waarop">
-      <option value="0">(bij &lsquo;alle nodes&rsquo;)</option>
-      <optgroup label="Nodes">
-        {% for r in alle_repeaters %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
-      </optgroup>
-      <optgroup label="Nodegroepen">
-        {% for g in nodegroepen %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
-      </optgroup>
-    </select>
-    <select name="role" aria-label="Rol">
-      {% for rol in rollen %}<option value="{{ rol }}">{{ rol }}</option>{% endfor %}
-    </select>
-    <select name="effect" aria-label="Effect">
-      <option value="allow">toestaan</option>
-      <option value="deny">weigeren (rol wordt genegeerd)</option>
-    </select>
-    <button type="submit">Toekennen</button>
-  </form>
-  <p class="muted small">De keuzelijsten &lsquo;Wie&rsquo; en &lsquo;Waarop&rsquo; tonen alles door
-     elkaar; wat er telt is het soort dat u ernaast kiest. Kiest u het verkeerde paar, dan weigert
-     de server de toekenning in plaats van er een te maken die iets anders betekent.</p>
   </div>
-</section>
-
-<section id="trail">
-  <h2>Audittrail</h2>
-  <div class="card tablecard">
-  <p class="muted small">De laatste handelingen op deze installatie.
-     <a href="/admin/audit">Bekijk het volledige trail</a>.</p>
-  <table>
-    <thead><tr><th>Wanneer</th><th>Wie</th><th>Handeling</th><th>Node</th><th>Uitkomst</th><th>Toelichting</th></tr></thead>
-    <tbody>
-    {% for r in audit %}
-      <tr>
-        <td><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
-        <td>{{ r.actor }}</td>
-        <td><code>{{ r.action }}</code></td>
-        <td>{% if r.object_id %}<a href="/admin/repeaters/{{ r.object_id }}">{{ r.object_name or r.object_id }}</a>{% endif %}</td>
-        <td>{{ r.outcome }}</td>
-        <td class="muted small">{{ r.detail }}</td>
-      </tr>
-    {% else %}
-      <tr><td colspan="6" class="muted">Nog geen regels.</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
+  <form method="post" action="/admin/grants">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <fieldset{{ g|mag_attr }}>
+    <div class="frm">
+      <label class="frm-label" for="grant-subject">Wie</label>
+      <div class="frm-field">
+        <div class="frm-row">
+          <select name="subject_type" aria-label="Soort onderwerp">
+            <option value="user">gebruiker</option>
+            <option value="group">gebruikersgroep</option>
+          </select>
+          <select name="subject_id" id="grant-subject" aria-label="Wie">
+            <optgroup label="Gebruikers">
+              {% for u in gebruikers %}<option value="{{ u.id }}">{{ u.username }}</option>{% endfor %}
+            </optgroup>
+            <optgroup label="Gebruikersgroepen">
+              {% for gr in gebruikersgroepen %}<option value="{{ gr.id }}">{{ gr.name }}</option>{% endfor %}
+            </optgroup>
+          </select>
+        </div>
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="grant-object">Waarop</label>
+      <div class="frm-field">
+        <div class="frm-row">
+          <select name="object_type" aria-label="Soort voorwerp">
+            <option value="node">node</option>
+            <option value="nodegroup">nodegroep</option>
+            <option value="all">alle nodes</option>
+          </select>
+          <select name="object_id" id="grant-object" aria-label="Waarop">
+            <option value="0">(bij &lsquo;alle nodes&rsquo;)</option>
+            <optgroup label="Nodes">
+              {% for r in alle_repeaters %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+            </optgroup>
+            <optgroup label="Nodegroepen">
+              {% for gr in nodegroepen %}<option value="{{ gr.id }}">{{ gr.name }}</option>{% endfor %}
+            </optgroup>
+          </select>
+        </div>
+        <p class="frm-hint">De keuzelijsten &lsquo;Wie&rsquo; en &lsquo;Waarop&rsquo; tonen alles door
+           elkaar; wat er telt is het soort dat u ernaast kiest. Kiest u het verkeerde paar, dan weigert
+           de server de toekenning in plaats van er een te maken die iets anders betekent.</p>
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="grant-role">Rol en effect</label>
+      <div class="frm-field">
+        <div class="frm-row">
+          <select name="role" id="grant-role" aria-label="Rol">
+            {% for rol in rollen %}<option value="{{ rol }}">{{ rol }}</option>{% endfor %}
+          </select>
+          <select name="effect" aria-label="Effect">
+            <option value="allow">toestaan</option>
+            <option value="deny">weigeren (rol wordt genegeerd)</option>
+          </select>
+        </div>
+      </div>
+      <div class="frm-actions"><button type="submit"{{ g|mag_attr }}>Toekennen</button></div>
+    </div>
+    </fieldset>
+  </form>
   </div>
 </section>
 
 <section id="tokens">
   <h2>API-tokens</h2>
   <div class="card tablecard">
-  <table>
+  <p class="card-desc">Voor wie via de HTTP-API binnenkomt, zoals de Home Assistant-integratie. Een
+     token is geen gebruiker: het opent de invoerwegen en niets onder <code>/admin</code>.</p>
+  <div class="tablewrap">
+  <table class="stack">
     <thead><tr><th>Naam</th><th>Aangemaakt</th><th>Laatst gebruikt</th><th></th></tr></thead>
     <tbody>
-    {% for t in tokens %}
+    {% for tok in tokens %}
       <tr>
-        <td>{{ t.name }}</td>
-        <td><time class="reltime" datetime="{{ t.created_at }}">{{ t.created_at }}</time></td>
-        <td>{% if t.last_used %}<time class="reltime" datetime="{{ t.last_used }}">{{ t.last_used }}</time>{% else %}nooit{% endif %}</td>
+        <td data-l="Naam"><strong>{{ tok.name }}</strong></td>
+        <td data-l="Aangemaakt"><time class="reltime" datetime="{{ tok.created_at }}">{{ tok.created_at }}</time></td>
+        <td data-l="Laatst gebruikt">{% if tok.last_used %}<time class="reltime" datetime="{{ tok.last_used }}">{{ tok.last_used }}</time>{% else %}nooit{% endif %}</td>
         <td>
-          <form method="post" action="/admin/tokens/{{ t.id }}/revoke" class="inline"
-                onsubmit="return confirm('Token {{ t.name }} intrekken?')">
+          <form method="post" action="/admin/tokens/{{ tok.id }}/revoke" class="inline"
+                onsubmit="return confirm('Token {{ tok.name }} intrekken?')">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <button type="submit" class="danger">Intrekken</button>
+            <button type="submit" class="danger"{{ t|mag_attr }}>Intrekken</button>
           </form>
         </td>
       </tr>
@@ -312,10 +382,16 @@
     {% endfor %}
     </tbody>
   </table>
-  <form method="post" action="/admin/tokens" class="rowform">
+  </div>
+  <form method="post" action="/admin/tokens" class="frm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="name" placeholder="Naam (bv. home-assistant)" required>
-    <button type="submit">Token aanmaken</button>
+    <label class="frm-label" for="token-name">Nieuw token</label>
+    <fieldset class="frm-field"{{ t|mag_attr }}>
+      <input id="token-name" name="name" placeholder="Naam (bv. home-assistant)" required>
+      <p class="frm-hint">Het token wordt één keer getoond, meteen na het aanmaken. De site bewaart
+         alleen zijn hash en kan hem niet opnieuw laten zien.</p>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ t|mag_attr }}>Token aanmaken</button></div>
   </form>
   </div>
 </section>
@@ -334,7 +410,7 @@
   <div class="card">
 
   {% if storage.falls_short %}
-  <p class="error"><strong>De ingestelde bewaartermijn wordt niet gehaald.</strong>
+  <p class="waarschuwing"><strong>De ingestelde bewaartermijn wordt niet gehaald.</strong>
      Er is <strong>{{ storage.days }} dagen</strong> ingesteld, maar er staat feitelijk
      <strong>{{ storage.effective_days }} dagen</strong> aan pakketten in de databank: de
      {% if storage.limit_hit == 'rows' %}grens van {{ '{:,}'.format(storage.max_rows).replace(',', '.') }} rijen{% else %}grens van {{ storage.max_mb }} MB{% endif %}
@@ -342,30 +418,52 @@
      verhoog dan die bovengrens &mdash; en kijk eerst of daar schijfruimte voor is.</p>
   {% endif %}
   {% if storage.over_ceiling %}
-  <p class="error"><strong>De databank staat boven de bovengrens van {{ storage.max_mb }} MB.</strong>
+  <p class="waarschuwing"><strong>De databank staat boven de bovengrens van {{ storage.max_mb }} MB.</strong>
      De pakketten zijn al tot hun ondergrens teruggesnoeid; wat er nu nog staat zijn metingen en
      contacten, en die gooit deze site niet uit zichzelf weg. Verhoog de bovengrens of verlaag de
      bewaartermijn van de historiek.</p>
   {% endif %}
 
-  <form method="post" action="/admin/settings" class="settingsgrid">
+  <form method="post" action="/admin/settings">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>Bewaartermijn historiek (dagen)
-      <input type="number" name="retention_days" value="{{ settings.retention_days }}" min="1" max="3650" required>
-    </label>
-    <label>Bewaartermijn pakketten (dagen)
-      <input type="number" name="packet_retention_days" value="{{ settings.packet_retention_days }}" min="1" max="365" required>
-    </label>
-    <label>Maximum aantal pakketrijen (FIFO)
-      <input type="number" name="packet_max_rows" value="{{ settings.packet_max_rows }}" min="1000" max="50000000" required>
-    </label>
-    <label>Maximale bestandsgrootte (MB)
-      <input type="number" name="db_max_mb" value="{{ settings.db_max_mb }}" min="16" max="1000000" required>
-    </label>
-    <div class="settingsactions"><button type="submit">Opslaan</button></div>
+    <fieldset{{ i|mag_attr }}>
+    <div class="frm frm-first">
+      <label class="frm-label" for="retention_days">Bewaartermijn historiek</label>
+      <div class="frm-field">
+        <div class="frm-row"><input type="number" id="retention_days" name="retention_days" value="{{ settings.retention_days }}" min="1" max="3650" required> <span class="muted small">dagen</span></div>
+        <p class="frm-hint">1&ndash;3650. Voor de metingen (grafieken).</p>
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="packet_retention_days">Bewaartermijn pakketten</label>
+      <div class="frm-field">
+        <div class="frm-row"><input type="number" id="packet_retention_days" name="packet_retention_days" value="{{ settings.packet_retention_days }}" min="1" max="365" required> <span class="muted small">dagen</span></div>
+        <p class="frm-hint">1&ndash;365. Bepaalt meteen het venster van de heatmap op de kaart: verhoog je hem,
+           dan groeit die mee, zonder herstart.</p>
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="packet_max_rows">Maximum aantal pakketrijen</label>
+      <div class="frm-field">
+        <div class="frm-row"><input type="number" id="packet_max_rows" name="packet_max_rows" value="{{ settings.packet_max_rows }}" min="1000" max="50000000" required> <span class="muted small">rijen (FIFO)</span></div>
+        <p class="frm-hint">1 000&ndash;50 000 000. Bovengrens op de pakkettentabel; de oudste gaan het eerst weg.</p>
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="db_max_mb">Maximale bestandsgrootte</label>
+      <div class="frm-field">
+        <div class="frm-row"><input type="number" id="db_max_mb" name="db_max_mb" value="{{ settings.db_max_mb }}" min="16" max="1000000" required> <span class="muted small">MB</span></div>
+        <p class="frm-hint">16&ndash;1 000 000. Bovengrens op het databankbestand, WAL inbegrepen.</p>
+      </div>
+      <div class="frm-actions"><button type="submit"{{ i|mag_attr }}>Opslaan</button></div>
+    </div>
+    </fieldset>
   </form>
 
-  <table>
+  <table class="kv">
     <tr><td>Databestand</td><td class="mono">{{ storage.db_bytes | filesizeformat(true) }}
       <span class="muted">&middot; bovengrens {{ storage.max_mb }} MB
       {%- if storage.free_bytes %} &middot; {{ storage.free_bytes | filesizeformat(true) }} vrije ruimte binnenin{% endif %}</span></td></tr>
@@ -412,39 +510,51 @@
       {%- if storage.state.last_error %} &middot; laatste fout: {{ storage.state.last_error }}{% endif %}</span></td></tr>
   </table>
 
-  <p class="muted small"><strong>Twee grenzen, niet één.</strong> Een termijn in dagen zegt niets over
-     schijfruimte: bij een verkeersexplosie loopt de schijf alsnog vol terwijl de instelling keurig
-     gerespecteerd wordt. Daarom is de termijn wat we <em>willen</em>, en zijn het rijmaximum en de
-     maximale bestandsgrootte wat we <em>beloven</em>. Botsen ze, dan gaat de oudste eruit &mdash; wie het
-     eerst binnenkwam gaat het eerst weg &mdash; en zegt deze pagina dat hierboven met zoveel woorden.
-     Er wordt elk uur opgeruimd en niet alleen bij het opstarten, want een server die maanden draait
-     hoort tussendoor op te ruimen.</p>
-  <p class="muted small"><strong>Waarom het bestand niet altijd krimpt.</strong> SQLite geeft ruimte na een
-     verwijdering niet terug aan de schijf: de pagina's komen op een vrije lijst en worden hergebruikt.
-     Bij een gelijkmatige instroom is dat prima. Verlaag je een termijn of snijdt de bovengrens, dan
-     blijft er een groot gat achter, en pas dan wordt het bestand herschreven (<code>VACUUM</code>).
-     Dat gebeurt alleen als er minstens 16 MB én een vijfde van het bestand vrij staat, en alleen als er
-     ruim genoeg schijfruimte is voor de tijdelijke tweede kopie.</p>
-  <p class="muted small">De bewaartermijn voor pakketten bepaalt meteen het venster van de heatmap op de
-     kaart: verhoog je hem, dan groeit die mee, zonder herstart.</p>
+  <details class="uitleg">
+    <summary>Twee grenzen, niet één &mdash; en waarom het bestand niet altijd krimpt</summary>
+    <p><strong>Twee grenzen, niet één.</strong> Een termijn in dagen zegt niets over
+       schijfruimte: bij een verkeersexplosie loopt de schijf alsnog vol terwijl de instelling keurig
+       gerespecteerd wordt. Daarom is de termijn wat we <em>willen</em>, en zijn het rijmaximum en de
+       maximale bestandsgrootte wat we <em>beloven</em>. Botsen ze, dan gaat de oudste eruit &mdash; wie het
+       eerst binnenkwam gaat het eerst weg &mdash; en zegt deze pagina dat hierboven met zoveel woorden.
+       Er wordt elk uur opgeruimd en niet alleen bij het opstarten, want een server die maanden draait
+       hoort tussendoor op te ruimen.</p>
+    <p><strong>Waarom het bestand niet altijd krimpt.</strong> SQLite geeft ruimte na een
+       verwijdering niet terug aan de schijf: de pagina's komen op een vrije lijst en worden hergebruikt.
+       Bij een gelijkmatige instroom is dat prima. Verlaag je een termijn of snijdt de bovengrens, dan
+       blijft er een groot gat achter, en pas dan wordt het bestand herschreven (<code>VACUUM</code>).
+       Dat gebeurt alleen als er minstens 16 MB én een vijfde van het bestand vrij staat, en alleen als er
+       ruim genoeg schijfruimte is voor de tijdelijke tweede kopie.</p>
+  </details>
   </div>
 </section>
 
 <section id="weergave">
   <h2>Weergave van de publieke site</h2>
   <div class="card">
-  <form method="post" action="/admin/settings" class="settingsgrid">
+  <form method="post" action="/admin/settings">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>Punt-interval grafieken (minuten)
-      <input type="number" name="heartbeat_min" value="{{ settings.heartbeat_min }}" min="1" max="1440" required>
-    </label>
-    <label>Historiekperiodes (uren, kommagescheiden)
-      <input name="history_ranges" value="{{ settings.history_ranges }}" placeholder="4,24,48,168,744,2160" required>
-    </label>
-    <div class="settingsactions"><button type="submit">Opslaan</button></div>
+    <fieldset{{ i|mag_attr }}>
+    <div class="frm frm-first">
+      <label class="frm-label" for="heartbeat_min">Punt-interval grafieken</label>
+      <div class="frm-field">
+        <div class="frm-row"><input type="number" id="heartbeat_min" name="heartbeat_min" value="{{ settings.heartbeat_min }}" min="1" max="1440" required> <span class="muted small">minuten</span></div>
+        <p class="frm-hint">1&ndash;1440. Hoe vaak er minstens een grafiekpunt wordt opgeslagen, ook als
+           de waarde niet wijzigt.</p>
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="history_ranges">Historiekperiodes</label>
+      <div class="frm-field">
+        <input id="history_ranges" name="history_ranges" value="{{ settings.history_ranges }}" placeholder="4,24,48,168,744,2160" required>
+        <p class="frm-hint">Uren, kommagescheiden, elk 1&ndash;8760: 24 = 24 u, 168 = 7 d, 744 = 31 d. Dit zijn de
+           uurknoppen bij de grafieken op een repeaterpagina.</p>
+      </div>
+      <div class="frm-actions"><button type="submit"{{ i|mag_attr }}>Opslaan</button></div>
+    </div>
+    </fieldset>
   </form>
-  <p class="muted small">Punt-interval: hoe vaak er minstens een grafiekpunt wordt opgeslagen, ook als
-     de waarde niet wijzigt. Periodes: 24 = 24 u, 168 = 7 d, 744 = 31 d.</p>
 
   <h3>Blokken op de startpagina</h3>
   <p class="muted small">Sleep de blokken in de gewenste volgorde; vink af wat verborgen moet blijven.</p>
@@ -457,10 +567,10 @@
     </li>
     {% endfor %}
   </ul>
-  <form method="post" action="/admin/layout" id="layout-form">
+  <form method="post" action="/admin/layout" id="layout-form" class="actions left">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="layout" id="layout-json">
-    <button type="submit">Indeling opslaan</button>
+    <button type="submit"{{ i|mag_attr }}>Indeling opslaan</button>
   </form>
   </div>
 </section>
@@ -472,17 +582,20 @@
 <section id="cli-params">
   <h2>Op te vragen parameters</h2>
   <div class="card">
-  <form method="post" action="/admin/cli_params" class="rowform" style="flex-direction: column; align-items: stretch;">
+  <form method="post" action="/admin/cli_params" class="frm frm-first">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="cli_params" value="{{ cli_params }}" class="mono" aria-label="Op te vragen CLI-parameters">
-    <div><button type="submit">Parameterlijst opslaan</button></div>
+    <label class="frm-label" for="cli_params">Parameterlijst</label>
+    <fieldset class="frm-field"{{ i|mag_attr }}>
+      <input id="cli_params" name="cli_params" value="{{ cli_params }}" class="mono" aria-label="Op te vragen CLI-parameters">
+      <p class="frm-hint">Eén lijst voor alle repeaters: kommagescheiden <code>get</code>-parameters van
+         de repeater-CLI. Onbekende parameters leveren gewoon een foutantwoord op en kunnen geen kwaad.</p>
+      <p class="frm-hint"><strong>Deze lijst stuurt alleen de poller-weg.</strong> Beide MQTT-wegen gebruiken de
+         lijst in de firmware (<code>SET_PARAMS</code>) — zowel een node die zichzelf uitleest als
+         een monitor die een gemonitorde repeater over LoRa uitvraagt — dus een parameter die je
+         hier toevoegt bereikt die pas na een firmware-aanpassing.</p>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ i|mag_attr }}>Parameterlijst opslaan</button></div>
   </form>
-  <p class="muted small">Eén lijst voor alle repeaters: kommagescheiden <code>get</code>-parameters van
-     de repeater-CLI. Onbekende parameters leveren gewoon een foutantwoord op en kunnen geen kwaad.
-     <strong>Deze lijst stuurt alleen de poller-weg.</strong> Beide MQTT-wegen gebruiken de
-     lijst in de firmware (<code>SET_PARAMS</code>) — zowel een node die zichzelf uitleest als
-     een monitor die een gemonitorde repeater over LoRa uitvraagt — dus een parameter die je
-     hier toevoegt bereikt die pas na een firmware-aanpassing.</p>
   </div>
 </section>
 
@@ -497,7 +610,7 @@
 <section id="sensorronde">
   <h2>Sensornodes over IP</h2>
   <div class="card">
-  <table>
+  <table class="kv">
     <tr><td>Staat aan</td><td>
       {%- if sensor_poll.enabled %}<span class="ok">ja</span>, elke {{ sensor_poll.interval_s }} s
       {%- else %}<span class="muted">nee &mdash; <code>MM_SENSOR_POLL_ENABLED=0</code></span>{% endif %}</td></tr>
@@ -517,7 +630,7 @@
 <section id="kloksync">
   <h2>Kloksynchronisatie</h2>
   <div class="card">
-  <table>
+  <table class="kv">
     <tr><td>Staat aan</td><td>
       {%- if clocksync.enabled %}<span class="ok">ja</span>, elke {{ clocksync.interval_hours }} uur
       {%- else %}<span class="muted">nee &mdash; <code>MM_CLOCKSYNC_ENABLED=0</code></span>{% endif %}</td></tr>
@@ -547,32 +660,40 @@
       te doen staat waar hij hoort -- op de pagina van die ene node, met de
       bevestigingsvraag erbij. -#}
   {% if clock_targets %}
-  <table>
-    <tr><th>Repeater</th><th>Krijgt de tijd?</th></tr>
-    {% for t in clock_targets %}
+  <h3>Wie krijgt de tijd</h3>
+  <div class="tablewrap">
+  <table class="stack">
+    <thead><tr><th>Repeater</th><th>Krijgt de tijd?</th></tr></thead>
+    <tbody>
+    {% for tg in clock_targets %}
     <tr>
-      <td><a href="/admin/repeaters/{{ t.id }}">{{ t.name }}</a> <span class="muted mono">{{ t.prefix[:6] }}</span></td>
-      <td>{% if t.ok %}<span class="ok">ja</span>{% else %}<span class="muted">nee</span>{% endif %}
-          <span class="muted">&middot; {{ t.why }}</span></td>
+      <td data-l="Repeater"><a href="/admin/repeaters/{{ tg.id }}">{{ tg.name }}</a> <span class="muted mono">{{ tg.prefix[:6] }}</span></td>
+      <td data-l="Krijgt de tijd?">{% if tg.ok %}<span class="ok">ja</span>{% else %}<span class="muted">nee</span>{% endif %}
+          <span class="muted">&middot; {{ tg.why }}</span></td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
+  </div>
   {% endif %}
 
-  <p class="muted small">Een MeshCore-node zet zijn klok nooit uit zichzelf goed: na een herstart staat
-     hij op de datum die in de firmware zit. De site stuurt daarom periodiek
-     <code>time &lt;epoch&gt;</code> naar elke node die rechtstreeks publiceert; die zet zijn eigen klok
-     en controleert daarna over LoRa de klokken van de repeaters die hij monitort &mdash; de enige weg
-     naar een repeater die hier zelf niets publiceert. Vereist nodefirmware 1.10.0 op de node.</p>
-  <p class="muted small"><strong>Wat &quot;bruikbaar&quot; hier wel en niet betekent.</strong> Deze app
-     draait in een container en leest de tijddiscipline van de kernel (<code>adjtimex</code>, dezelfde
-     bron als <code>NTPSynchronized</code> van <code>timedatectl</code>). In een LXC is dat het oordeel
-     van de <em>host</em>, doorgegeven: &quot;de host meldt dat hij gelijkloopt&quot; is iets anders dan
-     &quot;de tijd is aantoonbaar juist&quot;. De juistheid van elke klok in dit mesh hangt dus
-     uiteindelijk aan de NTP-instelling van die host. Daarnaast wordt gecontroleerd of de wandklok niet
-     springt ten opzichte van de monotone klok en of hij niet achteruitloopt. Bij twijfel vertrekt er
-     niets: een klok kan alleen vooruit gezet worden, dus een fout hier is op een dak niet meer terug
-     te draaien.</p>
+  <details class="uitleg">
+    <summary>Hoe de synchronisatie werkt, en wat &quot;bruikbaar&quot; wel en niet betekent</summary>
+    <p>Een MeshCore-node zet zijn klok nooit uit zichzelf goed: na een herstart staat
+       hij op de datum die in de firmware zit. De site stuurt daarom periodiek
+       <code>time &lt;epoch&gt;</code> naar elke node die rechtstreeks publiceert; die zet zijn eigen klok
+       en controleert daarna over LoRa de klokken van de repeaters die hij monitort &mdash; de enige weg
+       naar een repeater die hier zelf niets publiceert. Vereist nodefirmware 1.10.0 op de node.</p>
+    <p><strong>Wat &quot;bruikbaar&quot; hier wel en niet betekent.</strong> Deze app
+       draait in een container en leest de tijddiscipline van de kernel (<code>adjtimex</code>, dezelfde
+       bron als <code>NTPSynchronized</code> van <code>timedatectl</code>). In een LXC is dat het oordeel
+       van de <em>host</em>, doorgegeven: &quot;de host meldt dat hij gelijkloopt&quot; is iets anders dan
+       &quot;de tijd is aantoonbaar juist&quot;. De juistheid van elke klok in dit mesh hangt dus
+       uiteindelijk aan de NTP-instelling van die host. Daarnaast wordt gecontroleerd of de wandklok niet
+       springt ten opzichte van de monotone klok en of hij niet achteruitloopt. Bij twijfel vertrekt er
+       niets: een klok kan alleen vooruit gezet worden, dus een fout hier is op een dak niet meer terug
+       te draaien.</p>
+  </details>
   </div>
 </section>
 
@@ -587,14 +708,14 @@
       niets binnen zonder dat een pagina er iets van liet zien. Zie
       mqtt_ingest.health(). -#}
   {% if mqtt.health.state == 'geweigerd' or mqtt.health.state == 'weg' %}
-  <p class="bad" style="display:block;padding:.6rem .8rem;margin:0 0 .8rem">
+  <p class="waarschuwing">
     <strong>De invoer over MQTT ligt stil.</strong> {{ mqtt.health.why }}<br>
     <span class="small">Er komen op dit moment geen metingen en geen pakketten binnen.
     De rest van de site blijft gewoon werken en toont wat er al stond, dus dit is
     niet aan de pagina's te zien &mdash; alleen hier.</span>
   </p>
   {% elif mqtt.health.state == 'stil' %}
-  <p class="bad" style="display:block;padding:.6rem .8rem;margin:0 0 .8rem">
+  <p class="waarschuwing waarschuwing--amber">
     <strong>Verbonden, maar er komt niets binnen.</strong> {{ mqtt.health.why }}<br>
     <span class="small">Dat kan kloppen als er niemand publiceert. Klopt het niet,
     dan is de gebruikelijke oorzaak een ACL op de broker die de topics van de
@@ -602,7 +723,7 @@
     Drempel: <code>MM_MQTT_QUIET_MIN={{ mqtt.quiet_min }}</code>.</span>
   </p>
   {% endif %}
-  <table>
+  <table class="kv">
     <tr><td>MQTT-invoer</td><td>
       {%- if mqtt.health.state == 'goed' %}<span class="ok">in orde</span>
       {%- elif mqtt.health.state == 'uit' %}<span class="muted">uit &mdash; {{ mqtt.health.why }}</span>
@@ -641,7 +762,7 @@
 <section id="tsdb">
   <h2>Metingen (tijdreeksen)</h2>
   <div class="card">
-  <table>
+  <table class="kv">
     <tr><td>Tijdreeksdatabank</td><td class="mono">{{ tsdb.url or 'niet ingesteld &mdash; alles in SQLite' }}</td></tr>
     <tr><td>Bereikbaar</td><td>
       {%- if not tsdb.enabled %}<span class="muted">niet in gebruik</span>
@@ -669,7 +790,7 @@
   {% if not hadiscovery.enabled %}
   <p class="muted"><strong>Uit.</strong> {{ hadiscovery.reason }}</p>
   {% endif %}
-  <table>
+  <table class="kv">
     <tr><td>Publiceren naar HA</td><td>
       {%- if hadiscovery.enabled and hadiscovery.connected %}<span class="ok">aan &mdash; verbonden</span>
       {%- elif hadiscovery.enabled %}<span class="bad">aan, maar niet verbonden</span>
@@ -688,6 +809,35 @@
      <code>MM_HA_DISCOVERY_ENABLED=1</code> en maak een EMQX-gebruiker met een ACL onder
      <code>{{ hadiscovery.discovery_prefix }}/#</code> en <code>{{ hadiscovery.state_prefix }}/#</code>.
      Zie <code>docs/ha-integratie.md</code>.</p>
+  </div>
+</section>
+
+{#- Het audittrail staat achteraan: het is geschiedenis, geen bediening. De
+    sub-balk bovenaan wijst er rechtstreeks naar. -#}
+<section id="trail">
+  <h2>Audittrail</h2>
+  <div class="card tablecard">
+  <p class="card-desc">De laatste handelingen op deze installatie.
+     <a href="/admin/audit">Bekijk het volledige trail</a>.</p>
+  <div class="tablewrap">
+  <table class="stack">
+    <thead><tr><th>Wanneer</th><th>Wie</th><th>Handeling</th><th>Node</th><th>Uitkomst</th><th>Toelichting</th></tr></thead>
+    <tbody>
+    {% for r in audit %}
+      <tr>
+        <td data-l="Wanneer"><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
+        <td data-l="Wie">{{ r.actor }}</td>
+        <td data-l="Handeling"><code>{{ r.action }}</code></td>
+        <td data-l="Node">{% if r.object_id %}<a href="/admin/repeaters/{{ r.object_id }}">{{ r.object_name or r.object_id }}</a>{% endif %}</td>
+        <td data-l="Uitkomst">{{ r.outcome }}</td>
+        <td data-l="Toelichting" class="muted small">{{ r.detail }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">Nog geen regels.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
   </div>
 </section>
 {% endblock %}

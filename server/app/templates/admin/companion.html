@@ -6,16 +6,26 @@
     en niet één globale keuze-met-JavaScript, zodat de knoppen ook zonder
     JavaScript werken: een commando naar een handzender hoort niet af te hangen van
     een script. De standaard is de standaardafzender van de companion; is die er
-    niet, dan valt de route daar sowieso op terug. -#}
+    niet, dan valt de route daar sowieso op terug.
+
+    De rechtenpoort zit op de afzender (mag_versturen: node.instelling.merkbaar
+    op die node, uit de route): een node waar deze gebruiker geen DM vanaf mag
+    sturen staat in de keuzelijst uit, met de reden erbij. En als de
+    STANDAARDafzender niet mag, staat het hele formulier uit (``mv`` hieronder):
+    dat is de node die de knop zonder verdere keuze zou gebruiken. -#}
 {%- macro afzender() -%}
-<label class="small muted">afzender
+<label class="check small muted">afzender
   <select name="sender">
     <option value="">{% if default_sender %}standaard ({{ default_sender.name }}){% else %}— kies —{% endif %}</option>
     {% for s in senders %}
-    <option value="{{ s.id }}"{% if default_sender and s.id == default_sender.id %} selected{% endif %}>{{ s.name }}</option>
+    {%- set b = mag_versturen[s.id] if mag_versturen is defined and s.id in mag_versturen else none %}
+    <option value="{{ s.id }}"{% if default_sender and s.id == default_sender.id %} selected{% endif %}
+            {%- if b and not b.allowed %} disabled title="{{ b.reason }}"{% endif %}>{{ s.name }}{% if b and not b.allowed %} — {{ b.reason }}{% endif %}</option>
     {% endfor %}
   </select></label>
 {%- endmacro -%}
+{%- set mv = (mag_versturen.get(comp.sender_repeater_id)
+              if mag_versturen is defined and comp.sender_repeater_id else none) -%}
 
 {#- ``data-cid``/``data-rep`` voeden de auto-ververs in companions.js
     (wireLiveDetail): welke companion dit is, en welke ENE afzender-node de
@@ -63,7 +73,17 @@
      {% if comp.last_lat is not none and comp.last_lon is not none %}hidden{% endif %}>
     Nog geen locatie bekend voor deze companion.
   </p>
+  {% if mv and not mv.allowed %}<p class="muted small">&#128274; {{ mv.reason }} &mdash; de commando's hieronder
+    staan daarom uit voor de standaardafzender {{ default_sender.name if default_sender else '' }}.</p>{% endif %}
 </div>
+
+<nav class="secnav" aria-label="Onderdelen van deze companionpagina">
+  <a href="#commandos">Commando's</a>
+  <a href="#valdetectie">Valdetectie</a>
+  <a href="#vrij">Vrij bericht</a>
+  <a href="#serieel">Seriële CLI</a>
+  {% if mag_beheren.allowed %}<a href="#beheer">Beheer</a>{% endif %}
+</nav>
 
 {% if result %}
 <div class="card notice">
@@ -73,7 +93,7 @@
 {% endif %}
 
 {% if not senders %}
-<p class="muted small">&#9888; Geen enkele node heeft nu een bereikbare eigen API met
+<p class="waarschuwing waarschuwing--amber">&#9888; Geen enkele node heeft nu een bereikbare eigen API met
   een bot. De commando-knoppen hieronder hebben een afzender nodig en kunnen zonder
   er geen DM versturen. De seriële weg onderaan werkt wél — die loopt niet via een
   node.</p>
@@ -82,7 +102,9 @@
 {#- ==================== Commando's over het mesh ============================
     Elk knopje bouwt een T1000-E-DM (mét ``!``) en verstuurt hem via de gekozen
     afzender. De commandotaal zelf staat in companions.py; hier staan alleen de
-    formulieren. -#}
+    formulieren. Het raster van kleine kaarten blijft: veel kleine handelingen
+    naast elkaar is hier de juiste vorm. -#}
+<section id="commandos">
 <h2>Commando's (over het mesh)</h2>
 <p class="muted small">Elk commando gaat als DM naar de pubkey van deze companion,
   verstuurd vanaf de gekozen afzender-node. Op het mesh dragen ze een <code>!</code>
@@ -95,7 +117,7 @@
     Leeg (het gebruikelijke geval) laat de server zelf kiezen -- de
     niet-alarm/MGMT-bot als de node er een heeft, zie companions.default_bot_for. -#}
 <div class="rowform" id="bot-picker" data-rep="{{ comp.sender_repeater_id or '' }}">
-  <label class="small muted">verstuurt via (bot)
+  <label class="check small muted">verstuurt via (bot)
     <select id="bot-choice">
       <option value="">— standaard{% if comp.preferred_bot %} ({{ comp.preferred_bot }}){% endif %} —</option>
     </select></label>
@@ -105,54 +127,63 @@
 <div class="cardgrid">
 
   <div class="card">
-    <div class="card-head"><strong>Terugvinden</strong></div>
+    <div class="card-head"><h3>Terugvinden</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="find">
+      <fieldset class="rowform"{{ mv|mag_attr }}>
       {{ afzender() }}
       <button type="submit">Find-me (!find)</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="findstop">
+      <fieldset class="rowform"{{ mv|mag_attr }}>
       {{ afzender() }}
-      <button type="submit">Stoppen (!findstop)</button>
+      <button type="submit" class="secondary">Stoppen (!findstop)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Dempen</strong></div>
+    <div class="card-head"><h3>Dempen</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="mute">
-      <label class="small muted">stand
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">stand
         <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
-      <label class="small muted"><input type="checkbox" name="followapp" value="1"> volg de app</label>
+      <label class="check small muted"><input type="checkbox" name="followapp" value="1"> volg de app</label>
       {{ afzender() }}
       <button type="submit">Zetten</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Volume</strong></div>
+    <div class="card-head"><h3>Volume</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="vol">
-      <label class="small muted">ernst
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">ernst
         <select name="slot"><option value="">— globaal —</option>{% for s in severities %}<option>{{ s }}</option>{% endfor %}</select></label>
-      <label class="small muted">niveau
+      <label class="check small muted">niveau
         <select name="level">{% for v in vol_levels %}<option{% if v == '2' %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
       {{ afzender() }}
       <button type="submit">Zetten (!vol)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Auto-locatie-push</strong></div>
+    <div class="card-head"><h3>Auto-locatie-push</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="locpush">
-      <label class="small muted">interval
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">interval
         <select name="min">
           <option value="0">uit</option>
           <option value="1">1 min</option>
@@ -164,11 +195,15 @@
         </select></label>
       {{ afzender() }}
       <button type="submit">Zetten (!locpush)</button>
+      </fieldset>
     </form>
-    <p class="muted small">De companion stuurt dan zelf elke X min zijn locatie
-      (<code>#LOC</code>) naar de ingestelde node, zodat kaart/spoor vers blijven
-      zonder handmatige <code>!loc</code>. Het <em>doel</em> staat op de companion
-      zelf ingesteld (via serieel/menu); hier zet je enkel het interval.</p>
+    <details class="uitleg">
+      <summary>Wat dit doet</summary>
+      <p>De companion stuurt dan zelf elke X min zijn locatie
+        (<code>#LOC</code>) naar de ingestelde node, zodat kaart/spoor vers blijven
+        zonder handmatige <code>!loc</code>. Het <em>doel</em> staat op de companion
+        zelf ingesteld (via serieel/menu); hier zet je enkel het interval.</p>
+    </details>
   </div>
 
   {#- Beltoon per ernst: kies een ingebouwde beltoon uit de firmware-bibliotheek,
@@ -177,148 +212,173 @@
       met name="cmd" in één formulier: de aangeklikte bepaalt welk commando de
       route bouwt. -#}
   <div class="card">
-    <div class="card-head"><strong>Beltoon per ernst</strong></div>
+    <div class="card-head"><h3>Beltoon per ernst</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label class="small muted">ernst
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">ernst
         <select name="slot">{% for s in severities %}<option>{{ s }}</option>{% endfor %}</select></label>
-      <label class="small muted">beltoon
+      <label class="check small muted">beltoon
         <select name="name">{% for t in tune_library %}<option>{{ t }}</option>{% endfor %}</select></label>
       {{ afzender() }}
-      <button type="submit" name="cmd" value="play">&#9654; Afspelen</button>
+      <button type="submit" name="cmd" value="play" class="secondary">&#9654; Afspelen</button>
       <button type="submit" name="cmd" value="tune">Toewijzen (!tune)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Stille periode</strong></div>
+    <div class="card-head"><h3>Stille periode</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="quiet">
-      <input name="range" placeholder="22-7" style="width:6rem">
-      <label class="small muted">actie
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <input name="range" placeholder="22-7" class="w-short" aria-label="Uren, bv. 22-7">
+      <label class="check small muted">actie
         <select name="action">{% for a in quiet_actions %}<option>{{ a }}</option>{% endfor %}</select></label>
       {{ afzender() }}
       <button type="submit">Zetten (!quiet)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>GPS</strong></div>
+    <div class="card-head"><h3>GPS</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="gps">
-      <label class="small muted">stand
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">stand
         <select name="mode">{% for m in gps_modes %}<option>{{ m }}</option>{% endfor %}</select></label>
       {{ afzender() }}
       <button type="submit">Zetten</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Valdetectie</strong></div>
+    <div class="card-head"><h3>Valdetectie</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="fall">
-      <label class="small muted">stand
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">stand
         <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
       {{ afzender() }}
       <button type="submit">Zetten</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Valdetectie — gevoeligheid</strong></div>
+    <div class="card-head"><h3>Valdetectie — gevoeligheid</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="sens">
-      <select name="level"><option value="low">laag</option><option value="med" selected>gemiddeld</option><option value="high">hoog</option></select>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <select name="level" aria-label="Gevoeligheid"><option value="low">laag</option><option value="med" selected>gemiddeld</option><option value="high">hoog</option></select>
       {{ afzender() }}
       <button type="submit">Zetten (!fall sens)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Valdetectie — extra opties</strong></div>
+    <div class="card-head"><h3>Valdetectie — extra opties</h3></div>
     {#- Drie eenvoudige aan/uit-schakelaars die dezelfde ``!fall <sub> <state>``-vorm
         delen; ``sub`` verschilt per formulier (hidden). -#}
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="nomotion">
-      <label class="small muted">geen-beweging-alarm
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">geen-beweging-alarm
         <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
       {{ afzender() }}
       <button type="submit">Zetten</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="prealarm">
-      <label class="small muted">vooralarm
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">vooralarm
         <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
       {{ afzender() }}
       <button type="submit">Zetten</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="mm">
-      <label class="small muted">motion-monitor
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">motion-monitor
         <select name="state"><option value="on">aan</option><option value="off">uit</option></select></label>
       {{ afzender() }}
       <button type="submit">Zetten</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="fall">
       <input type="hidden" name="sub" value="test">
-      {{ afzender() }}<button type="submit">Test (!fall test)</button>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      {{ afzender() }}<button type="submit" class="secondary">Test (!fall test)</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="fall">
       <input type="hidden" name="sub" value="status">
-      {{ afzender() }}<button type="submit">Status (!fall status)</button>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      {{ afzender() }}<button type="submit" class="secondary">Status (!fall status)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Valdetectie — doelen (target)</strong></div>
+    <div class="card-head"><h3>Valdetectie — doelen (target)</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="fall"><input type="hidden" name="sub" value="target">
-      <label class="small muted">actie
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">actie
         <select name="action"><option value="list">list</option><option value="add">add</option><option value="del">del</option></select></label>
-      <input name="value" class="mono" placeholder="pubkey (add) of prefix (del)"
-             style="width:min(100%,22rem)">
+      <input name="value" class="mono w-wide" placeholder="pubkey (add) of prefix (del)" aria-label="Pubkey of prefix">
       {{ afzender() }}
       <button type="submit">Uitvoeren (!fall target)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Radio-ontvangststand (rxps)</strong></div>
+    <div class="card-head"><h3>Radio-ontvangststand (rxps)</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="rxps">
-      <select name="mode">{% for m in rxps_modes %}<option>{{ m }}</option>{% endfor %}</select>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <select name="mode" aria-label="Ontvangststand">{% for m in rxps_modes %}<option>{{ m }}</option>{% endfor %}</select>
       {{ afzender() }}
       <button type="submit">Zetten (!rxps)</button>
+      </fieldset>
     </form>
   </div>
 
   {#- ================ Radioparameters: alleen-lezen + WAARSCHUWING ============
       Een verkeerde freq/bw/sf/cr/tx-power laat de companion van het mesh
       vallen -- alleen fysieke, seriële recovery brengt hem dan terug. Vandaar
-      de rode waarschuwing ÉN de client-side confirm() (``data-confirm`` op het
-      formulier, afgedwongen in companions.js) BOVENOP de gewone
+      de risicoklasse `ingrijpend` ÉN de client-side confirm() (``data-confirm``
+      op het formulier, afgedwongen in companions.js) BOVENOP de gewone
       rechtencontrole -- geen van beide vervangt de andere. -#}
   <div class="card">
-    <div class="card-head"><strong>Radio — alleen-lezen</strong></div>
+    <div class="card-head"><h3>Radio — alleen-lezen</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="radioshow">
-      {{ afzender() }}<button type="submit">Tonen (!radio show)</button>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      {{ afzender() }}<button type="submit" class="secondary">Tonen (!radio show)</button>
+      </fieldset>
     </form>
   </div>
 
-  <div class="card" style="border-color:var(--danger,#c0392b)">
-    <div class="card-head"><strong>&#9888; Radioparameter zetten</strong></div>
-    <p class="small" style="color:var(--danger,#c0392b)">
+  <div class="card risk-ingrijpend">
+    <div class="card-head"><h3>&#9888; Radioparameter zetten</h3><span class="act-tag">ingrijpend</span></div>
+    <p class="waarschuwing">
       <strong>Waarschuwing:</strong> een verkeerde waarde kan de companion van de
       mesh doen vallen; herstel vereist dan een fysieke, seriële verbinding met
       het toestel. Wijzig dit alleen als u zeker weet wat u doet.
@@ -326,66 +386,82 @@
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax"
           data-confirm="Radioparameter wijzigen op {{ comp.name }}? Dit kan de companion van de mesh doen vallen; herstel vereist dan een fysieke, seriële verbinding.">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="radio">
-      <label class="small muted">veld
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">veld
         <select name="field">{% for f in radio_fields %}<option>{{ f }}</option>{% endfor %}</select></label>
-      <input name="value" class="mono" placeholder="waarde" style="width:8rem">
+      <input name="value" class="mono w-short" placeholder="waarde" aria-label="Waarde">
       {{ afzender() }}
       <button type="submit" class="danger">Zetten (!radio … confirm)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Opvragen</strong></div>
+    <div class="card-head"><h3>Opvragen</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="loc">
-      {{ afzender() }}<button type="submit">Locatie (!loc)</button>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      {{ afzender() }}<button type="submit" class="secondary">Locatie (!loc)</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="cfg">
-      {{ afzender() }}<button type="submit">Configuratie (!cfg)</button>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      {{ afzender() }}<button type="submit" class="secondary">Configuratie (!cfg)</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="status">
-      {{ afzender() }}<button type="submit">Status (!status)</button>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      {{ afzender() }}<button type="submit" class="secondary">Status (!status)</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="tunes">
-      {{ afzender() }}<button type="submit">Beltoon-bibliotheek (!tunes)</button>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      {{ afzender() }}<button type="submit" class="secondary">Beltoon-bibliotheek (!tunes)</button>
+      </fieldset>
     </form>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="cmd" value="ping">
-      {{ afzender() }}<button type="submit">Ping (!ping)</button>
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      {{ afzender() }}<button type="submit" class="secondary">Ping (!ping)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Snelbericht-preset</strong></div>
+    <div class="card-head"><h3>Snelbericht-preset</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="preset">
-      <label class="small muted">slot
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">slot
         <select name="slot"><option>1</option><option>2</option><option>3</option></select></label>
-      <input name="text" placeholder="tekst" style="width:min(100%,18rem)">
+      <input name="text" placeholder="tekst" class="w-wide" aria-label="Tekst van de preset">
       {{ afzender() }}
       <button type="submit">Zetten (!preset)</button>
+      </fieldset>
     </form>
   </div>
 
   <div class="card">
-    <div class="card-head"><strong>Toegestane-lijst</strong></div>
+    <div class="card-head"><h3>Toegestane-lijst</h3></div>
     <form method="post" action="/admin/companions/{{ comp.id }}/cmd" class="rowform cmd-ajax">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="cmd" value="allow">
-      <label class="small muted">actie
+      <fieldset class="rowform"{{ mv|mag_attr }}>
+      <label class="check small muted">actie
         <select name="sub"><option value="list">list</option><option value="add">add</option><option value="del">del</option></select></label>
-      <input name="value" class="mono" placeholder="pubkey (add) of prefix (del)"
-             style="width:min(100%,22rem)">
+      <input name="value" class="mono w-wide" placeholder="pubkey (add) of prefix (del)" aria-label="Pubkey of prefix">
       {{ afzender() }}
       <button type="submit">Uitvoeren (!allow)</button>
+      </fieldset>
     </form>
   </div>
 
 </div>
+</section>
 
 {#- ==================== Valdetectie & escalatie ==============================
     Twee losse dingen op één plek: WAT er het laatst gemeld is (companions.py
@@ -395,10 +471,11 @@
     serverhandeling (server.companions), net als de rest van de companion-CRUD
     -- er wordt hier nog niets verstuurd, alleen bijgehouden wie het zou moeten
     krijgen. -#}
-<h2 style="margin-top:1.4rem">Valdetectie &amp; escalatie</h2>
+<section id="valdetectie">
+<h2>Valdetectie &amp; escalatie</h2>
 
 <div class="card">
-  <div class="card-head"><strong>Laatst verwerkte val</strong></div>
+  <div class="card-head"><h3>Laatst verwerkte val</h3></div>
   {% if last_fall_iso %}
   <p class="small">
     {% if fall_recent %}&#9888;{% else %}&#8505;{% endif %}
@@ -420,21 +497,22 @@
   {% endif %}
 </div>
 
-<div class="card" style="margin-top:.8rem">
-  <div class="card-head"><strong>Toegewezen ontvangers</strong></div>
-  <p class="muted small">Elke rij hieronder krijgt bij een NIEUWE val een DM,
+<div class="card">
+  <div class="card-head"><h3>Toegewezen ontvangers</h3></div>
+  <p class="card-desc">Elke rij hieronder krijgt bij een NIEUWE val een DM,
     verstuurd vanaf de gekozen afzender-node (of de standaardafzender van deze
     companion als er geen eigen afzender gekozen is). Geen ontvangers hier
     betekent: de val wordt gezien en vastgelegd, maar niemand krijgt een DM.</p>
   {% if alerts %}
-  <table>
+  <div class="tablewrap">
+  <table class="stack">
     <thead><tr><th>Ontvanger</th><th>Label</th><th>Afzender</th><th></th></tr></thead>
     <tbody>
       {% for a in alerts %}
       <tr>
-        <td class="mono">{{ a.recipient_pubkey[:16] }}…</td>
-        <td>{{ a.label or '—' }}</td>
-        <td>
+        <td data-l="Ontvanger" class="mono">{{ a.recipient_pubkey[:16] }}…</td>
+        <td data-l="Label">{{ a.label or '—' }}</td>
+        <td data-l="Afzender">
           {%- set s = rep_by_id.get(a.sender_repeater_id) -%}
           {% if s %}{{ s.name }}{% elif default_sender %}standaard ({{ default_sender.name }}){% else %}— geen —{% endif %}
         </td>
@@ -443,7 +521,7 @@
           <form method="post" action="/admin/companions/{{ comp.id }}/alerts/{{ a.id }}/delete"
                 onsubmit="return confirm('Deze ontvanger verwijderen?');">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <button type="submit" class="danger small">Verwijderen</button>
+            <button type="submit" class="danger small"{{ mag_beheren|mag_attr }}>Verwijderen</button>
           </form>
           {% endif %}
         </td>
@@ -451,59 +529,71 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="muted small">Nog geen ontvangers toegewezen.</p>
   {% endif %}
 
   {% if mag_beheren.allowed %}
-  <form method="post" action="/admin/companions/{{ comp.id }}/alerts/add" class="rowform"
-        style="margin-top:.8rem">
+  <form method="post" action="/admin/companions/{{ comp.id }}/alerts/add" class="frm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label class="small muted">ontvanger (pubkey, 64 hex)<br>
-      <input name="recipient" class="mono" pattern="[0-9a-fA-F]{64}" maxlength="64" required
-             style="width:min(100%,32rem)" placeholder="volledige pubkey van de ontvanger"></label>
-    <label class="small muted">label<br>
-      <input name="label" maxlength="64" placeholder="bv. dochter, meldkamer"></label>
-    <label class="small muted">afzender (relayt de DM)<br>
-      <select name="sender">
-        <option value="">{% if default_sender %}standaard ({{ default_sender.name }}){% else %}— kies —{% endif %}</option>
-        {% for s in senders %}
-        <option value="{{ s.id }}">{{ s.name }}</option>
-        {% endfor %}
-      </select></label>
-    <button type="submit">Toevoegen</button>
+    <label class="frm-label" for="alert-recip">Ontvanger toevoegen</label>
+    <fieldset class="frm-field"{{ mag_beheren|mag_attr }}>
+      <input id="alert-recip" name="recipient" class="mono" pattern="[0-9a-fA-F]{64}" maxlength="64" required
+             placeholder="volledige pubkey van de ontvanger (64 hex)">
+      <div class="frm-row">
+        <input name="label" maxlength="64" placeholder="label, bv. dochter, meldkamer" aria-label="Label">
+        <select name="sender" aria-label="Afzender die de DM relayt">
+          <option value="">{% if default_sender %}standaard ({{ default_sender.name }}){% else %}— kies —{% endif %}</option>
+          {% for s in senders %}
+          <option value="{{ s.id }}">{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p class="frm-hint">Pubkey van de ontvanger, een label voor jezelf, en de afzender die de DM relayt.</p>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ mag_beheren|mag_attr }}>Toevoegen</button></div>
   </form>
   {% elif not alerts %}
   <p class="muted small">&#128274; Ontvangers toewijzen is voorbehouden aan een
     serverbeheerder.</p>
   {% endif %}
 </div>
+</section>
 
 {#- ==================== Vrije DM ============================================
     Voor alles wat niet in een knop past: een vrije tekst naar deze companion, via
     dezelfde weg. Dit is de generieke Send-DM toegespitst op deze bestemming. -#}
-<h2 style="margin-top:1.4rem">Vrij bericht</h2>
-<form method="post" action="/admin/senddm/send" class="cmd-ajax">
+<section id="vrij">
+<h2>Vrij bericht</h2>
+<div class="card">
+<form method="post" action="/admin/senddm/send" class="cmd-ajax frm frm-first">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="pubkey" value="{{ comp.pubkey }}">
   {#- Zonder dit veld stuurt senddm_send altijd naar de generieke Send-DM-tab
       terug, weg van deze companion-pagina -- zie _back_target in
       routes_companions.py. -#}
   <input type="hidden" name="back" value="companion:{{ comp.id }}">
-  <p>{{ afzender() }}</p>
-  <p><input name="msg" placeholder="vrij bericht of ruw commando" style="width:min(100%,42rem)"></p>
-  <button type="submit">Versturen</button>
+  <label class="frm-label" for="vrij-msg">Bericht</label>
+  <fieldset class="frm-field"{{ mv|mag_attr }}>
+    <input id="vrij-msg" name="msg" placeholder="vrij bericht of ruw commando">
+    <div class="frm-row">{{ afzender() }}</div>
+  </fieldset>
+  <fieldset class="frm-actions"{{ mv|mag_attr }}><button type="submit">Versturen</button></fieldset>
 </form>
+</div>
+</section>
 
 {#- ==================== Seriële CLI in de browser ===========================
     Als de companion via USB aan DEZE computer hangt, praat de browser met zijn
     seriële CLI via de Web Serial API — puur client-side, geen server ertussen. Op
     serieel vervalt de ``!`` vooraan. Alleen Chrome/Edge; op de rest degradeert het
     naar een uitleg. Zie companions.js. -#}
-<h2 style="margin-top:1.4rem">Seriële CLI (browser)</h2>
-<section class="card" id="serial-panel"
-         data-pubkey="{{ comp.pubkey }}" data-name="{{ comp.name }}">
-  <p class="muted small">
+<section id="serieel">
+<h2>Seriële CLI (browser)</h2>
+<div class="card" id="serial-panel"
+     data-pubkey="{{ comp.pubkey }}" data-name="{{ comp.name }}">
+  <p class="card-desc">
     Hangt deze companion via USB aan uw eigen computer, dan kunt u hier
     rechtstreeks met zijn seriële CLI praten — dit loopt <strong>niet</strong> via
     een node. Op serieel typt u de commando's <strong>zonder</strong> de
@@ -514,58 +604,80 @@
     &#9888; Deze browser kent de Web Serial API niet. Gebruik Chrome of Edge op een
     desktop om serieel te verbinden.
   </div>
-  <div id="serial-controls" hidden>
+  <div id="serial-controls" class="actions left" hidden>
     <button type="button" id="serial-connect">Verbinden (serieel)</button>
-    <button type="button" id="serial-disconnect" hidden>Verbreken</button>
+    <button type="button" id="serial-disconnect" class="secondary" hidden>Verbreken</button>
     <span id="serial-status" class="muted small">niet verbonden</span>
   </div>
-  <div id="serial-io" hidden style="margin-top:.7rem">
-    <div class="serial-quick" style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.4rem">
+  <div id="serial-io" hidden>
+    <div class="serial-quick">
       {% for q in ["find", "findstop", "loc", "cfg", "ping", "mute on", "mute off"] %}
       <button type="button" class="pill serial-fill" data-cmd="{{ q }}">{{ q }}</button>
       {% endfor %}
     </div>
     {#- Dezelfde beltoon-bibliotheek als de mesh-knoppen, maar serieel: de knop
         stuurt ``play <naam>`` (zonder ``!``) rechtstreeks over de poort. -#}
-    <div class="serial-tune" style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin-bottom:.4rem">
-      <label class="small muted">beltoon
+    <div class="serial-tune">
+      <label class="check small muted">beltoon
         <select id="serial-tune">{% for t in tune_library %}<option>{{ t }}</option>{% endfor %}</select></label>
       <button type="button" class="pill" id="serial-tune-play">&#9654; Afspelen (serieel)</button>
     </div>
-    <pre id="serial-log" class="mono"
-         style="height:16rem;overflow:auto;background:var(--card-bg,rgba(0,0,0,.2));padding:.6rem;border-radius:6px;white-space:pre-wrap"></pre>
+    <pre id="serial-log" class="mono"></pre>
     <form id="serial-form" class="rowform">
-      <input id="serial-input" class="mono" autocomplete="off"
-             placeholder="commando zonder ! (bv. vol 2)" style="flex:1;min-width:12rem">
+      <input id="serial-input" class="mono serial-input" autocomplete="off"
+             placeholder="commando zonder ! (bv. vol 2)">
       <button type="submit">Sturen</button>
     </form>
   </div>
+</div>
 </section>
 
 {#- ==================== Beheer =============================================
     Bewerken en verwijderen staan hier, op de pagina van de companion zelf, en
     niet in de lijst — zo blijft de lijst leesbaar bij tientallen companions.
-    Alleen voor wie de lijst mag beheren (serverbeheerder). -#}
+    Alleen voor wie de lijst mag beheren (serverbeheerder). Verwijderen staat als
+    laatste, rood, in de klasse `ingrijpend`. -#}
 {% if mag_beheren.allowed %}
-<h2 style="margin-top:1.4rem">Beheer</h2>
-<section class="card">
+<section id="beheer">
+<h2>Beheer</h2>
+<div class="card">
   <form method="post" action="/admin/companions/{{ comp.id }}/edit">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <p><label>Naam<br><input name="name" maxlength="64" required value="{{ comp.name }}"></label></p>
-    <p><label>Pubkey (64 hex)<br>
-      <input name="pubkey" class="mono" pattern="[0-9a-fA-F]{64}" maxlength="64" required
-             value="{{ comp.pubkey }}" style="width:min(100%,42rem)"></label></p>
-    <p><label>Type<br><input name="type" maxlength="32" value="{{ comp.type or '' }}"></label></p>
-    <p><label>Standaardafzender<br>
-      <select name="sender">
-        <option value="">— geen —</option>
-        {% for s in senders %}
-        <option value="{{ s.id }}"{% if s.id == comp.sender_repeater_id %} selected{% endif %}>{{ s.name }}</option>
-        {% endfor %}
-      </select></label></p>
-    <p><label>Notities<br><textarea name="notes" maxlength="500" rows="2"
-       style="width:min(100%,42rem)">{{ comp.notes or '' }}</textarea></label></p>
-    <button type="submit">Opslaan</button>
+    <fieldset{{ mag_beheren|mag_attr }}>
+    <div class="frm frm-first">
+      <label class="frm-label" for="e-name">Naam</label>
+      <div class="frm-field"><input id="e-name" name="name" maxlength="64" required value="{{ comp.name }}"></div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="e-pubkey">Pubkey (64 hex)</label>
+      <div class="frm-field"><input id="e-pubkey" name="pubkey" class="mono" pattern="[0-9a-fA-F]{64}" maxlength="64" required
+             value="{{ comp.pubkey }}"></div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="e-type">Type</label>
+      <div class="frm-field"><input id="e-type" name="type" maxlength="32" value="{{ comp.type or '' }}"></div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="e-sender">Standaardafzender</label>
+      <div class="frm-field">
+        <select id="e-sender" name="sender">
+          <option value="">— geen —</option>
+          {% for s in senders %}
+          <option value="{{ s.id }}"{% if s.id == comp.sender_repeater_id %} selected{% endif %}>{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="frm-actions"></div>
+    </div>
+    <div class="frm">
+      <label class="frm-label" for="e-notes">Notities</label>
+      <div class="frm-field"><textarea id="e-notes" name="notes" maxlength="500" rows="2">{{ comp.notes or '' }}</textarea></div>
+      <div class="frm-actions"><button type="submit"{{ mag_beheren|mag_attr }}>Opslaan</button></div>
+    </div>
+    </fieldset>
   </form>
   {#- De bot-VOORKEUR staat los van het formulier hierboven (een eigen route,
       db.set_companion_bot) en niet als extra veld erin: dit is geen
@@ -573,91 +685,104 @@
       afzender-node deze companion standaard krijgt -- zie
       companions.resolve_bot. Leeg = geen eigen voorkeur, dan kiest de server
       zelf (de MGMT-bot als de node er een heeft). -#}
-  <form method="post" action="/admin/companions/{{ comp.id }}/bot" style="margin-top:.8rem">
+  <form method="post" action="/admin/companions/{{ comp.id }}/bot" class="frm">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label class="small muted">Bot-voorkeur (naam of index uit /bots.json, leeg = standaard)<br>
-      <input name="bot" maxlength="64" value="{{ comp.preferred_bot or '' }}"
-             placeholder="bv. BE-HSS-DinX-MGMT" style="width:min(100%,24rem)"></label>
-    <button type="submit">Bot-voorkeur opslaan</button>
+    <label class="frm-label" for="e-bot">Bot-voorkeur</label>
+    <fieldset class="frm-field"{{ mag_beheren|mag_attr }}>
+      <input id="e-bot" name="bot" maxlength="64" value="{{ comp.preferred_bot or '' }}"
+             placeholder="bv. BE-HSS-DinX-MGMT">
+      <p class="frm-hint">Naam of index uit <code>/bots.json</code> van de afzender-node; leeg = standaard
+         (de MGMT-bot als de node er een heeft).</p>
+    </fieldset>
+    <div class="frm-actions"><button type="submit"{{ mag_beheren|mag_attr }}>Bot-voorkeur opslaan</button></div>
   </form>
-  {#- ==================== Publieke deel-link ================================
-      Een openbare, login-vrije pagina (/loc/<token>) met de laatste positie en
-      het recente spoor van deze companion. Het token is de sleutel: wie de link
-      heeft, ziet de kaart. "Vervangen" maakt een NIEUW token en maakt de oude
-      link daarmee meteen dood -- de weg om een gelekte link ongeldig te maken.
-      "Intrekken" wist het token; daarna geeft /loc/<oude token> een 404. -#}
-  <div class="card" style="margin-top:.8rem">
-    <div class="card-head"><strong>&#128279; Publieke deel-link</strong></div>
-    {% if share_url %}
-    <p class="small">Actieve deel-link (geen login nodig):<br>
-      <a href="{{ share_url }}" class="mono" target="_blank" rel="noopener">{{ share_url }}</a></p>
-    <p class="muted small">Iedereen met deze link ziet de laatste positie en het
-      recente spoor van deze companion. Deel hem alleen met wie dat mag zien.</p>
-    <div class="rowform">
-      <form method="post" action="/admin/companions/{{ comp.id }}/share">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="action" value="on">
-        <button type="submit"
-                onclick="return confirm('Een nieuw token maken? De huidige deel-link werkt daarna niet meer.');">Vervangen (nieuw token)</button>
-      </form>
-      <form method="post" action="/admin/companions/{{ comp.id }}/share">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="action" value="off">
-        <button type="submit" class="danger"
-                onclick="return confirm('De deel-link intrekken? De huidige link werkt daarna niet meer.');">Intrekken</button>
-      </form>
-    </div>
-    {% else %}
-    <p class="muted small">Nog geen deel-link. Maak er een aan om de laatste
-      positie en het recente spoor van deze companion publiek (zonder login)
-      te tonen op <code>/loc/&lt;token&gt;</code>.</p>
+</div>
+
+{#- ==================== Publieke deel-link ================================
+    Een openbare, login-vrije pagina (/loc/<token>) met de laatste positie en
+    het recente spoor van deze companion. Het token is de sleutel: wie de link
+    heeft, ziet de kaart. "Vervangen" maakt een NIEUW token en maakt de oude
+    link daarmee meteen dood -- de weg om een gelekte link ongeldig te maken.
+    "Intrekken" wist het token; daarna geeft /loc/<oude token> een 404. -#}
+<div class="card risk-merkbaar">
+  <div class="card-head"><h3>&#128279; Publieke deel-link</h3><span class="act-tag">publiek zonder login</span></div>
+  {% if share_url %}
+  <p class="small">Actieve deel-link (geen login nodig):<br>
+    <a href="{{ share_url }}" class="mono" target="_blank" rel="noopener">{{ share_url }}</a></p>
+  <p class="muted small">Iedereen met deze link ziet de laatste positie en het
+    recente spoor van deze companion. Deel hem alleen met wie dat mag zien.</p>
+  <div class="actions left">
     <form method="post" action="/admin/companions/{{ comp.id }}/share">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="action" value="on">
-      <button type="submit">Deel-link aanmaken</button>
+      <button type="submit" class="secondary"{{ mag_beheren|mag_attr }}
+              onclick="return confirm('Een nieuw token maken? De huidige deel-link werkt daarna niet meer.');">Vervangen (nieuw token)</button>
     </form>
-    {% endif %}
-  </div>
-
-  {#- ==================== Home Assistant device_tracker =====================
-      Een OPT-IN per companion: staat hij aan, dan publiceert hadiscovery deze
-      companion als device_tracker naar Home Assistant (op de HA-kaart, met de
-      batterij als attribuut) zodra hij een positie heeft. Dezelfde HA-MQTT-
-      discovery-brug als de nodes; de opt-in raakt alleen de databankrij, het
-      publiceren én het opruimen gebeuren in de hadiscovery-ronde. Twee kleine
-      POST-formulieren (aan/uit) in dezelfde stijl als de deel-link hierboven. -#}
-  <div class="card" style="margin-top:.8rem">
-    <div class="card-head"><strong>&#127968; Home Assistant</strong></div>
-    {% if ha_publish_on %}
-    <p class="small">Publicatie naar Home Assistant staat <strong>aan</strong>:
-      deze companion verschijnt als <code>device_tracker</code> op de HA-kaart
-      (met de batterij als attribuut) zodra hij een positie heeft gemeld.</p>
-    <form method="post" action="/admin/companions/{{ comp.id }}/ha">
+    <form method="post" action="/admin/companions/{{ comp.id }}/share">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="action" value="off">
-      <button type="submit" class="danger"
-              onclick="return confirm('Publicatie naar Home Assistant uitzetten? De device_tracker-entiteit wordt uit HA verwijderd.');">Naar Home Assistant publiceren uitzetten</button>
+      <button type="submit" class="danger"{{ mag_beheren|mag_attr }}
+              onclick="return confirm('De deel-link intrekken? De huidige link werkt daarna niet meer.');">Intrekken</button>
     </form>
-    {% else %}
-    <p class="muted small">Zet dit aan om deze companion als
-      <code>device_tracker</code> naar Home Assistant te publiceren (op de
-      HA-kaart, met de batterij als attribuut). Uit tenzij je het bewust
-      aanzet — een handzender hoort niet vanzelf op iemands HA-kaart. De
-      HA-MQTT-brug moet aanstaan (zie de serverpagina); zolang die uit is,
-      gebeurt er niets.</p>
-    <form method="post" action="/admin/companions/{{ comp.id }}/ha">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="action" value="on">
-      <button type="submit">Naar Home Assistant publiceren (device_tracker)</button>
-    </form>
-    {% endif %}
   </div>
-
-  <form method="post" action="/admin/companions/{{ comp.id }}/delete" style="margin-top:.8rem"
-        onsubmit="return confirm('Companion {{ comp.name }} verwijderen? Dit raakt alleen de lijst, niet het toestel.');">
+  {% else %}
+  <p class="muted small">Nog geen deel-link. Maak er een aan om de laatste
+    positie en het recente spoor van deze companion publiek (zonder login)
+    te tonen op <code>/loc/&lt;token&gt;</code>.</p>
+  <form method="post" action="/admin/companions/{{ comp.id }}/share" class="actions left">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit" class="danger">Verwijderen</button>
+    <input type="hidden" name="action" value="on">
+    <button type="submit"{{ mag_beheren|mag_attr }}>Deel-link aanmaken</button>
   </form>
+  {% endif %}
+</div>
+
+{#- ==================== Home Assistant device_tracker =====================
+    Een OPT-IN per companion: staat hij aan, dan publiceert hadiscovery deze
+    companion als device_tracker naar Home Assistant (op de HA-kaart, met de
+    batterij als attribuut) zodra hij een positie heeft. Dezelfde HA-MQTT-
+    discovery-brug als de nodes; de opt-in raakt alleen de databankrij, het
+    publiceren én het opruimen gebeuren in de hadiscovery-ronde. Twee kleine
+    POST-formulieren (aan/uit) in dezelfde stijl als de deel-link hierboven. -#}
+<div class="card">
+  <div class="card-head"><h3>&#127968; Home Assistant</h3></div>
+  {% if ha_publish_on %}
+  <p class="small">Publicatie naar Home Assistant staat <strong>aan</strong>:
+    deze companion verschijnt als <code>device_tracker</code> op de HA-kaart
+    (met de batterij als attribuut) zodra hij een positie heeft gemeld.</p>
+  <form method="post" action="/admin/companions/{{ comp.id }}/ha" class="actions left">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="off">
+    <button type="submit" class="secondary"{{ mag_beheren|mag_attr }}
+            onclick="return confirm('Publicatie naar Home Assistant uitzetten? De device_tracker-entiteit wordt uit HA verwijderd.');">Naar Home Assistant publiceren uitzetten</button>
+  </form>
+  {% else %}
+  <p class="muted small">Zet dit aan om deze companion als
+    <code>device_tracker</code> naar Home Assistant te publiceren (op de
+    HA-kaart, met de batterij als attribuut). Uit tenzij je het bewust
+    aanzet — een handzender hoort niet vanzelf op iemands HA-kaart. De
+    HA-MQTT-brug moet aanstaan (zie de serverpagina); zolang die uit is,
+    gebeurt er niets.</p>
+  <form method="post" action="/admin/companions/{{ comp.id }}/ha" class="actions left">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="on">
+    <button type="submit"{{ mag_beheren|mag_attr }}>Naar Home Assistant publiceren (device_tracker)</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card risk-ingrijpend">
+  <div class="act risk-ingrijpend act--danger">
+    <div class="act-head"><h3>Deze companion verwijderen</h3><span class="act-tag">onomkeerbaar</span></div>
+    <p class="muted small">Dit raakt alleen de lijst op deze site, niet het toestel: de handzender
+       blijft werken, alleen de knoppen hier verdwijnen.</p>
+    <form method="post" action="/admin/companions/{{ comp.id }}/delete" class="actions"
+          onsubmit="return confirm('Companion {{ comp.name }} verwijderen? Dit raakt alleen de lijst, niet het toestel.');">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="danger"{{ mag_beheren|mag_attr }}>Verwijderen</button>
+    </form>
+  </div>
+</div>
 </section>
 {% endif %}
 

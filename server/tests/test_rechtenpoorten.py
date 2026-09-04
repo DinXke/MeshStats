@@ -94,15 +94,25 @@ def _forms_zonder_poort(pad):
 # getal op, dan staat er een nieuw formulier zonder poort op het scherm.
 #
 # login.html staat er niet in: daar is niets te poorten (zie GEEN_RECHT_NODIG).
+#
+# node.html staat op 0 sinds de herindeling (docs/nl/beheer-ux.md): de pagina is
+# opgesplitst in admin/node/_*.html en elk formulier daarin draagt zijn poort.
+# Die includes staan niet apart in deze tabel -- ze horen op nul te blijven, en
+# de laatste test hieronder telt ze mee omdat hij recursief zoekt. Een include
+# die buiten de telling valt zou precies de ontsnapping zijn die deze ratel
+# moet voorkomen.
+#
+# account.html blijft op 1: het wachtwoordformulier is je eigen wachtwoord en
+# heeft met opzet geen recht (zie GEEN_RECHT_NODIG); een poort zou daar liegen.
 RATEL = {
     "account.html": 1,
-    "companion.html": 37,
-    "companions.html": 1,
-    "compare.html": 2,
-    "discovery.html": 4,
-    "monitors.html": 2,
-    "node.html": 22,
-    "server.html": 17,
+    "companion.html": 0,
+    "companions.html": 0,
+    "compare.html": 0,
+    "discovery.html": 0,
+    "monitors.html": 0,
+    "node.html": 0,
+    "server.html": 0,
 }
 
 
@@ -129,8 +139,10 @@ def test_de_ratel_kent_elk_sjabloon_met_formulieren():
     """Een nieuw sjabloon met ongepoorte formulieren moet hier opduiken en niet
     buiten de telling vallen."""
     ontbreekt = []
-    for pad in glob.glob(os.path.join(TEMPLATES, "*.html")):
-        naam = os.path.basename(pad)
+    # Recursief, zodat ook de includes onder admin/node/ meetellen: een
+    # formulier in een include is net zo goed een formulier op het scherm.
+    for pad in glob.glob(os.path.join(TEMPLATES, "**", "*.html"), recursive=True):
+        naam = os.path.relpath(pad, TEMPLATES).replace(os.sep, "/")
         if naam in RATEL or naam == "login.html":
             continue
         if _forms_zonder_poort(pad):

@@ -418,9 +418,17 @@ Since the split there are two worlds, with a tab bar between them:
 | `GET /admin` | **Nodes and repeaters** — everything that is an action on, or information about, a physical device |
 | `GET /admin/repeaters/{rid}` | One node: identity and versions, visibility, look-ups, clock, firmware, delete |
 | `GET /admin/firmware` | **Firmware** — which release runs where, which are available, and who can be written to |
-| `GET /admin/server` | **Server and site** — everything that configures this installation and touches no device |
+| `GET /admin/server` | **Server and site** (menu label: *Server, gebruikers en site*) — everything that configures this installation and touches no device: users, groups, grants, tokens, storage, display |
 | `GET /admin/account` | **My account** — your own password, the roles you hold, and your own audit lines |
 | `GET /admin/audit` | The full audit trail (server administrators only) |
+
+The tab is labelled *Server, gebruikers en site* ("server, users and site") in
+the menu, and inside that world a sub-bar lists the sections as anchors. That
+came about because the owner of an installation could not find user management
+behind the bare label *Server en site*; the *Monitors* tab (which node polls
+which node) was still called *Beheerders* ("administrators") at the time. The
+layout of the admin pages themselves is described in
+[`beheer-ux.md`](beheer-ux.md).
 
 **Server and site** is the one tab this site *hides* rather than disabling.
 Behind it there is not a single action an ordinary user may perform, and a tab

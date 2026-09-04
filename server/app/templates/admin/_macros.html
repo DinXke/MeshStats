@@ -1,0 +1,41 @@
+{#- De drie macro's die de nodepagina overal gebruikt, in een eigen bestand
+    omdat die pagina sinds de herindeling (docs/nl/beheer-ux.md) uit includes
+    bestaat, en een macro die in de hoofdtemplate staat is in een include niet
+    te zien. Elke include haalt ze binnen met
+
+        {% from "admin/_macros.html" import recht, waarom, hulp with context %}
+
+    -- ``with context`` omdat ``recht`` en ``waarom`` in ``rechten`` kijken, de
+    besluiten die de route meegeeft.
+
+    Twee vragen per knop, en pas als ze allebei ja zeggen werkt hij.
+
+    ``route``   wat er KÁN -- firmware, brokerverbinding, wie er publiceert.
+                Komt uit commanding.route_for.
+    ``rechten`` wat deze gebruiker MAG. Komt uit rbac.decide.
+
+    ``recht`` zet de tweede om in de attributen van een knop. Een handeling die
+    niet mag verdwijnt niet: ze staat er uitgeschakeld, met de reden in de
+    tooltip -- dezelfde lijn die de beheerpagina's overal aanhouden voor knoppen
+    die niet kúnnen. Een knop die stilletjes weg is, laat iemand denken dat de
+    site stuk is; een knop die zegt waarom hij uit staat, laat hem weten wie hij
+    moet aanspreken.
+
+    Waarom een macro en niet per knop uitgeschreven: dertien knoppen die allemaal
+    hetzelfde `{% if %}` herhalen, zijn dertien plaatsen om er één te vergeten. -#}
+{%- macro recht(sleutel) -%}
+{%- set besluit = rechten[sleutel] -%}
+{%- if not besluit.allowed %} disabled title="{{ besluit.reason }}"{% endif %}
+{%- endmacro -%}
+{%- macro waarom(sleutel) -%}
+{%- set besluit = rechten[sleutel] -%}
+{%- if not besluit.allowed %}<p class="muted small">&#128274; {{ besluit.reason }}.</p>{% endif %}
+{%- endmacro -%}
+{#- Een compacte "?"-popover: de instelling staat vooraan, de uitleg zit erachter
+    en verschijnt bij hover of toetsenbordfocus. Puur CSS (zie .help in style.css),
+    geen JavaScript en geen externe assets, en zonder animatie -- dus ook goed
+    onder prefers-reduced-motion. De tekst staat in de DOM (role="note"), zodat een
+    schermlezer hem bereikt en hij niet verdwijnt voor wie niet kan hoveren. -#}
+{%- macro hulp(tekst) -%}
+<span class="help"><button type="button" class="help-btn" aria-label="Uitleg tonen">?</button><span class="help-pop" role="note">{{ tekst }}</span></span>
+{%- endmacro -%}

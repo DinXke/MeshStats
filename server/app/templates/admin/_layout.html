@@ -69,8 +69,12 @@
     &#9707; Vergelijken</a>
   <a href="/admin/discovery"{% if discovery_tab %} class="on" aria-current="page"{% endif %}>
     &#128225; Uitvragen</a>
+  {#- "Monitors" en niet "Beheerders", wat het eerst heette: die pagina gaat over
+      welke node welke andere node uitvraagt, en de eigenaar van deze installatie
+      klikte erop toen hij een tweede beheerder wilde aanmaken. Een tab die naar
+      iets anders klinkt dan hij is, kost meer dan een tab die er niet is. -#}
   <a href="/admin/monitors"{% if monitors_tab %} class="on" aria-current="page"{% endif %}>
-    &#128100; Beheerders</a>
+    &#8644; Monitors</a>
   {#- Companions is een EIGEN top-level onderdeel, geen tab in de apparaat-wereld:
       het is een eigen module (routes_companions.py) met een eigen sub-navigatie
       hieronder (Companions-lijst en Send-DM). ``world == 'companions'`` markeert
@@ -79,9 +83,13 @@
     &#128241; Companions</a>
   <a href="/admin/firmware"{% if firmware_tab %} class="on" aria-current="page"{% endif %}>
     &#8679; Firmware</a>
+  {#- De naam noemt de gebruikers met zoveel woorden. Gebruikersbeheer is een
+      van de eerste dingen die een beheerder van een nieuwe installatie zoekt, en
+      het zat achter een label dat alleen "server" en "site" zei. Zie
+      docs/nl/beheer-ux.md, "Vindbaarheid". -#}
   {% if serverrechten and serverrechten['server.instellingen'].allowed %}
   <a href="/admin/server"{% if world == 'server' %} class="on" aria-current="page"{% endif %}>
-    &#9881; Server en site</a>
+    &#9881; Server, gebruikers en site</a>
   {% endif %}
   <a href="/admin/account"{% if world == 'account' %} class="on" aria-current="page"{% endif %}>
     &#128100; Mijn account</a>
@@ -96,6 +104,24 @@
     Send DM</a>
   <a href="/admin/companions/kaart"{% if companions_map_tab %} class="on" aria-current="page"{% endif %}>
     Kaart</a>
+</nav>
+{% endif %}
+{#- De sub-navigatie van Server, gebruikers en site: de secties van die ene
+    lange pagina als ankers, zichtbaar vóór je scrolt. Dit is de inhoudsopgave
+    die er niet was toen de eigenaar het gebruikersbeheer niet kon vinden. Geen
+    aparte pagina's: de POST-routes en de rechtenpoorten blijven waar ze zijn,
+    en één pagina met ankers werkt zonder JavaScript en zonder een tweede
+    rechtencontrole. -#}
+{% if world == 'server' %}
+<nav class="adminnav subnav" aria-label="Onderdelen van Server, gebruikers en site">
+  <a href="/admin/server#gebruikers">Gebruikers en rechten</a>
+  <a href="/admin/server#tokens">API-tokens</a>
+  <a href="/admin/server#opslag">Opslag</a>
+  <a href="/admin/server#weergave">Weergave</a>
+  <a href="/admin/server#cli-params">Parameters</a>
+  <a href="/admin/server#kloksync">Kloksync</a>
+  <a href="/admin/server#invoer">Invoer en metingen</a>
+  <a href="/admin/server#trail">Audittrail</a>
 </nav>
 {% endif %}
 {% block admin %}{% endblock %}

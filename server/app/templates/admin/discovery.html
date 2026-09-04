@@ -1,17 +1,26 @@
 {% extends "admin/_layout.html" %}
 {% block title %}Uitvragen — beheer — {{ site_name }}{% endblock %}
 {% block admin %}
-<h1>Uitvragen zonder inloggegevens</h1>
-
-<p class="muted">
-  Van een repeater die niet van jou is valt meer op te halen dan je zou denken:
-  de volledige statustelling, zijn burenlijst en zijn accuspanning en
-  chiptemperatuur — zonder wachtwoord. Dat kan omdat MeshCore het toestaat en
-  niet omdat er iets omzeild wordt: het gastwachtwoord is standaard leeg, een leeg
-  wachtwoord matcht erop, en een gast krijgt de status zonder rechtencontrole.
-  De CLI blijft dicht, dus er valt niets te <em>zetten</em> — dat is door de
-  overkant afgedwongen.
-</p>
+{#- Elke handeling hier gaat over de AFZENDER: hij doet het werk over LoRa en wij
+    vragen het hem over IP. Vandaar één besluit (``mag``, node.instelling.merkbaar
+    op de afzender, uit de route) voor alle drie de formulieren, op een fieldset
+    zodat velden én knop uit staan voor wie het niet mag. -#}
+<div class="pagehead">
+  <div class="pagehead-top"><h1>Uitvragen zonder inloggegevens</h1></div>
+  <p class="muted small">
+    Van een repeater die niet van jou is valt meer op te halen dan je zou denken:
+    de volledige statustelling, zijn burenlijst en zijn accuspanning en
+    chiptemperatuur — zonder wachtwoord. De CLI blijft dicht, dus er valt niets te
+    <em>zetten</em> — dat is door de overkant afgedwongen.
+  </p>
+  <details class="uitleg">
+    <summary>Waarom dat kan, en waarom het geen omzeiling is</summary>
+    <p>MeshCore staat het toe: het gastwachtwoord is standaard leeg, een leeg
+       wachtwoord matcht erop, en een gast krijgt de status zonder rechtencontrole.
+       Er wordt niets omzeild; de eigenaar die dat niet wil zet
+       <code>set guest.password</code>, en dan zwijgt zijn node hier.</p>
+  </details>
+</div>
 
 {% if outcome %}
 <div class="card notice">
@@ -42,35 +51,35 @@
 {% else %}
 
 <div class="card">
-  <p class="small">
-    Verzoeken vertrekken vanaf <a href="/admin/repeaters/{{ sender.rep.id }}">{{ sender.rep.name }}</a>
-    <span class="mono muted">{{ sender.rep.pubkey_prefix }}</span>.
-    {% if sender.candidates | length > 1 %}
-    Er zijn {{ sender.candidates | length }} nodes die dit kunnen; voorlopig wordt de
-    eerste gebruikt. Een keuze met volgorde en terugval komt later.
-    {% else %}
-    Dat is voorlopig de enige node die dit kan.
+  <table class="kv">
+    <tr><td>Afzender</td><td><a href="/admin/repeaters/{{ sender.rep.id }}">{{ sender.rep.name }}</a>
+      <span class="mono muted">{{ sender.rep.pubkey_prefix }}</span>
+      <span class="muted small">&mdash;
+      {% if sender.candidates | length > 1 %}
+      er zijn {{ sender.candidates | length }} nodes die dit kunnen; voorlopig wordt de
+      eerste gebruikt. Een keuze met volgorde en terugval komt later.
+      {% else %}
+      voorlopig de enige node die dit kan.
+      {% endif %}</span></td></tr>
+    {#- Kosten vóór de klik en niet erna. En eerlijk over het lastige deel: de
+        firmware kent geen poll van één node, dus een uitvraging neemt élke
+        gemonitorde node mee in de ronde. -#}
+    {% if cost and cost.ok %}
+    <tr><td>Wat het kost</td><td>Een uitvraging start een pollronde, en die loopt de
+      hele monitorlijst af — de firmware kent geen ronde van één node. Met
+      {{ cost.monitored }} gemonitorde node(s) erbij wordt dat
+      <strong>{{ cost.nodes }} node(s), {{ cost.requests }} verzoeken</strong> over LoRa, en
+      in het slechtste geval <strong>{{ (cost.worst_secs / 60) | round(1) }} minuten</strong>
+      waarin de mesh-machinerie van die node bezig is.
+      <span class="muted small">Dat slechtste geval is precies wat
+      je aan het uitproberen bent: een node die antwoordt is in seconden klaar, een node
+      die zwijgt kost de volle wachttijd.</span></td></tr>
     {% endif %}
-  </p>
-
-  {#- Kosten vóór de klik en niet erna. En eerlijk over het lastige deel: de
-      firmware kent geen poll van één node, dus een uitvraging neemt élke
-      gemonitorde node mee in de ronde. -#}
-  {% if cost and cost.ok %}
-  <p class="muted small">
-    <strong>Wat het kost.</strong> Een uitvraging start een pollronde, en die loopt de
-    hele monitorlijst af — de firmware kent geen ronde van één node. Met
-    {{ cost.monitored }} gemonitorde node(s) erbij wordt dat
-    <strong>{{ cost.nodes }} node(s), {{ cost.requests }} verzoeken</strong> over LoRa, en
-    in het slechtste geval <strong>{{ (cost.worst_secs / 60) | round(1) }} minuten</strong>
-    waarin de mesh-machinerie van die node bezig is. Dat slechtste geval is precies wat
-    je aan het uitproberen bent: een node die antwoordt is in seconden klaar, een node
-    die zwijgt kost de volle wachttijd.
-  </p>
-  {% endif %}
+  </table>
+  {% if mag and not mag.allowed %}<p class="muted small">&#128274; {{ mag.reason }}.</p>{% endif %}
 </div>
 
-<section>
+<section id="interval">
   <h2>Hoe vaak</h2>
   <div class="card">
     {#- Per monitor en niet per node, en dat is de vorm van de firmware en niet
@@ -78,34 +87,35 @@
         af. Er bestaat geen ronde van één node, dus er bestaat geen interval van
         één node. Een per-node-veld hierboven zou iets beloven wat de firmware
         niet kan doen. -#}
-    <p class="muted small">
+    <p class="card-desc">
       Herhaald uitvragen hoeft niet gepland te worden: <strong>{{ sender.rep.name }} doet
       het zelf</strong>. Hij loopt zijn hele monitorlijst af op zijn eigen interval, en dat
       interval geldt <strong>per monitor en niet per node</strong> — de firmware kent geen
       ronde van één node. Wat per node wél bestaat is aan of uit: in de lijst staan, of
       eruit met <em>Vergeten</em>.
     </p>
-    <form method="post" action="/admin/discovery/interval" class="rowform">
+    <form method="post" action="/admin/discovery/interval" class="frm frm-first">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label>Elke
-        <input type="number" name="secs" min="60" max="65535" step="60"
-               value="{{ poll_iv.secs if poll_iv and poll_iv.secs else 900 }}" required>
-        seconden
-      </label>
-      <button type="submit">Opslaan</button>
+      <label class="frm-label" for="disc-secs">Elke</label>
+      <fieldset class="frm-field"{{ mag|mag_attr }}>
+        <div class="frm-row">
+          <input type="number" id="disc-secs" name="secs" min="60" max="65535" step="60"
+                 value="{{ poll_iv.secs if poll_iv and poll_iv.secs else 900 }}" required>
+          <span class="muted small">seconden</span>
+        </div>
+        <p class="frm-hint">Ondergrens 60 s, want daar klemt de firmware zelf. Elke ronde is een
+          LoRa-heen-en-weer per gemonitorde node op een gedeelde band; korter betekent niet
+          meer weten maar vaker vragen.</p>
+      </fieldset>
+      <div class="frm-actions"><button type="submit"{{ mag|mag_attr }}>Opslaan</button></div>
     </form>
-    <p class="muted small">
-      Ondergrens 60 s, want daar klemt de firmware zelf. Elke ronde is een
-      LoRa-heen-en-weer per gemonitorde node op een gedeelde band; korter betekent niet
-      meer weten maar vaker vragen.
-    </p>
   </div>
 </section>
 
-<section>
+<section id="wie">
   <h2>Wie wil je uitvragen?</h2>
   <div class="card">
-    <p class="muted small">
+    <p class="card-desc">
       Jij wijst aan. Er is met opzet geen knop die alles aanklopt wat deze node ooit
       gehoord heeft: het gaat om andermans apparatuur op een gedeelde band, en een
       site die dat op eigen initiatief doet is niet nieuwsgierig maar onbeschoft.
@@ -125,25 +135,28 @@
         chat adverteren omdat een telefoon alleen bij een chatcontact een
         tekstvenster geeft. Dat filter sloot dus precies de nodes uit die je wilt
         uitlezen. De rol staat er nu als label en als sorteersleutel. -#}
-    <p class="muted small"><strong>De rol bepaalt de volgorde en niet wie er in staat.</strong>
-       Wat een node over zichzelf zegt (“repeater”, “chat”) is een bewering over waarvoor hij
-       bedoeld is; of hij telemetrie antwoordt is iets anders. Daarom staat alles hier, met
-       infrastructuur bovenaan — en bovenop dat alles: <em>wie ooit telemetrie geantwoord heeft</em>.
-       Dat is de enige meting in deze tabel, en de node onthoudt hem over een herstart heen.</p>
-    <table>
+    <details class="uitleg">
+      <summary>De rol bepaalt de volgorde en niet wie er in staat</summary>
+      <p>Wat een node over zichzelf zegt (“repeater”, “chat”) is een bewering over waarvoor hij
+         bedoeld is; of hij telemetrie antwoordt is iets anders. Daarom staat alles hier, met
+         infrastructuur bovenaan — en bovenop dat alles: <em>wie ooit telemetrie geantwoord heeft</em>.
+         Dat is de enige meting in deze tabel, en de node onthoudt hem over een herstart heen.</p>
+    </details>
+    <div class="tablewrap">
+    <table class="stack">
       <thead><tr><th>Node</th><th>Sleutel</th><th>Gehoord</th><th>Rol</th><th>Waarom in de lijst</th><th></th></tr></thead>
       <tbody>
       {% for h in heard.entries %}
       <tr>
-        <td>{{ h.name or "—" }}</td>
-        <td class="mono small">{{ h.key[:12] }}</td>
-        <td class="small">
+        <td data-l="Node"><strong>{{ h.name or "—" }}</strong></td>
+        <td data-l="Sleutel" class="mono small">{{ h.key[:12] }}</td>
+        <td data-l="Gehoord" class="small">
           {%- if h.cached %}<span class="muted" title="Uit een bewaarde advert; niet deze keer gehoord">uit advert</span>
           {%- elif h.snr is not none %}SNR {{ h.snr }}
           {%- else %}<span class="muted">—</span>{% endif %}
         </td>
-        <td class="small">{% if h.role %}{{ h.role }}{% else %}<span class="muted">onbekend</span>{% endif %}</td>
-        <td class="small">
+        <td data-l="Rol" class="small">{% if h.role %}{{ h.role }}{% else %}<span class="muted">onbekend</span>{% endif %}</td>
+        <td data-l="Waarom in de lijst" class="small">
           {%- if h.telemetry %}<strong>heeft al telemetrie geantwoord</strong><br>
           {%- endif %}
           {%- if h.why == 'heard' %}<span class="muted">nu gehoord</span>
@@ -157,7 +170,7 @@
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="key" value="{{ h.key }}">
             <input type="hidden" name="label" value="{{ h.name }}">
-            <button type="submit">Uitvragen</button>
+            <button type="submit" class="secondary"{{ mag|mag_attr }}>Uitvragen</button>
           </form>
           {% endif %}
         </td>
@@ -165,30 +178,32 @@
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% endif %}
 
-    <form method="post" action="/admin/discovery/probe" class="rowform">
+    <form method="post" action="/admin/discovery/probe" class="frm">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label>Of plak een publieke sleutel
-        <input name="key" placeholder="hex, minstens 8 tekens" autocomplete="off" required>
-      </label>
-      <label>Naam (optioneel)
-        <input name="label" maxlength="30" autocomplete="off">
-      </label>
-      <button type="submit">Uitvragen</button>
+      <label class="frm-label" for="disc-key">Of plak een publieke sleutel</label>
+      <fieldset class="frm-field"{{ mag|mag_attr }}>
+        <div class="frm-row">
+          <input id="disc-key" name="key" placeholder="hex, minstens 8 tekens" autocomplete="off" required>
+          <input name="label" maxlength="30" autocomplete="off" placeholder="Naam (optioneel)">
+        </div>
+      </fieldset>
+      <div class="frm-actions"><button type="submit"{{ mag|mag_attr }}>Uitvragen</button></div>
     </form>
   </div>
 </section>
 
 {% if jobs %}
-<section>
+<section id="uitkomst">
   <h2>Wat er terugkwam</h2>
   {% for key, job in jobs.items() %}
   <div class="card">
-    <h3>
-      {{ job.name or "(zonder naam)" }}
+    <div class="card-head">
+      <h3>{{ job.name or "(zonder naam)" }}</h3>
       <span class="mono muted small">{{ key[:12] }}</span>
-    </h3>
+    </div>
     <p class="small">
       <strong>
         {%- if job.result == "antwoord binnen" %}Antwoord binnen
@@ -220,6 +235,7 @@
 
     {% set res = results.get(key) %}
     {% if res and res.metrics %}
+    <div class="tablewrap">
     <table>
       <thead><tr><th>Meting</th><th>Waarde</th><th>Gelezen</th></tr></thead>
       <tbody>
@@ -232,6 +248,7 @@
       {% endfor %}
       </tbody>
     </table>
+    </div>
     <p class="muted small">
       Dit is wat een gast krijgt. Externe sensoren blijven achter: de firmware zet
       <code>perm_mask</code> op nul voor een gast, dus alleen de basistelemetrie komt mee.
@@ -246,13 +263,17 @@
     {% endif %}
 
     {% if job.result != "vergeten" %}
-    <form method="post" action="/admin/discovery/forget" class="inline">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="key" value="{{ key }}">
-      <button type="submit">Vergeten</button>
-    </form>
-    <span class="muted small">Haalt hem uit de monitorlijst van {{ sender.rep.name }},
-      zodat hij niet in elke volgende ronde meegaat.</span>
+    <div class="frm frm--nolabel">
+      <div class="frm-field"><p class="frm-hint">Haalt hem uit de monitorlijst van {{ sender.rep.name }},
+        zodat hij niet in elke volgende ronde meegaat.</p></div>
+      <div class="frm-actions">
+        <form method="post" action="/admin/discovery/forget" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="key" value="{{ key }}">
+          <button type="submit" class="secondary"{{ mag|mag_attr }}>Vergeten</button>
+        </form>
+      </div>
+    </div>
     {% endif %}
   </div>
   {% endfor %}
