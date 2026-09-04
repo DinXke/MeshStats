@@ -1455,3 +1455,14 @@ td.cmp-off { border-left: 2px solid var(--red); }
 @media (prefers-reduced-motion: reduce) {
   .pacman { animation: none; }
 }
+
+/* De 'groter'-knop onder een vaste grafiek. Onopvallend tot je hem zoekt: de
+   grafiek is de inhoud, dit is een hulpmiddel. Alleen zichtbaar gemaakt door
+   app.js, want zonder JavaScript doet hij niets. */
+.chartzoom {
+  display: block; margin: .5rem 0 0; padding: .2rem .5rem;
+  font-family: var(--mono); font-size: .7rem;
+  color: var(--muted); background: none; border: 1px solid var(--line);
+  border-radius: 4px; cursor: pointer;
+}
+.chartzoom:hover { color: var(--text); border-color: var(--accent); }

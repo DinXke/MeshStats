@@ -10,6 +10,26 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.14.0 - 2026-09-04
+
+- **Een gezamenlijke filterstatistiek.** Naast de losse tegels nu een frame met
+  de VERHOUDING: beoordeeld totaal, doorgelaten, weggegooid. Dat is een andere
+  vraag dan "hoeveel gooide hij weg" -- 200 geweigerd op 220 is een repeater die
+  niets meer doorlaat, 200 op 20.000 is een filter dat zijn werk doet. Daaronder
+  een tweede frame met de zes redenen naast elkaar; apart, omdat die reeksen
+  ordes van grootte lager liggen en in een gedeelde as allemaal op de nullijn
+  zouden vallen.
+- **De noemer is een echte meetreeks** (`filter_total` = doorgelaten +
+  weggegooid + vrijgesteld via de ACL), en alleen waar de node een
+  doorlaatteller meldt. Zonder die teller zou de som van de weigeringen de
+  noemer worden en las elke grafiek als "100% geweigerd" -- een cijfer dat klopt
+  met de opgeslagen data en toch onwaar is. Een stock-repeater meldt geen
+  `passed`, dus daar blijft die lijn gewoon weg.
+- **Elke vaste grafiek is nu open te klikken** ("Groter met meer periodes"): het
+  bestaande grote frame nam maar één reeks aan en kan er nu meerdere tekenen,
+  met de knoppen voor een langere periode. Een reeks die deze firmware niet
+  meldt, valt daar uit de legenda in plaats van de rest mee te trekken.
+
 ## 2.13.0 - 2026-09-04
 
 - **Kanaalfilter te beheren vanaf de site.** In het pollerblok op de nodepagina:

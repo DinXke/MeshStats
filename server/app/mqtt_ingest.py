@@ -788,6 +788,32 @@ def _filter_metrics(state: dict) -> dict:
         waarde = _num(state.get(sleutel))
         if waarde is not None:
             uit[naam] = waarde
+    # De NOEMER: alles waar het filter naar gekeken heeft. Doorgelaten plus
+    # weggegooid plus wat via de access list buitenom ging -- dat is het aantal
+    # pakketten waarover een beslissing genomen is, en dus het enige getal
+    # waartegen "hoeveel is er geweigerd" een verhouding is.
+    #
+    # Alleen als ``passed`` gemeld is. Zonder doorlaatteller zou de som van de
+    # drops de noemer worden en dan leest elke grafiek als "100% geweigerd" --
+    # precies het soort cijfer dat klopt met de opgeslagen data en toch onwaar
+    # is. Een node die geen passed meldt (de stock-variant) krijgt hier dus
+    # niets, en de grafiek laat die lijn dan gewoon weg.
+    if "filter_passed" in uit:
+        uit["filter_total"] = (uit["filter_passed"] + uit.get("filter_dropped", 0.0)
+                               + uit.get("filter_exempt", 0.0))
+    # De NOEMER: alles waar het filter naar gekeken heeft. Doorgelaten plus
+    # weggegooid plus wat via de access list buitenom ging -- dat is het aantal
+    # pakketten waarover een beslissing genomen is, en dus het enige getal
+    # waartegen "hoeveel is er geweigerd" een verhouding is.
+    #
+    # Alleen als ``passed`` gemeld is. Zonder doorlaatteller zou de som van de
+    # drops de noemer worden en dan leest elke grafiek als "100% geweigerd" --
+    # precies het soort cijfer dat klopt met de opgeslagen data en toch onwaar
+    # is. Een node die geen passed meldt (de stock-variant) krijgt hier dus
+    # niets, en de grafiek laat die lijn dan gewoon weg.
+    if "filter_passed" in uit:
+        uit["filter_total"] = (uit["filter_passed"] + uit.get("filter_dropped", 0.0)
+                               + uit.get("filter_exempt", 0.0))
     # Aan of uit als getal, zodat 'wanneer stond dit filter aan' een reeks is en
     # geen gok op basis van wanneer er weer iets weggegooid werd.
     if isinstance(state.get("on"), bool):

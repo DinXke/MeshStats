@@ -75,7 +75,8 @@ CATALOG = {
     # 'Ontvangen flood' zetten zou suggereren dat het metingen van dezelfde
     # soort zijn, en juist het verschil is hier het punt: een lijn die omhoog
     # loopt betekent dat er iets wegvalt omdat iemand dat zo ingesteld heeft.
-    "filter_on":              ("filter", "Filter aan", None, 0),
+    "filter_total":           ("filter", "Beoordeeld totaal", None, 0),
+    "filter_on":              ("filter", "Filter aan", None, 1),
     "filter_dropped":         ("filter", "Weggegooid totaal", None, 1),
     "filter_passed":          ("filter", "Doorgelaten", None, 2),
     "filter_exempt":          ("filter", "Vrijgesteld (ACL)", None, 3),
@@ -122,7 +123,7 @@ TILE_METRICS = {
     # zonder noemer zegt niets. Duizend weg is veel op tienduizend en bijna
     # niets op een miljoen, en dat verschil is precies wat je wil weten voor je
     # aan de regels gaat zitten.
-    "filter": ["filter_on", "filter_dropped", "filter_passed", "filter_exempt"],
+    "filter": ["filter_total", "filter_dropped", "filter_passed", "filter_exempt"],
 }
 
 # Charts on a repeater page: (key, title, [metrics], hours). The key is the
@@ -144,6 +145,19 @@ CHARTS = [
     # lege grafiek op elke nodepagina zou suggereren dat er iets stuk is op elke
     # node die simpelweg geen filter heeft.
     ("filter", "Pakketfilter (24 u)", ["filter_dropped", "filter_passed"], 24),
+    # EEN frame met de verhouding: hoeveel pakketten er beoordeeld zijn, hoeveel
+    # er door mochten en hoeveel niet. De vraag die dit beantwoordt is niet
+    # "hoeveel gooide hij weg" (dat staat hierboven) maar "hoeveel is dat van
+    # het geheel" -- 200 geweigerd op 220 is een repeater die niets meer
+    # doorlaat, 200 op 20.000 is een filter dat zijn werk doet.
+    ("filter_share", "Filter: aandeel van het geheel (24 u)",
+     ["filter_total", "filter_passed", "filter_dropped"], 24),
+    # En daaronder de zes redenen naast elkaar. Apart en niet in het frame
+    # hierboven: die reeksen liggen twee ordes van grootte lager dan het totaal,
+    # en in een gedeelde as zouden ze allemaal op de nullijn liggen.
+    ("filter_reasons", "Filter: reden van weigering (24 u)",
+     ["filter_drop_hops", "filter_drop_rate", "filter_drop_type",
+      "filter_drop_hash", "filter_drop_channel", "filter_drop_malformed"], 24),
     # De druk op de snelheidslimiet in één frame: hoe vaak beet hij, tegen hoe
     # vaak hij de kans had. Twee lijnen die uit elkaar lopen betekent een limiet
     # die ruim staat; twee die tegen elkaar aan kruipen er een die knelt.

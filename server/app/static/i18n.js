@@ -435,6 +435,9 @@
       "chart.msg_rates": "Berichtenrates (24 u)",
       "chart.neighbor_count": "Aantal buren (7 d)",
       "chart.filter": "Pakketfilter (24 u)",
+      "chart.filter_share": "Filter: aandeel van het geheel (24 u)",
+      "chart.filter_reasons": "Filter: reden van weigering (24 u)",
+      "chart.zoom": "\uD83D\uDD0D Groter met meer periodes",
       "chart.filter_rate": "Snelheidslimiet (24 u)",
 
       // --- metrieken (moeten gelijklopen met metrics.CATALOG) ---
@@ -485,6 +488,7 @@
       // Nederlandse label uit metrics.CATALOG -- ook op een Engelse pagina, want
       // apply() laat een onbekende sleutel staan zoals de template hem rendeerde.
       // Ze moeten dus in BEIDE talen staan, niet alleen in het Engels.
+      "metric.filter_total": "Beoordeeld totaal",
       "metric.filter_on": "Filter aan",
       "metric.filter_dropped": "Weggegooid totaal",
       "metric.filter_passed": "Doorgelaten",
@@ -961,6 +965,9 @@
       "chart.msg_rates": "Message rates (24 h)",
       "chart.neighbor_count": "Neighbour count (7 d)",
       "chart.filter": "Packet filter (24 h)",
+      "chart.filter_share": "Filter: share of the whole (24 h)",
+      "chart.filter_reasons": "Filter: reason for refusal (24 h)",
+      "chart.zoom": "\uD83D\uDD0D Larger, with more ranges",
       "chart.filter_rate": "Rate limit (24 h)",
 
       "metric.online": "Online",
@@ -1006,6 +1013,7 @@
       "metric.rx_airtime_utilization": "RX utilisation",
       "metric.airtime": "TX airtime total",
       "metric.rx_airtime": "RX airtime total",
+      "metric.filter_total": "Total judged",
       "metric.filter_on": "Filter on",
       "metric.filter_dropped": "Dropped total",
       "metric.filter_passed": "Forwarded",

@@ -848,32 +848,64 @@
     var modalEmpty = document.getElementById("modal-empty");
     var rangeBtns = modal.querySelectorAll(".rangebtns button");
     var modalChart = null;
-    var current = null; // {metric, label, unit}
+    // {metrics: [..], labels: [..], unit} -- een lijst, ook bij een enkele
+    // reeks. Een tegel opent er een, een grafiek opent er meer, en met twee
+    // codepaden zou de ene vorm ergens achterblijven bij een wijziging.
+    var current = null;
 
     function loadModal(hours) {
       rangeBtns.forEach(function (b) {
         b.classList.toggle("active", parseInt(b.dataset.hours, 10) === hours);
       });
-      fetchHistory(current.metric, hours).then(function (res) {
-        if (modalChart) { modalChart.destroy(); modalChart = null; }
-        var has = res.points && res.points.length > 0;
-        modalEmpty.hidden = has;
-        modalCanvas.parentElement.style.display = has ? "" : "none";
-        if (!has) return;
-        modalChart = lineChart(modalCanvas,
-                               [dataset(current.label, res.points, 0, true, zoneFor(current.metric))],
-                               current.unit, false, hours);
-      });
+      var mets = current.metrics;
+      Promise.all(mets.map(function (m) { return fetchHistory(m, hours); }))
+        .then(function (results) {
+          if (modalChart) { modalChart.destroy(); modalChart = null; }
+          // Leeg is leeg als GEEN van de reeksen punten heeft. Een reeks die
+          // deze firmware niet meldt (de stock-variant kent geen passed) hoort
+          // de andere niet mee te trekken; hij valt gewoon weg uit de legenda.
+          var gevuld = results.map(function (res, i) { return { res: res, i: i }; })
+                              .filter(function (x) { return x.res.points && x.res.points.length; });
+          modalEmpty.hidden = gevuld.length > 0;
+          modalCanvas.parentElement.style.display = gevuld.length ? "" : "none";
+          if (!gevuld.length) return;
+          var single = gevuld.length === 1;
+          var datasets = gevuld.map(function (x, n) {
+            return dataset(metricLabel(mets[x.i], current.labels[x.i]), x.res.points, n, single,
+                           single ? zoneFor(mets[x.i]) : null);
+          });
+          modalChart = lineChart(modalCanvas, datasets, current.unit,
+                                 gevuld.length > 1, hours);
+        });
     }
 
     function openModal(metric, label, unit) {
-      current = { metric: metric, label: label, unit: unit };
-      modalTitle.textContent = label;
+      openSeries([metric], [label], label, unit, metric);
+    }
+
+    // De algemene vorm: een of meer reeksen in het grote frame. ``mapMetric`` is
+    // de reeks waarop het kaartje in de modal zich richt -- bij meerdere reeksen
+    // is er niet een, en dan blijft die kaart weg in plaats van willekeurig de
+    // eerste te kiezen.
+    function openSeries(metrics, labels, title, unit, mapMetric) {
+      current = { metrics: metrics, labels: labels, unit: unit };
+      modalTitle.textContent = title;
       modal.hidden = false;
       document.body.style.overflow = "hidden";
-      if (window.mcsModalMap) window.mcsModalMap(metric);
+      if (window.mcsModalMap) window.mcsModalMap(mapMetric || null);
       loadModal((window.MCS && window.MCS.defaultHours) || 24);
     }
+
+    // De knop onder elke vaste grafiek. Pas hier zichtbaar gemaakt, want zonder
+    // JavaScript doet hij niets en dan hoort hij er niet te staan.
+    document.querySelectorAll(".chartzoom[data-expand]").forEach(function (btn) {
+      btn.hidden = false;
+      btn.addEventListener("click", function () {
+        var cfg = JSON.parse(btn.dataset.expand);
+        openSeries(cfg.metrics, cfg.labels, cfg.title, cfg.unit,
+                   cfg.metrics.length === 1 ? cfg.metrics[0] : null);
+      });
+    });
     function closeModal() {
       modal.hidden = true;
       document.body.style.overflow = "";
