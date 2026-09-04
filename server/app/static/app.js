@@ -896,14 +896,32 @@
       loadModal((window.MCS && window.MCS.defaultHours) || 24);
     }
 
-    // De knop onder elke vaste grafiek. Pas hier zichtbaar gemaakt, want zonder
-    // JavaScript doet hij niets en dan hoort hij er niet te staan.
-    document.querySelectorAll(".chartzoom[data-expand]").forEach(function (btn) {
-      btn.hidden = false;
-      btn.addEventListener("click", function () {
-        var cfg = JSON.parse(btn.dataset.expand);
+    // Elke vaste grafiek opent zichzelf groot -- dezelfde handeling als een
+    // tegel erboven. De rol en de tabstop worden HIER gezet en niet in het
+    // sjabloon: zonder JavaScript doet een klik niets, en dan mag er ook niets
+    // staan wat zich als knop voordoet.
+    //
+    // Toetsenbord erbij (de tegels hebben dat nog niet; dit is de nieuwe vorm):
+    // Enter en spatie doen wat een klik doet, en spatie mag de pagina niet laten
+    // scrollen terwijl de focus op de grafiek staat.
+    document.querySelectorAll(".chartcard[data-expand]").forEach(function (card) {
+      function open() {
+        var cfg = JSON.parse(card.dataset.expand);
         openSeries(cfg.metrics, cfg.labels, cfg.title, cfg.unit,
                    cfg.metrics.length === 1 ? cfg.metrics[0] : null);
+      }
+      card.classList.add("clickable");
+      card.setAttribute("role", "button");
+      card.setAttribute("tabindex", "0");
+      var titel = card.querySelector("h3");
+      card.setAttribute("aria-label",
+        (titel ? titel.textContent.trim() + " \u2014 " : "") + t("chart.zoom_aria"));
+      card.addEventListener("click", open);
+      card.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+          e.preventDefault();
+          open();
+        }
       });
     });
     function closeModal() {

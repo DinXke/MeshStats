@@ -1456,13 +1456,12 @@ td.cmp-off { border-left: 2px solid var(--red); }
   .pacman { animation: none; }
 }
 
-/* De 'groter'-knop onder een vaste grafiek. Onopvallend tot je hem zoekt: de
-   grafiek is de inhoud, dit is een hulpmiddel. Alleen zichtbaar gemaakt door
-   app.js, want zonder JavaScript doet hij niets. */
-.chartzoom {
-  display: block; margin: .5rem 0 0; padding: .2rem .5rem;
-  font-family: var(--mono); font-size: .7rem;
-  color: var(--muted); background: none; border: 1px solid var(--line);
-  border-radius: 4px; cursor: pointer;
+/* Een grafiekkaart die zichzelf groot opent. De klasse wordt door app.js gezet,
+   dus zonder JavaScript ziet de kaart eruit zoals hij is: niet aanklikbaar.
+   De focusrand is er met opzet zichtbaar -- dit is nu een tabstop, en een
+   tabstop die je niet ziet staan is er geen. */
+.chartcard.clickable { cursor: pointer; }
+.chartcard.clickable:hover { border-color: var(--accent); }
+.chartcard.clickable:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
 }
-.chartzoom:hover { color: var(--text); border-color: var(--accent); }

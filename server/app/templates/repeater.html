@@ -234,16 +234,15 @@
   <div class="sec-body">
   <div class="chartgrid">
   {% for c in b.charts %}
-    {#- Aanklikbaar: hetzelfde frame groot, met de knoppen voor een langere
-        periode. Een knop en geen div-met-onclick, zodat toetsenbord en
-        schermlezer hem vinden; zonder JavaScript blijft de kleine grafiek staan
-        en doet de knop niets (hij is dan ook niet zichtbaar). -#}
-    <div class="card chartcard">
+    {#- De hele kaart is aanklikbaar en opent dit frame groot, met de knoppen
+        voor een langere periode -- dezelfde handeling als op een tegel erboven,
+        dus dezelfde manier van doen. ``role`` en ``tabindex`` worden door app.js
+        gezet en niet hier: zonder JavaScript gebeurt er niets bij een klik, en
+        dan hoort dit ook geen knop te LIJKEN. -#}
+    <div class="card chartcard"
+         data-expand='{{ {"metrics": c.metrics, "labels": c.labels, "title": c.title, "unit": c.unit}|tojson }}'>
       <h3 data-i18n="chart.{{ c.key }}">{{ c.title }}</h3>
       <div class="chartwrap"><canvas data-chart='{{ {"slug": r.slug, "metrics": c.metrics, "labels": c.labels, "hours": c.hours, "unit": c.unit}|tojson }}'></canvas></div>
-      <button type="button" class="chartzoom" hidden
-              data-expand='{{ {"metrics": c.metrics, "labels": c.labels, "title": c.title, "unit": c.unit}|tojson }}'
-              data-i18n="chart.zoom">&#128269; Groter met meer periodes</button>
     </div>
   {% endfor %}
   </div>

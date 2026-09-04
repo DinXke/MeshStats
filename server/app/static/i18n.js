@@ -437,7 +437,7 @@
       "chart.filter": "Pakketfilter (24 u)",
       "chart.filter_share": "Filter: aandeel van het geheel (24 u)",
       "chart.filter_reasons": "Filter: reden van weigering (24 u)",
-      "chart.zoom": "\uD83D\uDD0D Groter met meer periodes",
+      "chart.zoom_aria": "klik om groter te openen, met meer periodes",
       "chart.filter_rate": "Snelheidslimiet (24 u)",
 
       // --- metrieken (moeten gelijklopen met metrics.CATALOG) ---
@@ -967,7 +967,7 @@
       "chart.filter": "Packet filter (24 h)",
       "chart.filter_share": "Filter: share of the whole (24 h)",
       "chart.filter_reasons": "Filter: reason for refusal (24 h)",
-      "chart.zoom": "\uD83D\uDD0D Larger, with more ranges",
+      "chart.zoom_aria": "click to open larger, with more ranges",
       "chart.filter_rate": "Rate limit (24 h)",
 
       "metric.online": "Online",
