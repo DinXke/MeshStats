@@ -802,6 +802,22 @@ tr.warn > td:first-child, tr.warnrow > td:first-child { border-left: 2px solid v
 .aandacht > li.bad-li { border-color: rgba(255, 92, 92, .5); }
 .aandacht p { margin: .3rem 0 0; }
 
+/* Vaste veldbreedtes in de commandokaarten van een companion, in plaats van
+   style="" per veld: kort voor een uur-bereik of één waarde, breed voor een
+   pubkey. Beide krimpen mee op een smal scherm. */
+.w-short { width: 7rem; max-width: 100%; }
+.w-wide { width: min(100%, 22rem); }
+/* De seriële terminal (companion.html, companions.js): het log is een vaste
+   hoogte met eigen schuifbalk, de sneltoetsen een rij pillen. */
+.serial-quick, .serial-tune { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin-bottom: .4rem; }
+#serial-io { margin-top: .7rem; }
+#serial-log {
+  height: 16rem; overflow: auto; white-space: pre-wrap;
+  background: var(--bg); border: 1px solid var(--card-edge); border-radius: 6px; padding: .6rem;
+  font-size: .8rem;
+}
+.serial-input { flex: 1; min-width: 12rem; }
+
 /* Een rij knoppen onder een blok: rechts uitgelijnd, zoals in .frm-actions. */
 .actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: .6rem; }
 .actions form { margin: 0; }

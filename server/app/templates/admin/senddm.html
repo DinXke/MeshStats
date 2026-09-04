@@ -5,16 +5,21 @@
 {#- De generieke Send-DM-tab. Herbruikbaar en niet aan één companion gebonden:
     kies WELKE node de DM verstuurt, kies een bestemming (een companion óf een
     contact van die node), typ een tekst, verstuur. Het vervoer is de bot van de
-    afzender-node (rooms.bot_sendto); het mesh routeert verder via de repeater. -#}
-<h1>Send-DM</h1>
+    afzender-node (rooms.bot_sendto); het mesh routeert verder via de repeater.
 
-<p class="muted">
-  Stuur een direct bericht het mesh op. Kies eerst welke <strong>node</strong> de
-  DM verstuurt — bijvoorbeeld de bot van de MeshUptime-node — en dan de
-  <strong>bestemming</strong>: een beheerde companion, of een contact dat die node
-  kent. De DM vertrekt bij de gekozen node en het lokale mesh brengt hem via de
-  repeater verder.
-</p>
+    De rechtenpoort zit op de afzender: per node in de keuzelijst staat de optie
+    uit met de reden als deze gebruiker er geen DM vanaf mag sturen
+    (mag_versturen, node.instelling.merkbaar op die node -- zie de route). -#}
+<div class="pagehead">
+  <div class="pagehead-top"><h1>Send-DM</h1></div>
+  <p class="muted small">
+    Stuur een direct bericht het mesh op. Kies eerst welke <strong>node</strong> de
+    DM verstuurt — bijvoorbeeld de bot van de MeshUptime-node — en dan de
+    <strong>bestemming</strong>: een beheerde companion, of een contact dat die node
+    kent. De DM vertrekt bij de gekozen node en het lokale mesh brengt hem via de
+    repeater verder.
+  </p>
+</div>
 
 {% if result %}
 <div class="card notice">
@@ -24,7 +29,7 @@
 {% endif %}
 
 {% if not senders %}
-<p class="muted small">&#9888; Geen enkele node heeft nu een bereikbare eigen API met
+<p class="waarschuwing waarschuwing--amber">&#9888; Geen enkele node heeft nu een bereikbare eigen API met
   een bot om vanaf te versturen. Zet het adres van de eigen API van een node
   (sensor-host) en zorg dat er een botidentiteit op draait.</p>
 {% endif %}
@@ -38,56 +43,66 @@
   {% endfor %}
 </datalist>
 
-<form method="post" action="/admin/senddm/send" id="senddm-form" class="card cmd-ajax" style="margin-top:1rem">
+<form method="post" action="/admin/senddm/send" id="senddm-form" class="card cmd-ajax">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <p>
-    <label>Afzender-node (verstuurt de DM)<br>
+  <div class="frm frm-first">
+    <label class="frm-label" for="dm-sender">Afzender-node</label>
+    <div class="frm-field">
       <select name="sender" id="dm-sender" required data-contacts="/admin/senddm/contacts/">
         <option value="">— kies een node —</option>
         {% for s in senders %}
         <option value="{{ s.id }}"{% set b = mag_versturen[s.id] %}
-          {% if not b.allowed %} disabled title="{{ b.reason }}"{% endif %}>{{ s.name }}</option>
+          {% if not b.allowed %} disabled title="{{ b.reason }}"{% endif %}>{{ s.name }}{% if not b.allowed %} — {{ b.reason }}{% endif %}</option>
         {% endfor %}
-      </select></label>
-  </p>
+      </select>
+      <p class="frm-hint">De node die de DM verstuurt. Een node waar u geen DM vanaf mag sturen staat uit,
+         met de reden erbij.</p>
+    </div>
+    <div class="frm-actions"></div>
+  </div>
 
   {#- Twee wegen naar dezelfde pubkey: een keuzelijst die met JavaScript gevuld
       wordt zodra er een afzender gekozen is (bestemming -> vult het veld), en het
       veld zelf, waarin een pubkey ook met de hand of via de datalist kan. -#}
-  <p>
-    <label>Bestemming kiezen<br>
+  <div class="frm">
+    <label class="frm-label" for="dm-dest-pick">Bestemming</label>
+    <div class="frm-field">
       <select id="dm-dest-pick">
         <option value="">— kies een afzender om contacten te laden —</option>
         {% for c in companions %}
         <option value="{{ c.pubkey }}">{{ c.name }} (companion)</option>
         {% endfor %}
-      </select></label>
-    <span class="muted small" id="dm-dest-note"></span>
-  </p>
-  <p>
-    <label>Bestemming-pubkey (64 hex)<br>
+      </select>
+      <span class="muted small" id="dm-dest-note"></span>
       <input name="pubkey" id="dm-pubkey" class="mono" list="dm-dests"
              pattern="[0-9a-fA-F]{64}" maxlength="64" required
-             style="width:min(100%,42rem)"
-             placeholder="volledige pubkey, of kies hierboven"></label>
-  </p>
-  <p>
-    <label>Bericht<br>
-      <input name="msg" required style="width:min(100%,42rem)"
-             placeholder="het bericht (voor een T1000-E-commando: !find, !vol 2, …)"></label>
-  </p>
+             placeholder="volledige pubkey, of kies hierboven" aria-label="Bestemming-pubkey (64 hex)">
+      <p class="frm-hint">Kies een companion of een contact van de afzender, of plak de pubkey (64 hex) zelf.</p>
+    </div>
+    <div class="frm-actions"></div>
+  </div>
+  <div class="frm">
+    <label class="frm-label" for="dm-msg">Bericht</label>
+    <div class="frm-field">
+      <input name="msg" id="dm-msg" required
+             placeholder="het bericht (voor een T1000-E-commando: !find, !vol 2, …)">
+    </div>
+    <div class="frm-actions"></div>
+  </div>
   {#- Dezelfde bot-kiezer als de companion-pagina (companions.js: wireBotPicker),
       hier zonder ``data-rep`` -- er is nog geen afzender gekozen bij het laden
       van deze pagina, dus de lijst vult zich pas zodra de select hierboven
       verandert. Leeg laat de server zelf kiezen. -#}
-  <div id="bot-picker" data-rep="">
-    <label class="small muted">verstuurt via (bot)
+  <div class="frm" id="bot-picker" data-rep="">
+    <label class="frm-label" for="bot-choice">Verstuurt via (bot)</label>
+    <div class="frm-field">
       <select id="bot-choice" name="bot">
         <option value="">— standaard (MGMT, indien aanwezig) —</option>
-      </select></label>
-    <span class="muted small" id="bot-note"></span>
+      </select>
+      <span class="muted small" id="bot-note"></span>
+    </div>
+    <div class="frm-actions"><button type="submit">Versturen</button></div>
   </div>
-  <button type="submit">Versturen</button>
 </form>
 
 {% endblock %}

@@ -1,14 +1,15 @@
 {% extends "admin/_layout.html" %}
 {% block title %}Vergelijken — beheer — {{ site_name }}{% endblock %}
 {% block admin %}
-<h1>Repeaters vergelijken</h1>
-
-<p class="muted">
-  Alle repeaters naast elkaar. De nadruk ligt op wat er <strong>uit de pas
-  loopt</strong>: bij drie nodes zie je dat zelf nog, bij twintig niet meer, en
-  dan is een node met een afwijkende instelling iets wat je pas ontdekt als er
-  iets misgaat.
-</p>
+<div class="pagehead">
+  <div class="pagehead-top"><h1>Repeaters vergelijken</h1></div>
+  <p class="muted small">
+    Alle repeaters naast elkaar. De nadruk ligt op wat er <strong>uit de pas
+    loopt</strong>: bij drie nodes zie je dat zelf nog, bij twintig niet meer, en
+    dan is een node met een afwijkende instelling iets wat je pas ontdekt als er
+    iets misgaat.
+  </p>
+</div>
 
 {#- De legenda staat vóór de tabel en niet erna. Een lezer die niet weet wat een
     gemarkeerd vakje betekent, leest de markering als een fout van de site. -#}
@@ -20,12 +21,13 @@
     <span class="cmp-never">niet gevraagd</span> — deze parameter staat niet in
     de uitleeslijst, of er is nooit een ronde geweest.
   </p>
-  <p class="muted small" style="margin:.4rem 0 0">
-    Er wordt alleen gemarkeerd als er een <em>echte</em> meerderheid is om van af
-    te wijken, en pas vanaf drie nodes met een waarde. Twee nodes die het oneens
-    zijn hebben geen afwijker — ze zijn het gewoon oneens, en beide vakjes
-    kleuren zegt niets.
-  </p>
+  <details class="uitleg">
+    <summary>Wanneer er gemarkeerd wordt</summary>
+    <p>Er wordt alleen gemarkeerd als er een <em>echte</em> meerderheid is om van af
+       te wijken, en pas vanaf drie nodes met een waarde. Twee nodes die het oneens
+       zijn hebben geen afwijker — ze zijn het gewoon oneens, en beide vakjes
+       kleuren zegt niets.</p>
+  </details>
 </div>
 
 {% if tabel.rijen %}
@@ -115,10 +117,14 @@
 {% endif %}
 
 {% if bewerken %}
-<section>
+{#- De klasse van de parameter bepaalt kleur en poort, net als op de nodepagina:
+    dezelfde drie woorden als in rbac.ACTIONS en in de route (compare_write). -#}
+{% set mz = mag_zetten if mag_zetten is defined else none %}
+<section id="zetten">
   <h2>Zetten: <span class="mono">{{ bewerken.key }}</span> op
     <a href="/admin/repeaters/{{ bewerken.rij.rep.id }}">{{ bewerken.rij.rep.name }}</a></h2>
-  <div class="card">
+  {% set p = bewerken.param %}
+  <div class="card{% if p %} risk-{{ 'gewoon' if p.risk == 1 else ('merkbaar' if p.risk == 2 else 'ingrijpend') }}{% endif %}">
   {% if not bewerken.lijst.ok %}
     <p class="muted small"><strong>Kan niet:</strong>
       {{ bewerken.lijst.error or "deze node biedt geen parameterlijst aan" }}.</p>
@@ -133,8 +139,11 @@
         in de firmware. -#}
     <p class="muted small"><strong>Niet van afstand:</strong> {{ cfg_no_remote_reason }}</p>
   {% else %}
-    {% set p = bewerken.param %}
-    <p class="muted small">
+    <div class="card-head">
+      <h3>{{ bewerken.key }}</h3>
+      <span class="act-tag">{% if p.risk == 1 %}gewoon{% elif p.risk == 2 %}merkbaar &middot; bevestigen{% else %}ingrijpend &middot; naam overtypen{% endif %}</span>
+    </div>
+    <p class="card-desc">
       Nu:
       {% if bewerken.huidig %}<span class="mono">{{ bewerken.huidig }}</span>
       {% else %}<span class="muted">onbekend</span>{% endif %}.
@@ -142,57 +151,66 @@
       Gaat het mis op een node die je alleen over de radio bereikt, dan is er geen
       tweede weg om het mee terug te draaien.{% endif %}
     </p>
-    <form method="post" action="/admin/compare/write" class="rowform">
+    <form method="post" action="/admin/compare/write" class="frm frm-first">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="rid" value="{{ bewerken.rij.rep.id }}">
       <input type="hidden" name="key" value="{{ bewerken.key }}">
-      {% if p.kind == "bool" %}
-      <select name="value"><option value="on">on</option><option value="off">off</option></select>
-      {% elif p.kind == "enum" %}
-      <select name="value">
-        {% for c in p.choices.split("|") if c %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
-      </select>
-      {% elif p.kind == "radio" %}
-      <input type="number" name="rf" step="0.001" min="150" max="2500" placeholder="freq" required>
-      <input type="number" name="rb" step="0.001" min="7" max="500" placeholder="bw" required>
-      <input type="number" name="rs" step="1" min="5" max="12" placeholder="sf" required>
-      <input type="number" name="rc" step="1" min="5" max="8" placeholder="cr" required>
-      {% elif p.kind == "int" %}
-      <input type="number" name="value" step="1" min="{{ p.lo }}" max="{{ p.hi }}" required>
-      {% elif p.kind == "float" %}
-      <input type="number" name="value" step="any" min="{{ p.lo }}" max="{{ p.hi }}" required>
-      {% elif p.secret %}
-      <input type="password" name="value" maxlength="39" autocomplete="new-password" required>
-      {% else %}
-      <input name="value" maxlength="39" autocomplete="off" required>
-      {% endif %}
-
-      {% if p.risk == 2 %}
-      <label class="cfgconfirm"><input type="checkbox" name="confirm" value="ja" required>
-        bevestig</label>
-      {% elif p.risk == 3 %}
-      <input name="confirm" placeholder="{{ bewerken.rij.rep.name }}" autocomplete="off" required
-             title="Typ de naam van deze node over om te bevestigen">
-      {% endif %}
-      <button type="submit" {% if p.risk == 3 %}class="danger"{% endif %}>Zet</button>
-      <a href="/admin/compare" class="muted small">annuleren</a>
+      <label class="frm-label" for="cmp-value">Nieuwe waarde</label>
+      <fieldset class="frm-field"{{ mz|mag_attr }}>
+        <div class="frm-row">
+        {% if p.kind == "bool" %}
+        <select name="value" id="cmp-value"><option value="on">on</option><option value="off">off</option></select>
+        {% elif p.kind == "enum" %}
+        <select name="value" id="cmp-value">
+          {% for c in p.choices.split("|") if c %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+        {% elif p.kind == "radio" %}
+        <input type="number" name="rf" id="cmp-value" step="0.001" min="150" max="2500" placeholder="freq" required>
+        <input type="number" name="rb" step="0.001" min="7" max="500" placeholder="bw" required>
+        <input type="number" name="rs" step="1" min="5" max="12" placeholder="sf" required>
+        <input type="number" name="rc" step="1" min="5" max="8" placeholder="cr" required>
+        {% elif p.kind == "int" %}
+        <input type="number" name="value" id="cmp-value" step="1" min="{{ p.lo }}" max="{{ p.hi }}" required>
+        {% elif p.kind == "float" %}
+        <input type="number" name="value" id="cmp-value" step="any" min="{{ p.lo }}" max="{{ p.hi }}" required>
+        {% elif p.secret %}
+        <input type="password" name="value" id="cmp-value" maxlength="39" autocomplete="new-password" required>
+        {% else %}
+        <input name="value" id="cmp-value" maxlength="39" autocomplete="off" required>
+        {% endif %}
+        </div>
+      </fieldset>
+      <fieldset class="frm-actions"{{ mz|mag_attr }}>
+        {% if p.risk == 2 %}
+        <label class="cfgconfirm"><input type="checkbox" name="confirm" value="ja" required>
+          bevestig</label>
+        {% elif p.risk == 3 %}
+        <input name="confirm" placeholder="{{ bewerken.rij.rep.name }}" autocomplete="off" required
+               title="Typ de naam van deze node over om te bevestigen">
+        {% endif %}
+        <a href="/admin/compare" class="muted small">annuleren</a>
+        <button type="submit" {% if p.risk == 3 %}class="danger"{% endif %}>Zet</button>
+      </fieldset>
     </form>
+    {% if mz and not mz.allowed %}<p class="muted small">&#128274; {{ mz.reason }}.</p>{% endif %}
   {% endif %}
   </div>
 </section>
 {% endif %}
 
-<section>
+<section id="kolommen">
   <h2>Kolommen</h2>
   <div class="card">
-    <p class="muted small">
+    <p class="card-desc">
       Wat er te kiezen valt zijn de vaste gegevens plus elke parameter die van
       minstens één node ooit uitgelezen is. Een parameter die nergens gelezen is
       staat er niet bij: een lege kolom lijkt op een probleem terwijl er alleen
       nooit iets uitgevraagd is.
     </p>
+    {% set sk = serverrechten['server.instellingen'] if serverrechten else none %}
     <form method="post" action="/admin/compare/columns">
       <input type="hidden" name="csrf" value="{{ csrf }}">
+      <fieldset{{ sk|mag_attr }}>
       <div class="cmp-cols">
         {% for k, label in tabel.keuzes %}
         <label class="cmp-col">
@@ -202,15 +220,19 @@
         </label>
         {% endfor %}
       </div>
-      <button type="submit">Kolommen opslaan</button>
+      <div class="actions left"><button type="submit"{{ sk|mag_attr }}>Kolommen opslaan</button></div>
+      </fieldset>
     </form>
-    <p class="muted small" style="margin-top:.6rem">
-      De keuze wordt op de server bewaard en geldt dus voor iedereen die inlogt —
-      beheer is een gedeelde taak, en wie een tabel inricht die laat zien dat één
-      node uit de pas loopt, wil dat de volgende hetzelfde ziet. Een
-      <code>?cols=</code> in de URL wint eenmalig, om een blik te kunnen delen
-      zonder de opgeslagen keuze te overschrijven.
-    </p>
+    <details class="uitleg">
+      <summary>Waarom de keuze voor iedereen geldt</summary>
+      <p>
+        De keuze wordt op de server bewaard en geldt dus voor iedereen die inlogt —
+        beheer is een gedeelde taak, en wie een tabel inricht die laat zien dat één
+        node uit de pas loopt, wil dat de volgende hetzelfde ziet. Een
+        <code>?cols=</code> in de URL wint eenmalig, om een blik te kunnen delen
+        zonder de opgeslagen keuze te overschrijven.
+      </p>
+    </details>
   </div>
 </section>
 {% endblock %}

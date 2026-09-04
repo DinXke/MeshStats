@@ -1,14 +1,20 @@
 {% extends "admin/_layout.html" %}
 {% block title %}Monitors — beheer — {{ site_name }}{% endblock %}
 {% block admin %}
-<h1>Wie mag welke node uitvragen</h1>
-
-<p class="muted">
-  Een node die alleen over LoRa te bereiken is, wordt uitgevraagd door een andere
-  repeater — zijn <strong>monitor</strong>. Tot nu toe was dat een waarneming: wie
-  zijn cijfers doorstuurde, was het. Hier stel je het in, met een volgorde, zodat
-  bij stilte de volgende kandidaat het probeert.
-</p>
+{#- "Monitors" en niet "Beheerders": deze pagina gaat over welke node welke
+    andere node uitvraagt. De rechtenpoorten komen per node uit de route
+    (mag_schema: node.schema, dezelfde klasse als het uitvraagschema, want wie
+    hier iets zet bepaalt van wélke node er elke ronde zendtijd afgaat;
+    mag_bekijken: node.bekijken; mag_groep: server.instellingen). -#}
+<div class="pagehead">
+  <div class="pagehead-top"><h1>Monitors: wie mag welke node uitvragen</h1></div>
+  <p class="muted small">
+    Een node die alleen over LoRa te bereiken is, wordt uitgevraagd door een andere
+    repeater — zijn <strong>monitor</strong>. Tot nu toe was dat een waarneming: wie
+    zijn cijfers doorstuurde, was het. Hier stel je het in, met een volgorde, zodat
+    bij stilte de volgende kandidaat het probeert.
+  </p>
+</div>
 
 {% if outcome %}
 <div class="card notice">
@@ -54,96 +60,105 @@
 </div>
 {% else %}
 
-<section>
+<section id="per-node">
   <h2>Per node</h2>
   {% for row in rows %}
+  {% set ms = mag_schema[row.rep.id] if mag_schema is defined else none %}
   <div class="card">
-    <h3>
-      <a href="/admin/repeaters/{{ row.rep.id }}">{{ row.rep.name }}</a>
+    <div class="card-head">
+      <h3><a href="/admin/repeaters/{{ row.rep.id }}">{{ row.rep.name }}</a></h3>
       <span class="mono muted small">{{ row.rep.pubkey_prefix }}</span>
-    </h3>
+    </div>
 
     {#- Waarneming náást configuratie, nooit in plaats van. Ze kunnen verschillen
         en dat verschil is informatie: X hoort hem en Y bereikt hem niet, of
         iemand heeft de instelling net veranderd en de volgende ronde moet het
         nog laten zien. -#}
-    <p class="small">
-      <strong>Waargenomen:</strong>
-      {%- if row.observed and row.observed.id == row.rep.id %}
-      stuurt zijn cijfers zelf in.
-      {%- elif row.observed %}
-      stuurt zijn cijfers door via <a href="/admin/repeaters/{{ row.observed.id }}">{{ row.observed.name }}</a>.
-      {%- else %}
-      er is nog geen bericht van of over deze node binnengekomen.
-      {%- endif %}
-      <br>
-      <strong>Ingesteld:</strong>
-      {%- if row.source == "node" %}
-      {% for m in row.configured %}{{ m.name }}{% if not loop.last %}, dan {% endif %}{% endfor %}.
-      {%- elif row.source == "group" %}
-      via nodegroep <em>{{ row.group.name }}</em>:
-      {% for m in row.configured %}{{ m.name }}{% if not loop.last %}, dan {% endif %}{% endfor %}.
-      {%- else %}
-      niets — dan geldt de waarneming, en dat is voor de meeste installaties het
-      juiste antwoord.
-      {%- endif %}
-    </p>
+    <table class="kv">
+      <tr><td>Waargenomen</td><td>
+        {%- if row.observed and row.observed.id == row.rep.id %}
+        stuurt zijn cijfers zelf in.
+        {%- elif row.observed %}
+        stuurt zijn cijfers door via <a href="/admin/repeaters/{{ row.observed.id }}">{{ row.observed.name }}</a>.
+        {%- else %}
+        er is nog geen bericht van of over deze node binnengekomen.
+        {%- endif %}</td></tr>
+      <tr><td>Ingesteld</td><td>
+        {%- if row.source == "node" %}
+        {% for m in row.configured %}{{ m.name }}{% if not loop.last %}, dan {% endif %}{% endfor %}.
+        {%- elif row.source == "group" %}
+        via nodegroep <em>{{ row.group.name }}</em>:
+        {% for m in row.configured %}{{ m.name }}{% if not loop.last %}, dan {% endif %}{% endfor %}.
+        {%- else %}
+        niets — dan geldt de waarneming, en dat is voor de meeste installaties het
+        juiste antwoord.
+        {%- endif %}</td></tr>
+      {#- Wat er bij de laatste geplande poging gebeurde. Zonder dit is een lijst
+          die nooit voorbij de eerste kandidaat komt niet op te merken. -#}
+      {% set poging = attempts.get(row.rep.pubkey_prefix) %}
+      {% if poging and poging.result %}
+      <tr><td>Laatste poging</td><td{% if poging.result == 'gevraagd, geen antwoord' or poging.result == 'monitor kan het niet' %} class="cmp-off"{% endif %}>
+        {{ poging.result }}
+        {%- if poging.cursor %} (stond op kandidaat {{ poging.cursor + 1 }}){% endif %}.
+        {%- if poging.result == "monitor kan het niet" %}
+        Er wordt <em>niet</em> doorgeschoven naar de volgende: dit is blijvend en was
+        bij de eerste poging al bekend. Doorschuiven zou verbergen dat de eerste
+        kandidaat verkeerd staat.
+        {%- elif poging.result == "alle monitors geprobeerd, geen antwoord" %}
+        De hele lijst is afgelopen zonder antwoord.
+        {%- endif %}</td></tr>
+      {% endif %}
+    </table>
 
-    {#- Wat er bij de laatste geplande poging gebeurde. Zonder dit is een lijst
-        die nooit voorbij de eerste kandidaat komt niet op te merken. -#}
-    {% set poging = attempts.get(row.rep.pubkey_prefix) %}
-    {% if poging and poging.result %}
-    <p class="small{% if poging.result == 'gevraagd, geen antwoord' or poging.result == 'monitor kan het niet' %} cmp-off{% endif %}"
-       {%- if poging.result == 'monitor kan het niet' %} style="padding:.4rem .5rem"{% endif %}>
-      <strong>Laatste poging:</strong> {{ poging.result }}
-      {%- if poging.cursor %} (stond op kandidaat {{ poging.cursor + 1 }}){% endif %}.
-      {%- if poging.result == "monitor kan het niet" %}
-      Er wordt <em>niet</em> doorgeschoven naar de volgende: dit is blijvend en was
-      bij de eerste poging al bekend. Doorschuiven zou verbergen dat de eerste
-      kandidaat verkeerd staat.
-      {%- elif poging.result == "alle monitors geprobeerd, geen antwoord" %}
-      De hele lijst is afgelopen zonder antwoord.
-      {%- endif %}
-    </p>
-    {% endif %}
-
-    <form method="post" action="/admin/repeaters/{{ row.rep.id }}/monitors" class="rowform">
+    <form method="post" action="/admin/repeaters/{{ row.rep.id }}/monitors" class="frm">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      {% for n in range(max_candidates) %}
-      <label>{{ loop.index }}<sup>e</sup>
-        <select name="m{{ loop.index }}">
-          <option value="">— geen —</option>
-          {% for opt in row.options %}
-          {#- Een kandidaat die het nooit kan staat er als zodanig bij, met de
-              reden. Dat was de eis van het begin: een lijst met een monitor die
-              het nooit kan, is een lijst die liegt. -#}
-          <option value="{{ opt.rep.id }}"
-                  {% if opt.problem %}disabled title="{{ opt.problem }}"{% endif %}
-                  {% if row.configured | length > n and row.configured[n].id == opt.rep.id and row.source == "node" %}selected{% endif %}>
-            {{ opt.rep.name }}{% if opt.problem %} — kan niet{% endif %}
-          </option>
-          {% endfor %}
-        </select>
-      </label>
-      {% endfor %}
-      <button type="submit">Opslaan</button>
+      <span class="frm-label">Volgorde</span>
+      <fieldset class="frm-field"{{ ms|mag_attr }}>
+        <div class="frm-row">
+        {% for n in range(max_candidates) %}
+        <label class="check">{{ loop.index }}<sup>e</sup>
+          <select name="m{{ loop.index }}" aria-label="Kandidaat {{ loop.index }}">
+            <option value="">— geen —</option>
+            {% for opt in row.options %}
+            {#- Een kandidaat die het nooit kan staat er als zodanig bij, met de
+                reden. Dat was de eis van het begin: een lijst met een monitor die
+                het nooit kan, is een lijst die liegt. -#}
+            <option value="{{ opt.rep.id }}"
+                    {% if opt.problem %}disabled title="{{ opt.problem }}"{% endif %}
+                    {% if row.configured | length > n and row.configured[n].id == opt.rep.id and row.source == "node" %}selected{% endif %}>
+              {{ opt.rep.name }}{% if opt.problem %} — kan niet{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endfor %}
+        </div>
+        <p class="frm-hint">Leeg betekent: terug naar de waarneming. Bij stilte probeert de
+          volgende kandidaat het.</p>
+      </fieldset>
+      <div class="frm-actions"><button type="submit"{{ ms|mag_attr }}>Opslaan</button></div>
     </form>
+    {% if ms and not ms.allowed %}<p class="muted small">&#128274; {{ ms.reason }}.</p>{% endif %}
 
     {% if row.effective %}
-    <form method="post" action="/admin/repeaters/{{ row.rep.id }}/monitors/rights" class="inline">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="mid" value="{{ row.effective[0].id }}">
-      <button type="submit">Rechten van {{ row.effective[0].name }} nakijken</button>
-    </form>
-    <span class="muted small">Vraagt de monitor zelf of hij bij deze node binnenkomt.
-      Niet automatisch: op deze pagina zou dat één HTTP-verzoek per node per weergave zijn.</span>
+    <div class="frm frm--nolabel">
+      <div class="frm-field"><p class="frm-hint">Vraagt de monitor zelf of hij bij deze node binnenkomt.
+        Niet automatisch: op deze pagina zou dat één HTTP-verzoek per node per weergave zijn.</p></div>
+      <div class="frm-actions">
+        <form method="post" action="/admin/repeaters/{{ row.rep.id }}/monitors/rights" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="mid" value="{{ row.effective[0].id }}">
+          <button type="submit" class="secondary"{{ (mag_bekijken[row.rep.id] if mag_bekijken is defined else none)|mag_attr }}>Rechten van {{ row.effective[0].name }} nakijken</button>
+        </form>
+      </div>
+    </div>
     {% endif %}
   </div>
   {% endfor %}
 </section>
 
 {% if groups %}
-<section>
+<section id="per-groep">
   <h2>Per nodegroep</h2>
   <p class="muted small">
     Zodat twintig nodes niet twintig keer hoeven. Een lijst op een node <strong>wint</strong>
@@ -153,36 +168,41 @@
   </p>
   {% for g in groups %}
   <div class="card">
-    <h3>{{ g.group.name }} <span class="muted small">{{ g.members }} node(s)</span></h3>
-    <form method="post" action="/admin/nodegroups/{{ g.group.id }}/monitors" class="rowform">
+    <div class="card-head"><h3>{{ g.group.name }}</h3> <span class="muted small">{{ g.members }} node(s)</span></div>
+    <form method="post" action="/admin/nodegroups/{{ g.group.id }}/monitors" class="frm frm-first">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      {% for n in range(max_candidates) %}
-      <label>{{ loop.index }}<sup>e</sup>
-        <select name="m{{ loop.index }}">
-          <option value="">— geen —</option>
-          {% for m in possible %}
-          <option value="{{ m.id }}"
-                  {% if g.monitors | length > n and g.monitors[n].id == m.id %}selected{% endif %}>
-            {{ m.name }}
-          </option>
-          {% endfor %}
-        </select>
-      </label>
-      {% endfor %}
-      <button type="submit">Opslaan</button>
+      <span class="frm-label">Volgorde</span>
+      <fieldset class="frm-field"{{ (mag_groep if mag_groep is defined else none)|mag_attr }}>
+        <div class="frm-row">
+        {% for n in range(max_candidates) %}
+        <label class="check">{{ loop.index }}<sup>e</sup>
+          <select name="m{{ loop.index }}" aria-label="Kandidaat {{ loop.index }}">
+            <option value="">— geen —</option>
+            {% for m in possible %}
+            <option value="{{ m.id }}"
+                    {% if g.monitors | length > n and g.monitors[n].id == m.id %}selected{% endif %}>
+              {{ m.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endfor %}
+        </div>
+        <p class="frm-hint">
+          Hier wordt niet per lid gecontroleerd of de monitor die node kan bereiken: dat
+          hangt van de node af en een groep kan leden hebben die verschillen. De regel van
+          elke node hierboven laat zien wat er voor hém uitkomt — de groep is een voorkeur,
+          geen belofte per lid.
+        </p>
+      </fieldset>
+      <div class="frm-actions"><button type="submit"{{ (mag_groep if mag_groep is defined else none)|mag_attr }}>Opslaan</button></div>
     </form>
-    <p class="muted small">
-      Hier wordt niet per lid gecontroleerd of de monitor die node kan bereiken: dat
-      hangt van de node af en een groep kan leden hebben die verschillen. De regel van
-      elke node hierboven laat zien wat er voor hém uitkomt — de groep is een voorkeur,
-      geen belofte per lid.
-    </p>
   </div>
   {% endfor %}
 </section>
 {% endif %}
 
-<section>
+<section id="twee-lijsten">
   <h2>Deze lijst en de lijst op de node zelf</h2>
   <div class="card">
     <p class="small">
@@ -191,21 +211,24 @@
       (<code>wifi mon</code>, of zijn beheerpagina) zegt wie hij werkelijk kán uitvragen —
       daar staan de sleutels en, als het nodig is, het wachtwoord.
     </p>
-    <p class="small">
-      Ze moeten het eens zijn, en deze pagina vult de lijst op de node
-      <strong>niet</strong> automatisch. Dat is een keuze: een node aan die lijst
-      toevoegen laat de monitor hem elke ronde pollen — terugkerende zendtijd — en het
-      vraagt een besluit over inloggegevens (leeg, via zijn toegangslijst, of een
-      wachtwoord). Zulke gevolgen horen niet als bijwerking van een keuzelijst te
-      ontstaan.
-    </p>
-    <p class="muted small">
-      Twee wegen die die lijst wél vullen en die hier dus niet doorkruist worden:
-      <a href="/admin/discovery">Uitvragen</a> zet een node erin zonder wachtwoord (de
-      gastweg), en de beheerpagina van de repeater zelf blijft de baas over zijn eigen
-      lijst. Staat een node hier ingesteld maar niet in de lijst van die monitor, dan
-      zegt “Rechten nakijken” dat met zoveel woorden.
-    </p>
+    <details class="uitleg">
+      <summary>Waarom deze pagina de lijst op de node niet zelf vult</summary>
+      <p>
+        Ze moeten het eens zijn, en deze pagina vult de lijst op de node
+        <strong>niet</strong> automatisch. Dat is een keuze: een node aan die lijst
+        toevoegen laat de monitor hem elke ronde pollen — terugkerende zendtijd — en het
+        vraagt een besluit over inloggegevens (leeg, via zijn toegangslijst, of een
+        wachtwoord). Zulke gevolgen horen niet als bijwerking van een keuzelijst te
+        ontstaan.
+      </p>
+      <p>
+        Twee wegen die die lijst wél vullen en die hier dus niet doorkruist worden:
+        <a href="/admin/discovery">Uitvragen</a> zet een node erin zonder wachtwoord (de
+        gastweg), en de beheerpagina van de repeater zelf blijft de baas over zijn eigen
+        lijst. Staat een node hier ingesteld maar niet in de lijst van die monitor, dan
+        zegt “Rechten nakijken” dat met zoveel woorden.
+      </p>
+    </details>
   </div>
 </section>
 {% endif %}

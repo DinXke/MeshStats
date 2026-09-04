@@ -8,56 +8,64 @@
      tokens, bewaartermijn, weergave &mdash; staan onder <a href="/admin/server">Server en site</a>.</p>
 </div>
 
-{# Verborgen binnenkomen mag, ongemerkt binnenkomen niet. Een repeater die
-   vanzelf uit een binnengekomen bericht ontstaat stond vroeger meteen op de
-   voorpagina; nu wacht hij op een beslissing. Zonder deze regel blijft hij daar
-   wachten, want één verborgen pil tussen de andere valt niet op. #}
-{#- Nodes waar deze gebruiker niets over mag weten. Het getal wel, de namen
+{#- Aandachtspunten bovenaan, als één lijst en niet als drie losse gele blokken:
+    drie blokken lezen als drie storingen, en het zijn drie besluiten die nog
+    genomen moeten worden (plus, als eerste, een storing die NU speelt).
+
+    Verborgen binnenkomen mag, ongemerkt binnenkomen niet. Een repeater die
+    vanzelf uit een binnengekomen bericht ontstaat stond vroeger meteen op de
+    voorpagina; nu wacht hij op een beslissing. Zonder deze regel blijft hij daar
+    wachten, want één verborgen pil tussen de andere valt niet op.
+
+    Nodes waar deze gebruiker niets over mag weten: het getal wel, de namen
     niet -- dat zou de lijst zijn die hij niet hoort te zien. Zonder dit getal is
     "waar is die node gebleven" een vraag zonder antwoord, en dat is precies het
-    soort stilte waar de rest van deze pagina tegen gebouwd is. -#}
-{% if onzichtbaar %}
-<p class="pending"><strong>{{ onzichtbaar }} node(s) worden hier niet getoond.</strong>
-   U hebt er geen rechten op. Wie deze server beheert, kan u een rol geven op een node of
-   op een nodegroep.</p>
-{% endif %}
+    soort stilte waar de rest van deze pagina tegen gebouwd is.
 
-{#- Alarmen bovenaan, en dat is niet dezelfde soort melding als de drie hieronder.
-    Die gaan over configuratie die niet af is; dit gaat over een storing die NU
-    speelt. Telemetrie is polling en een alarm is een trap: het hele punt van een
-    trap is dat je hem ziet zonder ernaar te zoeken, en een storing die alleen op
-    de pagina van één node staat is een storing die je pas vindt als je al weet
-    waar je moet kijken. -#}
+    Alarmen staan als eerste, en dat is niet dezelfde soort melding als de drie
+    andere. Die gaan over configuratie die niet af is; dit gaat over een storing
+    die NU speelt. Telemetrie is polling en een alarm is een trap: het hele punt
+    van een trap is dat je hem ziet zonder ernaar te zoeken, en een storing die
+    alleen op de pagina van één node staat is een storing die je pas vindt als je
+    al weet waar je moet kijken.
+
+    Een leeg beheeradres is geen kleinigheid: het sluit de HTTP-schrijfweg én de
+    firmware-upgradeweg, en het is niet aan de node te zien. Vandaar hier en niet
+    pas als iemand op een knop drukt -- dezelfde reden als het gezondheidsblok
+    van de broker. Alleen voor full managed nodes: bij een doorgestuurde node is
+    een leeg adres de normale toestand en geen verzuim. -#}
+{% if alerts_total or onzichtbaar or hidden_repeaters or no_host_reps %}
+<ul class="aandacht" aria-label="Aandachtspunten">
 {% if alerts_total %}
-<p class="pending"><strong>&#9888; {{ alerts_total }} niet-bevestigd(e) alarm(en).</strong>
+<li class="bad-li"><strong>&#9888; {{ alerts_total }} niet-bevestigd(e) alarm(en).</strong>
    Meldingen van sensornodes, doorgezet door de repeater die ze hoorde. Ze wachten niet op
    een uitvraagronde &mdash; ze komen op het moment dat er iets gebeurt.
    {% for a in alerts_recent %}{% if not a.acked %}
    <br>&middot; <time class="reltime" datetime="{{ a.ts }}">{{ a.ts }}</time> &mdash;
    {% if a.repeater_id %}<a href="/admin/repeaters/{{ a.repeater_id }}#alarmen">{{ a.node_name or 'node' }}</a>{% else %}<span class="muted">onbekende node</span>{% endif %}:
-   {{ a.text }}{% endif %}{% endfor %}</p>
+   {{ a.text }}{% endif %}{% endfor %}</li>
 {% endif %}
-
+{% if onzichtbaar %}
+<li><strong>{{ onzichtbaar }} node(s) worden hier niet getoond.</strong>
+   U hebt er geen rechten op. Wie deze server beheert, kan u een rol geven op een node of
+   op een nodegroep.</li>
+{% endif %}
 {% if hidden_repeaters %}
-<p class="pending"><strong>{{ hidden_repeaters }} repeater(s) staan verborgen.</strong>
+<li><strong>{{ hidden_repeaters }} repeater(s) staan verborgen.</strong>
    Een repeater die vanzelf ontstaat uit een binnengekomen bericht komt niet meteen op de
    publieke site: wie op het MQTT-topic mag publiceren, hoort daarmee niet ook op de
    voorpagina te kunnen publiceren. De pil <em>verborgen</em> bij een node hieronder maakt
-   hem zichtbaar.</p>
+   hem zichtbaar.</li>
 {% endif %}
-
 {% if no_host_reps %}
-{#- Een leeg beheeradres is geen kleinigheid: het sluit de HTTP-schrijfweg én de
-    firmware-upgradeweg, en het is niet aan de node te zien. Vandaar hier en niet
-    pas als iemand op een knop drukt -- dezelfde reden als het gezondheidsblok
-    van de broker. Alleen voor full managed nodes: bij een doorgestuurde node is
-    een leeg adres de normale toestand en geen verzuim. -#}
-<p class="pending"><strong>{{ no_host_reps | length }} node(s) hebben geen beheeradres.</strong>
+<li><strong>{{ no_host_reps | length }} node(s) hebben geen beheeradres.</strong>
    Zonder dat adres kan de server hun beheerpagina niet bereiken: geen firmware-upgrade,
    geen instellingen schrijven, en geen rechtencontrole bij hun monitor. Er is aan de node
    zelf niets te zien van dit gemis — het valt pas op als je op een knop drukt die dan
    niets doet.
-   {% for r in no_host_reps %}<a href="/admin/repeaters/{{ r.id }}">{{ r.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+   {% for r in no_host_reps %}<a href="/admin/repeaters/{{ r.id }}">{{ r.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.</li>
+{% endif %}
+</ul>
 {% endif %}
 
 {#- Waarom de lijst in drie groepen uiteenvalt, en niet op naam of op laatst

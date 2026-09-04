@@ -101,13 +101,16 @@ def _forms_zonder_poort(pad):
 # de laatste test hieronder telt ze mee omdat hij recursief zoekt. Een include
 # die buiten de telling valt zou precies de ontsnapping zijn die deze ratel
 # moet voorkomen.
+#
+# account.html blijft op 1: het wachtwoordformulier is je eigen wachtwoord en
+# heeft met opzet geen recht (zie GEEN_RECHT_NODIG); een poort zou daar liegen.
 RATEL = {
     "account.html": 1,
-    "companion.html": 37,
-    "companions.html": 1,
-    "compare.html": 2,
-    "discovery.html": 4,
-    "monitors.html": 2,
+    "companion.html": 0,
+    "companions.html": 0,
+    "compare.html": 0,
+    "discovery.html": 0,
+    "monitors.html": 0,
     "node.html": 0,
     "server.html": 0,
 }

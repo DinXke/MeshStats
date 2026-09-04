@@ -1,10 +1,10 @@
 {#- Het volledige audittrail.
 
-    Waarom een eigen pagina naast het blok op Server en site: dat blok toont de
-    laatste veertig regels, en dat is genoeg om te zien dát er iets gebeurd is.
-    De vraag waarvoor dit trail bestaat -- wie heeft die node geflasht, en wanneer
-    -- wordt gesteld op een avond waarop iemand terug moet kijken naar vorige
-    maand. -#}
+    Waarom een eigen pagina naast het blok op Server, gebruikers en site: dat
+    blok toont de laatste veertig regels, en dat is genoeg om te zien dát er iets
+    gebeurd is. De vraag waarvoor dit trail bestaat -- wie heeft die node
+    geflasht, en wanneer -- wordt gesteld op een avond waarop iemand terug moet
+    kijken naar vorige maand. -#}
 {% extends "admin/_layout.html" %}
 {% block title %}Audittrail — {{ site_name }}{% endblock %}
 {% block admin %}
@@ -14,14 +14,17 @@
      geweigerde: een poging die op de rechten afketste is precies de regel die je wil zien
      als je je afvraagt of iemand iets probeerde wat niet mocht. Regels blijven
      {{ bewaardagen }} dagen staan en zijn niet te wissen vanaf deze site.</p>
-  <p class="muted small">Wat er niet in staat: wachtwoorden, tokens, beheeradressen en de
-     inhoud van instellingen. De toelichting vat samen wát er gebeurde, niet met welke
-     waarde.</p>
+  <details class="uitleg">
+    <summary>Wat er niet in staat</summary>
+    <p>Wachtwoorden, tokens, beheeradressen en de inhoud van instellingen. De toelichting
+       vat samen wát er gebeurde, niet met welke waarde.</p>
+  </details>
 </div>
 
 <section id="regels">
   <div class="card tablecard">
-  <table>
+  <div class="tablewrap">
+  <table class="stack">
     <thead><tr>
       <th>Wanneer</th><th>Wie</th><th>Handeling</th><th>Node</th>
       <th>Uitkomst</th><th>Toelichting</th><th>Vanaf</th>
@@ -29,19 +32,20 @@
     <tbody>
     {% for r in regels %}
       <tr{% if r.outcome == 'geweigerd' %} class="warn"{% endif %}>
-        <td><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
-        <td>{{ r.actor }}</td>
-        <td><code>{{ r.action }}</code></td>
-        <td>{% if r.object_id %}<a href="/admin/repeaters/{{ r.object_id }}">{{ r.object_name or r.object_id }}</a>{% endif %}</td>
-        <td>{{ r.outcome }}</td>
-        <td class="muted small">{{ r.detail }}</td>
-        <td class="muted small">{{ r.ip }}</td>
+        <td data-l="Wanneer"><time class="reltime" datetime="{{ r.ts }}">{{ r.ts }}</time></td>
+        <td data-l="Wie">{{ r.actor }}</td>
+        <td data-l="Handeling"><code>{{ r.action }}</code></td>
+        <td data-l="Node">{% if r.object_id %}<a href="/admin/repeaters/{{ r.object_id }}">{{ r.object_name or r.object_id }}</a>{% endif %}</td>
+        <td data-l="Uitkomst">{{ r.outcome }}</td>
+        <td data-l="Toelichting" class="muted small">{{ r.detail }}</td>
+        <td data-l="Vanaf" class="muted small">{{ r.ip }}</td>
       </tr>
     {% else %}
       <tr><td colspan="7" class="muted">Nog geen regels.</td></tr>
     {% endfor %}
     </tbody>
   </table>
+  </div>
   </div>
   <p class="muted small">Laatste {{ limit }} regels.
      <a href="/admin/audit?n=1000">Toon er 1000</a></p>
