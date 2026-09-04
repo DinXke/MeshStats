@@ -5,9 +5,15 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Undefined
 from markupsafe import Markup
 
+from . import version
+
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 # Cache busting: changes on every (re)start, and therefore on every deploy
 templates.env.globals["asset_v"] = str(int(time.time()))
+# Versie · commit · bouwdatum voor de footer van elke pagina. Eén global en geen
+# veld per route: de stempel hoort op elke pagina te staan, en een route die hem
+# vergeet mee te geven zou precies de pagina zijn waar iemand hem zoekt.
+templates.env.globals["build"] = version.info()
 
 
 def mag_attr(besluit) -> Markup:

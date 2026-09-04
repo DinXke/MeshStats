@@ -141,6 +141,34 @@ version.
 | `MM_PRUNE_MINUTES` | `60` | Minutes between retention passes. Pruning also happens at startup, but a server that runs for months has to prune in between. |
 | `MM_MAX_BODY_BYTES` | `2000000` | Largest request body accepted, on every route and method. Enforced while reading, so a chunked request cannot skip it. |
 | `MM_TRUSTED_PROXY_HOPS` | `1` | How many proxies sit in front of the app. The login throttle counts this many `X-Forwarded-For` entries in from the right to find the client address. Raise it only when you really add a hop — see [`security.md`](security.md#which-address-gets-counted). |
+| `MM_BUILD_SHA`, `MM_BUILD_DATE` | *(empty)* | The git commit and build date baked into the image (Docker `ARG` → `ENV`). Not something you set in `.env`: `deploy/autoupdate.sh` passes them as build args, a manual build may pass them too, and an image built without them shows `dev`. See *Which version is running?* below. |
+
+### Which version is running?
+
+Every page carries a stamp in its footer — `v1.0.0 · fee27ba · 2026-09-04` —
+and `GET /api/v1/ping` returns the same as `app_version` and `build`. The
+container's journal opens with it as well. Two numbers, on purpose
+(`server/app/version.py`):
+
+- **`VERSION`** is the site's semantic version, bumped by hand for a change a
+  user notices. It is the number for people.
+- **commit · date** is what the image was actually built from. Two sites at the
+  same `VERSION` can run different commits, and then the commit is the only thing
+  that tells them apart. It is the number for finding a bug.
+
+The commit is baked in at build time: `deploy/autoupdate.sh` exports
+`MM_BUILD_SHA=$(git rev-parse --short HEAD)` and `MM_BUILD_DATE=$(date -u +%F)`
+before `docker compose build`, and `docker-compose.yml` hands them to the
+`Dockerfile` as build args. Building by hand:
+
+```bash
+MM_BUILD_SHA=$(git rev-parse --short HEAD) MM_BUILD_DATE=$(date -u +%F) docker compose build
+docker compose up -d
+```
+
+An image built without the arguments shows `dev` — true, and deliberately not
+a made-up value. Outside Docker the module asks `git` itself, so a development
+checkout shows its real commit.
 
 ### MQTT
 

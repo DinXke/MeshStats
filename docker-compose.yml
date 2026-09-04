@@ -42,7 +42,15 @@ name: meshstats
 
 services:
   meshmanager:
-    build: ./server
+    build:
+      context: ./server
+      # De commit en bouwdatum die de footer toont. deploy/autoupdate.sh zet ze;
+      # bouw je met de hand, geef ze dan mee (MM_BUILD_SHA=$(git rev-parse
+      # --short HEAD) MM_BUILD_DATE=$(date -u +%F) docker compose build) of
+      # accepteer dat de site "dev" toont.
+      args:
+        MM_BUILD_SHA: "${MM_BUILD_SHA:-}"
+        MM_BUILD_DATE: "${MM_BUILD_DATE:-}"
     image: meshmanager:latest
     container_name: meshmanager
     restart: unless-stopped

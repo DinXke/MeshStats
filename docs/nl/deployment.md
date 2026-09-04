@@ -144,6 +144,34 @@ volgende hoofdversie.
 | `MM_PRUNE_MINUTES` | `60` | Minuten tussen twee opruimrondes. Er wordt ook bij het opstarten gesnoeid, maar een server die maanden draait moet er tussenin snoeien. |
 | `MM_MAX_BODY_BYTES` | `2000000` | Grootste request-body die aanvaard wordt, op elke route en methode. Afgedwongen tijdens het lezen, dus een chunked request kan er niet omheen. |
 | `MM_TRUSTED_PROXY_HOPS` | `1` | Hoeveel proxy's er vóór de app staan. De inlogbegrenzing telt zoveel `X-Forwarded-For`-vermeldingen van rechts naar binnen om het clientadres te vinden. Alleen verhogen als je er echt een hop bij zet — zie [`security.md`](../security.md#which-address-gets-counted). |
+| `MM_BUILD_SHA`, `MM_BUILD_DATE` | *(leeg)* | De git-commit en bouwdatum die in het image gebakken zitten (Docker `ARG` → `ENV`). Niets om in `.env` te zetten: `deploy/autoupdate.sh` geeft ze mee als build-args, een handmatige build kan dat ook, en een image zonder toont `dev`. Zie *Welke versie draait er?* hieronder. |
+
+### Welke versie draait er?
+
+Elke pagina draagt een stempel in de footer — `v1.0.0 · fee27ba · 2026-09-04` —
+en `GET /api/v1/ping` geeft hetzelfde terug als `app_version` en `build`. Het
+journal van de container opent er ook mee. Twee getallen, met opzet
+(`server/app/version.py`):
+
+- **`VERSION`** is de semantische versie van de site, met de hand opgehoogd bij
+  een wijziging die een gebruiker merkt. Het getal voor mensen.
+- **commit · datum** is waar het image echt van gebouwd is. Twee sites op
+  dezelfde `VERSION` kunnen een andere commit draaien, en dan is de commit het
+  enige dat ze uit elkaar houdt. Het getal om een fout te vinden.
+
+De commit gaat er bij het bouwen in: `deploy/autoupdate.sh` exporteert
+`MM_BUILD_SHA=$(git rev-parse --short HEAD)` en `MM_BUILD_DATE=$(date -u +%F)`
+vóór `docker compose build`, en `docker-compose.yml` geeft ze als build-args aan
+de `Dockerfile`. Met de hand bouwen:
+
+```bash
+MM_BUILD_SHA=$(git rev-parse --short HEAD) MM_BUILD_DATE=$(date -u +%F) docker compose build
+docker compose up -d
+```
+
+Een image dat zonder die argumenten gebouwd is toont `dev` — waar, en bewust
+geen verzonnen waarde. Buiten Docker vraagt de module het aan `git` zelf, dus een
+ontwikkelcheckout toont zijn echte commit.
 
 ### MQTT
 
@@ -301,9 +329,12 @@ node op je eigen netwerk, laat dan de `ports:`-toewijzing van de
 
 ```bash
 git pull
-docker compose build
+MM_BUILD_SHA=$(git rev-parse --short HEAD) MM_BUILD_DATE=$(date -u +%F) docker compose build
 docker compose up -d
 ```
+
+(De twee variabelen zijn de versiestempel in de footer — zie *Welke versie
+draait er?* hierboven. Laat je ze weg, dan toont de site `dev`.)
 
 Het schema wordt bij het opstarten met `CREATE TABLE IF NOT EXISTS` toegepast; er
 is geen migratieframework. Maak een back-up van `/data` voordat je over een

@@ -48,6 +48,12 @@ git merge --ff-only --quiet origin/main
 # bereikt (set -e) en blijven de draaiende containers op de oude image staan;
 # de fout komt in het journal en de marker blijft achter, dus de volgende
 # ronde probeert het opnieuw.
+#
+# De commit en de datum gaan als build-args mee, zodat de footer van de site en
+# /api/v1/ping zeggen welke build er draait (app/version.py). Zonder deze twee
+# regels toont de site "dev", wat waar is maar niets zegt.
+export MM_BUILD_SHA="$(git rev-parse --short HEAD)"
+export MM_BUILD_DATE="$(date -u +%F)"
 docker compose build
 # --remove-orphans omdat de services van naam veranderd zijn bij de
 # hernoeming naar MeshManager. Zonder dit blijft de oude container

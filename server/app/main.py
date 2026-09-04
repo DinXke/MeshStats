@@ -81,6 +81,11 @@ app.mount("/tiles", StaticFiles(directory="/tiles", check_dir=False), name="tile
 
 @app.on_event("startup")
 def bootstrap():
+    # Eerste regel van elke start: welke build dit is. Het journal van een
+    # container die maanden draait begint dan met het antwoord op de vraag die
+    # bij elke storing als eerste komt.
+    from . import version as _version
+    print("[meshmanager] MeshManager %s" % _version.info()["label"], flush=True)
     db.get_conn()
     if not db.qone("SELECT 1 FROM admins LIMIT 1"):
         password = secrets.token_urlsafe(12)

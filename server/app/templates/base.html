@@ -34,6 +34,10 @@
 </main>
 <footer>
   <span><span data-i18n="footer.text">MeshCore-statistieken &middot; rechtstreeks van de nodes &middot; </span><a href="/admin" data-i18n="footer.admin">beheer</a></span>
+  {#- Versie · commit · bouwdatum. Eén regel die zegt welke build hier draait,
+      zodat "welke versie heb jij?" nooit meer een reconstructie is -- zie
+      app/version.py voor waarom het er twee getallen zijn. -#}
+  <span class="build" data-i18n-title="footer.build_title" title="Versie van deze site &middot; git-commit &middot; bouwdatum">{{ build.label }}</span>
 </footer>
 <!-- Loads before any page script so generated text can use MCSI18N.t as well. -->
 <script src="/static/i18n.js?v={{ asset_v }}"></script>

@@ -24,6 +24,7 @@
       "nav.lang_title": "Taal wisselen / switch language",
       "footer.text": "MeshCore-statistieken · rechtstreeks van de nodes · ",
       "footer.admin": "beheer",
+      "footer.build_title": "Versie van deze site · git-commit · bouwdatum",
 
       // --- inloggen (de rest van /admin is enkel Nederlands) ---
       "login.invalid": "Ongeldige inloggegevens",
@@ -599,6 +600,7 @@
       "nav.lang_title": "Taal wisselen / switch language",
       "footer.text": "MeshCore statistics · straight from the nodes · ",
       "footer.admin": "admin",
+      "footer.build_title": "Version of this site · git commit · build date",
 
       "login.invalid": "Invalid credentials",
       "login.invalid_throttled": "Invalid credentials — too many attempts, wait {n} s.",

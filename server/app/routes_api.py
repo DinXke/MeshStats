@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from . import (auth, candidates, config, countries, db, metrics, packets,
-               pfstock, pktfilter, search, sensorpush)
+               pfstock, pktfilter, search, sensorpush, version)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -73,9 +73,17 @@ def limit_body(request: Request, max_bytes: int = config.MAX_BODY_BYTES):
 
 @router.get("/ping")
 def ping(authorization: str | None = Header(default=None)):
-    """Connection test for the Home Assistant integration."""
+    """Connection test for a poller or integration.
+
+    ``version`` is the API contract version and stays 1 as long as the
+    endpoints keep their shape; ``app_version`` and ``build`` are the site's
+    own version and commit (see ``version.py``), so a client can say what it
+    talked to when something looks off.
+    """
     require_token(authorization)
-    return {"ok": True, "app": "meshmanager", "version": 1}
+    build = version.info()
+    return {"ok": True, "app": "meshmanager", "version": 1,
+            "app_version": build["version"], "build": build["sha"]}
 
 
 @router.post("/contacts")

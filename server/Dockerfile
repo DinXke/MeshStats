@@ -17,6 +17,15 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Welke commit dit image is, voor de footer en /api/v1/ping (app/version.py).
+# Meegegeven door deploy/autoupdate.sh; leeg bij een build met de hand, dan
+# toont de site "dev" in plaats van iets te verzinnen. Staat NA de pip-laag,
+# anders zou elke nieuwe commit de dependency-cache ongeldig maken.
+ARG MM_BUILD_SHA=""
+ARG MM_BUILD_DATE=""
+ENV MM_BUILD_SHA=$MM_BUILD_SHA \
+    MM_BUILD_DATE=$MM_BUILD_DATE
+
 COPY app/ ./app/
 
 # Data (SQLite + sleutel) staat in een volume, zodat een update van het image

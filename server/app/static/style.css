@@ -125,6 +125,10 @@ a { color: var(--cyan); text-decoration: none; }
 .brand:hover { text-shadow: 0 0 18px rgba(53, 224, 140, .7); }
 .topbar nav a { font-family: var(--mono); font-size: .85rem; }
 footer { text-align: center; color: var(--muted); font-size: .78rem; padding: 1.2rem; font-family: var(--mono); }
+/* Versie · commit · bouwdatum (app/version.py): op een eigen regel onder de
+   footertekst, iets kleiner en gedempt -- leesbaar voor wie het zoekt, geen
+   blikvanger voor wie het niet zoekt. */
+footer .build { display: block; margin-top: .35rem; font-size: .7rem; opacity: .75; letter-spacing: .02em; }
 
 h1 { font-family: var(--sans); font-weight: 700; font-size: 1.7rem; margin: 0; letter-spacing: -.01em; }
 h2 {
