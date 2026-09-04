@@ -10,6 +10,23 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.14.1 - 2026-09-04
+
+- **Een grafiek open je door op de grafiek te klikken**, niet op een knopje
+  eronder -- dezelfde handeling als op een tegel erboven. De hele kaart is de
+  knop, met rol, tabstop en Enter/spatie erbij; die worden door app.js gezet en
+  niet in het sjabloon, want zonder JavaScript doet een klik niets en dan mag er
+  ook niets staan wat zich als knop voordoet. (De tegels hebben die
+  toetsenbordtoegang nog niet; dit is de vorm waar ze naartoe moeten.)
+- **`filter_total` teruggerekend over de historie die er al lag**
+  (`server/tools/backfill_filter_total.py`). De reeks bestond pas vanaf de
+  uitrol, terwijl de drie componenten zeven dagen aan punten hadden -- dus stond
+  het totaal niet op de grafiek. Het script vult alleen tijdstippen waar ALLE
+  DRIE de componenten een punt hebben: een som van twee van de drie zou een
+  lager totaal en dus een hoger weigeringspercentage suggereren dan er was.
+  Draai hem per periode (`--uren 168` en `--uren 24`), want de tijdreeksdatabank
+  antwoordt per periode op een eigen stap-raster.
+
 ## 2.14.0 - 2026-09-04
 
 - **Een gezamenlijke filterstatistiek.** Naast de losse tegels nu een frame met
