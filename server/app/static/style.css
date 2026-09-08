@@ -248,6 +248,10 @@ a.settingslink:hover { color: var(--text); border-color: var(--text); text-shado
   display: flex; align-items: center; gap: .3rem; flex-wrap: wrap;
   margin-top: .3rem; font-size: .68rem; line-height: 1.3;
 }
+/* De datum onder een tegel die niet meer meegemeten wordt. Klein en grijs: het
+   is geen waarschuwing, het is de ontbrekende context bij een getal dat er
+   anders even vers uitziet als de tegel ernaast. */
+.tile-age { margin-top: .25rem; font-size: .66rem; line-height: 1.3; opacity: .8; }
 .pf-rule {
   font-family: var(--mono); font-size: .66rem; color: var(--muted);
   background: rgba(125, 143, 160, .12); border-radius: 4px; padding: .05rem .28rem;

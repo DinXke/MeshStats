@@ -364,6 +364,7 @@
       "rep.refresh_both": "⏳ Statusverzoek verstuurd naar de node én in de wachtrij gezet; binnen ±1 minuut verschijnt een vers datapunt.",
       "rep.refresh_none": "⚠ Er is niets verstuurd — geen weg naar deze repeater op dit ogenblik. De beheerpagina van deze node zegt waarom.",
       "rep.lastupdate": "laatste update",
+      "tile.measured": "gemeten",
       "rep.hint": "💡 Klik op een tegel of buur voor de historiek",
 
       // --- blokken ---
@@ -909,6 +910,7 @@
       "rep.refresh_both": "⏳ Status request sent to the node and queued for the poller; a fresh data point appears within ±1 minute.",
       "rep.refresh_none": "⚠ Nothing was sent — no route to this repeater at the moment. The node's admin page says why.",
       "rep.lastupdate": "last update",
+      "tile.measured": "measured",
       "rep.hint": "💡 Click a tile or a neighbour for its history",
 
       "block.status": "Status",

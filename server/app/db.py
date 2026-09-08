@@ -3895,16 +3895,39 @@ def history(repeater_id: int, metric: str, hours: int) -> list[tuple[str, float]
 # nergens bestaat en blijft leeg -- precies de "waarde wel, grafiek niet"-klacht.
 _UTIL_BASIS = {"airtime_utilization": "airtime", "rx_airtime_utilization": "rx_airtime"}
 
+# Dezelfde ziekte, dezelfde remedie, negen keer. Elke ``*_rate`` in de catalogus
+# is de helling van een teller die de node zelf al stuurt -- en niemand schreef
+# die rates ooit weg behalve de oude Home Assistant-weg, die ze zelf uitrekende
+# en meestuurde. Sinds die weg uit de keten is, was elke tegel hier een getal met
+# een lege grafiek eronder: de tegel rekent live, de grafiek vroeg een reeks op
+# die sindsdien niet meer bestond. Afleiden in plaats van laten schrijven maakt
+# ze ook meteen volledig over de HELE historie, en niet pas vanaf vandaag.
+_RATE_BASIS = {
+    "nb_recv_rate":      "nb_recv",
+    "nb_sent_rate":      "nb_sent",
+    "recv_flood_rate":   "recv_flood",
+    "recv_direct_rate":  "recv_direct",
+    "sent_flood_rate":   "sent_flood",
+    "sent_direct_rate":  "sent_direct",
+    "flood_dups_rate":   "flood_dups",
+    "direct_dups_rate":  "direct_dups",
+    "recv_errors_rate":  "recv_errors",
+}
+
 
 def metric_history(repeater, metric: str, hours: int) -> list[tuple[str, float]]:
     """History for a chart, from wherever it actually lives.
 
-    VictoriaMetrics when it answers, SQLite when it does not. De twee
-    benuttingsmetrics worden afgeleid uit hun airtime-teller (zie _UTIL_BASIS).
+    VictoriaMetrics when it answers, SQLite when it does not. De benuttings- en
+    rate-metrics worden afgeleid uit hun teller (zie _UTIL_BASIS en _RATE_BASIS).
     """
     basis = _UTIL_BASIS.get(metric)
     if basis is not None:
         return _utilisatie_reeks(repeater, basis, hours)
+    basis = _RATE_BASIS.get(metric)
+    if basis is not None:
+        # msg/min: geen factor, want de deling geeft die eenheid al.
+        return _hellingsreeks(repeater, basis, hours, 1.0)
     points = tsdb.history(repeater["slug"], metric, hours)
     if points is None:
         return history(repeater["id"], metric, hours)
@@ -3916,10 +3939,20 @@ def _utilisatie_reeks(repeater, basis_metric: str, hours: int) -> list[tuple[str
 
     Zelfde rekensom als computed_utilization, maar tussen elk opeenvolgend paar
     punten in plaats van over het hele venster: delta-airtime (min) gedeeld door
-    delta-wandtijd (min), maal 100. Een tellerreset (negatieve delta) of een
-    niet-oplopende tijd wordt overgeslagen -- geen valse piek, geen deling door
-    nul. Het tijdstip van het TWEEDE punt draagt de waarde, want dat is het einde
-    van het interval waarover gemeten is.
+    delta-wandtijd (min), maal 100.
+    """
+    return _hellingsreeks(repeater, basis_metric, hours, 100.0)
+
+
+def _hellingsreeks(repeater, basis_metric: str, hours: int,
+                   factor: float) -> list[tuple[str, float]]:
+    """De helling van een oplopende teller: (delta waarde / delta minuten) * factor.
+
+    Een tellerreset (negatieve delta) of een niet-oplopende tijd wordt
+    overgeslagen -- geen valse piek, geen deling door nul. Het tijdstip van het
+    TWEEDE punt draagt de waarde, want dat is het einde van het interval waarover
+    gemeten is. Een node die na een herstart bij nul begint levert dus één
+    ontbrekend punt op en niet een uitschieter van duizenden per minuut.
     """
     raw = metric_history(repeater, basis_metric, hours)
     uit: list[tuple[str, float]] = []
@@ -3933,7 +3966,7 @@ def _utilisatie_reeks(repeater, basis_metric: str, hours: int) -> list[tuple[str
         dv = v1 - v0
         if dt_min <= 0 or dv < 0:
             continue
-        uit.append((t1, round(dv / dt_min * 100, 2)))
+        uit.append((t1, round(dv / dt_min * factor, 2)))
     return uit
 
 
@@ -3943,17 +3976,45 @@ def computed_utilization(repeater, total_metric: str, window_min: int = 90) -> f
     Computed here instead of read from the node because the meshcore-side figure
     resets on every Home Assistant restart.
     """
+    helling = _venster_helling(repeater, total_metric, window_min)
+    return None if helling is None else round(helling * 100, 2)
+
+
+def computed_rate(repeater, counter_metric: str, window_min: int = 90) -> float | None:
+    """Berichten per minuut, uit de oplopende teller van de node zelf.
+
+    Waarom dit er is: de node stuurt tellers, geen rates. De rates die in
+    ``latest`` staan zijn door de oude Home Assistant-weg uitgerekend en
+    meegestuurd, en die weg is uit de keten. Zonder deze functie toont de tegel
+    "Ontvangstrate" dus voor altijd het cijfer van de dag waarop die weg
+    afgesloten werd -- 26 dagen oud, en niets op de pagina dat dat verraadt.
+
+    Dezelfde rekensom en dezelfde grenzen als de benutting hierboven; alleen de
+    eenheid verschilt (per minuut in plaats van procent).
+    """
+    helling = _venster_helling(repeater, counter_metric, window_min)
+    return None if helling is None else round(helling, 2)
+
+
+def _venster_helling(repeater, metric: str, window_min: int) -> float | None:
+    """(delta waarde / delta minuten) over het laatste venster, of None.
+
+    None bij: te weinig punten, een venster dat te kort is om iets te betekenen
+    (< 10 min) en een tellerreset (negatieve delta). In alle drie de gevallen is
+    "geen cijfer" juister dan een cijfer, want een herstart zou hier als een
+    enorme negatieve of positieve sprong doorkomen.
+    """
     # This reads the same measurements the charts do, so it has to follow them
     # to VictoriaMetrics -- otherwise moving the history would quietly empty
-    # these two tiles, since `samples` stops being written once the move is on.
-    series = tsdb.window_values(repeater["slug"], total_metric, window_min)
+    # these tiles, since `samples` stops being written once the move is on.
+    series = tsdb.window_values(repeater["slug"], metric, window_min)
     if series is None:
         since = (datetime.now(timezone.utc)
                  - timedelta(minutes=window_min)).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = q(
             "SELECT ts, value FROM samples WHERE repeater_id=? AND metric=? AND ts>=? "
             "ORDER BY ts",
-            (repeater["id"], total_metric, since),
+            (repeater["id"], metric, since),
         )
         series = []
         for r in rows:
@@ -3966,10 +4027,10 @@ def computed_utilization(repeater, total_metric: str, window_min: int = 90) -> f
     if len(series) < 2:
         return None
     dt_min = (series[-1][0] - series[0][0]) / 60
-    dv_min = series[-1][1] - series[0][1]   # airtime is in minutes
-    if dt_min < 10 or dv_min < 0:           # window too short, or counter reset
+    dv = series[-1][1] - series[0][1]
+    if dt_min < 10 or dv < 0:               # window too short, or counter reset
         return None
-    return round(dv_min / dt_min * 100, 2)
+    return dv / dt_min
 
 
 def latest_for(repeater_id: int) -> dict[str, sqlite3.Row]:

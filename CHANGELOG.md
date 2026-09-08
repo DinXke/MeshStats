@@ -10,6 +10,30 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.18.0 - 2026-09-08
+
+- **Negen tegels toonden een cijfer van 13 augustus als "net nu".** De
+  berichtenrates (ontvangst, verzending, flood, direct, dubbelen, RX-fouten)
+  werden nooit door een node gemeten: de oude Home Assistant-weg rekende ze uit
+  en stuurde ze mee. Sinds die weg uit de keten is, stond in `latest` het cijfer
+  van de dag waarop hij afgesloten werd -- en de nodepagina zette dat onder
+  "laatste update: net nu". De bijbehorende grafiek was leeg, want de reeks werd
+  door niemand meer geschreven. Beide kanten komen nu uit de teller die de node
+  wél stuurt: de tegel via `db.computed_rate` (hetzelfde venster als de
+  benutting) en de grafiek via `db._RATE_BASIS` in `metric_history`. De historie
+  is daarmee ook meteen volledig tot waar de tellers reiken, en niet pas vanaf
+  vandaag.
+- **Een tegel die niet meer meegemeten wordt, zegt dat nu.** Staat een meting
+  meer dan 90 minuten voor de laatste melding van de node, dan komt de datum
+  eronder ("gemeten 26 dagen geleden"). Dat vangt de resterende fossielen die
+  met dezelfde weg verdwenen -- `Verzoeken gelukt`, `Verzoeken mislukt`,
+  `Uitgaand pad`, `Volle wachtrij-events` -- zonder ze te verbergen. Bij een node
+  die zelf stil is verschijnt er niets: daar is alles even oud en zegt de kop van
+  de pagina dat al.
+- Vangnettest: elke metric in de catalogus met eenheid `msg/min` moet een teller
+  als bron hebben. Een nieuwe rate zonder bron valt nu om in de tests en niet op
+  de site.
+
 ## 2.17.1 - 2026-09-04
 
 - **"0 geweigerd" kon een oud cijfer zijn zonder dat het opviel.** Een

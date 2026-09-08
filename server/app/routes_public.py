@@ -1,6 +1,7 @@
 """Public HTML pages."""
 import threading
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse)
@@ -83,6 +84,13 @@ def repeater_page(request: Request, slug: str):
         "airtime_utilization": db.computed_utilization(r, "airtime"),
         "rx_airtime_utilization": db.computed_utilization(r, "rx_airtime"),
     }
+    # En om exact dezelfde reden de negen berichtenrates: ook die kwamen kant en
+    # klaar van Home Assistant mee, en sinds die weg uit de keten is stond hier
+    # een cijfer uit augustus met "laatste update: net nu" erboven. De teller
+    # zelf komt wel binnen, dus de rate is af te leiden -- en dan klopt de tegel
+    # met de grafiek eronder, die hetzelfde doet (db._RATE_BASIS).
+    for _rate, _teller in db._RATE_BASIS.items():
+        computed[_rate] = db.computed_rate(r, _teller)
 
     # De namen bij de kanalen van deze node. Het telemetrieformaat draagt er geen,
     # dus zonder deze tabel heet elk kanaal alleen naar zijn nummer. Zie
@@ -114,9 +122,16 @@ def repeater_page(request: Request, slug: str):
             # als "Ch1 spanning" blijven staan.
             _, label, unit, _ = metrics.metric_info(m, ch_names)
             tile = _channel_tile(m, label, unit, row)
-            if computed.get(m) is not None:
-                tile["value"] = computed[m]
-                tile["display"] = f"{computed[m]:g} {unit}" if unit else f"{computed[m]:g}"
+            if m in computed:
+                # Deze tegel HOORT afgeleid te zijn. Dus ook als het niet lukt
+                # (te weinig punten, of een teller die net herstart is) mag het
+                # oude cijfer uit `latest` er niet voor doorgaan: dat is precies
+                # de fout die dit blok komt repareren. Dan liever een streep.
+                waarde = computed[m]
+                tile["value"] = waarde
+                tile["display"] = ("—" if waarde is None else
+                                   (f"{waarde:g} {unit}" if unit else f"{waarde:g}"))
+                tile["ts"] = r["last_seen"] if waarde is not None else tile["ts"]
             tiles.append(tile)
         extra = []
         for m, row in latest.items():
@@ -129,6 +144,14 @@ def repeater_page(request: Request, slug: str):
         for _, m, t in sorted(extra, key=lambda x: x[0]):
             tiles.append(t)
             used.add(m)
+        # Welke tegel is een FOSSIEL? Niet "oud gemeten" op zich -- bij een node
+        # die al drie dagen stil is, is alles even oud en klopt de kop van de
+        # pagina daarover. Het gaat om het geval dat deze site zelf voortbracht:
+        # de node meldde zich NET, en toch komt dit ene cijfer van weken terug,
+        # omdat de weg waarlangs juist die meting binnenkwam weg is. Zo'n tegel
+        # zonder datum tonen is de lezer laten denken dat hij vers is.
+        for t in tiles:
+            t["stale_since"] = _fossiel(t.get("ts"), r["last_seen"])
         if tiles:
             sections[key] = {"key": key, "title": title, "tiles": tiles}
 
@@ -510,6 +533,25 @@ def _channel_tile(metric: str, label: str, unit: str | None, row) -> dict:
     tile["channel"] = channel
     tile["kind"] = kind
     return tile
+
+
+# Hoeveel later dan de laatste melding van de node een meting mag zijn voordat
+# ze een fossiel heet. Ruim genomen: een node met een traag opvraagritme (de
+# zonnenode zakt 's nachts naar één meting per twintig minuten) mag hier niet
+# per ongeluk in vallen. Wat we willen betrappen is weken, niet minuten.
+FOSSIEL_NA_MIN = 90
+
+
+def _fossiel(ts: str | None, last_seen: str | None) -> str | None:
+    """De tijdstempel terug als die veel ouder is dan de laatste melding."""
+    if not ts or not last_seen:
+        return None
+    try:
+        gemeten = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+        gezien = datetime.strptime(last_seen, "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return None
+    return ts if (gezien - gemeten).total_seconds() > FOSSIEL_NA_MIN * 60 else None
 
 
 def _tile(metric: str, label: str, unit: str | None, row) -> dict:

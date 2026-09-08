@@ -76,6 +76,15 @@
       <canvas width="180" height="96"></canvas>
       <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
       <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
+      {#- Een cijfer dat NIET meer meekomt met de meldingen van deze node. De kop
+          van de pagina zegt "laatste update: net nu", en zonder deze regel gaat
+          dat ook over dit getal -- terwijl het van weken terug kan zijn omdat de
+          weg waarlangs precies deze meting binnenkwam verdwenen is. Zie
+          _fossiel() in routes_public.py voor de grens. -#}
+      {%- if t.stale_since %}
+      <div class="tile-age muted small"><span data-i18n="tile.measured">gemeten</span>
+        <time class="reltime" datetime="{{ t.stale_since }}">{{ t.stale_since }}</time></div>
+      {%- endif %}
     </div>
     {% elif t.metric in thermos and t.value is not none %}
     <div class="tile gaugetile clickable" data-thermo="{{ t.metric }}" data-value="{{ t.value }}"
@@ -85,6 +94,15 @@
       <canvas width="180" height="96"></canvas>
       <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
       <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
+      {#- Een cijfer dat NIET meer meekomt met de meldingen van deze node. De kop
+          van de pagina zegt "laatste update: net nu", en zonder deze regel gaat
+          dat ook over dit getal -- terwijl het van weken terug kan zijn omdat de
+          weg waarlangs precies deze meting binnenkwam verdwenen is. Zie
+          _fossiel() in routes_public.py voor de grens. -#}
+      {%- if t.stale_since %}
+      <div class="tile-age muted small"><span data-i18n="tile.measured">gemeten</span>
+        <time class="reltime" datetime="{{ t.stale_since }}">{{ t.stale_since }}</time></div>
+      {%- endif %}
     </div>
     {% else %}
     <div class="tile {% if t.metric == 'online' %}{{ 'online' if t.value == 1.0 else 'offline' }}{% endif %} {% if t.value is not none %}clickable{% endif %}"
@@ -92,6 +110,15 @@
          {%- if t.hint %} title="{{ t.hint }}" data-i18n-title="{{ t.hint_key }}"{% endif %}>
       <div class="tile-value"{% if t.i18n %} data-i18n="{{ t.i18n }}" data-i18n-vars='{{ t.i18n_vars|tojson }}'{% endif %}>{{ t.display }}</div>
       <div class="tile-label" data-i18n="metric.{{ t.metric }}">{{ t.label }}</div>
+      {#- Een cijfer dat NIET meer meekomt met de meldingen van deze node. De kop
+          van de pagina zegt "laatste update: net nu", en zonder deze regel gaat
+          dat ook over dit getal -- terwijl het van weken terug kan zijn omdat de
+          weg waarlangs precies deze meting binnenkwam verdwenen is. Zie
+          _fossiel() in routes_public.py voor de grens. -#}
+      {%- if t.stale_since %}
+      <div class="tile-age muted small"><span data-i18n="tile.measured">gemeten</span>
+        <time class="reltime" datetime="{{ t.stale_since }}">{{ t.stale_since }}</time></div>
+      {%- endif %}
       {#- Alleen filtertegels krijgen dit: de instelling die dit cijfer veroorzaakt,
           waar hij nu op staat, en een '?' met wat die regel doet. Zichtbaar en niet
           alleen als title-attribuut, want een tooltip zonder affordance vindt
