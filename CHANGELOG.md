@@ -10,6 +10,14 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.18.1 - 2026-09-08
+
+- De afleiding uit 2.18.0 werkte maar voor de helft van de tegels: de rates
+  staan niet in `TILE_METRICS` en komen dus langs de tweede tegellus, waar hij
+  niet stond -- het fossiel bleef staan. Nu op één plek (`_afgeleid`) en in
+  beide lussen, met een test die de echte pagina rendert in plaats van alleen de
+  rekenfunctie te controleren.
+
 ## 2.18.0 - 2026-09-08
 
 - **Negen tegels toonden een cijfer van 13 augustus als "net nu".** De

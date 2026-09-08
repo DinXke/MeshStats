@@ -121,18 +121,8 @@ def repeater_page(request: Request, slug: str):
             # namen zou juist het kanaal dat een node als eerste vult ("spanning")
             # als "Ch1 spanning" blijven staan.
             _, label, unit, _ = metrics.metric_info(m, ch_names)
-            tile = _channel_tile(m, label, unit, row)
-            if m in computed:
-                # Deze tegel HOORT afgeleid te zijn. Dus ook als het niet lukt
-                # (te weinig punten, of een teller die net herstart is) mag het
-                # oude cijfer uit `latest` er niet voor doorgaan: dat is precies
-                # de fout die dit blok komt repareren. Dan liever een streep.
-                waarde = computed[m]
-                tile["value"] = waarde
-                tile["display"] = ("—" if waarde is None else
-                                   (f"{waarde:g} {unit}" if unit else f"{waarde:g}"))
-                tile["ts"] = r["last_seen"] if waarde is not None else tile["ts"]
-            tiles.append(tile)
+            tiles.append(_afgeleid(_channel_tile(m, label, unit, row),
+                                   m, unit, computed, r["last_seen"]))
         extra = []
         for m, row in latest.items():
             if m in used:
@@ -140,7 +130,12 @@ def repeater_page(request: Request, slug: str):
             section, label, unit, sort = metrics.metric_info(m, ch_names)
             if section != key:
                 continue
-            extra.append((sort, m, _channel_tile(m, label, unit, row)))
+            # Ook hier de afleiding. Juist hier, zelfs: de rates staan niet in
+            # TILE_METRICS en komen dus langs DEZE lus. De eerste versie van
+            # deze fix zette de afleiding alleen in de lus hierboven, en dan
+            # blijft het fossiel gewoon staan.
+            extra.append((sort, m, _afgeleid(_channel_tile(m, label, unit, row),
+                                             m, unit, computed, r["last_seen"])))
         for _, m, t in sorted(extra, key=lambda x: x[0]):
             tiles.append(t)
             used.add(m)
@@ -532,6 +527,29 @@ def _channel_tile(metric: str, label: str, unit: str | None, row) -> dict:
     # grafiek bijgeprogrammeerd hoeft te worden.
     tile["channel"] = channel
     tile["kind"] = kind
+    return tile
+
+
+def _afgeleid(tile: dict, metric: str, unit: str | None,
+              computed: dict, last_seen: str | None) -> dict:
+    """De tegelwaarde vervangen door de zelf uitgerekende, waar die er is.
+
+    Een metric die in ``computed`` staat HOORT afgeleid te zijn -- de node stuurt
+    een teller, niet dit cijfer. Lukt de afleiding niet (te weinig punten, of een
+    teller die net herstart is), dan komt er een streep en niet het oude cijfer
+    uit ``latest``: dat oude cijfer is precies de fout die hier gerepareerd
+    wordt. Een streep is te zien; een getal van vorige maand niet.
+    """
+    if metric not in computed:
+        return tile
+    waarde = computed[metric]
+    tile["value"] = waarde
+    tile["display"] = ("—" if waarde is None else
+                       (f"{waarde:g} {unit}" if unit else f"{waarde:g}"))
+    if waarde is not None and last_seen:
+        # Vers gerekend uit metingen tot en met de laatste melding, dus draagt
+        # deze tegel die tijd -- anders zou _fossiel hem als oud aanmerken.
+        tile["ts"] = last_seen
     return tile
 
 

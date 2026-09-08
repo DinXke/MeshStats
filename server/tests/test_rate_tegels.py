@@ -54,3 +54,88 @@ def test_fossiel_alleen_als_de_node_daarna_nog_meldde():
     assert routes_public._fossiel("2026-09-01T10:00:00Z", "2026-09-01T10:20:00Z") is None
     assert routes_public._fossiel(None, "2026-09-08T09:38:33Z") is None
     assert routes_public._fossiel("2026-09-08T09:38:33Z", None) is None
+
+
+# --- op de pagina zelf -------------------------------------------------------
+#
+# De unittests hierboven zeggen dat de afleiding klopt. Ze zeiden niets over de
+# vraag of de PAGINA hem gebruikt -- en juist daar zat de fout na de eerste
+# poging: de rates staan niet in TILE_METRICS en komen dus langs de tweede
+# tegellus, waar de afleiding niet stond. Het fossiel bleef gewoon staan. Deze
+# test rendert de echte pagina met een echt fossiel in de databank.
+
+import pytest
+
+from app import config
+
+
+@pytest.fixture
+def echte_db(tmp_path, monkeypatch):
+    from app import db as db_module
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.sqlite3")
+    db_module._conn = None
+    yield db_module
+    if db_module._conn is not None:
+        db_module._conn.close()
+        db_module._conn = None
+
+
+class _Request:
+    cookies: dict = {}
+    query_params: dict = {}
+
+
+def _tegels(ctx):
+    return {t["metric"]: t for b in ctx["blocks"] if b["type"] == "section"
+            for t in b["section"]["tiles"]}
+
+
+def test_de_pagina_toont_het_fossiel_niet_meer(echte_db, monkeypatch):
+    db_ = echte_db
+    from app import routes_public
+
+    from datetime import datetime, timedelta, timezone
+
+    def stempel(minuten_terug):
+        return (datetime.now(timezone.utc)
+                - timedelta(minutes=minuten_terug)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    rep = db_.get_or_create_repeater("aabbccddeeff", "Fossielnode")
+    db_.execute("UPDATE repeaters SET is_public=1 WHERE id=?", (rep["id"],))
+    # Eerst de oude wereld: een rate die door de verdwenen weg is meegestuurd.
+    # Ver genoeg terug om buiten het rekenvenster van 90 minuten te vallen, want
+    # anders zou de test niet kunnen onderscheiden of het cijfer afgeleid is.
+    db_.ingest(rep["id"], "2026-08-13T19:05:17Z",
+               {"online": True, "nb_recv": 500, "nb_recv_rate": 11.3}, None)
+    # Dan de nieuwe: alleen de teller komt nog binnen.
+    db_.ingest(rep["id"], stempel(60), {"online": True, "nb_recv": 1000}, None)
+    db_.ingest(rep["id"], stempel(0), {"online": True, "nb_recv": 1600}, None)
+
+    monkeypatch.setattr(routes_public.templates, "TemplateResponse",
+                        lambda request, name, ctx: ctx)
+    ctx = routes_public.repeater_page(_Request(), rep["slug"])
+    tegel = _tegels(ctx)["nb_recv_rate"]
+
+    # +600 berichten in 60 minuten = 10 msg/min. Het fossiel was 11,3.
+    assert tegel["display"] == "10 msg/min", tegel
+    # En het is geen fossiel meer, dus geen datum eronder.
+    assert tegel["stale_since"] is None
+
+
+def test_zonder_verse_tellers_een_streep_en_niet_het_oude_cijfer(echte_db, monkeypatch):
+    """Een node die al weken stil is. Een rate is een uitspraak over NU, dus is
+    "geen cijfer" hier het juiste antwoord -- en zeker niet het cijfer dat de
+    verdwenen weg als laatste meestuurde."""
+    db_ = echte_db
+    from app import routes_public
+
+    rep = db_.get_or_create_repeater("aabbccddeeff", "Stille node")
+    db_.execute("UPDATE repeaters SET is_public=1 WHERE id=?", (rep["id"],))
+    db_.ingest(rep["id"], "2026-08-13T19:05:17Z",
+               {"online": True, "nb_recv": 500, "nb_recv_rate": 11.3}, None)
+
+    monkeypatch.setattr(routes_public.templates, "TemplateResponse",
+                        lambda request, name, ctx: ctx)
+    tegel = _tegels(routes_public.repeater_page(_Request(), rep["slug"]))["nb_recv_rate"]
+    assert tegel["value"] is None
+    assert "11.3" not in tegel["display"] and "11,3" not in tegel["display"]
