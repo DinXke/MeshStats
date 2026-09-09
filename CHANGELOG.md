@@ -10,6 +10,23 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.18.2 - 2026-09-09
+
+- **"None" is een antwoord, geen stilte.** Op de lucht gemeten (JessaZH.VIR02):
+  op een lege kanaallijst antwoordt de stock-firmware met de tekst . De
+  parser gooide dat woord als ruis weg en gaf  terug -- dezelfde uitkomst
+  als bij een node die zwijgt -- dus de pagina zei "niet bekend" terwijl de node
+  net had gezegd dat er niets in de lijst staat. Nu levert zo'n antwoord een
+  LEGE lijst en heeft de kaart drie standen in plaats van twee: kanalen, leeg
+  (beantwoord), of onbekend (niet gevraagd / geen antwoord).
+- De ECHO van het commando eet de lijst niet meer op. Deze firmware prefixt
+  antwoorden met  (de statusregel komt binnen als ); een
+  build die  echoot met het antwoord eronder verloor
+  voorheen zijn hele lijst, omdat elke tekst die zo begon als onleesbaar gold.
+  De usage-regel wordt nu op haar syntaxtekens () herkend in plaats van
+  op haar eerste woorden -- en  uit dat voorbeeld belandt dus niet meer
+  als "geblokkeerd kanaal" op de pagina.
+
 ## 2.18.1 - 2026-09-08
 
 - De afleiding uit 2.18.0 werkte maar voor de helft van de tegels: de rates

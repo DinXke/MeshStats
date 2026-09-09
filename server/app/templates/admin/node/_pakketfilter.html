@@ -318,11 +318,21 @@
         {% endfor %}
       </tbody>
     </table>
+    {#- DRIE standen en niet twee. "Leeg" en "niet gevraagd" zijn verschillende
+        dingen en de pagina hoort te zeggen welke van de twee het is. Sommige
+        builds antwoorden op een lege lijst met de tekst "None" -- dan WETEN we
+        het; andere zwijgen, en dan weten we het niet. -#}
+    {% elif filter_state.channels is defined and filter_state.channels is not none %}
+    <p class="muted small">
+      De lijst is <strong>leeg</strong>: de node heeft de vraag beantwoord en er staat
+      geen enkel kanaal in. Er wordt hier dus niets op kanaal geweigerd.
+    </p>
     {% else %}
     <p class="muted small">
-      Geen kanaal in de lijst. Let op de kleine lettertjes van deze firmware: op een
-      <em>lege</em> lijst antwoordt hij helemaal niet, dus "niets geblokkeerd" en "geen
-      antwoord op de vraag" komen hier als hetzelfde aan. De teller
+      <strong>Niet bekend.</strong> Er staat hier geen antwoord op de kanaalvraag — dat
+      is iets anders dan een lege lijst. Sommige builds van deze firmware zwijgen op
+      een lege lijst, en stilte en "niets geblokkeerd" komen dan als hetzelfde aan.
+      Haal de stand op met de knop bovenaan deze kaart. De teller
       <span class="mono">Channel</span> in de statusregel is het onafhankelijke bewijs:
       staat die boven nul, dan is er wél iets geblokkeerd.
     </p>

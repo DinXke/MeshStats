@@ -392,8 +392,54 @@ def parse_filter_channels(text):
     # Een foutmelding of de usage-regel is geen lijst.
     if "syntax error" in text.lower() or "command error" in text.lower():
         return None
-    if text.lstrip().startswith("> filter channel"):
-        return None
+    # DE ECHO VAN HET COMMANDO. "> filter channel list" kan twee dingen zijn: de
+    # usage-regel bij een verkeerd commando (dan weten we niets) of de echo met
+    # het antwoord erachter of eronder (dan staat het antwoord er wél). Deze
+    # firmware prefixt antwoorden met "> " -- de statusregel komt binnen als
+    # "> Filter on: ..." -- dus de echo alleen wegdenken en verder lezen. Wie hem
+    # als "onleesbaar" behandelt gooit op zo'n build de hele lijst weg.
+    regels = []
+    for regel in text.splitlines():
+        r = regel.strip()
+        if not r:
+            continue
+        if r.lower().startswith("> filter channel"):
+            rest = r[len("> filter channel"):].strip()
+            for verb in ("list", "add", "remove"):
+                if rest.lower().startswith(verb):
+                    rest = rest[len(verb):].strip()
+                    break
+            # De USAGE-regel is te herkennen aan haar syntaxtekens:
+            #   > filter channel [list | add | remove] <#name | Public>
+            # Daar staat geen kanaal in maar de VORM van een kanaal, en "Public"
+            # is er een voorbeeld en geen geblokkeerd kanaal. Wie dat leest, leest
+            # een verzonnen lijst -- dus hier stoppen en niets beweren.
+            if any(teken in rest for teken in "[]|<"):
+                return None
+            if rest:
+                regels.append(rest)
+            continue
+        regels.append(r)
+    if not regels:
+        return None            # niets dan de echo: geen antwoord op de vraag
+    # Met een spatie aan elkaar en niet met een regeleinde: verderop wordt er
+    # toch op witruimte gesplitst, en zo hoeft deze regel geen escape te dragen.
+    text = " ".join(regels)
+
+    # "None" IS HET ANTWOORD. Op de lucht gemeten (VIR02, 9 sep 2026): op een lege
+    # lijst antwoordt deze firmware met de tekst "None". Dat is geen stilte maar
+    # een vaststelling -- "er staat niets in de lijst" -- en het hoort dus een lege
+    # lijst te worden en niet None. Die twee lopen hierboven bewust uiteen, en dit
+    # is precies het geval waarin we het verschil WEL kunnen zien.
+    #
+    # De eis is dat het antwoord uit NIETS anders bestaat dan zo'n woord (plus
+    # leestekens en de echo van het commando): staat er een kanaalnaam bij, dan is
+    # het een gewone lijst en loopt hij door de parser hieronder.
+    kern = text.replace(">", " ").replace("(", " ").replace(")", " ")
+    woorden = [w.lower().strip(",:;.") for w in kern.split()]
+    woorden = [w for w in woorden if w]
+    if woorden and all(w in _CHAN_RUIS for w in woorden)             and ({"none", "empty"} & set(woorden)):
+        return []
 
     uit = []
     gezien = set()

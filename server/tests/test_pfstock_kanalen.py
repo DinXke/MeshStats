@@ -149,3 +149,47 @@ def test_de_lijst_opvragen_neemt_geen_naam(db):
     uit = pktfilter.queue_write(rep(), "channel list")
     assert uit["ok"] is True
     assert db.pop_settings_requests()[0]["params"][0] == "cmd:filter channel list"
+
+
+# --- "None" is een ANTWOORD, geen stilte -------------------------------------
+#
+# Op de lucht gemeten (BE-HSS-JessaZH.VIR02, 9 september 2026): `filter channel
+# list` levert op een lege lijst de TEKST "None". De parser gooide dat woord als
+# ruis weg en gaf None terug -- dezelfde uitkomst als bij een node die zwijgt --
+# en de pagina moest dus zeggen "we weten het niet" terwijl de node net had
+# gezegd dat er niets in de lijst staat. Dat verschil is het hele punt van deze
+# functie, dus hoort het vastgelegd te zijn.
+
+def test_none_betekent_een_lege_lijst():
+    met_echo = """> filter channel list
+None"""
+    for tekst in ("None", "none", "(none)", "empty", met_echo,
+                  "> filter channel list None"):
+        assert pfstock.parse_filter_channels(tekst) == [], tekst
+
+
+def test_stilte_blijft_onbekend():
+    """En dit is de andere kant: niets, en de usage-regel zonder antwoord, mogen
+    NOOIT als lege lijst gelden -- dan zou de pagina beweren dat er niets
+    geblokkeerd is terwijl er niets gevraagd of niets begrepen is."""
+    for tekst in ("", "   ", None, "> filter channel list", "> filter channel",
+                  "syntax error", "command error"):
+        assert pfstock.parse_filter_channels(tekst) is None, tekst
+
+
+def test_de_echo_eet_de_lijst_niet_op():
+    """Deze firmware prefixt antwoorden met "> " (de statusregel komt binnen als
+    "> Filter on: ..."). Een build die het commando echoot en het antwoord
+    eronder zet, verloor voorheen zijn hele lijst."""
+    antwoord = """> filter channel list
+#dinx (EC), Public (AB)"""
+    uit = pfstock.parse_filter_channels(antwoord)
+    assert [c["label"] for c in uit] == ["#dinx", "Public"]
+    assert [c["hash"] for c in uit] == ["ec", "ab"]
+
+
+def test_none_naast_een_kanaal_is_gewoon_een_lijst():
+    """Staat er een kanaalnaam bij, dan is het geen 'leeg'-antwoord: dan telt de
+    lijst en wordt het woord weer ruis."""
+    uit = pfstock.parse_filter_channels("None, #dinx (EC)")
+    assert [c["label"] for c in uit] == ["#dinx"]
