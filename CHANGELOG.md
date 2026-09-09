@@ -13,19 +13,20 @@ functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 ## 2.18.2 - 2026-09-09
 
 - **"None" is een antwoord, geen stilte.** Op de lucht gemeten (JessaZH.VIR02):
-  op een lege kanaallijst antwoordt de stock-firmware met de tekst . De
-  parser gooide dat woord als ruis weg en gaf  terug -- dezelfde uitkomst
-  als bij een node die zwijgt -- dus de pagina zei "niet bekend" terwijl de node
-  net had gezegd dat er niets in de lijst staat. Nu levert zo'n antwoord een
-  LEGE lijst en heeft de kaart drie standen in plaats van twee: kanalen, leeg
-  (beantwoord), of onbekend (niet gevraagd / geen antwoord).
-- De ECHO van het commando eet de lijst niet meer op. Deze firmware prefixt
-  antwoorden met  (de statusregel komt binnen als ); een
-  build die  echoot met het antwoord eronder verloor
-  voorheen zijn hele lijst, omdat elke tekst die zo begon als onleesbaar gold.
-  De usage-regel wordt nu op haar syntaxtekens () herkend in plaats van
-  op haar eerste woorden -- en  uit dat voorbeeld belandt dus niet meer
-  als "geblokkeerd kanaal" op de pagina.
+  op een lege kanaallijst antwoordt de stock-firmware met de tekst `None`. Dat
+  woord stond in onze ruiswoordenlijst, dus de parser gaf `None` terug -- niet te
+  onderscheiden van een node die zwijgt -- en de pagina zei "niet bekend" terwijl
+  de node net had gezegd dat er niets in de lijst staat. Nu levert zo'n antwoord
+  een LEGE lijst, en de filterkaart heeft drie standen in plaats van twee:
+  kanalen, leeg-en-beantwoord, of onbekend (niet gevraagd / geen antwoord).
+- **De echo van het commando eet de lijst niet meer op.** Deze firmware prefixt
+  al haar antwoorden met `> ` -- de statusregel komt binnen als
+  `> Filter on: ...`. Een build die `> filter channel list` echoot met het
+  antwoord eronder verloor voorheen zijn hele lijst, omdat elke tekst die zo
+  begon als onleesbaar gold. De usage-regel wordt nu herkend op haar
+  syntaxtekens (`[ ] | <`) in plaats van op haar eerste woorden, zodat `Public`
+  uit dat voorbeeld niet als "geblokkeerd kanaal" op de pagina belandt -- de
+  bestaande test daarover ving die regressie.
 
 ## 2.18.1 - 2026-09-08
 
