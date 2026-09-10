@@ -400,6 +400,10 @@
 
       // --- kaart ---
       "map.labels": "SNR-labels tonen",
+      "map.zoom_title": "De kaart groot openen",
+      "map.zoom_aria": "Kaart groot openen",
+      "map.shrink_title": "Terug naar de gewone maat (Escape)",
+      "map.shrink_aria": "Kaart weer klein maken",
       "map.nolocation": "Nog geen locatie bekend voor deze repeater.",
       "map.legend": "SNR link",
       "map.legend_good": "goed (≥0 dB)",
@@ -937,6 +941,10 @@
       "nb.link_snr": "Link {name} — SNR",
 
       "map.labels": "Show SNR labels",
+      "map.zoom_title": "Open the map large",
+      "map.zoom_aria": "Open map large",
+      "map.shrink_title": "Back to normal size (Escape)",
+      "map.shrink_aria": "Shrink map back",
       "map.nolocation": "No location known for this repeater yet.",
       "map.legend": "Link SNR",
       "map.legend_good": "good (≥0 dB)",

@@ -840,6 +840,109 @@
       });
   });
 
+  // --- een kaart groot openen -------------------------------------------------
+  //
+  // Waarom een eigen overlay en niet de Fullscreen API: die haalt het element uit
+  // de gewone opmaakstroom (top layer) en dan verliest de kaart alles wat er
+  // buiten staat -- het pakketpaneel dat het pad tekent, de zoekbalk, de modals.
+  // Bovendien mag hij geweigerd worden zonder gebruikersgesture en verschilt hij
+  // per browser in wat er dan gebeurt. Dit is voorspelbaarder en, belangrijker,
+  // het is DEZELFDE Leaflet-instantie in dezelfde DOM: de live-animatie, de
+  // pacman-modus, de drukte-laag en het filter lopen door zonder iets te
+  // herbouwen. Alleen het KADER wordt groter.
+  //
+  // Geen aparte code per kaart: elke .mapcard krijgt dezelfde knop, dus de
+  // linkkaart op een nodepagina doet het ook. Wat de knop niet doet is de kaart
+  // vertellen dat ze groter is -- daar zorgt een window-resize voor, want Leaflet
+  // hangt daar zelf al aan (trackResize) en de live-kaart heeft er bovendien een
+  // ResizeObserver op zijn eigen element voor.
+  (function () {
+    var kaarten = document.querySelectorAll(".mapcard");
+    if (!kaarten.length) return;
+    var backdrop = null;
+    var groot = null;      // de kaart die nu groot staat, of null
+
+    // Leaflet meet zijn eigen doos pas als iemand het vraagt. Twee keer vragen:
+    // eenmaal zodra de browser de nieuwe opmaak gedaan heeft, en nog eens iets
+    // later voor het geval er een overgang over de hoogte liep. Twee resizes
+    // kosten niets; een kaart die halverwege zijn oude maat aanhoudt levert een
+    // grijze rand op waar de tegels ontbreken.
+    function hermeten() {
+      requestAnimationFrame(function () {
+        window.dispatchEvent(new Event("resize"));
+      });
+      setTimeout(function () { window.dispatchEvent(new Event("resize")); }, 260);
+    }
+
+    function sluit() {
+      if (!groot) return;
+      var kaart = groot;
+      groot = null;
+      kaart.classList.remove("big");
+      document.body.classList.remove("mapbig");
+      if (backdrop) { backdrop.remove(); backdrop = null; }
+      var knop = kaart.querySelector(".mapzoom");
+      if (knop) {
+        knop.setAttribute("aria-pressed", "false");
+        knop.title = t("map.zoom_title");
+        knop.setAttribute("aria-label", t("map.zoom_aria"));
+      }
+      hermeten();
+    }
+
+    function open(kaart) {
+      if (groot) sluit();
+      groot = kaart;
+      backdrop = document.createElement("div");
+      backdrop.className = "mapback";
+      // Naast de kaart klikken sluit hem. Niet op de kaart zelf: daar is elke
+      // klik een handeling (slepen, een bolletje, een pakket) en die mag niet
+      // per ongeluk het venster wegklappen.
+      backdrop.addEventListener("click", sluit);
+      document.body.appendChild(backdrop);
+      kaart.classList.add("big");
+      document.body.classList.add("mapbig");
+      var knop = kaart.querySelector(".mapzoom");
+      if (knop) {
+        knop.setAttribute("aria-pressed", "true");
+        knop.title = t("map.shrink_title");
+        knop.setAttribute("aria-label", t("map.shrink_aria"));
+      }
+      hermeten();
+    }
+
+    kaarten.forEach(function (kaart) {
+      var bar = kaart.querySelector(".mapbar");
+      var knop = document.createElement("button");
+      knop.type = "button";
+      knop.className = "mapzoom";
+      // Het teken en niet het woord: de balk erboven staat al vol met
+      // schakelaars, en dit is de enige knop die over het KADER gaat.
+      knop.innerHTML = "&#9974;";
+      knop.setAttribute("aria-pressed", "false");
+      knop.title = t("map.zoom_title");
+      knop.setAttribute("aria-label", t("map.zoom_aria"));
+      knop.addEventListener("click", function () {
+        if (kaart.classList.contains("big")) sluit(); else open(kaart);
+      });
+      // In de balk als die er is (dan staat hij bij de andere kaartknoppen),
+      // anders rechtsboven in de kaart zelf.
+      var rechts = bar && bar.querySelector(".mapbar-right");
+      if (rechts) rechts.appendChild(knop);
+      else if (bar) bar.appendChild(knop);
+      else kaart.insertBefore(knop, kaart.firstChild);
+    });
+
+    // Escape sluit, zoals bij elk ander groot venster op deze site. Alleen als
+    // er geen modal openstaat: die vangt Escape zelf en heeft dan voorrang.
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape" || !groot) return;
+      var m = document.getElementById("metric-modal");
+      if (m && !m.hidden) return;
+      sluit();
+    });
+  })();
+
   // --- history modal ----------------------------------------------------------
   var modal = document.getElementById("metric-modal");
   if (modal) {

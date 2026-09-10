@@ -10,6 +10,28 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.19.0 - 2026-09-09
+
+- **Een kaart groot openen.** De knop `⛶` in de kaartbalk zet de kaart over de
+  hele pagina (met een marge; op een telefoon helemaal beeldvullend), Escape of
+  een klik naast de kaart brengt hem terug. Bewust een eigen overlay en niet de
+  Fullscreen API: die haalt het element uit de opmaakstroom en dan verliest de
+  kaart alles wat ernaast hoort — het pakketpaneel dat het pad tekent, de
+  filters, de modals. Dit blijft dezelfde Leaflet-instantie in dezelfde DOM, dus
+  de live-animatie, de pacman-modus, de druktelaag en het filter lopen door
+  zonder iets te herbouwen; alleen het kader wordt groter. De pakketlijst blijft
+  staan met een eigen schuifbalk, want die is de helft van deze weergave — hem
+  verbergen zou de knop een verlies maken in plaats van een winst.
+  Geen code per kaart: elke kaartkaart krijgt de knop, dus de linkkaart op een
+  nodepagina kan het ook.
+- Vangnettest op de vertaalsleutels: elke sleutel die het script zelf opbouwt
+  (`t("...")`) moet in **beide** talen bestaan, en de twee tabellen moeten
+  dezelfde sleutels dekken. Waarom dat nodig is: een sjabloon draagt zijn
+  Nederlandse tekst als inhoud en valt dus terug op leesbaar Nederlands, maar
+  tekst die JavaScript maakt levert bij een ontbrekende sleutel de ruwe
+  sleutelnaam op de pagina op — en dat ziet niemand tot een bezoeker op Engels
+  staat.
+
 ## 2.18.2 - 2026-09-09
 
 - **"None" is een antwoord, geen stilte.** Op de lucht gemeten (JessaZH.VIR02):

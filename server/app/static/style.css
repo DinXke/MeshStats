@@ -1075,6 +1075,45 @@ tr.warn > td:first-child, tr.warnrow > td:first-child { border-left: 2px solid v
 .livefeed li.selected { background: rgba(199, 125, 255, .12); border-left-color: #c77dff; }
 
 .mapbar-right { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+/* --- een kaart groot openen --------------------------------------------------
+   Zie de toelichting in app.js: dit is een overlay en niet de Fullscreen API,
+   zodat het DEZELFDE Leaflet-instantie in dezelfde DOM blijft en alles wat naast
+   de kaart hoort (het pakketpaneel, de filters) blijft werken.
+
+   Lagen. Leaflet gebruikt tot ~1000, het pakketpaneel zit op 1500 en de
+   grafiekmodal op 2000. De vergrote kaart hoort daar precies tussen: boven de
+   kaartlagen, maar ONDER het paneel -- want dat paneel tekent het pad van een
+   pakket op deze kaart en moet er dus voor kunnen staan. */
+.mapzoom {
+  width: auto; margin: 0; padding: .1rem .4rem; line-height: 1.2;
+  font-size: 1rem; background: none; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--muted); cursor: pointer;
+}
+.mapzoom:hover { color: var(--text); border-color: var(--accent-dim); }
+.mapzoom[aria-pressed="true"] { color: var(--text); border-color: var(--accent-dim); }
+body.mapbig { overflow: hidden; }
+.mapback { position: fixed; inset: 0; z-index: 1100; background: rgba(0, 0, 0, .55); }
+.mapcard.big {
+  position: fixed; inset: 2vh 2vw; z-index: 1101; margin: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+/* De kaart neemt wat er over is; de balken houden hun eigen hoogte. min-height:0
+   is nodig omdat een flexitem anders niet KLEINER wil worden dan zijn inhoud, en
+   dan groeit de kaart de doos uit in plaats van hem te vullen. */
+.mapcard.big .mapwrap { flex: 1 1 auto; min-height: 0; }
+.mapcard.big .mapwrap > #livemap { height: 100%; }
+.mapcard.big > #linkmap { flex: 1 1 auto; min-height: 0; height: auto; }
+/* De pakketlijst blijft staan -- hij is de helft van deze weergave -- maar krijgt
+   een eigen plafond met een schuifbalk, zodat de kaart het grootste deel houdt.
+   Verbergen zou de knop een verlies maken in plaats van een winst. */
+.mapcard.big .livefeed { flex: 0 1 auto; min-height: 0; max-height: 30vh; overflow-y: auto; }
+/* Op een telefoon is een marge rond de kaart verspilling: die twee centimeter
+   zijn daar juist het verschil tussen wel en niet leesbaar. */
+@media (max-width: 640px) {
+  .mapcard.big { inset: 0; border-radius: 0; }
+  .mapcard.big .livefeed { max-height: 22vh; }
+}
+
 .maptoggle input:disabled + span { opacity: .5; }
 
 /* --- packet filter ----------------------------------------------------------- */
