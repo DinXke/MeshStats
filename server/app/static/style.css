@@ -1105,7 +1105,11 @@ body.mapbig { overflow: hidden; }
    weergave (gemeten: 294 px waar hij er anders 420 had) -- dan is de knop een
    verlies. Met flex-basis 0 verdelen ze wat er na de balken overblijft, dus de
    verhouding houdt stand op elk schermformaat en er valt nooit iets buiten. */
-.mapcard.big .mapwrap { flex: 3 1 0; min-height: 0; }
+.mapcard.big .mapwrap { flex: 3 1 0; min-height: min(420px, 55vh); }
+/* Die ondergrens is geen smaakkwestie: 420 px is de hoogte die de kaart in de
+   GEWONE weergave heeft. Op een lage viewport gaf 3:1 er minder dan dat, en een
+   knop die de kaart kleiner maakt is een knop die niemand wil. Onder de 55vh
+   wint de viewport, zodat er ook op een laag venster niets buiten valt. */
 .mapcard.big .mapwrap > #livemap { height: 100%; }
 .mapcard.big > #linkmap { flex: 1 1 auto; min-height: 0; height: auto; }
 /* De pakketlijst blijft staan -- hij is de helft van deze weergave -- maar krijgt
