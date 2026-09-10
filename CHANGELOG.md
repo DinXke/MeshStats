@@ -21,7 +21,14 @@ functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
   de live-animatie, de pacman-modus, de druktelaag en het filter lopen door
   zonder iets te herbouwen; alleen het kader wordt groter. De pakketlijst blijft
   staan met een eigen schuifbalk, want die is de helft van deze weergave — hem
-  verbergen zou de knop een verlies maken in plaats van een winst.
+  verbergen zou de knop een verlies maken in plaats van een winst. Kaart en
+  lijst verdelen de vrije ruimte 3:1 (4:1 op een telefoon) en de kaart heeft een
+  ondergrens van 420 px — de hoogte die hij in de gewone weergave heeft — want
+  met vaste maten kwam hij op een laag venster LAGER uit dan zonder de knop.
+  Gemeten: op 1600×1000 gaat de kaart van 1080×420 naar 1515×589 (bijna twee
+  keer het oppervlak), op een telefoon van 315×420 naar 354×505. Daar gaat de
+  uitleg boven de kaart weg zodra hij groot staat: die loopt op dat formaat over
+  vier regels.
   Geen code per kaart: elke kaartkaart krijgt de knop, dus de linkkaart op een
   nodepagina kan het ook.
 - Vangnettest op de vertaalsleutels: elke sleutel die het script zelf opbouwt
