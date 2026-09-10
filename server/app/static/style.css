@@ -1121,6 +1121,10 @@ body.mapbig { overflow: hidden; }
 @media (max-width: 640px) {
   .mapcard.big { inset: 0; border-radius: 0; }
   .mapcard.big .mapwrap { flex: 4 1 0; }   /* op een telefoon weegt de kaart nog zwaarder */
+  /* En de uitleg boven de kaart gaat weg zodra hij groot staat: op een telefoon
+     loopt die tekst over vier regels en dat is een kwart van de hoogte die je
+     net gevraagd hebt. Wie de kaart groot opent, kijkt er al naar. */
+  .mapcard.big .mapbar [data-i18n="live.hint"] { display: none; }
 }
 
 .maptoggle input:disabled + span { opacity: .5; }
