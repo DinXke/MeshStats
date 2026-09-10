@@ -1100,18 +1100,23 @@ body.mapbig { overflow: hidden; }
 /* De kaart neemt wat er over is; de balken houden hun eigen hoogte. min-height:0
    is nodig omdat een flexitem anders niet KLEINER wil worden dan zijn inhoud, en
    dan groeit de kaart de doos uit in plaats van hem te vullen. */
-.mapcard.big .mapwrap { flex: 1 1 auto; min-height: 0; }
+/* Kaart en lijst delen de ruimte 3:1 en niet elk een vaste hoogte. Met vaste
+   maten kreeg de kaart op een lage viewport MINDER hoogte dan in de gewone
+   weergave (gemeten: 294 px waar hij er anders 420 had) -- dan is de knop een
+   verlies. Met flex-basis 0 verdelen ze wat er na de balken overblijft, dus de
+   verhouding houdt stand op elk schermformaat en er valt nooit iets buiten. */
+.mapcard.big .mapwrap { flex: 3 1 0; min-height: 0; }
 .mapcard.big .mapwrap > #livemap { height: 100%; }
 .mapcard.big > #linkmap { flex: 1 1 auto; min-height: 0; height: auto; }
 /* De pakketlijst blijft staan -- hij is de helft van deze weergave -- maar krijgt
    een eigen plafond met een schuifbalk, zodat de kaart het grootste deel houdt.
    Verbergen zou de knop een verlies maken in plaats van een winst. */
-.mapcard.big .livefeed { flex: 0 1 auto; min-height: 0; max-height: 30vh; overflow-y: auto; }
+.mapcard.big .livefeed { flex: 1 1 0; min-height: 0; overflow-y: auto; }
 /* Op een telefoon is een marge rond de kaart verspilling: die twee centimeter
    zijn daar juist het verschil tussen wel en niet leesbaar. */
 @media (max-width: 640px) {
   .mapcard.big { inset: 0; border-radius: 0; }
-  .mapcard.big .livefeed { max-height: 22vh; }
+  .mapcard.big .mapwrap { flex: 4 1 0; }   /* op een telefoon weegt de kaart nog zwaarder */
 }
 
 .maptoggle input:disabled + span { opacity: .5; }
