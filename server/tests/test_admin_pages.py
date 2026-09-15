@@ -178,7 +178,8 @@ def test_weergaveformulier_laat_de_bewaartermijn_staan(db, monkeypatch):
                                       heartbeat_min=9, retention_days=None,
                                       history_ranges="4,24",
                                       packet_retention_days=None,
-                                      packet_max_rows=None, db_max_mb=None)
+                                      packet_max_rows=None, db_max_mb=None,
+                                      batt_warn_v=None, batt_crit_v=None)
     assert resp.headers["location"] == "/admin/server"
     assert db.setting_int("retention_days", 0) == 42
     assert db.setting_int("heartbeat_min", 0) == 9
@@ -197,7 +198,8 @@ def test_bewaarformulier_laat_het_puntinterval_staan(db, monkeypatch):
     routes_admin.save_settings(scope_request("/admin/settings"), csrf="x",
                                heartbeat_min=None, retention_days=30,
                                history_ranges=None, packet_retention_days=5,
-                               packet_max_rows=100000, db_max_mb=64)
+                               packet_max_rows=100000, db_max_mb=64,
+                               batt_warn_v=None, batt_crit_v=None)
     assert db.setting_int("heartbeat_min", 0) == 7
     assert db.setting_int("retention_days", 0) == 30
     assert db.setting_int("packet_retention_days", 0) == 5
@@ -219,7 +221,8 @@ def test_weergave_lokt_geen_opruimronde_uit(db, monkeypatch):
     routes_admin.save_settings(scope_request("/admin/settings"), csrf="x",
                                heartbeat_min=10, retention_days=None,
                                history_ranges=None, packet_retention_days=None,
-                               packet_max_rows=None, db_max_mb=None)
+                               packet_max_rows=None, db_max_mb=None,
+                                      batt_warn_v=None, batt_crit_v=None)
     assert gedraaid == []
 
 

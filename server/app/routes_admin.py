@@ -26,7 +26,7 @@ import json
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from . import (audit, auth, clocksync, commanding, compare, config, db, pfguard,
+from . import (battwatch, audit, auth, clocksync, commanding, compare, config, db, pfguard,
                discovery, firmware, hadiscovery, metrics, monitors, mqtt_ingest,
                nodeconfig, nodecred, pfstock, pktfilter, qrsvg, ratelimit, rbac, retention,
                rooms, sensornode, sensorpush, snmp, sweepsched, tsdb)
@@ -836,6 +836,9 @@ def server_page(request: Request):
         # ronde die uitstaat mag er niet uitzien als een die nooit iets vond.
         "sensor_poll": sensornode.status_summary(),
         "clock_targets": clocksync.targets(repeaters),
+        # Zichtbaarheid is hier de helft van de bewaking: een lus die draait
+        # en nooit iets vindt, hoort er anders uit te zien dan een die stilstaat.
+        "battwatch": battwatch.status(),
         "cli_params": db.get_setting("cli_params", db.DEFAULT_CLI_PARAMS),
         "settings": {
             "heartbeat_min": db.setting_int("heartbeat_min", config.HEARTBEAT_MIN),
@@ -845,6 +848,8 @@ def server_page(request: Request):
             "packet_max_rows": db.setting_int("packet_max_rows", config.PACKET_MAX_ROWS),
             "db_max_mb": db.setting_int("db_max_mb", config.DB_MAX_MB),
             "history_ranges": ",".join(str(h) for h in metrics.parse_ranges(db.get_setting("history_ranges"))),
+            "batt_warn_v": "%.2f" % battwatch.grenzen()[0],
+            "batt_crit_v": "%.2f" % battwatch.grenzen()[1],
         },
         # Wat de opslag op dit ogenblik doet, plus wat de laatste ronde opruimde.
         # Zichtbaarheid is hier de helft van de feature: een bewaartermijn die
@@ -861,6 +866,8 @@ def server_page(request: Request):
 
 @router.post("/settings")
 def save_settings(request: Request, csrf: str = Form(...),
+                  batt_warn_v: float | None = Form(default=None),
+                  batt_crit_v: float | None = Form(default=None),
                   heartbeat_min: int | None = Form(default=None),
                   retention_days: int | None = Form(default=None),
                   history_ranges: str | None = Form(default=None),
@@ -888,6 +895,13 @@ def save_settings(request: Request, csrf: str = Form(...),
     """
     user = require_perm(request, "server.instellingen")
     check_csrf(request, csrf)
+    # De accugrenzen. Geklemd op wat een cel kan zijn; dat kritiek onder laag
+    # hoort te liggen bewaakt battwatch.grenzen() zelf, want die regel geldt ook
+    # voor een waarde die langs een andere weg in settings belandt.
+    if batt_warn_v is not None:
+        db.set_setting("batt_warn_v", "%.2f" % max(0.5, min(30.0, batt_warn_v)))
+    if batt_crit_v is not None:
+        db.set_setting("batt_crit_v", "%.2f" % max(0.5, min(30.0, batt_crit_v)))
     if heartbeat_min is not None:
         db.set_setting("heartbeat_min", str(max(1, min(1440, heartbeat_min))))
     if retention_days is not None:

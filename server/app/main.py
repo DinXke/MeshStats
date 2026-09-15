@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, clocksync, companions, db, hadiscovery, limits, meshmoni,
+from . import (auth, battwatch, clocksync, companions, db, hadiscovery, limits, meshmoni,
                mqtt_ingest, rbac, retention, routes_admin, routes_api,
                routes_companions, routes_public, sensornode, sensorpush,
                sweepsched, tsdb, webpush)
@@ -105,6 +105,10 @@ def bootstrap():
     # Webpush kijkt periodiek in de alerts-tabel, zoals retention in de zijne;
     # zonder VAPID-sleutels start hij niet en zegt hij waarom (zie webpush.py).
     webpush.start()
+    # De accubewaking schrijft in diezelfde tabel en weet van webpush niets af;
+    # dat is het hele punt van een tabel als koppelvlak. Zie battwatch.py voor
+    # de afloop die deze lus had moeten melden.
+    battwatch.start()
     # Contacts stored before this column existed, or while borders.json was
     # missing, are classified here rather than never: ingest only classifies a
     # position when it changes, and most nodes never move.

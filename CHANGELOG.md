@@ -10,6 +10,29 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.22.0 - 2026-09-15
+
+- **Accubewaking.** Op 14 september zakte de zonnerepeater DinX-Home van 3,55 V
+  naar 2,81 V en viel stil — hij nam de statistieken van drie andere nodes mee,
+  want hij was ook hun koerier. In `alerts` stond over die hele afloop **geen
+  enkele regel**. De cijfers waren er wel; ze werden door niemand gelezen. Een
+  lus kijkt nu elke vijf minuten naar de laatst gemeten accuspanning van elke
+  node en schrijft een alarm als die onder een grens zakt. Standaard 3,50 V
+  (waarschuwing) en 3,30 V (kritiek), in te stellen op de beheerpagina.
+- **Op de spanning, niet op het percentage.** Dat laatste is afgeleid, en een
+  drempel op een afgeleide is twee keer raden.
+- **Vier regels tegen ruis**: alleen een verse meting (ouder dan zes uur zegt
+  niets over nu — een node die niet meer meldt heeft geen lage accu, die heeft
+  geen meting); alleen een bruikbare meting (onder 2 V meet een bord geen cel);
+  alleen bij een overgang (laag blijven is geen nieuwe gebeurtenis, verder zakken
+  naar kritiek wel); en terug omhoog pas met een marge, zodat een zonnecel die bij
+  elke wolk rond de grens dobbert geen alarmenmolen wordt.
+- **De trede staat in `settings`**, niet in het geheugen van de lus: een herstart
+  van de site is geen gebeurtenis aan de accu.
+- Geen `kind` op deze alarmen, met opzet: die dient om dezelfde gebeurtenis langs
+  twee wegen te ontdubbelen, en omdat al deze teksten met "accu" beginnen zou die
+  regel juist de escalatie van laag naar kritiek opeten.
+
 ## 2.21.0 - 2026-09-15
 
 - **Instellingen zetten over de mesh, via de opdrachtwachtrij.** Er waren vier
