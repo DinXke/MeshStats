@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from . import (auth, candidates, config, countries, db, metrics, packets,
-               pfstock, pktfilter, search, sensorpush, version)
+               nbstock, pfstock, pktfilter, search, sensorpush, version)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -169,6 +169,12 @@ async def repeater_settings(request: Request, authorization: str | None = Header
     # er niets zichtbaars -- zie pfstock.apply_cli_filter.
     if pfstock.apply_cli_filter(row["id"], values, source="cli"):
         log.info("Filterstand van %s uit de CLI-sweep overgenomen", row["slug"])
+    # En een `cmd:neighbors`-antwoord is evenmin een instelling: dat is de
+    # burenlijst, langs dezelfde weg als de dakrepeater hem publiceerde.
+    # Zie nbstock -- 0 buren is een uitkomst, "onleesbaar" is er geen.
+    aantal = nbstock.apply_cli_neighbors(row["id"], values, source="cli")
+    if aantal is not None:
+        log.info("Burenlijst van %s uit de CLI-ronde: %d buren", row["slug"], aantal)
     return {"ok": True, "count": len(values)}
 
 

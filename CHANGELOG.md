@@ -10,6 +10,25 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.20.0 - 2026-09-15
+
+- **De burenlijst komt weer binnen, nu uit de CLI.** De dakrepeater vroeg de
+  buren van elke node die hij bewaakte op met het binaire `REQ_TYPE_GET_NEIGHBOURS`
+  en publiceerde ze mee. Sinds hij wegviel stond `neighbor_count` op de kaarten
+  zoals hij dagen eerder was. De weg terug hoeft geen tweede protocolimplementatie
+  te zijn: stock firmware heeft een `neighbors`-commando in de gewone CLI, en over
+  die weg praat MeshUptime toch al met deze repeaters. `nbstock.apply_cli_neighbors`
+  vertaalt dat antwoord naar dezelfde bestemming als de MQTT-weg had: de
+  `neighbors`-tabel plus de meting `neighbor_count`.
+- **Zes hextekens, niet acht.** De CLI geeft vier byte sleutel; overal in deze
+  databank is een buurprefix er drie (`contacts.prefix6`, `packets.sender`,
+  `neighbors.prefix`), en de naamkoppeling zoekt letterlijk op `prefix6`. Acht
+  bewaren zou elke buur een tweede rij geven náást zijn eigen historie, en hem
+  tegelijk naamloos maken.
+- **`-none-` is een uitkomst, `Unknown command` niet.** Een repeater die het
+  commando niet kent mag geen buurloze node worden: onleesbaar levert None en
+  verandert niets. SNR komt als SNR×4 over de lijn en wordt gedeeld.
+
 ## 2.19.1 - 2026-09-15
 
 - **De batterij was niet weg, het percentage was afgeleid.** Een
