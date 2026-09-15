@@ -10,6 +10,34 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.21.0 - 2026-09-15
+
+- **Instellingen zetten over de mesh, via de opdrachtwachtrij.** Er waren vier
+  schrijfwegen, en voor een node zonder IP-pad was er maar één: `mesh`, over de
+  MONITOR van die node. Viel die monitor weg, dan viel het schrijven weg —
+  terwijl de node zelf bereikbaar bleef en de poller zijn instellingen nog elke
+  ronde ophaalde. De pagina zei dan "de doorstuurder is hier zelf niet bekend",
+  wat klopte maar niet het hele verhaal was. De vijfde weg gebruikt wat er dan wél
+  is: de site legt `cmd:set <param> <waarde>` in de wachtrij en MeshUptime voert
+  het over LoRa uit.
+- **De set en de teruglezing in één sessie.** Er gaan twee opdrachten de wachtrij
+  in — `cmd:set tx 20` en `tx` — zodat de poller met één login zet én terugleest.
+  De teruggelezen waarde verschijnt in de instellingentabel waar de pagina hem toch
+  al toont.
+- **`applied` blijft leeg, en dat staat er ook.** Dit is de enige weg zonder
+  teruglezing in hetzelfde verzoek: het commando vertrekt in een wachtrij die pas
+  bij de volgende poll geleegd wordt. De melding zegt dat het in de wachtrij staat
+  en niet dat het gelukt is — een gevraagde waarde als gemeten waarde vastleggen is
+  precies waar deze module tegen gebouwd is.
+- **Alle drempels gelden onverkort**: dezelfde ingang (`write()`), dus dezelfde
+  parameterlijst, grenzen, risicoklassen, bevestiging en rechten. Het plafond is
+  hetzelfde als bij de monitor-weg, en de firmware van de poller weigert bovendien
+  zelf wat een node op een dak onbereikbaar maakt (`clkreboot`, `reboot`, `erase`,
+  `set radio`, `set freq`, `ota`).
+- **Geen poller ooit gezien, geen kandidaat.** Anders staat op elke nodepagina een
+  afgevallen weg die deze installatie niet gebruikt — dezelfde regel als bij de
+  eigen API van een node.
+
 ## 2.20.0 - 2026-09-15
 
 - **De burenlijst komt weer binnen, nu uit de CLI.** De dakrepeater vroeg de

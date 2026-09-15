@@ -86,6 +86,7 @@ gebeurd is.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 import threading
 import time
 import urllib.error
@@ -409,6 +410,70 @@ def _route_mesh(rep, relay) -> dict:
     return out
 
 
+def _route_poller(rep) -> dict | None:
+    """Kandidaat 4: de opdrachtwachtrij -- de poller voert het over LoRa uit.
+
+    DE WEG DIE ONTBRAK. Tot nu toe was 'mesh' de enige schrijfweg naar een node
+    zonder IP-pad, en die liep over de MONITOR van die node: onze eigen firmware
+    op een dakrepeater, met ``POST /api/moncfg``. Viel die monitor weg, dan viel
+    het schrijven weg -- terwijl de node zelf gewoon bereikbaar bleef. Dat is
+    precies wat er gebeurde toen de dakrepeater zijn accu leegtrok: lezen ging
+    door (de poller haalt zijn instellingen over LoRa op), schrijven kon niet
+    meer, en de pagina zei "de doorstuurder is hier zelf niet bekend".
+
+    Deze weg gebruikt wat er dan nog wél is: dezelfde poller, dezelfde sessie,
+    dezelfde CLI. De site legt ``cmd:set <param> <waarde>`` in de wachtrij, de
+    poller logt in en voert het uit, en het antwoord komt terug zoals elk ander
+    antwoord uit die wachtrij.
+
+    WAT DEZE WEG NIET KAN, en dat hoort de pagina te zeggen: TERUGLEZEN IN
+    HETZELFDE VERZOEK. Alle andere vervoermiddelen wachten op de node en geven
+    ``applied`` terug -- het hele punt van deze module, want MeshCore antwoordt
+    "OK" op dingen die het niet overnam. Hier vertrekt het commando in een
+    wachtrij die pas bij de volgende poll geleegd wordt, en het antwoord komt
+    tientallen seconden later langs een andere weg binnen. Daarom zet ``write()``
+    er meteen een LEESopdracht achteraan: de poller voert allebei uit in
+    dezelfde sessie (een login, twee commando's) en de teruggelezen waarde
+    verschijnt in de instellingentabel waar de pagina hem toch al toont.
+
+    WAAROM HET RISICOPLAFOND HETZELFDE IS ALS BIJ 'mesh' en niet lager: er staat
+    een geauthenticeerde tegenpartij tegenover (de poller logt in met het
+    admin-wachtwoord van het DOEL, dat alleen op die node staat), en de firmware
+    van de poller weigert bovendien zelf de opdrachten die een node op een dak
+    onbereikbaar kunnen maken -- clkreboot, reboot, erase, set radio, set freq,
+    ota. Dat is dezelfde grens als de monitor-weg, langs een kortere ketting.
+    """
+    from . import commanding
+
+    seen = db.poller_last_seen()
+    if not seen:
+        # Nooit een poller gezien: dan is dit geen afgevallen weg maar een weg
+        # die voor deze installatie niet bestaat, en hem op elke nodepagina als
+        # reden tonen zou de lijst vullen met iets dat niemand hier gebruikt.
+        # Dezelfde regel als bij de eigen API hierboven: geen adres, geen
+        # kandidaat.
+        return None
+    caps = db.poller_last_caps()
+    if caps is None:
+        caps = list(commanding.DEFAULT_POLLER_CAPS)
+    vers = commanding._fresh(seen, commanding.POLLER_STALE_SECS,
+                             datetime.now(timezone.utc))
+    naam = db.poller_last_name() or ""
+
+    out = {"transport": "poller", "can": False, "blocker": "", "host": "",
+           "fw": "", "min_fw": "", "max_risk": RISK_CUTOFF,
+           "target": (_field(rep, "pubkey_prefix") or "").lower().strip(),
+           "monitor": naam}
+    if not vers:
+        out["blocker"] = "no_poller"
+    elif "settings" not in caps:
+        out["blocker"] = "poller_no_settings"
+    elif not out["target"]:
+        out["blocker"] = "no_target"
+    else:
+        out["can"] = True
+    return out
+
 # Waarom een kandidaat afvalt, in het Nederlands, zodat de reden in ``why``
 # dezelfde is als die op de pagina en in het logboek. Een zin die op drie
 # plaatsen anders luidt, is een zin waar niemand meer op vertrouwt.
@@ -426,6 +491,8 @@ BLOCKER_TEXT = {
     "relay_no_fw": "de monitor meldt geen versie van onze firmware",
     "relay_old_fw": "de firmware van de monitor is er te oud voor",
     "no_target": "van deze repeater is geen publieke sleutel bekend",
+    "no_poller": "er is geen verse poller die de wachtrij komt leegmaken",
+    "poller_no_settings": "de poller voert geen instellingsopdrachten uit",
     "no_sensor_host": "er is geen adres voor de eigen API van deze node ingevuld",
     "no_sensor_answer": ("op dat adres heeft nog nooit iets geantwoord; zolang "
                          "dat zo is, is het een adres en geen weg"),
@@ -436,6 +503,7 @@ TRANSPORT_TEXT = {
     "ip": "over HTTP naar de node zelf",
     "mqtt": "over het MQTT-cmd-topic",
     "mesh": "over LoRa via zijn monitor",
+    "poller": "over LoRa via de opdrachtwachtrij",
 }
 
 
@@ -497,8 +565,15 @@ def cfg_route(rep, relay=None, broker_connected=None) -> dict:
     # node HEEFT de andere wegen niet. Hem achteraan zetten zou betekenen dat de
     # pagina eerst twee redenen opsomt waarom onze firmware er niet op staat,
     # voordat ze bij de weg komt die werkt.
+    # De wachtrij staat ACHTERAAN: hij is de traagste en de enige zonder
+    # teruglezing in hetzelfde verzoek. Maar hij staat er voor elke node, ook
+    # een die zelf publiceert, want hij hangt aan geen enkele eigenschap van
+    # het doel -- alleen aan een poller die vers is. Dat is precies wat er
+    # nodig was toen de monitor wegviel en 'mesh' zei dat er niets kon.
+    poller = _route_poller(rep)
     kandidaten = ([sensor] if sensor is not None else []) \
-        + ([ip, mqtt] if not relayed else [mesh])
+        + ([ip, mqtt] if not relayed else [mesh]) \
+        + ([poller] if poller is not None else [])
     gekozen = next((k for k in kandidaten if k["can"]), None)
 
     out = {"can": False, "blocker": "", "host": "", "fw": "", "relayed": relayed,
@@ -687,6 +762,15 @@ def params_for(rep, route=None) -> dict:
         return sensornode.spec()
     if route["transport"] == "mqtt":
         return spec_from_node(rep)
+    if route["transport"] == "poller":
+        # Een stock repeater publiceert zijn tabel nergens en heeft geen
+        # /api/cfg. Wat hij wél draait is dezelfde CommonCLI als onze
+        # firmware, en daarvan staat hier al een spiegel met een test die
+        # hem tegen de C-broncode aan houdt. Diezelfde afweging als bij de
+        # sensornode, om dezelfde reden: een tweede lijst verzinnen zou
+        # parameters aanbieden die de node weigert.
+        from . import sensornode
+        return sensornode.spec()
     return params(route["host"])
 
 
@@ -882,7 +966,9 @@ def write(rep, key: str, value: str, confirm: str = "") -> dict:
     # terugkomt. De pagina hoort dat te zeggen, langs welke weg dan ook.
     out["reboot"] = bool(spec.get("reboot"))
 
-    if route["transport"] == "mesh":
+    if route["transport"] == "poller":
+        _write_poller(rep, route, out)
+    elif route["transport"] == "mesh":
         _write_mesh(route, out)
     elif route["transport"] == "mqtt":
         _write_mqtt(rep, route, out)
@@ -1134,6 +1220,45 @@ def mesh_state(monitor_host: str) -> dict:
         uit["error"] = f"monitor niet bereikbaar ({type(exc).__name__})"
     return uit
 
+
+def _write_poller(rep, route: dict, out: dict) -> None:
+    """De weg via de opdrachtwachtrij: zetten en meteen laten teruglezen.
+
+    TWEE OPDRACHTEN, EEN SESSIE. ``cmd:set <param> <waarde>`` zet hem,
+    ``<param>`` leest hem terug -- de poller voert de lijst in volgorde uit
+    binnen dezelfde login, dus dit kost een login en twee commando's in plaats
+    van twee volle sessies. De teruggelezen waarde belandt onder de gewone
+    parameternaam in de instellingentabel, precies waar de pagina hem toch al
+    toont; de uitkomst van de schrijfactie zelf staat onder
+    ``cmd:set <param> <waarde>``.
+
+    ``ok`` betekent hier IETS ANDERS dan bij de andere vier, en daarom staat het
+    er met zoveel woorden bij in ``msg``: het commando is in de wachtrij gezet,
+    niet uitgevoerd. ``applied`` blijft leeg, zodat ``_remember`` niets vastlegt
+    -- het zou een waarde zijn die nog niemand heeft teruggelezen, en dat is
+    exact de onwaarheid waar deze module tegen gebouwd is.
+
+    Geen herhaling en geen wachten. Wachten zou de browser tientallen seconden
+    laten hangen op een ronde die pas bij de volgende poll begint, en herhalen is
+    bij een schrijfactie die stil bleef de tweede keer hetzelfde doen op een node
+    die je niet kunt nakijken.
+    """
+    param = "cmd:set %s %s" % (out["key"], out["asked"])
+    try:
+        db.request_settings(route["target"], [param, out["key"]])
+    except Exception as exc:                      # noqa: BLE001 - zie hieronder
+        # Wat hier misgaat is de databank, niet de node. De melding hoort dat te
+        # zeggen in plaats van "de node antwoordde niet": dat zou de lezer naar
+        # het dak sturen voor een fout die hier staat.
+        out.update(step="wachtrij", msg="kon de opdracht niet in de wachtrij "
+                                        "zetten: %s" % exc)
+        return
+    out.update(ok=True, step="wachtrij", exact=False, msg=(
+        "in de wachtrij gezet. %s voert het over LoRa uit -- inloggen, zetten en "
+        "teruglezen in een sessie -- en dat duurt tientallen seconden. De "
+        "teruggelezen waarde verschijnt hieronder bij de instellingen zodra de "
+        "ronde klaar is; deze weg kan hem niet in hetzelfde verzoek tonen."
+        % (route.get("monitor") or "de poller")))
 
 def _write_mesh(route: dict, out: dict) -> None:
     """De weg naar een node die alleen over LoRa te bereiken is.
