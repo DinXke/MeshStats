@@ -15,6 +15,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from . import config, countries, packets, tsdb
+from . import metrics as metrics_mod   # naam bezet: ingest() heeft een dict 'metrics'
 
 log = logging.getLogger("meshmanager.db")
 
@@ -3732,6 +3733,17 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
     the table with identical rows while its chart still needs points to keep
     running. force=True (manual status update) always writes.
     """
+    # Het batterijpercentage erbij als de bron alleen de spanning stuurde. Hier
+    # en niet in een van de twee ingest-wegen: dan geldt het voor allebei, en voor
+    # elke poller die er later bij komt. Nooit OVERSCHRIJVEN -- een bron die zelf
+    # een percentage meldt (de dakrepeater, een sensornode met een echte
+    # brandstofmeter) weet meer van die cel dan onze curve.
+    if "bat" in metrics and "battery_percentage" not in metrics:
+        pct = metrics_mod.battery_percentage(metrics.get("bat"))
+        if pct is not None:
+            metrics = dict(metrics)
+            metrics["battery_percentage"] = pct
+
     # Read the setting before taking the lock; get_setting takes it itself
     heartbeat = timedelta(minutes=setting_int("heartbeat_min", config.HEARTBEAT_MIN))
     to_tsdb: dict = {}

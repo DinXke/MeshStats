@@ -423,3 +423,41 @@ def parse_layout(raw: str | None) -> list[dict]:
         plek = next((i for i, b in enumerate(layout) if b["key"] in erna), len(layout))
         layout.insert(plek, dict(block))
     return layout
+
+
+# --- de batterijcurve -------------------------------------------------------
+#
+# battery_percentage is AFGELEID en was dat altijd al. Een MeshCore-repeater
+# meldt in zijn RepeaterStats alleen `batt_milli_volts`; het percentage dat tot
+# nu toe in de databank stond kwam van de dakrepeater, die het uit diezelfde
+# spanning rekende (`meshmanager_batt_percent()` in MeshManagerNet.cpp, de
+# grenzen hieronder zijn letterlijk de zijne). Nu MeshUptime de statussen
+# ophaalt komt er alleen nog `bat` binnen, en stond de batterij op elke
+# kaart leeg terwijl de spanning gewoon bekend was.
+#
+# DEZELFDE grenzen, en niet een eigen betere curve: de reeks loopt door over de
+# overname heen. Een nieuwe curve zou een sprong in de grafiek tekenen op de dag
+# dat er niets aan de batterij veranderde -- en dat is precies het soort leugen
+# waar de rest van deze module tegen gebouwd is.
+#
+# Onder de 2 V meet een bord geen bruikbare cel meer (geen batterij, een
+# kapotte deler): dan liever niets dan 0 %.
+BATT_EMPTY_MV = 3000
+BATT_FULL_MV = 4200
+
+
+def battery_percentage(volts) -> int | None:
+    """Spanning (V) -> percentage, of None als er geen bruikbare meting is."""
+    try:
+        mv = float(volts) * 1000.0
+    except (TypeError, ValueError):
+        return None
+    if mv < 2000:
+        return None
+    if mv <= BATT_EMPTY_MV:
+        return 0
+    if mv >= BATT_FULL_MV:
+        return 100
+    # Afkappen, niet afronden: zo geeft dezelfde spanning hier hetzelfde getal
+    # als op de node, en blijft de reeks over de overname heen aaneengesloten.
+    return int((mv - BATT_EMPTY_MV) * 100 // (BATT_FULL_MV - BATT_EMPTY_MV))

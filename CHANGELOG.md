@@ -10,6 +10,25 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.19.1 - 2026-09-15
+
+- **De batterij was niet weg, het percentage was afgeleid.** Een
+  MeshCore-repeater meldt in zijn statusantwoord alleen de spanning
+  (`batt_milli_volts`); het percentage dat tot nu toe in de databank stond kwam
+  van de dakrepeater, die het zelf uit diezelfde spanning rekende. Nu MeshUptime
+  de statussen ophaalt kwam er alleen nog `bat` binnen en stond de batterij op
+  elke kaart leeg terwijl de spanning gewoon bekend was. `db.ingest()` leidt
+  `battery_percentage` nu af als de bron er zelf geen meestuurt — één plek, dus
+  voor beide ingest-wegen en voor elke poller die er later bij komt.
+- **Dezelfde curve als de node had** (3000 mV = 0 %, 4200 mV = 100 %, onder 2 V
+  geen bruikbare meting), letterlijk overgenomen uit `meshmanager_batt_percent()`
+  en niet vervangen door een eigen betere: 3,89 V geeft hier 74 %, precies wat er
+  historisch voor die node in stond. Een nieuwe curve zou een sprong in de grafiek
+  tekenen op een dag dat er niets aan de batterij veranderde.
+- **Nooit overschrijven.** Stuurt een bron wél een percentage mee (de
+  dakrepeater, een sensornode met een echte brandstofmeter), dan blijft dat staan:
+  die weet meer van die cel dan onze curve.
+
 ## 2.19.0 - 2026-09-09
 
 - **Een kaart groot openen.** De knop `⛶` in de kaartbalk zet de kaart over de
