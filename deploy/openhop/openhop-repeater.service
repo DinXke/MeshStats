@@ -1,0 +1,16 @@
+[Unit]
+Description=openHop Repeater daemon (radio = MeshUptime node over TCP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/openhop-venv/bin/openhop-repeater --config /etc/openhop_repeater/config.yaml
+Restart=always
+RestartSec=10
+WorkingDirectory=/root/openhop_repeater
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

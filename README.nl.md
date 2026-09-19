@@ -102,6 +102,25 @@ van elke repeater.
 
 ---
 
+## Verwante projecten
+
+Deze site is één van vier stukken die samen gegroeid zijn. Ze staan met opzet
+in aparte repo's: elk draait op andere hardware, met een eigen tempo, en elk is
+bruikbaar zonder de rest.
+
+| Project | Wat het is |
+|---|---|
+| **MeshManager** (hier) | De site: statistieken, live kaart, pakketarchief, alarmen en het beheer van de vloot |
+| [**MeshUptime**](https://github.com/DinXke/MeshUptime) | De bewakingsnode: room-server, bots, IRC, sensoren, en de poller die de andere repeaters over LoRa om hun status, instellingen en buren vraagt. Plus de T1000-E-companionfirmware (een pager voor dit mesh) |
+| [**MeshManagerNet**](https://github.com/DinXke/MeshManagerNet) | De dakrepeater: een MeshCore-repeater met een IP-leven naast zijn meshleven — wifi, beheerpagina, OTA met terugrol, MQTT, pakketfilter. Een overlay op MeshCore, geen fork |
+| [openHop](https://github.com/openhop-dev) (van derden) | Een Python-herimplementatie van MeshCore. Draait naast deze vloot met de nodes als antenne; zie [`deploy/openhop/`](deploy/openhop/) |
+
+Beide firmwares dragen een **openHop-brug**: een openHop-daemon mag hun radio
+over TCP gebruiken zonder dat de node ophoudt repeater te zijn, met een failover
+die het repeteren terugneemt zodra die daemon wegvalt.
+
+---
+
 ## Snelstart
 
 ```bash

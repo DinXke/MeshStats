@@ -93,9 +93,28 @@ sample interval; a read-only view of each repeater's CLI settings.
 | [`server/`](server/) | The site: FastAPI + SQLite. Public pages, admin, ingest API, MQTT subscriber, packet decoder, search |
 | [`firmware/`](firmware/) | MeshCore firmware changes: several companions on one node at once, the stats publisher, and the repeater's network module with a management page and OTA |
 | [`mosquitto/`](mosquitto/) | Broker configuration for the Docker deployment, with one account per node and an ACL that enforces who may publish where |
-| [`deploy/`](deploy/) | Installation without Docker (venv + systemd), and an auto-update timer for the Compose deployment |
+| [`deploy/`](deploy/) | Installation without Docker (venv + systemd), and an auto-update timer for the Compose deployment, plus [`deploy/openhop/`](deploy/openhop/): running openHop alongside this fleet with the nodes as antennas |
 | [`homeassistant/`](homeassistant/) | Optional HA integration. Since nodes publish over MQTT themselves it is no longer required — it still supplies map positions from adverts and fetches repeater CLI settings over LoRa |
 | [`proxy/`](proxy/) | Optional TCP fan-out proxy, for when you cannot flash modified firmware and still want more than one client on a node |
+
+---
+
+## Related projects
+
+This site is one of four pieces that grew together. They are separate
+repositories on purpose: each runs on different hardware, on its own release
+cycle, and each is useful without the others.
+
+| Project | What it is |
+|---|---|
+| **MeshManager** (here) | The site: statistics, live map, packet archive, alerts, and the management side of the fleet |
+| [**MeshUptime**](https://github.com/DinXke/MeshUptime) | The monitoring node: room server, bots, IRC, sensors, and the poller that asks the other repeaters for their status, settings and neighbours over LoRa. Plus the T1000-E companion firmware (a pager for this mesh) |
+| [**MeshManagerNet**](https://github.com/DinXke/MeshManagerNet) | The roof repeater: a MeshCore repeater with an IP life next to its mesh life — wifi, management page, OTA with rollback, MQTT, packet filter. An overlay on MeshCore, not a fork |
+| [openHop](https://github.com/openhop-dev) (third party) | A Python reimplementation of MeshCore. Runs alongside this fleet using the nodes as antennas; see [`deploy/openhop/`](deploy/openhop/) |
+
+Both firmwares carry an **openHop bridge**: an openHop daemon may use their
+radio over TCP without the node ceasing to be a repeater, with a failover that
+takes the repeating back the moment that daemon disappears.
 
 ---
 

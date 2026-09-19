@@ -1,0 +1,229 @@
+# VOORBEELD -- de echte staat in /etc/openhop_repeater/config.yaml op de
+# container en hoort NOOIT in git: daar staan wachtwoorden en een JWT-sleutel in.
+# Zie LEESMIJ.md voor wat de MeshUptime-kant hiervan verwacht.
+ch341:
+  pid: 21778
+  vid: 6790
+delays:
+  direct_tx_delay_factor: 0.5
+  tx_delay_factor: 1.0
+duty_cycle:
+  enforcement_enabled: true
+  max_airtime_per_minute: 6000
+glass:
+  api_token: ''
+  base_url: http://localhost:8080
+  cert_store_dir: /etc/openhop_repeater/glass
+  enabled: false
+  inform_interval_seconds: 30
+  request_timeout_seconds: 10
+  verify_tls: true
+gps:
+  advertise_gps_location: false
+  api_fallback_to_config_location: true
+  baud_rate: 9600
+  device: /dev/serial0
+  enabled: false
+  endpoint: /api/stats
+  host: ''
+  location_precision_digits: null
+  password: null
+  persist_gps_fix_interval_seconds: 600.0
+  persist_gps_fix_to_config: false
+  poll_interval_seconds: 2.0
+  port: 80
+  read_timeout_seconds: 1.0
+  reconnect_interval_seconds: 5.0
+  require_checksum: false
+  retain_sentences: 25
+  scheme: http
+  source: serial
+  source_path: /var/lib/openhop_repeater/gps_nmea.txt
+  stale_after_seconds: 10.0
+  time_sync_enabled: true
+  time_sync_interval_seconds: 3600.0
+  time_sync_min_offset_seconds: 1.0
+  time_sync_min_valid_year: 2020
+  username: admin
+  validate_checksum: true
+http:
+  enabled: true
+  host: 0.0.0.0
+  port: 8000
+  socket_queue_size: 100
+  socket_timeout: 65
+  thread_pool: 8
+  thread_pool_max: 16
+identities:
+  companions:
+  - name: Test
+    identity_key: 40e3a0d33da3655ea97ea0a287e4e14f2fed7754be405144895ba248ff87f04a
+    type: companion
+    settings:
+      node_name: BE-HSS-DinX-OpenHopTest
+      tcp_port: 5050
+      bind_address: 0.0.0.0
+  room_servers:
+  - name: BE-HSS-DinX-OpenHopRoom
+    identity_key: b8388f6e7b2dd37c8d39db6996f4c66ab73b1f7aa0da9bc0f39241a8c7f3376c
+    type: room_server
+    settings:
+      node_name: BE-HSS-DinX-OpenHopRoom
+      latitude: 50.929431
+      longitude: 5.312173
+      flood_advert_interval_hours: 0
+      direct_advert_interval_hours: 0
+      admin_password: VUL-IN
+      guest_password: ''
+      allow_read_only: true
+logging:
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  level: INFO
+mesh:
+  default_region: be
+  global_flood_allow: true
+  loop_detect: minimal
+  path_hash_mode: 1
+  unscoped_flood_allow: true
+metrics:
+  rrd_enabled: true
+modem_tcp:
+  connect_timeout: 5.0
+  host: 192.168.110.160
+  lbt_enabled: true
+  lbt_max_attempts: 5
+  port: 5055
+  token: ''
+mqtt_brokers:
+  brokers: []
+  email: ''
+  iata_code: Test
+  owner: ''
+  status_interval: 300
+policy:
+  policy_file: policy.yaml
+radio:
+  bandwidth: 62500
+  coding_rate: 8
+  frequency: 869618000
+  implicit_header: false
+  preamble_length: 32
+  spreading_factor: 8
+  tx_power: 22
+radio_type: modem_tcp
+repeater:
+  advert_adaptive:
+    enabled: false
+    ewma_alpha: 0.1
+    hysteresis_seconds: 300
+    thresholds:
+      busy_max: 0.5
+      normal_max: 0.2
+      quiet_max: 0.05
+  advert_penalty_box:
+    base_penalty_seconds: 21600
+    enabled: false
+    max_penalty_seconds: 86400
+    penalty_multiplier: 2.0
+    violation_decay_seconds: 43200
+    violation_threshold: 2
+  advert_rate_limit:
+    bucket_capacity: 2
+    enabled: false
+    min_interval_seconds: 0
+    refill_interval_seconds: 36000
+    refill_tokens: 1
+  allow_discovery: true
+  cache_ttl: 3600
+  direct_advert_interval_hours: 0
+  identity_file: null
+  latitude: 50.929421
+  longitude: 5.312181
+  max_flood_hops: 64
+  mode: forward
+  multi_acks: 0
+  neighbour_link_ewma_alpha: 0.2
+  neighbour_link_max_entries: 512
+  neighbour_link_metrics_enabled: true
+  neighbour_link_ttl_seconds: 86400
+  node_name: BE-HSS-DinX-OpenHop
+  owner_info: Björn Scheepers - bjorn@scheepers.one
+  score_threshold: 0.3
+  security:
+    admin_password: VUL-IN
+    allow_read_only: false
+    guest_password: ''
+    jwt_expiry_minutes: 60
+    jwt_secret: VUL-IN-MET-python -c \"import secrets;print(secrets.token_hex(32))\"
+    max_clients: 5
+  send_advert_interval_hours: 41
+  use_score_for_tx: false
+  identity_key: !!binary |
+    SAAxS2erUxA42oYzjBn3yRax/RTo7fiqOC+55DpA11M=
+sensors:
+  auto_install_packages: true
+  definitions:
+  - enabled: true
+    name: system-health
+    type: hardware_stats
+  enabled: true
+  poll_interval_seconds: 10.0
+storage:
+  retention:
+    companion_events_days: 31
+    sqlite_cleanup_days: 31
+  storage_dir: /var/lib/openhop_repeater
+sx1262:
+  bus_id: 0
+  busy_pin: 20
+  cs_id: 0
+  cs_pin: 21
+  dio3_tcxo_voltage: 1.8
+  en_pin: -1
+  irq_pin: 16
+  is_waveshare: false
+  reset_pin: 18
+  rxen_pin: -1
+  rxled_pin: -1
+  txen_pin: -1
+  txled_pin: -1
+  use_dio2_rf: false
+  use_dio3_tcxo: false
+web:
+  carto_api_key: ''
+  cors_enabled: false
+setup_completed: true
+policy_engine:
+  enabled: false
+  default_action: allow
+  rules: []
+  objects: {}
+policy_file_path: /etc/openhop_repeater/policy.yaml
+radios:
+- id: dak
+  radio_type: modem_tcp
+  modem_tcp:
+    host: 192.168.110.178
+    port: 5055
+    token: ''
+    connect_timeout: 5.0
+    lbt_enabled: true
+    lbt_max_attempts: 5
+- id: bureau
+  radio_type: modem_tcp
+  modem_tcp:
+    host: 192.168.110.160
+    port: 5055
+    token: ''
+    connect_timeout: 5.0
+    lbt_enabled: true
+    lbt_max_attempts: 5
+  radio:
+    tx_power: 22
+    frequency: 869618000.0
+    bandwidth: 62500
+    spreading_factor: 8
+    coding_rate: 8
+fabric:
+  default_radio: dak
+  tx_mode: bridge
