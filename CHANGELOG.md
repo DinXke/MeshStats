@@ -10,6 +10,32 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.23.0 - 2026-09-21
+
+- **MeshChat op `/chat`.** De IRC-achtige webclient voor companion-radio's
+  (repo DinXke/MeshChat) staat nu op meshmanager.net/chat: één zelfstandig
+  HTML-bestand dat via Web Serial of Web Bluetooth rechtstreeks met de node van
+  de bezoeker praat. De server serveert alleen de pagina en ziet geen bericht,
+  geen sleutel en geen contact -- alles blijft in de browser. Reden om het hier
+  te zetten en niet op een losse host: Web Serial en Web Bluetooth eisen https,
+  en die is er hier al.
+- **Bijwerken is een kopie.** `server/app/static/chat/index.html` is de
+  gebouwde `meshchat.html` uit die repo; bij een MeshChat-release wordt ze met
+  de hand vervangen. Geen submodule en geen build-stap, om dezelfde reden als
+  bij de rest van deze site: er is geen build-stap, en dat blijft zo.
+- **Twee koppen aangepast voor die ene map.** `/chat` krijgt dezelfde
+  `Cache-Control: no-cache` als `/static` (anders serveert de browser na een
+  release nog dagen de oude client), en mag als enige pad de browserlocatie
+  vragen (`Permissions-Policy: geolocation=(self)`), want de gebruiker zet er
+  zijn eigen node-positie mee. De CSP blijft ongewijzigd: de client gebruikt
+  inline script en stijl, en `'unsafe-inline'` stond er al voor de kaarten.
+- **Installeerbaar.** MeshChat is een PWA: `static/chat/manifest.webmanifest`
+  en een service worker (`static/chat/sw.js`) die altijd eerst het netwerk
+  haalt en pas bij een storing de laatst gecachte pagina geeft -- een nieuwe
+  release komt dus direct door, ook op een geïnstalleerde app. Daarvoor is
+  `'self'` toegevoegd aan `worker-src` in de CSP; `blob:` blijft voor de
+  kaart-workers.
+
 ## 2.22.0 - 2026-09-15
 
 - **Accubewaking.** Op 14 september zakte de zonnerepeater DinX-Home van 3,55 V
