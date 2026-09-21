@@ -350,6 +350,10 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
 .about{font-size:12.5px;line-height:1.5} .about p{margin:0 0 10px} .about ul,.about ol{margin:0 0 10px;padding-left:20px} .about li{margin:2px 0} .about code{font-family:var(--mono);color:var(--accent);font-size:12px} .about dl.meta{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg-2)} .about dl.meta dt{color:var(--fg-mute)} .about dl.meta dd{margin:0} .about a{color:var(--accent)} .about .cmds td{padding:4px 6px;vertical-align:top} .about .cmds td:first-child{white-space:nowrap}
 #btn-about{font-weight:700}
 @media (min-width:901px){ .m{grid-template-columns:max-content var(--nickw,11ch) minmax(0,1fr) max-content} }
+.scope-pick{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 6px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg-2);color:var(--fg-dim);font-size:12px}
+.scope-pick .i{color:var(--fg-mute)} .scope-pick select{border:0;background:transparent;color:var(--fg);font-size:12px;max-width:180px;height:22px;padding:0 2px}
+.scope-pick.custom{border-color:color-mix(in srgb,var(--accent) 60%,transparent);color:var(--accent)} .scope-pick.custom .i{color:var(--accent)}
+@media (max-width:900px){ .scope-pick select{max-width:110px} }
 </style>
 </head>
 <body>
@@ -357,7 +361,7 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14c2.8 0 4.5 1.6 4.5 4"/></symbol>
-  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37 1 .608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></symbol><symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
   <symbol id="i-hash" viewBox="0 0 24 24"><path d="M9 3 7 21M17 3l-2 18M3.5 8.5h17M3.5 15.5h17"/></symbol>
   <symbol id="i-ant" viewBox="0 0 24 24"><path d="M12 8v13M8.5 21h7"/><circle cx="12" cy="6" r="2"/><path d="M6.5 9.5a7 7 0 0 1 0-8M17.5 9.5a7 7 0 0 0 0-8M8.8 8a3.8 3.8 0 0 1 0-5M15.2 8a3.8 3.8 0 0 0 0-5"/></symbol>
@@ -407,6 +411,7 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
   <div id="chan-head" data-target="status">
     <div class="title"><div id="chan-name">MeshChat</div><div id="chan-topic"></div></div>
     <div class="actions">
+      <label id="chan-scope-wrap" class="scope-pick" hidden title="Regio (flood-scope) voor berichten in dit kanaal"><svg class="i"><use href="#i-globe"/></svg><select id="chan-scope" aria-label="Regio voor dit kanaal"></select></label>
       <button class="btn sm ghost" id="btn-chan-info">Info</button>
       <button class="btn sm ghost danger" id="btn-chan-leave" hidden>Verlaten</button>
     </div>
@@ -1112,9 +1117,11 @@ const S = {
   rxLog: [],                   // decoded raw packets from PUSH_CODE_LOG_RX_DATA
   defaultScope: null,          // {name, key} from device
   sendScope: { mode: 'default', name: '', key: '' }, // default | unscoped | custom
+  chanScope: {},               // channel secret -> { mode, name, key } (per kanaal; leeg = globale verzendscope)
+  deviceScopeKey: undefined,   // wat er nu op de node als verzendscope staat (null = zonder scope)
   extras: {},                  // pub -> {alias, note, fav}
   roomPw: {},                  // pub -> {pw, auto}
-  settings: { theme: 'auto', ts: true, compact: false, meta: true, notif: true, debug: false, showSensorsAsRepeaters: true, staleDays: 7, favOnly: true },
+  settings: { theme: 'auto', ts: true, compact: false, meta: true, notif: true, debug: false, showSensorsAsRepeaters: true, staleDays: 7, favOnly: true, regions: [] },
   connecting: false, syncing: false, msgSeq: 0,
 };
 
@@ -1123,7 +1130,7 @@ function loadState() {
   try {
     const st = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
     Object.assign(S.settings, st.settings || {});
-    S.extras = st.extras || {}; S.roomPw = st.roomPw || {}; S.sendScope = st.sendScope || S.sendScope; S.contactsSync = st.contactsSync || null;
+    S.extras = st.extras || {}; S.roomPw = st.roomPw || {}; S.sendScope = st.sendScope || S.sendScope; S.contactsSync = st.contactsSync || null; S.chanScope = st.chanScope || {}; if (!Array.isArray(S.settings.regions)) S.settings.regions = [];
     for (const c of (st.contacts || [])) S.contacts.set(c.pub, c);
     S.channels = st.channels || [];
     for (const [key, meta] of Object.entries(st.convs || {})) { const cv = mkConv(key, meta.kind, meta.name, meta.pub, meta.secret); cv.msgs = (st.history || {})[key] || []; cv.lastRead = meta.lastRead || 0; for (const m of cv.msgs) if ((m.kind === 'msg' || m.kind === 'action') && m.nick && !m.self) cv.users.set(m.nick, { nick: m.nick, last: m.t, snr: m.snr, pub: m.pub }); }
@@ -1137,7 +1144,7 @@ function saveState(now) {
       const convs = {}, history = {};
       for (const [k, cv] of S.convs) { if (k === 'status') continue; convs[k] = { kind: cv.kind, name: cv.name, pub: cv.pub, secret: cv.secret, lastRead: cv.lastRead }; history[k] = cv.msgs.slice(-MAX_HIST).map(m => { const { _timer, ...rest } = m; return rest; }); }
       const contacts = Array.from(S.contacts.values()).map(c => ({ ...c, loggedIn: false }));
-      localStorage.setItem(LS_KEY, JSON.stringify({ settings: S.settings, extras: S.extras, roomPw: S.roomPw, sendScope: S.sendScope, contactsSync: S.contactsSync, contacts, channels: S.channels, convs, history }));
+      localStorage.setItem(LS_KEY, JSON.stringify({ settings: S.settings, extras: S.extras, roomPw: S.roomPw, sendScope: S.sendScope, contactsSync: S.contactsSync, chanScope: S.chanScope, contacts, channels: S.channels, convs, history }));
     } catch (e) { console.warn('state save', e); toast('Opslaan in browser mislukt: ' + e.message, 'err'); }
   };
   if (now) doSave(); else saveTimer = setTimeout(doSave, 800);
@@ -1401,7 +1408,19 @@ function renderHead(cv) {
   else if (cv.kind === 'channel') { const ch = channelByConv(cv); const kind = ch?.secret === PUBLIC_KEY_HEX ? 'Publiek kanaal' : ch?.name.startsWith('#') ? 'Hashtag-kanaal' : 'Privékanaal'; topic = `${kind} · sleutel <span class="key">${ch ? ch.secret.slice(0, 4) + '…' + ch.secret.slice(-4) : '?'}</span> · ${cv.users.size} deelnemer${cv.users.size === 1 ? '' : 's'} gezien${ch ? ' · slot ' + ch.idx : ''}`; }
   else { const c = S.contacts.get(cv.pub); if (c) { const p = pathInfo(c); topic = `${ADV_TYPE[c.type]} · ${c.pub.slice(0, 12)}… · advert ${fmtAgo(c.lastAdvert)} geleden · pad ${p.text}` + (c.type >= 2 ? (c.loggedIn ? ' · ingelogd' : ' · niet ingelogd') : ''); } }
   $('#chan-topic').innerHTML = topic;
+  renderChanScope(cv);
   $('#btn-chan-leave').hidden = cv.kind === 'status'; $('#btn-chan-leave').textContent = cv.kind === 'channel' ? 'Verlaten' : 'Sluiten';
+}
+function renderChanScope(cv) {
+  const wrap = $('#chan-scope-wrap'), sel = $('#chan-scope'); const ch = cv.kind === 'channel' ? channelByConv(cv) : null;
+  wrap.hidden = !ch; if (!ch) return;
+  const own = S.chanScope[ch.secret]; const cur = own ? (own.mode === 'unscoped' ? 'unscoped' : own.mode === 'default' ? 'default' : 'key:' + own.key) : 'global';
+  const regions = S.settings.regions.slice(); if (S.defaultScope && !regions.some(r => r.key === S.defaultScope.key)) regions.unshift({ name: S.defaultScope.name, key: S.defaultScope.key });
+  let html = `<option value="global">Regio: globaal (${esc(scopeText(S.sendScope))})</option><option value="default">Standaardregio node${S.defaultScope ? ' (' + esc(S.defaultScope.name) + ')' : ''}</option><option value="unscoped">Zonder scope (overal)</option>`;
+  for (const r of regions) html += `<option value="key:${r.key}">${esc(r.name)}</option>`;
+  html += `<option value="new">+ Andere regio…</option>`;
+  sel.innerHTML = html; sel.value = cur; if (sel.value !== cur) { sel.insertAdjacentHTML('beforeend', `<option value="${cur}">${esc(scopeText(own))}</option>`); sel.value = cur; }
+  wrap.classList.toggle('custom', !!own); wrap.title = 'Regio (flood-scope) voor berichten in dit kanaal: ' + (own ? scopeText(own) : 'globaal');
 }
 function renderCompose(cv) {
   const t = $('#target'); t.textContent = cv.kind === 'status' ? 'status' : cv.name; t.dataset.target = cv.key;
@@ -1656,9 +1675,9 @@ async function sendToConv(cv, text, asAction = false) {
   text = text.trim(); if (!text) return;
   if (cv.kind === 'channel') {
     const ch = channelByConv(cv); if (!ch) { errorMsg('Kanaal staat niet (meer) op de node.', cv); return; }
-    const body = asAction ? '* ' + text : text;
-    const m = addMsg(cv, { kind: asAction ? 'action' : 'msg', nick: myNick(), text, self: true, scope: S.sendScope.mode === 'unscoped' ? 'zonder scope' : S.sendScope.mode === 'custom' ? (S.sendScope.name || 'scope') : null });
-    try { const r = await C.sendChannelText(ch.idx, body); m.t = r.ts; m.flood = true; updateMsgDom(m); } catch (e) { m.ack = 'fail'; updateMsgDom(m); errorMsg('Verzenden mislukt: ' + e.message, cv); }
+    const body = asAction ? '* ' + text : text; const sc = scopeFor(cv);
+    const m = addMsg(cv, { kind: asAction ? 'action' : 'msg', nick: myNick(), text, self: true, scope: sc.mode === 'unscoped' ? 'zonder scope' : sc.mode === 'custom' ? (sc.name || 'scope') : (S.chanScope[ch.secret] ? scopeText(sc) : null) });
+    try { await ensureDeviceScope(sc); const r = await C.sendChannelText(ch.idx, body); m.t = r.ts; m.flood = true; updateMsgDom(m); } catch (e) { m.ack = 'fail'; updateMsgDom(m); errorMsg('Verzenden mislukt: ' + e.message, cv); }
     return;
   }
   const c = S.contacts.get(cv.pub); if (!c) { errorMsg('Contact niet gevonden.', cv); return; }
@@ -1666,7 +1685,7 @@ async function sendToConv(cv, text, asAction = false) {
   if (cv.kind === 'room' && !c.loggedIn) { notice('Je bent niet ingelogd op deze room. Gebruik /login <wachtwoord>.', cv, false); openLoginDlg(c); return; }
   const m = addMsg(cv, { kind: asAction ? 'action' : 'msg', nick: myNick(), text, self: true, ack: 'pending' });
   try {
-    const r = await C.sendText(c.pub, asAction ? '* ' + text : text, TXT.PLAIN, 0); m.t = r.ts; m.ackCode = r.ack; m.flood = r.flood; updateMsgDom(m);
+    await ensureDeviceScope(S.sendScope); const r = await C.sendText(c.pub, asAction ? '* ' + text : text, TXT.PLAIN, 0); m.t = r.ts; m.ackCode = r.ack; m.flood = r.flood; updateMsgDom(m);
     m._timer = setTimeout(() => { if (m.ack === 'pending') { m.ack = 'fail'; updateMsgDom(m); saveState(); } }, Math.max(5000, r.timeoutMs) + 2000);
   } catch (e) { m.ack = 'fail'; updateMsgDom(m); errorMsg('Verzenden mislukt: ' + e.message, cv); }
 }
@@ -1674,7 +1693,7 @@ async function sendCli(cv, c, cmdText) {
   if (!requireConn(cv)) return;
   if (!c.loggedIn && !/^(ver|clock|board)$/.test(cmdText)) notice('Niet ingelogd: het antwoord kan uitblijven. Gebruik /login <wachtwoord>.', cv, false);
   const m = addMsg(cv, { kind: 'cli', nick: displayName(c), cmd: cmdText, text: '', self: false, ack: 'pending' });
-  try { const r = await C.sendText(c.pub, cmdText, TXT.CLI, 0); m.flood = r.flood; m.pathLen = null; m._timer = setTimeout(() => { if (m.ack === 'pending') { m.ack = 'fail'; m.text = m.text || '(geen antwoord)'; updateMsgDom(m); } }, Math.max(8000, r.timeoutMs) + 4000); }
+  try { await ensureDeviceScope(S.sendScope); const r = await C.sendText(c.pub, cmdText, TXT.CLI, 0); m.flood = r.flood; m.pathLen = null; m._timer = setTimeout(() => { if (m.ack === 'pending') { m.ack = 'fail'; m.text = m.text || '(geen antwoord)'; updateMsgDom(m); } }, Math.max(8000, r.timeoutMs) + 4000); }
   catch (e) { m.ack = 'fail'; m.text = 'fout: ' + e.message; updateMsgDom(m); }
 }
 async function doLogin(c, pw, silent) {
@@ -1682,13 +1701,27 @@ async function doLogin(c, pw, silent) {
   try { c._loginPending = true; const r = await C.login(c.pub, pw); if (!silent) notice(`Login verstuurd naar ${displayName(c)} (${r.flood ? 'flood' : 'direct'})…`, cv, false); setTimeout(() => { if (c._loginPending && !c.loggedIn) { c._loginPending = false; notice(`Geen antwoord op login van ${displayName(c)}.`, cv, false); } }, Math.max(8000, r.timeoutMs) + 3000); }
   catch (e) { c._loginPending = false; errorMsg('Login mislukt: ' + e.message, cv); }
 }
+// Effectieve scope voor een venster: kanaal-eigen keuze, anders de globale verzendscope.
+function scopeFor(cv) { const ch = cv && cv.kind === 'channel' ? channelByConv(cv) : null; const s = ch && S.chanScope[ch.secret]; return s && s.mode ? s : S.sendScope; }
+function scopeKeyOf(s) { if (s.mode === 'unscoped') return null; if (s.mode === 'custom' && s.key) return s.key; return S.defaultScope ? S.defaultScope.key : null; }
+function scopeText(s) { return s.mode === 'unscoped' ? 'zonder scope' : s.mode === 'custom' ? (s.name || s.key.slice(0, 8) + '…') : (S.defaultScope ? 'standaard (' + S.defaultScope.name + ')' : 'standaard'); }
+function rememberRegion(name, key) { if (!name || !key) return; const r = S.settings.regions; if (!r.some(x => x.key === key)) { r.push({ name, key }); saveState(); } }
+// Zet de verzendscope op de node om als die afwijkt van wat dit venster nodig heeft (één commando, alleen bij wissel).
+async function ensureDeviceScope(s) {
+  const want = scopeKeyOf(s); if (S.deviceScopeKey !== undefined && S.deviceScopeKey === want) return;
+  try { await C.setSendScope(want); S.deviceScopeKey = want; }
+  catch (e) { if (e.errCode === 1) { S.deviceScopeKey = want; if (s.mode !== 'default') notice("Deze firmware ondersteunt geen flood-scopes (regio's); bericht gaat zonder scope-wissel.", activeConv(), false); } else throw e; }
+}
+async function setChannelScope(ch, s) {
+  if (!ch) return; if (!s || s.mode === 'global') delete S.chanScope[ch.secret]; else S.chanScope[ch.secret] = s;
+  if (s && s.mode === 'custom') rememberRegion(s.name, s.key); saveState();
+  const cv = S.convs.get(convKeyForChannel(ch)); if (cv) { renderHead(cv); notice('Regio voor dit kanaal: ' + (s && s.mode !== 'global' ? scopeText(s) : 'volgt de globale verzendscope (' + scopeText(S.sendScope) + ')'), cv, false); }
+}
 async function applySendScope(announce = true) {
   if (!C.connected) return;
   const s = S.sendScope;
   try {
-    if (s.mode === 'unscoped') await C.setSendScope(null);
-    else if (s.mode === 'custom' && s.key) await C.setSendScope(s.key);
-    else if (S.defaultScope) await C.setSendScope(S.defaultScope.key); else await C.setSendScope(null);
+    const k = scopeKeyOf(s); await C.setSendScope(k); S.deviceScopeKey = k; if (s.mode === 'custom') rememberRegion(s.name, s.key);
     if (announce) notice('Verzendscope: ' + sendScopeText(), S.convs.get('status'), false);
   } catch (e) { if (e.errCode === 1) { if (s.mode !== 'default') notice('Deze firmware ondersteunt geen flood-scopes (regio\'s).', S.convs.get('status'), false); } else debugLog('scope: ' + e.message); }
   const cv = activeConv(); if (cv.kind === 'status') renderInfo(cv);
@@ -1752,7 +1785,18 @@ async function showNodeStats(cv) {
     addMsg(cv, { kind: 'cli', nick: myNick(), cmd: 'stats', text: lines.join('\n') });
   } catch (e) { errorMsg('Statistieken niet beschikbaar (oudere firmware?): ' + e.message, cv); }
 }
+async function parseScopeArgs(argv) {
+  const a = (argv[0] || '').toLowerCase();
+  if (a === 'off' || a === 'none' || a === 'uit') return { mode: 'unscoped', name: '', key: '' };
+  if (a === 'default' || a === 'standaard') return { mode: 'default', name: '', key: '' };
+  if (a === 'global' || a === 'globaal') return { mode: 'global' };
+  if (/^[0-9a-f]{32}$/i.test(a)) return { mode: 'custom', name: argv[1] || '', key: a.toLowerCase() };
+  const known = S.settings.regions.find(r => r.name.toLowerCase() === argv[0].toLowerCase().replace(/^#/, ''));
+  return { mode: 'custom', name: argv[0].replace(/^#/, ''), key: known ? known.key : await scopeKeyFromName(argv[0]) };
+}
 async function setSendScopeCmd(argv) {
+  const cv0 = activeConv(); const ch0 = cv0.kind === 'channel' ? channelByConv(cv0) : null;
+  if (ch0) { if (!argv[0]) { notice('Regio van dit kanaal: ' + (S.chanScope[ch0.secret] ? scopeText(S.chanScope[ch0.secret]) : 'globaal (' + scopeText(S.sendScope) + ')') + '. Gebruik /scope <naam|off|default|global>.', cv0, false); return; } await setChannelScope(ch0, await parseScopeArgs(argv)); return; }
   const a = (argv[0] || '').toLowerCase(); const st = S.convs.get('status');
   if (!a) { notice('Verzendscope: ' + sendScopeText() + (S.defaultScope ? ` · standaardregio van de node: ${S.defaultScope.name} (${S.defaultScope.key})` : ' · geen standaardregio op de node'), activeConv(), false); return; }
   if (a === 'off' || a === 'none' || a === 'uit') S.sendScope = { mode: 'unscoped', name: '', key: '' };
@@ -2044,6 +2088,14 @@ function wire() {
   on('#tree', 'click', (e) => { const it = e.target.closest('.item'); if (it && !e.target.closest('.add')) openConv(it.dataset.target); });
   on('#tree', 'contextmenu', (e) => { const it = e.target.closest('.item'); if (!it) return; e.preventDefault(); const cv = S.convs.get(it.dataset.target); if (!cv) return; const c = cv.pub ? S.contacts.get(cv.pub) : null; showCtx(e.clientX, e.clientY, [{ label: 'Openen', run: () => openConv(cv.key) }, { label: 'Als gelezen markeren', run: () => { cv.unread = 0; cv.hl = false; renderTree(); } }, c ? { label: 'Contactinfo…', run: () => openContactDlg(c) } : null, c && c.type >= 2 ? { label: c.loggedIn ? 'Uitloggen' : 'Inloggen…', run: () => c.loggedIn ? handleInput('/logout') : openLoginDlg(c) } : null, '-', cv.kind === 'channel' ? { label: 'Kanaal verlaten', danger: true, run: () => leaveChannel(channelByConv(cv)) } : cv.kind === 'dm' ? { label: 'Venster sluiten', run: () => closeConv(cv) } : null, { label: 'Geschiedenis wissen', danger: true, run: () => { cv.msgs = []; if (cv.key === S.active) renderMessages(cv); saveState(true); } }]); });
   on('#btn-chan-leave', 'click', () => closeConv(activeConv()));
+  on('#chan-scope', 'change', async (e) => {
+    const cv = activeConv(); const ch = cv.kind === 'channel' ? channelByConv(cv) : null; if (!ch) return; const v = e.target.value;
+    if (v === 'global') await setChannelScope(ch, null);
+    else if (v === 'default') await setChannelScope(ch, { mode: 'default', name: '', key: '' });
+    else if (v === 'unscoped') await setChannelScope(ch, { mode: 'unscoped', name: '', key: '' });
+    else if (v.startsWith('key:')) { const key = v.slice(4); const r = S.settings.regions.find(x => x.key === key) || (S.defaultScope && S.defaultScope.key === key ? S.defaultScope : null); await setChannelScope(ch, { mode: 'custom', name: r ? r.name : '', key }); }
+    else if (v === 'new') { const name = await promptDlg('Andere regio', 'Regionaam (bv. Antwerpen) of 32-tekens hex-sleutel', ''); if (name) await setChannelScope(ch, await parseScopeArgs(name.trim().split(/\s+/))); else renderChanScope(cv); }
+  });
   on('#btn-chan-info', 'click', () => { const cv = activeConv(); const c = cv.pub ? S.contacts.get(cv.pub) : null; if (c) openContactDlg(c); else if (cv.kind === 'channel') { const ch = channelByConv(cv); if (ch) promptDlg('Kanaalsleutel · ' + cv.name, 'Hex (deel dit met wie mee mag lezen) · base64: ' + b64(unhex(ch.secret)), ch.secret); } else fillSettings().then(() => $('#dlg-settings').showModal()); });
   // messages
   on('#messages', 'contextmenu', (e) => { const el = e.target.closest('.m'); if (!el) return; const m = msgFromEl(el); if (!m) return; e.preventDefault(); showCtx(e.clientX, e.clientY, msgContextItems(m, activeConv())); });
