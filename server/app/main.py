@@ -108,7 +108,8 @@ async def security_headers(request, call_next):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; "
         "font-src https://fonts.gstatic.com; "
         "img-src 'self' data: https://unpkg.com; "
-        "connect-src 'self'; "
+        # api.open-meteo.com: tropo-ducting-overlay van MeshChat (alleen als de gebruiker die aanzet).
+        "connect-src 'self' https://api.open-meteo.com; "
         # MapLibre GL maakt zijn tegel-worker als blob-URL aan; zonder deze regel
         # blokkeert default-src 'self' hem. De vector-tiles, fonts en sprites zelf
         # zijn same-origin (/tiles/...) en vallen onder connect-src 'self'.
