@@ -4141,6 +4141,14 @@ function metaText(m) {
   if (m.trip) parts.push(m.trip + ' ms');
   return parts.join(' · ');
 }
+// Sleutelprefixen in CLI-tekst (bv. 'neighbors') aanvullen met de naam van het bekende contact.
+function annotateKeys(text) {
+  return esc(text).replace(/([0-9a-f]{6,64})/gi, (hexs) => {
+    if (!/[a-f]/i.test(hexs) && hexs.length < 8) return hexs; // gewone getallen overslaan
+    const c = contactByPrefix(hexs.toLowerCase()); if (!c) return hexs;
+    return hexs + ' <span class="mute">(' + esc(cname(c)) + ')</span>';
+  });
+}
 function renderMsg(m) {
   const cls = ['m', 'm-' + m.kind]; if (m.self) cls.push('m-self'); if (m.hl) cls.push('m-hl');
   if (m.ack === 'pending') cls.push('m-pending'); else if (m.ack === 'ok') cls.push('m-acked'); else if (m.ack === 'fail') cls.push('m-failed');
@@ -4150,7 +4158,7 @@ function renderMsg(m) {
   switch (m.kind) {
     case 'notice': case 'error': body = `<span class="x">${linkify(m.text)}</span>`; break;
     case 'action': body = `<span class="x"><b class="${m.self ? '' : nickColor(m.nick)}">${esc(m.nick)}</b> ${linkify(m.text)}</span>`; break;
-    case 'cli': body = `<span class="n">${esc(m.nick)}</span><span class="x">${m.cmd ? `<span class="cmd">${esc(m.cmd)}</span>` : ''}${m.text ? `<pre>${esc(m.text)}</pre>` : (m.ack === 'pending' ? `<span class="dim">${esc(t('msg.waitingReply'))}</span>` : '')}</span>`; break;
+    case 'cli': body = `<span class="n">${esc(m.nick)}</span><span class="x">${m.cmd ? `<span class="cmd">${esc(m.cmd)}</span>` : ''}${m.text ? `<pre>${annotateKeys(m.text)}</pre>` : (m.ack === 'pending' ? `<span class="dim">${esc(t('msg.waitingReply'))}</span>` : '')}</span>`; break;
     default: body = `<span class="n ${m.self ? '' : nickColor(m.nick)}">${esc(m.nick)}</span><span class="x">${linkify(m.text)}</span>`;
   }
   return `<div class="${cls.join(' ')}" data-id="${m.id}">${ts}${body}${meta}</div>`;
