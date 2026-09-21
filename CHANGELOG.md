@@ -10,6 +10,18 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.24.0 - 2026-09-21
+
+- **Kaarttiles ook voor MeshChat buiten deze site.** `/tiles` krijgt
+  `Access-Control-Allow-Origin: *` (met `Range` als toegestane kop en de
+  `Content-Range`-koppen zichtbaar) en een 204 op de OPTIONS-preflight. Reden:
+  MeshChat draait ook als los HTML-bestand en als PWA op een andere host, en
+  toont daar dezelfde offline kaart met de vector-tiles, glyphs en sprites van
+  deze server. Een Range-request is geen "simple request", dus zonder preflight
+  en zonder deze koppen weigert de browser hem. Alleen `/tiles`: openbare
+  OSM-afgeleiden zonder iets persoonlijks; de rest van de site blijft
+  same-origin.
+
 ## 2.23.0 - 2026-09-21
 
 - **MeshChat op `/chat`.** De IRC-achtige webclient voor companion-radio's

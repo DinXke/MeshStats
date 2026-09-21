@@ -38,6 +38,17 @@ async def security_headers(request, call_next):
     if request.url.path.startswith("/chat"):
         h.setdefault("Permissions-Policy", "geolocation=(self), microphone=(), camera=()")
     h.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    # /tiles is bewust voor iedereen leesbaar, ook cross-origin: MeshChat draait ook
+    # als los HTML-bestand (file://) en als PWA op andere hosts, en haalt zijn kaart
+    # per byte-bereik (Range) uit basemap.pmtiles plus glyphs en sprites. Zonder
+    # deze koppen weigert de browser dat. Het zijn openbare OSM-afgeleiden; er zit
+    # niets persoonlijks in en de rest van de site houdt zijn same-origin-regels.
+    if request.url.path.startswith("/tiles"):
+        h["Access-Control-Allow-Origin"] = "*"
+        h["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
+        h["Access-Control-Allow-Headers"] = "Range, If-None-Match, If-Modified-Since"
+        h["Access-Control-Expose-Headers"] = "Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified"
+        h["Access-Control-Max-Age"] = "86400"
     # Without Cache-Control, browsers apply heuristic caching to /static and
     # may keep serving yesterday's app.js long after a deploy — readers then
     # see a mix of new API responses and old frontend code. "no-cache" does
@@ -91,6 +102,14 @@ app.mount("/chat", StaticFiles(directory=str(Path(__file__).resolve().parent / "
 # StaticFiles ondersteunt Range-requests, wat pmtiles nodig heeft om alleen de
 # bekeken tegels op te halen. check_dir=False zodat de app ook zonder het volume
 # opstart -- de kaarten vallen dan terug op OSM-raster (zie static/basemap.js).
+# De CORS-preflight voor /tiles: een Range-request is geen "simple request", dus de
+# browser stuurt eerst OPTIONS. StaticFiles kent dat niet (405); dit antwoordt 204 en
+# de middleware hierboven zet de Access-Control-koppen erop.
+@app.options("/tiles/{path:path}")
+async def tiles_preflight(path: str):
+    from fastapi import Response
+    return Response(status_code=204)
+
 app.mount("/tiles", StaticFiles(directory="/tiles", check_dir=False), name="tiles")
 
 
