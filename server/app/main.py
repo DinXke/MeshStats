@@ -7,7 +7,10 @@ import secrets
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI
+import os
+
+from fastapi import FastAPI, Response
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (auth, battwatch, clocksync, companions, db, hadiscovery, limits, meshmoni,
@@ -24,9 +27,45 @@ app = FastAPI(title="MC Repeater Stats", docs_url=None, redoc_url=None, openapi_
 app.add_middleware(limits.BodySizeLimitMiddleware)
 
 
+# MeshChat op een eigen hostnaam. De chat staat als static/chat/ in deze repo en is
+# ook bereikbaar op /chat/; met MM_CHAT_HOST (standaard chat.meshmanager.net) krijgt
+# hij daarbovenop een eigen origin op /. Waarom een eigen origin: een PWA, zijn
+# service worker en zijn opslag zijn aan de origin gebonden, en "chat.meshmanager.net"
+# is wat mensen elkaar doorgeven. /tiles blijft op die hostnaam gewoon werken -- het
+# is dezelfde app die antwoordt -- zodat de kaart same-origin blijft. Alles anders op
+# die hostnaam is 404: de beheerpagina's van de site horen daar niet te verschijnen.
+CHAT_HOST = os.environ.get("MM_CHAT_HOST", "chat.meshmanager.net").strip().lower()
+_CHAT_DIR = Path(__file__).resolve().parent / "static" / "chat"
+_CHAT_FILES = {"/": "index.html", "/index.html": "index.html", "/sw.js": "sw.js",
+               "/manifest.webmanifest": "manifest.webmanifest"}
+
+
+def _is_chat_host(request) -> bool:
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    return bool(CHAT_HOST) and host == CHAT_HOST
+
+
+async def _chat_host_response(request):
+    """Antwoord voor de chat-hostnaam, of None als het gewone pad gevolgd moet worden."""
+    if not _is_chat_host(request):
+        return None
+    path = request.url.path
+    if path.startswith("/tiles/") or path == "/tiles":
+        return None
+    if path.startswith("/chat"):
+        rest = path[len("/chat"):].lstrip("/")
+        return RedirectResponse("/" + rest, status_code=301)
+    name = _CHAT_FILES.get(path)
+    if name is None:
+        return Response(status_code=404)
+    return FileResponse(str(_CHAT_DIR / name))
+
+
 @app.middleware("http")
 async def security_headers(request, call_next):
-    resp = await call_next(request)
+    resp = await _chat_host_response(request)
+    if resp is None:
+        resp = await call_next(request)
     h = resp.headers
     h.setdefault("X-Content-Type-Options", "nosniff")
     h.setdefault("X-Frame-Options", "DENY")
@@ -35,7 +74,7 @@ async def security_headers(request, call_next):
     # eigen node-positie mee. De rest van de site heeft geen locatie nodig en
     # houdt de dichte deur. Web Serial en Web Bluetooth staan voor same-origin
     # standaard open en hoeven hier niet genoemd te worden.
-    if request.url.path.startswith("/chat"):
+    if request.url.path.startswith("/chat") or _is_chat_host(request):
         h.setdefault("Permissions-Policy", "geolocation=(self), microphone=(), camera=()")
     h.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
     # /tiles is bewust voor iedereen leesbaar, ook cross-origin: MeshChat draait ook
@@ -60,7 +99,7 @@ async def security_headers(request, call_next):
     # dekkingsgebied verandert de hele indeling -- zonder revalidatie zou een
     # browser oude en nieuwe ranges kunnen mengen en de kaart beschadigen. De
     # ETag verandert mee, dus revalidatie is een goedkope 304 zolang niets wijzigt.
-    if request.url.path.startswith(("/static", "/tiles", "/chat")):
+    if request.url.path.startswith(("/static", "/tiles", "/chat")) or _is_chat_host(request):
         h.setdefault("Cache-Control", "no-cache")
     h.setdefault(
         "Content-Security-Policy",

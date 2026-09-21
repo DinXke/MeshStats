@@ -10,6 +10,17 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.25.0 - 2026-09-21
+
+- **MeshChat op chat.meshmanager.net.** Op die hostnaam (instelbaar met
+  `MM_CHAT_HOST`) serveert de site de chat op `/`, met `/sw.js`,
+  `/manifest.webmanifest` en `/tiles` erbij; `/chat/...` stuurt daar door naar `/`.
+  Alles anders op die hostnaam is 404. `meshmanager.net/chat/` blijft bestaan
+  voor wie de app al geïnstalleerd heeft. Reden voor een eigen origin: een PWA,
+  zijn service worker en zijn opslag hangen aan de origin, en een korte hostnaam
+  is wat mensen elkaar doorgeven. De cloudflared-tunnel krijgt die hostnaam als
+  extra publieke hostnaam naar dezelfde poort 8080.
+
 ## 2.24.0 - 2026-09-21
 
 - **Kaarttiles ook voor MeshChat buiten deze site.** `/tiles` krijgt
