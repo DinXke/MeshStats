@@ -3945,6 +3945,7 @@ function mapInit(container) {
   }
   const center = (S.self && S.self.lat) ? [S.self.lon, S.self.lat] : [4.5, 50.9];
   mapObj = new maplibregl.Map({ container, style: mapStyle(), center, zoom: S.self && S.self.lat ? 9 : 7, attributionControl: { compact: true }, maxZoom: 16, minZoom: 3, preserveDrawingBuffer: !!S.devMode });
+  if ('ResizeObserver' in window) new ResizeObserver(() => { try { mapObj && mapObj.resize(); } catch (e) {} }).observe(container);
   mapObj.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
   mapObj.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
   // overlays (nodes/pakketten) toevoegen zodra de stijl er is; 'styledata' vuurt ook na setStyle (themawissel)
@@ -3986,10 +3987,11 @@ function mapPopup(f, lngLat) {
 }
 function mapFocus(pub, zoom = 12) {
   const c = pub === S.self?.pub ? S.self : S.contacts.get(pub); if (!c || !c.lat) { toast(t('map_no_location'), 'warn'); return false; }
-  mapShow(); const go = () => { mapObj.flyTo({ center: [c.lon, c.lat], zoom, duration: 900 }); mapObj.once('moveend', () => { const f = mapNodeFeatures().features.find(x => x.properties.pub === (c.pub || S.self.pub)); if (f) mapPopup(f, { lng: c.lon, lat: c.lat }); }); };
+  openConv('map'); const go = () => setTimeout(() => { mapObj.resize(); mapObj.flyTo({ center: [c.lon, c.lat], zoom, duration: 900 }); mapObj.once('moveend', () => { const f = mapNodeFeatures().features.find(x => x.properties.pub === (c.pub || S.self.pub)); if (f) mapPopup(f, { lng: c.lon, lat: c.lat }); }); }, 80);
+  if (!mapObj) { setTimeout(() => mapObj && go(), 600); return true; }
   if (mapReady) go(); else mapObj.once('load', go); return true;
 }
-function mapFitAll() { if (!mapObj) return; const fs = mapNodeFeatures().features; if (!fs.length) return; const b = new maplibregl.LngLatBounds(); for (const f of fs) b.extend(f.geometry.coordinates); mapObj.fitBounds(b, { padding: 60, maxZoom: 12, duration: 700 }); }
+function mapFitAll() { if (!mapObj) return; mapObj.resize(); const fs = mapNodeFeatures().features; if (!fs.length) return; const b = new maplibregl.LngLatBounds(); for (const f of fs) b.extend(f.geometry.coordinates); mapObj.fitBounds(b, { padding: 60, maxZoom: 12, duration: 700 }); }
 
 // ---------- pakketanimatie ----------
 // points: [[lon,lat], ...] van bron naar bestemming; kleur per pakkettype
@@ -4035,7 +4037,7 @@ function mapShowNeighbors(rpt, list) {
   if (!rpt || !rpt.lat) { toast(t('map_no_location'), 'warn'); return; }
   openConv('map'); S.nbActive = { pub: rpt.pub, list };
   const draw = () => {
-    mapAddNbLayers(); const feats = []; const from = [rpt.lon, rpt.lat]; const b = new maplibregl.LngLatBounds(from, from); let placed = 0;
+    mapObj.resize(); mapAddNbLayers(); const feats = []; const from = [rpt.lon, rpt.lat]; const b = new maplibregl.LngLatBounds(from, from); let placed = 0;
     for (const n of list) { const c = n.contact; if (!c || !c.lat || !c.lon) continue; const to = [c.lon, c.lat]; const col = snrColor(n.snr); b.extend(to); placed++;
       feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: [from, to] }, properties: { color: col } });
       feats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2] }, properties: { color: col, label: (n.snr != null ? n.snr.toFixed(1) + ' dB' : '?') + (n.age != null ? ' · ' + fmtAgo(nowSecs() - n.age) : '') } }); }
@@ -4052,7 +4054,7 @@ function mapClearNeighbors() { S.nbActive = null; if (mapObj && mapObj.getSource
 // ---------- venster ----------
 function mapShow() {
   const wrap = $('#mapwrap'); wrap.hidden = false; $('#messages').hidden = true; $('#compose').hidden = true;
-  mapAvailable().then(ok => { if (!ok) { mapSetNotice(mapAvailReason === 'offline' ? t('map_offline_nocache') : t('map_unavailable')); return; } mapSetNotice(''); mapInit($('#map')); setTimeout(() => mapObj && mapObj.resize(), 50); mapRefreshNodes(); });
+  mapAvailable().then(ok => { if (!ok) { mapSetNotice(mapAvailReason === 'offline' ? t('map_offline_nocache') : t('map_unavailable')); return; } mapSetNotice(''); mapInit($('#map')); mapObj.resize(); setTimeout(() => mapObj && mapObj.resize(), 60); mapRefreshNodes(); });
 }
 function mapHide() { const wrap = $('#mapwrap'); if (wrap) wrap.hidden = true; $('#messages').hidden = false; $('#compose').hidden = false; }
 function mapSetNotice(text) { const n = $('#map-notice'); if (!n) return; n.hidden = !text; n.textContent = text; }
