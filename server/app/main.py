@@ -31,6 +31,12 @@ async def security_headers(request, call_next):
     h.setdefault("X-Content-Type-Options", "nosniff")
     h.setdefault("X-Frame-Options", "DENY")
     h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # /chat (MeshChat) mag de browserlocatie vragen: de gebruiker zet er zijn
+    # eigen node-positie mee. De rest van de site heeft geen locatie nodig en
+    # houdt de dichte deur. Web Serial en Web Bluetooth staan voor same-origin
+    # standaard open en hoeven hier niet genoemd te worden.
+    if request.url.path.startswith("/chat"):
+        h.setdefault("Permissions-Policy", "geolocation=(self), microphone=(), camera=()")
     h.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
     # Without Cache-Control, browsers apply heuristic caching to /static and
     # may keep serving yesterday's app.js long after a deploy — readers then
@@ -43,7 +49,7 @@ async def security_headers(request, call_next):
     # dekkingsgebied verandert de hele indeling -- zonder revalidatie zou een
     # browser oude en nieuwe ranges kunnen mengen en de kaart beschadigen. De
     # ETag verandert mee, dus revalidatie is een goedkope 304 zolang niets wijzigt.
-    if request.url.path.startswith("/static") or request.url.path.startswith("/tiles"):
+    if request.url.path.startswith(("/static", "/tiles", "/chat")):
         h.setdefault("Cache-Control", "no-cache")
     h.setdefault(
         "Content-Security-Policy",
@@ -56,7 +62,9 @@ async def security_headers(request, call_next):
         # MapLibre GL maakt zijn tegel-worker als blob-URL aan; zonder deze regel
         # blokkeert default-src 'self' hem. De vector-tiles, fonts en sprites zelf
         # zijn same-origin (/tiles/...) en vallen onder connect-src 'self'.
-        "worker-src blob:; "
+        # 'self' erbij voor de service worker van /chat (MeshChat is installeerbaar
+        # als PWA; zie static/chat/sw.js). Die haalt altijd eerst het netwerk.
+        "worker-src 'self' blob:; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
     )
     return resp
@@ -71,6 +79,13 @@ app.include_router(meshmoni.router)   # de PWA-subsite voor op de telefoon
 app.include_router(sensorpush.router)  # gebeurtenis-push van sensornodes
 app.include_router(companions.router)  # instant-push van companion-locatie/-val (POST /api/companion)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
+# MeshChat: de IRC-achtige webclient voor companion-radio's (repo DinXke/MeshChat),
+# één zelfstandig HTML-bestand dat via Web Serial/Web Bluetooth rechtstreeks
+# met de node van de bezoeker praat -- de server ziet er niets van. Het staat
+# als static/chat/index.html in deze repo en wordt bij een MeshChat-release
+# met de hand bijgewerkt (zie CHANGELOG 2.23.0). html=True serveert index.html
+# op /chat/; /chat zonder slash wordt door StaticFiles doorgestuurd.
+app.mount("/chat", StaticFiles(directory=str(Path(__file__).resolve().parent / "static" / "chat"), html=True), name="chat")
 # Zelf-gehoste kaart-assets: vector-tiles (basemap.pmtiles), glyph-fonts en sprites,
 # als read-only volume gemount op /tiles (zie docker-compose.yml). Starlette's
 # StaticFiles ondersteunt Range-requests, wat pmtiles nodig heeft om alleen de
