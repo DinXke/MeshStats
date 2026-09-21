@@ -2730,17 +2730,20 @@ class BleTransport {
       } catch (e) { lastErr = e; try { this.device.gatt.disconnect(); } catch (_) {} }
     }
     if (!svc) { this.device = null; throw new Error(t('ble.hintConnect', lastErr && lastErr.message)); }
-    this.device.addEventListener('gattserverdisconnected', () => this._closed());
+    this._onDisc = () => this._closed(); this.device.addEventListener('gattserverdisconnected', this._onDisc);
     const step = async (name, fn) => {
       let err; for (let i = 0; i < 3; i++) { try { return await fn(); } catch (e) { err = e; await sleep(400 * (i + 1)); } }
       throw new Error(t('ble.hintStep', err.message, name));
     };
     this.rx = await step(t('ble.stepRx'), () => svc.getCharacteristic(UART_RX));
     this.tx = await step(t('ble.stepTx'), () => svc.getCharacteristic(UART_TX));
-    this.tx.addEventListener('characteristicvaluechanged', (ev) => {
+    this._onValue = (ev) => {
+      if (!this.device || ev.target !== this.tx) return; // stale listener of a closed transport
       const v = ev.target.value; const u8 = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
       try { this.onFrame && this.onFrame(u8); } catch (e) { console.error(e); }
-    });
+    };
+    if (BleTransport._lastTx && BleTransport._lastTx.tx) { try { BleTransport._lastTx.tx.removeEventListener('characteristicvaluechanged', BleTransport._lastTx.fn); } catch (e) {} }
+    this.tx.addEventListener('characteristicvaluechanged', this._onValue); BleTransport._lastTx = { tx: this.tx, fn: this._onValue };
     await step(t('ble.stepNotify'), () => this.tx.startNotifications());
   }
   send(payload) {
@@ -2752,7 +2755,13 @@ class BleTransport {
     return this._q;
   }
   async close() { try { this.device?.gatt?.disconnect(); } catch (e) {} this._closed(); }
-  _closed() { if (this.device) { this.device = null; this.rx = this.tx = null; this.onClose && this.onClose(); } }
+  _closed() {
+    if (!this.device) return;
+    try { this.tx && this._onValue && this.tx.removeEventListener('characteristicvaluechanged', this._onValue); } catch (e) {}
+    try { this._onDisc && this.device.removeEventListener('gattserverdisconnected', this._onDisc); } catch (e) {}
+    if (BleTransport._lastTx && BleTransport._lastTx.fn === this._onValue) BleTransport._lastTx = null;
+    this.device = null; this.rx = this.tx = null; this.onClose && this.onClose();
+  }
 }
 
 // ---------- parsers ----------
@@ -2842,8 +2851,8 @@ class MeshCoreClient extends EventTarget {
   get kind() { return this.tr ? this.tr.kind : null; }
   async connect(transport) {
     this.tr = transport;
-    transport.onFrame = (f) => this._onFrame(f);
-    transport.onClose = () => { const was = this.connected; this.connected = false; this.tr = null; this._failAll(t('core.connLost')); if (was) this.emit('disconnected'); };
+    transport.onFrame = (f) => { if (this.tr === transport) this._onFrame(f); };
+    transport.onClose = () => { if (this.tr !== transport) return; const was = this.connected; this.connected = false; this.tr = null; this._failAll(t('core.connLost')); if (was) this.emit('disconnected'); };
     await transport.connect();
     this.connected = true;
   }
@@ -2979,6 +2988,15 @@ function parseAdvertUri(uri) {
     return r;
   } catch (e) { return null; }
 }
+// ---------- flood-scope: transportcode van een pakket voor een gegeven regiosleutel ----------
+// firmware (TransportKey::calcTransportCode): HMAC-SHA256 met de 16-byte sleutel over payloadtype(1) + payload, eerste 2 bytes.
+const _hmacKeys = new Map();
+async function transportCodeFor(keyHex, ptype, payloadHex) {
+  if (!globalThis.crypto || !crypto.subtle) return null;
+  let k = _hmacKeys.get(keyHex); if (!k) { k = await crypto.subtle.importKey('raw', unhex(keyHex), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']); _hmacKeys.set(keyHex, k); }
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', k, cat([ptype & 15], unhex(payloadHex))));
+  return mac[0] | (mac[1] << 8);
+}
 // ---------- channel key derivation ----------
 async function hashtagKey(name) { const n = name.startsWith('#') ? name : '#' + name; return hex((await sha256(te.encode(n.toLowerCase()))).subarray(0, 16)); }
 async function passwordKey(pw) { return hex((await sha256(te.encode(pw))).subarray(0, 16)); }
@@ -3019,6 +3037,7 @@ let LANG = 'nl';
 const I18N = {};
 
 I18N.nl = {
+  'scope.named': 'regio {0}', 'nb.discover': 'Buren', 'nb.none': 'De repeater meldt geen buren.',
   'users.searchPh': 'Zoek deelnemer…', 'users.searchNone': 'Geen deelnemer voor "{0}".',
   'uri.title': 'Contact importeren', 'uri.text': 'Dit contact toevoegen aan je node?\n{0}', 'uri.import': 'Importeren', 'uri.done': 'Contact geïmporteerd: {0}', 'uri.failed': 'Importeren mislukt: {0}', 'uri.known': '{0} staat al in je contacten.', 'uri.waitConnect': 'Contact-link ontvangen ({0}). Verbind eerst met je node; daarna volgt de importvraag.', 'uri.weblink': 'Weblink (opent MeshChat met importvraag):',
   'h.emoji': 'Emoji invoegen', 'emoji.recent': 'Recent', 'emoji.smileys': 'Smileys', 'emoji.mesh': 'Mesh & weer', 'emoji.hearts': 'Overig',
@@ -3258,6 +3277,7 @@ I18N.nl = {
 };
 
 I18N.en = {
+  'scope.named': 'region {0}', 'nb.discover': 'Neighbours', 'nb.none': 'The repeater reports no neighbours.',
   'users.searchPh': 'Find participant…', 'users.searchNone': 'No participant for "{0}".',
   'uri.title': 'Import contact', 'uri.text': 'Add this contact to your node?\n{0}', 'uri.import': 'Import', 'uri.done': 'Contact imported: {0}', 'uri.failed': 'Import failed: {0}', 'uri.known': '{0} is already in your contacts.', 'uri.waitConnect': 'Contact link received ({0}). Connect to your node first; the import prompt follows.', 'uri.weblink': 'Web link (opens MeshChat with an import prompt):',
   'h.emoji': 'Insert emoji', 'emoji.recent': 'Recent', 'emoji.smileys': 'Smileys', 'emoji.mesh': 'Mesh & weather', 'emoji.hearts': 'Other',
@@ -3476,6 +3496,7 @@ I18N.en = {
 };
 
 I18N.fr = {
+  'scope.named': 'région {0}', 'nb.discover': 'Voisins', 'nb.none': 'Le répéteur ne signale aucun voisin.',
   'users.searchPh': 'Chercher un participant…', 'users.searchNone': 'Aucun participant pour "{0}".',
   'uri.title': 'Importer un contact', 'uri.text': 'Ajouter ce contact à votre nœud ?\n{0}', 'uri.import': 'Importer', 'uri.done': 'Contact importé : {0}', 'uri.failed': 'Import échoué : {0}', 'uri.known': '{0} est déjà dans vos contacts.', 'uri.waitConnect': 'Lien de contact reçu ({0}). Connectez d\'abord votre nœud ; la demande d\'import suivra.', 'uri.weblink': 'Lien web (ouvre MeshChat avec une demande d\'import) :',
   'h.emoji': 'Insérer un emoji', 'emoji.recent': 'Récents', 'emoji.smileys': 'Smileys', 'emoji.mesh': 'Mesh et météo', 'emoji.hearts': 'Autres',
@@ -3746,8 +3767,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260921-2144-4f2b910'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.2.0', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260921-2202-4fd0b6f'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.2.1', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 400;
 
@@ -3883,8 +3904,22 @@ function correlateRx(m) { // attach the most recent, unclaimed raw packet that f
     r.claimed = true; m.rx = r.pkt; m.rssi = r.rssi; return;
   }
 }
+// Bekende regio's (lijst in Instellingen + standaardregio van de node) -> naam bij de transportcodes van een pakket
+function knownRegions() { const r = (S.settings.regions || []).slice(); if (S.defaultScope && !r.some(x => x.key === S.defaultScope.key)) r.push(S.defaultScope); return r; }
+async function resolveScopeNames(rx) {
+  if (!rx || !rx.codes || !rx.payloadHex) return null; const names = [];
+  for (const r of knownRegions()) { try { const code = await transportCodeFor(r.key, rx.ptype, rx.payloadHex); if (rx.codes.includes(code)) names.push(r.name); } catch (e) {} }
+  return names;
+}
 function scopeLabelFor(m) {
-  if (m.rx) { if (m.rx.route === 0 || m.rx.route === 3) return t('scope.codes', m.rx.codes.map(c => c.toString(16).padStart(4, '0')).join('/')); return m.rx.route === 1 ? t('scope.none') : 'direct'; }
+  if (m.rx) {
+    if (m.rx.route === 0 || m.rx.route === 3) {
+      if (m.rx.scopeNames === undefined) { m.rx.scopeNames = null; resolveScopeNames(m.rx).then(n => { m.rx.scopeNames = n || []; if (n && n.length) updateMsgDom(m); }); }
+      if (m.rx.scopeNames && m.rx.scopeNames.length) return t('scope.named', m.rx.scopeNames.join('+'));
+      return t('scope.codes', m.rx.codes.filter(c => c).map(c => c.toString(16).padStart(4, '0')).join('/'));
+    }
+    return m.rx.route === 1 ? t('scope.none') : 'direct';
+  }
   return null;
 }
 /* Kaartstijl overgenomen van MeshManager (basemap.js, protomaps-themes-base 4.5.0); lagen voor bron "protomaps". */
@@ -4217,7 +4252,7 @@ function metaText(m) {
 }
 // Sleutelprefixen in CLI-tekst (bv. 'neighbors') aanvullen met de naam van het bekende contact.
 function annotateKeys(text) {
-  return esc(text).replace(/([0-9a-f]{6,64})/gi, (hexs) => {
+  return esc(text).replace(/\b([0-9a-f]{6,64})\b/gi, (hexs) => {
     if (!/[a-f]/i.test(hexs) && hexs.length < 8) return hexs; // gewone getallen overslaan
     const c = contactByPrefix(hexs.toLowerCase()); if (!c) return hexs;
     return hexs + ' <span class="mute">(' + esc(cname(c)) + ')</span>';
@@ -4372,6 +4407,7 @@ function renderInfo(cv) {
     ${c.type >= 2 ? `<dt>${esc(t('info.login'))}</dt><dd>${esc(c.loggedIn ? t('info.loggedIn') + (c.perms ? t('info.admin') : '') : t('info.notLoggedIn'))}</dd>` : ''}
     ${x.note ? `<dt>${esc(t('info.note'))}</dt><dd>${esc(x.note)}</dd>` : ''}
   </dl><div class="acts">
+    ${c.type === 2 ? `<button class="btn sm" data-act="neighbors">${esc(t('nb.discover'))}</button>` : ''}
     ${c.type >= 2 ? `<button class="btn sm" data-act="status">${esc(t('info.status'))}</button>` : ''}
     <button class="btn sm" data-act="telemetry">${esc(t('info.telemetry'))}</button>
     ${p.hashes.length ? `<button class="btn sm" data-act="trace">${esc(t('info.trace'))}</button>` : ''}
@@ -4458,7 +4494,7 @@ async function refreshContacts(full) {
   const list = await C.getContacts(since);
   if (since) { for (const c of S.contacts.values()) if (c.hidden === undefined) c.hidden = false; }
   const seen = new Set();
-  for (const c of list) { seen.add(c.pub); const old = S.contacts.get(c.pub) || {}; S.contacts.set(c.pub, { ...old, ...c, hidden: false }); }
+  for (const c of list) { if (/�/.test(c.name) || !/^[0-9a-f]{64}$/.test(c.pub)) { debugLog('contact overgeslagen (onleesbaar): ' + c.pub.slice(0, 8)); continue; } seen.add(c.pub); const old = S.contacts.get(c.pub) || {}; S.contacts.set(c.pub, { ...old, ...c, hidden: false }); }
   if (!since) for (const [pub, c] of S.contacts) if (!seen.has(pub)) c.hidden = true; // not on device (anymore)
   if (list.lastmod) S.contactsSync = { pub: S.self.pub, lastmod: Math.max(list.lastmod, since || 0) };
   for (const c of S.contacts.values()) if (!c.hidden && c.type >= 2) convForContact(c);
@@ -4471,7 +4507,7 @@ async function refreshContact(pub) {
 }
 async function refreshChannels() {
   const max = S.dev?.maxChannels || 8; const chans = [];
-  for (let i = 0; i < max; i++) { try { const ch = await C.getChannel(i); chans[i] = ch; } catch (e) { if (i > 0) break; } }
+  for (let i = 0; i < max; i++) { try { const ch = await C.getChannel(i); if (ch.idx !== i || /�/.test(ch.name)) { debugLog('kanaal ' + i + ': onleesbaar antwoord, overgeslagen'); continue; } chans[i] = ch; } catch (e) { if (i > 0) break; } }
   S.channels = chans;
   for (const ch of chans) if (ch && ch.name) convForChannel(ch);
   renderTree(); saveState();
@@ -4637,7 +4673,8 @@ function handleIncoming(m) {
     if (m.txtType === TXT.CLI) { // CLI reply from repeater/sensor
       for (const w of (S.cliWaiters || []).filter(w => w.pub === c.pub)) { clearTimeout(w.timer); w.resolve(m.text); } S.cliWaiters = (S.cliWaiters || []).filter(w => w.pub !== c.pub);
       const pending = cv.msgs.slice(-20).reverse().find(x => x.kind === 'cli' && x.ack === 'pending');
-      if (pending) { pending.text = (pending.text ? pending.text + '\n' : '') + m.text; pending.ack = null; pending.snr = m.snr; pending.pathLen = m.pathLen; clearTimeout(pending._timer); updateMsgDom(pending); if (cv.key !== S.active) { cv.unread++; renderTree(); } saveState(); }
+      if (pending) { pending.text = (pending.text ? pending.text + '\n' : '') + m.text; pending.ack = null; pending.snr = m.snr; pending.pathLen = m.pathLen; clearTimeout(pending._timer); updateMsgDom(pending); if (cv.key !== S.active) { cv.unread++; renderTree(); } saveState();
+        if (S.autoNbFor === c.pub && /^neighbou?rs\b/i.test(pending.cmd || '')) { S.autoNbFor = null; const nb = parseNeighbors(pending.text); if (nb.length) mapShowNeighbors(c, nb); else toast(t('nb.none'), 'warn'); } }
       else addMsg(cv, { kind: 'cli', nick: displayName(c), cmd: '', text: m.text, t: saneTs(m.ts), snr: m.snr, pathLen: m.pathLen });
       return;
     }
@@ -5181,7 +5218,7 @@ function showMsgInfo(m, cv) {
   add(t('mi.type'), m.txtType != null ? esc({ 0: t('mi.typeText'), 1: 'CLI', 2: t('mi.typeSigned') }[m.txtType] || m.txtType) : null);
   if (m.rx) {
     const p = m.rx; add(t('mi.rawRoute'), esc(routeName(p.route)) + esc(t('mi.payload', p.ptypeName, p.ver)));
-    if (p.codes) add(t('mi.scopeCodes'), p.codes.map(c => c.toString(16).padStart(4, '0')).join(' / ') + (S.defaultScope ? t('mi.nodeRegion', esc(S.defaultScope.name)) : ''));
+    if (p.codes) add(t('mi.scopeCodes'), (p.scopeNames && p.scopeNames.length ? `<b>${esc(p.scopeNames.join(', '))}</b> · ` : '') + p.codes.map(c => c.toString(16).padStart(4, '0')).join(' / ') + (S.defaultScope ? t('mi.nodeRegion', esc(S.defaultScope.name)) : ''));
     add(t('mi.path'), p.hashes.length ? p.hashes.map((h, i) => `<div>${i + 1}. <b>${h}</b> ${resolveHash(h).map(c => esc(cname(c)) + ' <span class="mute">(' + esc(advType(c.type)) + (c.lat ? ', ' + c.lat.toFixed(3) + ',' + c.lon.toFixed(3) : '') + ')</span>').join(', ') || `<span class="mute">${esc(t('mi.unknownNode'))}</span>`}</div>`).join('') : `<span class="mute">${esc(t('mi.noRepeaters'))}</span>`);
     add(t('mi.rawPacket'), `<div class="raw">${p.rawHex}</div>`);
   } else if (!m.self) add(t('mi.rawPacket'), `<span class="mute">${esc(t('mi.rawUnavailable'))}</span>`);
@@ -5243,7 +5280,8 @@ function wire() {
   on('#userlist', 'contextmenu', (e) => { const u = e.target.closest('.user'); if (!u) return; e.preventDefault(); const c = u.dataset.pub ? S.contacts.get(u.dataset.pub) : contactByName(u.dataset.nick); showCtx(e.clientX, e.clientY, [c ? { label: t('ctx.dmShort'), run: () => { const cv = convForContact(c); cv.open = true; openConv(cv.key); } } : null, c ? { label: t('ctx.contactInfoDots'), run: () => openContactDlg(c) } : null, c ? { label: t('ctx.whois'), run: () => handleInput('/whois ' + cname(c)) } : null, c && c.lat ? { label: t('ctx.onMapShort'), run: () => mapFocus(c.pub) } : null, { label: t('ctx.mention'), run: () => { const inp = $('#input'); inp.value = '@' + (u.dataset.nick || (c && cname(c))) + ' ' + inp.value; inp.focus(); } }]); });
   on('#info', 'click', async (e) => { const b = e.target.closest('[data-act]'); if (!b) return; const cv = activeConv(); const c = cv.pub ? S.contacts.get(cv.pub) : null; const act = b.dataset.act;
     const map = { status: '/status', telemetry: '/telemetry', trace: '/trace', discover: '/path', 'path-reset': '/resetpath', logout: '/logout', 'advert-flood': '/advert flood', 'advert-0': '/advert' };
-    if (act === 'path-set' && c) openPathDlg(c); else if (act === 'map' && c) mapFocus(c.pub); else if (act === 'resync' && c) resyncRoom(c); else if (act === 'sync') handleInput('/sync'); else if (act === 'map-fit') mapFitAll(); else if (act === 'map-settings') openMapSettings();
+    if (act === 'neighbors' && c) { S.autoNbFor = c.pub; sendCli(cv, c, 'neighbors'); }
+    else if (act === 'path-set' && c) openPathDlg(c); else if (act === 'map' && c) mapFocus(c.pub); else if (act === 'resync' && c) resyncRoom(c); else if (act === 'sync') handleInput('/sync'); else if (act === 'map-fit') mapFitAll(); else if (act === 'map-settings') openMapSettings();
     else if (act === 'login' && c) openLoginDlg(c); else if (act === 'edit' && c) openContactDlg(c); else if (act === 'contacts') { renderContactsDlg(); $('#dlg-contacts').showModal(); } else if (act === 'download') downloadSelf(); else if (act === 'copy-key') { const ch = channelByConv(cv); if (ch) copyText(ch.secret); } else if (act === 'leave') closeConv(cv); else if (map[act]) handleInput(map[act]); });
   // composer
   const inp = $('#input');
@@ -5344,7 +5382,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260921-2144-4f2b910' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260921-2202-4fd0b6f' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5402,7 +5440,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260921-2144-4f2b910') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260921-2202-4fd0b6f') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
