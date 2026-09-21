@@ -2983,6 +2983,7 @@ let LANG = 'nl';
 const I18N = {};
 
 I18N.nl = {
+  'heard.via': 'gehoord via {0}', 'heard.ok': 'gehoord', 'heard.no': 'niet gehoord', 'heard.wait': 'wacht op herhaling…', 'ctx.resendSame': 'Opnieuw verzenden (zelfde regel)',
   'map.legend.pending': 'wachtend advert', 'map_pending': 'Wachtend advert (nog geen contact op de node).', 'map_accept': 'Toevoegen', 'map_ignore': 'Negeren',
   // ---- pad / retries ----
   'path.flood': 'flood', 'path.direct': 'direct (0 hops)', 'path.hops': '{0} hop(s) via {1}', 'path.tooLong': 'Pad te lang (max. 64 bytes).', 'path.set': 'Pad naar {0} ingesteld: {1}', 'path.cleared': 'Pad naar {0} gewist (flood).', 'path.setBtn': 'Pad instellen', 'path.dlgTitle': 'Pad naar {0}', 'path.dlgInfo': '{0} hop(s) · {1} van {2} bytes', 'path.unknownHop': 'Een hop in het pad is geen bekend contact; verwijder die eerst.',
@@ -3216,6 +3217,7 @@ I18N.nl = {
 };
 
 I18N.en = {
+  'heard.via': 'heard via {0}', 'heard.ok': 'heard', 'heard.no': 'not heard', 'heard.wait': 'waiting for repeat…', 'ctx.resendSame': 'Resend (same line)',
   'map.legend.pending': 'pending advert', 'map_pending': 'Pending advert (not yet a contact on the node).', 'map_accept': 'Add', 'map_ignore': 'Ignore',
   // ---- path / retries ----
   'path.flood': 'flood', 'path.direct': 'direct (0 hops)', 'path.hops': '{0} hop(s) via {1}', 'path.tooLong': 'Path too long (max. 64 bytes).', 'path.set': 'Path to {0} set: {1}', 'path.cleared': 'Path to {0} cleared (flood).', 'path.setBtn': 'Set path', 'path.dlgTitle': 'Path to {0}', 'path.dlgInfo': '{0} hop(s) · {1} of {2} bytes', 'path.unknownHop': 'A hop in the path is not a known contact; remove it first.',
@@ -3428,6 +3430,7 @@ I18N.en = {
 };
 
 I18N.fr = {
+  'heard.via': 'entendu via {0}', 'heard.ok': 'entendu', 'heard.no': 'pas entendu', 'heard.wait': 'en attente de répétition…', 'ctx.resendSame': 'Renvoyer (même ligne)',
   'map.legend.pending': 'advert en attente', 'map_pending': 'Advert en attente (pas encore un contact sur le nœud).', 'map_accept': 'Ajouter', 'map_ignore': 'Ignorer',
   // ---- chemin / renvois ----
   'path.flood': 'flood', 'path.direct': 'direct (0 saut)', 'path.hops': '{0} saut(s) via {1}', 'path.tooLong': 'Chemin trop long (max. 64 octets).', 'path.set': 'Chemin vers {0} défini : {1}', 'path.cleared': 'Chemin vers {0} effacé (flood).', 'path.setBtn': 'Définir le chemin', 'path.dlgTitle': 'Chemin vers {0}', 'path.dlgInfo': '{0} saut(s) · {1} sur {2} octets', 'path.unknownHop': 'Un saut du chemin n\'est pas un contact connu ; retirez-le d\'abord.',
@@ -4127,6 +4130,7 @@ function metaText(m) {
   if (m.self && m.scope) parts.push(m.scope);
   const sc = scopeLabelFor(m); if (sc && !m.self) parts.push(sc);
   if (m.self && m.attempt) parts.push(t('retry.attempt', m.attempt, S.settings.retries ?? 3));
+  if (m.self && m.heard === 'ok') parts.push(m.heardVia ? t('heard.via', hashLabel(m.heardVia)) : t('heard.ok')); else if (m.self && m.heard === 'no') parts.push(t('heard.no')); else if (m.self && m.heard === 'pending') parts.push(t('heard.wait'));
   if (m.trip) parts.push(m.trip + ' ms');
   return parts.join(' · ');
 }
@@ -4407,6 +4411,12 @@ function scheduleRetry(cv, c, m, text, txtType, r) {
     } catch (e) { m.ack = 'fail'; updateMsgDom(m); errorMsg(t('send.failed', e.message), cv); }
   }, Math.max(m.kind === 'cli' ? 8000 : 5000, r.timeoutMs) + 2000);
 }
+async function resendChannelMsg(cv, m) {
+  const ch = channelByConv(cv); if (!ch || !requireConn(cv)) return;
+  m.attempt = (m.attempt || 0) + 1; m.heard = null; updateMsgDom(m);
+  try { await ensureDeviceScope(scopeFor(cv)); const body = m.chText || (m.kind === 'action' ? '* ' + m.text : m.text); const r = await C.sendChannelText(ch.idx, body); m.t = r.ts; armHeard(m, cv); updateMsgDom(m); saveState(); }
+  catch (e) { errorMsg(t('send.failed', e.message), cv); }
+}
 async function resyncRoom(c) {
   const cv = convForContact(c); if (!requireConn(cv)) return; if (c.type !== 3) { errorMsg(t('resync.onlyRoom'), cv); return; }
   if (!await confirmDlg(t('resync.title'), t('resync.text', displayName(c)), t('resync.btn'), true)) return;
@@ -4462,8 +4472,29 @@ C.addEventListener('pathDiscovery', (e) => {
 C.addEventListener('rxLog', (e) => {
   const pkt = decodePacket(e.detail.raw); S.rxLog.push({ at: Date.now(), snr: e.detail.snr, rssi: e.detail.rssi, pkt }); if (S.rxLog.length > 300) S.rxLog.shift();
   if (S.settings.debug) debugLog(`rx ${pkt.ptypeName} ${routeName(pkt.route)} ${pkt.hashCount} hops SNR ${e.detail.snr} RSSI ${e.detail.rssi}`);
-  mapAnimateRx(pkt);
+  heardCheck(pkt); mapAnimateRx(pkt);
 });
+// "Gehoord": een repeater herhaalde ons pakket en onze node hoorde die herhaling (ruw pakket 0x88).
+// Matching op pakkettype, kanaalhash / bestemmings- en bronhash en de verwachte payloadlengte, binnen 20 s na verzenden.
+function expectedPayloadLen(textBytes, extra) { return extra + 16 * Math.ceil((5 + textBytes) / 16); } // 4 timestamp + 1 vlaggen, AES-blokken, + hash/MAC-bytes
+function heardCheck(pkt) {
+  S.rxLogSeen = true; if (!pkt || pkt.hashCount < 1 || !pkt.payloadHex) return;
+  const plen = pkt.payloadHex.length / 2, now = Date.now();
+  for (const cv of S.convs.values()) {
+    for (let i = cv.msgs.length - 1; i >= Math.max(0, cv.msgs.length - 15); i--) {
+      const m = cv.msgs[i]; if (!m.self || m.heard !== 'pending' || !m.sentAt || now - m.sentAt > 20000) continue;
+      let hit = false;
+      if (cv.kind === 'channel' && pkt.ptype === 5 && m.chanHash && pkt.payloadHex.slice(0, 2) === m.chanHash && plen === m.expLen) hit = true;
+      else if (cv.kind !== 'channel' && pkt.ptype === 2 && m.dstHash && pkt.payloadHex.slice(0, 2) === m.dstHash && pkt.payloadHex.slice(2, 4) === m.srcHash && plen === m.expLen) hit = true;
+      if (hit) { m.heard = 'ok'; m.heardVia = pkt.hashes[0]; clearTimeout(m._heardTimer); updateMsgDom(m); saveState(); return; }
+    }
+  }
+}
+function armHeard(m, cv) {
+  if (!S.rxLogSeen) { m.heard = null; return; } // firmware stuurt geen ruwe pakketten: geen uitspraak doen
+  m.heard = 'pending'; m.sentAt = Date.now(); clearTimeout(m._heardTimer);
+  m._heardTimer = setTimeout(() => { if (m.heard === 'pending') { m.heard = 'no'; updateMsgDom(m); saveState(); } }, 15000);
+}
 // Ontvangen pakket op de kaart tekenen (alleen als de kaart open staat en 'Live pakketten' aanstaat)
 const PKT_COLORS = { 2: '#5cc8ff', 5: '#4ea1ff', 4: '#f7b955', 3: '#3ccf83', 0: '#c4a3ff', 1: '#c4a3ff', 7: '#c4a3ff', 9: '#ff8fab' };
 function mapAnimateRx(pkt) {
@@ -4522,7 +4553,7 @@ async function sendToConv(cv, text, asAction = false) {
     const ch = channelByConv(cv); if (!ch) { errorMsg(t('send.chanGone'), cv); return; }
     const body = asAction ? '* ' + text : text; const sc = scopeFor(cv);
     const m = addMsg(cv, { kind: asAction ? 'action' : 'msg', nick: myNick(), text, self: true, scope: sc.mode === 'unscoped' ? t('scope.none') : sc.mode === 'custom' ? (sc.name || t('scope.custom')) : (S.chanScope[ch.secret] ? scopeText(sc) : null) });
-    try { await ensureDeviceScope(sc); const r = await C.sendChannelText(ch.idx, body); m.t = r.ts; m.flood = true; updateMsgDom(m); } catch (e) { m.ack = 'fail'; updateMsgDom(m); errorMsg(t('send.failed', e.message), cv); }
+    try { m.chanHash = hex((await sha256(unhex(ch.secret))).subarray(0, 1)); m.expLen = expectedPayloadLen(te.encode(myNick() + ': ' + body).length, 3); m.chText = body; m.chIdx = ch.idx; await ensureDeviceScope(sc); const r = await C.sendChannelText(ch.idx, body); m.t = r.ts; m.flood = true; armHeard(m, cv); updateMsgDom(m); } catch (e) { m.ack = 'fail'; updateMsgDom(m); errorMsg(t('send.failed', e.message), cv); }
     return;
   }
   const c = S.contacts.get(cv.pub); if (!c) { errorMsg(t('send.noContact'), cv); return; }
@@ -4530,7 +4561,7 @@ async function sendToConv(cv, text, asAction = false) {
   if (cv.kind === 'room' && !c.loggedIn) { notice(t('send.roomNotLoggedIn'), cv, false); openLoginDlg(c); return; }
   const m = addMsg(cv, { kind: asAction ? 'action' : 'msg', nick: myNick(), text, self: true, ack: 'pending' });
   try {
-    await ensureDeviceScope(S.sendScope); const body = asAction ? '* ' + text : text; const r = await C.sendText(c.pub, body, TXT.PLAIN, 0); m.t = r.ts; m.ackCode = r.ack; m.flood = r.flood; m.attempt = 0; updateMsgDom(m);
+    await ensureDeviceScope(S.sendScope); const body = asAction ? '* ' + text : text; const r = await C.sendText(c.pub, body, TXT.PLAIN, 0); m.t = r.ts; m.ackCode = r.ack; m.flood = r.flood; m.attempt = 0; m.dstHash = c.pub.slice(0, 2); m.srcHash = S.self ? S.self.pub.slice(0, 2) : null; m.expLen = expectedPayloadLen(te.encode(body).length, 4); if (r.flood) armHeard(m, cv); updateMsgDom(m);
     scheduleRetry(cv, c, m, body, TXT.PLAIN, r);
   } catch (e) { m.ack = 'fail'; updateMsgDom(m); errorMsg(t('send.failed', e.message), cv); }
 }
@@ -5007,6 +5038,7 @@ function msgContextItems(m, cv) {
     { label: t('ctx.copyText'), run: () => copyText(m.text) },
     m.rawHex || m.rx ? { label: t('ctx.copyRaw'), run: () => copyText(m.rx ? m.rx.rawHex : m.rawHex) } : null,
     m.self && m.ack === 'fail' && cv.kind !== 'channel' ? { label: t('ctx.resend'), run: () => sendToConv(cv, m.text) } : null,
+    m.self && cv.kind === 'channel' && (m.heard === 'no' || m.heard === null || m.heard === undefined) && !m.heardVia ? { label: t('ctx.resendSame'), run: () => resendChannelMsg(cv, m) } : null,
     '-',
     { label: t('ctx.deleteLocal'), danger: true, run: () => { cv.msgs = cv.msgs.filter(x => x.id !== m.id); renderMessages(cv, true); saveState(); } },
   ];
