@@ -590,6 +590,19 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
       </div>
       <div class="row" style="justify-content:flex-end"><button class="btn ghost" id="s-region-clear" data-needs-conn>Regio wissen</button><button class="btn primary" id="s-region-save" data-needs-conn>Regio opslaan</button></div>
       <div class="hr"></div>
+      <h4 class="sub">Mijn regio's</h4>
+      <table class="tbl" id="regions-table"><thead><tr><th>Naam</th><th class="hide-m">Sleutel</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="row" style="margin:8px 0 4px;flex-wrap:wrap">
+        <input id="rg-name" class="inp mono" placeholder="naam, bv. be-vlg" maxlength="30" style="width:160px">
+        <input id="rg-key" class="inp mono" placeholder="sleutel (leeg = afleiden)" style="flex:1;min-width:160px">
+        <button class="btn" id="rg-add">Toevoegen</button>
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px">
+        <select id="rg-rpt" aria-label="Repeater" style="min-width:180px"></select>
+        <button class="btn" id="rg-discover" data-needs-conn>Regio's ophalen van repeater</button>
+        <span class="help" style="font-size:11px;color:var(--fg-mute)">Stuurt het CLI-commando <span class="mono">region</span>; login als admin is nodig.</span>
+      </div>
+      <div class="hr"></div>
       <h4 class="sub">Verzendscope voor deze sessie</h4>
       <div class="field"><label for="s-scope-mode">Scope bij het verzenden</label><select id="s-scope-mode"><option value="default">Standaardregio van de node</option><option value="unscoped">Zonder scope (overal heen floods)</option><option value="custom">Andere regio…</option></select></div>
       <div id="s-scope-custom" hidden class="grid2">
@@ -660,6 +673,17 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
     </div>
     <div class="dlg-foot"><button class="btn" value="cancel" formnovalidate>Annuleren</button><button class="btn primary" value="ok" id="login-ok">Inloggen</button></div>
   </form>
+</dialog>
+
+<!-- Regio's van repeater overnemen -->
+<dialog class="dlg" id="dlg-regions" aria-labelledby="dlg-regions-t">
+  <div class="dlg-head"><h2 id="dlg-regions-t">Regio's van <span class="mono" id="rg-src"></span></h2><button class="btn icon ghost" data-close aria-label="Sluiten"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-body">
+    <div class="callout" style="margin-bottom:10px">Antwoord van de repeater: <span class="mono" id="rg-raw" style="overflow-wrap:anywhere"></span></div>
+    <table class="tbl" id="rg-pick"><thead><tr><th></th><th>Regio</th><th class="hide-m">Sleutel</th><th title="Als standaardregio van mijn node instellen">Node-std.</th></tr></thead><tbody></tbody></table>
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="rg-set-global" checked> Gekozen node-standaard ook als globale verzendscope gebruiken</label>
+  </div>
+  <div class="dlg-foot"><button class="btn" data-close>Annuleren</button><button class="btn primary" id="rg-apply">Overnemen</button></div>
 </dialog>
 
 <!-- Berichtinfo -->
@@ -1495,7 +1519,7 @@ const COMMANDS = [
   ['/advert', '[flood]', 'Eigen advert versturen'], ['/login', '[wachtwoord]', 'Inloggen op room/repeater'], ['/logout', '', 'Uitloggen'],
   ['/cli', '<commando>', 'CLI-commando naar repeater'], ['/status', '', 'Statistieken opvragen'], ['/telemetry', '[nick]', 'Telemetrie opvragen'],
   ['/trace', '[nick]', 'Pad traceren met SNR per hop'], ['/path', '[nick]', 'Pad opnieuw ontdekken'], ['/resetpath', '[nick]', 'Pad wissen (terug naar flood)'],
-  ['/scope', '<naam|hex|off|default>', 'Verzendscope (regio) kiezen'], ['/region', '<naam> [hex]', 'Standaardregio van de node instellen'],
+  ['/scope', '<naam|hex|off|default>', 'Verzendscope (regio) kiezen'], ['/region', '<naam> [hex]', 'Standaardregio van de node instellen'], ['/regions', '[repeater]', 'Regio\'s ophalen van een repeater en kiezen'],
   ['/export', '[nick]', 'Contact als meshcore:// URI'], ['/import', '<meshcore://…>', 'Contact importeren'], ['/share', '<nick>', 'Contact delen op het mesh'], ['/del', '<nick>', 'Contact verwijderen'],
   ['/time', '', 'Tijd van de node'], ['/settime', '', 'Tijd synchroniseren'], ['/battery', '', 'Batterij'], ['/stats', '', 'Statistieken van de node'],
   ['/raw', '<hex>', 'Ruw commando-frame sturen'], ['/debug', '', 'Debug-uitvoer aan/uit'], ['/clear', '', 'Venster leegmaken'], ['/theme', 'dark|light|auto', 'Thema'], ['/quit', '', 'Verbreken en venster sluiten'],
@@ -1648,6 +1672,7 @@ function handleIncoming(m) {
     if (!c) { addMsg(S.convs.get('status'), { kind: 'msg', nick: '?' + m.prefix.slice(0, 6), text: m.text, t: saneTs(m.ts), snr: m.snr, pathLen: m.pathLen }); return; }
     const cv = convForContact(c); cv.open = true; if (m.snr != null && (m.pathLen === 0xFF || (m.pathLen & 63) === 0)) c.lastSnr = m.snr; c.lastSeen = nowSecs();
     if (m.txtType === TXT.CLI) { // CLI reply from repeater/sensor
+      for (const w of (S.cliWaiters || []).filter(w => w.pub === c.pub)) { clearTimeout(w.timer); w.resolve(m.text); } S.cliWaiters = (S.cliWaiters || []).filter(w => w.pub !== c.pub);
       const pending = cv.msgs.slice(-20).reverse().find(x => x.kind === 'cli' && x.ack === 'pending');
       if (pending) { pending.text = (pending.text ? pending.text + '\n' : '') + m.text; pending.ack = null; pending.snr = m.snr; pending.pathLen = m.pathLen; clearTimeout(pending._timer); updateMsgDom(pending); if (cv.key !== S.active) { cv.unread++; renderTree(); } saveState(); }
       else addMsg(cv, { kind: 'cli', nick: displayName(c), cmd: '', text: m.text, t: saneTs(m.ts), snr: m.snr, pathLen: m.pathLen });
@@ -1688,6 +1713,26 @@ async function sendToConv(cv, text, asAction = false) {
     await ensureDeviceScope(S.sendScope); const r = await C.sendText(c.pub, asAction ? '* ' + text : text, TXT.PLAIN, 0); m.t = r.ts; m.ackCode = r.ack; m.flood = r.flood; updateMsgDom(m);
     m._timer = setTimeout(() => { if (m.ack === 'pending') { m.ack = 'fail'; updateMsgDom(m); saveState(); } }, Math.max(5000, r.timeoutMs) + 2000);
   } catch (e) { m.ack = 'fail'; updateMsgDom(m); errorMsg('Verzenden mislukt: ' + e.message, cv); }
+}
+// Stuur een CLI-commando en wacht op het (eerste) antwoord van deze repeater.
+function askCli(c, cmdText, timeoutMs = 20000) {
+  const cv = convForContact(c);
+  return new Promise((resolve, reject) => {
+    const w = { pub: c.pub, resolve, timer: setTimeout(() => { S.cliWaiters = (S.cliWaiters || []).filter(x => x !== w); reject(new Error('geen antwoord van ' + displayName(c) + ' binnen ' + Math.round(timeoutMs / 1000) + ' s')); }, timeoutMs) };
+    (S.cliWaiters = S.cliWaiters || []).push(w); sendCli(cv, c, cmdText).catch(e => { clearTimeout(w.timer); reject(e); });
+  });
+}
+// Regionamen uit de uitvoer van 'region' halen. Markeringen: '*' wildcard, '^' home, 'F' flood-vlag, '$naam' = privésleutel (niet af te leiden).
+function parseRegionReply(text) {
+  const out = []; let home = null;
+  for (const raw of text.split(/[\s\/,;|()]+/)) {
+    let tok = raw.trim(); if (!tok) continue;
+    const isHome = tok.includes('^'); tok = tok.replace(/[\^*]/g, '');
+    if (!tok || tok === 'F' || /^F+$/.test(tok) || tok.startsWith('$')) continue;
+    tok = tok.replace(/^#/, '').replace(/[^\w.\-]/g, ''); if (!tok || /^\d+$/.test(tok)) continue;
+    if (!out.includes(tok)) out.push(tok); if (isHome) home = tok;
+  }
+  return { names: out, home };
 }
 async function sendCli(cv, c, cmdText) {
   if (!requireConn(cv)) return;
@@ -1761,6 +1806,7 @@ async function handleInput(raw) {
       case '/resetpath': { const c = targetContact(argv[0]); if (!c) break; if (!requireConn(cv)) break; await C.resetPath(c.pub); await refreshContact(c.pub); notice('Pad naar ' + displayName(c) + ' gewist (flood).', convForContact(c), true); break; }
       case '/scope': await setSendScopeCmd(argv); break;
       case '/region': case '/regio': await setRegionCmd(argv); break;
+      case '/regions': { const c = argv[0] ? contactByName(argv[0]) : (activeContact()?.type === 2 ? activeContact() : null); await fillSettings(); $('#dlg-settings').showModal(); $$('.tab').find(x => x.dataset.tab === 'region').click(); if (c) { $('#rg-rpt').value = c.pub; discoverRegions().catch(e => toast(e.message, 'err')); } break; }
       case '/export': { if (!requireConn(cv)) break; const c = argv[0] ? contactByName(argv[0]) : null; const uri = await C.exportContact(c ? c.pub : null); notice((c ? displayName(c) : 'Eigen node') + ': ' + uri, cv, false); copyText(uri); break; }
       case '/import': if (!requireConn(cv)) break; await C.importContact(arg); await refreshContacts(); notice('Contact geïmporteerd.', cv, true); break;
       case '/share': { const c = targetContact(argv[0]); if (!c) break; if (!requireConn(cv)) break; await C.shareContact(c.pub); notice('Contact ' + displayName(c) + ' gedeeld op het mesh.', cv, true); break; }
@@ -1946,6 +1992,7 @@ async function fillSettings() {
   }
   if (S.dev) { $('#s-model').value = S.dev.model || '?'; $('#s-fw').value = (S.dev.version || '?') + ' (protocol v' + S.dev.fwVer + ')'; $('#s-build').value = S.dev.build || '?'; $('#s-pin').value = S.dev.blePin || ''; $('#s-repeat').checked = !!S.dev.repeatEn; $('#s-hashmode').value = S.dev.pathHashMode ?? 0; $('#s-limits').value = `${S.dev.maxContacts || '?'} contacten · ${S.dev.maxChannels || '?'} kanalen`; }
   $('#s-region-name').value = S.defaultScope?.name || ''; $('#s-region-key').value = S.defaultScope?.key || '';
+  renderRegions();
   $('#s-scope-mode').value = S.sendScope.mode; $('#s-scope-name').value = S.sendScope.name || ''; $('#s-scope-key').value = S.sendScope.key || ''; scopeModeUpdate();
   $('#s-theme').value = S.settings.theme; $('#s-ts').checked = S.settings.ts; $('#s-meta').checked = S.settings.meta; $('#s-compact').checked = !!S.settings.compact; $('#s-notif').checked = S.settings.notif; $('#s-debug').checked = !!S.settings.debug; $('#s-stale').value = S.settings.staleDays; $('#s-favonly').checked = !!S.settings.favOnly;
   try { $('#s-storage').textContent = 'Opslag in browser: ' + ((localStorage.getItem(LS_KEY) || '').length / 1024).toFixed(0) + ' kB · ' + Array.from(S.convs.values()).reduce((n, c) => n + c.msgs.length, 0) + ' berichten'; } catch (e) {}
@@ -1956,6 +2003,44 @@ async function fillSettings() {
     try { const r = await C.getAllowedRepeatFreq(); $('#s-repeat-help').textContent = r.length ? 'Client-repeat toegestaan op: ' + r.map(x => x[0] === x[1] ? x[0] + ' MHz' : x[0] + '–' + x[1] + ' MHz').join(', ') : ''; } catch (e) {}
     try { S.batt = await C.getBattery(); renderBattery(); $('#s-battery').value = (S.batt.mv / 1000).toFixed(2) + ' V' + (S.batt.totalKb ? ` · opslag ${S.batt.usedKb}/${S.batt.totalKb} kB` : ''); } catch (e) {}
   }
+}
+function renderRegions() {
+  const regions = S.settings.regions; const tb = $('#regions-table tbody'); if (!tb) return;
+  tb.innerHTML = regions.map((r, i) => `<tr data-i="${i}"><td class="mono">${esc(r.name)}${S.defaultScope && S.defaultScope.key === r.key ? ' <span class="type room" title="standaardregio van de node">node</span>' : ''}${S.sendScope.mode === 'custom' && S.sendScope.key === r.key ? ' <span class="type chat" title="globale verzendscope">globaal</span>' : ''}</td><td class="hide-m mono dim" style="font-size:10.5px">${r.key}</td><td><div class="acts"><button class="btn sm" data-act="global" title="Als globale verzendscope gebruiken">Globaal</button><button class="btn sm" data-act="node" data-needs-conn title="Als standaardregio op de node zetten">Node</button><button class="btn sm ghost danger" data-act="del" aria-label="Verwijderen">${icon('x')}</button></div></td></tr>`).join('') || '<tr><td colspan="3" class="dim" style="padding:10px">Nog geen regio\'s. Voeg er een toe of haal ze op van een repeater.</td></tr>';
+  const sel = $('#rg-rpt'); if (sel) { const rpts = Array.from(S.contacts.values()).filter(c => !c.hidden && c.type === 2).sort((a, b) => (b.loggedIn ? 1 : 0) - (a.loggedIn ? 1 : 0) || cname(a).localeCompare(cname(b))); sel.innerHTML = rpts.map(c => `<option value="${c.pub}">${esc(cname(c))}${c.loggedIn ? ' (ingelogd)' : ''}</option>`).join('') || '<option value="">— geen repeaters —</option>'; }
+  $$('#dlg-settings [data-needs-conn]').forEach(el => el.disabled = !C.connected);
+}
+async function addRegion(name, key) {
+  name = (name || '').trim().replace(/^#/, ''); if (!name) { toast('Geef een regionaam', 'err'); return null; }
+  key = (key || '').trim().toLowerCase(); if (!/^[0-9a-f]{32}$/.test(key)) key = await scopeKeyFromName(name);
+  const r = S.settings.regions; const ex = r.find(x => x.key === key); if (ex) { ex.name = name; } else r.push({ name, key });
+  saveState(); renderRegions(); return { name, key };
+}
+async function discoverRegions() {
+  const c = S.contacts.get(val('#rg-rpt')); if (!c) { toast('Kies een repeater', 'err'); return; }
+  if (!requireConn(activeConv())) return;
+  if (!c.loggedIn) { toast('Log eerst in op ' + cname(c) + ' (admin) — het venster wordt geopend', 'warn', 6000); openConv(convKeyFor(c)); openLoginDlg(c); $('#dlg-settings').close(); return; }
+  const btn = $('#rg-discover'); btn.disabled = true; btn.textContent = 'Wachten op antwoord…';
+  try {
+    const text = await askCli(c, 'region');
+    const { names, home } = parseRegionReply(text);
+    if (!names.length) { toast('Geen regionamen herkend in het antwoord: ' + text.slice(0, 80), 'warn', 8000); return; }
+    S.rgCandidates = []; for (const n of names) { const key = await scopeKeyFromName(n); S.rgCandidates.push({ name: n, key, known: S.settings.regions.some(r => r.key === key) }); }
+    $('#rg-src').textContent = cname(c); $('#rg-raw').textContent = text;
+    const nodeKey = S.defaultScope?.key; const pre = home || null;
+    $('#rg-pick tbody').innerHTML = S.rgCandidates.map((r, i) => `<tr><td><input type="checkbox" data-i="${i}" ${r.known ? '' : 'checked'}></td><td class="mono">${esc(r.name)}${r.known ? ' <span class="dim">(al bekend)</span>' : ''}${r.name === home ? ' <span class="type room">home</span>' : ''}</td><td class="hide-m mono dim" style="font-size:10.5px">${r.key}</td><td><input type="radio" name="rg-node" value="${i}" ${(pre ? r.name === pre : r.key === nodeKey) ? 'checked' : ''}></td></tr>`).join('');
+    $('#dlg-regions').showModal();
+  } catch (e) { toast(e.message, 'err', 7000); }
+  finally { btn.disabled = false; btn.textContent = "Regio's ophalen van repeater"; }
+}
+async function applyDiscovered() {
+  const picks = $$('#rg-pick input[type=checkbox]:checked').map(i => S.rgCandidates[+i.dataset.i]); const nodeSel = $('#rg-pick input[name=rg-node]:checked');
+  for (const p of picks) await addRegion(p.name, p.key);
+  if (nodeSel) { const r = S.rgCandidates[+nodeSel.value]; await addRegion(r.name, r.key);
+    if (C.connected) { try { await C.setDefaultScope(r.name, r.key); S.defaultScope = { name: r.name, key: r.key }; $('#s-region-name').value = r.name; $('#s-region-key').value = r.key; } catch (e) { toast('Standaardregio op node zetten mislukt: ' + e.message, 'err'); } }
+    if ($('#rg-set-global').checked) { S.sendScope = { mode: 'custom', name: r.name, key: r.key }; $('#s-scope-mode').value = 'custom'; $('#s-scope-name').value = r.name; $('#s-scope-key').value = r.key; scopeModeUpdate(); await applySendScope(true); }
+  }
+  saveState(); renderRegions(); $('#dlg-regions').close(); toast(`${picks.length} regio's overgenomen`, 'ok'); renderHead(activeConv());
 }
 function scopeModeUpdate() { const m = $('#s-scope-mode').value; $('#s-scope-custom').hidden = m !== 'custom'; }
 async function saveNode() {
@@ -1986,7 +2071,7 @@ async function saveTuning() { if (!requireConn(activeConv())) return; await C.se
 async function saveRegion() {
   if (!requireConn(activeConv())) return; const name = val('#s-region-name').replace(/^#/, ''); let key = val('#s-region-key').toLowerCase();
   if (!name) { await C.setDefaultScope('', ''); S.defaultScope = null; toast('Regio gewist', 'ok'); }
-  else { if (!/^[0-9a-f]{32}$/.test(key)) { key = await scopeKeyFromName(name); $('#s-region-key').value = key; } await C.setDefaultScope(name, key); S.defaultScope = { name, key }; toast('Regio opgeslagen', 'ok'); }
+  else { if (!/^[0-9a-f]{32}$/.test(key)) { key = await scopeKeyFromName(name); $('#s-region-key').value = key; } await C.setDefaultScope(name, key); S.defaultScope = { name, key }; rememberRegion(name, key); renderRegions(); toast('Regio opgeslagen', 'ok'); }
   await applySendScope(false); saveState(); renderInfo(activeConv());
 }
 async function applyScopeDlg() {
@@ -2158,6 +2243,13 @@ function wire() {
   on('#s-tuning-save', 'click', () => saveTuning().catch(e => toast(e.message, 'err')));
   on('#s-region-derive', 'click', async () => { $('#s-region-key').value = await scopeKeyFromName(val('#s-region-name')); });
   on('#s-region-save', 'click', () => saveRegion().catch(e => toast(e.message, 'err'))); on('#s-region-clear', 'click', () => { $('#s-region-name').value = ''; $('#s-region-key').value = ''; saveRegion().catch(e => toast(e.message, 'err')); });
+  on('#rg-add', 'click', async () => { const r = await addRegion(val('#rg-name'), val('#rg-key')); if (r) { $('#rg-name').value = ''; $('#rg-key').value = ''; toast('Regio toegevoegd: ' + r.name, 'ok'); } });
+  on('#rg-discover', 'click', () => discoverRegions().catch(e => toast(e.message, 'err')));
+  on('#rg-apply', 'click', () => applyDiscovered().catch(e => toast(e.message, 'err')));
+  on('#regions-table', 'click', async (e) => { const b = e.target.closest('[data-act]'); const tr = e.target.closest('tr[data-i]'); if (!b || !tr) return; const r = S.settings.regions[+tr.dataset.i]; if (!r) return;
+    if (b.dataset.act === 'del') { S.settings.regions.splice(+tr.dataset.i, 1); saveState(); renderRegions(); }
+    else if (b.dataset.act === 'global') { S.sendScope = { mode: 'custom', name: r.name, key: r.key }; $('#s-scope-mode').value = 'custom'; $('#s-scope-name').value = r.name; $('#s-scope-key').value = r.key; scopeModeUpdate(); await applySendScope(true); renderRegions(); }
+    else if (b.dataset.act === 'node') { if (!requireConn(activeConv())) return; try { await C.setDefaultScope(r.name, r.key); S.defaultScope = { name: r.name, key: r.key }; $('#s-region-name').value = r.name; $('#s-region-key').value = r.key; await applySendScope(false); renderRegions(); toast('Standaardregio van de node: ' + r.name, 'ok'); } catch (err) { toast(err.message, 'err'); } } });
   on('#s-scope-mode', 'change', scopeModeUpdate); on('#s-scope-derive', 'click', async () => { $('#s-scope-key').value = await scopeKeyFromName(val('#s-scope-name')); }); on('#s-scope-apply', 'click', () => applyScopeDlg().catch(e => toast(e.message, 'err')));
   on('#s-sync-time', 'click', async () => { if (!requireConn(activeConv())) return; await C.setTime(); toast('Tijd gesynchroniseerd', 'ok'); fillSettings(); });
   on('#s-reboot', 'click', async () => { if (!requireConn(activeConv())) return; if (await confirmDlg('Node herstarten', 'De verbinding valt weg en moet opnieuw gemaakt worden.', 'Herstarten', true)) { await C.reboot(); toast('Herstart verstuurd', 'ok'); } });
