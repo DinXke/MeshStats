@@ -395,6 +395,7 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
 .map-countries{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 12px;margin:6px 0 10px}
 .map-countries label{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 0} .map-countries .sz{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--fg-mute)}
 @media (max-width:900px){ #map-legend{display:none} }
+.maplibregl-popup{z-index:5}
 </style>
 </head>
 <body>
@@ -3926,9 +3927,10 @@ function mapInit(container) {
   const ensureOverlays = () => { try { if (mapObj.isStyleLoaded() && !mapObj.getLayer('nodes-circle')) { mapAddOverlays(); mapRefreshNodes(); } } catch (e) { /* stijl nog niet klaar */ } };
   mapObj.on('style.load', ensureOverlays); mapObj.on('styledata', ensureOverlays); mapObj.on('idle', ensureOverlays);
   mapObj.on('load', () => { mapReady = true; ensureOverlays(); });
-  mapObj.on('click', 'nodes-circle', (e) => { const f = e.features && e.features[0]; if (!f) return; mapPopup(f, e.lngLat); });
-  mapObj.on('mouseenter', 'nodes-circle', () => { mapObj.getCanvas().style.cursor = 'pointer'; });
-  mapObj.on('mouseleave', 'nodes-circle', () => { mapObj.getCanvas().style.cursor = ''; });
+  // klikken: op de (ruime, onzichtbare) klikcirkel of het label; bij meerdere treffers de dichtstbijzijnde
+  const pick = (e) => { const fs = mapObj.queryRenderedFeatures([[e.point.x - 16, e.point.y - 16], [e.point.x + 16, e.point.y + 16]], { layers: ['nodes-hit', 'nodes-label'] }); if (!fs.length) return null; let best = fs[0], bd = 1e9; for (const f of fs) { const p = mapObj.project(f.geometry.coordinates); const d = Math.hypot(p.x - e.point.x, p.y - e.point.y); if (d < bd) { bd = d; best = f; } } return best; };
+  mapObj.on('click', (e) => { const f = pick(e); if (!f) return; e.preventDefault && e.preventDefault(); mapPopup(f, { lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] }); });
+  mapObj.on('mousemove', (e) => { mapObj.getCanvas().style.cursor = pick(e) ? 'pointer' : ''; });
   mapObj.on('error', (e) => { const msg = e && e.error && e.error.message || ''; if (/pmtiles|tiles|Failed to fetch/i.test(msg)) mapSetNotice(t('map_offline_missing')); });
   return mapObj;
 }
@@ -3938,6 +3940,7 @@ function mapAddOverlays() {
   if (!mapObj.getSource('packets')) mapObj.addSource('packets', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   if (!mapObj.getSource('packet-dots')) mapObj.addSource('packet-dots', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   if (!mapObj.getLayer('packets-line')) mapObj.addLayer({ id: 'packets-line', type: 'line', source: 'packets', paint: { 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-opacity': ['get', 'opacity'], 'line-dasharray': [2, 1.5] } });
+  if (!mapObj.getLayer('nodes-hit')) mapObj.addLayer({ id: 'nodes-hit', type: 'circle', source: 'nodes', paint: { 'circle-radius': 16, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-width': 0 } });
   if (!mapObj.getLayer('nodes-circle')) mapObj.addLayer({ id: 'nodes-circle', type: 'circle', source: 'nodes', paint: { 'circle-radius': ['case', ['get', 'self'], 8, ['get', 'fav'], 7, 5.5], 'circle-color': ['case', ['get', 'pending'], 'rgba(0,0,0,0)', ['get', 'color']], 'circle-stroke-width': ['case', ['get', 'self'], 3, ['get', 'pending'], 2, 1.5], 'circle-stroke-color': ['case', ['get', 'pending'], ['get', 'color'], ['get', 'stale'], 'rgba(255,255,255,.35)', '#ffffff'], 'circle-opacity': ['case', ['get', 'stale'], 0.55, 0.95], 'circle-stroke-opacity': ['case', ['get', 'pending'], 0.9, 1] } });
   if (!mapObj.getLayer('nodes-label')) mapObj.addLayer({ id: 'nodes-label', type: 'symbol', source: 'nodes', layout: { 'text-field': ['case', ['get', 'pending'], ['concat', ['get', 'name'], ' ?'], ['get', 'name']], 'text-font': ['case', ['get', 'pending'], ['literal', ['Noto Sans Italic']], ['literal', ['Noto Sans Medium']]], 'text-size': 11.5, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-optional': true, 'text-max-width': 12 }, paint: { 'text-color': mapIsDark() ? '#e6ebf0' : '#1c2530', 'text-halo-color': mapIsDark() ? 'rgba(14,17,22,.9)' : 'rgba(255,255,255,.9)', 'text-halo-width': 1.4 } });
   if (!mapObj.getLayer('packet-dots')) mapObj.addLayer({ id: 'packet-dots', type: 'circle', source: 'packet-dots', paint: { 'circle-radius': 6, 'circle-color': ['get', 'color'], 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff', 'circle-opacity': ['get', 'opacity'] } });
