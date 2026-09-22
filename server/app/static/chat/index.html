@@ -2802,9 +2802,17 @@ class BleTransport {
     };
     this.rx = await step(t('ble.stepRx'), () => svc.getCharacteristic(UART_RX));
     this.tx = await step(t('ble.stepTx'), () => svc.getCharacteristic(UART_TX));
+    // Windows levert bij een gekoppeld apparaat soms élke notificatie twee keer af (Chromium-eigenaardigheid). Elk
+    // antwoord komt dan dubbel binnen en de client koppelt het tweede exemplaar aan het volgende commando, waardoor
+    // alles één plaats verschuift (verkeerde firmware-info, klok op 1970, "ongeldig argument", corrupte kanalen, halve
+    // burenlijsten). Een identiek frame binnen 200 ms na het vorige wordt daarom genegeerd; een echt antwoord komt
+    // nooit twee keer identiek zo snel achter elkaar.
     this._onValue = (ev) => {
       if (!this.device || ev.target !== this.tx) return; // stale listener of a closed transport
       const v = ev.target.value; const u8 = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
+      const now = performance.now(); const key = hex(u8);
+      if (key === this._lastKey && now - this._lastAt < 200) { this._lastAt = now; this.dups = (this.dups || 0) + 1; return; }
+      this._lastKey = key; this._lastAt = now;
       try { this.onFrame && this.onFrame(u8); } catch (e) { console.error(e); }
     };
     if (BleTransport._lastTx && BleTransport._lastTx.tx) { try { BleTransport._lastTx.tx.removeEventListener('characteristicvaluechanged', BleTransport._lastTx.fn); } catch (e) {} }
@@ -3105,6 +3113,7 @@ let LANG = 'nl';
 const I18N = {};
 
 I18N.nl = {
+  'ble.dups': 'Bluetooth leverde {0} frames dubbel af (Windows-eigenaardigheid bij een gekoppeld apparaat); de dubbelen zijn genegeerd.',
   'nb.heardAgo': 'gehoord {0} geleden',
   'sig.tip': 'SNR {0} dB · {1}{2}', 'sig.q0': 'amper signaal', 'sig.q1': 'zwak', 'sig.q2': 'matig', 'sig.q3': 'goed', 'sig.q4': 'uitstekend',
   'nb.progress': 'Buren ophalen… {0} van {1}', 'nb.err': 'Buren ophalen mislukt: {0}', 'nb.timeout': 'geen antwoord van de repeater', 'nb.partial': 'Onvolledig: {0} van {1} buren ({2})', 'nb.header': '{0} buren in dit antwoord (repeater meldt {1}); samen met eerdere antwoorden {2} buren van de laatste 7 dagen:', 'nb.cliMerged': 'Burengeheugen: {0} in dit antwoord, samen {1} van de laatste 7 dagen (knop "Buren op kaart" toont ze allemaal).', 'nb.noTarget': 'Geef een repeater op, of open eerst zijn venster.', 'cmd.neighbours': 'Alle buren van een repeater ophalen en op de kaart tonen', 'state.histFail': 'Geschiedenis kon niet in IndexedDB bewaard worden; ze wordt beperkt in localStorage bewaard.',
@@ -3356,6 +3365,7 @@ I18N.nl = {
 };
 
 I18N.en = {
+  'ble.dups': 'Bluetooth delivered {0} frames twice (a Windows quirk with a paired device); the duplicates were ignored.',
   'nb.heardAgo': 'heard {0} ago',
   'sig.tip': 'SNR {0} dB · {1}{2}', 'sig.q0': 'barely any signal', 'sig.q1': 'weak', 'sig.q2': 'fair', 'sig.q3': 'good', 'sig.q4': 'excellent',
   'nb.progress': 'Fetching neighbours… {0} of {1}', 'nb.err': 'Fetching neighbours failed: {0}', 'nb.timeout': 'no answer from the repeater', 'nb.partial': 'Incomplete: {0} of {1} neighbours ({2})', 'nb.header': '{0} neighbours in this reply (repeater reports {1}); together with earlier replies {2} neighbours of the last 7 days:', 'nb.cliMerged': 'Neighbour memory: {0} in this reply, {1} in total over the last 7 days (the "Neighbours on map" button shows them all).', 'nb.noTarget': 'Name a repeater, or open its window first.', 'cmd.neighbours': 'Fetch all neighbours of a repeater and show them on the map', 'state.histFail': 'History could not be stored in IndexedDB; a limited history is kept in localStorage instead.',
@@ -3586,6 +3596,7 @@ I18N.en = {
 };
 
 I18N.fr = {
+  'ble.dups': 'Le Bluetooth a livré {0} trames en double (particularité de Windows avec un appareil jumelé) ; les doublons ont été ignorés.',
   'nb.heardAgo': 'entendu il y a {0}',
   'sig.tip': 'SNR {0} dB · {1}{2}', 'sig.q0': 'signal à peine perceptible', 'sig.q1': 'faible', 'sig.q2': 'moyen', 'sig.q3': 'bon', 'sig.q4': 'excellent',
   'nb.progress': 'Récupération des voisins… {0} sur {1}', 'nb.err': 'Échec de la récupération des voisins : {0}', 'nb.timeout': 'pas de réponse du répéteur', 'nb.partial': 'Incomplet : {0} voisins sur {1} ({2})', 'nb.header': '{0} voisins dans cette réponse (le répéteur en annonce {1}) ; avec les réponses précédentes, {2} voisins sur les 7 derniers jours :', 'nb.cliMerged': 'Mémoire des voisins : {0} dans cette réponse, {1} au total sur 7 jours (le bouton « Voisins sur la carte » les affiche tous).', 'nb.noTarget': 'Indiquez un répéteur, ou ouvrez d\'abord sa fenêtre.', 'cmd.neighbours': 'Récupérer tous les voisins d\'un répéteur et les afficher sur la carte', 'state.histFail': 'L\'historique n\'a pu être enregistré dans IndexedDB ; un historique limité est conservé dans localStorage.',
@@ -3868,8 +3879,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0947-7e3acd1'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.7.3', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0957-d29011d'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.7.4', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 2000;
 
@@ -4855,6 +4866,7 @@ async function afterConnect() {
   if (!S.convs.has(S.active) || S.active === 'status') { const pub = S.channels.find(c => c && c.secret === PUBLIC_KEY_HEX); if (pub) openConv(convKeyForChannel(pub)); }
   renderTree(); renderHead(activeConv()); renderUsers(activeConv());
   await drainMessages();
+  if (C.tr && C.tr.dups) notice(t('ble.dups', C.tr.dups), st, false);
   autoLogin();
   if (S.pendingUri) { const u = S.pendingUri; S.pendingUri = null; setTimeout(() => handleIncomingUri(u), 500); }
   if (S.settings.notif && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
@@ -5884,7 +5896,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0947-7e3acd1' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0957-d29011d' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5943,7 +5955,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0947-7e3acd1') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0957-d29011d') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
