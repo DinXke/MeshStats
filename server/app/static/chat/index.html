@@ -3081,7 +3081,7 @@ const I18N = {};
 
 I18N.nl = {
   'sig.tip': 'SNR {0} dB · {1}{2}', 'sig.q0': 'amper signaal', 'sig.q1': 'zwak', 'sig.q2': 'matig', 'sig.q3': 'goed', 'sig.q4': 'uitstekend',
-  'nb.progress': 'Buren ophalen… {0} van {1}', 'nb.err': 'Buren ophalen mislukt: {0}', 'nb.timeout': 'geen antwoord van de repeater', 'nb.partial': 'Onvolledig: {0} van {1} buren ({2})', 'nb.header': '{0} buren (van {1}):', 'nb.noTarget': 'Geef een repeater op, of open eerst zijn venster.', 'cmd.neighbours': 'Alle buren van een repeater ophalen en op de kaart tonen', 'state.histFail': 'Geschiedenis kon niet in IndexedDB bewaard worden; ze wordt beperkt in localStorage bewaard.',
+  'nb.progress': 'Buren ophalen… {0} van {1}', 'nb.err': 'Buren ophalen mislukt: {0}', 'nb.timeout': 'geen antwoord van de repeater', 'nb.partial': 'Onvolledig: {0} van {1} buren ({2})', 'nb.header': '{0} buren in dit antwoord (repeater meldt {1}); samen met eerdere antwoorden {2} buren van de laatste 7 dagen:', 'nb.cliMerged': 'Burengeheugen: {0} in dit antwoord, samen {1} van de laatste 7 dagen (knop "Buren op kaart" toont ze allemaal).', 'nb.noTarget': 'Geef een repeater op, of open eerst zijn venster.', 'cmd.neighbours': 'Alle buren van een repeater ophalen en op de kaart tonen', 'state.histFail': 'Geschiedenis kon niet in IndexedDB bewaard worden; ze wordt beperkt in localStorage bewaard.',
   
   'tropo.stale': 'offline · laatst bekend: model {0} UTC',
   'tropo.legendTip': 'Tropo-ducting-schatting (Open-Meteo-weermodel, vraagt internet). Kleurschaal zoals de Hepburn-kaarten (dxinfocentre.com), berekend uit de refractiviteitsgradiënt dN/dh onder 1,5 km:\n• doorzichtig: 0, niets (gradiënt boven -60 N/km; normaal is -40)\n• paars 1 marginaal · blauw 2 redelijk · groen 3 matig · lichtgroen 4 hoog\n• geel 5 sterk · amber 6 zeer sterk · oranje 7 intens\n• rood 8 zeer intens (ducting, onder -157 N/km) · roze 9-10+ extreem\n• Schatting uit lagen van 200–700 m; dunne ducts vlak boven de grond blijven onzichtbaar.\nBron: ICON-EU (DWD) via meshmanager.net, gekalibreerd op de Hepburn-kaarten; voor 868 MHz telt de nachtelijke grondinversie boven land voor de helft mee (Hepburn negeert die).', 'tropo.opacity': 'Doorzichtigheid van de tropo-laag', 'tropo.lv.nil': 'niets', 'tropo.lv.marginal': 'marginaal', 'tropo.lv.fair': 'redelijk', 'tropo.lv.moderate': 'matig', 'tropo.lv.high': 'hoog', 'tropo.lv.strong': 'sterk', 'tropo.lv.vstrong': 'zeer sterk', 'tropo.lv.intense': 'intens', 'tropo.lv.vintense': 'zeer intens (ducting)', 'tropo.lv.extreme': 'extreem', 'tropo.rateLimited': 'te veel aanvragen bij Open-Meteo, opnieuw over {0} s',
@@ -3331,7 +3331,7 @@ I18N.nl = {
 
 I18N.en = {
   'sig.tip': 'SNR {0} dB · {1}{2}', 'sig.q0': 'barely any signal', 'sig.q1': 'weak', 'sig.q2': 'fair', 'sig.q3': 'good', 'sig.q4': 'excellent',
-  'nb.progress': 'Fetching neighbours… {0} of {1}', 'nb.err': 'Fetching neighbours failed: {0}', 'nb.timeout': 'no answer from the repeater', 'nb.partial': 'Incomplete: {0} of {1} neighbours ({2})', 'nb.header': '{0} neighbours (of {1}):', 'nb.noTarget': 'Name a repeater, or open its window first.', 'cmd.neighbours': 'Fetch all neighbours of a repeater and show them on the map', 'state.histFail': 'History could not be stored in IndexedDB; a limited history is kept in localStorage instead.',
+  'nb.progress': 'Fetching neighbours… {0} of {1}', 'nb.err': 'Fetching neighbours failed: {0}', 'nb.timeout': 'no answer from the repeater', 'nb.partial': 'Incomplete: {0} of {1} neighbours ({2})', 'nb.header': '{0} neighbours in this reply (repeater reports {1}); together with earlier replies {2} neighbours of the last 7 days:', 'nb.cliMerged': 'Neighbour memory: {0} in this reply, {1} in total over the last 7 days (the "Neighbours on map" button shows them all).', 'nb.noTarget': 'Name a repeater, or open its window first.', 'cmd.neighbours': 'Fetch all neighbours of a repeater and show them on the map', 'state.histFail': 'History could not be stored in IndexedDB; a limited history is kept in localStorage instead.',
   
   'tropo.stale': 'offline · last known: model {0} UTC',
   'tropo.legendTip': 'Tropospheric ducting estimate (Open-Meteo weather model, needs internet). Colour scale like the Hepburn maps (dxinfocentre.com), derived from the refractivity gradient dN/dh below 1.5 km:\n• transparent: 0, nil (gradient above -60 N/km; -40 is normal)\n• purple 1 marginal · blue 2 fair · green 3 moderate · lime 4 high\n• yellow 5 strong · amber 6 very strong · orange 7 intense\n• red 8 very intense (ducting, below -157 N/km) · pink 9-10+ extreme\n• Estimated from layers of 200–700 m; thin ducts close to the ground stay invisible.\nSource: ICON-EU (DWD) via meshmanager.net, calibrated against the Hepburn maps; for 868 MHz the nocturnal ground inversion over land counts at half weight (Hepburn ignores it).', 'tropo.opacity': 'Opacity of the tropo layer', 'tropo.lv.nil': 'nil', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'fair', 'tropo.lv.moderate': 'moderate', 'tropo.lv.high': 'high', 'tropo.lv.strong': 'strong', 'tropo.lv.vstrong': 'very strong', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'very intense (ducting)', 'tropo.lv.extreme': 'extreme', 'tropo.rateLimited': 'too many requests to Open-Meteo, retrying in {0} s',
@@ -3560,7 +3560,7 @@ I18N.en = {
 
 I18N.fr = {
   'sig.tip': 'SNR {0} dB · {1}{2}', 'sig.q0': 'signal à peine perceptible', 'sig.q1': 'faible', 'sig.q2': 'moyen', 'sig.q3': 'bon', 'sig.q4': 'excellent',
-  'nb.progress': 'Récupération des voisins… {0} sur {1}', 'nb.err': 'Échec de la récupération des voisins : {0}', 'nb.timeout': 'pas de réponse du répéteur', 'nb.partial': 'Incomplet : {0} voisins sur {1} ({2})', 'nb.header': '{0} voisins (sur {1}) :', 'nb.noTarget': 'Indiquez un répéteur, ou ouvrez d\'abord sa fenêtre.', 'cmd.neighbours': 'Récupérer tous les voisins d\'un répéteur et les afficher sur la carte', 'state.histFail': 'L\'historique n\'a pu être enregistré dans IndexedDB ; un historique limité est conservé dans localStorage.',
+  'nb.progress': 'Récupération des voisins… {0} sur {1}', 'nb.err': 'Échec de la récupération des voisins : {0}', 'nb.timeout': 'pas de réponse du répéteur', 'nb.partial': 'Incomplet : {0} voisins sur {1} ({2})', 'nb.header': '{0} voisins dans cette réponse (le répéteur en annonce {1}) ; avec les réponses précédentes, {2} voisins sur les 7 derniers jours :', 'nb.cliMerged': 'Mémoire des voisins : {0} dans cette réponse, {1} au total sur 7 jours (le bouton « Voisins sur la carte » les affiche tous).', 'nb.noTarget': 'Indiquez un répéteur, ou ouvrez d\'abord sa fenêtre.', 'cmd.neighbours': 'Récupérer tous les voisins d\'un répéteur et les afficher sur la carte', 'state.histFail': 'L\'historique n\'a pu être enregistré dans IndexedDB ; un historique limité est conservé dans localStorage.',
   
   'tropo.stale': 'hors ligne · dernier connu : modèle {0} UTC',
   'tropo.legendTip': 'Estimation de la propagation troposphérique (modèle météo Open-Meteo, nécessite internet). Échelle de couleurs comme les cartes Hepburn (dxinfocentre.com), calculée à partir du gradient de réfractivité dN/dh sous 1,5 km :\n• transparent : 0, rien (gradient au-dessus de -60 N/km ; -40 est normal)\n• violet 1 marginal · bleu 2 passable · vert 3 modéré · vert clair 4 élevé\n• jaune 5 fort · ambre 6 très fort · orange 7 intense\n• rouge 8 très intense (ducting, sous -157 N/km) · rose 9-10+ extrême\n• Estimation à partir de couches de 200–700 m ; les conduits minces près du sol restent invisibles.\nSource : ICON-EU (DWD) via meshmanager.net, calibré sur les cartes Hepburn ; pour 868 MHz l\'inversion nocturne au sol compte pour moitié (Hepburn l\'ignore).', 'tropo.opacity': 'Opacité de la couche tropo', 'tropo.lv.nil': 'rien', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'passable', 'tropo.lv.moderate': 'modéré', 'tropo.lv.high': 'élevé', 'tropo.lv.strong': 'fort', 'tropo.lv.vstrong': 'très fort', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'très intense (ducting)', 'tropo.lv.extreme': 'extrême', 'tropo.rateLimited': 'trop de requêtes vers Open-Meteo, nouvel essai dans {0} s',
@@ -3840,8 +3840,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0848-119e64b'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.7.0', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0934-75ffd9f'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.7.1', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 2000;
 
@@ -5021,7 +5021,8 @@ function handleIncoming(m) {
       for (const w of (S.cliWaiters || []).filter(w => w.pub === c.pub)) { clearTimeout(w.timer); w.resolve(m.text); } S.cliWaiters = (S.cliWaiters || []).filter(w => w.pub !== c.pub);
       const pending = cv.msgs.slice(-20).reverse().find(x => x.kind === 'cli' && x.ack === 'pending');
       if (pending) { pending.text = (pending.text ? pending.text + '\n' : '') + m.text; pending.ack = null; pending.snr = m.snr; pending.pathLen = m.pathLen; clearTimeout(pending._timer); updateMsgDom(pending); if (cv.key !== S.active) { cv.unread++; renderTree(); } saveState();
-        if (S.autoNbFor === c.pub && /^neighbou?rs\b/i.test(pending.cmd || '')) { S.autoNbFor = null; const nb = parseNeighbors(pending.text); if (nb.length) mapShowNeighbors(c, nb); else toast(t('nb.none'), 'warn'); } }
+        if (/^neighbou?rs\b/i.test(pending.cmd || '')) { const nb = parseNeighbors(pending.text); if (nb.length) { const merged = nbMerge(c, nb); if (merged.length > nb.length) notice(t('nb.cliMerged', nb.length, merged.length), cv, false); } }
+        if (S.autoNbFor === c.pub && /^neighbou?rs\b/i.test(pending.cmd || '')) { S.autoNbFor = null; const nb = nbMerged(c); if (nb.length) mapShowNeighbors(c, nb); else toast(t('nb.none'), 'warn'); } }
       else addMsg(cv, { kind: 'cli', nick: displayName(c), cmd: '', text: m.text, t: saneTs(m.ts), snr: m.snr, pathLen: m.pathLen });
       return;
     }
@@ -5074,7 +5075,7 @@ function askCli(c, cmdText, timeoutMs = 20000) {
 // Verzoek: [6, versie 0, aantal, offset LE16, volgorde (0 = nieuwste eerst), prefixlengte, 4 willekeurige bytes].
 // Antwoord (na de tag): [totaal LE16][aantal LE16] dan per buur [prefix][seconden geleden LE32][snr×4 i8].
 // De repeater past hoogstens 130 bytes in één antwoord: met een prefix van 6 bytes zijn dat 11 buren per pagina.
-const NB_PREFIX = 6, NB_PER_PAGE = 11;
+const NB_PREFIX = 6, NB_PER_PAGE = 10; // 10 per pagina, zoals de officiële app ("10 van 27")
 function waitBinaryResp(tag, ms) {
   return new Promise((res, rej) => {
     const w = { tag, res, timer: setTimeout(() => { S.binWaiters = (S.binWaiters || []).filter(x => x !== w); rej(new Error(t('nb.timeout'))); }, ms) };
@@ -5085,6 +5086,22 @@ C.addEventListener('binaryResp', (e) => {
   const ws = S.binWaiters || []; const w = ws.find(x => x.tag === e.detail.tag);
   if (w) { clearTimeout(w.timer); S.binWaiters = ws.filter(x => x !== w); w.res(e.detail.data); } else debugLog('binair antwoord zonder wachter, tag ' + e.detail.tag);
 });
+// Burengeheugen per repeater (S.extras[pub].nb): elk antwoord, via knop of CLI, wordt samengevoegd met wat eerder binnenkwam.
+// Sleutel = eerste 4 bytes van de prefix (het CLI-antwoord geeft er 4, het binaire verzoek 6); ouder dan 7 dagen valt weg.
+function nbCache(c) { const x = S.extras[c.pub] || (S.extras[c.pub] = {}); if (!x.nb || typeof x.nb !== 'object') x.nb = {}; return x.nb; }
+function nbMerge(c, list) {
+  const nb = nbCache(c); const now = nowSecs();
+  for (const n of list || []) {
+    if (!n || !n.hex) continue; const k = n.hex.slice(0, 8).toLowerCase(); const heardAt = now - (n.age || 0); const old = nb[k];
+    if (!old || heardAt >= old.heardAt - 5) nb[k] = { heardAt, snr: n.snr, hex: (old && old.hex && old.hex.length > n.hex.length) ? old.hex : n.hex.toLowerCase() };
+  }
+  for (const k of Object.keys(nb)) if (now - nb[k].heardAt > 7 * 86400) delete nb[k];
+  saveState(); return nbMerged(c);
+}
+function nbMerged(c) {
+  const nb = nbCache(c); const now = nowSecs();
+  return Object.values(nb).map(v => ({ hex: v.hex, snr: v.snr, age: Math.max(0, now - v.heardAt), contact: contactByPrefix(v.hex) })).sort((a, b) => a.age - b.age);
+}
 async function fetchAllNeighbours(c) {
   const cv = convForContact(c); if (!requireConn(cv)) return null;
   const m = { kind: 'cli', nick: displayName(c), cmd: 'neighbours', text: '', ack: 'pending' }; addMsg(cv, m);
@@ -5112,10 +5129,11 @@ async function fetchAllNeighbours(c) {
     }
   } catch (e) { if (!all.length) { m.ack = 'fail'; m.text = t('nb.err', e.message || e); updateMsgDom(m); saveState(); return null; } toast(t('nb.partial', all.length, total ?? '?', e.message || e), 'warn'); }
   m.ack = null; m.nbTotal = total;
+  const merged = nbMerge(c, all);
   // Zelfde regelvorm als het CLI-antwoord (prefix:seconden:snr×4), zodat namen, kleuren en de kaartknop gewoon werken.
-  m.text = t('nb.header', all.length, total ?? all.length) + '\n' + all.map(x => `${x.hex}:${x.age}:${Math.round(x.snr * 4)}`).join('\n');
+  m.text = t('nb.header', all.length, total ?? all.length, merged.length) + '\n' + merged.map(x => `${x.hex}:${x.age}:${Math.round(x.snr * 4)}`).join('\n');
   updateMsgDom(m); saveState();
-  return all;
+  return merged;
 }
 async function neighboursToMap(c) { const list = await fetchAllNeighbours(c); if (!list) return; if (list.length) mapShowNeighbors(c, list); else toast(t('nb.none'), 'warn'); }
 // Buren uit het CLI-antwoord van 'neighbors': per regel een sleutelprefix, daarna SNR en ouderdom (seconden).
@@ -5704,7 +5722,7 @@ function wire() {
   on('#btn-chan-info', 'click', () => { const cv = activeConv(); const c = cv.pub ? S.contacts.get(cv.pub) : null; if (c) openContactDlg(c); else if (cv.kind === 'channel') { const ch = channelByConv(cv); if (ch) promptDlg(t('chkey.title', cv.name), t('chkey.label', b64(unhex(ch.secret))), ch.secret); } else fillSettings().then(() => $('#dlg-settings').showModal()); });
   // messages
   on('#messages', 'contextmenu', (e) => { const el = e.target.closest('.m'); if (!el) return; const m = msgFromEl(el); if (!m) return; e.preventDefault(); showCtx(e.clientX, e.clientY, msgContextItems(m, activeConv())); });
-  on('#messages', 'click', (e) => { const b = e.target.closest('.nb-btn'); if (!b) return; const cv = activeConv(); const m = cv.msgs.find(x => x.id === b.dataset.nb); const c = cv.pub ? S.contacts.get(cv.pub) : null; if (m && c) mapShowNeighbors(c, parseNeighbors(m.text)); });
+  on('#messages', 'click', (e) => { const b = e.target.closest('.nb-btn'); if (!b) return; const cv = activeConv(); const m = cv.msgs.find(x => x.id === b.dataset.nb); const c = cv.pub ? S.contacts.get(cv.pub) : null; if (m && c) mapShowNeighbors(c, (nbMerged(c).length ? nbMerged(c) : null) || parseNeighbors(m.text)); });
   on('#map-nb-clear', 'click', mapClearNeighbors);
   // tropo-overlay (standaard uit, alleen online)
   on('#map-tropo', 'change', (e) => tropoSetEnabled(e.target.checked));
@@ -5838,7 +5856,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0848-119e64b' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0934-75ffd9f' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5897,7 +5915,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0848-119e64b') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0934-75ffd9f') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
