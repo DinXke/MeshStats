@@ -27,6 +27,21 @@ LEVELS = (1000, 950, 925, 900, 850)
 STEPS = tuple(range(0, 40, 3))            # 0, 3, ..., 39 uur na de run
 VARS = (("t", "T"), ("relhum", "RELHUM"), ("fi", "FI"))
 G0 = 9.80665
+# Kalibratie tegen de Hepburn-kaarten (dxinfocentre.com, 00 UTC 22-09-2026). Dunne lagen
+# (1000→950 hPa, ~430 m) pikten 's nachts boven land de grondinversie op (-100..-150 N/km) en
+# kleurden Nederland en het Ruhrgebied "sterk" waar Hepburn marginaal gaf. Daarom telt een
+# dunne laag alleen mee als ze echt vangt (gradiënt onder DUCT_N_KM: een duct, zoals boven de
+# Golf van Biskaje); superrefractie wordt alleen over lagen van minstens MIN_DZ_KM genomen
+# (1000→925, 1000→900, 950→850, 925→850, 1000→850).
+# Voor MeshCore (868 MHz, nodes op 5-30 m) telt die grondinversie wel: de node zit erin en
+# haalt er merkbaar meer bereik uit, ook zonder echte duct. Daarom telt superrefractie in een
+# dunne laag voor THIN_WEIGHT mee (het teveel onder -60 N/km gehalveerd): -140 in een dunne
+# laag wordt -100 (niveau 3, matig) in plaats van 6 (Hepburn: 1). Elke laag die wij kunnen
+# zien is ≥ 200 m dik en vangt daarmee alles boven ~30 MHz, dus 868 MHz zeker.
+MIN_DZ_KM = 0.5
+DUCT_N_KM = -157.0
+THIN_WEIGHT = 0.5
+LEVEL1_N_KM = -60.0
 
 # Bronraster
 NI, NJ = 1377, 657
@@ -133,18 +148,22 @@ def refractivity(t_c, rh, p_hpa):
 
 
 def gradient_field(levels):
-    """levels: {p: (T_c, RH, Z_m)} arrays → steilste dN/dh (N/km) per punt, NaN waar niets bruikbaar."""
+    """levels: {p: (T_c, RH, Z_m)} arrays → steilste dN/dh (N/km) per punt over alle paren niveaus:
+    dikke lagen (≥ MIN_DZ_KM) volledig, dunne volledig als ze een duct vormen (< DUCT_N_KM) en anders
+    voor THIN_WEIGHT (grondinversie boven land, relevant voor 868 MHz). NaN waar niets bruikbaar."""
     import numpy as np
     ps = sorted(levels, reverse=True)      # 1000 → 850: van laag naar hoog
     best = None
-    for a, b in zip(ps, ps[1:]):
-        t1, r1, z1 = levels[a]
-        t2, r2, z2 = levels[b]
-        dz = (z2 - z1) / 1000.0
-        with np.errstate(invalid="ignore", divide="ignore"):
-            g = (refractivity(t2, r2, b) - refractivity(t1, r1, a)) / dz
-        g[~(dz >= 0.05)] = np.nan
-        best = g if best is None else np.fmin(best, g)
+    for i, a in enumerate(ps):
+        for b in ps[i + 1:]:
+            t1, r1, z1 = levels[a]
+            t2, r2, z2 = levels[b]
+            dz = (z2 - z1) / 1000.0
+            with np.errstate(invalid="ignore", divide="ignore"):
+                g = (refractivity(t2, r2, b) - refractivity(t1, r1, a)) / dz
+            thin_super = (dz < MIN_DZ_KM) & (g >= DUCT_N_KM)
+            g = np.where(thin_super, LEVEL1_N_KM + (g - LEVEL1_N_KM) * THIN_WEIGHT, g)
+            best = g if best is None else np.fmin(best, g)
     return best
 
 

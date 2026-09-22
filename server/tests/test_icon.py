@@ -79,12 +79,21 @@ def test_gradient_vijf_niveaus_en_ontbrekend_niveau():
     n = 4
     lv = {
         1000: (np.full(n, 14.0), np.full(n, 70.0), np.full(n, 250.0)),
-        950: (np.full(n, 12.0), np.array([60.0, 5.0, 60.0, 60.0]), np.full(n, 680.0)),   # punt 1: droog boven → steil
-        925: (np.full(n, 10.0), np.full(n, 52.0), np.full(n, 900.0)),
+        950: (np.full(n, 12.0), np.full(n, 60.0), np.full(n, 680.0)),
+        925: (np.full(n, 10.0), np.array([52.0, 5.0, 52.0, 52.0]), np.full(n, 900.0)),   # punt 1: droog boven → steil
         850: (np.full(n, 9.8), np.full(n, 30.0), np.full(n, 1600.0)),
     }
     g = icon.gradient_field(lv)
     assert g.shape == (n,) and g[1] < g[0] - 30           # het droge punt is duidelijk steiler
+    # Een dunne laag (1000→950, ~430 m) met superrefractie telt voor de helft: grondinversie boven land.
+    warm_dry = (np.full(n, 20.0), np.full(n, 20.0), np.full(n, 680.0))
+    thin = icon.gradient_field({1000: lv[1000], 950: warm_dry})
+    raw = (icon.refractivity(20.0, 20.0, 950) - icon.refractivity(14.0, 70.0, 1000)) / 0.43
+    assert raw < -100 and np.allclose(thin, -60 + (raw + 60) * 0.5) and (thin > raw).all()
+    # ... maar een dunne laag die wél vangt (duct, < -157 N/km) blijft staan: zeer droog en warm boven vochtig.
+    duct = icon.gradient_field({1000: (np.full(n, 14.0), np.full(n, 95.0), np.full(n, 100.0)),
+                                950: (np.full(n, 20.0), np.full(n, 3.0), np.full(n, 520.0))})
+    assert (duct < icon.DUCT_N_KM).all()
     # Zelfde som per laag als tropo.py (scalair) voor punt 0 tussen 1000 en 925 (950 tussenin, dus alleen richting)
     ref = tropo.gradient({"temperature_1000hPa": [14.0], "relative_humidity_1000hPa": [70], "geopotential_height_1000hPa": [250],
                           "temperature_925hPa": [10.0], "relative_humidity_925hPa": [52], "geopotential_height_925hPa": [900],
