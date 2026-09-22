@@ -10,6 +10,17 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.27.0 - 2026-09-22
+
+- **Tropo-veld uit ICON-EU** (DWD Open Data, `app/icon.py`). De server kijkt elk half uur
+  of er een nieuwe complete ICON-EU-run staat (om de 3 uur) en haalt dan T, RELHUM en FI
+  op 1000/950/925/900/850 hPa voor de tijdstappen 0..39 uur (195 GRIB2-bestanden, ~200 MB),
+  decodeert ze met eccodes en rekent de refractiviteitsgradiënt uit op een raster van
+  0,25° (6279 punten, was 0,5° met 1610). Geen aanvraaglimiet meer; vijf lagen van
+  ~400 m laten meer ducting zien dan drie van ~700 m. Open-Meteo blijft terugval als
+  DWD onbereikbaar is (`MM_TROPO_SOURCE=openmeteo` dwingt dat af). `/api/tropo` geeft
+  nu ook `source` en `run` mee en aanvaardt `h` tot 39. Nieuw in requirements: eccodes, numpy.
+
 ## 2.26.1 - 2026-09-22
 
 - **Tropo-veld om de 6 uur** in plaats van elk uur: Open-Meteo telt per rasterpunt met
