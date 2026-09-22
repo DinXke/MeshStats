@@ -3830,8 +3830,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0759-d0944ab'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.6.0', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0832-718e41e'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.6.1', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 2000;
 
@@ -5066,17 +5066,23 @@ async function fetchAllNeighbours(c) {
   const all = []; let total = null, offset = 0;
   try {
     for (let page = 0; page < 60; page++) {
-      const blob = new Uint8Array(4); crypto.getRandomValues(blob);
-      const req = Uint8Array.from([6, 0, NB_PER_PAGE, offset & 255, offset >> 8, 0, NB_PREFIX, ...blob]);
-      const r = await C.binaryReq(c.pub, req);
-      const d = await waitBinaryResp(r.tag, Math.max(r.timeoutMs || 0, 6000) + 4000);
+      // per pagina tot 3 pogingen: een repeater die druk is of via flood bereikt wordt, laat weleens één antwoord vallen
+      let d = null, lastErr = null;
+      for (let attempt = 0; attempt < 3 && !d; attempt++) {
+        const blob = new Uint8Array(4); crypto.getRandomValues(blob);
+        const req = Uint8Array.from([6, 0, NB_PER_PAGE, offset & 255, offset >> 8, 0, NB_PREFIX, ...blob]);
+        try { const r = await C.binaryReq(c.pub, req); d = await waitBinaryResp(r.tag, Math.max(r.timeoutMs || 0, 8000) + 4000); }
+        catch (e) { lastErr = e; debugLog(`buren ${displayName(c)}: pagina offset ${offset} poging ${attempt + 1} mislukt: ${e.message || e}`); }
+      }
+      if (!d) throw lastErr || new Error(t('nb.timeout'));
+      debugLog(`buren ${displayName(c)}: offset ${offset} → ${d.length} bytes: ${hex(d.subarray(0, Math.min(d.length, 24)))}${d.length > 24 ? '…' : ''}`);
       if (d.length < 4) break;
       total = rdU16(d, 0); const n = rdU16(d, 2); let o = 4;
       for (let i = 0; i < n && o + NB_PREFIX + 5 <= d.length; i++) {
         const hx = hex(d.subarray(o, o + NB_PREFIX)); o += NB_PREFIX; const age = rdU32(d, o); o += 4; const snr = rdI8(d[o]) / 4; o += 1;
         if (!all.some(x => x.hex === hx)) all.push({ hex: hx, age, snr, contact: contactByPrefix(hx) });
       }
-      offset += n; if (n === 0 || offset >= total) break;
+      offset += n; debugLog(`buren ${displayName(c)}: ${all.length} van ${total} na deze pagina (${n} in antwoord)`); if (n === 0 || offset >= total) break;
       m.text = t('nb.progress', all.length, total); updateMsgDom(m);
     }
   } catch (e) { if (!all.length) { m.ack = 'fail'; m.text = t('nb.err', e.message || e); updateMsgDom(m); saveState(); return null; } toast(t('nb.partial', all.length, total ?? '?', e.message || e), 'warn'); }
@@ -5807,7 +5813,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0759-d0944ab' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0832-718e41e' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5866,7 +5872,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0759-d0944ab') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0832-718e41e') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
