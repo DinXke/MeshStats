@@ -14,6 +14,10 @@ templates.env.globals["asset_v"] = str(int(time.time()))
 # veld per route: de stempel hoort op elke pagina te staan, en een route die hem
 # vergeet mee te geven zou precies de pagina zijn waar iemand hem zoekt.
 templates.env.globals["build"] = version.info()
+# Callable, geen waarde: of er bezoekcijfers zijn hangt aan de omgeving en mag
+# wijzigen zonder herstart (zie app/analytics.py).
+from . import analytics as _analytics  # noqa: E402
+templates.env.globals["analytics_on"] = _analytics.enabled
 
 
 def mag_attr(besluit) -> Markup:

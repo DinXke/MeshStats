@@ -88,6 +88,10 @@ services:
       MM_MAX_BODY_BYTES: "${MM_MAX_BODY_BYTES:-${MCS_MAX_BODY_BYTES:-2000000}}"
       MM_TRUSTED_PROXY_HOPS: "${MM_TRUSTED_PROXY_HOPS:-${MCS_TRUSTED_PROXY_HOPS:-1}}"
       # MQTT: nodes publiceren hun statistieken naar de broker hieronder
+      # Bezoekcijfers naar een eigen Matomo (app/analytics.py). Leeg = uit.
+      MM_MATOMO_URL: "${MM_MATOMO_URL-}"
+      MM_MATOMO_SITE_ID: "${MM_MATOMO_SITE_ID-}"
+      MM_MATOMO_CHAT_SITE_ID: "${MM_MATOMO_CHAT_SITE_ID-}"
       MM_MQTT_HOST: "${MM_MQTT_HOST:-${MCS_MQTT_HOST:-mosquitto}}"
       MM_MQTT_PORT: "${MM_MQTT_PORT:-${MCS_MQTT_PORT:-1883}}"
       MM_MQTT_USER: "${MM_MQTT_USER:-${MCS_MQTT_USER:-meshmanager}}"
