@@ -10,6 +10,18 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.27.1 - 2026-09-22
+
+- **Tropo-veld gekalibreerd** tegen de Hepburn-kaarten (dxinfocentre.com, 00 UTC 22-09).
+  Superrefractie wordt nu alleen over lagen van minstens 500 m genomen (alle paren van de
+  vijf niveaus die dik genoeg zijn); een dunne laag telt alleen mee als ze echt vangt
+  (onder -157 N/km, een duct). De dunne laag 1000→950 hPa pikte 's nachts boven land de
+  grondinversie op en kleurde Nederland en het Ruhrgebied "sterk" waar Hepburn marginaal
+  tot redelijk gaf, terwijl de echte ducts boven de Golf van Biskaje en de Noordzee dun
+  zijn en zonder die uitzondering zouden verdwijnen. Voor MeshCore (868 MHz, nodes op
+  daken) telt die grondinversie wél voor de helft mee: -140 N/km in een dunne laag wordt
+  niveau 3 (matig) in plaats van 6.
+
 ## 2.27.0 - 2026-09-22
 
 - **Tropo-veld uit ICON-EU** (DWD Open Data, `app/icon.py`). De server kijkt elk half uur
