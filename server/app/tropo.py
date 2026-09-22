@@ -1,4 +1,4 @@
-"""Tropo-ducting-veld voor MeshChat: één keer per uur van Open-Meteo, voor iedereen.
+"""Tropo-ducting-veld voor MeshChat: van ICON-EU (DWD, zie icon.py), met Open-Meteo als terugval.
 
 Waarom op de server. MeshChat rekende dit eerst in de browser uit en vroeg Open-Meteo
 per gebruiker en per kaartbeeld tot 220 rasterpunten op. Open-Meteo telt elk punt als
@@ -28,9 +28,11 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Query, Response
+
+from . import icon
 
 router = APIRouter()
 
@@ -43,8 +45,10 @@ NY = int(round((NORTH - SOUTH) / STEP)) + 1
 CHUNK = 100
 CHUNK_PAUSE_S = 3.0
 FIRST_RUN_DELAY_S = 20
-INTERVAL_S = 6 * 3600
+INTERVAL_S = 6 * 3600     # Open-Meteo-terugval: hoogstens om de 6 uur (daglimiet per IP)
 RETRY_S = 900
+POLL_S = 1800             # om het half uur kijken of er een nieuwe ICON-EU-run is
+SOURCE = os.environ.get("MM_TROPO_SOURCE", "icon")   # icon | openmeteo
 API = "https://api.open-meteo.com/v1/forecast"
 
 _lock = threading.Lock()
@@ -129,7 +133,9 @@ def fetch_field(fetch=None, pause=None):
             grad[o + k] = [gradient(h, ti) for ti in range(n)] if n else None
     if not times:
         raise ValueError("Open-Meteo gaf geen tijdreeks")
-    return {"times": times, "grad": grad, "fetched": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")}
+    return {"times": times, "grad": grad, "source": "Open-Meteo", "run": None,
+            "grid": {"step": STEP, "w": WEST, "e": EAST, "s": SOUTH, "n": NORTH, "nx": NX, "ny": NY},
+            "fetched": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")}
 
 
 def set_field(field):
@@ -152,34 +158,65 @@ def slice_field(field, hours_ahead, now=None):
     idx = next((i for i, t in enumerate(times) if t[:13] == key), None)
     if idx is None:
         idx = 0 if key < times[0][:13] else len(times) - 1
-    idx = max(0, min(len(times) - 1, idx + int(hours_ahead)))
+    # ICON-EU levert stappen om de 3 uur: neem de stap die het dichtst bij (nu + h) ligt.
+    want = target + timedelta(hours=int(hours_ahead))
+    stamps = [datetime.strptime(t[:13], "%Y-%m-%dT%H").replace(tzinfo=timezone.utc) for t in times]
+    idx = min(range(len(stamps)), key=lambda i: abs((stamps[i] - want).total_seconds()))
+    g = field.get("grid") or {"step": STEP, "w": WEST, "e": EAST, "s": SOUTH, "n": NORTH, "nx": NX, "ny": NY}
     return {
-        "step": STEP, "w": WEST, "e": EAST, "s": SOUTH, "n": NORTH, "nx": NX, "ny": NY,
-        "model_time": times[idx], "fetched": field["fetched"], "h": int(hours_ahead),
-        "grad": [(g[idx] if g and idx < len(g) else None) for g in field["grad"]],
+        **g, "model_time": times[idx], "fetched": field["fetched"], "h": int(hours_ahead),
+        "source": field.get("source", "Open-Meteo"), "run": field.get("run"),
+        "grad": [(row[idx] if row and idx < len(row) else None) for row in field["grad"]],
     }
 
 
 def _run():
+    """Elk half uur: is er een nieuwere complete ICON-EU-run, haal die dan; lukt ICON-EU niet
+    en is er geen (recent) veld, dan Open-Meteo, hoogstens om de 6 uur (daglimiet per IP)."""
     global _last_error
     time.sleep(FIRST_RUN_DELAY_S)
+    last_om = 0.0
     while True:
+        cur = get_field()
         try:
-            set_field(fetch_field())
-            _last_error = None
-            print("[meshmanager] tropo: veld vernieuwd", flush=True)
+            if SOURCE == "icon":
+                run = icon.latest_run()
+                if run is None:
+                    raise RuntimeError("geen complete ICON-EU-run bereikbaar")
+                if cur is None or cur.get("run") != run.strftime("%Y-%m-%dT%H"):
+                    t0 = time.time()
+                    set_field(icon.fetch_field(run=run))
+                    print(f"[meshmanager] tropo: ICON-EU-run {run:%Y-%m-%d %H} UTC verwerkt in {time.time() - t0:.0f} s", flush=True)
+                _last_error = None
+            else:
+                raise RuntimeError("bron openmeteo gekozen")
         except Exception as e:  # noqa: BLE001 - de lus mag nooit stoppen
             _last_error = str(e)
-            print(f"[meshmanager] tropo: ophalen mislukt: {e}", flush=True)
+            if SOURCE == "icon":
+                print(f"[meshmanager] tropo: ICON-EU mislukt: {e}", flush=True)
+            stale = cur is None or cur.get("source") != "Open-Meteo" and (time.time() - last_om) > INTERVAL_S and _hours_old(cur) > 9
+            if (cur is None or stale) and time.time() - last_om > INTERVAL_S:
+                try:
+                    set_field(fetch_field())
+                    last_om = time.time()
+                    print("[meshmanager] tropo: veld van Open-Meteo (terugval)", flush=True)
+                except Exception as e2:  # noqa: BLE001
+                    _last_error = f"{_last_error}; Open-Meteo: {e2}"
+                    print(f"[meshmanager] tropo: Open-Meteo mislukt: {e2}", flush=True)
             time.sleep(RETRY_S)
             continue
-        # Om de 6 uur, een kwartier na 00/06/12/18 UTC: dan is de nieuwe modelrun er.
-        now = time.time()
-        time.sleep(max(60, INTERVAL_S - (now % INTERVAL_S) + 900))
+        time.sleep(POLL_S)
+
+
+def _hours_old(field):
+    try:
+        return (datetime.now(timezone.utc) - datetime.strptime(field["fetched"], "%Y-%m-%dT%H:%M").replace(tzinfo=timezone.utc)).total_seconds() / 3600
+    except Exception:  # noqa: BLE001
+        return 1e9
 
 
 def start():
-    """Start de uurlijkse ophaal-lus; MM_TROPO=0 zet hem uit (tests, offline installaties)."""
+    """Start de ophaal-lus (ICON-EU, terugval Open-Meteo); MM_TROPO=0 zet hem uit (tests, offline installaties)."""
     global _thread
     if os.environ.get("MM_TROPO", "1") == "0" or _thread is not None:
         return
@@ -188,7 +225,7 @@ def start():
 
 
 @router.get("/api/tropo")
-def api_tropo(h: int = Query(0, ge=0, le=36)):
+def api_tropo(h: int = Query(0, ge=0, le=39)):
     field = get_field()
     if field is None:
         return Response(json.dumps({"error": "nog geen gegevens", "detail": _last_error}), status_code=503,

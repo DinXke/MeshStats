@@ -8,3 +8,10 @@ paho-mqtt>=2.0
 # subsite die geen meldingen meer aflevert. Ontbreekt het pakket, dan start de
 # site gewoon en staat webpush uit met die reden in de UI (zie app/webpush.py).
 pywebpush==2.4.0
+# GRIB2-decoder voor het tropo-veld uit ICON-EU (app/icon.py); geen OS-pakket nodig.
+# Ontbreekt hij, dan valt tropo.py terug op Open-Meteo.
+eccodes>=2.40
+# De bibliotheek zelf; op Linux komt die niet mee in de eccodes-wheel maar in deze
+# (manylinux_2_28, past bij python:3.12-slim/bookworm).
+eccodeslib>=2.48
+numpy>=1.26
