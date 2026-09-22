@@ -495,7 +495,7 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
   <div id="mapwrap" hidden>
     <div id="map"></div>
     <div id="map-notice" hidden></div>
-    <div id="map-tools"><input id="map-search" class="inp mono" list="map-search-list" placeholder="Zoek node…" data-i18n-ph="map.searchPh" aria-label="Zoek node op de kaart" data-i18n-aria="map.searchPh" style="width:150px;height:26px;font-size:12px"><datalist id="map-search-list"></datalist><button class="btn sm" id="map-fit" data-i18n="map.tools.fit">Alles tonen</button><button class="btn sm" id="map-me" data-i18n="map.tools.me">Mijn node</button><label class="btn sm" style="gap:6px"><input type="checkbox" id="map-live" checked> <span data-i18n="map.tools.live">Live pakketten</span></label><button class="btn sm ghost" id="map-settings" data-i18n="map.tools.settings">Offline kaarten…</button><button class="btn sm ghost" id="map-nb-clear" hidden data-i18n="map.tools.clearNb">Buren wissen</button><label class="btn sm" style="gap:6px" data-i18n-title="tropo.legendTip" title=""><input type="checkbox" id="map-tropo"> <span data-i18n="map.tools.tropo">Tropo</span></label><select id="map-tropo-h" class="inp" hidden style="height:26px;font-size:12px"><option value="0" data-i18n="tropo.h0">nu</option><option value="6">+6 h</option><option value="12">+12 h</option><option value="24">+24 h</option></select><input type="range" id="map-tropo-op" min="10" max="100" step="5" hidden data-i18n-title="tropo.opacity" title="Doorzichtigheid"></div>
+    <div id="map-tools"><input id="map-search" class="inp mono" list="map-search-list" placeholder="Zoek node…" data-i18n-ph="map.searchPh" aria-label="Zoek node op de kaart" data-i18n-aria="map.searchPh" style="width:150px;height:26px;font-size:12px"><datalist id="map-search-list"></datalist><button class="btn sm" id="map-fit" data-i18n="map.tools.fit">Alles tonen</button><button class="btn sm" id="map-me" data-i18n="map.tools.me">Mijn node</button><label class="btn sm" style="gap:6px"><input type="checkbox" id="map-live" checked> <span data-i18n="map.tools.live">Live pakketten</span></label><button class="btn sm ghost" id="map-settings" data-i18n="map.tools.settings">Offline kaarten…</button><button class="btn sm ghost" id="map-nb-clear" hidden data-i18n="map.tools.clearNb">Buren wissen</button><label class="btn sm" style="gap:6px" data-i18n-title="tropo.legendTip" title=""><input type="checkbox" id="map-tropo"> <span data-i18n="map.tools.tropo">Tropo</span></label><select id="map-tropo-h" class="inp" hidden style="height:26px;font-size:12px"><option value="0" data-i18n="tropo.h0">nu</option><option value="6">+6 h</option><option value="12">+12 h</option><option value="24">+24 h</option></select><input type="range" id="map-tropo-op" min="0" max="40" step="2" hidden data-i18n-title="tropo.opacity" title="Doorzichtigheid"></div>
     <div id="map-legend"><span><i style="background:#3ccf83"></i><span data-i18n="map.legend.you">jij</span></span><span><i style="background:#f7b955"></i><span data-i18n="map.legend.repeater">repeater</span></span><span><i style="background:#c4a3ff"></i>room</span><span><i style="background:#5cc8ff"></i>chat</span><span><i style="background:#5fd6c5"></i><span data-i18n="map.legend.sensor">sensor</span></span><span><i style="background:transparent;border:2px solid #8e9baa"></i><span data-i18n="map.legend.pending">wachtend advert</span></span><span id="map-tropo-legend" hidden data-i18n-title="tropo.legendTip" title=""><b data-i18n="map.tools.tropo">Tropo</b> <span id="map-tropo-bar"></span> <span id="map-tropo-ts" class="dim"></span></span></div>
   </div>
   <button class="btn sm" id="scroll-bottom" aria-label="Naar nieuwste berichten" data-i18n-aria="h.toNewest"><svg class="i"><use href="#i-down"/></svg><span data-i18n="h.newMessages">Nieuwe berichten</span></button>
@@ -3810,8 +3810,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0105-1c93eae'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.3.6', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0119-9164403'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.3.8', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 400;
 
@@ -4216,7 +4216,8 @@ const TROPO_SCALE = [[0, 0, 0], [134, 3, 241], [1, 180, 239], [2, 208, 131], [16
 const TROPO_LEVEL_KEYS = ['nil', 'marginal', 'fair', 'moderate', 'high', 'strong', 'vstrong', 'intense', 'vintense', 'extreme', 'extreme'];
 const tropoSt = { key: null, busy: false, again: false, timer: null, canvas: null, modelTime: {}, cache: new Map(), retryAt: 0, pending: null };
 function tropoEnabled() { return !!(S.settings && S.settings.tropo); }
-function tropoOpacity() { const v = +(S.settings.tropoOp ?? 30); return Math.min(100, Math.max(10, v)) / 100; }
+// doorzichtigheid 0..40 %: de laag mag de kaart nooit overstemmen
+function tropoOpacity() { const v = +(S.settings.tropoOp ?? 30); return Math.min(40, Math.max(0, Number.isFinite(v) ? v : 30)) / 100; }
 function tropoN(T, RH, P) { const Tk = T + 273.15; const es = 6.112 * Math.exp(17.67 * T / (T + 243.5)); const e = Math.max(0, Math.min(100, RH)) / 100 * es; return 77.6 * P / Tk + 3.73e5 * e / (Tk * Tk); }
 function tropoGradient(h, ti) {
   let best = null;
@@ -4353,7 +4354,7 @@ const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
 const mercLat = (y) => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180 / Math.PI;
 function tropoDraw(grad, g) {
   // pixelrijen lopen lineair in Mercator-y (zo plaatst MapLibre de afbeelding), kolommen lineair in lengtegraad
-  const W = g.nx > 30 ? 1024 : 512, H = g.ny > 24 ? 768 : 384; const cv = tropoSt.canvas || (tropoSt.canvas = document.createElement('canvas')); cv.width = W; cv.height = H;
+  /* groot veld (heel ICON-EU): fijner canvas */ const W = g.nx > 200 ? 2048 : g.nx > 30 ? 1024 : 512, H = g.ny > 120 ? 1024 : g.ny > 24 ? 768 : 384; const cv = tropoSt.canvas || (tropoSt.canvas = document.createElement('canvas')); cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d'); const img = ctx.createImageData(W, H); const px = img.data;
   const yN = mercY(g.n), yS = mercY(g.s);
   const at = (i, j) => grad[Math.min(g.ny - 1, Math.max(0, j)) * g.nx + Math.min(g.nx - 1, Math.max(0, i))];
@@ -4388,7 +4389,7 @@ function tropoEnsureLayer() {
   const before = mapObj.getLayer('packets-line') ? 'packets-line' : undefined;
   mapObj.addLayer({ id: 'tropo', type: 'raster', source: 'tropo', paint: { 'raster-opacity': tropoOpacity(), 'raster-resampling': 'linear', 'raster-fade-duration': 0 }, layout: { visibility: tropoEnabled() ? 'visible' : 'none' } }, before);
 }
-function tropoSetOpacity(pct) { S.settings.tropoOp = Math.min(100, Math.max(10, +pct || 30)); saveState(); const sl = $('#map-tropo-op'); if (sl) sl.value = String(S.settings.tropoOp); if (mapObj && mapObj.getLayer('tropo')) mapObj.setPaintProperty('tropo', 'raster-opacity', tropoOpacity()); }
+function tropoSetOpacity(pct) { const v = +pct; S.settings.tropoOp = Math.min(40, Math.max(0, Number.isFinite(v) ? v : 30)); saveState(); const sl = $('#map-tropo-op'); if (sl) sl.value = String(S.settings.tropoOp); if (mapObj && mapObj.getLayer('tropo')) mapObj.setPaintProperty('tropo', 'raster-opacity', tropoOpacity()); }
 // legenda: kleurbalk 1..10+ (tooltip met uitleg) + modeluur/max-niveau
 function tropoSetLegend(txt) {
   const el = $('#map-tropo-legend'); if (!el) return; el.hidden = !tropoEnabled();
@@ -5702,7 +5703,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0105-1c93eae' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0119-9164403' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5760,7 +5761,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0105-1c93eae') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0119-9164403') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;

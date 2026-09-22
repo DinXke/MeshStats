@@ -10,6 +10,13 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.27.2 - 2026-09-22
+
+- **Tropo-veld over het hele ICON-EU-gebied** (23° W tot 62° O, 29° tot 70° N) in plaats van
+  alleen het kaartgebied van de tegels: 56.925 punten op 0,25°, zodat de laag bij uitzoomen
+  geen rechte rand meer heeft door Ierland en Polen. Gradiënten als gehele N/km; ~230 kB
+  per uur vóór compressie.
+
 ## 2.27.1 - 2026-09-22
 
 - **Tropo-veld gekalibreerd** tegen de Hepburn-kaarten (dxinfocentre.com, 00 UTC 22-09).

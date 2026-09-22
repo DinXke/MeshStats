@@ -46,9 +46,11 @@ LEVEL1_N_KM = -60.0
 # Bronraster
 NI, NJ = 1377, 657
 LAT0, LON0, INC = 29.5, -23.5, 0.0625
-# Doelraster: hetzelfde gebied als tropo.py (basemap.pmtiles), maar 0,25° = elk 4e punt.
+# Doelraster: het volledige ICON-EU-gebied (Atlantische Oceaan tot de Oeral, Sahara tot Noord-Noorwegen)
+# op 0,25° = elk 4e punt: 345 × 165 = 56.925 punten. Als gehele getallen (N/km) is dat ~230 kB JSON per
+# uur en na compressie door Cloudflare een fractie daarvan; zo eindigt de laag nooit met een rand in beeld.
 STEP = 0.25
-WEST, EAST, SOUTH, NORTH = -7.0, 15.5, 42.0, 59.0
+WEST, EAST, SOUTH, NORTH = -23.5, 62.5, 29.5, 70.5
 NX = int(round((EAST - WEST) / STEP)) + 1
 NY = int(round((NORTH - SOUTH) / STEP)) + 1
 PAUSE_S = 0.3
@@ -199,10 +201,10 @@ def fetch_field(run=None, download=None, exists=None, pause=None, now=None):
             continue
         grad = gradient_field(levels)
         times.append((run + timedelta(hours=step)).strftime("%Y-%m-%dT%H:00"))
-        per_step.append(np.round(grad, 1))
+        per_step.append(np.round(grad, 0))
     if not times:
         raise RuntimeError(f"ICON-EU-run {run:%Y-%m-%dT%H} leverde geen tijdstappen")
     stack = np.stack(per_step, axis=1)  # (punten, stappen)
-    grad = [[None if math.isnan(v) else float(v) for v in row] for row in stack]
+    grad = [[None if math.isnan(v) else int(v) for v in row] for row in stack]  # hele N/km volstaan en houden het JSON klein
     return {"times": times, "grad": grad, "grid": grid(), "source": f"ICON-EU {run:%Y-%m-%d %H} UTC",
             "run": run.strftime("%Y-%m-%dT%H"), "fetched": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")}
