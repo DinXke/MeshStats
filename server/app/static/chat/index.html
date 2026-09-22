@@ -2936,6 +2936,7 @@ class MeshCoreClient extends EventTarget {
       case PUSH.LOGIN_FAIL: this.emit('login', { ok: false, prefix: hex(f.subarray(2, 8)) }); break;
       case PUSH.STATUS_RESPONSE: this.emit('status', { prefix: hex(f.subarray(2, 8)), stats: parseStatus(f), raw: f }); break;
       case PUSH.TELEMETRY_RESPONSE: this.emit('telemetry', { prefix: hex(f.subarray(2, 8)), lpp: parseLPP(f.subarray(8)) }); break;
+      case PUSH.BINARY_RESPONSE: this.emit('binaryResp', { tag: hex(f.subarray(2, 6)), data: f.subarray(6) }); break;
       case PUSH.TRACE_DATA: {
         const pathLen = f[2], flags = f[3], sz = flags & 3, n = pathLen >> sz;
         const hashes = []; for (let i = 0; i < n; i++) hashes.push(hex(f.subarray(12 + i * (1 << sz), 12 + (i + 1) * (1 << sz))));
@@ -2994,6 +2995,8 @@ class MeshCoreClient extends EventTarget {
   reboot() { return this.cmd(cat([CMD.REBOOT], te.encode('reboot')), { timeout: 1500 }).catch(() => {}); }
   async login(pubHex, password) { const f = await this.cmd(cat([CMD.SEND_LOGIN], unhex(pubHex), te.encode(password))); return { flood: f[1] === 1, timeoutMs: rdU32(f, 6) }; }
   logout(pubHex) { return this.cmd(cat([CMD.LOGOUT], unhex(pubHex))); }
+  // Binair verzoek (REQ_TYPE_*) naar een repeater/room; antwoord komt als push 0x8C met dezelfde tag.
+  async binaryReq(pubHex, req) { const f = await this.cmd(cat([CMD.SEND_BINARY_REQ], unhex(pubHex), req)); return { tag: hex(f.subarray(2, 6)), timeoutMs: rdU32(f, 6) }; }
   async statusReq(pubHex) { const f = await this.cmd(cat([CMD.SEND_STATUS_REQ], unhex(pubHex))); return { timeoutMs: rdU32(f, 6) }; }
   async telemetryReq(pubHex) { const f = await this.cmd(cat([CMD.SEND_TELEMETRY_REQ, 0, 0, 0], unhex(pubHex))); return { timeoutMs: rdU32(f, 6) }; }
   async pathDiscovery(pubHex) { const f = await this.cmd(cat([CMD.SEND_PATH_DISCOVERY_REQ, 0], unhex(pubHex))); return { timeoutMs: rdU32(f, 6) }; }
@@ -3070,6 +3073,7 @@ let LANG = 'nl';
 const I18N = {};
 
 I18N.nl = {
+  'nb.progress': 'Buren ophalen… {0} van {1}', 'nb.err': 'Buren ophalen mislukt: {0}', 'nb.timeout': 'geen antwoord van de repeater', 'nb.partial': 'Onvolledig: {0} van {1} buren ({2})', 'nb.header': '{0} buren (van {1}):', 'nb.noTarget': 'Geef een repeater op, of open eerst zijn venster.', 'cmd.neighbours': 'Alle buren van een repeater ophalen en op de kaart tonen', 'state.histFail': 'Geschiedenis kon niet in IndexedDB bewaard worden; ze wordt beperkt in localStorage bewaard.',
   
   'tropo.stale': 'offline · laatst bekend: model {0} UTC',
   'tropo.legendTip': 'Tropo-ducting-schatting (Open-Meteo-weermodel, vraagt internet). Kleurschaal zoals de Hepburn-kaarten (dxinfocentre.com), berekend uit de refractiviteitsgradiënt dN/dh onder 1,5 km:\n• doorzichtig: 0, niets (gradiënt boven -60 N/km; normaal is -40)\n• paars 1 marginaal · blauw 2 redelijk · groen 3 matig · lichtgroen 4 hoog\n• geel 5 sterk · amber 6 zeer sterk · oranje 7 intens\n• rood 8 zeer intens (ducting, onder -157 N/km) · roze 9-10+ extreem\n• Schatting uit lagen van 200–700 m; dunne ducts vlak boven de grond blijven onzichtbaar.\nBron: ICON-EU (DWD) via meshmanager.net, gekalibreerd op de Hepburn-kaarten; voor 868 MHz telt de nachtelijke grondinversie boven land voor de helft mee (Hepburn negeert die).', 'tropo.opacity': 'Doorzichtigheid van de tropo-laag', 'tropo.lv.nil': 'niets', 'tropo.lv.marginal': 'marginaal', 'tropo.lv.fair': 'redelijk', 'tropo.lv.moderate': 'matig', 'tropo.lv.high': 'hoog', 'tropo.lv.strong': 'sterk', 'tropo.lv.vstrong': 'zeer sterk', 'tropo.lv.intense': 'intens', 'tropo.lv.vintense': 'zeer intens (ducting)', 'tropo.lv.extreme': 'extreem', 'tropo.rateLimited': 'te veel aanvragen bij Open-Meteo, opnieuw over {0} s',
@@ -3318,6 +3322,7 @@ I18N.nl = {
 };
 
 I18N.en = {
+  'nb.progress': 'Fetching neighbours… {0} of {1}', 'nb.err': 'Fetching neighbours failed: {0}', 'nb.timeout': 'no answer from the repeater', 'nb.partial': 'Incomplete: {0} of {1} neighbours ({2})', 'nb.header': '{0} neighbours (of {1}):', 'nb.noTarget': 'Name a repeater, or open its window first.', 'cmd.neighbours': 'Fetch all neighbours of a repeater and show them on the map', 'state.histFail': 'History could not be stored in IndexedDB; a limited history is kept in localStorage instead.',
   
   'tropo.stale': 'offline · last known: model {0} UTC',
   'tropo.legendTip': 'Tropospheric ducting estimate (Open-Meteo weather model, needs internet). Colour scale like the Hepburn maps (dxinfocentre.com), derived from the refractivity gradient dN/dh below 1.5 km:\n• transparent: 0, nil (gradient above -60 N/km; -40 is normal)\n• purple 1 marginal · blue 2 fair · green 3 moderate · lime 4 high\n• yellow 5 strong · amber 6 very strong · orange 7 intense\n• red 8 very intense (ducting, below -157 N/km) · pink 9-10+ extreme\n• Estimated from layers of 200–700 m; thin ducts close to the ground stay invisible.\nSource: ICON-EU (DWD) via meshmanager.net, calibrated against the Hepburn maps; for 868 MHz the nocturnal ground inversion over land counts at half weight (Hepburn ignores it).', 'tropo.opacity': 'Opacity of the tropo layer', 'tropo.lv.nil': 'nil', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'fair', 'tropo.lv.moderate': 'moderate', 'tropo.lv.high': 'high', 'tropo.lv.strong': 'strong', 'tropo.lv.vstrong': 'very strong', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'very intense (ducting)', 'tropo.lv.extreme': 'extreme', 'tropo.rateLimited': 'too many requests to Open-Meteo, retrying in {0} s',
@@ -3545,6 +3550,7 @@ I18N.en = {
 };
 
 I18N.fr = {
+  'nb.progress': 'Récupération des voisins… {0} sur {1}', 'nb.err': 'Échec de la récupération des voisins : {0}', 'nb.timeout': 'pas de réponse du répéteur', 'nb.partial': 'Incomplet : {0} voisins sur {1} ({2})', 'nb.header': '{0} voisins (sur {1}) :', 'nb.noTarget': 'Indiquez un répéteur, ou ouvrez d\'abord sa fenêtre.', 'cmd.neighbours': 'Récupérer tous les voisins d\'un répéteur et les afficher sur la carte', 'state.histFail': 'L\'historique n\'a pu être enregistré dans IndexedDB ; un historique limité est conservé dans localStorage.',
   
   'tropo.stale': 'hors ligne · dernier connu : modèle {0} UTC',
   'tropo.legendTip': 'Estimation de la propagation troposphérique (modèle météo Open-Meteo, nécessite internet). Échelle de couleurs comme les cartes Hepburn (dxinfocentre.com), calculée à partir du gradient de réfractivité dN/dh sous 1,5 km :\n• transparent : 0, rien (gradient au-dessus de -60 N/km ; -40 est normal)\n• violet 1 marginal · bleu 2 passable · vert 3 modéré · vert clair 4 élevé\n• jaune 5 fort · ambre 6 très fort · orange 7 intense\n• rouge 8 très intense (ducting, sous -157 N/km) · rose 9-10+ extrême\n• Estimation à partir de couches de 200–700 m ; les conduits minces près du sol restent invisibles.\nSource : ICON-EU (DWD) via meshmanager.net, calibré sur les cartes Hepburn ; pour 868 MHz l\'inversion nocturne au sol compte pour moitié (Hepburn l\'ignore).', 'tropo.opacity': 'Opacité de la couche tropo', 'tropo.lv.nil': 'rien', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'passable', 'tropo.lv.moderate': 'modéré', 'tropo.lv.high': 'élevé', 'tropo.lv.strong': 'fort', 'tropo.lv.vstrong': 'très fort', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'très intense (ducting)', 'tropo.lv.extreme': 'extrême', 'tropo.rateLimited': 'trop de requêtes vers Open-Meteo, nouvel essai dans {0} s',
@@ -3824,10 +3830,10 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0748-a51cc8f'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.5.0', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0759-d0944ab'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.6.0', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
-const MAX_HIST = 400;
+const MAX_HIST = 2000;
 
 const S = {
   client: new MeshCoreClient(),
@@ -3859,15 +3865,56 @@ function loadState() {
     for (const [key, meta] of Object.entries(st.convs || {})) { const cv = mkConv(key, meta.kind, meta.name, meta.pub, meta.secret); cv.msgs = (st.history || {})[key] || []; cv.lastRead = meta.lastRead || 0; for (const m of cv.msgs) if ((m.kind === 'msg' || m.kind === 'action') && m.nick && !m.self) cv.users.set(m.nick, { nick: m.nick, last: m.t, snr: m.snr, pub: m.pub }); }
   } catch (e) { console.warn('state load', e); }
 }
+// Berichtgeschiedenis in IndexedDB (per gesprek één record). localStorage is beperkt tot ~5 MB en met honderden contacten
+// en ruwe pakketten per bericht liep het opslaan daar stil vast, waardoor de geschiedenis na een herstart weg leek.
+const HIST_DB = 'mcirc-hist', HIST_STORE = 'conv';
+function histDb() {
+  if (S._histDb) return S._histDb;
+  S._histDb = new Promise((res) => {
+    if (!('indexedDB' in globalThis)) return res(null);
+    try { const r = indexedDB.open(HIST_DB, 1); r.onupgradeneeded = () => r.result.createObjectStore(HIST_STORE); r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onblocked = () => res(null); }
+    catch (e) { res(null); }
+  });
+  return S._histDb;
+}
+async function histLoadAll() {
+  const db = await histDb(); if (!db) return null;
+  return new Promise((res) => { const out = new Map(); try { const rq = db.transaction(HIST_STORE, 'readonly').objectStore(HIST_STORE).openCursor(); rq.onsuccess = () => { const c = rq.result; if (c) { out.set(c.key, c.value); c.continue(); } else res(out); }; rq.onerror = () => res(out); } catch (e) { res(out); } });
+}
+function histStrip(msgs) { return msgs.slice(-MAX_HIST).map(m => { const { _timer, ...rest } = m; return rest; }); }
+async function histSaveAll() {
+  const db = await histDb(); if (!db) return false;
+  return new Promise((res) => {
+    try {
+      const tx = db.transaction(HIST_STORE, 'readwrite'); const st = tx.objectStore(HIST_STORE);
+      for (const [k, cv] of S.convs) { if (k === 'status' || k === 'map') continue; st.put(histStrip(cv.msgs), k); }
+      tx.oncomplete = () => res(true); tx.onerror = () => res(false); tx.onabort = () => res(false);
+    } catch (e) { res(false); }
+  });
+}
+async function histDeleteKey(k) { const db = await histDb(); if (!db) return; try { db.transaction(HIST_STORE, 'readwrite').objectStore(HIST_STORE).delete(k); } catch (e) {} }
+// Bij het opstarten: geschiedenis uit IndexedDB over die uit localStorage leggen (oudere versies bewaarden ze daar)
+async function histRestore() {
+  const map = await histLoadAll(); if (!map) return false; let changed = false;
+  for (const [k, msgs] of map) {
+    const cv = S.convs.get(k); if (!cv || !Array.isArray(msgs)) continue;
+    if (msgs.length >= cv.msgs.length) { cv.msgs = msgs; changed = true; for (const m of msgs) if ((m.kind === 'msg' || m.kind === 'action') && m.nick && !m.self) cv.users.set(m.nick, { nick: m.nick, last: m.t, snr: m.snr, pub: m.pub }); }
+  }
+  return changed;
+}
 let saveTimer = null;
 function saveState(now) {
   clearTimeout(saveTimer);
   const doSave = () => {
     try {
       const convs = {}, history = {};
-      for (const [k, cv] of S.convs) { if (k === 'status') continue; convs[k] = { kind: cv.kind, name: cv.name, pub: cv.pub, secret: cv.secret, lastRead: cv.lastRead }; history[k] = cv.msgs.slice(-MAX_HIST).map(m => { const { _timer, ...rest } = m; return rest; }); }
+      for (const [k, cv] of S.convs) { if (k === 'status') continue; convs[k] = { kind: cv.kind, name: cv.name, pub: cv.pub, secret: cv.secret, lastRead: cv.lastRead }; }
       const contacts = Array.from(S.contacts.values()).map(c => ({ ...c, loggedIn: false }));
-      localStorage.setItem(LS_KEY, JSON.stringify({ settings: S.settings, extras: S.extras, roomPw: S.roomPw, sendScope: S.sendScope, contactsSync: S.contactsSync, chanScope: S.chanScope, contacts, channels: S.channels, convs, history }));
+      // Geschiedenis gaat naar IndexedDB (histSaveAll); alleen als dat er niet is, blijft ze (beperkt) in localStorage.
+      const useIdb = 'indexedDB' in globalThis && !S._histFallback;
+      if (!useIdb) for (const [k, cv] of S.convs) { if (k !== 'status' && k !== 'map') history[k] = histStrip(cv.msgs).slice(-300); }
+      localStorage.setItem(LS_KEY, JSON.stringify({ settings: S.settings, extras: S.extras, roomPw: S.roomPw, sendScope: S.sendScope, contactsSync: S.contactsSync, chanScope: S.chanScope, contacts, channels: S.channels, convs, history: useIdb ? undefined : history }));
+      if (useIdb) histSaveAll().then(ok => { if (!ok && !S._histFallback) { S._histFallback = true; toast(t('state.histFail'), 'warn'); saveState(true); } });
     } catch (e) { console.warn('state save', e); toast(t('state.saveFail', e.message), 'err'); }
   };
   if (now) doSave(); else saveTimer = setTimeout(doSave, 800);
@@ -4998,6 +5045,48 @@ function askCli(c, cmdText, timeoutMs = 20000) {
     (S.cliWaiters = S.cliWaiters || []).push(w); sendCli(cv, c, cmdText).catch(e => { clearTimeout(w.timer); reject(e); });
   });
 }
+// ---------- buren: volledige lijst via REQ_TYPE_GET_NEIGHBOURS (0x06), gepagineerd zoals de officiële app ----------
+// Verzoek: [6, versie 0, aantal, offset LE16, volgorde (0 = nieuwste eerst), prefixlengte, 4 willekeurige bytes].
+// Antwoord (na de tag): [totaal LE16][aantal LE16] dan per buur [prefix][seconden geleden LE32][snr×4 i8].
+// De repeater past hoogstens 130 bytes in één antwoord: met een prefix van 6 bytes zijn dat 11 buren per pagina.
+const NB_PREFIX = 6, NB_PER_PAGE = 11;
+function waitBinaryResp(tag, ms) {
+  return new Promise((res, rej) => {
+    const w = { tag, res, timer: setTimeout(() => { S.binWaiters = (S.binWaiters || []).filter(x => x !== w); rej(new Error(t('nb.timeout'))); }, ms) };
+    (S.binWaiters = S.binWaiters || []).push(w);
+  });
+}
+C.addEventListener('binaryResp', (e) => {
+  const ws = S.binWaiters || []; const w = ws.find(x => x.tag === e.detail.tag);
+  if (w) { clearTimeout(w.timer); S.binWaiters = ws.filter(x => x !== w); w.res(e.detail.data); } else debugLog('binair antwoord zonder wachter, tag ' + e.detail.tag);
+});
+async function fetchAllNeighbours(c) {
+  const cv = convForContact(c); if (!requireConn(cv)) return null;
+  const m = { kind: 'cli', nick: displayName(c), cmd: 'neighbours', text: '', ack: 'pending' }; addMsg(cv, m);
+  const all = []; let total = null, offset = 0;
+  try {
+    for (let page = 0; page < 60; page++) {
+      const blob = new Uint8Array(4); crypto.getRandomValues(blob);
+      const req = Uint8Array.from([6, 0, NB_PER_PAGE, offset & 255, offset >> 8, 0, NB_PREFIX, ...blob]);
+      const r = await C.binaryReq(c.pub, req);
+      const d = await waitBinaryResp(r.tag, Math.max(r.timeoutMs || 0, 6000) + 4000);
+      if (d.length < 4) break;
+      total = rdU16(d, 0); const n = rdU16(d, 2); let o = 4;
+      for (let i = 0; i < n && o + NB_PREFIX + 5 <= d.length; i++) {
+        const hx = hex(d.subarray(o, o + NB_PREFIX)); o += NB_PREFIX; const age = rdU32(d, o); o += 4; const snr = rdI8(d[o]) / 4; o += 1;
+        if (!all.some(x => x.hex === hx)) all.push({ hex: hx, age, snr, contact: contactByPrefix(hx) });
+      }
+      offset += n; if (n === 0 || offset >= total) break;
+      m.text = t('nb.progress', all.length, total); updateMsgDom(m);
+    }
+  } catch (e) { if (!all.length) { m.ack = 'fail'; m.text = t('nb.err', e.message || e); updateMsgDom(m); saveState(); return null; } toast(t('nb.partial', all.length, total ?? '?', e.message || e), 'warn'); }
+  m.ack = null; m.nbTotal = total;
+  // Zelfde regelvorm als het CLI-antwoord (prefix:seconden:snr×4), zodat namen, kleuren en de kaartknop gewoon werken.
+  m.text = t('nb.header', all.length, total ?? all.length) + '\n' + all.map(x => `${x.hex}:${x.age}:${Math.round(x.snr * 4)}`).join('\n');
+  updateMsgDom(m); saveState();
+  return all;
+}
+async function neighboursToMap(c) { const list = await fetchAllNeighbours(c); if (!list) return; if (list.length) mapShowNeighbors(c, list); else toast(t('nb.none'), 'warn'); }
 // Buren uit het CLI-antwoord van 'neighbors': per regel een sleutelprefix, daarna SNR en ouderdom (seconden).
 function parseNeighbors(text) {
   const out = [];
@@ -5081,6 +5170,7 @@ async function handleInput(raw) {
       case '/connect': connect(/bl|bt/i.test(arg) ? 'ble' : 'usb'); break;
       case '/disconnect': case '/quit': await C.disconnect(); break;
       case '/join': await joinChannel(argv[0], argv.slice(1).join(' ')); break;
+      case '/neighbours': case '/neighbors': case '/buren': { const c = targetContact(argv[0]); if (!c) break; if (!requireConn(cv)) break; neighboursToMap(c); break; }
       case '/part': case '/leave': await leaveChannel(arg ? S.channels.find(c => c && (c.name.toLowerCase() === arg.toLowerCase() || (arg.toLowerCase() === '#public' && c.secret === PUBLIC_KEY_HEX))) : channelByConv(cv)); break;
       case '/msg': { const c = targetContact(argv[0]); if (!c) break; const t = argv.slice(1).join(' '); const cv2 = convForContact(c); cv2.open = true; openConv(cv2.key); if (t) await sendToConv(cv2, t); break; }
       case '/query': { const c = targetContact(argv[0]); if (!c) break; const cv2 = convForContact(c); cv2.open = true; openConv(cv2.key); break; }
@@ -5614,7 +5704,7 @@ function wire() {
   on('#userlist', 'contextmenu', (e) => { const u = e.target.closest('.user'); if (!u) return; e.preventDefault(); const c = u.dataset.pub ? S.contacts.get(u.dataset.pub) : contactByName(u.dataset.nick); showCtx(e.clientX, e.clientY, [c ? { label: t('ctx.dmShort'), run: () => { const cv = convForContact(c); cv.open = true; openConv(cv.key); } } : null, c ? { label: t('ctx.contactInfoDots'), run: () => openContactDlg(c) } : null, c ? { label: t('ctx.whois'), run: () => handleInput('/whois ' + cname(c)) } : null, c && c.lat ? { label: t('ctx.onMapShort'), run: () => mapFocus(c.pub) } : null, { label: t('ctx.mention'), run: () => { const inp = $('#input'); inp.value = '@' + (u.dataset.nick || (c && cname(c))) + ' ' + inp.value; inp.focus(); } }]); });
   on('#info', 'click', async (e) => { const b = e.target.closest('[data-act]'); if (!b) return; const cv = activeConv(); const c = cv.pub ? S.contacts.get(cv.pub) : null; const act = b.dataset.act;
     const map = { status: '/status', telemetry: '/telemetry', trace: '/trace', discover: '/path', 'path-reset': '/resetpath', logout: '/logout', 'advert-flood': '/advert flood', 'advert-0': '/advert' };
-    if (act === 'neighbors' && c) { S.autoNbFor = c.pub; sendCli(cv, c, 'neighbors'); }
+    if (act === 'neighbors' && c) neighboursToMap(c);
     else if (act === 'statusdlg' && c) openStatusDlg(c);
     else if (act === 'path-set' && c) openPathDlg(c); else if (act === 'map' && c) mapFocus(c.pub); else if (act === 'resync' && c) resyncRoom(c); else if (act === 'sync') handleInput('/sync'); else if (act === 'map-fit') mapFitAll(); else if (act === 'map-settings') openMapSettings();
     else if (act === 'login' && c) openLoginDlg(c); else if (act === 'edit' && c) openContactDlg(c); else if (act === 'contacts') { renderContactsDlg(); $('#dlg-contacts').showModal(); } else if (act === 'download') downloadSelf(); else if (act === 'copy-key') { const ch = channelByConv(cv); if (ch) copyText(ch.secret); } else if (act === 'leave') closeConv(cv); else if (map[act]) handleInput(map[act]); });
@@ -5712,16 +5802,17 @@ function tabComplete(inp) {
 
 // ---------- init ----------
 function init() {
-  if (/[?&]fresh=1/.test(location.search)) { try { localStorage.removeItem(LS_KEY); } catch (e) {} } // ontwikkelhulp: schone start voor schermafbeeldingen
-  COMMANDS.push(['/setpath', '[naam]', 'cmd.setpath'], ['/sync', '', 'cmd.sync'], ['/resync', '', 'cmd.resync'], ['/map', '[naam]', 'cmd.map']);
+  if (/[?&]fresh=1/.test(location.search)) { try { localStorage.removeItem(LS_KEY); indexedDB.deleteDatabase(HIST_DB); } catch (e) {} } // ontwikkelhulp: schone start voor schermafbeeldingen
+  COMMANDS.push(['/neighbours', '[naam]', 'cmd.neighbours'], ['/setpath', '[naam]', 'cmd.setpath'], ['/sync', '', 'cmd.sync'], ['/resync', '', 'cmd.resync'], ['/map', '[naam]', 'cmd.map']);
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0748-a51cc8f' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0759-d0944ab' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
   openConv(S.convs.has(S.active) ? S.active : 'status');
+  histRestore().then(changed => { if (changed) { renderTree(); openConv(S.active); } }).catch(e => console.warn('hist', e));
   if (!S.self && !S.client.connected) { const lastNick = localStorage.getItem('mcirc.nick'); if (lastNick) $('#nick').textContent = lastNick; }
   if (!S.settings.compact) document.body.classList.remove('compact');
   setInterval(() => { if (S.client.connected) renderTree(); }, 60000);
@@ -5775,7 +5866,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0748-a51cc8f') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0759-d0944ab') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
