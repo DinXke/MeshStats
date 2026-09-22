@@ -822,6 +822,20 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
     <div class="dlg-foot"><button class="btn" value="cancel" formnovalidate data-i18n="h.cancel">Annuleren</button><button class="btn primary" value="ok" id="confirm-ok" data-i18n="ui.ok">OK</button></div>
   </form>
 </dialog>
+<dialog class="dlg" id="dlg-tcp" aria-labelledby="tcp-t">
+  <form method="dialog">
+    <div class="dlg-head"><h2 id="tcp-t" data-i18n="conn.tcpTitle">Verbinden via TCP/IP</h2><button class="btn icon ghost" value="cancel" aria-label="Sluiten" data-i18n-aria="h.close" formnovalidate><svg class="i"><use href="#i-x"/></svg></button></div>
+    <div class="dlg-body">
+      <div class="field"><label for="tcp-list" data-i18n="tcp.saved">Bewaarde verbindingen</label><select id="tcp-list"></select></div>
+      <div class="grid2">
+        <div class="field"><label for="tcp-name" data-i18n="tcp.name">Naam</label><input id="tcp-name" maxlength="40" placeholder="bv. Node thuis" data-i18n-ph="tcp.namePh"></div>
+        <div class="field"><label for="tcp-url" data-i18n="tcp.url">Adres van de brug</label><input id="tcp-url" class="mono" placeholder="ws://127.0.0.1:5005" required></div>
+      </div>
+      <p class="help" style="margin:0;font-size:12px;color:var(--fg-dim)" data-i18n-html="tcp.help">Een browser kan niet rechtstreeks TCP. Draai op deze pc <code>python src/tools/meshchat-bridge.py &lt;ip-node&gt;</code> en gebruik ws://127.0.0.1:5005. Brug op een andere machine (bv. een Pi)? Vanaf https kan dat alleen met wss://: start de brug met <code>--tls cert.pem key.pem</code> en open eerst één keer https://&lt;brug&gt;:5005/ om het certificaat te aanvaarden.</p>
+    </div>
+    <div class="dlg-foot wrap"><button class="btn" type="button" id="tcp-del" data-i18n="tcp.delete">Verwijderen</button><button class="btn" type="button" id="tcp-save" data-i18n="tcp.save">Bewaren</button><span class="grow"></span><button class="btn" value="cancel" formnovalidate data-i18n="h.cancel">Annuleren</button><button class="btn primary" value="ok" data-i18n="tcp.connect">Verbinden</button></div>
+  </form>
+</dialog>
 <dialog class="dlg" id="dlg-prompt" aria-labelledby="prompt-t">
   <form method="dialog">
     <div class="dlg-head"><h2 id="prompt-t" data-i18n="h.input">Invoer</h2></div>
@@ -3092,6 +3106,7 @@ let LANG = 'nl';
 const I18N = {};
 
 I18N.nl = {
+  'tcp.saved': 'Bewaarde verbindingen', 'tcp.new': '(nieuwe verbinding)', 'tcp.name': 'Naam', 'tcp.namePh': 'bv. Node thuis', 'tcp.url': 'Adres van de brug', 'tcp.save': 'Bewaren', 'tcp.delete': 'Verwijderen', 'tcp.connect': 'Verbinden', 'tcp.savedToast': 'Verbinding bewaard.', 'tcp.help': 'Een browser kan niet rechtstreeks TCP. Draai op deze pc <code>python src/tools/meshchat-bridge.py &lt;ip-node&gt;</code> en gebruik ws://127.0.0.1:5005. Brug op een andere machine (bv. een Pi)? Vanaf https kan dat alleen met wss://: start de brug met <code>--tls cert.pem key.pem</code> en open eerst één keer https://&lt;brug&gt;:5005/ om het certificaat te aanvaarden.',
   'h.tcpTitle': 'Verbinden via TCP/IP (WiFi-companion, via een WebSocket-brug)', 'conn.tcpTitle': 'Verbinden via TCP/IP', 'conn.tcpLabel': 'WebSocket-adres van de brug naar de node (bv. ws://127.0.0.1:5005). Een browser kan niet rechtstreeks TCP: draai src/tools/meshchat-bridge.py <ip-node> op deze pc, of websocat.', 'conn.noWs': 'Deze browser ondersteunt geen WebSocket.', 'conn.tcpBadUrl': 'Ongeldig adres: {0}', 'conn.tcpTimeout': 'Geen antwoord van {0} binnen 10 s. Draait de brug, en staat de node aan?', 'conn.tcpFailed': 'Verbinding met {0} mislukt. Draait de brug (meshchat-bridge.py) en klopt het adres?', 'conn.tcpClosed': 'Verbinding gesloten: {0}', 'conn.tcpMixed': 'Vanaf https mag de browser alleen naar localhost een onbeveiligde ws://-verbinding openen. Draai de brug op deze pc (ws://127.0.0.1:5005), gebruik wss://, of open MeshChat als los bestand.',
   'tropo.stale': 'offline · laatst bekend: model {0} UTC',
   'tropo.legendTip': 'Tropo-ducting-schatting (Open-Meteo-weermodel, vraagt internet). Kleurschaal zoals de Hepburn-kaarten (dxinfocentre.com), berekend uit de refractiviteitsgradiënt dN/dh onder 1,5 km:\n• doorzichtig: 0, niets (gradiënt boven -60 N/km; normaal is -40)\n• paars 1 marginaal · blauw 2 redelijk · groen 3 matig · lichtgroen 4 hoog\n• geel 5 sterk · amber 6 zeer sterk · oranje 7 intens\n• rood 8 zeer intens (ducting, onder -157 N/km) · roze 9-10+ extreem\n• Schatting uit lagen van 200–700 m; dunne ducts vlak boven de grond blijven onzichtbaar.\nBron: ICON-EU (DWD) via meshmanager.net, gekalibreerd op de Hepburn-kaarten; voor 868 MHz telt de nachtelijke grondinversie boven land voor de helft mee (Hepburn negeert die).', 'tropo.opacity': 'Doorzichtigheid van de tropo-laag', 'tropo.lv.nil': 'niets', 'tropo.lv.marginal': 'marginaal', 'tropo.lv.fair': 'redelijk', 'tropo.lv.moderate': 'matig', 'tropo.lv.high': 'hoog', 'tropo.lv.strong': 'sterk', 'tropo.lv.vstrong': 'zeer sterk', 'tropo.lv.intense': 'intens', 'tropo.lv.vintense': 'zeer intens (ducting)', 'tropo.lv.extreme': 'extreem', 'tropo.rateLimited': 'te veel aanvragen bij Open-Meteo, opnieuw over {0} s',
@@ -3340,6 +3355,7 @@ I18N.nl = {
 };
 
 I18N.en = {
+  'tcp.saved': 'Saved connections', 'tcp.new': '(new connection)', 'tcp.name': 'Name', 'tcp.namePh': 'e.g. Node at home', 'tcp.url': 'Bridge address', 'tcp.save': 'Save', 'tcp.delete': 'Delete', 'tcp.connect': 'Connect', 'tcp.savedToast': 'Connection saved.', 'tcp.help': 'A browser cannot open raw TCP. Run <code>python src/tools/meshchat-bridge.py &lt;node-ip&gt;</code> on this PC and use ws://127.0.0.1:5005. Bridge on another machine (e.g. a Pi)? From https that only works with wss://: start the bridge with <code>--tls cert.pem key.pem</code> and open https://&lt;bridge&gt;:5005/ once to accept the certificate.',
   'h.tcpTitle': 'Connect via TCP/IP (WiFi companion, through a WebSocket bridge)', 'conn.tcpTitle': 'Connect via TCP/IP', 'conn.tcpLabel': 'WebSocket address of the bridge to the node (e.g. ws://127.0.0.1:5005). A browser cannot open raw TCP: run src/tools/meshchat-bridge.py <node-ip> on this PC, or websocat.', 'conn.noWs': 'This browser does not support WebSocket.', 'conn.tcpBadUrl': 'Invalid address: {0}', 'conn.tcpTimeout': 'No answer from {0} within 10 s. Is the bridge running and the node on?', 'conn.tcpFailed': 'Connection to {0} failed. Is the bridge (meshchat-bridge.py) running and the address right?', 'conn.tcpClosed': 'Connection closed: {0}', 'conn.tcpMixed': 'From https the browser only allows an insecure ws:// connection to localhost. Run the bridge on this PC (ws://127.0.0.1:5005), use wss://, or open MeshChat as a local file.',
   'tropo.stale': 'offline · last known: model {0} UTC',
   'tropo.legendTip': 'Tropospheric ducting estimate (Open-Meteo weather model, needs internet). Colour scale like the Hepburn maps (dxinfocentre.com), derived from the refractivity gradient dN/dh below 1.5 km:\n• transparent: 0, nil (gradient above -60 N/km; -40 is normal)\n• purple 1 marginal · blue 2 fair · green 3 moderate · lime 4 high\n• yellow 5 strong · amber 6 very strong · orange 7 intense\n• red 8 very intense (ducting, below -157 N/km) · pink 9-10+ extreme\n• Estimated from layers of 200–700 m; thin ducts close to the ground stay invisible.\nSource: ICON-EU (DWD) via meshmanager.net, calibrated against the Hepburn maps; for 868 MHz the nocturnal ground inversion over land counts at half weight (Hepburn ignores it).', 'tropo.opacity': 'Opacity of the tropo layer', 'tropo.lv.nil': 'nil', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'fair', 'tropo.lv.moderate': 'moderate', 'tropo.lv.high': 'high', 'tropo.lv.strong': 'strong', 'tropo.lv.vstrong': 'very strong', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'very intense (ducting)', 'tropo.lv.extreme': 'extreme', 'tropo.rateLimited': 'too many requests to Open-Meteo, retrying in {0} s',
@@ -3567,6 +3583,7 @@ I18N.en = {
 };
 
 I18N.fr = {
+  'tcp.saved': 'Connexions enregistrées', 'tcp.new': '(nouvelle connexion)', 'tcp.name': 'Nom', 'tcp.namePh': 'ex. Nœud maison', 'tcp.url': 'Adresse du pont', 'tcp.save': 'Enregistrer', 'tcp.delete': 'Supprimer', 'tcp.connect': 'Connecter', 'tcp.savedToast': 'Connexion enregistrée.', 'tcp.help': 'Un navigateur ne peut pas ouvrir de TCP brut. Lancez <code>python src/tools/meshchat-bridge.py &lt;ip-du-nœud&gt;</code> sur ce PC et utilisez ws://127.0.0.1:5005. Pont sur une autre machine (ex. un Pi) ? Depuis https, seul wss:// fonctionne : lancez le pont avec <code>--tls cert.pem key.pem</code> et ouvrez une fois https://&lt;pont&gt;:5005/ pour accepter le certificat.',
   'h.tcpTitle': 'Connecter via TCP/IP (companion WiFi, via un pont WebSocket)', 'conn.tcpTitle': 'Connexion TCP/IP', 'conn.tcpLabel': 'Adresse WebSocket du pont vers le nœud (ex. ws://127.0.0.1:5005). Un navigateur ne peut pas ouvrir de TCP brut : lancez src/tools/meshchat-bridge.py <ip-du-nœud> sur ce PC, ou websocat.', 'conn.noWs': 'Ce navigateur ne prend pas en charge WebSocket.', 'conn.tcpBadUrl': 'Adresse invalide : {0}', 'conn.tcpTimeout': 'Pas de réponse de {0} en 10 s. Le pont tourne-t-il et le nœud est-il allumé ?', 'conn.tcpFailed': 'Connexion à {0} échouée. Le pont (meshchat-bridge.py) tourne-t-il et l\'adresse est-elle correcte ?', 'conn.tcpClosed': 'Connexion fermée : {0}', 'conn.tcpMixed': 'Depuis https, le navigateur n\'autorise une connexion ws:// non sécurisée que vers localhost. Lancez le pont sur ce PC (ws://127.0.0.1:5005), utilisez wss://, ou ouvrez MeshChat comme fichier local.',
   'tropo.stale': 'hors ligne · dernier connu : modèle {0} UTC',
   'tropo.legendTip': 'Estimation de la propagation troposphérique (modèle météo Open-Meteo, nécessite internet). Échelle de couleurs comme les cartes Hepburn (dxinfocentre.com), calculée à partir du gradient de réfractivité dN/dh sous 1,5 km :\n• transparent : 0, rien (gradient au-dessus de -60 N/km ; -40 est normal)\n• violet 1 marginal · bleu 2 passable · vert 3 modéré · vert clair 4 élevé\n• jaune 5 fort · ambre 6 très fort · orange 7 intense\n• rouge 8 très intense (ducting, sous -157 N/km) · rose 9-10+ extrême\n• Estimation à partir de couches de 200–700 m ; les conduits minces près du sol restent invisibles.\nSource : ICON-EU (DWD) via meshmanager.net, calibré sur les cartes Hepburn ; pour 868 MHz l\'inversion nocturne au sol compte pour moitié (Hepburn l\'ignore).', 'tropo.opacity': 'Opacité de la couche tropo', 'tropo.lv.nil': 'rien', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'passable', 'tropo.lv.moderate': 'modéré', 'tropo.lv.high': 'élevé', 'tropo.lv.strong': 'fort', 'tropo.lv.vstrong': 'très fort', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'très intense (ducting)', 'tropo.lv.extreme': 'extrême', 'tropo.rateLimited': 'trop de requêtes vers Open-Meteo, nouvel essai dans {0} s',
@@ -3846,8 +3863,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0706-c3cb057'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.4.0', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0730-89a84ba'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.4.1', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 400;
 
@@ -3866,7 +3883,7 @@ const S = {
   deviceScopeKey: undefined,   // wat er nu op de node als verzendscope staat (null = zonder scope)
   extras: {},                  // pub -> {alias, note, fav}
   roomPw: {},                  // pub -> {pw, auto}
-  settings: { theme: 'auto', ts: true, compact: false, meta: true, notif: true, debug: false, showSensorsAsRepeaters: true, staleDays: 7, favOnly: true, regions: [], tropo: false, tropoH: 0, tropoOp: 30, statusPopup: 'manual' },
+  settings: { theme: 'auto', ts: true, compact: false, meta: true, notif: true, debug: false, showSensorsAsRepeaters: true, staleDays: 7, favOnly: true, regions: [], tropo: false, tropoH: 0, tropoOp: 30, tcpList: [], statusPopup: 'manual' },
   connecting: false, syncing: false, msgSeq: 0,
 };
 
@@ -4751,12 +4768,12 @@ async function connect(kind) {
   if (!Tr.supported()) { errorMsg(kind === 'ble' ? t('conn.noBle') : kind === 'tcp' ? t('conn.noWs') : t('conn.noSerial'), S.convs.get('status')); return; }
   let url = null;
   if (kind === 'tcp') {
-    url = await promptDlg(t('conn.tcpTitle'), t('conn.tcpLabel'), S.settings.tcpUrl || 'ws://127.0.0.1:5005'); if (url == null) return;
+    url = await openTcpDlg(); if (url == null) return;
     url = url.trim(); if (!url) return;
     if (!/^wss?:\/\//i.test(url)) url = 'ws://' + url; // 'host:poort' volstaat
     // Een https-pagina mag alleen naar localhost een onbeveiligde ws:// openen (mixed content); waarschuw vooraf.
     if (location.protocol === 'https:' && /^ws:\/\//i.test(url) && !/^ws:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(url)) { errorMsg(t('conn.tcpMixed'), S.convs.get('status')); return; }
-    S.settings.tcpUrl = url; saveState();
+    S.settings.tcpUrl = url; tcpRemember(url); saveState();
   }
   S.connecting = true; setStatusKey('st-busy', 'status.connecting');
   try {
@@ -5514,6 +5531,31 @@ function msgContextItems(m, cv) {
     { label: t('ctx.deleteLocal'), danger: true, run: () => { cv.msgs = cv.msgs.filter(x => x.id !== m.id); renderMessages(cv, true); saveState(); } },
   ];
 }
+// ---------- TCP/IP: bewaarde verbindingen ----------
+function tcpList() { if (!Array.isArray(S.settings.tcpList)) S.settings.tcpList = []; return S.settings.tcpList; }
+function tcpNormalize(u) { u = (u || '').trim(); if (u && !/^wss?:\/\//i.test(u)) u = 'ws://' + u; return u; }
+function tcpRemember(url, name) {
+  // laatst gebruikte bovenaan; naam behouden als die er al was
+  const list = tcpList(); const i = list.findIndex(x => x.url === url); const old = i >= 0 ? list.splice(i, 1)[0] : null;
+  list.unshift({ url, name: (name || (old && old.name) || url.replace(/^wss?:\/\//i, '')).slice(0, 40) }); if (list.length > 20) list.length = 20;
+}
+function renderTcpList(selUrl) {
+  const sel = $('#tcp-list'); const list = tcpList();
+  sel.innerHTML = `<option value="">${esc(t('tcp.new'))}</option>` + list.map(x => `<option value="${esc(x.url)}"${x.url === selUrl ? ' selected' : ''}>${esc(x.name)}${x.name !== x.url ? ' · ' + esc(x.url) : ''}</option>`).join('');
+  $('#tcp-del').disabled = !selUrl || !list.some(x => x.url === selUrl);
+}
+function openTcpDlg() {
+  const d = $('#dlg-tcp'); const list = tcpList(); const last = S.settings.tcpUrl || (list[0] && list[0].url) || 'ws://127.0.0.1:5005';
+  const cur = list.find(x => x.url === last);
+  $('#tcp-url').value = last; $('#tcp-name').value = cur ? cur.name : ''; renderTcpList(cur ? cur.url : '');
+  return new Promise(res => { d.onclose = () => res(d.returnValue === 'ok' ? tcpNormalize($('#tcp-url').value) : null); d.showModal(); setTimeout(() => $('#tcp-url').focus(), 30); });
+}
+function initTcpDlg() {
+  on('#tcp-list', 'change', (e) => { const x = tcpList().find(y => y.url === e.target.value); if (x) { $('#tcp-url').value = x.url; $('#tcp-name').value = x.name; } else { $('#tcp-url').value = ''; $('#tcp-name').value = ''; } $('#tcp-del').disabled = !x; });
+  on('#tcp-save', 'click', () => { const url = tcpNormalize($('#tcp-url').value); if (!url) return; tcpRemember(url, $('#tcp-name').value.trim()); saveState(); renderTcpList(url); toast(t('tcp.savedToast'), 'ok'); });
+  on('#tcp-del', 'click', () => { const url = tcpNormalize($('#tcp-url').value); const list = tcpList(); const i = list.findIndex(x => x.url === url); if (i >= 0) list.splice(i, 1); saveState(); $('#tcp-url').value = ''; $('#tcp-name').value = ''; renderTcpList(''); });
+}
+
 // ---------- status/radio-venster voor repeaters en rooms ----------
 const RADIO_CMDS = [['radio', 'get radio'], ['tx', 'get tx'], ['af', 'get af'], ['repeat', 'get repeat'], ['flood.max', 'get flood.max'], ['advert.interval', 'get advert.interval'], ['flood.advert.interval', 'get flood.advert.interval'], ['rxdelay', 'get rxdelay'], ['txdelay', 'get txdelay'], ['direct.txdelay', 'get direct.txdelay'], ['lat', 'get lat'], ['lon', 'get lon'], ['ver', 'ver'], ['clock', 'clock']];
 function fmtRadioVal(k, v) {
@@ -5574,7 +5616,7 @@ function showMsgInfo(m, cv) {
 
 // ---------- wiring ----------
 function wire() {
-  on('#btn-usb', 'click', () => connect('usb')); on('#btn-bt', 'click', () => connect('ble')); on('#btn-tcp', 'click', () => connect('tcp')); on('#btn-disconnect', 'click', () => C.disconnect());
+  on('#btn-usb', 'click', () => connect('usb')); on('#btn-bt', 'click', () => connect('ble')); on('#btn-tcp', 'click', () => connect('tcp')); initTcpDlg(); on('#btn-disconnect', 'click', () => C.disconnect());
   on('#lang-sel', 'change', (e) => setLang(e.target.value)); on('#s-lang', 'change', (e) => setLang(e.target.value));
   on('#btn-theme', 'click', () => { const dark = matchMedia('(prefers-color-scheme:dark)').matches; const cur = document.documentElement.dataset.theme || (dark ? 'dark' : 'light'); setTheme(cur === 'dark' ? 'light' : 'dark'); });
   on('#btn-sidebar', 'click', () => document.body.classList.toggle('sidebar-open')); on('#btn-users', 'click', () => document.body.classList.toggle('users-open')); on('#backdrop', 'click', () => document.body.classList.remove('sidebar-open', 'users-open'));
@@ -5748,7 +5790,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0706-c3cb057' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0730-89a84ba' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5806,7 +5848,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0706-c3cb057') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0730-89a84ba') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
