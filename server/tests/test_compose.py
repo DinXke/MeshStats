@@ -41,7 +41,10 @@ ANDERE_NAMEN = {"MESHMANAGER_PORT": "MESHSTATS_PORT"}
 # ``MM_BUILD_SHA`` en ``MM_BUILD_DATE`` zijn nieuw (versiestempel in de footer,
 # zie app/version.py) en hebben dus nooit een oude naam gehad. Het zijn ook geen
 # instellingen maar build-args: deploy/autoupdate.sh vult ze, .env niet.
-NOOIT_HERNOEMD = {"MQTT_PORT", "TZ", "MM_BUILD_SHA", "MM_BUILD_DATE"}
+# MM_MATOMO_*: pas na de hernoeming ontstaan (2.28.0, bezoekcijfers), dus er is geen
+# MCS_-voorganger om op terug te vallen.
+NOOIT_HERNOEMD = {"MQTT_PORT", "TZ", "MM_BUILD_SHA", "MM_BUILD_DATE",
+                  "MM_MATOMO_URL", "MM_MATOMO_SITE_ID", "MM_MATOMO_CHAT_SITE_ID"}
 
 # ``${NAAM:-standaard}`` of ``${NAAM-standaard}``, met een standaard die zelf
 # weer zo'n constructie mag zijn.

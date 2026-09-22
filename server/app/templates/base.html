@@ -42,5 +42,8 @@
 <!-- Loads before any page script so generated text can use MCSI18N.t as well. -->
 <script src="/static/i18n.js?v={{ asset_v }}"></script>
 {% block scripts %}{% endblock %}
+{#- Bezoekcijfers: een bestand van deze server zelf, dus het valt onder script-src 'self'.
+    Zonder MM_MATOMO_URL staat er niets (zie app/analytics.py). -#}
+{% if analytics_on() %}<script src="/analytics.js" defer></script>{% endif %}
 </body>
 </html>

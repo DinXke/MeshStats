@@ -13,7 +13,7 @@ from fastapi import FastAPI, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, battwatch, clocksync, companions, db, hadiscovery, limits, meshmoni, tropo,
+from . import (analytics, auth, battwatch, clocksync, companions, db, hadiscovery, limits, meshmoni, tropo,
                mqtt_ingest, rbac, retention, routes_admin, routes_api,
                routes_companions, routes_public, sensornode, sensorpush,
                sweepsched, tsdb, webpush)
@@ -50,7 +50,7 @@ async def _chat_host_response(request):
     if not _is_chat_host(request):
         return None
     path = request.url.path
-    if path.startswith("/tiles/") or path in ("/tiles", "/api/tropo"):
+    if path.startswith("/tiles/") or path in ("/tiles", "/api/tropo", "/analytics.js"):
         return None
     if path.startswith("/chat"):
         rest = path[len("/chat"):].lstrip("/")
@@ -102,15 +102,20 @@ async def security_headers(request, call_next):
     # ETag verandert mee, dus revalidatie is een goedkope 304 zolang niets wijzigt.
     if request.url.path.startswith(("/static", "/tiles", "/chat")) or _is_chat_host(request):
         h.setdefault("Cache-Control", "no-cache")
+    # Bezoekcijfers (app/analytics.py): de startcode komt van deze server, maar matomo.js
+    # en de telbeeldjes komen van de Matomo zelf. Alleen die ene herkomst erbij, en alleen
+    # als MM_MATOMO_URL ingesteld is -- zonder Matomo blijft de CSP precies zo dicht als hij was.
+    mtm = analytics.matomo_url().rstrip("/")
+    mtm_src = (" " + mtm) if mtm else ""
     h.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
+        f"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com{mtm_src}; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; "
         "font-src https://fonts.gstatic.com; "
-        "img-src 'self' data: https://unpkg.com; "
+        f"img-src 'self' data: https://unpkg.com{mtm_src}; "
         # api.open-meteo.com: tropo-ducting-overlay van MeshChat (alleen als de gebruiker die aanzet).
-        "connect-src 'self' https://api.open-meteo.com; "
+        f"connect-src 'self' https://api.open-meteo.com{mtm_src}; "
         # MapLibre GL maakt zijn tegel-worker als blob-URL aan; zonder deze regel
         # blokkeert default-src 'self' hem. De vector-tiles, fonts en sprites zelf
         # zijn same-origin (/tiles/...) en vallen onder connect-src 'self'.
@@ -128,6 +133,7 @@ app.include_router(routes_admin.router)
 app.include_router(routes_companions.router)
 app.include_router(routes_public.router)
 app.include_router(tropo.router)          # tropo-ducting-veld voor MeshChat (GET /api/tropo)
+app.include_router(analytics.router)      # bezoekcijfers naar Matomo (GET /analytics.js)
 app.include_router(meshmoni.router)   # de PWA-subsite voor op de telefoon
 app.include_router(sensorpush.router)  # gebeurtenis-push van sensornodes
 app.include_router(companions.router)  # instant-push van companion-locatie/-val (POST /api/companion)

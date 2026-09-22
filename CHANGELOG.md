@@ -10,6 +10,16 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.28.0 - 2026-09-22
+
+- **Bezoekcijfers naar een eigen Matomo** (`app/analytics.py`, `MM_MATOMO_URL`). De
+  startcode komt van deze server zelf (`/analytics.js`), zodat ze onder `script-src
+  'self'` valt; alleen de Matomo-herkomst wordt aan de CSP toegevoegd, en alleen als
+  er een Matomo ingesteld is. Geen cookies en "Do Not Track" wordt gerespecteerd, dus
+  geen toestemmingsbanner. `meshmanager.net` en `chat.meshmanager.net` tellen apart
+  (`MM_MATOMO_SITE_ID`, `MM_MATOMO_CHAT_SITE_ID`); MeshChat laadt het script alleen op
+  de gehoste versie, niet in het losse bestand en niet offline.
+
 ## 2.27.2 - 2026-09-22
 
 - **Tropo-veld over het hele ICON-EU-gebied** (23° W tot 62° O, 29° tot 70° N) in plaats van
