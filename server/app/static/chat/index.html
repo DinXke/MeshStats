@@ -424,6 +424,9 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
 
 #map-tropo-h{width:auto;flex:0 0 auto;height:26px;font-size:12px;padding:0 4px}
 @media (max-width:600px){ #map-tools{max-width:calc(100% - 20px)} #map-tools .btn,#map-tools label.btn{padding:3px 6px;font-size:11.5px} #map-search{width:120px!important} }
+
+#map-tropo-bar i{display:inline-block;width:11px;height:11px;margin:0 1px -2px 0;border-radius:2px}
+#map-tropo-op{width:70px;height:26px;margin:0;flex:0 0 auto;accent-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -492,8 +495,8 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
   <div id="mapwrap" hidden>
     <div id="map"></div>
     <div id="map-notice" hidden></div>
-    <div id="map-tools"><input id="map-search" class="inp mono" list="map-search-list" placeholder="Zoek node…" data-i18n-ph="map.searchPh" aria-label="Zoek node op de kaart" data-i18n-aria="map.searchPh" style="width:150px;height:26px;font-size:12px"><datalist id="map-search-list"></datalist><button class="btn sm" id="map-fit" data-i18n="map.tools.fit">Alles tonen</button><button class="btn sm" id="map-me" data-i18n="map.tools.me">Mijn node</button><label class="btn sm" style="gap:6px"><input type="checkbox" id="map-live" checked> <span data-i18n="map.tools.live">Live pakketten</span></label><button class="btn sm ghost" id="map-settings" data-i18n="map.tools.settings">Offline kaarten…</button><button class="btn sm ghost" id="map-nb-clear" hidden data-i18n="map.tools.clearNb">Buren wissen</button><label class="btn sm" style="gap:6px" data-i18n-title="tropo.help" title="Tropo-ducting-schatting (Open-Meteo, vraagt internet)"><input type="checkbox" id="map-tropo"> <span data-i18n="map.tools.tropo">Tropo</span></label><select id="map-tropo-h" class="inp" hidden style="height:26px;font-size:12px"><option value="0" data-i18n="tropo.h0">nu</option><option value="6">+6 h</option><option value="12">+12 h</option><option value="24">+24 h</option></select></div>
-    <div id="map-legend"><span><i style="background:#3ccf83"></i><span data-i18n="map.legend.you">jij</span></span><span><i style="background:#f7b955"></i><span data-i18n="map.legend.repeater">repeater</span></span><span><i style="background:#c4a3ff"></i>room</span><span><i style="background:#5cc8ff"></i>chat</span><span><i style="background:#5fd6c5"></i><span data-i18n="map.legend.sensor">sensor</span></span><span><i style="background:transparent;border:2px solid #8e9baa"></i><span data-i18n="map.legend.pending">wachtend advert</span></span><span id="map-tropo-legend" hidden><i style="background:#ffd54a"></i><span data-i18n="tropo.legend.super">superrefractie</span> <i style="background:#ff4d4d"></i><span data-i18n="tropo.legend.duct">ducting</span> <span id="map-tropo-ts" class="dim"></span></span></div>
+    <div id="map-tools"><input id="map-search" class="inp mono" list="map-search-list" placeholder="Zoek node…" data-i18n-ph="map.searchPh" aria-label="Zoek node op de kaart" data-i18n-aria="map.searchPh" style="width:150px;height:26px;font-size:12px"><datalist id="map-search-list"></datalist><button class="btn sm" id="map-fit" data-i18n="map.tools.fit">Alles tonen</button><button class="btn sm" id="map-me" data-i18n="map.tools.me">Mijn node</button><label class="btn sm" style="gap:6px"><input type="checkbox" id="map-live" checked> <span data-i18n="map.tools.live">Live pakketten</span></label><button class="btn sm ghost" id="map-settings" data-i18n="map.tools.settings">Offline kaarten…</button><button class="btn sm ghost" id="map-nb-clear" hidden data-i18n="map.tools.clearNb">Buren wissen</button><label class="btn sm" style="gap:6px" data-i18n-title="tropo.legendTip" title=""><input type="checkbox" id="map-tropo"> <span data-i18n="map.tools.tropo">Tropo</span></label><select id="map-tropo-h" class="inp" hidden style="height:26px;font-size:12px"><option value="0" data-i18n="tropo.h0">nu</option><option value="6">+6 h</option><option value="12">+12 h</option><option value="24">+24 h</option></select><input type="range" id="map-tropo-op" min="10" max="100" step="5" hidden data-i18n-title="tropo.opacity" title="Doorzichtigheid"></div>
+    <div id="map-legend"><span><i style="background:#3ccf83"></i><span data-i18n="map.legend.you">jij</span></span><span><i style="background:#f7b955"></i><span data-i18n="map.legend.repeater">repeater</span></span><span><i style="background:#c4a3ff"></i>room</span><span><i style="background:#5cc8ff"></i>chat</span><span><i style="background:#5fd6c5"></i><span data-i18n="map.legend.sensor">sensor</span></span><span><i style="background:transparent;border:2px solid #8e9baa"></i><span data-i18n="map.legend.pending">wachtend advert</span></span><span id="map-tropo-legend" hidden data-i18n-title="tropo.legendTip" title=""><b data-i18n="map.tools.tropo">Tropo</b> <span id="map-tropo-bar"></span> <span id="map-tropo-ts" class="dim"></span></span></div>
   </div>
   <button class="btn sm" id="scroll-bottom" aria-label="Naar nieuwste berichten" data-i18n-aria="h.toNewest"><svg class="i"><use href="#i-down"/></svg><span data-i18n="h.newMessages">Nieuwe berichten</span></button>
   <div id="compose">
@@ -3056,6 +3059,7 @@ let LANG = 'nl';
 const I18N = {};
 
 I18N.nl = {
+  'tropo.legendTip': 'Tropo-ducting-schatting (Open-Meteo-weermodel, vraagt internet). Kleurschaal zoals de Hepburn-kaarten (dxinfocentre.com), berekend uit de refractiviteitsgradiënt dN/dh onder 1,5 km:\n• doorzichtig: 0, niets (gradiënt boven -50 N/km)\n• paars 1 marginaal · blauw 2 redelijk · groen 3 matig · lichtgroen 4 hoog\n• geel 5 sterk · amber 6 zeer sterk · oranje 7 intens\n• rood 8 zeer intens (ducting, onder -157 N/km) · roze 9-10+ extreem\n• Schatting uit lagen van ca. 700 m; dunne ducts vlak boven de grond blijven onzichtbaar.', 'tropo.opacity': 'Doorzichtigheid van de tropo-laag', 'tropo.lv.nil': 'niets', 'tropo.lv.marginal': 'marginaal', 'tropo.lv.fair': 'redelijk', 'tropo.lv.moderate': 'matig', 'tropo.lv.high': 'hoog', 'tropo.lv.strong': 'sterk', 'tropo.lv.vstrong': 'zeer sterk', 'tropo.lv.intense': 'intens', 'tropo.lv.vintense': 'zeer intens (ducting)', 'tropo.lv.extreme': 'extreem', 'tropo.rateLimited': 'te veel aanvragen bij Open-Meteo, opnieuw over {0} s',
   'emoji.flags': 'Vlaggen', 'h.nameBytes': '{0}/31 bytes (een vlag telt 8)', 'map.tools.tropo': 'Tropo', 'tropo.help': 'Tropo-ducting-schatting uit het Open-Meteo-weermodel (vraagt internet): geel = superrefractie, rood = ducting.', 'tropo.h0': 'nu', 'tropo.loading': 'laden…', 'tropo.offline': 'De tropo-overlay heeft internet nodig.', 'tropo.err': 'Tropo-gegevens ophalen mislukt: {0}', 'tropo.legend.super': 'superrefractie', 'tropo.legend.duct': 'ducting', 'tropo.data': 'model {0} UTC',
   'stat.details': 'Details', 'stat.btn': 'Statusvenster', 'stat.title': 'Status van {0}', 'stat.auto': ' Automatisch openen bij een status-antwoord', 'stat.sec.status': 'Status', 'stat.sec.radio': 'Radio-instellingen', 'stat.received': 'ontvangen {0}', 'stat.noStats': 'Nog geen status ontvangen. Klik op "Status vernieuwen".', 'stat.requested': 'Status opgevraagd…',
   'stat.batt': 'Batterij', 'stat.uptime': 'Uptime', 'stat.txq': 'TX-wachtrij', 'stat.noise': 'Ruisvloer', 'stat.rssi': 'Laatste RSSI', 'stat.snr': 'Laatste SNR', 'stat.recv': 'Ontvangen', 'stat.sent': 'Verzonden', 'stat.fd': '{0} (flood {1}, direct {2})', 'stat.airtime': 'Airtime TX / RX', 'stat.full': 'Wachtrij vol', 'stat.dups': 'Duplicaten direct / flood',
@@ -3301,6 +3305,7 @@ I18N.nl = {
 };
 
 I18N.en = {
+  'tropo.legendTip': 'Tropospheric ducting estimate (Open-Meteo weather model, needs internet). Colour scale like the Hepburn maps (dxinfocentre.com), derived from the refractivity gradient dN/dh below 1.5 km:\n• transparent: 0, nil (gradient above -50 N/km)\n• purple 1 marginal · blue 2 fair · green 3 moderate · lime 4 high\n• yellow 5 strong · amber 6 very strong · orange 7 intense\n• red 8 very intense (ducting, below -157 N/km) · pink 9-10+ extreme\n• Estimated from layers of about 700 m; thin ducts close to the ground stay invisible.', 'tropo.opacity': 'Opacity of the tropo layer', 'tropo.lv.nil': 'nil', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'fair', 'tropo.lv.moderate': 'moderate', 'tropo.lv.high': 'high', 'tropo.lv.strong': 'strong', 'tropo.lv.vstrong': 'very strong', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'very intense (ducting)', 'tropo.lv.extreme': 'extreme', 'tropo.rateLimited': 'too many requests to Open-Meteo, retrying in {0} s',
   'emoji.flags': 'Flags', 'h.nameBytes': '{0}/31 bytes (a flag counts 8)', 'map.tools.tropo': 'Tropo', 'tropo.help': 'Tropospheric ducting estimate from the Open-Meteo weather model (needs internet): yellow = super-refraction, red = ducting.', 'tropo.h0': 'now', 'tropo.loading': 'loading…', 'tropo.offline': 'The tropo overlay needs an internet connection.', 'tropo.err': 'Fetching tropo data failed: {0}', 'tropo.legend.super': 'super-refraction', 'tropo.legend.duct': 'ducting', 'tropo.data': 'model {0} UTC',
   'stat.details': 'Details', 'stat.btn': 'Status window', 'stat.title': 'Status of {0}', 'stat.auto': ' Open automatically on a status reply', 'stat.sec.status': 'Status', 'stat.sec.radio': 'Radio settings', 'stat.received': 'received {0}', 'stat.noStats': 'No status received yet. Click "Refresh status".', 'stat.requested': 'Status requested…',
   'stat.batt': 'Battery', 'stat.uptime': 'Uptime', 'stat.txq': 'TX queue', 'stat.noise': 'Noise floor', 'stat.rssi': 'Last RSSI', 'stat.snr': 'Last SNR', 'stat.recv': 'Received', 'stat.sent': 'Sent', 'stat.fd': '{0} (flood {1}, direct {2})', 'stat.airtime': 'Airtime TX / RX', 'stat.full': 'Queue full', 'stat.dups': 'Duplicates direct / flood',
@@ -3525,6 +3530,7 @@ I18N.en = {
 };
 
 I18N.fr = {
+  'tropo.legendTip': 'Estimation de la propagation troposphérique (modèle météo Open-Meteo, nécessite internet). Échelle de couleurs comme les cartes Hepburn (dxinfocentre.com), calculée à partir du gradient de réfractivité dN/dh sous 1,5 km :\n• transparent : 0, rien (gradient au-dessus de -50 N/km)\n• violet 1 marginal · bleu 2 passable · vert 3 modéré · vert clair 4 élevé\n• jaune 5 fort · ambre 6 très fort · orange 7 intense\n• rouge 8 très intense (ducting, sous -157 N/km) · rose 9-10+ extrême\n• Estimation à partir de couches d’environ 700 m ; les conduits minces près du sol restent invisibles.', 'tropo.opacity': 'Opacité de la couche tropo', 'tropo.lv.nil': 'rien', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'passable', 'tropo.lv.moderate': 'modéré', 'tropo.lv.high': 'élevé', 'tropo.lv.strong': 'fort', 'tropo.lv.vstrong': 'très fort', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'très intense (ducting)', 'tropo.lv.extreme': 'extrême', 'tropo.rateLimited': 'trop de requêtes vers Open-Meteo, nouvel essai dans {0} s',
   'emoji.flags': 'Drapeaux', 'h.nameBytes': '{0}/31 octets (un drapeau compte 8)', 'map.tools.tropo': 'Tropo', 'tropo.help': 'Estimation de la propagation troposphérique (ducting) d\'après le modèle météo Open-Meteo (nécessite internet) : jaune = superréfraction, rouge = ducting.', 'tropo.h0': 'maintenant', 'tropo.loading': 'chargement…', 'tropo.offline': 'La couche tropo nécessite une connexion internet.', 'tropo.err': 'Échec du chargement des données tropo : {0}', 'tropo.legend.super': 'superréfraction', 'tropo.legend.duct': 'ducting', 'tropo.data': 'modèle {0} UTC',
   'stat.details': 'Détails', 'stat.btn': 'Fenêtre d\'état', 'stat.title': 'État de {0}', 'stat.auto': ' Ouvrir automatiquement à chaque réponse status', 'stat.sec.status': 'État', 'stat.sec.radio': 'Paramètres radio', 'stat.received': 'reçu {0}', 'stat.noStats': 'Aucun état reçu pour l\'instant. Cliquez sur « Actualiser l\'état ».', 'stat.requested': 'État demandé…',
   'stat.batt': 'Batterie', 'stat.uptime': 'Uptime', 'stat.txq': 'File TX', 'stat.noise': 'Bruit de fond', 'stat.rssi': 'Dernier RSSI', 'stat.snr': 'Dernier SNR', 'stat.recv': 'Reçus', 'stat.sent': 'Envoyés', 'stat.fd': '{0} (flood {1}, direct {2})', 'stat.airtime': 'Airtime TX / RX', 'stat.full': 'File pleine', 'stat.dups': 'Doublons direct / flood',
@@ -3801,8 +3807,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0008-1a01527'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.3.1', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0022-ba23338'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.3.2', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 400;
 
@@ -3821,7 +3827,7 @@ const S = {
   deviceScopeKey: undefined,   // wat er nu op de node als verzendscope staat (null = zonder scope)
   extras: {},                  // pub -> {alias, note, fav}
   roomPw: {},                  // pub -> {pw, auto}
-  settings: { theme: 'auto', ts: true, compact: false, meta: true, notif: true, debug: false, showSensorsAsRepeaters: true, staleDays: 7, favOnly: true, regions: [], tropo: false, tropoH: 0, statusPopup: 'manual' },
+  settings: { theme: 'auto', ts: true, compact: false, meta: true, notif: true, debug: false, showSensorsAsRepeaters: true, staleDays: 7, favOnly: true, regions: [], tropo: false, tropoH: 0, tropoOp: 75, statusPopup: 'manual' },
   connecting: false, syncing: false, msgSeq: 0,
 };
 
@@ -4197,10 +4203,17 @@ function fmtBytes(b) { if (b == null) return '—'; if (b < 1e6) return (b / 1e3
 // Bron: Open-Meteo (gratis, CORS, geen sleutel). Per drukniveau: refractiviteit N = 77.6·P/T + 3.73e5·e/T²;
 // verticale gradiënt dN/dh (N-eenheden per km) tussen opeenvolgende niveaus onder ~1,5 km. Normaal ≈ -40 N/km,
 // -79..-157 = superrefractie (verlengd bereik), < -157 = ducting (het signaal blijft in een laag gevangen).
-const TROPO_LEVELS = [1000, 975, 950, 925, 900, 850];
-const TROPO_NX = 10, TROPO_NY = 8;
-const tropoSt = { key: null, busy: false, again: false, timer: null, canvas: null, modelTime: null };
+// Bemonstering op een VAST geografisch raster (veelvouden van de stap), met cache per punt: dezelfde plek houdt
+// dezelfde kleur bij pannen en zoomen; alleen ontbrekende punten worden opgehaald.
+// 3 niveaus x 3 variabelen = 9 variabelen: telt bij Open-Meteo als 1 aanvraag per punt (tot 10 variabelen).
+const TROPO_LEVELS = [1000, 925, 850];
+const TROPO_MAX_POINTS = 220, TROPO_CHUNK = 110;
+// Kleurschaal zoals de Hepburn-kaarten (dxinfocentre.com): 0 = niets (doorzichtig), 1 marginaal … 8 zeer intens, 9-10 extreem.
+const TROPO_SCALE = [[0, 0, 0], [134, 3, 241], [1, 180, 239], [2, 208, 131], [165, 235, 1], [239, 222, 5], [233, 177, 12], [255, 128, 0], [255, 0, 0], [255, 128, 192], [255, 180, 220]];
+const TROPO_LEVEL_KEYS = ['nil', 'marginal', 'fair', 'moderate', 'high', 'strong', 'vstrong', 'intense', 'vintense', 'extreme', 'extreme'];
+const tropoSt = { key: null, busy: false, again: false, timer: null, canvas: null, modelTime: {}, cache: new Map(), retryAt: 0, pending: null };
 function tropoEnabled() { return !!(S.settings && S.settings.tropo); }
+function tropoOpacity() { const v = +(S.settings.tropoOp ?? 75); return Math.min(100, Math.max(10, v)) / 100; }
 function tropoN(T, RH, P) { const Tk = T + 273.15; const es = 6.112 * Math.exp(17.67 * T / (T + 243.5)); const e = Math.max(0, Math.min(100, RH)) / 100 * es; return 77.6 * P / Tk + 3.73e5 * e / (Tk * Tk); }
 function tropoGradient(h, ti) {
   let best = null;
@@ -4216,56 +4229,78 @@ function tropoGradient(h, ti) {
   }
   return best;
 }
-// kleur: doorzichtig tot ca. -60, geel → oranje tot -157, rood daaronder
-function tropoRGBA(g) {
-  if (g == null || g > -60) return [0, 0, 0, 0];
-  if (g > -79) { const f = (-60 - g) / 19; return [255, 230, 90, Math.round(55 * f)]; }
-  if (g > -157) { const f = (-79 - g) / 78; return [255, Math.round(215 - 120 * f), 60, Math.round(95 + 70 * f)]; }
-  const f = Math.min(1, (-157 - g) / 100); return [Math.round(255 - 60 * f), 50, 50, Math.round(175 + 50 * f)];
+// gradiënt → niveau 0..10: vanaf -50 N/km (1, marginaal) in stappen van ~13,4 tot -157 (8, ducting); -200 → 9, daaronder 10
+function tropoLevel(g) {
+  if (g == null || g > -50) return 0;
+  if (g > -157) return Math.min(8, 1 + Math.floor((-50 - g) / 13.4));
+  return g > -200 ? 9 : 10;
 }
+function tropoRGBA(g) { const lv = tropoLevel(g); if (!lv) return [0, 0, 0, 0]; const c = TROPO_SCALE[lv]; return [c[0], c[1], c[2], 230]; }
+// rasterstap naar kaartbreedte; ruim rondom het beeld (35 %) en uitgelijnd op veelvouden van de stap
 function tropoGrid() {
-  const b = mapObj.getBounds(); const w = b.getWest(), e = b.getEast(), s = b.getSouth(), n = b.getNorth();
-  // ruim rondom het beeld (15 %, minstens 0,1°) en naar buiten afronden op 0,25°, zodat de laag altijd het hele beeld dekt
-  const pw = Math.max(0.1, (e - w) * 0.15), ph = Math.max(0.1, (n - s) * 0.15); const fl = (v) => Math.floor(v * 4) / 4, ce = (v) => Math.ceil(v * 4) / 4;
-  return { w: fl(w - pw), e: ce(e + pw), s: Math.max(-85, fl(s - ph)), n: Math.min(85, ce(n + ph)) };
+  const b = mapObj.getBounds(); const w = b.getWest(), e = b.getEast(), s = Math.max(-80, b.getSouth()), n = Math.min(80, b.getNorth());
+  const span = e - w; let step = span <= 2.5 ? 0.25 : span <= 5 ? 0.5 : span <= 10 ? 1 : 2;
+  const pw = Math.max(0.2, span * 0.35), ph = Math.max(0.2, (n - s) * 0.35);
+  for (;;) {
+    const g = { step, w: Math.floor((w - pw) / step) * step, e: Math.ceil((e + pw) / step) * step, s: Math.max(-80, Math.floor((s - ph) / step) * step), n: Math.min(80, Math.ceil((n + ph) / step) * step) };
+    g.nx = Math.round((g.e - g.w) / step) + 1; g.ny = Math.round((g.n - g.s) / step) + 1;
+    if (g.nx * g.ny <= TROPO_MAX_POINTS || step >= 4) return g;
+    step *= 2;
+  }
 }
 function tropoHourIndex(times, hoursAhead) {
   const target = new Date(); target.setUTCMinutes(0, 0, 0); target.setUTCHours(target.getUTCHours() + hoursAhead);
   const iso = target.toISOString().slice(0, 13); let idx = times.findIndex(x => x.slice(0, 13) === iso);
   if (idx < 0) idx = Math.max(0, Math.min(times.length - 1, hoursAhead)); return idx;
 }
+const tropoPtKey = (stamp, hours, lat, lon) => stamp + '|' + hours + '|' + lat.toFixed(2) + '|' + lon.toFixed(2);
 async function tropoRefresh(force) {
   if (!mapObj || !tropoEnabled()) return;
   if (!navigator.onLine) { tropoSetLegend(t('tropo.offline')); toast(t('tropo.offline'), 'warn'); return; }
   const g = tropoGrid(); const hours = +(S.settings.tropoH || 0); const stamp = new Date().toISOString().slice(0, 13);
-  const key = [g.w, g.s, g.e, g.n, hours, stamp].join('|');
+  const key = [g.step, g.w, g.s, g.e, g.n, hours, stamp].join('|');
   if (!force && key === tropoSt.key) return;
   if (tropoSt.busy) { tropoSt.again = true; return; }
-  tropoSt.busy = true; tropoSetLegend(t('tropo.loading'));
+  const pts = []; for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) pts.push({ lat: g.n - j * g.step, lon: g.w + i * g.step });
+  const missing = pts.filter(p => !tropoSt.cache.has(tropoPtKey(stamp, hours, p.lat, p.lon)));
+  if (missing.length && Date.now() < tropoSt.retryAt) { tropoSetLegend(t('tropo.rateLimited', Math.ceil((tropoSt.retryAt - Date.now()) / 1000))); clearTimeout(tropoSt.timer); tropoSt.timer = setTimeout(() => tropoRefresh(false), tropoSt.retryAt - Date.now() + 200); return; }
+  tropoSt.busy = true; if (missing.length) tropoSetLegend(t('tropo.loading'));
   try {
-    const lats = [], lons = [];
-    for (let j = 0; j < TROPO_NY; j++) for (let i = 0; i < TROPO_NX; i++) { lats.push((g.n - (g.n - g.s) * j / (TROPO_NY - 1)).toFixed(3)); lons.push((g.w + (g.e - g.w) * i / (TROPO_NX - 1)).toFixed(3)); }
     const vars = TROPO_LEVELS.flatMap(p => ['temperature_' + p + 'hPa', 'relative_humidity_' + p + 'hPa', 'geopotential_height_' + p + 'hPa']).join(',');
-    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lats.join(',') + '&longitude=' + lons.join(',') + '&hourly=' + vars + '&forecast_days=2&timezone=UTC';
-    const res = await fetch(url); if (!res.ok) throw new Error('HTTP ' + res.status);
-    let data = await res.json(); if (!Array.isArray(data)) data = [data];
-    if (data.length !== lats.length || !data[0].hourly) throw new Error(data.reason || 'unexpected reply');
-    const ti = tropoHourIndex(data[0].hourly.time, hours);
-    const grad = data.map(d => tropoGradient(d.hourly, ti));
-    tropoDraw(grad, g); tropoSt.key = key; tropoSt.modelTime = data[0].hourly.time[ti];
-    let minG = Infinity; for (const v of grad) if (v != null && v < minG) minG = v;
-    tropoSetLegend(t('tropo.data', tropoSt.modelTime.replace('T', ' ')) + (minG < Infinity ? ' · min ' + Math.round(minG) + ' N/km' : ''));
+    for (let o = 0; o < missing.length; o += TROPO_CHUNK) {
+      const chunk = missing.slice(o, o + TROPO_CHUNK);
+      const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + chunk.map(p => p.lat.toFixed(2)).join(',') + '&longitude=' + chunk.map(p => p.lon.toFixed(2)).join(',') + '&hourly=' + vars + '&forecast_days=2&timezone=UTC';
+      const res = await fetch(url);
+      if (res.status === 429) { tropoSt.retryAt = Date.now() + 60000; tropoSetLegend(t('tropo.rateLimited', 60)); clearTimeout(tropoSt.timer); tropoSt.timer = setTimeout(() => tropoRefresh(true), 60200); break; }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      let data = await res.json(); if (!Array.isArray(data)) data = [data];
+      if (data.length !== chunk.length || !data[0].hourly) throw new Error(data.reason || 'unexpected reply');
+      const ti = tropoHourIndex(data[0].hourly.time, hours); tropoSt.modelTime[stamp + '|' + hours] = data[0].hourly.time[ti];
+      chunk.forEach((p, i) => tropoSt.cache.set(tropoPtKey(stamp, hours, p.lat, p.lon), tropoGradient(data[i].hourly, ti)));
+    }
+    if (tropoSt.cache.size > 4000) for (const k of tropoSt.cache.keys()) if (!k.startsWith(stamp)) tropoSt.cache.delete(k); // oude modeluren opruimen
+    const grad = pts.map(p => tropoSt.cache.get(tropoPtKey(stamp, hours, p.lat, p.lon)) ?? null);
+    if (grad.some(v => v != null)) {
+      tropoDraw(grad, g); tropoSt.key = key;
+      let minG = Infinity; for (const v of grad) if (v != null && v < minG) minG = v;
+      const mt = tropoSt.modelTime[stamp + '|' + hours] || '';
+      tropoSetLegend(t('tropo.data', mt.replace('T', ' ')) + (minG < Infinity ? ' · max ' + tropoLevel(minG) + ' (' + Math.round(minG) + ' N/km)' : ''));
+    }
   } catch (e) { tropoSetLegend(''); toast(t('tropo.err', e.message || e), 'warn'); }
   finally { tropoSt.busy = false; if (tropoSt.again) { tropoSt.again = false; tropoRefresh(false); } }
 }
+const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+const mercLat = (y) => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180 / Math.PI;
 function tropoDraw(grad, g) {
-  const W = 320, H = 256; const cv = tropoSt.canvas || (tropoSt.canvas = document.createElement('canvas')); cv.width = W; cv.height = H;
+  // pixelrijen lopen lineair in Mercator-y (zo plaatst MapLibre de afbeelding), kolommen lineair in lengtegraad
+  const W = 512, H = 384; const cv = tropoSt.canvas || (tropoSt.canvas = document.createElement('canvas')); cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d'); const img = ctx.createImageData(W, H); const px = img.data;
-  const at = (i, j) => grad[Math.min(TROPO_NY - 1, Math.max(0, j)) * TROPO_NX + Math.min(TROPO_NX - 1, Math.max(0, i))];
+  const yN = mercY(g.n), yS = mercY(g.s);
+  const at = (i, j) => grad[Math.min(g.ny - 1, Math.max(0, j)) * g.nx + Math.min(g.nx - 1, Math.max(0, i))];
   for (let y = 0; y < H; y++) {
-    const fy = y / (H - 1) * (TROPO_NY - 1), j0 = Math.floor(fy), ty = fy - j0;
+    const lat = mercLat(yN + (yS - yN) * y / (H - 1)); const fy = (g.n - lat) / g.step, j0 = Math.floor(fy), ty = fy - j0;
     for (let x = 0; x < W; x++) {
-      const fx = x / (W - 1) * (TROPO_NX - 1), i0 = Math.floor(fx), tx = fx - i0;
+      const fx = x / (W - 1) * (g.nx - 1), i0 = Math.floor(fx), tx = fx - i0;
       const a = at(i0, j0), b = at(i0 + 1, j0), c = at(i0, j0 + 1), d = at(i0 + 1, j0 + 1);
       let v; if (a != null && b != null && c != null && d != null) v = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty; else v = a ?? b ?? c ?? d;
       const rgba = tropoRGBA(v); const o = (y * W + x) * 4; px[o] = rgba[0]; px[o + 1] = rgba[1]; px[o + 2] = rgba[2]; px[o + 3] = rgba[3];
@@ -4275,7 +4310,7 @@ function tropoDraw(grad, g) {
   tropoApply([[g.w, g.n], [g.e, g.n], [g.e, g.s], [g.w, g.s]]);
 }
 // Canvas-bron (geen fetch, dus geen CSP- of offline-probleem); bij elke verversing bron en laag opnieuw zetten,
-// want een niet-geanimeerde canvas-bron leest het canvas maar één keer. Pas als de stijl geladen is.
+// want een niet-geanimeerde canvas-bron leest het canvas maar één keer.
 function tropoApply(coords) {
   // isStyleLoaded() wacht ook op alle tegels; hier is alleen de stijl zelf nodig (anders gooit addSource)
   const defer = (ev) => { tropoSt.pending = coords; mapObj.once(ev, () => { const p = tropoSt.pending; if (p) { tropoSt.pending = null; tropoApply(p); } }); };
@@ -4289,20 +4324,26 @@ function tropoApply(coords) {
 }
 function tropoEnsureLayer() {
   if (!mapObj || !mapObj.getSource('tropo')) return;
-  if (mapObj.getLayer('tropo')) { mapObj.setLayoutProperty('tropo', 'visibility', tropoEnabled() ? 'visible' : 'none'); return; }
+  if (mapObj.getLayer('tropo')) { mapObj.setLayoutProperty('tropo', 'visibility', tropoEnabled() ? 'visible' : 'none'); mapObj.setPaintProperty('tropo', 'raster-opacity', tropoOpacity()); return; }
   const before = mapObj.getLayer('packets-line') ? 'packets-line' : undefined;
-  mapObj.addLayer({ id: 'tropo', type: 'raster', source: 'tropo', paint: { 'raster-opacity': 0.8, 'raster-resampling': 'linear', 'raster-fade-duration': 0 }, layout: { visibility: tropoEnabled() ? 'visible' : 'none' } }, before);
+  mapObj.addLayer({ id: 'tropo', type: 'raster', source: 'tropo', paint: { 'raster-opacity': tropoOpacity(), 'raster-resampling': 'linear', 'raster-fade-duration': 0 }, layout: { visibility: tropoEnabled() ? 'visible' : 'none' } }, before);
 }
-function tropoSetLegend(txt) { const el = $('#map-tropo-legend'); if (!el) return; el.hidden = !tropoEnabled(); const ts = $('#map-tropo-ts'); if (ts) ts.textContent = txt || ''; }
+function tropoSetOpacity(pct) { S.settings.tropoOp = Math.min(100, Math.max(10, +pct || 75)); saveState(); const sl = $('#map-tropo-op'); if (sl) sl.value = String(S.settings.tropoOp); if (mapObj && mapObj.getLayer('tropo')) mapObj.setPaintProperty('tropo', 'raster-opacity', tropoOpacity()); }
+// legenda: kleurbalk 1..10+ (tooltip met uitleg) + modeluur/max-niveau
+function tropoSetLegend(txt) {
+  const el = $('#map-tropo-legend'); if (!el) return; el.hidden = !tropoEnabled();
+  const bar = $('#map-tropo-bar'); if (bar && !bar.childElementCount) bar.innerHTML = TROPO_SCALE.map((c, i) => i ? `<i style="background:rgb(${c.join(',')})" title="${i === 10 ? '10+' : i} · ${esc(t('tropo.lv.' + TROPO_LEVEL_KEYS[i]))}"></i>` : '').join('');
+  const ts = $('#map-tropo-ts'); if (ts) ts.textContent = txt || '';
+}
 function tropoSetEnabled(on) {
-  S.settings.tropo = !!on; saveState(); const sel = $('#map-tropo-h'); if (sel) sel.hidden = !on; const cb = $('#map-tropo'); if (cb) cb.checked = !!on;
+  S.settings.tropo = !!on; saveState(); for (const id of ['#map-tropo-h', '#map-tropo-op']) { const x = $(id); if (x) x.hidden = !on; } const cb = $('#map-tropo'); if (cb) cb.checked = !!on;
   if (!on) { if (mapObj && mapObj.getLayer('tropo')) mapObj.setLayoutProperty('tropo', 'visibility', 'none'); tropoSetLegend(''); return; }
   if (mapObj && mapObj.getLayer('tropo')) mapObj.setLayoutProperty('tropo', 'visibility', 'visible');
   tropoSetLegend(''); if (mapObj) tropoRefresh(true);
 }
 function tropoBind() {
   if (!mapObj) return;
-  mapObj.on('moveend', () => { if (!tropoEnabled()) return; clearTimeout(tropoSt.timer); tropoSt.timer = setTimeout(() => tropoRefresh(false), 1200); });
+  mapObj.on('moveend', () => { if (!tropoEnabled()) return; clearTimeout(tropoSt.timer); tropoSt.timer = setTimeout(() => tropoRefresh(false), 1500); });
   mapObj.on('style.load', () => { tropoSt.key = null; if (tropoEnabled()) setTimeout(() => tropoRefresh(true), 600); }); // bij themawissel gaan bron en laag verloren
   if (tropoEnabled()) mapObj.once('load', () => tropoRefresh(true));
 }
@@ -5473,6 +5514,8 @@ function wire() {
   on('#map-tropo', 'change', (e) => tropoSetEnabled(e.target.checked));
   on('#map-tropo-h', 'change', (e) => { S.settings.tropoH = +e.target.value; saveState(); tropoRefresh(true); });
   $('#map-tropo').checked = !!S.settings.tropo; $('#map-tropo-h').value = String(S.settings.tropoH || 0); $('#map-tropo-h').hidden = !S.settings.tropo;
+  $('#map-tropo-op').value = String(S.settings.tropoOp ?? 75); $('#map-tropo-op').hidden = !S.settings.tropo;
+  on('#map-tropo-op', 'input', (e) => tropoSetOpacity(e.target.value));
   // status-popup: knop onder een status-antwoord, en de knoppen in het venster zelf
   on('#messages', 'click', (e) => { const b = e.target.closest('.st-btn'); if (!b) return; const cv = activeConv(); const c = cv.pub ? S.contacts.get(cv.pub) : null; if (c) openStatusDlg(c); });
   on('#rs-auto', 'change', (e) => { S.settings.statusPopup = e.target.checked ? 'auto' : 'manual'; saveState(); });
@@ -5599,7 +5642,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0008-1a01527' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0022-ba23338' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5657,7 +5700,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0008-1a01527') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0022-ba23338') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
