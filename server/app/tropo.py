@@ -15,7 +15,11 @@ gradiënt dN/dh (N-eenheden per km) tussen opeenvolgende niveaus. Normaal ≈ -4
 (src/tropo.js), zodat server en terugvalpad dezelfde kleuren geven.
 
 Gewicht bij Open-Meteo: 3 niveaus × 3 variabelen = 9 variabelen ≤ 10, dus 1 per punt;
-1610 punten in 17 blokken van 100 = 17 aanvragen per uur.
+1610 punten in 17 blokken van 100. Open-Meteo telt per punt, met een daglimiet van
+10.000 per IP: elk uur ophalen (38.640 per dag) zou dus 429 geven. Daarom om de 6 uur
+(6.440 per dag); elk antwoord bevat 48 uur voorspelling en slice_field kiest daaruit
+het gevraagde uur, dus tussen twee ophaalbeurten blijft het veld bruikbaar. De server
+deelt bovendien zijn publieke IP met de browsers thuis die het terugvalpad gebruiken.
 """
 import json
 import os
@@ -39,7 +43,8 @@ NY = int(round((NORTH - SOUTH) / STEP)) + 1
 CHUNK = 100
 CHUNK_PAUSE_S = 3.0
 FIRST_RUN_DELAY_S = 20
-INTERVAL_S = 3600
+INTERVAL_S = 6 * 3600
+RETRY_S = 900
 API = "https://api.open-meteo.com/v1/forecast"
 
 _lock = threading.Lock()
@@ -166,11 +171,11 @@ def _run():
         except Exception as e:  # noqa: BLE001 - de lus mag nooit stoppen
             _last_error = str(e)
             print(f"[meshmanager] tropo: ophalen mislukt: {e}", flush=True)
-            time.sleep(300)
+            time.sleep(RETRY_S)
             continue
-        # Elk uur, net na het hele uur: dan zijn de nieuwe modeluren beschikbaar.
+        # Om de 6 uur, een kwartier na 00/06/12/18 UTC: dan is de nieuwe modelrun er.
         now = time.time()
-        time.sleep(max(60, INTERVAL_S - (now % INTERVAL_S) + 300))
+        time.sleep(max(60, INTERVAL_S - (now % INTERVAL_S) + 900))
 
 
 def start():
