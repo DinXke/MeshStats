@@ -10,6 +10,13 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.26.1 - 2026-09-22
+
+- **Tropo-veld om de 6 uur** in plaats van elk uur: Open-Meteo telt per rasterpunt met
+  een daglimiet van 10.000 per IP, en 1610 punten per uur gaf op de server zelf 429.
+  Het antwoord bevat 48 uur voorspelling, dus het veld blijft tussen twee beurten
+  bruikbaar. Herkansing na een fout na 15 minuten.
+
 ## 2.26.0 - 2026-09-22
 
 - **Tropo-veld voor MeshChat** (`GET /api/tropo?h=0..36`, `app/tropo.py`). De server
