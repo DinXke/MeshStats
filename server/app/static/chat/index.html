@@ -457,6 +457,7 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
   <span class="sep no-mobile"></span>
   <button class="btn sm" id="btn-usb" title="Verbinden via USB (Web Serial)" data-i18n-title="h.usbTitle"><svg class="i"><use href="#i-usb"/></svg><span class="no-mobile">USB</span></button>
   <button class="btn sm" id="btn-bt" title="Verbinden via Bluetooth (Web Bluetooth)" data-i18n-title="h.btTitle"><svg class="i"><use href="#i-bt"/></svg><span class="no-mobile">Bluetooth</span></button>
+  <button class="btn sm" id="btn-tcp" title="Verbinden via TCP/IP (WiFi-companion, via WebSocket-brug)" data-i18n-title="h.tcpTitle"><svg class="i"><use href="#i-globe"/></svg><span class="no-mobile">TCP/IP</span></button>
   <button class="btn sm ghost no-mobile" id="btn-disconnect" disabled data-i18n="h.disconnect">Verbreken</button>
   <button class="btn sm ghost no-mobile" id="btn-sync" disabled data-i18n="h.sync" data-i18n-title="h.syncTitle" title="Wachtrij van de node nu leeghalen">Sync</button>
   <span class="spacer"></span>
@@ -2697,6 +2698,22 @@ const MSG_TERMINALS = new Set([RESP.CONTACT_MSG_RECV, RESP.CHANNEL_MSG_RECV, RES
 // ---------- transports ----------
 const UART_SVC = '6e400001-b5a3-f393-e0a9-e50e24dcca9e', UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e', UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
+// Companion-framing over een bytestroom (USB, TCP): de app STUURT '<' (0x3C) + lengte LE16 + data,
+// de node stuurt '>' (0x3E) + lengte LE16 + data (firmware: ArduinoSerialInterface / SerialWifiInterface).
+const FRAME_TX = 0x3C, FRAME_RX = 0x3E;
+function frameSplitter(onFrame) {
+  let state = 0, len = 0, frame = null, fi = 0;
+  return (chunk) => {
+    for (const b of chunk) {
+      if (state === 0) { if (b === FRAME_RX) state = 1; }
+      else if (state === 1) { len = b; state = 2; }
+      else if (state === 2) { len |= b << 8; if (len === 0 || len > 4096) { state = 0; continue; } frame = new Uint8Array(len); fi = 0; state = 3; }
+      else { frame[fi++] = b; if (fi >= len) { state = 0; try { onFrame(frame); } catch (e) { console.error(e); } } }
+    }
+  };
+}
+function frameWrap(payload) { return cat([FRAME_TX, payload.length & 255, payload.length >> 8], payload); }
+
 class SerialTransport {
   constructor() { this.kind = 'USB'; this.onFrame = null; this.onClose = null; this.port = null; this._reading = false; }
   static supported() { return 'serial' in navigator; }
@@ -2709,23 +2726,18 @@ class SerialTransport {
   }
   async _readLoop() {
     const reader = this.port.readable.getReader(); this.reader = reader;
-    let state = 0, len = 0, frame = null, fi = 0;
+    const feed = frameSplitter((f) => this.onFrame && this.onFrame(f));
     try {
       while (this._reading) {
         const { value, done } = await reader.read(); if (done) break;
-        for (const b of value) {
-          if (state === 0) { if (b === 0x3C) state = 1; }
-          else if (state === 1) { len = b; state = 2; }
-          else if (state === 2) { len |= b << 8; if (len === 0 || len > 4096) { state = 0; continue; } frame = new Uint8Array(len); fi = 0; state = 3; }
-          else { frame[fi++] = b; if (fi >= len) { state = 0; try { this.onFrame && this.onFrame(frame); } catch (e) { console.error(e); } } }
-        }
+        feed(value);
       }
     } catch (e) { console.warn('serial read', e); }
     finally { try { reader.releaseLock(); } catch (e) {} this._closed(); }
   }
   async send(payload) {
     if (!this.writer) throw new Error(t('core.notConnected'));
-    await this.writer.write(cat([0x3E, payload.length & 255, payload.length >> 8], payload));
+    await this.writer.write(frameWrap(payload));
   }
   async close() {
     this._reading = false;
@@ -2735,6 +2747,27 @@ class SerialTransport {
     this._closed();
   }
   _closed() { if (this.port) { this.port = null; this.writer = null; this.onClose && this.onClose(); } }
+}
+
+// TCP/IP via WebSocket. Een browser kan geen ruwe TCP-socket openen; een kleine brug (src/tools/meshchat-bridge.py,
+// of websocat) geeft de bytes door naar poort 5000 van de WiFi-companion. Zelfde framing als USB.
+class WsTransport {
+  constructor(url) { this.kind = 'TCP/IP'; this.url = url; this.onFrame = null; this.onClose = null; this.ws = null; }
+  static supported() { return 'WebSocket' in globalThis; }
+  connect() {
+    return new Promise((resolve, reject) => {
+      let ws; try { ws = new WebSocket(this.url); } catch (e) { reject(new Error(t('conn.tcpBadUrl', this.url))); return; }
+      ws.binaryType = 'arraybuffer'; const feed = frameSplitter((f) => this.onFrame && this.onFrame(f));
+      const timer = setTimeout(() => { try { ws.close(); } catch (e) {} reject(new Error(t('conn.tcpTimeout', this.url))); }, 10000);
+      ws.onopen = () => { clearTimeout(timer); this.ws = ws; resolve(); };
+      ws.onmessage = (ev) => { if (ev.data instanceof ArrayBuffer) feed(new Uint8Array(ev.data)); };
+      ws.onerror = () => { clearTimeout(timer); if (!this.ws) reject(new Error(t('conn.tcpFailed', this.url))); };
+      ws.onclose = (ev) => { clearTimeout(timer); if (!this.ws) { reject(new Error(ev.reason ? t('conn.tcpClosed', ev.reason) : t('conn.tcpFailed', this.url))); return; } this._closed(); };
+    });
+  }
+  async send(payload) { if (!this.ws || this.ws.readyState !== 1) throw new Error(t('core.notConnected')); this.ws.send(frameWrap(payload)); }
+  async close() { try { this.ws && this.ws.close(); } catch (e) {} this._closed(); }
+  _closed() { if (this.ws) { this.ws = null; this.onClose && this.onClose(); } }
 }
 
 class BleTransport {
@@ -3059,6 +3092,7 @@ let LANG = 'nl';
 const I18N = {};
 
 I18N.nl = {
+  'h.tcpTitle': 'Verbinden via TCP/IP (WiFi-companion, via een WebSocket-brug)', 'conn.tcpTitle': 'Verbinden via TCP/IP', 'conn.tcpLabel': 'WebSocket-adres van de brug naar de node (bv. ws://127.0.0.1:5005). Een browser kan niet rechtstreeks TCP: draai src/tools/meshchat-bridge.py <ip-node> op deze pc, of websocat.', 'conn.noWs': 'Deze browser ondersteunt geen WebSocket.', 'conn.tcpBadUrl': 'Ongeldig adres: {0}', 'conn.tcpTimeout': 'Geen antwoord van {0} binnen 10 s. Draait de brug, en staat de node aan?', 'conn.tcpFailed': 'Verbinding met {0} mislukt. Draait de brug (meshchat-bridge.py) en klopt het adres?', 'conn.tcpClosed': 'Verbinding gesloten: {0}', 'conn.tcpMixed': 'Vanaf https mag de browser alleen naar localhost een onbeveiligde ws://-verbinding openen. Draai de brug op deze pc (ws://127.0.0.1:5005), gebruik wss://, of open MeshChat als los bestand.',
   'tropo.stale': 'offline · laatst bekend: model {0} UTC',
   'tropo.legendTip': 'Tropo-ducting-schatting (Open-Meteo-weermodel, vraagt internet). Kleurschaal zoals de Hepburn-kaarten (dxinfocentre.com), berekend uit de refractiviteitsgradiënt dN/dh onder 1,5 km:\n• doorzichtig: 0, niets (gradiënt boven -60 N/km; normaal is -40)\n• paars 1 marginaal · blauw 2 redelijk · groen 3 matig · lichtgroen 4 hoog\n• geel 5 sterk · amber 6 zeer sterk · oranje 7 intens\n• rood 8 zeer intens (ducting, onder -157 N/km) · roze 9-10+ extreem\n• Schatting uit lagen van 200–700 m; dunne ducts vlak boven de grond blijven onzichtbaar.\nBron: ICON-EU (DWD) via meshmanager.net, gekalibreerd op de Hepburn-kaarten; voor 868 MHz telt de nachtelijke grondinversie boven land voor de helft mee (Hepburn negeert die).', 'tropo.opacity': 'Doorzichtigheid van de tropo-laag', 'tropo.lv.nil': 'niets', 'tropo.lv.marginal': 'marginaal', 'tropo.lv.fair': 'redelijk', 'tropo.lv.moderate': 'matig', 'tropo.lv.high': 'hoog', 'tropo.lv.strong': 'sterk', 'tropo.lv.vstrong': 'zeer sterk', 'tropo.lv.intense': 'intens', 'tropo.lv.vintense': 'zeer intens (ducting)', 'tropo.lv.extreme': 'extreem', 'tropo.rateLimited': 'te veel aanvragen bij Open-Meteo, opnieuw over {0} s',
   'emoji.flags': 'Vlaggen', 'h.nameBytes': '{0}/31 bytes (een vlag telt 8)', 'map.tools.tropo': 'Tropo', 'tropo.help': 'Tropo-ducting-schatting uit het Open-Meteo-weermodel (vraagt internet): geel = superrefractie, rood = ducting.', 'tropo.h0': 'nu', 'tropo.loading': 'laden…', 'tropo.offline': 'De tropo-overlay heeft internet nodig.', 'tropo.err': 'Tropo-gegevens ophalen mislukt: {0}', 'tropo.legend.super': 'superrefractie', 'tropo.legend.duct': 'ducting', 'tropo.data': 'model {0} UTC',
@@ -3306,6 +3340,7 @@ I18N.nl = {
 };
 
 I18N.en = {
+  'h.tcpTitle': 'Connect via TCP/IP (WiFi companion, through a WebSocket bridge)', 'conn.tcpTitle': 'Connect via TCP/IP', 'conn.tcpLabel': 'WebSocket address of the bridge to the node (e.g. ws://127.0.0.1:5005). A browser cannot open raw TCP: run src/tools/meshchat-bridge.py <node-ip> on this PC, or websocat.', 'conn.noWs': 'This browser does not support WebSocket.', 'conn.tcpBadUrl': 'Invalid address: {0}', 'conn.tcpTimeout': 'No answer from {0} within 10 s. Is the bridge running and the node on?', 'conn.tcpFailed': 'Connection to {0} failed. Is the bridge (meshchat-bridge.py) running and the address right?', 'conn.tcpClosed': 'Connection closed: {0}', 'conn.tcpMixed': 'From https the browser only allows an insecure ws:// connection to localhost. Run the bridge on this PC (ws://127.0.0.1:5005), use wss://, or open MeshChat as a local file.',
   'tropo.stale': 'offline · last known: model {0} UTC',
   'tropo.legendTip': 'Tropospheric ducting estimate (Open-Meteo weather model, needs internet). Colour scale like the Hepburn maps (dxinfocentre.com), derived from the refractivity gradient dN/dh below 1.5 km:\n• transparent: 0, nil (gradient above -60 N/km; -40 is normal)\n• purple 1 marginal · blue 2 fair · green 3 moderate · lime 4 high\n• yellow 5 strong · amber 6 very strong · orange 7 intense\n• red 8 very intense (ducting, below -157 N/km) · pink 9-10+ extreme\n• Estimated from layers of 200–700 m; thin ducts close to the ground stay invisible.\nSource: ICON-EU (DWD) via meshmanager.net, calibrated against the Hepburn maps; for 868 MHz the nocturnal ground inversion over land counts at half weight (Hepburn ignores it).', 'tropo.opacity': 'Opacity of the tropo layer', 'tropo.lv.nil': 'nil', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'fair', 'tropo.lv.moderate': 'moderate', 'tropo.lv.high': 'high', 'tropo.lv.strong': 'strong', 'tropo.lv.vstrong': 'very strong', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'very intense (ducting)', 'tropo.lv.extreme': 'extreme', 'tropo.rateLimited': 'too many requests to Open-Meteo, retrying in {0} s',
   'emoji.flags': 'Flags', 'h.nameBytes': '{0}/31 bytes (a flag counts 8)', 'map.tools.tropo': 'Tropo', 'tropo.help': 'Tropospheric ducting estimate from the Open-Meteo weather model (needs internet): yellow = super-refraction, red = ducting.', 'tropo.h0': 'now', 'tropo.loading': 'loading…', 'tropo.offline': 'The tropo overlay needs an internet connection.', 'tropo.err': 'Fetching tropo data failed: {0}', 'tropo.legend.super': 'super-refraction', 'tropo.legend.duct': 'ducting', 'tropo.data': 'model {0} UTC',
@@ -3532,6 +3567,7 @@ I18N.en = {
 };
 
 I18N.fr = {
+  'h.tcpTitle': 'Connecter via TCP/IP (companion WiFi, via un pont WebSocket)', 'conn.tcpTitle': 'Connexion TCP/IP', 'conn.tcpLabel': 'Adresse WebSocket du pont vers le nœud (ex. ws://127.0.0.1:5005). Un navigateur ne peut pas ouvrir de TCP brut : lancez src/tools/meshchat-bridge.py <ip-du-nœud> sur ce PC, ou websocat.', 'conn.noWs': 'Ce navigateur ne prend pas en charge WebSocket.', 'conn.tcpBadUrl': 'Adresse invalide : {0}', 'conn.tcpTimeout': 'Pas de réponse de {0} en 10 s. Le pont tourne-t-il et le nœud est-il allumé ?', 'conn.tcpFailed': 'Connexion à {0} échouée. Le pont (meshchat-bridge.py) tourne-t-il et l\'adresse est-elle correcte ?', 'conn.tcpClosed': 'Connexion fermée : {0}', 'conn.tcpMixed': 'Depuis https, le navigateur n\'autorise une connexion ws:// non sécurisée que vers localhost. Lancez le pont sur ce PC (ws://127.0.0.1:5005), utilisez wss://, ou ouvrez MeshChat comme fichier local.',
   'tropo.stale': 'hors ligne · dernier connu : modèle {0} UTC',
   'tropo.legendTip': 'Estimation de la propagation troposphérique (modèle météo Open-Meteo, nécessite internet). Échelle de couleurs comme les cartes Hepburn (dxinfocentre.com), calculée à partir du gradient de réfractivité dN/dh sous 1,5 km :\n• transparent : 0, rien (gradient au-dessus de -60 N/km ; -40 est normal)\n• violet 1 marginal · bleu 2 passable · vert 3 modéré · vert clair 4 élevé\n• jaune 5 fort · ambre 6 très fort · orange 7 intense\n• rouge 8 très intense (ducting, sous -157 N/km) · rose 9-10+ extrême\n• Estimation à partir de couches de 200–700 m ; les conduits minces près du sol restent invisibles.\nSource : ICON-EU (DWD) via meshmanager.net, calibré sur les cartes Hepburn ; pour 868 MHz l\'inversion nocturne au sol compte pour moitié (Hepburn l\'ignore).', 'tropo.opacity': 'Opacité de la couche tropo', 'tropo.lv.nil': 'rien', 'tropo.lv.marginal': 'marginal', 'tropo.lv.fair': 'passable', 'tropo.lv.moderate': 'modéré', 'tropo.lv.high': 'élevé', 'tropo.lv.strong': 'fort', 'tropo.lv.vstrong': 'très fort', 'tropo.lv.intense': 'intense', 'tropo.lv.vintense': 'très intense (ducting)', 'tropo.lv.extreme': 'extrême', 'tropo.rateLimited': 'trop de requêtes vers Open-Meteo, nouvel essai dans {0} s',
   'emoji.flags': 'Drapeaux', 'h.nameBytes': '{0}/31 octets (un drapeau compte 8)', 'map.tools.tropo': 'Tropo', 'tropo.help': 'Estimation de la propagation troposphérique (ducting) d\'après le modèle météo Open-Meteo (nécessite internet) : jaune = superréfraction, rouge = ducting.', 'tropo.h0': 'maintenant', 'tropo.loading': 'chargement…', 'tropo.offline': 'La couche tropo nécessite une connexion internet.', 'tropo.err': 'Échec du chargement des données tropo : {0}', 'tropo.legend.super': 'superréfraction', 'tropo.legend.duct': 'ducting', 'tropo.data': 'modèle {0} UTC',
@@ -3810,8 +3846,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0119-9164403'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.3.8', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0706-c3cb057'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.4.0', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 400;
 
@@ -4711,11 +4747,20 @@ const C = S.client;
 
 async function connect(kind) {
   if (C.connected || S.connecting) return;
-  const Tr = kind === 'ble' ? BleTransport : SerialTransport;
-  if (!Tr.supported()) { errorMsg(kind === 'ble' ? t('conn.noBle') : t('conn.noSerial'), S.convs.get('status')); return; }
+  const Tr = kind === 'ble' ? BleTransport : kind === 'tcp' ? WsTransport : SerialTransport;
+  if (!Tr.supported()) { errorMsg(kind === 'ble' ? t('conn.noBle') : kind === 'tcp' ? t('conn.noWs') : t('conn.noSerial'), S.convs.get('status')); return; }
+  let url = null;
+  if (kind === 'tcp') {
+    url = await promptDlg(t('conn.tcpTitle'), t('conn.tcpLabel'), S.settings.tcpUrl || 'ws://127.0.0.1:5005'); if (url == null) return;
+    url = url.trim(); if (!url) return;
+    if (!/^wss?:\/\//i.test(url)) url = 'ws://' + url; // 'host:poort' volstaat
+    // Een https-pagina mag alleen naar localhost een onbeveiligde ws:// openen (mixed content); waarschuw vooraf.
+    if (location.protocol === 'https:' && /^ws:\/\//i.test(url) && !/^ws:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(url)) { errorMsg(t('conn.tcpMixed'), S.convs.get('status')); return; }
+    S.settings.tcpUrl = url; saveState();
+  }
   S.connecting = true; setStatusKey('st-busy', 'status.connecting');
   try {
-    await C.connect(new Tr());
+    await C.connect(kind === 'tcp' ? new Tr(url) : new Tr());
     setStatusKey('st-busy', 'status.syncing');
     await afterConnect();
     setStatusKey('st-on', 'status.connected', C.kind);
@@ -5529,7 +5574,7 @@ function showMsgInfo(m, cv) {
 
 // ---------- wiring ----------
 function wire() {
-  on('#btn-usb', 'click', () => connect('usb')); on('#btn-bt', 'click', () => connect('ble')); on('#btn-disconnect', 'click', () => C.disconnect());
+  on('#btn-usb', 'click', () => connect('usb')); on('#btn-bt', 'click', () => connect('ble')); on('#btn-tcp', 'click', () => connect('tcp')); on('#btn-disconnect', 'click', () => C.disconnect());
   on('#lang-sel', 'change', (e) => setLang(e.target.value)); on('#s-lang', 'change', (e) => setLang(e.target.value));
   on('#btn-theme', 'click', () => { const dark = matchMedia('(prefers-color-scheme:dark)').matches; const cur = document.documentElement.dataset.theme || (dark ? 'dark' : 'light'); setTheme(cur === 'dark' ? 'light' : 'dark'); });
   on('#btn-sidebar', 'click', () => document.body.classList.toggle('sidebar-open')); on('#btn-users', 'click', () => document.body.classList.toggle('users-open')); on('#backdrop', 'click', () => document.body.classList.remove('sidebar-open', 'users-open'));
@@ -5703,7 +5748,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0119-9164403' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0706-c3cb057' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5761,7 +5806,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0119-9164403') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0706-c3cb057') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
