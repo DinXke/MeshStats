@@ -10,6 +10,17 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.26.0 - 2026-09-22
+
+- **Tropo-veld voor MeshChat** (`GET /api/tropo?h=0..36`, `app/tropo.py`). De server
+  haalt één keer per uur de drukniveaus 1000/925/850 hPa van Open-Meteo op voor heel
+  West-Europa (raster 0,5°, 1610 punten, 17 aanvragen) en serveert de
+  refractiviteitsgradiënt als één JSON van ~10 kB, met CORS en 10 minuten cache, ook
+  op de chat-hostnaam. Reden: MeshChat vroeg dit eerst per client en per kaartbeeld
+  aan Open-Meteo (tot 220 punten per keer) en liep tegen de limiet per IP (429).
+  `MM_TROPO=0` zet de ophaal-lus uit. MeshChat 0.3.4 gebruikt dit veld en valt
+  terug op Open-Meteo zelf als de server onbereikbaar is.
+
 ## 2.25.0 - 2026-09-21
 
 - **MeshChat op chat.meshmanager.net.** Op die hostnaam (instelbaar met

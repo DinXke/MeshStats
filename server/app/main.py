@@ -13,7 +13,7 @@ from fastapi import FastAPI, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (auth, battwatch, clocksync, companions, db, hadiscovery, limits, meshmoni,
+from . import (auth, battwatch, clocksync, companions, db, hadiscovery, limits, meshmoni, tropo,
                mqtt_ingest, rbac, retention, routes_admin, routes_api,
                routes_companions, routes_public, sensornode, sensorpush,
                sweepsched, tsdb, webpush)
@@ -50,7 +50,7 @@ async def _chat_host_response(request):
     if not _is_chat_host(request):
         return None
     path = request.url.path
-    if path.startswith("/tiles/") or path == "/tiles":
+    if path.startswith("/tiles/") or path in ("/tiles", "/api/tropo"):
         return None
     if path.startswith("/chat"):
         rest = path[len("/chat"):].lstrip("/")
@@ -82,7 +82,8 @@ async def security_headers(request, call_next):
     # per byte-bereik (Range) uit basemap.pmtiles plus glyphs en sprites. Zonder
     # deze koppen weigert de browser dat. Het zijn openbare OSM-afgeleiden; er zit
     # niets persoonlijks in en de rest van de site houdt zijn same-origin-regels.
-    if request.url.path.startswith("/tiles"):
+    # /api/tropo idem: het tropo-veld voor MeshChat, ook voor het losse bestand.
+    if request.url.path.startswith(("/tiles", "/api/tropo")):
         h["Access-Control-Allow-Origin"] = "*"
         h["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
         h["Access-Control-Allow-Headers"] = "Range, If-None-Match, If-Modified-Since"
@@ -126,6 +127,7 @@ app.include_router(routes_admin.router)
 # top-level navigatie-onderdeel). Zie routes_companions.py.
 app.include_router(routes_companions.router)
 app.include_router(routes_public.router)
+app.include_router(tropo.router)          # tropo-ducting-veld voor MeshChat (GET /api/tropo)
 app.include_router(meshmoni.router)   # de PWA-subsite voor op de telefoon
 app.include_router(sensorpush.router)  # gebeurtenis-push van sensornodes
 app.include_router(companions.router)  # instant-push van companion-locatie/-val (POST /api/companion)
@@ -198,6 +200,7 @@ def bootstrap():
     # wacht sowieso vijf minuten voor zijn eerste ronde -- zie FIRST_RUN_DELAY_S
     # -- maar de volgorde hier maakt dat niet toevallig goed.
     clocksync.start()     # en krijgen van ons periodiek de juiste tijd terug
+    tropo.start()         # elk uur het tropo-veld van Open-Meteo, één keer voor alle MeshChat-clients
     sweepsched.start()    # en worden volgens hun eigen schema uitgevraagd
     # En de nodes die niet over MQTT binnenkomen maar hun eigen API over IP
     # aanbieden, worden op hun eigen ritme uitgelezen. Deze weg raakt de broker
