@@ -421,6 +421,9 @@ h4.sub{margin:4px 0 8px;font-size:11px;letter-spacing:.8px;text-transform:upperc
 .map-countries label{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 0} .map-countries .sz{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--fg-mute)}
 @media (max-width:900px){ #map-legend{display:none} }
 .maplibregl-popup{z-index:5}
+
+#map-tropo-h{width:auto;flex:0 0 auto;height:26px;font-size:12px;padding:0 4px}
+@media (max-width:600px){ #map-tools{max-width:calc(100% - 20px)} #map-tools .btn,#map-tools label.btn{padding:3px 6px;font-size:11.5px} #map-search{width:120px!important} }
 </style>
 </head>
 <body>
@@ -3798,8 +3801,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260921-2252-895e7d5'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.3.0', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0008-1a01527'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.3.1', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 400;
 
@@ -4061,7 +4064,7 @@ function mapInit(container) {
   const pick = (e) => { const fs = mapObj.queryRenderedFeatures([[e.point.x - 16, e.point.y - 16], [e.point.x + 16, e.point.y + 16]], { layers: ['nodes-hit', 'nodes-label'] }); if (!fs.length) return null; let best = fs[0], bd = 1e9; for (const f of fs) { const p = mapObj.project(f.geometry.coordinates); const d = Math.hypot(p.x - e.point.x, p.y - e.point.y); if (d < bd) { bd = d; best = f; } } return best; };
   mapObj.on('click', (e) => { const f = pick(e); if (!f) return; e.preventDefault && e.preventDefault(); mapPopup(f, { lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] }); });
   mapObj.on('mousemove', (e) => { mapObj.getCanvas().style.cursor = pick(e) ? 'pointer' : ''; });
-  mapObj.on('error', (e) => { const msg = e && e.error && e.error.message || ''; if (/pmtiles|tiles|Failed to fetch/i.test(msg)) mapSetNotice(t('map_offline_missing')); });
+  mapObj.on('error', (e) => { if (e && e.sourceId === 'tropo') return; const msg = e && e.error && e.error.message || ''; if (/pmtiles|tiles|Failed to fetch/i.test(msg)) mapSetNotice(t('map_offline_missing')); });
   return mapObj;
 }
 function mapSetTheme() { if (!mapObj) return; mapObj.setStyle(mapStyle()); /* style.load voegt overlays opnieuw toe */ }
@@ -4222,8 +4225,9 @@ function tropoRGBA(g) {
 }
 function tropoGrid() {
   const b = mapObj.getBounds(); const w = b.getWest(), e = b.getEast(), s = b.getSouth(), n = b.getNorth();
-  const pw = (e - w) * 0.15, ph = (n - s) * 0.15; const r = (v) => Math.round(v * 4) / 4;
-  return { w: r(w - pw), e: r(e + pw), s: Math.max(-85, r(s - ph)), n: Math.min(85, r(n + ph)) };
+  // ruim rondom het beeld (15 %, minstens 0,1°) en naar buiten afronden op 0,25°, zodat de laag altijd het hele beeld dekt
+  const pw = Math.max(0.1, (e - w) * 0.15), ph = Math.max(0.1, (n - s) * 0.15); const fl = (v) => Math.floor(v * 4) / 4, ce = (v) => Math.ceil(v * 4) / 4;
+  return { w: fl(w - pw), e: ce(e + pw), s: Math.max(-85, fl(s - ph)), n: Math.min(85, ce(n + ph)) };
 }
 function tropoHourIndex(times, hoursAhead) {
   const target = new Date(); target.setUTCMinutes(0, 0, 0); target.setUTCHours(target.getUTCHours() + hoursAhead);
@@ -4268,15 +4272,20 @@ function tropoDraw(grad, g) {
     }
   }
   ctx.putImageData(img, 0, 0);
-  const coords = [[g.w, g.n], [g.e, g.n], [g.e, g.s], [g.w, g.s]]; const url = cv.toDataURL('image/png');
-  tropoApply(url, coords);
+  tropoApply([[g.w, g.n], [g.e, g.n], [g.e, g.s], [g.w, g.s]]);
 }
-// bron/laag pas zetten als de stijl geladen is (anders gooit MapLibre); tot dan onthouden
-function tropoApply(url, coords) {
-  if (!mapObj.isStyleLoaded()) { tropoSt.pending = { url, coords }; mapObj.once('idle', () => { const p = tropoSt.pending; if (p) { tropoSt.pending = null; tropoApply(p.url, p.coords); } }); return; }
-  const src = mapObj.getSource('tropo');
-  if (src) src.updateImage({ url, coordinates: coords }); else mapObj.addSource('tropo', { type: 'image', url, coordinates: coords });
-  tropoEnsureLayer();
+// Canvas-bron (geen fetch, dus geen CSP- of offline-probleem); bij elke verversing bron en laag opnieuw zetten,
+// want een niet-geanimeerde canvas-bron leest het canvas maar één keer. Pas als de stijl geladen is.
+function tropoApply(coords) {
+  // isStyleLoaded() wacht ook op alle tegels; hier is alleen de stijl zelf nodig (anders gooit addSource)
+  const defer = (ev) => { tropoSt.pending = coords; mapObj.once(ev, () => { const p = tropoSt.pending; if (p) { tropoSt.pending = null; tropoApply(p); } }); };
+  if (!(mapObj.style && mapObj.style._loaded)) { defer('style.load'); return; }
+  try {
+    if (mapObj.getLayer('tropo')) mapObj.removeLayer('tropo');
+    if (mapObj.getSource('tropo')) mapObj.removeSource('tropo');
+    mapObj.addSource('tropo', { type: 'canvas', canvas: tropoSt.canvas, coordinates: coords, animate: false });
+    tropoEnsureLayer();
+  } catch (e) { defer('idle'); }
 }
 function tropoEnsureLayer() {
   if (!mapObj || !mapObj.getSource('tropo')) return;
@@ -5590,7 +5599,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260921-2252-895e7d5' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0008-1a01527' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5648,7 +5657,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260921-2252-895e7d5') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0008-1a01527') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
