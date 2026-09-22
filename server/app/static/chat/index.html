@@ -2758,18 +2758,43 @@ class SerialTransport {
 class BleTransport {
   constructor() { this.kind = 'Bluetooth'; this.onFrame = null; this.onClose = null; this.device = null; this._q = Promise.resolve(); }
   static supported() { return 'bluetooth' in navigator; }
+  // Eerder gekozen node hergebruiken zonder kiezer (Chrome: getDevices + watchAdvertisements); lukt dat niet binnen
+  // ~2,5 s, dan de gewone kiezer (die moet binnen de gebruikersactie blijven, daarom kort).
+  static async pickDevice() {
+    const wantId = (() => { try { return localStorage.getItem('mcirc.bleId'); } catch (e) { return null; } })();
+    try {
+      if (wantId && navigator.bluetooth.getDevices) {
+        const devs = await navigator.bluetooth.getDevices(); const d = devs.find(x => x.id === wantId);
+        if (d && d.gatt) {
+          if (d.gatt.connected) return d;
+          if (!d.watchAdvertisements) return d;
+          const seen = await new Promise((res) => {
+            const ac = new AbortController(); const timer = setTimeout(() => { ac.abort(); res(false); }, 2500);
+            d.addEventListener('advertisementreceived', () => { clearTimeout(timer); ac.abort(); res(true); }, { once: true });
+            d.watchAdvertisements({ signal: ac.signal }).catch(() => { clearTimeout(timer); res(false); });
+          });
+          if (seen) return d;
+        }
+      }
+    } catch (e) { /* kiezer */ }
+    return navigator.bluetooth.requestDevice({ filters: [{ services: [UART_SVC] }, { namePrefix: 'MeshCore' }], optionalServices: [UART_SVC] });
+  }
   async connect() {
-    this.device = await navigator.bluetooth.requestDevice({ filters: [{ services: [UART_SVC] }, { namePrefix: 'MeshCore' }], optionalServices: [UART_SVC] });
-    // Windows drops the GATT link once during pairing/bonding; retry service discovery a few times.
+    this.device = await BleTransport.pickDevice();
+    // Windows laat de GATT-link tijdens het koppelen/versleutelen één of twee keer vallen ("GATT Server is disconnected").
+    // Daarom: tot 6 pogingen met oplopende pauze, elke keer opnieuw verbinden, en na het verbinden even wachten voordat
+    // de servicelijst gevraagd wordt (Windows heeft die dan nog niet altijd klaar).
     let svc = null, lastErr = null;
-    for (let attempt = 0; attempt < 4 && !svc; attempt++) {
+    for (let attempt = 0; attempt < 6 && !svc; attempt++) {
       try {
-        if (attempt) await sleep(600 * attempt);
+        if (attempt) await sleep(500 + 500 * attempt);
         const server = this.device.gatt.connected ? this.device.gatt : await this.device.gatt.connect();
+        await sleep(attempt ? 500 : 200);
         svc = await server.getPrimaryService(UART_SVC);
       } catch (e) { lastErr = e; try { this.device.gatt.disconnect(); } catch (_) {} }
     }
     if (!svc) { this.device = null; throw new Error(t('ble.hintConnect', lastErr && lastErr.message)); }
+    try { localStorage.setItem('mcirc.bleId', this.device.id); } catch (e) {}
     this._onDisc = () => this._closed(); this.device.addEventListener('gattserverdisconnected', this._onDisc);
     const step = async (name, fn) => {
       let err; for (let i = 0; i < 3; i++) { try { return await fn(); } catch (e) { err = e; await sleep(400 * (i + 1)); } }
@@ -3118,7 +3143,7 @@ I18N.nl = {
   // ---- core / protocol ----
   'core.notConnected': 'niet verbonden', 'core.connLost': 'verbinding verbroken', 'core.timeout': 'timeout (cmd {0})', 'core.err': 'fout: {0}', 'core.errCode': 'code {0}', 'core.disabledFw': 'uitgeschakeld in firmware',
   'err.1': 'commando niet ondersteund', 'err.2': 'niet gevonden', 'err.3': 'tabel/wachtrij vol', 'err.4': 'ongeldige toestand', 'err.5': 'opslagfout', 'err.6': 'ongeldig argument',
-  'ble.hintConnect': '{0} — controleer of de node niet nog met de telefoon-app verbonden is, en koppel hem eerst in Windows (Instellingen › Bluetooth › Apparaat toevoegen, pincode standaard 123456).',
+  'ble.hintConnect': '{0} — controleer of de node niet nog met de telefoon-app verbonden is. Blijft het misgaan: verwijder de node in Windows (Instellingen › Bluetooth) en koppel opnieuw met de pincode (standaard 123456). Dat is nodig zodra Windows en de node niet meer dezelfde sleutels hebben, bijvoorbeeld na een herstart of herflash van de node, een pincodewijziging of een koppeling met een ander toestel.',
   'ble.hintStep': '{0} (stap: {1}). Op Windows: koppel de node eerst via Instellingen › Bluetooth met de pincode (standaard 123456), of zet de BLE-pincode van de node op 0 via een USB-verbinding (Instellingen › Apparaat). Zorg dat de telefoon-app niet verbonden is.',
   'ble.stepRx': 'RX-karakteristiek', 'ble.stepTx': 'TX-karakteristiek', 'ble.stepNotify': 'notificaties',
   'adv.0': 'onbekend', 'adv.1': 'chat', 'adv.2': 'repeater', 'adv.3': 'room', 'adv.4': 'sensor',
@@ -3368,7 +3393,7 @@ I18N.en = {
   'map.total': 'Selection: about {0} (overview {1} + countries {2})', 'map.progress': '{0} of {1} tiles · {2} cached · {3} errors', 'map.done': 'Preload finished: {0} tiles, {1} cached.', 'map.cancelled': 'Preload stopped.', 'map.needOnline': 'Preloading needs a connection to meshmanager.net.',
   'core.notConnected': 'not connected', 'core.connLost': 'connection lost', 'core.timeout': 'timeout (cmd {0})', 'core.err': 'error: {0}', 'core.errCode': 'code {0}', 'core.disabledFw': 'disabled in firmware',
   'err.1': 'command not supported', 'err.2': 'not found', 'err.3': 'table/queue full', 'err.4': 'invalid state', 'err.5': 'storage error', 'err.6': 'invalid argument',
-  'ble.hintConnect': '{0} — make sure the node is not still connected to the phone app, and pair it in Windows first (Settings › Bluetooth › Add device, default PIN 123456).',
+  'ble.hintConnect': '{0} — make sure the node is not still connected to the phone app. If it keeps failing: remove the node in Windows (Settings › Bluetooth) and pair again with the PIN (default 123456). That is needed whenever Windows and the node no longer share the same keys, for example after a reboot or reflash of the node, a PIN change or pairing with another device.',
   'ble.hintStep': '{0} (step: {1}). On Windows: pair the node first via Settings › Bluetooth using the PIN (default 123456), or set the node\'s BLE PIN to 0 over a USB connection (Settings › Device). Make sure the phone app is not connected.',
   'ble.stepRx': 'RX characteristic', 'ble.stepTx': 'TX characteristic', 'ble.stepNotify': 'notifications',
   'adv.0': 'unknown', 'adv.1': 'chat', 'adv.2': 'repeater', 'adv.3': 'room', 'adv.4': 'sensor',
@@ -3598,7 +3623,7 @@ I18N.fr = {
   'map.total': 'Sélection : environ {0} (vue d\'ensemble {1} + pays {2})', 'map.progress': '{0} sur {1} tuiles · {2} en cache · {3} erreurs', 'map.done': 'Préchargement terminé : {0} tuiles, {1} en cache.', 'map.cancelled': 'Préchargement arrêté.', 'map.needOnline': 'Le préchargement nécessite une connexion à meshmanager.net.',
   'core.notConnected': 'non connecté', 'core.connLost': 'connexion perdue', 'core.timeout': 'délai dépassé (cmd {0})', 'core.err': 'erreur : {0}', 'core.errCode': 'code {0}', 'core.disabledFw': 'désactivé dans le firmware',
   'err.1': 'commande non prise en charge', 'err.2': 'introuvable', 'err.3': 'table/file d\'attente pleine', 'err.4': 'état invalide', 'err.5': 'erreur de stockage', 'err.6': 'argument invalide',
-  'ble.hintConnect': '{0} — vérifiez que le nœud n\'est pas encore connecté à l\'application mobile, et appairez-le d\'abord dans Windows (Paramètres › Bluetooth › Ajouter un appareil, code PIN par défaut 123456).',
+  'ble.hintConnect': '{0} — vérifiez que le nœud n\'est pas encore connecté à l\'application du téléphone. Si l\'échec persiste : supprimez le nœud dans Windows (Paramètres › Bluetooth) et jumelez-le à nouveau avec le code (123456 par défaut). C\'est nécessaire dès que Windows et le nœud n\'ont plus les mêmes clés, par exemple après un redémarrage ou un reflash du nœud, un changement de code ou un jumelage avec un autre appareil.',
   'ble.hintStep': '{0} (étape : {1}). Sous Windows : appairez d\'abord le nœud via Paramètres › Bluetooth avec le code PIN (123456 par défaut), ou mettez le PIN BLE du nœud à 0 via une connexion USB (Paramètres › Appareil). Assurez-vous que l\'application mobile n\'est pas connectée.',
   'ble.stepRx': 'caractéristique RX', 'ble.stepTx': 'caractéristique TX', 'ble.stepNotify': 'notifications',
   'adv.0': 'inconnu', 'adv.1': 'chat', 'adv.2': 'répéteur', 'adv.3': 'room', 'adv.4': 'capteur',
@@ -3843,8 +3868,8 @@ function applyLang(rerender = true) {
 /* ===================== Application: state, persistence, model ===================== */
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const APP_BUILD = '20260922-0938-a6f8b41'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
-const APP_VERSION = '0.7.2', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
+const APP_BUILD = '20260922-0947-7e3acd1'; // wordt door build.sh vervangen door datum+commit; basis van de updatecheck
+const APP_VERSION = '0.7.3', APP_REPO = 'https://github.com/DinXke/MeshChat', APP_AUTHOR = 'DinX';
 const LS_KEY = 'mcirc.v1';
 const MAX_HIST = 2000;
 
@@ -5859,7 +5884,7 @@ function init() {
   loadState(); initLang(); mkConv('status', 'status', 'MeshChat', null, null); S.convs.get('status').open = true; mkConv('map', 'map', t('map.title'), null, null).open = true;
   for (const c of S.contacts.values()) { c.loggedIn = false; if (c.type >= 2 && !c.hidden) convForContact(c); }
   for (const ch of S.channels) if (ch && ch.name) convForChannel(ch);
-  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0938-a6f8b41' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
+  $$('.app-version').forEach(e => e.textContent = 'v' + APP_VERSION + (APP_BUILD !== '20260922-0947-7e3acd1' ? ' · ' + APP_BUILD : '')); $$('a.app-repo').forEach(a => { a.href = APP_REPO; a.textContent = APP_REPO.replace(/^https?:\/\//, ''); }); $$('.app-author').forEach(e => e.textContent = APP_AUTHOR);
   setTheme(S.settings.theme); applyView(); wire(); renderNick(); renderBattery(); setStatusKey('st-off', 'status.off');
   const st = S.convs.get('status');
   if (!st.msgs.length) { addMsg(st, { kind: 'notice', text: t('init.welcome') }); if (!SerialTransport.supported() && !BleTransport.supported()) addMsg(st, { kind: 'error', text: t('init.noSupport') }); if (location.protocol === 'file:') addMsg(st, { kind: 'notice', text: t('init.fileTip') }); }
@@ -5918,7 +5943,7 @@ function initPwa() {
   const check = async () => {
     try {
       const res = await fetch(location.pathname, { cache: 'no-store' }); if (!res.ok) return;
-      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0938-a6f8b41') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
+      const html = await res.text(); const mb = /APP_BUILD = '([^']+)'/.exec(html); const mv = /APP_VERSION = '([^']+)'/.exec(html); if (!mb || !mv || mb[1] === APP_BUILD || mb[1] === '20260922-0947-7e3acd1') return; const m = [null, mv[1] + (mb[1] ? ' · ' + mb[1] : '')];
       if ($('#toast-update')) return;
       const el = document.createElement('div'); el.className = 'toast ok'; el.id = 'toast-update';
       el.innerHTML = `<span class="dot on"></span><span>${esc(t('update.available', m[1], APP_VERSION))}</span><button class="btn sm primary" id="btn-reload">${esc(t('update.reload'))}</button><button class="btn icon ghost sm x" aria-label="${esc(t('ui.close'))}">${icon('x')}</button>`;
