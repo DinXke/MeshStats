@@ -33,7 +33,10 @@ log = logging.getLogger("meshtrack.sim")
 Emit = Callable[[str, str, Optional[int], Optional[float], Optional[int]], Awaitable[None]]
 
 # Dagritme in lokale tijd (de server zelf draait meestal in UTC).
-TZ = ZoneInfo(os.environ.get("MESHTRACK_TZ", "Europe/Brussels"))
+try:
+    TZ = ZoneInfo(os.environ.get("MESHTRACK_TZ", "Europe/Brussels"))
+except Exception:  # noqa: BLE001 - geen tijdzonedatabase (bv. Windows zonder tzdata)
+    TZ = datetime.now().astimezone().tzinfo
 
 
 def local_now() -> datetime:

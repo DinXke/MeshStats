@@ -141,6 +141,23 @@ class MeshLink:
         if res is not None and res.type == EventType.ERROR:
             log.info("contact %s niet verwijderd (bestond niet?)", pubkey[:12])
 
+    async def nodes(self, max_age_s: int = 60) -> list[dict[str, Any]]:
+        """Alle bekende meshnodes met een advertpositie (repeaters, rooms,
+        companions, sensoren). Contactenlijst hooguit elke max_age_s verversen."""
+        mc = self._require()
+        if time.time() - getattr(self, "_nodes_at", 0) > max_age_s:
+            await mc.commands.get_contacts()
+            self._nodes_at = time.time()
+        out = []
+        for k, c in (mc.contacts or {}).items():
+            lat, lon = c.get("adv_lat") or 0, c.get("adv_lon") or 0
+            if abs(lat) < 0.001 and abs(lon) < 0.001:
+                continue
+            out.append({"key": k[:12], "name": c.get("adv_name", ""), "type": c.get("type"),
+                        "lat": lat, "lon": lon, "last_advert": c.get("last_advert"),
+                        "hops": c.get("out_path_len")})
+        return out
+
     def status(self) -> dict[str, Any]:
         return {
             "connected": self.connected, "host": self.host, "port": self.port,
