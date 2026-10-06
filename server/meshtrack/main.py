@@ -466,6 +466,14 @@ async def geofence_events(limit: int = 50):
     return S.db.geofence_events(min(max(limit, 1), 500))
 
 
+@app.get("/api/mesh/nodes")
+async def mesh_nodes():
+    try:
+        return await S.mesh.nodes()
+    except ConnectionError as e:
+        raise HTTPException(503, str(e))
+
+
 @app.get("/api/unknown")
 async def unknown():
     return S.db.unknown()

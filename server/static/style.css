@@ -236,3 +236,7 @@ details.terminal { margin-top: 14px; }
   .grid { grid-template-columns: 1fr; }
   header.top nav a { padding: 6px 2px; }
 }
+.sidehead.nodes { flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
+label.mini { display: inline-flex; align-items: center; gap: 5px; margin: 0; color: var(--text); font-size: 13px; cursor: pointer; }
+label.mini i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+label.mini input { width: auto; accent-color: var(--accent); }

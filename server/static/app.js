@@ -35,10 +35,13 @@
     trackOn: store.get("trackOn", true),
     hours: store.get("hours", 24),
     color: store.get("color", "tracker"),
+    ntypes: new Set(store.get("ntypes", [2])),
+    nrecent: store.get("nrecent", true),
   };
   const savePrefs = () => {
     store.set("fav", [...prefs.fav]); store.set("hidden", [...prefs.hidden]); store.set("filter", prefs.filter);
     store.set("trackOn", prefs.trackOn); store.set("hours", prefs.hours); store.set("color", prefs.color);
+    store.set("ntypes", [...prefs.ntypes]); store.set("nrecent", prefs.nrecent);
   };
   const onMap = (t) => t.active && !prefs.hidden.has(t.id);
   const hoursNow = () => (prefs.trackOn ? prefs.hours : 0);
@@ -123,6 +126,41 @@
     })) };
   }
 
+  let meshNodes = [];
+  const NTYPE = { 1: "companion", 2: "repeater", 3: "room", 4: "sensor" };
+  function nodeFeatures() {
+    const cutoff = Date.now() / 1000 - 7 * 86400;
+    return { type: "FeatureCollection", features: meshNodes
+      .filter((n) => prefs.ntypes.has(n.type) && (!prefs.nrecent || (n.last_advert || 0) >= cutoff))
+      .map((n) => ({ type: "Feature", properties: { name: n.name, type: n.type, last: n.last_advert || 0, hops: n.hops ?? -1 },
+        geometry: { type: "Point", coordinates: [n.lon, n.lat] } })) };
+  }
+  async function loadNodes() {
+    if (!prefs.ntypes.size) { meshNodes = []; refreshLayers(); return; }
+    try { meshNodes = await MT.api("/api/mesh/nodes"); } catch (_) { meshNodes = []; }
+    refreshLayers();
+  }
+  document.querySelectorAll("[data-ntype]").forEach((cb) => {
+    cb.checked = prefs.ntypes.has(Number(cb.dataset.ntype));
+    cb.addEventListener("change", () => {
+      const t = Number(cb.dataset.ntype);
+      if (cb.checked) prefs.ntypes.add(t); else prefs.ntypes.delete(t);
+      savePrefs(); loadNodes();
+    });
+  });
+  $("nodes-recent").checked = prefs.nrecent;
+  $("nodes-recent").addEventListener("change", () => { prefs.nrecent = $("nodes-recent").checked; savePrefs(); refreshLayers(); });
+  map.on("click", "nodes", (e) => {
+    if (drawing) return;
+    const p = e.features[0].properties;
+    const hops = p.hops >= 0 && p.hops < 64 ? ` · ${p.hops} hops van de server` : "";
+    new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat)
+      .setHTML(`<strong>${MT.esc(p.name)}</strong><br>${NTYPE[p.type] || "node"}${hops}<br>laatste advert ${MT.ago(p.last)}`).addTo(map);
+  });
+  map.on("mouseenter", "nodes", () => { if (!drawing) map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", "nodes", () => { if (!drawing) map.getCanvas().style.cursor = ""; });
+  setInterval(loadNodes, 5 * 60 * 1000);
+
   function simRouteFeatures() {
     return { type: "FeatureCollection", features: Object.entries(simRoutes).map(([tid, coords]) => ({
       type: "Feature", properties: { color: (trackers.get(Number(tid)) || {}).color || "#7c3aed" },
@@ -139,6 +177,14 @@
     map.addLayer({ id: "zones-label", type: "symbol", source: "zones",
       layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Medium"], "text-size": 12 },
       paint: { "text-color": ["get", "color"], "text-halo-color": dark.matches ? "#000" : "#fff", "text-halo-width": 1.5 } });
+    map.addSource("nodes", { type: "geojson", data: nodeFeatures() });
+    map.addLayer({ id: "nodes", type: "circle", source: "nodes",
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 7, 2.5, 12, 5, 15, 7],
+               "circle-color": ["match", ["get", "type"], 2, "#0ea5e9", 3, "#a855f7", 4, "#f59e0b", "#64748b"],
+               "circle-stroke-color": dark.matches ? "#000" : "#fff", "circle-stroke-width": 1, "circle-opacity": 0.9 } });
+    map.addLayer({ id: "nodes-label", type: "symbol", source: "nodes", minzoom: 11,
+      layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-offset": [0, 1.1], "text-anchor": "top" },
+      paint: { "text-color": dark.matches ? "#cbd5e1" : "#334155", "text-halo-color": dark.matches ? "#000" : "#fff", "text-halo-width": 1.2 } });
     map.addSource("simroutes", { type: "geojson", data: simRouteFeatures() });
     map.addLayer({ id: "simroutes", type: "line", source: "simroutes",
       paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.55, "line-dasharray": [1, 2] } });
@@ -166,6 +212,7 @@
     map.getSource("points").setData(f.points);
     map.getSource("zones").setData(zoneFeatures());
     map.getSource("simroutes").setData(simRouteFeatures());
+    map.getSource("nodes").setData(nodeFeatures());
     const c = colorSel.value === "speed" ? speedColor : ["get", "color"];
     map.setPaintProperty("tracks", "line-color", c);
     map.setPaintProperty("points", "circle-color", c);
@@ -576,6 +623,7 @@
     await loadAll();
     await loadZones();
     refreshSims();
+    loadNodes();
     const withPos = [...trackers.values()].filter((t) => t.active && t.last_lat != null);
     if (withPos.length > 1) {
       const b = new maplibregl.LngLatBounds();
