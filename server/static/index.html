@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack</title>
+<link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav><a href="/" class="on">Kaart</a><a href="/admin">Trackers</a></nav>
+  <span class="spacer"></span>
+  <span id="mesh" class="pill">mesh …</span>
+</header>
+<div class="mapwrap">
+  <aside id="side">
+    <div class="sidehead">
+      <span class="muted">Spoor</span>
+      <select id="hours">
+        <option value="1">1 uur</option>
+        <option value="6">6 uur</option>
+        <option value="24" selected>24 uur</option>
+        <option value="168">7 dagen</option>
+        <option value="0">geen</option>
+      </select>
+    </div>
+    <div id="list"></div>
+  </aside>
+  <div id="map"></div>
+</div>
+<script src="/static/vendor/maplibre-gl.js"></script>
+<script src="/static/vendor/pmtiles.js"></script>
+<script src="/static/basemap.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
