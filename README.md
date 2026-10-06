@@ -96,6 +96,7 @@ sample interval; a read-only view of each repeater's CLI settings.
 | [`deploy/`](deploy/) | Installation without Docker (venv + systemd), and an auto-update timer for the Compose deployment, plus [`deploy/openhop/`](deploy/openhop/): running openHop alongside this fleet with the nodes as antennas |
 | [`homeassistant/`](homeassistant/) | Optional HA integration. Since nodes publish over MQTT themselves it is no longer required — it still supplies map positions from adverts and fetches repeater CLI settings over LoRa |
 | [`proxy/`](proxy/) | Optional TCP fan-out proxy, for when you cannot flash modified firmware and still want more than one client on a node |
+| [`meshtrack/`](meshtrack/) | Separate subproject: APRS-like tracking over MeshCore. T1000-E tracker firmware, a server with an offline map, tracker management, geofences and a simulator that drives virtual trackers over real roads |
 
 ---
 
