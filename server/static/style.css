@@ -181,7 +181,6 @@ button.link { border: 0; background: none; padding: 2px 0; color: var(--accent);
     border-right: 0; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0;
     box-shadow: 0 -4px 16px rgba(0,0,0,.18); transition: height .2s;
   }
-  #side.collapsed { height: 92px; overflow: hidden; }
   .sheet-handle { display: block; width: 100%; border: 0; border-radius: 14px 14px 0 0; padding: 8px 0 4px; background: var(--panel); }
   .sheet-handle span { display: block; width: 44px; height: 5px; border-radius: 3px; background: var(--line); margin: 0 auto; }
   .tab { padding: 12px 6px; }
@@ -305,3 +304,25 @@ main.page.help { display: grid; grid-template-columns: 220px 1fr; gap: 16px; max
 
 a.btnlink { display: inline-block; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 4px 9px;
   font-size: 13px; color: var(--text); text-decoration: none; }
+
+/* ---- meldingsontvangers ---- */
+.rcpts { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill.rcpt { display: inline-flex; align-items: center; gap: 4px; color: var(--text); }
+.pill.rcpt .x { border: 0; background: none; padding: 0 2px; font-size: 12px; color: var(--muted); }
+
+/* ---- telefoon: versleepbaar onderpaneel ---- */
+.sheet-show { display: none; }
+@media (max-width: 720px) {
+  #side { height: 45%; }
+  #side.sheet-hidden { display: none; }
+  .sheet-handle { touch-action: none; cursor: ns-resize; padding: 10px 0 8px; }
+  .sheet-show:not([hidden]) { display: block; position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 5;
+    border-radius: 999px; padding: 10px 18px; background: var(--accent); color: var(--accent-text); border: 0; box-shadow: var(--shadow); font-weight: 600; }
+}
+
+@media (max-width: 720px) {
+  header.top nav { overflow-x: auto; white-space: nowrap; scrollbar-width: none; flex: 1; min-width: 0; }
+  header.top nav::-webkit-scrollbar { display: none; }
+  header.top .spacer { display: none; }
+  #mesh { display: none; }
+}

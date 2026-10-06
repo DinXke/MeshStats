@@ -30,13 +30,15 @@ PERMS: dict[str, tuple[str, str]] = {
     "companion.view":  ("Server-companion", "QR-code, pubkey en contacten van de companion."),
     "export":          ("Exporteren", "Sporen downloaden als GPX of CSV."),
     "share.manage":    ("Deellinks", "Kaartlinks zonder login maken en intrekken."),
+    "alerts.manage":   ("Meldingsregels", "Regels die bij gebeurtenissen een DM via de mesh sturen."),
+    "system.manage":   ("Systeeminstellingen", "Vaste instellingen: meldingen, bewaartermijn, simulator."),
     "users.manage":    ("Gebruikers en groepen", "Gebruikers, groepen, rechten en het auditlog beheren."),
 }
 
 DEFAULT_GROUPS: list[dict[str, Any]] = [
     {"name": "Beheerders", "perms": list(PERMS), "all_trackers": True, "history_hours": 0,
      "description": "Alles, inclusief gebruikers en groepen."},
-    {"name": "Operators", "perms": [p for p in PERMS if p != "users.manage"], "all_trackers": True,
+    {"name": "Operators", "perms": [p for p in PERMS if p not in ("users.manage", "system.manage")], "all_trackers": True,
      "history_hours": 0, "description": "Dagelijks werk: trackers, zones, simulators en deellinks."},
     {"name": "Kijkers", "perms": ["map.view", "map.sidebar", "map.tracks", "map.nodes", "zones.view", "log.view"],
      "all_trackers": True, "history_hours": 24 * 7, "description": "Meekijken met lijst en sporen, niets wijzigen."},

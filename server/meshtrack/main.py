@@ -25,6 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import auth, config, geofence, ingest, nodes, rbac
+from . import settings as setmod
+from .alerts import EVENTS, EVENT_TEXT, AlertManager
 from .db import DB
 from .mesh_client import MeshLink, send_text
 from .rbac import PERMS, Principal
@@ -86,6 +88,16 @@ class State:
     mesh: MeshLink
     hub: Hub
     sims: SimManager
+    alerts: AlertManager
+    settings: dict
+
+
+def get_settings() -> dict[str, Any]:
+    return S.settings
+
+
+def reload_settings() -> None:
+    S.settings = setmod.effective(S.cfg, S.db.settings())
 
 
 S = State()
@@ -94,7 +106,7 @@ S = State()
 def tracker_out(t: dict[str, Any], p: Optional[Principal] = None) -> dict[str, Any]:
     now = int(time.time())
     out = dict(t)
-    out["stale"] = not t["last_rx"] or now - t["last_rx"] > S.cfg.stale_after_s
+    out["stale"] = not t["last_rx"] or now - t["last_rx"] > S.settings["stale_after_h"] * 3600
     if p is not None and not p.can("map.details"):
         out = strip_tracker(out)
     return out
@@ -119,6 +131,7 @@ def strip_msg(msg: dict[str, Any]) -> dict[str, Any]:
 # ---- verwerking van berichten ----------------------------------------------------
 
 async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: bool = False) -> None:
+    before = S.db.tracker_by_prefix(prefix)
     pos = ingest.handle(S.db, S.cfg, prefix, text, sender_ts, snr, path_len)
     if not pos:
         if not simulated:
@@ -128,11 +141,16 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
     if not simulated:
         log.info("positie %s seq=%s state=%s", t["alias"], pos["seq"], pos["state"])
     await S.hub.send({"type": "position", "position": pos, "tracker": tracker_out(t)})
+    S.alerts.fire(t, pos["state"], pos)
+    if pos["bat"] is not None and pos["bat"] < 20 and (before is None or before["last_bat"] is None
+                                                          or before["last_bat"] >= 20):
+        S.alerts.fire(t, "bat_low", pos)
     if pos["lat"] is not None and not pos["suspect"]:
         for ev in geofence.evaluate(S.db, t["id"], pos["lat"], pos["lon"], pos["ts"]):
             ev["tracker"] = t["alias"]
             log.info("geofence: %s %s %s", t["alias"], ev["event"], ev["geofence"])
             await S.hub.send({"type": "geofence", "event": ev})
+            S.alerts.fire(t, "zone_in" if ev["event"] == "enter" else "zone_out", pos, ev["geofence"])
             if ev["notify_pubkey"] and S.mesh.connected:
                 verb = "is binnengekomen in" if ev["event"] == "enter" else "heeft verlaten:"
                 try:
@@ -174,10 +192,19 @@ async def on_connect() -> None:
 
 async def pruner() -> None:
     while True:
-        n = S.db.prune(int(time.time()) - S.cfg.retention_days * 86400)
+        n = S.db.prune(int(time.time()) - S.settings["retention_days"] * 86400)
         if n:
             log.info("retentie: %d oude posities verwijderd", n)
         await asyncio.sleep(6 * 3600)
+
+
+async def silent_watch() -> None:
+    while True:
+        await asyncio.sleep(300)
+        try:
+            S.alerts.check_silent(S.db.trackers())
+        except Exception:  # noqa: BLE001
+            log.exception("stilte-controle")
 
 
 def bootstrap_users() -> None:
@@ -201,10 +228,13 @@ async def lifespan(app: FastAPI):
     Path(S.cfg.db_path).parent.mkdir(parents=True, exist_ok=True)
     S.db = DB(S.cfg.db_path)
     bootstrap_users()
+    reload_settings()
     S.hub = Hub()
     S.mesh = MeshLink(S.cfg.mesh_host, S.cfg.mesh_port, S.cfg.keepalive_s, on_message, on_connect)
     S.sims = SimManager(make_router, on_sim_message)
-    tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner())]
+    S.alerts = AlertManager(S.db, S.mesh, get_settings)
+    tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner()),
+             asyncio.create_task(S.alerts.run()), asyncio.create_task(silent_watch())]
     tiles = Path(S.cfg.tiles_dir)
     if tiles.is_dir():
         app.mount("/tiles", StaticFiles(directory=tiles), name="tiles")
@@ -276,7 +306,8 @@ def audit(p: Principal, action: str, detail: str = "") -> None:
 
 PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help")
 PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "trackers.serial", "sims.manage", "companion.view"),
-              "/users": ("users.manage", "share.manage"), "/log": ("log.view",)}
+              "/users": ("users.manage", "share.manage"), "/log": ("log.view",),
+              "/system": ("alerts.manage", "system.manage")}
 
 
 @app.middleware("http")
@@ -296,7 +327,7 @@ async def guard(request: Request, call_next):
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     if path.startswith("/tiles"):
         resp.headers["Cache-Control"] = "no-cache"
-    elif path.startswith("/static") or path in ("/", "/admin", "/login", "/users", "/help", "/log"):
+    elif path.startswith("/static") or path in ("/", "/admin", "/login", "/users", "/help", "/log", "/system"):
         # Altijd hervalideren (ETag/Last-Modified -> 304): na een update nooit
         # een oude CSS/JS naast nieuwe HTML.
         resp.headers["Cache-Control"] = "no-cache"
@@ -435,7 +466,7 @@ async def status(request: Request):
         mesh = {"connected": mesh["connected"], "name": mesh["name"]}
     return {"mesh": mesh, "map": {"center": S.cfg.map_center, "zoom": S.cfg.map_zoom},
             "tiles": (Path(S.cfg.tiles_dir) / "basemap.pmtiles").exists(),
-            "stale_after_s": S.cfg.stale_after_s, "version": VERSION}
+            "stale_after_s": S.settings["stale_after_h"] * 3600, "version": VERSION}
 
 
 # ---- trackers ------------------------------------------------------------------
@@ -609,7 +640,7 @@ async def purge_tracker(tid: int, b: PurgeIn, request: Request):
 
 @app.get("/api/companion/contacts")
 async def companion_contacts(request: Request):
-    need(request, "companion.view", "trackers.manage")
+    need(request, "companion.view", "trackers.manage", "alerts.manage")
     try:
         return await S.mesh.contacts()
     except ConnectionError as e:
@@ -819,6 +850,7 @@ EVENT_TYPES = {
     "zone_in": "zone binnen", "zone_out": "zone buiten", "bat_low": "batterij onder 20 %",
     "suspect": "verdachte positie",
 }
+# NB: "te lang stil" is geen positie maar een meldingsgebeurtenis; die staat in de verzonden meldingen.
 
 
 @app.get("/api/events")
@@ -1038,6 +1070,116 @@ async def delete_share(sid: int, request: Request):
     S.db.delete_share(sid)
     audit(p, "deellink ingetrokken", s["name"])
     return {"ok": True}
+
+
+# ---- systeem: instellingen en meldingsregels --------------------------------------
+
+@app.get("/system")
+async def system_page():
+    return FileResponse(STATIC / "system.html")
+
+
+@app.get("/api/settings")
+async def get_settings_api(request: Request):
+    need(request, "system.manage")
+    return {"values": S.settings, "spec": setmod.describe()}
+
+
+@app.put("/api/settings")
+async def put_settings(body: dict, request: Request):
+    p = need(request, "system.manage")
+    try:
+        changes = setmod.validate(body)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    for k, v in changes.items():
+        S.db.set_setting(k, v)
+    reload_settings()
+    audit(p, "systeeminstellingen gewijzigd", ", ".join(f"{k}={v}" for k, v in changes.items()))
+    return {"values": S.settings}
+
+
+class RuleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    active: bool = True
+    events: list[str]
+    trackers: list[int] = []
+    recipients: list[dict]
+    cooldown_s: int = Field(900, ge=0, le=7 * 86400)
+
+
+def _rule(b: RuleIn) -> dict[str, Any]:
+    ev = [e for e in b.events if e in EVENTS]
+    if not ev:
+        raise HTTPException(422, "kies minstens één gebeurtenis")
+    rc = []
+    for r in b.recipients:
+        pk = str(r.get("pubkey", "")).strip().lower()
+        if not HEX64.match(pk):
+            raise HTTPException(422, "ontvanger: pubkey moet 64 hex-tekens zijn")
+        rc.append({"pubkey": pk, "name": str(r.get("name", ""))[:40]})
+    if not rc:
+        raise HTTPException(422, "kies minstens één ontvanger")
+    if len(rc) > 25:
+        raise HTTPException(422, "maximaal 25 ontvangers per regel")
+    return {**b.model_dump(), "events": ev, "recipients": rc}
+
+
+@app.get("/api/alerts")
+async def list_alerts(request: Request):
+    need(request, "alerts.manage")
+    return {"rules": S.db.alert_rules(), "events": EVENT_TEXT, "queue": S.alerts.status()}
+
+
+@app.post("/api/alerts")
+async def create_alert(b: RuleIn, request: Request):
+    p = need(request, "alerts.manage")
+    rid = S.db.save_alert_rule(None, _rule(b))
+    audit(p, "meldingsregel aangemaakt", b.name)
+    return {"id": rid}
+
+
+@app.put("/api/alerts/{rid}")
+async def update_alert(rid: int, b: RuleIn, request: Request):
+    p = need(request, "alerts.manage")
+    if not any(r["id"] == rid for r in S.db.alert_rules()):
+        raise HTTPException(404, "onbekende regel")
+    S.db.save_alert_rule(rid, _rule(b))
+    audit(p, "meldingsregel gewijzigd", b.name)
+    return {"id": rid}
+
+
+@app.delete("/api/alerts/{rid}")
+async def delete_alert(rid: int, request: Request):
+    p = need(request, "alerts.manage")
+    r = next((x for x in S.db.alert_rules() if x["id"] == rid), None)
+    if not r:
+        raise HTTPException(404, "onbekende regel")
+    S.db.delete_alert_rule(rid)
+    audit(p, "meldingsregel verwijderd", r["name"])
+    return {"ok": True}
+
+
+@app.post("/api/alerts/{rid}/test")
+async def test_alert(rid: int, request: Request):
+    """Testbericht naar alle ontvangers van de regel (via dezelfde wachtrij)."""
+    p = need(request, "alerts.manage")
+    r = next((x for x in S.db.alert_rules() if x["id"] == rid), None)
+    if not r:
+        raise HTTPException(404, "onbekende regel")
+    from .alerts import Job
+    text = f"MeshTrack: test van melding '{r['name']}' door {p.display}"
+    for rc in r["recipients"]:
+        lid = S.db.add_alert_log(r["name"], "(test)", "test", rc.get("name") or rc["pubkey"][:8], text)
+        S.alerts.queue.put_nowait(Job(lid, rc["pubkey"], text))
+    audit(p, "testmelding", r["name"])
+    return {"queued": len(r["recipients"])}
+
+
+@app.get("/api/alerts/log")
+async def alerts_log(request: Request, limit: int = 200):
+    need(request, "alerts.manage", "system.manage")
+    return {"log": S.db.alert_log(min(max(limit, 1), 1000)), "queue": S.alerts.status()}
 
 
 @app.get("/api/audit")

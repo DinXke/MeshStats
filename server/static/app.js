@@ -717,8 +717,49 @@
   // ruimte die het onderpaneel van de kaart inneemt (telefoon)
   const pad = () => (phone() ? { top: 60, left: 40, right: 40, bottom: $("side").offsetHeight + 30 } : 80);
 
-  // smartphone: onderpaneel in- en uitklappen
-  $("sheet").addEventListener("click", () => $("side").classList.toggle("collapsed"));
+  // Telefoon: onderpaneel versleepbaar. Omlaag tot onder ~12 % = verbergen (dan
+  // een knop "Lijst"); de hoogte wordt onthouden. Tikken wisselt half/klein.
+  (function sheet() {
+    const side = $("side"), handle = $("sheet"), showBtn = $("sheet-show");
+    const vh = () => window.innerHeight - 48;
+    const apply = (frac) => {
+      if (!phone()) return;
+      if (frac < 0.12) {
+        side.classList.add("sheet-hidden"); showBtn.hidden = false; store.set("sheetFrac", 0); map.resize(); return;
+      }
+      side.classList.remove("sheet-hidden"); showBtn.hidden = true;
+      frac = Math.min(0.92, Math.max(0.14, frac));
+      side.style.height = Math.round(frac * vh()) + "px";
+      store.set("sheetFrac", frac);
+      map.resize();
+    };
+    apply(store.get("sheetFrac", 0.45));
+    let startY = 0, startH = 0, moved = false, dragging = false;
+    handle.addEventListener("pointerdown", (e) => {
+      if (!phone()) return;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) { /* geen echte aanwijzer */ }
+      startY = e.clientY; startH = side.offsetHeight; moved = false; dragging = true;
+      side.style.transition = "none";
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dy = startY - e.clientY;
+      if (Math.abs(dy) > 6) moved = true;
+      side.style.height = Math.max(0, startH + dy) + "px";
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      const frac = side.offsetHeight / vh();   // eerst meten, dan pas de animatie terug aan
+      side.style.transition = "";
+      if (!moved) { apply(frac > 0.3 ? 0.18 : 0.5); return; }
+      apply(frac);
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+    showBtn.addEventListener("click", () => apply(0.45));
+    window.addEventListener("resize", () => { if (phone()) apply(store.get("sheetFrac", 0.45)); else side.style.height = ""; });
+  })();
 
   MT.live((msg) => {
     if (msg.type === "mesh") MT.meshPill($("mesh"), msg.mesh);

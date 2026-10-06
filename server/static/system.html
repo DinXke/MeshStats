@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – systeem</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin">
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav></nav>
+  <span class="spacer"></span>
+</header>
+<main class="page">
+  <div class="tabs pagetabs" role="tablist">
+    <button class="tab on" data-tab="rules">Meldingsregels</button>
+    <button class="tab" data-tab="sent">Verzonden meldingen</button>
+    <button class="tab" data-tab="settings">Instellingen</button>
+  </div>
+
+  <section class="card pane" id="pane-rules">
+    <div class="cardhead"><h2>Meldingsregels</h2><button class="primary" id="r-new">+ Regel</button></div>
+    <p class="muted">Bij een gekozen gebeurtenis stuurt de server een DM via de mesh naar de ontvangers. DM's gaan na
+      elkaar weg met een pauze ertussen (zie Instellingen), zodat de mesh niet overbelast raakt.</p>
+    <form id="r-form" class="subform" hidden>
+      <input type="hidden" id="r-id">
+      <div class="grid">
+        <div><label for="r-name">Naam</label><input id="r-name" maxlength="60" required placeholder="bv. SOS en beweging naar de post"></div>
+        <div><label for="r-cool">Niet vaker dan (per tracker en gebeurtenis)</label>
+          <select id="r-cool"><option value="0">altijd</option><option value="300">elke 5 min</option><option value="900" selected>elke 15 min</option>
+            <option value="3600">elk uur</option><option value="21600">elke 6 uur</option><option value="86400">eens per dag</option></select></div>
+      </div>
+      <fieldset><legend>Bij deze gebeurtenissen</legend><div id="r-events" class="typegrid"></div></fieldset>
+      <fieldset><legend>Voor deze trackers</legend>
+        <label class="switch block"><input type="checkbox" id="r-alltr" checked><span></span> Alle trackers</label>
+        <div id="r-trackers" class="permgrid" hidden></div></fieldset>
+      <fieldset><legend>Naar deze ontvangers</legend>
+        <div id="r-rcpts" class="rcpts"></div>
+        <div class="row">
+          <select id="r-contact" style="flex:1;min-width:200px"><option value="">– kies uit de contacten van de companion –</option></select>
+          <button type="button" id="r-add">Toevoegen</button>
+        </div>
+        <div class="row"><input id="r-pk" class="mono" placeholder="of plak een pubkey (64 hex)" maxlength="64" style="flex:1;min-width:200px">
+          <input id="r-pkname" placeholder="naam" maxlength="40" style="width:160px"><button type="button" id="r-addpk">Toevoegen</button></div>
+      </fieldset>
+      <label class="switch block"><input type="checkbox" id="r-active" checked><span></span> Actief</label>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="r-cancel">Annuleren</button></div>
+      <div id="r-msg" class="msg"></div>
+    </form>
+    <div id="rules" class="tlist"></div>
+  </section>
+
+  <section class="card pane" id="pane-sent" hidden>
+    <div class="cardhead"><h2>Verzonden meldingen</h2><span class="muted small" id="q"></span></div>
+    <div id="sent"></div>
+  </section>
+
+  <section class="card pane" id="pane-settings" hidden>
+    <div class="cardhead"><h2>Systeeminstellingen</h2></div>
+    <form id="set-form"><div id="settings" class="grid"></div>
+      <div class="row"><button class="primary" type="submit">Opslaan</button></div>
+      <div id="set-msg" class="msg"></div></form>
+  </section>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/system.js"></script>
+</body>
+</html>

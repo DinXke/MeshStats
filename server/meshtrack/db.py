@@ -123,6 +123,33 @@ CREATE TABLE IF NOT EXISTS audit (
   detail TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS audit_ts ON audit(ts);
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL                         -- JSON
+);
+CREATE TABLE IF NOT EXISTS alert_rules (
+  id         INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL,
+  active     INTEGER NOT NULL DEFAULT 1,
+  events     TEXT NOT NULL DEFAULT '[]',      -- JSON: W, S, E, N, P, B, zone_in, zone_out, bat_low, silent
+  trackers   TEXT NOT NULL DEFAULT '[]',      -- JSON tracker-id's; leeg = alle
+  recipients TEXT NOT NULL DEFAULT '[]',      -- JSON [{"pubkey":..., "name":...}]
+  cooldown_s INTEGER NOT NULL DEFAULT 900,    -- zelfde tracker + gebeurtenis niet vaker dan dit
+  created    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alert_log (
+  id        INTEGER PRIMARY KEY,
+  ts        INTEGER NOT NULL,
+  rule      TEXT NOT NULL,
+  tracker   TEXT NOT NULL,
+  event     TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  text      TEXT NOT NULL,
+  status    TEXT NOT NULL,                    -- wacht | ok | mislukt | overgeslagen
+  attempts  INTEGER NOT NULL DEFAULT 0,
+  done_ts   INTEGER
+);
+CREATE INDEX IF NOT EXISTS alert_log_ts ON alert_log(ts);
 CREATE TABLE IF NOT EXISTS unknown_msgs (
   id INTEGER PRIMARY KEY,
   rx_ts INTEGER NOT NULL,
@@ -236,6 +263,7 @@ class DB:
         n = self._x("DELETE FROM positions WHERE rx_ts<?", (older_than,)).rowcount
         self._x("DELETE FROM geofence_events WHERE ts<?", (older_than,))
         self._x("DELETE FROM audit WHERE ts<?", (older_than - 275 * 86400,))   # audit: ~1 jaar
+        self._x("DELETE FROM alert_log WHERE ts<?", (older_than,))
         self._x("DELETE FROM unknown_msgs WHERE rx_ts<?", (older_than,))
         return n
 
@@ -313,6 +341,46 @@ class DB:
             "SELECT e.*, g.name AS geofence, t.alias AS tracker FROM geofence_events e "
             "JOIN geofences g ON g.id=e.geofence_id JOIN trackers t ON t.id=e.tracker_id "
             "ORDER BY e.id DESC LIMIT ?", (limit,))
+
+    # ---- instellingen en meldingsregels ------------------------------------------
+
+    def settings(self) -> dict[str, Any]:
+        return {r["key"]: json.loads(r["value"]) for r in self._q("SELECT key, value FROM settings")}
+
+    def set_setting(self, key: str, value: Any) -> None:
+        self._x("INSERT INTO settings(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, json.dumps(value)))
+
+    def alert_rules(self) -> list[dict[str, Any]]:
+        rows = self._q("SELECT * FROM alert_rules ORDER BY name COLLATE NOCASE")
+        for r in rows:
+            for k in ("events", "trackers", "recipients"):
+                r[k] = json.loads(r[k])
+            r["active"] = bool(r["active"])
+        return rows
+
+    def save_alert_rule(self, rid: Optional[int], r: dict[str, Any]) -> int:
+        vals = (r["name"], int(r["active"]), json.dumps(r["events"]), json.dumps(r["trackers"]),
+                json.dumps(r["recipients"]), int(r["cooldown_s"]))
+        if rid is None:
+            return self._x("INSERT INTO alert_rules(name, active, events, trackers, recipients, cooldown_s, created) "
+                           "VALUES(?,?,?,?,?,?,?)", vals + (int(time.time()),)).lastrowid
+        self._x("UPDATE alert_rules SET name=?, active=?, events=?, trackers=?, recipients=?, cooldown_s=? WHERE id=?",
+                vals + (rid,))
+        return rid
+
+    def delete_alert_rule(self, rid: int) -> None:
+        self._x("DELETE FROM alert_rules WHERE id=?", (rid,))
+
+    def add_alert_log(self, rule: str, tracker: str, event: str, recipient: str, text: str) -> int:
+        return self._x("INSERT INTO alert_log(ts, rule, tracker, event, recipient, text, status) VALUES(?,?,?,?,?,?,?)",
+                       (int(time.time()), rule, tracker, event, recipient, text, "wacht")).lastrowid
+
+    def finish_alert_log(self, lid: int, status: str, attempts: int) -> None:
+        self._x("UPDATE alert_log SET status=?, attempts=?, done_ts=? WHERE id=?", (status, attempts, int(time.time()), lid))
+
+    def alert_log(self, limit: int = 200) -> list[dict[str, Any]]:
+        return self._q("SELECT * FROM alert_log ORDER BY id DESC LIMIT ?", (limit,))
 
     # ---- logboek ---------------------------------------------------------------
 

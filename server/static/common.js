@@ -47,7 +47,8 @@ const MT = {
     const links = [
       ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"],
       ["/admin", "Beheer", ["trackers.manage", "trackers.serial", "sims.manage", "companion.view"]],
-      ["/users", "Gebruikers", ["users.manage", "share.manage"]], ["/help", "Help", null],
+      ["/users", "Gebruikers", ["users.manage", "share.manage"]], ["/system", "Systeem", ["alerts.manage", "system.manage"]],
+      ["/help", "Help", null],
     ];
     const nav = document.querySelector("header.top nav");
     if (nav) {
