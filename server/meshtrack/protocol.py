@@ -11,6 +11,7 @@ from typing import Optional
 
 STATES = {
     "M": "bewegend",
+    "W": "wakker door beweging",
     "S": "stilgevallen",
     "H": "heartbeat",
     "N": "geen fix",

@@ -29,7 +29,7 @@
     status = await MT.api("/api/status");
     MT.meshPill($("mesh"), status.mesh);
     renderCompanion(status.mesh);
-    [trackers, sims] = await Promise.all([MT.api("/api/trackers"), MT.api("/api/sims")]);
+    [trackers, sims] = await Promise.all([MT.api("/api/trackers"), MT.can("sims.manage") ? MT.api("/api/sims") : []]);
     const simBy = Object.fromEntries(sims.map((s) => [s.tracker_id, s]));
     $("trackers").innerHTML = trackers.length ? trackers.map((t) => {
       const sim = simBy[t.id];
@@ -47,6 +47,7 @@
     }).join("") : '<div class="empty">Nog geen trackers. Klik op "+ Tracker".</div>';
     document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => edit(Number(b.dataset.edit))));
     document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => del(Number(b.dataset.del))));
+    if (!MT.can("trackers.manage")) return;
     const unk = await MT.api("/api/unknown");
     $("unknown").innerHTML = unk.length ? unk.map((u) => `<div class="ev"><span class="mono">${MT.esc(u.pubkey_prefix)}</span>
       · ${MT.esc(u.reason)}<div class="muted small">${new Date(u.rx_ts * 1000).toLocaleString("nl-BE")} · <span class="mono">${MT.esc(u.text)}</span></div></div>`).join("")
@@ -61,6 +62,7 @@
     path: "pad", footway: "voetpad", pedestrian: "voetgangerszone", steps: "trappen", sidewalk: "stoep", crossing: "oversteek" };
   let simDefaults = null;
   async function renderSpeeds(profile, current) {
+    if (MT.me && !MT.can("sims.manage")) return;
     if (!simDefaults) simDefaults = await MT.api("/api/sims/defaults");
     const def = simDefaults[profile];
     $("d-speeds").innerHTML = Object.entries(def.speeds).map(([k, v]) =>
@@ -115,11 +117,13 @@
     $("f-running").checked = true;
     $("f-virtual").disabled = false;
     $("contacts").hidden = true;
+    $("f-data").hidden = true;
     icon = "";
     setVirtual(false);
     renderIcons();
     fillDrive(null);
     renderSpeeds("car", null);
+    if (MT.me && !MT.can("trackers.manage")) { setVirtual(true); $("f-virtual").disabled = true; }
     $("save").textContent = "Toevoegen";
   }
 
@@ -163,8 +167,30 @@
     }
     renderIcons();
     $("save").textContent = "Opslaan";
+    loadDataInfo(t.id);
     openForm(`Bewerken: ${t.alias}`);
   }
+
+  async function loadDataInfo(id) {
+    $("f-data").hidden = false;
+    const d = await MT.api(`/api/trackers/${id}/data`);
+    const f = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "–");
+    $("f-datainfo").textContent = d.n ? `${d.n} posities, van ${f(d.first)} tot ${f(d.last)}` : "Geen opgeslagen posities.";
+  }
+  async function purge(all) {
+    const id = $("f-id").value;
+    const days = all ? 0 : Number($("f-purgedays").value);
+    if (!all && !(days > 0)) return;
+    const what = all ? "ALLE posities" : `alle posities ouder dan ${days} dagen`;
+    if (!confirm(`${what} van deze tracker wissen? Dit kan niet ongedaan gemaakt worden.`)) return;
+    try {
+      const r = await MT.api(`/api/trackers/${id}/purge`, { method: "POST", body: { older_than_days: days } });
+      msg($("fmsg"), `${r.deleted} posities gewist.`, true);
+      loadDataInfo(id);
+    } catch (e) { msg($("fmsg"), e.message); }
+  }
+  $("f-purge").addEventListener("click", () => purge(false));
+  $("f-purgeall").addEventListener("click", () => purge(true));
 
   async function del(id) {
     const t = trackers.find((x) => x.id === id);
@@ -231,7 +257,6 @@
     if (!$("f-alias").value) $("f-alias").value = e.target.selectedOptions[0].textContent.replace(/ \(.*\)$/, "");
   });
 
-  $("logout").addEventListener("click", async () => { await MT.api("/api/logout", { method: "POST" }); location.href = "/login"; });
 
   // ---- duur-invoer (getal + eenheid) ------------------------------------------------
   const UNITS = [["s", 1, "sec"], ["m", 60, "min"], ["h", 3600, "uur"]];
@@ -431,10 +456,30 @@
   $("s-send").addEventListener("click", sendFree);
   $("s-cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") sendFree(); });
 
+  // Secties volgens de rechten. Alleen simulators beheren = enkel virtuele trackers.
+  function applyPerms() {
+    const can = MT.can;
+    const sec = (id) => document.getElementById(id).closest("section");
+    const manageAny = can("trackers.manage") || can("sims.manage");
+    sec("trackers").hidden = !manageAny;
+    $("new").hidden = !manageAny;
+    if (!can("trackers.manage")) { $("f-virtual").checked = true; $("f-virtual").disabled = true; setVirtual(true); }
+    if (!can("sims.manage")) document.querySelector("#f-virtual").closest("label").hidden = true;
+    sec("s-connect").hidden = !can("trackers.serial");
+    $("s-use").hidden = !can("trackers.manage");
+    sec("qr").hidden = !can("companion.view");
+    sec("unknown").hidden = !can("trackers.manage");
+  }
+
   MT.live((m) => {
     if (m.type === "mesh") MT.meshPill($("mesh"), m.mesh);
     if (m.type === "tracker" || m.type === "tracker_deleted") load();
   });
-  load();
+  MT.initHeader("/admin").then(async () => {
+    applyPerms();
+    await load();
+    const m = /edit=(\d+)/.exec(location.hash);   // vanaf de kaart: meteen bewerken
+    if (m) edit(Number(m[1]));
+  });
   setInterval(load, 30000);
 })();

@@ -390,7 +390,7 @@ class SimTracker:
                     self.waking_until = now + self.rng.uniform(5, 25)
                 elif now >= self.waking_until:
                     st.sleeping, self.waking_until, st.still_since = False, None, None
-                    await self._send(now, "M", reason="wakker")
+                    await self._send(now, "W", reason="wakker")
                 return
             if heartbeat_due(st, p, now):
                 st.last_heartbeat = now

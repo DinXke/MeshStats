@@ -9,10 +9,9 @@
 <body class="admin">
 <header class="top">
   <h1>MeshTrack</h1>
-  <nav><a href="/">Kaart</a><a href="/admin" class="on">Trackers</a></nav>
+  <nav></nav>
   <span class="spacer"></span>
   <span id="mesh" class="pill">mesh …</span>
-  <button id="logout" class="ghost">Uitloggen</button>
 </header>
 <main class="page">
 
@@ -107,6 +106,16 @@
         <label class="switch block"><input type="checkbox" id="f-running" checked><span></span> Simulator rijdt</label>
       </div>
 
+      <fieldset id="f-data" hidden>
+        <legend>Opgeslagen posities</legend>
+        <div class="muted small" id="f-datainfo"></div>
+        <div class="row">
+          <span>Wis posities ouder dan</span>
+          <div class="unit" style="width:150px"><input id="f-purgedays" type="number" min="1" max="3650" value="30"><span>dagen</span></div>
+          <button type="button" class="danger" id="f-purge">Wissen</button>
+          <button type="button" class="danger" id="f-purgeall">Alles wissen</button>
+        </div>
+      </fieldset>
       <label for="f-notes">Notities</label>
       <textarea id="f-notes" rows="2" maxlength="500"></textarea>
       <label class="switch block"><input type="checkbox" id="f-active" checked><span></span> Actief (zichtbaar op de kaart)</label>

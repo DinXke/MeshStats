@@ -257,3 +257,51 @@ details.sect > :last-child { padding-bottom: 10px; }
 .resizing, .resizing * { cursor: col-resize !important; user-select: none; }
 #side { min-width: 200px; }
 @media (max-width: 720px) { #resizer { display: none; } #side { min-width: 0; } }
+
+/* ---- gebruikersmenu en dialogen ---- */
+.usermenu { position: relative; }
+.usermenu > summary { list-style: none; cursor: pointer; }
+.usermenu > summary::-webkit-details-marker { display: none; }
+.avatar { display: inline-flex; width: 30px; height: 30px; border-radius: 50%; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--accent-text); font-weight: 700; font-size: 14px; }
+.usermenu .menu { position: absolute; right: 0; top: 38px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow); padding: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 200px; z-index: 20; }
+.usermenu .who { padding: 2px 4px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+dialog.dlg { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); padding: 18px; max-width: 420px; width: calc(100% - 32px); }
+dialog.dlg::backdrop { background: rgba(0,0,0,.45); }
+dialog.dlg h2 { margin: 0 0 6px; font-size: 17px; }
+/* kioskweergave: enkel de kaart */
+body.kiosk header.top nav, body.kiosk #side, body.kiosk #resizer, body.kiosk .usermenu { display: none !important; }
+body.kiosk .mapwrap { height: calc(100% - 48px); }
+body.kiosk #map { position: absolute; inset: 48px 0 0 0; }
+
+/* ---- gebruikers, logboek ---- */
+main.page.wide { max-width: 1200px; }
+.pagetabs { position: static; margin-bottom: 14px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--panel); }
+.subform { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px; background: var(--bg); }
+.permgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px 14px; }
+label.mini.perm { align-items: flex-start; }
+label.mini.perm input { margin-top: 3px; }
+.chipsline { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.sharelink { margin-top: 4px; color: var(--accent); word-break: break-all; }
+.pill.warn { color: var(--warn); border-color: currentColor; }
+.filters { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(260px, 2fr) minmax(200px, 1fr); gap: 16px; }
+.typegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px 10px; }
+table.log td { vertical-align: middle; }
+table.log .tico { display: inline-flex; width: 20px; height: 20px; vertical-align: middle; }
+table.log .tico svg { width: 13px; height: 13px; }
+.nowrap { white-space: nowrap; }
+@media (max-width: 860px) { .filters { grid-template-columns: 1fr; } }
+
+/* ---- help ---- */
+main.page.help { display: grid; grid-template-columns: 220px 1fr; gap: 16px; max-width: 1100px; align-items: start; }
+.toc { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.toc a { text-decoration: none; }
+.doc h2 { margin-top: 26px; scroll-margin-top: 12px; }
+.doc h2:first-child { margin-top: 0; }
+.doc p, .doc li { line-height: 1.55; }
+.doc code { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 13px; }
+@media (max-width: 860px) { main.page.help { grid-template-columns: 1fr; } .toc { position: static; } }
+
+a.btnlink { display: inline-block; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 4px 9px;
+  font-size: 13px; color: var(--text); text-decoration: none; }

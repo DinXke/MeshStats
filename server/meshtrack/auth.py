@@ -42,15 +42,18 @@ def verify_password(pw: str, stored: str) -> bool:
         return False
 
 
-def make_session(user: str, secret: str, days: int) -> str:
+def make_session(user: str, secret: str, days: int, gen: int = 0) -> str:
+    """Ondertekende sessie: gebruiker, generatie en vervaldatum. Een hogere
+    generatie in de database (nieuw wachtwoord, gedeactiveerd) maakt alle
+    oudere sessies van die gebruiker ongeldig."""
     exp = int(time.time()) + days * 86400
-    body = f"{user}|{exp}"
+    body = f"{user}|{gen}|{exp}"
     sig = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
     return _b64(body.encode()) + "." + _b64(sig)
 
 
-def check_session(token: str | None, secret: str) -> str | None:
-    """Gebruikersnaam bij een geldige, niet-verlopen sessie, anders None."""
+def check_session(token: str | None, secret: str) -> tuple[str, int] | None:
+    """(gebruiker, generatie) bij een geldige, niet-verlopen sessie, anders None."""
     if not token or not secret or "." not in token:
         return None
     try:
@@ -59,10 +62,21 @@ def check_session(token: str | None, secret: str) -> str | None:
         good = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
         if not hmac.compare_digest(good, _unb64(s)):
             return None
-        user, exp = body.rsplit("|", 1)
-        return user if int(exp) > time.time() else None
+        parts = body.split("|")
+        if len(parts) == 2:                 # oud formaat zonder generatie
+            user, exp, gen = parts[0], parts[1], "0"
+        else:
+            user, gen, exp = parts[0], parts[1], parts[2]
+        return (user, int(gen)) if int(exp) > time.time() else None
     except (ValueError, UnicodeDecodeError):
         return None
+
+
+def password_problem(pw: str) -> str | None:
+    """Minimale eisen; None = goed."""
+    if len(pw) < 8:
+        return "minstens 8 tekens"
+    return None
 
 
 if __name__ == "__main__":

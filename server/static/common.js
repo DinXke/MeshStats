@@ -7,6 +7,7 @@ const MT = {
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     if (r.status === 401) { location.href = "/login"; throw new Error("niet ingelogd"); }
+    if (r.status === 403 && !opts.quiet403) throw new Error("geen toegang");
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || r.statusText);
     return j;
@@ -25,7 +26,7 @@ const MT = {
     return `${Math.round(s / 86400)} d geleden`;
   },
 
-  STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd" },
+  STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd", W: "wakker door beweging" },
   MODE: { c: "companion", t: "tracker" },
 
   TOWNS: [
@@ -36,6 +37,60 @@ const MT = {
     ["Maastricht", 50.8514, 5.6910], ["Eindhoven", 51.4416, 5.4697], ["Utrecht", 52.0907, 5.1214],
     ["Rotterdam", 51.9244, 4.4777], ["Amsterdam", 52.3676, 4.9041], ["Luxemburg", 49.6116, 6.1319],
   ],
+
+  me: null,
+  can(perm) { return !!(MT.me && MT.me.perms.includes(perm)); },
+
+  /* Kopbalk: menu volgens de rechten, gebruikersmenu met wachtwoord en uitloggen. */
+  async initHeader(active) {
+    MT.me = await MT.api("/api/me");
+    const links = [
+      ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"],
+      ["/admin", "Beheer", ["trackers.manage", "trackers.serial", "sims.manage", "companion.view"]],
+      ["/users", "Gebruikers", ["users.manage", "share.manage"]], ["/help", "Help", null],
+    ];
+    const nav = document.querySelector("header.top nav");
+    if (nav) {
+      nav.innerHTML = links.filter(([, , p]) => !p || (Array.isArray(p) ? p.some(MT.can) : MT.can(p)))
+        .map(([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ""}>${label}</a>`).join("");
+    }
+    const hdr = document.querySelector("header.top");
+    if (hdr && !document.getElementById("usermenu") && MT.me.kind === "user") {
+      hdr.insertAdjacentHTML("beforeend", `<details id="usermenu" class="usermenu"><summary title="${MT.esc(MT.me.group)}">
+        <span class="avatar">${MT.esc((MT.me.display || "?").slice(0, 1).toUpperCase())}</span></summary>
+        <div class="menu"><div class="who"><strong>${MT.esc(MT.me.display)}</strong><div class="muted small">${MT.esc(MT.me.group)}</div></div>
+        <button type="button" id="um-pw">Wachtwoord wijzigen</button><button type="button" id="um-out">Uitloggen</button></div></details>`);
+      document.getElementById("um-out").addEventListener("click", async () => { await MT.api("/api/logout", { method: "POST" }); location.href = "/login"; });
+      document.getElementById("um-pw").addEventListener("click", MT.passwordDialog);
+    }
+    return MT.me;
+  },
+
+  passwordDialog() {
+    let d = document.getElementById("pwdlg");
+    if (!d) {
+      document.body.insertAdjacentHTML("beforeend", `<dialog id="pwdlg" class="dlg"><form method="dialog" id="pwform">
+        <h2>Wachtwoord wijzigen</h2>
+        <label for="pw-old">Huidig wachtwoord</label><input id="pw-old" type="password" autocomplete="current-password" required>
+        <label for="pw-new">Nieuw wachtwoord (min. 8 tekens)</label><input id="pw-new" type="password" autocomplete="new-password" minlength="8" required>
+        <div class="row"><button class="primary" id="pw-save" type="submit">Opslaan</button><button type="button" id="pw-cancel">Annuleren</button></div>
+        <div id="pw-msg" class="msg"></div></form></dialog>`);
+      d = document.getElementById("pwdlg");
+      document.getElementById("pw-cancel").addEventListener("click", () => d.close());
+      document.getElementById("pwform").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const m = document.getElementById("pw-msg");
+        try {
+          await MT.api("/api/me/password", { method: "POST", body: { old: document.getElementById("pw-old").value, new: document.getElementById("pw-new").value } });
+          m.className = "msg ok"; m.textContent = "Gewijzigd. Andere sessies zijn afgemeld.";
+          setTimeout(() => d.close(), 1200);
+        } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+      });
+    }
+    d.querySelector("form").reset();
+    document.getElementById("pw-msg").textContent = "";
+    d.showModal();
+  },
 
   meshPill(el, m) {
     el.className = "pill " + (m.connected ? "ok" : "bad");

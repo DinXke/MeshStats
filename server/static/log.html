@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – logboek</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin">
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav></nav>
+  <span class="spacer"></span>
+</header>
+<main class="page wide">
+  <section class="card">
+    <div class="cardhead"><h2>Logboek</h2><span class="muted small" id="count"></span></div>
+    <div class="filters">
+      <div><label for="f-trk">Trackers</label><select id="f-trk" multiple size="5"></select>
+        <div class="help">Niets gekozen = alle. Ctrl/Cmd voor meerdere.</div></div>
+      <div><label>Soort</label><div id="f-types" class="typegrid"></div>
+        <div class="row" style="margin-top:6px"><button type="button" class="link" id="t-all">alles</button>
+          <button type="button" class="link" id="t-none">niets</button><button type="button" class="link" id="t-alerts">alleen bijzondere</button></div></div>
+      <div><label for="f-period">Periode</label>
+        <select id="f-period"><option value="1">laatste uur</option><option value="6">6 uur</option><option value="24" selected>24 uur</option>
+          <option value="72">3 dagen</option><option value="168">7 dagen</option><option value="720">30 dagen</option><option value="custom">van–tot</option></select>
+        <div id="f-custom" hidden><label>Van</label><input id="f-from" type="datetime-local"><label>Tot</label><input id="f-to" type="datetime-local"></div>
+        <label for="f-text">Zoeken</label><input id="f-text" type="search" placeholder="naam, zone…">
+        <div class="row"><button class="primary" id="f-go">Toon</button><button id="f-csv">CSV</button>
+          <label class="mini"><input type="checkbox" id="f-live" checked> live bijwerken</label></div></div>
+    </div>
+  </section>
+  <section class="card">
+    <div id="events"></div>
+  </section>
+</main>
+<script src="/static/icons.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/log.js"></script>
+</body>
+</html>
