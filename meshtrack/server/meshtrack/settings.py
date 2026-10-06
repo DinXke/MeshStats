@@ -27,6 +27,19 @@ SPEC: dict[str, tuple[Any, Any, Any, str, str]] = {
     "retention_days":      (90, 1, 3650, "Bewaartermijn (dagen)", "Posities ouder dan dit worden automatisch gewist."),
     "sim_history_days":    (7, 0, 30, "Historiek simulators (dagen)",
                             "Een nieuwe simulator krijgt meteen zo veel dagen gesimuleerde geschiedenis (0 = geen)."),
+    # Klaarmaken van een nieuwe tracker (sleutel op de server): zo komt hij op de mesh.
+    "prov_freq":           (869.618, 150.0, 2500.0, "Nieuwe tracker: frequentie (MHz)",
+                            "Radio-instellingen die een nieuw toestel krijgt. Zelfde als je mesh (BE/NL: 869.618)."),
+    "prov_bw":             (62.5, 7.8, 500.0, "Nieuwe tracker: bandbreedte (kHz)", "Meestal 62.5."),
+    "prov_sf":             (8, 5, 12, "Nieuwe tracker: spreading factor", "Meestal 8."),
+    "prov_cr":             (8, 5, 8, "Nieuwe tracker: coding rate", "Meestal 8."),
+    "prov_tx":             (22, -9, 22, "Nieuwe tracker: zendvermogen (dBm)", "De T1000-E kan tot 22 dBm."),
+    "prov_path_bytes":     (2, 2, 3, "Nieuwe tracker: bytes per hop",
+                            "Grootte van een hop in het pad. MeshTrack gebruikt altijd minstens 2 (1 byte botst te vaak)."),
+    "prov_scope":          ("be", 0, 30, "Nieuwe tracker: regio (scope)",
+                            "Standaardregio voor floods, zonder # (bv. be). Leeg = geen regio."),
+    "prov_public_channel": (True, None, None, "Nieuwe tracker: kanaal Public",
+                            "Het openbare kanaal toevoegen, handig als het toestel ook als companion dient."),
 }
 
 
@@ -55,6 +68,12 @@ def validate(changes: dict[str, Any]) -> dict[str, Any]:
         if isinstance(default, bool):
             out[k] = bool(v)
             continue
+        if isinstance(default, str):
+            s = str(v or "").strip()
+            if len(s) > hi or any(c in s for c in " #\t\r\n"):
+                raise ValueError(f"{label}: hoogstens {hi} tekens, zonder spaties of #")
+            out[k] = s
+            continue
         try:
             n = type(default)(v)
         except (TypeError, ValueError):
@@ -67,4 +86,5 @@ def validate(changes: dict[str, Any]) -> dict[str, Any]:
 
 def describe() -> list[dict[str, Any]]:
     return [{"key": k, "default": v[0], "min": v[1], "max": v[2], "label": v[3], "help": v[4],
-             "type": "bool" if isinstance(v[0], bool) else "number"} for k, v in SPEC.items()]
+             "type": "bool" if isinstance(v[0], bool) else "text" if isinstance(v[0], str) else "number",
+             "step": "any" if isinstance(v[0], float) else 1} for k, v in SPEC.items()]

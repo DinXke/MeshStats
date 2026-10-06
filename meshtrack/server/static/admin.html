@@ -50,6 +50,9 @@
       <label class="switch block"><input type="checkbox" id="f-virtual"><span></span> Virtuele tracker (simulator, geen hardware)</label>
 
       <div id="f-real">
+        <label class="switch block" id="f-genrow" hidden><input type="checkbox" id="f-genkey"><span></span> Nieuw toestel: de server maakt de sleutel en de instellingen</label>
+        <div class="help" id="f-genhelp">Daarna zet je alles in één keer op een toestel dat met USB verbonden is (sleutel, naam, radio, regio, 2-byte paden en het doel).</div>
+        <div id="f-pubrow">
         <label for="f-pubkey">Public key van de tracker</label>
         <input id="f-pubkey" class="mono" maxlength="64" placeholder="64 hex-tekens" autocomplete="off" spellcheck="false">
         <div class="help">Te vinden via USB (hieronder) of in de MeshCore-app. Of kies een bekend contact:</div>
@@ -57,6 +60,19 @@
           <button type="button" id="pick">Kies uit contacten van de companion</button>
           <select id="contacts" hidden></select>
         </div>
+        </div>
+        <label class="switch block"><input type="checkbox" id="f-lost"><span></span> Verloren</label>
+        <div class="help">Een verloren tracker blijft verloren tot je dit uitzet. Komt er nog een bericht van binnen,
+          dan krijgt elke meldingsregel met <em>verloren tracker gezien</em> een melding.</div>
+        <fieldset id="f-keys" hidden>
+          <legend>Sleutel en backups op de server</legend>
+          <div id="f-keylist" class="small"></div>
+          <div class="row">
+            <label class="btnlike">Export uit de MeshCore-app importeren<input type="file" id="f-keyfile" accept=".json,application/json" hidden></label>
+          </div>
+          <div class="help">Een backup bevat de <strong>privésleutel</strong>; de server bewaart hem versleuteld. Terugzetten
+            gebeurt op het toestel dat hieronder met USB verbonden is.</div>
+        </fieldset>
       </div>
 
       <div id="f-sim" hidden>
@@ -144,6 +160,40 @@
     <div class="row">
       <button class="primary" id="s-connect">Verbinden</button>
       <button id="s-disconnect" hidden>Loskoppelen</button>
+    </div>
+
+    <div class="fwbox" id="fw">
+      <div class="fwhead"><strong>Firmware</strong> <span id="fw-ver" class="pill">…</span> <span id="fw-dev" class="small muted"></span></div>
+      <div class="muted small" id="fw-notes"></div>
+      <div class="row">
+        <button id="fw-flash" class="primary" disabled>Flashen via de browser</button>
+        <a id="fw-zip" class="btnlink" download hidden>DFU-pakket (.zip)</a>
+        <a id="fw-uf2" class="btnlink" download hidden>UF2 (slepen naar het USB-station)</a>
+      </div>
+      <div class="help">Flashen vervangt alleen de app. Sleutel, contacten, kanalen en instellingen blijven. Eerst wordt
+        een backup gedownload, na afloop controleert de pagina of de pubkey nog dezelfde is.</div>
+      <div id="dfu" class="dfu" hidden>
+        <ol id="dfu-steps"></ol>
+        <div class="bar"><span id="dfu-bar"></span></div>
+        <div id="dfu-act" class="row"></div>
+        <div id="dfu-msg" class="msg"></div>
+      </div>
+    </div>
+
+    <div class="fwbox" id="prov" hidden>
+      <div class="fwhead"><strong>Toestel klaarmaken of terugzetten</strong></div>
+      <div class="row">
+        <select id="prov-t" style="flex:1;min-width:200px"></select>
+        <button id="prov-go" class="primary">Op dit toestel zetten</button>
+      </div>
+      <div class="help">Zet de sleutel van de server, de naam, de radio, de regio, 2-byte paden, de kanalen en het doel
+        op het verbonden toestel. Een andere sleutel op het toestel wordt eerst als backup gedownload.</div>
+      <div class="row">
+        <button id="bk-server">Backup naar de server</button>
+        <button id="bk-json">Backup downloaden (.json)</button>
+        <button id="bk-bin">Volledige opslag downloaden (.bin)</button>
+      </div>
+      <div id="prov-msg" class="msg"></div>
     </div>
 
     <div id="s-panel" hidden>
@@ -254,5 +304,7 @@
 <script src="/static/icons.js"></script>
 <script src="/static/common.js"></script>
 <script src="/static/admin.js"></script>
+<script src="/static/dfu.js"></script>
+<script src="/static/device.js"></script>
 </body>
 </html>

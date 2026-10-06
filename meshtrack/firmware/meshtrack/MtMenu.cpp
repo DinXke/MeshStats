@@ -139,6 +139,121 @@ static const char* set_param(const char* k, const char* v) {
   return NULL;
 }
 
+// ---- mesh-instellingen (naam, radio, paden, regio) en de sleutel -----------------
+
+static int hexval(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  c = tolower((unsigned char)c);
+  return (c >= 'a' && c <= 'f') ? c - 'a' + 10 : -1;
+}
+
+static bool parse_hex(const char* s, uint8_t* o, int n) {
+  if ((int)strlen(s) != n * 2) return false;
+  for (int i = 0; i < n; i++) {
+    int a = hexval(s[2 * i]), b = hexval(s[2 * i + 1]);
+    if (a < 0 || b < 0) return false;
+    o[i] = (uint8_t)(a << 4 | b);
+  }
+  return true;
+}
+
+// Geeft NULL als de sleutel niet bij deze instellingen hoort (de gewone set_param).
+// "radio" en "tx" werken pas na een herstart.
+static const char* set_mesh(const char* k, char* v, bool* handled) {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  *handled = true;
+  if (!strcmp(k, "name")) {
+    if (!*v || strlen(v) >= sizeof(p->node_name)) return "ongeldige waarde";
+    strcpy(p->node_name, v);
+  } else if (!strcmp(k, "radio")) {          // set radio 869.618 62.5 8 8
+    char *e1, *e2, *e3, *e4;          // geen sscanf("%f"): newlib-nano leest geen kommagetallen
+    float f = strtod(v, &e1), bw = strtod(e1, &e2);
+    int sf = strtol(e2, &e3, 10), cr = strtol(e3, &e4, 10);
+    if (e1 == v || e2 == e1 || e3 == e2 || e4 == e3) return "gebruik: set radio <MHz> <BW kHz> <SF> <CR>";
+    if (f < 150 || f > 2500 || bw < 7.8f || bw > 500 || sf < 5 || sf > 12 || cr < 5 || cr > 8) return "ongeldige waarde";
+    p->freq = f; p->bw = bw; p->sf = sf; p->cr = cr;
+  } else if (!strcmp(k, "tx")) {
+    int tx = atoi(v);
+    if (tx < -9 || tx > MAX_LORA_TX_POWER) return "ongeldige waarde";
+    p->tx_power_dbm = tx;
+  } else if (!strcmp(k, "path_bytes")) {     // 2 of 3 bytes per hop; 1 is niet toegelaten
+    int b = atoi(v);
+    if (b < 2 || b > 3) return "ongeldige waarde (2 of 3)";
+    p->path_hash_mode = b - 1;
+  } else if (!strcmp(k, "scope")) {          // regio: naam zonder #, of - voor geen
+    if (!strcmp(v, "-")) {
+      memset(p->default_scope_name, 0, sizeof(p->default_scope_name));
+      memset(p->default_scope_key, 0, sizeof(p->default_scope_key));
+    } else {
+      if (*v == '#') v++;
+      if (!*v || strlen(v) >= sizeof(p->default_scope_name)) return "ongeldige waarde";
+      char tag[34];
+      snprintf(tag, sizeof(tag), "#%s", v);
+      TransportKeyStore temp;
+      TransportKey key;
+      temp.getAutoKeyFor(0xFFFF, tag, key);
+      memset(p->default_scope_name, 0, sizeof(p->default_scope_name));
+      strcpy(p->default_scope_name, v);
+      memcpy(p->default_scope_key, key.key, sizeof(p->default_scope_key));
+    }
+  } else { *handled = false; return NULL; }
+  the_mesh.savePrefs();
+  return NULL;
+}
+
+static void cmd_key(char* args) {
+  char* sub = strtok(args, " ");
+  char* v = strtok(NULL, " ");
+  if (sub && !strcmp(sub, "export")) {
+    uint8_t prv[64];
+    the_mesh.mtExportKey(prv);
+    out("privkey=");
+    for (int i = 0; i < 64; i++) out("%02X", prv[i]);
+    outl("");
+    memset(prv, 0, sizeof(prv));
+  } else if (sub && !strcmp(sub, "import") && v) {
+    uint8_t prv[64];
+    if (!parse_hex(v, prv, 64)) { outl("key: ongeldige sleutel (128 hex)"); return; }
+    bool ok = the_mesh.mtImportKey(prv);
+    memset(prv, 0, sizeof(prv));
+    if (!ok) { outl("key: sleutel geweigerd of niet bewaard"); return; }
+    outl("key: sleutel bewaard; 'reboot' om hem te gebruiken");
+  } else outl("gebruik: key export | key import <128 hex>");
+}
+
+// chan list: "chan=<nr>|<32 hex>|<naam>" per kanaal; chan set <nr> <32 hex> <naam>; chan del <nr>
+static void cmd_chan(char* args) {
+  char* sub = args;
+  char* rest = strchr(args, ' ');
+  if (rest) { *rest++ = 0; while (*rest == ' ') rest++; } else rest = (char*)"";
+  if (!strcmp(sub, "list")) {
+    for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+      ChannelDetails ch;
+      if (!the_mesh.mtGetChannel(i, ch) || !ch.name[0]) continue;
+      out("chan=%d|", i);
+      for (int j = 0; j < 16; j++) out("%02X", ch.channel.secret[j]);
+      outl("|%s", ch.name);
+    }
+    outl("chan=einde");
+  } else if (!strcmp(sub, "set") || !strcmp(sub, "del")) {
+    char* nr = rest;
+    char* sec = strchr(rest, ' ');
+    if (sec) { *sec++ = 0; while (*sec == ' ') sec++; }
+    int idx = atoi(nr);
+    uint8_t secret[16];
+    memset(secret, 0, sizeof(secret));
+    const char* name = "";
+    if (!strcmp(sub, "set")) {
+      char* nm = sec ? strchr(sec, ' ') : NULL;
+      if (nm) { *nm++ = 0; while (*nm == ' ') nm++; }
+      if (!sec || !nm || !*nm || !parse_hex(sec, secret, 16)) { outl("gebruik: chan set <nr> <32 hex> <naam>"); return; }
+      name = nm;
+    }
+    if (idx < 0 || idx >= MAX_GROUP_CHANNELS || !*nr) { outl("chan: ongeldig nummer"); return; }
+    outl(the_mesh.mtSetChannel(idx, name, secret) ? "chan %d bewaard" : "chan %d: NIET bewaard", idx);
+  } else outl("gebruik: chan list | chan set <nr> <32 hex> <naam> | chan del <nr>");
+}
+
 // ---- status (machine-leesbaar: de webpagina leest de key=waarde-paren) ---------
 
 static void cmd_status() {
@@ -154,6 +269,9 @@ static void cmd_status() {
        mt_usb() ? "ja" : "nee", ui_task.isBluetoothEnabled() ? "aan" : "uit");
   outl("batt=%umV batt_pct=%d radio=%.3fMHz SF%u BW%.1f CR%u TX%ddBm", mv, mt_battery_pct(mv),
        (double)p->freq, (unsigned)p->sf, (double)p->bw, (unsigned)p->cr, (int)p->tx_power_dbm);
+  outl("freq=%.3f bw=%.1f sf=%u cr=%u tx=%d path_bytes=%u scope=%s", (double)p->freq, (double)p->bw,
+       (unsigned)p->sf, (unsigned)p->cr, (int)p->tx_power_dbm, (unsigned)p->path_hash_mode + 1,
+       p->default_scope_name[0] ? p->default_scope_name : "-");
   fmt_dur(a, sizeof(a), mt_cfg.min_interval_s);  fmt_dur(b, sizeof(b), mt_cfg.max_interval_s);
   fmt_dur(c, sizeof(c), mt_cfg.still_timeout_s); fmt_dur(d, sizeof(d), mt_cfg.heartbeat_s);
   outl("min_speed=%ukm/h min_dist=%um turn_min=%udeg turn_min_speed=%ukm/h",
@@ -185,6 +303,10 @@ static void cmd_help() {
   outl("    still_timeout heartbeat fix_timeout fix_timeout_hb ack_retries");
   outl("    track_in_companion on|off  accel_sens laag|midden|hoog  target <64 hex>");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
+  outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
+  outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
+  outl("  key export | key import <128 hex>   PRIVATE KEY (import na een reboot)");
+  outl("  chan list | chan set <nr> <32 hex> <naam> | chan del <nr>");
   outl("  send                        nu een positie sturen (zoals een klik)");
   outl("  defaults | backup | reboot | menu | q (menu sluiten)");
 }
@@ -407,10 +529,17 @@ static void command(char* s) {
   if (!strcmp(s, "help") || !strcmp(s, "?")) cmd_help();
   else if (!strcmp(s, "status") || !strcmp(s, "cfg")) cmd_status();
   else if (!strcmp(s, "set")) {
-    char* k = strtok(args, " ");
-    char* v = strtok(NULL, " ");
-    if (!k || !v) { outl("gebruik: set <param> <waarde>"); return; }
-    const char* err = set_param(k, v);
+    char* k = args;
+    char* v = strchr(args, ' ');
+    if (v) { *v++ = 0; while (*v == ' ') v++; }
+    if (!*k || !v || !*v) { outl("gebruik: set <param> <waarde>"); return; }
+    bool handled;
+    const char* err = set_mesh(k, v, &handled);
+    if (!handled) {
+      char* sp = strchr(v, ' ');              // gewone parameters: één woord
+      if (sp) *sp = 0;
+      err = set_param(k, v);
+    }
     if (err) outl("%s: %s (%s)", k, err, v);
     else outl("%s = %s (bewaard)", k, v);
   }
@@ -423,6 +552,8 @@ static void command(char* s) {
   else if (!strcmp(s, "send")) outl(mt_tracker_manual() ? "positie wordt verstuurd" : "niet verstuurd (geen doel of te snel)");
   else if (!strcmp(s, "defaults")) { mt_cfg_defaults(mt_cfg); outl("instellingen: standaard %s", mt_cfg_save() ? "(bewaard)" : "[NIET bewaard]"); }
   else if (!strcmp(s, "backup")) cmd_backup();
+  else if (!strcmp(s, "key")) cmd_key(args);
+  else if (!strcmp(s, "chan")) cmd_chan(args);
   else if (!strcmp(s, "reboot")) { outl("herstart..."); delay(100); NVIC_SystemReset(); }
   else if (!strcmp(s, "menu")) open_menu();
   else if (!strcmp(s, "q")) { if (s_in_menu) { s_in_menu = false; outl(""); outl("Menu gesloten."); } }
@@ -454,7 +585,7 @@ static void handle_line(char* line) {
 
 // ---- invoer ---------------------------------------------------------------------
 
-static char s_line[120];
+static char s_line[200];
 static uint8_t s_len = 0;
 static bool s_last_cr = false;
 
@@ -478,6 +609,6 @@ void mt_menu_loop() {
       continue;
     }
     if (ch == 0x08 || ch == 0x7F) { if (s_len) { s_len--; out("\b \b"); } continue; }
-    if (s_len < sizeof(s_line) - 1 && ch >= 0x20) { s_line[s_len++] = ch; Serial.write(ch); }
+    if (s_len < sizeof(s_line) - 1 && (uint8_t)ch >= 0x20) { s_line[s_len++] = ch; Serial.write(ch); }   // ook UTF-8 (namen)
   }
 }

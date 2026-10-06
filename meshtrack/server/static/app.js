@@ -252,7 +252,7 @@
   function popupHtml(t) {
     const st = MT.STATE[t.last_state] || t.last_state || "–";
     return [
-      `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">sim</span>' : ""}`,
+      `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">sim</span>' : ""}${t.lost ? ' <span class="lostbadge">VERLOREN</span>' : ""}`,
       `${MT.esc(st)}${t.last_mode ? " · " + MT.esc(MT.MODE[t.last_mode] || t.last_mode) : ""}`,
       t.last_spd != null ? `${t.last_spd} km/u${t.last_crs != null ? " · koers " + t.last_crs + "°" : ""}` : null,
       t.last_bat != null ? `batterij ${t.last_bat}%` : null,
@@ -281,6 +281,7 @@
     el.style.background = t.color;
     el.classList.toggle("stale", t.stale);
     el.classList.toggle("sos", t.last_state === "E");
+    el.classList.toggle("lost", !!t.lost);
     const moving = t.last_crs != null && (t.last_spd || 0) >= 3;
     el.classList.toggle("has-crs", moving);
     if (moving) el.querySelector(".arrow").style.transform = `rotate(${t.last_crs}deg)`;
@@ -324,7 +325,7 @@
       return;
     }
     $("list").innerHTML = items.map((t) => {
-      const sos = t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "";
+      const sos = (t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "") + (t.lost ? ' <span class="lostbadge">VERLOREN</span>' : "");
       const sim = t.kind === "sim" ? ' <span class="pill">sim</span>' : "";
       const meta = [MT.STATE[t.last_state] || "nog niets ontvangen", t.last_bat != null ? `${t.last_bat}%` : null,
                     t.last_spd ? `${t.last_spd} km/u` : null].filter(Boolean).join(" · ");
@@ -806,6 +807,11 @@
     }
     if (msg.type === "tracker" || msg.type === "tracker_deleted") loadAll();
     if (msg.type === "geofences") loadZones();
+    if (msg.type === "lost_seen" && msg.tracker) {
+      const t = msg.tracker;
+      if (trackers.has(t.id)) { trackers.set(t.id, { ...trackers.get(t.id), ...t }); renderList(); }
+      toast(`Verloren tracker ${t.alias} is terug opgedoken`, "out");
+    }
     if (msg.type === "geofence") {
       const e = msg.event;
       toast(`${e.tracker} ${e.event === "enter" ? "is binnengekomen in" : "heeft verlaten:"} ${e.geofence}`, e.event === "enter" ? "" : "out");

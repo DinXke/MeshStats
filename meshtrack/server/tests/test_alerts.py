@@ -51,3 +51,11 @@ def test_settings_validation():
         setmod.validate({"alert_gap_s": 1})
     with pytest.raises(ValueError):
         setmod.validate({"bestaat_niet": 1})
+
+
+def test_lost_seen_event():
+    db, am, t, _ = setup()
+    db.save_alert_rule(None, {"name": "Verloren", "active": True, "events": ["lost_seen"], "trackers": [t["id"]],
+                              "recipients": [{"pubkey": "ee" * 32, "name": "Wacht"}], "cooldown_s": 0})
+    assert am.fire(t, "lost_seen", {"lat": 51.0, "lon": 4.0, "ts": 0}) == 1
+    assert "Ziekenwagen 1 (VERLOREN) is terug opgedoken @51.00000,4.00000" in db.alert_log()[0]["text"]

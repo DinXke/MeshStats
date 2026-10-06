@@ -166,6 +166,25 @@ protected:
 
 public:
   void mtSaveContacts() { saveContacts(); }   // MeshTrack: doel-contact bewaren
+  // MeshTrack: sleutel inladen (klaarmaken/herstellen vanaf de server). Werkt pas na een herstart.
+  bool mtImportKey(const uint8_t* prv) {
+    if (!mesh::LocalIdentity::validatePrivateKey(prv)) return false;
+    mesh::LocalIdentity id;
+    id.readFrom(prv, 64);
+    return _store->saveMainIdentity(id);
+  }
+  void mtExportKey(uint8_t* prv) { self_id.writeTo(prv, 64); }
+  // MeshTrack: kanalen (128-bit sleutel, zoals de app) lezen en zetten
+  bool mtGetChannel(int idx, ChannelDetails& ch) { return getChannel(idx, ch); }
+  bool mtSetChannel(int idx, const char* name, const uint8_t* secret16) {
+    ChannelDetails ch;
+    memset(&ch, 0, sizeof(ch));
+    StrHelper::strncpy(ch.name, name, sizeof(ch.name));
+    memcpy(ch.channel.secret, secret16, 16);
+    if (!setChannel(idx, ch)) return false;
+    saveChannels();
+    return true;
+  }
   void savePrefs() {
     _prefs.node_lat = sensors.node_lat;
     _prefs.node_lon = sensors.node_lon;

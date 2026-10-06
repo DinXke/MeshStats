@@ -38,7 +38,7 @@
                     t.last_state ? MT.STATE[t.last_state] : null].filter(Boolean).join(" · ");
       return `<div class="titem">
         <span class="tico big" style="background:${MT.esc(t.color)}">${t.icon ? MTIcons.svg(t.icon) : ""}</span>
-        <div class="body"><div><strong>${MT.esc(t.alias)}</strong> ${kind}${t.active ? "" : ' <span class="pill">inactief</span>'}</div>
+        <div class="body"><div><strong>${MT.esc(t.alias)}</strong> ${kind}${t.active ? "" : ' <span class="pill">inactief</span>'}${t.lost ? ` <span class="pill lost">verloren${t.lost_seen ? " · terug gezien " + MT.esc(MT.ago(t.lost_seen)) : ""}</span>` : ""}${t.keys ? ` <span class="pill" title="${t.keys} sleutel(s)/backup(s) op de server">sleutel op server</span>` : ""}</div>
           <div class="muted small">${MT.esc(meta)}</div>
           ${t.kind === "real" ? `<div class="mono muted small">${MT.esc(t.pubkey.slice(0, 16))}…</div>` : ""}
           ${t.notes && t.notes !== "simulator" ? `<div class="muted small">${MT.esc(t.notes)}</div>` : ""}</div>
@@ -119,6 +119,11 @@
     $("contacts").hidden = true;
     $("f-data").hidden = true;
     $("f-histrow").hidden = true;
+    $("f-genkey").checked = false;
+    $("f-pubrow").hidden = false;
+    $("f-genrow").hidden = !MT.can("keys.manage");
+    $("f-genhelp").hidden = !MT.can("keys.manage");
+    $("f-keys").hidden = true;
     icon = "";
     setVirtual(false);
     renderIcons();
@@ -141,6 +146,7 @@
     $("f-color").value = t.color;
     $("f-notes").value = t.notes === "simulator" ? "" : t.notes;
     $("f-active").checked = !!t.active;
+    $("f-lost").checked = !!t.lost;
     icon = t.icon || "";
     setVirtual(t.kind === "sim");
     $("f-virtual").disabled = true;            // soort wisselen = nieuwe tracker
@@ -170,6 +176,7 @@
     renderIcons();
     $("save").textContent = "Opslaan";
     loadDataInfo(t.id);
+    if (window.MTDevice) MTDevice.onEdit(t);
     openForm(`Bewerken: ${t.alias}`);
   }
 
@@ -229,7 +236,7 @@
     e.preventDefault();
     const id = $("f-id").value;
     const base = { alias: $("f-alias").value.trim(), color: $("f-color").value, icon, notes: $("f-notes").value,
-                   active: $("f-active").checked };
+                   active: $("f-active").checked, lost: $("f-lost").checked };
     try {
       let r;
       if ($("f-virtual").checked) {
@@ -241,9 +248,11 @@
         }
         msg($("fmsg"), "Bewaard. De simulator rijdt zodra zijn eerste route berekend is.", true);
       } else {
+        const gen = !id && $("f-genkey").checked;
         if (id) r = await MT.api(`/api/trackers/${id}`, { method: "PUT", body: base });
-        else r = await MT.api("/api/trackers", { method: "POST", body: { ...base, pubkey: $("f-pubkey").value.trim() } });
+        else r = await MT.api("/api/trackers", { method: "POST", body: { ...base, pubkey: gen ? null : $("f-pubkey").value.trim(), generate_key: gen } });
         msg($("fmsg"), `Bewaard. ${r.contact || ""}`, true);
+        if (gen && window.MTDevice) { await load(); MTDevice.offerProvision(r.tracker); return; }
       }
       $("formcard").hidden = true;
       load();
@@ -261,6 +270,7 @@
       sel.focus();
     } catch (e) { msg($("fmsg"), e.message); }
   });
+  $("f-genkey").addEventListener("change", () => { $("f-pubrow").hidden = $("f-genkey").checked; });
   $("contacts").addEventListener("change", (e) => {
     if (!e.target.value) return;
     $("f-pubkey").value = e.target.value;
@@ -288,9 +298,11 @@
   }
 
   // ---- Web Serial -------------------------------------------------------------------
-  let port = null, reader = null, buf = "", lines = [], lastKv = {};
+  let port = null, reader = null, buf = "", lines = [], lastKv = {}, quiet = 0;
   const log = $("s-log");
-  const append = (t) => { log.textContent += t; if (log.textContent.length > 20000) log.textContent = log.textContent.slice(-15000); log.scrollTop = log.scrollHeight; };
+  const append = (t) => {
+    if (quiet) return;                      // privésleutel of backup: niet in de terminal
+   log.textContent += t; if (log.textContent.length > 20000) log.textContent = log.textContent.slice(-15000); log.scrollTop = log.scrollHeight; };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   if (!("serial" in navigator)) {
@@ -332,6 +344,24 @@
     return lines.slice();
   }
 
+  // Commando sturen en lezen tot een regel aan `re` voldoet (of de tijd om is).
+  async function until(cmd, re, timeoutMs = 4000, silent = false) {
+    if (silent) quiet++;
+    try {
+      lines = [];
+      await send(cmd);
+      const t0 = Date.now();
+      while (Date.now() - t0 < timeoutMs) {
+        if (lines.some((l) => re.test(l))) return lines.slice();
+        if (!port) throw new Error("verbinding verbroken");
+        await sleep(40);
+      }
+      throw new Error(`geen antwoord op "${cmd.split(" ").slice(0, 2).join(" ")}"`);
+    } finally {
+      if (silent) setTimeout(() => { quiet = Math.max(0, quiet - 1); }, 300);
+    }
+  }
+
   function parseStatus(ls) {
     const kv = {};
     for (const l of ls) for (const m of l.matchAll(/([a-z_]+)=([^\s]+)/g)) kv[m[1]] = m[2];
@@ -339,6 +369,8 @@
     if (g) kv.gekozen = g[1];
     const a = /actief=(\w+)/.exec(ls.join("\n"));
     if (a) kv.actief = a[1];
+    const nm = ls.find((l) => l.startsWith("naam="));
+    if (nm) kv.naam = nm.slice(5).trim();          // namen mogen spaties bevatten
     return kv;
   }
 
@@ -360,7 +392,8 @@
       · batterij ${MT.esc(kv.batt || "?")} · nu ${MT.esc(kv.actief || "?")}${kv.usb === "ja" ? " (USB)" : ""}</div>
       <div class="mono muted small">${MT.esc(kv.pubkey || "")}</div>
       <div class="small">${known ? `In MeshTrack als <strong>${MT.esc(known.alias)}</strong>` : '<span class="warn">Nog niet in MeshTrack</span>'}</div>`;
-    $("s-use").hidden = !!known;
+    $("s-use").hidden = !!known || !MT.can("trackers.manage");
+    if (window.MTDevice) MTDevice.onStatus(kv, known);
   }
 
   let mode = "tracker";
@@ -371,9 +404,14 @@
   $("s-mode").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.v)));
 
   async function readStatus() {
-    const ls = await command("status", 900);
+    let ls;
+    try { ls = await until("status", /^cfg=/, 2500); } catch (_) { ls = lines.slice(); }
     lastKv = parseStatus(ls);
-    if (!lastKv.pubkey) { msg($("s-msg"), "Geen antwoord van de tracker. Is dit een MeshTrack-tracker?"); return false; }
+    if (!lastKv.pubkey) {
+      msg($("s-msg"), "Geen antwoord van een MeshTrack-tracker. Staat er nog andere firmware op? Flash dan eerst MeshTrack (hierboven).");
+      if (window.MTDevice) MTDevice.onStatus(null, null);
+      return false;
+    }
     fillForm(lastKv);
     $("s-panel").hidden = false;
     msg($("s-msg"), "");
@@ -382,6 +420,8 @@
 
   function disconnected(why) {
     port = null;
+    lastKv = {};
+    if (window.MTDevice) MTDevice.onStatus(null, null);
     $("s-connect").hidden = false;
     $("s-disconnect").hidden = true;
     $("s-panel").hidden = true;
@@ -389,30 +429,48 @@
     $("s-state").textContent = why || "niet verbonden";
   }
 
+  async function openPort(p) {
+    port = p;
+    await port.open({ baudRate: 115200 });
+    await port.setSignals({ dataTerminalReady: true });
+    $("s-connect").hidden = true;
+    $("s-disconnect").hidden = false;
+    $("s-state").className = "pill ok";
+    $("s-state").textContent = "verbonden";
+    readLoop();
+    await sleep(700);
+    await send("q");
+    await sleep(200);
+    if (!(await readStatus())) await readStatus();
+    return lastKv.pubkey ? lastKv : null;
+  }
+
+  async function closePort() {
+    const p = port;
+    port = null;
+    try { if (reader) await reader.cancel(); } catch (_) {}
+    try { await p.close(); } catch (_) {}
+    disconnected();
+    return p;
+  }
+
+  // Voor device.js (flashen, klaarmaken, backups)
+  window.MTDev = {
+    get port() { return port; }, get kv() { return lastKv; }, get trackers() { return trackers; },
+    get status() { return status; },
+    send, command, until, readStatus, parseStatus, open: openPort, close: closePort, reload: () => load(),
+    msg: (t, ok) => msg($("s-msg"), t, ok),
+  };
+
   $("s-connect").addEventListener("click", async () => {
     try {
-      port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 115200 });
-      await port.setSignals({ dataTerminalReady: true });
-      $("s-connect").hidden = true;
-      $("s-disconnect").hidden = false;
-      $("s-state").className = "pill ok";
-      $("s-state").textContent = "verbonden";
+      const p = await navigator.serial.requestPort();
       log.textContent = "";
-      readLoop();
-      await sleep(500);
-      await send("q");                       // een eventueel open menu sluiten
-      await sleep(200);
-      if (!(await readStatus())) await readStatus();
+      await openPort(p);
     } catch (e) { msg($("s-msg"), `Verbinden mislukt: ${e.message}`); if (port) disconnected(); }
   });
 
-  $("s-disconnect").addEventListener("click", async () => {
-    const p = port;
-    port = null;
-    try { if (reader) await reader.cancel(); await p.close(); } catch (_) {}
-    disconnected();
-  });
+  $("s-disconnect").addEventListener("click", closePort);
 
   $("s-reload").addEventListener("click", readStatus);
   $("s-defaults").addEventListener("click", async () => {

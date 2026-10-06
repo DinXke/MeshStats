@@ -950,6 +950,11 @@ void MyMesh::begin(bool has_display) {
   _prefs.tx_power_dbm = constrain(_prefs.tx_power_dbm, -9, MAX_LORA_TX_POWER);
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
+  // MeshTrack: altijd paden van minstens 2 bytes (mode 0 = 1 byte is te weinig voor een druk net)
+  if (_prefs.path_hash_mode < 1 || _prefs.path_hash_mode > 2) {
+    _prefs.path_hash_mode = 1;
+    savePrefs();
+  }
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -1460,7 +1465,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     savePrefs();
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_SET_PATH_HASH_MODE && cmd_frame[1] == 0 && len >= 3) {
-    if (cmd_frame[2] >= 3) {
+    if (cmd_frame[2] >= 3 || cmd_frame[2] == 0) {   // MeshTrack: 1 byte niet toegelaten
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else {
       _prefs.path_hash_mode = cmd_frame[2];

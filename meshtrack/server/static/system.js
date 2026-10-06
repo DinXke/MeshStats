@@ -121,13 +121,16 @@
     $("settings").innerHTML = r.spec.map((s) => s.type === "bool"
       ? `<div><label class="switch block"><input type="checkbox" data-key="${s.key}"${r.values[s.key] ? " checked" : ""}><span></span> ${MT.esc(s.label)}</label>
          <div class="help">${MT.esc(s.help)}</div></div>`
-      : `<div><label>${MT.esc(s.label)}</label><input type="number" data-key="${s.key}" min="${s.min}" max="${s.max}" value="${r.values[s.key]}">
+      : s.type === "text"
+      ? `<div><label>${MT.esc(s.label)}</label><input type="text" data-key="${s.key}" maxlength="${s.max}" value="${MT.esc(r.values[s.key])}">
+         <div class="help">${MT.esc(s.help)}</div></div>`
+      : `<div><label>${MT.esc(s.label)}</label><input type="number" data-key="${s.key}" min="${s.min}" max="${s.max}" step="${s.step || 1}" value="${r.values[s.key]}">
          <div class="help">${MT.esc(s.help)} (standaard ${s.default})</div></div>`).join("");
   }
   $("set-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = {};
-    $("settings").querySelectorAll("[data-key]").forEach((el) => { body[el.dataset.key] = el.type === "checkbox" ? el.checked : Number(el.value); });
+    $("settings").querySelectorAll("[data-key]").forEach((el) => { body[el.dataset.key] = el.type === "checkbox" ? el.checked : el.type === "text" ? el.value.trim() : Number(el.value); });
     try { await MT.api("/api/settings", { method: "PUT", body }); msg($("set-msg"), "Bewaard.", true); }
     catch (err) { msg($("set-msg"), err.message); }
   });

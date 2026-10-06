@@ -12,6 +12,7 @@ auth:
   user: admin
   password_hash: ""      # python -m meshtrack.auth
   session_secret: ""     # idem
+  keystore_secret: ""    # versleutelt privésleutels en backups; leeg = afgeleid van session_secret
   session_days: 30
 map:
   center: [5.33, 50.93]  # lon, lat
