@@ -647,7 +647,39 @@
   }));
 
   const phone = () => window.innerWidth <= 720;
-  if (phone()) $("viewopts").open = false;
+  // Inklapbare blokken: stand per browser onthouden (telefoon: standaard dicht).
+  document.querySelectorAll("details.sect").forEach((d) => {
+    const key = "sect." + d.dataset.sect;
+    const saved = store.get(key, null);
+    d.open = saved === null ? (phone() ? false : d.open) : saved;
+    d.addEventListener("toggle", () => store.set(key, d.open));
+  });
+
+  // Versleepbare zijbalk (alleen op een breed scherm).
+  const side = $("side");
+  const setW = (w) => { side.style.width = Math.max(200, Math.min(640, w)) + "px"; map.resize(); };
+  const savedW = store.get("sideW", null);
+  if (savedW && !phone()) setW(savedW);
+  $("resizer").addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    $("resizer").setPointerCapture(e.pointerId);
+    document.body.classList.add("resizing");
+    const move = (ev) => setW(ev.clientX - side.getBoundingClientRect().left);
+    const up = () => {
+      document.body.classList.remove("resizing");
+      $("resizer").removeEventListener("pointermove", move);
+      store.set("sideW", side.offsetWidth);
+    };
+    $("resizer").addEventListener("pointermove", move);
+    $("resizer").addEventListener("pointerup", up, { once: true });
+  });
+  $("resizer").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      setW(side.offsetWidth + (e.key === "ArrowRight" ? 20 : -20));
+      store.set("sideW", side.offsetWidth);
+    }
+  });
+  $("resizer").addEventListener("dblclick", () => { side.style.width = ""; store.set("sideW", null); map.resize(); });
   // ruimte die het onderpaneel van de kaart inneemt (telefoon)
   const pad = () => (phone() ? { top: 60, left: 40, right: 40, bottom: $("side").offsetHeight + 30 } : 80);
 
