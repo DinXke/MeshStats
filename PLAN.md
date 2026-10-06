@@ -195,6 +195,20 @@ SLEEP ──(heartbeat_interval)──> ACQUIRE (korte timeout) ──> SEND(H) 
 - Fase 3b: draadloos via de server (configwachtrij, uitgevoerd na het volgende
   bericht van de tracker).
 
+### 4.4b Batterij
+
+Overnemen uit MU-companion (`MuBattery.cpp/.h`, zie `battery_fix_t1000e.md`):
+
+- `battery_percent_from_mv()`: echte LiPo-ontlaadcurve i.p.v. lineair (de
+  T1000-E-bug "blijft op 50-60 % hangen en valt dan plots uit"). Dit is het
+  `bat_pct`-veld in elk T1-bericht en de waarde in `status`.
+- **App-spoofing** `battery_app_mv()`: de MeshCore-app rekent lineair
+  `(mv-3000)/12`; we geven in de twee app-frames (self-info/battery-reply in
+  `MyMesh.cpp`) een virtueel mV `3000 + pct*12` door, zodat de app het juiste %
+  toont. Alleen de waarde verandert, niet de framestructuur. Vergt een kopie van
+  `MyMesh.cpp` met 2 kleine hooks (zoals MU-companion).
+- Eigen uitvoer (T1, serieel) toont de ECHTE spanning en het echte %.
+
 ### 4.5 Energie
 
 Tracker/SLEEP: GNSS uit (backup-voeding aan voor hot start), radio sleep, BLE
