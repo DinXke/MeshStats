@@ -53,6 +53,39 @@
       : '<div class="empty">geen</div>';
   }
 
+  // ---- rijgedrag (simulator) ----------------------------------------------------------
+  const KIND_NL = { motorway: "snelweg", motorway_link: "op-/afrit snelweg", trunk: "autoweg", trunk_link: "op-/afrit autoweg",
+    primary: "gewestweg", primary_link: "afrit gewestweg", secondary: "secundaire weg", secondary_link: "afrit secundair",
+    tertiary: "lokale verbindingsweg", tertiary_link: "afrit lokaal", unclassified: "buitenweg", residential: "woonstraat",
+    living_street: "woonerf", service: "dienstweg / parking", road: "onbekende weg", cycleway: "fietspad", track: "veldweg",
+    path: "pad", footway: "voetpad", pedestrian: "voetgangerszone", steps: "trappen", sidewalk: "stoep", crossing: "oversteek" };
+  let simDefaults = null;
+  async function renderSpeeds(profile, current) {
+    if (!simDefaults) simDefaults = await MT.api("/api/sims/defaults");
+    const def = simDefaults[profile];
+    $("d-speeds").innerHTML = Object.entries(def.speeds).map(([k, v]) =>
+      `<div><label>${MT.esc(KIND_NL[k] || k)}</label><div class="unit"><input type="number" min="3" max="200" data-kind="${MT.esc(k)}"
+        placeholder="${v}" value="${current && current[k] ? current[k] : ""}"><span>km/u</span></div></div>`).join("");
+    $("d-tmin").placeholder = def.trip[0];
+    $("d-tmax").placeholder = def.trip[1];
+  }
+  function driveBody() {
+    const speeds = {};
+    document.querySelectorAll("#d-speeds [data-kind]").forEach((el) => { if (el.value) speeds[el.dataset.kind] = Number(el.value); });
+    return { speed_pct: Number($("d-pct").value) || 100, max_kmh: Number($("d-max").value) || 0,
+             trip_min_km: Number($("d-tmin").value) || null, trip_max_km: Number($("d-tmax").value) || null,
+             roam: $("d-roam").checked, speeds };
+  }
+  function fillDrive(d) {
+    d = d || {};
+    $("d-pct").value = d.speed_pct || 100;
+    $("d-max").value = d.max_kmh || 0;
+    $("d-tmin").value = d.trip_min_km || "";
+    $("d-tmax").value = d.trip_max_km || "";
+    $("d-roam").checked = !!d.roam;
+  }
+  $("f-profile").addEventListener("change", () => renderSpeeds($("f-profile").value, null));
+
   // ---- formulier --------------------------------------------------------------------
   $("f-town").innerHTML = MT.TOWNS.map((t, i) => `<option value="${i}">${t[0]}</option>`).join("");
 
@@ -85,6 +118,8 @@
     icon = "";
     setVirtual(false);
     renderIcons();
+    fillDrive(null);
+    renderSpeeds("car", null);
     $("save").textContent = "Toevoegen";
   }
 
@@ -116,6 +151,8 @@
           $("f-town").dataset.lon = s.home_lon;
         } else $("f-town").value = ti;
         document.querySelectorAll("[data-sp]").forEach((el) => { if (s.params[el.dataset.sp] != null) el.value = s.params[el.dataset.sp]; });
+        fillDrive(s.drive);
+        renderSpeeds(s.profile, (s.drive || {}).speeds);
         $("f-loss").value = s.loss_pct;
         $("f-batt").value = s.batt_speed;
         $("f-running").checked = !!s.running;
@@ -148,7 +185,8 @@
     if (sel.value === "custom") { lat = Number(sel.dataset.lat); lon = Number(sel.dataset.lon); }
     else { const t = MT.TOWNS[Number(sel.value)]; lat = t[1]; lon = t[2]; }
     return { profile: $("f-profile").value, home_lat: lat, home_lon: lon, params,
-             loss_pct: Number($("f-loss").value), batt_speed: Number($("f-batt").value), running: $("f-running").checked };
+             loss_pct: Number($("f-loss").value), batt_speed: Number($("f-batt").value), running: $("f-running").checked,
+             drive: driveBody() };
   }
 
   $("form").addEventListener("submit", async (e) => {

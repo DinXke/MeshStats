@@ -108,6 +108,9 @@ class DB:
         cols = {r["name"] for r in self._q("PRAGMA table_info(trackers)")}
         if "kind" not in cols:   # 0.2.1: echte of gesimuleerde tracker
             self._x("ALTER TABLE trackers ADD COLUMN kind TEXT NOT NULL DEFAULT 'real'")
+        scols = {r["name"] for r in self._q("PRAGMA table_info(sims)")}
+        if "drive" not in scols:  # 0.2.2: rijgedrag (snelheden, ritlengte, zwerven)
+            self._x("ALTER TABLE sims ADD COLUMN drive TEXT NOT NULL DEFAULT '{}'")
 
     def _q(self, sql: str, args: tuple = ()) -> list[dict[str, Any]]:
         with self._lock:
@@ -193,19 +196,22 @@ class DB:
         rows = self._q("SELECT s.*, t.alias, t.color, t.pubkey FROM sims s JOIN trackers t ON t.id=s.tracker_id")
         for r in rows:
             r["params"] = json.loads(r["params"])
+            r["drive"] = json.loads(r.get("drive") or "{}")
         return rows
 
     def sim(self, tid: int) -> Optional[dict[str, Any]]:
         return next((s for s in self.sims() if s["tracker_id"] == tid), None)
 
     def save_sim(self, tid: int, profile: str, home_lat: float, home_lon: float, params: dict,
-                 loss_pct: int, batt_speed: float, running: bool) -> None:
+                 loss_pct: int, batt_speed: float, running: bool, drive: Optional[dict] = None) -> None:
         self._x(
-            "INSERT INTO sims(tracker_id, profile, home_lat, home_lon, params, loss_pct, batt_speed, running) "
-            "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(tracker_id) DO UPDATE SET profile=excluded.profile, "
+            "INSERT INTO sims(tracker_id, profile, home_lat, home_lon, params, loss_pct, batt_speed, running, drive) "
+            "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(tracker_id) DO UPDATE SET profile=excluded.profile, "
             "home_lat=excluded.home_lat, home_lon=excluded.home_lon, params=excluded.params, "
-            "loss_pct=excluded.loss_pct, batt_speed=excluded.batt_speed, running=excluded.running",
-            (tid, profile, home_lat, home_lon, json.dumps(params), loss_pct, batt_speed, int(running)))
+            "loss_pct=excluded.loss_pct, batt_speed=excluded.batt_speed, running=excluded.running, "
+            "drive=excluded.drive",
+            (tid, profile, home_lat, home_lon, json.dumps(params), loss_pct, batt_speed, int(running),
+             json.dumps(drive or {})))
 
     def set_sim_running(self, tid: int, running: bool) -> None:
         self._x("UPDATE sims SET running=? WHERE tracker_id=?", (int(running), tid))

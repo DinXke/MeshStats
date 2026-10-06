@@ -132,7 +132,8 @@
     const cutoff = Date.now() / 1000 - 7 * 86400;
     return { type: "FeatureCollection", features: meshNodes
       .filter((n) => prefs.ntypes.has(n.type) && (!prefs.nrecent || (n.last_advert || 0) >= cutoff))
-      .map((n) => ({ type: "Feature", properties: { name: n.name, type: n.type, last: n.last_advert || 0, hops: n.hops ?? -1 },
+      .map((n) => ({ type: "Feature", properties: { name: n.name, type: n.type, last: n.last_advert || 0, hops: n.hops ?? -1,
+          direct: n.direct ? 1 : 0, rssi: n.rssi ?? null, snr: n.snr ?? null, adverts: n.adverts ?? null },
         geometry: { type: "Point", coordinates: [n.lon, n.lat] } })) };
   }
   async function loadNodes() {
@@ -153,9 +154,12 @@
   map.on("click", "nodes", (e) => {
     if (drawing) return;
     const p = e.features[0].properties;
-    const hops = p.hops >= 0 && p.hops < 64 ? ` · ${p.hops} hops van de server` : "";
+    const hops = p.hops >= 0 && p.hops < 64 ? ` · ${p.hops === 0 ? "rechtstreeks" : p.hops + " hops"} tot de server` : "";
+    const direct = p.direct ? `<br><span style="color:#22c55e">directe buur van de server</span>` : "";
+    const sig = p.rssi != null && p.rssi !== "null" ? `<br>RSSI ${p.rssi} dBm · SNR ${p.snr} dB` : "";
+    const cnt = p.adverts != null && p.adverts !== "null" ? ` · ${p.adverts} adverts` : "";
     new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat)
-      .setHTML(`<strong>${MT.esc(p.name)}</strong><br>${NTYPE[p.type] || "node"}${hops}<br>laatste advert ${MT.ago(p.last)}`).addTo(map);
+      .setHTML(`<strong>${MT.esc(p.name)}</strong><br>${NTYPE[p.type] || "node"}${hops}${direct}${sig}<br>laatste advert ${MT.ago(p.last)}${cnt}`).addTo(map);
   });
   map.on("mouseenter", "nodes", () => { if (!drawing) map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", "nodes", () => { if (!drawing) map.getCanvas().style.cursor = ""; });
@@ -181,7 +185,8 @@
     map.addLayer({ id: "nodes", type: "circle", source: "nodes",
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 7, 2.5, 12, 5, 15, 7],
                "circle-color": ["match", ["get", "type"], 2, "#0ea5e9", 3, "#a855f7", 4, "#f59e0b", "#64748b"],
-               "circle-stroke-color": dark.matches ? "#000" : "#fff", "circle-stroke-width": 1, "circle-opacity": 0.9 } });
+               "circle-stroke-color": ["case", ["==", ["get", "direct"], 1], "#22c55e", dark.matches ? "#000" : "#fff"],
+               "circle-stroke-width": ["case", ["==", ["get", "direct"], 1], 2.5, 1], "circle-opacity": 0.9 } });
     map.addLayer({ id: "nodes-label", type: "symbol", source: "nodes", minzoom: 11,
       layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-offset": [0, 1.1], "text-anchor": "top" },
       paint: { "text-color": dark.matches ? "#cbd5e1" : "#334155", "text-halo-color": dark.matches ? "#000" : "#fff", "text-halo-width": 1.2 } });

@@ -27,6 +27,7 @@ class Config:
     max_hdop: float = 5.0
     stale_after_s: int = 25 * 3600    # grijs op de kaart (2x heartbeat + marge)
     retention_days: int = 90
+    openhop_db: str = "/var/lib/openhop_repeater/repeater.db"   # adverts die openHop als observer zag
     dedup_window_s: int = 24 * 3600
     extra: dict = field(default_factory=dict)
 
@@ -59,5 +60,6 @@ def load(path: str | None = None) -> Config:
     c.max_hdop = float(raw.get("max_hdop", c.max_hdop))
     c.stale_after_s = int(raw.get("stale_after_s", c.stale_after_s))
     c.retention_days = int(raw.get("retention_days", c.retention_days))
+    c.openhop_db = raw.get("openhop_db", c.openhop_db)
     c.extra = raw
     return c

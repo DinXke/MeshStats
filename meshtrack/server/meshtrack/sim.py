@@ -25,7 +25,7 @@ from typing import Awaitable, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from .geo import angle_diff, bearing, haversine, offset
-from .roadgraph import Leg, Router
+from .roadgraph import SPEEDS, Leg, Router
 from .rules import STILL_KMH, Params, RuleState, decide, heartbeat_due, stillness
 
 log = logging.getLogger("meshtrack.sim")
@@ -47,11 +47,16 @@ AIRTIME_S = 0.7    # geschatte zendtijd van één T1-bericht (SF8/BW62,5/CR4/8)
 
 # Rijgedrag per profiel.
 PROFILE = {
-    #        optrekken/afremmen (km/u per s), bochtsnelheid, ritlengte km, kans op stop per kruispunt, stopduur s
-    "car":  dict(acc=2.5, dec=7.0, corner=20, bend=40, trip=(2, 25), stop_p=0.10, stop_s=(5, 45)),
-    "bike": dict(acc=1.5, dec=4.0, corner=10, bend=14, trip=(1, 10), stop_p=0.06, stop_s=(3, 25)),
-    "walk": dict(acc=2.0, dec=4.0, corner=4, bend=5, trip=(0.5, 4), stop_p=0.03, stop_s=(5, 60)),
+    # acc/dec: km/u per s. a_lat: toegelaten zijwaartse versnelling in bochten
+    # (m/s2). trip: standaard ritlengte (km). stop_p: kans op stoppen bij een
+    # kruising van gewone wegen; stop_s: hoe lang.
+    "car":  dict(acc=2.8, dec=7.0, a_lat=2.6, min_corner=15, trip=(3, 30), stop_p=0.12, stop_s=(5, 50)),
+    "bike": dict(acc=1.2, dec=4.0, a_lat=1.6, min_corner=8, trip=(1, 12), stop_p=0.05, stop_s=(3, 25)),
+    "walk": dict(acc=2.0, dec=4.0, a_lat=9.0, min_corner=3, trip=(0.5, 4), stop_p=0.02, stop_s=(5, 60)),
 }
+
+# Wegen waar je niet zomaar stopt (geen verkeerslichten, wel af en toe file).
+FAST_ROADS = {"motorway", "motorway_link", "trunk", "trunk_link"}
 
 # Batterijverbruik in %/u (T1000-E 700 mAh, zie PLAN 4.5).
 BATT_MOVING = 2.3      # GPS continu + zenden
@@ -89,6 +94,13 @@ class SimTracker:
         self.params = Params.from_dict(row["params"])
         self.loss = row["loss_pct"] / 100
         self.batt_speed = float(row["batt_speed"])
+        d = row.get("drive") or {}
+        self.speed_pct = float(d.get("speed_pct") or 100)
+        self.max_kmh = float(d.get("max_kmh") or 0)
+        lo, hi = self.prof["trip"]
+        self.trip_km = (float(d.get("trip_min_km") or lo), float(d.get("trip_max_km") or hi))
+        self.roam = bool(d.get("roam"))
+        self.speeds = {**SPEEDS[self.profile], **{k: float(v) for k, v in (d.get("speeds") or {}).items() if v}}
         self.router, self.emit = router, emit
         self.rng = random.Random()
 
@@ -108,6 +120,10 @@ class SimTracker:
         self.spd = 0.0
         self.crs: Optional[float] = None
         self.trip_factor = 1.0
+        self.cum: list[float] = []         # afstand tot elk routepunt (m)
+        self.vmax: list[float] = []        # max. snelheid per routepunt (bochten)
+        self.jam_until = 0.0
+        self.jam_kmh = 0.0
         self.stop_until = 0.0
         self.dest: Optional[tuple[float, float]] = None
         self.rules = RuleState()
@@ -180,28 +196,59 @@ class SimTracker:
 
     def _next_destination(self, now: float) -> tuple[float, float]:
         hour = local_now().hour
+        lo, hi = self.trip_km
+        if self.roam:
+            # Zwerven: altijd vanaf waar hij nu is, nooit terug naar huis.
+            return self.router.random_destination((self.lat, self.lon), lo, hi, self.rng)
         from_home = haversine(self.lat, self.lon, *self.home) / 1000
         if hour >= 21 or hour < 6:
             return self.home if from_home > 0.3 else self.router.random_destination(self.home, 0.5, 2, self.rng)
-        if from_home > 15 and self.rng.random() < 0.6:
+        if from_home > max(15, hi * 0.6) and self.rng.random() < 0.6:
             return self.home
-        lo, hi = self.prof["trip"]
-        base = (self.lat, self.lon) if from_home < 30 else self.home
+        base = (self.lat, self.lon) if from_home < max(30, hi) else self.home
         return self.router.random_destination(base, lo, hi, self.rng)
+
+    def _prepare_route(self) -> None:
+        """Afstanden en bochtsnelheden vooraf berekenen. De bochtstraal komt uit
+        punten ~15 m voor en na elk routepunt (korte stukjes in de wegvorm geven
+        anders schijnbaar scherpe bochten); v = sqrt(a_lat * r)."""
+        legs = self.legs
+        n = len(legs)
+        cum = [0.0] * n
+        for i in range(1, n):
+            cum[i] = cum[i - 1] + haversine(legs[i - 1].lat, legs[i - 1].lon, legs[i].lat, legs[i].lon)
+        vmax = [999.0] * n
+        a_lat, vmin = self.prof["a_lat"], self.prof["min_corner"]
+        j = 0
+        k = 0
+        for i in range(1, n - 1):
+            while j < i and cum[i] - cum[j + 1] >= 15:
+                j += 1
+            k = max(k, i + 1)
+            while k < n - 1 and cum[k] - cum[i] < 15:
+                k += 1
+            a, b, c = legs[j], legs[i], legs[k]
+            turn = angle_diff(bearing(a.lat, a.lon, b.lat, b.lon), bearing(b.lat, b.lon, c.lat, c.lon))
+            if turn < 8:
+                continue
+            chord = min(cum[i] - cum[j], cum[k] - cum[i])
+            r = chord / (2 * math.sin(math.radians(turn) / 2))
+            vmax[i] = max(vmin, math.sqrt(a_lat * max(r, 1.0)) * 3.6)
+        self.cum, self.vmax = cum, vmax
 
     async def _plan(self, now: float) -> None:
         self.phase, self.note = "plan", "route berekenen"
         for _ in range(4):
             dest = self._next_destination(now)
-            legs = await asyncio.to_thread(self.router.route, (self.lat, self.lon), dest, self.profile)
+            legs = await asyncio.to_thread(self.router.route, (self.lat, self.lon), dest, self.profile,
+                                           0.03, self.speeds)
             if legs and len(legs) >= 2:
                 self.legs, self.i, self.pos_m, self.dest = legs, 0, 0.0, (legs[-1].lat, legs[-1].lon)
-                self.trip_factor = self.rng.uniform(0.85, 1.05)
+                self._prepare_route()
+                # rijstijl per rit: iets onder of boven de limiet
+                self.trip_factor = self.rng.uniform(0.9, 1.04) * self.speed_pct / 100
                 self.phase, self.note = "drive", f"onderweg ({self._left_m() / 1000:.1f} km)"
                 self.stats.trips += 1
-                # vertrek: eerst naar het beginpunt van de route "springen" is
-                # onrealistisch als dat ver is; het ligt altijd op < 3 km en
-                # meestal op enkele meters (dichtstbijzijnde weg).
                 self.lat, self.lon = legs[0].lat, legs[0].lon
                 return
         self.phase, self.note = "park", "geen route gevonden, later opnieuw"
@@ -220,51 +267,58 @@ class SimTracker:
         else:
             secs = self.rng.uniform(3, 6) * 3600
         self.phase, self.park_until, self.legs, self.dest = "park", now + secs, [], None
+        self.cum, self.vmax = [], []
         self.note = f"geparkeerd tot {datetime.fromtimestamp(self.park_until, TZ):%H:%M}"
 
     # ---- rijden -------------------------------------------------------------------
 
     def _left_m(self) -> float:
-        if not self.legs:
+        if not self.legs or not self.cum:
             return 0.0
-        rest = sum(haversine(a.lat, a.lon, b.lat, b.lon) for a, b in zip(self.legs[self.i:], self.legs[self.i + 1:]))
-        return max(0.0, rest - self.pos_m)
+        return max(0.0, self.cum[-1] - (self.cum[self.i] + self.pos_m))
 
     def _seg(self, i: int) -> tuple[float, float]:
         a, b = self.legs[i], self.legs[i + 1]
-        return haversine(a.lat, a.lon, b.lat, b.lon), bearing(a.lat, a.lon, b.lat, b.lon)
+        return self.cum[i + 1] - self.cum[i], bearing(a.lat, a.lon, b.lat, b.lon)
 
-    def _target_speed(self) -> float:
-        lg = self.legs[self.i]
-        target = lg.limit_kmh * self.trip_factor
-        # vooruitkijken: bochten binnen remafstand
-        look = max(30.0, (self.spd / 3.6) ** 2 / 2 / (self.prof["dec"] / 3.6) + 15)
-        dist = self._seg(self.i)[0] - self.pos_m
-        j = self.i
-        while dist < look and j + 2 < len(self.legs):
-            turn = angle_diff(self._seg(j)[1], self._seg(j + 1)[1])
-            if turn > 60:
-                target = min(target, self.prof["corner"])
-            elif turn > 30:
-                target = min(target, self.prof["bend"])
+    def _limit(self, i: int) -> float:
+        v = self.legs[i].limit_kmh * self.trip_factor
+        return min(v, self.max_kmh) if self.max_kmh > 0 else v
+
+    def _target_speed(self, now: float) -> float:
+        here = self.cum[self.i] + self.pos_m
+        target = self._limit(self.i)
+        if now < self.jam_until:
+            target = min(target, self.jam_kmh)
+        dec = self.prof["dec"] / 3.6                  # m/s per s
+        # Vooruitkijken: elk punt binnen de remafstand begrenst de snelheid nu
+        # tot sqrt(v_punt^2 + 2*a*d). Ook een lagere limiet verderop telt.
+        look = (self.spd / 3.6) ** 2 / (2 * dec) + 40
+        j = self.i + 1
+        while j < len(self.legs) and self.cum[j] - here <= look:
+            d = self.cum[j] - here
+            vj = min(self.vmax[j], self._limit(j) if j < len(self.legs) - 1 else 0.0) / 3.6
+            if j == len(self.legs) - 1:
+                vj = 0.0                               # aankomst: stilstaan
+            target = min(target, math.sqrt(vj * vj + 2 * dec * d) * 3.6)
             j += 1
-            dist += self._seg(j)[0]
-        # aankomst: uitbollen
-        left = self._left_m()
-        if left < 60:
-            target = min(target, max(5.0, left / 4))
-        return target
+        return max(0.0, target)
 
     def _drive(self, now: float, dt: float) -> None:
         if now < self.stop_until:
             self.spd = max(0.0, self.spd - self.prof["dec"] * dt)
             return
-        target = self._target_speed()
+        kind = self.legs[self.i].kind
+        # File op snelweg/autoweg: af en toe enkele minuten traag.
+        if kind in FAST_ROADS and now >= self.jam_until and self.rng.random() < dt / 1800:
+            self.jam_until = now + self.rng.uniform(60, 300)
+            self.jam_kmh = self.rng.uniform(15, 60)
+        target = self._target_speed(now)
         if self.spd < target:
-            self.spd = min(target, self.spd + self.prof["acc"] * dt)
+            self.spd = min(target, self.spd + self.prof["acc"] * dt * (0.6 if self.spd > 80 else 1.0))
         else:
             self.spd = max(target, self.spd - self.prof["dec"] * dt)
-        self.spd = max(0.0, self.spd + self.rng.gauss(0, 0.3))
+        self.spd = max(0.0, self.spd + self.rng.gauss(0, 0.4))
         move = self.spd / 3.6 * dt
         self.stats.km += move / 1000
         while move > 0 and self.i + 1 < len(self.legs):
@@ -279,8 +333,10 @@ class SimTracker:
                 self.pos_m = 0.0
                 if self.i + 1 < len(self.legs):
                     a, b = self.legs[self.i - 1], self.legs[self.i]
-                    # kruispunt (wegtype wisselt): soms even stoppen
-                    if a.kind != b.kind and self.rng.random() < self.prof["stop_p"]:
+                    # Kruispunt van gewone wegen (wegtype wisselt): soms even
+                    # stoppen (verkeerslicht, voorrang). Nooit op snelwegen.
+                    if (a.kind != b.kind and a.kind not in FAST_ROADS and b.kind not in FAST_ROADS
+                            and self.rng.random() < self.prof["stop_p"]):
                         self.stop_until = now + self.rng.uniform(*self.prof["stop_s"])
             self.crs = seg_brg
         if self.i + 1 >= len(self.legs):
@@ -292,7 +348,8 @@ class SimTracker:
         seg_len = self._seg(self.i)[0] or 1
         f = self.pos_m / seg_len
         self.lat, self.lon = a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f
-        self.note = f"onderweg ({self._left_m() / 1000:.1f} km te gaan)"
+        jam = " · file" if now < self.jam_until else ""
+        self.note = f"onderweg op {kind or 'weg'} ({self._left_m() / 1000:.1f} km te gaan){jam}"
 
     # ---- batterij en lader ----------------------------------------------------------
 
