@@ -21,6 +21,7 @@ class Config:
     auth_password_hash: str = ""      # leeg = inloggen onmogelijk
     session_secret: str = ""
     session_days: int = 30
+    keystore_secret: str = ""         # versleutelt sleutels/backups; leeg = afgeleid van session_secret
     map_center: tuple[float, float] = (5.33, 50.93)   # lon, lat
     map_zoom: float = 10
     region_bbox: tuple[float, float, float, float] = (2.0, 49.0, 7.8, 54.0)
@@ -52,6 +53,7 @@ def load(path: str | None = None) -> Config:
     c.auth_password_hash = auth.get("password_hash", c.auth_password_hash)
     c.session_secret = auth.get("session_secret", c.session_secret)
     c.session_days = int(auth.get("session_days", c.session_days))
+    c.keystore_secret = auth.get("keystore_secret", c.keystore_secret)
     if "center" in mp:
         c.map_center = tuple(mp["center"])
     c.map_zoom = float(mp.get("zoom", c.map_zoom))

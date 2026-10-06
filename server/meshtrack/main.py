@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, config, geofence, ingest, nodes, rbac
+from . import auth, config, geofence, ingest, keys, nodes, rbac
 from . import settings as setmod
 from .alerts import EVENTS, EVENT_TEXT, AlertManager
 from .db import DB
@@ -39,7 +39,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -54,7 +54,7 @@ class Hub:
     @staticmethod
     def _allowed(p: Principal, msg: dict[str, Any]) -> bool:
         t = msg.get("type")
-        if t in ("position", "tracker"):
+        if t in ("position", "tracker", "lost_seen"):
             tid = (msg.get("tracker") or {}).get("id")
             return tid is not None and p.sees(tid)
         if t == "tracker_deleted":
@@ -92,6 +92,7 @@ class State:
     sims: SimManager
     alerts: AlertManager
     settings: dict
+    vault: keys.Vault
 
 
 def get_settings() -> dict[str, Any]:
@@ -144,6 +145,12 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
         log.info("positie %s seq=%s state=%s", t["alias"], pos["seq"], pos["state"])
     await S.hub.send({"type": "position", "position": pos, "tracker": tracker_out(t)})
     S.alerts.fire(t, pos["state"], pos)
+    if before is not None and before.get("lost"):
+        # De status 'verloren' blijft; elke regel met lost_seen krijgt een melding (cooldown per regel).
+        S.db.mark_lost_seen(t["id"], int(time.time()))
+        log.warning("verloren tracker %s is terug opgedoken (%s)", t["alias"], pos["state"])
+        S.alerts.fire(t, "lost_seen", pos)
+        await S.hub.send({"type": "lost_seen", "tracker": tracker_out(S.db.tracker(t["id"]))})
     if pos["bat"] is not None and pos["bat"] < 20 and (before is None or before["last_bat"] is None
                                                           or before["last_bat"] >= 20):
         S.alerts.fire(t, "bat_low", pos)
@@ -262,6 +269,7 @@ async def lifespan(app: FastAPI):
     S.cfg = config.load()
     Path(S.cfg.db_path).parent.mkdir(parents=True, exist_ok=True)
     S.db = DB(S.cfg.db_path)
+    S.vault = keys.Vault(S.cfg.keystore_secret or S.cfg.session_secret)
     bootstrap_users()
     reload_settings()
     S.hub = Hub()
@@ -532,7 +540,12 @@ async def status(request: Request):
 @app.get("/api/trackers")
 async def list_trackers(request: Request):
     p = who(request)
-    return [tracker_out(t, p) for t in S.db.trackers() if p.sees(t["id"])]
+    out = [tracker_out(t, p) for t in S.db.trackers() if p.sees(t["id"])]
+    if p.can("keys.manage"):
+        counts = S.db.key_counts()
+        for t in out:
+            t["keys"] = counts.get(t["id"], 0)
+    return out
 
 
 class TrackerIn(BaseModel):
@@ -542,6 +555,8 @@ class TrackerIn(BaseModel):
     icon: Optional[str] = Field(None, max_length=40)
     notes: Optional[str] = Field(None, max_length=500)
     active: Optional[bool] = None
+    lost: Optional[bool] = None
+    generate_key: bool = False        # nieuw toestel: sleutelpaar op de server maken
 
 
 def _check_fields(b: TrackerIn) -> None:
@@ -569,6 +584,10 @@ async def _sync_contact(t: dict[str, Any]) -> str:
 @app.post("/api/trackers")
 async def create_tracker(b: TrackerIn, request: Request):
     p = need(request, "trackers.manage")
+    prv = None
+    if b.generate_key:
+        need(request, "keys.manage")
+        prv, b.pubkey = keys.new_keypair()
     if not b.pubkey or not HEX64.match(b.pubkey.strip()):
         raise HTTPException(422, "pubkey moet 64 hex-tekens zijn")
     if not b.alias:
@@ -579,9 +598,12 @@ async def create_tracker(b: TrackerIn, request: Request):
         raise HTTPException(409, "deze tracker bestaat al")
     tid = S.db.add_tracker(pk, b.alias.strip(), b.color or "#e4572e", b.icon or "", b.notes or "",
                            True if b.active is None else b.active)
+    if prv:
+        doc = _profile(S.db.tracker(tid), prv)
+        S.db.add_key(tid, "generated", p.name, pk, "nieuw sleutelpaar (server)", keys.summary(doc), S.vault.seal(doc))
     t = S.db.tracker(tid)
     note = await _sync_contact(t)
-    audit(p, "tracker toegevoegd", f"{t['alias']} ({pk[:12]})")
+    audit(p, "tracker toegevoegd", f"{t['alias']} ({pk[:12]}){' met sleutel van de server' if prv else ''}")
     await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
     return {"tracker": tracker_out(t, p), "contact": note}
 
@@ -595,6 +617,9 @@ async def update_tracker(tid: int, b: TrackerIn, request: Request):
     _check_fields(b)
     S.db.update_tracker(tid, alias=b.alias.strip() if b.alias else None, color=b.color, icon=b.icon,
                         notes=b.notes, active=b.active)
+    if b.lost is not None and bool(b.lost) != bool(old.get("lost")):
+        S.db.set_lost(tid, b.lost)
+        audit(p, "tracker verloren gemeld" if b.lost else "tracker niet meer verloren", old["alias"])
     t = S.db.tracker(tid)
     note = await _sync_contact(t) if t["active"] and not old["active"] else ""
     audit(p, "tracker gewijzigd", t["alias"])
@@ -620,6 +645,96 @@ async def delete_tracker(tid: int, request: Request, keep_contact: bool = False)
     audit(p, "tracker verwijderd", t["alias"])
     await S.hub.send({"type": "tracker_deleted", "id": tid})
     return {"ok": True, "contact": note}
+
+
+# ---- sleutels, klaarmaken en backups ---------------------------------------------
+
+def _profile(t: dict[str, Any], prv: str) -> dict[str, Any]:
+    target = (S.mesh.status().get("pubkey") or "").lower()
+    return keys.profile(t["alias"][:31], prv, t["pubkey"], S.settings, target)
+
+
+def _key_tracker(request: Request, tid: int) -> tuple[Principal, dict[str, Any]]:
+    p = need(request, "keys.manage")
+    t = S.db.tracker(tid)
+    if not t or t["kind"] != "real":
+        raise HTTPException(404, "onbekende tracker")
+    return p, t
+
+
+@app.get("/api/trackers/{tid}/keys")
+async def list_keys(tid: int, request: Request):
+    _key_tracker(request, tid)
+    return S.db.keys(tid)
+
+
+@app.get("/api/trackers/{tid}/provision")
+async def provision(tid: int, request: Request):
+    """Profiel om een toestel klaar te maken: de sleutel van de server (of de nieuwste backup)
+    met de huidige standaardinstellingen uit Systeem, naam = alias, doel = de server-companion."""
+    p, t = _key_tracker(request, tid)
+    rows = S.db.keys(tid)
+    if not rows:
+        raise HTTPException(404, "de server kent de privésleutel van deze tracker niet")
+    doc = S.vault.open(S.db.key(rows[0]["id"])["blob"])
+    fresh = _profile(t, doc["private_key"])
+    if rows[0]["kind"] != "generated":          # backup: eigen kanalen en instellingen behouden
+        fresh["channels"] = doc.get("channels") or fresh["channels"]
+        fresh["meshtrack"]["settings"] = {**(doc.get("meshtrack") or {}).get("settings", {}),
+                                          **fresh["meshtrack"]["settings"]}
+    audit(p, "privésleutel opgehaald (klaarmaken)", t["alias"])
+    return fresh
+
+
+class KeyIn(BaseModel):
+    doc: dict
+    kind: str = "backup"
+    note: str = Field("", max_length=200)
+
+
+@app.post("/api/trackers/{tid}/keys")
+async def add_key(tid: int, b: KeyIn, request: Request):
+    """Backup bewaren: van het toestel (via USB) of een export uit de MeshCore-app."""
+    p, t = _key_tracker(request, tid)
+    doc = b.doc
+    prv, pub = str(doc.get("private_key") or "").lower(), str(doc.get("public_key") or t["pubkey"]).lower()
+    if not keys.check_pair(prv, pub):
+        raise HTTPException(422, "privésleutel en pubkey horen niet bij elkaar")
+    if pub != t["pubkey"]:
+        raise HTTPException(422, f"deze sleutel ({pub[:8]}) is niet die van {t['alias']} ({t['pubkey'][:8]})")
+    doc["private_key"], doc["public_key"] = prv, pub
+    kind = b.kind if b.kind in ("backup", "import") else "backup"
+    kid = S.db.add_key(tid, kind, p.name, pub, b.note.strip(), keys.summary(doc), S.vault.seal(doc))
+    audit(p, "backup met privésleutel bewaard", f"{t['alias']} ({kind})")
+    return {"id": kid}
+
+
+@app.get("/api/trackers/{tid}/keys/{kid}")
+async def get_key(tid: int, kid: int, request: Request):
+    p, t = _key_tracker(request, tid)
+    row = S.db.key(kid)
+    if not row or row["tracker_id"] != tid:
+        raise HTTPException(404, "onbekende backup")
+    audit(p, "backup met privésleutel opgehaald", t["alias"])
+    return S.vault.open(row["blob"])
+
+
+@app.delete("/api/trackers/{tid}/keys/{kid}")
+async def delete_key(tid: int, kid: int, request: Request):
+    p, t = _key_tracker(request, tid)
+    row = S.db.key(kid)
+    if not row or row["tracker_id"] != tid:
+        raise HTTPException(404, "onbekende backup")
+    S.db.delete_key(kid)
+    audit(p, "backup verwijderd", t["alias"])
+    return {"ok": True}
+
+
+@app.get("/api/firmware")
+async def firmware(request: Request):
+    need(request, "trackers.serial")
+    f = Path(__file__).resolve().parent.parent / "static" / "firmware" / "firmware.json"
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {"releases": [], "latest": None}
 
 
 def _visible(request: Request, tid: int, perm: str = "map.view") -> tuple[Principal, dict[str, Any]]:
@@ -970,6 +1085,7 @@ EVENT_TYPES = {
     "N": "geen GPS-fix", "E": "SOS", "P": "handmatig verstuurd", "B": "moduswissel",
     "zone_in": "zone binnen", "zone_out": "zone buiten", "bat_low": "batterij onder 20 %",
     "suspect": "verdachte positie", "usb_on": "aan de lader (USB)", "usb_off": "van de lader af",
+    "lost_seen": "verloren tracker gezien",
 }
 # NB: "te lang stil" is geen positie maar een meldingsgebeurtenis; die staat in de verzonden meldingen.
 
@@ -993,6 +1109,9 @@ async def events(request: Request, tracker: str = "", types: str = "", hours: fl
                        "bat_low" in wanted, "suspect" in wanted, min(max(limit, 1), 5000),
                        "usb_on" in wanted or "usb_off" in wanted)
     rows = [r for r in rows if not r["type"].startswith("usb") or r["type"] in wanted]
+    if "lost_seen" in wanted:
+        rows += _lost_events(ids, since, until)
+        rows.sort(key=lambda r: r["ts"], reverse=True)
     if "zone_in" not in wanted:
         rows = [r for r in rows if r["type"] != "zone_in"]
     if "zone_out" not in wanted:
@@ -1000,6 +1119,18 @@ async def events(request: Request, tracker: str = "", types: str = "", hours: fl
     if not p.can("map.details"):
         rows = [{k: v for k, v in r.items() if k not in ("snr", "path_len", "hdop")} for r in rows]
     return {"types": EVENT_TYPES, "since": since, "until": until, "events": rows}
+
+
+def _lost_events(ids: Optional[list[int]], since: int, until: int) -> list[dict[str, Any]]:
+    """Berichten van trackers die nu als verloren gemarkeerd zijn, sinds die markering."""
+    out = []
+    for t in S.db.trackers():
+        if not t.get("lost") or (ids is not None and t["id"] not in ids):
+            continue
+        for r in S.db.track(t["id"], max(since, t["lost_since"] or 0), 500):
+            if r["ts"] <= until:
+                out.append({**r, "type": "lost_seen", "tracker_id": t["id"], "alias": t["alias"]})
+    return out
 
 
 @app.get("/log")

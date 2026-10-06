@@ -150,6 +150,18 @@ CREATE TABLE IF NOT EXISTS alert_log (
   done_ts   INTEGER
 );
 CREATE INDEX IF NOT EXISTS alert_log_ts ON alert_log(ts);
+CREATE TABLE IF NOT EXISTS tracker_keys (
+  id          INTEGER PRIMARY KEY,
+  tracker_id  INTEGER NOT NULL REFERENCES trackers(id) ON DELETE CASCADE,
+  ts          INTEGER NOT NULL,
+  kind        TEXT NOT NULL,                 -- generated | backup | import
+  who         TEXT NOT NULL DEFAULT '',
+  pubkey      TEXT NOT NULL,
+  note        TEXT NOT NULL DEFAULT '',
+  summary     TEXT NOT NULL DEFAULT '{}',    -- zonder geheimen, voor de lijst
+  blob        TEXT NOT NULL                  -- versleuteld (AES-GCM), zie keys.py
+);
+CREATE INDEX IF NOT EXISTS tracker_keys_t ON tracker_keys(tracker_id, ts);
 CREATE TABLE IF NOT EXISTS unknown_msgs (
   id INTEGER PRIMARY KEY,
   rx_ts INTEGER NOT NULL,
@@ -159,7 +171,7 @@ CREATE TABLE IF NOT EXISTS unknown_msgs (
 );
 """
 
-TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active")
+TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since")
 
 
 class DB:
@@ -185,6 +197,10 @@ class DB:
             self._x("ALTER TABLE positions ADD COLUMN power TEXT")
         if "last_power" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
             self._x("ALTER TABLE trackers ADD COLUMN last_power TEXT")
+        if "lost" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:   # 0.4: verloren
+            self._x("ALTER TABLE trackers ADD COLUMN lost INTEGER NOT NULL DEFAULT 0")
+            self._x("ALTER TABLE trackers ADD COLUMN lost_since INTEGER")
+            self._x("ALTER TABLE trackers ADD COLUMN lost_seen INTEGER")
         scols = {r["name"] for r in self._q("PRAGMA table_info(sims)")}
         if "drive" not in scols:  # 0.2.2: rijgedrag (snelheden, ritlengte, zwerven)
             self._x("ALTER TABLE sims ADD COLUMN drive TEXT NOT NULL DEFAULT '{}'")
@@ -223,9 +239,44 @@ class DB:
         if not sets:
             return
         sql = "UPDATE trackers SET " + ", ".join(f"{k}=?" for k, _ in sets) + " WHERE id=?"
-        self._x(sql, tuple(int(v) if k == "active" else v for k, v in sets) + (tid,))
+        self._x(sql, tuple(int(v) if k in ("active", "lost") else v for k, v in sets) + (tid,))
+
+    def set_lost(self, tid: int, lost: bool) -> None:
+        if lost:
+            self._x("UPDATE trackers SET lost=1, lost_since=?, lost_seen=NULL WHERE id=? AND lost=0",
+                    (int(time.time()), tid))
+        else:
+            self._x("UPDATE trackers SET lost=0, lost_since=NULL, lost_seen=NULL WHERE id=?", (tid,))
+
+    def mark_lost_seen(self, tid: int, ts: int) -> None:
+        self._x("UPDATE trackers SET lost_seen=? WHERE id=?", (ts, tid))
+
+    # ---- sleutels en backups -------------------------------------------------
+
+    def add_key(self, tid: int, kind: str, who: str, pubkey: str, note: str, summary: dict, blob: str) -> int:
+        cur = self._x("INSERT INTO tracker_keys(tracker_id, ts, kind, who, pubkey, note, summary, blob) VALUES(?,?,?,?,?,?,?,?)",
+                      (tid, int(time.time()), kind, who, pubkey.lower(), note, json.dumps(summary, ensure_ascii=False), blob))
+        return cur.lastrowid
+
+    def keys(self, tid: int) -> list[dict[str, Any]]:
+        rows = self._q("SELECT id, tracker_id, ts, kind, who, pubkey, note, summary FROM tracker_keys "
+                       "WHERE tracker_id=? ORDER BY ts DESC, id DESC", (tid,))
+        for r in rows:
+            r["summary"] = json.loads(r["summary"] or "{}")
+        return rows
+
+    def key(self, kid: int) -> Optional[dict[str, Any]]:
+        r = self._q("SELECT * FROM tracker_keys WHERE id=?", (kid,))
+        return r[0] if r else None
+
+    def key_counts(self) -> dict[int, int]:
+        return {r["tracker_id"]: r["n"] for r in self._q("SELECT tracker_id, COUNT(*) n FROM tracker_keys GROUP BY tracker_id")}
+
+    def delete_key(self, kid: int) -> None:
+        self._x("DELETE FROM tracker_keys WHERE id=?", (kid,))
 
     def delete_tracker(self, tid: int) -> None:
+        self._x("DELETE FROM tracker_keys WHERE tracker_id=?", (tid,))
         self._x("DELETE FROM trackers WHERE id=?", (tid,))
 
     # ---- posities -----------------------------------------------------------

@@ -358,3 +358,21 @@ a.btnlink { display: inline-block; border: 1px solid var(--line); background: va
 .themes { display: flex; gap: 6px; flex-wrap: wrap; }
 .themes button { padding: 4px 8px; font-size: 13px; }
 .themes button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+/* ---- firmware, flashen en klaarmaken ---- */
+.fwbox { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 12px 0; background: var(--bg); }
+.fwhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }
+label.btnlike { display: inline-block; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px;
+  font-size: 13px; cursor: pointer; margin: 0; }
+.dfu { margin-top: 10px; }
+.dfu ol { margin: 0 0 8px; padding-left: 22px; }
+.dfu li { margin: 3px 0; color: var(--muted); }
+.dfu li.busy { color: var(--text); font-weight: 600; }
+.dfu li.done { color: var(--ok); }
+.dfu li.done::after { content: " ✓"; }
+.dfu li.err { color: var(--danger); font-weight: 600; }
+.dfu .bar { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.dfu .bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.pill.lost, .lostbadge { color: #fff; background: var(--danger); border-color: var(--danger); }
+.lostbadge { font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 999px; margin-left: 4px; }
+.marker.lost { outline: 3px solid var(--danger); outline-offset: 2px; }

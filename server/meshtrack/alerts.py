@@ -1,7 +1,8 @@
 """Meldingen: bij gebeurtenissen een DM via de mesh naar gekozen ontvangers.
 
 Gebeurtenissen: de toestand van een bericht (W, S, E, N, P, B, H, M), zones
-(zone_in/zone_out), batterij onder 20 % (bat_low) en "te lang stil" (silent).
+(zone_in/zone_out), batterij onder 20 % (bat_low), "te lang stil" (silent) en
+een bericht van een tracker die als verloren gemarkeerd is (lost_seen).
 Een regel kiest gebeurtenissen, trackers en ontvangers, met een cooldown per
 tracker en gebeurtenis.
 
@@ -28,6 +29,7 @@ EVENT_TEXT = {
     "H": "stuurde een heartbeat", "M": "beweegt", "zone_in": "kwam binnen in", "zone_out": "verliet",
     "bat_low": "heeft minder dan 20 % batterij", "silent": "is te lang stil",
     "usb_on": "hangt aan de lader", "usb_off": "is van de lader gehaald",
+    "lost_seen": "(VERLOREN) is terug opgedoken",
 }
 EVENTS = list(EVENT_TEXT)
 

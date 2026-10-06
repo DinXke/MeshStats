@@ -25,7 +25,8 @@ PERMS: dict[str, tuple[str, str]] = {
     "zones.view":      ("Zones bekijken", "Gedeelde zones en eigen zones op de kaart, met hun meldingen."),
     "zones.manage":    ("Gedeelde zones beheren", "Gedeelde zones tekenen, wijzigen en verwijderen (eigen zones mag iedereen met 'Zones bekijken')."),
     "trackers.manage": ("Trackers beheren", "Trackers toevoegen, bewerken en verwijderen."),
-    "trackers.serial": ("Instellen via USB", "Een tracker via Web Serial uitlezen en instellen."),
+    "trackers.serial": ("Instellen via USB", "Een tracker via Web Serial uitlezen, instellen en flashen."),
+    "keys.manage":     ("Sleutels en backups", "Privésleutels op de server maken, toestellen klaarmaken en backups (met privésleutel) bewaren en terugzetten."),
     "sims.manage":     ("Simulators", "Virtuele trackers starten, wijzigen en stoppen."),
     "companion.view":  ("Server-companion", "QR-code, pubkey en contacten van de companion."),
     "export":          ("Exporteren", "Sporen downloaden als GPX of CSV."),
@@ -39,7 +40,7 @@ PERMS: dict[str, tuple[str, str]] = {
 DEFAULT_GROUPS: list[dict[str, Any]] = [
     {"name": "Beheerders", "perms": list(PERMS), "all_trackers": True, "history_hours": 0,
      "description": "Alles, inclusief gebruikers en groepen."},
-    {"name": "Operators", "perms": [p for p in PERMS if p not in ("users.manage", "system.manage")], "all_trackers": True,
+    {"name": "Operators", "perms": [p for p in PERMS if p not in ("users.manage", "system.manage", "keys.manage")], "all_trackers": True,
      "history_hours": 0, "description": "Dagelijks werk: trackers, zones, simulators en deellinks."},
     {"name": "Kijkers", "perms": ["map.view", "map.sidebar", "map.tracks", "map.nodes", "zones.view", "log.view"],
      "all_trackers": True, "history_hours": 24 * 7, "description": "Meekijken met lijst en sporen, niets wijzigen."},

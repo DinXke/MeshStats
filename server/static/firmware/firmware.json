@@ -1,0 +1,15 @@
+{
+  "releases": [
+    {
+      "version": "0.3.1",
+      "date": "2026-10-07",
+      "notes": "Klaarmaken en terugzetten vanaf de server: sleutel, naam, radio, regio en kanalen via USB. Paden altijd 2 bytes per hop (1 wordt automatisch 2). Backup van sleutel en kanalen (key export, chan list). Namen met emoji in het seriële menu.",
+      "zip": "meshtrack-t1000e-0.3.1.zip",
+      "zip_sha256": "759c3da88b679e11c4ddc80a42feab0f605ec7066a0f9cfda9ead5431391d730",
+      "uf2": "meshtrack-t1000e-0.3.1.uf2",
+      "app_size": 383600,
+      "meshcore": "v1.17.1"
+    }
+  ],
+  "latest": "0.3.1"
+}

@@ -24,10 +24,14 @@
     <a href="#knop">De knop, de biepjes en de led</a>
     <a href="#regels">Wanneer stuurt hij een positie?</a>
     <a href="#instellen">Instellen via USB</a>
+    <a href="#flashen">Firmware flashen</a>
+    <a href="#klaarmaken">Nieuw toestel klaarmaken</a>
+    <a href="#backups">Sleutels en backups</a>
     <a href="#menu">Het seriële menu</a>
     <a href="#statussen">Statussen</a>
     <a href="#beheer">Trackers beheren</a>
     <a href="#sim">De simulator</a>
+    <a href="#verloren">Verloren trackers</a>
     <a href="#zones">Zones</a>
     <a href="#meldingen">Meldingen via de mesh</a>
     <a href="#nodes">Meshnodes</a>
@@ -135,13 +139,72 @@
       waarden. Met <em>Opslaan op de tracker</em> schrijf je ze weg; met <em>In MeshTrack zetten</em> voeg je de
       tracker toe met zijn eigen sleutel.</p>
 
+    <h2 id="flashen">Firmware flashen</h2>
+    <p>In dezelfde sectie staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je kunt ze
+      downloaden als DFU-pakket (<code>.zip</code>, voor <code>adafruit-nrfutil</code>) of als <code>.uf2</code> (dubbelklik
+      op de resetknop en sleep het bestand naar het USB-station). Eenvoudiger is <em>Flashen via de browser</em>:</p>
+    <ol>
+      <li>Verbind de tracker en klik op <em>Flashen via de browser</em>.</li>
+      <li>De pagina downloadt eerst een <strong>backup</strong>: de volledige opslag (<code>.bin</code>) en de sleutel met
+        de instellingen (<code>.json</code>). Heb je het recht <em>Sleutels en backups</em>, dan gaat die ook naar de
+        server. Lukt de backup niet, dan wordt er niets geflasht.</li>
+      <li>De tracker springt naar de bootloader. De eerste keer vraagt de browser om de bootloader-poort te kiezen; daarna
+        gaat het vanzelf.</li>
+      <li>De nieuwe firmware wordt geschreven (ongeveer een minuut, niet loskoppelen).</li>
+      <li>De pagina verbindt opnieuw en controleert of de <strong>pubkey nog dezelfde</strong> is. Is dat niet zo, dan
+        verschijnt een knop om de sleutel en de instellingen terug te zetten.</li>
+    </ol>
+    <p>Alleen de app wordt vervangen. De sleutel, de contacten, de kanalen en alle instellingen blijven staan. Op een
+      toestel met andere firmware (bv. stock MeshCore) is geen backup of sleutelcontrole mogelijk; de pagina vraagt
+      dan eerst om bevestiging.</p>
+
+    <h2 id="klaarmaken">Nieuw toestel klaarmaken</h2>
+    <p>Voor een nieuwe tracker hoef je niets met de hand in te stellen:</p>
+    <ol>
+      <li>Klik in <em>Beheer</em> op <em>+ Tracker</em>, geef een naam en zet <em>Nieuw toestel: de server maakt de sleutel
+        en de instellingen</em> aan. De server maakt een sleutelpaar en zet de tracker al als contact op de
+        companion.</li>
+      <li>Verbind het nieuwe toestel met USB. Staat er nog geen MeshTrack 0.3.1 of nieuwer op, flash dan eerst.</li>
+      <li>Kies bij <em>Toestel klaarmaken of terugzetten</em> de nieuwe tracker en klik op <em>Op dit toestel
+        zetten</em>.</li>
+    </ol>
+    <p>Het toestel krijgt dan de sleutel van de server, zijn naam, de radio-instellingen, de regio, 2 bytes per hop,
+      het kanaal Public en de server-companion als doel, en het start in trackermodus. Had het toestel al een andere
+      sleutel, dan wordt die eerst als backup gedownload. Na de herstart controleert de pagina of de pubkey klopt. De
+      standaardwaarden (frequentie, bandbreedte, regio …) stelt een beheerder in onder <em>Systeem</em> →
+      <em>Instellingen</em>.</p>
+    <p>MeshTrack gebruikt altijd <strong>2 bytes per hop</strong> in het pad. Met 1 byte botsen de korte id's van
+      repeaters te vaak in een druk net. De firmware zet 1 byte bij het opstarten zelf om naar 2, ook als de
+      MeshCore-app iets anders vraagt.</p>
+
+    <h2 id="backups">Sleutels en backups</h2>
+    <p>Met het recht <em>Sleutels en backups</em> zie je bij het bewerken van een echte tracker het blok <em>Sleutel en
+      backups op de server</em>. Een backup bevat de <strong>privésleutel</strong>, de naam, de radio, de regio, de
+      kanalen en de trackerinstellingen, in hetzelfde formaat als de export van de MeshCore-app. De server bewaart
+      backups versleuteld.</p>
+    <ul>
+      <li><em>Backup naar de server</em> (in de USB-sectie) leest het verbonden toestel uit en bewaart het bij de
+        juiste tracker.</li>
+      <li><em>Backup downloaden (.json)</em> geeft hetzelfde als bestand; <em>Volledige opslag downloaden (.bin)</em>
+        geeft een ruwe kopie van alle opslag, ook de contacten.</li>
+      <li><em>Export uit de MeshCore-app importeren</em> bewaart een bestand dat de app maakte.</li>
+      <li><em>Op verbonden toestel zetten</em> zet een backup terug, bv. op een vervangtoestel. Contacten worden niet
+        teruggezet; die leert het toestel opnieuw uit de adverts.</li>
+    </ul>
+    <p>Wie een backup ophaalt, terugzet of verwijdert, staat in het auditlog. Geef dit recht alleen aan wie het echt
+      nodig heeft: met een privésleutel kun je je als die tracker voordoen.</p>
+
     <h2 id="menu">Het seriële menu</h2>
     <p>Verbind je met een terminalprogramma (115200 baud), dan opent meteen een genummerd menu met: status, modus,
       wanneer een positie sturen, ritme, stilstand en heartbeat, GPS en verzending, nu een positie sturen en
       onderhoud (backup, standaardwaarden en herstarten). Met <code>0</code> ga je terug.</p>
     <p>Losse commando's werken altijd, ook met het menu open: <code>status</code>,
       <code>set &lt;instelling&gt; &lt;waarde&gt;</code>, <code>mode tracker</code> of <code>mode companion</code>,
-      <code>send</code>, <code>backup</code> en <code>help</code>. De statusled stel je in met
+      <code>send</code>, <code>backup</code> en <code>help</code>. Voor het klaarmaken zijn er ook
+      <code>set name</code>, <code>set radio &lt;MHz&gt; &lt;BW&gt; &lt;SF&gt; &lt;CR&gt;</code>, <code>set tx</code>,
+      <code>set path_bytes 2</code>, <code>set scope be</code>, <code>chan list</code>, <code>chan set</code>,
+      <code>key export</code> en <code>key import</code> (radio, zendvermogen en sleutel gelden na
+      <code>reboot</code>). De statusled stel je in met
       <code>set led companion</code>, <code>set led altijd</code> of <code>set led uit</code>. Tijden geef je op als <code>30s</code>,
       <code>5m</code> of <code>2h</code>.</p>
 
@@ -165,6 +228,19 @@
     <p>Vink je <em>virtuele tracker</em> aan, dan maak je een simulator; die heeft geen sleutel nodig. Bij het bewerken
       van een tracker kun je ook zijn opgeslagen posities opruimen: alles ouder dan een gekozen aantal dagen, of
       alles.</p>
+
+    <h2 id="verloren">Verloren trackers</h2>
+    <p>Is een tracker zoek, zet dan bij het bewerken <em>Verloren</em> aan. Hij krijgt een rode markering op de kaart en
+      in de lijsten. Komt er daarna nog een bericht van hem binnen, dan:</p>
+    <ul>
+      <li>krijgt elke meldingsregel met de gebeurtenis <em>verloren tracker gezien</em> een melding, met de positie;</li>
+      <li>verschijnt er een melding op de kaart en een regel in het logboek;</li>
+      <li><strong>blijft hij verloren</strong>, zodat je ook de volgende berichten opvolgt. Pas als je <em>Verloren</em>
+        weer uitzet, is hij terug gewoon.</li>
+    </ul>
+    <p>Maak dus vooraf een regel onder <em>Systeem</em> → <em>Meldingsregels</em> met de gebeurtenis <em>verloren
+      tracker gezien</em> en de ontvangers die het moeten weten. Een cooldown van bv. 30 minuten voorkomt een DM bij
+      elk bericht.</p>
 
     <h2 id="sim">De simulator</h2>
     <p>Een virtuele tracker rijdt dag en nacht over echte wegen rond zijn thuisbasis en volgt dezelfde verzendregels
@@ -191,8 +267,8 @@
 
     <h2 id="meldingen">Meldingen via de mesh</h2>
     <p>Onder <em>Systeem</em> → <em>Meldingsregels</em> bepaal je bij welke gebeurtenissen de server een DM via de mesh
-      stuurt (bijvoorbeeld wakker door beweging, SOS, batterij bijna leeg, aan of van de lader, een zone binnenkomen of
-      te lang stil), voor
+      stuurt (bijvoorbeeld wakker door beweging, SOS, batterij bijna leeg, aan of van de lader, een zone binnenkomen,
+      te lang stil of een verloren tracker die terug opduikt), voor
       welke trackers en naar welke ontvangers. Je kiest de ontvangers uit de contacten van de companion, of je plakt
       hun pubkey.</p>
     <p>De DM's gaan na elkaar weg, met een pauze ertussen, zodat de mesh niet overbelast raakt. Per bericht volgen
@@ -243,6 +319,10 @@
       <li><strong>Na een klik volgt een lage toon, of blijven de twee hoge biepjes uit</strong>: er kwam geen
         bevestiging. De tracker is buiten bereik, of de server is niet met de companion verbonden.</li>
       <li><strong>De kaart blijft leeg</strong>: herlaad de pagina met Ctrl+F5.</li>
+      <li><strong>Flashen blijft hangen in de bootloader</strong>: trek de USB-kabel uit en steek hem terug in; de oude
+        firmware start dan weer. Probeer opnieuw en kies de bootloader-poort als de browser erom vraagt.</li>
+      <li><strong>"Firmware kan geen sleutel ontvangen"</strong>: flash eerst de nieuwste firmware; klaarmaken kan pas
+        vanaf versie 0.3.1.</li>
     </ul>
     <p class="muted small" id="ver"></p>
   </article>
