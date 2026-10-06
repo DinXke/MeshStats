@@ -81,4 +81,5 @@ public:
 
   void shutdown(bool restart = false);
   void playModeTune(bool tracker);   // MeshTrack
+  void playForced(const char* rtttl); // MeshTrack: ook als de buzzer stil staat
 };

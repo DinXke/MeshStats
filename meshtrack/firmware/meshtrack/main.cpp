@@ -248,7 +248,7 @@ void setup() {
 }
 
 void loop() {
-  the_mesh.loop();
+  if (!mt_mesh_paused()) the_mesh.loop();   // MeshTrack: radio slaapt in trackermodus
   interface_manager.loop();
   sensors.loop();
 #ifdef DISPLAY_CLASS
@@ -260,7 +260,7 @@ void loop() {
   external_watchdog.loop();
 #endif
 
-  if (!the_mesh.hasPendingWork()) {
+  if (mt_mesh_paused() || !the_mesh.hasPendingWork()) {   // MeshTrack: ook slapen als de radio slaapt
 #if defined(NRF52_PLATFORM)
     board.sleep(0); // nrf ignores seconds param, sleeps whenever possible
 #endif
