@@ -1,45 +1,66 @@
 # MeshTrack
 
-APRS-achtige tracking over MeshCore. Trackers (Seeed T1000-E met eigen firmware)
-sturen hun positie als versleutelde DM naar een companion die openHop host; de
-MeshTrack-server toont ze live op een offline kaart.
+APRS-achtige tracking via MeshCore, volledig offline. Trackers (Seeed T1000-E met eigen firmware) sturen hun
+positie als versleutelde DM naar een companion die openHop host. De MeshTrack-server toont ze live op een kaart.
 
 ```
 T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ (kaart, beheer, simulator)
 ```
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E.
-  Volledige companion met USB, trackermodus op batterij (dubbelklik wisselt), serieel menu,
-  backup van de opslag. De sleutel en contacten blijven bij elke flash behouden.
-- **server/**: FastAPI + meshcore-py. SQLite, live kaart (MapLibre + eigen pmtiles, geen
-  externe diensten), trackerbeheer met alias en iconen, geofences, Web Serial-instellingen,
-  en een simulator die virtuele trackers 24/7 over echte wegen laat rijden (offline routering
-  over de wegenlaag van de kaarttegels).
-- **deploy/**: systemd-unit en `deploy.sh` (draait nu op de openHop-LXC, poort 8090).
-- **PLAN.md**: ontwerp, berichtprotocol (`T1|...`), bewegingsregels en fasen.
+## Onderdelen
+
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.2.1).
+  - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus, één klik stuurt meteen een
+    positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
+  - Bewegingsregels (snelheid, afstand, bochten, ritme), stilstand en heartbeat, wakker worden via de
+    bewegingssensor, ACK met herhaalpogingen, radio en led uit in trackermodus.
+  - Genummerd serieel menu en `backup` van de opslag. De sleutel, contacten, kanalen en regio's blijven bij elke
+    app-only flash behouden.
+- **server/**: FastAPI + meshcore-py.
+  - Live kaart met MapLibre en eigen pmtiles (geen externe diensten), filters, favorieten, volgen, sporen per
+    snelheid, meshnodes uit de observer-database van openHop.
+  - Gebruikers, groepen en rechten, deellinks, auditlog, logboek met filters, GPX/CSV-export.
+  - Zones (gedeeld of persoonlijk) en meldingsregels die DM's via de mesh sturen, met een wachtrij.
+  - Simulator: virtuele trackers rijden 24/7 over echte wegen (offline routering over de wegenlaag van de
+    kaarttegels), met een historiek in versnelde tijd. Profielen auto, fiets, voet en reiziger.
+  - Instellen van een tracker via Web Serial, helppagina in de site, zes thema's.
+- **deploy/**: systemd-unit en `deploy.sh` (draait op de openHop-LXC, poort 8090).
+- **tools/build_display_tiles.py**: bouwt de weergavekaart (z0–13 voor heel het bronarchief, z14 voor de Benelux)
+  zonder veel geheugen.
+- **PLAN.md**: ontwerp, berichtprotocol (`T1|…`) en bewegingsregels.
+
+## Berichtprotocol
+
+```
+T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>|<mode c|t>|<power u|b>
+```
+
+Statussen: `M` beweging, `W` wakker door beweging, `S` stilgevallen, `H` heartbeat, `N` geen fix, `P` handmatig,
+`E` SOS, `B` moduswissel of voeding gewijzigd.
 
 ## Server lokaal
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -r server/requirements.txt pytest
+python -m venv .venv && .venv/bin/pip install -r server/requirements.txt pytest httpx
 cd server && ../.venv/bin/python -m pytest -q
 python -m meshtrack.auth          # wachtwoordhash + sessiesleutel voor config.yaml
 MESHTRACK_CONFIG=config.yaml python -m meshtrack.main
 ```
 
-Let op: openHop laat **één** client per companion toe; een tweede verbinding (lokale test,
-meshcore-cli) gooit de draaiende server eruit.
+Let op: openHop laat **één** client per companion toe; een tweede verbinding (lokale test, meshcore-cli) gooit de
+draaiende server eruit. Bij de eerste start maakt de server de standaardgroepen aan en een beheerder uit
+`config.yaml` (`auth.user` / `auth.password_hash`).
 
 ## Kaarttegels
 
-`tiles_dir` bevat `basemap.pmtiles` (Protomaps-schema), `fonts/` en `sprites/`. Een
-Benelux-uitsnede tot z14 is ~1,2 GB:
+In `tiles_dir`:
+- `basemap.pmtiles`: de weergavekaart (Protomaps-schema). Bouwen met
+  `python tools/build_display_tiles.py bron.pmtiles basemap.pmtiles` (zet `TMPDIR` op een schijf, niet op tmpfs).
+- `roads.pmtiles`: een Benelux-uitsnede tot z14 voor de routering van de simulator
+  (`pmtiles extract bron.pmtiles roads.pmtiles --bbox=2.5,49.4,7.3,53.6 --maxzoom=14`).
+- `fonts/` en `sprites/`.
 
-```bash
-pmtiles extract <bron>.pmtiles basemap.pmtiles --bbox=2.5,49.4,7.3,53.6 --maxzoom=14
-```
+## Firmware bouwen en flashen
 
-## Firmware bouwen
-
-Zie `firmware/platformio.local.ini`: MeshCore v1.17.1 (d929643) naast deze map, env
-`t1000e_meshtrack`, bouwen op een ASCII-pad. Flashen altijd app-only via DFU, eerst `backup`.
+Zie `firmware/platformio.local.ini`: MeshCore v1.17.1 (d929643) naast deze map, env `t1000e_meshtrack`, bouwen op
+een ASCII-pad. Flashen altijd app-only via DFU, en eerst een `backup` maken.
