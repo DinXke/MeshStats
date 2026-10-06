@@ -35,7 +35,7 @@ def test_mode_message_without_position():
     "T1|1|M|50.9|5.3",                      # te weinig velden
     "T1|70000|M|50.9|5.3|0|0|0|50|1|0",     # seq te groot
     "T1|1|X|50.9|5.3|0|0|0|50|1|0",         # onbekende state
-    "T1|1|M|||0|0|0|50|1|0",                # M zonder positie
+    "T1|1|M|||0|0|0|50|1|0",                # M zonder positie (S mag wel)
     "T1|1|H|50.9||0|0|0|50|1|0",            # lat zonder lon
     "T1|1|M|95.0|5.3|0|0|0|50|1|0",         # lat buiten bereik
     "T1|1|M|50.9|5.3|0|0|400|50|1|0",       # koers buiten bereik
@@ -61,6 +61,19 @@ def test_suspect():
     assert not is_suspect(parse("T1|1|N||||||50||"), BBOX)
 
 
+def test_power_field():
+    r = parse("T1|11|B||||||99|||c|u")
+    assert r.power == "u" and r.mode == "c"
+    assert parse("T1|12|M|50.9|5.3|||||1|0|t|b").power == "b"
+    with pytest.raises(ProtocolError):
+        parse("T1|13|M|50.9|5.3|||||1|0|t|x")
+
+
 def test_manual_state():
     r = parse("T1|10|P|50.93|5.33|40|0||91|1.1|2|t")
     assert r.state == "P" and r.has_fix and r.mode == "t"
+
+
+def test_still_without_fix_is_valid():
+    r = parse("T1|20|S||||||85|||t|b")
+    assert r.state == "S" and not r.has_fix

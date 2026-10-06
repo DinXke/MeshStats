@@ -7,6 +7,7 @@ const MT = {
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     if (r.status === 401) { location.href = "/login"; throw new Error("niet ingelogd"); }
+    if (r.status === 403 && !opts.quiet403) throw new Error("geen toegang");
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || r.statusText);
     return j;
@@ -25,7 +26,7 @@ const MT = {
     return `${Math.round(s / 86400)} d geleden`;
   },
 
-  STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd" },
+  STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd", W: "wakker door beweging" },
   MODE: { c: "companion", t: "tracker" },
 
   TOWNS: [
@@ -36,6 +37,107 @@ const MT = {
     ["Maastricht", 50.8514, 5.6910], ["Eindhoven", 51.4416, 5.4697], ["Utrecht", 52.0907, 5.1214],
     ["Rotterdam", 51.9244, 4.4777], ["Amsterdam", 52.3676, 4.9041], ["Luxemburg", 49.6116, 6.1319],
   ],
+
+  me: null,
+
+  // ---- voorkeuren: in het gebruikersprofiel op de server, met localStorage als
+  // snelle kopie (en als enige bron voor deellinks) -----------------------------
+  _pending: {}, _timer: null,
+  prefGet(key, def) {
+    if (MT.me && MT.me.kind === "user" && MT.me.prefs && key in MT.me.prefs) return MT.me.prefs[key];
+    try { const v = localStorage.getItem("mt." + key); return v === null ? def : JSON.parse(v); } catch (_) { return def; }
+  },
+  prefSet(key, val) {
+    try { localStorage.setItem("mt." + key, JSON.stringify(val)); } catch (_) { /* geen opslag */ }
+    if (!MT.me || MT.me.kind !== "user") return;
+    MT.me.prefs[key] = val;
+    MT._pending[key] = val;
+    clearTimeout(MT._timer);
+    MT._timer = setTimeout(() => {
+      const body = MT._pending; MT._pending = {};
+      MT.api("/api/me/prefs", { method: "PUT", body }).catch(() => {});
+    }, 800);
+  },
+
+  // ---- thema's --------------------------------------------------------------------
+  THEMES: { auto: "Automatisch", light: "Licht", dark: "Donker", night: "Nacht (rood)", contrast: "Hoog contrast", ocean: "Oceaan" },
+  theme() { return MT.prefGet("theme", "auto"); },
+  isDark() {
+    const t = MT.theme();
+    if (t === "dark" || t === "night") return true;
+    if (t === "auto") return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return false;
+  },
+  applyTheme(t) {
+    if (t === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+    document.dispatchEvent(new CustomEvent("mt-theme"));
+  },
+  setTheme(t) { MT.prefSet("theme", t); MT.applyTheme(t); },
+  can(perm) { return !!(MT.me && MT.me.perms.includes(perm)); },
+
+  /* Kopbalk: menu volgens de rechten, gebruikersmenu met wachtwoord en uitloggen. */
+  async initHeader(active) {
+    MT.me = await MT.api("/api/me");
+    MT.applyTheme(MT.theme());
+    const links = [
+      ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"],
+      ["/admin", "Beheer", ["trackers.manage", "trackers.serial", "sims.manage", "companion.view"]],
+      ["/users", "Gebruikers", ["users.manage", "share.manage"]], ["/system", "Systeem", ["alerts.manage", "alerts.personal", "system.manage"]],
+      ["/help", "Help", null],
+    ];
+    const nav = document.querySelector("header.top nav");
+    if (nav) {
+      nav.innerHTML = links.filter(([, , p]) => !p || (Array.isArray(p) ? p.some(MT.can) : MT.can(p)))
+        .map(([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ""}>${label}</a>`).join("");
+    }
+    const hdr = document.querySelector("header.top");
+    if (hdr && MT.me.kind === "share" && !document.getElementById("sharelogin")) {
+      hdr.insertAdjacentHTML("beforeend", '<a id="sharelogin" class="btnlink" href="/login">Inloggen</a>');
+    }
+    if (hdr && !document.getElementById("usermenu") && MT.me.kind === "user") {
+      hdr.insertAdjacentHTML("beforeend", `<details id="usermenu" class="usermenu"><summary title="${MT.esc(MT.me.group)}">
+        <span class="avatar">${MT.esc((MT.me.display || "?").slice(0, 1).toUpperCase())}</span></summary>
+        <div class="menu"><div class="who"><strong>${MT.esc(MT.me.display)}</strong><div class="muted small">${MT.esc(MT.me.group)}</div></div>
+        <div class="muted small">Thema</div><div class="themes" id="um-themes"></div>
+        <button type="button" id="um-pw">Wachtwoord wijzigen</button><button type="button" id="um-out">Uitloggen</button></div></details>`);
+      const tb = document.getElementById("um-themes");
+      const drawThemes = () => {
+        tb.innerHTML = Object.entries(MT.THEMES).map(([k, v]) => `<button type="button" data-th="${k}"${MT.theme() === k ? ' class="on"' : ""}>${v}</button>`).join("");
+        tb.querySelectorAll("[data-th]").forEach((b) => b.addEventListener("click", () => { MT.setTheme(b.dataset.th); drawThemes(); }));
+      };
+      drawThemes();
+      document.getElementById("um-out").addEventListener("click", async () => { await MT.api("/api/logout", { method: "POST" }); location.href = "/login"; });
+      document.getElementById("um-pw").addEventListener("click", MT.passwordDialog);
+    }
+    return MT.me;
+  },
+
+  passwordDialog() {
+    let d = document.getElementById("pwdlg");
+    if (!d) {
+      document.body.insertAdjacentHTML("beforeend", `<dialog id="pwdlg" class="dlg"><form method="dialog" id="pwform">
+        <h2>Wachtwoord wijzigen</h2>
+        <label for="pw-old">Huidig wachtwoord</label><input id="pw-old" type="password" autocomplete="current-password" required>
+        <label for="pw-new">Nieuw wachtwoord (min. 8 tekens)</label><input id="pw-new" type="password" autocomplete="new-password" minlength="8" required>
+        <div class="row"><button class="primary" id="pw-save" type="submit">Opslaan</button><button type="button" id="pw-cancel">Annuleren</button></div>
+        <div id="pw-msg" class="msg"></div></form></dialog>`);
+      d = document.getElementById("pwdlg");
+      document.getElementById("pw-cancel").addEventListener("click", () => d.close());
+      document.getElementById("pwform").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const m = document.getElementById("pw-msg");
+        try {
+          await MT.api("/api/me/password", { method: "POST", body: { old: document.getElementById("pw-old").value, new: document.getElementById("pw-new").value } });
+          m.className = "msg ok"; m.textContent = "Gewijzigd. Andere sessies zijn afgemeld.";
+          setTimeout(() => d.close(), 1200);
+        } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+      });
+    }
+    d.querySelector("form").reset();
+    document.getElementById("pw-msg").textContent = "";
+    d.showModal();
+  },
 
   meshPill(el, m) {
     el.className = "pill " + (m.connected ? "ok" : "bad");

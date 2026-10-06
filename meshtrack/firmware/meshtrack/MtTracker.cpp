@@ -125,9 +125,11 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   }
   int bat = mt_battery_pct(board.getBattMilliVolts());
   char text[96];
-  snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c",
+  // 13e veld: voeding (u = USB/laden, b = batterij). Elk bericht draagt het mee,
+  // zodat de server een gemiste in/uitplug-melding bij het volgende bericht inhaalt.
+  snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c|%c",
            (unsigned)seq_next(), state, lat, lon, alt, spd, crs, bat < 0 ? 0 : bat, hd, age,
-           mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c');
+           mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b');
   radio_wake();
   mt_send(text, manual);
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
@@ -209,7 +211,7 @@ static void step_tracking() {
           s_last_hb_s = now_s();
           if (moving_now(g.speedKmh())) enter(MT_T_MOVING); else enter(MT_T_SLEEP);
         } else {
-          send_report('M', true, false, "wakker");
+          send_report('W', true, false, "wakker");     // eerste positie na rust: wakker door beweging
           enter(MT_T_MOVING);
         }
       } else if ((int32_t)(now - s_acq_deadline) >= 0) {
@@ -250,6 +252,29 @@ static void step_tracking() {
   }
 }
 
+// ---- SOS: meteen (laatst gekende positie als er geen verse fix is), daarna
+// nog twee keer met een verse positie, telkens 60 s later. Negeert de rate limit.
+static uint8_t s_sos_left = 0;
+static uint32_t s_sos_next = 0;
+
+static void step_sos() {
+  if (!s_sos_left || (int32_t)(millis() - s_sos_next) < 0) return;
+  s_sos_left--;
+  s_sos_next = millis() + 60000;
+  MtNmeaProvider& g = mt_gps();
+  send_report('E', g.lastValidMs() != 0, true, "SOS");
+}
+
+bool mt_tracker_sos() {
+  if (!mt_cfg.target_set) return false;
+  gps_want(true);
+  radio_wake();
+  s_sos_left = 3;
+  s_sos_next = millis();
+  step_sos();
+  return true;
+}
+
 static void step_manual() {
   if (!s_manual) return;
   MtNmeaProvider& g = mt_gps();
@@ -264,7 +289,7 @@ static void step_manual() {
 }
 
 static void step_radio() {
-  bool want_sleep = mt_effective_mode() == MT_MODE_TRACKER && !mt_sender_busy() && !s_manual &&
+  bool want_sleep = mt_effective_mode() == MT_MODE_TRACKER && !mt_sender_busy() && !s_manual && !s_sos_left &&
                     !the_mesh.hasPendingWork();
   if (!want_sleep) { s_quiet_since = 0; radio_wake(); return; }
   if (s_radio_asleep) return;
@@ -291,6 +316,7 @@ void mt_tracker_loop() {
   if (tracking_active()) step_tracking();
   else if (s_state != MT_T_OFF) enter(MT_T_OFF);
   step_manual();
+  step_sos();
   step_radio();
 }
 
@@ -309,6 +335,15 @@ bool mt_tracker_manual() {
 void mt_tracker_mode_changed() {
   if (!mt_cfg.target_set) return;
   send_report('B', false, false, "modus");
+}
+
+// USB in of uit. Een B-bericht, ook als de modus niet wisselt; hooguit eens per
+// 30 s (een wiebelende stekker mag de mesh niet vullen).
+void mt_tracker_power_changed() {
+  static uint32_t last = 0;
+  if (!mt_cfg.target_set || (last && millis() - last < 30000)) return;
+  last = millis();
+  send_report('B', mt_gps().freshFix(60000), false, mt_usb() ? "USB in" : "USB uit");
 }
 
 void mt_tracker_target_changed() {

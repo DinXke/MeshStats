@@ -5,12 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeshTrack</title>
 <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header class="top">
   <h1>MeshTrack</h1>
-  <nav><a href="/" class="on">Kaart</a><a href="/admin">Trackers</a></nav>
+  <nav></nav>
   <span class="spacer"></span>
   <span id="mesh" class="pill">mesh …</span>
 </header>
@@ -93,6 +95,7 @@
           <div><label for="z-color">Kleur</label><input id="z-color" type="color" value="#3b82f6"></div>
           <div id="z-radius-wrap"><label for="z-radius">Straal (m)</label><input id="z-radius" type="number" min="10" max="200000"></div>
         </div>
+        <label class="mini" id="z-personal-wrap"><input type="checkbox" id="z-personal"> Alleen voor mij (eigen zone)</label>
         <label><input type="checkbox" id="z-enter" checked> Melden bij binnenkomen</label>
         <label><input type="checkbox" id="z-exit" checked> Melden bij verlaten</label>
         <label for="z-trackers">Voor trackers (niets gekozen = alle)</label>
@@ -119,7 +122,7 @@
         <input id="s-alias" maxlength="40" placeholder="bv. Sim Ziekenwagen" required>
         <div class="grid2">
           <div><label for="s-profile">Profiel</label>
-            <select id="s-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">te voet</option></select></div>
+            <select id="s-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">te voet</option><option value="travel">reiziger</option></select></div>
           <div><label for="s-color">Kleur</label><input id="s-color" type="color" value="#7c3aed"></div>
         </div>
         <label>Thuisbasis</label>
@@ -150,9 +153,10 @@
     </section>
   </aside>
   <div id="resizer" role="separator" aria-orientation="vertical" aria-label="Breedte van de zijbalk" tabindex="0"></div>
-  <div id="map"></div>
+  <div id="map"><button id="followbtn" class="followbtn" hidden>Volgen stoppen</button></div>
 </div>
 <div id="toasts"></div>
+<button id="sheet-show" class="sheet-show" hidden aria-label="Lijst tonen">☰ Lijst</button>
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/vendor/pmtiles.js"></script>
 <script src="/static/basemap.js"></script>

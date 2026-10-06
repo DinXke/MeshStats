@@ -85,6 +85,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _userButton->onQuadruplePress([this]() { handleButtonQuadruplePress(); });
   _userButton->onLongPress([this]() { handleButtonLongPress(); });
   _userButton->onAnyPress([this]() { handleButtonAnyPress(); });
+  // MeshTrack: SOS door vasthouden
+  _userButton->onHoldArm([this]() { playForced("arm:d=32,o=7,b=200:c,p,c,p,c"); });
+  _userButton->onHoldWarn([this]() { playForced("warn:d=4,o=5,b=120:4c"); });
+  _userButton->onHoldRelease([]() { mt_on_sos(); });
 #endif
 
   // Initialize analog button if available
@@ -385,6 +389,10 @@ void UITask::userLedHandler() {
     }
   }
 #elif defined(PIN_STATUS_LED)
+  if (!mt_led_allowed()) {               // MeshTrack: led uit in trackermodus (stroom sparen)
+    digitalWrite(PIN_STATUS_LED, !LED_STATE_ON);
+    return;
+  }
   static int state = 0;
   static int next_change = 0;
   static int last_increment = 0;
@@ -599,7 +607,7 @@ void UITask::handleButtonQuadruplePress() {
 
 void UITask::handleButtonLongPress() {
   MESH_DEBUG_PRINTLN("UITask: long press triggered");
-  if (millis() - ui_started_at < 8000) {   // long press in first 8 seconds since startup -> CLI/rescue
+  if (millis() - ui_started_at < 20000) {  // long press binnen 20 s na het opstarten -> CLI/rescue (vasthouden duurt nu 8 s)
     mt_on_cli_rescue();   // MeshTrack: Serial vrijgeven
     the_mesh.enterCLIRescue();
   } else {

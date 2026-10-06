@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – gebruikers</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin">
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav></nav>
+  <span class="spacer"></span>
+</header>
+<main class="page">
+  <div class="tabs pagetabs" role="tablist">
+    <button class="tab on" data-tab="users">Gebruikers</button>
+    <button class="tab" data-tab="groups">Groepen en rechten</button>
+    <button class="tab" data-tab="shares">Deellinks</button>
+    <button class="tab" data-tab="audit">Auditlog</button>
+  </div>
+
+  <!-- gebruikers -->
+  <section class="card pane" id="pane-users">
+    <div class="cardhead"><h2>Gebruikers</h2><button class="primary" id="u-new">+ Gebruiker</button></div>
+    <form id="u-form" class="subform" hidden>
+      <input type="hidden" id="u-id">
+      <div class="grid">
+        <div><label for="u-name">Gebruikersnaam</label><input id="u-name" maxlength="32" autocomplete="off" required></div>
+        <div><label for="u-display">Volledige naam</label><input id="u-display" maxlength="60"></div>
+        <div><label for="u-group">Groep</label><select id="u-group"></select></div>
+        <div><label for="u-pw">Wachtwoord <span class="muted" id="u-pwhint">(min. 8 tekens)</span></label>
+          <div class="row" style="margin:0"><input id="u-pw" type="text" autocomplete="new-password" style="flex:1">
+          <button type="button" id="u-gen" title="Willekeurig wachtwoord">Genereer</button></div></div>
+      </div>
+      <label class="switch block"><input type="checkbox" id="u-active" checked><span></span> Actief</label>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="u-cancel">Annuleren</button></div>
+      <div id="u-msg" class="msg"></div>
+    </form>
+    <div id="users" class="tlist"></div>
+  </section>
+
+  <!-- groepen -->
+  <section class="card pane" id="pane-groups" hidden>
+    <div class="cardhead"><h2>Groepen en rechten</h2><button class="primary" id="g-new">+ Groep</button></div>
+    <form id="g-form" class="subform" hidden>
+      <input type="hidden" id="g-id">
+      <div class="grid">
+        <div><label for="g-name">Naam</label><input id="g-name" maxlength="40" required></div>
+        <div><label for="g-hist">Max. terugblik</label><div class="unit"><input id="g-hist" type="number" min="0" max="8760"><span>uur (0 = onbeperkt)</span></div></div>
+      </div>
+      <label for="g-desc">Omschrijving</label><input id="g-desc" maxlength="200">
+      <fieldset><legend>Rechten</legend><div id="g-perms" class="permgrid"></div>
+        <div class="row"><button type="button" class="link" id="g-all">alles</button><button type="button" class="link" id="g-none">niets</button>
+        <button type="button" class="link" id="g-ro">alleen kijken</button><button type="button" class="link" id="g-kiosk">kiosk</button></div></fieldset>
+      <fieldset><legend>Trackers die deze groep ziet</legend>
+        <label class="switch block"><input type="checkbox" id="g-alltr" checked><span></span> Alle trackers (ook toekomstige)</label>
+        <div id="g-trackers" class="permgrid" hidden></div></fieldset>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="g-cancel">Annuleren</button></div>
+      <div id="g-msg" class="msg"></div>
+    </form>
+    <div id="groups" class="tlist"></div>
+  </section>
+
+  <!-- deellinks -->
+  <section class="card pane" id="pane-shares" hidden>
+    <div class="cardhead"><h2>Deellinks</h2><button class="primary" id="s-new">+ Deellink</button></div>
+    <p class="muted">Een link die zonder login een kaart toont met enkel de gekozen trackers, tot hij verloopt.
+      Handig voor een evenement, een externe dienst of een groot scherm.</p>
+    <form id="s-form" class="subform" hidden>
+      <div class="grid">
+        <div><label for="s-name">Naam (zichtbaar in de lijst)</label><input id="s-name" maxlength="60" required placeholder="bv. Wielerwedstrijd zaterdag"></div>
+        <div><label for="s-valid">Geldig</label><select id="s-valid">
+          <option value="2">2 uur</option><option value="12">12 uur</option><option value="24" selected>1 dag</option>
+          <option value="72">3 dagen</option><option value="168">1 week</option><option value="720">30 dagen</option><option value="0">onbeperkt</option></select></div>
+        <div><label for="s-hours">Spoor tonen tot</label><div class="unit"><input id="s-hours" type="number" min="1" max="720" value="12"><span>uur terug</span></div></div>
+      </div>
+      <label class="switch block"><input type="checkbox" id="s-sidebar"><span></span> Met zijbalk (lijst en zoeken)</label>
+      <label>Trackers</label><div id="s-trackers" class="permgrid"></div>
+      <div class="row"><button class="primary" type="submit">Link maken</button><button type="button" id="s-cancel">Annuleren</button></div>
+      <div id="s-msg" class="msg"></div>
+    </form>
+    <div id="shares" class="tlist"></div>
+  </section>
+
+  <!-- audit -->
+  <section class="card pane" id="pane-audit" hidden>
+    <div class="cardhead"><h2>Auditlog</h2><input id="a-filter" type="search" placeholder="Filter op gebruiker of actie" style="max-width:280px"></div>
+    <div id="audit"></div>
+  </section>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/users.js"></script>
+</body>
+</html>

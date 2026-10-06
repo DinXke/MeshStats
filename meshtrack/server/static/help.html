@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – help</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin">
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav><a href="/">Kaart</a><a href="/help" class="on">Help</a></nav>
+  <span class="spacer"></span>
+</header>
+<main class="page help">
+  <aside class="toc card">
+    <strong>Inhoud</strong>
+    <a href="#wat">Wat is MeshTrack?</a>
+    <a href="#kaart">De kaart</a>
+    <a href="#logboek">Het logboek</a>
+    <a href="#tracker">De tracker (T1000-E)</a>
+    <a href="#knop">De knop, de biepjes en de led</a>
+    <a href="#regels">Wanneer stuurt hij een positie?</a>
+    <a href="#instellen">Instellen via USB</a>
+    <a href="#menu">Het seriële menu</a>
+    <a href="#statussen">Statussen</a>
+    <a href="#beheer">Trackers beheren</a>
+    <a href="#sim">De simulator</a>
+    <a href="#zones">Zones</a>
+    <a href="#meldingen">Meldingen via de mesh</a>
+    <a href="#nodes">Meshnodes</a>
+    <a href="#rechten">Gebruikers en rechten</a>
+    <a href="#profiel">Je profiel en thema's</a>
+    <a href="#delen">Deellinks</a>
+    <a href="#offline">Offline werken</a>
+    <a href="#problemen">Problemen oplossen</a>
+  </aside>
+
+  <article class="card doc">
+    <h2 id="wat">Wat is MeshTrack?</h2>
+    <p>MeshTrack volgt trackers via het <strong>MeshCore</strong>-netwerk, zonder gsm-netwerk of internet. Een tracker
+      (een Seeed T1000-E met MeshTrack-firmware) stuurt zijn positie als versleuteld bericht (DM) naar een companion
+      die op de openHop-server draait. Deze website toont die posities live op een kaart.</p>
+    <p>Alles werkt offline: de kaart, de routes van de simulator en de lijst met meshnodes komen allemaal van de
+      server zelf.</p>
+
+    <h2 id="kaart">De kaart</h2>
+    <ul>
+      <li>In de <strong>lijst links</strong> zoek je op naam en filter je op <em>favorieten</em> (☆), <em>echte</em> of
+        <em>virtuele</em> trackers. Met het vinkje bepaal je of een tracker op de kaart staat. De knop
+        <em>alleen deze lijst</em> toont enkel de trackers die na je zoekopdracht of filter overblijven.</li>
+      <li>Het <strong>spoor</strong> zet je aan of uit, en je kiest hoe ver het teruggaat (van 1 uur tot 7 dagen).
+        Het spoor krijgt de kleur van de tracker of een kleur volgens de snelheid.</li>
+      <li><strong>Klik op een tracker</strong> voor de details, de afgelegde afstand en de maximale en gemiddelde
+        snelheid. Heb je het recht, dan kun je het spoor ook als <strong>GPX</strong> of <strong>CSV</strong>
+        downloaden. Met <em>centreren en volgen</em> houdt de kaart de tracker in het midden bij elke nieuwe positie;
+        zelf de kaart verslepen of de knop <em>volgen stoppen</em> bovenaan beëindigt dat.</li>
+      <li>Het <strong>pijltje</strong> op een marker wijst de rijrichting aan. Een <strong>grijze</strong> marker betekent
+        dat die tracker al lang niets meer van zich heeft laten horen.</li>
+      <li>De zijbalk kun je <strong>breder of smaller slepen</strong>; dubbelklik op de rand om hem terug te zetten.
+        Elk blok in de zijbalk kun je in- en uitklappen.</li>
+      <li>Op een <strong>telefoon</strong> staat de lijst in een onderpaneel. Sleep het streepje omhoog of omlaag om het
+        groter of kleiner te maken, of helemaal naar beneden om het te verbergen. Met de knop <em>☰ Lijst</em> haal je
+        het terug.</li>
+    </ul>
+
+    <h2 id="logboek">Het logboek</h2>
+    <p>Het logboek toont alle gebeurtenissen per tracker: gewone posities, wakker worden door beweging, stilvallen,
+      heartbeats, SOS, handmatig verstuurde posities, moduswissels, aan of van de lader, het binnenkomen in of verlaten
+      van een zone, een batterij onder 20 % en verdachte posities.</p>
+    <p>Je filtert op tracker, soort gebeurtenis, periode of vrije tekst. De knop <em>alleen bijzondere</em> verbergt
+      de gewone posities. Met <em>CSV</em> download je wat je op dat moment ziet, en met <em>kaart</em> spring je naar
+      de plek van die gebeurtenis.</p>
+
+    <h2 id="tracker">De tracker (T1000-E)</h2>
+    <p>De tracker kent twee modi:</p>
+    <ul>
+      <li><strong>Companion</strong>: hij werkt als een gewone MeshCore-companion die met de MeshCore-app verbindt.
+        Aan USB-voeding is hij <em>altijd</em> companion. Staat de instelling <em>ook posities sturen als
+        companion</em> aan, dan stuurt hij intussen ook zijn positie.</li>
+      <li><strong>Tracker</strong>: Bluetooth staat uit, de radio slaapt tussen twee berichten, en hij stuurt alleen een
+        positie als hij beweegt. Zo gaat de batterij weken mee in plaats van dagen.</li>
+    </ul>
+    <p>Zijn sleutel, contacten, kanalen en regio's blijven bij elke firmware-update behouden.</p>
+
+    <h2 id="knop">De knop, de biepjes en de led</h2>
+    <table>
+      <tr><th>Indrukken</th><th>Functie</th></tr>
+      <tr><td>1 keer</td><td>Meteen een positie sturen. Je hoort eerst de modusbiep. Daarna betekenen
+        <strong>twee hoge biepjes</strong> dat de server het bericht ontvangen heeft, en <strong>één lage toon</strong>
+        dat het niet gelukt is. Dit kan hooguit één keer per 10 seconden.</td></tr>
+      <tr><td>2 keer</td><td>Van modus wisselen: <strong>één biep</strong> = tracker, <strong>twee biepjes</strong> =
+        companion.</td></tr>
+      <tr><td>3 keer</td><td>De buzzer aan- of uitzetten.</td></tr>
+      <tr><td>2 tot 8 s vasthouden</td><td><strong>SOS.</strong> Na 2 seconden hoor je drie hoge biepjes: de SOS is
+        gewapend. Laat je nu los, dan stuurt hij meteen een SOS met zijn positie, en daarna nog twee keer met een verse
+        positie, telkens een minuut later. Na 6,5 seconden klinkt een lage waarschuwingstoon: blijf je vasthouden,
+        dan schakelt hij uit in plaats van een SOS te sturen.</td></tr>
+      <tr><td>langer dan 8 s</td><td>Uitschakelen. Binnen 20 seconden na het opstarten opent dit het herstelmenu.
+        Weer aanzetten doe je door de knop enkele seconden in te houden of door hem aan USB te hangen.</td></tr>
+    </table>
+    <p>Automatisch verstuurde posities maken nooit geluid.</p>
+    <p>De <strong>groene led</strong> flitst kort om de 4 seconden zolang de firmware draait. Is de flits langer (ongeveer
+      een halve tel), dan wachten er ongelezen berichten die de app nog niet opgehaald heeft. In
+      <strong>trackermodus</strong> blijft de led standaard uit, omdat hij anders het stroomverbruik in rust bijna
+      verdubbelt. Met de instelling <em>statusled</em> kies je: alleen als companion (standaard), altijd of nooit.</p>
+    <p>Wordt de tracker <strong>aan de lader gehangen of ervan losgekoppeld</strong>, dan meldt hij dat meteen aan de
+      server. Elk bericht vermeldt bovendien of hij op USB of op batterij draait; gaat een melding onderweg verloren,
+      dan ziet de server de wissel toch bij het volgende bericht.</p>
+
+    <h2 id="regels">Wanneer stuurt hij een positie?</h2>
+    <p>Zolang hij beweegt, stuurt hij een positie zodra aan één van de onderstaande regels voldaan is, maar nooit vaker
+      dan de instelling <em>nooit vaker dan 1× per</em> toelaat:</p>
+    <ul>
+      <li><strong>Afstand</strong>: hij is verder verplaatst dan de <em>minimale verplaatsing</em> en gaat sneller dan
+        de <em>minimumsnelheid</em> (staat die op 0, dan telt ook wandelen mee).</li>
+      <li><strong>Bocht</strong>: zijn rijrichting is meer gedraaid dan <em>scherpe bocht vanaf</em>, terwijl hij sneller
+        gaat dan <em>bochten pas boven</em>.</li>
+      <li><strong>Ritme</strong>: zolang hij beweegt, stuurt hij hoe dan ook minstens één positie per
+        <em>in beweging minstens 1× per</em>.</li>
+    </ul>
+    <p>Ligt hij langer stil dan <em>slapen na stilstand van</em>, dan stuurt hij een laatste positie
+      (<em>stilgevallen</em>) en gaat hij slapen. De bewegingssensor maakt hem weer wakker; zijn eerste positie
+      daarna krijgt de status <em>wakker door beweging</em>. In rust laat hij elke <em>heartbeat</em> een teken van
+      leven horen.</p>
+    <p>Na elk bericht wacht hij op een bevestiging (ACK) van de server. Komt die niet, dan probeert hij het opnieuw, de
+      laatste keer via flood. Lukt ook dat niet, dan geeft hij het op; de volgende positie wordt gewoon weer
+      verstuurd.</p>
+
+    <h2 id="instellen">Instellen via USB</h2>
+    <p>Ga naar <em>Beheer</em> → <em>Tracker instellen via USB</em> en klik op <em>Verbinden</em>. Dat werkt in Chrome
+      of Edge op een computer of Android-toestel, via https of localhost. Het formulier toont meteen de huidige
+      waarden. Met <em>Opslaan op de tracker</em> schrijf je ze weg; met <em>In MeshTrack zetten</em> voeg je de
+      tracker toe met zijn eigen sleutel.</p>
+
+    <h2 id="menu">Het seriële menu</h2>
+    <p>Verbind je met een terminalprogramma (115200 baud), dan opent meteen een genummerd menu met: status, modus,
+      wanneer een positie sturen, ritme, stilstand en heartbeat, GPS en verzending, nu een positie sturen en
+      onderhoud (backup, standaardwaarden en herstarten). Met <code>0</code> ga je terug.</p>
+    <p>Losse commando's werken altijd, ook met het menu open: <code>status</code>,
+      <code>set &lt;instelling&gt; &lt;waarde&gt;</code>, <code>mode tracker</code> of <code>mode companion</code>,
+      <code>send</code>, <code>backup</code> en <code>help</code>. De statusled stel je in met
+      <code>set led companion</code>, <code>set led altijd</code> of <code>set led uit</code>. Tijden geef je op als <code>30s</code>,
+      <code>5m</code> of <code>2h</code>.</p>
+
+    <h2 id="statussen">Statussen</h2>
+    <table>
+      <tr><th>Code</th><th>Betekenis</th></tr>
+      <tr><td>M</td><td>positie terwijl hij beweegt</td></tr>
+      <tr><td>W</td><td>wakker geworden door beweging (eerste positie na een rustperiode)</td></tr>
+      <tr><td>S</td><td>stilgevallen (laatste positie voor hij gaat slapen)</td></tr>
+      <tr><td>H</td><td>heartbeat in rust</td></tr>
+      <tr><td>N</td><td>geen GPS-fix (het bericht bevat wel de batterij en de modus)</td></tr>
+      <tr><td>P</td><td>handmatig verstuurd met de knop</td></tr>
+      <tr><td>E</td><td>SOS</td></tr>
+      <tr><td>B</td><td>van modus gewisseld, of aan de lader gehangen of ervan losgekoppeld</td></tr>
+    </table>
+
+    <h2 id="beheer">Trackers beheren</h2>
+    <p>Klik in <em>Beheer</em> op <em>+ Tracker</em> en geef een naam, een kleur en een icoon. Voor een echte tracker vul
+      je ook de <em>public key</em> in. Die vind je via USB, in de contacten van de companion of in de MeshCore-app. De
+      server zet de tracker zelf als contact op de companion.</p>
+    <p>Vink je <em>virtuele tracker</em> aan, dan maak je een simulator; die heeft geen sleutel nodig. Bij het bewerken
+      van een tracker kun je ook zijn opgeslagen posities opruimen: alles ouder dan een gekozen aantal dagen, of
+      alles.</p>
+
+    <h2 id="sim">De simulator</h2>
+    <p>Een virtuele tracker rijdt dag en nacht over echte wegen rond zijn thuisbasis en volgt dezelfde verzendregels
+      als de firmware. Je stelt in: het profiel (auto, fiets, te voet of reiziger), de snelheid ten opzichte van de limiet, een
+      maximumsnelheid, de snelheid per wegtype, de ritlengte en <em>zwerven</em> (door de hele Benelux, zonder naar
+      huis terug te keren).</p>
+    <p>Tussen twee ritten parkeert hij, 's nachts gaat hij naar huis, en als zijn batterij bijna leeg is, laadt hij op
+      (dan staat hij in companionmodus). Zijn berichten gaan niet over de mesh. In de lijst zie je per simulator
+      hoeveel berichten hij per uur stuurt en hoeveel zendtijd dat zou kosten.</p>
+    <p>De <strong>reiziger</strong> rijdt enkel over snelwegen, autowegen en grote gewestwegen, rond 90 km/u, van stad naar
+      stad door alle landen waarvoor de server een kaart heeft (de Benelux, Duitsland, Frankrijk, Zwitserland, Denemarken
+      en andere). Hij blijft altijd op het vasteland.</p>
+    <p>Een nieuwe simulator krijgt meteen een <strong>historiek</strong>: de server rijdt zijn traject van de voorbije dagen
+      (standaard 7, in te stellen onder <em>Systeem</em>) in versnelde tijd na en slaat die posities op. Zo zie je meteen
+      sporen en gebeurtenissen in het logboek.</p>
+
+    <h2 id="zones">Zones</h2>
+    <p>Open op de kaart het tabblad <em>Zones</em>, klik op <em>+ Cirkel</em> of <em>+ Polygoon</em> en teken de zone op
+      de kaart. Kies daarna of je een melding wilt bij binnenkomen, bij vertrekken of bij allebei, en voor welke
+      trackers. Meldingen verschijnen live op de kaart en in het logboek.</p>
+    <p>Een <strong>eigen zone</strong> zie alleen jij, en ook de meldingen ervan krijg alleen jij. Een
+      <strong>gedeelde zone</strong> ziet iedereen; alleen wie het recht <em>gedeelde zones beheren</em> heeft, kan er
+      een maken.</p>
+
+    <h2 id="meldingen">Meldingen via de mesh</h2>
+    <p>Onder <em>Systeem</em> → <em>Meldingsregels</em> bepaal je bij welke gebeurtenissen de server een DM via de mesh
+      stuurt (bijvoorbeeld wakker door beweging, SOS, batterij bijna leeg, aan of van de lader, een zone binnenkomen of
+      te lang stil), voor
+      welke trackers en naar welke ontvangers. Je kiest de ontvangers uit de contacten van de companion, of je plakt
+      hun pubkey.</p>
+    <p>De DM's gaan na elkaar weg, met een pauze ertussen, zodat de mesh niet overbelast raakt. Per bericht volgen
+      enkele pogingen; lukt het dan nog niet, dan probeert de server het later opnieuw. Hoe lang die pauze is en
+      hoeveel pogingen er komen, stelt een beheerder in onder <em>Systeem</em> → <em>Instellingen</em>. Onder
+      <em>Verzonden meldingen</em> zie je wat er verstuurd is en of het aangekomen is.</p>
+
+    <h2 id="nodes">Meshnodes</h2>
+    <p>Onder <em>Meshnodes op de kaart</em> zet je repeaters, rooms, companions en sensoren op de kaart: alles wat
+      openHop als observer via de mesh gehoord heeft. Een <strong>groene rand</strong> betekent dat die node een directe
+      buur van de server is, en de popup toont hoeveel hops hij van de server verwijderd is. Zo zie je of een tracker
+      dicht bij veel repeaters zit of buiten bereik dreigt te raken.</p>
+    <p>Staat <em>alleen nodes die de laatste 7 dagen gezien zijn</em> aan, dan verdwijnen nodes waarvan al een week
+      niets meer gehoord is.</p>
+
+    <h2 id="rechten">Gebruikers en rechten</h2>
+    <p>Elke gebruiker zit in een groep. De groep bepaalt welke rechten hij heeft, welke trackers hij ziet en hoe ver hij
+      terug mag kijken. Er zijn vier standaardgroepen: <strong>Beheerders</strong> (alles), <strong>Operators</strong>
+      (alles behalve gebruikers en systeeminstellingen), <strong>Kijkers</strong> (meekijken) en <strong>Kiosk</strong>
+      (alleen de kaart, schermvullend, bijvoorbeeld op een groot scherm).</p>
+    <p>Zonder het recht <em>zijbalk</em> opent de kaart in kioskweergave en houdt ze alle trackers in beeld. De laatste
+      beheerder kan zichzelf niet buitensluiten, en elke wijziging komt in het <em>auditlog</em>.</p>
+
+    <h2 id="profiel">Je profiel en thema's</h2>
+    <p>Je favorieten, welke trackers je toont, je spoor- en kleurinstellingen, de breedte van de zijbalk en je thema
+      worden in je profiel op de server bewaard. Log je op een ander toestel in, dan ziet alles er hetzelfde uit.</p>
+    <p>Klik rechtsboven op je initiaal om een <strong>thema</strong> te kiezen of je wachtwoord te wijzigen. Er zijn zes
+      thema's: automatisch, licht, donker, nacht (rood, om je nachtzicht te sparen), hoog contrast (voor buiten in de
+      zon) en oceaan.</p>
+
+    <h2 id="delen">Deellinks</h2>
+    <p>Onder <em>Gebruikers</em> → <em>Deellinks</em> maak je een link die zonder login een kaart toont met alleen de
+      gekozen trackers, tot de link verloopt. Je kunt een link altijd intrekken. Ben je zelf ingelogd en open je een
+      deellink, dan blijf je gewoon ingelogd; wie via een deellink kijkt, ziet rechtsboven een knop
+      <em>Inloggen</em>.</p>
+
+    <h2 id="offline">Offline werken</h2>
+    <p>De server heeft geen internet nodig: kaarttegels, lettertypes en iconen staan op de server zelf, en trackers en
+      nodes komen via de mesh binnen. Hij draait op dezelfde machine als openHop (een LXC, een Raspberry Pi of een
+      NUC).</p>
+
+    <h2 id="problemen">Problemen oplossen</h2>
+    <ul>
+      <li><strong>"mesh: niet verbonden"</strong>: openHop draait niet, of een ander programma is met de companion
+        verbonden (openHop laat maar één verbinding tegelijk toe).</li>
+      <li><strong>Een tracker verschijnt niet</strong>: kijk in <em>Beheer</em> → <em>Genegeerde berichten</em>. Klopt zijn
+        pubkey? Staat zijn <em>doel</em> ingesteld op de pubkey van de server-companion?</li>
+      <li><strong>Na een klik volgt een lage toon, of blijven de twee hoge biepjes uit</strong>: er kwam geen
+        bevestiging. De tracker is buiten bereik, of de server is niet met de companion verbonden.</li>
+      <li><strong>De kaart blijft leeg</strong>: herlaad de pagina met Ctrl+F5.</li>
+    </ul>
+    <p class="muted small" id="ver"></p>
+  </article>
+</main>
+<script>
+  fetch("/api/health").then((r) => r.json()).then((h) => { document.getElementById("ver").textContent = "MeshTrack " + h.version; }).catch(() => {});
+</script>
+</body>
+</html>

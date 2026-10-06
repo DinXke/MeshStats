@@ -1,7 +1,17 @@
 /* Kaartpagina: trackers live, zones (geofences), simulator. Volledig offline. */
 (async function () {
   const $ = (id) => document.getElementById(id);
-  const dark = window.matchMedia("(prefers-color-scheme: dark)");
+  const dark = { get matches() { return MT.isDark(); } };
+  await MT.initHeader("/");
+  const can = MT.can;
+  const kiosk = !can("map.sidebar");
+  if (kiosk) document.body.classList.add("kiosk");
+  if (!can("zones.view")) document.querySelector('.tab[data-tab="zones"]').hidden = true;
+  if (!can("sims.manage")) document.querySelector('.tab[data-tab="sim"]').hidden = true;
+  // Eigen zones mag iedereen met "zones bekijken"; gedeelde enkel met "zones beheren".
+  if (MT.me.kind !== "user" && !can("zones.manage")) { $("z-circle").hidden = true; $("z-poly").hidden = true; }
+  if (!can("map.nodes")) document.querySelector('details[data-sect="nodes"]').hidden = true;
+  if (!can("map.tracks")) document.querySelector('details[data-sect="track"]').hidden = true;
   const status = await MT.api("/api/status");
   MT.meshPill($("mesh"), status.mesh);
 
@@ -21,13 +31,11 @@
   let zones = [];
   let simRoutes = {};
   let selected = null;
+  let following = null;              // tracker-id die de kaart volgt
 
   // Per-browser voorkeuren. localStorage kan ontbreken (privévenster): dan
   // gewoon met standaardwaarden werken.
-  const store = {
-    get(k, d) { try { const v = localStorage.getItem("mt." + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
-    set(k, v) { try { localStorage.setItem("mt." + k, JSON.stringify(v)); } catch (_) { /* geen opslag */ } },
-  };
+  const store = { get: (k, d) => MT.prefGet(k, d), set: (k, v) => MT.prefSet(k, v) };
   const prefs = {
     fav: new Set(store.get("fav", [])),
     hidden: new Set(store.get("hidden", [])),
@@ -137,7 +145,7 @@
         geometry: { type: "Point", coordinates: [n.lon, n.lat] } })) };
   }
   async function loadNodes() {
-    if (!prefs.ntypes.size) { meshNodes = []; refreshLayers(); return; }
+    if (!can("map.nodes") || !prefs.ntypes.size) { meshNodes = []; refreshLayers(); return; }
     try { meshNodes = await MT.api("/api/mesh/nodes"); } catch (_) { meshNodes = []; }
     refreshLayers();
   }
@@ -235,7 +243,7 @@
 
   // ---- trackers --------------------------------------------------------------------
   async function loadTrack(id) {
-    const h = hoursNow();
+    const h = can("map.tracks") ? hoursNow() : 0;
     if (!h) { tracks.set(id, []); return; }
     const pts = await MT.api(`/api/trackers/${id}/track?hours=${h}`);
     tracks.set(id, pts.filter((p) => !p.suspect));
@@ -249,7 +257,7 @@
       t.last_spd != null ? `${t.last_spd} km/u${t.last_crs != null ? " · koers " + t.last_crs + "°" : ""}` : null,
       t.last_bat != null ? `batterij ${t.last_bat}%` : null,
       `laatst gehoord ${MT.ago(t.last_rx)}`,
-      t.last_snr != null ? `SNR ${t.last_snr} dB${t.last_path_len != null ? ", " + t.last_path_len + " hops" : ""}` : null,
+      t.last_snr != null ? `SNR ${t.last_snr} dB${t.last_path_len != null && t.last_path_len < 64 ? ", " + t.last_path_len + " hops" : ""}` : null,
       t.last_lat != null ? `<span class="mono">${t.last_lat.toFixed(5)}, ${t.last_lon.toFixed(5)}</span>` : null,
     ].filter(Boolean).join("<br>");
   }
@@ -320,7 +328,12 @@
       const sim = t.kind === "sim" ? ' <span class="pill">sim</span>' : "";
       const meta = [MT.STATE[t.last_state] || "nog niets ontvangen", t.last_bat != null ? `${t.last_bat}%` : null,
                     t.last_spd ? `${t.last_spd} km/u` : null].filter(Boolean).join(" · ");
-      const stats = t.id === selected ? `<div class="stats">${MT.esc(statsFor(t.id))}</div>` : "";
+      const exp = t.id === selected && can("export")
+        ? `<div class="stats">Exporteer ${prefs.trackOn ? prefs.hours : 24} u: <a href="/api/trackers/${t.id}/export?fmt=gpx&hours=${prefs.trackOn ? prefs.hours : 24}">GPX</a>
+           · <a href="/api/trackers/${t.id}/export?fmt=csv&hours=${prefs.trackOn ? prefs.hours : 24}">CSV</a></div>` : "";
+      const follow = t.id === selected && t.last_lat != null
+        ? `<div class="stats"><button type="button" class="link" data-follow="${t.id}">${following === t.id ? "volgen stoppen" : "centreren en volgen"}</button></div>` : "";
+      const stats = t.id === selected ? `<div class="stats">${MT.esc(statsFor(t.id))}</div>${exp}${follow}` : "";
       const vis = !prefs.hidden.has(t.id);
       const ico = t.icon ? MTIcons.svg(t.icon) : "";
       return `<div class="trk${t.stale ? " stale" : ""}${t.id === selected ? " sel" : ""}${vis ? "" : " hiddenmap"}" data-id="${t.id}">
@@ -333,6 +346,11 @@
     $("list").querySelectorAll(".trk").forEach((el) => el.addEventListener("click", (e) => {
       if (e.target.closest(".vis, .fav")) return;
       select(Number(el.dataset.id), true);
+    }));
+    $("list").querySelectorAll("[data-follow]").forEach((b) => b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = Number(b.dataset.follow);
+      setFollow(following === id ? null : id);
     }));
     $("list").querySelectorAll("[data-vis]").forEach((cb) => cb.addEventListener("change", () => {
       const id = Number(cb.dataset.vis);
@@ -364,6 +382,20 @@
     for (const t of trackers.values()) { if (keep.has(t.id)) prefs.hidden.delete(t.id); else prefs.hidden.add(t.id); }
     savePrefs(); applyVisibility();
   });
+
+  function setFollow(id) {
+    following = id;
+    $("followbtn").hidden = id == null;
+    if (id != null) {
+      const t = trackers.get(id);
+      $("followbtn").textContent = `${t ? t.alias : "tracker"} volgen: stoppen`;
+      if (t && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], zoom: Math.max(map.getZoom(), 15) });
+    }
+    renderList();
+  }
+  $("followbtn").addEventListener("click", () => setFollow(null));
+  // Zelf de kaart verslepen stopt het volgen (zoomen niet).
+  map.on("dragstart", () => { if (following != null) setFollow(null); });
 
   function select(id, fly) {
     selected = id;
@@ -497,6 +529,9 @@
     $("z-enter").checked = z.on_enter !== 0 && z.on_enter !== false;
     $("z-exit").checked = z.on_exit !== 0 && z.on_exit !== false;
     $("z-notify").value = z.notify_pubkey || "";
+    $("z-personal").checked = z.id ? !!z.mine : !can("zones.manage");
+    $("z-personal").disabled = !!z.id || !can("zones.manage");
+    $("z-personal-wrap").hidden = !can("zones.manage");
     $("z-radius-wrap").hidden = z.kind !== "circle";
     if (z.kind === "circle") $("z-radius").value = Math.round(z.geom.radius);
     fillTrackerSelect(z.trackers || []);
@@ -511,7 +546,8 @@
     const geom = zoneDraft.kind === "circle" ? { center: zoneDraft.geom.center, radius: Number($("z-radius").value) } : zoneDraft.geom;
     const body = { name: $("z-name").value, kind: zoneDraft.kind, geom, color: $("z-color").value,
       on_enter: $("z-enter").checked, on_exit: $("z-exit").checked, notify_pubkey: $("z-notify").value.trim(),
-      trackers: [...$("z-trackers").selectedOptions].map((o) => Number(o.value)), active: true };
+      trackers: [...$("z-trackers").selectedOptions].map((o) => Number(o.value)), active: true,
+      personal: $("z-personal").checked };
     try {
       const id = $("z-id").value;
       await MT.api(id ? `/api/geofences/${id}` : "/api/geofences", { method: id ? "PUT" : "POST", body });
@@ -522,15 +558,19 @@
   });
 
   async function loadZones() {
+    if (!can("zones.view")) { zones = []; return; }
     zones = await MT.api("/api/geofences");
     $("zones").innerHTML = zones.length ? zones.map((z) => `<div class="item">
       <span class="dot" style="background:${MT.esc(z.color)}"></span> <strong>${MT.esc(z.name)}</strong>
       <span class="muted">${z.kind === "circle" ? Math.round(z.geom.radius) + " m" : (z.geom.length - 1) + " punten"}</span>
-      ${z.active ? "" : '<span class="pill">uit</span>'}
+      ${z.active ? "" : '<span class="pill">uit</span>'}${z.mine ? ' <span class="pill ok">eigen</span>' : ""}
       <div class="row"><button data-zgo="${z.id}">Toon</button><button data-zedit="${z.id}">Bewerken</button>
       <button data-ztog="${z.id}">${z.active ? "Uitzetten" : "Aanzetten"}</button>
       <button class="danger" data-zdel="${z.id}">Verwijderen</button></div></div>`).join("")
       : '<div class="empty">Nog geen zones. Teken er een met de knoppen hierboven.</div>';
+    zones.forEach((z) => {
+      if (!z.editable) $("zones").querySelectorAll(`[data-zedit="${z.id}"],[data-ztog="${z.id}"],[data-zdel="${z.id}"]`).forEach((b) => b.remove());
+    });
     const byId = (id) => zones.find((z) => z.id === Number(id));
     $("zones").querySelectorAll("[data-zgo]").forEach((b) => b.addEventListener("click", () => {
       const z = byId(b.dataset.zgo);
@@ -555,6 +595,7 @@
   }
 
   async function refreshEvents() {
+    if (!can("zones.view")) return;
     const ev = await MT.api("/api/geofence-events?limit=30");
     $("events").innerHTML = ev.length ? ev.map((e) => `<div class="ev">
       <span class="${e.event === "enter" ? "in" : "out"}">${e.event === "enter" ? "▶ binnen" : "◀ buiten"}</span>
@@ -591,8 +632,9 @@
     } catch (err) { $("s-msg").className = "msg err"; $("s-msg").textContent = err.message; }
   });
 
-  const PROF = { car: "auto", bike: "fiets", walk: "te voet" };
+  const PROF = { car: "auto", bike: "fiets", walk: "te voet", travel: "reiziger" };
   async function refreshSims() {
+    if (!can("sims.manage")) return;
     const sims = await MT.api("/api/sims");
     simRoutes = await MT.api("/api/sims/routes");
     refreshLayers();
@@ -606,6 +648,7 @@
         <strong>${MT.esc(s.alias)}</strong> <span class="muted">${PROF[s.profile] || s.profile}</span>
         <div class="stats">${info}</div><div class="stats">${counts}</div>
         <div class="row"><button data-sgo="${s.tracker_id}">Toon</button>
+        <a class="btnlink" href="/admin#edit=${s.tracker_id}">Bewerken</a>
         <button data-srun="${s.tracker_id}" data-on="${run ? 0 : 1}">${run ? "Stop" : "Start"}</button>
         <button class="danger" data-sdel="${s.tracker_id}">Verwijderen</button></div></div>`;
     }).join("") : '<div class="empty">Nog geen simulators.</div>';
@@ -629,6 +672,18 @@
     await loadZones();
     refreshSims();
     loadNodes();
+    const qs = new URLSearchParams(location.search);
+    if (qs.get("focus")) {
+      // vanuit het logboek: die tracker kiezen en naar dat punt vliegen
+      const id = Number(qs.get("focus"));
+      if (trackers.has(id)) select(id, false);
+      if (qs.get("lat")) {
+        const ll = [Number(qs.get("lon")), Number(qs.get("lat"))];
+        map.jumpTo({ center: ll, zoom: 15 });
+        new maplibregl.Marker({ color: "#f59e0b" }).setLngLat(ll).addTo(map);
+      }
+      return;
+    }
     const withPos = [...trackers.values()].filter((t) => t.active && t.last_lat != null);
     if (withPos.length > 1) {
       const b = new maplibregl.LngLatBounds();
@@ -639,7 +694,9 @@
     }
   });
   map.on("style.load", () => { addLayers(); refreshLayers(); });
-  dark.addEventListener("change", () => map.setStyle(MTBasemap.style(dark.matches, status.tiles)));
+  const restyle = () => map.setStyle(MTBasemap.style(dark.matches, status.tiles));
+  document.addEventListener("mt-theme", restyle);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (MT.theme() === "auto") restyle(); });
   async function reloadTracks() { await Promise.all([...trackers.keys()].map(loadTrack)); refreshLayers(); renderList(); }
   $("hours").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     prefs.hours = Number(b.dataset.h); prefs.trackOn = true; $("trackon").checked = true;
@@ -688,8 +745,49 @@
   // ruimte die het onderpaneel van de kaart inneemt (telefoon)
   const pad = () => (phone() ? { top: 60, left: 40, right: 40, bottom: $("side").offsetHeight + 30 } : 80);
 
-  // smartphone: onderpaneel in- en uitklappen
-  $("sheet").addEventListener("click", () => $("side").classList.toggle("collapsed"));
+  // Telefoon: onderpaneel versleepbaar. Omlaag tot onder ~12 % = verbergen (dan
+  // een knop "Lijst"); de hoogte wordt onthouden. Tikken wisselt half/klein.
+  (function sheet() {
+    const side = $("side"), handle = $("sheet"), showBtn = $("sheet-show");
+    const vh = () => window.innerHeight - 48;
+    const apply = (frac) => {
+      if (!phone()) return;
+      if (frac < 0.12) {
+        side.classList.add("sheet-hidden"); showBtn.hidden = false; store.set("sheetFrac", 0); map.resize(); return;
+      }
+      side.classList.remove("sheet-hidden"); showBtn.hidden = true;
+      frac = Math.min(0.92, Math.max(0.14, frac));
+      side.style.height = Math.round(frac * vh()) + "px";
+      store.set("sheetFrac", frac);
+      map.resize();
+    };
+    apply(store.get("sheetFrac", 0.45));
+    let startY = 0, startH = 0, moved = false, dragging = false;
+    handle.addEventListener("pointerdown", (e) => {
+      if (!phone()) return;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) { /* geen echte aanwijzer */ }
+      startY = e.clientY; startH = side.offsetHeight; moved = false; dragging = true;
+      side.style.transition = "none";
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dy = startY - e.clientY;
+      if (Math.abs(dy) > 6) moved = true;
+      side.style.height = Math.max(0, startH + dy) + "px";
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      const frac = side.offsetHeight / vh();   // eerst meten, dan pas de animatie terug aan
+      side.style.transition = "";
+      if (!moved) { apply(frac > 0.3 ? 0.18 : 0.5); return; }
+      apply(frac);
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+    showBtn.addEventListener("click", () => apply(0.45));
+    window.addEventListener("resize", () => { if (phone()) apply(store.get("sheetFrac", 0.45)); else side.style.height = ""; });
+  })();
 
   MT.live((msg) => {
     if (msg.type === "mesh") MT.meshPill($("mesh"), msg.mesh);
@@ -704,6 +802,7 @@
       upsertMarker(t);
       renderList();
       refreshLayers();
+      if (following === t.id && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], duration: 800 });
     }
     if (msg.type === "tracker" || msg.type === "tracker_deleted") loadAll();
     if (msg.type === "geofences") loadZones();
@@ -715,4 +814,14 @@
   });
 
   setInterval(() => { renderList(); for (const t of trackers.values()) upsertMarker(t); }, 30000);
+  if (kiosk) {
+    // Kioskweergave: elke minuut alle trackers in beeld (geen zijbalk om te kiezen).
+    setInterval(() => {
+      const pts = [...trackers.values()].filter((t) => t.active && t.last_lat != null);
+      if (!pts.length) return;
+      const b = new maplibregl.LngLatBounds();
+      pts.forEach((t) => b.extend([t.last_lon, t.last_lat]));
+      map.fitBounds(b, { padding: 80, maxZoom: 15, duration: 1500 });
+    }, 60000);
+  }
 })();

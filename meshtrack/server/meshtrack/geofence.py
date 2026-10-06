@@ -35,7 +35,7 @@ def evaluate(db: DB, tracker_id: int, lat: float, lon: float, ts: int) -> list[d
             eid = db.add_geofence_event(ts, g["id"], tracker_id, kind, lat, lon)
             events.append({"id": eid, "ts": ts, "geofence_id": g["id"], "geofence": g["name"],
                            "tracker_id": tracker_id, "event": kind, "lat": lat, "lon": lon,
-                           "notify_pubkey": g["notify_pubkey"]})
+                           "notify_pubkey": g["notify_pubkey"], "owner": g.get("owner")})
     return events
 
 

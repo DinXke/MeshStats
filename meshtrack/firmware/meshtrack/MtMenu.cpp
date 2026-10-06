@@ -121,6 +121,13 @@ static const char* set_param(const char* k, const char* v) {
     else ok = false;
   }
   else if (!strcmp(k, "target")) { ok = parse_key(v, c.target); if (ok) c.target_set = 1; }
+  else if (!strcmp(k, "led")) {
+    ok = true;
+    if (!strcmp(v, "companion")) c.led_mode = 0;
+    else if (!strcmp(v, "altijd") || !strcmp(v, "always")) c.led_mode = 1;
+    else if (!strcmp(v, "uit") || !strcmp(v, "off")) c.led_mode = 2;
+    else ok = false;
+  }
   else return "onbekende parameter";
   if (!ok) return "ongeldige waarde";
   bool sens_changed = c.accel_sens != mt_cfg.accel_sens;
@@ -153,9 +160,10 @@ static void cmd_status() {
        mt_cfg.min_speed_kmh, mt_cfg.min_dist_m, mt_cfg.turn_min_deg, mt_cfg.turn_min_speed_kmh);
   outl("min_interval=%s max_interval=%s still_timeout=%s heartbeat=%s", a, b, c, d);
   fmt_dur(a, sizeof(a), mt_cfg.fix_timeout_s); fmt_dur(b, sizeof(b), mt_cfg.fix_timeout_hb_s);
-  outl("fix_timeout=%s fix_timeout_hb=%s ack_retries=%u track_in_companion=%s accel_sens=%s",
+  outl("fix_timeout=%s fix_timeout_hb=%s ack_retries=%u track_in_companion=%s accel_sens=%s led=%s",
        a, b, mt_cfg.ack_retries, mt_cfg.track_in_companion ? "aan" : "uit",
-       mt_cfg.accel_sens == 0 ? "laag" : mt_cfg.accel_sens == 2 ? "hoog" : "midden");
+       mt_cfg.accel_sens == 0 ? "laag" : mt_cfg.accel_sens == 2 ? "hoog" : "midden",
+       mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "companion");
   out("target=");
   if (mt_cfg.target_set) for (int i = 0; i < 32; i++) out("%02X", mt_cfg.target[i]); else out("(niet_ingesteld)");
   outl("");
@@ -176,6 +184,7 @@ static void cmd_help() {
   outl("    min_speed min_dist turn_min turn_min_speed min_interval max_interval");
   outl("    still_timeout heartbeat fix_timeout fix_timeout_hb ack_retries");
   outl("    track_in_companion on|off  accel_sens laag|midden|hoog  target <64 hex>");
+  outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
   outl("  send                        nu een positie sturen (zoals een klik)");
   outl("  defaults | backup | reboot | menu | q (menu sluiten)");
 }
@@ -305,8 +314,11 @@ static void show() {
       outl("   2  Kies companion (MeshCore-app, radio luistert altijd)");
       outl("   3  Ook posities sturen als companion ......... %s", mt_cfg.track_in_companion ? "aan" : "uit");
       outl("");
+      outl("   4  Statusled ................................. %s",
+           mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "alleen als companion");
+      outl("");
       outl("   Knop: 1x = positie nu, 2x = modus wisselen, 3x = buzzer aan/uit,");
-      outl("         lang = uitschakelen.");
+      outl("         2-8 s vasthouden en loslaten = SOS, langer dan 8 s = uitschakelen.");
       outl("");
       outl("   0  Terug");
       break;
@@ -365,6 +377,7 @@ static void menu_choice(int n) {
       if (n == 1) mt_choose_mode(MT_MODE_TRACKER, false);
       else if (n == 2) mt_choose_mode(MT_MODE_COMPANION, false);
       else if (n == 3) set_param("track_in_companion", mt_cfg.track_in_companion ? "off" : "on");
+      else if (n == 4) set_param("led", mt_cfg.led_mode == 0 ? "altijd" : mt_cfg.led_mode == 1 ? "uit" : "companion");
       else if (n == 0) s_screen = SC_MAIN;
       show();
       return;
