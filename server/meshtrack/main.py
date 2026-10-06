@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, config, geofence, ingest
+from . import auth, config, geofence, ingest, nodes
 from .db import DB
 from .mesh_client import MeshLink, send_text
 from .roadgraph import Router
@@ -95,7 +95,11 @@ async def on_sim_message(prefix: str, text: str, sender_ts, snr, path_len) -> No
 
 
 def make_router() -> Optional[Router]:
-    p = Path(S.cfg.tiles_dir) / "basemap.pmtiles"
+    # Routeren op een eigen wegenbestand (Benelux z14) als dat er is, zodat een
+    # grotere weergavekaart de routering niet trager of zwaarder maakt.
+    p = Path(S.cfg.tiles_dir) / "roads.pmtiles"
+    if not p.exists():
+        p = Path(S.cfg.tiles_dir) / "basemap.pmtiles"
     if not p.exists():
         log.warning("simulator: %s ontbreekt, routeren onmogelijk", p)
         return None
@@ -356,6 +360,36 @@ class SimIn(BaseModel):
     loss_pct: Optional[int] = Field(None, ge=0, le=90)
     batt_speed: Optional[float] = Field(None, ge=1, le=100)
     running: Optional[bool] = None
+    drive: Optional[dict] = None
+
+
+def _drive(d: Optional[dict]) -> Optional[dict]:
+    """Rijgedrag controleren: speed_pct 30..200, max_kmh 0..200, trip 0.3..300 km,
+    roam bool, speeds {wegtype: km/u 3..200}."""
+    if d is None:
+        return None
+    out: dict = {}
+    try:
+        if d.get("speed_pct") is not None:
+            out["speed_pct"] = min(200.0, max(30.0, float(d["speed_pct"])))
+        if d.get("max_kmh") is not None:
+            out["max_kmh"] = min(200.0, max(0.0, float(d["max_kmh"])))
+        lo = float(d["trip_min_km"]) if d.get("trip_min_km") else None
+        hi = float(d["trip_max_km"]) if d.get("trip_max_km") else None
+        if lo is not None:
+            out["trip_min_km"] = min(80.0, max(0.3, lo))
+        if hi is not None:
+            out["trip_max_km"] = min(80.0, max(out.get("trip_min_km", 0.3), hi))
+        out["roam"] = bool(d.get("roam"))
+        sp = {}
+        for k, v in (d.get("speeds") or {}).items():
+            if v not in (None, "", 0) and isinstance(k, str) and len(k) < 30:
+                sp[k] = min(200.0, max(3.0, float(v)))
+        if sp:
+            out["speeds"] = sp
+    except (TypeError, ValueError):
+        raise HTTPException(422, "ongeldig rijgedrag")
+    return out
 
 
 def _sim_out(row: dict[str, Any]) -> dict[str, Any]:
@@ -366,6 +400,14 @@ def _sim_out(row: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/sims")
 async def list_sims():
     return [_sim_out(r) for r in S.db.sims()]
+
+
+@app.get("/api/sims/defaults")
+async def sim_defaults():
+    """Standaardsnelheden per wegtype en ritlengtes, voor het formulier."""
+    from .roadgraph import SPEEDS
+    from .sim import PROFILE
+    return {p: {"speeds": SPEEDS[p], "trip": PROFILE[p]["trip"]} for p in SPEEDS}
 
 
 @app.get("/api/sims/routes")
@@ -389,7 +431,7 @@ async def create_sim(b: SimIn):
     tid = S.db.add_tracker(new_pubkey(), b.alias.strip(), b.color or "#7c3aed", b.icon or "", "simulator",
                            True, kind="sim")
     S.db.save_sim(tid, b.profile or "car", lat, lon, b.params or {}, 5 if b.loss_pct is None else b.loss_pct,
-                  4 if b.batt_speed is None else b.batt_speed, b.running is not False)
+                  4 if b.batt_speed is None else b.batt_speed, b.running is not False, _drive(b.drive) or {})
     row = S.db.sim(tid)
     if row["running"]:
         try:
@@ -417,7 +459,8 @@ async def update_sim(tid: int, b: SimIn):
                   row["params"] if b.params is None else b.params,
                   row["loss_pct"] if b.loss_pct is None else b.loss_pct,
                   row["batt_speed"] if b.batt_speed is None else b.batt_speed,
-                  row["running"] if b.running is None else b.running)
+                  row["running"] if b.running is None else b.running,
+                  row["drive"] if b.drive is None else _drive(b.drive))
     row = S.db.sim(tid)
     if row["running"]:
         await S.sims.start(row, S.db.tracker(tid))     # herstart met nieuwe instellingen
@@ -473,9 +516,10 @@ async def geofence_events(limit: int = 50):
 @app.get("/api/mesh/nodes")
 async def mesh_nodes():
     try:
-        return await S.mesh.nodes()
-    except ConnectionError as e:
-        raise HTTPException(503, str(e))
+        comp = await S.mesh.nodes()
+    except ConnectionError:
+        comp = []
+    return await asyncio.to_thread(nodes.merged, S.cfg.openhop_db, comp)
 
 
 @app.get("/api/unknown")

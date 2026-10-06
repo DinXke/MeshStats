@@ -398,45 +398,106 @@ class Graph:
         return None
 
 
+# Hoofdwegen: in het midden van een lange corridor tellen alleen deze mee.
+MAJOR = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
+         "secondary", "secondary_link", "tertiary", "tertiary_link"}
+
+
+def _tile_center(tx: int, ty: int) -> tuple[float, float]:
+    lon, lat = tile_to_lonlat(Z, tx, ty, 0.5, 0.5, 1)
+    return lat, lon
+
+
+def _dist_to_segment_m(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Afstand van punt p tot lijnstuk a-b (vlakke benadering, ruim genoeg)."""
+    k = 111_320.0
+    c = math.cos(math.radians(p[0]))
+    ax, ay = a[1] * k * c, a[0] * k
+    bx, by = b[1] * k * c, b[0] * k
+    px, py = p[1] * k * c, p[0] * k
+    dx, dy = bx - ax, by - ay
+    t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
 class Router:
     def __init__(self, tiles_path: str):
         self.tiles = TileRoads(tiles_path)
 
-    def build(self, bbox: tuple[float, float, float, float], profile: str) -> Graph:
-        speeds = SPEEDS[profile]
+    def _add_tile(self, g: Graph, tx: int, ty: int, speeds: dict, profile: str, major_only: bool) -> None:
+        for kd, oneway, pts in self.tiles.roads(tx, ty):
+            if major_only and kd not in MAJOR:
+                continue
+            kmh = speeds.get(kd)
+            if kmh:
+                g.add_road(pts, kmh, oneway and profile == "car", kd)
+
+    def build(self, bbox: tuple[float, float, float, float], profile: str,
+              speeds: Optional[dict] = None) -> Graph:
+        speeds = speeds or SPEEDS[profile]
         w, s, e, n = bbox
         x0, y1 = tile_xy(w, s)
         x1, y0 = tile_xy(e, n)
         g = Graph()
         for tx in range(x0, x1 + 1):
             for ty in range(y0, y1 + 1):
-                for kd, oneway, pts in self.tiles.roads(tx, ty):
-                    kmh = speeds.get(kd)
-                    if kmh:
-                        g.add_road(pts, kmh, oneway and profile == "car", kd)
+                self._add_tile(g, tx, ty, speeds, profile, False)
+        g.finish()
+        return g
+
+    def build_corridor(self, a: tuple[float, float], b: tuple[float, float], profile: str,
+                       width_m: float, speeds: Optional[dict] = None, local_m: float = 4000) -> Graph:
+        """Graaf voor een lange rit: alleen tegels binnen width_m van de lijn a-b;
+        verder dan local_m van vertrek en bestemming enkel de hoofdwegen."""
+        speeds = speeds or SPEEDS[profile]
+        pad = width_m / 111_320
+        w, e = min(a[1], b[1]) - pad * 1.6, max(a[1], b[1]) + pad * 1.6
+        s_, n = min(a[0], b[0]) - pad, max(a[0], b[0]) + pad
+        x0, y1 = tile_xy(w, s_)
+        x1, y0 = tile_xy(e, n)
+        g = Graph()
+        for tx in range(x0, x1 + 1):
+            for ty in range(y0, y1 + 1):
+                c = _tile_center(tx, ty)
+                if _dist_to_segment_m(c, a, b) > width_m:
+                    continue
+                near = min(haversine(c[0], c[1], *a), haversine(c[0], c[1], *b)) < local_m
+                self._add_tile(g, tx, ty, speeds, profile, major_only=not near and profile == "car")
         g.finish()
         return g
 
     def route(self, a: tuple[float, float], b: tuple[float, float], profile: str,
-              margin_deg: float = 0.03) -> Optional[list[Leg]]:
-        """Route tussen twee (lat, lon)-punten; None als er geen is."""
-        w = min(a[1], b[1]) - margin_deg
-        e = max(a[1], b[1]) + margin_deg
-        s = min(a[0], b[0]) - margin_deg * 0.65
-        n = max(a[0], b[0]) + margin_deg * 0.65
-        g = self.build((w, s, e, n), profile)
-        na, nb = g.nearest(*a), g.nearest(*b)
-        if na is None or nb is None or na == nb:
-            return None
-        vmax = max(SPEEDS[profile].values())
-        path = g.astar(na, nb, vmax)
-        if not path:
-            return None
-        legs = []
-        for i, (node, _, _) in enumerate(path):
-            nxt = path[i + 1] if i + 1 < len(path) else (node, 0.0, "")
-            legs.append(Leg(g.lat[node], g.lon[node], nxt[1], nxt[2]))
-        return legs
+              margin_deg: float = 0.03, speeds: Optional[dict] = None) -> Optional[list[Leg]]:
+        """Route tussen twee (lat, lon)-punten; None als er geen is. Korte ritten
+        in een rechthoek rond beide punten, lange (> 30 km) in een corridor.
+        Bedoeld voor ritten tot ~80 km; langere afstanden legt de simulator af
+        als een reeks ritten (zwerven)."""
+        speeds = speeds or SPEEDS[profile]
+        d = haversine(a[0], a[1], b[0], b[1])
+        if d <= 30_000:
+            w = min(a[1], b[1]) - margin_deg
+            e = max(a[1], b[1]) + margin_deg
+            s = min(a[0], b[0]) - margin_deg * 0.65
+            n = max(a[0], b[0]) + margin_deg * 0.65
+            graphs = [lambda: self.build((w, s, e, n), profile, speeds)]
+        else:
+            graphs = [lambda wm=wm: self.build_corridor(a, b, profile, wm, speeds)
+                      for wm in (max(6000, 0.12 * d), max(12000, 0.25 * d))]
+        vmax = max(speeds.values())
+        for make in graphs:
+            g = make()
+            na, nb = g.nearest(*a), g.nearest(*b)
+            if na is None or nb is None or na == nb:
+                continue
+            path = g.astar(na, nb, vmax)
+            if not path:
+                continue
+            legs = []
+            for i, (node, _, _) in enumerate(path):
+                nxt = path[i + 1] if i + 1 < len(path) else (node, 0.0, "")
+                legs.append(Leg(g.lat[node], g.lon[node], nxt[1], nxt[2]))
+            return legs
+        return None
 
     def random_destination(self, frm: tuple[float, float], min_km: float, max_km: float,
                            rng: random.Random) -> tuple[float, float]:
