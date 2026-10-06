@@ -28,6 +28,15 @@ const MT = {
   STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd" },
   MODE: { c: "companion", t: "tracker" },
 
+  TOWNS: [
+    ["Hasselt", 50.9307, 5.3378], ["Genk", 50.9650, 5.5000], ["Sint-Truiden", 50.8160, 5.1866],
+    ["Tongeren", 50.7806, 5.4646], ["Beringen", 51.0490, 5.2260], ["Leuven", 50.8798, 4.7005],
+    ["Brussel", 50.8503, 4.3517], ["Antwerpen", 51.2194, 4.4025], ["Gent", 51.0543, 3.7174],
+    ["Brugge", 51.2093, 3.2247], ["Luik", 50.6326, 5.5797], ["Namen", 50.4674, 4.8720],
+    ["Maastricht", 50.8514, 5.6910], ["Eindhoven", 51.4416, 5.4697], ["Utrecht", 52.0907, 5.1214],
+    ["Rotterdam", 51.9244, 4.4777], ["Amsterdam", 52.3676, 4.9041], ["Luxemburg", 49.6116, 6.1319],
+  ],
+
   meshPill(el, m) {
     el.className = "pill " + (m.connected ? "ok" : "bad");
     el.textContent = m.connected ? `mesh: ${m.name || "verbonden"}` : "mesh: niet verbonden";

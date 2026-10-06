@@ -523,7 +523,7 @@ void UITask::handleButtonDoublePress() {
   _need_refresh = true;
 }
 
-// MeshTrack: biep = tracker, biieep biieep = companion. Klinkt ook als de
+// MeshTrack: biep = tracker, biep-biep = companion. Klinkt ook als de
 // buzzer stil staat (3x klik): het is de enige terugkoppeling zonder scherm.
 void UITask::playModeTune(bool tracker) {
 #ifdef PIN_BUZZER
@@ -531,7 +531,7 @@ void UITask::playModeTune(bool tracker) {
   _mt_restore_quiet = true;
   buzzer.quiet(false);
   if (tracker) buzzer.play("trk:d=4,o=6,b=200:16a6");
-  else         buzzer.play("cmp:d=4,o=6,b=100:4a6,8p,4a6");
+  else         buzzer.play("cmp:d=4,o=6,b=200:16a6,16p,16a6");
 #endif
 }
 

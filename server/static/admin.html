@@ -6,118 +6,216 @@
 <title>MeshTrack – trackers</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="admin">
 <header class="top">
   <h1>MeshTrack</h1>
   <nav><a href="/">Kaart</a><a href="/admin" class="on">Trackers</a></nav>
   <span class="spacer"></span>
   <span id="mesh" class="pill">mesh …</span>
-  <button id="logout">Uitloggen</button>
+  <button id="logout" class="ghost">Uitloggen</button>
 </header>
 <main class="page">
 
+  <!-- lijst -->
   <section class="card">
-    <h2>Server-companion</h2>
-    <div class="row" style="align-items:flex-start;margin-top:0">
-      <div id="qr" style="background:#fff;padding:8px;border-radius:8px;line-height:0"></div>
-      <div style="flex:1;min-width:220px">
-        <div><strong id="c-name">–</strong></div>
-        <div class="mono muted" id="c-key">niet verbonden</div>
-        <p class="muted">Scan met de MeshCore-app om deze server als contact toe te voegen. Een MeshTrack-tracker
-          heeft dit niet nodig: die maakt het contact zelf aan uit zijn <span class="mono">target</span>.</p>
-        <button id="c-copy" disabled>Pubkey kopiëren</button>
-      </div>
+    <div class="cardhead">
+      <h2>Trackers</h2>
+      <button class="primary" id="new">+ Tracker</button>
     </div>
+    <div id="trackers" class="tlist"></div>
   </section>
 
-  <section class="card">
-    <h2>Trackers</h2>
-    <table>
-      <thead><tr><th></th><th>Alias</th><th class="hide-sm">Pubkey</th><th>Laatst gehoord</th><th class="hide-sm">Batterij</th><th></th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-    <div id="none" class="muted" hidden>Nog geen trackers.</div>
-  </section>
-
-  <section class="card">
-    <h2 id="ftitle">Tracker toevoegen</h2>
+  <!-- toevoegen / bewerken -->
+  <section class="card" id="formcard" hidden>
+    <div class="cardhead">
+      <h2 id="ftitle">Tracker toevoegen</h2>
+      <button class="ghost" id="fclose" aria-label="Sluiten">✕</button>
+    </div>
     <form id="form">
       <input type="hidden" id="f-id">
       <div class="grid">
         <div>
-          <label for="f-alias">Alias (naam op de kaart)</label>
-          <input id="f-alias" maxlength="40" required>
+          <label for="f-alias">Naam op de kaart</label>
+          <input id="f-alias" maxlength="40" required placeholder="bv. Ziekenwagen 1">
         </div>
         <div>
           <label for="f-color">Kleur</label>
           <input id="f-color" type="color" value="#e4572e">
         </div>
       </div>
-      <label for="f-pubkey">Public key (64 hex)</label>
-      <input id="f-pubkey" class="mono" maxlength="64" placeholder="bv. 2CB0C5EB…" autocomplete="off">
-      <div class="row">
-        <button type="button" id="pick">Kies uit contacten van de companion</button>
-        <select id="contacts" hidden></select>
+      <label>Icoon</label>
+      <div id="f-icons" class="ico-picker"></div>
+
+      <label class="switch block"><input type="checkbox" id="f-virtual"><span></span> Virtuele tracker (simulator, geen hardware)</label>
+
+      <div id="f-real">
+        <label for="f-pubkey">Public key van de tracker</label>
+        <input id="f-pubkey" class="mono" maxlength="64" placeholder="64 hex-tekens" autocomplete="off" spellcheck="false">
+        <div class="help">Te vinden via USB (hieronder) of in de MeshCore-app. Of kies een bekend contact:</div>
+        <div class="row">
+          <button type="button" id="pick">Kies uit contacten van de companion</button>
+          <select id="contacts" hidden></select>
+        </div>
       </div>
+
+      <div id="f-sim" hidden>
+        <div class="grid">
+          <div>
+            <label for="f-profile">Rijdt als</label>
+            <select id="f-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">voetganger</option></select>
+          </div>
+          <div>
+            <label for="f-town">Thuisbasis</label>
+            <select id="f-town"></select>
+          </div>
+        </div>
+        <div class="help">De simulator kiest zelf ritten over echte wegen rond zijn thuisbasis, parkeert tussendoor
+          en laadt zijn batterij op. Zijn berichten gaan niet over de mesh.</div>
+        <details>
+          <summary>Verzendregels en simulatie</summary>
+          <div class="grid">
+            <div><label>Min. snelheid (km/u)</label><input data-sp="min_speed_kmh" type="number" min="0" value="10"></div>
+            <div><label>Min. verplaatsing (m)</label><input data-sp="min_dist_m" type="number" min="0" value="100"></div>
+            <div><label>Bocht vanaf (graden)</label><input data-sp="turn_min_deg" type="number" min="0" max="180" value="30"></div>
+            <div><label>Bocht pas boven (km/u)</label><input data-sp="turn_min_speed_kmh" type="number" min="0" value="5"></div>
+            <div><label>Nooit vaker dan 1× per (s)</label><input data-sp="min_interval_s" type="number" min="10" value="60"></div>
+            <div><label>In beweging minstens 1× per (s)</label><input data-sp="max_interval_s" type="number" min="0" value="600"></div>
+            <div><label>Stilstand na (s)</label><input data-sp="still_timeout_s" type="number" min="30" value="300"></div>
+            <div><label>Heartbeat in rust (s)</label><input data-sp="heartbeat_s" type="number" min="0" value="43200"></div>
+            <div><label>Pakketverlies (%)</label><input id="f-loss" type="number" min="0" max="90" value="5"></div>
+            <div><label>Batterij × sneller</label><input id="f-batt" type="number" min="1" max="100" value="4"></div>
+          </div>
+        </details>
+        <label class="switch block"><input type="checkbox" id="f-running" checked><span></span> Simulator rijdt</label>
+      </div>
+
       <label for="f-notes">Notities</label>
       <textarea id="f-notes" rows="2" maxlength="500"></textarea>
-      <label><input type="checkbox" id="f-active" checked> Actief (tonen op de kaart, contact op de companion)</label>
+      <label class="switch block"><input type="checkbox" id="f-active" checked><span></span> Actief (zichtbaar op de kaart)</label>
       <div class="row">
         <button class="primary" type="submit" id="save">Toevoegen</button>
-        <button type="button" id="cancel" hidden>Annuleren</button>
+        <button type="button" id="cancel">Annuleren</button>
       </div>
       <div id="fmsg" class="msg"></div>
     </form>
   </section>
 
+  <!-- USB -->
   <section class="card">
-    <h2>Tracker instellen via USB (Web Serial)</h2>
-    <p class="muted" id="serial-note">Steek de tracker in deze computer en klik op Verbinden. Werkt in Chrome en Edge.</p>
+    <div class="cardhead">
+      <h2>Tracker instellen via USB</h2>
+      <span id="s-state" class="pill">niet verbonden</span>
+    </div>
+    <p class="muted" id="serial-note">Steek de tracker met een USB-kabel in deze computer en klik op Verbinden.
+      Werkt in Chrome of Edge op een computer (of Android), via https of localhost.</p>
     <div class="row">
       <button class="primary" id="s-connect">Verbinden</button>
-      <button id="s-status" disabled>Status lezen</button>
-      <button id="s-use" disabled>Als tracker toevoegen</button>
-      <button id="s-disconnect" disabled>Loskoppelen</button>
+      <button id="s-disconnect" hidden>Loskoppelen</button>
     </div>
-    <form id="s-form" hidden>
-      <div class="grid">
-        <div><label>Min. snelheid (km/u, 0 = uit)</label><input data-set="min_speed" type="number" min="0" max="300"></div>
-        <div><label>Min. verplaatsing (m)</label><input data-set="min_dist" type="number" min="0" max="50000"></div>
-        <div><label>Bocht vanaf (graden, 0 = uit)</label><input data-set="turn_min" type="number" min="0" max="180"></div>
-        <div><label>Bocht pas boven (km/u)</label><input data-set="turn_min_speed" type="number" min="0" max="300"></div>
-        <div><label>Nooit vaker dan 1× per</label><input data-set="min_interval" placeholder="60s, 2m"></div>
-        <div><label>In beweging minstens 1× per</label><input data-set="max_interval" placeholder="10m, 0 = uit"></div>
-        <div><label>Stilstand na</label><input data-set="still_timeout" placeholder="5m"></div>
-        <div><label>Heartbeat in rust</label><input data-set="heartbeat" placeholder="12h, 0 = uit"></div>
-        <div><label>Ook volgen als companion</label>
-          <select data-set="track_in_companion"><option value="on">aan</option><option value="off">uit</option></select></div>
-        <div><label>Bewegingsgevoeligheid</label>
-          <select data-set="accel_sens"><option value="laag">laag</option><option value="midden">midden</option><option value="hoog">hoog</option></select></div>
-        <div><label>Modus op batterij</label>
-          <select data-mode><option value="tracker">tracker</option><option value="companion">companion</option></select></div>
-      </div>
-      <label>Doel (pubkey van de server-companion)</label>
-      <input data-set="target" class="mono" maxlength="64">
-      <div class="row">
-        <button class="primary" type="submit">Instellingen opslaan op de tracker</button>
-        <button type="button" id="s-target">Doel = deze server</button>
-      </div>
-    </form>
-    <div class="row">
-      <input id="s-cmd" placeholder="los commando, bv. help" disabled style="flex:1">
-      <button id="s-send" disabled>Stuur</button>
+
+    <div id="s-panel" hidden>
+      <div class="devinfo" id="s-info"></div>
+      <form id="s-form">
+        <fieldset>
+          <legend>Modus</legend>
+          <div class="seg wide" id="s-mode" role="radiogroup" aria-label="Modus op batterij">
+            <button type="button" data-v="tracker">Tracker</button><button type="button" data-v="companion">Companion</button>
+          </div>
+          <div class="help">Met USB-voeding is hij altijd companion. Dubbelklik op de knop wisselt ook.</div>
+          <label class="switch block"><input type="checkbox" data-set="track_in_companion" data-kind="bool"><span></span> Ook posities sturen als companion</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Wanneer een positie sturen</legend>
+          <div class="grid">
+            <div><label>Minimum snelheid</label><div class="unit"><input data-set="min_speed" type="number" min="0" max="300"><span>km/u</span></div>
+              <div class="help">0 = altijd, ook wandelen</div></div>
+            <div><label>Minimum verplaatsing</label><div class="unit"><input data-set="min_dist" type="number" min="0" max="50000"><span>m</span></div></div>
+            <div><label>Scherpe bocht vanaf</label><div class="unit"><input data-set="turn_min" type="number" min="0" max="180"><span>°</span></div>
+              <div class="help">0 = bochten negeren</div></div>
+            <div><label>Bochten pas boven</label><div class="unit"><input data-set="turn_min_speed" type="number" min="0" max="300"><span>km/u</span></div></div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Ritme</legend>
+          <div class="grid">
+            <div><label>Nooit vaker dan 1× per</label><div class="dur" data-set="min_interval"></div></div>
+            <div><label>In beweging minstens 1× per</label><div class="dur" data-set="max_interval" data-off="1"></div></div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Stilstand en rust</legend>
+          <div class="grid">
+            <div><label>Slapen na stilstand van</label><div class="dur" data-set="still_timeout"></div></div>
+            <div><label>Teken van leven (heartbeat) elke</label><div class="dur" data-set="heartbeat" data-off="1"></div></div>
+            <div><label>Bewegingsgevoeligheid</label>
+              <select data-set="accel_sens"><option value="laag">laag</option><option value="midden">midden</option><option value="hoog">hoog</option></select></div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>GPS en verzending</legend>
+          <div class="grid">
+            <div><label>GPS-fix zoeken max.</label><div class="dur" data-set="fix_timeout"></div></div>
+            <div><label>…bij heartbeat max.</label><div class="dur" data-set="fix_timeout_hb"></div></div>
+            <div><label>Herhaalpogingen zonder ACK</label><input data-set="ack_retries" type="number" min="0" max="5"></div>
+          </div>
+          <label>Doel: server-companion (pubkey)</label>
+          <div class="row" style="margin-top:0">
+            <input data-set="target" class="mono" maxlength="64" style="flex:1;min-width:200px" spellcheck="false">
+            <button type="button" id="s-target">Deze server</button>
+          </div>
+        </fieldset>
+
+        <div class="row sticky-actions">
+          <button class="primary" type="submit">Opslaan op de tracker</button>
+          <button type="button" id="s-reload">Opnieuw lezen</button>
+          <button type="button" id="s-defaults">Standaardwaarden</button>
+          <button type="button" id="s-use">In MeshTrack zetten</button>
+        </div>
+        <div id="s-msg" class="msg"></div>
+      </form>
+
+      <details class="terminal">
+        <summary>Terminal (geavanceerd)</summary>
+        <div class="row">
+          <input id="s-cmd" placeholder="commando, bv. help" style="flex:1">
+          <button id="s-send">Stuur</button>
+        </div>
+        <pre class="log" id="s-log"></pre>
+      </details>
     </div>
-    <pre class="log" id="s-log"></pre>
+  </section>
+
+  <!-- server-companion -->
+  <section class="card">
+    <details>
+      <summary class="h2sum">Server-companion (QR-code)</summary>
+      <div class="row" style="align-items:flex-start">
+        <div id="qr" class="qrbox"></div>
+        <div style="flex:1;min-width:200px">
+          <div><strong id="c-name">–</strong></div>
+          <div class="mono muted" id="c-key">niet verbonden</div>
+          <p class="muted">Scan met de MeshCore-app om deze server als contact toe te voegen. Een MeshTrack-tracker
+            heeft dit niet nodig: die maakt het contact zelf aan uit zijn doel.</p>
+          <button id="c-copy" disabled>Pubkey kopiëren</button>
+        </div>
+      </div>
+    </details>
   </section>
 
   <section class="card">
-    <h2>Genegeerde berichten</h2>
-    <p class="muted">Berichten die op MeshTrack leken maar van een onbekende afzender kwamen of ongeldig waren.</p>
-    <table><thead><tr><th>Tijd</th><th>Afzender</th><th>Reden</th><th class="hide-sm">Tekst</th></tr></thead>
-      <tbody id="unknown"></tbody></table>
+    <details>
+      <summary class="h2sum">Genegeerde berichten</summary>
+      <p class="muted">Berichten die op MeshTrack leken maar van een onbekende afzender kwamen of ongeldig waren.</p>
+      <div id="unknown"></div>
+    </details>
   </section>
 </main>
 <script src="/static/vendor/qrcode.js"></script>
+<script src="/static/icons.js"></script>
 <script src="/static/common.js"></script>
 <script src="/static/admin.js"></script>
 </body>

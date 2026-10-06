@@ -16,23 +16,132 @@
 </header>
 <div class="mapwrap">
   <aside id="side">
-    <div class="sidehead">
-      <span class="muted">Spoor</span>
-      <select id="hours">
-        <option value="1">1 uur</option>
-        <option value="6">6 uur</option>
-        <option value="24" selected>24 uur</option>
-        <option value="168">7 dagen</option>
-        <option value="0">geen</option>
-      </select>
+    <button id="sheet" class="sheet-handle" aria-label="Lijst tonen of verbergen"><span></span></button>
+    <div class="tabs" role="tablist">
+      <button class="tab on" data-tab="trk" role="tab">Trackers</button>
+      <button class="tab" data-tab="zones" role="tab">Zones</button>
+      <button class="tab" data-tab="sim" role="tab">Simulator</button>
     </div>
-    <div id="list"></div>
+
+    <!-- trackers -->
+    <section class="pane" id="pane-trk">
+      <div class="sidehead">
+        <input id="search" type="search" placeholder="Zoek tracker…" autocomplete="off" aria-label="Zoek tracker">
+      </div>
+      <div class="chips" role="group" aria-label="Filter">
+        <button class="chip on" data-filter="all">Alle</button>
+        <button class="chip" data-filter="fav">★ Favorieten</button>
+        <button class="chip" data-filter="real">Echt</button>
+        <button class="chip" data-filter="sim">Virtueel</button>
+      </div>
+      <details id="viewopts" class="viewopts" open>
+        <summary>Weergave: kaart, spoor en kleur</summary>
+      <div class="sidehead small">
+        <span class="muted">Op de kaart:</span>
+        <button class="link" id="show-filtered">alleen deze lijst</button>
+        <button class="link" id="show-all">alle</button>
+        <button class="link" id="show-none">geen</button>
+      </div>
+      <div class="sidehead">
+        <label class="switch"><input type="checkbox" id="trackon" checked><span></span> Spoor</label>
+        <div class="seg" id="hours" role="group" aria-label="Periode">
+          <button data-h="1">1u</button><button data-h="4">4u</button><button data-h="12">12u</button>
+          <button data-h="24" class="on">24u</button><button data-h="168">7d</button>
+        </div>
+      </div>
+      <div class="sidehead">
+        <span class="muted">Kleur</span>
+        <div class="seg" id="colormode" role="group" aria-label="Kleur van het spoor">
+          <button data-c="tracker" class="on">tracker</button><button data-c="speed">snelheid</button>
+        </div>
+      </div>
+      <div id="speedlegend" class="legend" hidden>
+        <span><i style="background:#9ca3af"></i>stil</span><span><i style="background:#22c55e"></i>&lt;15</span>
+        <span><i style="background:#eab308"></i>&lt;50</span><span><i style="background:#f97316"></i>&lt;90</span>
+        <span><i style="background:#dc2626"></i>90+ km/u</span>
+      </div>
+      </details>
+      <div id="list"></div>
+    </section>
+
+    <!-- zones -->
+    <section class="pane" id="pane-zones" hidden>
+      <div class="sidehead">
+        <button id="z-circle">+ Cirkel</button>
+        <button id="z-poly">+ Polygoon</button>
+      </div>
+      <div id="z-help" class="hint" hidden></div>
+      <form id="z-form" class="sideform" hidden>
+        <input type="hidden" id="z-id">
+        <label for="z-name">Naam</label>
+        <input id="z-name" maxlength="60" required>
+        <div class="grid2">
+          <div><label for="z-color">Kleur</label><input id="z-color" type="color" value="#3b82f6"></div>
+          <div id="z-radius-wrap"><label for="z-radius">Straal (m)</label><input id="z-radius" type="number" min="10" max="200000"></div>
+        </div>
+        <label><input type="checkbox" id="z-enter" checked> Melden bij binnenkomen</label>
+        <label><input type="checkbox" id="z-exit" checked> Melden bij verlaten</label>
+        <label for="z-trackers">Voor trackers (niets gekozen = alle)</label>
+        <select id="z-trackers" multiple size="4"></select>
+        <label for="z-notify">Ook als DM naar (pubkey, optioneel)</label>
+        <input id="z-notify" class="mono" maxlength="64" placeholder="64 hex">
+        <div class="row">
+          <button class="primary" type="submit">Opslaan</button>
+          <button type="button" id="z-cancel">Annuleren</button>
+        </div>
+        <div id="z-msg" class="msg"></div>
+      </form>
+      <div id="zones"></div>
+      <h3 class="subhead">Laatste meldingen</h3>
+      <div id="events"></div>
+    </section>
+
+    <!-- simulator -->
+    <section class="pane" id="pane-sim" hidden>
+      <p class="hint">Virtuele trackers rijden 24/7 over echte wegen rond hun thuisbasis, met dezelfde
+        bewegingsregels als de firmware. Hun berichten gaan niet over de mesh.</p>
+      <form id="s-form" class="sideform">
+        <label for="s-alias">Naam</label>
+        <input id="s-alias" maxlength="40" placeholder="bv. Sim Ziekenwagen" required>
+        <div class="grid2">
+          <div><label for="s-profile">Profiel</label>
+            <select id="s-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">te voet</option></select></div>
+          <div><label for="s-color">Kleur</label><input id="s-color" type="color" value="#7c3aed"></div>
+        </div>
+        <label>Thuisbasis</label>
+        <div class="row" style="margin-top:0">
+          <select id="s-town" style="flex:1"></select>
+          <button type="button" id="s-pick" title="Klik daarna op de kaart">Kies op kaart</button>
+        </div>
+        <div class="mono muted" id="s-home"></div>
+        <details>
+          <summary>Bewegingsregels en simulatie</summary>
+          <div class="grid2">
+            <div><label>Min. snelheid km/u</label><input data-p="min_speed_kmh" type="number" value="10"></div>
+            <div><label>Min. afstand m</label><input data-p="min_dist_m" type="number" value="100"></div>
+            <div><label>Bocht graden</label><input data-p="turn_min_deg" type="number" value="30"></div>
+            <div><label>Bocht vanaf km/u</label><input data-p="turn_min_speed_kmh" type="number" value="5"></div>
+            <div><label>Min. interval s</label><input data-p="min_interval_s" type="number" value="60"></div>
+            <div><label>Max. interval s</label><input data-p="max_interval_s" type="number" value="600"></div>
+            <div><label>Stilstand na s</label><input data-p="still_timeout_s" type="number" value="300"></div>
+            <div><label>Heartbeat s</label><input data-p="heartbeat_s" type="number" value="43200"></div>
+            <div><label>Pakketverlies %</label><input id="s-loss" type="number" min="0" max="90" value="5"></div>
+            <div><label>Batterij x sneller</label><input id="s-batt" type="number" min="1" max="100" value="4"></div>
+          </div>
+        </details>
+        <div class="row"><button class="primary" type="submit">Simulator starten</button></div>
+        <div id="s-msg" class="msg"></div>
+      </form>
+      <div id="sims"></div>
+    </section>
   </aside>
   <div id="map"></div>
 </div>
+<div id="toasts"></div>
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/vendor/pmtiles.js"></script>
 <script src="/static/basemap.js"></script>
+<script src="/static/icons.js"></script>
 <script src="/static/common.js"></script>
 <script src="/static/app.js"></script>
 </body>

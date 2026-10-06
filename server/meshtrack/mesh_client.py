@@ -148,3 +148,13 @@ class MeshLink:
             "connected_since": self.connected_since, "last_rx": self.last_rx,
             "last_error": self.last_error,
         }
+
+
+async def send_text(link: MeshLink, pubkey: str, text: str) -> None:
+    """Tekstbericht (DM) via de companion. De ontvanger moet een contact zijn;
+    zo niet, dan wordt hij eerst toegevoegd."""
+    mc = link._require()
+    await link.ensure_contact(pubkey, f"melding-{pubkey[:8]}")
+    res = await mc.commands.send_msg(pubkey.lower(), text[:140])
+    if res is None or res.type == EventType.ERROR:
+        raise RuntimeError(f"bericht niet verstuurd: {getattr(res, 'payload', None)}")

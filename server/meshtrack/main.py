@@ -18,9 +18,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, config, ingest
+from . import auth, config, geofence, ingest
 from .db import DB
-from .mesh_client import MeshLink
+from .mesh_client import MeshLink, send_text
+from .roadgraph import Router
+from .sim import SimManager, new_pubkey
 
 log = logging.getLogger("meshtrack")
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -48,6 +50,7 @@ class State:
     db: DB
     mesh: MeshLink
     hub: Hub
+    sims: SimManager
 
 
 S = State()
@@ -60,20 +63,49 @@ def tracker_out(t: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-async def on_message(prefix: str, text: str, sender_ts, snr, path_len) -> None:
+async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: bool = False) -> None:
     pos = ingest.handle(S.db, S.cfg, prefix, text, sender_ts, snr, path_len)
-    if pos:
-        t = S.db.tracker(pos["tracker_id"])
+    if not pos:
+        if not simulated:
+            log.info("bericht van %s genegeerd: %r", prefix, text[:60])
+        return
+    t = S.db.tracker(pos["tracker_id"])
+    if not simulated:
         log.info("positie %s seq=%s state=%s", t["alias"], pos["seq"], pos["state"])
-        await S.hub.send({"type": "position", "position": pos, "tracker": tracker_out(t)})
-    else:
-        log.info("bericht van %s genegeerd: %r", prefix, text[:60])
+    await S.hub.send({"type": "position", "position": pos, "tracker": tracker_out(t)})
+    if pos["lat"] is not None and not pos["suspect"]:
+        for ev in geofence.evaluate(S.db, t["id"], pos["lat"], pos["lon"], pos["ts"]):
+            ev["tracker"] = t["alias"]
+            log.info("geofence: %s %s %s", t["alias"], ev["event"], ev["geofence"])
+            await S.hub.send({"type": "geofence", "event": ev})
+            if ev["notify_pubkey"] and S.mesh.connected:
+                verb = "is binnengekomen in" if ev["event"] == "enter" else "heeft verlaten:"
+                try:
+                    await send_text(S.mesh, ev["notify_pubkey"], f"MeshTrack: {t['alias']} {verb} {ev['geofence']}")
+                except Exception as e:  # noqa: BLE001
+                    log.warning("geofence-DM mislukt: %s", e)
+
+
+async def on_message(prefix: str, text: str, sender_ts, snr, path_len) -> None:
+    await process(prefix, text, sender_ts, snr, path_len)
+
+
+async def on_sim_message(prefix: str, text: str, sender_ts, snr, path_len) -> None:
+    await process(prefix, text, sender_ts, snr, path_len, simulated=True)
+
+
+def make_router() -> Optional[Router]:
+    p = Path(S.cfg.tiles_dir) / "basemap.pmtiles"
+    if not p.exists():
+        log.warning("simulator: %s ontbreekt, routeren onmogelijk", p)
+        return None
+    return Router(str(p))
 
 
 async def on_connect() -> None:
     # Elke actieve tracker moet als contact op de companion staan.
     for t in S.db.trackers():
-        if t["active"]:
+        if t["active"] and t["kind"] == "real":
             try:
                 await S.mesh.ensure_contact(t["pubkey"], t["alias"])
             except Exception as e:  # noqa: BLE001
@@ -96,13 +128,21 @@ async def lifespan(app: FastAPI):
     S.db = DB(S.cfg.db_path)
     S.hub = Hub()
     S.mesh = MeshLink(S.cfg.mesh_host, S.cfg.mesh_port, S.cfg.keepalive_s, on_message, on_connect)
+    S.sims = SimManager(make_router, on_sim_message)
     tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner())]
     tiles = Path(S.cfg.tiles_dir)
     if tiles.is_dir():
         app.mount("/tiles", StaticFiles(directory=tiles), name="tiles")
     else:
         log.warning("tegelmap %s ontbreekt: kaart zonder achtergrond", tiles)
+    for row in S.db.sims():
+        if row["running"]:
+            try:
+                await S.sims.start(row, S.db.tracker(row["tracker_id"]))
+            except Exception as e:  # noqa: BLE001
+                log.warning("simulator %s niet gestart: %s", row["alias"], e)
     yield
+    await S.sims.stop_all()
     await S.mesh.stop()
     for t in tasks:
         t.cancel()
@@ -206,7 +246,7 @@ class TrackerIn(BaseModel):
     pubkey: Optional[str] = None
     alias: Optional[str] = Field(None, max_length=40)
     color: Optional[str] = None
-    icon: Optional[str] = Field(None, max_length=8)
+    icon: Optional[str] = Field(None, max_length=40)
     notes: Optional[str] = Field(None, max_length=500)
     active: Optional[bool] = None
 
@@ -220,6 +260,8 @@ def _check_fields(b: TrackerIn) -> None:
 
 async def _sync_contact(t: dict[str, Any]) -> str:
     """Contact op de companion zetten of weghalen; geeft een korte status."""
+    if t["kind"] != "real":
+        return ""
     if not S.mesh.connected:
         return "companion niet verbonden: contact volgt bij de volgende verbinding"
     try:
@@ -268,9 +310,10 @@ async def delete_tracker(tid: int, keep_contact: bool = False):
     t = S.db.tracker(tid)
     if not t:
         raise HTTPException(404, "onbekende tracker")
+    await S.sims.stop(tid)
     S.db.delete_tracker(tid)
     note = ""
-    if not keep_contact and S.mesh.connected:
+    if t["kind"] == "real" and not keep_contact and S.mesh.connected:
         try:
             await S.mesh.remove_contact(t["pubkey"])
             note = "contact verwijderd van de companion"
@@ -294,6 +337,133 @@ async def companion_contacts():
         return await S.mesh.contacts()
     except ConnectionError as e:
         raise HTTPException(503, str(e))
+
+
+# ---- simulator -----------------------------------------------------------------
+
+class SimIn(BaseModel):
+    alias: Optional[str] = Field(None, max_length=40)
+    color: Optional[str] = None
+    icon: Optional[str] = Field(None, max_length=40)
+    profile: Optional[str] = None
+    home_lat: Optional[float] = None
+    home_lon: Optional[float] = None
+    params: Optional[dict] = None
+    loss_pct: Optional[int] = Field(None, ge=0, le=90)
+    batt_speed: Optional[float] = Field(None, ge=1, le=100)
+    running: Optional[bool] = None
+
+
+def _sim_out(row: dict[str, Any]) -> dict[str, Any]:
+    st = S.sims.status(row["tracker_id"]) or {"running": False}
+    return {**row, "status": st}
+
+
+@app.get("/api/sims")
+async def list_sims():
+    return [_sim_out(r) for r in S.db.sims()]
+
+
+@app.get("/api/sims/routes")
+async def sim_routes():
+    return S.sims.routes()
+
+
+@app.post("/api/sims")
+async def create_sim(b: SimIn):
+    if not b.alias or not b.alias.strip():
+        raise HTTPException(422, "alias is verplicht")
+    if b.profile not in (None, "car", "bike", "walk"):
+        raise HTTPException(422, "profiel: car, bike of walk")
+    if b.color and not COLOR.match(b.color):
+        raise HTTPException(422, "kleur moet #rrggbb zijn")
+    lat = b.home_lat if b.home_lat is not None else S.cfg.map_center[1]
+    lon = b.home_lon if b.home_lon is not None else S.cfg.map_center[0]
+    w, s_, e, n = S.cfg.region_bbox
+    if not (w <= lon <= e and s_ <= lat <= n):
+        raise HTTPException(422, "thuisbasis ligt buiten het kaartgebied")
+    tid = S.db.add_tracker(new_pubkey(), b.alias.strip(), b.color or "#7c3aed", b.icon or "", "simulator",
+                           True, kind="sim")
+    S.db.save_sim(tid, b.profile or "car", lat, lon, b.params or {}, 5 if b.loss_pct is None else b.loss_pct,
+                  4 if b.batt_speed is None else b.batt_speed, b.running is not False)
+    row = S.db.sim(tid)
+    if row["running"]:
+        try:
+            await S.sims.start(row, S.db.tracker(tid))
+        except Exception as ex:  # noqa: BLE001
+            S.db.set_sim_running(tid, False)
+            raise HTTPException(503, str(ex))
+    await S.hub.send({"type": "tracker", "tracker": tracker_out(S.db.tracker(tid))})
+    return _sim_out(S.db.sim(tid))
+
+
+@app.put("/api/sims/{tid}")
+async def update_sim(tid: int, b: SimIn):
+    row = S.db.sim(tid)
+    if not row:
+        raise HTTPException(404, "onbekende simulator")
+    if b.profile not in (None, "car", "bike", "walk"):
+        raise HTTPException(422, "profiel: car, bike of walk")
+    if b.color and not COLOR.match(b.color):
+        raise HTTPException(422, "kleur moet #rrggbb zijn")
+    S.db.update_tracker(tid, alias=b.alias.strip() if b.alias else None, color=b.color, icon=b.icon)
+    S.db.save_sim(tid, b.profile or row["profile"],
+                  row["home_lat"] if b.home_lat is None else b.home_lat,
+                  row["home_lon"] if b.home_lon is None else b.home_lon,
+                  row["params"] if b.params is None else b.params,
+                  row["loss_pct"] if b.loss_pct is None else b.loss_pct,
+                  row["batt_speed"] if b.batt_speed is None else b.batt_speed,
+                  row["running"] if b.running is None else b.running)
+    row = S.db.sim(tid)
+    if row["running"]:
+        await S.sims.start(row, S.db.tracker(tid))     # herstart met nieuwe instellingen
+    else:
+        await S.sims.stop(tid)
+    await S.hub.send({"type": "tracker", "tracker": tracker_out(S.db.tracker(tid))})
+    return _sim_out(row)
+
+
+# ---- geofences -----------------------------------------------------------------
+
+@app.get("/api/geofences")
+async def list_geofences():
+    return S.db.geofences()
+
+
+@app.post("/api/geofences")
+async def create_geofence(body: dict):
+    try:
+        g = geofence.validate(body)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    gid = S.db.add_geofence(g)
+    await S.hub.send({"type": "geofences"})
+    return S.db.geofence(gid)
+
+
+@app.put("/api/geofences/{gid}")
+async def update_geofence(gid: int, body: dict):
+    if not S.db.geofence(gid):
+        raise HTTPException(404, "onbekende zone")
+    try:
+        g = geofence.validate(body)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    S.db.update_geofence(gid, g)
+    await S.hub.send({"type": "geofences"})
+    return S.db.geofence(gid)
+
+
+@app.delete("/api/geofences/{gid}")
+async def delete_geofence(gid: int):
+    S.db.delete_geofence(gid)
+    await S.hub.send({"type": "geofences"})
+    return {"ok": True}
+
+
+@app.get("/api/geofence-events")
+async def geofence_events(limit: int = 50):
+    return S.db.geofence_events(min(max(limit, 1), 500))
 
 
 @app.get("/api/unknown")
