@@ -1,14 +1,15 @@
 /* Kaartpagina: trackers live, zones (geofences), simulator. Volledig offline. */
 (async function () {
   const $ = (id) => document.getElementById(id);
-  const dark = window.matchMedia("(prefers-color-scheme: dark)");
+  const dark = { get matches() { return MT.isDark(); } };
   await MT.initHeader("/");
   const can = MT.can;
   const kiosk = !can("map.sidebar");
   if (kiosk) document.body.classList.add("kiosk");
   if (!can("zones.view")) document.querySelector('.tab[data-tab="zones"]').hidden = true;
   if (!can("sims.manage")) document.querySelector('.tab[data-tab="sim"]').hidden = true;
-  if (!can("zones.manage")) { $("z-circle").hidden = true; $("z-poly").hidden = true; }
+  // Eigen zones mag iedereen met "zones bekijken"; gedeelde enkel met "zones beheren".
+  if (MT.me.kind !== "user" && !can("zones.manage")) { $("z-circle").hidden = true; $("z-poly").hidden = true; }
   if (!can("map.nodes")) document.querySelector('details[data-sect="nodes"]').hidden = true;
   if (!can("map.tracks")) document.querySelector('details[data-sect="track"]').hidden = true;
   const status = await MT.api("/api/status");
@@ -33,10 +34,7 @@
 
   // Per-browser voorkeuren. localStorage kan ontbreken (privévenster): dan
   // gewoon met standaardwaarden werken.
-  const store = {
-    get(k, d) { try { const v = localStorage.getItem("mt." + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
-    set(k, v) { try { localStorage.setItem("mt." + k, JSON.stringify(v)); } catch (_) { /* geen opslag */ } },
-  };
+  const store = { get: (k, d) => MT.prefGet(k, d), set: (k, v) => MT.prefSet(k, v) };
   const prefs = {
     fav: new Set(store.get("fav", [])),
     hidden: new Set(store.get("hidden", [])),
@@ -509,6 +507,9 @@
     $("z-enter").checked = z.on_enter !== 0 && z.on_enter !== false;
     $("z-exit").checked = z.on_exit !== 0 && z.on_exit !== false;
     $("z-notify").value = z.notify_pubkey || "";
+    $("z-personal").checked = z.id ? !!z.mine : !can("zones.manage");
+    $("z-personal").disabled = !!z.id || !can("zones.manage");
+    $("z-personal-wrap").hidden = !can("zones.manage");
     $("z-radius-wrap").hidden = z.kind !== "circle";
     if (z.kind === "circle") $("z-radius").value = Math.round(z.geom.radius);
     fillTrackerSelect(z.trackers || []);
@@ -523,7 +524,8 @@
     const geom = zoneDraft.kind === "circle" ? { center: zoneDraft.geom.center, radius: Number($("z-radius").value) } : zoneDraft.geom;
     const body = { name: $("z-name").value, kind: zoneDraft.kind, geom, color: $("z-color").value,
       on_enter: $("z-enter").checked, on_exit: $("z-exit").checked, notify_pubkey: $("z-notify").value.trim(),
-      trackers: [...$("z-trackers").selectedOptions].map((o) => Number(o.value)), active: true };
+      trackers: [...$("z-trackers").selectedOptions].map((o) => Number(o.value)), active: true,
+      personal: $("z-personal").checked };
     try {
       const id = $("z-id").value;
       await MT.api(id ? `/api/geofences/${id}` : "/api/geofences", { method: id ? "PUT" : "POST", body });
@@ -539,12 +541,14 @@
     $("zones").innerHTML = zones.length ? zones.map((z) => `<div class="item">
       <span class="dot" style="background:${MT.esc(z.color)}"></span> <strong>${MT.esc(z.name)}</strong>
       <span class="muted">${z.kind === "circle" ? Math.round(z.geom.radius) + " m" : (z.geom.length - 1) + " punten"}</span>
-      ${z.active ? "" : '<span class="pill">uit</span>'}
+      ${z.active ? "" : '<span class="pill">uit</span>'}${z.mine ? ' <span class="pill ok">eigen</span>' : ""}
       <div class="row"><button data-zgo="${z.id}">Toon</button><button data-zedit="${z.id}">Bewerken</button>
       <button data-ztog="${z.id}">${z.active ? "Uitzetten" : "Aanzetten"}</button>
       <button class="danger" data-zdel="${z.id}">Verwijderen</button></div></div>`).join("")
       : '<div class="empty">Nog geen zones. Teken er een met de knoppen hierboven.</div>';
-    if (!can("zones.manage")) $("zones").querySelectorAll("[data-zedit],[data-ztog],[data-zdel]").forEach((b) => b.remove());
+    zones.forEach((z) => {
+      if (!z.editable) $("zones").querySelectorAll(`[data-zedit="${z.id}"],[data-ztog="${z.id}"],[data-zdel="${z.id}"]`).forEach((b) => b.remove());
+    });
     const byId = (id) => zones.find((z) => z.id === Number(id));
     $("zones").querySelectorAll("[data-zgo]").forEach((b) => b.addEventListener("click", () => {
       const z = byId(b.dataset.zgo);
@@ -668,7 +672,9 @@
     }
   });
   map.on("style.load", () => { addLayers(); refreshLayers(); });
-  dark.addEventListener("change", () => map.setStyle(MTBasemap.style(dark.matches, status.tiles)));
+  const restyle = () => map.setStyle(MTBasemap.style(dark.matches, status.tiles));
+  document.addEventListener("mt-theme", restyle);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (MT.theme() === "auto") restyle(); });
   async function reloadTracks() { await Promise.all([...trackers.keys()].map(loadTrack)); refreshLayers(); renderList(); }
   $("hours").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     prefs.hours = Number(b.dataset.h); prefs.trackOn = true; $("trackon").checked = true;

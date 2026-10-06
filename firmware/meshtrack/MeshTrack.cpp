@@ -27,9 +27,12 @@ static void apply_mode(MtMode m) {
   s_eff = m;
 }
 
-static void reevaluate(bool beep) {
+static void reevaluate(bool beep, bool power_event = false) {
   MtMode w = wanted_mode();
-  if (w == s_eff) return;
+  if (w == s_eff) {
+    if (power_event) mt_tracker_power_changed();   // zelfde modus, toch de voeding melden
+    return;
+  }
   apply_mode(w);
   mt_log("modus: %s (%s)", mt_mode_name(w), s_usb ? "USB-voeding" : "batterij");
   if (beep) ui_task.playModeTune(w == MT_MODE_TRACKER);
@@ -58,6 +61,19 @@ void mt_on_double_press() {
 
 void mt_on_cli_rescue() { mt_menu_suspend(); }
 
+void mt_on_sos() {
+  mt_log("SOS via de knop");
+  if (!mt_tracker_sos()) mt_log("SOS niet verstuurd: geen doel ingesteld");
+}
+
+bool mt_led_allowed() {
+  switch (mt_cfg.led_mode) {
+    case 1: return true;
+    case 2: return false;
+    default: return s_eff == MT_MODE_COMPANION;
+  }
+}
+
 bool mt_mesh_paused() { return mt_radio_paused(); }
 
 void mt_begin() {
@@ -72,7 +88,7 @@ void mt_loop() {
   if ((int32_t)(millis() - s_next_usb_check) >= 0) {
     s_next_usb_check = millis() + 500;
     bool usb = board.isExternalPowered();
-    if (usb != s_usb) { s_usb = usb; reevaluate(true); }
+    if (usb != s_usb) { s_usb = usb; reevaluate(true, true); }
   }
   mt_tracker_loop();
   mt_menu_loop();

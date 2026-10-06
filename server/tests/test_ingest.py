@@ -56,6 +56,16 @@ def test_suspect_does_not_move_marker():
     assert db.tracker(tid)["last_lat"] == 50.93
 
 
+def test_power_change_in_log():
+    db, cfg, tid = setup()
+    handle(db, cfg, KEY[:12], "T1|1|M|50.93|5.33|||||1.0|0|t|b", now=NOW)
+    handle(db, cfg, KEY[:12], "T1|2|B||||||80|||c|u", now=NOW + 60)
+    handle(db, cfg, KEY[:12], "T1|3|M|50.93|5.33|||||1.0|0|t|b", now=NOW + 120)
+    ev = db.events(None, [], NOW - 10, NOW + 200, False, False, False, 50, power=True)
+    assert [e["type"] for e in ev] == ["usb_off", "usb_on"]
+    assert db.tracker(tid)["last_power"] == "b"
+
+
 def test_pick_ts():
     assert pick_ts(NOW - 10, NOW, None) == NOW - 10
     assert pick_ts(NOW - 30 * 86400, NOW, None) == NOW      # klok fout

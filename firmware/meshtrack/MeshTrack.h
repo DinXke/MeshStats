@@ -11,7 +11,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#define MT_FW_VERSION "0.2.0"
+#define MT_FW_VERSION "0.2.1"
 
 enum MtMode : uint8_t { MT_MODE_COMPANION = 0, MT_MODE_TRACKER = 1 };
 
@@ -22,6 +22,8 @@ void mt_loop();                  // elke loop()
 void mt_on_short_press();        // positie nu versturen
 void mt_on_double_press();       // modus wisselen
 void mt_on_cli_rescue();         // stock rescue-CLI neemt Serial over
+void mt_on_sos();                // knop 2..8 s vastgehouden en losgelaten
+bool mt_led_allowed();           // mag de statusled knipperen?
 
 MtMode mt_effective_mode();      // wat nu actief is (USB => companion)
 bool mt_usb();

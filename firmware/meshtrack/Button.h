@@ -6,7 +6,10 @@
 // Button timing configuration
 #define BUTTON_DEBOUNCE_TIME_MS    50      // Debounce time in ms
 #define BUTTON_CLICK_TIMEOUT_MS    500     // Max time between clicks for multi-click
-#define BUTTON_LONG_PRESS_TIME_MS  3000    // Time to trigger long press (3 seconds)
+// MeshTrack: vasthouden 2..8 s = SOS (bij loslaten), langer dan 8 s = uitschakelen.
+#define BUTTON_LONG_PRESS_TIME_MS  8000    // uitschakelen
+#define BUTTON_HOLD_ARM_MS         2000    // SOS gewapend (biep)
+#define BUTTON_HOLD_WARN_MS        6500    // waarschuwing: nog even en hij schakelt uit
 #define BUTTON_READ_INTERVAL_MS    10      // How often to read the button
 
 class Button {
@@ -18,7 +21,10 @@ public:
         TRIPLE_PRESS,
         QUADRUPLE_PRESS,
         LONG_PRESS,
-        ANY_PRESS
+        ANY_PRESS,
+        HOLD_ARM,
+        HOLD_WARN,
+        HOLD_RELEASE
     };
 
     using EventCallback = std::function<void()>;
@@ -36,6 +42,9 @@ public:
     void onQuadruplePress(EventCallback callback) { _onQuadruplePress = callback; }
     void onLongPress(EventCallback callback) { _onLongPress = callback; }
     void onAnyPress(EventCallback callback) { _onAnyPress = callback; }
+    void onHoldArm(EventCallback callback) { _onHoldArm = callback; }
+    void onHoldWarn(EventCallback callback) { _onHoldWarn = callback; }
+    void onHoldRelease(EventCallback callback) { _onHoldRelease = callback; }
     
     // State getters
     bool isPressed() const { return _currentState; }
@@ -73,6 +82,11 @@ private:
     EventCallback _onQuadruplePress = nullptr;
     EventCallback _onLongPress = nullptr;
     EventCallback _onAnyPress = nullptr;
+    EventCallback _onHoldArm = nullptr;
+    EventCallback _onHoldWarn = nullptr;
+    EventCallback _onHoldRelease = nullptr;
+    bool _armFired = false;
+    bool _warnFired = false;
     
     bool readButton();
     void handleStateChange();

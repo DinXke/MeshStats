@@ -39,15 +39,51 @@ const MT = {
   ],
 
   me: null,
+
+  // ---- voorkeuren: in het gebruikersprofiel op de server, met localStorage als
+  // snelle kopie (en als enige bron voor deellinks) -----------------------------
+  _pending: {}, _timer: null,
+  prefGet(key, def) {
+    if (MT.me && MT.me.kind === "user" && MT.me.prefs && key in MT.me.prefs) return MT.me.prefs[key];
+    try { const v = localStorage.getItem("mt." + key); return v === null ? def : JSON.parse(v); } catch (_) { return def; }
+  },
+  prefSet(key, val) {
+    try { localStorage.setItem("mt." + key, JSON.stringify(val)); } catch (_) { /* geen opslag */ }
+    if (!MT.me || MT.me.kind !== "user") return;
+    MT.me.prefs[key] = val;
+    MT._pending[key] = val;
+    clearTimeout(MT._timer);
+    MT._timer = setTimeout(() => {
+      const body = MT._pending; MT._pending = {};
+      MT.api("/api/me/prefs", { method: "PUT", body }).catch(() => {});
+    }, 800);
+  },
+
+  // ---- thema's --------------------------------------------------------------------
+  THEMES: { auto: "Automatisch", light: "Licht", dark: "Donker", night: "Nacht (rood)", contrast: "Hoog contrast", ocean: "Oceaan" },
+  theme() { return MT.prefGet("theme", "auto"); },
+  isDark() {
+    const t = MT.theme();
+    if (t === "dark" || t === "night") return true;
+    if (t === "auto") return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return false;
+  },
+  applyTheme(t) {
+    if (t === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+    document.dispatchEvent(new CustomEvent("mt-theme"));
+  },
+  setTheme(t) { MT.prefSet("theme", t); MT.applyTheme(t); },
   can(perm) { return !!(MT.me && MT.me.perms.includes(perm)); },
 
   /* Kopbalk: menu volgens de rechten, gebruikersmenu met wachtwoord en uitloggen. */
   async initHeader(active) {
     MT.me = await MT.api("/api/me");
+    MT.applyTheme(MT.theme());
     const links = [
       ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"],
       ["/admin", "Beheer", ["trackers.manage", "trackers.serial", "sims.manage", "companion.view"]],
-      ["/users", "Gebruikers", ["users.manage", "share.manage"]], ["/system", "Systeem", ["alerts.manage", "system.manage"]],
+      ["/users", "Gebruikers", ["users.manage", "share.manage"]], ["/system", "Systeem", ["alerts.manage", "alerts.personal", "system.manage"]],
       ["/help", "Help", null],
     ];
     const nav = document.querySelector("header.top nav");
@@ -60,7 +96,14 @@ const MT = {
       hdr.insertAdjacentHTML("beforeend", `<details id="usermenu" class="usermenu"><summary title="${MT.esc(MT.me.group)}">
         <span class="avatar">${MT.esc((MT.me.display || "?").slice(0, 1).toUpperCase())}</span></summary>
         <div class="menu"><div class="who"><strong>${MT.esc(MT.me.display)}</strong><div class="muted small">${MT.esc(MT.me.group)}</div></div>
+        <div class="muted small">Thema</div><div class="themes" id="um-themes"></div>
         <button type="button" id="um-pw">Wachtwoord wijzigen</button><button type="button" id="um-out">Uitloggen</button></div></details>`);
+      const tb = document.getElementById("um-themes");
+      const drawThemes = () => {
+        tb.innerHTML = Object.entries(MT.THEMES).map(([k, v]) => `<button type="button" data-th="${k}"${MT.theme() === k ? ' class="on"' : ""}>${v}</button>`).join("");
+        tb.querySelectorAll("[data-th]").forEach((b) => b.addEventListener("click", () => { MT.setTheme(b.dataset.th); drawThemes(); }));
+      };
+      drawThemes();
       document.getElementById("um-out").addEventListener("click", async () => { await MT.api("/api/logout", { method: "POST" }); location.href = "/login"; });
       document.getElementById("um-pw").addEventListener("click", MT.passwordDialog);
     }

@@ -60,7 +60,9 @@ class Hub:
         if t == "tracker_deleted":
             return p.sees(msg.get("id", -1)) or p.tracker_ids is None
         if t == "geofence":
-            return p.can("zones.view") and p.sees(msg["event"]["tracker_id"])
+            own = msg["event"].get("owner")
+            return (p.can("zones.view") and p.sees(msg["event"]["tracker_id"])
+                    and (own is None or own == p.user_id))
         if t == "geofences":
             return p.can("zones.view")
         return True
@@ -145,12 +147,14 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
     if pos["bat"] is not None and pos["bat"] < 20 and (before is None or before["last_bat"] is None
                                                           or before["last_bat"] >= 20):
         S.alerts.fire(t, "bat_low", pos)
+    if pos.get("power") and before is not None and before.get("last_power") and before["last_power"] != pos["power"]:
+        S.alerts.fire(t, "usb_on" if pos["power"] == "u" else "usb_off", pos)
     if pos["lat"] is not None and not pos["suspect"]:
         for ev in geofence.evaluate(S.db, t["id"], pos["lat"], pos["lon"], pos["ts"]):
             ev["tracker"] = t["alias"]
             log.info("geofence: %s %s %s", t["alias"], ev["event"], ev["geofence"])
             await S.hub.send({"type": "geofence", "event": ev})
-            S.alerts.fire(t, "zone_in" if ev["event"] == "enter" else "zone_out", pos, ev["geofence"])
+            S.alerts.fire(t, "zone_in" if ev["event"] == "enter" else "zone_out", pos, ev["geofence"], ev.get("owner"))
             if ev["notify_pubkey"] and S.mesh.connected:
                 verb = "is binnengekomen in" if ev["event"] == "enter" else "heeft verlaten:"
                 try:
@@ -307,7 +311,7 @@ def audit(p: Principal, action: str, detail: str = "") -> None:
 PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help")
 PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "trackers.serial", "sims.manage", "companion.view"),
               "/users": ("users.manage", "share.manage"), "/log": ("log.view",),
-              "/system": ("alerts.manage", "system.manage")}
+              "/system": ("alerts.manage", "alerts.personal", "system.manage")}
 
 
 @app.middleware("http")
@@ -455,7 +459,30 @@ async def health():
 @app.get("/api/me")
 async def me(request: Request):
     p = who(request)
-    return {**p.public(), "perm_labels": {k: v[0] for k, v in PERMS.items()}}
+    prefs = S.db.user_prefs(p.user_id) if p.kind == "user" else {}
+    return {**p.public(), "user_id": p.user_id, "prefs": prefs, "perm_labels": {k: v[0] for k, v in PERMS.items()}}
+
+
+@app.put("/api/me/prefs")
+async def put_prefs(body: dict, request: Request):
+    """Weergavevoorkeuren van de gebruiker (favorieten, zichtbaarheid, spoor, thema...).
+    Samenvoegen met wat er al is; alleen eenvoudige waarden, max. ~16 kB."""
+    p = who(request)
+    if p.kind != "user":
+        return {"ok": False}
+    prefs = S.db.user_prefs(p.user_id)
+    for k, v in body.items():
+        if not isinstance(k, str) or len(k) > 40:
+            continue
+        if v is None:
+            prefs.pop(k, None)
+        else:
+            prefs[k] = v
+    raw = json.dumps(prefs)
+    if len(raw) > 16384:
+        raise HTTPException(413, "te veel voorkeuren")
+    S.db.set_user_prefs(p.user_id, prefs)
+    return {"ok": True}
 
 
 @app.get("/api/status")
@@ -640,7 +667,7 @@ async def purge_tracker(tid: int, b: PurgeIn, request: Request):
 
 @app.get("/api/companion/contacts")
 async def companion_contacts(request: Request):
-    need(request, "companion.view", "trackers.manage", "alerts.manage")
+    need(request, "companion.view", "trackers.manage", "alerts.manage", "alerts.personal")
     try:
         return await S.mesh.contacts()
     except ConnectionError as e:
@@ -781,30 +808,47 @@ async def update_sim(tid: int, b: SimIn, request: Request):
 
 # ---- geofences -----------------------------------------------------------------
 
+def _zone_visible(p: Principal, g: dict[str, Any]) -> bool:
+    return g.get("owner") is None or g.get("owner") == p.user_id
+
+
+def _zone_editable(p: Principal, g: dict[str, Any]) -> bool:
+    if g.get("owner") is None:
+        return p.can("zones.manage")
+    return g["owner"] == p.user_id
+
+
 @app.get("/api/geofences")
 async def list_geofences(request: Request):
-    need(request, "zones.view")
-    return S.db.geofences()
+    p = need(request, "zones.view")
+    return [{**g, "mine": g.get("owner") == p.user_id and p.user_id is not None, "editable": _zone_editable(p, g)}
+            for g in S.db.geofences() if _zone_visible(p, g)]
 
 
 @app.post("/api/geofences")
 async def create_geofence(body: dict, request: Request):
-    p = need(request, "zones.manage")
+    p = need(request, "zones.view")
+    personal = bool(body.get("personal")) or not p.can("zones.manage")
+    if personal and p.kind != "user":
+        raise HTTPException(403, "geen toegang")
     try:
         g = geofence.validate(body)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    gid = S.db.add_geofence(g)
-    audit(p, "zone aangemaakt", g["name"])
+    gid = S.db.add_geofence(g, p.user_id if personal else None)
+    audit(p, "eigen zone aangemaakt" if personal else "zone aangemaakt", g["name"])
     await S.hub.send({"type": "geofences"})
     return S.db.geofence(gid)
 
 
 @app.put("/api/geofences/{gid}")
 async def update_geofence(gid: int, body: dict, request: Request):
-    p = need(request, "zones.manage")
-    if not S.db.geofence(gid):
+    p = need(request, "zones.view")
+    old = S.db.geofence(gid)
+    if not old or not _zone_visible(p, old):
         raise HTTPException(404, "onbekende zone")
+    if not _zone_editable(p, old):
+        raise HTTPException(403, "geen toegang")
     try:
         g = geofence.validate(body)
     except ValueError as e:
@@ -817,8 +861,10 @@ async def update_geofence(gid: int, body: dict, request: Request):
 
 @app.delete("/api/geofences/{gid}")
 async def delete_geofence(gid: int, request: Request):
-    p = need(request, "zones.manage")
+    p = need(request, "zones.view")
     g = S.db.geofence(gid)
+    if not g or not _zone_editable(p, g):
+        raise HTTPException(403, "geen toegang")
     S.db.delete_geofence(gid)
     audit(p, "zone verwijderd", g["name"] if g else str(gid))
     await S.hub.send({"type": "geofences"})
@@ -828,7 +874,8 @@ async def delete_geofence(gid: int, request: Request):
 @app.get("/api/geofence-events")
 async def geofence_events(request: Request, limit: int = 50):
     p = need(request, "zones.view")
-    return [e for e in S.db.geofence_events(min(max(limit, 1), 500)) if p.sees(e["tracker_id"])]
+    return [e for e in S.db.geofence_events(min(max(limit, 1), 500))
+            if p.sees(e["tracker_id"]) and (e["owner"] is None or e["owner"] == p.user_id)]
 
 
 @app.get("/api/mesh/nodes")
@@ -848,7 +895,7 @@ EVENT_TYPES = {
     "M": "positie (beweging)", "W": "wakker door beweging", "S": "stilgevallen", "H": "heartbeat",
     "N": "geen GPS-fix", "E": "SOS", "P": "handmatig verstuurd", "B": "moduswissel",
     "zone_in": "zone binnen", "zone_out": "zone buiten", "bat_low": "batterij onder 20 %",
-    "suspect": "verdachte positie",
+    "suspect": "verdachte positie", "usb_on": "aan de lader (USB)", "usb_off": "van de lader af",
 }
 # NB: "te lang stil" is geen positie maar een meldingsgebeurtenis; die staat in de verzonden meldingen.
 
@@ -869,7 +916,9 @@ async def events(request: Request, tracker: str = "", types: str = "", hours: fl
     if not p.can("zones.view"):
         wanted = [w for w in wanted if not w.startswith("zone")]
     rows = S.db.events(ids, [w for w in wanted if len(w) == 1], since, until, "zone_in" in wanted or "zone_out" in wanted,
-                       "bat_low" in wanted, "suspect" in wanted, min(max(limit, 1), 5000))
+                       "bat_low" in wanted, "suspect" in wanted, min(max(limit, 1), 5000),
+                       "usb_on" in wanted or "usb_off" in wanted)
+    rows = [r for r in rows if not r["type"].startswith("usb") or r["type"] in wanted]
     if "zone_in" not in wanted:
         rows = [r for r in rows if r["type"] != "zone_in"]
     if "zone_out" not in wanted:
@@ -1108,6 +1157,10 @@ class RuleIn(BaseModel):
     cooldown_s: int = Field(900, ge=0, le=7 * 86400)
 
 
+class RuleCreate(RuleIn):
+    personal: bool = False
+
+
 def _rule(b: RuleIn) -> dict[str, Any]:
     ev = [e for e in b.events if e in EVENTS]
     if not ev:
@@ -1122,28 +1175,47 @@ def _rule(b: RuleIn) -> dict[str, Any]:
         raise HTTPException(422, "kies minstens één ontvanger")
     if len(rc) > 25:
         raise HTTPException(422, "maximaal 25 ontvangers per regel")
-    return {**b.model_dump(), "events": ev, "recipients": rc}
+    d = b.model_dump()
+    d.pop("personal", None)
+    return {**d, "events": ev, "recipients": rc}
+
+
+def _rule_access(p: Principal, r: dict[str, Any]) -> bool:
+    if r.get("owner") is None:
+        return p.can("alerts.manage")
+    return r["owner"] == p.user_id and p.can("alerts.personal")
+
+
+def _get_rule(p: Principal, rid: int) -> dict[str, Any]:
+    r = next((x for x in S.db.alert_rules() if x["id"] == rid), None)
+    if not r or not _rule_access(p, r):
+        raise HTTPException(404, "onbekende regel")
+    return r
 
 
 @app.get("/api/alerts")
 async def list_alerts(request: Request):
-    need(request, "alerts.manage")
-    return {"rules": S.db.alert_rules(), "events": EVENT_TEXT, "queue": S.alerts.status()}
+    p = need(request, "alerts.manage", "alerts.personal")
+    rules = [{**r, "mine": r.get("owner") is not None} for r in S.db.alert_rules() if _rule_access(p, r)]
+    return {"rules": rules, "events": EVENT_TEXT, "queue": S.alerts.status(),
+            "can_shared": p.can("alerts.manage"), "can_personal": p.can("alerts.personal") and p.kind == "user"}
 
 
 @app.post("/api/alerts")
-async def create_alert(b: RuleIn, request: Request):
-    p = need(request, "alerts.manage")
-    rid = S.db.save_alert_rule(None, _rule(b))
-    audit(p, "meldingsregel aangemaakt", b.name)
+async def create_alert(b: RuleCreate, request: Request):
+    p = need(request, "alerts.manage", "alerts.personal")
+    personal = b.personal or not p.can("alerts.manage")
+    if personal and not (p.can("alerts.personal") and p.kind == "user"):
+        raise HTTPException(403, "geen toegang")
+    rid = S.db.save_alert_rule(None, _rule(b), p.user_id if personal else None)
+    audit(p, "eigen meldingsregel aangemaakt" if personal else "meldingsregel aangemaakt", b.name)
     return {"id": rid}
 
 
 @app.put("/api/alerts/{rid}")
-async def update_alert(rid: int, b: RuleIn, request: Request):
-    p = need(request, "alerts.manage")
-    if not any(r["id"] == rid for r in S.db.alert_rules()):
-        raise HTTPException(404, "onbekende regel")
+async def update_alert(rid: int, b: RuleCreate, request: Request):
+    p = need(request, "alerts.manage", "alerts.personal")
+    _get_rule(p, rid)
     S.db.save_alert_rule(rid, _rule(b))
     audit(p, "meldingsregel gewijzigd", b.name)
     return {"id": rid}
@@ -1151,10 +1223,8 @@ async def update_alert(rid: int, b: RuleIn, request: Request):
 
 @app.delete("/api/alerts/{rid}")
 async def delete_alert(rid: int, request: Request):
-    p = need(request, "alerts.manage")
-    r = next((x for x in S.db.alert_rules() if x["id"] == rid), None)
-    if not r:
-        raise HTTPException(404, "onbekende regel")
+    p = need(request, "alerts.manage", "alerts.personal")
+    r = _get_rule(p, rid)
     S.db.delete_alert_rule(rid)
     audit(p, "meldingsregel verwijderd", r["name"])
     return {"ok": True}
@@ -1163,10 +1233,8 @@ async def delete_alert(rid: int, request: Request):
 @app.post("/api/alerts/{rid}/test")
 async def test_alert(rid: int, request: Request):
     """Testbericht naar alle ontvangers van de regel (via dezelfde wachtrij)."""
-    p = need(request, "alerts.manage")
-    r = next((x for x in S.db.alert_rules() if x["id"] == rid), None)
-    if not r:
-        raise HTTPException(404, "onbekende regel")
+    p = need(request, "alerts.manage", "alerts.personal")
+    r = _get_rule(p, rid)
     from .alerts import Job
     text = f"MeshTrack: test van melding '{r['name']}' door {p.display}"
     for rc in r["recipients"]:
@@ -1178,7 +1246,7 @@ async def test_alert(rid: int, request: Request):
 
 @app.get("/api/alerts/log")
 async def alerts_log(request: Request, limit: int = 200):
-    need(request, "alerts.manage", "system.manage")
+    need(request, "alerts.manage", "system.manage", "alerts.personal")
     return {"log": S.db.alert_log(min(max(limit, 1), 1000)), "queue": S.alerts.status()}
 
 

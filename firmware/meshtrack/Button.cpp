@@ -60,6 +60,16 @@ void Button::update() {
         _state = IDLE;
     }
     
+    // MeshTrack: tijdens het vasthouden eerst "gewapend", dan de waarschuwing.
+    if (_state == PRESSED && !_armFired && (now - _pressTime) > BUTTON_HOLD_ARM_MS) {
+        _armFired = true;
+        triggerEvent(HOLD_ARM);
+    }
+    if (_state == PRESSED && !_warnFired && (now - _pressTime) > BUTTON_HOLD_WARN_MS) {
+        _warnFired = true;
+        triggerEvent(HOLD_WARN);
+    }
+
     // Handle long press while button is held
     if (_state == PRESSED && (now - _pressTime) > BUTTON_LONG_PRESS_TIME_MS) {
         triggerEvent(LONG_PRESS);
@@ -83,13 +93,19 @@ void Button::handleStateChange() {
         // Button pressed
         _pressTime = now;
         _state = PRESSED;
+        _armFired = _warnFired = false;
         triggerEvent(ANY_PRESS);
     } else {
         // Button released
         if (_state == PRESSED) {
             uint32_t pressDuration = now - _pressTime;
             
-            if (pressDuration < BUTTON_LONG_PRESS_TIME_MS) {
+            if (pressDuration >= BUTTON_HOLD_ARM_MS && pressDuration < BUTTON_LONG_PRESS_TIME_MS) {
+                // MeshTrack: losgelaten tussen 2 en 8 s = SOS
+                _state = IDLE;
+                _clickCount = 0;
+                triggerEvent(HOLD_RELEASE);
+            } else if (pressDuration < BUTTON_LONG_PRESS_TIME_MS) {
                 // Short press detected
                 _clickCount++;
                 _releaseTime = now;
@@ -124,6 +140,15 @@ void Button::triggerEvent(EventType event) {
             break;
         case LONG_PRESS:
             if (_onLongPress) _onLongPress();
+            break;
+        case HOLD_ARM:
+            if (_onHoldArm) _onHoldArm();
+            break;
+        case HOLD_WARN:
+            if (_onHoldWarn) _onHoldWarn();
+            break;
+        case HOLD_RELEASE:
+            if (_onHoldRelease) _onHoldRelease();
             break;
         default:
             break;

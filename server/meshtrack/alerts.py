@@ -27,6 +27,7 @@ EVENT_TEXT = {
     "N": "heeft geen GPS-fix", "P": "stuurde handmatig een positie", "B": "wisselde van modus",
     "H": "stuurde een heartbeat", "M": "beweegt", "zone_in": "kwam binnen in", "zone_out": "verliet",
     "bat_low": "heeft minder dan 20 % batterij", "silent": "is te lang stil",
+    "usb_on": "hangt aan de lader", "usb_off": "is van de lader gehaald",
 }
 EVENTS = list(EVENT_TEXT)
 
@@ -51,7 +52,7 @@ class AlertManager:
     # ---- regels toepassen -------------------------------------------------------
 
     def fire(self, tracker: dict[str, Any], event: str, pos: Optional[dict[str, Any]] = None,
-             zone: Optional[str] = None) -> int:
+             zone: Optional[str] = None, zone_owner: Optional[int] = None) -> int:
         """Gebeurtenis melden. Geeft het aantal ingeplande DM's terug."""
         st = self.get_settings()
         if tracker.get("kind") == "sim" and not st["alert_sims"]:
@@ -65,6 +66,8 @@ class AlertManager:
                 continue
             if r["trackers"] and tracker["id"] not in r["trackers"]:
                 continue
+            if zone_owner is not None and r.get("owner") != zone_owner:
+                continue                      # persoonlijke zone: enkel de regels van de eigenaar
             key = (r["id"], tracker["id"], event)
             if now - self._last.get(key, 0) < r["cooldown_s"]:
                 continue

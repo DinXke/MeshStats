@@ -51,7 +51,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
         "ts": pick_ts(sender_ts, rx, r.fix_age_s) if r.has_fix else rx,
         "rx_ts": rx, "seq": r.seq, "state": r.state,
         "lat": r.lat, "lon": r.lon, "alt": r.alt_m, "spd": r.spd_kmh, "crs": r.crs_deg,
-        "bat": r.bat_pct, "hdop": r.hdop, "fix_age": r.fix_age_s, "mode": r.mode,
+        "bat": r.bat_pct, "hdop": r.hdop, "fix_age": r.fix_age_s, "mode": r.mode, "power": r.power,
         "suspect": int(is_suspect(r, cfg.region_bbox, cfg.max_hdop)),
         "snr": snr, "path_len": path_len, "raw": text.strip(),
     }

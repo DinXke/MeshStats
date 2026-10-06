@@ -30,7 +30,8 @@ struct MtCfg {
   uint16_t fix_timeout_hb_s;
   uint8_t  target_set;
   uint8_t  target[32];          // pubkey server-companion
-  uint8_t  _pad[3];
+  uint8_t  led_mode;            // 0 = alleen als companion, 1 = altijd, 2 = nooit (zat vroeger in de opvulling: v1 blijft leesbaar)
+  uint8_t  _pad[2];
   uint32_t crc;                 // crc32 over alles hiervoor
 };
 

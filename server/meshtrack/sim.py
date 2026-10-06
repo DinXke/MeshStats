@@ -420,6 +420,7 @@ class SimTracker:
             str(spd) if spd is not None else "", str(crs) if crs is not None else "",
             str(int(self.batt)), f"{hdop}" if hdop is not None else "", "0" if with_pos else "",
             self.mode,
+            "u" if self.charging else "b",
         ]
         text = "|".join(fields_)
         self.seq = (self.seq + 1) % 65536

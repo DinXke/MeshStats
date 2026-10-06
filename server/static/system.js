@@ -4,11 +4,12 @@
   await MT.initHeader("/system");
   const can = MT.can;
   let rules = [], events = {}, trackers = [], contacts = [], rcpts = [];
+  let canShared = false, canPersonal = false;
   const msg = (el, t, ok) => { el.textContent = t || ""; el.className = "msg " + (ok ? "ok" : "err"); };
   const fmt = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "");
 
   // ---- tabs ------------------------------------------------------------------------
-  const need = { rules: "alerts.manage", sent: ["alerts.manage", "system.manage"], settings: "system.manage" };
+  const need = { rules: ["alerts.manage", "alerts.personal"], sent: ["alerts.manage", "alerts.personal", "system.manage"], settings: "system.manage" };
   const allowed = (k) => (Array.isArray(need[k]) ? need[k].some(can) : can(need[k]));
   const tabs = document.querySelectorAll(".pagetabs .tab");
   tabs.forEach((b) => { if (!allowed(b.dataset.tab)) b.hidden = true; b.addEventListener("click", () => show(b.dataset.tab)); });
@@ -24,8 +25,9 @@
   async function loadRules() {
     const r = await MT.api("/api/alerts");
     rules = r.rules; events = r.events;
+    canShared = r.can_shared; canPersonal = r.can_personal;
     $("rules").innerHTML = rules.map((x) => `<div class="titem"><div class="body">
-      <div><strong>${MT.esc(x.name)}</strong> ${x.active ? "" : '<span class="pill">uit</span>'}</div>
+      <div><strong>${MT.esc(x.name)}</strong> ${x.active ? "" : '<span class="pill">uit</span>'}${x.mine ? ' <span class="pill ok">eigen</span>' : ""}</div>
       <div class="chipsline">${x.events.map((e) => `<span class="pill">${MT.esc(events[e] || e)}</span>`).join(" ")}</div>
       <div class="muted small">${x.trackers.length ? x.trackers.map((id) => MT.esc((trackers.find((t) => t.id === id) || {}).alias || "#" + id)).join(", ") : "alle trackers"}
         → ${x.recipients.map((c) => MT.esc(c.name || c.pubkey.slice(0, 8))).join(", ")}</div></div>
@@ -64,6 +66,9 @@
     rcpts = r ? r.recipients.map((x) => ({ ...x })) : [];
     renderRcpts();
     $("r-active").checked = r ? r.active : true;
+    $("r-personal").checked = r ? !!r.mine : !canShared;
+    $("r-personal").disabled = !!r || !(canShared && canPersonal);
+    $("r-personal-wrap").hidden = !(canShared && canPersonal) && !r;
     msg($("r-msg"), "");
     $("r-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -89,7 +94,7 @@
     const body = { name: $("r-name").value.trim(), active: $("r-active").checked, cooldown_s: Number($("r-cool").value),
       events: [...$("r-events").querySelectorAll("input:checked")].map((c) => c.value),
       trackers: $("r-alltr").checked ? [] : [...$("r-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)),
-      recipients: rcpts };
+      recipients: rcpts, personal: $("r-personal").checked };
     try {
       await MT.api(id ? `/api/alerts/${id}` : "/api/alerts", { method: id ? "PUT" : "POST", body });
       $("r-form").hidden = true;
@@ -129,7 +134,7 @@
 
   // ---- start ---------------------------------------------------------------------------
   trackers = await MT.api("/api/trackers");
-  if (can("alerts.manage")) {
+  if (can("alerts.manage") || can("alerts.personal")) {
     try {
       contacts = (await MT.api("/api/companion/contacts")).filter((c) => c.type === 1).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     } catch (_) { contacts = []; }

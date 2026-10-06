@@ -1,8 +1,9 @@
 """T1-berichtprotocol (zie docs/protocol.md).
 
-    T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>[|<mode>]
+    T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>[|<mode>[|<power>]]
 
-Lege velden zijn toegestaan waar de spec dat zegt; `mode` (c|t) is optioneel.
+Lege velden zijn toegestaan waar de spec dat zegt; `mode` (c|t) en `power`
+(u = USB/laden, b = batterij) zijn optioneel.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ STATES = {
     "B": "modus/boot",
 }
 MODES = {"c": "companion", "t": "tracker"}
+POWER = {"u": "USB", "b": "batterij"}
 
 
 class ProtocolError(ValueError):
@@ -43,6 +45,7 @@ class Report:
     hdop: Optional[float]
     fix_age_s: Optional[int]
     mode: Optional[str] = None
+    power: Optional[str] = None
 
     @property
     def has_fix(self) -> bool:
@@ -86,8 +89,8 @@ def parse(text: str) -> Report:
         raise ProtocolError("geen MeshTrack-bericht")
     if parts[0] != "T1":
         raise UnknownVersion(f"onbekende versie {parts[0]}")
-    if len(parts) not in (11, 12):
-        raise ProtocolError(f"verwacht 11 of 12 velden, kreeg {len(parts)}")
+    if len(parts) not in (11, 12, 13):
+        raise ProtocolError(f"verwacht 11 tot 13 velden, kreeg {len(parts)}")
 
     _, seq_s, state, lat_s, lon_s, alt_s, spd_s, crs_s, bat_s, hdop_s, age_s, *rest = parts
     seq = _opt_int(seq_s, 0, 65535, "seq")
@@ -103,11 +106,15 @@ def parse(text: str) -> Report:
     if state in ("M", "S") and lat is None:
         raise ProtocolError(f"state {state} vereist een positie")
 
-    mode = None
+    mode = power = None
     if rest:
         mode = rest[0] or None
         if mode is not None and mode not in MODES:
             raise ProtocolError(f"onbekende mode {mode!r}")
+    if len(rest) > 1:
+        power = rest[1] or None
+        if power is not None and power not in POWER:
+            raise ProtocolError(f"onbekende voeding {power!r}")
 
     return Report(
         seq=seq,
@@ -121,6 +128,7 @@ def parse(text: str) -> Report:
         hdop=_opt_float(hdop_s, 0, 99.9, "hdop"),
         fix_age_s=_opt_int(age_s, 0, 10**7, "fix_age"),
         mode=mode,
+        power=power,
     )
 
 

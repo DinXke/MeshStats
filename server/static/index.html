@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeshTrack</title>
 <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -93,6 +95,7 @@
           <div><label for="z-color">Kleur</label><input id="z-color" type="color" value="#3b82f6"></div>
           <div id="z-radius-wrap"><label for="z-radius">Straal (m)</label><input id="z-radius" type="number" min="10" max="200000"></div>
         </div>
+        <label class="mini" id="z-personal-wrap"><input type="checkbox" id="z-personal"> Alleen voor mij (eigen zone)</label>
         <label><input type="checkbox" id="z-enter" checked> Melden bij binnenkomen</label>
         <label><input type="checkbox" id="z-exit" checked> Melden bij verlaten</label>
         <label for="z-trackers">Voor trackers (niets gekozen = alle)</label>

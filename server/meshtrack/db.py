@@ -176,6 +176,15 @@ class DB:
         cols = {r["name"] for r in self._q("PRAGMA table_info(trackers)")}
         if "kind" not in cols:   # 0.2.1: echte of gesimuleerde tracker
             self._x("ALTER TABLE trackers ADD COLUMN kind TEXT NOT NULL DEFAULT 'real'")
+        for table in ("geofences", "alert_rules"):   # 0.3.1: persoonlijke zones en regels
+            if "owner" not in {r["name"] for r in self._q(f"PRAGMA table_info({table})")}:
+                self._x(f"ALTER TABLE {table} ADD COLUMN owner INTEGER")
+        if "prefs" not in {r["name"] for r in self._q("PRAGMA table_info(users)")}:
+            self._x("ALTER TABLE users ADD COLUMN prefs TEXT NOT NULL DEFAULT '{}'")
+        if "power" not in {r["name"] for r in self._q("PRAGMA table_info(positions)")}:   # 0.3.1: voeding
+            self._x("ALTER TABLE positions ADD COLUMN power TEXT")
+        if "last_power" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
+            self._x("ALTER TABLE trackers ADD COLUMN last_power TEXT")
         scols = {r["name"] for r in self._q("PRAGMA table_info(sims)")}
         if "drive" not in scols:  # 0.2.2: rijgedrag (snelheden, ritlengte, zwerven)
             self._x("ALTER TABLE sims ADD COLUMN drive TEXT NOT NULL DEFAULT '{}'")
@@ -227,7 +236,7 @@ class DB:
 
     def add_position(self, tid: int, p: dict[str, Any]) -> int:
         cols = ("tracker_id", "ts", "rx_ts", "seq", "state", "lat", "lon", "alt", "spd", "crs", "bat",
-                "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw")
+                "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw", "power")
         vals = (tid,) + tuple(p.get(c) for c in cols[1:])
         cur = self._x(f"INSERT INTO positions({','.join(cols)}) VALUES({','.join('?' * len(cols))})", vals)
         # tracker-samenvatting bijwerken
@@ -237,6 +246,8 @@ class DB:
             upd["last_bat"] = p["bat"]
         if p.get("mode"):
             upd["last_mode"] = p["mode"]
+        if p.get("power"):
+            upd["last_power"] = p["power"]
         if p.get("lat") is not None and not p.get("suspect"):
             upd.update(last_ts=p["ts"], last_lat=p["lat"], last_lon=p["lon"],
                        last_spd=p.get("spd"), last_crs=p.get("crs"))
@@ -305,12 +316,12 @@ class DB:
     def geofence(self, gid: int) -> Optional[dict[str, Any]]:
         return next((g for g in self.geofences() if g["id"] == gid), None)
 
-    def add_geofence(self, g: dict[str, Any]) -> int:
+    def add_geofence(self, g: dict[str, Any], owner: Optional[int] = None) -> int:
         cur = self._x(
-            "INSERT INTO geofences(name, kind, geom, color, trackers, on_enter, on_exit, notify_pubkey, active, created) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO geofences(name, kind, geom, color, trackers, on_enter, on_exit, notify_pubkey, active, created, owner) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (g["name"], g["kind"], json.dumps(g["geom"]), g["color"], json.dumps(g["trackers"]),
-             int(g["on_enter"]), int(g["on_exit"]), g["notify_pubkey"], int(g["active"]), int(time.time())))
+             int(g["on_enter"]), int(g["on_exit"]), g["notify_pubkey"], int(g["active"]), int(time.time()), owner))
         return cur.lastrowid
 
     def update_geofence(self, gid: int, g: dict[str, Any]) -> None:
@@ -338,7 +349,7 @@ class DB:
 
     def geofence_events(self, limit: int = 50) -> list[dict[str, Any]]:
         return self._q(
-            "SELECT e.*, g.name AS geofence, t.alias AS tracker FROM geofence_events e "
+            "SELECT e.*, g.name AS geofence, g.owner AS owner, t.alias AS tracker FROM geofence_events e "
             "JOIN geofences g ON g.id=e.geofence_id JOIN trackers t ON t.id=e.tracker_id "
             "ORDER BY e.id DESC LIMIT ?", (limit,))
 
@@ -359,12 +370,12 @@ class DB:
             r["active"] = bool(r["active"])
         return rows
 
-    def save_alert_rule(self, rid: Optional[int], r: dict[str, Any]) -> int:
+    def save_alert_rule(self, rid: Optional[int], r: dict[str, Any], owner: Optional[int] = None) -> int:
         vals = (r["name"], int(r["active"]), json.dumps(r["events"]), json.dumps(r["trackers"]),
                 json.dumps(r["recipients"]), int(r["cooldown_s"]))
         if rid is None:
-            return self._x("INSERT INTO alert_rules(name, active, events, trackers, recipients, cooldown_s, created) "
-                           "VALUES(?,?,?,?,?,?,?)", vals + (int(time.time()),)).lastrowid
+            return self._x("INSERT INTO alert_rules(name, active, events, trackers, recipients, cooldown_s, created, owner) "
+                           "VALUES(?,?,?,?,?,?,?,?)", vals + (int(time.time()), owner)).lastrowid
         self._x("UPDATE alert_rules SET name=?, active=?, events=?, trackers=?, recipients=?, cooldown_s=? WHERE id=?",
                 vals + (rid,))
         return rid
@@ -385,7 +396,8 @@ class DB:
     # ---- logboek ---------------------------------------------------------------
 
     def events(self, tracker_ids: Optional[list[int]], states: Optional[list[str]], since: int, until: int,
-               zones: bool, bat_low: bool, suspect: bool, limit: int) -> list[dict[str, Any]]:
+               zones: bool, bat_low: bool, suspect: bool, limit: int,
+               power: bool = False) -> list[dict[str, Any]]:
         """Gebeurtenissen voor het logboek: posities (per toestand), zone-
         meldingen, batterij onder 20 % (afgeleid) en verdachte posities."""
         out: list[dict[str, Any]] = []
@@ -396,14 +408,20 @@ class DB:
                 return []
             tf = f" AND p.tracker_id IN ({','.join('?' * len(tracker_ids))})"
             args += tracker_ids
-        if states or bat_low or suspect:
+        if states or bat_low or suspect or power:
             rows = self._q(
                 "SELECT p.id, p.tracker_id, t.alias, t.color, t.icon, p.ts, p.rx_ts, p.state, p.lat, p.lon, p.spd, "
-                "p.bat, p.mode, p.suspect, p.hdop, p.snr, p.path_len FROM positions p JOIN trackers t ON t.id=p.tracker_id "
+                "p.bat, p.mode, p.suspect, p.hdop, p.snr, p.path_len, p.power FROM positions p JOIN trackers t ON t.id=p.tracker_id "
                 "WHERE p.rx_ts BETWEEN ? AND ?" + tf + " ORDER BY p.tracker_id, p.rx_ts", tuple(args))
             prev_bat: dict[int, Optional[int]] = {}
+            prev_pow: dict[int, Optional[str]] = {}
             for r in rows:
                 pb = prev_bat.get(r["tracker_id"])
+                pp = prev_pow.get(r["tracker_id"])
+                if power and r["power"] and pp and r["power"] != pp:
+                    out.append({**r, "type": "usb_on" if r["power"] == "u" else "usb_off"})
+                if r["power"]:
+                    prev_pow[r["tracker_id"]] = r["power"]
                 if states and r["state"] in states:
                     out.append({**r, "type": r["state"]})
                 if bat_low and r["bat"] is not None and r["bat"] < 20 and (pb is None or pb >= 20):
@@ -465,6 +483,13 @@ class DB:
         return self._x("INSERT INTO users(username, display_name, password_hash, group_id, active, created) "
                        "VALUES(?,?,?,?,?,?)", (username, display, password_hash, group_id, int(active),
                                                int(time.time()))).lastrowid
+
+    def user_prefs(self, uid: int) -> dict[str, Any]:
+        r = self._q("SELECT prefs FROM users WHERE id=?", (uid,))
+        return json.loads(r[0]["prefs"]) if r else {}
+
+    def set_user_prefs(self, uid: int, prefs: dict[str, Any]) -> None:
+        self._x("UPDATE users SET prefs=? WHERE id=?", (json.dumps(prefs), uid))
 
     def update_user(self, uid: int, **f: Any) -> None:
         allowed = ("display_name", "group_id", "active", "password_hash", "last_login")

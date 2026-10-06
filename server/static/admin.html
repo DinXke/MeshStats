@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeshTrack – trackers</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="admin">
@@ -179,6 +181,9 @@
             <div><label>Teken van leven (heartbeat) elke</label><div class="dur" data-set="heartbeat" data-off="1"></div></div>
             <div><label>Bewegingsgevoeligheid</label>
               <select data-set="accel_sens"><option value="laag">laag</option><option value="midden">midden</option><option value="hoog">hoog</option></select></div>
+            <div><label>Statusled</label>
+              <select data-set="led"><option value="companion">alleen als companion</option><option value="altijd">altijd</option><option value="uit">nooit</option></select>
+              <div class="help">In trackermodus spaart een uitgeschakelde led stroom.</div></div>
           </div>
         </fieldset>
 

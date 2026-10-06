@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeshTrack – systeem</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="admin">
@@ -44,6 +46,7 @@
         <div class="row"><input id="r-pk" class="mono" placeholder="of plak een pubkey (64 hex)" maxlength="64" style="flex:1;min-width:200px">
           <input id="r-pkname" placeholder="naam" maxlength="40" style="width:160px"><button type="button" id="r-addpk">Toevoegen</button></div>
       </fieldset>
+      <label class="switch block" id="r-personal-wrap"><input type="checkbox" id="r-personal"><span></span> Eigen regel (alleen ik beheer hem)</label>
       <label class="switch block"><input type="checkbox" id="r-active" checked><span></span> Actief</label>
       <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="r-cancel">Annuleren</button></div>
       <div id="r-msg" class="msg"></div>

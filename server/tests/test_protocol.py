@@ -61,6 +61,14 @@ def test_suspect():
     assert not is_suspect(parse("T1|1|N||||||50||"), BBOX)
 
 
+def test_power_field():
+    r = parse("T1|11|B||||||99|||c|u")
+    assert r.power == "u" and r.mode == "c"
+    assert parse("T1|12|M|50.9|5.3|||||1|0|t|b").power == "b"
+    with pytest.raises(ProtocolError):
+        parse("T1|13|M|50.9|5.3|||||1|0|t|x")
+
+
 def test_manual_state():
     r = parse("T1|10|P|50.93|5.33|40|0||91|1.1|2|t")
     assert r.state == "P" and r.has_fix and r.mode == "t"
