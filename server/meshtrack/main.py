@@ -167,6 +167,10 @@ async def guard(request: Request, call_next):
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     if path.startswith("/tiles"):
         resp.headers["Cache-Control"] = "no-cache"
+    elif path.startswith("/static") or path in ("/", "/admin", "/login"):
+        # Altijd hervalideren (ETag/Last-Modified -> 304): na een update nooit
+        # een oude CSS/JS naast nieuwe HTML.
+        resp.headers["Cache-Control"] = "no-cache"
     return resp
 
 
