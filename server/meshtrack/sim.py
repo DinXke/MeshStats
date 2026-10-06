@@ -53,6 +53,8 @@ PROFILE = {
     "car":  dict(acc=2.8, dec=7.0, a_lat=2.6, min_corner=15, trip=(3, 30), stop_p=0.12, stop_s=(5, 50)),
     "bike": dict(acc=1.2, dec=4.0, a_lat=1.6, min_corner=8, trip=(1, 12), stop_p=0.05, stop_s=(3, 25)),
     "walk": dict(acc=2.0, dec=4.0, a_lat=9.0, min_corner=3, trip=(0.5, 4), stop_p=0.02, stop_s=(5, 60)),
+    # Reiziger: lange ritten tussen steden over grote wegen, rustig rond 90 km/u.
+    "travel": dict(acc=2.0, dec=6.0, a_lat=2.4, min_corner=30, trip=(80, 350), stop_p=0.0, stop_s=(5, 20)),
 }
 
 # Wegen waar je niet zomaar stopt (geen verkeerslichten, wel af en toe file).
@@ -85,6 +87,7 @@ class SimStats:
 
 class SimTracker:
     def __init__(self, row: dict, router: Router, emit: Emit, start: Optional[dict] = None):
+        self.outbox: list[tuple] = []        # berichten van deze stap (echt of virtueel)
         self.tid = row["tracker_id"]
         self.alias = row["alias"]
         self.prefix = row["pubkey"][:12]
@@ -99,6 +102,8 @@ class SimTracker:
         self.max_kmh = float(d.get("max_kmh") or 0)
         lo, hi = self.prof["trip"]
         self.trip_km = (float(d.get("trip_min_km") or lo), float(d.get("trip_max_km") or hi))
+        if self.profile != "travel":   # z14-routering: lange ritten worden te zwaar
+            self.trip_km = (min(self.trip_km[0], 80.0), min(self.trip_km[1], 80.0))
         self.roam = bool(d.get("roam"))
         self.speeds = {**SPEEDS[self.profile], **{k: float(v) for k, v in (d.get("speeds") or {}).items() if v}}
         self.router, self.emit = router, emit
@@ -170,6 +175,19 @@ class SimTracker:
 
     # ---- lus ----------------------------------------------------------------------
 
+    def _local(self, now: float) -> datetime:
+        return datetime.fromtimestamp(now, TZ)
+
+    def step(self, now: float, dt: float) -> None:
+        """Eén stap (zonder plannen): rijden, batterij, regels. Berichten gaan naar
+        self.outbox. Wordt gebruikt in echte tijd en voor de historiek."""
+        if self.phase == "drive":
+            self._drive(now, dt)
+        else:
+            self.spd = 0.0
+        self._battery(now, dt)
+        self._observe(now)
+
     async def _run(self) -> None:
         last = time.time()
         while True:
@@ -179,24 +197,46 @@ class SimTracker:
             last = now
             try:
                 if self.phase == "park" and now >= self.park_until and not self._needs_charge():
-                    await self._plan(now)
-                if self.phase == "drive":
-                    self._drive(now, dt)
-                else:
-                    self.spd = 0.0
-                self._battery(now, dt)
-                await self._observe(now)
+                    await asyncio.to_thread(self._plan_sync, now)
+                self.step(now, dt)
+                out, self.outbox = self.outbox, []
+                for m in out:
+                    await self.emit(*m)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
                 log.exception("simulator %s", self.alias)
                 self.phase, self.park_until = "park", now + 120
 
+    def backfill(self, start: float, end: float, sink: Callable[[tuple], None]) -> int:
+        """Historiek: van start tot end in virtuele tijd rijden en elk bericht aan
+        sink geven (met de virtuele tijd als ontvangsttijd). Geparkeerd gaat de
+        klok in grotere stappen, rijdend per seconde. Geeft het aantal berichten."""
+        self.park_until = start + self.rng.uniform(60, 1800)
+        self.rules.last_heartbeat = start
+        t, n = start, 0
+        while t < end:
+            if self.phase == "park" and t >= self.park_until and not self._needs_charge():
+                self._plan_sync(t)
+            dt = 1.0 if self.phase == "drive" else (30.0 if not self.charging else 10.0)
+            if self.phase == "park" and not self.charging:
+                dt = max(1.0, min(dt, self.park_until - t))
+            self.step(t, dt)
+            for m in self.outbox:
+                sink(m)
+                n += 1
+            self.outbox = []
+            t += dt
+        self.stats = SimStats()
+        return n
+
     # ---- plannen ------------------------------------------------------------------
 
     def _next_destination(self, now: float) -> tuple[float, float]:
-        hour = local_now().hour
+        hour = self._local(now).hour
         lo, hi = self.trip_km
+        if self.profile == "travel":
+            return self.router.city_destination((self.lat, self.lon), lo, hi, self.rng)
         if self.roam:
             # Zwerven: altijd vanaf waar hij nu is, nooit terug naar huis.
             return self.router.random_destination((self.lat, self.lon), lo, hi, self.rng)
@@ -236,12 +276,11 @@ class SimTracker:
             vmax[i] = max(vmin, math.sqrt(a_lat * max(r, 1.0)) * 3.6)
         self.cum, self.vmax = cum, vmax
 
-    async def _plan(self, now: float) -> None:
+    def _plan_sync(self, now: float) -> None:
         self.phase, self.note = "plan", "route berekenen"
         for _ in range(4):
             dest = self._next_destination(now)
-            legs = await asyncio.to_thread(self.router.route, (self.lat, self.lon), dest, self.profile,
-                                           0.03, self.speeds)
+            legs = self.router.route((self.lat, self.lon), dest, self.profile, 0.03, self.speeds)
             if legs and len(legs) >= 2:
                 self.legs, self.i, self.pos_m, self.dest = legs, 0, 0.0, (legs[-1].lat, legs[-1].lon)
                 self._prepare_route()
@@ -255,10 +294,10 @@ class SimTracker:
         self.park_until = now + 600
 
     def _park(self, now: float) -> None:
-        hour = local_now().hour
+        hour = self._local(now).hour
         r = self.rng.random()
         if hour >= 21 or hour < 6:
-            wake = local_now().replace(hour=7, minute=0, second=0)
+            wake = self._local(now).replace(hour=7, minute=0, second=0)
             secs = (wake.timestamp() - now) % 86400 + self.rng.uniform(0, 5400)
         elif r < 0.6:
             secs = self.rng.uniform(10, 40) * 60
@@ -378,10 +417,10 @@ class SimTracker:
 
     # ---- regels toepassen en verzenden ---------------------------------------------
 
-    async def _observe(self, now: float) -> None:
+    def _observe(self, now: float) -> None:
         if getattr(self, "_pending_mode", False):
             self._pending_mode = False
-            await self._send(now, "B", with_pos=False, reason="modus")
+            self._send(now, "B", with_pos=False, reason="modus")
         st, p = self.rules, self.params
         moving = self.spd >= STILL_KMH
         if st.sleeping:
@@ -390,22 +429,22 @@ class SimTracker:
                     self.waking_until = now + self.rng.uniform(5, 25)
                 elif now >= self.waking_until:
                     st.sleeping, self.waking_until, st.still_since = False, None, None
-                    await self._send(now, "W", reason="wakker")
+                    self._send(now, "W", reason="wakker")
                 return
             if heartbeat_due(st, p, now):
                 st.last_heartbeat = now
-                await self._send(now, "H", reason="heartbeat")
+                self._send(now, "H", reason="heartbeat")
             return
         if stillness(st, p, now, self.spd):
-            await self._send(now, "S", reason="stil")
+            self._send(now, "S", reason="stil")
             st.sleeping, st.last_heartbeat = True, now
             return
         if moving:
             reason = decide(st, p, now, self.lat, self.lon, self.spd, self.crs)
             if reason:
-                await self._send(now, "M", reason=reason)
+                self._send(now, "M", reason=reason)
 
-    async def _send(self, now: float, state: str, reason: str, with_pos: bool = True) -> None:
+    def _send(self, now: float, state: str, reason: str, with_pos: bool = True) -> None:
         lat = lon = None
         hdop = None
         if with_pos:
@@ -432,13 +471,16 @@ class SimTracker:
         self.stats.sent += 1
         snr = round(self.rng.uniform(-8, 10), 1)
         hops = self.rng.choice((0, 1, 1, 2, 2, 3))
-        await self.emit(self.prefix, text, int(now), snr, hops)
+        self.outbox.append((self.prefix, text, int(now), snr, hops))
 
 
 class SimManager:
-    def __init__(self, router_factory: Callable[[], Optional[Router]], emit: Emit):
+    def __init__(self, router_factory: Callable[[], Optional[Router]], emit: Emit,
+                 wide_factory: Optional[Callable[[], Optional[Router]]] = None):
         self._router_factory = router_factory
+        self._wide_factory = wide_factory
         self._router: Optional[Router] = None
+        self._wide: Optional[Router] = None
         self.emit = emit
         self.sims: dict[int, SimTracker] = {}
 
@@ -448,11 +490,19 @@ class SimManager:
             self._router = self._router_factory()
         return self._router
 
+    def router_for(self, profile: str) -> Optional[Router]:
+        if profile == "travel":
+            if self._wide is None and self._wide_factory:
+                self._wide = self._wide_factory()
+            return self._wide
+        return self.router
+
     async def start(self, row: dict, tracker: dict) -> SimTracker:
         await self.stop(row["tracker_id"])
-        if self.router is None:
+        router = self.router_for(row["profile"])
+        if router is None:
             raise RuntimeError("geen kaarttegels: simulator kan niet routeren")
-        s = SimTracker(row, self.router, self.emit, tracker)
+        s = SimTracker(row, router, self.emit, tracker)
         self.sims[row["tracker_id"]] = s
         s.start()
         return s

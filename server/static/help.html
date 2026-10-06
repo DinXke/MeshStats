@@ -55,7 +55,8 @@
         Het spoor krijgt de kleur van de tracker of een kleur volgens de snelheid.</li>
       <li><strong>Klik op een tracker</strong> voor de details, de afgelegde afstand en de maximale en gemiddelde
         snelheid. Heb je het recht, dan kun je het spoor ook als <strong>GPX</strong> of <strong>CSV</strong>
-        downloaden.</li>
+        downloaden. Met <em>centreren en volgen</em> houdt de kaart de tracker in het midden bij elke nieuwe positie;
+        zelf de kaart verslepen of de knop <em>volgen stoppen</em> bovenaan beëindigt dat.</li>
       <li>Het <strong>pijltje</strong> op een marker wijst de rijrichting aan. Een <strong>grijze</strong> marker betekent
         dat die tracker al lang niets meer van zich heeft laten horen.</li>
       <li>De zijbalk kun je <strong>breder of smaller slepen</strong>; dubbelklik op de rand om hem terug te zetten.
@@ -167,12 +168,18 @@
 
     <h2 id="sim">De simulator</h2>
     <p>Een virtuele tracker rijdt dag en nacht over echte wegen rond zijn thuisbasis en volgt dezelfde verzendregels
-      als de firmware. Je stelt in: het profiel (auto, fiets of te voet), de snelheid ten opzichte van de limiet, een
+      als de firmware. Je stelt in: het profiel (auto, fiets, te voet of reiziger), de snelheid ten opzichte van de limiet, een
       maximumsnelheid, de snelheid per wegtype, de ritlengte en <em>zwerven</em> (door de hele Benelux, zonder naar
       huis terug te keren).</p>
     <p>Tussen twee ritten parkeert hij, 's nachts gaat hij naar huis, en als zijn batterij bijna leeg is, laadt hij op
       (dan staat hij in companionmodus). Zijn berichten gaan niet over de mesh. In de lijst zie je per simulator
       hoeveel berichten hij per uur stuurt en hoeveel zendtijd dat zou kosten.</p>
+    <p>De <strong>reiziger</strong> rijdt enkel over snelwegen, autowegen en grote gewestwegen, rond 90 km/u, van stad naar
+      stad door alle landen waarvoor de server een kaart heeft (de Benelux, Duitsland, Frankrijk, Zwitserland, Denemarken
+      en andere). Hij blijft altijd op het vasteland.</p>
+    <p>Een nieuwe simulator krijgt meteen een <strong>historiek</strong>: de server rijdt zijn traject van de voorbije dagen
+      (standaard 7, in te stellen onder <em>Systeem</em>) in versnelde tijd na en slaat die posities op. Zo zie je meteen
+      sporen en gebeurtenissen in het logboek.</p>
 
     <h2 id="zones">Zones</h2>
     <p>Open op de kaart het tabblad <em>Zones</em>, klik op <em>+ Cirkel</em> of <em>+ Polygoon</em> en teken de zone op
@@ -218,7 +225,9 @@
 
     <h2 id="delen">Deellinks</h2>
     <p>Onder <em>Gebruikers</em> → <em>Deellinks</em> maak je een link die zonder login een kaart toont met alleen de
-      gekozen trackers, tot de link verloopt. Je kunt een link altijd intrekken.</p>
+      gekozen trackers, tot de link verloopt. Je kunt een link altijd intrekken. Ben je zelf ingelogd en open je een
+      deellink, dan blijf je gewoon ingelogd; wie via een deellink kijkt, ziet rechtsboven een knop
+      <em>Inloggen</em>.</p>
 
     <h2 id="offline">Offline werken</h2>
     <p>De server heeft geen internet nodig: kaarttegels, lettertypes en iconen staan op de server zelf, en trackers en

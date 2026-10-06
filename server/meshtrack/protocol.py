@@ -103,7 +103,7 @@ def parse(text: str) -> Report:
     lon = _opt_float(lon_s, -180, 180, "lon")
     if (lat is None) != (lon is None):
         raise ProtocolError("lat en lon moeten samen gegeven zijn")
-    if state in ("M", "S") and lat is None:
+    if state == "M" and lat is None:      # S mag zonder fix (stilgevallen binnen)
         raise ProtocolError(f"state {state} vereist een positie")
 
     mode = power = None

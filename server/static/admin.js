@@ -118,6 +118,7 @@
     $("f-virtual").disabled = false;
     $("contacts").hidden = true;
     $("f-data").hidden = true;
+    $("f-histrow").hidden = true;
     icon = "";
     setVirtual(false);
     renderIcons();
@@ -155,6 +156,7 @@
           $("f-town").dataset.lon = s.home_lon;
         } else $("f-town").value = ti;
         document.querySelectorAll("[data-sp]").forEach((el) => { if (s.params[el.dataset.sp] != null) el.value = s.params[el.dataset.sp]; });
+        $("f-histrow").hidden = false;
         fillDrive(s.drive);
         renderSpeeds(s.profile, (s.drive || {}).speeds);
         $("f-loss").value = s.loss_pct;
@@ -170,6 +172,14 @@
     loadDataInfo(t.id);
     openForm(`Bewerken: ${t.alias}`);
   }
+
+  $("f-history").addEventListener("click", async () => {
+    if (!confirm("Alle posities van deze simulator wissen en de historiek opnieuw opbouwen?")) return;
+    try {
+      await MT.api(`/api/sims/${$("f-id").value}/history`, { method: "POST" });
+      msg($("fmsg"), "De historiek wordt op de achtergrond opgebouwd; de simulator rijdt daarna verder.", true);
+    } catch (e) { msg($("fmsg"), e.message); }
+  });
 
   async function loadDataInfo(id) {
     $("f-data").hidden = false;

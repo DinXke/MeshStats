@@ -296,6 +296,9 @@ dialog.dlg::backdrop { background: rgba(0,0,0,.45); }
 dialog.dlg h2 { margin: 0 0 6px; font-size: 17px; }
 /* kioskweergave: enkel de kaart */
 body.kiosk header.top nav, body.kiosk #side, body.kiosk #resizer, body.kiosk .usermenu { display: none !important; }
+#sharelogin { margin-left: auto; }
+.followbtn { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 4; border-radius: 999px;
+  padding: 6px 14px; background: var(--accent); color: var(--accent-text); border: 0; box-shadow: var(--shadow); font-weight: 600; }
 body.kiosk .mapwrap { height: calc(100% - 48px); }
 body.kiosk #map { position: absolute; inset: 48px 0 0 0; }
 

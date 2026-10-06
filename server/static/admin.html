@@ -63,7 +63,7 @@
         <div class="grid">
           <div>
             <label for="f-profile">Rijdt als</label>
-            <select id="f-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">voetganger</option></select>
+            <select id="f-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">voetganger</option><option value="travel">reiziger (grote wegen, alle landen)</option></select>
           </div>
           <div>
             <label for="f-town">Thuisbasis</label>
@@ -79,11 +79,11 @@
               <div class="help">bv. 115 voor een dringende rit</div></div>
             <div><label>Nooit sneller dan</label><div class="unit"><input id="d-max" type="number" min="0" max="200" value="0"><span>km/u</span></div>
               <div class="help">0 = geen grens</div></div>
-            <div><label>Ritlengte van</label><div class="unit"><input id="d-tmin" type="number" min="0.3" max="80" step="0.5"><span>km</span></div></div>
-            <div><label>tot</label><div class="unit"><input id="d-tmax" type="number" min="0.3" max="80" step="0.5"><span>km</span></div></div>
+            <div><label>Ritlengte van</label><div class="unit"><input id="d-tmin" type="number" min="0.3" max="400" step="0.5"><span>km</span></div></div>
+            <div><label>tot</label><div class="unit"><input id="d-tmax" type="number" min="0.3" max="400" step="0.5"><span>km</span></div></div>
           </div>
           <label class="switch block"><input type="checkbox" id="d-roam"><span></span> Zwerven door de hele Benelux (nooit terug naar huis)</label>
-          <div class="help">Ritten zijn max. 80 km; zwervend komt hij via opeenvolgende ritten overal in de Benelux.</div>
+          <div class="help">Ritten zijn max. 80 km (de reiziger tot 400 km); zwervend komt hij via opeenvolgende ritten overal.</div>
           <details>
             <summary>Snelheid per wegtype (km/u)</summary>
             <div class="grid" id="d-speeds"></div>
@@ -106,6 +106,10 @@
           </div>
         </details>
         <label class="switch block"><input type="checkbox" id="f-running" checked><span></span> Simulator rijdt</label>
+        <div class="row" id="f-histrow" hidden>
+          <button type="button" id="f-history">Historiek opnieuw opbouwen</button>
+          <span class="help">wist zijn posities en rijdt de voorbije dagen opnieuw na (duurt ongeveer een minuut)</span>
+        </div>
       </div>
 
       <fieldset id="f-data" hidden>

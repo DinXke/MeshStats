@@ -31,6 +31,7 @@
   let zones = [];
   let simRoutes = {};
   let selected = null;
+  let following = null;              // tracker-id die de kaart volgt
 
   // Per-browser voorkeuren. localStorage kan ontbreken (privévenster): dan
   // gewoon met standaardwaarden werken.
@@ -330,7 +331,9 @@
       const exp = t.id === selected && can("export")
         ? `<div class="stats">Exporteer ${prefs.trackOn ? prefs.hours : 24} u: <a href="/api/trackers/${t.id}/export?fmt=gpx&hours=${prefs.trackOn ? prefs.hours : 24}">GPX</a>
            · <a href="/api/trackers/${t.id}/export?fmt=csv&hours=${prefs.trackOn ? prefs.hours : 24}">CSV</a></div>` : "";
-      const stats = t.id === selected ? `<div class="stats">${MT.esc(statsFor(t.id))}</div>${exp}` : "";
+      const follow = t.id === selected && t.last_lat != null
+        ? `<div class="stats"><button type="button" class="link" data-follow="${t.id}">${following === t.id ? "volgen stoppen" : "centreren en volgen"}</button></div>` : "";
+      const stats = t.id === selected ? `<div class="stats">${MT.esc(statsFor(t.id))}</div>${exp}${follow}` : "";
       const vis = !prefs.hidden.has(t.id);
       const ico = t.icon ? MTIcons.svg(t.icon) : "";
       return `<div class="trk${t.stale ? " stale" : ""}${t.id === selected ? " sel" : ""}${vis ? "" : " hiddenmap"}" data-id="${t.id}">
@@ -343,6 +346,11 @@
     $("list").querySelectorAll(".trk").forEach((el) => el.addEventListener("click", (e) => {
       if (e.target.closest(".vis, .fav")) return;
       select(Number(el.dataset.id), true);
+    }));
+    $("list").querySelectorAll("[data-follow]").forEach((b) => b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = Number(b.dataset.follow);
+      setFollow(following === id ? null : id);
     }));
     $("list").querySelectorAll("[data-vis]").forEach((cb) => cb.addEventListener("change", () => {
       const id = Number(cb.dataset.vis);
@@ -374,6 +382,20 @@
     for (const t of trackers.values()) { if (keep.has(t.id)) prefs.hidden.delete(t.id); else prefs.hidden.add(t.id); }
     savePrefs(); applyVisibility();
   });
+
+  function setFollow(id) {
+    following = id;
+    $("followbtn").hidden = id == null;
+    if (id != null) {
+      const t = trackers.get(id);
+      $("followbtn").textContent = `${t ? t.alias : "tracker"} volgen: stoppen`;
+      if (t && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], zoom: Math.max(map.getZoom(), 15) });
+    }
+    renderList();
+  }
+  $("followbtn").addEventListener("click", () => setFollow(null));
+  // Zelf de kaart verslepen stopt het volgen (zoomen niet).
+  map.on("dragstart", () => { if (following != null) setFollow(null); });
 
   function select(id, fly) {
     selected = id;
@@ -610,7 +632,7 @@
     } catch (err) { $("s-msg").className = "msg err"; $("s-msg").textContent = err.message; }
   });
 
-  const PROF = { car: "auto", bike: "fiets", walk: "te voet" };
+  const PROF = { car: "auto", bike: "fiets", walk: "te voet", travel: "reiziger" };
   async function refreshSims() {
     if (!can("sims.manage")) return;
     const sims = await MT.api("/api/sims");
@@ -780,6 +802,7 @@
       upsertMarker(t);
       renderList();
       refreshLayers();
+      if (following === t.id && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], duration: 800 });
     }
     if (msg.type === "tracker" || msg.type === "tracker_deleted") loadAll();
     if (msg.type === "geofences") loadZones();

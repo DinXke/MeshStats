@@ -92,6 +92,9 @@ const MT = {
         .map(([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ""}>${label}</a>`).join("");
     }
     const hdr = document.querySelector("header.top");
+    if (hdr && MT.me.kind === "share" && !document.getElementById("sharelogin")) {
+      hdr.insertAdjacentHTML("beforeend", '<a id="sharelogin" class="btnlink" href="/login">Inloggen</a>');
+    }
     if (hdr && !document.getElementById("usermenu") && MT.me.kind === "user") {
       hdr.insertAdjacentHTML("beforeend", `<details id="usermenu" class="usermenu"><summary title="${MT.esc(MT.me.group)}">
         <span class="avatar">${MT.esc((MT.me.display || "?").slice(0, 1).toUpperCase())}</span></summary>

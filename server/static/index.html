@@ -122,7 +122,7 @@
         <input id="s-alias" maxlength="40" placeholder="bv. Sim Ziekenwagen" required>
         <div class="grid2">
           <div><label for="s-profile">Profiel</label>
-            <select id="s-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">te voet</option></select></div>
+            <select id="s-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">te voet</option><option value="travel">reiziger</option></select></div>
           <div><label for="s-color">Kleur</label><input id="s-color" type="color" value="#7c3aed"></div>
         </div>
         <label>Thuisbasis</label>
@@ -153,7 +153,7 @@
     </section>
   </aside>
   <div id="resizer" role="separator" aria-orientation="vertical" aria-label="Breedte van de zijbalk" tabindex="0"></div>
-  <div id="map"></div>
+  <div id="map"><button id="followbtn" class="followbtn" hidden>Volgen stoppen</button></div>
 </div>
 <div id="toasts"></div>
 <button id="sheet-show" class="sheet-show" hidden aria-label="Lijst tonen">☰ Lijst</button>

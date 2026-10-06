@@ -183,6 +183,37 @@ def make_router() -> Optional[Router]:
     return Router(str(p))
 
 
+def make_wide_router() -> Optional[Router]:
+    """Router voor de reiziger: grote wegen op z11 van de weergavekaart (alle landen)."""
+    p = Path(S.cfg.tiles_dir) / "basemap.pmtiles"
+    return Router(str(p), z=11) if p.exists() else None   # z11: enkel hoofdwegen, snel en zuinig
+
+
+def backfill_sim(tid: int, days: float) -> int:
+    """Simulator een historiek geven: `days` dagen terug in virtuele tijd rijden en
+    de berichten rechtstreeks opslaan (geen live-updates, zones of meldingen)."""
+    row = S.db.sim(tid)
+    if not row or days <= 0:
+        return 0
+    router = S.sims.router_for(row["profile"])
+    if router is None:
+        return 0
+    from .sim import SimTracker
+    start = time.time() - days * 86400
+    sim = SimTracker(row, router, on_sim_message, {"last_lat": row["home_lat"], "last_lon": row["home_lon"],
+                                                   "last_bat": 100, "last_seq": 30000})
+    count = 0
+
+    def sink(m):
+        nonlocal count
+        prefix, text, ts, snr, hops = m
+        if ingest.handle(S.db, S.cfg, prefix, text, ts, snr, hops, now=ts):
+            count += 1
+
+    sim.backfill(start, time.time() - 5, sink)
+    return count
+
+
 async def on_connect() -> None:
     # Elke actieve tracker moet als contact op de companion staan.
     for t in S.db.trackers():
@@ -235,7 +266,7 @@ async def lifespan(app: FastAPI):
     reload_settings()
     S.hub = Hub()
     S.mesh = MeshLink(S.cfg.mesh_host, S.cfg.mesh_port, S.cfg.keepalive_s, on_message, on_connect)
-    S.sims = SimManager(make_router, on_sim_message)
+    S.sims = SimManager(make_router, on_sim_message, make_wide_router)
     S.alerts = AlertManager(S.db, S.mesh, get_settings)
     tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner()),
              asyncio.create_task(S.alerts.run()), asyncio.create_task(silent_watch())]
@@ -268,6 +299,7 @@ _pcache: dict[tuple, tuple[float, Optional[Principal]]] = {}
 
 def _resolve(cookies: dict[str, str]) -> Optional[Principal]:
     sess = auth.check_session(cookies.get(auth.COOKIE), S.cfg.session_secret)
+    # Een ingelogde gebruiker blijft ingelogd, ook met een deellink-cookie in de browser.
     if sess:
         key = ("u",) + sess
         hit = _pcache.get(key)
@@ -376,7 +408,6 @@ async def open_share(token: str, request: Request):
     secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
     age = int(share["expires"] - time.time()) if share["expires"] else 30 * 86400
     resp.set_cookie(SHARE_COOKIE, token, max_age=age, httponly=True, samesite="lax", secure=secure)
-    resp.delete_cookie(auth.COOKIE)
     return resp
 
 
@@ -704,9 +735,9 @@ def _drive(d: Optional[dict]) -> Optional[dict]:
         lo = float(d["trip_min_km"]) if d.get("trip_min_km") else None
         hi = float(d["trip_max_km"]) if d.get("trip_max_km") else None
         if lo is not None:
-            out["trip_min_km"] = min(80.0, max(0.3, lo))
+            out["trip_min_km"] = min(400.0, max(0.3, lo))
         if hi is not None:
-            out["trip_max_km"] = min(80.0, max(out.get("trip_min_km", 0.3), hi))
+            out["trip_max_km"] = min(400.0, max(out.get("trip_min_km", 0.3), hi))
         out["roam"] = bool(d.get("roam"))
         sp = {}
         for k, v in (d.get("speeds") or {}).items():
@@ -721,6 +752,8 @@ def _drive(d: Optional[dict]) -> Optional[dict]:
 
 def _sim_out(row: dict[str, Any]) -> dict[str, Any]:
     st = S.sims.status(row["tracker_id"]) or {"running": False}
+    if row["tracker_id"] in _building:
+        st = {**st, "note": "historiek wordt opgebouwd", "building": True}
     return {**row, "status": st}
 
 
@@ -752,8 +785,8 @@ async def create_sim(b: SimIn, request: Request):
     p = need(request, "sims.manage")
     if not b.alias or not b.alias.strip():
         raise HTTPException(422, "alias is verplicht")
-    if b.profile not in (None, "car", "bike", "walk"):
-        raise HTTPException(422, "profiel: car, bike of walk")
+    if b.profile not in (None, "car", "bike", "walk", "travel"):
+        raise HTTPException(422, "profiel: car, bike, walk of travel")
     if b.color and not COLOR.match(b.color):
         raise HTTPException(422, "kleur moet #rrggbb zijn")
     lat = b.home_lat if b.home_lat is not None else S.cfg.map_center[1]
@@ -766,12 +799,11 @@ async def create_sim(b: SimIn, request: Request):
     S.db.save_sim(tid, b.profile or "car", lat, lon, b.params or {}, 5 if b.loss_pct is None else b.loss_pct,
                   4 if b.batt_speed is None else b.batt_speed, b.running is not False, _drive(b.drive) or {})
     row = S.db.sim(tid)
-    if row["running"]:
-        try:
-            await S.sims.start(row, S.db.tracker(tid))
-        except Exception as ex:  # noqa: BLE001
-            S.db.set_sim_running(tid, False)
-            raise HTTPException(503, str(ex))
+    if S.sims.router_for(row["profile"]) is None:
+        S.db.set_sim_running(tid, False)
+        raise HTTPException(503, "geen kaarttegels: simulator kan niet routeren")
+    days = float(S.settings.get("sim_history_days", 0) or 0)
+    asyncio.create_task(_history_then_start(tid, days, bool(row["running"])))
     audit(p, "simulator aangemaakt", b.alias.strip())
     await S.hub.send({"type": "tracker", "tracker": tracker_out(S.db.tracker(tid))})
     return _sim_out(S.db.sim(tid))
@@ -783,8 +815,8 @@ async def update_sim(tid: int, b: SimIn, request: Request):
     row = S.db.sim(tid)
     if not row or not p.sees(tid):
         raise HTTPException(404, "onbekende simulator")
-    if b.profile not in (None, "car", "bike", "walk"):
-        raise HTTPException(422, "profiel: car, bike of walk")
+    if b.profile not in (None, "car", "bike", "walk", "travel"):
+        raise HTTPException(422, "profiel: car, bike, walk of travel")
     if b.color and not COLOR.match(b.color):
         raise HTTPException(422, "kleur moet #rrggbb zijn")
     S.db.update_tracker(tid, alias=b.alias.strip() if b.alias else None, color=b.color, icon=b.icon)
@@ -804,6 +836,48 @@ async def update_sim(tid: int, b: SimIn, request: Request):
     audit(p, "simulator gewijzigd", f"{row['alias']} ({'rijdt' if row['running'] else 'gestopt'})")
     await S.hub.send({"type": "tracker", "tracker": tracker_out(S.db.tracker(tid))})
     return _sim_out(row)
+
+
+_building: set[int] = set()     # simulators waarvan de historiek nu opgebouwd wordt
+
+
+async def _history_then_start(tid: int, days: float, start: bool) -> None:
+    """Op de achtergrond: eerst de historiek (virtuele tijd), dan in echte tijd starten.
+    Zo overschrijven oude virtuele posities nooit de live-positie."""
+    _building.add(tid)
+    try:
+        if days > 0:
+            n = await asyncio.to_thread(backfill_sim, tid, days)
+            log.info("simulator %s: historiek van %g dagen, %d posities", tid, days, n)
+        row = S.db.sim(tid)
+        if row and start:
+            await S.sims.start(row, S.db.tracker(tid))
+        t = S.db.tracker(tid)
+        if t:
+            await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
+    except Exception:  # noqa: BLE001
+        log.exception("historiek simulator %s", tid)
+    finally:
+        _building.discard(tid)
+
+
+@app.post("/api/sims/{tid}/history")
+async def regenerate_history(tid: int, request: Request, days: float = 7):
+    """Historiek opnieuw opbouwen: bestaande posities van deze simulator wissen en
+    `days` dagen in virtuele tijd opnieuw rijden."""
+    p = need(request, "sims.manage")
+    row = S.db.sim(tid)
+    if not row or not p.sees(tid):
+        raise HTTPException(404, "onbekende simulator")
+    if tid in _building:
+        raise HTTPException(409, "de historiek wordt al opgebouwd")
+    days = min(max(days, 0.1), 30)
+    running = tid in S.sims.sims
+    await S.sims.stop(tid)
+    S.db.purge_positions(tid)
+    asyncio.create_task(_history_then_start(tid, days, running))
+    audit(p, "simulatorhistoriek opgebouwd", f"{row['alias']}: {days:g} dagen")
+    return {"started": True}
 
 
 # ---- geofences -----------------------------------------------------------------

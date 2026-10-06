@@ -37,6 +37,11 @@ SPEEDS = {
         "residential": 18, "living_street": 12, "service": 12, "track": 12, "path": 14,
         "primary_link": 14, "secondary_link": 14, "tertiary_link": 14, "road": 16,
     },
+    # Reiziger: enkel de grote wegen, door alle landen van de kaart (op z12-tegels).
+    "travel": {
+        "motorway": 90, "motorway_link": 60, "trunk": 90, "trunk_link": 50,
+        "primary": 80, "primary_link": 40,
+    },
     "walk": {
         "footway": 5, "pedestrian": 5, "path": 5, "residential": 5, "living_street": 5,
         "service": 5, "track": 5, "unclassified": 5, "tertiary": 5, "cycleway": 5,
@@ -233,7 +238,8 @@ def clip_line(line: list[tuple[int, int]], ext: int) -> list[list[tuple[float, f
 class TileRoads:
     """Gedecodeerde wegen per tegel, met een kleine LRU-cache."""
 
-    def __init__(self, path: str, cache: int = 300):
+    def __init__(self, path: str, cache: int = 300, z: int = Z):
+        self.z = z
         self.path = Path(path)
         self._lock = threading.Lock()
         self._cache: OrderedDict = OrderedDict()
@@ -252,7 +258,7 @@ class TileRoads:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return self._cache[key]
-            raw = self._reader.get(Z, tx, ty)
+            raw = self._reader.get(self.z, tx, ty)
         out = []
         if raw:
             if raw[:2] == b"\x1f\x8b":
@@ -260,7 +266,7 @@ class TileRoads:
             extent, feats = decode_roads(raw)
             for kd, oneway, ln in feats:
                 for part in clip_line(ln, extent):
-                    pts = [tile_to_lonlat(Z, tx, ty, px, py, extent) for px, py in part]
+                    pts = [tile_to_lonlat(self.z, tx, ty, px, py, extent) for px, py in part]
                     out.append((kd, oneway, pts))
         with self._lock:
             self._cache[key] = out
@@ -284,7 +290,11 @@ class Leg:
 
 
 class Graph:
-    def __init__(self) -> None:
+    def __init__(self, snap_m: float = SNAP_M) -> None:
+        # Op lagere zoomniveaus is de wegvorm vereenvoudigd en vallen kruispunten
+        # niet meer exact samen: dan ruimer samenvoegen.
+        self.snap_m = snap_m
+        self.cell = max(_CELL_DEG, snap_m / 111_000 * 1.2)
         self.lat: list[float] = []
         self.lon: list[float] = []
         self.adj: list[list[tuple[int, float, float, str]]] = []   # (naar, meters, km/u, kind)
@@ -318,12 +328,14 @@ class Graph:
         self.main = set(best)
 
     def _node(self, lon: float, lat: float) -> int:
-        cx, cy = int(lon / _CELL_DEG), int(lat / _CELL_DEG)
+        cx, cy = int(lon / self.cell), int(lat / self.cell)
+        lim_lat = self.snap_m / 111_000 * 1.05
+        lim_lon = lim_lat * 1.7
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 for n in self._grid.get((cx + dx, cy + dy), ()):
-                    if abs(self.lat[n] - lat) < 2e-5 and abs(self.lon[n] - lon) < 3e-5 \
-                            and haversine(lat, lon, self.lat[n], self.lon[n]) <= SNAP_M:
+                    if abs(self.lat[n] - lat) < lim_lat and abs(self.lon[n] - lon) < lim_lon \
+                            and haversine(lat, lon, self.lat[n], self.lon[n]) <= self.snap_m:
                         return n
         n = len(self.lat)
         self.lat.append(lat)
@@ -345,7 +357,7 @@ class Graph:
 
     def nearest(self, lat: float, lon: float, max_m: float = 3000) -> Optional[int]:
         best, bd = None, max_m
-        cx, cy = int(lon / _CELL_DEG), int(lat / _CELL_DEG)
+        cx, cy = int(lon / self.cell), int(lat / self.cell)
         for r in (3, 30, 300, 1000):
             for (gx, gy), nodes in self._grid.items() if r >= 300 else self._ring(cx, cy, r):
                 if abs(gx - cx) > r or abs(gy - cy) > r:
@@ -403,8 +415,8 @@ MAJOR = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary
          "secondary", "secondary_link", "tertiary", "tertiary_link"}
 
 
-def _tile_center(tx: int, ty: int) -> tuple[float, float]:
-    lon, lat = tile_to_lonlat(Z, tx, ty, 0.5, 0.5, 1)
+def _tile_center(tx: int, ty: int, z: int = Z) -> tuple[float, float]:
+    lon, lat = tile_to_lonlat(z, tx, ty, 0.5, 0.5, 1)
     return lat, lon
 
 
@@ -420,9 +432,14 @@ def _dist_to_segment_m(p: tuple[float, float], a: tuple[float, float], b: tuple[
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
+SNAP_BY_ZOOM = {14: 1.5, 13: 6.0, 12: 15.0, 11: 30.0}
+
+
 class Router:
-    def __init__(self, tiles_path: str):
-        self.tiles = TileRoads(tiles_path)
+    def __init__(self, tiles_path: str, z: int = Z):
+        self.z = z
+        self.snap = SNAP_BY_ZOOM.get(z, 1.5)
+        self.tiles = TileRoads(tiles_path, z=z)
 
     def _add_tile(self, g: Graph, tx: int, ty: int, speeds: dict, profile: str, major_only: bool) -> None:
         for kd, oneway, pts in self.tiles.roads(tx, ty):
@@ -436,9 +453,9 @@ class Router:
               speeds: Optional[dict] = None) -> Graph:
         speeds = speeds or SPEEDS[profile]
         w, s, e, n = bbox
-        x0, y1 = tile_xy(w, s)
-        x1, y0 = tile_xy(e, n)
-        g = Graph()
+        x0, y1 = tile_xy(w, s, self.z)
+        x1, y0 = tile_xy(e, n, self.z)
+        g = Graph(self.snap)
         for tx in range(x0, x1 + 1):
             for ty in range(y0, y1 + 1):
                 self._add_tile(g, tx, ty, speeds, profile, False)
@@ -453,16 +470,17 @@ class Router:
         pad = width_m / 111_320
         w, e = min(a[1], b[1]) - pad * 1.6, max(a[1], b[1]) + pad * 1.6
         s_, n = min(a[0], b[0]) - pad, max(a[0], b[0]) + pad
-        x0, y1 = tile_xy(w, s_)
-        x1, y0 = tile_xy(e, n)
-        g = Graph()
+        x0, y1 = tile_xy(w, s_, self.z)
+        x1, y0 = tile_xy(e, n, self.z)
+        g = Graph(self.snap)
         for tx in range(x0, x1 + 1):
             for ty in range(y0, y1 + 1):
-                c = _tile_center(tx, ty)
+                c = _tile_center(tx, ty, self.z)
                 if _dist_to_segment_m(c, a, b) > width_m:
                     continue
                 near = min(haversine(c[0], c[1], *a), haversine(c[0], c[1], *b)) < local_m
-                self._add_tile(g, tx, ty, speeds, profile, major_only=not near and profile == "car")
+                major = profile == "travel" or (not near and profile == "car")
+                self._add_tile(g, tx, ty, speeds, profile, major_only=major)
         g.finish()
         return g
 
@@ -474,7 +492,7 @@ class Router:
         als een reeks ritten (zwerven)."""
         speeds = speeds or SPEEDS[profile]
         d = haversine(a[0], a[1], b[0], b[1])
-        if d <= 30_000:
+        if d <= 30_000 and profile != "travel":
             w = min(a[1], b[1]) - margin_deg
             e = max(a[1], b[1]) + margin_deg
             s = min(a[0], b[0]) - margin_deg * 0.65
@@ -482,7 +500,8 @@ class Router:
             graphs = [lambda: self.build((w, s, e, n), profile, speeds)]
         else:
             graphs = [lambda wm=wm: self.build_corridor(a, b, profile, wm, speeds)
-                      for wm in (max(6000, 0.12 * d), max(12000, 0.25 * d))]
+                      for wm in ((max(6000, 0.12 * d), max(12000, 0.25 * d)) if profile != "travel"
+                                 else (max(15000, 0.15 * d), max(30000, 0.3 * d)))]
         vmax = max(speeds.values())
         for make in graphs:
             g = make()
@@ -499,6 +518,19 @@ class Router:
             return legs
         return None
 
+    def city_destination(self, frm: tuple[float, float], min_km: float, max_km: float,
+                         rng: random.Random) -> tuple[float, float]:
+        """Een stad op min..max km, binnen de kaart (voor de reiziger)."""
+        w, s, e, n = self.tiles.bounds
+        # Altijd op het vasteland: Groot-Brittannie is over de weg niet bereikbaar
+        # (tunnel en veerboot zitten niet in de wegenlaag).
+        pool = [c for c in CITIES if w < c[2] < e and s < c[1] < n and not _in_gb(c[1], c[2])]
+        options = [c for c in pool if min_km <= haversine(frm[0], frm[1], c[1], c[2]) / 1000 <= max_km]
+        if not options:
+            options = pool
+        c = rng.choice(options)
+        return c[1], c[2]
+
     def random_destination(self, frm: tuple[float, float], min_km: float, max_km: float,
                            rng: random.Random) -> tuple[float, float]:
         w, s, e, n = self.tiles.bounds
@@ -510,3 +542,33 @@ class Router:
             if w + 0.05 < lon < e - 0.05 and s + 0.05 < lat < n - 0.05:
                 return lat, lon
         return frm
+
+
+# Steden voor de reiziger (naam, lat, lon): verspreid over de landen van de kaart.
+CITIES = [
+    ("Hasselt", 50.931, 5.338), ("Antwerpen", 51.219, 4.402), ("Gent", 51.054, 3.717), ("Brussel", 50.850, 4.352),
+    ("Brugge", 51.209, 3.225), ("Luik", 50.633, 5.580), ("Namen", 50.467, 4.872), ("Bergen", 50.454, 3.952),
+    ("Aarlen", 49.684, 5.816), ("Luxemburg", 49.612, 6.132), ("Maastricht", 50.851, 5.691),
+    ("Eindhoven", 51.442, 5.470), ("Rotterdam", 51.924, 4.478), ("Amsterdam", 52.368, 4.904),
+    ("Utrecht", 52.091, 5.121), ("Groningen", 53.219, 6.567), ("Zwolle", 52.517, 6.083), ("Den Haag", 52.071, 4.300),
+    ("Aken", 50.776, 6.084), ("Keulen", 50.938, 6.960), ("Düsseldorf", 51.228, 6.774), ("Dortmund", 51.514, 7.466),
+    ("Essen", 51.456, 7.012), ("Bremen", 53.079, 8.802), ("Hamburg", 53.551, 9.994), ("Hannover", 52.375, 9.732),
+    ("Berlijn", 52.520, 13.405), ("Leipzig", 51.340, 12.375), ("Dresden", 51.050, 13.738),
+    ("Frankfurt", 50.110, 8.682), ("Stuttgart", 48.776, 9.183), ("Neurenberg", 49.452, 11.077),
+    ("München", 48.137, 11.576), ("Trier", 49.750, 6.637), ("Saarbrücken", 49.240, 6.997),
+    ("Lille", 50.629, 3.057), ("Parijs", 48.857, 2.352), ("Reims", 49.258, 4.032), ("Metz", 49.120, 6.176),
+    ("Straatsburg", 48.573, 7.752), ("Rouen", 49.443, 1.099), ("Caen", 49.183, -0.371), ("Rennes", 48.117, -1.678),
+    ("Nantes", 47.218, -1.554), ("Orléans", 47.903, 1.909), ("Dijon", 47.322, 5.041), ("Lyon", 45.764, 4.836),
+    ("Clermont-Ferrand", 45.778, 3.087), ("Bordeaux", 44.838, -0.579), ("Calais", 50.951, 1.858),
+    ("Londen", 51.507, -0.128), ("Dover", 51.128, 1.313), ("Birmingham", 52.486, -1.890),
+    ("Manchester", 53.480, -2.243), ("Leeds", 53.801, -1.549), ("Newcastle", 54.978, -1.618),
+    ("Edinburgh", 55.953, -3.188), ("Glasgow", 55.864, -4.252), ("Bristol", 51.455, -2.588),
+    ("Cardiff", 51.481, -3.179), ("Southampton", 50.910, -1.404), ("Norwich", 52.630, 1.297),
+    ("Zürich", 47.377, 8.541), ("Bern", 46.948, 7.447), ("Bazel", 47.560, 7.589), ("Kopenhagen", 55.676, 12.568),
+    ("Aarhus", 56.163, 10.204), ("Salzburg", 47.810, 13.055), ("Innsbruck", 47.269, 11.404),
+]
+
+
+def _in_gb(lat: float, lon: float) -> bool:
+    """Ruwe test: ligt dit punt op Groot-Brittannie (ten westen van het Kanaal)?"""
+    return lat > 49.9 and lon < 1.75 and not (lat < 51.1 and lon > 1.55)
