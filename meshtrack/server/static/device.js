@@ -351,7 +351,7 @@
     $("f-keylist").innerHTML = rows.length ? rows.map((k) => {
       const s = k.summary || {};
       const bits = [s.radio, s.path_bytes ? `${s.path_bytes} bytes per hop` : null, s.scope ? `regio ${s.scope}` : null,
-        s.channels ? `${s.channels} kanalen` : null, s.contacts ? `${s.contacts} contacten (niet teruggezet)` : null, s.fw ? `fw ${s.fw}` : null].filter(Boolean);
+        s.channels ? `${s.channels} ${s.channels === 1 ? "kanaal" : "kanalen"}` : null, s.contacts ? `${s.contacts} contacten (niet teruggezet)` : null, s.fw ? `fw ${s.fw}` : null].filter(Boolean);
       return `<div class="ev"><strong>${MT.esc(KIND[k.kind] || k.kind)}</strong> · ${new Date(k.ts * 1000).toLocaleString("nl-BE")} · ${MT.esc(k.who)}
         ${k.note ? `<div class="muted">${MT.esc(k.note)}</div>` : ""}<div class="muted">${MT.esc(bits.join(" · "))}</div>
         <div class="row" style="margin-top:4px"><button type="button" data-kput="${k.id}">Op verbonden toestel zetten</button>
