@@ -59,3 +59,8 @@ def test_suspect():
     assert is_suspect(parse("T1|1|M|40.0|5.3|0|0|0|50|1.0|0"), BBOX)   # buiten gebied
     assert is_suspect(parse("T1|1|M|50.9|5.3|0|0|0|50|7.5|0"), BBOX)   # slechte hdop
     assert not is_suspect(parse("T1|1|N||||||50||"), BBOX)
+
+
+def test_manual_state():
+    r = parse("T1|10|P|50.93|5.33|40|0||91|1.1|2|t")
+    assert r.state == "P" and r.has_fix and r.mode == "t"

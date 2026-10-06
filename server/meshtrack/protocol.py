@@ -15,6 +15,7 @@ STATES = {
     "H": "heartbeat",
     "N": "geen fix",
     "E": "SOS",
+    "P": "handmatig",
     "B": "modus/boot",
 }
 MODES = {"c": "companion", "t": "tracker"}

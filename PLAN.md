@@ -63,7 +63,7 @@ T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_a
 |---|---|---|
 | `T1` | literal | Protocol + versie. Server negeert onbekende versies en logt ze. |
 | `seq` | uint16 | Oplopend per bericht, wrap op 65535. Deduplicatie bij retries. |
-| `state` | char | `M` bewegend, `S` net stilgevallen, `H` heartbeat, `N` geen fix, `E` SOS, `B` modus/boot-melding |
+| `state` | char | `M` bewegend, `S` net stilgevallen, `H` heartbeat, `N` geen fix, `E` SOS, `B` modus/boot-melding, `P` handmatig (enkele klik) |
 | `lat`,`lon` | 5 decimalen | WGS84. Leeg bij `N`. |
 | `alt_m` | int | Mag leeg. |
 | `spd_kmh` | int | GNSS-snelheid. Mag leeg. |
@@ -133,7 +133,7 @@ Knopindeling (stock-functies zoveel mogelijk behouden):
 
 | Klik | Stock | MeshTrack |
 |---|---|---|
-| 1x | – (geen scherm) | huidige modus laten horen |
+| 1x | – (geen scherm) | **positie nu versturen** (modusbiep, GPS-fix tot fix_timeout_hb, state `P`; 2 hoge biepjes = ACK, lage toon = mislukt; max 1x per 10 s, negeert min_interval) |
 | 2x | advert sturen | **modus wisselen** (advert blijft via de app) |
 | 3x | buzzer aan/uit | ongewijzigd |
 | 4x | GPS aan/uit | ongewijzigd in companion; **open punt**: SOS in tracker |
