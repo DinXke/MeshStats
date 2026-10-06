@@ -37,6 +37,8 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
   voor de downloads en de webflasher. De binaire bestanden staan niet in git.
 - **tools/build_display_tiles.py**: bouwt de weergavekaart (z0–13 voor heel het bronarchief, z14 voor de Benelux)
   zonder veel geheugen.
+- **docs/handleiding/**: handleiding voor gebruikers (HTML-bron, screenshots en de PDF, ook te downloaden vanaf de
+  helppagina van de site).
 - **PLAN.md**: ontwerp, berichtprotocol (`T1|…`) en bewegingsregels.
 
 ## Berichtprotocol

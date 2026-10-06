@@ -172,6 +172,8 @@
     } else {
       $("f-pubkey").value = t.pubkey;
       $("f-pubkey").disabled = true;           // sleutel = identiteit
+      $("f-genrow").hidden = true;             // alleen bij een nieuwe tracker
+      $("f-genhelp").hidden = true;
     }
     renderIcons();
     $("save").textContent = "Opslaan";

@@ -1,0 +1,18 @@
+  ==============================================================
+   MeshTrack T1000-E  fw 0.3.1       MODUS EN KNOP
+  ==============================================================
+   T1000-E Ploeg 3   |  modus companion (USB)  |  batterij 99% (4196 mV)
+   tracker slaapt  |  GPS zoekt  |  laatste zending: OK (ACK)
+  ==============================================================
+   Op batterij nu gekozen: companion.  Met USB altijd companion.
+
+   1  Kies tracker   (BLE uit, radio slaapt, zenden bij beweging)
+   2  Kies companion (MeshCore-app, radio luistert altijd)
+   3  Ook posities sturen als companion ......... aan
+
+   4  Statusled ................................. alleen als companion
+
+   Knop: 1x = positie nu, 2x = modus wisselen, 3x = buzzer aan/uit,
+         2-8 s vasthouden en loslaten = SOS, langer dan 8 s = uitschakelen.
+
+   0  Terug
