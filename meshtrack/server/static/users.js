@@ -145,7 +145,7 @@
     trackerChecks($("g-trackers"), g ? g.trackers : []);
     const tsel = g ? g.tracker_groups : [];
     $("g-tgroups").innerHTML = tgroups.map((t) => `<label class="mini"><input type="checkbox" value="${t.id}"${tsel.includes(t.id) ? " checked" : ""}>
-      <i style="background:${MT.esc(t.color)}"></i>${MT.esc(t.name)} <span class="muted small">(${t.trackers.length})</span></label>`).join("")
+      <i style="background:${MT.esc(t.color)}"></i>${MT.esc(t.name)} <span class="muted small">(${(t.members || t.trackers).length})</span></label>`).join("")
       || '<span class="muted">Nog geen trackergroepen. Maak ze in Beheer.</span>';
     $("g-trwrap").hidden = $("g-alltr").checked;
     msg($("g-msg"), "");

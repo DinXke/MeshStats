@@ -255,3 +255,29 @@ def test_channel_keys_only_for_admins_or_own_group(client):
     got = c.get("/api/channels/device").json()
     assert [x["name"] for x in got] == ["#ambu"] and got[0]["secret"]
     assert c.get("/api/channels").status_code == 403                 # volledige lijst alleen voor beheer
+
+
+def test_group_of_groups_combines_channels(client):
+    c, main = client
+    login(c, "admin", "beheerder1")
+    ids = {n: c.post("/api/trackers", json={"pubkey": k * 32, "alias": n}).json()["tracker"]["id"]
+           for n, k in (("A", "a1"), ("B", "b1"), ("C", "c1"), ("D", "d1"))}
+    ga = c.post("/api/tracker-groups", json={"name": "Kanaal #ambu", "trackers": [ids["A"]]}).json()
+    gb = c.post("/api/tracker-groups", json={"name": "Kanaal #brand", "trackers": [ids["B"]]}).json()
+    combo = c.post("/api/tracker-groups", json={"name": "Interventie", "trackers": [ids["C"]],
+                                                "includes": [ga["id"], gb["id"]]}).json()
+    assert combo["trackers"] == [ids["C"]] and combo["members"] == sorted([ids["A"], ids["B"], ids["C"]])
+    g = c.post("/api/groups", json={"name": "Coördinatie", "perms": ["map.view"], "all_trackers": False,
+                                    "tracker_groups": [combo["id"]]}).json()
+    c.post("/api/users", json={"username": "coord", "password": "geheim123", "group_ids": [g["id"]]})
+    # later komt D op kanaal #ambu: meteen zichtbaar via de gecombineerde groep
+    c.put(f"/api/tracker-groups/{ga['id']}", json={"name": "Kanaal #ambu", "trackers": [ids["A"], ids["D"]]})
+    c.post("/api/logout")
+    login(c, "coord", "geheim123")
+    assert sorted(t["alias"] for t in c.get("/api/trackers").json()) == ["A", "B", "C", "D"]
+    # een ingesloten groep verwijderen haalt hem uit de combinatie
+    c.post("/api/logout")
+    login(c, "admin", "beheerder1")
+    c.delete(f"/api/tracker-groups/{gb['id']}")
+    combo2 = next(x for x in c.get("/api/tracker-groups").json() if x["id"] == combo["id"])
+    assert combo2["includes"] == [ga["id"]] and ids["B"] not in combo2["members"]

@@ -68,7 +68,11 @@
     <div><label for="tg-color">Kleur</label><input id="tg-color" type="color" value="#64748b"></div>
   </div>
   <label for="tg-desc">Omschrijving</label><input id="tg-desc" maxlength="200">
-  <label>Trackers</label><div id="tg-trackers" class="permgrid"></div>
+  <label>Ook alle trackers van deze kanalen of groepen</label>
+  <div id="tg-includes" class="permgrid"></div>
+  <div class="help">Zo combineer je bv. meerdere kanalen op één kaart. Trackers die later in die kanalen of groepen komen,
+    tellen vanzelf mee.</div>
+  <label>Losse trackers</label><div id="tg-trackers" class="permgrid"></div>
   <div class="row sticky-actions"><button class="primary" type="submit">Opslaan</button><button type="button" id="tg-cancel">Annuleren</button></div>
   <div id="tg-msg" class="msg"></div>
 </form>
