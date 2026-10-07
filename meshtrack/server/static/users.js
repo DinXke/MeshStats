@@ -157,7 +157,8 @@
     const now = Date.now() / 1000;
     $("shares").innerHTML = shares.map((s) => {
       const expired = s.expires && s.expires < now;
-      const names = s.trackers.map((id) => (trackers.find((t) => t.id === id) || {}).alias || `#${id}`).join(", ");
+      const names = [...(s.tracker_groups || []).map((id) => "groep " + ((tgroups.find((g) => g.id === id) || {}).name || `#${id}`)),
+        ...s.trackers.map((id) => (trackers.find((t) => t.id === id) || {}).alias || `#${id}`)].join(", ");
       return `<div class="titem"><div class="body">
         <div><strong>${MT.esc(s.name)}</strong> ${expired ? '<span class="pill bad">verlopen</span>' : ""}</div>
         <div class="muted small">${MT.esc(names)} · spoor ${s.hours} u · ${s.expires ? "geldig tot " + fmtTs(s.expires) : "onbeperkt geldig"}
@@ -171,13 +172,21 @@
       await MT.api(`/api/shares/${b.dataset.sdel}`, { method: "DELETE" }); loadShares();
     }));
   }
-  $("s-new").addEventListener("click", () => { $("s-form").hidden = false; trackerChecks($("s-trackers"), []); msg($("s-msg"), ""); });
+  $("s-new").addEventListener("click", () => {
+    $("s-form").hidden = false;
+    trackerChecks($("s-trackers"), []);
+    $("s-tgroups").innerHTML = tgroups.map((g) => `<label class="mini"><input type="checkbox" value="${g.id}">
+      <i style="background:${MT.esc(g.color)}"></i>${MT.esc(g.name)} <span class="muted small">(${g.trackers.length})</span></label>`).join("")
+      || '<span class="muted">Nog geen trackergroepen.</span>';
+    msg($("s-msg"), "");
+  });
   $("s-cancel").addEventListener("click", () => { $("s-form").hidden = true; });
   $("s-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
       const r = await MT.api("/api/shares", { method: "POST", body: { name: $("s-name").value.trim(),
         trackers: [...$("s-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)),
+        tracker_groups: [...$("s-tgroups").querySelectorAll("input:checked")].map((c) => Number(c.value)),
         hours: Number($("s-hours").value) || 12, sidebar: $("s-sidebar").checked, valid_hours: Number($("s-valid").value) } });
       $("s-form").hidden = true;
       navigator.clipboard && navigator.clipboard.writeText(r.url).catch(() => {});

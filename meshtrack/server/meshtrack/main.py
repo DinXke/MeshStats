@@ -39,7 +39,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -287,7 +287,7 @@ async def lifespan(app: FastAPI):
     S.hub = Hub()
     S.mesh = MeshLink(S.cfg.mesh_host, S.cfg.mesh_port, S.cfg.keepalive_s, on_message, on_connect)
     S.sims = SimManager(make_router, on_sim_message, make_wide_router)
-    S.alerts = AlertManager(S.db, S.mesh, get_settings)
+    S.alerts = AlertManager(S.db, S.mesh, get_settings, _user_sees)
     tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner()),
              asyncio.create_task(S.alerts.run()), asyncio.create_task(silent_watch())]
     tiles = Path(S.cfg.tiles_dir)
@@ -351,10 +351,40 @@ def _resolve(cookies: dict[str, str]) -> Optional[Principal]:
         return p
     tok = cookies.get(SHARE_COOKIE)
     if tok:
+        key = ("s", tok)
+        hit = _pcache.get(key)
+        if hit and hit[0] > time.time():
+            return hit[1]
         share = S.db.share_by_token(tok)
+        p = None
         if share and (share["expires"] is None or share["expires"] > time.time()):
-            return rbac.principal_for_share(share)
+            creator = _user_principal(share["created_by"]) if share.get("tracker_groups") else None
+            p = rbac.principal_for_share(share, S.db.tracker_group_members(), creator)
+        _pcache[key] = (time.time() + 10, p)
+        return p
     return None
+
+
+def _user_principal(username: str) -> Optional[Principal]:
+    """Principal van een (actieve) gebruiker, los van een sessie."""
+    user = S.db.user_by_name(username)
+    if not user or not user["active"]:
+        return None
+    gids = set(S.db.user_group_ids(user["id"]))
+    groups = [g for g in S.db.groups() if g["id"] in gids]
+    return rbac.principal_for_user(user, groups, S.db.tracker_group_members()) if groups else None
+
+
+def _user_sees(user_id: int, tracker_id: int) -> bool:
+    key = ("uid", user_id)
+    hit = _pcache.get(key)
+    if hit and hit[0] > time.time():
+        p = hit[1]
+    else:
+        u = S.db.user(user_id)
+        p = _user_principal(u["username"]) if u else None
+        _pcache[key] = (time.time() + 10, p)
+    return p is not None and p.sees(tracker_id)
 
 
 def who(request: Request) -> Principal:
@@ -1412,7 +1442,8 @@ async def delete_user(uid: int, request: Request):
 
 class ShareIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    trackers: list[int]
+    trackers: list[int] = []
+    tracker_groups: list[int] = []
     hours: int = Field(12, ge=1, le=24 * 30)
     sidebar: bool = False
     valid_hours: int = Field(24, ge=0, le=24 * 365)   # 0 = nooit verlopen
@@ -1430,12 +1461,17 @@ async def list_shares(request: Request):
 async def create_share(b: ShareIn, request: Request):
     p = need(request, "share.manage")
     ids = [t for t in b.trackers if S.db.tracker(t) and p.sees(t)]
-    if not ids:
-        raise HTTPException(422, "kies minstens één tracker")
+    known = {g["id"] for g in S.db.tracker_groups()}
+    tgs = [g for g in dict.fromkeys(b.tracker_groups) if g in known]
+    if not ids and not tgs:
+        raise HTTPException(422, "kies minstens één tracker of trackergroep")
+    if tgs and p.kind != "user":
+        raise HTTPException(403, "geen toegang")
     token = secrets.token_urlsafe(18)
     expires = int(time.time() + b.valid_hours * 3600) if b.valid_hours else None
-    S.db.add_share(token, b.name.strip(), ids, b.hours, b.sidebar, expires, p.name)
-    audit(p, "deellink gemaakt", f"{b.name} ({len(ids)} trackers, {b.valid_hours or 'onbeperkt'} u geldig)")
+    S.db.add_share(token, b.name.strip(), ids, b.hours, b.sidebar, expires, p.name, tgs)
+    audit(p, "deellink gemaakt", f"{b.name} ({len(ids)} trackers, {len(tgs)} trackergroepen, "
+                                 f"{b.valid_hours or 'onbeperkt'} u geldig)")
     base = str(request.base_url).rstrip("/")
     return {"url": f"{base}/s/{token}"}
 
@@ -1447,6 +1483,7 @@ async def delete_share(sid: int, request: Request):
     if not s:
         raise HTTPException(404, "onbekende deellink")
     S.db.delete_share(sid)
+    _pcache.clear()
     audit(p, "deellink ingetrokken", s["name"])
     return {"ok": True}
 
@@ -1483,6 +1520,7 @@ class RuleIn(BaseModel):
     active: bool = True
     events: list[str]
     trackers: list[int] = []
+    tracker_groups: list[int] = []
     recipients: list[dict]
     cooldown_s: int = Field(900, ge=0, le=7 * 86400)
 
@@ -1507,7 +1545,8 @@ def _rule(b: RuleIn) -> dict[str, Any]:
         raise HTTPException(422, "maximaal 25 ontvangers per regel")
     d = b.model_dump()
     d.pop("personal", None)
-    return {**d, "events": ev, "recipients": rc}
+    known = {g["id"] for g in S.db.tracker_groups()}
+    return {**d, "events": ev, "recipients": rc, "tracker_groups": [g for g in b.tracker_groups if g in known]}
 
 
 def _rule_access(p: Principal, r: dict[str, Any]) -> bool:

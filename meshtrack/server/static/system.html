@@ -36,7 +36,12 @@
       <fieldset><legend>Bij deze gebeurtenissen</legend><div id="r-events" class="typegrid"></div></fieldset>
       <fieldset><legend>Voor deze trackers</legend>
         <label class="switch block"><input type="checkbox" id="r-alltr" checked><span></span> Alle trackers</label>
-        <div id="r-trackers" class="permgrid" hidden></div></fieldset>
+        <div id="r-trwrap" hidden>
+          <label>Trackergroepen <span class="muted small">(ook trackers die er later bij komen)</span></label>
+          <div id="r-tgroups" class="permgrid"></div>
+          <label>Losse trackers</label>
+          <div id="r-trackers" class="permgrid"></div>
+        </div></fieldset>
       <fieldset><legend>Naar deze ontvangers</legend>
         <div id="r-rcpts" class="rcpts"></div>
         <div class="row">

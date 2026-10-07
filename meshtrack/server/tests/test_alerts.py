@@ -59,3 +59,26 @@ def test_lost_seen_event():
                               "recipients": [{"pubkey": "ee" * 32, "name": "Wacht"}], "cooldown_s": 0})
     assert am.fire(t, "lost_seen", {"lat": 51.0, "lon": 4.0, "ts": 0}) == 1
     assert "Ziekenwagen 1 (VERLOREN) is terug opgedoken @51.00000,4.00000" in db.alert_log()[0]["text"]
+
+
+def test_rule_with_tracker_group_follows_membership():
+    db, am, t, _ = setup()
+    other = db.tracker(db.add_tracker("ff" * 32, "Brandweer"))
+    gid = db.save_tracker_group(None, "Ziekenwagens", "#ff0000", "", [t["id"]])
+    db.save_alert_rule(None, {"name": "Groep", "active": True, "events": ["P"], "trackers": [], "tracker_groups": [gid],
+                              "recipients": [{"pubkey": "ee" * 32, "name": "Wacht"}], "cooldown_s": 0})
+    assert am.fire(t, "P") == 1
+    assert am.fire(other, "P") == 0
+    db.save_tracker_group(gid, "Ziekenwagens", "#ff0000", "", [t["id"], other["id"]])   # later toegevoegd
+    assert am.fire(other, "P") == 1
+
+
+def test_personal_rule_only_for_trackers_owner_sees():
+    db, _, t, _ = setup()
+    st = setmod.effective(Cfg(), {})
+    am = AlertManager(db, mesh=None, get_settings=lambda: st, can_see=lambda uid, tid: tid == t["id"])
+    other = db.tracker(db.add_tracker("ff" * 32, "Geheim"))
+    db.save_alert_rule(None, {"name": "Mijn", "active": True, "events": ["P"], "trackers": [],
+                              "recipients": [{"pubkey": "ee" * 32, "name": "Ik"}], "cooldown_s": 0}, owner=7)
+    assert am.fire(t, "P") == 1
+    assert am.fire(other, "P") == 0      # eigenaar ziet deze tracker niet

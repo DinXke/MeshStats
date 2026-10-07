@@ -299,7 +299,8 @@
     <p>Onder <em>Systeem</em> → <em>Meldingsregels</em> bepaal je bij welke gebeurtenissen de server een DM via de mesh
       stuurt (bijvoorbeeld wakker door beweging, SOS, batterij bijna leeg, aan of van de lader, een zone binnenkomen,
       te lang stil of een verloren tracker die terug opduikt), voor
-      welke trackers en naar welke ontvangers. Je kiest de ontvangers uit de contacten van de companion, of je plakt
+      welke trackers (alle, trackergroepen en/of losse trackers) en naar welke ontvangers. Met een trackergroep geldt de
+      regel ook voor trackers die later in die groep komen. Een eigen regel meldt alleen trackers die je zelf mag zien. Je kiest de ontvangers uit de contacten van de companion, of je plakt
       hun pubkey.</p>
     <p>De DM's gaan na elkaar weg, met een pauze ertussen, zodat de mesh niet overbelast raakt. Per bericht volgen
       enkele pogingen; lukt het dan nog niet, dan probeert de server het later opnieuw. Hoe lang die pauze is en
@@ -341,7 +342,8 @@
 
     <h2 id="delen">Deellinks</h2>
     <p>Onder <em>Gebruikers</em> → <em>Deellinks</em> maak je een link die zonder login een kaart toont met alleen de
-      gekozen trackers, tot de link verloopt. Je kunt een link altijd intrekken. Ben je zelf ingelogd en open je een
+      gekozen trackers of trackergroepen, tot de link verloopt. Komt er later een tracker in zo'n trackergroep, dan verschijnt
+      hij ook in de link, maar alleen als de maker van de link hem zelf mag zien. Je kunt een link altijd intrekken. Ben je zelf ingelogd en open je een
       deellink, dan blijf je gewoon ingelogd; wie via een deellink kijkt, ziet rechtsboven een knop
       <em>Inloggen</em>.</p>
 

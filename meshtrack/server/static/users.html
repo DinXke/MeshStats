@@ -87,7 +87,9 @@
         <div><label for="s-hours">Spoor tonen tot</label><div class="unit"><input id="s-hours" type="number" min="1" max="720" value="12"><span>uur terug</span></div></div>
       </div>
       <label class="switch block"><input type="checkbox" id="s-sidebar"><span></span> Met zijbalk (lijst en zoeken)</label>
-      <label>Trackers</label><div id="s-trackers" class="permgrid"></div>
+      <label>Trackergroepen <span class="muted small">(trackers die er later bij komen, verschijnen ook)</span></label>
+      <div id="s-tgroups" class="permgrid"></div>
+      <label>Losse trackers</label><div id="s-trackers" class="permgrid"></div>
       <div class="row"><button class="primary" type="submit">Link maken</button><button type="button" id="s-cancel">Annuleren</button></div>
       <div id="s-msg" class="msg"></div>
     </form>

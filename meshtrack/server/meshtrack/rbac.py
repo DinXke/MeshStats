@@ -103,8 +103,16 @@ def principal_for_user(user: dict[str, Any], groups, tracker_group_members: Opti
         tracker_ids=tids, history_hours=history, user_id=user["id"])
 
 
-def principal_for_share(share: dict[str, Any]) -> Principal:
+def principal_for_share(share: dict[str, Any], tracker_group_members: Optional[dict[int, set[int]]] = None,
+                        creator: Optional[Principal] = None) -> Principal:
+    """Losse trackers van de link, plus de huidige leden van zijn trackergroepen. Leden
+    via een groep alleen als de maker ze (nog) mag zien: een link toont nooit meer dan
+    wie hem maakte."""
+    ids = set(share["trackers"])
+    members = tracker_group_members or {}
+    for tg in share.get("tracker_groups") or []:
+        ids |= {t for t in members.get(tg, set()) if creator is not None and creator.sees(t)}
     return Principal(
         name=f"deellink:{share['name']}", display=share["name"], kind="share", group="deellink",
         perms=set(SHARE_PERMS) | ({"map.sidebar"} if share.get("sidebar") else set()),
-        tracker_ids=set(share["trackers"]), history_hours=int(share["hours"] or 12))
+        tracker_ids=ids, history_hours=int(share["hours"] or 12))

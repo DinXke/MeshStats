@@ -44,8 +44,10 @@ class Job:
 
 
 class AlertManager:
-    def __init__(self, db, mesh, get_settings: Callable[[], dict[str, Any]]):
+    def __init__(self, db, mesh, get_settings: Callable[[], dict[str, Any]],
+                 can_see: Optional[Callable[[int, int], bool]] = None):
         self.db, self.mesh, self.get_settings = db, mesh, get_settings
+        self.can_see = can_see            # (gebruiker, tracker) -> mag zien; voor eigen regels
         self.queue: asyncio.Queue[Job] = asyncio.Queue()
         self._last: dict[tuple, float] = {}       # (regel, tracker, gebeurtenis) -> tijd
         self._silent_sent: set[int] = set()
@@ -63,11 +65,21 @@ class AlertManager:
             self._silent_sent.discard(tracker["id"])
         now = time.time()
         n = 0
+        members = None
         for r in self.db.alert_rules():
             if not r["active"] or event not in r["events"] or not r["recipients"]:
                 continue
-            if r["trackers"] and tracker["id"] not in r["trackers"]:
-                continue
+            if r["trackers"] or r.get("tracker_groups"):
+                # losse trackers of leden van de gekozen trackergroepen (zoals ze nu zijn)
+                if members is None:
+                    members = self.db.tracker_group_members()
+                ids = set(r["trackers"])
+                for tg in r.get("tracker_groups") or []:
+                    ids |= members.get(tg, set())
+                if tracker["id"] not in ids:
+                    continue
+            if r.get("owner") is not None and self.can_see and not self.can_see(r["owner"], tracker["id"]):
+                continue                      # eigen regel: alleen trackers die de eigenaar mag zien
             if zone_owner is not None and r.get("owner") != zone_owner:
                 continue                      # persoonlijke zone: enkel de regels van de eigenaar
             key = (r["id"], tracker["id"], event)
