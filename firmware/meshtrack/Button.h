@@ -5,7 +5,8 @@
 
 // Button timing configuration
 #define BUTTON_DEBOUNCE_TIME_MS    50      // Debounce time in ms
-#define BUTTON_CLICK_TIMEOUT_MS    500     // Max time between clicks for multi-click
+#define BUTTON_CLICK_TIMEOUT_MS    600     // MeshTrack: max. tijd tussen klikken (stock 500; stugge knop)
+#define BUTTON_ISR_RELEASED_MS     30      // MeshTrack: zo lang los voor een flank als nieuwe klik telt
 // MeshTrack: vasthouden 2..8 s = SOS (bij loslaten), langer dan 8 s = uitschakelen.
 #define BUTTON_LONG_PRESS_TIME_MS  8000    // uitschakelen
 #define BUTTON_HOLD_ARM_MS         2000    // SOS gewapend (biep)
@@ -74,6 +75,17 @@ private:
     
     uint8_t _clickCount = 0;
     EventType _lastEvent = NONE;
+
+    // MeshTrack: klikken via een interrupt tellen. De lus leest de knop maar af en
+    // toe (radio, GPS, slaap op batterij); een snelle tik viel soms tussen twee metingen.
+    static void isr();
+    static uint8_t s_isrPin;
+    static bool s_isrActive;
+    static volatile uint32_t s_presses;
+    static volatile uint32_t s_lastRelease;
+    static volatile uint32_t s_lastEdge;
+    uint32_t _seenPresses = 0;
+    bool _useIsr = false;
     
     // Callbacks
     EventCallback _onShortPress = nullptr;
