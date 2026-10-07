@@ -9,7 +9,7 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.6.1).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.6.2).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus, één klik stuurt meteen een
     positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
   - Bewegingsregels (snelheid, afstand, bochten, ritme), stilstand en heartbeat, wakker worden via de
@@ -19,6 +19,8 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
     als `server/meshtrack/rules.py`, die ook de simulator gebruikt.
   - Genummerd serieel menu en `backup` van de opslag. De sleutel, contacten, kanalen en regio's blijven bij elke
     app-only flash behouden.
+  - In companionmodus komt een kopie van elke eigen positie in de berichtenwachtrij (0.6.2), zodat een app via
+    Bluetooth ook de eigen posities ziet; een companion hoort zijn eigen kanaalberichten anders niet.
   - Klaarmaken via USB: `key import/export`, `chan list/set`, `set name|radio|tx|path_bytes|scope`. Paden altijd
     2 bytes per hop (1 byte wordt bij het opstarten 2).
 - **server/**: FastAPI + meshcore-py.
@@ -43,6 +45,14 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
   - Nieuw toestel klaarmaken: de server maakt het sleutelpaar en zet sleutel, naam, radio, regio, kanalen en doel
     via USB op het toestel. Backups (met privésleutel, formaat van de MeshCore-app) staan versleuteld (AES-GCM) op
     de server; recht `keys.manage`.
+  - Offline-app `/offline` (PWA, 0.9.0): verbindt via Web Bluetooth met een MeshCore-companion, haalt de
+    kanaalberichten op die de companion ontcijferde (ook die nog in de wachtrij staan), leest `T1C|…` volledig
+    offline (met de extra punten), kijkt de controletekens na met de authsleutels uit het offline-pakket, bewaart
+    alles in IndexedDB en tekent sporen zoals de online kaart. Kaarten (Limburg, België, Benelux, Frankrijk,
+    Duitsland) worden als pmtiles-bestand in de opslag van de browser (OPFS) gezet; een service worker bewaart de
+    app, lettertypes en sprites. Kanalen toevoegen via QR (camera of foto) of met naam en sleutel. Het pakket
+    (`/api/offline/bundle`) volgt de rechten: kanaalsleutels alleen voor beheerders of de eigen kanaalgroep,
+    authsleutels alleen met `trackers.serial` of `keys.manage`.
   - Verloren trackers: een bericht van een verloren tracker geeft de gebeurtenis `lost_seen`; de status blijft.
 - **deploy/**: systemd-unit en `deploy.sh` (draait op de openHop-LXC, poort 8090).
 - **tools/publish_firmware.py**: zet een firmwarebuild (zip + uf2 + `firmware.json`) in `server/static/firmware/`
@@ -101,6 +111,9 @@ In `tiles_dir`:
   `python tools/build_display_tiles.py bron.pmtiles basemap.pmtiles` (zet `TMPDIR` op een schijf, niet op tmpfs).
 - `roads.pmtiles`: een Benelux-uitsnede tot z14 voor de routering van de simulator
   (`pmtiles extract bron.pmtiles roads.pmtiles --bbox=2.5,49.4,7.3,53.6 --maxzoom=14`).
+- `offline/*.pmtiles`: de kaarten voor de offline-app, uitgesneden met `bash tools/build_offline_maps.sh`
+  (Limburg z14 84 MB, België z13 286 MB, Benelux z10/z12 44/276 MB, Frankrijk z10/z12 216 MB/1,1 GB,
+  Duitsland z10/z12 157/884 MB).
 - `fonts/` en `sprites/`.
 
 ## Firmware bouwen en flashen

@@ -86,6 +86,7 @@ const MT = {
       ["/devices", "Toestellen", "trackers.serial"],
       ["/users", "Gebruikers", ["users.manage", "share.manage"]],
       ["/system", "Systeem", ["alerts.manage", "alerts.personal", "system.manage", "companion.view"]],
+      ["/offline", "Offline", "map.view"],
       ["/help", "Help", null],
     ];
     const nav = document.querySelector("header.top nav");

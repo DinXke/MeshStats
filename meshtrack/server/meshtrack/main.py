@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.8.1"
+VERSION = "0.9.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -492,7 +492,8 @@ def audit(p: Principal, action: str, detail: str = "") -> None:
     S.db.audit(p.name, action, detail)
 
 
-PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help")
+PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help",
+          "/offline", "/offline-sw.js", "/manifest.webmanifest")   # offline-app: moet zonder login openen
 PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "sims.manage"), "/devices": ("trackers.serial",),
               "/users": ("users.manage", "share.manage"), "/log": ("log.view",),
               "/system": ("alerts.manage", "alerts.personal", "system.manage", "companion.view")}
@@ -537,6 +538,67 @@ async def admin():
 @app.get("/devices")
 async def devices():
     return page("devices.html")
+
+
+# ---- offline-app (PWA) -------------------------------------------------------------
+
+@app.get("/offline")
+async def offline_page():
+    return page("offline.html")
+
+
+@app.get("/offline-sw.js")
+async def offline_sw():
+    return FileResponse(STATIC / "offline-sw.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
+@app.get("/manifest.webmanifest")
+async def manifest():
+    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+OFFLINE_MAPS = {   # bestand -> (naam, omschrijving)
+    "limburg-z14": ("Limburg (gedetailleerd)", "Belgisch en Nederlands Limburg, alle straten (zoom 14)"),
+    "belgie-z13": ("België", "Heel België, tot op straatniveau (zoom 13)"),
+    "benelux-z10": ("Benelux (overzicht)", "Steden en hoofdwegen (zoom 10)"),
+    "benelux-z12": ("Benelux", "Benelux met de meeste straten (zoom 12)"),
+    "frankrijk-z10": ("Frankrijk (overzicht)", "Steden en hoofdwegen (zoom 10)"),
+    "frankrijk-z12": ("Frankrijk", "Frankrijk met de meeste straten (zoom 12)"),
+    "duitsland-z10": ("Duitsland (overzicht)", "Steden en hoofdwegen (zoom 10)"),
+    "duitsland-z12": ("Duitsland", "Duitsland met de meeste straten (zoom 12)"),
+}
+
+
+@app.get("/api/offline/maps")
+async def offline_maps(request: Request):
+    need(request, "map.view")
+    d = Path(S.cfg.tiles_dir) / "offline"
+    out = []
+    for key, (name, desc) in OFFLINE_MAPS.items():
+        f = d / f"{key}.pmtiles"
+        if f.exists():
+            out.append({"key": key, "name": name, "description": desc, "size": f.stat().st_size,
+                        "url": f"/tiles/offline/{key}.pmtiles", "version": int(f.stat().st_mtime)})
+    return out
+
+
+@app.get("/api/offline/bundle")
+async def offline_bundle(request: Request):
+    """Wat de offline-app meeneemt: namen/kleuren/iconen van de zichtbare echte trackers,
+    de kanalen die deze gebruiker mag zien (zoals in Toestellen) en, met het recht om
+    toestellen in te stellen, de authsleutels om controletekens offline na te kijken."""
+    p = need(request, "map.view")
+    keys_ok = p.can("trackers.serial") or p.can("keys.manage")
+    trackers = [{"pk8": t["pubkey"][:8], "alias": t["alias"], "color": t["color"], "icon": t["icon"],
+                 **({"authkey": t["authkey"]} if keys_ok and t.get("authkey") else {})}
+                for t in S.db.trackers() if t["kind"] == "real" and t["active"] and p.sees(t["id"])]
+    chans = [{"name": c["name"], "secret": c["secret"], "region": c.get("region") or ""} for c in S.db.channels()
+             if c["active"] and (p.can("system.manage") or c.get("tracker_group_id") in p.tracker_groups)]
+    if p.kind == "user":
+        audit(p, "offline-pakket opgehaald", f"{len(trackers)} trackers, {len(chans)} kanalen"
+                                              f"{', met authsleutels' if keys_ok else ''}")
+    return {"trackers": trackers, "channels": chans, "user": p.display, "ts": int(time.time())}
 
 
 @app.get("/users")

@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.6.2",
+      "date": "2026-10-07",
+      "notes": "In companionmodus komt een kopie van elke eigen positie in de berichtenwachtrij, zodat een app via Bluetooth ook de eigen posities ziet (offline-app)",
+      "zip": "meshtrack-t1000e-0.6.2.zip",
+      "zip_sha256": "536dd14fa8efb2f4f8515c556fc4e984efdd5b9bab9015083acb857460cf1133",
+      "uf2": "meshtrack-t1000e-0.6.2.uf2",
+      "app_size": 392632,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.6.1",
       "date": "2026-10-07",
       "notes": "Herstelt het meesturen van punten: in beweging bewaart de tracker nu echt elke x s een punt (in 0.5.0 en 0.6.0 gebeurde dat alleen tijdens het zoeken naar een fix, zodat er onderweg geen extra punten meekwamen). Verder zoals 0.6.0: DM of kanaal met ondertekening, compacte punten.",
@@ -11,5 +21,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.6.1"
+  "latest": "0.6.2"
 }

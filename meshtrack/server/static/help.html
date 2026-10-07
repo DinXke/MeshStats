@@ -39,7 +39,7 @@
     <a href="#rechten">Gebruikers en rechten</a>
     <a href="#profiel">Je profiel en thema's</a>
     <a href="#delen">Deellinks</a>
-    <a href="#offline">Offline werken</a>
+    <a href="#offline">Offline werken en de offline-app</a>
     <a href="#problemen">Problemen oplossen</a>
   </aside>
 
@@ -405,10 +405,35 @@
       deellink, dan blijf je gewoon ingelogd; wie via een deellink kijkt, ziet rechtsboven een knop
       <em>Inloggen</em>.</p>
 
-    <h2 id="offline">Offline werken</h2>
+    <h2 id="offline">Offline werken en de offline-app</h2>
     <p>De server heeft geen internet nodig: kaarttegels, lettertypes en iconen staan op de server zelf, en trackers en
       nodes komen via de mesh binnen. Hij draait op dezelfde machine als openHop (een LXC, een Raspberry Pi of een
       NUC).</p>
+    <h3>De offline-app</h3>
+    <p>Zonder internet en zonder verbinding met de server volg je trackers met de <a href="/offline">offline-app</a>.
+      Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus, of een andere
+      companion die op het kanaal van de trackers meeluistert. De companion ontcijfert de kanaalberichten; de app leest
+      ze, bewaart ze op de telefoon en tekent de sporen op een kaart die op de telefoon staat. Dat werkt alleen voor
+      trackers die via een <a href="#kanalen">kanaal</a> sturen: berichten naar de server (DM) kan alleen de server lezen.</p>
+    <ol>
+      <li><strong>Vooraf, met internet:</strong> open <code>/offline</code> in Chrome, log in en kies in het menu van
+        Chrome <em>App installeren</em> (of <em>Toevoegen aan startscherm</em>). Haal bij <em>Gegevens</em> de gegevens
+        van de server op (namen, kleuren, kanalen en, met het recht om toestellen in te stellen, de authsleutels) en
+        download bij <em>Kaarten</em> een kaart. Kies een kaart die past bij de opslag van je telefoon: Limburg (84 MB),
+        België (286 MB), Benelux, Frankrijk of Duitsland in een overzichts- en een gedetailleerde versie.</li>
+      <li><strong>Kanaal:</strong> de companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: kies een
+        kanaal van de server, scan de QR-code (bijvoorbeeld uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies
+        een foto van een QR-code, of vul naam en sleutel in. Bij een #kanaal mag de sleutel leeg blijven.</li>
+      <li><strong>Onderweg:</strong> tik bij <em>Verbinding</em> op <em>Verbinden</em> en kies de companion
+        (pincode van een MeshTrack-tracker: 123456). De app haalt alle wachtende berichten op en daarna elk nieuw
+        bericht zodra het binnenkomt.</li>
+    </ol>
+    <p>In de lijst staat bij elke positie of de controletekens <em>gecontroleerd</em> zijn (met de authsleutel uit de
+      gegevens) of <em>niet gecontroleerd</em> (geen sleutel op de telefoon, of een bericht zonder controletekens).
+      Berichten met foute controletekens worden geweigerd. Verbind je met een tracker in companionmodus (firmware 0.6.2
+      of nieuwer), dan zie je ook zijn eigen posities, gemarkeerd als <em>eigen</em>. Alles blijft op de telefoon tot je
+      het bij <em>Gegevens</em> wist; daar exporteer je de posities ook als CSV. Bluetooth werkt in Chrome op Android en
+      op een computer, niet op een iPhone.</p>
 
     <h2 id="problemen">Problemen oplossen</h2>
     <ul>
