@@ -31,8 +31,33 @@
   .bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 6px; }
   .bar span { display: block; height: 100%; width: 0; background: var(--accent); }
   #qrvideo { width: 100%; max-height: 260px; background: #000; border-radius: 8px; }
+  #chat-btn { position: absolute; left: 10px; bottom: 30px; z-index: 3; border-radius: 999px; padding: 8px 14px;
+    box-shadow: var(--shadow); background: var(--panel); font-weight: 600; }
+  #chat-badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px;
+    background: var(--danger); color: #fff; font-size: 12px; text-align: center; }
+  #chat { position: absolute; left: 10px; bottom: 76px; z-index: 4; width: min(360px, calc(100% - 20px)); height: min(60%, 460px);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; }
+  #chat[hidden] { display: none; }
+  #chat .chead { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid var(--line); }
+  #chat .chead select { flex: 1; min-width: 0; }
+  #chat-list { flex: 1; overflow: auto; padding: 8px; }
+  .cmsg { margin: 0 0 8px; max-width: 85%; }
+  .cmsg .ctext { background: var(--bg); border-radius: 10px; padding: 6px 9px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cmsg.own { margin-left: auto; text-align: right; }
+  .cmsg.own .ctext { background: var(--accent); color: var(--accent-text); text-align: left; }
+  .cmeta { font-size: 11px; color: var(--muted); margin: 0 2px 2px; }
+  #chat-form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
+  #chat-form input { flex: 1; min-width: 0; }
+  #chat-msg:empty { display: none; }
+  #chat-msg { padding: 0 8px 6px; }
   .msglog { font-family: ui-monospace, Consolas, monospace; font-size: 11px; max-height: 160px; overflow: auto; background: var(--bg); border-radius: 8px; padding: 6px; white-space: pre-wrap; }
+  header.top h1 { white-space: nowrap; }
+  #btpill { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
   @media (max-width: 760px) {
+    header.top { gap: 6px; }
+    header.top h1 .muted { display: none; }
+    header.top a.small { font-size: 12px; white-space: nowrap; }
     .offmain { flex-direction: column; }
     #omap { flex: 1 1 52%; }
     #opanel { width: auto; border-left: 0; border-top: 1px solid var(--line); flex: 1 1 48%; }
@@ -49,7 +74,21 @@
   <span id="btpill" class="pill">Bluetooth: uit</span>
 </header>
 <div class="offmain">
-  <div id="omap"></div>
+  <div id="omap">
+    <button type="button" id="chat-btn" aria-controls="chat" aria-expanded="false">Chat <span id="chat-badge" hidden>0</span></button>
+    <section id="chat" hidden aria-label="Chat">
+      <div class="chead">
+        <select id="chat-chan" aria-label="Kanaal"></select>
+        <button type="button" id="chat-close" aria-label="Chat sluiten">✕</button>
+      </div>
+      <div id="chat-list" aria-live="polite"></div>
+      <div id="chat-msg" class="msg"></div>
+      <form id="chat-form">
+        <input id="chat-text" maxlength="140" autocomplete="off" aria-label="Bericht">
+        <button class="primary" id="chat-send">Stuur</button>
+      </form>
+    </section>
+  </div>
   <aside id="opanel">
     <div class="tabs" id="otabs">
       <button class="tab" data-tab="trk">Trackers</button>
@@ -78,6 +117,10 @@
         <button id="bt-disconnect" hidden>Loskoppelen</button>
         <button id="bt-sync" hidden>Berichten ophalen</button>
       </div>
+      <div class="row" style="align-items:center;gap:8px">
+        <label for="bt-scope" style="margin:0">Regio (scope) voor wat je stuurt</label>
+        <input id="bt-scope" style="width:90px" maxlength="30" placeholder="leeg = standaard">
+      </div>
       <div id="bt-info" class="small" style="margin-top:8px"></div>
       <div id="bt-msg" class="msg"></div>
       <h3 class="small">Laatst ontvangen</h3>
@@ -102,7 +145,7 @@
       <div class="row"><button class="primary" id="ch-add">Op de companion zetten</button></div>
       <div id="ch-msg" class="msg"></div>
       <h3 class="small">Kanalen van de server</h3>
-      <div id="ch-srv" class="small muted">Haal eerst de gegevens van de server op (tabblad Gegevens).</div>
+      <div id="ch-srv" class="small muted">Alleen met een account: haal de gegevens op bij Gegevens.</div>
     </section>
 
     <section class="pane" id="pane-maps" hidden>
@@ -110,15 +153,16 @@
         verbinding.</p>
       <div id="maps-stored"></div>
       <h3 class="small">Beschikbaar op de server</h3>
-      <div id="maps-avail" class="small muted">Alleen met internet en als je ingelogd bent.</div>
+      <div id="maps-avail" class="small muted">Alleen met internet.</div>
       <div id="maps-msg" class="msg"></div>
       <div class="small muted" id="maps-quota"></div>
     </section>
 
     <section class="pane" id="pane-data" hidden>
-      <h3 class="small">Gegevens van de server</h3>
-      <p class="muted small">Namen, kleuren en iconen van de trackers, de kanalen die je mag gebruiken en (met het recht om
-        toestellen in te stellen) de authsleutels om controletekens offline na te kijken.</p>
+      <h3 class="small">Gegevens van de server (optioneel)</h3>
+      <p class="muted small">De app werkt zonder account: wie de sleutel van het kanaal kent, ziet de trackers op dat kanaal.
+        Met een account op de server haal je er namen, kleuren en iconen van de trackers bij, de kanalen die je mag
+        gebruiken en (met het recht om toestellen in te stellen) de authsleutels om de controletekens na te kijken.</p>
       <div class="row"><button id="d-bundle">Ophalen van de server</button><a class="btnlink" href="/login?next=/offline" id="d-login" hidden>Inloggen</a></div>
       <div id="d-bundleinfo" class="small muted"></div>
       <div id="d-msg" class="msg"></div>

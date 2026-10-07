@@ -543,7 +543,8 @@
 <!-- ============================ 11 ============================ -->
 <h2 class="chap"><span class="nr">11</span>De offline-app</h2>
 <p>Met de <strong>offline-app</strong> volg je trackers zonder internet en zonder de server, bijvoorbeeld op een
-  terrein zonder bereik. Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus,
+  terrein zonder bereik. Je hebt er geen account voor nodig: wie de sleutel van het kanaal kent, ziet de trackers op
+  dat kanaal. Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus,
   of een andere companion die op het kanaal van de trackers meeluistert. De companion ontcijfert de kanaalberichten; de
   app leest ze, bewaart ze op de telefoon en tekent de sporen op een kaart die op de telefoon staat.</p>
 <div class="note"><b>Alleen via een kanaal</b>De app ziet alleen trackers die via een kanaal sturen (hoofdstuk 9).
@@ -557,11 +558,11 @@
   <div>
     <h3>Vooraf, met internet</h3>
     <ol>
-      <li>Open <em>/offline</em> in Chrome (in het menu: <em>Offline</em>) en log in.</li>
+      <li>Open <em>/offline</em> in Chrome (in het menu van de site: <em>Offline</em>).</li>
       <li>Kies in het menu van Chrome <em>App installeren</em> of <em>Toevoegen aan startscherm</em>.</li>
-      <li>Tik bij <em>Gegevens</em> op <em>Ophalen van de server</em>: namen, kleuren en iconen van de trackers, de kanalen
-        die je mag gebruiken en, met het recht om toestellen in te stellen, de authsleutels.</li>
       <li>Download bij <em>Kaarten</em> een kaart die past bij de opslag van je telefoon.</li>
+      <li>Niet verplicht, alleen met een account: tik bij <em>Gegevens</em> op <em>Ophalen van de server</em> voor namen,
+        kleuren en iconen, de kanalen die je mag gebruiken en, met het recht om toestellen in te stellen, de authsleutels.</li>
     </ol>
   </div>
   <table>
@@ -584,6 +585,19 @@
   authsleutel op de telefoon of een bericht zonder controletekens). Berichten met foute controletekens worden geweigerd.
   Verbind je met een tracker in companionmodus (firmware 0.6.2 of nieuwer), dan zie je ook zijn eigen posities,
   gemarkeerd als <em>eigen</em>.</p>
+<div class="cols">
+  <div>
+    <h3>Chat en herhalingen</h3>
+    <p>De app houdt de trackerberichten apart. Al de rest op de kanalen van de companion, en privéberichten aan de
+      companion, staat in de <em>Chat</em>: de knop linksonder op de kaart, met het aantal nieuwe berichten. Kies een
+      kanaal om zelf een bericht te sturen.</p>
+    <p>Onder elk verstuurd bericht staat hoe vaak het via een repeater gehoord is en via welke, bijvoorbeeld
+      <em>2× gehoord via e3d3, 51f0</em>. Bij een tracker in companionmodus zie je dat ook bij zijn eigen posities.</p>
+    <p>Wat je verstuurt, gaat met de regio (scope) uit <em>Verbinding</em>, standaard <strong>be</strong>. Is de
+      companion de tracker zelf, dan geldt die regio ook voor zijn posities zolang de app verbonden is.</p>
+  </div>
+  <figure class="phones" style="margin-top:0"><div><img src="img/offline-chat.jpg" alt=""><figcaption>De chat, met de herhalingen van een verstuurd bericht.</figcaption></div></figure>
+</div>
 <p>Alles blijft op de telefoon tot je het bij <em>Gegevens</em> wist; daar exporteer je de posities ook als CSV.
   Bluetooth werkt in Chrome op Android en op een computer, niet op een iPhone.</p>
 

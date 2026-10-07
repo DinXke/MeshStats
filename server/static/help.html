@@ -411,15 +411,17 @@
       NUC).</p>
     <h3>De offline-app</h3>
     <p>Zonder internet en zonder verbinding met de server volg je trackers met de <a href="/offline">offline-app</a>.
+      Je hebt er <strong>geen account</strong> voor nodig: wie de sleutel van het kanaal kent, ziet de trackers op dat
+      kanaal.
       Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus, of een andere
       companion die op het kanaal van de trackers meeluistert. De companion ontcijfert de kanaalberichten; de app leest
       ze, bewaart ze op de telefoon en tekent de sporen op een kaart die op de telefoon staat. Dat werkt alleen voor
       trackers die via een <a href="#kanalen">kanaal</a> sturen: berichten naar de server (DM) kan alleen de server lezen.</p>
     <ol>
-      <li><strong>Vooraf, met internet:</strong> open <code>/offline</code> in Chrome, log in en kies in het menu van
-        Chrome <em>App installeren</em> (of <em>Toevoegen aan startscherm</em>). Haal bij <em>Gegevens</em> de gegevens
-        van de server op (namen, kleuren, kanalen en, met het recht om toestellen in te stellen, de authsleutels) en
-        download bij <em>Kaarten</em> een kaart. Kies een kaart die past bij de opslag van je telefoon: Limburg (84 MB),
+      <li><strong>Vooraf, met internet:</strong> open <code>/offline</code> in Chrome en kies in het menu van Chrome
+        <em>App installeren</em> (of <em>Toevoegen aan startscherm</em>). Download bij <em>Kaarten</em> een kaart.
+        Heb je een account, dan haal je bij <em>Gegevens</em> ook namen, kleuren en kanalen op en, met het recht om
+        toestellen in te stellen, de authsleutels; dat is niet verplicht. Kies een kaart die past bij de opslag van je telefoon: Limburg (84 MB),
         België (286 MB), Benelux, Frankrijk of Duitsland in een overzichts- en een gedetailleerde versie.</li>
       <li><strong>Kanaal:</strong> de companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: kies een
         kanaal van de server, scan de QR-code (bijvoorbeeld uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies
@@ -428,6 +430,15 @@
         (pincode van een MeshTrack-tracker: 123456). De app haalt alle wachtende berichten op en daarna elk nieuw
         bericht zodra het binnenkomt.</li>
     </ol>
+    <h3>Chat en herhalingen</h3>
+    <p>De app houdt de trackerberichten apart; al de rest op de kanalen van de companion (en privéberichten aan de
+      companion) staat in de <em>Chat</em>: de knop linksonder op de kaart, met het aantal nieuwe berichten. Kies een
+      kanaal om zelf een bericht te sturen. Onder elk verstuurd bericht staat hoe vaak het via een repeater gehoord is
+      en via welke (de laatste repeater op het pad, bv. <em>2× gehoord via e3d3, 51f0</em>). Bij een tracker in
+      companionmodus zie je dat ook bij zijn eigen posities.</p>
+    <p>Wat je verstuurt, gaat met de regio (scope) uit <em>Verbinding</em>, standaard <strong>be</strong>. Laat het veld
+      leeg om de standaardregio van de companion te gebruiken. Is de companion de tracker zelf, dan geldt de regio ook
+      voor zijn posities zolang de app verbonden is; laat ze daarom op <em>be</em> staan.</p>
     <p>In de lijst staat bij elke positie of de controletekens <em>gecontroleerd</em> zijn (met de authsleutel uit de
       gegevens) of <em>niet gecontroleerd</em> (geen sleutel op de telefoon, of een bericht zonder controletekens).
       Berichten met foute controletekens worden geweigerd. Verbind je met een tracker in companionmodus (firmware 0.6.2

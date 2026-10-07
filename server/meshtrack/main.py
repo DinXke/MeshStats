@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -493,7 +493,11 @@ def audit(p: Principal, action: str, detail: str = "") -> None:
 
 
 PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help",
-          "/offline", "/offline-sw.js", "/manifest.webmanifest")   # offline-app: moet zonder login openen
+          "/offline", "/offline-sw.js", "/manifest.webmanifest", "/api/offline/maps",
+          "/tiles/offline/", "/tiles/fonts/", "/tiles/sprites/")
+# De offline-app werkt volledig zonder account: wie de kanaalsleutel kent, kan meelezen.
+# Kaarten, lettertypes en symbolen zijn gewone OpenStreetMap-gegevens; trackers, kanalen
+# en sleutels (/api/offline/bundle) blijven achter de login.
 PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "sims.manage"), "/devices": ("trackers.serial",),
               "/users": ("users.manage", "share.manage"), "/log": ("log.view",),
               "/system": ("alerts.manage", "alerts.personal", "system.manage", "companion.view")}
@@ -571,8 +575,7 @@ OFFLINE_MAPS = {   # bestand -> (naam, omschrijving)
 
 
 @app.get("/api/offline/maps")
-async def offline_maps(request: Request):
-    need(request, "map.view")
+async def offline_maps():
     d = Path(S.cfg.tiles_dir) / "offline"
     out = []
     for key, (name, desc) in OFFLINE_MAPS.items():
@@ -585,7 +588,7 @@ async def offline_maps(request: Request):
 
 @app.get("/api/offline/bundle")
 async def offline_bundle(request: Request):
-    """Wat de offline-app meeneemt: namen/kleuren/iconen van de zichtbare echte trackers,
+    """Optioneel voor de offline-app (die werkt ook zonder):  namen/kleuren/iconen van de zichtbare echte trackers,
     de kanalen die deze gebruiker mag zien (zoals in Toestellen) en, met het recht om
     toestellen in te stellen, de authsleutels om controletekens offline na te kijken."""
     p = need(request, "map.view")
