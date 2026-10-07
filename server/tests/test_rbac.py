@@ -188,3 +188,24 @@ def test_share_with_tracker_group_is_dynamic_and_limited_to_creator(client):
     main._pcache.clear()
     c.get(f"/s/{token}")
     assert sorted(t["alias"] for t in c.get("/api/trackers").json()) == ["A", "B"]
+
+
+def test_effective_rights_shows_origin(client):
+    c, _ = client
+    login(c, "admin", "beheerder1")
+    a = c.post("/api/trackers", json={"pubkey": "a1" * 32, "alias": "A"}).json()["tracker"]["id"]
+    b = c.post("/api/trackers", json={"pubkey": "b1" * 32, "alias": "B"}).json()["tracker"]["id"]
+    c.post("/api/trackers", json={"pubkey": "c1" * 32, "alias": "C"})
+    tg = c.post("/api/tracker-groups", json={"name": "Ploeg", "trackers": [a]}).json()
+    g1 = c.post("/api/groups", json={"name": "G1", "perms": ["map.view"], "all_trackers": False,
+                                     "tracker_groups": [tg["id"]], "history_hours": 6}).json()
+    g2 = c.post("/api/groups", json={"name": "G2", "perms": ["map.view", "log.view"], "all_trackers": False,
+                                     "trackers": [b], "history_hours": 48}).json()
+    uid = c.post("/api/users", json={"username": "piet", "password": "geheim123", "group_ids": [g1["id"], g2["id"]]}).json()["id"]
+    e = c.get(f"/api/users/{uid}/effective").json()
+    perms = {p["id"]: p["via"] for p in e["perms"]}
+    assert perms["map.view"] == ["G1", "G2"] and perms["log.view"] == ["G2"] and perms["users.manage"] == []
+    tr = {t["alias"]: t for t in e["trackers"]}
+    assert tr["A"]["sees"] and tr["A"]["via"] == ["G1: trackergroep Ploeg"]
+    assert tr["B"]["sees"] and tr["B"]["via"] == ["G2: losse tracker"]
+    assert not tr["C"]["sees"] and e["history_hours"] == 48 and e["history_via"] == ["G2"]

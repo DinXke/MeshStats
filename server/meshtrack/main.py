@@ -39,7 +39,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -1422,6 +1422,50 @@ async def update_user(uid: int, b: UserIn, request: Request):
                            ("wachtwoord", b.password)) if v is not None]
     audit(p, "gebruiker gewijzigd", f"{u['username']}: {', '.join(what)}")
     return next(x for x in S.db.users() if x["id"] == uid)
+
+
+@app.get("/api/users/{uid}/effective")
+async def effective_rights(uid: int, request: Request):
+    """Wat een gebruiker echt mag en ziet, met de herkomst (welke groep, welke trackergroep)."""
+    need(request, "users.manage")
+    u = S.db.user(uid)
+    if not u:
+        raise HTTPException(404, "onbekende gebruiker")
+    gids = set(S.db.user_group_ids(uid))
+    groups = [g for g in S.db.groups() if g["id"] in gids]
+    members = S.db.tracker_group_members()
+    tgnames = {g["id"]: g["name"] for g in S.db.tracker_groups()}
+    p = rbac.principal_for_user(u, groups, members) if groups else None
+    perms = [{"id": k, "label": v[0], "via": [g["name"] for g in groups if k in g["perms"]]}
+             for k, v in PERMS.items()]
+    trackers = []
+    for t in S.db.trackers():
+        via = []
+        for g in groups:
+            if g["all_trackers"]:
+                via.append(f"{g['name']}: alle trackers")
+                continue
+            if t["id"] in g["trackers"]:
+                via.append(f"{g['name']}: losse tracker")
+            for tg in g.get("tracker_groups") or []:
+                if t["id"] in members.get(tg, set()):
+                    via.append(f"{g['name']}: trackergroep {tgnames.get(tg, tg)}")
+        trackers.append({"id": t["id"], "alias": t["alias"], "kind": t["kind"], "color": t["color"],
+                         "active": bool(t["active"]), "sees": bool(p and p.sees(t["id"])), "via": via})
+    hist_src = [g["name"] for g in groups if int(g["history_hours"] or 0) == (p.history_hours if p else -1)]
+    rules = [r["name"] for r in S.db.alert_rules() if r.get("owner") == uid]
+    return {
+        "user": {"id": u["id"], "username": u["username"], "display_name": u["display_name"], "active": bool(u["active"])},
+        "groups": [g["name"] for g in groups],
+        "perms": perms,
+        "all_trackers": bool(p and p.tracker_ids is None),
+        "trackers": trackers,
+        "history_hours": p.history_hours if p else None,
+        "history_via": hist_src,
+        "own_rules": rules,
+        "warnings": ([] if u["active"] else ["Deze gebruiker is gedeactiveerd en kan niet inloggen."])
+                    + ([] if groups else ["Deze gebruiker zit in geen enkele groep en ziet niets."]),
+    }
 
 
 @app.delete("/api/users/{uid}")
