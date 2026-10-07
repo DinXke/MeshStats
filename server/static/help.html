@@ -172,13 +172,16 @@
       komt wel in het spoor maar verandert de laatste positie niet.</p>
 
     <h2 id="instellen">Instellen via USB</h2>
-    <p>Ga naar <em>Beheer</em> → <em>Tracker instellen via USB</em> en klik op <em>Verbinden</em>. Dat werkt in Chrome
-      of Edge op een computer of Android-toestel, via https of localhost. Het formulier toont meteen de huidige
-      waarden. Met <em>Opslaan op de tracker</em> schrijf je ze weg; met <em>In MeshTrack zetten</em> voeg je de
-      tracker toe met zijn eigen sleutel.</p>
+    <p>Ga naar <em>Toestellen</em> en klik op <em>Verbinden</em>. Dat werkt in Chrome of Edge op een computer of
+      Android-toestel, via https of localhost. Bovenaan zie je welk toestel verbonden is; daaronder staan de tabbladen
+      <em>Instellingen</em>, <em>Firmware</em>, <em>Klaarmaken &amp; backups</em> en <em>Terminal</em>.</p>
+    <p>In <em>Instellingen</em> staan eerst de belangrijkste instellingen (modus, verzenden, wanneer en hoe vaak). Met een
+      <em>voorinstelling</em> (te voet, fiets, voertuig, spaarzaam) vul je ze in één klik in. De rest staat achter
+      <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de tracker</em> schrijf je alles weg. Staat het toestel
+      nog niet in MeshTrack, dan voeg je het toe met <em>In MeshTrack zetten</em>.</p>
 
     <h2 id="flashen">Firmware flashen</h2>
-    <p>In dezelfde sectie staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je kunt ze
+    <p>In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar (met de badge <em>nieuw</em> als het verbonden toestel een oudere heeft), met de datum en de wijzigingen. Je kunt ze
       downloaden als DFU-pakket (<code>.zip</code>, voor <code>adafruit-nrfutil</code>) of als <code>.uf2</code> (dubbelklik
       op de resetknop en sleep het bestand naar het USB-station). Eenvoudiger is <em>Flashen via de browser</em>:</p>
     <ol>
@@ -199,11 +202,11 @@
     <h2 id="klaarmaken">Nieuw toestel klaarmaken</h2>
     <p>Voor een nieuwe tracker hoef je niets met de hand in te stellen:</p>
     <ol>
-      <li>Klik in <em>Beheer</em> op <em>+ Tracker</em>, geef een naam en zet <em>Nieuw toestel: de server maakt de sleutel
+      <li>Klik in <em>Trackers</em> op <em>+ Tracker</em>, geef een naam en zet onder <em>Toestel</em> <em>Nieuw toestel: de server maakt de sleutel
         en de instellingen</em> aan. De server maakt een sleutelpaar en zet de tracker al als contact op de
         companion.</li>
       <li>Verbind het nieuwe toestel met USB. Staat er nog geen MeshTrack 0.3.1 of nieuwer op, flash dan eerst.</li>
-      <li>Kies bij <em>Toestel klaarmaken of terugzetten</em> de nieuwe tracker en klik op <em>Op dit toestel
+      <li>Kies in <em>Toestellen</em> → <em>Klaarmaken &amp; backups</em> de nieuwe tracker en klik op <em>Op dit toestel
         zetten</em>.</li>
     </ol>
     <p>Het toestel krijgt dan de sleutel van de server, zijn naam, de radio-instellingen, de regio, 2 bytes per hop,
@@ -221,12 +224,12 @@
       kanalen en de trackerinstellingen, in hetzelfde formaat als de export van de MeshCore-app. De server bewaart
       backups versleuteld.</p>
     <ul>
-      <li><em>Backup naar de server</em> (in de USB-sectie) leest het verbonden toestel uit en bewaart het bij de
+      <li><em>Backup naar de server</em> (<em>Toestellen</em> → <em>Klaarmaken &amp; backups</em>) leest het verbonden toestel uit en bewaart het bij de
         juiste tracker.</li>
       <li><em>Backup downloaden (.json)</em> geeft hetzelfde als bestand; <em>Volledige opslag downloaden (.bin)</em>
         geeft een ruwe kopie van alle opslag, ook de contacten.</li>
       <li><em>Export uit de MeshCore-app importeren</em> bewaart een bestand dat de app maakte.</li>
-      <li><em>Op verbonden toestel zetten</em> zet een backup terug, bv. op een vervangtoestel. Contacten worden niet
+      <li><em>Op een toestel zetten</em> (bij de backup, in Trackers → tabblad Toestel) opent Toestellen en zet de backup terug, bv. op een vervangtoestel. Contacten worden niet
         teruggezet; die leert het toestel opnieuw uit de adverts.</li>
     </ul>
     <p>Wie een backup ophaalt, terugzet of verwijdert, staat in het auditlog. Geef dit recht alleen aan wie het echt
@@ -238,7 +241,7 @@
       op een <strong>kanaal</strong> laten sturen. De server luistert mee op de kanalen die een beheerder instelt onder
       <em>Systeem</em> → <em>Kanalen</em>; MeshTrack zet ze zelf op de server-companion.</p>
     <ul>
-      <li><strong>Kanaal kiezen</strong>: in <em>Beheer</em> → USB → <em>Verzenden via</em> kies je een kanaal van de server.
+      <li><strong>Kanaal kiezen</strong>: in <em>Toestellen</em> → <em>Instellingen</em> → <em>Verzenden via</em> kies je een kanaal van de server.
         De pagina zet het kanaal met zijn sleutel, de regio en de authsleutel op de tracker. Het kanaal staat daarna ook in
         de MeshCore-app als je de tracker als companion gebruikt. Met een terminal: <code>chan set</code>,
         <code>set chan</code>, <code>set authkey</code>, <code>set transport kanaal</code>, of het menu
@@ -248,6 +251,9 @@
         <em>authsleutel</em> en de inhoud van het bericht. De server rekent ze na; een vals of gewijzigd bericht komt bij
         <em>Genegeerde berichten</em>. De authsleutel zie je bij het bewerken van een tracker (<em>Tonen</em>); je kunt hem
         ook overtikken in de CLI (spaties mogen). Per kanaal kies je of niet-ondertekende berichten toch aanvaard worden.</li>
+      <li><strong>Wie ziet de sleutels</strong>: alleen beheerders (recht <em>Systeeminstellingen</em>) zien alle kanalen
+        en hun sleutels. Andere gebruikers krijgen in <em>Toestellen</em> alleen de kanalen waarvan hun groep de
+        kanaalgroep (<em>Kanaal …</em>) ziet.</li>
       <li><strong>Regio</strong>: elk kanaal heeft een regio (standaard <code>be</code>) die de tracker krijgt. Berichten zonder
         regio worden steeds vaker geblokkeerd.</li>
       <li><strong>Eigen kaart per kanaal</strong>: elke tracker die via een kanaal stuurt, komt vanzelf in de trackergroep
@@ -287,7 +293,10 @@
     </table>
 
     <h2 id="beheer">Trackers beheren</h2>
-    <p>Klik in <em>Beheer</em> op <em>+ Tracker</em> en geef een naam, een kleur en een icoon. Voor een echte tracker vul
+    <p>Klik in <em>Trackers</em> op <em>+ Tracker</em>. Er opent een paneel met de tabbladen <em>Algemeen</em> (naam,
+      kleur, icoon, groepen, notities), <em>Toestel</em> of <em>Simulator</em>, en bij het bewerken <em>Gegevens</em>
+      (posities opruimen en de tracker verwijderen). Klik in de lijst op een tracker om hem te bewerken; met het zoekveld en
+      de filters (echt, virtueel, verloren, inactief) vind je hem snel. Voor een echte tracker vul
       je ook de <em>public key</em> in. Die vind je via USB, in de contacten van de companion of in de MeshCore-app. De
       server zet de tracker zelf als contact op de companion.</p>
     <p>Vink je <em>virtuele tracker</em> aan, dan maak je een simulator; die heeft geen sleutel nodig. Bij het bewerken
@@ -357,11 +366,16 @@
       (alles behalve gebruikers en systeeminstellingen), <strong>Kijkers</strong> (meekijken) en <strong>Kiosk</strong>
       (alleen de kaart, schermvullend, bijvoorbeeld op een groot scherm).</p>
     <h3>Trackergroepen: wie ziet welke trackers</h3>
-    <p>In <em>Beheer</em> → <em>Trackergroepen</em> groepeer je trackers, bv. per dienst of ploeg. Een tracker kan in
+    <p>In <em>Trackers</em> → <em>Trackergroepen</em> groepeer je trackers, bv. per dienst of ploeg. Een tracker kan in
       meerdere trackergroepen zitten; je kiest ze ook bij het bewerken van een tracker. In <em>Gebruikers</em> →
       <em>Groepen en rechten</em> zet je bij een groep <em>Alle trackers</em> uit en kies je de trackergroepen (en eventueel
       losse trackers) die de groep ziet. Een tracker die later aan een trackergroep wordt toegevoegd, is meteen zichtbaar
       voor wie die groep ziet, ook op een kaart die al open staat.</p>
+    <p><strong>Let op bij kanalen:</strong> trackergroepen bepalen wie wat ziet in MeshTrack. Met DM (de standaard) zijn de
+      posities versleuteld tussen de tracker en de server, en kan niemand anders ze lezen. Stuurt een tracker op een
+      <em>kanaal</em>, dan kan iedereen met de sleutel van dat kanaal zijn posities ook buiten MeshTrack lezen, bv. in de
+      MeshCore-app. Wil je trackers dan echt van elkaar afschermen, gebruik dan per groep een eigen kanaal (elk kanaal
+      heeft vanzelf zijn eigen trackergroep), of blijf bij DM.</p>
     <p>Voorbeeld: Els zit in <em>Ambulancedienst</em> (ziet de trackergroep Ziekenwagens) en in <em>Fietsbegeleiding</em>
       (ziet de trackergroep Fietsploeg). Ze ziet dan beide groepen samen, en niets anders. Op de kaart filter je de lijst
       op één trackergroep met de keuzelijst onder <em>Filter en zichtbaarheid</em>.</p>
@@ -396,7 +410,7 @@
     <ul>
       <li><strong>"mesh: niet verbonden"</strong>: openHop draait niet, of een ander programma is met de companion
         verbonden (openHop laat maar één verbinding tegelijk toe).</li>
-      <li><strong>Een tracker verschijnt niet</strong>: kijk in <em>Beheer</em> → <em>Genegeerde berichten</em>. Klopt zijn
+      <li><strong>Een tracker verschijnt niet</strong>: kijk in <em>Trackers</em> → <em>Genegeerde berichten</em> (met <em>Als tracker toevoegen</em> voor een onbekende). Klopt zijn
         pubkey? Staat zijn <em>doel</em> ingesteld op de pubkey van de server-companion?</li>
       <li><strong>Na een klik volgt een lage toon, of blijven de twee hoge biepjes uit</strong>: er kwam geen
         bevestiging. De tracker is buiten bereik, of de server is niet met de companion verbonden.</li>

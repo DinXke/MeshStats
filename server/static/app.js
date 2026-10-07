@@ -281,7 +281,7 @@
   function popupHtml(t) {
     const st = MT.STATE[t.last_state] || t.last_state || "–";
     return [
-      `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">sim</span>' : ""}${t.lost ? ' <span class="lostbadge">VERLOREN</span>' : ""}`,
+      `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">virtueel</span>' : ""}${t.lost ? ' <span class="lostbadge">VERLOREN</span>' : ""}`,
       `${MT.esc(st)}${t.last_mode ? " · " + MT.esc(MT.MODE[t.last_mode] || t.last_mode) : ""}`,
       t.last_spd != null ? `${t.last_spd} km/u${t.last_crs != null ? " · koers " + t.last_crs + "°" : ""}` : null,
       t.last_bat != null ? `batterij ${t.last_bat}%` : null,
@@ -356,7 +356,7 @@
     }
     $("list").innerHTML = items.map((t) => {
       const sos = (t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "") + (t.lost ? ' <span class="lostbadge">VERLOREN</span>' : "");
-      const sim = t.kind === "sim" ? ' <span class="pill">sim</span>' : "";
+      const sim = t.kind === "sim" ? ' <span class="pill">virtueel</span>' : "";
       const meta = [MT.STATE[t.last_state] || "nog niets ontvangen", t.last_bat != null ? `${t.last_bat}%` : null,
                     t.last_spd ? `${t.last_spd} km/u` : null].filter(Boolean).join(" · ");
       const exp = t.id === selected && can("export")
@@ -456,8 +456,11 @@
     const sel = $("tgfilter");
     $("tgfilter-wrap").hidden = !tgroups.length;
     if (prefs.tgroup && !tgroups.some((g) => g.id === prefs.tgroup)) prefs.tgroup = 0;
-    sel.innerHTML = '<option value="0">Alle trackergroepen</option>' +
-      tgroups.map((g) => `<option value="${g.id}">${MT.esc(g.name)} (${g.trackers.length})</option>`).join("");
+    const chans = tgroups.filter((g) => g.channel), plain = tgroups.filter((g) => !g.channel);
+    const opt = (g, label) => `<option value="${g.id}">${MT.esc(label)} (${g.trackers.length})</option>`;
+    sel.innerHTML = '<option value="0">Alle trackers</option>'
+      + (chans.length ? `<optgroup label="Kanalen">${chans.map((g) => opt(g, g.channel)).join("")}</optgroup>` : "")
+      + (plain.length ? `<optgroup label="Trackergroepen">${plain.map((g) => opt(g, g.name)).join("")}</optgroup>` : "");
     sel.value = String(prefs.tgroup);
   }
   $("tgfilter").addEventListener("change", () => { prefs.tgroup = Number($("tgfilter").value); savePrefs(); renderList(); });

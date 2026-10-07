@@ -82,8 +82,10 @@ const MT = {
     MT.applyTheme(MT.theme());
     const links = [
       ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"],
-      ["/admin", "Beheer", ["trackers.manage", "trackers.serial", "sims.manage", "companion.view"]],
-      ["/users", "Gebruikers", ["users.manage", "share.manage"]], ["/system", "Systeem", ["alerts.manage", "alerts.personal", "system.manage"]],
+      ["/admin", "Trackers", ["trackers.manage", "sims.manage"]],
+      ["/devices", "Toestellen", "trackers.serial"],
+      ["/users", "Gebruikers", ["users.manage", "share.manage"]],
+      ["/system", "Systeem", ["alerts.manage", "alerts.personal", "system.manage", "companion.view"]],
       ["/help", "Help", null],
     ];
     const nav = document.querySelector("header.top nav");
@@ -92,6 +94,16 @@ const MT = {
         .map(([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ""}>${label}</a>`).join("");
     }
     const hdr = document.querySelector("header.top");
+    if (hdr && nav && !hdr.querySelector(".navtoggle")) {     // gsm: menuknop
+      hdr.querySelector("h1").insertAdjacentHTML("beforebegin",
+        '<button type="button" class="navtoggle" aria-label="Menu" aria-expanded="false">☰</button>');
+      const tg = hdr.querySelector(".navtoggle");
+      tg.addEventListener("click", () => {
+        const open = hdr.classList.toggle("navopen");
+        tg.setAttribute("aria-expanded", String(open));
+      });
+    }
+    document.querySelectorAll(".msg").forEach((m) => { if (!m.hasAttribute("aria-live")) m.setAttribute("aria-live", "polite"); });
     if (hdr && MT.me.kind === "share" && !document.getElementById("sharelogin")) {
       hdr.insertAdjacentHTML("beforeend", '<a id="sharelogin" class="btnlink" href="/login">Inloggen</a>');
     }
@@ -137,6 +149,88 @@ const MT = {
     d.querySelector("form").reset();
     document.getElementById("pw-msg").textContent = "";
     d.showModal();
+  },
+
+  /* Tabbladen: knoppen [data-tab] in container, panelen #pane-<naam>. ARIA, pijltjestoetsen,
+     actief tabblad in location.hash. onShow(naam) bij elke wissel. */
+  tabs(container, onShow, allowed) {
+    const btns = [...container.querySelectorAll("[data-tab]")];
+    container.setAttribute("role", "tablist");
+    const ok = (b) => !b.hidden && (!allowed || allowed(b.dataset.tab));
+    btns.forEach((b) => {
+      const pane = document.getElementById("pane-" + b.dataset.tab);
+      b.setAttribute("role", "tab");
+      b.id = b.id || "tab-" + b.dataset.tab;
+      if (pane) { pane.setAttribute("role", "tabpanel"); pane.setAttribute("aria-labelledby", b.id); b.setAttribute("aria-controls", pane.id); }
+      if (allowed && !allowed(b.dataset.tab)) b.hidden = true;
+      b.addEventListener("click", () => show(b.dataset.tab));
+      b.addEventListener("keydown", (e) => {
+        const vis = btns.filter(ok), i = vis.indexOf(b);
+        let n = null;
+        if (e.key === "ArrowRight") n = vis[(i + 1) % vis.length];
+        if (e.key === "ArrowLeft") n = vis[(i - 1 + vis.length) % vis.length];
+        if (e.key === "Home") n = vis[0];
+        if (e.key === "End") n = vis[vis.length - 1];
+        if (n) { e.preventDefault(); show(n.dataset.tab); n.focus(); }
+      });
+    });
+    function show(name) {
+      btns.forEach((b) => {
+        const on = b.dataset.tab === name;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-selected", String(on));
+        b.tabIndex = on ? 0 : -1;
+        const pane = document.getElementById("pane-" + b.dataset.tab);
+        if (pane) pane.hidden = !on;
+      });
+      const h = location.hash.slice(1).split("?")[0];
+      if (h !== name) history.replaceState(null, "", "#" + name + (location.hash.includes("?") && h === name ? "?" + location.hash.split("?")[1] : ""));
+      if (onShow) onShow(name);
+    }
+    const want = location.hash.slice(1).split("?")[0];
+    const first = btns.find((b) => b.dataset.tab === want && ok(b)) || btns.find(ok);
+    if (first) show(first.dataset.tab);
+    return show;
+  },
+
+  /* Een formulier in een zijpaneel zetten. Bestaande code mag form.hidden blijven
+     gebruiken: hidden = false opent het paneel, true sluit het. */
+  dialogize(form, title) {
+    const d = document.createElement("dialog");
+    d.className = "side";
+    d.setAttribute("aria-label", title || "Formulier");
+    d.innerHTML = `<div class="dlghead"><h2></h2><button type="button" class="ghost" aria-label="Sluiten">✕</button></div><div class="dlgbody"></div>`;
+    d.querySelector("h2").textContent = title || "";
+    document.body.appendChild(d);
+    d.querySelector(".dlgbody").appendChild(form);
+    form.hidden = false;
+    d.querySelector(".dlghead button").addEventListener("click", () => d.close());
+    Object.defineProperty(form, "hidden", {
+      configurable: true,
+      get() { return !d.open; },
+      set(v) { if (v) { if (d.open) d.close(); } else if (!d.open) d.showModal(); },
+    });
+    form.setTitle = (t) => { d.querySelector("h2").textContent = t; d.setAttribute("aria-label", t); };
+    form.dialog = d;
+    form.scrollIntoView = () => {};
+    return d;
+  },
+
+  /* Bevestigen met een eigen venster. danger = rode knop. Geeft een Promise<boolean>. */
+  confirm(text, { ok = "OK", danger = false, title = "Bevestigen" } = {}) {
+    return new Promise((resolve) => {
+      const d = document.createElement("dialog");
+      d.className = "dlg";
+      d.innerHTML = `<form method="dialog"><h2></h2><p class="cbody"></p>
+        <div class="row"><button value="ok" class="${danger ? "danger" : "primary"}"></button><button value="no" type="submit">Annuleren</button></div></form>`;
+      d.querySelector("h2").textContent = title;
+      d.querySelector(".cbody").textContent = text;
+      d.querySelector("button[value=ok]").textContent = ok;
+      document.body.appendChild(d);
+      d.addEventListener("close", () => { resolve(d.returnValue === "ok"); d.remove(); });
+      d.showModal();
+      d.querySelector("button[value=no]").focus();
+    });
   },
 
   meshPill(el, m) {

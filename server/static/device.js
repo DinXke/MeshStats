@@ -41,26 +41,61 @@
     refresh();
   }
 
+  // Vanuit Trackers: /devices#prov?tracker=<id>[&backup=<id>]
+  const pend = new URLSearchParams((location.hash.split("?")[1]) || "");
+  let pendDone = false;
+
   function refresh() {
     const r = fw && fw.releases && fw.releases[0];
     const connected = !!MTDev.port;
     $("fw-flash").disabled = !r || !connected || busy || !("serial" in navigator);
+    $("fw-why").textContent = !("serial" in navigator) ? "Deze browser kan niet flashen: gebruik Chrome of Edge."
+      : !connected ? "Verbind eerst een toestel (bovenaan)." : busy ? "Even geduld, er loopt nog een taak." : "";
     if (!connected) $("fw-dev").textContent = "verbind eerst een toestel";
     else if (!kv) $("fw-dev").textContent = "op het toestel: geen MeshTrack (of geen antwoord)";
     else $("fw-dev").textContent = r && newer(r.version, kv.fw) ? `op het toestel: v${kv.fw}, update beschikbaar` : `op het toestel: v${kv.fw}`;
-    $("prov").hidden = !connected || !MT.can("keys.manage");
+    $("fw-badge").hidden = !(r && kv && newer(r.version, kv.fw));
+    const allowed = MT.can("keys.manage");
+    $("prov").hidden = !connected || !allowed;
+    $("prov-none").hidden = !$("prov").hidden;
+    $("prov-none").textContent = !allowed ? "Klaarmaken en backups vragen het recht Sleutels en backups."
+      : "Verbind eerst een toestel om het klaar te maken of er een backup van te nemen.";
     if (!$("prov").hidden) {
       const ts = MTDev.trackers.filter((t) => t.kind === "real" && t.keys);
       const cur = $("prov-t").value;
       $("prov-t").innerHTML = ts.length ? ts.map((t) => `<option value="${t.id}">${MT.esc(t.alias)} (${MT.esc(t.pubkey.slice(0, 8))})${kv && kv.pubkey && kv.pubkey.toLowerCase() === t.pubkey ? " · dit toestel" : ""}</option>`).join("")
         : '<option value="">Geen trackers met een sleutel op de server</option>';
-      if (cur && ts.some((t) => String(t.id) === cur)) $("prov-t").value = cur;
+      if (pend.get("tracker") && ts.some((t) => String(t.id) === pend.get("tracker"))) $("prov-t").value = pend.get("tracker");
+      else if (cur && ts.some((t) => String(t.id) === cur)) $("prov-t").value = cur;
       else if (known && ts.some((t) => t.id === known.id)) $("prov-t").value = known.id;
       $("prov-go").disabled = !ts.length || busy || !kv;
       ["bk-server", "bk-json", "bk-bin"].forEach((id) => { $(id).disabled = !kv || busy; });
       $("bk-server").disabled = !kv || !known || busy;
       $("bk-server").title = known ? "" : "Dit toestel staat nog niet in MeshTrack";
+      showPending();
     }
+  }
+
+  // Een backup die vanuit Trackers gekozen werd: klaar om terug te zetten.
+  async function showPending() {
+    const tid = pend.get("tracker"), bid = pend.get("backup");
+    if (!tid || pendDone) return;
+    const t = MTDev.trackers.find((x) => String(x.id) === tid);
+    const box = $("prov-pending");
+    box.hidden = false;
+    if (!bid) {
+      box.innerHTML = `<b>${MT.esc(t ? t.alias : "Tracker")}</b> is gekozen. Klik op <em>Op dit toestel zetten</em> om dit toestel klaar te maken.`;
+      return;
+    }
+    box.innerHTML = `<b>Backup terugzetten</b> voor ${MT.esc(t ? t.alias : "tracker")}. <button type="button" class="primary" id="pend-go">Backup op dit toestel zetten</button>`;
+    $("pend-go").onclick = async () => {
+      try {
+        const doc = await MT.api(`/api/trackers/${tid}/keys/${bid}`);
+        pendDone = true;
+        box.hidden = true;
+        provisionFlow(doc, true);
+      } catch (e) { say($("prov-msg"), e.message, false); }
+    };
   }
 
   // ---- uitlezen van het toestel ----------------------------------------------------
@@ -252,7 +287,7 @@
           step(1, "done", "opslag (.bin) en sleutel (.json) gedownload" + (MTDev.trackers.some((t) => t.pubkey === backup.public_key) && MT.can("keys.manage") ? ", ook op de server" : ""));
         } else step(1, "done", "opslag (.bin) gedownload");
       } else {
-        if (!confirm("Op dit toestel draait geen MeshTrack (of het antwoordt niet). Er kan geen backup gemaakt worden en de sleutel niet gecontroleerd. Toch flashen?")) throw new Error("geannuleerd");
+        if (!(await MT.confirm("Op dit toestel draait geen MeshTrack (of het antwoordt niet). Er kan geen backup gemaakt worden en de sleutel niet gecontroleerd. Toch flashen?", { ok: "Toch flashen", danger: true }))) throw new Error("geannuleerd");
         step(1, "done", "overgeslagen (geen MeshTrack)");
       }
 
@@ -309,7 +344,7 @@
     const same = kv.pubkey.toLowerCase() === doc.public_key;
     if (!same) {
       const cur = MTDev.trackers.find((t) => t.pubkey === kv.pubkey.toLowerCase());
-      const ok = confirm(`Dit toestel (${kv.naam || "?"}, ${kv.pubkey.slice(0, 8)}…${cur ? `, in MeshTrack als ${cur.alias}` : ""}) krijgt de identiteit van ${doc.name} (${doc.public_key.slice(0, 8)}…).\n\nDe huidige sleutel wordt eerst als backup gedownload${cur && MT.can("keys.manage") ? " en op de server bewaard" : ""}. Doorgaan?`);
+      const ok = await MT.confirm(`Dit toestel (${kv.naam || "?"}, ${kv.pubkey.slice(0, 8)}…${cur ? `, in MeshTrack als ${cur.alias}` : ""}) krijgt de identiteit van ${doc.name} (${doc.public_key.slice(0, 8)}…).\n\nDe huidige sleutel wordt eerst als backup gedownload${cur && MT.can("keys.manage") ? " en op de server bewaard" : ""}. Doorgaan?`, { ok: "Doorgaan", danger: true, title: "Andere identiteit" });
       if (!ok) return;
     }
     busy = true; refresh();
@@ -344,57 +379,12 @@
     } catch (e) { say($("prov-msg"), e.message, false); }
   }
 
-  // ---- sleutels in het trackerformulier ----------------------------------------------
-  let editing = null;
-  async function loadKeys(t) {
-    if (!MT.can("keys.manage") || t.kind !== "real") { $("f-keys").hidden = true; return; }
-    $("f-keys").hidden = false;
-    const rows = await MT.api(`/api/trackers/${t.id}/keys`);
-    const KIND = { generated: "sleutel van de server", backup: "backup van het toestel", import: "export uit de app" };
-    $("f-keylist").innerHTML = rows.length ? rows.map((k) => {
-      const s = k.summary || {};
-      const bits = [s.radio, s.path_bytes ? `${s.path_bytes} bytes per hop` : null, s.scope ? `regio ${s.scope}` : null,
-        s.channels ? `${s.channels} ${s.channels === 1 ? "kanaal" : "kanalen"}` : null, s.contacts ? `${s.contacts} contacten (niet teruggezet)` : null, s.fw ? `fw ${s.fw}` : null].filter(Boolean);
-      return `<div class="ev"><strong>${MT.esc(KIND[k.kind] || k.kind)}</strong> · ${new Date(k.ts * 1000).toLocaleString("nl-BE")} · ${MT.esc(k.who)}
-        ${k.note ? `<div class="muted">${MT.esc(k.note)}</div>` : ""}<div class="muted">${MT.esc(bits.join(" · "))}</div>
-        <div class="row" style="margin-top:4px"><button type="button" data-kput="${k.id}">Op verbonden toestel zetten</button>
-        <button type="button" data-kget="${k.id}">Downloaden</button><button type="button" class="danger" data-kdel="${k.id}">Verwijderen</button></div></div>`;
-    }).join("") : '<div class="empty">Nog geen sleutel of backup op de server. Verbind het toestel en kies "Backup naar de server", of importeer een export uit de MeshCore-app.</div>';
-    $("f-keylist").querySelectorAll("[data-kget]").forEach((b) => b.addEventListener("click", async () => {
-      const doc = await MT.api(`/api/trackers/${t.id}/keys/${b.dataset.kget}`);
-      download(jsonName(doc), JSON.stringify(doc, null, 2), "application/json");
-    }));
-    $("f-keylist").querySelectorAll("[data-kdel]").forEach((b) => b.addEventListener("click", async () => {
-      if (!confirm("Deze backup (met privésleutel) van de server verwijderen?")) return;
-      await MT.api(`/api/trackers/${t.id}/keys/${b.dataset.kdel}`, { method: "DELETE" });
-      loadKeys(t); MTDev.reload();
-    }));
-    $("f-keylist").querySelectorAll("[data-kput]").forEach((b) => b.addEventListener("click", async () => {
-      if (!MTDev.port) { alert("Verbind eerst het toestel met USB (sectie hieronder)."); return; }
-      const doc = await MT.api(`/api/trackers/${t.id}/keys/${b.dataset.kput}`);
-      $("fw").scrollIntoView({ behavior: "smooth", block: "start" });
-      provisionFlow(doc, true);
-    }));
-  }
-
-  $("f-keyfile").addEventListener("change", async (e) => {
-    const f = e.target.files[0];
-    e.target.value = "";
-    if (!f || !editing) return;
-    try {
-      const doc = JSON.parse(await f.text());
-      if (!doc.private_key) throw new Error("dit bestand bevat geen privésleutel");
-      await MT.api(`/api/trackers/${editing.id}/keys`, { method: "POST", body: { doc, kind: "import", note: f.name } });
-      loadKeys(editing); MTDev.reload();
-    } catch (err) { alert(`Importeren mislukt: ${err.message}`); }
-  });
-
   // ---- knoppen ---------------------------------------------------------------------
   $("fw-flash").addEventListener("click", () => {
     const r = fw.releases[0];
     const q = kv ? `Firmware v${r.version} flashen op ${kv.naam || "dit toestel"} (nu v${kv.fw})?\n\nEerst worden de opslag en de sleutel als backup gedownload. Niet loskoppelen tijdens het flashen (ongeveer een minuut).`
       : `Firmware v${r.version} flashen op het verbonden toestel?`;
-    if (confirm(q)) flashFlow();
+    MT.confirm(q, { ok: "Flashen", title: "Firmware flashen" }).then((ok) => { if (ok) flashFlow(); });
   });
   $("prov-go").addEventListener("click", () => { if ($("prov-t").value) provisionTracker(Number($("prov-t").value)); });
   $("bk-server").addEventListener("click", async () => {
@@ -416,15 +406,7 @@
 
   window.MTDevice = {
     onStatus(k, t) { kv = k && k.pubkey ? k : null; known = t || null; refresh(); },
-    onEdit(t) { editing = t; loadKeys(t).catch(() => {}); },
-    offerProvision(t) {
-      if (!t) return;
-      $("fw").scrollIntoView({ behavior: "smooth", block: "start" });
-      steps([]);
-      say($("dfu-msg"), `"${t.alias}" heeft nu een sleutel op de server. Verbind het nieuwe toestel (Verbinden), kies "${t.alias}" bij "Toestel klaarmaken" en klik op "Op dit toestel zetten". Staat er nog geen MeshTrack 0.3.0 of nieuwer op, flash dan eerst.`, true);
-      setTimeout(() => { if (!$("prov").hidden) $("prov-t").value = t.id; }, 300);
-    },
   };
 
-  MT.whenReady ? MT.whenReady(loadFirmware) : setTimeout(loadFirmware, 800);
+  document.addEventListener("mt-devices-ready", loadFirmware);
 })();

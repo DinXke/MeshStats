@@ -11,18 +11,16 @@
 
   // ---- tabs ------------------------------------------------------------------------
   const need = { rules: ["alerts.manage", "alerts.personal"], sent: ["alerts.manage", "alerts.personal", "system.manage"],
-    channels: "system.manage", settings: "system.manage" };
+    channels: "system.manage", settings: "system.manage", companion: "companion.view" };
   const allowed = (k) => (Array.isArray(need[k]) ? need[k].some(can) : can(need[k]));
-  const tabs = document.querySelectorAll(".pagetabs .tab");
-  tabs.forEach((b) => { if (!allowed(b.dataset.tab)) b.hidden = true; b.addEventListener("click", () => show(b.dataset.tab)); });
-  function show(name) {
-    tabs.forEach((x) => x.classList.toggle("on", x.dataset.tab === name));
-    document.querySelectorAll("main .pane").forEach((p) => { p.hidden = p.id !== "pane-" + name; });
+  function onShow(name) {
     if (name === "sent") loadSent();
     if (name === "settings") loadSettings();
     if (name === "channels") loadChannels();
-    history.replaceState(null, "", "#" + name);
+    if (name === "companion") loadCompanion();
   }
+  MT.dialogize($("r-form"), "Meldingsregel");
+  MT.dialogize($("c-form"), "Kanaal");
 
   // ---- regels ------------------------------------------------------------------------
   async function loadRules() {
@@ -39,7 +37,7 @@
       || '<div class="empty">Nog geen meldingsregels.</div>';
     document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => openRule(rules.find((r) => r.id === Number(b.dataset.edit)))));
     document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
-      if (!confirm("Deze regel verwijderen?")) return;
+      if (!(await MT.confirm("Deze meldingsregel verwijderen?", { ok: "Verwijderen", danger: true }))) return;
       await MT.api(`/api/alerts/${b.dataset.del}`, { method: "DELETE" }); loadRules();
     }));
     document.querySelectorAll("[data-test]").forEach((b) => b.addEventListener("click", async () => {
@@ -156,7 +154,7 @@
     }));
     document.querySelectorAll("[data-cdel]").forEach((b) => b.addEventListener("click", async () => {
       const c = chans.find((x) => x.id === Number(b.dataset.cdel));
-      if (!confirm(`Kanaal "${c.name}" verwijderen? De server luistert dan niet meer mee; trackers die erop sturen, worden niet meer ontvangen.`)) return;
+      if (!(await MT.confirm(`Kanaal "${c.name}" verwijderen? De server luistert dan niet meer mee; trackers die erop sturen, worden niet meer ontvangen.`, { ok: "Verwijderen", danger: true }))) return;
       await MT.api(`/api/channels/${c.id}`, { method: "DELETE" }); loadChannels();
     }));
   }
@@ -183,29 +181,56 @@
     e.preventDefault();
     const id = $("c-id").value, slot = Number($("c-slot").value);
     const other = compSlots.find((s) => s.slot === slot && !chans.some((c) => c.slot === slot && String(c.id) === id));
-    if (other && !confirm(`Op nummer ${slot} van de companion staat nu "${other.name}". Overschrijven?`)) return;
+    if (other && !(await MT.confirm(`Op nummer ${slot} van de companion staat nu "${other.name}". Overschrijven?`, { ok: "Overschrijven", danger: true }))) return;
     const body = { name: $("c-name").value.trim(), secret: $("c-secret").value.trim(), slot,
       require_sig: $("c-sig").checked, active: $("c-active").checked, region: $("c-region").value.trim() };
     try {
       const r = await MT.api(id ? `/api/channels/${id}` : "/api/channels", { method: id ? "PUT" : "POST", body });
       $("c-form").hidden = true;
       await loadChannels();
-      if (r.issues && r.issues.length) alert(r.issues.join("\n"));
+      if (r.issues && r.issues.length) msg($("c-msg"), r.issues.join(" · "));
     } catch (err) { msg($("c-msg"), err.message); }
   });
 
   // ---- instellingen ------------------------------------------------------------------
   async function loadSettings() {
     const r = await MT.api("/api/settings");
-    $("settings").innerHTML = r.spec.map((s) => s.type === "bool"
-      ? `<div><label class="switch block"><input type="checkbox" data-key="${s.key}"${r.values[s.key] ? " checked" : ""}><span></span> ${MT.esc(s.label)}</label>
+    const GROUPS = [
+      ["Meldingen via de mesh", ["alert_gap_s", "alert_attempts", "alert_flood_after", "alert_rounds", "alert_round_pause_s", "alert_sims"]],
+      ["Kaart en bewaren", ["silent_alert_h", "stale_after_h", "retention_days", "sim_history_days"]],
+      ["Nieuwe toestellen (radio)", ["prov_freq", "prov_bw", "prov_sf", "prov_cr", "prov_tx", "prov_path_bytes", "prov_scope", "prov_public_channel"]],
+    ];
+    const known = new Set(GROUPS.flatMap((g) => g[1]));
+    const rest = r.spec.filter((s) => !known.has(s.key)).map((s) => s.key);
+    if (rest.length) GROUPS.push(["Overige", rest]);
+    const field = (s) => s.type === "bool"
+      ? `<div><label class="switch block"><input type="checkbox" data-key="${s.key}"${r.values[s.key] ? " checked" : ""}><span></span> ${MT.esc(s.label.replace(/^Nieuwe tracker: /, ""))}</label>
          <div class="help">${MT.esc(s.help)}</div></div>`
       : s.type === "text"
-      ? `<div><label>${MT.esc(s.label)}</label><input type="text" data-key="${s.key}" maxlength="${s.max}" value="${MT.esc(r.values[s.key])}">
+      ? `<div><label>${MT.esc(s.label.replace(/^Nieuwe tracker: /, ""))}</label><input type="text" data-key="${s.key}" maxlength="${s.max}" value="${MT.esc(r.values[s.key])}">
          <div class="help">${MT.esc(s.help)}</div></div>`
-      : `<div><label>${MT.esc(s.label)}</label><input type="number" data-key="${s.key}" min="${s.min}" max="${s.max}" step="${s.step || 1}" value="${r.values[s.key]}">
-         <div class="help">${MT.esc(s.help)} (standaard ${s.default})</div></div>`).join("");
+      : `<div><label>${MT.esc(s.label.replace(/^Nieuwe tracker: /, ""))}</label><input type="number" data-key="${s.key}" min="${s.min}" max="${s.max}" step="${s.step || 1}" value="${r.values[s.key]}">
+         <div class="help">${MT.esc(s.help)} (standaard ${s.default})</div></div>`;
+    $("settings").innerHTML = GROUPS.map(([title, keys]) => `<fieldset><legend>${MT.esc(title)}</legend><div class="grid">
+      ${keys.map((k) => r.spec.find((s) => s.key === k)).filter(Boolean).map(field).join("")}</div></fieldset>`).join("");
   }
+
+  // ---- companion -----------------------------------------------------------------------
+  async function loadCompanion() {
+    const st = await MT.api("/api/status");
+    const m = st.mesh || {};
+    if (!m.pubkey) { $("cmp-key").textContent = "niet verbonden"; return; }
+    $("cmp-name").textContent = m.name || "";
+    $("cmp-key").textContent = m.pubkey;
+    $("cmp-copy").disabled = false;
+    const url = `meshcore://contact/add?name=${encodeURIComponent(m.name || "")}&public_key=${m.pubkey}&type=1`;
+    const qr = qrcode(0, "M");
+    qr.addData(url);
+    qr.make();
+    $("qr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
+    $("qr").title = url;
+  }
+  $("cmp-copy").addEventListener("click", () => navigator.clipboard.writeText($("cmp-key").textContent));
   $("set-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = {};
@@ -225,7 +250,6 @@
       `<option value="${MT.esc(c.public_key)}" data-name="${MT.esc(c.name || "")}">${MT.esc(c.name || "?")} (${MT.esc(c.public_key.slice(0, 8))})</option>`).join(""));
     await loadRules();
   }
-  const first = location.hash.slice(1);
-  show(first && allowed(first) ? first : (allowed("rules") ? "rules" : "settings"));
+  MT.tabs(document.querySelector(".pagetabs"), onShow, allowed);
   setInterval(() => { if (!$("pane-sent").hidden) loadSent(); }, 10000);
 })();

@@ -89,7 +89,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Website 0.7 · firmware 0.6.0 (T1000-E) · MeshCore v1.17.1<br>
+    Website 0.8 · firmware 0.6.0 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -301,7 +301,7 @@
 <figure class="phones">
   <div><img src="img/gsm-kaart.jpg" alt=""><figcaption>De lijst in een onderpaneel.</figcaption></div>
   <div><img src="img/gsm-tracker.jpg" alt=""><figcaption>Een tracker gekozen.</figcaption></div>
-  <div><img src="img/gsm-beheer.jpg" alt=""><figcaption>Beheer op de telefoon.</figcaption></div>
+  <div><img src="img/gsm-beheer.jpg" alt=""><figcaption>Trackers op de telefoon.</figcaption></div>
 </figure>
 <p>Op een telefoon staat de lijst in een <strong>onderpaneel</strong>. Sleep het streepje omhoog of omlaag om het groter of
   kleiner te maken, of helemaal naar beneden om het te verbergen. <em>☰ Lijst</em> haalt het terug.</p>
@@ -326,7 +326,7 @@
 <h3>Verloren trackers</h3>
 <div class="cols">
   <div>
-    <p>Is een tracker zoek, open hem dan in <em>Beheer</em> en zet <strong>Verloren</strong> aan. Hij krijgt een rode
+    <p>Is een tracker zoek, open hem dan in <em>Trackers</em> en zet <strong>Verloren</strong> aan. Hij krijgt een rode
       markering <span class="pill lost">VERLOREN</span> op de kaart en in de lijsten.</p>
     <p>Komt er daarna nog een bericht van hem binnen:</p>
     <ul>
@@ -362,20 +362,28 @@
 
 <!-- ============================ 7 ============================ -->
 <h2 class="chap"><span class="nr">7</span>Trackers beheren</h2>
-<figure><img src="img/beheer.jpg" alt=""><figcaption>Beheer: de lijst met trackers en de USB-sectie met de firmware.</figcaption></figure>
+<figure><img src="img/beheer.jpg" alt=""><figcaption>Trackers: zoeken, filteren, en klikken op een tracker om hem te bewerken.</figcaption></figure>
+<p>De pagina <em>Trackers</em> heeft drie tabbladen: <em>Trackers</em>, <em>Trackergroepen</em> en <em>Genegeerde berichten</em>
+  (met een teller als er iets is). Alles met een USB-kabel staat op een aparte pagina, <em>Toestellen</em>.</p>
 <h3>Een tracker toevoegen</h3>
-<p>Klik op <em>+ Tracker</em> en geef een naam, een kleur en een icoon. Voor een echte tracker zijn er twee manieren:</p>
+<p>Klik op <em>+ Tracker</em>. Er opent een paneel met de tabbladen <em>Algemeen</em> (naam, kleur, icoon, groepen, notities),
+  <em>Toestel</em> of <em>Simulator</em>, en bij het bewerken <em>Gegevens</em> (posities opruimen, tracker verwijderen).
+  Voor een echte tracker zijn er twee manieren:</p>
 <ul>
   <li><strong>Bestaand toestel</strong>: vul de <em>public key</em> in. Die vind je via USB (de knop <em>In MeshTrack zetten</em>), in
-    de contacten van de companion of in de MeshCore-app.</li>
+    de contacten van de companion of in de MeshCore-app. Een onbekende tracker uit <em>Genegeerde berichten</em> voeg je toe met
+    <em>Als tracker toevoegen</em>.</li>
   <li><strong>Nieuw toestel</strong>: zet <em>Nieuw toestel: de server maakt de sleutel en de instellingen</em> aan (zie hoofdstuk 9).</li>
 </ul>
 <p>De server zet de tracker zelf als contact op de companion. Bij het bewerken ruim je ook opgeslagen posities op.</p>
 
 <h3>Instellen via USB</h3>
-<p>Ga naar <em>Beheer</em> → <em>Tracker instellen via USB</em>, steek de tracker met een USB-kabel in de computer en klik op
-  <em>Verbinden</em>. Dat werkt in <strong>Chrome of Edge</strong> op een computer of Android-toestel. Het formulier toont de
-  huidige waarden; met <em>Opslaan op de tracker</em> schrijf je ze weg.</p>
+<p>Ga naar <em>Toestellen</em>, steek de tracker met een USB-kabel in de computer en klik op <em>Verbinden</em>. Dat werkt in
+  <strong>Chrome of Edge</strong> op een computer of Android-toestel. Bovenaan zie je welk toestel verbonden is; daaronder staan
+  de tabbladen <em>Instellingen</em>, <em>Firmware</em>, <em>Klaarmaken &amp; backups</em> en <em>Terminal</em>.</p>
+<p>In <em>Instellingen</em> staan eerst de belangrijkste instellingen. Een <em>voorinstelling</em> (te voet, fiets, voertuig,
+  spaarzaam) vult ze in één klik in; de rest staat achter <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de
+  tracker</em> schrijf je ze weg.</p>
 <p>Met een terminalprogramma (115200 baud) opent meteen een genummerd menu. Losse commando's (<code>status</code>,
   <code>set …</code>, <code>mode tracker</code>, <code>help</code>) werken altijd.</p>
 <div>
@@ -418,7 +426,7 @@
 
 <!-- ============================ 8 ============================ -->
 <h2 class="chap"><span class="nr">8</span>Firmware flashen</h2>
-<p class="lead">In de USB-sectie staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je flasht ze
+<p class="lead">In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je flasht ze
   rechtstreeks vanuit de browser, zonder extra programma's.</p>
 <figure><img src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: backup, bootloader, flashen en de controle van de sleutel.</figcaption></figure>
 <ol class="steps">
@@ -442,7 +450,7 @@
 <div class="cols">
   <figure style="margin-top:0"><img src="img/nieuw-toestel.jpg" alt=""><figcaption>Een nieuwe tracker met een sleutel van de server.</figcaption></figure>
   <ol class="steps">
-    <li>Klik in <em>Beheer</em> op <em>+ Tracker</em>, geef een naam en zet <em>Nieuw toestel</em> aan. De server maakt
+    <li>Klik in <em>Trackers</em> op <em>+ Tracker</em>, geef een naam en zet onder <em>Toestel</em> <em>Nieuw toestel</em> aan. De server maakt
       een sleutelpaar.</li>
     <li>Verbind het nieuwe toestel met USB. Staat er nog geen MeshTrack 0.3.1 of nieuwer op, flash dan eerst (hoofdstuk 8).</li>
     <li>Kies bij <em>Toestel klaarmaken of terugzetten</em> de nieuwe tracker en klik op <em>Op dit toestel zetten</em>.</li>
@@ -458,7 +466,7 @@
 <h3>Sleutels en backups op de server</h3>
 <figure class="half"><img src="img/tracker-sleutels.jpg" alt=""><figcaption>Een tracker bewerken: Verloren, en het blok Sleutel en backups op de server.</figcaption></figure>
 <ul>
-  <li><em>Backup naar de server</em> (in de USB-sectie) leest het verbonden toestel uit en bewaart het bij de juiste tracker.</li>
+  <li><em>Backup naar de server</em> (Toestellen → Klaarmaken &amp; backups) leest het verbonden toestel uit en bewaart het bij de juiste tracker.</li>
   <li><em>Backup downloaden (.json)</em> geeft hetzelfde als bestand, in het formaat van de MeshCore-app;
     <em>Volledige opslag downloaden (.bin)</em> geeft een ruwe kopie van alles, ook de contacten.</li>
   <li><em>Export uit de MeshCore-app importeren</em> bewaart een bestand dat de app maakte.</li>
@@ -470,12 +478,16 @@
   <em>Sleutels en backups</em> alleen aan wie het echt nodig heeft, en bewaar gedownloade bestanden veilig.</div>
 
 <h3>Verzenden via een kanaal</h3>
-<p>Standaard stuurt een tracker via DM naar de server, met bevestiging. Kies je in de USB-sectie bij <em>Verzenden via</em> een
+<p>Standaard stuurt een tracker via DM naar de server, met bevestiging. Kies je in Toestellen → Instellingen bij <em>Verzenden via</em> een
   kanaal van de server, dan zet de pagina het kanaal (met sleutel en regio) en de authsleutel op de tracker. De server luistert
   mee op de kanalen onder <em>Systeem</em> → <em>Kanalen</em>, en elk kanaal krijgt een eigen trackergroep en kaart.</p>
 <div class="note"><b>Controletekens</b>Op een kanaal kan iedereen met de sleutel berichten sturen. Daarom zet de tracker in elk
   kanaalbericht 8 controletekens, berekend uit zijn authsleutel. De server rekent ze na en weigert valse berichten. Je hoeft
   ze nergens in te geven; enkel de authsleutel gaat (automatisch) via USB naar de tracker.</div>
+<div class="warn"><b>Kanalen en wie meekijkt</b>Met DM (de standaard) zijn posities versleuteld tussen tracker en server. Op een
+  kanaal kan iedereen met de kanaalsleutel de posities ook buiten MeshTrack lezen. Wil je groepen echt afschermen, gebruik dan
+  per groep een eigen kanaal. Alleen beheerders zien alle kanaalsleutels; andere gebruikers krijgen bij het instellen alleen
+  de kanalen van hun eigen groep.</div>
 
 <!-- ============================ 10 ============================ -->
 <h2 class="chap"><span class="nr">10</span>Gebruikers, rechten en instellingen</h2>
@@ -491,9 +503,9 @@
   <tr><td class="k">Kiosk</td><td>Alleen de kaart, schermvullend, bv. op een groot scherm in de post.</td></tr>
 </table>
 <h3>Trackergroepen: wie ziet welke trackers</h3>
-<figure><img src="img/trackergroepen.jpg" alt=""><figcaption>Beheer → Trackergroepen. Een tracker kan in meerdere groepen zitten.</figcaption></figure>
+<figure><img src="img/trackergroepen.jpg" alt=""><figcaption>Trackers → Trackergroepen. Een tracker kan in meerdere groepen zitten.</figcaption></figure>
 <ol class="steps">
-  <li>Maak in <em>Beheer</em> → <em>Trackergroepen</em> groepen, bv. per dienst of ploeg, en vink de trackers aan. Bij het
+  <li>Maak in <em>Trackers</em> → <em>Trackergroepen</em> groepen, bv. per dienst of ploeg, en vink de trackers aan. Bij het
     bewerken van een tracker kies je ook zijn groepen.</li>
   <li>Zet in <em>Gebruikers</em> → <em>Groepen en rechten</em> bij een groep <em>Alle trackers</em> uit en vink de
     trackergroepen aan die de groep ziet (eventueel aangevuld met losse trackers).</li>
@@ -531,7 +543,7 @@
   <tr><th>Probleem</th><th>Wat te doen</th></tr>
   <tr><td class="k">mesh: niet verbonden</td><td>De companion op de server is niet bereikbaar, of een ander programma is ermee verbonden
     (er kan maar één verbinding tegelijk). Verwittig de beheerder.</td></tr>
-  <tr><td class="k">Tracker verschijnt niet</td><td>Kijk in <em>Beheer</em> → <em>Genegeerde berichten</em>. Klopt de pubkey? Staat het
+  <tr><td class="k">Tracker verschijnt niet</td><td>Kijk in <em>Trackers</em> → <em>Genegeerde berichten</em>. Klopt de pubkey? Staat het
     <em>doel</em> van de tracker op de server-companion?</td></tr>
   <tr><td class="k">Lage toon na een klik</td><td>Er kwam geen ontvangstbewijs: buiten bereik, of de server is niet verbonden. Probeer later
     opnieuw of op een hogere plek.</td></tr>

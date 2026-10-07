@@ -61,6 +61,7 @@ class Principal:
     tracker_ids: Optional[set[int]] = None    # None = alle trackers
     history_hours: int = 0          # 0 = onbeperkt
     user_id: Optional[int] = None
+    tracker_groups: set = field(default_factory=set)   # trackergroepen die zijn groepen expliciet zien
 
     def can(self, perm: str) -> bool:
         return perm in self.perms
@@ -87,8 +88,10 @@ def principal_for_user(user: dict[str, Any], groups, tracker_group_members: Opti
     perms: set[str] = set()
     tids: Optional[set[int]] = set()
     hours: list[int] = []
+    tgs: set[int] = set()
     for g in groups:
         perms |= set(g["perms"])
+        tgs |= set(g.get("tracker_groups") or [])
         hours.append(int(g["history_hours"] or 0))
         if g["all_trackers"]:
             tids = None
@@ -100,7 +103,7 @@ def principal_for_user(user: dict[str, Any], groups, tracker_group_members: Opti
     return Principal(
         name=user["username"], display=user["display_name"] or user["username"], kind="user",
         group=", ".join(g["name"] for g in groups), perms=perms & set(PERMS),
-        tracker_ids=tids, history_hours=history, user_id=user["id"])
+        tracker_ids=tids, history_hours=history, user_id=user["id"], tracker_groups=tgs)
 
 
 def principal_for_share(share: dict[str, Any], tracker_group_members: Optional[dict[int, set[int]]] = None,

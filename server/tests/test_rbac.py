@@ -238,3 +238,20 @@ def test_channel_messages_signed_and_grouped(client):
     run("Jan: hallo allemaal")                                    # gewone chat: genegeerd
     run(f"MT: T1C|ab12cd34|{good}|{rest}".replace("|5.33|", "|5.34|"))   # gewijzigd: handtekening klopt niet meer
     assert len(c.get(f"/api/trackers/{tid}/track?hours=999999").json()) == 1
+
+
+def test_channel_keys_only_for_admins_or_own_group(client):
+    c, main = client
+    login(c, "admin", "beheerder1")
+    c.post("/api/channels", json={"name": "#ambu", "slot": 6})
+    c.post("/api/channels", json={"name": "#brand", "slot": 7})
+    chans = {x["name"]: x for x in c.get("/api/channels").json()["channels"]}
+    assert {x["name"] for x in c.get("/api/channels/device").json()} == {"#ambu", "#brand"}   # beheerder: alles
+    g = c.post("/api/groups", json={"name": "Ambu-techniek", "perms": ["map.view", "trackers.serial"], "all_trackers": False,
+                                    "tracker_groups": [chans["#ambu"]["tracker_group_id"]]}).json()
+    c.post("/api/users", json={"username": "tech", "password": "geheim123", "group_ids": [g["id"]]})
+    c.post("/api/logout")
+    login(c, "tech", "geheim123")
+    got = c.get("/api/channels/device").json()
+    assert [x["name"] for x in got] == ["#ambu"] and got[0]["secret"]
+    assert c.get("/api/channels").status_code == 403                 # volledige lijst alleen voor beheer

@@ -20,6 +20,7 @@
     <button class="tab" data-tab="sent">Verzonden meldingen</button>
     <button class="tab" data-tab="channels">Kanalen</button>
     <button class="tab" data-tab="settings">Instellingen</button>
+    <button class="tab" data-tab="companion">Companion</button>
   </div>
 
   <section class="card pane" id="pane-rules">
@@ -97,9 +98,22 @@
 
   <section class="card pane" id="pane-settings" hidden>
     <div class="cardhead"><h2>Systeeminstellingen</h2></div>
-    <form id="set-form"><div id="settings" class="grid"></div>
+    <form id="set-form"><div id="settings"></div>
       <div class="row"><button class="primary" type="submit">Opslaan</button></div>
       <div id="set-msg" class="msg"></div></form>
+  </section>
+  <section class="card pane" id="pane-companion" hidden>
+    <div class="cardhead"><h2>Server-companion</h2></div>
+    <div class="row" style="align-items:flex-start">
+      <div id="qr" class="qrbox"></div>
+      <div style="flex:1;min-width:220px">
+        <div><strong id="cmp-name">–</strong></div>
+        <div class="mono muted" id="cmp-key">niet verbonden</div>
+        <p class="muted">Scan met de MeshCore-app om deze server als contact toe te voegen. Een MeshTrack-tracker heeft dit niet
+          nodig: die maakt het contact zelf aan uit zijn doel.</p>
+        <button id="cmp-copy" disabled>Pubkey kopiëren</button>
+      </div>
+    </div>
   </section>
 </main>
 <script src="/static/vendor/qrcode.js"></script>

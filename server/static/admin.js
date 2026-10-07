@@ -1,104 +1,161 @@
-/* Beheerpagina: trackers (echt of virtueel), USB-instellingen, server-companion. */
+/* Trackers: lijst (echt en virtueel), trackergroepen, genegeerde berichten. Formulieren in een zijpaneel. */
 (function () {
   const $ = (id) => document.getElementById(id);
-  let status = null, trackers = [], sims = [], tgroups = [];
-  let icon = "";
+  let status = null, trackers = [], sims = [], tgroups = [], unknown = [];
+  let icon = "", filter = "all";
 
   function msg(el, text, ok) {
     el.textContent = text || "";
     el.className = "msg " + (ok ? "ok" : "err");
   }
+  const fmtTs = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "–");
 
-  // ---- server-companion -----------------------------------------------------------
-  function renderCompanion(m) {
-    if (!m.pubkey) return;
-    $("c-name").textContent = m.name || "";
-    $("c-key").textContent = m.pubkey;
-    $("c-copy").disabled = false;
-    const url = `meshcore://contact/add?name=${encodeURIComponent(m.name || "")}&public_key=${m.pubkey}&type=1`;
-    const qr = qrcode(0, "M");
-    qr.addData(url);
-    qr.make();
-    $("qr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
-    $("qr").title = url;
-  }
-  $("c-copy").addEventListener("click", () => navigator.clipboard.writeText($("c-key").textContent));
+  // ---- zijpanelen -------------------------------------------------------------------
+  const form = $("form"), tgForm = $("tg-form");
+  MT.dialogize(form, "Tracker");
+  MT.dialogize(tgForm, "Trackergroep");
 
-  // ---- lijst -------------------------------------------------------------------------
+  // ---- laden --------------------------------------------------------------------------
   async function load() {
     status = await MT.api("/api/status");
     MT.meshPill($("mesh"), status.mesh);
-    renderCompanion(status.mesh);
     [trackers, sims, tgroups] = await Promise.all([MT.api("/api/trackers"), MT.can("sims.manage") ? MT.api("/api/sims") : [],
       MT.api("/api/tracker-groups")]);
+    renderList();
     renderTgroups();
+    if (MT.can("trackers.manage")) {
+      unknown = await MT.api("/api/unknown");
+      renderUnknown();
+    }
+  }
+
+  // ---- trackerlijst -------------------------------------------------------------------
+  function matches(t, q) {
+    if (filter === "real" && t.kind !== "real") return false;
+    if (filter === "sim" && t.kind !== "sim") return false;
+    if (filter === "lost" && !t.lost) return false;
+    if (filter === "inactive" && t.active) return false;
+    return !q || t.alias.toLowerCase().includes(q) || (t.notes || "").toLowerCase().includes(q);
+  }
+
+  function renderList() {
+    const q = $("t-search").value.trim().toLowerCase();
     const simBy = Object.fromEntries(sims.map((s) => [s.tracker_id, s]));
-    $("trackers").innerHTML = trackers.length ? trackers.map((t) => {
+    const rows = trackers.filter((t) => matches(t, q));
+    $("ttable").hidden = !rows.length;
+    $("t-empty").hidden = !!rows.length;
+    $("t-empty").innerHTML = trackers.length
+      ? "Geen tracker past bij de zoekopdracht of de filter."
+      : `Nog geen trackers. Voeg een echte tracker toe, of start een virtuele om te oefenen.
+         <div class="cta"><button class="primary" type="button" id="t-empty-new">+ Tracker</button></div>`;
+    const en = $("t-empty-new");
+    if (en) en.addEventListener("click", () => newTracker());
+    $("trackers").innerHTML = rows.map((t) => {
       const sim = simBy[t.id];
-      const kind = t.kind === "sim" ? `<span class="pill">virtueel${sim && sim.status && sim.status.running ? " · rijdt" : " · gestopt"}</span>` : "";
-      const meta = [MT.ago(t.last_rx), t.last_bat != null ? `batterij ${t.last_bat}%` : null,
-                    t.last_state ? MT.STATE[t.last_state] : null, t.last_via && t.kind === "real" ? `via ${t.last_via}` : null,
-                    t.kind === "real" && t.has_authkey ? "authsleutel" : null].filter(Boolean).join(" · ");
-      return `<div class="titem">
-        <span class="tico big" style="background:${MT.esc(t.color)}">${t.icon ? MTIcons.svg(t.icon) : ""}</span>
-        <div class="body"><div><strong>${MT.esc(t.alias)}</strong> ${kind}${t.active ? "" : ' <span class="pill">inactief</span>'}${t.lost ? ` <span class="pill lost">verloren${t.lost_seen ? " · terug gezien " + MT.esc(MT.ago(t.lost_seen)) : ""}</span>` : ""}${t.keys ? ` <span class="pill" title="${t.keys} sleutel(s)/backup(s) op de server">sleutel op server</span>` : ""}</div>
-          <div class="muted small">${MT.esc(meta)}</div>
-          ${t.kind === "real" ? `<div class="mono muted small">${MT.esc(t.pubkey.slice(0, 16))}…</div>` : ""}
-          ${t.notes && t.notes !== "simulator" ? `<div class="muted small">${MT.esc(t.notes)}</div>` : ""}
-          ${(t.groups || []).length ? `<div class="chipsline">${t.groups.map((id) => tgroups.find((g) => g.id === id)).filter(Boolean).map((g) => `<span class="pill" style="border-color:${MT.esc(g.color)}">${MT.esc(g.name)}</span>`).join(" ")}</div>` : ""}</div>
-        <div class="actions"><button data-edit="${t.id}">Bewerken</button>
-          <button class="danger" data-del="${t.id}">Verwijderen</button></div></div>`;
-    }).join("") : '<div class="empty">Nog geen trackers. Klik op "+ Tracker".</div>';
-    document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => edit(Number(b.dataset.edit))));
-    document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => del(Number(b.dataset.del))));
-    if (!MT.can("trackers.manage")) return;
-    const unk = await MT.api("/api/unknown");
-    $("unknown").innerHTML = unk.length ? unk.map((u) => `<div class="ev"><span class="mono">${MT.esc(u.pubkey_prefix)}</span>
-      · ${MT.esc(u.reason)}<div class="muted small">${new Date(u.rx_ts * 1000).toLocaleString("nl-BE")} · <span class="mono">${MT.esc(u.text)}</span></div></div>`).join("")
-      : '<div class="empty">geen</div>';
+      const pills = [
+        t.kind === "sim" ? `<span class="pill">virtueel${sim && sim.status && sim.status.running ? " · rijdt" : " · gestopt"}</span>` : "",
+        t.active ? "" : '<span class="pill">inactief</span>',
+        t.lost ? `<span class="pill lost">verloren${t.lost_seen ? " · terug gezien" : ""}</span>` : "",
+        t.last_state === "E" ? '<span class="pill sos">SOS</span>' : "",
+      ].join(" ");
+      const sub = [t.kind === "real" ? `${t.pubkey.slice(0, 8)}…` : null, t.last_via && t.kind === "real" ? `via ${t.last_via}` : null,
+        t.kind === "real" && t.keys ? "sleutel op server" : null].filter(Boolean).join(" · ");
+      const groups = (t.groups || []).map((id) => tgroups.find((g) => g.id === id)).filter(Boolean)
+        .map((g) => `<span class="pill" style="border-color:${MT.esc(g.color)}">${MT.esc(g.name)}</span>`).join(" ");
+      return `<tr data-id="${t.id}" tabindex="0" aria-label="${MT.esc(t.alias)} bewerken">
+        <td><span class="tico" style="background:${MT.esc(t.color)}">${t.icon ? MTIcons.svg(t.icon) : ""}</span></td>
+        <td><div class="nm">${MT.esc(t.alias)} ${pills}</div><div class="sub">${MT.esc(sub)}</div>
+          <div class="mob">${MT.esc([MT.ago(t.last_rx), t.last_bat != null ? t.last_bat + " %" : null].filter(Boolean).join(" · "))}</div></td>
+        <td class="col-opt" data-ago="${t.last_rx || 0}">${MT.esc(MT.ago(t.last_rx))}</td>
+        <td class="col-opt">${t.last_bat != null ? t.last_bat + " %" : "–"}</td>
+        <td class="col-opt">${MT.esc(t.last_state ? MT.STATE[t.last_state] || t.last_state : "–")}</td>
+        <td class="col-opt">${groups}</td></tr>`;
+    }).join("");
+    $("trackers").querySelectorAll("tr").forEach((tr) => {
+      const go = () => edit(Number(tr.dataset.id));
+      tr.addEventListener("click", go);
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+    });
+  }
+  $("t-search").addEventListener("input", renderList);
+  $("t-chips").querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => {
+    filter = c.dataset.f;
+    $("t-chips").querySelectorAll(".chip").forEach((x) => x.classList.toggle("on", x === c));
+    renderList();
+  }));
+  // "laatst gehoord" bijwerken zonder de lijst opnieuw op te bouwen
+  setInterval(() => document.querySelectorAll("[data-ago]").forEach((td) => { td.textContent = MT.ago(Number(td.dataset.ago) || 0); }), 15000);
+
+  // ---- genegeerde berichten ---------------------------------------------------------
+  function renderUnknown() {
+    $("unk-count").hidden = !unknown.length;
+    $("unk-count").textContent = unknown.length;
+    $("unknown").innerHTML = unknown.length ? unknown.map((u, i) => `<div class="ev"><span class="mono">${MT.esc(u.pubkey_prefix)}</span>
+      · ${MT.esc(u.reason)}${/onbekende tracker/.test(u.reason) ? ` <button type="button" class="link" data-unew="${i}">Als tracker toevoegen</button>` : ""}
+      <div class="muted small">${fmtTs(u.rx_ts)} · <span class="mono">${MT.esc(u.text)}</span></div></div>`).join("")
+      : '<div class="empty">Geen genegeerde berichten. Alles wat binnenkomt, komt van gekende trackers.</div>';
+    $("unknown").querySelectorAll("[data-unew]").forEach((b) => b.addEventListener("click", async () => {
+      const u = unknown[Number(b.dataset.unew)];
+      newTracker();
+      // volledige pubkey uit de contacten van de companion, als die er is
+      try {
+        const c = (await MT.api("/api/companion/contacts")).find((x) => x.public_key.startsWith(u.pubkey_prefix.toLowerCase()));
+        if (c) { $("f-pubkey").value = c.public_key; $("f-alias").value = c.name || ""; }
+        else msg($("fmsg"), `Het begin van de pubkey is ${u.pubkey_prefix}; vul de volledige pubkey in (Toestellen of MeshCore-app).`);
+      } catch (_) { /* companion niet verbonden */ }
+      showTab("dev");
+    }));
   }
 
   // ---- trackergroepen ----------------------------------------------------------------
   function tgChecks(el, selected) {
     el.innerHTML = trackers.map((t) => `<label class="mini"><input type="checkbox" value="${t.id}"${selected.includes(t.id) ? " checked" : ""}>
-      <i style="background:${MT.esc(t.color)}"></i>${MT.esc(t.alias)}${t.kind === "sim" ? " (sim)" : ""}</label>`).join("")
+      <i style="background:${MT.esc(t.color)}"></i>${MT.esc(t.alias)}${t.kind === "sim" ? " (virtueel)" : ""}</label>`).join("")
       || '<span class="muted">Nog geen trackers.</span>';
   }
   function renderTgroups() {
-    $("tgcard").hidden = !MT.can("trackers.manage");
     $("tglist").innerHTML = tgroups.map((g) => `<div class="titem">
       <span class="tico big" style="background:${MT.esc(g.color)}"></span>
-      <div class="body"><div><strong>${MT.esc(g.name)}</strong> <span class="muted small">${g.trackers.length} tracker(s)</span></div>
+      <div class="body"><div><strong>${MT.esc(g.name)}</strong> <span class="muted small">${g.trackers.length} tracker(s)</span>
+        ${g.channel ? `<span class="pill">kanaal</span>` : ""}</div>
         <div class="muted small">${MT.esc(g.description || "")}</div>
         <div class="muted small">${MT.esc(g.trackers.map((id) => (trackers.find((t) => t.id === id) || {}).alias).filter(Boolean).join(", "))}</div></div>
-      <div class="actions"><button type="button" data-tgedit="${g.id}">Bewerken</button><button type="button" class="danger" data-tgdel="${g.id}">Verwijderen</button></div></div>`).join("")
-      || '<div class="empty">Nog geen trackergroepen.</div>';
+      <div class="actions"><a class="btnlink" href="/?tgroup=${g.id}">Kaart</a><button type="button" data-tgedit="${g.id}">Bewerken</button></div></div>`).join("")
+      || '<div class="empty">Nog geen trackergroepen. Maak er een, bv. per dienst of ploeg.</div>';
     $("tglist").querySelectorAll("[data-tgedit]").forEach((b) => b.addEventListener("click", () => openTg(tgroups.find((g) => g.id === Number(b.dataset.tgedit)))));
-    $("tglist").querySelectorAll("[data-tgdel]").forEach((b) => b.addEventListener("click", async () => {
-      const g = tgroups.find((x) => x.id === Number(b.dataset.tgdel));
-      if (!confirm(`Trackergroep "${g.name}" verwijderen? De trackers zelf blijven; gebruikersgroepen die via deze groep keken, zien ze niet meer.`)) return;
-      try { await MT.api(`/api/tracker-groups/${g.id}`, { method: "DELETE" }); load(); } catch (e) { alert(e.message); }
-    }));
   }
   function openTg(g) {
-    $("tg-form").hidden = false;
+    tgForm.setTitle(g ? `Trackergroep: ${g.name}` : "Nieuwe trackergroep");
     $("tg-id").value = g ? g.id : "";
     $("tg-name").value = g ? g.name : "";
     $("tg-color").value = g ? g.color : "#64748b";
     $("tg-desc").value = g ? g.description : "";
     tgChecks($("tg-trackers"), g ? g.trackers : []);
     msg($("tg-msg"), "");
+    let del = $("tg-delete");
+    if (!del) {
+      tgForm.querySelector(".sticky-actions").insertAdjacentHTML("beforeend", '<button type="button" class="danger" id="tg-delete" style="margin-left:auto">Verwijderen</button>');
+      del = $("tg-delete");
+      del.addEventListener("click", async () => {
+        const gg = tgroups.find((x) => String(x.id) === $("tg-id").value);
+        if (!gg || !(await MT.confirm(`Trackergroep "${gg.name}" verwijderen? De trackers zelf blijven; gebruikersgroepen die via deze groep keken, zien ze niet meer.`, { ok: "Verwijderen", danger: true }))) return;
+        try { await MT.api(`/api/tracker-groups/${gg.id}`, { method: "DELETE" }); tgForm.hidden = true; load(); } catch (e) { msg($("tg-msg"), e.message); }
+      });
+    }
+    del.hidden = !g;
+    tgForm.hidden = false;
+    $("tg-name").focus();
   }
   $("tg-new").addEventListener("click", () => openTg(null));
-  $("tg-cancel").addEventListener("click", () => { $("tg-form").hidden = true; });
-  $("tg-form").addEventListener("submit", async (e) => {
+  $("tg-cancel").addEventListener("click", () => { tgForm.hidden = true; });
+  tgForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const id = $("tg-id").value;
     const body = { name: $("tg-name").value.trim(), color: $("tg-color").value, description: $("tg-desc").value,
       trackers: [...$("tg-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)) };
     try {
       await MT.api(id ? `/api/tracker-groups/${id}` : "/api/tracker-groups", { method: id ? "PUT" : "POST", body });
-      $("tg-form").hidden = true;
+      tgForm.hidden = true;
       load();
     } catch (err) { msg($("tg-msg"), err.message); }
   });
@@ -116,7 +173,7 @@
     path: "pad", footway: "voetpad", pedestrian: "voetgangerszone", steps: "trappen", sidewalk: "stoep", crossing: "oversteek" };
   let simDefaults = null;
   async function renderSpeeds(profile, current) {
-    if (MT.me && !MT.can("sims.manage")) return;
+    if (!MT.can("sims.manage")) return;
     if (!simDefaults) simDefaults = await MT.api("/api/sims/defaults");
     const def = simDefaults[profile];
     $("d-speeds").innerHTML = Object.entries(def.speeds).map(([k, v]) =>
@@ -142,55 +199,68 @@
   }
   $("f-profile").addEventListener("change", () => renderSpeeds($("f-profile").value, null));
 
-  // ---- formulier --------------------------------------------------------------------
+  // ---- trackerformulier -------------------------------------------------------------
   $("f-town").innerHTML = MT.TOWNS.map((t, i) => `<option value="${i}">${t[0]}</option>`).join("");
 
   function renderIcons() { MTIcons.picker($("f-icons"), icon, $("f-color").value, (id) => { icon = id; }); }
   $("f-color").addEventListener("input", renderIcons);
 
+  function showTab(name) {
+    $("f-tabs").querySelectorAll("[data-ft]").forEach((b) => b.classList.toggle("on", b.dataset.ft === name));
+    form.querySelectorAll("[data-fp]").forEach((p) => { p.hidden = p.dataset.fp !== name; });
+  }
+  $("f-tabs").querySelectorAll("[data-ft]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.ft)));
+
   function setVirtual(v) {
     $("f-virtual").checked = v;
-    $("f-real").hidden = v;
-    $("f-sim").hidden = !v;
+    $("f-kind").querySelectorAll("button").forEach((b) => b.classList.toggle("on", (b.dataset.v === "sim") === v));
+    $("ft-dev").hidden = v;
+    $("ft-sim").hidden = !v;
+    $("f-lostrow").hidden = v;
+    const cur = $("f-tabs").querySelector("button.on");
+    if (cur && cur.hidden) showTab("gen");
   }
-  $("f-virtual").addEventListener("change", () => setVirtual($("f-virtual").checked));
-
-  function openForm(title) {
-    $("ftitle").textContent = title;
-    $("formcard").hidden = false;
-    msg($("fmsg"), "");
-    $("formcard").scrollIntoView({ behavior: "smooth", block: "start" });
-  }
+  $("f-kind").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    if ($("f-id").value) return;                 // soort wisselen = nieuwe tracker
+    setVirtual(b.dataset.v === "sim");
+  }));
 
   function resetForm() {
-    $("form").reset();
+    form.reset();
     $("f-id").value = "";
     $("f-pubkey").disabled = false;
     $("f-color").value = "#e4572e";
     $("f-active").checked = true;
     $("f-running").checked = true;
-    $("f-virtual").disabled = false;
     $("contacts").hidden = true;
-    $("f-data").hidden = true;
+    $("ft-data").hidden = true;
     $("f-histrow").hidden = true;
     $("f-genkey").checked = false;
     $("f-pubrow").hidden = false;
     $("f-genrow").hidden = !MT.can("keys.manage");
     $("f-genhelp").hidden = !MT.can("keys.manage");
     $("f-keys").hidden = true;
+    $("f-authrow").hidden = true;
+    $("f-kind").hidden = !(MT.can("trackers.manage") && MT.can("sims.manage"));
     fillFormGroups([]);
     icon = "";
-    setVirtual(false);
+    setVirtual(!MT.can("trackers.manage"));
     renderIcons();
     fillDrive(null);
     renderSpeeds("car", null);
-    if (MT.me && !MT.can("trackers.manage")) { setVirtual(true); $("f-virtual").disabled = true; }
+    showTab("gen");
     $("save").textContent = "Toevoegen";
+    msg($("fmsg"), "");
   }
 
-  $("new").addEventListener("click", () => { resetForm(); openForm("Tracker toevoegen"); $("f-alias").focus(); });
-  $("fclose").addEventListener("click", () => { $("formcard").hidden = true; });
-  $("cancel").addEventListener("click", () => { $("formcard").hidden = true; });
+  function newTracker() {
+    resetForm();
+    form.setTitle("Tracker toevoegen");
+    form.hidden = false;
+    $("f-alias").focus();
+  }
+  $("new").addEventListener("click", newTracker);
+  $("cancel").addEventListener("click", () => { form.hidden = true; });
 
   function edit(id) {
     const t = trackers.find((x) => x.id === id);
@@ -202,13 +272,10 @@
     $("f-notes").value = t.notes === "simulator" ? "" : t.notes;
     $("f-active").checked = !!t.active;
     $("f-lost").checked = !!t.lost;
-    $("f-authrow").hidden = t.kind !== "real" || !(MT.can("trackers.serial") || MT.can("keys.manage"));
-    $("f-authkey").textContent = t.has_authkey ? "verborgen" : "nog geen";
-    $("f-authcopy").hidden = true;
+    $("f-kind").hidden = true;
     fillFormGroups(t.groups || []);
     icon = t.icon || "";
     setVirtual(t.kind === "sim");
-    $("f-virtual").disabled = true;            // soort wisselen = nieuwe tracker
     if (t.kind === "sim") {
       const s = sims.find((x) => x.tracker_id === id);
       if (s) {
@@ -220,7 +287,11 @@
           $("f-town").dataset.lat = s.home_lat;
           $("f-town").dataset.lon = s.home_lon;
         } else $("f-town").value = ti;
-        document.querySelectorAll("[data-sp]").forEach((el) => { if (s.params[el.dataset.sp] != null) el.value = s.params[el.dataset.sp]; });
+        form.querySelectorAll("[data-sp]").forEach((el) => {
+          const v = s.params[el.dataset.sp];
+          if (v == null) return;
+          if (el.dataset.kind === "bool") el.checked = !!Number(v); else el.value = v;
+        });
         $("f-histrow").hidden = false;
         fillDrive(s.drive);
         renderSpeeds(s.profile, (s.drive || {}).speeds);
@@ -231,18 +302,23 @@
     } else {
       $("f-pubkey").value = t.pubkey;
       $("f-pubkey").disabled = true;           // sleutel = identiteit
-      $("f-genrow").hidden = true;             // alleen bij een nieuwe tracker
+      $("f-genrow").hidden = true;
       $("f-genhelp").hidden = true;
+      $("f-authrow").hidden = !(MT.can("trackers.serial") || MT.can("keys.manage"));
+      $("f-authkey").textContent = t.has_authkey ? "verborgen" : "nog geen";
+      $("f-authcopy").hidden = true;
+      loadKeys(t).catch(() => {});
     }
     renderIcons();
+    $("ft-data").hidden = false;
     $("save").textContent = "Opslaan";
     loadDataInfo(t.id);
-    if (window.MTDevice) MTDevice.onEdit(t);
-    openForm(`Bewerken: ${t.alias}`);
+    form.setTitle(`Bewerken: ${t.alias}`);
+    form.hidden = false;
   }
 
   $("f-history").addEventListener("click", async () => {
-    if (!confirm("Alle posities van deze simulator wissen en de historiek opnieuw opbouwen?")) return;
+    if (!(await MT.confirm("Alle posities van deze simulator wissen en de historiek opnieuw opbouwen?", { ok: "Opnieuw opbouwen", danger: true }))) return;
     try {
       await MT.api(`/api/sims/${$("f-id").value}/history`, { method: "POST" });
       msg($("fmsg"), "De historiek wordt op de achtergrond opgebouwd; de simulator rijdt daarna verder.", true);
@@ -250,17 +326,16 @@
   });
 
   async function loadDataInfo(id) {
-    $("f-data").hidden = false;
     const d = await MT.api(`/api/trackers/${id}/data`);
-    const f = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "–");
-    $("f-datainfo").textContent = d.n ? `${d.n} posities, van ${f(d.first)} tot ${f(d.last)}` : "Geen opgeslagen posities.";
+    $("f-datainfo").textContent = d.n ? `${d.n} posities, van ${fmtTs(d.first)} tot ${fmtTs(d.last)}` : "Geen opgeslagen posities.";
   }
   async function purge(all) {
     const id = $("f-id").value;
+    const t = trackers.find((x) => String(x.id) === id);
     const days = all ? 0 : Number($("f-purgedays").value);
     if (!all && !(days > 0)) return;
     const what = all ? "ALLE posities" : `alle posities ouder dan ${days} dagen`;
-    if (!confirm(`${what} van deze tracker wissen? Dit kan niet ongedaan gemaakt worden.`)) return;
+    if (!(await MT.confirm(`${what} van "${t ? t.alias : "deze tracker"}" wissen? Dit kan niet ongedaan gemaakt worden.`, { ok: "Wissen", danger: true }))) return;
     try {
       const r = await MT.api(`/api/trackers/${id}/purge`, { method: "POST", body: { older_than_days: days } });
       msg($("fmsg"), `${r.deleted} posities gewist.`, true);
@@ -270,20 +345,19 @@
   $("f-purge").addEventListener("click", () => purge(false));
   $("f-purgeall").addEventListener("click", () => purge(true));
 
-  async function del(id) {
-    const t = trackers.find((x) => x.id === id);
-    if (!t || !confirm(`"${t.alias}" verwijderen?\nAlle opgeslagen posities gaan mee weg.`)) return;
+  $("f-delete").addEventListener("click", async () => {
+    const t = trackers.find((x) => String(x.id) === $("f-id").value);
+    if (!t || !(await MT.confirm(`"${t.alias}" verwijderen? Alle opgeslagen posities, sleutels en backups gaan mee weg.`, { ok: "Verwijderen", danger: true, title: "Tracker verwijderen" }))) return;
     try {
-      const r = await MT.api(`/api/trackers/${id}`, { method: "DELETE" });
-      msg($("fmsg"), `"${t.alias}" verwijderd. ${r.contact || ""}`, true);
-      $("formcard").hidden = true;
+      await MT.api(`/api/trackers/${t.id}`, { method: "DELETE" });
+      form.hidden = true;
       load();
-    } catch (e) { alert(e.message); }
-  }
+    } catch (e) { msg($("fmsg"), e.message); }
+  });
 
   function simBody() {
     const params = {};
-    document.querySelectorAll("[data-sp]").forEach((el) => { params[el.dataset.sp] = Number(el.value); });
+    form.querySelectorAll("[data-sp]").forEach((el) => { params[el.dataset.sp] = el.dataset.kind === "bool" ? (el.checked ? 1 : 0) : Number(el.value); });
     const sel = $("f-town");
     let lat, lon;
     if (sel.value === "custom") { lat = Number(sel.dataset.lat); lon = Number(sel.dataset.lon); }
@@ -293,7 +367,7 @@
              drive: driveBody() };
   }
 
-  $("form").addEventListener("submit", async (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const id = $("f-id").value;
     const base = { alias: $("f-alias").value.trim(), color: $("f-color").value, icon, notes: $("f-notes").value,
@@ -309,15 +383,20 @@
           r = await MT.api("/api/sims", { method: "POST", body: { ...simBody(), ...base } });
           if (groups.length && r && r.tracker_id && MT.can("trackers.manage")) await MT.api(`/api/trackers/${r.tracker_id}`, { method: "PUT", body: { groups } });
         }
-        msg($("fmsg"), "Bewaard. De simulator rijdt zodra zijn eerste route berekend is.", true);
       } else {
         const gen = !id && $("f-genkey").checked;
+        if (!id && !gen && !/^[0-9a-fA-F]{64}$/.test($("f-pubkey").value.trim())) { showTab("dev"); throw new Error("Vul de pubkey in (64 hex-tekens), of kies 'Nieuw toestel'."); }
         if (id) r = await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, groups } });
         else r = await MT.api("/api/trackers", { method: "POST", body: { ...base, groups, pubkey: gen ? null : $("f-pubkey").value.trim(), generate_key: gen } });
-        msg($("fmsg"), `Bewaard. ${r.contact || ""}`, true);
-        if (gen && window.MTDevice) { await load(); MTDevice.offerProvision(r.tracker); return; }
+        if (gen && r.tracker) {
+          form.hidden = true;
+          if (await MT.confirm(`"${r.tracker.alias}" heeft nu een sleutel op de server. Nu het toestel klaarmaken via Toestellen?`, { ok: "Naar Toestellen", title: "Toestel klaarmaken" }))
+            location.href = `/devices#prov?tracker=${r.tracker.id}`;
+          load();
+          return;
+        }
       }
-      $("formcard").hidden = true;
+      form.hidden = true;
       load();
     } catch (err) { msg($("fmsg"), err.message); }
   });
@@ -333,12 +412,19 @@
       sel.focus();
     } catch (e) { msg($("fmsg"), e.message); }
   });
+  $("contacts").addEventListener("change", (e) => {
+    if (!e.target.value) return;
+    $("f-pubkey").value = e.target.value;
+    if (!$("f-alias").value) $("f-alias").value = e.target.selectedOptions[0].textContent.replace(/ \(.*\)$/, "");
+  });
   $("f-genkey").addEventListener("change", () => { $("f-pubrow").hidden = $("f-genkey").checked; });
+
+  // ---- authsleutel ------------------------------------------------------------------
   const groupKey = (k) => k.match(/.{1,4}/g).join(" ");
   async function showAuth(fresh) {
     const id = $("f-id").value;
     if (!id) return;
-    if (fresh && !confirm("Een nieuwe authsleutel maken? De tracker moet dan ook de nieuwe krijgen, anders worden zijn kanaalberichten geweigerd.")) return;
+    if (fresh && !(await MT.confirm("Een nieuwe authsleutel maken? De tracker moet dan ook de nieuwe krijgen, anders worden zijn kanaalberichten geweigerd.", { ok: "Nieuwe sleutel", danger: true }))) return;
     try {
       const { authkey } = await MT.api(`/api/trackers/${id}/authkey${fresh ? "?new=1" : ""}`);
       $("f-authkey").textContent = groupKey(authkey);
@@ -348,349 +434,77 @@
   }
   $("f-authshow").addEventListener("click", () => showAuth(false));
   $("f-authnew").addEventListener("click", () => showAuth(true));
-  $("contacts").addEventListener("change", (e) => {
-    if (!e.target.value) return;
-    $("f-pubkey").value = e.target.value;
-    if (!$("f-alias").value) $("f-alias").value = e.target.selectedOptions[0].textContent.replace(/ \(.*\)$/, "");
-  });
 
-
-  // ---- duur-invoer (getal + eenheid) ------------------------------------------------
-  const UNITS = [["s", 1, "sec"], ["m", 60, "min"], ["h", 3600, "uur"]];
-  document.querySelectorAll(".dur").forEach((d) => {
-    d.innerHTML = `<input type="number" min="0"><select>${UNITS.map((u) => `<option value="${u[0]}">${u[2]}</option>`).join("")}</select>`;
-    if (d.dataset.off) d.insertAdjacentHTML("beforeend", '<span class="help">0 = uit</span>');
-  });
-  function durSet(d, v) {
-    const [inp, sel] = [d.querySelector("input"), d.querySelector("select")];
-    if (!v || v === "uit" || v === "0") { inp.value = 0; sel.value = "m"; return; }
-    const m = /^(\d+)([smh]?)$/.exec(v);
-    if (!m) return;
-    inp.value = m[1];
-    sel.value = m[2] || "s";
+  // ---- sleutels en backups op de server ---------------------------------------------
+  let editing = null;
+  function download(name, data, type) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([data], { type }));
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
   }
-  function durGet(d) {
-    const n = Number(d.querySelector("input").value);
-    return n > 0 ? `${n}${d.querySelector("select").value}` : "0";
+  const jsonName = (doc) => `${(doc.name || "toestel").replace(/[^\p{L}\p{N}_-]+/gu, "_")}_meshcore_config_${new Date().toISOString().slice(0, 10)}.json`;
+  async function loadKeys(t) {
+    editing = t;
+    if (!MT.can("keys.manage") || t.kind !== "real") { $("f-keys").hidden = true; return; }
+    $("f-keys").hidden = false;
+    const rows = await MT.api(`/api/trackers/${t.id}/keys`);
+    const KIND = { generated: "sleutel van de server", backup: "backup van het toestel", import: "export uit de app" };
+    $("f-keylist").innerHTML = rows.length ? rows.map((k) => {
+      const s = k.summary || {};
+      const bits = [s.radio, s.path_bytes ? `${s.path_bytes} bytes per hop` : null, s.scope ? `regio ${s.scope}` : null,
+        s.channels ? `${s.channels} ${s.channels === 1 ? "kanaal" : "kanalen"}` : null, s.contacts ? `${s.contacts} contacten (niet teruggezet)` : null, s.fw ? `fw ${s.fw}` : null].filter(Boolean);
+      return `<div class="ev"><strong>${MT.esc(KIND[k.kind] || k.kind)}</strong> · ${fmtTs(k.ts)} · ${MT.esc(k.who)}
+        ${k.note ? `<div class="muted">${MT.esc(k.note)}</div>` : ""}<div class="muted">${MT.esc(bits.join(" · "))}</div>
+        <div class="row" style="margin-top:4px">${MT.can("trackers.serial") ? `<a class="btnlink" href="/devices#prov?tracker=${t.id}&backup=${k.id}">Op een toestel zetten</a>` : ""}
+        <button type="button" data-kget="${k.id}">Downloaden</button><button type="button" class="danger" data-kdel="${k.id}">Verwijderen</button></div></div>`;
+    }).join("") : '<div class="empty">Nog geen sleutel of backup op de server. Maak er een via Toestellen ("Backup naar de server"), of importeer een export uit de MeshCore-app.</div>';
+    $("f-keylist").querySelectorAll("[data-kget]").forEach((b) => b.addEventListener("click", async () => {
+      const doc = await MT.api(`/api/trackers/${t.id}/keys/${b.dataset.kget}`);
+      download(jsonName(doc), JSON.stringify(doc, null, 2), "application/json");
+    }));
+    $("f-keylist").querySelectorAll("[data-kdel]").forEach((b) => b.addEventListener("click", async () => {
+      if (!(await MT.confirm("Deze backup (met privésleutel) van de server verwijderen?", { ok: "Verwijderen", danger: true }))) return;
+      await MT.api(`/api/trackers/${t.id}/keys/${b.dataset.kdel}`, { method: "DELETE" });
+      loadKeys(t); load();
+    }));
   }
-
-  // ---- Web Serial -------------------------------------------------------------------
-  let port = null, reader = null, buf = "", lines = [], lastKv = {}, quiet = 0;
-  const log = $("s-log");
-  const append = (t) => {
-    if (quiet) return;                      // privésleutel of backup: niet in de terminal
-   log.textContent += t; if (log.textContent.length > 20000) log.textContent = log.textContent.slice(-15000); log.scrollTop = log.scrollHeight; };
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  if (!("serial" in navigator)) {
-    $("serial-note").textContent = "Deze browser kan niet met USB-apparaten praten. Gebruik Chrome of Edge op een computer of Android-toestel, via https of localhost.";
-    $("s-connect").disabled = true;
-  }
-
-  async function readLoop() {
-    const dec = new TextDecoder();
-    while (port && port.readable) {
-      reader = port.readable.getReader();
-      try {
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          const s = dec.decode(value, { stream: true });
-          append(s);
-          buf += s;
-          let i;
-          while ((i = buf.search(/\r?\n/)) >= 0) { lines.push(buf.slice(0, i)); buf = buf.slice(i).replace(/^\r?\n/, ""); }
-        }
-      } catch (_) { /* poort weg */ } finally { reader.releaseLock(); }
-      break;
-    }
-    if (port) disconnected("verbinding verbroken");
-  }
-
-  async function send(cmd) {
-    if (!port || !port.writable) throw new Error("niet verbonden");
-    const w = port.writable.getWriter();
-    await w.write(new TextEncoder().encode(cmd + "\r"));
-    w.releaseLock();
-  }
-
-  async function command(cmd, waitMs = 600) {
-    lines = [];
-    await send(cmd);
-    await sleep(waitMs);
-    return lines.slice();
-  }
-
-  // Commando sturen en lezen tot een regel aan `re` voldoet (of de tijd om is).
-  async function until(cmd, re, timeoutMs = 4000, silent = false) {
-    if (silent) quiet++;
+  $("f-keyfile").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f || !editing) return;
     try {
-      lines = [];
-      await send(cmd);
-      const t0 = Date.now();
-      while (Date.now() - t0 < timeoutMs) {
-        if (lines.some((l) => re.test(l))) return lines.slice();
-        if (!port) throw new Error("verbinding verbroken");
-        await sleep(40);
-      }
-      throw new Error(`geen antwoord op "${cmd.split(" ").slice(0, 2).join(" ")}"`);
-    } finally {
-      if (silent) setTimeout(() => { quiet = Math.max(0, quiet - 1); }, 300);
-    }
-  }
-
-  function parseStatus(ls) {
-    const kv = {};
-    for (const l of ls) for (const m of l.matchAll(/([a-z_]+)=([^\s]+)/g)) kv[m[1]] = m[2];
-    const g = /gekozen=(\w+)/.exec(ls.join("\n"));
-    if (g) kv.gekozen = g[1];
-    const a = /actief=(\w+)/.exec(ls.join("\n"));
-    if (a) kv.actief = a[1];
-    const nm = ls.find((l) => l.startsWith("naam="));
-    if (nm) kv.naam = nm.slice(5).trim();          // namen mogen spaties bevatten
-    return kv;
-  }
-
-  function fillForm(kv) {
-    const num = (v) => (v || "").replace(/(km\/h|deg|m)$/, "");
-    document.querySelectorAll("#s-form [data-set]").forEach((el) => {
-      const k = el.dataset.set;
-      if (!(k in kv)) return;
-      const v = kv[k];
-      if (el.classList.contains("dur")) durSet(el, v);
-      else if (el.dataset.kind === "bool") el.checked = v === "aan" || v === "on";
-      else if (["min_speed", "min_dist", "turn_min", "turn_min_speed"].includes(k)) el.value = num(v);
-      else if (k === "target") el.value = v.startsWith("(") ? "" : v;
-      else el.value = v;
-    });
-    setMode(kv.gekozen || "tracker");
-    $("s-authstate").textContent = kv.authkey === "ja" ? "Authsleutel: ingesteld" : kv.authkey === "nee" ? "Authsleutel: niet ingesteld" : "Authsleutel: (firmware te oud)";
-    $("s-auth").disabled = !known || !kv.authkey;
-    $("s-ritme").textContent = kv.ritme ? `Ritme nu: ${kv.ritme}.` : "Deze firmware kent het ritme volgens de ontvangst nog niet (vanaf 0.4.0).";
-    const known = trackers.find((t) => t.pubkey === (kv.pubkey || "").toLowerCase());
-    $("s-info").innerHTML = `<div><strong>${MT.esc(kv.naam || "?")}</strong> · firmware ${MT.esc(kv.fw || "?")}
-      · batterij ${MT.esc(kv.batt || "?")} · nu ${MT.esc(kv.actief || "?")}${kv.usb === "ja" ? " (USB)" : ""}</div>
-      <div class="mono muted small">${MT.esc(kv.pubkey || "")}</div>
-      <div class="small">${known ? `In MeshTrack als <strong>${MT.esc(known.alias)}</strong>` : '<span class="warn">Nog niet in MeshTrack</span>'}</div>`;
-    $("s-use").hidden = !!known || !MT.can("trackers.manage");
-    if (window.MTDevice) MTDevice.onStatus(kv, known);
-  }
-
-  let mode = "tracker";
-  function setMode(v) {
-    mode = v;
-    $("s-mode").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
-  }
-  $("s-mode").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.v)));
-
-  // Kanalen op het toestel, voor de keuzelijst "Verzenden via".
-  let devChans = [], srvChans = [];
-  async function readChannels() {
-    let ls = [];
-    try { ls = await until("chan list", /^chan=einde/, 3000, true); } catch (_) { /* oude firmware */ }
-    devChans = ls.map((l) => /^chan=(\d+)\|([0-9A-Fa-f]{32})\|(.*)$/.exec(l)).filter(Boolean)
-      .map((m) => ({ slot: Number(m[1]), secret: m[2].toLowerCase(), name: m[3].trim() }));
-    srvChans = await MT.api("/api/channels/device").catch(() => []);
-    const cur = lastKv.transport === "kanaal" ? devChans.find((d) => d.slot === Number(lastKv.chan)) : null;
-    const curSrv = cur && srvChans.find((s) => s.secret === cur.secret);
-    const others = devChans.filter((d) => !srvChans.some((s) => s.secret === d.secret));
-    $("s-via").innerHTML = '<option value="dm">DM naar de server (standaard)</option>'
-      + (srvChans.length ? `<optgroup label="Kanalen van de server">${srvChans.map((s) => `<option value="srv:${s.id}">${MT.esc(s.name)}</option>`).join("")}</optgroup>` : "")
-      + (others.length ? `<optgroup label="Andere kanalen op het toestel">${others.map((d) => `<option value="dev:${d.slot}">${d.slot}: ${MT.esc(d.name)}</option>`).join("")}</optgroup>` : "");
-    $("s-via").value = !cur ? "dm" : curSrv ? `srv:${curSrv.id}` : `dev:${cur.slot}`;
-  }
-
-  // "Verzenden via" toepassen: kanaal (met sleutel) en authsleutel op het toestel zetten.
-  async function applyVia(bad) {
-    const v = $("s-via").value;
-    const run = async (cmd, silent) => {
-      const out = await until(cmd, /bewaard|ongeldig|onbekend|NIET|gebruik|kies eerst/, 3000, silent);
-      if (out.some((l) => /ongeldig|onbekend|NIET|gebruik|kies eerst/.test(l))) bad.push(cmd.split(" ").slice(0, 2).join(" "));
-    };
-    if (v === "dm") { if (lastKv.transport !== "dm") await run("set transport dm"); return; }
-    let slot;
-    if (v.startsWith("srv:")) {
-      const s = srvChans.find((x) => `srv:${x.id}` === v);
-      const have = devChans.find((d) => d.secret === s.secret);
-      if (have) slot = have.slot;
-      else {
-        const used = new Set(devChans.map((d) => d.slot));
-        slot = 1; while (used.has(slot) && slot < 39) slot++;
-        await run(`chan set ${slot} ${s.secret} ${s.name}`, true);
-      }
-      const t = trackers.find((x) => x.pubkey === (lastKv.pubkey || "").toLowerCase());
-      if (t && lastKv.authkey !== "ja") {
-        const { authkey } = await MT.api(`/api/trackers/${t.id}/authkey`);
-        await run(`set authkey ${authkey}`, true);
-      } else if (!t) msg($("s-msg"), "Deze tracker staat nog niet in MeshTrack: zet hem erin, anders weigert een kanaal met ondertekening zijn berichten.");
-      if (s.region && lastKv.scope !== s.region) await run(`set scope ${s.region}`);
-    } else slot = Number(v.slice(4));
-    if (!lastKv.scope || lastKv.scope === "-")
-      msg($("s-msg"), "Let op: deze tracker heeft geen regio (scope). Berichten zonder regio worden steeds vaker geblokkeerd; zet er een (bv. be) bij de kanaalinstelling op de server.");
-    await run(`set chan ${slot}`);
-    await run("set transport kanaal");
-  }
-
-  async function readStatus() {
-    let ls;
-    try { ls = await until("status", /^cfg=/, 2500); } catch (_) { ls = lines.slice(); }
-    lastKv = parseStatus(ls);
-    if (!lastKv.pubkey) {
-      msg($("s-msg"), "Geen antwoord van een MeshTrack-tracker. Staat er nog andere firmware op? Flash dan eerst MeshTrack (hierboven).");
-      if (window.MTDevice) MTDevice.onStatus(null, null);
-      return false;
-    }
-    fillForm(lastKv);
-    if (lastKv.transport) await readChannels();
-    $("s-via").closest("fieldset").querySelector("#s-via").disabled = !lastKv.transport;
-    $("s-panel").hidden = false;
-    msg($("s-msg"), "");
-    return true;
-  }
-
-  function disconnected(why) {
-    port = null;
-    lastKv = {};
-    if (window.MTDevice) MTDevice.onStatus(null, null);
-    $("s-connect").hidden = false;
-    $("s-disconnect").hidden = true;
-    $("s-panel").hidden = true;
-    $("s-state").className = "pill";
-    $("s-state").textContent = why || "niet verbonden";
-  }
-
-  async function openPort(p) {
-    port = p;
-    await port.open({ baudRate: 115200 });
-    await port.setSignals({ dataTerminalReady: true });
-    $("s-connect").hidden = true;
-    $("s-disconnect").hidden = false;
-    $("s-state").className = "pill ok";
-    $("s-state").textContent = "verbonden";
-    readLoop();
-    await sleep(700);
-    await send("q");
-    await sleep(200);
-    if (!(await readStatus())) await readStatus();
-    return lastKv.pubkey ? lastKv : null;
-  }
-
-  async function closePort() {
-    const p = port;
-    port = null;
-    try { if (reader) await reader.cancel(); } catch (_) {}
-    try { await p.close(); } catch (_) {}
-    disconnected();
-    return p;
-  }
-
-  // Voor device.js (flashen, klaarmaken, backups)
-  window.MTDev = {
-    get port() { return port; }, get kv() { return lastKv; }, get trackers() { return trackers; },
-    get status() { return status; },
-    send, command, until, readStatus, parseStatus, open: openPort, close: closePort, reload: () => load(),
-    msg: (t, ok) => msg($("s-msg"), t, ok),
-  };
-
-  $("s-connect").addEventListener("click", async () => {
-    try {
-      const p = await navigator.serial.requestPort();
-      log.textContent = "";
-      await openPort(p);
-    } catch (e) { msg($("s-msg"), `Verbinden mislukt: ${e.message}`); if (port) disconnected(); }
+      const doc = JSON.parse(await f.text());
+      if (!doc.private_key) throw new Error("dit bestand bevat geen privésleutel");
+      await MT.api(`/api/trackers/${editing.id}/keys`, { method: "POST", body: { doc, kind: "import", note: f.name } });
+      loadKeys(editing); load();
+    } catch (err) { msg($("fmsg"), `Importeren mislukt: ${err.message}`); }
   });
 
-  $("s-disconnect").addEventListener("click", closePort);
-
-  $("s-reload").addEventListener("click", readStatus);
-  $("s-defaults").addEventListener("click", async () => {
-    if (!confirm("Alle trackerinstellingen terugzetten naar standaard? (Sleutel en contacten blijven.)")) return;
-    await command("defaults", 500);
-    await readStatus();
-    msg($("s-msg"), "Standaardwaarden hersteld.", true);
-  });
-
-  $("s-use").addEventListener("click", () => {
-    resetForm();
-    $("f-pubkey").value = (lastKv.pubkey || "").toLowerCase();
-    $("f-alias").value = lastKv.naam || "";
-    openForm("Tracker toevoegen");
-  });
-
-  $("s-auth").addEventListener("click", async () => {
-    const t = trackers.find((x) => x.pubkey === (lastKv.pubkey || "").toLowerCase());
-    if (!t) return;
-    try {
-      const { authkey } = await MT.api(`/api/trackers/${t.id}/authkey`);
-      const out = await until(`set authkey ${authkey}`, /bewaard|ongeldig|onbekend/, 3000, true);
-      msg($("s-msg"), out.some((l) => /bewaard/.test(l)) ? "Authsleutel staat op de tracker." : "Authsleutel niet aanvaard.", out.some((l) => /bewaard/.test(l)));
-      await readStatus();
-    } catch (e) { msg($("s-msg"), e.message); }
-  });
-
-  $("s-target").addEventListener("click", () => {
-    const pk = status && status.mesh && status.mesh.pubkey;
-    if (pk) document.querySelector('#s-form [data-set="target"]').value = pk;
-    else msg($("s-msg"), "De server-companion is niet verbonden; zijn pubkey is onbekend.");
-  });
-
-  $("s-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const cmds = [];
-    document.querySelectorAll("#s-form [data-set]").forEach((el) => {
-      const k = el.dataset.set;
-      if (!(k in lastKv)) return;              // oudere firmware kent deze instelling niet
-      let v;
-      if (el.classList.contains("dur")) v = durGet(el);
-      else if (el.dataset.kind === "bool") v = el.checked ? "on" : "off";
-      else v = el.value.trim();
-      if (v !== "" && !/\s/.test(v)) cmds.push(`set ${k} ${v}`);
-    });
-    cmds.push(`mode ${mode}`);
-    const bad = [];
-    for (const c of cmds) {
-      const out = await command(c, 250);
-      if (out.some((l) => /ongeldig|onbekend|NIET/.test(l))) bad.push(c.replace(/^set /, ""));
-    }
-    if (lastKv.transport) await applyVia(bad);
-    await readStatus();
-    if (bad.length) msg($("s-msg"), `Niet aanvaard: ${bad.join(", ")}`);
-    else msg($("s-msg"), "Opgeslagen op de tracker.", true);
-  });
-
-  async function sendFree() {
-    const c = $("s-cmd").value.trim();
-    if (!c) return;
-    $("s-cmd").value = "";
-    try { await send(c); } catch (e) { append(`\n[${e.message}]\n`); }
-  }
-  $("s-send").addEventListener("click", sendFree);
-  $("s-cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") sendFree(); });
-
-  // Secties volgens de rechten. Alleen simulators beheren = enkel virtuele trackers.
-  function applyPerms() {
-    const can = MT.can;
-    const sec = (id) => document.getElementById(id).closest("section");
-    const manageAny = can("trackers.manage") || can("sims.manage");
-    sec("trackers").hidden = !manageAny;
-    $("new").hidden = !manageAny;
-    if (!can("trackers.manage")) { $("f-virtual").checked = true; $("f-virtual").disabled = true; setVirtual(true); }
-    if (!can("sims.manage")) document.querySelector("#f-virtual").closest("label").hidden = true;
-    sec("s-connect").hidden = !can("trackers.serial");
-    $("s-use").hidden = !can("trackers.manage");
-    sec("qr").hidden = !can("companion.view");
-    sec("unknown").hidden = !can("trackers.manage");
-  }
-
+  // ---- start ---------------------------------------------------------------------------
+  let showPage = null;
   MT.live((m) => {
     if (m.type === "mesh") MT.meshPill($("mesh"), m.mesh);
-    if (m.type === "tracker" || m.type === "tracker_deleted" || m.type === "tracker_groups") load();
+    if ((m.type === "tracker" || m.type === "tracker_deleted" || m.type === "tracker_groups") && !form.dialog.open && !tgForm.dialog.open) load();
   });
+  const startHash = location.hash;                          // vóór de tabbladen de hash herschrijven
   MT.initHeader("/admin").then(async () => {
-    applyPerms();
+    const manage = MT.can("trackers.manage") || MT.can("sims.manage");
+    showPage = MT.tabs($("ptabs"), null, (n) => n === "trackers" ? manage : MT.can("trackers.manage"));
+    $("new").hidden = !manage;
     await load();
-    const m = /edit=(\d+)/.exec(location.hash);   // vanaf de kaart: meteen bewerken
+    const h = startHash;
+    const m = /edit=(\d+)/.exec(h);                         // vanaf de kaart: meteen bewerken
     if (m) edit(Number(m[1]));
+    const n = /new\?(.*)$/.exec(h);                         // vanaf Toestellen: tracker toevoegen met deze pubkey
+    if (n) {
+      const q = new URLSearchParams(n[1]);
+      newTracker();
+      setVirtual(false);
+      $("f-pubkey").value = q.get("pubkey") || "";
+      $("f-alias").value = q.get("alias") || "";
+    }
   });
-  setInterval(load, 30000);
 })();
