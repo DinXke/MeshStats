@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -299,6 +299,21 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="MeshTrack", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+_ASSET = re.compile(r'((?:src|href)="/static/[^"?]+\.(?:js|css|svg))"')
+
+
+def page(name: str) -> HTMLResponse:
+    """HTML-pagina met een versie achter elk script en stylesheet (?v=<wijzigtijd>).
+    Cloudflare laat de browser /static 4 uur cachen; zo krijgt elke update een nieuwe URL."""
+    html = (STATIC / name).read_text(encoding="utf-8")
+
+    def ver(m: re.Match) -> str:
+        f = STATIC / m.group(1).split('"/static/', 1)[1]
+        v = int(f.stat().st_mtime) if f.exists() else 0
+        return f'{m.group(1)}?v={v}"'
+    return HTMLResponse(_ASSET.sub(ver, html), headers={"Cache-Control": "no-cache"})
+
+
 
 # ---- wie is dit? -------------------------------------------------------------------
 
@@ -382,27 +397,27 @@ async def guard(request: Request, call_next):
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC / "index.html")
+    return page("index.html")
 
 
 @app.get("/admin")
 async def admin():
-    return FileResponse(STATIC / "admin.html")
+    return page("admin.html")
 
 
 @app.get("/users")
 async def users_page():
-    return FileResponse(STATIC / "users.html")
+    return page("users.html")
 
 
 @app.get("/help")
 async def help_page():
-    return FileResponse(STATIC / "help.html")
+    return page("help.html")
 
 
 @app.get("/login")
 async def login_page():
-    return FileResponse(STATIC / "login.html")
+    return page("login.html")
 
 
 @app.get("/s/{token}")
@@ -1135,7 +1150,7 @@ def _lost_events(ids: Optional[list[int]], since: int, until: int) -> list[dict[
 
 @app.get("/log")
 async def log_page():
-    return FileResponse(STATIC / "log.html")
+    return page("log.html")
 
 
 @app.get("/api/unknown")
@@ -1330,7 +1345,7 @@ async def delete_share(sid: int, request: Request):
 
 @app.get("/system")
 async def system_page():
-    return FileResponse(STATIC / "system.html")
+    return page("system.html")
 
 
 @app.get("/api/settings")
