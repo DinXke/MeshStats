@@ -312,5 +312,8 @@ def test_offline_bundle_and_maps(client, tmp_path):
     off = __import__("pathlib").Path(main.S.cfg.tiles_dir) / "offline"
     off.mkdir(parents=True, exist_ok=True)
     (off / "benelux-z10.pmtiles").write_bytes(b"x" * 1234)
+    c.post("/api/logout")                                         # kaarten: ook zonder account
     maps = c.get("/api/offline/maps").json()
     assert [(m["key"], m["size"], m["url"]) for m in maps] == [("benelux-z10", 1234, "/tiles/offline/benelux-z10.pmtiles")]
+    assert c.get("/api/offline/bundle").status_code == 401           # trackers en sleutels niet
+    assert c.get("/api/trackers").status_code == 401

@@ -49,7 +49,11 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
     kanaalberichten op die de companion ontcijferde (ook die nog in de wachtrij staan), leest `T1C|…` volledig
     offline (met de extra punten), kijkt de controletekens na met de authsleutels uit het offline-pakket, bewaart
     alles in IndexedDB en tekent sporen zoals de online kaart. Kaarten (Limburg, België, Benelux, Frankrijk,
-    Duitsland) worden als pmtiles-bestand in de opslag van de browser (OPFS) gezet; een service worker bewaart de
+    Duitsland) worden als pmtiles-bestand in de opslag van de browser (OPFS) gezet. Werkt volledig zonder account
+    (kaarten, lettertypes en sprites zijn openbaar); met een account komen er namen en sleutels bij. Chat (0.9.1):
+    alle andere kanaal- en privéberichten in een venster, zelf sturen op een kanaal met instelbare scope (standaard
+    `be`, `CMD_SET_FLOOD_SCOPE_KEY`), herhalingen van eigen berichten en eigen trackerposities geteld via de ruwe
+    ontvangstlog (push 0x88: eerste AES-ECB-blok van het eigen pakket vergelijken); een service worker bewaart de
     app, lettertypes en sprites. Kanalen toevoegen via QR (camera of foto) of met naam en sleutel. Het pakket
     (`/api/offline/bundle`) volgt de rechten: kanaalsleutels alleen voor beheerders of de eigen kanaalgroep,
     authsleutels alleen met `trackers.serial` of `keys.manage`.

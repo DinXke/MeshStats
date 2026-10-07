@@ -18,12 +18,15 @@
   let db;
   function openDb() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open("mt-offline", 1);
-      r.onupgradeneeded = () => {
+      const r = indexedDB.open("mt-offline", 2);
+      r.onupgradeneeded = (e) => {
         const d = r.result;
-        const p = d.createObjectStore("pos", { keyPath: "k" });
-        p.createIndex("ts", "ts");
-        d.createObjectStore("meta", { keyPath: "key" });
+        if (e.oldVersion < 1) {
+          const p = d.createObjectStore("pos", { keyPath: "k" });
+          p.createIndex("ts", "ts");
+          d.createObjectStore("meta", { keyPath: "key" });
+        }
+        if (e.oldVersion < 2) d.createObjectStore("chat", { keyPath: "k" }).createIndex("ts", "ts");   // 0.9.1
       };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
@@ -125,12 +128,13 @@
 
   // ---- Bluetooth (MeshCore companion, Nordic UART) ------------------------------------------
   const NUS = "6e400001-b5a3-f393-e0a9-e50e24dcca9e", RXC = "6e400002-b5a3-f393-e0a9-e50e24dcca9e", TXC = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
-  let dev = null, rxc = null, waiter = null, syncing = false, again = false, chanNames = {}, devChans = [];
+  let selfName = "", dev = null, rxc = null, waiter = null, syncing = false, again = false, chanNames = {}, devChans = [];
   const log = (t) => { const el = $("bt-log"); el.textContent = `${new Date().toLocaleTimeString("nl-BE")} ${t}\n` + el.textContent.slice(0, 4000); };
 
   function onFrame(f) {
     if (f[0] >= 0x80) {                              // push
       if (f[0] === 0x83) syncAll();
+      else if (f[0] === 0x88) onRawRx(f);
       return;
     }
     if (waiter && waiter.codes.includes(f[0])) { const w = waiter; waiter = null; w.resolve(f); }
@@ -162,9 +166,11 @@
       const name = new TextEncoder().encode("MeshTrack offline");
       const self = await ask(new Uint8Array([1, 3, 0, 0, 0, 0, 0, 0, ...name]), [5]);
       const devName = new TextDecoder().decode(self.slice(58)).replace(/\0.*$/, "") || dev.name || "companion";
+      selfName = devName;
       setBt(true, devName);
       say($("bt-msg"), "Verbonden.", true);
       await readChannels();
+      await applyScope();
       await syncAll();
     } catch (e) { say($("bt-msg"), `Verbinden mislukt: ${e.message}`, false); setBt(false); }
   }
@@ -174,36 +180,57 @@
     $("bt-connect").hidden = on; $("bt-disconnect").hidden = !on; $("bt-sync").hidden = !on;
     $("bt-info").textContent = on ? `Verbonden met ${name}.` : "";
     if (!on) { rxc = null; devChans = []; renderDevChans(); }
+    renderChat();
   }
 
   async function syncAll() {
     if (!rxc) return;
     if (syncing) { again = true; return; }
     syncing = true; again = false;
-    let n = 0, stored = 0, rejected = 0;
+    let n = 0, stored = 0, rejected = 0, chats = 0;
     try {
       for (let i = 0; i < 300; i++) {
         const f = await ask(new Uint8Array([10]), [16, 17, 7, 8, 10], 5000);
         if (f[0] === 10) break;                         // geen berichten meer
         n++;
-        if (f[0] !== 17 && f[0] !== 8) continue;       // enkel kanaalberichten
+        const dv = new DataView(f.buffer);
+        if (f[0] === 16 || f[0] === 7) {               // privébericht aan de companion: chat
+          const o = f[0] === 16 ? 4 : 1;
+          const from = [...f.slice(o, o + 6)].map((b) => b.toString(16).padStart(2, "0")).join("");
+          const txtType = f[o + 7], ts = dv.getUint32(o + 8, true);
+          const text = new TextDecoder().decode(f.slice(o + 12 + (txtType === 2 ? 4 : 0))).replace(/\0+$/, "");
+          if (!text.startsWith("T1|")) chats += await addChat({ dm: true, chan: "privé", from, text, ts });
+          continue;
+        }
+        if (f[0] !== 17 && f[0] !== 8) continue;
         const v3 = f[0] === 17;
         const o = v3 ? 4 : 1;
         const own = v3 && f[2] === 1;
         const chan = f[o];
-        const ts = new DataView(f.buffer).getUint32(o + 3, true);
+        const ts = dv.getUint32(o + 3, true);
         const text = new TextDecoder().decode(f.slice(o + 7)).replace(/\0+$/, "");
-        const r = await decode(text, ts, { own, chan: chan === 0xFF ? "DM" : (chanNames[chan] || `kanaal ${chan}`) });
-        if (!r) continue;
+        const chanName = chan === 0xFF ? "DM" : (chanNames[chan] || `kanaal ${chan}`);
+        const r = await decode(text, ts, { own, chan: chanName });
+        if (!r) {                                       // geen trackerbericht: gewone chat
+          const i2 = text.indexOf(": ");
+          chats += await addChat({ chan: chanName, chanIdx: chan, from: i2 > 0 ? text.slice(0, i2) : "?",
+            text: i2 > 0 ? text.slice(i2 + 2) : text, ts });
+          continue;
+        }
         if (r.bad) { rejected++; log(`geweigerd (${r.bad}) ${r.pk || ""}`); continue; }
         stored += await storePositions(r.positions);
+        const ch = devChans.find((c) => c.idx === chan);
+        if (own && ch && chan !== 0xFF) {                 // eigen kanaalbericht van de tracker: herhalingen tellen
+          const main = r.positions[r.positions.length - 1];
+          watchFor("pos", main.k, ch.secret, ts, text, 2);
+        }
         const tr = known()[r.pk];
         log(`${own ? "eigen · " : ""}${tr ? tr.alias : r.pk} ${STATE[r.state] || r.state} (+${r.positions.length - 1} punten)`);
       }
     } catch (e) { say($("bt-msg"), e.message, false); }
     finally { syncing = false; }
     if (again && rxc) setTimeout(syncAll, 50);
-    if (n) say($("bt-msg"), `${n} bericht(en) gelezen, ${stored} nieuwe positie(s)${rejected ? `, ${rejected} geweigerd` : ""}.`, true);
+    if (n) say($("bt-msg"), `${n} bericht(en) gelezen, ${stored} nieuwe positie(s)${chats ? `, ${chats} chatbericht(en)` : ""}${rejected ? `, ${rejected} geweigerd` : ""}.`, true);
   }
 
   async function readChannels() {
@@ -216,7 +243,7 @@
       const secret = [...f.slice(34, 50)].map((b) => b.toString(16).padStart(2, "0")).join("");
       if (name) { devChans.push({ idx: i, name, secret }); chanNames[i] = name; }
     }
-    renderDevChans();
+    renderDevChans(); renderChat();
   }
   function renderDevChans() {
     $("ch-dev").innerHTML = !rxc ? "Niet verbonden." : devChans.length
@@ -254,7 +281,7 @@
     $("ch-srv").innerHTML = ch.length ? ch.map((c, i) => `<div class="row" style="margin:4px 0;align-items:center"><span style="flex:1"><strong>${esc(c.name)}</strong>
       ${devChans.some((d) => d.secret === c.secret) ? '<span class="pill ok">op de companion</span>' : ""}</span>
       <button type="button" data-srvch="${i}">Op de companion zetten</button></div>`).join("")
-      : "Geen kanalen (of nog niet opgehaald van de server).";
+      : "Geen kanalen van de server (alleen met een account, bij Gegevens).";
     $("ch-srv").querySelectorAll("[data-srvch]").forEach((b) => b.addEventListener("click", () => { const c = ch[Number(b.dataset.srvch)]; addChannel(c.name, c.secret); }));
   }
 
@@ -292,6 +319,139 @@
     if (r.length) useQr(r[0].rawValue); else say($("ch-msg"), "Geen QR-code gevonden op de foto.", false);
   }
 
+  // ---- herhalingen van eigen berichten ------------------------------------------------------
+  // Een kanaalbericht is AES-128-ECB met het kanaalgeheim; het eerste blok is
+  // [tijd 4][0]["naam: tekst" ...]. Dat blok rekenen we zelf uit; elk ontvangen pakket
+  // (push 0x88) met hetzelfde blok is ons bericht, herhaald door een repeater. Het laatste
+  // stuk van het pad is de repeater die we hoorden.
+  const hex = (a) => [...a].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const unhex = (h) => new Uint8Array(h.match(/../g).map((x) => parseInt(x, 16)));
+  let watch = [];                                   // { block, until, store, k }
+  async function aesBlock(secretHex, block) {
+    const key = await crypto.subtle.importKey("raw", unhex(secretHex).slice(0, 16), { name: "AES-CBC" }, false, ["encrypt"]);
+    const out = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv: new Uint8Array(16) }, key, block));
+    return hex(out.slice(0, 16));                   // CBC met nul-IV over 1 blok = ECB
+  }
+  async function watchFor(store, k, secretHex, ts, text, tsSlack) {
+    const t = new TextEncoder().encode(text);
+    for (let d = -tsSlack; d <= tsSlack; d++) {
+      const b = new Uint8Array(16);
+      new DataView(b.buffer).setUint32(0, ts + d, true);
+      b.set(t.slice(0, 11), 5);
+      watch.push({ block: await aesBlock(secretHex, b), until: Date.now() + 180000, store, k });
+    }
+  }
+  async function onRawRx(f) {
+    const now = Date.now();
+    watch = watch.filter((w) => w.until > now);
+    if (!watch.length) return;
+    const snr = new Int8Array(f.buffer)[1] / 4;
+    const raw = f.slice(3);
+    const route = raw[0] & 3, type = (raw[0] >> 2) & 15;
+    if (type !== 5) return;                          // alleen kanaaltekst
+    let i = 1 + (route === 0 || route === 3 ? 4 : 0);
+    const pl = raw[i++], size = (pl >> 6) + 1, count = pl & 63;
+    const path = raw.slice(i, i + size * count); i += size * count;
+    const block = hex(raw.slice(i + 3, i + 19));     // na kanaalhash (1) en MAC (2)
+    const w = watch.find((x) => x.block === block);
+    if (!w) return;
+    const last = count ? hex(path.slice((count - 1) * size, count * size)) : "direct";
+    const st = tx(w.store, "readwrite");
+    const rec = await req(st.get(w.k));
+    if (!rec) return;
+    rec.rep = rec.rep || [];
+    const via = hex(path) || "direct";
+    if (!rec.rep.some((r) => r.path === via)) rec.rep.push({ path: via, last, hops: count, snr });
+    st.put(rec);
+    const mem = (w.store === "chat" ? chatLog : posAll).find((x) => x.k === w.k);
+    if (mem) mem.rep = rec.rep;
+    if (w.store === "chat") renderChat(); else renderAll();
+  }
+  const repText = (rep) => !rep || !rep.length ? "" :
+    `${rep.length}× gehoord via ${[...new Set(rep.map((r) => r.last))].slice(0, 4).join(", ")}`;
+
+  // ---- regio (scope) voor wat de app verstuurt ----------------------------------------------
+  async function applyScope() {
+    if (!rxc) return;
+    const name = (await metaGet("scope", "be")).replace(/^#/, "").trim();
+    try {
+      if (name) {
+        const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("#" + name)));
+        await ask(new Uint8Array([54, 0, ...h.slice(0, 16)]), [0, 1]);
+      } else await ask(new Uint8Array([54, 0]), [0, 1]);     // standaard van de companion
+      log(`regio voor versturen: ${name || "standaard van de companion"}`);
+    } catch (e) { log(`regio instellen mislukt: ${e.message}`); }
+  }
+
+  // ---- chat: alles wat geen trackerbericht is ---------------------------------------------
+  const chatLog = [];
+  let unread = 0;
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+  async function loadChat() {
+    const all = await req(tx("chat", "readonly").index("ts").getAll(IDBKeyRange.lowerBound(Date.now() / 1000 - 7 * 86400)));
+    chatLog.length = 0; chatLog.push(...all);
+  }
+  async function addChat(m) {
+    m.k = `${m.chan}|${m.ts}|${m.from}|${m.text}`;
+    m.rx = Math.round(Date.now() / 1000);
+    const st = tx("chat", "readwrite");
+    if (await req(st.get(m.k))) return 0;
+    st.put(m);
+    chatLog.push(m);
+    if ($("chat").hidden && !m.own) unread++;
+    renderChat();
+    return 1;
+  }
+  function renderChat() {
+    const b = $("chat-badge");
+    b.textContent = unread > 99 ? "99+" : String(unread); b.hidden = !unread;
+    const sel = $("chat-chan"), cur = sel.value;
+    const names = [...new Set(devChans.map((c) => c.name).concat(chatLog.map((m) => m.chan)))];
+    sel.innerHTML = '<option value="">Alle kanalen</option>' +
+      names.map((n) => `<option${n === cur ? " selected" : ""}>${esc(n)}</option>`).join("");
+    const shown = chatLog.filter((m) => !sel.value || m.chan === sel.value).sort((a, b) => a.ts - b.ts).slice(-300);
+    const list = $("chat-list");
+    const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    list.innerHTML = shown.length ? shown.map((m) => `<div class="cmsg${m.own ? " own" : ""}">
+      <div class="cmeta">${m.own ? "jij" : esc(m.dm ? `privé van ${m.from}` : m.from)}${sel.value ? "" : ` · ${esc(m.chan)}`} · ${new Date(m.ts * 1000).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })}</div>
+      <div class="ctext">${esc(m.text)}</div>${m.own ? `<div class="cmeta">${esc(repText(m.rep) || "nog niet gehoord via een repeater")}</div>` : ""}</div>`).join("") : '<div class="empty">Nog geen chatberichten.</div>';
+    if (atEnd) list.scrollTop = list.scrollHeight;
+    const target = devChans.find((c) => c.name === sel.value);
+    $("chat-text").disabled = $("chat-send").disabled = !rxc || !target;
+    $("chat-text").placeholder = !rxc ? "Verbind met een companion om te sturen"
+      : !target ? "Kies een kanaal om te sturen" : `Bericht op ${target.name}`;
+  }
+  function chatOpen(on) {
+    $("chat").hidden = !on; $("chat-btn").setAttribute("aria-expanded", String(on));
+    lsSet("mt.off.chat", on ? "1" : "0");
+    if (on) unread = 0;
+    renderChat();
+    if (on) { const l = $("chat-list"); l.scrollTop = l.scrollHeight; }
+  }
+  async function sendChat(e) {
+    e.preventDefault();
+    const text = $("chat-text").value.trim();
+    const target = devChans.find((c) => c.name === $("chat-chan").value);
+    if (!text || !target || !rxc) return;
+    const ts = Math.round(Date.now() / 1000);
+    const body = new TextEncoder().encode(text).slice(0, 140);
+    const f = new Uint8Array(7 + body.length);   // CMD_SEND_CHANNEL_TXT_MSG: [3, type, kanaal, ts, tekst]
+    f.set([3, 0, target.idx]); new DataView(f.buffer).setUint32(3, ts, true); f.set(body, 7);
+    try {
+      const r = await ask(f, [0, 1, 6]);
+      if (r[0] === 1) throw new Error("de companion weigerde het bericht");
+      $("chat-text").value = ""; say($("chat-msg"), "");
+      const m = { chan: target.name, chanIdx: target.idx, from: selfName || "jij", text, ts, own: true };
+      await addChat(m);
+      watchFor("chat", m.k, target.secret, ts, `${selfName}: ${text}`, 0);
+    } catch (err) { say($("chat-msg"), err.message, false); }
+  }
+  $("chat-btn").addEventListener("click", () => chatOpen($("chat").hidden));
+  $("chat-close").addEventListener("click", () => chatOpen(false));
+  $("chat-chan").addEventListener("change", renderChat);
+  $("chat-form").addEventListener("submit", sendChat);
+
   // ---- kaart ---------------------------------------------------------------------------
   let map = null, markers = new Map(), hours = 24, trackOn = true;
   const dark = () => matchMedia("(prefers-color-scheme: dark)").matches;
@@ -308,8 +468,7 @@
     const file = active ? await mapFile(active) : null;
     let style;
     if (file) style = MTBasemap.offlineStyle(dark(), new File([file], `${active}.pmtiles`));
-    else if (navigator.onLine) style = MTBasemap.style(dark(), true);
-    else style = MTBasemap.style(dark(), false);
+    else style = MTBasemap.style(dark(), false);      // nog geen kaart op het toestel: lege achtergrond
     const view = await metaGet("view", { center: [5.33, 50.93], zoom: 10 });
     if (map) map.remove();
     markers.forEach((m) => m.remove()); markers = new Map();
@@ -327,7 +486,7 @@
       });
       renderAll();
     });
-    if (!file && !navigator.onLine) say($("maps-msg"), "Geen offline kaart op dit toestel: download er een terwijl je internet hebt.", false);
+    if (!file) say($("maps-msg"), "Nog geen kaart op dit toestel: download er hieronder een terwijl je internet hebt.", false);
   }
 
   function colorOf(pk) { const t = known()[pk]; if (t) return t.color; let h = 0; for (const c of pk) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h},70%,45%)`; }
@@ -378,7 +537,7 @@
       return `<div class="otrk" data-pk="${esc(pk)}"><span class="omark" style="background:${esc(colorOf(pk))}">${t && t.icon && window.MTIcons ? MTIcons.svg(t.icon) : ""}</span>
         <div class="body"><div class="nm">${esc(nameOf(pk))} ${last.own ? '<span class="pill">eigen</span>' : ""} ${last.state === "E" ? '<span class="pill sos">SOS</span>' : ""}</div>
         <div class="sub">${esc(ago(last.ts))} · ${esc(STATE[last.state] || last.state || "")}${last.bat != null ? " · " + last.bat + " %" : ""} · ${esc(last.chan || "")} · ${n} punten</div>
-        <div class="sub">${ver}</div></div></div>`;
+        <div class="sub">${ver}${last.own && last.rep ? ` <span class="pill">${esc(repText(last.rep))}</span>` : ""}</div></div></div>`;
     }).join("") : '<div class="empty">Nog geen posities. Verbind met een companion (tabblad Verbinding).</div>';
     $("o-list").querySelectorAll(".otrk").forEach((el) => el.addEventListener("click", () => {
       const arr = by[el.dataset.pk]; const p = arr[arr.length - 1];
@@ -417,7 +576,6 @@
     if (!navigator.onLine) return;
     try {
       const r = await fetch("/api/offline/maps", { credentials: "same-origin" });
-      if (r.status === 401) { $("maps-avail").innerHTML = 'Log in om kaarten te downloaden. <a href="/login?next=/offline">Inloggen</a>'; return; }
       const list = await r.json();
       $("maps-avail").innerHTML = list.map((m) => `<div class="mapbox"><strong>${esc(m.name)}</strong> <span class="muted small">${fmtSize(m.size)}</span>
         <div class="muted small">${esc(m.description)}</div>
@@ -460,10 +618,15 @@
   }
 
   // ---- gegevens ----------------------------------------------------------------------------
-  async function fetchBundle() {
+  async function fetchBundle(quiet) {
+    if (!navigator.onLine) { say($("d-msg"), "Daarvoor heb je internet nodig.", false); return; }
     try {
       const r = await fetch("/api/offline/bundle", { credentials: "same-origin" });
-      if (r.status === 401) { $("d-login").hidden = false; say($("d-msg"), "Log eerst in.", false); return; }
+      if (r.status === 401) {
+        $("d-login").hidden = false;
+        if (quiet !== true) say($("d-msg"), "Daarvoor heb je een account op de server nodig. Zonder account werkt de app ook: zet het kanaal op de companion.", false);
+        return;
+      }
       if (!r.ok) throw new Error(r.statusText);
       bundle = await r.json();
       await metaSet("bundle", bundle);
@@ -480,10 +643,11 @@
     const pks = new Set(posAll.map((p) => p.pk));
     $("d-stats").textContent = `${n} posities bewaard van ${pks.size} tracker(s).`;
   }
-  $("d-bundle").addEventListener("click", fetchBundle);
+  $("d-bundle").addEventListener("click", () => fetchBundle());
   $("d-clear").addEventListener("click", async () => {
-    if (!confirm("Alle bewaarde posities van dit toestel wissen?")) return;
+    if (!confirm("Alle bewaarde posities en chatberichten van dit toestel wissen?")) return;
     await req(tx("pos", "readwrite").clear());
+    await req(tx("chat", "readwrite").clear()); chatLog.length = 0; renderChat();
     posAll.length = 0; markers.forEach((m) => m.remove()); markers = new Map();
     renderAll(); renderStats();
   });
@@ -507,6 +671,7 @@
   function net() { const on = navigator.onLine; $("net").textContent = on ? "online" : "offline"; $("net").className = "pill netpill " + (on ? "on" : "off"); }
   addEventListener("online", net); addEventListener("offline", net);
 
+  $("bt-scope").addEventListener("change", async () => { await metaSet("scope", $("bt-scope").value.trim()); applyScope(); });
   $("bt-connect").addEventListener("click", connect);
   $("bt-disconnect").addEventListener("click", () => { if (dev && dev.gatt.connected) dev.gatt.disconnect(); setBt(false); });
   $("bt-sync").addEventListener("click", syncAll);
@@ -517,6 +682,9 @@
   // Voor tests en foutzoeken: een bericht zoals de companion het doorgeeft verwerken.
   window.MTOffline = {
     decode,
+    addChat, onFrame, onRawRx,
+    // nep-companion voor tests: { write(bytes) } die antwoorden via MTOffline.onFrame teruggeeft
+    async attach(fake, name) { rxc = { properties: { write: true }, writeValue: async (b) => fake.write(b) }; selfName = name; setBt(true, name); await readChannels(); await applyScope(); await syncAll(); },
     async ingest(text, ts, meta) { const r = await decode(text, ts, meta || {}); return r && r.positions ? storePositions(r.positions) : r; },
   };
 
@@ -526,12 +694,16 @@
     db = await openDb();
     bundle = await metaGet("bundle", { trackers: [], channels: [] });
     hours = await metaGet("hours", 24);
+    $("bt-scope").value = await metaGet("scope", "be");
     $("o-hours").querySelectorAll("button").forEach((x) => x.classList.toggle("on", Number(x.dataset.h) === hours));
     await loadPositions();
-    show("trk");
+    await loadChat();
+    chatOpen(lsGet("mt.off.chat") === "1");
+    const act = await metaGet("activeMap", null);
+    show(act && (await mapFile(act)) ? "trk" : "maps");   // eerste keer: eerst een kaart kiezen
     await initMap();
     renderSrvChans();
-    if (navigator.onLine && !bundle.ts) fetchBundle();
+    if (navigator.onLine && !bundle.ts) fetchBundle(true);
     setInterval(renderAll, 30000);
   })();
 })();
