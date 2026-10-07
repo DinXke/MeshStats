@@ -283,37 +283,16 @@ def test_group_of_groups_combines_channels(client):
     assert combo2["includes"] == [ga["id"]] and ids["B"] not in combo2["members"]
 
 
-def test_offline_bundle_and_maps(client, tmp_path):
+def test_offline_app_uses_only_maps(client):
+    """De offline-app gebruikt niets uit de database: alleen kaarten, zonder login."""
     c, main = client
-    assert c.get("/offline").status_code == 200                     # app opent zonder login
+    assert c.get("/offline").status_code == 200
     assert c.get("/offline-sw.js").headers["service-worker-allowed"] == "/"
-    assert c.get("/api/offline/bundle").status_code == 401
-    login(c, "admin", "beheerder1")
-    tid = c.post("/api/trackers", json={"pubkey": "ab12cd34" + "00" * 28, "alias": "Kanaaltracker"}).json()["tracker"]["id"]
-    key = c.get(f"/api/trackers/{tid}/authkey").json()["authkey"]
-    c.post("/api/channels", json={"name": "#ambu", "slot": 6})
-    c.post("/api/channels", json={"name": "#brand", "slot": 7})
-    chans = {x["name"]: x for x in c.get("/api/channels").json()["channels"]}
-    b = c.get("/api/offline/bundle").json()
-    assert {x["name"] for x in b["channels"]} == {"#ambu", "#brand"}
-    assert b["trackers"] == [{"pk8": "ab12cd34", "alias": "Kanaaltracker", "color": b["trackers"][0]["color"],
-                              "icon": b["trackers"][0]["icon"], "authkey": key}]
-    # kijker van groep #ambu: alleen dat kanaal, geen authsleutels
-    g = c.post("/api/groups", json={"name": "Ambu", "perms": ["map.view"], "all_trackers": False,
-                                    "tracker_groups": [chans["#ambu"]["tracker_group_id"]]}).json()
-    c.put(f"/api/tracker-groups/{chans['#ambu']['tracker_group_id']}", json={"name": "Kanaal #ambu", "trackers": [tid]})
-    c.post("/api/users", json={"username": "kijker", "password": "geheim123", "group_ids": [g["id"]]})
-    c.post("/api/logout")
-    login(c, "kijker", "geheim123")
-    b = c.get("/api/offline/bundle").json()
-    assert [x["name"] for x in b["channels"]] == ["#ambu"]
-    assert [t["pk8"] for t in b["trackers"]] == ["ab12cd34"] and "authkey" not in b["trackers"][0]
-    # kaarten: alleen bestanden die echt bestaan
     off = __import__("pathlib").Path(main.S.cfg.tiles_dir) / "offline"
     off.mkdir(parents=True, exist_ok=True)
     (off / "benelux-z10.pmtiles").write_bytes(b"x" * 1234)
-    c.post("/api/logout")                                         # kaarten: ook zonder account
     maps = c.get("/api/offline/maps").json()
     assert [(m["key"], m["size"], m["url"]) for m in maps] == [("benelux-z10", 1234, "/tiles/offline/benelux-z10.pmtiles")]
-    assert c.get("/api/offline/bundle").status_code == 401           # trackers en sleutels niet
     assert c.get("/api/trackers").status_code == 401
+    login(c, "admin", "beheerder1")
+    assert c.get("/api/offline/bundle").status_code == 404          # bestaat niet meer

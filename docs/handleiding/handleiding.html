@@ -543,8 +543,8 @@
 <!-- ============================ 11 ============================ -->
 <h2 class="chap"><span class="nr">11</span>De offline-app</h2>
 <p>Met de <strong>offline-app</strong> volg je trackers zonder internet en zonder de server, bijvoorbeeld op een
-  terrein zonder bereik. Je hebt er geen account voor nodig: wie de sleutel van het kanaal kent, ziet de trackers op
-  dat kanaal. Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus,
+  terrein zonder bereik. Je hebt er geen account voor nodig en de app gebruikt niets uit de database van MeshTrack: van
+  de server komen alleen de kaarten. Wie de sleutel van het kanaal kent, ziet de trackers op dat kanaal. Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus,
   of een andere companion die op het kanaal van de trackers meeluistert. De companion ontcijfert de kanaalberichten; de
   app leest ze, bewaart ze op de telefoon en tekent de sporen op een kaart die op de telefoon staat.</p>
 <div class="note"><b>Alleen via een kanaal</b>De app ziet alleen trackers die via een kanaal sturen (hoofdstuk 9).
@@ -561,8 +561,6 @@
       <li>Open <em>/offline</em> in Chrome (in het menu van de site: <em>Offline</em>).</li>
       <li>Kies in het menu van Chrome <em>App installeren</em> of <em>Toevoegen aan startscherm</em>.</li>
       <li>Download bij <em>Kaarten</em> een kaart die past bij de opslag van je telefoon.</li>
-      <li>Niet verplicht, alleen met een account: tik bij <em>Gegevens</em> op <em>Ophalen van de server</em> voor namen,
-        kleuren en iconen, de kanalen die je mag gebruiken en, met het recht om toestellen in te stellen, de authsleutels.</li>
     </ol>
   </div>
   <table>
@@ -575,15 +573,16 @@
   </table>
 </div>
 <h3>Het kanaal op de companion</h3>
-<p>De companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: kies een kanaal van de server, scan de
-  QR-code (uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies een foto van een QR-code, of vul naam en
+<p>De companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: scan de QR-code (uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies een foto van een QR-code, of vul naam en
   sleutel in. Bij een #kanaal mag de sleutel leeg blijven.</p>
 <h3>Onderweg</h3>
 <p>Tik bij <em>Verbinding</em> op <em>Verbinden</em> en kies de companion (pincode van een MeshTrack-tracker: 123456).
   De app haalt eerst alle wachtende berichten op en daarna elk nieuw bericht zodra het binnenkomt.</p>
-<p>Bij elke tracker staat of de controletekens <em>gecontroleerd</em> zijn of <em>niet gecontroleerd</em> (geen
-  authsleutel op de telefoon of een bericht zonder controletekens). Berichten met foute controletekens worden geweigerd.
-  Verbind je met een tracker in companionmodus (firmware 0.6.2 of nieuwer), dan zie je ook zijn eigen posities,
+<p>Bij <em>Trackers</em> kies je in de keuzelijst <em>Kanaal</em> een van de kanalen die op de companion staan; de
+  kaart en de lijst tonen dan alleen de trackers van dat kanaal. Staat het kanaal er niet bij, kies dan
+  <em>+ Kanaal toevoegen…</em>: je komt bij <em>Kanalen</em>, waar je het toevoegt met naam en sleutel, een QR-scan of een foto.</p>
+<p>De namen van de trackers komen uit de contacten van de companion; een tracker die de companion (nog) niet kent,
+  staat er met het begin van zijn sleutel. De controletekens in de berichten kan alleen de server nakijken. Verbind je met een tracker in companionmodus (firmware 0.6.2 of nieuwer), dan zie je ook zijn eigen posities,
   gemarkeerd als <em>eigen</em>.</p>
 <div class="cols">
   <div>
