@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MeshTrack – offline</title>
+<meta name="theme-color" content="#0b6e4f">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body.offapp { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  .offmain { flex: 1; display: flex; min-height: 0; }
+  #omap { flex: 1; min-width: 0; position: relative; }
+  #opanel { width: 380px; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  #opanel .pane { overflow: auto; padding: 10px 12px 24px; flex: 1; }
+  .netpill.on { color: var(--ok); border-color: currentColor; }
+  .netpill.off { color: var(--warn); border-color: currentColor; }
+  .otrk { display: flex; gap: 10px; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .otrk .body { flex: 1; min-width: 0; }
+  .otrk .nm { font-weight: 600; }
+  .otrk .sub { font-size: 12px; color: var(--muted); }
+  .omark { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; color: #fff; }
+  .omark svg { width: 16px; height: 16px; }
+  .olabel { position: absolute; left: 28px; top: 2px; white-space: nowrap; background: var(--panel); color: var(--text); font-size: 12px; font-weight: 600; padding: 1px 6px; border-radius: 6px; box-shadow: var(--shadow); }
+  .mapbox { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 8px 0; }
+  .mapbox .row { margin: 6px 0 0; }
+  .bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 6px; }
+  .bar span { display: block; height: 100%; width: 0; background: var(--accent); }
+  #qrvideo { width: 100%; max-height: 260px; background: #000; border-radius: 8px; }
+  .msglog { font-family: ui-monospace, Consolas, monospace; font-size: 11px; max-height: 160px; overflow: auto; background: var(--bg); border-radius: 8px; padding: 6px; white-space: pre-wrap; }
+  @media (max-width: 760px) {
+    .offmain { flex-direction: column; }
+    #omap { flex: 1 1 52%; }
+    #opanel { width: auto; border-left: 0; border-top: 1px solid var(--line); flex: 1 1 48%; }
+  }
+</style>
+</head>
+<body class="offapp">
+<header class="top">
+  <h1>MeshTrack <span class="muted small" style="font-weight:400">offline</span></h1>
+  <span class="spacer"></span>
+  <a href="/" class="small" id="o-online">Online kaart</a>
+  <a href="/help#offline" class="small">Help</a>
+  <span id="net" class="pill netpill">…</span>
+  <span id="btpill" class="pill">Bluetooth: uit</span>
+</header>
+<div class="offmain">
+  <div id="omap"></div>
+  <aside id="opanel">
+    <div class="tabs" id="otabs">
+      <button class="tab" data-tab="trk">Trackers</button>
+      <button class="tab" data-tab="bt">Verbinding</button>
+      <button class="tab" data-tab="ch">Kanalen</button>
+      <button class="tab" data-tab="maps">Kaarten</button>
+      <button class="tab" data-tab="data">Gegevens</button>
+    </div>
+
+    <section class="pane" id="pane-trk">
+      <div class="row" style="margin-top:0;align-items:center;gap:8px">
+        <label class="switch" style="margin:0"><input type="checkbox" id="o-trackon" checked><span></span> Spoor</label>
+        <div class="seg" id="o-hours">
+          <button data-h="1">1u</button><button data-h="4">4u</button><button data-h="12">12u</button><button data-h="24">24u</button><button data-h="168">7d</button>
+        </div>
+      </div>
+      <div id="o-list"></div>
+    </section>
+
+    <section class="pane" id="pane-bt" hidden>
+      <p class="muted small">Verbind met een MeshCore-companion via Bluetooth: een tracker in companionmodus of een andere
+        companion die op het kanaal meeluistert. De companion ontcijfert de kanaalberichten zelf; deze app leest ze, ook
+        zonder internet. Werkt in Chrome op Android en op een computer. Pincode van een MeshTrack-tracker: <strong>123456</strong>.</p>
+      <div class="row">
+        <button class="primary" id="bt-connect">Verbinden</button>
+        <button id="bt-disconnect" hidden>Loskoppelen</button>
+        <button id="bt-sync" hidden>Berichten ophalen</button>
+      </div>
+      <div id="bt-info" class="small" style="margin-top:8px"></div>
+      <div id="bt-msg" class="msg"></div>
+      <h3 class="small">Laatst ontvangen</h3>
+      <div id="bt-log" class="msglog"></div>
+    </section>
+
+    <section class="pane" id="pane-ch" hidden>
+      <p class="muted small">De companion moet het kanaal kennen om de berichten te ontcijferen. Hier zet je een kanaal op de
+        verbonden companion.</p>
+      <h3 class="small">Op de verbonden companion</h3>
+      <div id="ch-dev" class="small muted">Niet verbonden.</div>
+      <h3 class="small">Kanaal toevoegen</h3>
+      <div class="row">
+        <button id="ch-scan">QR-code scannen</button>
+        <label class="btnlike">Foto van een QR-code<input type="file" id="ch-file" accept="image/*" hidden></label>
+      </div>
+      <video id="qrvideo" playsinline muted hidden></video>
+      <div class="grid">
+        <div><label for="ch-name">Naam</label><input id="ch-name" maxlength="31" placeholder="bv. #ploeg3 of Ploeg 3"></div>
+        <div><label for="ch-secret">Sleutel (32 hex)</label><input id="ch-secret" class="mono" maxlength="47" placeholder="leeg bij een #kanaal"></div>
+      </div>
+      <div class="row"><button class="primary" id="ch-add">Op de companion zetten</button></div>
+      <div id="ch-msg" class="msg"></div>
+      <h3 class="small">Kanalen van de server</h3>
+      <div id="ch-srv" class="small muted">Haal eerst de gegevens van de server op (tabblad Gegevens).</div>
+    </section>
+
+    <section class="pane" id="pane-maps" hidden>
+      <p class="muted small">Download een kaart terwijl je internet hebt. Ze blijft op dit toestel en werkt daarna zonder
+        verbinding.</p>
+      <div id="maps-stored"></div>
+      <h3 class="small">Beschikbaar op de server</h3>
+      <div id="maps-avail" class="small muted">Alleen met internet en als je ingelogd bent.</div>
+      <div id="maps-msg" class="msg"></div>
+      <div class="small muted" id="maps-quota"></div>
+    </section>
+
+    <section class="pane" id="pane-data" hidden>
+      <h3 class="small">Gegevens van de server</h3>
+      <p class="muted small">Namen, kleuren en iconen van de trackers, de kanalen die je mag gebruiken en (met het recht om
+        toestellen in te stellen) de authsleutels om controletekens offline na te kijken.</p>
+      <div class="row"><button id="d-bundle">Ophalen van de server</button><a class="btnlink" href="/login?next=/offline" id="d-login" hidden>Inloggen</a></div>
+      <div id="d-bundleinfo" class="small muted"></div>
+      <div id="d-msg" class="msg"></div>
+      <h3 class="small">Op dit toestel</h3>
+      <div id="d-stats" class="small"></div>
+      <div class="row">
+        <button id="d-export">Posities exporteren (CSV)</button>
+        <button class="danger" id="d-clear">Alle posities wissen</button>
+      </div>
+    </section>
+  </aside>
+</div>
+<script src="/static/vendor/maplibre-gl.js"></script>
+<script src="/static/vendor/pmtiles.js"></script>
+<script src="/static/basemap.js"></script>
+<script src="/static/icons.js"></script>
+<script src="/static/offline.js"></script>
+</body>
+</html>

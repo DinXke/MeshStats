@@ -108,10 +108,11 @@
     <li><span class="n">8</span> Firmware flashen <small>met behoud van de sleutel</small></li>
     <li><span class="n">9</span> Nieuw toestel klaarmaken, sleutels en backups</li>
     <li><span class="n">10</span> Gebruikers, rechten en instellingen</li>
-    <li><span class="n">11</span> Problemen oplossen</li>
+    <li><span class="n">11</span> De offline-app <small>trackers volgen zonder internet</small></li>
+    <li><span class="n">12</span> Problemen oplossen</li>
   </ol>
   <div class="who">
-    <div><b>Iedereen</b>De tracker gebruiken (hoofdstuk 2 en 3), de kaart en het logboek lezen (4 en 5).</div>
+    <div><b>Iedereen</b>De tracker gebruiken (hoofdstuk 2 en 3), de kaart en het logboek lezen (4 en 5), de offline-app (11).</div>
     <div><b>Operators</b>Trackers toevoegen en instellen, zones en meldingen (5 tot 7).</div>
     <div><b>Beheerders</b>Firmware, sleutels en backups, gebruikers en systeeminstellingen (8 tot 10).</div>
   </div>
@@ -540,7 +541,54 @@
   zendvermogen, bytes per hop, regio en het kanaal Public.</p>
 
 <!-- ============================ 11 ============================ -->
-<h2 class="chap"><span class="nr">11</span>Problemen oplossen</h2>
+<h2 class="chap"><span class="nr">11</span>De offline-app</h2>
+<p>Met de <strong>offline-app</strong> volg je trackers zonder internet en zonder de server, bijvoorbeeld op een
+  terrein zonder bereik. Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus,
+  of een andere companion die op het kanaal van de trackers meeluistert. De companion ontcijfert de kanaalberichten; de
+  app leest ze, bewaart ze op de telefoon en tekent de sporen op een kaart die op de telefoon staat.</p>
+<div class="note"><b>Alleen via een kanaal</b>De app ziet alleen trackers die via een kanaal sturen (hoofdstuk 9).
+  Berichten naar de server (DM) kan alleen de server lezen.</div>
+<figure class="phones">
+  <div><img src="img/offline-gsm.jpg" alt=""><figcaption>Een rit, met elk punt van 10 seconden.</figcaption></div>
+  <div><img src="img/offline-kanalen.jpg" alt=""><figcaption>Een kanaal op de companion zetten.</figcaption></div>
+  <div><img src="img/offline-kaarten.jpg" alt=""><figcaption>Kaarten op de telefoon.</figcaption></div>
+</figure>
+<div class="cols">
+  <div>
+    <h3>Vooraf, met internet</h3>
+    <ol>
+      <li>Open <em>/offline</em> in Chrome (in het menu: <em>Offline</em>) en log in.</li>
+      <li>Kies in het menu van Chrome <em>App installeren</em> of <em>Toevoegen aan startscherm</em>.</li>
+      <li>Tik bij <em>Gegevens</em> op <em>Ophalen van de server</em>: namen, kleuren en iconen van de trackers, de kanalen
+        die je mag gebruiken en, met het recht om toestellen in te stellen, de authsleutels.</li>
+      <li>Download bij <em>Kaarten</em> een kaart die past bij de opslag van je telefoon.</li>
+    </ol>
+  </div>
+  <table>
+    <tr><th>Kaart</th><th>Grootte</th></tr>
+    <tr><td>Limburg, alle straten</td><td>84 MB</td></tr>
+    <tr><td>België, tot op straatniveau</td><td>286 MB</td></tr>
+    <tr><td>Benelux, overzicht / de meeste straten</td><td>44 / 276 MB</td></tr>
+    <tr><td>Frankrijk, overzicht / de meeste straten</td><td>216 MB / 1,1 GB</td></tr>
+    <tr><td>Duitsland, overzicht / de meeste straten</td><td>157 / 884 MB</td></tr>
+  </table>
+</div>
+<h3>Het kanaal op de companion</h3>
+<p>De companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: kies een kanaal van de server, scan de
+  QR-code (uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies een foto van een QR-code, of vul naam en
+  sleutel in. Bij een #kanaal mag de sleutel leeg blijven.</p>
+<h3>Onderweg</h3>
+<p>Tik bij <em>Verbinding</em> op <em>Verbinden</em> en kies de companion (pincode van een MeshTrack-tracker: 123456).
+  De app haalt eerst alle wachtende berichten op en daarna elk nieuw bericht zodra het binnenkomt.</p>
+<p>Bij elke tracker staat of de controletekens <em>gecontroleerd</em> zijn of <em>niet gecontroleerd</em> (geen
+  authsleutel op de telefoon of een bericht zonder controletekens). Berichten met foute controletekens worden geweigerd.
+  Verbind je met een tracker in companionmodus (firmware 0.6.2 of nieuwer), dan zie je ook zijn eigen posities,
+  gemarkeerd als <em>eigen</em>.</p>
+<p>Alles blijft op de telefoon tot je het bij <em>Gegevens</em> wist; daar exporteer je de posities ook als CSV.
+  Bluetooth werkt in Chrome op Android en op een computer, niet op een iPhone.</p>
+
+<!-- ============================ 12 ============================ -->
+<h2 class="chap"><span class="nr">12</span>Problemen oplossen</h2>
 <table>
   <tr><th>Probleem</th><th>Wat te doen</th></tr>
   <tr><td class="k">mesh: niet verbonden</td><td>De companion op de server is niet bereikbaar, of een ander programma is ermee verbonden

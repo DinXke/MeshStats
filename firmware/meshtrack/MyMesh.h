@@ -180,6 +180,26 @@ public:
     if (!getChannel(idx, ch) || !ch.name[0]) return false;
     return sendGroupMessage(getRTCClock()->getCurrentTimeUnique(), ch.channel, "MT", text, strlen(text));
   }
+  // MeshTrack: een kopie van een eigen positie in de wachtrij voor de app (Bluetooth), zodat een
+  // verbonden app (bv. de offline-app) ook de eigen posities ziet. reserved1 = 1 markeert "eigen".
+  void mtQueueOwn(uint8_t chan_idx, const char* text) {
+    uint8_t f[MAX_FRAME_SIZE];
+    int i = 0;
+    f[i++] = 17;                 // RESP_CODE_CHANNEL_MSG_RECV_V3
+    f[i++] = 0;                  // snr
+    f[i++] = 1;                  // reserved1: eigen bericht
+    f[i++] = 0;
+    f[i++] = chan_idx;           // 0xFF = via DM verstuurd
+    f[i++] = 0xFF;               // path_len: eigen
+    f[i++] = 0;                  // TXT_TYPE_PLAIN
+    uint32_t ts = getRTCClock()->getCurrentTime();
+    memcpy(&f[i], &ts, 4); i += 4;
+    int n = snprintf((char*)&f[i], MAX_FRAME_SIZE - i, "MT: %s", text);
+    if (n < 0) return;
+    i += n < MAX_FRAME_SIZE - i ? n : MAX_FRAME_SIZE - i - 1;
+    addToOfflineQueue(f, i);
+    if (_serial->isConnected()) { uint8_t t[1] = {0x83}; _serial->writeFrame(t, 1); }   // PUSH_CODE_MSG_WAITING
+  }
   // MeshTrack: kanalen (128-bit sleutel, zoals de app) lezen en zetten
   bool mtGetChannel(int idx, ChannelDetails& ch) { return getChannel(idx, ch); }
   bool mtSetChannel(int idx, const char* name, const uint8_t* secret16) {

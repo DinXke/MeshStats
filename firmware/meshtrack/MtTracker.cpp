@@ -229,6 +229,18 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
     snprintf(text, sizeof(text), "T1C|%s|%s|%s", pk, sig, body + 9);
     retries = 0;
   }
+  // Eigen positie ook naar een verbonden app (alleen als companion: dan staat Bluetooth aan).
+  if (mt_effective_mode() == MT_MODE_COMPANION) {
+    char own[MT_TEXT_MAX + 1];
+    if (chan) strncpy(own, text, sizeof(own));
+    else {
+      char pk[9];
+      for (int i = 0; i < 4; i++) snprintf(pk + 2 * i, 3, "%02x", the_mesh.self_id.pub_key[i]);
+      snprintf(own, sizeof(own), "T1C|%s|-|%s", pk, text + 3);
+    }
+    own[MT_TEXT_MAX] = 0;
+    the_mesh.mtQueueOwn(chan ? mt_cfg.chan_idx : 0xFF, own);
+  }
   mt_send(text, manual, retries, keep, tag);
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
   strncpy(s_last_reason, reason, sizeof(s_last_reason) - 1);
