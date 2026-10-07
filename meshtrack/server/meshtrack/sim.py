@@ -440,9 +440,33 @@ class SimTracker:
             st.sleeping, st.last_heartbeat = True, now
             return
         if moving:
+            self._sample(now)
             reason = decide(st, p, now, self.lat, self.lon, self.spd, self.crs)
             if reason:
                 self._send(now, "M", reason=reason)
+
+    def _sample(self, now: float) -> None:
+        """Zoals de firmware: in beweging elke sample_s een punt bewaren."""
+        p = self.params
+        if p.sample_s <= 0 or self.spd < STILL_KMH:
+            return
+        buf = self.__dict__.setdefault("pts", [])
+        if buf and now - buf[-1][0] < p.sample_s:
+            return
+        buf.append((int(now), self.lat, self.lon, round(self.spd)))
+        del buf[:-16]
+
+    def _extra(self, now: float, lat: float, lon: float) -> str:
+        """Bewaarde punten als dt,dlat,dlon,spd; zoveel als in 160 tekens past (oudste eerst)."""
+        buf = [b for b in self.__dict__.get("pts", []) if b[0] < int(now)]
+        out, room = [], 160 - 75
+        for ts, la, lo, sp in buf:
+            item = f"{int(now) - ts},{round((la - lat) * 1e5)},{round((lo - lon) * 1e5)},{sp}"
+            if len(item) + 1 > room:
+                break
+            out.append(item)
+            room -= len(item) + 1
+        return ";".join(out)
 
     def _send(self, now: float, state: str, reason: str, with_pos: bool = True) -> None:
         lat = lon = None
@@ -461,6 +485,7 @@ class SimTracker:
             self.mode,
             "u" if self.charging else "b",
             str(int(now)) if with_pos else "",     # fix_ts: tijd van de fix
+            self._extra(now, lat, lon) if with_pos else "",
         ]
         text = "|".join(fields_)
         self.seq = (self.seq + 1) % 65536
@@ -469,7 +494,8 @@ class SimTracker:
         if self.rng.random() < self.loss:
             self.stats.lost += 1
             link_result(self.rules, self.params, False)
-            return
+            return                                 # punten blijven bewaard voor het volgende bericht
+        self.__dict__["pts"] = []                  # bevestigd: buffer leeg
         self.stats.sent += 1
         snr = round(self.rng.uniform(-8, 10), 1)
         hops = self.rng.choice((0, 1, 1, 2, 2, 3))

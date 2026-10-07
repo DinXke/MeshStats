@@ -841,7 +841,11 @@
       const p = msg.position;
       if (p.lat != null && !p.suspect && hoursNow()) {
         if (!tracks.has(t.id)) tracks.set(t.id, []);
-        tracks.get(t.id).push({ lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat });
+        // Chronologisch invoegen: een bericht kan eerdere punten meebrengen.
+        const arr = tracks.get(t.id), item = { lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat };
+        let i = arr.length;
+        while (i > 0 && arr[i - 1].ts > item.ts) i--;
+        if (!(i > 0 && arr[i - 1].ts === item.ts)) arr.splice(i, 0, item);
       }
       if (p.state === "E" && p.lat != null && !p.suspect) {
         if (!sosPts.has(t.id)) sosPts.set(t.id, []);

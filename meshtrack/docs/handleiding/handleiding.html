@@ -89,7 +89,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Website 0.5 · firmware 0.4.1 (T1000-E) · MeshCore v1.17.1<br>
+    Website 0.6 · firmware 0.5.0 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -232,7 +232,12 @@
 <p>Een bewegingssensor maakt hem weer wakker; de eerste positie daarna heet <em>wakker door beweging</em>. Krijgt hij geen
   ontvangstbewijs, dan probeert hij het nog enkele keren (de laatste keer via flood) en wacht daarna op de volgende positie.</p>
 
-<h3>Ritme volgens de ontvangst</h3>
+<h3>Meerdere punten per bericht</h3>
+<p>In beweging bewaart de tracker elke 15 s een punt (instelbaar). Elk bericht neemt zoveel bewaarde punten mee als erin passen,
+  elk met zijn eigen tijd. Je stelt dus in hoe vaak hij verstuurt en hoe vaak hij een punt neemt: een fijn spoor met weinig
+  berichten. De punten komen chronologisch op de kaart; gaat een bericht verloren, dan reizen ze mee met het volgende.</p>
+
+<h3>Ritme volgens de ontvangst (optioneel)</h3>
 <table>
   <tr><th>Ontvangst</th><th>Wat doet de tracker</th><th>Standaard</th></tr>
   <tr><td class="k">Goed</td><td>De ACK komt snel binnen: in beweging stuurt hij vaker (als hij minstens 20 m verplaatst is).

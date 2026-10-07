@@ -96,6 +96,41 @@ static void radio_wake() {
 
 bool mt_radio_paused() { return s_radio_asleep; }
 
+// ---- punten bewaren -------------------------------------------------------------
+// In beweging elke sample_s een punt; elk bericht met een positie neemt zoveel eerdere
+// punten mee als in 156 tekens past (oudste eerst, als dt,dlat,dlon,spd t.o.v. het
+// hoofdpunt). Pas na een ACK verdwijnen ze uit de buffer: een gemist bericht gaat dus
+// niet verloren, zijn punten reizen mee met het volgende.
+struct MtPt { uint32_t ts; int32_t lat, lon; uint16_t spd; };   // lat/lon in 1e-5 graden
+#define MT_PTS 24
+static MtPt s_pts[MT_PTS];
+static uint8_t s_npts = 0;
+
+static void pts_push(uint32_t ts, double la, double lo, float sp) {
+  if (!ts) return;
+  if (s_npts && s_pts[s_npts - 1].ts >= ts) return;            // al bewaard
+  if (s_npts == MT_PTS) { memmove(s_pts, s_pts + 1, sizeof(MtPt) * (MT_PTS - 1)); s_npts--; }
+  s_pts[s_npts++] = { ts, (int32_t)lround(la * 1e5), (int32_t)lround(lo * 1e5), (uint16_t)(sp < 0 ? 0 : sp + 0.5f) };
+}
+
+static void pts_acked(uint32_t upto) {
+  uint8_t k = 0;
+  while (k < s_npts && s_pts[k].ts <= upto) k++;
+  if (k) { memmove(s_pts, s_pts + k, sizeof(MtPt) * (s_npts - k)); s_npts -= k; }
+}
+
+static void pts_sample(MtNmeaProvider& g) {
+  if (!mt_cfg.sample_s || !g.lastValidUnix()) return;
+  uint32_t ts = g.lastValidUnix();
+  if (s_npts && ts - s_pts[s_npts - 1].ts < mt_cfg.sample_s) return;
+  double la = g.getLatitude() / 1e6, lo = g.getLongitude() / 1e6;
+  if (s_npts && g.speedKmh() < 3 &&
+      mt_haversine_m(s_pts[s_npts - 1].lat / 1e5, s_pts[s_npts - 1].lon / 1e5, la, lo) < 5) return;   // stil: geen dubbele punten
+  pts_push(ts, la, lo, g.speedKmh());
+}
+
+uint8_t mt_tracker_buffered() { return s_npts; }
+
 // ---- berichten ----------------------------------------------------------------
 
 static bool tracking_active() {
@@ -125,21 +160,40 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
     with_pos = false;
   }
   int bat = mt_battery_pct(board.getBattMilliVolts());
-  char text[96];
+  char text[MT_TEXT_MAX + 1];
   // 13e veld: voeding (u = USB/laden, b = batterij). Elk bericht draagt het mee,
   // zodat de server een gemiste in/uitplug-melding bij het volgende bericht inhaalt.
   // 14e veld: GPS-tijd van de fix. Zo staat de positie op het juiste moment, ook na
   // herhaalpogingen of als het bericht even in de wachtrij stond.
-  snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c|%c|%s",
+  int n = snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c|%c|%s",
            (unsigned)seq_next(), state, lat, lon, alt, spd, crs, bat < 0 ? 0 : bat, hd, age,
            mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b', fts);
+  // 15e veld: eerdere punten, zoveel als er passen.
+  uint32_t tag = 0, main_ts = with_pos ? g.lastValidUnix() : 0;
+  if (main_ts) {
+    int32_t mla = lround(la * 1e5), mlo = lround(lo * 1e5);
+    bool first = true;
+    for (uint8_t k = 0; k < s_npts; k++) {
+      const MtPt& q = s_pts[k];
+      if (q.ts >= main_ts) break;
+      char item[40];
+      int m = snprintf(item, sizeof(item), "%s%lu,%ld,%ld,%u", first ? "|" : ";", (unsigned long)(main_ts - q.ts),
+                       (long)(q.lat - mla), (long)(q.lon - mlo), (unsigned)q.spd);
+      if (n + m > MT_TEXT_MAX) break;
+      memcpy(text + n, item, m + 1);
+      n += m;
+      first = false;
+    }
+    pts_push(main_ts, la, lo, sp);          // ook het hoofdpunt: bij een misser gaat het mee met het volgende
+    tag = main_ts;
+  }
   radio_wake();
   // Gewone posities (M, W, N) in het snelle ritme: weinig of geen herhaalpogingen,
   // want de volgende verse positie komt er zo aan. Belangrijke berichten: alle pogingen.
   bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B';
   uint8_t retries = mt_cfg.ack_retries;
   if (!keep && s_rules.fast && !s_rules.slow && mt_cfg.fast_retries < retries) retries = mt_cfg.fast_retries;
-  mt_send(text, manual, retries, keep);
+  mt_send(text, manual, retries, keep, tag);
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
   strncpy(s_last_reason, reason, sizeof(s_last_reason) - 1);
   s_last_tx_ms = millis();
@@ -148,7 +202,8 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
 
 static MtRuleParams params();
 
-static void on_send_done(bool ok, bool manual, uint32_t ack_ms) {
+static void on_send_done(bool ok, bool manual, uint32_t ack_ms, uint32_t tag) {
+  if (ok && tag) pts_acked(tag);
   if (manual) ui_task.playForced(ok ? "ok:d=16,o=7,b=200:16c,16p,16c" : "nok:d=4,o=5,b=100:4c");
   bool was_fast = s_rules.fast, was_slow = s_rules.slow;
   mt_rules_link(s_rules, params(), ok, ack_ms);
@@ -198,6 +253,7 @@ static MtRuleParams params() {
   p.fast_ack_s = mt_cfg.fast_ack_s;
   p.slow_after = mt_cfg.slow_after;
   p.slow_factor = mt_cfg.slow_factor;
+  p.adaptive = mt_cfg.adaptive;
   return p;
 }
 
@@ -229,6 +285,7 @@ static void step_tracking() {
     case MT_T_ACQUIRE:
       if (new_fix) {
         s_last_eval_fix = g.lastValidMs();
+        if (moving_now(g.speedKmh())) pts_sample(g);
         if (s_purpose == PUR_HEARTBEAT) {
           send_report('H', true, false, "heartbeat");
           s_last_hb_s = now_s();

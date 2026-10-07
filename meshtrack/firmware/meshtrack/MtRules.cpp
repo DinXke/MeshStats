@@ -15,6 +15,7 @@ float mt_angle_diff(float a, float b) {
 }
 
 void mt_rules_link(MtRuleState& st, const MtRuleParams& p, bool ok, uint32_t ack_ms) {
+  if (!p.adaptive) { st.fast = st.slow = false; st.fails = 0; return; }
   if (ok) {
     st.fails = 0;
     st.slow = false;

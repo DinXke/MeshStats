@@ -39,7 +39,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.5.2"
+VERSION = "0.6.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -153,8 +153,18 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
             log.info("bericht van %s genegeerd: %r", prefix, text[:60])
         return
     t = S.db.tracker(pos["tracker_id"])
+    extras = pos.pop("extras", [])
     if not simulated:
-        log.info("positie %s seq=%s state=%s", t["alias"], pos["seq"], pos["state"])
+        log.info("positie %s seq=%s state=%s%s", t["alias"], pos["seq"], pos["state"],
+                 f" (+{len(extras)} eerdere punten)" if extras else "")
+    # eerdere punten eerst, chronologisch: zones en de live kaart volgen de echte volgorde
+    for ep in extras:
+        await S.hub.send({"type": "position", "position": ep, "tracker": tracker_out(t)})
+        if not ep["suspect"]:
+            for ev in geofence.evaluate(S.db, t["id"], ep["lat"], ep["lon"], ep["ts"]):
+                ev["tracker"] = t["alias"]
+                await S.hub.send({"type": "geofence", "event": ev})
+                S.alerts.fire(t, "zone_in" if ev["event"] == "enter" else "zone_out", ep, ev["geofence"], ev.get("owner"))
     await S.hub.send({"type": "position", "position": pos, "tracker": tracker_out(t)})
     S.alerts.fire(t, pos["state"], pos)
     if before is not None and before.get("lost"):
