@@ -9,19 +9,14 @@
   const fmtTs = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "nooit");
 
   // ---- tabs ------------------------------------------------------------------------
-  const tabs = document.querySelectorAll(".pagetabs .tab");
   const tabPerm = { users: "users.manage", groups: "users.manage", shares: "share.manage", audit: "users.manage" };
-  tabs.forEach((b) => {
-    if (!can(tabPerm[b.dataset.tab])) b.hidden = true;
-    b.addEventListener("click", () => show(b.dataset.tab));
-  });
-  function show(name) {
-    tabs.forEach((x) => x.classList.toggle("on", x.dataset.tab === name));
-    document.querySelectorAll("main .pane").forEach((p) => { p.hidden = p.id !== "pane-" + name; });
+  function onShow(name) {
     if (name === "audit") loadAudit();
     if (name === "shares") loadShares();
-    history.replaceState(null, "", "#" + name);
   }
+  MT.dialogize($("u-form"), "Gebruiker");
+  MT.dialogize($("g-form"), "Groep");
+  MT.dialogize($("s-form"), "Deellink");
 
   // ---- gegevens --------------------------------------------------------------------
   async function loadBase() {
@@ -91,7 +86,7 @@
   }
   async function delUser(id) {
     const u = users.find((x) => x.id === id);
-    if (!confirm(`Gebruiker "${u.username}" verwijderen?`)) return;
+    if (!(await MT.confirm(`Gebruiker "${u.username}" verwijderen?`, { ok: "Verwijderen", danger: true }))) return;
     try { await MT.api(`/api/users/${id}`, { method: "DELETE" }); users = await MT.api("/api/users"); renderUsers(); }
     catch (e) { alert(e.message); }
   }
@@ -129,7 +124,7 @@
     document.querySelectorAll("[data-gedit]").forEach((b) => b.addEventListener("click", () => openGroup(groups.find((g) => g.id === Number(b.dataset.gedit)))));
     document.querySelectorAll("[data-gdel]").forEach((b) => b.addEventListener("click", async () => {
       const g = groups.find((x) => x.id === Number(b.dataset.gdel));
-      if (!confirm(`Groep "${g.name}" verwijderen?`)) return;
+      if (!(await MT.confirm(`Groep "${g.name}" verwijderen?`, { ok: "Verwijderen", danger: true }))) return;
       try { await MT.api(`/api/groups/${g.id}`, { method: "DELETE" }); await loadBase(); renderGroups(); renderUsers(); } catch (e) { alert(e.message); }
     }));
   }
@@ -196,7 +191,7 @@
     }).join("") || '<div class="empty">Nog geen deellinks.</div>';
     document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => { navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Gekopieerd"; }));
     document.querySelectorAll("[data-sdel]").forEach((b) => b.addEventListener("click", async () => {
-      if (!confirm("Deze link intrekken? Wie hem heeft, ziet daarna niets meer.")) return;
+      if (!(await MT.confirm("Deze link intrekken? Wie hem heeft, ziet daarna niets meer.", { ok: "Intrekken", danger: true }))) return;
       await MT.api(`/api/shares/${b.dataset.sdel}`, { method: "DELETE" }); loadShares();
     }));
   }
@@ -240,6 +235,5 @@
   // ---- start --------------------------------------------------------------------------
   await loadBase();
   if (can("users.manage")) { renderUsers(); renderGroups(); }
-  const first = location.hash.slice(1) || (can("users.manage") ? "users" : "shares");
-  show(can(tabPerm[first]) ? first : (can("users.manage") ? "users" : "shares"));
+  MT.tabs(document.querySelector(".pagetabs"), onShow, (n) => can(tabPerm[n]));
 })();

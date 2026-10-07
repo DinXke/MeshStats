@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -493,9 +493,9 @@ def audit(p: Principal, action: str, detail: str = "") -> None:
 
 
 PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help")
-PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "trackers.serial", "sims.manage", "companion.view"),
+PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "sims.manage"), "/devices": ("trackers.serial",),
               "/users": ("users.manage", "share.manage"), "/log": ("log.view",),
-              "/system": ("alerts.manage", "alerts.personal", "system.manage")}
+              "/system": ("alerts.manage", "alerts.personal", "system.manage", "companion.view")}
 
 
 @app.middleware("http")
@@ -515,7 +515,7 @@ async def guard(request: Request, call_next):
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     if path.startswith("/tiles"):
         resp.headers["Cache-Control"] = "no-cache"
-    elif path.startswith("/static") or path in ("/", "/admin", "/login", "/users", "/help", "/log", "/system"):
+    elif path.startswith("/static") or path in ("/", "/admin", "/devices", "/login", "/users", "/help", "/log", "/system"):
         # Altijd hervalideren (ETag/Last-Modified -> 304): na een update nooit
         # een oude CSS/JS naast nieuwe HTML.
         resp.headers["Cache-Control"] = "no-cache"
@@ -532,6 +532,11 @@ async def index():
 @app.get("/admin")
 async def admin():
     return page("admin.html")
+
+
+@app.get("/devices")
+async def devices():
+    return page("devices.html")
 
 
 @app.get("/users")
@@ -817,8 +822,10 @@ async def list_tracker_groups(request: Request):
     """Alle ingelogden: enkel de trackers die je ziet; beheerders ook lege groepen."""
     p = who(request)
     manage = p.can("trackers.manage") or p.can("users.manage")
+    chan_of = {c["tracker_group_id"]: c["name"] for c in S.db.channels() if c.get("tracker_group_id")}
     out = []
     for g in S.db.tracker_groups():
+        g["channel"] = chan_of.get(g["id"])
         g["trackers"] = [t for t in g["trackers"] if p.sees(t)]
         if manage or g["trackers"]:
             out.append(g)
@@ -1020,10 +1027,13 @@ def _channel_body(b: ChannelIn, cid: Optional[int]) -> dict[str, Any]:
 
 @app.get("/api/channels/device")
 async def channels_for_device(request: Request):
-    """Kanalen om op een tracker te zetten (USB-formulier): naam, sleutel."""
-    need(request, "trackers.serial")
+    """Kanalen om op een tracker te zetten (USB-formulier): naam, sleutel. Beheerders (system.manage)
+    krijgen alle kanalen; anderen alleen de kanalen waarvan een van hun groepen de kanaalgroep ziet."""
+    p = need(request, "trackers.serial")
+    def allowed(c: dict[str, Any]) -> bool:
+        return p.can("system.manage") or (c.get("tracker_group_id") in p.tracker_groups)
     return [{"id": c["id"], "name": c["name"], "secret": c["secret"], "region": c.get("region") or ""}
-            for c in S.db.channels() if c["active"]]
+            for c in S.db.channels() if c["active"] and allowed(c)]
 
 
 @app.get("/api/channels")

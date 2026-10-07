@@ -15,373 +15,215 @@
   <span class="spacer"></span>
   <span id="mesh" class="pill">mesh …</span>
 </header>
-<main class="page">
+<main class="page wide">
+  <div class="tabs pagetabs" id="ptabs">
+    <button class="tab" data-tab="trackers">Trackers</button>
+    <button class="tab" data-tab="groups">Trackergroepen</button>
+    <button class="tab" data-tab="ignored">Genegeerde berichten <span class="badge" id="unk-count" hidden></span></button>
+  </div>
 
-  <!-- lijst -->
-  <section class="card">
-    <div class="cardhead">
-      <h2>Trackers</h2>
+  <!-- trackers -->
+  <section class="card pane" id="pane-trackers">
+    <div class="toolbar">
+      <input type="search" id="t-search" placeholder="Zoek op naam of notitie…" aria-label="Zoek tracker">
+      <div class="chips" id="t-chips" role="group" aria-label="Filter">
+        <button class="chip on" data-f="all">Alle</button><button class="chip" data-f="real">Echt</button>
+        <button class="chip" data-f="sim">Virtueel</button><button class="chip" data-f="lost">Verloren</button>
+        <button class="chip" data-f="inactive">Inactief</button>
+      </div>
+      <span class="spacer"></span>
       <button class="primary" id="new">+ Tracker</button>
     </div>
-    <div id="trackers" class="tlist"></div>
+    <table class="ttable" id="ttable">
+      <thead><tr><th style="width:36px"></th><th>Tracker</th><th class="col-opt">Laatst gehoord</th><th class="col-opt">Batterij</th>
+        <th class="col-opt">Status</th><th class="col-opt">Groepen</th></tr></thead>
+      <tbody id="trackers"></tbody>
+    </table>
+    <div id="t-empty" class="empty" hidden></div>
   </section>
 
   <!-- trackergroepen -->
-  <section class="card" id="tgcard">
-    <details id="tgdetails">
-      <summary class="h2sum">Trackergroepen</summary>
-      <p class="muted">Groepeer trackers, bv. per dienst of ploeg. Een tracker kan in meerdere groepen zitten. In
-        <a href="/users#groups">Gebruikers → Groepen</a> kies je welke gebruikersgroep welke trackergroepen ziet.</p>
-      <div class="row"><button class="primary" id="tg-new" type="button">+ Trackergroep</button></div>
-      <form id="tg-form" class="subform" hidden>
-        <input type="hidden" id="tg-id">
-        <div class="grid">
-          <div><label for="tg-name">Naam</label><input id="tg-name" maxlength="40" required placeholder="bv. Ziekenwagens"></div>
-          <div><label for="tg-color">Kleur</label><input id="tg-color" type="color" value="#64748b"></div>
-        </div>
-        <label for="tg-desc">Omschrijving</label><input id="tg-desc" maxlength="200">
-        <label>Trackers</label><div id="tg-trackers" class="permgrid"></div>
-        <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="tg-cancel">Annuleren</button></div>
-        <div id="tg-msg" class="msg"></div>
-      </form>
-      <div id="tglist" class="tlist"></div>
-    </details>
+  <section class="card pane" id="pane-groups" hidden>
+    <div class="toolbar">
+      <p class="muted" style="margin:0;flex:1">Groepeer trackers, bv. per dienst of ploeg. Een tracker kan in meerdere groepen zitten.
+        In <a href="/users#groups">Gebruikers → Groepen en rechten</a> kies je welke gebruikersgroep welke trackergroepen ziet.</p>
+      <button class="primary" id="tg-new" type="button">+ Trackergroep</button>
+    </div>
+    <div id="tglist" class="tlist"></div>
   </section>
 
-  <!-- toevoegen / bewerken -->
-  <section class="card" id="formcard" hidden>
-    <div class="cardhead">
-      <h2 id="ftitle">Tracker toevoegen</h2>
-      <button class="ghost" id="fclose" aria-label="Sluiten">✕</button>
-    </div>
-    <form id="form">
-      <input type="hidden" id="f-id">
-      <div class="grid">
-        <div>
-          <label for="f-alias">Naam op de kaart</label>
-          <input id="f-alias" maxlength="40" required placeholder="bv. Ziekenwagen 1">
-        </div>
-        <div>
-          <label for="f-color">Kleur</label>
-          <input id="f-color" type="color" value="#e4572e">
-        </div>
-      </div>
-      <label>Icoon</label>
-      <div id="f-icons" class="ico-picker"></div>
-
-      <label class="switch block"><input type="checkbox" id="f-virtual"><span></span> Virtuele tracker (simulator, geen hardware)</label>
-
-      <div id="f-real">
-        <label class="switch block" id="f-genrow" hidden><input type="checkbox" id="f-genkey"><span></span> Nieuw toestel: de server maakt de sleutel en de instellingen</label>
-        <div class="help" id="f-genhelp">Daarna zet je alles in één keer op een toestel dat met USB verbonden is (sleutel, naam, radio, regio, 2-byte paden en het doel).</div>
-        <div id="f-pubrow">
-        <label for="f-pubkey">Public key van de tracker</label>
-        <input id="f-pubkey" class="mono" maxlength="64" placeholder="64 hex-tekens" autocomplete="off" spellcheck="false">
-        <div class="help">Te vinden via USB (hieronder) of in de MeshCore-app. Of kies een bekend contact:</div>
-        <div class="row">
-          <button type="button" id="pick">Kies uit contacten van de companion</button>
-          <select id="contacts" hidden></select>
-        </div>
-        </div>
-        <div id="f-authrow" hidden>
-          <label>Authsleutel (voor kanalen)</label>
-          <div class="row" style="margin-top:0">
-            <code id="f-authkey" class="mono">verborgen</code>
-            <button type="button" id="f-authshow">Tonen</button>
-            <button type="button" id="f-authcopy" hidden>Kopiëren</button>
-            <button type="button" id="f-authnew">Nieuwe sleutel</button>
-          </div>
-          <div class="help">Ondertekent de kanaalberichten van deze tracker. Via USB zet de pagina hem zelf; met een terminal:
-            <code>set authkey</code> gevolgd door de sleutel (spaties mogen), of in het menu onder <em>6 GPS en verzending</em>.</div>
-        </div>
-        <label class="switch block"><input type="checkbox" id="f-lost"><span></span> Verloren</label>
-        <div class="help">Een verloren tracker blijft verloren tot je dit uitzet. Komt er nog een bericht van binnen,
-          dan krijgt elke meldingsregel met <em>verloren tracker gezien</em> een melding.</div>
-        <fieldset id="f-keys" hidden>
-          <legend>Sleutel en backups op de server</legend>
-          <div id="f-keylist" class="small"></div>
-          <div class="row">
-            <label class="btnlike">Export uit de MeshCore-app importeren<input type="file" id="f-keyfile" accept=".json,application/json" hidden></label>
-          </div>
-          <div class="help">Een backup bevat de <strong>privésleutel</strong>; de server bewaart hem versleuteld. Terugzetten
-            gebeurt op het toestel dat hieronder met USB verbonden is.</div>
-        </fieldset>
-      </div>
-
-      <div id="f-sim" hidden>
-        <div class="grid">
-          <div>
-            <label for="f-profile">Rijdt als</label>
-            <select id="f-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">voetganger</option><option value="travel">reiziger (grote wegen, alle landen)</option></select>
-          </div>
-          <div>
-            <label for="f-town">Thuisbasis</label>
-            <select id="f-town"></select>
-          </div>
-        </div>
-        <div class="help">De simulator kiest zelf ritten over echte wegen rond zijn thuisbasis, parkeert tussendoor
-          en laadt zijn batterij op. Zijn berichten gaan niet over de mesh.</div>
-        <fieldset>
-          <legend>Rijgedrag</legend>
-          <div class="grid">
-            <div><label>Snelheid t.o.v. de limiet</label><div class="unit"><input id="d-pct" type="number" min="30" max="200" value="100"><span>%</span></div>
-              <div class="help">bv. 115 voor een dringende rit</div></div>
-            <div><label>Nooit sneller dan</label><div class="unit"><input id="d-max" type="number" min="0" max="200" value="0"><span>km/u</span></div>
-              <div class="help">0 = geen grens</div></div>
-            <div><label>Ritlengte van</label><div class="unit"><input id="d-tmin" type="number" min="0.3" max="400" step="0.5"><span>km</span></div></div>
-            <div><label>tot</label><div class="unit"><input id="d-tmax" type="number" min="0.3" max="400" step="0.5"><span>km</span></div></div>
-          </div>
-          <label class="switch block"><input type="checkbox" id="d-roam"><span></span> Zwerven door de hele Benelux (nooit terug naar huis)</label>
-          <div class="help">Ritten zijn max. 80 km (de reiziger tot 400 km); zwervend komt hij via opeenvolgende ritten overal.</div>
-          <details>
-            <summary>Snelheid per wegtype (km/u)</summary>
-            <div class="grid" id="d-speeds"></div>
-            <div class="help">Leeg = standaard voor dit profiel.</div>
-          </details>
-        </fieldset>
-        <details>
-          <summary>Verzendregels en simulatie</summary>
-          <div class="grid">
-            <div><label>Min. snelheid (km/u)</label><input data-sp="min_speed_kmh" type="number" min="0" value="10"></div>
-            <div><label>Min. verplaatsing (m)</label><input data-sp="min_dist_m" type="number" min="0" value="100"></div>
-            <div><label>Bocht vanaf (graden)</label><input data-sp="turn_min_deg" type="number" min="0" max="180" value="30"></div>
-            <div><label>Bocht pas boven (km/u)</label><input data-sp="turn_min_speed_kmh" type="number" min="0" value="5"></div>
-            <div><label>Nooit vaker dan 1× per (s)</label><input data-sp="min_interval_s" type="number" min="10" value="60"></div>
-            <div><label>In beweging minstens 1× per (s)</label><input data-sp="max_interval_s" type="number" min="0" value="600"></div>
-            <div><label>Punt bewaren elke (s, 0 = uit)</label><input data-sp="sample_s" type="number" min="0" value="15"></div>
-            <div><label>Ritme volgens ontvangst (1 = aan, 0 = uit)</label><input data-sp="adaptive" type="number" min="0" max="1" value="1"></div>
-            <div><label>Goede ontvangst: elke (s, 0 = uit)</label><input data-sp="fast_interval_s" type="number" min="0" value="30"></div>
-            <div><label>Goede ontvangst = ACK binnen (s)</label><input data-sp="fast_ack_s" type="number" min="0" value="10"></div>
-            <div><label>Snel blijven tot zoveel missers</label><input data-sp="fast_keep" type="number" min="0" max="10" value="2"></div>
-            <div><label>Trager na zoveel missers</label><input data-sp="slow_after" type="number" min="0" max="20" value="3"></div>
-            <div><label>Trager: intervallen maal</label><input data-sp="slow_factor" type="number" min="1" max="10" value="3"></div>
-            <div><label>Stilstand na (s)</label><input data-sp="still_timeout_s" type="number" min="30" value="300"></div>
-            <div><label>Heartbeat in rust (s)</label><input data-sp="heartbeat_s" type="number" min="0" value="43200"></div>
-            <div><label>Pakketverlies (%)</label><input id="f-loss" type="number" min="0" max="90" value="5"></div>
-            <div><label>Batterij × sneller</label><input id="f-batt" type="number" min="1" max="100" value="4"></div>
-          </div>
-        </details>
-        <label class="switch block"><input type="checkbox" id="f-running" checked><span></span> Simulator rijdt</label>
-        <div class="row" id="f-histrow" hidden>
-          <button type="button" id="f-history">Historiek opnieuw opbouwen</button>
-          <span class="help">wist zijn posities en rijdt de voorbije dagen opnieuw na (duurt ongeveer een minuut)</span>
-        </div>
-      </div>
-
-      <fieldset id="f-data" hidden>
-        <legend>Opgeslagen posities</legend>
-        <div class="muted small" id="f-datainfo"></div>
-        <div class="row">
-          <span>Wis posities ouder dan</span>
-          <div class="unit" style="width:150px"><input id="f-purgedays" type="number" min="1" max="3650" value="30"><span>dagen</span></div>
-          <button type="button" class="danger" id="f-purge">Wissen</button>
-          <button type="button" class="danger" id="f-purgeall">Alles wissen</button>
-        </div>
-      </fieldset>
-      <div id="f-tgwrap"><label>Trackergroepen</label><div id="f-tgroups" class="permgrid"></div></div>
-      <label for="f-notes">Notities</label>
-      <textarea id="f-notes" rows="2" maxlength="500"></textarea>
-      <label class="switch block"><input type="checkbox" id="f-active" checked><span></span> Actief (zichtbaar op de kaart)</label>
-      <div class="row">
-        <button class="primary" type="submit" id="save">Toevoegen</button>
-        <button type="button" id="cancel">Annuleren</button>
-      </div>
-      <div id="fmsg" class="msg"></div>
-    </form>
-  </section>
-
-  <!-- USB -->
-  <section class="card">
-    <div class="cardhead">
-      <h2>Tracker instellen via USB</h2>
-      <span id="s-state" class="pill">niet verbonden</span>
-    </div>
-    <p class="muted" id="serial-note">Steek de tracker met een USB-kabel in deze computer en klik op Verbinden.
-      Werkt in Chrome of Edge op een computer (of Android), via https of localhost.</p>
-    <div class="row">
-      <button class="primary" id="s-connect">Verbinden</button>
-      <button id="s-disconnect" hidden>Loskoppelen</button>
-    </div>
-
-    <div class="fwbox" id="fw">
-      <div class="fwhead"><strong>Firmware</strong> <span id="fw-ver" class="pill">…</span> <span id="fw-dev" class="small muted"></span></div>
-      <div class="muted small" id="fw-notes"></div>
-      <div class="row">
-        <button id="fw-flash" class="primary" disabled>Flashen via de browser</button>
-        <a id="fw-zip" class="btnlink" download hidden>DFU-pakket (.zip)</a>
-        <a id="fw-uf2" class="btnlink" download hidden>UF2 (slepen naar het USB-station)</a>
-      </div>
-      <div class="help">Flashen vervangt alleen de app. Sleutel, contacten, kanalen en instellingen blijven. Eerst wordt
-        een backup gedownload, na afloop controleert de pagina of de pubkey nog dezelfde is.</div>
-      <div id="dfu" class="dfu" hidden>
-        <ol id="dfu-steps"></ol>
-        <div class="bar"><span id="dfu-bar"></span></div>
-        <div id="dfu-act" class="row"></div>
-        <div id="dfu-msg" class="msg"></div>
-      </div>
-    </div>
-
-    <div class="fwbox" id="prov" hidden>
-      <div class="fwhead"><strong>Toestel klaarmaken of terugzetten</strong></div>
-      <div class="row">
-        <select id="prov-t" style="flex:1;min-width:200px"></select>
-        <button id="prov-go" class="primary">Op dit toestel zetten</button>
-      </div>
-      <div class="help">Zet de sleutel van de server, de naam, de radio, de regio, 2-byte paden, de kanalen en het doel
-        op het verbonden toestel. Een andere sleutel op het toestel wordt eerst als backup gedownload.</div>
-      <div class="row">
-        <button id="bk-server">Backup naar de server</button>
-        <button id="bk-json">Backup downloaden (.json)</button>
-        <button id="bk-bin">Volledige opslag downloaden (.bin)</button>
-      </div>
-      <div id="prov-msg" class="msg"></div>
-    </div>
-
-    <div id="s-panel" hidden>
-      <div class="devinfo" id="s-info"></div>
-      <form id="s-form">
-        <fieldset>
-          <legend>Modus</legend>
-          <div class="seg wide" id="s-mode" role="radiogroup" aria-label="Modus op batterij">
-            <button type="button" data-v="tracker">Tracker</button><button type="button" data-v="companion">Companion</button>
-          </div>
-          <div class="help">Met USB-voeding is hij altijd companion. Dubbelklik op de knop wisselt ook.</div>
-          <label class="switch block"><input type="checkbox" data-set="track_in_companion" data-kind="bool"><span></span> Ook posities sturen als companion</label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Wanneer een positie sturen</legend>
-          <div class="grid">
-            <div><label>Minimum snelheid</label><div class="unit"><input data-set="min_speed" type="number" min="0" max="300"><span>km/u</span></div>
-              <div class="help">0 = altijd, ook wandelen</div></div>
-            <div><label>Minimum verplaatsing</label><div class="unit"><input data-set="min_dist" type="number" min="0" max="50000"><span>m</span></div></div>
-            <div><label>Scherpe bocht vanaf</label><div class="unit"><input data-set="turn_min" type="number" min="0" max="180"><span>°</span></div>
-              <div class="help">0 = bochten negeren</div></div>
-            <div><label>Bochten pas boven</label><div class="unit"><input data-set="turn_min_speed" type="number" min="0" max="300"><span>km/u</span></div></div>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Ritme</legend>
-          <div class="grid">
-            <div><label>Nooit vaker dan 1× per</label><div class="dur" data-set="min_interval"></div></div>
-            <div><label>In beweging minstens 1× per</label><div class="dur" data-set="max_interval" data-off="1"></div></div>
-            <div><label>Punt bewaren elke</label><div class="dur" data-set="sample" data-off="1"></div>
-              <div class="help">In beweging; elk bericht neemt zoveel bewaarde punten mee als erin passen (tot ±8).
-                Zo krijg je een fijn spoor met weinig berichten.</div></div>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Ritme volgens de ontvangst</legend>
-          <label class="switch block"><input type="checkbox" data-set="adaptive" data-kind="bool"><span></span> Ritme aanpassen aan de ontvangst</label>
-          <div class="help">Komt een bevestiging (ACK) snel binnen, dan is de ontvangst goed en stuurt hij vaker: zo
-            volg je hem nauwkeurig. Lukt het verzenden een paar keer na elkaar niet (weinig repeaters in de buurt), dan
-            stuurt hij minder vaak en spaart hij de batterij. Elk bericht kost zendtijd op de mesh: zet het snelle
-            ritme niet korter dan nodig.</div>
-          <div class="grid">
-            <div><label>Goede ontvangst: in beweging elke</label><div class="dur" data-set="fast_interval" data-off="1"></div></div>
-            <div><label>Goede ontvangst = ACK binnen</label><div class="dur" data-set="fast_ack"></div>
-              <div class="help">0 = elke ACK telt</div></div>
-            <div><label>Snel blijven tot zoveel missers</label><input data-set="fast_keep" type="number" min="0" max="10">
-              <div class="help">1 misser maakt hem dan niet meteen trager</div></div>
-            <div><label>Herhaalpogingen bij goede ontvangst</label><input data-set="fast_retries" type="number" min="0" max="5">
-              <div class="help">Voor gewone posities; de volgende verse positie komt er toch zo aan. SOS, een klik,
-                stilgevallen en heartbeat krijgen altijd alle pogingen.</div></div>
-            <div><label>Trager na zoveel missers</label><input data-set="slow_after" type="number" min="0" max="20">
-              <div class="help">0 = nooit trager</div></div>
-            <div><label>Trager: intervallen maal</label><input data-set="slow_factor" type="number" min="1" max="10"></div>
-          </div>
-          <div class="help" id="s-ritme"></div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Stilstand en rust</legend>
-          <div class="grid">
-            <div><label>Slapen na stilstand van</label><div class="dur" data-set="still_timeout"></div></div>
-            <div><label>Teken van leven (heartbeat) elke</label><div class="dur" data-set="heartbeat" data-off="1"></div></div>
-            <div><label>Bewegingsgevoeligheid</label>
-              <select data-set="accel_sens"><option value="laag">laag</option><option value="midden">midden</option><option value="hoog">hoog</option></select></div>
-            <div><label>Statusled</label>
-              <select data-set="led"><option value="companion">alleen als companion</option><option value="altijd">altijd</option><option value="uit">nooit</option></select>
-              <div class="help">In trackermodus spaart een uitgeschakelde led stroom.</div></div>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>GPS en verzending</legend>
-          <div class="grid">
-            <div><label>GPS-fix zoeken max.</label><div class="dur" data-set="fix_timeout"></div></div>
-            <div><label>…bij heartbeat max.</label><div class="dur" data-set="fix_timeout_hb"></div></div>
-            <div><label>Herhaalpogingen zonder ACK</label><input data-set="ack_retries" type="number" min="0" max="5"></div>
-          </div>
-          <label for="s-via">Verzenden via</label>
-          <div class="grid">
-            <div><select id="s-via"></select>
-              <div class="help">Kies je een kanaal van de server, dan zet de pagina het kanaal met zijn sleutel en de
-                authsleutel zelf op de tracker. Het kanaal staat daarna ook in de MeshCore-app als je de tracker als
-                companion gebruikt. Een kanaal krijgt geen bevestiging en wordt door het hele net geflood.</div></div>
-            <div><div class="small" id="s-authstate">Authsleutel: …</div>
-              <button type="button" id="s-auth">Authsleutel van de server zetten</button>
-              <div class="help">Ondertekent kanaalberichten, zodat niemand anders posities voor deze tracker kan versturen.</div></div>
-          </div>
-          <label>Doel: server-companion (pubkey)</label>
-          <div class="row" style="margin-top:0">
-            <input data-set="target" class="mono" maxlength="64" style="flex:1;min-width:200px" spellcheck="false">
-            <button type="button" id="s-target">Deze server</button>
-          </div>
-        </fieldset>
-
-        <div class="row sticky-actions">
-          <button class="primary" type="submit">Opslaan op de tracker</button>
-          <button type="button" id="s-reload">Opnieuw lezen</button>
-          <button type="button" id="s-defaults">Standaardwaarden</button>
-          <button type="button" id="s-use">In MeshTrack zetten</button>
-        </div>
-        <div id="s-msg" class="msg"></div>
-      </form>
-
-      <details class="terminal">
-        <summary>Terminal (geavanceerd)</summary>
-        <div class="row">
-          <input id="s-cmd" placeholder="commando, bv. help" style="flex:1">
-          <button id="s-send">Stuur</button>
-        </div>
-        <pre class="log" id="s-log"></pre>
-      </details>
-    </div>
-  </section>
-
-  <!-- server-companion -->
-  <section class="card">
-    <details>
-      <summary class="h2sum">Server-companion (QR-code)</summary>
-      <div class="row" style="align-items:flex-start">
-        <div id="qr" class="qrbox"></div>
-        <div style="flex:1;min-width:200px">
-          <div><strong id="c-name">–</strong></div>
-          <div class="mono muted" id="c-key">niet verbonden</div>
-          <p class="muted">Scan met de MeshCore-app om deze server als contact toe te voegen. Een MeshTrack-tracker
-            heeft dit niet nodig: die maakt het contact zelf aan uit zijn doel.</p>
-          <button id="c-copy" disabled>Pubkey kopiëren</button>
-        </div>
-      </div>
-    </details>
-  </section>
-
-  <section class="card">
-    <details>
-      <summary class="h2sum">Genegeerde berichten</summary>
-      <p class="muted">Berichten die op MeshTrack leken maar van een onbekende afzender kwamen of ongeldig waren.</p>
-      <div id="unknown"></div>
-    </details>
+  <!-- genegeerde berichten -->
+  <section class="card pane" id="pane-ignored" hidden>
+    <p class="muted">Berichten die op MeshTrack leken, maar van een onbekende afzender kwamen, ongeldig waren of een foute
+      handtekening hadden. Een onbekende tracker voeg je meteen toe met <em>Als tracker toevoegen</em>.</p>
+    <div id="unknown"></div>
   </section>
 </main>
-<script src="/static/vendor/qrcode.js"></script>
+
+<!-- trackergroep (zijpaneel) -->
+<form id="tg-form" class="subform" hidden>
+  <input type="hidden" id="tg-id">
+  <div class="grid">
+    <div><label for="tg-name">Naam</label><input id="tg-name" maxlength="40" required placeholder="bv. Ziekenwagens"></div>
+    <div><label for="tg-color">Kleur</label><input id="tg-color" type="color" value="#64748b"></div>
+  </div>
+  <label for="tg-desc">Omschrijving</label><input id="tg-desc" maxlength="200">
+  <label>Trackers</label><div id="tg-trackers" class="permgrid"></div>
+  <div class="row sticky-actions"><button class="primary" type="submit">Opslaan</button><button type="button" id="tg-cancel">Annuleren</button></div>
+  <div id="tg-msg" class="msg"></div>
+</form>
+
+<!-- tracker (zijpaneel) -->
+<form id="form" class="subform" hidden>
+  <input type="hidden" id="f-id">
+  <div class="seg wide" id="f-kind" role="radiogroup" aria-label="Soort tracker">
+    <button type="button" data-v="real" class="on">Echte tracker</button><button type="button" data-v="sim">Virtueel (simulator)</button>
+  </div>
+  <input type="checkbox" id="f-virtual" hidden>
+  <div class="ftabs" id="f-tabs" role="tablist">
+    <button type="button" data-ft="gen" class="on">Algemeen</button>
+    <button type="button" data-ft="dev" id="ft-dev">Toestel</button>
+    <button type="button" data-ft="sim" id="ft-sim" hidden>Simulator</button>
+    <button type="button" data-ft="data" id="ft-data" hidden>Gegevens</button>
+  </div>
+
+  <div data-fp="gen">
+    <div class="grid">
+      <div><label for="f-alias">Naam op de kaart</label><input id="f-alias" maxlength="40" required placeholder="bv. Ziekenwagen 1"></div>
+      <div><label for="f-color">Kleur</label><input id="f-color" type="color" value="#e4572e"></div>
+    </div>
+    <label>Icoon</label>
+    <div id="f-icons" class="ico-picker"></div>
+    <div id="f-tgwrap"><label>Trackergroepen</label><div id="f-tgroups" class="permgrid"></div></div>
+    <label for="f-notes">Notities</label>
+    <textarea id="f-notes" rows="2" maxlength="500"></textarea>
+    <label class="switch block"><input type="checkbox" id="f-active" checked><span></span> Actief (zichtbaar op de kaart)</label>
+    <div id="f-lostrow">
+      <label class="switch block"><input type="checkbox" id="f-lost"><span></span> Verloren</label>
+      <div class="help">Een verloren tracker blijft verloren tot je dit uitzet. Komt er nog een bericht van binnen, dan krijgt
+        elke meldingsregel met <em>verloren tracker gezien</em> een melding.</div>
+    </div>
+  </div>
+
+  <div data-fp="dev" hidden id="f-real">
+    <label class="switch block" id="f-genrow" hidden><input type="checkbox" id="f-genkey"><span></span> Nieuw toestel: de server maakt de sleutel en de instellingen</label>
+    <div class="help" id="f-genhelp">Na het opslaan zet je alles in één keer op het toestel via <em>Toestellen</em> (sleutel, naam,
+      radio, regio, 2-byte paden en het doel).</div>
+    <div id="f-pubrow">
+      <label for="f-pubkey">Public key (pubkey) van de tracker</label>
+      <input id="f-pubkey" class="mono" maxlength="64" placeholder="64 hex-tekens" autocomplete="off" spellcheck="false">
+      <div class="help">Te vinden via <a href="/devices">Toestellen</a> of in de MeshCore-app. Of kies een bekend contact:</div>
+      <div class="row">
+        <button type="button" id="pick">Kies uit contacten van de companion</button>
+        <select id="contacts" hidden></select>
+      </div>
+    </div>
+    <div id="f-authrow" hidden>
+      <label>Authsleutel (voor kanalen)</label>
+      <div class="row" style="margin-top:0">
+        <code id="f-authkey" class="mono">verborgen</code>
+        <button type="button" id="f-authshow">Tonen</button>
+        <button type="button" id="f-authcopy" hidden>Kopiëren</button>
+        <button type="button" id="f-authnew">Nieuwe sleutel</button>
+      </div>
+      <div class="help">Ondertekent de kanaalberichten van deze tracker. Via <a href="/devices">Toestellen</a> zet de pagina hem zelf;
+        met een terminal: <code>set authkey</code> gevolgd door de sleutel (spaties mogen), of in het menu onder <em>6 GPS en verzending</em>.</div>
+    </div>
+    <fieldset id="f-keys" hidden>
+      <legend>Sleutel en backups op de server</legend>
+      <div id="f-keylist" class="small"></div>
+      <div class="row">
+        <label class="btnlike">Export uit de MeshCore-app importeren<input type="file" id="f-keyfile" accept=".json,application/json" hidden></label>
+      </div>
+      <div class="help">Een backup bevat de <strong>privésleutel</strong>; de server bewaart hem versleuteld. Terugzetten op een
+        toestel gaat via <a href="/devices">Toestellen</a>.</div>
+    </fieldset>
+  </div>
+
+  <div data-fp="sim" hidden id="f-sim">
+    <div class="grid">
+      <div><label for="f-profile">Rijdt als</label>
+        <select id="f-profile"><option value="car">auto</option><option value="bike">fiets</option><option value="walk">voetganger</option><option value="travel">reiziger (grote wegen, alle landen)</option></select></div>
+      <div><label for="f-town">Thuisbasis</label><select id="f-town"></select></div>
+    </div>
+    <div class="help">De simulator kiest zelf ritten over echte wegen rond zijn thuisbasis, parkeert tussendoor en laadt zijn
+      batterij op. Zijn berichten gaan niet over de mesh.</div>
+    <label class="switch block"><input type="checkbox" id="f-running" checked><span></span> Simulator rijdt</label>
+    <fieldset>
+      <legend>Rijgedrag</legend>
+      <div class="grid">
+        <div><label>Snelheid t.o.v. de limiet</label><div class="unit"><input id="d-pct" type="number" min="30" max="200" value="100"><span>%</span></div>
+          <div class="help">bv. 115 voor een dringende rit</div></div>
+        <div><label>Nooit sneller dan</label><div class="unit"><input id="d-max" type="number" min="0" max="200" value="0"><span>km/u</span></div>
+          <div class="help">0 = geen grens</div></div>
+        <div><label>Ritlengte van</label><div class="unit"><input id="d-tmin" type="number" min="0.3" max="400" step="0.5"><span>km</span></div></div>
+        <div><label>tot</label><div class="unit"><input id="d-tmax" type="number" min="0.3" max="400" step="0.5"><span>km</span></div></div>
+      </div>
+      <label class="switch block"><input type="checkbox" id="d-roam"><span></span> Zwerven door de hele Benelux (nooit terug naar huis)</label>
+      <div class="help">Ritten zijn max. 80 km (de reiziger tot 400 km); zwervend komt hij via opeenvolgende ritten overal.</div>
+      <details>
+        <summary>Snelheid per wegtype (km/u)</summary>
+        <div class="grid" id="d-speeds"></div>
+        <div class="help">Leeg = standaard voor dit profiel.</div>
+      </details>
+    </fieldset>
+    <details>
+      <summary>Verzendregels en simulatie</summary>
+      <div class="grid">
+        <div><label>Min. snelheid</label><div class="unit"><input data-sp="min_speed_kmh" type="number" min="0" value="10"><span>km/u</span></div></div>
+        <div><label>Min. verplaatsing</label><div class="unit"><input data-sp="min_dist_m" type="number" min="0" value="100"><span>m</span></div></div>
+        <div><label>Bocht vanaf</label><div class="unit"><input data-sp="turn_min_deg" type="number" min="0" max="180" value="30"><span>°</span></div></div>
+        <div><label>Bocht pas boven</label><div class="unit"><input data-sp="turn_min_speed_kmh" type="number" min="0" value="5"><span>km/u</span></div></div>
+        <div><label>Nooit vaker dan 1× per</label><div class="unit"><input data-sp="min_interval_s" type="number" min="10" value="60"><span>s</span></div></div>
+        <div><label>In beweging minstens 1× per</label><div class="unit"><input data-sp="max_interval_s" type="number" min="0" value="600"><span>s</span></div></div>
+        <div><label>Punt bewaren elke (0 = uit)</label><div class="unit"><input data-sp="sample_s" type="number" min="0" value="15"><span>s</span></div></div>
+        <div><label class="switch block"><input type="checkbox" data-sp="adaptive" data-kind="bool" checked><span></span> Ritme volgens de ontvangst</label></div>
+        <div><label>Goede ontvangst: elke (0 = uit)</label><div class="unit"><input data-sp="fast_interval_s" type="number" min="0" value="30"><span>s</span></div></div>
+        <div><label>Goede ontvangst = ACK binnen</label><div class="unit"><input data-sp="fast_ack_s" type="number" min="0" value="10"><span>s</span></div></div>
+        <div><label>Snel blijven tot zoveel missers</label><input data-sp="fast_keep" type="number" min="0" max="10" value="2"></div>
+        <div><label>Trager na zoveel missers</label><input data-sp="slow_after" type="number" min="0" max="20" value="3"></div>
+        <div><label>Trager: intervallen maal</label><input data-sp="slow_factor" type="number" min="1" max="10" value="3"></div>
+        <div><label>Stilstand na</label><div class="unit"><input data-sp="still_timeout_s" type="number" min="30" value="300"><span>s</span></div></div>
+        <div><label>Teken van leven (heartbeat) in rust</label><div class="unit"><input data-sp="heartbeat_s" type="number" min="0" value="43200"><span>s</span></div></div>
+        <div><label>Pakketverlies</label><div class="unit"><input id="f-loss" type="number" min="0" max="90" value="5"><span>%</span></div></div>
+        <div><label>Batterij × sneller</label><input id="f-batt" type="number" min="1" max="100" value="4"></div>
+      </div>
+    </details>
+    <div class="row" id="f-histrow" hidden>
+      <button type="button" id="f-history">Historiek opnieuw opbouwen</button>
+      <span class="help">wist zijn posities en rijdt de voorbije dagen opnieuw na (duurt ongeveer een minuut)</span>
+    </div>
+  </div>
+
+  <div data-fp="data" hidden>
+    <fieldset id="f-data">
+      <legend>Opgeslagen posities</legend>
+      <div class="muted small" id="f-datainfo"></div>
+      <div class="row">
+        <span>Wis posities ouder dan</span>
+        <div class="unit" style="width:150px"><input id="f-purgedays" type="number" min="1" max="3650" value="30"><span>dagen</span></div>
+        <button type="button" class="danger" id="f-purge">Wissen</button>
+      </div>
+    </fieldset>
+    <fieldset class="danger-zone">
+      <legend>Gevarenzone</legend>
+      <div class="row">
+        <button type="button" class="danger" id="f-purgeall">Alle posities wissen</button>
+        <button type="button" class="danger" id="f-delete">Tracker verwijderen</button>
+      </div>
+      <div class="help">Verwijderen haalt ook alle posities, sleutels en backups van de server weg.</div>
+    </fieldset>
+  </div>
+
+  <div class="row sticky-actions">
+    <button class="primary" type="submit" id="save">Toevoegen</button>
+    <button type="button" id="cancel">Annuleren</button>
+  </div>
+  <div id="fmsg" class="msg"></div>
+</form>
+
 <script src="/static/icons.js"></script>
 <script src="/static/common.js"></script>
 <script src="/static/admin.js"></script>
-<script src="/static/dfu.js"></script>
-<script src="/static/device.js"></script>
 </body>
 </html>

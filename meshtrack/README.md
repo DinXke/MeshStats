@@ -32,6 +32,10 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
   - Zones (gedeeld of persoonlijk) en meldingsregels die DM's via de mesh sturen, met een wachtrij.
   - Simulator: virtuele trackers rijden 24/7 over echte wegen (offline routering over de wegenlaag van de
     kaarttegels), met een historiek in versnelde tijd. Profielen auto, fiets, voet en reiziger.
+  - Pagina's: Kaart, Logboek, Trackers (lijst met zoeken en filters, trackergroepen, genegeerde berichten; formulieren
+    in een zijpaneel), Toestellen (alles via USB: instellingen met voorinstellingen, firmware, klaarmaken en backups,
+    terminal), Gebruikers, Systeem (meldingen, kanalen, instellingen, companion-QR), Help. Toegankelijke tabbladen,
+    menuknop op gsm, eigen bevestigingsvensters.
   - Instellen van een tracker via Web Serial, helppagina in de site, zes thema's.
   - Firmware flashen in de browser (Web Serial-DFU, `static/dfu.js`): eerst een backup, alleen de app, daarna
     controle van de pubkey.
