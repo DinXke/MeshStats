@@ -457,16 +457,23 @@ class SimTracker:
         del buf[:-16]
 
     def _extra(self, now: float, lat: float, lon: float) -> str:
-        """Bewaarde punten als dt,dlat,dlon,spd; zoveel als in 160 tekens past (oudste eerst)."""
+        """Zoals de firmware (compact): ~interval;dlat,dlon[@s] t.o.v. het vorige punt, nieuwste eerst."""
         buf = [b for b in self.__dict__.get("pts", []) if b[0] < int(now)]
-        out, room = [], 160 - 75
-        for ts, la, lo, sp in buf:
-            item = f"{int(now) - ts},{round((la - lat) * 1e5)},{round((lo - lon) * 1e5)},{sp}"
+        if not buf:
+            return ""
+        step = self.params.sample_s or (int(now) - buf[-1][0])
+        out, room = [f"~{step}"], 156 - 75
+        pts, pla, plo = int(now), round(lat * 1e5), round(lon * 1e5)
+        for ts, la, lo, _sp in reversed(buf):
+            qa, qo = round(la * 1e5), round(lo * 1e5)
+            gap = pts - ts
+            item = f"{qa - pla},{qo - plo}" + ("" if gap == step else f"@{gap}")
             if len(item) + 1 > room:
                 break
             out.append(item)
             room -= len(item) + 1
-        return ";".join(out)
+            pts, pla, plo = ts, qa, qo
+        return ";".join(out) if len(out) > 1 else ""
 
     def _send(self, now: float, state: str, reason: str, with_pos: bool = True) -> None:
         lat = lon = None

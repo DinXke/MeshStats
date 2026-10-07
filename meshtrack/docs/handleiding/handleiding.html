@@ -89,7 +89,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Website 0.6 · firmware 0.5.0 (T1000-E) · MeshCore v1.17.1<br>
+    Website 0.7 · firmware 0.6.0 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -468,6 +468,14 @@
 <div class="warn"><b>Een backup bevat de privésleutel</b>Wie de privésleutel heeft, kan zich voordoen als die tracker. De
   server bewaart backups versleuteld en houdt in het auditlog bij wie er een ophaalt, terugzet of verwijdert. Geef het recht
   <em>Sleutels en backups</em> alleen aan wie het echt nodig heeft, en bewaar gedownloade bestanden veilig.</div>
+
+<h3>Verzenden via een kanaal</h3>
+<p>Standaard stuurt een tracker via DM naar de server, met bevestiging. Kies je in de USB-sectie bij <em>Verzenden via</em> een
+  kanaal van de server, dan zet de pagina het kanaal (met sleutel en regio) en de authsleutel op de tracker. De server luistert
+  mee op de kanalen onder <em>Systeem</em> → <em>Kanalen</em>, en elk kanaal krijgt een eigen trackergroep en kaart.</p>
+<div class="note"><b>Controletekens</b>Op een kanaal kan iedereen met de sleutel berichten sturen. Daarom zet de tracker in elk
+  kanaalbericht 8 controletekens, berekend uit zijn authsleutel. De server rekent ze na en weigert valse berichten. Je hoeft
+  ze nergens in te geven; enkel de authsleutel gaat (automatisch) via USB naar de tracker.</div>
 
 <!-- ============================ 10 ============================ -->
 <h2 class="chap"><span class="nr">10</span>Gebruikers, rechten en instellingen</h2>

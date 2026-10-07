@@ -24,6 +24,7 @@ class MeshLink:
         self.host, self.port, self.keepalive_s = host, port, keepalive_s
         self.on_message = on_message
         self.on_connect = on_connect
+        self.on_channel: Optional[Callable[..., Awaitable[None]]] = None   # (slot, tekst, ts, snr, padlengte)
         self.mc: Optional[MeshCore] = None
         self.connected = False
         self.self_info: dict[str, Any] = {}
@@ -71,6 +72,7 @@ class MeshLink:
             raise ConnectionError(f"geen antwoord van {self.host}:{self.port}")
         self.mc = mc
         mc.subscribe(EventType.CONTACT_MSG_RECV, self._on_msg)
+        mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_chan)
         mc.subscribe(EventType.DISCONNECTED, lambda _e: self._lost.set())
         self.self_info = dict(mc.self_info or {})
         await mc.commands.get_contacts()
@@ -102,6 +104,38 @@ class MeshLink:
                                   p.get("SNR"), p.get("path_len"))
         except Exception:  # noqa: BLE001 - één slecht bericht mag de lus niet stoppen
             log.exception("fout bij verwerken van bericht")
+
+    async def _on_chan(self, event) -> None:
+        p = event.payload or {}
+        self.last_rx = int(time.time())
+        if not self.on_channel:
+            return
+        try:
+            await self.on_channel(p.get("channel_idx"), p.get("text", ""), p.get("sender_timestamp"),
+                                  p.get("SNR"), p.get("path_len"))
+        except Exception:  # noqa: BLE001
+            log.exception("fout bij verwerken van kanaalbericht")
+
+    # ---- kanalen op de companion ----------------------------------------------
+
+    async def channel_slots(self, n: int = 40) -> list[dict[str, Any]]:
+        """Kanalen die nu op de companion staan (nummer, naam, of de sleutel klopt met de onze kan de beller nagaan)."""
+        mc = self._require()
+        out = []
+        for i in range(n):
+            res = await mc.commands.get_channel(i)
+            if res is None or res.type == EventType.ERROR:
+                break
+            p = res.payload or {}
+            out.append({"slot": i, "name": p.get("channel_name", ""), "secret": bytes(p.get("channel_secret") or b"").hex()})
+        return out
+
+    async def set_channel(self, slot: int, name: str, secret_hex: str) -> None:
+        mc = self._require()
+        secret = bytes.fromhex(secret_hex) if secret_hex else bytes(16)
+        res = await mc.commands.set_channel(slot, name, secret)
+        if res is None or res.type == EventType.ERROR:
+            raise RuntimeError(f"kanaal {slot} instellen mislukt: {getattr(res, 'payload', None)}")
 
     # ---- contacten ----------------------------------------------------------
 

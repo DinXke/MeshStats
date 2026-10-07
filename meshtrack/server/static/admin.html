@@ -83,6 +83,17 @@
           <select id="contacts" hidden></select>
         </div>
         </div>
+        <div id="f-authrow" hidden>
+          <label>Authsleutel (voor kanalen)</label>
+          <div class="row" style="margin-top:0">
+            <code id="f-authkey" class="mono">verborgen</code>
+            <button type="button" id="f-authshow">Tonen</button>
+            <button type="button" id="f-authcopy" hidden>Kopiëren</button>
+            <button type="button" id="f-authnew">Nieuwe sleutel</button>
+          </div>
+          <div class="help">Ondertekent de kanaalberichten van deze tracker. Via USB zet de pagina hem zelf; met een terminal:
+            <code>set authkey</code> gevolgd door de sleutel (spaties mogen), of in het menu onder <em>6 GPS en verzending</em>.</div>
+        </div>
         <label class="switch block"><input type="checkbox" id="f-lost"><span></span> Verloren</label>
         <div class="help">Een verloren tracker blijft verloren tot je dit uitzet. Komt er nog een bericht van binnen,
           dan krijgt elke meldingsregel met <em>verloren tracker gezien</em> een melding.</div>
@@ -303,6 +314,16 @@
             <div><label>GPS-fix zoeken max.</label><div class="dur" data-set="fix_timeout"></div></div>
             <div><label>…bij heartbeat max.</label><div class="dur" data-set="fix_timeout_hb"></div></div>
             <div><label>Herhaalpogingen zonder ACK</label><input data-set="ack_retries" type="number" min="0" max="5"></div>
+          </div>
+          <label for="s-via">Verzenden via</label>
+          <div class="grid">
+            <div><select id="s-via"></select>
+              <div class="help">Kies je een kanaal van de server, dan zet de pagina het kanaal met zijn sleutel en de
+                authsleutel zelf op de tracker. Het kanaal staat daarna ook in de MeshCore-app als je de tracker als
+                companion gebruikt. Een kanaal krijgt geen bevestiging en wordt door het hele net geflood.</div></div>
+            <div><div class="small" id="s-authstate">Authsleutel: …</div>
+              <button type="button" id="s-auth">Authsleutel van de server zetten</button>
+              <div class="help">Ondertekent kanaalberichten, zodat niemand anders posities voor deze tracker kan versturen.</div></div>
           </div>
           <label>Doel: server-companion (pubkey)</label>
           <div class="row" style="margin-top:0">

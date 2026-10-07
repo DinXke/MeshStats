@@ -2,9 +2,10 @@
 
     T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>[|<mode>[|<power>[|<fix_ts>[|<extra>]]]]
 
-`extra` (fw 0.5.0+): eerdere punten, gescheiden door `;`, elk `dt,dlat,dlon,spd`:
-dt = seconden vóór fix_ts, dlat/dlon = verschil met het hoofdpunt in 1e-5 graden,
-spd in km/u (mag leeg). Zo passen tot een tiental punten in één bericht.
+`extra`: eerdere punten. Compact (fw 0.6.0+): `~<interval>;dlat,dlon[@s];...`, nieuwste
+eerst; elk punt is het verschil met het vorige (het eerste met het hoofdpunt) in 1e-5
+graden en ligt <interval> seconden eerder, of `@s` seconden als dat afwijkt. De snelheid
+volgt uit afstand en tijd. Ouder (fw 0.5.0): `dt,dlat,dlon,spd;...` t.o.v. het hoofdpunt.
 
 Lege velden zijn toegestaan waar de spec dat zegt; `mode` (c|t), `power`
 (u = USB/laden, b = batterij) en `fix_ts` (GPS-tijd van de fix, unix-seconden)
@@ -125,7 +126,11 @@ def parse(text: str) -> Report:
             raise ProtocolError(f"onbekende voeding {power!r}")
     fix_ts = _opt_int(rest[2], 1_500_000_000, 4_000_000_000, "fix_ts") if len(rest) > 2 else None
     extra = []
-    if len(rest) > 3 and rest[3]:
+    if len(rest) > 3 and rest[3].startswith("~"):
+        if lat is None:
+            raise ProtocolError("extra punten zonder hoofdpunt")
+        extra = _compact_extra(rest[3], lat, lon)
+    elif len(rest) > 3 and rest[3]:
         if lat is None:
             raise ProtocolError("extra punten zonder hoofdpunt")
         items = rest[3].split(";")
@@ -161,6 +166,34 @@ def parse(text: str) -> Report:
         fix_ts=fix_ts,
         extra=extra,
     )
+
+
+def _compact_extra(field: str, lat: float, lon: float) -> list:
+    """`~15;-412,201;-398,190@40` -> [(dt, lat, lon, spd)], dt cumulatief t.o.v. het hoofdpunt."""
+    from .geo import haversine
+    head, *items = field.split(";")
+    step = _opt_int(head[1:], 1, 86400, "interval")
+    if step is None or len(items) > 30:
+        raise ProtocolError("extra punten: ongeldig interval of te veel punten")
+    out, dt, plat, plon = [], 0, lat, lon
+    for it in items:
+        xy, _, gap_s = it.partition("@")
+        f = xy.split(",")
+        if len(f) != 2:
+            raise ProtocolError(f"extra punt: verwacht dlat,dlon[@s]: {it!r}")
+        dla = _opt_int(f[0], -2_000_000, 2_000_000, "extra dlat")
+        dlo = _opt_int(f[1], -2_000_000, 2_000_000, "extra dlon")
+        gap = _opt_int(gap_s, 1, 86400, "extra tijd") if gap_s else step
+        if dla is None or dlo is None:
+            raise ProtocolError(f"extra punt onvolledig: {it!r}")
+        nlat, nlon = round(plat + dla / 1e5, 5), round(plon + dlo / 1e5, 5)
+        if not (-90 <= nlat <= 90 and -180 <= nlon <= 180):
+            raise ProtocolError("extra punt buiten bereik")
+        dt += gap
+        spd = round(haversine(nlat, nlon, plat, plon) / gap * 3.6)
+        out.append((dt, nlat, nlon, min(spd, 1000)))
+        plat, plon = nlat, nlon
+    return out
 
 
 def is_suspect(r: Report, bbox: tuple[float, float, float, float], max_hdop: float = 5.0) -> bool:

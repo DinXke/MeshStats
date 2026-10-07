@@ -27,6 +27,7 @@
     <a href="#flashen">Firmware flashen</a>
     <a href="#klaarmaken">Nieuw toestel klaarmaken</a>
     <a href="#backups">Sleutels en backups</a>
+    <a href="#kanalen">Verzenden via een kanaal</a>
     <a href="#menu">Het seriële menu</a>
     <a href="#statussen">Statussen</a>
     <a href="#beheer">Trackers beheren</a>
@@ -230,6 +231,33 @@
     </ul>
     <p>Wie een backup ophaalt, terugzet of verwijdert, staat in het auditlog. Geef dit recht alleen aan wie het echt
       nodig heeft: met een privésleutel kun je je als die tracker voordoen.</p>
+
+
+    <h2 id="kanalen">Verzenden via een kanaal</h2>
+    <p>Standaard stuurt een tracker zijn posities als DM naar de server, met een bevestiging (ACK). Je kunt een tracker ook
+      op een <strong>kanaal</strong> laten sturen. De server luistert mee op de kanalen die een beheerder instelt onder
+      <em>Systeem</em> → <em>Kanalen</em>; MeshTrack zet ze zelf op de server-companion.</p>
+    <ul>
+      <li><strong>Kanaal kiezen</strong>: in <em>Beheer</em> → USB → <em>Verzenden via</em> kies je een kanaal van de server.
+        De pagina zet het kanaal met zijn sleutel, de regio en de authsleutel op de tracker. Het kanaal staat daarna ook in
+        de MeshCore-app als je de tracker als companion gebruikt. Met een terminal: <code>chan set</code>,
+        <code>set chan</code>, <code>set authkey</code>, <code>set transport kanaal</code>, of het menu
+        <em>6 GPS en verzending</em>.</li>
+      <li><strong>Ondertekening</strong>: op een kanaal kan iedereen met de sleutel berichten sturen, en de afzender is
+        gewone tekst. Daarom zet de tracker 8 controletekens in elk kanaalbericht, berekend uit zijn
+        <em>authsleutel</em> en de inhoud van het bericht. De server rekent ze na; een vals of gewijzigd bericht komt bij
+        <em>Genegeerde berichten</em>. De authsleutel zie je bij het bewerken van een tracker (<em>Tonen</em>); je kunt hem
+        ook overtikken in de CLI (spaties mogen). Per kanaal kies je of niet-ondertekende berichten toch aanvaard worden.</li>
+      <li><strong>Regio</strong>: elk kanaal heeft een regio (standaard <code>be</code>) die de tracker krijgt. Berichten zonder
+        regio worden steeds vaker geblokkeerd.</li>
+      <li><strong>Eigen kaart per kanaal</strong>: elke tracker die via een kanaal stuurt, komt vanzelf in de trackergroep
+        <em>Kanaal …</em>. Die kun je openen met de link <em>kaart van dit kanaal</em>, delen met een deellink of
+        toewijzen aan een gebruikersgroep.</li>
+      <li><strong>QR-code</strong>: bij elk kanaal toont <em>QR-code</em> een code om het kanaal met de MeshCore-app toe te
+        voegen.</li>
+    </ul>
+    <p>Een kanaalbericht krijgt geen bevestiging en wordt door het hele net geflood (binnen de regio). Een DM met een gekende
+      route kost meestal minder zendtijd; het ritme volgens de ontvangst en herhaalpogingen werken alleen met DM.</p>
 
     <h2 id="menu">Het seriële menu</h2>
     <p>Verbind je met een terminalprogramma (115200 baud), dan opent meteen een genummerd menu met: status, modus,

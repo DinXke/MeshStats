@@ -1,15 +1,15 @@
 {
   "releases": [
     {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "date": "2026-10-07",
-      "notes": "Meerdere punten per bericht: in beweging elke x s een punt bewaren, elk bericht neemt er zoveel mee als passen (chronologisch op de kaart, niets kwijt bij een gemist bericht). Ritme volgens de ontvangst is nu een schakelaar. Daarnaast: GPS-tijd van de fix, betrouwbare knop.",
-      "zip": "meshtrack-t1000e-0.5.0.zip",
-      "zip_sha256": "ad24858e50ffcb4aeed57495c53611e97074c9110d1487bd612e2e9491463850",
-      "uf2": "meshtrack-t1000e-0.5.0.uf2",
-      "app_size": 389080,
+      "notes": "Verzenden via DM (standaard) of een kanaal, met ondertekening (authsleutel, 8 controletekens per bericht) en regio; instelbaar via USB, CLI en menu. Compacter formaat voor extra punten (±9 per bericht). Daarnaast: meerdere punten per bericht, ritme volgens de ontvangst optioneel, GPS-tijd van de fix.",
+      "zip": "meshtrack-t1000e-0.6.0.zip",
+      "zip_sha256": "92360cb8445d06cd50f6264fd3dcd79e5002863613467e8bdd82dd38da7fe699",
+      "uf2": "meshtrack-t1000e-0.6.0.uf2",
+      "app_size": 391192,
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.5.0"
+  "latest": "0.6.0"
 }

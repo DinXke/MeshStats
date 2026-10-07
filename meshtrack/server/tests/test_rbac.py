@@ -209,3 +209,32 @@ def test_effective_rights_shows_origin(client):
     assert tr["A"]["sees"] and tr["A"]["via"] == ["G1: trackergroep Ploeg"]
     assert tr["B"]["sees"] and tr["B"]["via"] == ["G2: losse tracker"]
     assert not tr["C"]["sees"] and e["history_hours"] == 48 and e["history_via"] == ["G2"]
+
+
+def test_channel_messages_signed_and_grouped(client):
+    import asyncio
+    c, main = client
+    login(c, "admin", "beheerder1")
+    tid = c.post("/api/trackers", json={"pubkey": "ab12cd34" + "00" * 28, "alias": "Kanaaltracker"}).json()["tracker"]["id"]
+    r = c.post("/api/channels", json={"name": "#ploeg3", "slot": 5})
+    assert r.status_code == 200, r.text
+    ch = c.get("/api/channels").json()["channels"][0]
+    assert ch["secret"] == __import__("hashlib").sha256(b"#ploeg3").hexdigest()[:32] and ch["require_sig"]
+    key = c.get(f"/api/trackers/{tid}/authkey").json()["authkey"]
+    rest = "3|M|50.93|5.33|40|50|90|80|0.9|1|t|b|1800000000"
+    good = main.channel_tag(key, f"ab12cd34|{rest}")
+    run = lambda txt: asyncio.run(main.on_channel(5, txt, 1800000000, 5.0, 2))
+    run(f"MT: T1C|ab12cd34|00000000|{rest}")                     # foute handtekening
+    run(f"MT: T1C|ab12cd34|-|{rest}")                            # niet ondertekend, kanaal eist het
+    assert not c.get(f"/api/trackers/{tid}/track?hours=999999").json()
+    reasons = [u["reason"] for u in c.get("/api/unknown").json()]
+    assert "kanaal #ploeg3: ongeldige handtekening" in reasons and "kanaal #ploeg3: niet ondertekend" in reasons
+    run(f"MT: T1C|ab12cd34|{good}|{rest}")
+    assert len(c.get(f"/api/trackers/{tid}/track?hours=999999").json()) == 1
+    t = next(x for x in c.get("/api/trackers").json() if x["id"] == tid)
+    assert t["last_via"] == "kanaal #ploeg3" and t["has_authkey"] and "authkey" not in t
+    grp = next(g for g in c.get("/api/tracker-groups").json() if g["name"] == "Kanaal #ploeg3")
+    assert grp["trackers"] == [tid]                               # automatisch in de kanaalgroep
+    run("Jan: hallo allemaal")                                    # gewone chat: genegeerd
+    run(f"MT: T1C|ab12cd34|{good}|{rest}".replace("|5.33|", "|5.34|"))   # gewijzigd: handtekening klopt niet meer
+    assert len(c.get(f"/api/trackers/{tid}/track?hours=999999").json()) == 1

@@ -42,7 +42,7 @@
     fav: new Set(store.get("fav", [])),
     hidden: new Set(store.get("hidden", [])),
     filter: store.get("filter", "all"),
-    tgroup: store.get("tgroup", 0),       // 0 = alle trackergroepen
+    tgroup: Number(new URLSearchParams(location.search).get("tgroup")) || store.get("tgroup", 0),   // 0 = alle
     trackOn: store.get("trackOn", true),
     hours: store.get("hours", 24),
     color: store.get("color", "tracker"),

@@ -51,11 +51,20 @@ static void finish(bool ok) {
   bool manual = s_cur.manual;
   uint32_t tag = s_cur.tag;
   s_cur.used = false;
-  if (s_done_cb) s_done_cb(ok, manual, millis() - s_start_ms, tag);
+  if (s_done_cb) s_done_cb(ok, manual, mt_cfg.transport == 1 ? MT_ACK_NONE : millis() - s_start_ms, tag);
   if (s_next.used) { s_cur = s_next; s_next.used = false; s_attempt = 0; s_ts = 0; }
 }
 
 static bool transmit() {
+  if (mt_cfg.transport == 1) {           // kanaal: één keer verzenden, geen ACK
+    if (!the_mesh.mtSendChannel(mt_cfg.chan_idx, s_cur.text)) { s_stats.no_target++; return false; }
+    s_stats.sent_packets++;
+    s_start_ms = millis();
+    s_waiting = true;
+    s_deadline = millis();               // meteen afronden in de lus
+    s_expected_ack = 0;
+    return true;
+  }
   ContactInfo* c = target_contact(true);
   if (!c) { s_stats.no_target++; return false; }
   // Laatste poging: pad vergeten zodat het via flood gaat (zoals de app).
@@ -106,6 +115,7 @@ void mt_sender_loop() {
     return;
   }
   if ((int32_t)(millis() - s_deadline) < 0) return;
+  if (mt_cfg.transport == 1) { finish(true); return; }   // kanaal: verstuurd = klaar
   // Een gewone positie niet herhalen als er al een verse klaarstaat.
   if (!s_cur.keep && s_next.used) { s_stats.replaced++; finish(false); return; }
   if (s_attempt < s_cur.retries) {

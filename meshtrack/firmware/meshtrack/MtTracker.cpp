@@ -20,6 +20,7 @@
 #include "MtGps.h"
 #include "MyMesh.h"
 #include "UITask.h"
+#include <SHA256.h>
 #include <Adafruit_LittleFS.h>
 #include <InternalFileSystem.h>
 using namespace Adafruit_LittleFS_Namespace;
@@ -168,21 +169,40 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   int n = snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c|%c|%s",
            (unsigned)seq_next(), state, lat, lon, alt, spd, crs, bat < 0 ? 0 : bat, hd, age,
            mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b', fts);
-  // 15e veld: eerdere punten, zoveel als er passen.
+  // Kanaal: "T1C|<pubkey 8 hex>|<handtekening 8 hex>|<seq>|..." (zonder "T1|"); de
+  // handtekening = HMAC-SHA256(authsleutel, "<pubkey8>|<rest>"), eerste 4 bytes.
+  const bool chan = mt_cfg.transport == 1;
+  const int limit = chan ? MT_CHAN_TEXT_MAX - 19 : MT_TEXT_MAX;   // ruimte voor T1C|pk|tag| (min "T1|")
+  // 15e veld: eerdere punten, compact. "~<interval>" en daarna per punt het verschil met het
+  // vorige (nieuwste eerst, te beginnen bij het hoofdpunt) in 1e-5 graden: ";dlat,dlon".
+  // Wijkt de tijd tussen twee punten af van het interval, dan volgt "@<seconden>".
+  // De server berekent de snelheid uit afstand en tijd. Zo passen een negental punten.
   uint32_t tag = 0, main_ts = with_pos ? g.lastValidUnix() : 0;
   if (main_ts) {
-    int32_t mla = lround(la * 1e5), mlo = lround(lo * 1e5);
-    bool first = true;
-    for (uint8_t k = 0; k < s_npts; k++) {
-      const MtPt& q = s_pts[k];
-      if (q.ts >= main_ts) break;
-      char item[40];
-      int m = snprintf(item, sizeof(item), "%s%lu,%ld,%ld,%u", first ? "|" : ";", (unsigned long)(main_ts - q.ts),
-                       (long)(q.lat - mla), (long)(q.lon - mlo), (unsigned)q.spd);
-      if (n + m > MT_TEXT_MAX) break;
-      memcpy(text + n, item, m + 1);
-      n += m;
-      first = false;
+    int32_t pla = lround(la * 1e5), plo = lround(lo * 1e5);
+    uint32_t pts = main_ts;
+    int k = (int)s_npts - 1;
+    while (k >= 0 && s_pts[k].ts >= main_ts) k--;
+    if (k >= 0) {
+      uint32_t step = mt_cfg.sample_s ? mt_cfg.sample_s : pts - s_pts[k].ts;
+      char head[16];
+      int hm = snprintf(head, sizeof(head), "|~%lu", (unsigned long)step);
+      if (n + hm + 6 <= limit) {
+        memcpy(text + n, head, hm + 1);
+        n += hm;
+        for (; k >= 0; k--) {
+          const MtPt& q = s_pts[k];
+          uint32_t gap = pts - q.ts;
+          char item[40];
+          int m = gap == step ? snprintf(item, sizeof(item), ";%ld,%ld", (long)(q.lat - pla), (long)(q.lon - plo))
+                              : snprintf(item, sizeof(item), ";%ld,%ld@%lu", (long)(q.lat - pla), (long)(q.lon - plo),
+                                         (unsigned long)gap);
+          if (n + m > limit) break;            // oudere punten passen niet meer
+          memcpy(text + n, item, m + 1);
+          n += m;
+          pla = q.lat; plo = q.lon; pts = q.ts;
+        }
+      }
     }
     pts_push(main_ts, la, lo, sp);          // ook het hoofdpunt: bij een misser gaat het mee met het volgende
     tag = main_ts;
@@ -193,6 +213,22 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B';
   uint8_t retries = mt_cfg.ack_retries;
   if (!keep && s_rules.fast && !s_rules.slow && mt_cfg.fast_retries < retries) retries = mt_cfg.fast_retries;
+  if (chan) {
+    char pk[9], body[MT_TEXT_MAX + 1];
+    for (int i = 0; i < 4; i++) snprintf(pk + 2 * i, 3, "%02x", the_mesh.self_id.pub_key[i]);
+    snprintf(body, sizeof(body), "%s|%s", pk, text + 3);          // text begint met "T1|"
+    char sig[9] = "-";
+    if (mt_cfg.authkey_set) {
+      SHA256 sha;
+      uint8_t mac[4];
+      sha.resetHMAC(mt_cfg.authkey, 16);
+      sha.update(body, strlen(body));
+      sha.finalizeHMAC(mt_cfg.authkey, 16, mac, 4);
+      snprintf(sig, sizeof(sig), "%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3]);
+    }
+    snprintf(text, sizeof(text), "T1C|%s|%s|%s", pk, sig, body + 9);
+    retries = 0;
+  }
   mt_send(text, manual, retries, keep, tag);
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
   strncpy(s_last_reason, reason, sizeof(s_last_reason) - 1);
@@ -204,6 +240,10 @@ static MtRuleParams params();
 
 static void on_send_done(bool ok, bool manual, uint32_t ack_ms, uint32_t tag) {
   if (ok && tag) pts_acked(tag);
+  if (ack_ms == MT_ACK_NONE) {               // kanaal: verstuurd, geen bevestiging mogelijk
+    mt_log("tx op kanaal %u verstuurd (geen ACK op een kanaal)", (unsigned)mt_cfg.chan_idx);
+    return;
+  }
   if (manual) ui_task.playForced(ok ? "ok:d=16,o=7,b=200:16c,16p,16c" : "nok:d=4,o=5,b=100:4c");
   bool was_fast = s_rules.fast, was_slow = s_rules.slow;
   mt_rules_link(s_rules, params(), ok, ack_ms);

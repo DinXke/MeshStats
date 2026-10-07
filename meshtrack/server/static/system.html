@@ -18,6 +18,7 @@
   <div class="tabs pagetabs" role="tablist">
     <button class="tab on" data-tab="rules">Meldingsregels</button>
     <button class="tab" data-tab="sent">Verzonden meldingen</button>
+    <button class="tab" data-tab="channels">Kanalen</button>
     <button class="tab" data-tab="settings">Instellingen</button>
   </div>
 
@@ -64,6 +65,36 @@
     <div id="sent"></div>
   </section>
 
+  <section class="card pane" id="pane-channels" hidden>
+    <div class="cardhead"><h2>Kanalen</h2><button class="primary" id="c-new">+ Kanaal</button></div>
+    <p class="muted">Trackers kunnen hun posities via DM naar de server sturen (standaard), of op een kanaal. De server
+      luistert mee op de kanalen hieronder; MeshTrack zet ze zelf op de server-companion. Elk kanaal krijgt een eigen
+      trackergroep, dus ook een eigen kaart. Let op: een kanaalbericht wordt door het hele net geflood en krijgt geen
+      bevestiging; een DM met een gekende route kost meestal minder zendtijd.</p>
+    <form id="c-form" class="subform" hidden>
+      <input type="hidden" id="c-id">
+      <div class="grid">
+        <div><label for="c-name">Naam</label><input id="c-name" maxlength="31" required placeholder="bv. #ploeg3 of Ploeg 3">
+          <div class="help">Een naam die met # begint, krijgt zijn sleutel uit de naam (zoals in de MeshCore-app).</div></div>
+        <div><label for="c-secret">Sleutel (32 hex)</label><input id="c-secret" class="mono" maxlength="32" spellcheck="false" placeholder="leeg bij een #kanaal">
+          <div class="row" style="margin:4px 0 0"><button type="button" id="c-gen">Willekeurige sleutel</button></div></div>
+        <div><label for="c-region">Regio (scope)</label><input id="c-region" maxlength="30" value="be" placeholder="bv. be; leeg = geen">
+          <div class="help">Een tracker die op dit kanaal stuurt, krijgt deze regio voor zijn floods.</div></div>
+        <div><label for="c-slot">Kanaalnummer op de server-companion</label><input id="c-slot" type="number" min="0" max="39" value="8">
+          <div class="help" id="c-slots"></div></div>
+      </div>
+      <label class="switch block"><input type="checkbox" id="c-sig" checked><span></span> Alleen ondertekende berichten aanvaarden</label>
+      <div class="help">Op een kanaal kan iedereen met de sleutel berichten sturen, en de afzender is gewone tekst. Met ondertekening
+        (een authsleutel per tracker, via USB gezet) worden valse posities geweigerd. Zet dit alleen uit voor een kanaal waarvan
+        enkel jouw eigen trackers de sleutel kennen.</div>
+      <label class="switch block"><input type="checkbox" id="c-active" checked><span></span> Actief (meeluisteren)</label>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="c-cancel">Annuleren</button></div>
+      <div id="c-msg" class="msg"></div>
+    </form>
+    <div id="c-qr" class="subform" hidden></div>
+    <div id="channels" class="tlist"></div>
+  </section>
+
   <section class="card pane" id="pane-settings" hidden>
     <div class="cardhead"><h2>Systeeminstellingen</h2></div>
     <form id="set-form"><div id="settings" class="grid"></div>
@@ -71,6 +102,7 @@
       <div id="set-msg" class="msg"></div></form>
   </section>
 </main>
+<script src="/static/vendor/qrcode.js"></script>
 <script src="/static/common.js"></script>
 <script src="/static/system.js"></script>
 </body>

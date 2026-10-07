@@ -74,6 +74,9 @@ T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_a
 | `mode` | `c`/`t` | Companion of tracker (optioneel). |
 | `power` | `u`/`b` | USB of batterij (optioneel). |
 | `fix_ts` | unix-s | GPS-tijd van de fix (optioneel, fw 0.4.0+). Wint van alle andere tijden. |
+| `extra` | tekst | Eerdere punten (fw 0.5.0+; compact `~interval;dlat,dlon[@s]` vanaf 0.6.0). |
+
+Via een kanaal (fw 0.6.0+): `T1C|<pubkey8>|<hmac8>|<seq>|...`, ondertekend met een authsleutel per tracker.
 
 Voorbeeld: `T1|412|M|50.93012|5.33781|42|37|184|87|1.2|0` (ca. 45 bytes).
 

@@ -10,7 +10,8 @@
   const fmt = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "");
 
   // ---- tabs ------------------------------------------------------------------------
-  const need = { rules: ["alerts.manage", "alerts.personal"], sent: ["alerts.manage", "alerts.personal", "system.manage"], settings: "system.manage" };
+  const need = { rules: ["alerts.manage", "alerts.personal"], sent: ["alerts.manage", "alerts.personal", "system.manage"],
+    channels: "system.manage", settings: "system.manage" };
   const allowed = (k) => (Array.isArray(need[k]) ? need[k].some(can) : can(need[k]));
   const tabs = document.querySelectorAll(".pagetabs .tab");
   tabs.forEach((b) => { if (!allowed(b.dataset.tab)) b.hidden = true; b.addEventListener("click", () => show(b.dataset.tab)); });
@@ -19,6 +20,7 @@
     document.querySelectorAll("main .pane").forEach((p) => { p.hidden = p.id !== "pane-" + name; });
     if (name === "sent") loadSent();
     if (name === "settings") loadSettings();
+    if (name === "channels") loadChannels();
     history.replaceState(null, "", "#" + name);
   }
 
@@ -120,6 +122,77 @@
       <td class="hide-sm muted small">${MT.esc(l.text)}</td></tr>`).join("") + "</tbody></table>"
       : '<div class="empty">Nog niets verzonden.</div>';
   }
+
+  // ---- kanalen -----------------------------------------------------------------------
+  let chans = [], compSlots = [];
+  async function loadChannels() {
+    const r = await MT.api("/api/channels");
+    chans = r.channels; compSlots = r.companion;
+    $("channels").innerHTML = chans.map((c) => `<div class="titem"><div class="body">
+        <div><strong>${MT.esc(c.name)}</strong> <span class="muted small">nummer ${c.slot}</span>
+          ${c.active ? "" : '<span class="pill">uit</span>'}
+          ${!r.connected ? '<span class="pill">companion niet verbonden</span>' : c.on_companion ? '<span class="pill ok">op de companion</span>' : '<span class="pill warn">nog niet op de companion</span>'}
+          ${c.require_sig ? '<span class="pill">ondertekend</span>' : '<span class="pill warn">ook niet-ondertekend</span>'}</div>
+        <div class="muted small">regio ${MT.esc(c.region || "geen")} · ${c.members} tracker(s) sturen via dit kanaal ·
+          <a href="/?tgroup=${c.tracker_group_id}">kaart van dit kanaal</a></div></div>
+      <div class="actions"><button data-cqr="${c.id}">QR-code</button><button data-cedit="${c.id}">Bewerken</button><button class="danger" data-cdel="${c.id}">Verwijderen</button></div></div>`).join("")
+      || '<div class="empty">Nog geen kanalen. De trackers sturen via DM.</div>';
+    document.querySelectorAll("[data-cedit]").forEach((b) => b.addEventListener("click", () => openChannel(chans.find((c) => c.id === Number(b.dataset.cedit)))));
+    document.querySelectorAll("[data-cqr]").forEach((b) => b.addEventListener("click", () => {
+      const c = chans.find((x) => x.id === Number(b.dataset.cqr));
+      const url = `meshcore://channel/add?name=${encodeURIComponent(c.name)}&secret=${c.secret}`;
+      const qr = qrcode(0, "M");
+      qr.addData(url);
+      qr.make();
+      $("c-qr").innerHTML = `<div class="cardhead"><h3 style="margin:0">QR-code: ${MT.esc(c.name)}</h3>
+          <button type="button" class="ghost" id="c-qrclose" aria-label="Sluiten">✕</button></div>
+        <div class="row" style="align-items:flex-start"><div class="qrbox">${qr.createSvgTag({ cellSize: 5, margin: 2 })}</div>
+          <div style="flex:1;min-width:220px"><p>Scan met de MeshCore-app om dit kanaal toe te voegen.</p>
+            <div class="small muted">Sleutel</div><code class="mono">${MT.esc(c.secret.match(/.{1,4}/g).join(" "))}</code>
+            <p class="help">Wie deze code of sleutel heeft, kan het kanaal lezen en erop sturen. Deel hem alleen met wie mag.</p></div></div>`;
+      $("c-qr").hidden = false;
+      $("c-qrclose").addEventListener("click", () => { $("c-qr").hidden = true; });
+      $("c-qr").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }));
+    document.querySelectorAll("[data-cdel]").forEach((b) => b.addEventListener("click", async () => {
+      const c = chans.find((x) => x.id === Number(b.dataset.cdel));
+      if (!confirm(`Kanaal "${c.name}" verwijderen? De server luistert dan niet meer mee; trackers die erop sturen, worden niet meer ontvangen.`)) return;
+      await MT.api(`/api/channels/${c.id}`, { method: "DELETE" }); loadChannels();
+    }));
+  }
+  function openChannel(c) {
+    $("c-form").hidden = false;
+    $("c-id").value = c ? c.id : "";
+    $("c-name").value = c ? c.name : "";
+    $("c-secret").value = c && !c.name.startsWith("#") ? c.secret : "";
+    const used = new Set([...compSlots.map((s) => s.slot), ...chans.map((x) => x.slot)]);
+    let free = 8; while (used.has(free) && free < 39) free++;
+    $("c-slot").value = c ? c.slot : free;
+    $("c-slots").textContent = compSlots.length ? "Nu op de companion: " + compSlots.map((s) => `${s.slot} = ${s.name}`).join(", ") : "";
+    $("c-sig").checked = c ? c.require_sig : true;
+    $("c-region").value = c ? (c.region || "") : "be";
+    $("c-active").checked = c ? c.active : true;
+    msg($("c-msg"), "");
+  }
+  $("c-new").addEventListener("click", () => openChannel(null));
+  $("c-cancel").addEventListener("click", () => { $("c-form").hidden = true; });
+  $("c-gen").addEventListener("click", () => {
+    $("c-secret").value = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  });
+  $("c-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = $("c-id").value, slot = Number($("c-slot").value);
+    const other = compSlots.find((s) => s.slot === slot && !chans.some((c) => c.slot === slot && String(c.id) === id));
+    if (other && !confirm(`Op nummer ${slot} van de companion staat nu "${other.name}". Overschrijven?`)) return;
+    const body = { name: $("c-name").value.trim(), secret: $("c-secret").value.trim(), slot,
+      require_sig: $("c-sig").checked, active: $("c-active").checked, region: $("c-region").value.trim() };
+    try {
+      const r = await MT.api(id ? `/api/channels/${id}` : "/api/channels", { method: id ? "PUT" : "POST", body });
+      $("c-form").hidden = true;
+      await loadChannels();
+      if (r.issues && r.issues.length) alert(r.issues.join("\n"));
+    } catch (err) { msg($("c-msg"), err.message); }
+  });
 
   // ---- instellingen ------------------------------------------------------------------
   async function loadSettings() {

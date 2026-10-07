@@ -103,8 +103,8 @@ bool mt_cfg_save() {
 void mt_cfg_begin() {
   mt_cfg_defaults(mt_cfg);
   int r = load_file(MT_CFG_PATH);
-  if (r == 0) { mt_cfg_load_note = "geladen v3"; return; }
-  if (r == 2) { mt_cfg_load_note = "omgezet naar v3"; mt_cfg_save(); return; }
+  if (r == 0) { mt_cfg_load_note = "geladen v4"; return; }
+  if (r == 2) { mt_cfg_load_note = "omgezet naar v4"; mt_cfg_save(); return; }
   if (r == 1) {
     mt_cfg_readonly = true;
     mt_cfg_load_note = "DEFAULTS (bestand van nieuwere firmware, niet overschreven)";

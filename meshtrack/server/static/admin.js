@@ -37,7 +37,8 @@
       const sim = simBy[t.id];
       const kind = t.kind === "sim" ? `<span class="pill">virtueel${sim && sim.status && sim.status.running ? " · rijdt" : " · gestopt"}</span>` : "";
       const meta = [MT.ago(t.last_rx), t.last_bat != null ? `batterij ${t.last_bat}%` : null,
-                    t.last_state ? MT.STATE[t.last_state] : null].filter(Boolean).join(" · ");
+                    t.last_state ? MT.STATE[t.last_state] : null, t.last_via && t.kind === "real" ? `via ${t.last_via}` : null,
+                    t.kind === "real" && t.has_authkey ? "authsleutel" : null].filter(Boolean).join(" · ");
       return `<div class="titem">
         <span class="tico big" style="background:${MT.esc(t.color)}">${t.icon ? MTIcons.svg(t.icon) : ""}</span>
         <div class="body"><div><strong>${MT.esc(t.alias)}</strong> ${kind}${t.active ? "" : ' <span class="pill">inactief</span>'}${t.lost ? ` <span class="pill lost">verloren${t.lost_seen ? " · terug gezien " + MT.esc(MT.ago(t.lost_seen)) : ""}</span>` : ""}${t.keys ? ` <span class="pill" title="${t.keys} sleutel(s)/backup(s) op de server">sleutel op server</span>` : ""}</div>
@@ -201,6 +202,9 @@
     $("f-notes").value = t.notes === "simulator" ? "" : t.notes;
     $("f-active").checked = !!t.active;
     $("f-lost").checked = !!t.lost;
+    $("f-authrow").hidden = t.kind !== "real" || !(MT.can("trackers.serial") || MT.can("keys.manage"));
+    $("f-authkey").textContent = t.has_authkey ? "verborgen" : "nog geen";
+    $("f-authcopy").hidden = true;
     fillFormGroups(t.groups || []);
     icon = t.icon || "";
     setVirtual(t.kind === "sim");
@@ -330,6 +334,20 @@
     } catch (e) { msg($("fmsg"), e.message); }
   });
   $("f-genkey").addEventListener("change", () => { $("f-pubrow").hidden = $("f-genkey").checked; });
+  const groupKey = (k) => k.match(/.{1,4}/g).join(" ");
+  async function showAuth(fresh) {
+    const id = $("f-id").value;
+    if (!id) return;
+    if (fresh && !confirm("Een nieuwe authsleutel maken? De tracker moet dan ook de nieuwe krijgen, anders worden zijn kanaalberichten geweigerd.")) return;
+    try {
+      const { authkey } = await MT.api(`/api/trackers/${id}/authkey${fresh ? "?new=1" : ""}`);
+      $("f-authkey").textContent = groupKey(authkey);
+      $("f-authcopy").hidden = false;
+      $("f-authcopy").onclick = () => navigator.clipboard.writeText(authkey);
+    } catch (e) { msg($("fmsg"), e.message); }
+  }
+  $("f-authshow").addEventListener("click", () => showAuth(false));
+  $("f-authnew").addEventListener("click", () => showAuth(true));
   $("contacts").addEventListener("change", (e) => {
     if (!e.target.value) return;
     $("f-pubkey").value = e.target.value;
@@ -446,6 +464,8 @@
       else el.value = v;
     });
     setMode(kv.gekozen || "tracker");
+    $("s-authstate").textContent = kv.authkey === "ja" ? "Authsleutel: ingesteld" : kv.authkey === "nee" ? "Authsleutel: niet ingesteld" : "Authsleutel: (firmware te oud)";
+    $("s-auth").disabled = !known || !kv.authkey;
     $("s-ritme").textContent = kv.ritme ? `Ritme nu: ${kv.ritme}.` : "Deze firmware kent het ritme volgens de ontvangst nog niet (vanaf 0.4.0).";
     const known = trackers.find((t) => t.pubkey === (kv.pubkey || "").toLowerCase());
     $("s-info").innerHTML = `<div><strong>${MT.esc(kv.naam || "?")}</strong> · firmware ${MT.esc(kv.fw || "?")}
@@ -463,6 +483,54 @@
   }
   $("s-mode").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.v)));
 
+  // Kanalen op het toestel, voor de keuzelijst "Verzenden via".
+  let devChans = [], srvChans = [];
+  async function readChannels() {
+    let ls = [];
+    try { ls = await until("chan list", /^chan=einde/, 3000, true); } catch (_) { /* oude firmware */ }
+    devChans = ls.map((l) => /^chan=(\d+)\|([0-9A-Fa-f]{32})\|(.*)$/.exec(l)).filter(Boolean)
+      .map((m) => ({ slot: Number(m[1]), secret: m[2].toLowerCase(), name: m[3].trim() }));
+    srvChans = await MT.api("/api/channels/device").catch(() => []);
+    const cur = lastKv.transport === "kanaal" ? devChans.find((d) => d.slot === Number(lastKv.chan)) : null;
+    const curSrv = cur && srvChans.find((s) => s.secret === cur.secret);
+    const others = devChans.filter((d) => !srvChans.some((s) => s.secret === d.secret));
+    $("s-via").innerHTML = '<option value="dm">DM naar de server (standaard)</option>'
+      + (srvChans.length ? `<optgroup label="Kanalen van de server">${srvChans.map((s) => `<option value="srv:${s.id}">${MT.esc(s.name)}</option>`).join("")}</optgroup>` : "")
+      + (others.length ? `<optgroup label="Andere kanalen op het toestel">${others.map((d) => `<option value="dev:${d.slot}">${d.slot}: ${MT.esc(d.name)}</option>`).join("")}</optgroup>` : "");
+    $("s-via").value = !cur ? "dm" : curSrv ? `srv:${curSrv.id}` : `dev:${cur.slot}`;
+  }
+
+  // "Verzenden via" toepassen: kanaal (met sleutel) en authsleutel op het toestel zetten.
+  async function applyVia(bad) {
+    const v = $("s-via").value;
+    const run = async (cmd, silent) => {
+      const out = await until(cmd, /bewaard|ongeldig|onbekend|NIET|gebruik|kies eerst/, 3000, silent);
+      if (out.some((l) => /ongeldig|onbekend|NIET|gebruik|kies eerst/.test(l))) bad.push(cmd.split(" ").slice(0, 2).join(" "));
+    };
+    if (v === "dm") { if (lastKv.transport !== "dm") await run("set transport dm"); return; }
+    let slot;
+    if (v.startsWith("srv:")) {
+      const s = srvChans.find((x) => `srv:${x.id}` === v);
+      const have = devChans.find((d) => d.secret === s.secret);
+      if (have) slot = have.slot;
+      else {
+        const used = new Set(devChans.map((d) => d.slot));
+        slot = 1; while (used.has(slot) && slot < 39) slot++;
+        await run(`chan set ${slot} ${s.secret} ${s.name}`, true);
+      }
+      const t = trackers.find((x) => x.pubkey === (lastKv.pubkey || "").toLowerCase());
+      if (t && lastKv.authkey !== "ja") {
+        const { authkey } = await MT.api(`/api/trackers/${t.id}/authkey`);
+        await run(`set authkey ${authkey}`, true);
+      } else if (!t) msg($("s-msg"), "Deze tracker staat nog niet in MeshTrack: zet hem erin, anders weigert een kanaal met ondertekening zijn berichten.");
+      if (s.region && lastKv.scope !== s.region) await run(`set scope ${s.region}`);
+    } else slot = Number(v.slice(4));
+    if (!lastKv.scope || lastKv.scope === "-")
+      msg($("s-msg"), "Let op: deze tracker heeft geen regio (scope). Berichten zonder regio worden steeds vaker geblokkeerd; zet er een (bv. be) bij de kanaalinstelling op de server.");
+    await run(`set chan ${slot}`);
+    await run("set transport kanaal");
+  }
+
   async function readStatus() {
     let ls;
     try { ls = await until("status", /^cfg=/, 2500); } catch (_) { ls = lines.slice(); }
@@ -473,6 +541,8 @@
       return false;
     }
     fillForm(lastKv);
+    if (lastKv.transport) await readChannels();
+    $("s-via").closest("fieldset").querySelector("#s-via").disabled = !lastKv.transport;
     $("s-panel").hidden = false;
     msg($("s-msg"), "");
     return true;
@@ -547,6 +617,17 @@
     openForm("Tracker toevoegen");
   });
 
+  $("s-auth").addEventListener("click", async () => {
+    const t = trackers.find((x) => x.pubkey === (lastKv.pubkey || "").toLowerCase());
+    if (!t) return;
+    try {
+      const { authkey } = await MT.api(`/api/trackers/${t.id}/authkey`);
+      const out = await until(`set authkey ${authkey}`, /bewaard|ongeldig|onbekend/, 3000, true);
+      msg($("s-msg"), out.some((l) => /bewaard/.test(l)) ? "Authsleutel staat op de tracker." : "Authsleutel niet aanvaard.", out.some((l) => /bewaard/.test(l)));
+      await readStatus();
+    } catch (e) { msg($("s-msg"), e.message); }
+  });
+
   $("s-target").addEventListener("click", () => {
     const pk = status && status.mesh && status.mesh.pubkey;
     if (pk) document.querySelector('#s-form [data-set="target"]').value = pk;
@@ -571,6 +652,7 @@
       const out = await command(c, 250);
       if (out.some((l) => /ongeldig|onbekend|NIET/.test(l))) bad.push(c.replace(/^set /, ""));
     }
+    if (lastKv.transport) await applyVia(bad);
     await readStatus();
     if (bad.length) msg($("s-msg"), `Niet aanvaard: ${bad.join(", ")}`);
     else msg($("s-msg"), "Opgeslagen op de tracker.", true);

@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#define MT_CFG_VERSION 3   // v3: punten bewaren + ritme volgens ontvangst aan/uit (velden achteraan, oudere worden overgenomen)
+#define MT_CFG_VERSION 4   // v4: verzenden via DM of kanaal + authsleutel (velden achteraan, oudere worden overgenomen)
 
 struct MtCfg {
   uint32_t magic;               // 'MTC1'
@@ -44,6 +44,12 @@ struct MtCfg {
   uint16_t sample_s;            // in beweging elke x s een punt bewaren; mee in het volgende bericht (0 = uit)
   uint8_t  adaptive;            // ritme volgens de ontvangst: 1 aan, 0 uit
   uint8_t  _pad3;
+  // ---- v4 ----
+  uint8_t  transport;           // 0 = DM naar het doel (standaard), 1 = kanaal
+  uint8_t  chan_idx;            // kanaalnummer op dit toestel (chan list)
+  uint8_t  authkey_set;
+  uint8_t  _pad4;
+  uint8_t  authkey[16];         // ondertekent kanaalberichten (HMAC); van de server, via USB
   uint32_t crc;                 // crc32 over alles hiervoor
 };
 

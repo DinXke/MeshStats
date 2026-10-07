@@ -174,6 +174,12 @@ public:
     return _store->saveMainIdentity(id);
   }
   void mtExportKey(uint8_t* prv) { self_id.writeTo(prv, 64); }
+  // MeshTrack: bericht op een kanaal (flood, geen ACK). Korte afzendernaam "MT" spaart ruimte.
+  bool mtSendChannel(int idx, const char* text) {
+    ChannelDetails ch;
+    if (!getChannel(idx, ch) || !ch.name[0]) return false;
+    return sendGroupMessage(getRTCClock()->getCurrentTimeUnique(), ch.channel, "MT", text, strlen(text));
+  }
   // MeshTrack: kanalen (128-bit sleutel, zoals de app) lezen en zetten
   bool mtGetChannel(int idx, ChannelDetails& ch) { return getChannel(idx, ch); }
   bool mtSetChannel(int idx, const char* name, const uint8_t* secret16) {
