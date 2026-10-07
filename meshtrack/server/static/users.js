@@ -39,9 +39,10 @@
       <div class="body"><div><strong>${MT.esc(u.display_name || u.username)}</strong> <span class="muted">@${MT.esc(u.username)}</span>
         ${u.active ? "" : ' <span class="pill bad">gedeactiveerd</span>'}</div>
         <div class="muted small">${MT.esc(u.group_name)} · laatst ingelogd ${MT.esc(fmtTs(u.last_login))}</div></div>
-      <div class="actions"><button data-uedit="${u.id}">Bewerken</button><button class="danger" data-udel="${u.id}">Verwijderen</button></div></div>`).join("")
+      <div class="actions"><button data-ueff="${u.id}">Effectieve rechten</button><button data-uedit="${u.id}">Bewerken</button><button class="danger" data-udel="${u.id}">Verwijderen</button></div></div>`).join("")
       || '<div class="empty">Nog geen gebruikers.</div>';
     document.querySelectorAll("[data-uedit]").forEach((b) => b.addEventListener("click", () => editUser(Number(b.dataset.uedit))));
+    document.querySelectorAll("[data-ueff]").forEach((b) => b.addEventListener("click", () => showEffective(Number(b.dataset.ueff))));
     document.querySelectorAll("[data-udel]").forEach((b) => b.addEventListener("click", () => delUser(Number(b.dataset.udel))));
   }
   function openUser(u) {
@@ -61,6 +62,33 @@
     $("u-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
   function editUser(id) { openUser(users.find((u) => u.id === id)); }
+
+  // Wat mag deze gebruiker echt, en waarom?
+  async function showEffective(id) {
+    const e = await MT.api(`/api/users/${id}/effective`);
+    const has = e.perms.filter((p) => p.via.length), not = e.perms.filter((p) => !p.via.length);
+    const seen = e.trackers.filter((t) => t.sees), hidden = e.trackers.filter((t) => !t.sees);
+    const hist = e.history_hours == null ? "–" : e.history_hours === 0 ? "onbeperkt" : `${e.history_hours} uur`;
+    $("u-eff").innerHTML = `<div class="cardhead"><h3 style="margin:0">Effectieve rechten: ${MT.esc(e.user.display_name || e.user.username)}</h3>
+        <button type="button" class="ghost" id="u-effclose" aria-label="Sluiten">✕</button></div>
+      ${e.warnings.map((w) => `<div class="msg err">${MT.esc(w)}</div>`).join("")}
+      <div class="muted small">Groepen: <strong>${MT.esc(e.groups.join(", ") || "geen")}</strong> · terugblik ${MT.esc(hist)}${e.history_via.length ? " (via " + MT.esc(e.history_via.join(", ")) + ")" : ""}
+        ${e.own_rules.length ? " · eigen meldingsregels: " + MT.esc(e.own_rules.join(", ")) : ""}</div>
+      <h4>Rechten (${has.length} van ${e.perms.length})</h4>
+      <div class="permgrid">${has.map((p) => `<div class="small"><span class="ok">✓</span> <strong>${MT.esc(p.label)}</strong>
+        <span class="muted">via ${MT.esc(p.via.join(", "))}</span></div>`).join("") || '<span class="muted">geen</span>'}</div>
+      ${not.length ? `<details><summary class="small muted">Niet toegestaan (${not.length})</summary><div class="permgrid">${not.map((p) =>
+        `<div class="small muted">✗ ${MT.esc(p.label)}</div>`).join("")}</div></details>` : ""}
+      <h4>Trackers (${e.all_trackers ? "alle, ook toekomstige" : seen.length + " van " + e.trackers.length})</h4>
+      <div class="permgrid">${seen.map((t) => `<div class="small"><i class="dot" style="background:${MT.esc(t.color)}"></i>
+        <strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? " (sim)" : ""}${t.active ? "" : ' <span class="pill">inactief</span>'}
+        <div class="muted">${MT.esc(t.via.join(" · "))}</div></div>`).join("") || '<span class="muted">geen enkele tracker</span>'}</div>
+      ${hidden.length ? `<details><summary class="small muted">Niet zichtbaar (${hidden.length})</summary><div class="permgrid">${hidden.map((t) =>
+        `<div class="small muted">✗ ${MT.esc(t.alias)}</div>`).join("")}</div></details>` : ""}`;
+    $("u-eff").hidden = false;
+    $("u-effclose").addEventListener("click", () => { $("u-eff").hidden = true; });
+    $("u-eff").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
   async function delUser(id) {
     const u = users.find((x) => x.id === id);
     if (!confirm(`Gebruiker "${u.username}" verwijderen?`)) return;

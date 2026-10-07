@@ -382,3 +382,8 @@ label.btnlike { display: inline-block; border: 1px solid var(--line); background
 .sosmark { width: 34px; height: 34px; border-radius: 50%; background: #dc2626; color: #fff; border: 2.5px solid #fff;
   display: flex; align-items: center; justify-content: center; font: 800 11px/1 system-ui, sans-serif; letter-spacing: .3px;
   box-shadow: 0 0 0 2px #dc2626, 0 2px 8px rgba(0,0,0,.45); cursor: pointer; }
+
+/* ---- effectieve rechten ---- */
+#u-eff h4 { margin: 12px 0 6px; font-size: 14px; }
+#u-eff .ok { color: var(--ok); font-weight: 700; }
+i.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
