@@ -92,3 +92,13 @@ def test_fix_ts_wins_over_sender_and_receive_time():
     assert pick_ts(rx - 40, rx, 2, rx - 95) == rx - 95       # GPS-tijd van de fix
     assert pick_ts(rx - 40, rx, 2, None) == rx - 42          # oud: sender-tijd min fix_age
     assert pick_ts(rx - 40, rx, 2, 10) == rx - 42            # onzinnige fix_ts: genegeerd
+
+
+def test_compact_extra_points():
+    r = parse("T1|7|M|50.93000|5.33000|40|50|90|80|0.9|1|t|b|1800000000|~15;-100,50;-90,40@40;-80,30")
+    assert [e[0] for e in r.extra] == [15, 55, 70]                 # cumulatief
+    assert [(e[1], e[2]) for e in r.extra] == [(50.929, 5.3305), (50.9281, 5.3309), (50.9273, 5.3312)]
+    assert 25 <= r.extra[0][3] <= 30                              # ~111 m in 15 s = ±27 km/u
+    assert parse("T1|7|M|50.93|5.33|||||1|0|t|b|1800000000|~15").extra == []
+    with pytest.raises(ProtocolError):
+        parse("T1|7|M|50.93|5.33|||||1|0|t|b|1800000000|~0;1,1")

@@ -97,6 +97,7 @@ static bool parse_key(const char* s, uint8_t* o) {
 }
 
 // Eén parameter zetten. Geeft NULL bij succes, anders een foutmelding.
+static bool parse_hex(const char* s, uint8_t* o, int n);   // verderop
 static const char* set_param(const char* k, const char* v) {
   MtCfg c = mt_cfg;
   bool ok = false;
@@ -116,6 +117,31 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "fast_keep"))      { uint16_t r; ok = parse_u16(v, 10, &r); c.fast_keep = r; }
   else if (!strcmp(k, "fast_retries"))   { uint16_t r; ok = parse_u16(v, 5, &r); c.fast_retries = r; }
   else if (!strcmp(k, "sample"))         { ok = parse_dur(v, &d) && (d == 0 || d >= 5) && d <= 600; c.sample_s = d; }
+  else if (!strcmp(k, "transport")) {
+    ok = true;
+    if (!strcmp(v, "dm")) c.transport = 0;
+    else if (!strcmp(v, "kanaal") || !strcmp(v, "channel")) {
+      ChannelDetails ch;
+      if (!the_mesh.mtGetChannel(c.chan_idx, ch) || !ch.name[0]) return "kies eerst een bestaand kanaal (set chan <nr>)";
+      c.transport = 1;
+    } else ok = false;
+  }
+  else if (!strcmp(k, "chan")) {
+    uint16_t r; ChannelDetails ch;
+    ok = parse_u16(v, MAX_GROUP_CHANNELS - 1, &r) && the_mesh.mtGetChannel(r, ch) && ch.name[0];
+    if (ok) c.chan_idx = r;
+  }
+  else if (!strcmp(k, "authkey")) {
+    ok = true;
+    if (!strcmp(v, "-")) { c.authkey_set = 0; memset(c.authkey, 0, 16); }
+    else {
+      char h[40]; int j = 0;                  // spaties en streepjes mogen (zo toont de server hem)
+      for (const char* q = v; *q && j < 39; q++) if (*q != ' ' && *q != '-') h[j++] = *q;
+      h[j] = 0;
+      ok = parse_hex(h, c.authkey, 16);
+      if (ok) c.authkey_set = 1;
+    }
+  }
   else if (!strcmp(k, "adaptive"))       ok = parse_onoff(v, &c.adaptive);
   else if (!strcmp(k, "fast_ack"))       { ok = parse_dur(v, &d) && d <= 120; c.fast_ack_s = d; }
   else if (!strcmp(k, "slow_after"))     { uint16_t r; ok = parse_u16(v, 20, &r); c.slow_after = r; }
@@ -304,6 +330,13 @@ static void cmd_status() {
        a, mt_cfg.fast_keep, b, mt_cfg.fast_retries, mt_cfg.slow_after, mt_cfg.slow_factor, mt_tracker_link_str());
   fmt_dur(a, sizeof(a), mt_cfg.sample_s);
   outl("sample=%s adaptive=%s buffer=%u", a, mt_cfg.adaptive ? "aan" : "uit", (unsigned)mt_tracker_buffered());
+  {
+    ChannelDetails ch;
+    bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
+    out("transport=%s chan=%u authkey=%s chan_naam=", mt_cfg.transport == 1 ? "kanaal" : "dm", (unsigned)mt_cfg.chan_idx,
+        mt_cfg.authkey_set ? "ja" : "nee");
+    outl("%s", have ? ch.name : "-");
+  }
   outl("cfg=%s%s", mt_cfg_load_note, mt_cfg_readonly ? " [alleen-lezen]" : "");
 }
 
@@ -317,6 +350,7 @@ static void cmd_help() {
   outl("    track_in_companion on|off  accel_sens laag|midden|hoog  target <64 hex>");
   outl("    adaptive on|off  fast_interval fast_keep fast_ack fast_retries slow_after slow_factor");
   outl("    sample <tijd>   in beweging elke x een punt bewaren, mee in het volgende bericht (0 = uit)");
+  outl("    transport dm|kanaal  chan <nr>  authkey <32 hex>|-   (verzenden via DM of een kanaal)");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
@@ -379,6 +413,9 @@ static const Item GPSI[] = {
   {"GPS-fix bij heartbeat/klik max.", "fix_timeout_hb", 1},
   {"Herhaalpogingen zonder ACK (0-5)", "ack_retries", 0},
   {"Doel: pubkey server-companion", "target", 2},
+  {"Verzenden via (dm/kanaal)", "transport", 2},
+  {"Kanaalnummer (zie chan list)", "chan", 0},
+  {"Authsleutel kanaal (32 hex, - = geen)", "authkey", 2},
 };
 
 static Screen s_screen = SC_MAIN;
@@ -402,6 +439,13 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "fast_keep")) snprintf(o, n, "%u", mt_cfg.fast_keep);
   else if (!strcmp(param, "fast_retries")) snprintf(o, n, "%u", mt_cfg.fast_retries);
   else if (!strcmp(param, "sample")) fmt_dur_nl(o, n, mt_cfg.sample_s);
+  else if (!strcmp(param, "transport")) snprintf(o, n, "%s", mt_cfg.transport == 1 ? "kanaal" : "dm");
+  else if (!strcmp(param, "chan")) {
+    ChannelDetails ch;
+    bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
+    snprintf(o, n, "%u (%s)", (unsigned)mt_cfg.chan_idx, have ? ch.name : "leeg");
+  }
+  else if (!strcmp(param, "authkey")) snprintf(o, n, "%s", mt_cfg.authkey_set ? "ingesteld" : "niet ingesteld");
   else if (!strcmp(param, "adaptive")) snprintf(o, n, "%s", mt_cfg.adaptive ? "aan" : "uit");
   else if (!strcmp(param, "slow_after")) snprintf(o, n, mt_cfg.slow_after ? "%u" : "nooit", mt_cfg.slow_after);
   else if (!strcmp(param, "slow_factor")) snprintf(o, n, "x%u", mt_cfg.slow_factor);
@@ -478,7 +522,7 @@ static void show() {
     case SC_WHEN:   header("WANNEER EEN POSITIE STUREN"); list_items(WHEN, 4); break;
     case SC_RHYTHM: header("RITME"); list_items(RHYTHM, 10); outl("   Ritme nu: %s", mt_tracker_link_str()); break;
     case SC_REST:   header("STILSTAND EN HEARTBEAT"); list_items(REST, 3); break;
-    case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, 4); break;
+    case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, 7); break;
     case SC_MAINT:
       header("ONDERHOUD");
       outl("   1  Backup van alle opslag (bevat de PRIVATE KEY)");
@@ -544,7 +588,7 @@ static void menu_choice(int n) {
     case SC_WHEN: items = WHEN; count = 4; break;
     case SC_RHYTHM: items = RHYTHM; count = 10; break;
     case SC_REST: items = REST; count = 3; break;
-    case SC_GPS: items = GPSI; count = 4; break;
+    case SC_GPS: items = GPSI; count = 7; break;
   }
   if (n == 0) { s_screen = SC_MAIN; show(); return; }
   if (n >= 1 && n <= count) { prompt_for(&items[n - 1]); return; }
@@ -567,8 +611,8 @@ static void command(char* s) {
     bool handled;
     const char* err = set_mesh(k, v, &handled);
     if (!handled) {
-      char* sp = strchr(v, ' ');              // gewone parameters: één woord
-      if (sp) *sp = 0;
+      char* sp = strchr(v, ' ');              // gewone parameters: één woord (de authsleutel mag spaties hebben)
+      if (sp && strcmp(k, "authkey")) *sp = 0;
       err = set_param(k, v);
     }
     if (err) outl("%s: %s (%s)", k, err, v);

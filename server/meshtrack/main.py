@@ -10,6 +10,8 @@ WebSocket worden per verbinding gefilterd.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import re
@@ -39,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -122,12 +124,14 @@ def tracker_out(t: dict[str, Any], p: Optional[Principal] = None) -> dict[str, A
     out = dict(t)
     out["stale"] = not t["last_rx"] or now - t["last_rx"] > S.settings["stale_after_h"] * 3600
     out["groups"] = S.db.tracker_group_ids(t["id"])
+    out["has_authkey"] = bool(t.get("authkey"))
+    out.pop("authkey", None)                 # nooit in lijsten of live-berichten
     if p is not None and not p.can("map.details"):
         out = strip_tracker(out)
     return out
 
 
-DETAIL_FIELDS = ("pubkey", "last_snr", "last_path_len", "last_seq", "notes")
+DETAIL_FIELDS = ("pubkey", "last_snr", "last_path_len", "last_seq", "notes", "authkey")
 
 
 def strip_tracker(t: dict[str, Any]) -> dict[str, Any]:
@@ -145,7 +149,8 @@ def strip_msg(msg: dict[str, Any]) -> dict[str, Any]:
 
 # ---- verwerking van berichten ----------------------------------------------------
 
-async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: bool = False) -> None:
+async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: bool = False,
+                  via: Optional[dict[str, Any]] = None) -> None:
     before = S.db.tracker_by_prefix(prefix)
     pos = ingest.handle(S.db, S.cfg, prefix, text, sender_ts, snr, path_len)
     if not pos:
@@ -153,6 +158,11 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
             log.info("bericht van %s genegeerd: %r", prefix, text[:60])
         return
     t = S.db.tracker(pos["tracker_id"])
+    S.db.update_tracker(t["id"], last_via=f"kanaal {via['name']}" if via else ("sim" if simulated else "DM"))
+    if via and S.db.add_to_tracker_group(_channel_group(via), t["id"]):
+        _pcache.clear()
+        await S.hub.send({"type": "tracker_groups"})
+    t = S.db.tracker(t["id"])
     extras = pos.pop("extras", [])
     if not simulated:
         log.info("positie %s seq=%s state=%s%s", t["alias"], pos["seq"], pos["state"],
@@ -194,6 +204,69 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
 
 async def on_message(prefix: str, text: str, sender_ts, snr, path_len) -> None:
     await process(prefix, text, sender_ts, snr, path_len)
+
+
+# ---- kanalen -------------------------------------------------------------------------
+
+def channel_tag(authkey_hex: str, body: str) -> str:
+    """Handtekening van een kanaalbericht: eerste 4 bytes HMAC-SHA256 over "<pubkey8>|<rest>"."""
+    return hmac.new(bytes.fromhex(authkey_hex), body.encode(), hashlib.sha256).hexdigest()[:8]
+
+
+async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
+    """Kanaalbericht "naam: T1C|<pk8>|<tag>|<seq>|...". Alleen MeshTrack-berichten op een
+    kanaal dat we kennen; de handtekening bewijst dat het van die tracker komt."""
+    ch = S.db.channel_by_slot(slot) if slot is not None else None
+    if not ch:
+        return
+    body = text.split(": ", 1)[1] if ": " in text else text
+    if not body.startswith("T1C|"):
+        return
+    parts = body.split("|", 3)
+    if len(parts) < 4 or len(parts[1]) != 8:
+        S.db.log_unknown("?", f"kanaal {ch['name']}: ongeldig", body)
+        return
+    _, pk, tag, rest = parts
+    t = S.db.tracker_by_prefix(pk)
+    if not t or t["kind"] != "real":
+        S.db.log_unknown(pk, f"kanaal {ch['name']}: onbekende tracker", body)
+        return
+    if tag == "-":
+        if ch["require_sig"]:
+            S.db.log_unknown(pk, f"kanaal {ch['name']}: niet ondertekend", body)
+            return
+    elif not t.get("authkey") or not hmac.compare_digest(channel_tag(t["authkey"], f"{pk}|{rest}"), tag.lower()):
+        S.db.log_unknown(pk, f"kanaal {ch['name']}: ongeldige handtekening", body)
+        return
+    await process(pk, "T1|" + rest, sender_ts, snr, path_len, via=ch)
+
+
+def _channel_group(ch: dict[str, Any]) -> int:
+    """Trackergroep van het kanaal (wordt aangemaakt als ze ontbreekt)."""
+    gid = ch.get("tracker_group_id")
+    if gid and any(g["id"] == gid for g in S.db.tracker_groups()):
+        return gid
+    name = f"Kanaal {ch['name']}"
+    existing = next((g for g in S.db.tracker_groups() if g["name"].lower() == name.lower()), None)
+    gid = existing["id"] if existing else S.db.save_tracker_group(None, name, "#0ea5e9",
+                                                                 f"Trackers die via kanaal {ch['name']} sturen", [])
+    S.db.save_channel(ch["id"], {**ch, "tracker_group_id": gid})
+    return gid
+
+
+async def sync_channels() -> list[str]:
+    """Onze kanalen op de server-companion zetten. Geeft problemen terug (leeg = goed)."""
+    if not S.mesh.connected:
+        return ["companion niet verbonden: kanalen volgen bij de volgende verbinding"]
+    issues = []
+    for ch in S.db.channels():
+        if not ch["active"]:
+            continue
+        try:
+            await S.mesh.set_channel(ch["slot"], ch["name"], ch["secret"])
+        except Exception as e:  # noqa: BLE001
+            issues.append(f"{ch['name']}: {e}")
+    return issues
 
 
 async def on_sim_message(prefix: str, text: str, sender_ts, snr, path_len) -> None:
@@ -251,6 +324,8 @@ async def on_connect() -> None:
                 await S.mesh.ensure_contact(t["pubkey"], t["alias"])
             except Exception as e:  # noqa: BLE001
                 log.warning("contact %s: %s", t["alias"], e)
+    for issue in await sync_channels():
+        log.warning("kanaal: %s", issue)
     await S.hub.send({"type": "mesh", "mesh": S.mesh.status()})
 
 
@@ -298,6 +373,7 @@ async def lifespan(app: FastAPI):
     S.mesh = MeshLink(S.cfg.mesh_host, S.cfg.mesh_port, S.cfg.keepalive_s, on_message, on_connect)
     S.sims = SimManager(make_router, on_sim_message, make_wide_router)
     S.alerts = AlertManager(S.db, S.mesh, get_settings, _user_sees)
+    S.mesh.on_channel = on_channel
     tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner()),
              asyncio.create_task(S.alerts.run()), asyncio.create_task(silent_watch())]
     tiles = Path(S.cfg.tiles_dir)
@@ -828,6 +904,9 @@ async def provision(tid: int, request: Request):
         raise HTTPException(404, "de server kent de privésleutel van deze tracker niet")
     doc = S.vault.open(S.db.key(rows[0]["id"])["blob"])
     fresh = _profile(t, doc["private_key"])
+    if not t.get("authkey"):
+        S.db.set_authkey(t["id"], secrets.token_hex(16))
+    fresh["meshtrack"]["authkey"] = S.db.tracker(t["id"])["authkey"]
     if rows[0]["kind"] != "generated":          # backup: eigen kanalen en instellingen behouden
         fresh["channels"] = doc.get("channels") or fresh["channels"]
         fresh["meshtrack"]["settings"] = {**(doc.get("meshtrack") or {}).get("settings", {}),
@@ -877,6 +956,138 @@ async def delete_key(tid: int, kid: int, request: Request):
         raise HTTPException(404, "onbekende backup")
     S.db.delete_key(kid)
     audit(p, "backup verwijderd", t["alias"])
+    return {"ok": True}
+
+
+@app.get("/api/trackers/{tid}/authkey")
+async def get_authkey(tid: int, request: Request, new: bool = False):
+    """Authsleutel om kanaalberichten van deze tracker te ondertekenen (aangemaakt indien nodig).
+    Gaat via USB naar de tracker (set authkey)."""
+    p = need(request, "trackers.serial", "keys.manage")
+    t = S.db.tracker(tid)
+    if not t or t["kind"] != "real" or not p.sees(tid):
+        raise HTTPException(404, "onbekende tracker")
+    key = t.get("authkey")
+    if new or not key:
+        key = secrets.token_hex(16)
+        S.db.set_authkey(tid, key)
+        audit(p, "authsleutel aangemaakt" if not t.get("authkey") else "authsleutel vernieuwd", t["alias"])
+    return {"authkey": key}
+
+
+@app.delete("/api/trackers/{tid}/authkey")
+async def delete_authkey(tid: int, request: Request):
+    p = need(request, "trackers.manage")
+    t = S.db.tracker(tid)
+    if not t:
+        raise HTTPException(404, "onbekende tracker")
+    S.db.set_authkey(tid, None)
+    audit(p, "authsleutel verwijderd", t["alias"])
+    return {"ok": True}
+
+
+# ---- kanalen (beheer) ----------------------------------------------------------------
+
+class ChannelIn(BaseModel):
+    name: str = Field(min_length=1, max_length=31)
+    secret: str = ""                      # 32 hex; leeg bij een #hashtag-kanaal = afgeleid van de naam
+    slot: int = Field(ge=0, le=39)
+    require_sig: bool = True
+    active: bool = True
+    region: str = Field("be", max_length=30)   # regio (scope) die de tracker krijgt; leeg = geen
+
+
+def _channel_body(b: ChannelIn, cid: Optional[int]) -> dict[str, Any]:
+    name = b.name.strip()
+    secret = b.secret.strip().lower()
+    if not secret and name.startswith("#"):
+        secret = hashlib.sha256(name.encode()).hexdigest()[:32]
+    if not keys.is_hex(secret, 32):
+        raise HTTPException(422, "sleutel: 32 hex-tekens (of laat leeg voor een #hashtag-kanaal)")
+    for c in S.db.channels():
+        if c["id"] == cid:
+            continue
+        if c["name"].lower() == name.lower():
+            raise HTTPException(409, "dat kanaal bestaat al")
+        if c["slot"] == b.slot:
+            raise HTTPException(409, f"kanaalnummer {b.slot} is al in gebruik door {c['name']}")
+    region = b.region.strip().lstrip("#")
+    if any(ch in region for ch in " #|"):
+        raise HTTPException(422, "regio: één woord, zonder #")
+    return {"name": name, "secret": secret, "slot": b.slot, "require_sig": b.require_sig, "active": b.active,
+            "region": region}
+
+
+@app.get("/api/channels/device")
+async def channels_for_device(request: Request):
+    """Kanalen om op een tracker te zetten (USB-formulier): naam, sleutel."""
+    need(request, "trackers.serial")
+    return [{"id": c["id"], "name": c["name"], "secret": c["secret"], "region": c.get("region") or ""}
+            for c in S.db.channels() if c["active"]]
+
+
+@app.get("/api/channels")
+async def list_channels(request: Request):
+    need(request, "system.manage")
+    chans = S.db.channels()
+    slots = []
+    if S.mesh.connected:
+        try:
+            slots = await S.mesh.channel_slots()
+        except Exception as e:  # noqa: BLE001
+            log.warning("kanalen van de companion lezen: %s", e)
+    by_slot = {s["slot"]: s for s in slots}
+    for c in chans:
+        s = by_slot.get(c["slot"])
+        c["on_companion"] = bool(s and s["secret"] == c["secret"])
+        c["members"] = len(next((g["trackers"] for g in S.db.tracker_groups() if g["id"] == c.get("tracker_group_id")), []))
+    return {"channels": chans, "companion": [{"slot": s["slot"], "name": s["name"]} for s in slots if s["name"]],
+            "connected": S.mesh.connected}
+
+
+@app.post("/api/channels")
+async def create_channel(b: ChannelIn, request: Request):
+    p = need(request, "system.manage")
+    c = _channel_body(b, None)
+    cid = S.db.save_channel(None, c)
+    _channel_group({**c, "id": cid})
+    issues = await sync_channels()
+    audit(p, "kanaal toegevoegd", f"{c['name']} (nummer {c['slot']})")
+    await S.hub.send({"type": "tracker_groups"})
+    return {"id": cid, "issues": issues}
+
+
+@app.put("/api/channels/{cid}")
+async def update_channel(cid: int, b: ChannelIn, request: Request):
+    p = need(request, "system.manage")
+    old = S.db.channel(cid)
+    if not old:
+        raise HTTPException(404, "onbekend kanaal")
+    c = _channel_body(b, cid)
+    S.db.save_channel(cid, {**c, "tracker_group_id": old.get("tracker_group_id")})
+    if old["slot"] != c["slot"] and S.mesh.connected:
+        try:
+            await S.mesh.set_channel(old["slot"], "", "")      # oude plaats vrijmaken
+        except Exception:  # noqa: BLE001
+            pass
+    issues = await sync_channels()
+    audit(p, "kanaal gewijzigd", c["name"])
+    return {"id": cid, "issues": issues}
+
+
+@app.delete("/api/channels/{cid}")
+async def delete_channel(cid: int, request: Request):
+    p = need(request, "system.manage")
+    c = S.db.channel(cid)
+    if not c:
+        raise HTTPException(404, "onbekend kanaal")
+    S.db.delete_channel(cid)
+    if S.mesh.connected:
+        try:
+            await S.mesh.set_channel(c["slot"], "", "")
+        except Exception as e:  # noqa: BLE001
+            log.warning("kanaal %s op de companion wissen: %s", c["name"], e)
+    audit(p, "kanaal verwijderd", c["name"])
     return {"ok": True}
 
 

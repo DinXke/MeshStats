@@ -150,6 +150,16 @@ CREATE TABLE IF NOT EXISTS alert_log (
   done_ts   INTEGER
 );
 CREATE INDEX IF NOT EXISTS alert_log_ts ON alert_log(ts);
+CREATE TABLE IF NOT EXISTS channels (             -- 0.7: kanalen waarop de server meeluistert
+  id          INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  secret      TEXT NOT NULL,                   -- 32 hex (128 bit), zoals de MeshCore-app
+  slot        INTEGER NOT NULL UNIQUE,         -- kanaalnummer op de server-companion
+  require_sig INTEGER NOT NULL DEFAULT 1,      -- alleen ondertekende MeshTrack-berichten
+  active      INTEGER NOT NULL DEFAULT 1,
+  tracker_group_id INTEGER,                    -- automatische trackergroep van dit kanaal
+  created     INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tracker_groups (       -- 0.5: groepen van trackers
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -188,7 +198,7 @@ CREATE TABLE IF NOT EXISTS unknown_msgs (
 );
 """
 
-TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since")
+TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since", "last_via")
 
 
 class DB:
@@ -214,6 +224,11 @@ class DB:
             self._x("ALTER TABLE positions ADD COLUMN power TEXT")
         if "last_power" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
             self._x("ALTER TABLE trackers ADD COLUMN last_power TEXT")
+        if "region" not in {r["name"] for r in self._q("PRAGMA table_info(channels)")}:   # 0.7: regio per kanaal
+            self._x("ALTER TABLE channels ADD COLUMN region TEXT NOT NULL DEFAULT 'be'")
+        if "authkey" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:   # 0.7
+            self._x("ALTER TABLE trackers ADD COLUMN authkey TEXT")
+            self._x("ALTER TABLE trackers ADD COLUMN last_via TEXT")
         for table in ("alert_rules", "shares"):   # 0.5.1: trackergroepen in regels en deellinks
             if "tracker_groups" not in {r["name"] for r in self._q(f"PRAGMA table_info({table})")}:
                 self._x(f"ALTER TABLE {table} ADD COLUMN tracker_groups TEXT NOT NULL DEFAULT '[]'")
@@ -573,6 +588,42 @@ class DB:
             self._x("INSERT INTO user_groups(user_id, group_id) VALUES(?,?)", (uid, g))
         if group_ids:   # oude kolom blijft de eerste groep (NOT NULL)
             self._x("UPDATE users SET group_id=? WHERE id=?", (group_ids[0], uid))
+
+    # ---- kanalen -------------------------------------------------------------------
+
+    def channels(self) -> list[dict[str, Any]]:
+        rows = self._q("SELECT * FROM channels ORDER BY slot")
+        for r in rows:
+            r["require_sig"], r["active"] = bool(r["require_sig"]), bool(r["active"])
+        return rows
+
+    def channel(self, cid: int) -> Optional[dict[str, Any]]:
+        return next((c for c in self.channels() if c["id"] == cid), None)
+
+    def channel_by_slot(self, slot: int) -> Optional[dict[str, Any]]:
+        return next((c for c in self.channels() if c["slot"] == slot and c["active"]), None)
+
+    def save_channel(self, cid: Optional[int], c: dict[str, Any]) -> int:
+        vals = (c["name"], c["secret"], int(c["slot"]), int(c["require_sig"]), int(c["active"]), c.get("tracker_group_id"),
+                c.get("region", "be") or "")
+        if cid is None:
+            return self._x("INSERT INTO channels(name, secret, slot, require_sig, active, tracker_group_id, region, created) "
+                           "VALUES(?,?,?,?,?,?,?,?)", vals + (int(time.time()),)).lastrowid
+        self._x("UPDATE channels SET name=?, secret=?, slot=?, require_sig=?, active=?, tracker_group_id=?, region=? WHERE id=?",
+                vals + (cid,))
+        return cid
+
+    def delete_channel(self, cid: int) -> None:
+        self._x("DELETE FROM channels WHERE id=?", (cid,))
+
+    def set_authkey(self, tid: int, key: Optional[str]) -> None:
+        self._x("UPDATE trackers SET authkey=? WHERE id=?", (key, tid))
+
+    def add_to_tracker_group(self, gid: int, tid: int) -> bool:
+        if self._q("SELECT 1 FROM tracker_group_members WHERE group_id=? AND tracker_id=?", (gid, tid)):
+            return False
+        self._x("INSERT INTO tracker_group_members(group_id, tracker_id) VALUES(?,?)", (gid, tid))
+        return True
 
     # ---- trackergroepen ---------------------------------------------------------
 

@@ -9,7 +9,7 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.5.0).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.6.0).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus, één klik stuurt meteen een
     positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
   - Bewegingsregels (snelheid, afstand, bochten, ritme), stilstand en heartbeat, wakker worden via de
@@ -57,6 +57,15 @@ T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_a
 Optioneel 15e veld (fw 0.5.0): eerdere punten `dt,dlat,dlon,spd;...` (seconden vóór `fix_ts`, verschil in 1e-5
 graden, km/u). De tracker bewaart in beweging elke `sample` seconden een punt en stuurt er zoveel mee als in 156
 tekens past; de server slaat ze chronologisch op en slaat dubbele punten over.
+
+Extra punten in het compacte formaat (fw 0.6.0): `~<interval>;dlat,dlon[@s];...`, nieuwste eerst, elk punt als
+verschil met het vorige in 1e-5 graden; de server berekent de snelheid.
+
+Via een kanaal (fw 0.6.0, optioneel per tracker): `T1C|<pubkey 8 hex>|<tag 8 hex>|<seq>|...` (de rest zoals T1).
+`tag` = eerste 4 bytes HMAC-SHA256(authsleutel, `<pubkey8>|<rest>`); de authsleutel (16 bytes) maakt de server per
+tracker en gaat via USB naar de tracker. De server luistert op de kanalen uit *Systeem → Kanalen*, controleert de tag
+(of aanvaardt per kanaal ook `-`) en zet de tracker in de trackergroep van het kanaal. DM blijft de standaard; oudere
+firmware werkt ongewijzigd.
 
 `fix_ts` (vanaf firmware 0.4.0) is de GPS-tijd van de fix in unix-seconden; de server gebruikt die als tijdstip van
 de positie. Zonder `fix_ts`: sender-tijd min `fix_age_s`, of de ontvangsttijd als de klok van de tracker niet klopt.

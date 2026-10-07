@@ -10,7 +10,7 @@
   const BAD = /ongeldig|onbekend|NIET|geweigerd|gebruik:|mislukt/;
   const MT_KEYS = ["min_speed", "min_dist", "turn_min", "turn_min_speed", "min_interval", "max_interval", "still_timeout",
     "heartbeat", "fix_timeout", "fix_timeout_hb", "ack_retries", "track_in_companion", "accel_sens", "led", "target",
-    "fast_interval", "fast_keep", "fast_ack", "fast_retries", "slow_after", "slow_factor", "sample", "adaptive"];
+    "fast_interval", "fast_keep", "fast_ack", "fast_retries", "slow_after", "slow_factor", "sample", "adaptive", "chan", "transport"];
   let fw = null, kv = null, known = null, busy = false;
 
   function say(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); }
@@ -157,6 +157,7 @@
       if (v === "uit" && k !== "track_in_companion" && k !== "led") v = "0";
       steps.push([`set ${k} ${v}`, k]);
     }
+    if (mt.authkey && /^[0-9a-f]{32}$/i.test(mt.authkey) && (!kv || "authkey" in kv)) steps.push([`set authkey ${mt.authkey}`, "authsleutel", true]);
     if (mt.mode) steps.push([`mode ${mt.mode}`, "modus"]);
     for (let i = 0; i < steps.length; i++) {
       progress(i / steps.length, steps[i][1]);
