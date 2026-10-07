@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -495,9 +495,9 @@ def audit(p: Principal, action: str, detail: str = "") -> None:
 PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help",
           "/offline", "/offline-sw.js", "/manifest.webmanifest", "/api/offline/maps",
           "/tiles/offline/", "/tiles/fonts/", "/tiles/sprites/")
-# De offline-app werkt volledig zonder account: wie de kanaalsleutel kent, kan meelezen.
-# Kaarten, lettertypes en symbolen zijn gewone OpenStreetMap-gegevens; trackers, kanalen
-# en sleutels (/api/offline/bundle) blijven achter de login.
+# De offline-app werkt volledig zonder account en gebruikt niets uit de database: wie de
+# kanaalsleutel kent, kan meelezen. Van de server komen alleen kaarten, lettertypes en
+# symbolen (gewone OpenStreetMap-gegevens).
 PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "sims.manage"), "/devices": ("trackers.serial",),
               "/users": ("users.manage", "share.manage"), "/log": ("log.view",),
               "/system": ("alerts.manage", "alerts.personal", "system.manage", "companion.view")}
@@ -584,24 +584,6 @@ async def offline_maps():
             out.append({"key": key, "name": name, "description": desc, "size": f.stat().st_size,
                         "url": f"/tiles/offline/{key}.pmtiles", "version": int(f.stat().st_mtime)})
     return out
-
-
-@app.get("/api/offline/bundle")
-async def offline_bundle(request: Request):
-    """Optioneel voor de offline-app (die werkt ook zonder):  namen/kleuren/iconen van de zichtbare echte trackers,
-    de kanalen die deze gebruiker mag zien (zoals in Toestellen) en, met het recht om
-    toestellen in te stellen, de authsleutels om controletekens offline na te kijken."""
-    p = need(request, "map.view")
-    keys_ok = p.can("trackers.serial") or p.can("keys.manage")
-    trackers = [{"pk8": t["pubkey"][:8], "alias": t["alias"], "color": t["color"], "icon": t["icon"],
-                 **({"authkey": t["authkey"]} if keys_ok and t.get("authkey") else {})}
-                for t in S.db.trackers() if t["kind"] == "real" and t["active"] and p.sees(t["id"])]
-    chans = [{"name": c["name"], "secret": c["secret"], "region": c.get("region") or ""} for c in S.db.channels()
-             if c["active"] and (p.can("system.manage") or c.get("tracker_group_id") in p.tracker_groups)]
-    if p.kind == "user":
-        audit(p, "offline-pakket opgehaald", f"{len(trackers)} trackers, {len(chans)} kanalen"
-                                              f"{', met authsleutels' if keys_ok else ''}")
-    return {"trackers": trackers, "channels": chans, "user": p.display, "ts": int(time.time())}
 
 
 @app.get("/users")

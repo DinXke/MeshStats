@@ -1,7 +1,8 @@
 /* MeshTrack offline-app: posities via Bluetooth van een MeshCore-companion, zonder internet.
    De companion ontcijfert de kanaalberichten (hij kent kanaal en sleutel); deze app leest
-   "T1C|..." berichten, kijkt de controletekens na als de authsleutel bekend is, bewaart alles
-   in IndexedDB en tekent sporen op een kaart uit een lokaal pmtiles-bestand (OPFS). */
+   "T1C|..." berichten, bewaart alles in IndexedDB en tekent sporen op een kaart uit een lokaal
+   pmtiles-bestand (OPFS). Van de server komen alleen de kaarten: niets uit de MeshTrack-database.
+   Namen komen uit de contactenlijst van de companion. */
 (function () {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -37,8 +38,7 @@
   const metaGet = async (key, def) => { const v = await req(tx("meta", "readonly").get(key)); return v ? v.value : def; };
   const metaSet = (key, value) => req(tx("meta", "readwrite").put({ key, value }));
 
-  let bundle = { trackers: [], channels: [] };
-  const known = () => Object.fromEntries((bundle.trackers || []).map((t) => [t.pk8, t]));
+  let contactNames = {};                      // pk8 -> naam, uit de contacten van de companion
   const posAll = [];                          // alle posities in het geheugen (chronologisch per tracker)
 
   async function loadPositions() {
@@ -64,12 +64,6 @@
 
   // ---- berichten ontcijferen ---------------------------------------------------------
   // "T1C|<pk8>|<tag>|<seq>|<state>|<lat>|<lon>|<alt>|<spd>|<crs>|<bat>|<hdop>|<age>|<mode>|<power>|<fix_ts>|<extra>"
-  async function hmacTag(keyHex, body) {
-    const raw = new Uint8Array(keyHex.match(/../g).map((h) => parseInt(h, 16)));
-    const k = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(body)));
-    return [...mac.slice(0, 4)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  }
   function hav(a1, o1, a2, o2) {
     const R = 6371008.8, r = Math.PI / 180, dp = (a2 - a1) * r, dl = (o2 - o1) * r;
     const h = Math.sin(dp / 2) ** 2 + Math.cos(a1 * r) * Math.cos(a2 * r) * Math.sin(dl / 2) ** 2;
@@ -105,16 +99,12 @@
     if (!body.startsWith("T1C|")) return null;
     const parts = body.split("|");
     if (parts.length < 15) return { bad: "onvolledig" };
-    const [, pk, tag, ...f] = parts;
-    const restStr = body.split("|").slice(3).join("|");
-    const tr = known()[pk];
-    let verified = null;
-    if (tag !== "-" && tr && tr.authkey) verified = (await hmacTag(tr.authkey, `${pk}|${restStr}`)) === tag.toLowerCase();
-    if (verified === false) return { bad: "ongeldige controletekens", pk };
+    const [, pk0, , ...f] = parts;                 // controletekens: alleen de server kan ze nakijken
+    const pk = pk0.toLowerCase();
     const [seq, state, la, lo, alt, spd, crs, bat, hdop, age, mode, power, fts, extra] = f;
     const lat = la === "" ? null : +la, lon = lo === "" ? null : +lo;
     const tsMain = fts ? +fts : (frameTs || Math.round(Date.now() / 1000)) - (+age || 0);
-    const base = { pk, seq: +seq, bat: bat === "" ? null : +bat, mode, power, verified, own: !!meta.own, chan: meta.chan, rx: Math.round(Date.now() / 1000) };
+    const base = { pk, seq: +seq, bat: bat === "" ? null : +bat, mode, power, own: !!meta.own, chan: meta.chan, rx: Math.round(Date.now() / 1000) };
     const out = [];
     if (lat !== null) {
       for (const e of extras(extra, lat, lon)) {
@@ -134,9 +124,11 @@
   function onFrame(f) {
     if (f[0] >= 0x80) {                              // push
       if (f[0] === 0x83) syncAll();
+      else if (f[0] === 0x89) readContacts();      // nieuw contact gehoord
       else if (f[0] === 0x88) onRawRx(f);
       return;
     }
+    if (contactSink && (f[0] === 3 || f[0] === 4)) { contactSink(f); return; }
     if (waiter && waiter.codes.includes(f[0])) { const w = waiter; waiter = null; w.resolve(f); }
   }
   function ask(bytes, codes, ms = 4000) {
@@ -170,6 +162,7 @@
       setBt(true, devName);
       say($("bt-msg"), "Verbonden.", true);
       await readChannels();
+      await readContacts();
       await applyScope();
       await syncAll();
     } catch (e) { say($("bt-msg"), `Verbinden mislukt: ${e.message}`, false); setBt(false); }
@@ -224,8 +217,7 @@
           const main = r.positions[r.positions.length - 1];
           watchFor("pos", main.k, ch.secret, ts, text, 2);
         }
-        const tr = known()[r.pk];
-        log(`${own ? "eigen · " : ""}${tr ? tr.alias : r.pk} ${STATE[r.state] || r.state} (+${r.positions.length - 1} punten)`);
+        log(`${own ? "eigen · " : ""}${nameOf(r.pk)} ${STATE[r.state] || r.state} (+${r.positions.length - 1} punten)`);
       }
     } catch (e) { say($("bt-msg"), e.message, false); }
     finally { syncing = false; }
@@ -243,13 +235,31 @@
       const secret = [...f.slice(34, 50)].map((b) => b.toString(16).padStart(2, "0")).join("");
       if (name) { devChans.push({ idx: i, name, secret }); chanNames[i] = name; }
     }
-    renderDevChans(); renderChat();
+    renderDevChans(); renderChat(); renderAll();
   }
   function renderDevChans() {
     $("ch-dev").innerHTML = !rxc ? "Niet verbonden." : devChans.length
-      ? devChans.map((c) => `<div>${c.idx}: <strong>${esc(c.name)}</strong>${(bundle.channels || []).some((s) => s.secret === c.secret) ? ' <span class="pill ok">MeshTrack</span>' : ""}</div>`).join("")
+      ? devChans.map((c) => `<div>${c.idx}: <strong>${esc(c.name)}</strong></div>`).join("")
       : "Geen kanalen op de companion.";
-    renderSrvChans();
+  }
+
+  // Namen van trackers uit de contacten van de companion (CMD_GET_CONTACTS).
+  let contactSink = null;
+  async function readContacts() {
+    const names = await metaGet("names", {});
+    const done = new Promise((res) => {
+      const t = setTimeout(res, 8000);
+      contactSink = (f) => {
+        if (f[0] === 3) {
+          const nm = new TextDecoder().decode(f.slice(100, 132)).replace(/\0.*$/, "");
+          if (nm) names[hex(f.slice(1, 5))] = nm;
+        } else { clearTimeout(t); res(); }
+      };
+    });
+    try { await ask(new Uint8Array([4]), [2, 1]); await done; } catch (_) {} finally { contactSink = null; }
+    contactNames = names;
+    await metaSet("names", names);
+    renderAll();
   }
 
   async function sha16(name) {
@@ -276,15 +286,6 @@
       await readChannels();
     } catch (e) { say($("ch-msg"), e.message, false); }
   }
-  function renderSrvChans() {
-    const ch = bundle.channels || [];
-    $("ch-srv").innerHTML = ch.length ? ch.map((c, i) => `<div class="row" style="margin:4px 0;align-items:center"><span style="flex:1"><strong>${esc(c.name)}</strong>
-      ${devChans.some((d) => d.secret === c.secret) ? '<span class="pill ok">op de companion</span>' : ""}</span>
-      <button type="button" data-srvch="${i}">Op de companion zetten</button></div>`).join("")
-      : "Geen kanalen van de server (alleen met een account, bij Gegevens).";
-    $("ch-srv").querySelectorAll("[data-srvch]").forEach((b) => b.addEventListener("click", () => { const c = ch[Number(b.dataset.srvch)]; addChannel(c.name, c.secret); }));
-  }
-
   // QR: meshcore://channel/add?name=...&secret=...
   function useQr(text) {
     try {
@@ -489,13 +490,33 @@
     if (!file) say($("maps-msg"), "Nog geen kaart op dit toestel: download er hieronder een terwijl je internet hebt.", false);
   }
 
-  function colorOf(pk) { const t = known()[pk]; if (t) return t.color; let h = 0; for (const c of pk) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h},70%,45%)`; }
-  function nameOf(pk) { const t = known()[pk]; return t ? t.alias : `tracker ${pk}`; }
+  function colorOf(pk) { let h = 0; for (const c of pk) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h},70%,45%)`; }
+  function nameOf(pk) { return contactNames[pk] || `tracker ${pk}`; }
+
+  // Kanaalkeuze: de kanalen die op de companion staan (plus die waarop al posities binnenkwamen).
+  let chanFilter = "";
+  function renderChanSelect() {
+    const sel = $("o-chan");
+    const names = [...new Set(devChans.map((c) => c.name).concat(posAll.map((p) => p.chan).filter(Boolean)))];
+    const want = ["", ...names, "__add"].join("\n");
+    if (sel.dataset.opts !== want) {
+      sel.dataset.opts = want;
+      sel.innerHTML = '<option value="">Alle kanalen</option>' + names.map((n) => `<option>${esc(n)}</option>`).join("") +
+        '<option value="__add">+ Kanaal toevoegen…</option>';
+    }
+    sel.value = names.includes(chanFilter) ? chanFilter : "";
+  }
+  $("o-chan").addEventListener("change", () => {
+    if ($("o-chan").value === "__add") { $("o-chan").value = chanFilter; show("ch"); $("ch-name").focus(); return; }
+    chanFilter = $("o-chan").value; metaSet("chanFilter", chanFilter); renderAll(); });
 
   function renderAll() {
     const now = Date.now() / 1000, since = now - hours * 3600;
     const by = {};
-    for (const p of posAll) if (p.lat != null) (by[p.pk] = by[p.pk] || []).push(p);
+    renderChanSelect();
+    const cf = $("o-chan").value;
+    for (const p of posAll) if (p.lat != null && (!cf || p.chan === cf)) (by[p.pk] = by[p.pk] || []).push(p);
+    for (const [pk, m] of markers) if (!by[pk]) { m.remove(); markers.delete(pk); }   // ander kanaal: marker weg
     const lines = [], pts = [];
     for (const [pk, arr] of Object.entries(by)) {
       arr.sort((a, b) => a.ts - b.ts);
@@ -521,10 +542,8 @@
       m = new maplibregl.Marker({ element: el }).setLngLat([p.lon, p.lat]).addTo(map);
       markers.set(pk, m);
     }
-    const t = known()[pk];
     const el = m.getElement();
     el.querySelector(".omark").style.background = color;
-    el.querySelector(".omark").innerHTML = t && t.icon && window.MTIcons ? MTIcons.svg(t.icon) : "";
     el.querySelector(".olabel").textContent = name;
     m.setLngLat([p.lon, p.lat]);
   }
@@ -532,12 +551,10 @@
     const items = Object.entries(by).map(([pk, arr]) => ({ pk, last: arr[arr.length - 1], n: arr.length }))
       .sort((a, b) => b.last.ts - a.last.ts);
     $("o-list").innerHTML = items.length ? items.map(({ pk, last, n }) => {
-      const t = known()[pk];
-      const ver = last.verified === true ? '<span class="pill ok">gecontroleerd</span>' : last.verified === null ? '<span class="pill">niet gecontroleerd</span>' : "";
-      return `<div class="otrk" data-pk="${esc(pk)}"><span class="omark" style="background:${esc(colorOf(pk))}">${t && t.icon && window.MTIcons ? MTIcons.svg(t.icon) : ""}</span>
+      return `<div class="otrk" data-pk="${esc(pk)}"><span class="omark" style="background:${esc(colorOf(pk))}"></span>
         <div class="body"><div class="nm">${esc(nameOf(pk))} ${last.own ? '<span class="pill">eigen</span>' : ""} ${last.state === "E" ? '<span class="pill sos">SOS</span>' : ""}</div>
         <div class="sub">${esc(ago(last.ts))} · ${esc(STATE[last.state] || last.state || "")}${last.bat != null ? " · " + last.bat + " %" : ""} · ${esc(last.chan || "")} · ${n} punten</div>
-        <div class="sub">${ver}${last.own && last.rep ? ` <span class="pill">${esc(repText(last.rep))}</span>` : ""}</div></div></div>`;
+        ${last.own && last.rep ? `<div class="sub"><span class="pill">${esc(repText(last.rep))}</span></div>` : ""}</div></div>`;
     }).join("") : '<div class="empty">Nog geen posities. Verbind met een companion (tabblad Verbinding).</div>';
     $("o-list").querySelectorAll(".otrk").forEach((el) => el.addEventListener("click", () => {
       const arr = by[el.dataset.pk]; const p = arr[arr.length - 1];
@@ -618,32 +635,11 @@
   }
 
   // ---- gegevens ----------------------------------------------------------------------------
-  async function fetchBundle(quiet) {
-    if (!navigator.onLine) { say($("d-msg"), "Daarvoor heb je internet nodig.", false); return; }
-    try {
-      const r = await fetch("/api/offline/bundle", { credentials: "same-origin" });
-      if (r.status === 401) {
-        $("d-login").hidden = false;
-        if (quiet !== true) say($("d-msg"), "Daarvoor heb je een account op de server nodig. Zonder account werkt de app ook: zet het kanaal op de companion.", false);
-        return;
-      }
-      if (!r.ok) throw new Error(r.statusText);
-      bundle = await r.json();
-      await metaSet("bundle", bundle);
-      say($("d-msg"), `${bundle.trackers.length} trackers en ${bundle.channels.length} kanalen opgehaald.`, true);
-      renderBundleInfo(); renderSrvChans(); renderAll();
-    } catch (e) { say($("d-msg"), `Ophalen mislukt: ${e.message}`, false); }
-  }
-  function renderBundleInfo() {
-    const nKeys = (bundle.trackers || []).filter((t) => t.authkey).length;
-    $("d-bundleinfo").textContent = bundle.ts ? `Laatst opgehaald ${new Date(bundle.ts * 1000).toLocaleString("nl-BE")} door ${bundle.user}: ${bundle.trackers.length} trackers (${nKeys} met authsleutel), ${bundle.channels.length} kanalen.` : "Nog niet opgehaald.";
-  }
   async function renderStats() {
     const n = await req(tx("pos", "readonly").count());
     const pks = new Set(posAll.map((p) => p.pk));
     $("d-stats").textContent = `${n} posities bewaard van ${pks.size} tracker(s).`;
   }
-  $("d-bundle").addEventListener("click", () => fetchBundle());
   $("d-clear").addEventListener("click", async () => {
     if (!confirm("Alle bewaarde posities en chatberichten van dit toestel wissen?")) return;
     await req(tx("pos", "readwrite").clear());
@@ -653,8 +649,8 @@
   });
   $("d-export").addEventListener("click", async () => {
     const all = await req(tx("pos", "readonly").getAll());
-    const rows = [["tracker", "naam", "tijd", "toestand", "lat", "lon", "km/u", "batterij", "via", "gecontroleerd"]]
-      .concat(all.sort((a, b) => a.ts - b.ts).map((p) => [p.pk, nameOf(p.pk), new Date(p.ts * 1000).toISOString(), p.state, p.lat, p.lon, p.spd ?? "", p.bat ?? "", p.chan || "", p.verified === true ? "ja" : p.verified === null ? "onbekend" : "nee"]));
+    const rows = [["tracker", "naam", "tijd", "toestand", "lat", "lon", "km/u", "batterij", "via"]]
+      .concat(all.sort((a, b) => a.ts - b.ts).map((p) => [p.pk, nameOf(p.pk), new Date(p.ts * 1000).toISOString(), p.state, p.lat, p.lon, p.spd ?? "", p.bat ?? "", p.chan || ""]));
     const blob = new Blob([rows.map((r) => r.join(";")).join("\n")], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `meshtrack-offline-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
   });
@@ -665,7 +661,7 @@
     tabs.forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
     document.querySelectorAll("#opanel .pane").forEach((p) => { p.hidden = p.id !== "pane-" + name; });
     if (name === "maps") renderMaps();
-    if (name === "data") { renderBundleInfo(); renderStats(); }
+    if (name === "data") renderStats();
   }
   tabs.forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
   function net() { const on = navigator.onLine; $("net").textContent = on ? "online" : "offline"; $("net").className = "pill netpill " + (on ? "on" : "off"); }
@@ -684,7 +680,7 @@
     decode,
     addChat, onFrame, onRawRx,
     // nep-companion voor tests: { write(bytes) } die antwoorden via MTOffline.onFrame teruggeeft
-    async attach(fake, name) { rxc = { properties: { write: true }, writeValue: async (b) => fake.write(b) }; selfName = name; setBt(true, name); await readChannels(); await applyScope(); await syncAll(); },
+    async attach(fake, name) { rxc = { properties: { write: true }, writeValue: async (b) => fake.write(b) }; selfName = name; setBt(true, name); await readChannels(); await readContacts(); await applyScope(); await syncAll(); },
     async ingest(text, ts, meta) { const r = await decode(text, ts, meta || {}); return r && r.positions ? storePositions(r.positions) : r; },
   };
 
@@ -692,7 +688,8 @@
     net();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/offline-sw.js", { scope: "/offline" }).catch(() => {});
     db = await openDb();
-    bundle = await metaGet("bundle", { trackers: [], channels: [] });
+    contactNames = await metaGet("names", {});
+    chanFilter = await metaGet("chanFilter", "");
     hours = await metaGet("hours", 24);
     $("bt-scope").value = await metaGet("scope", "be");
     $("o-hours").querySelectorAll("button").forEach((x) => x.classList.toggle("on", Number(x.dataset.h) === hours));
@@ -702,8 +699,6 @@
     const act = await metaGet("activeMap", null);
     show(act && (await mapFile(act)) ? "trk" : "maps");   // eerste keer: eerst een kaart kiezen
     await initMap();
-    renderSrvChans();
-    if (navigator.onLine && !bundle.ts) fetchBundle(true);
     setInterval(renderAll, 30000);
   })();
 })();

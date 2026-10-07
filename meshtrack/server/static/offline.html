@@ -105,6 +105,10 @@
           <button data-h="1">1u</button><button data-h="4">4u</button><button data-h="12">12u</button><button data-h="24">24u</button><button data-h="168">7d</button>
         </div>
       </div>
+      <div class="row" style="align-items:center;gap:8px">
+        <label for="o-chan" style="margin:0">Kanaal</label>
+        <select id="o-chan" style="flex:1;min-width:0"><option value="">Alle kanalen</option></select>
+      </div>
       <div id="o-list"></div>
     </section>
 
@@ -144,8 +148,6 @@
       </div>
       <div class="row"><button class="primary" id="ch-add">Op de companion zetten</button></div>
       <div id="ch-msg" class="msg"></div>
-      <h3 class="small">Kanalen van de server</h3>
-      <div id="ch-srv" class="small muted">Alleen met een account: haal de gegevens op bij Gegevens.</div>
     </section>
 
     <section class="pane" id="pane-maps" hidden>
@@ -159,13 +161,8 @@
     </section>
 
     <section class="pane" id="pane-data" hidden>
-      <h3 class="small">Gegevens van de server (optioneel)</h3>
-      <p class="muted small">De app werkt zonder account: wie de sleutel van het kanaal kent, ziet de trackers op dat kanaal.
-        Met een account op de server haal je er namen, kleuren en iconen van de trackers bij, de kanalen die je mag
-        gebruiken en (met het recht om toestellen in te stellen) de authsleutels om de controletekens na te kijken.</p>
-      <div class="row"><button id="d-bundle">Ophalen van de server</button><a class="btnlink" href="/login?next=/offline" id="d-login" hidden>Inloggen</a></div>
-      <div id="d-bundleinfo" class="small muted"></div>
-      <div id="d-msg" class="msg"></div>
+      <p class="muted small">De app haalt van de server alleen de kaarten. Wat je ontvangt, blijft op dit toestel; de
+        namen van de trackers komen uit de contacten van de companion.</p>
       <h3 class="small">Op dit toestel</h3>
       <div id="d-stats" class="small"></div>
       <div class="row">
@@ -178,7 +175,6 @@
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/vendor/pmtiles.js"></script>
 <script src="/static/basemap.js"></script>
-<script src="/static/icons.js"></script>
 <script src="/static/offline.js"></script>
 </body>
 </html>

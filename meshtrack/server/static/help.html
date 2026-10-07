@@ -411,8 +411,8 @@
       NUC).</p>
     <h3>De offline-app</h3>
     <p>Zonder internet en zonder verbinding met de server volg je trackers met de <a href="/offline">offline-app</a>.
-      Je hebt er <strong>geen account</strong> voor nodig: wie de sleutel van het kanaal kent, ziet de trackers op dat
-      kanaal.
+      Je hebt er <strong>geen account</strong> voor nodig en de app gebruikt niets uit de database van MeshTrack: van de
+      server komen alleen de kaarten. Wie de sleutel van het kanaal kent, ziet de trackers op dat kanaal.
       Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus, of een andere
       companion die op het kanaal van de trackers meeluistert. De companion ontcijfert de kanaalberichten; de app leest
       ze, bewaart ze op de telefoon en tekent de sporen op een kaart die op de telefoon staat. Dat werkt alleen voor
@@ -420,11 +420,9 @@
     <ol>
       <li><strong>Vooraf, met internet:</strong> open <code>/offline</code> in Chrome en kies in het menu van Chrome
         <em>App installeren</em> (of <em>Toevoegen aan startscherm</em>). Download bij <em>Kaarten</em> een kaart.
-        Heb je een account, dan haal je bij <em>Gegevens</em> ook namen, kleuren en kanalen op en, met het recht om
-        toestellen in te stellen, de authsleutels; dat is niet verplicht. Kies een kaart die past bij de opslag van je telefoon: Limburg (84 MB),
+        Kies een kaart die past bij de opslag van je telefoon: Limburg (84 MB),
         België (286 MB), Benelux, Frankrijk of Duitsland in een overzichts- en een gedetailleerde versie.</li>
-      <li><strong>Kanaal:</strong> de companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: kies een
-        kanaal van de server, scan de QR-code (bijvoorbeeld uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies
+      <li><strong>Kanaal:</strong> de companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: scan de QR-code (bijvoorbeeld uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies
         een foto van een QR-code, of vul naam en sleutel in. Bij een #kanaal mag de sleutel leeg blijven.</li>
       <li><strong>Onderweg:</strong> tik bij <em>Verbinding</em> op <em>Verbinden</em> en kies de companion
         (pincode van een MeshTrack-tracker: 123456). De app haalt alle wachtende berichten op en daarna elk nieuw
@@ -439,9 +437,11 @@
     <p>Wat je verstuurt, gaat met de regio (scope) uit <em>Verbinding</em>, standaard <strong>be</strong>. Laat het veld
       leeg om de standaardregio van de companion te gebruiken. Is de companion de tracker zelf, dan geldt de regio ook
       voor zijn posities zolang de app verbonden is; laat ze daarom op <em>be</em> staan.</p>
-    <p>In de lijst staat bij elke positie of de controletekens <em>gecontroleerd</em> zijn (met de authsleutel uit de
-      gegevens) of <em>niet gecontroleerd</em> (geen sleutel op de telefoon, of een bericht zonder controletekens).
-      Berichten met foute controletekens worden geweigerd. Verbind je met een tracker in companionmodus (firmware 0.6.2
+    <p>Bij <em>Trackers</em> kies je in de keuzelijst <em>Kanaal</em> een van de kanalen die op de companion staan; de
+      kaart en de lijst tonen dan alleen de trackers van dat kanaal. Staat het kanaal er niet bij, kies dan
+      <em>+ Kanaal toevoegen…</em>: je komt bij <em>Kanalen</em>, waar je het toevoegt met naam en sleutel, een QR-scan of een foto.</p>
+    <p>De namen van de trackers komen uit de contacten van de companion; een tracker die de companion (nog) niet kent,
+      staat er met het begin van zijn sleutel. De controletekens in de berichten kan alleen de server nakijken. Verbind je met een tracker in companionmodus (firmware 0.6.2
       of nieuwer), dan zie je ook zijn eigen posities, gemarkeerd als <em>eigen</em>. Alles blijft op de telefoon tot je
       het bij <em>Gegevens</em> wist; daar exporteer je de posities ook als CSV. Bluetooth werkt in Chrome op Android en
       op een computer, niet op een iPhone.</p>
