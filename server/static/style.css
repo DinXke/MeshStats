@@ -377,3 +377,8 @@ label.btnlike { display: inline-block; border: 1px solid var(--line); background
 .lostbadge { font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 999px; margin-left: 4px; }
 .marker.lost { outline: 3px solid var(--danger); outline-offset: 2px; }
 .doc p.note { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 8px 12px; }
+
+/* ---- SOS op de kaart ---- */
+.sosmark { width: 34px; height: 34px; border-radius: 50%; background: #dc2626; color: #fff; border: 2.5px solid #fff;
+  display: flex; align-items: center; justify-content: center; font: 800 11px/1 system-ui, sans-serif; letter-spacing: .3px;
+  box-shadow: 0 0 0 2px #dc2626, 0 2px 8px rgba(0,0,0,.45); cursor: pointer; }
