@@ -214,6 +214,9 @@ class DB:
             self._x("ALTER TABLE positions ADD COLUMN power TEXT")
         if "last_power" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
             self._x("ALTER TABLE trackers ADD COLUMN last_power TEXT")
+        for table in ("alert_rules", "shares"):   # 0.5.1: trackergroepen in regels en deellinks
+            if "tracker_groups" not in {r["name"] for r in self._q(f"PRAGMA table_info({table})")}:
+                self._x(f"ALTER TABLE {table} ADD COLUMN tracker_groups TEXT NOT NULL DEFAULT '[]'")
         if "tracker_groups" not in {r["name"] for r in self._q("PRAGMA table_info(groups)")}:   # 0.5
             self._x("ALTER TABLE groups ADD COLUMN tracker_groups TEXT NOT NULL DEFAULT '[]'")
         if not self._q("SELECT 1 FROM user_groups LIMIT 1"):    # 0.5: groep van elke gebruiker overnemen
@@ -444,17 +447,18 @@ class DB:
         for r in rows:
             for k in ("events", "trackers", "recipients"):
                 r[k] = json.loads(r[k])
+            r["tracker_groups"] = json.loads(r.get("tracker_groups") or "[]")
             r["active"] = bool(r["active"])
         return rows
 
     def save_alert_rule(self, rid: Optional[int], r: dict[str, Any], owner: Optional[int] = None) -> int:
         vals = (r["name"], int(r["active"]), json.dumps(r["events"]), json.dumps(r["trackers"]),
-                json.dumps(r["recipients"]), int(r["cooldown_s"]))
+                json.dumps(r["recipients"]), int(r["cooldown_s"]), json.dumps(r.get("tracker_groups") or []))
         if rid is None:
-            return self._x("INSERT INTO alert_rules(name, active, events, trackers, recipients, cooldown_s, created, owner) "
-                           "VALUES(?,?,?,?,?,?,?,?)", vals + (int(time.time()), owner)).lastrowid
-        self._x("UPDATE alert_rules SET name=?, active=?, events=?, trackers=?, recipients=?, cooldown_s=? WHERE id=?",
-                vals + (rid,))
+            return self._x("INSERT INTO alert_rules(name, active, events, trackers, recipients, cooldown_s, tracker_groups, "
+                           "created, owner) VALUES(?,?,?,?,?,?,?,?,?)", vals + (int(time.time()), owner)).lastrowid
+        self._x("UPDATE alert_rules SET name=?, active=?, events=?, trackers=?, recipients=?, cooldown_s=?, tracker_groups=? "
+                "WHERE id=?", vals + (rid,))
         return rid
 
     def delete_alert_rule(self, rid: int) -> None:
@@ -601,6 +605,9 @@ class DB:
         for g in self.groups():            # uit de zichtbaarheid van gebruikersgroepen halen
             if gid in g["tracker_groups"]:
                 self.save_group(g["id"], {**g, "tracker_groups": [x for x in g["tracker_groups"] if x != gid]})
+        for r in self.alert_rules():       # en uit meldingsregels
+            if gid in r["tracker_groups"]:
+                self.save_alert_rule(r["id"], {**r, "tracker_groups": [x for x in r["tracker_groups"] if x != gid]})
 
     def tracker_group_ids(self, tid: int) -> list[int]:
         return [r["group_id"] for r in self._q("SELECT group_id FROM tracker_group_members WHERE tracker_id=? "
@@ -658,6 +665,7 @@ class DB:
         rows = self._q("SELECT * FROM shares ORDER BY id DESC")
         for r in rows:
             r["trackers"] = json.loads(r["trackers"])
+            r["tracker_groups"] = json.loads(r.get("tracker_groups") or "[]")
         return rows
 
     def share_by_token(self, token: str) -> Optional[dict[str, Any]]:
@@ -665,13 +673,14 @@ class DB:
         if not r:
             return None
         r[0]["trackers"] = json.loads(r[0]["trackers"])
+        r[0]["tracker_groups"] = json.loads(r[0].get("tracker_groups") or "[]")
         return r[0]
 
     def add_share(self, token: str, name: str, trackers: list[int], hours: int, sidebar: bool,
-                  expires: Optional[int], created_by: str) -> int:
-        return self._x("INSERT INTO shares(token, name, trackers, hours, sidebar, expires, created_by, created) "
-                       "VALUES(?,?,?,?,?,?,?,?)", (token, name, json.dumps(trackers), hours, int(sidebar), expires,
-                                                   created_by, int(time.time()))).lastrowid
+                  expires: Optional[int], created_by: str, tracker_groups: Optional[list[int]] = None) -> int:
+        return self._x("INSERT INTO shares(token, name, trackers, hours, sidebar, expires, created_by, created, tracker_groups) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (token, name, json.dumps(trackers), hours, int(sidebar), expires,
+                                                     created_by, int(time.time()), json.dumps(tracker_groups or []))).lastrowid
 
     def delete_share(self, sid: int) -> None:
         self._x("DELETE FROM shares WHERE id=?", (sid,))

@@ -3,7 +3,8 @@
   const $ = (id) => document.getElementById(id);
   await MT.initHeader("/system");
   const can = MT.can;
-  let rules = [], events = {}, trackers = [], contacts = [], rcpts = [];
+  let rules = [], events = {}, trackers = [], contacts = [], rcpts = [], tgroups = [];
+  const tgName = (id) => (tgroups.find((g) => g.id === id) || {}).name || `groep #${id}`;
   let canShared = false, canPersonal = false;
   const msg = (el, t, ok) => { el.textContent = t || ""; el.className = "msg " + (ok ? "ok" : "err"); };
   const fmt = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "");
@@ -29,7 +30,7 @@
     $("rules").innerHTML = rules.map((x) => `<div class="titem"><div class="body">
       <div><strong>${MT.esc(x.name)}</strong> ${x.active ? "" : '<span class="pill">uit</span>'}${x.mine ? ' <span class="pill ok">eigen</span>' : ""}</div>
       <div class="chipsline">${x.events.map((e) => `<span class="pill">${MT.esc(events[e] || e)}</span>`).join(" ")}</div>
-      <div class="muted small">${x.trackers.length ? x.trackers.map((id) => MT.esc((trackers.find((t) => t.id === id) || {}).alias || "#" + id)).join(", ") : "alle trackers"}
+      <div class="muted small">${x.trackers.length || (x.tracker_groups || []).length ? [...(x.tracker_groups || []).map((id) => "groep " + MT.esc(tgName(id))), ...x.trackers.map((id) => MT.esc((trackers.find((t) => t.id === id) || {}).alias || "#" + id))].join(", ") : "alle trackers"}
         → ${x.recipients.map((c) => MT.esc(c.name || c.pubkey.slice(0, 8))).join(", ")}</div></div>
       <div class="actions"><button data-test="${x.id}">Test</button><button data-edit="${x.id}">Bewerken</button>
         <button class="danger" data-del="${x.id}">Verwijderen</button></div></div>`).join("")
@@ -59,10 +60,14 @@
     if (![...$("r-cool").options].some((o) => o.value === $("r-cool").value)) $("r-cool").value = "900";
     $("r-events").innerHTML = Object.entries(events).map(([k, v]) => `<label class="mini"><input type="checkbox" value="${k}"
       ${r && r.events.includes(k) ? "checked" : ""}> ${MT.esc(v)}</label>`).join("");
-    $("r-alltr").checked = !r || !r.trackers.length;
+    $("r-alltr").checked = !r || (!r.trackers.length && !(r.tracker_groups || []).length);
+    const tsel = r ? r.tracker_groups || [] : [];
+    $("r-tgroups").innerHTML = tgroups.map((g) => `<label class="mini"><input type="checkbox" value="${g.id}"${tsel.includes(g.id) ? " checked" : ""}>
+      <i style="background:${MT.esc(g.color)}"></i>${MT.esc(g.name)} <span class="muted small">(${g.trackers.length})</span></label>`).join("")
+      || '<span class="muted">Nog geen trackergroepen.</span>';
     $("r-trackers").innerHTML = trackers.map((t) => `<label class="mini"><input type="checkbox" value="${t.id}"
       ${r && r.trackers.includes(t.id) ? "checked" : ""}><i style="background:${MT.esc(t.color)}"></i>${MT.esc(t.alias)}</label>`).join("");
-    $("r-trackers").hidden = $("r-alltr").checked;
+    $("r-trwrap").hidden = $("r-alltr").checked;
     rcpts = r ? r.recipients.map((x) => ({ ...x })) : [];
     renderRcpts();
     $("r-active").checked = r ? r.active : true;
@@ -72,7 +77,7 @@
     msg($("r-msg"), "");
     $("r-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
-  $("r-alltr").addEventListener("change", () => { $("r-trackers").hidden = $("r-alltr").checked; });
+  $("r-alltr").addEventListener("change", () => { $("r-trwrap").hidden = $("r-alltr").checked; });
   $("r-new").addEventListener("click", () => openRule(null));
   $("r-cancel").addEventListener("click", () => { $("r-form").hidden = true; });
   $("r-add").addEventListener("click", () => {
@@ -94,6 +99,7 @@
     const body = { name: $("r-name").value.trim(), active: $("r-active").checked, cooldown_s: Number($("r-cool").value),
       events: [...$("r-events").querySelectorAll("input:checked")].map((c) => c.value),
       trackers: $("r-alltr").checked ? [] : [...$("r-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)),
+      tracker_groups: $("r-alltr").checked ? [] : [...$("r-tgroups").querySelectorAll("input:checked")].map((c) => Number(c.value)),
       recipients: rcpts, personal: $("r-personal").checked };
     try {
       await MT.api(id ? `/api/alerts/${id}` : "/api/alerts", { method: id ? "PUT" : "POST", body });
@@ -137,6 +143,7 @@
 
   // ---- start ---------------------------------------------------------------------------
   trackers = await MT.api("/api/trackers");
+  tgroups = await MT.api("/api/tracker-groups").catch(() => []);
   if (can("alerts.manage") || can("alerts.personal")) {
     try {
       contacts = (await MT.api("/api/companion/contacts")).filter((c) => c.type === 1).sort((a, b) => (a.name || "").localeCompare(b.name || ""));

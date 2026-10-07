@@ -159,3 +159,32 @@ def test_last_admin_with_multiple_groups(client):
     kijk = next(g["id"] for g in c.get("/api/groups").json()["groups"] if g["name"] == "Kijkers")
     assert c.put(f"/api/users/{admin['id']}", json={"group_ids": [kijk]}).status_code == 409
     assert c.put(f"/api/users/{admin['id']}", json={"group_ids": [admin["group_ids"][0], kijk]}).status_code == 200
+
+
+def test_share_with_tracker_group_is_dynamic_and_limited_to_creator(client):
+    c, main = client
+    login(c, "admin", "beheerder1")
+    a = c.post("/api/trackers", json={"pubkey": "a1" * 32, "alias": "A"}).json()["tracker"]["id"]
+    b = c.post("/api/trackers", json={"pubkey": "b1" * 32, "alias": "B"}).json()["tracker"]["id"]
+    x = c.post("/api/trackers", json={"pubkey": "c1" * 32, "alias": "X"}).json()["tracker"]["id"]
+    tg = c.post("/api/tracker-groups", json={"name": "Ploeg", "trackers": [a]}).json()
+    # beperkte maker: ziet A en B, niet X
+    g = c.post("/api/groups", json={"name": "Deler", "perms": ["map.view", "share.manage"], "all_trackers": False,
+                                    "trackers": [a, b]}).json()
+    c.post("/api/users", json={"username": "deler", "password": "geheim123", "group_ids": [g["id"]]})
+    c.post("/api/logout")
+    login(c, "deler", "geheim123")
+    url = c.post("/api/shares", json={"name": "Link", "tracker_groups": [tg["id"]], "hours": 12}).json()["url"]
+    token = url.rsplit("/", 1)[1]
+    c.post("/api/logout")
+    c.get(f"/s/{token}")
+    assert [t["alias"] for t in c.get("/api/trackers").json()] == ["A"]
+    # later komen B (maker ziet die) en X (maker ziet die niet) in de groep
+    c.cookies.clear()
+    login(c, "admin", "beheerder1")
+    c.put(f"/api/tracker-groups/{tg['id']}", json={"name": "Ploeg", "trackers": [a, b, x]})
+    c.post("/api/logout")
+    c.cookies.clear()
+    main._pcache.clear()
+    c.get(f"/s/{token}")
+    assert sorted(t["alias"] for t in c.get("/api/trackers").json()) == ["A", "B"]
