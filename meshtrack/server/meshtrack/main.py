@@ -39,7 +39,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -49,7 +49,10 @@ class Hub:
     tracker gaat alleen naar wie die tracker mag zien."""
 
     def __init__(self) -> None:
-        self.clients: dict[WebSocket, Principal] = {}
+        # Per client de cookies; de principal wordt bij elk bericht opnieuw bepaald (gecachet,
+        # 10 s), zodat gewijzigde groepen, een gedeactiveerde gebruiker of een ingetrokken
+        # deellink meteen gelden, ook voor een kaart die al open staat.
+        self.clients: dict[WebSocket, dict[str, str]] = {}
 
     @staticmethod
     def _allowed(p: Principal, msg: dict[str, Any]) -> bool:
@@ -69,7 +72,15 @@ class Hub:
 
     async def send(self, msg: dict[str, Any]) -> None:
         cache: dict[tuple[bool, bool], str] = {}
-        for ws, p in list(self.clients.items()):
+        for ws, cookies in list(self.clients.items()):
+            p = _resolve(cookies)
+            if p is None or not p.can("map.view"):
+                self.clients.pop(ws, None)
+                try:
+                    await ws.close(code=4401)
+                except Exception:  # noqa: BLE001
+                    pass
+                continue
             if not self._allowed(p, msg):
                 continue
             key = (p.can("map.details"), p.can("companion.view"))
@@ -110,6 +121,7 @@ def tracker_out(t: dict[str, Any], p: Optional[Principal] = None) -> dict[str, A
     now = int(time.time())
     out = dict(t)
     out["stale"] = not t["last_rx"] or now - t["last_rx"] > S.settings["stale_after_h"] * 3600
+    out["groups"] = S.db.tracker_group_ids(t["id"])
     if p is not None and not p.can("map.details"):
         out = strip_tracker(out)
     return out
@@ -331,9 +343,10 @@ def _resolve(cookies: dict[str, str]) -> Optional[Principal]:
         user = S.db.user_by_name(sess[0])
         p = None
         if user and user["active"] and user["session_gen"] == sess[1]:
-            group = S.db.group(user["group_id"])
-            if group:
-                p = rbac.principal_for_user(user, group)
+            gids = set(S.db.user_group_ids(user["id"]))
+            groups = [g for g in S.db.groups() if g["id"] in gids]
+            if groups:
+                p = rbac.principal_for_user(user, groups, S.db.tracker_group_members())
         _pcache[key] = (time.time() + 10, p)
         return p
     tok = cookies.get(SHARE_COOKIE)
@@ -572,6 +585,7 @@ class TrackerIn(BaseModel):
     active: Optional[bool] = None
     lost: Optional[bool] = None
     generate_key: bool = False        # nieuw toestel: sleutelpaar op de server maken
+    groups: Optional[list[int]] = None   # trackergroepen
 
 
 def _check_fields(b: TrackerIn) -> None:
@@ -613,6 +627,8 @@ async def create_tracker(b: TrackerIn, request: Request):
         raise HTTPException(409, "deze tracker bestaat al")
     tid = S.db.add_tracker(pk, b.alias.strip(), b.color or "#e4572e", b.icon or "", b.notes or "",
                            True if b.active is None else b.active)
+    if b.groups is not None:
+        _set_groups(tid, b.groups)
     if prv:
         doc = _profile(S.db.tracker(tid), prv)
         S.db.add_key(tid, "generated", p.name, pk, "nieuw sleutelpaar (server)", keys.summary(doc), S.vault.seal(doc))
@@ -632,6 +648,9 @@ async def update_tracker(tid: int, b: TrackerIn, request: Request):
     _check_fields(b)
     S.db.update_tracker(tid, alias=b.alias.strip() if b.alias else None, color=b.color, icon=b.icon,
                         notes=b.notes, active=b.active)
+    if b.groups is not None:
+        need(request, "trackers.manage")
+        _set_groups(tid, b.groups)
     if b.lost is not None and bool(b.lost) != bool(old.get("lost")):
         S.db.set_lost(tid, b.lost)
         audit(p, "tracker verloren gemeld" if b.lost else "tracker niet meer verloren", old["alias"])
@@ -660,6 +679,82 @@ async def delete_tracker(tid: int, request: Request, keep_contact: bool = False)
     audit(p, "tracker verwijderd", t["alias"])
     await S.hub.send({"type": "tracker_deleted", "id": tid})
     return {"ok": True, "contact": note}
+
+
+def _set_groups(tid: int, groups: list[int]) -> None:
+    known = {g["id"] for g in S.db.tracker_groups()}
+    S.db.set_tracker_groups(tid, [g for g in groups if g in known])
+    _pcache.clear()                    # zichtbaarheid kan veranderd zijn
+
+
+# ---- trackergroepen ----------------------------------------------------------------
+
+class TrackerGroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    color: str = "#64748b"
+    description: str = Field("", max_length=200)
+    trackers: Optional[list[int]] = None
+
+
+@app.get("/api/tracker-groups")
+async def list_tracker_groups(request: Request):
+    """Alle ingelogden: enkel de trackers die je ziet; beheerders ook lege groepen."""
+    p = who(request)
+    manage = p.can("trackers.manage") or p.can("users.manage")
+    out = []
+    for g in S.db.tracker_groups():
+        g["trackers"] = [t for t in g["trackers"] if p.sees(t)]
+        if manage or g["trackers"]:
+            out.append(g)
+    return out
+
+
+def _tg_check(b: TrackerGroupIn, gid: Optional[int]) -> None:
+    if not COLOR.match(b.color):
+        raise HTTPException(422, "kleur moet #rrggbb zijn")
+    if any(g["name"].lower() == b.name.strip().lower() and g["id"] != gid for g in S.db.tracker_groups()):
+        raise HTTPException(409, "die trackergroep bestaat al")
+
+
+@app.post("/api/tracker-groups")
+async def create_tracker_group(b: TrackerGroupIn, request: Request):
+    p = need(request, "trackers.manage")
+    _tg_check(b, None)
+    known = {t["id"] for t in S.db.trackers()}
+    gid = S.db.save_tracker_group(None, b.name.strip(), b.color, b.description.strip(),
+                                  [t for t in (b.trackers or []) if t in known])
+    _pcache.clear()
+    audit(p, "trackergroep aangemaakt", b.name.strip())
+    await S.hub.send({"type": "tracker_groups"})
+    return next(g for g in S.db.tracker_groups() if g["id"] == gid)
+
+
+@app.put("/api/tracker-groups/{gid}")
+async def update_tracker_group(gid: int, b: TrackerGroupIn, request: Request):
+    p = need(request, "trackers.manage")
+    if not any(g["id"] == gid for g in S.db.tracker_groups()):
+        raise HTTPException(404, "onbekende trackergroep")
+    _tg_check(b, gid)
+    known = {t["id"] for t in S.db.trackers()}
+    S.db.save_tracker_group(gid, b.name.strip(), b.color, b.description.strip(),
+                            None if b.trackers is None else [t for t in b.trackers if t in known])
+    _pcache.clear()
+    audit(p, "trackergroep gewijzigd", b.name.strip())
+    await S.hub.send({"type": "tracker_groups"})
+    return next(g for g in S.db.tracker_groups() if g["id"] == gid)
+
+
+@app.delete("/api/tracker-groups/{gid}")
+async def delete_tracker_group(gid: int, request: Request):
+    p = need(request, "trackers.manage")
+    g = next((g for g in S.db.tracker_groups() if g["id"] == gid), None)
+    if not g:
+        raise HTTPException(404, "onbekende trackergroep")
+    S.db.delete_tracker_group(gid)
+    _pcache.clear()
+    audit(p, "trackergroep verwijderd", g["name"])
+    await S.hub.send({"type": "tracker_groups"})
+    return {"ok": True}
 
 
 # ---- sleutels, klaarmaken en backups ---------------------------------------------
@@ -1167,6 +1262,7 @@ class GroupIn(BaseModel):
     perms: list[str]
     all_trackers: bool = True
     trackers: list[int] = []
+    tracker_groups: list[int] = []
     history_hours: int = Field(0, ge=0, le=24 * 365)
 
 
@@ -1179,9 +1275,13 @@ def _admins_left(excluding_user: Optional[int] = None, group_override: Optional[
     for u in S.db.users():
         if u["id"] == excluding_user or not u["active"]:
             continue
-        if "users.manage" in groups.get(u["group_id"], {}).get("perms", []):
+        if any("users.manage" in groups.get(g, {}).get("perms", []) for g in u["group_ids"]):
             n += 1
     return n
+
+
+def _admin_groups(ids: list[int]) -> bool:
+    return any("users.manage" in (S.db.group(g) or {}).get("perms", []) for g in ids)
 
 
 @app.get("/api/groups")
@@ -1231,8 +1331,14 @@ class UserIn(BaseModel):
     username: Optional[str] = None
     display_name: Optional[str] = Field(None, max_length=60)
     password: Optional[str] = Field(None, max_length=200)
-    group_id: Optional[int] = None
+    group_id: Optional[int] = None          # oud: één groep
+    group_ids: Optional[list[int]] = None   # 0.5: één of meer groepen
     active: Optional[bool] = None
+
+    def ids(self) -> Optional[list[int]]:
+        if self.group_ids is not None:
+            return list(dict.fromkeys(self.group_ids))
+        return [self.group_id] if self.group_id is not None else None
 
 
 @app.get("/api/users")
@@ -1248,14 +1354,15 @@ async def create_user(b: UserIn, request: Request):
         raise HTTPException(422, "gebruikersnaam: 2-32 tekens, letters, cijfers, . _ -")
     if S.db.user_by_name(b.username):
         raise HTTPException(409, "die gebruiker bestaat al")
-    if not b.group_id or not S.db.group(b.group_id):
-        raise HTTPException(422, "kies een groep")
+    gids = b.ids() or []
+    if not gids or not all(S.db.group(g) for g in gids):
+        raise HTTPException(422, "kies minstens één groep")
     problem = auth.password_problem(b.password or "")
     if problem:
         raise HTTPException(422, f"wachtwoord: {problem}")
-    uid = S.db.add_user(b.username, (b.display_name or "").strip(), auth.hash_password(b.password), b.group_id,
+    uid = S.db.add_user(b.username, (b.display_name or "").strip(), auth.hash_password(b.password), gids,
                         b.active is not False)
-    audit(p, "gebruiker aangemaakt", f"{b.username} in {S.db.group(b.group_id)['name']}")
+    audit(p, "gebruiker aangemaakt", f"{b.username} in {', '.join(S.db.group(g)['name'] for g in gids)}")
     return next(u for u in S.db.users() if u["id"] == uid)
 
 
@@ -1265,9 +1372,10 @@ async def update_user(uid: int, b: UserIn, request: Request):
     u = S.db.user(uid)
     if not u:
         raise HTTPException(404, "onbekende gebruiker")
-    if b.group_id is not None and not S.db.group(b.group_id):
-        raise HTTPException(422, "onbekende groep")
-    losing = (b.active is False) or (b.group_id is not None and "users.manage" not in S.db.group(b.group_id)["perms"])
+    gids = b.ids()
+    if gids is not None and (not gids or not all(S.db.group(g) for g in gids)):
+        raise HTTPException(422, "kies minstens één bestaande groep")
+    losing = (b.active is False) or (gids is not None and not _admin_groups(gids))
     if losing and _admins_left(excluding_user=uid) == 0:
         raise HTTPException(409, "dit is de laatste beheerder; dat kan niet")
     pw_hash = None
@@ -1276,9 +1384,11 @@ async def update_user(uid: int, b: UserIn, request: Request):
         if problem:
             raise HTTPException(422, f"wachtwoord: {problem}")
         pw_hash = auth.hash_password(b.password)
-    S.db.update_user(uid, display_name=b.display_name, group_id=b.group_id, active=b.active, password_hash=pw_hash)
+    S.db.update_user(uid, display_name=b.display_name, active=b.active, password_hash=pw_hash)
+    if gids is not None:
+        S.db.set_user_groups(uid, gids)
     _pcache.clear()
-    what = [x for x, v in (("naam", b.display_name), ("groep", b.group_id), ("actief", b.active),
+    what = [x for x, v in (("naam", b.display_name), ("groepen", gids), ("actief", b.active),
                            ("wachtwoord", b.password)) if v is not None]
     audit(p, "gebruiker gewijzigd", f"{u['username']}: {', '.join(what)}")
     return next(x for x in S.db.users() if x["id"] == uid)
@@ -1485,7 +1595,7 @@ async def ws(websocket: WebSocket):
         await websocket.close(code=4401)
         return
     await websocket.accept()
-    S.hub.clients[websocket] = p
+    S.hub.clients[websocket] = dict(websocket.cookies)
     try:
         mesh = S.mesh.status()
         if not p.can("companion.view"):

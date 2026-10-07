@@ -114,3 +114,48 @@ def test_export_gpx(client):
     assert r.status_code == 200 and "<trkpt lat=\"50.93\"" in r.text
     assert c.get(f"/api/trackers/{tid}/export?fmt=csv").text.startswith("tijd_utc,lat,lon")
     assert any(a["action"] == "spoor geëxporteerd" for a in c.get("/api/audit").json())
+
+
+def test_tracker_groups_and_multiple_user_groups(client):
+    c, main = client
+    login(c, "admin", "beheerder1")
+    ids = {n: c.post("/api/trackers", json={"pubkey": k * 32, "alias": n}).json()["tracker"]["id"]
+           for n, k in (("Amb1", "a1"), ("Amb2", "a2"), ("Brand", "b1"), ("Fiets", "f1"))}
+    amb = c.post("/api/tracker-groups", json={"name": "Ziekenwagens", "trackers": [ids["Amb1"]]}).json()
+    brand = c.post("/api/tracker-groups", json={"name": "Brandweer", "trackers": [ids["Brand"], ids["Amb2"]]}).json()
+    # een tracker in meerdere groepen
+    r = c.put(f"/api/trackers/{ids['Amb2']}", json={"groups": [amb["id"], brand["id"]]})
+    assert sorted(r.json()["tracker"]["groups"]) == sorted([amb["id"], brand["id"]])
+    view = ["map.view", "map.sidebar", "map.tracks"]
+    g1 = c.post("/api/groups", json={"name": "Ploeg Amb", "perms": view, "all_trackers": False,
+                                     "tracker_groups": [amb["id"]], "history_hours": 6}).json()
+    g2 = c.post("/api/groups", json={"name": "Fietsers", "perms": view + ["log.view"], "all_trackers": False,
+                                     "trackers": [ids["Fiets"]], "history_hours": 24}).json()
+    assert c.post("/api/users", json={"username": "els", "password": "geheim123",
+                                      "group_ids": [g1["id"], g2["id"]]}).status_code == 200
+    u = next(x for x in c.get("/api/users").json() if x["username"] == "els")
+    assert u["group_ids"] == [g1["id"], g2["id"]] and u["group_name"] == "Ploeg Amb, Fietsers"
+    c.post("/api/logout")
+    login(c, "els", "geheim123")
+    me = c.get("/api/me").json()
+    assert "log.view" in me["perms"] and me["history_hours"] == 24        # som van de groepen
+    assert sorted(t["alias"] for t in c.get("/api/trackers").json()) == ["Amb1", "Amb2", "Fiets"]
+    tg = {g["name"]: g["trackers"] for g in c.get("/api/tracker-groups").json()}
+    assert tg == {"Ziekenwagens": sorted([ids["Amb1"], ids["Amb2"]]), "Brandweer": [ids["Amb2"]]}
+    assert c.post("/api/tracker-groups", json={"name": "X"}).status_code == 403
+    # een tracker die later in de groep komt, is meteen zichtbaar
+    c.post("/api/logout")
+    login(c, "admin", "beheerder1")
+    c.put(f"/api/tracker-groups/{amb['id']}", json={"name": "Ziekenwagens", "trackers": [ids["Amb1"], ids["Amb2"], ids["Brand"]]})
+    c.post("/api/logout")
+    login(c, "els", "geheim123")
+    assert "Brand" in [t["alias"] for t in c.get("/api/trackers").json()]
+
+
+def test_last_admin_with_multiple_groups(client):
+    c, _ = client
+    login(c, "admin", "beheerder1")
+    admin = next(x for x in c.get("/api/users").json() if x["username"] == "admin")
+    kijk = next(g["id"] for g in c.get("/api/groups").json()["groups"] if g["name"] == "Kijkers")
+    assert c.put(f"/api/users/{admin['id']}", json={"group_ids": [kijk]}).status_code == 409
+    assert c.put(f"/api/users/{admin['id']}", json={"group_ids": [admin["group_ids"][0], kijk]}).status_code == 200

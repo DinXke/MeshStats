@@ -89,7 +89,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Website 0.4 · firmware 0.4.1 (T1000-E) · MeshCore v1.17.1<br>
+    Website 0.5 · firmware 0.4.1 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -465,9 +465,9 @@
 <!-- ============================ 10 ============================ -->
 <h2 class="chap"><span class="nr">10</span>Gebruikers, rechten en instellingen</h2>
 <figure><img src="img/gebruikers.jpg" alt=""><figcaption>Gebruikers en groepen.</figcaption></figure>
-<p>Elke gebruiker hoort bij een <strong>groep</strong>. Een groep bepaalt de <strong>rechten</strong>, welke
-  <strong>trackers</strong> zichtbaar zijn en hoe ver je <strong>terug in de tijd</strong> kijkt. Standaard zijn er vier
-  groepen:</p>
+<p>Elke gebruiker zit in één of meer <strong>groepen</strong>. Een groep bepaalt de <strong>rechten</strong>, welke
+  <strong>trackers</strong> zichtbaar zijn en hoe ver je <strong>terug in de tijd</strong> kijkt. Zit je in meerdere groepen,
+  dan krijg je de som: alle rechten en trackers samen, en de ruimste terugblik. Standaard zijn er vier groepen:</p>
 <table>
   <tr><th>Groep</th><th>Wat mag het</th></tr>
   <tr><td class="k">Beheerders</td><td>Alles, ook gebruikers, systeeminstellingen, sleutels en backups.</td></tr>
@@ -475,6 +475,25 @@
   <tr><td class="k">Kijkers</td><td>Meekijken met de lijst, de sporen en het logboek (7 dagen terug), niets wijzigen.</td></tr>
   <tr><td class="k">Kiosk</td><td>Alleen de kaart, schermvullend, bv. op een groot scherm in de post.</td></tr>
 </table>
+<h3>Trackergroepen: wie ziet welke trackers</h3>
+<figure><img src="img/trackergroepen.jpg" alt=""><figcaption>Beheer → Trackergroepen. Een tracker kan in meerdere groepen zitten.</figcaption></figure>
+<ol class="steps">
+  <li>Maak in <em>Beheer</em> → <em>Trackergroepen</em> groepen, bv. per dienst of ploeg, en vink de trackers aan. Bij het
+    bewerken van een tracker kies je ook zijn groepen.</li>
+  <li>Zet in <em>Gebruikers</em> → <em>Groepen en rechten</em> bij een groep <em>Alle trackers</em> uit en vink de
+    trackergroepen aan die de groep ziet (eventueel aangevuld met losse trackers).</li>
+  <li>Vink bij een gebruiker één of meer groepen aan.</li>
+</ol>
+<div class="cols">
+  <figure><img src="img/groep-trackergroepen.jpg" alt=""><figcaption>Een groep die alleen de trackergroep Ziekenwagens ziet.</figcaption></figure>
+  <div>
+    <figure><img src="img/gebruiker-groepen.jpg" alt=""><figcaption>Els zit in twee groepen.</figcaption></figure>
+    <figure><img src="img/kaart-groepfilter.jpg" alt=""><figcaption>Wat Els ziet, gefilterd op de trackergroep Fietsploeg.</figcaption></figure>
+  </div>
+</div>
+<p>Een tracker die later aan een trackergroep wordt toegevoegd, is meteen zichtbaar voor wie die groep ziet, ook op een kaart
+  die al open staat. Iedereen kan op de kaart de lijst filteren op één trackergroep.</p>
+
 <p>Met <strong>deellinks</strong> toon je gekozen trackers aan iemand zonder account, tot de link verloopt. Je kunt een link altijd
   intrekken.</p>
 <h3>Systeeminstellingen</h3>

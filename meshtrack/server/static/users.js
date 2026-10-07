@@ -3,7 +3,7 @@
   const $ = (id) => document.getElementById(id);
   await MT.initHeader("/users");
   const can = MT.can;
-  let groups = [], perms = [], trackers = [], users = [];
+  let groups = [], perms = [], trackers = [], users = [], tgroups = [];
 
   function msg(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : "err"); }
   const fmtTs = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "nooit");
@@ -28,12 +28,12 @@
     const g = await MT.api("/api/groups");
     groups = g.groups; perms = g.perms;
     trackers = await MT.api("/api/trackers");
+    tgroups = await MT.api("/api/tracker-groups");
     if (can("users.manage")) users = await MT.api("/api/users");
   }
 
   // ---- gebruikers -------------------------------------------------------------------
   function renderUsers() {
-    $("u-group").innerHTML = groups.map((g) => `<option value="${g.id}">${MT.esc(g.name)}</option>`).join("");
     $("users").innerHTML = users.map((u) => `<div class="titem">
       <span class="avatar">${MT.esc((u.display_name || u.username).slice(0, 1).toUpperCase())}</span>
       <div class="body"><div><strong>${MT.esc(u.display_name || u.username)}</strong> <span class="muted">@${MT.esc(u.username)}</span>
@@ -50,7 +50,9 @@
     $("u-name").value = u ? u.username : "";
     $("u-name").disabled = !!u;
     $("u-display").value = u ? u.display_name : "";
-    $("u-group").value = u ? u.group_id : (groups.find((g) => g.name === "Kijkers") || groups[0]).id;
+    const sel = u ? u.group_ids : [(groups.find((g) => g.name === "Kijkers") || groups[0]).id];
+    $("u-groups").innerHTML = groups.map((g) => `<label class="mini"><input type="checkbox" value="${g.id}"${sel.includes(g.id) ? " checked" : ""}>
+      ${MT.esc(g.name)}<span class="muted small"> ${MT.esc(g.description || "")}</span></label>`).join("");
     $("u-pw").value = "";
     $("u-pw").required = !u;
     $("u-pwhint").textContent = u ? "(leeg = ongewijzigd)" : "(min. 8 tekens)";
@@ -75,7 +77,9 @@
   $("u-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const id = $("u-id").value;
-    const body = { display_name: $("u-display").value, group_id: Number($("u-group").value), active: $("u-active").checked };
+    const gids = [...$("u-groups").querySelectorAll("input:checked")].map((c) => Number(c.value));
+    if (!gids.length) { msg($("u-msg"), "Kies minstens één groep."); return; }
+    const body = { display_name: $("u-display").value, group_ids: gids, active: $("u-active").checked };
     if ($("u-pw").value) body.password = $("u-pw").value;
     try {
       if (id) await MT.api(`/api/users/${id}`, { method: "PUT", body });
@@ -92,7 +96,7 @@
       <div class="body"><div><strong>${MT.esc(g.name)}</strong> <span class="muted small">${g.members} ${g.members === 1 ? "lid" : "leden"}</span></div>
         <div class="muted small">${MT.esc(g.description || "")}</div>
         <div class="chipsline">${g.perms.map((p) => `<span class="pill">${MT.esc((perms.find((x) => x.id === p) || {}).label || p)}</span>`).join(" ")}</div>
-        <div class="muted small">${g.all_trackers ? "alle trackers" : g.trackers.length + " tracker(s)"} · terugblik ${g.history_hours ? g.history_hours + " u" : "onbeperkt"}</div></div>
+        <div class="muted small">${g.all_trackers ? "alle trackers" : [g.tracker_groups.length ? "trackergroepen: " + g.tracker_groups.map((id) => (tgroups.find((x) => x.id === id) || {}).name || "?").join(", ") : null, g.trackers.length ? g.trackers.length + " losse tracker(s)" : null].filter(Boolean).join(" · ") || "geen trackers"} · terugblik ${g.history_hours ? g.history_hours + " u" : "onbeperkt"}</div></div>
       <div class="actions"><button data-gedit="${g.id}">Bewerken</button>${g.members ? "" : `<button class="danger" data-gdel="${g.id}">Verwijderen</button>`}</div></div>`).join("");
     document.querySelectorAll("[data-gedit]").forEach((b) => b.addEventListener("click", () => openGroup(groups.find((g) => g.id === Number(b.dataset.gedit)))));
     document.querySelectorAll("[data-gdel]").forEach((b) => b.addEventListener("click", async () => {
@@ -116,7 +120,11 @@
       ${g && g.perms.includes(p.id) ? "checked" : ""}> <span><strong>${MT.esc(p.label)}</strong><span class="muted small"> ${MT.esc(p.help)}</span></span></label>`).join("");
     $("g-alltr").checked = g ? g.all_trackers : true;
     trackerChecks($("g-trackers"), g ? g.trackers : []);
-    $("g-trackers").hidden = $("g-alltr").checked;
+    const tsel = g ? g.tracker_groups : [];
+    $("g-tgroups").innerHTML = tgroups.map((t) => `<label class="mini"><input type="checkbox" value="${t.id}"${tsel.includes(t.id) ? " checked" : ""}>
+      <i style="background:${MT.esc(t.color)}"></i>${MT.esc(t.name)} <span class="muted small">(${t.trackers.length})</span></label>`).join("")
+      || '<span class="muted">Nog geen trackergroepen. Maak ze in Beheer.</span>';
+    $("g-trwrap").hidden = $("g-alltr").checked;
     msg($("g-msg"), "");
     $("g-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -125,7 +133,7 @@
   $("g-none").addEventListener("click", () => setPerms([]));
   $("g-ro").addEventListener("click", () => setPerms(["map.view", "map.sidebar", "map.tracks", "map.nodes", "zones.view", "log.view"]));
   $("g-kiosk").addEventListener("click", () => setPerms(["map.view", "map.tracks"]));
-  $("g-alltr").addEventListener("change", () => { $("g-trackers").hidden = $("g-alltr").checked; });
+  $("g-alltr").addEventListener("change", () => { $("g-trwrap").hidden = $("g-alltr").checked; });
   $("g-new").addEventListener("click", () => openGroup(null));
   $("g-cancel").addEventListener("click", () => { $("g-form").hidden = true; });
   $("g-form").addEventListener("submit", async (e) => {
@@ -133,7 +141,8 @@
     const id = $("g-id").value;
     const body = { name: $("g-name").value.trim(), description: $("g-desc").value, history_hours: Number($("g-hist").value) || 0,
       perms: [...$("g-perms").querySelectorAll("input:checked")].map((c) => c.value),
-      all_trackers: $("g-alltr").checked, trackers: [...$("g-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)) };
+      all_trackers: $("g-alltr").checked, trackers: [...$("g-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)),
+      tracker_groups: [...$("g-tgroups").querySelectorAll("input:checked")].map((c) => Number(c.value)) };
     try {
       await MT.api(id ? `/api/groups/${id}` : "/api/groups", { method: id ? "PUT" : "POST", body });
       $("g-form").hidden = true;

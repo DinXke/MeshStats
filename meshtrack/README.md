@@ -25,6 +25,9 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
   - Live kaart met MapLibre en eigen pmtiles (geen externe diensten), filters, favorieten, volgen, sporen per
     snelheid, meshnodes uit de observer-database van openHop.
   - Gebruikers, groepen en rechten, deellinks, auditlog, logboek met filters, GPX/CSV-export.
+  - Trackergroepen (een tracker in meerdere groepen) en gebruikers in meerdere groepen: rechten en zichtbare
+    trackers worden opgeteld; een groep ziet trackergroepen en/of losse trackers. De live-updates bepalen de rechten
+    per bericht opnieuw, zodat wijzigingen meteen gelden.
   - Zones (gedeeld of persoonlijk) en meldingsregels die DM's via de mesh sturen, met een wachtrij.
   - Simulator: virtuele trackers rijden 24/7 over echte wegen (offline routering over de wegenlaag van de
     kaarttegels), met een historiek in versnelde tijd. Profielen auto, fiets, voet en reiziger.

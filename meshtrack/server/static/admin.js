@@ -1,7 +1,7 @@
 /* Beheerpagina: trackers (echt of virtueel), USB-instellingen, server-companion. */
 (function () {
   const $ = (id) => document.getElementById(id);
-  let status = null, trackers = [], sims = [];
+  let status = null, trackers = [], sims = [], tgroups = [];
   let icon = "";
 
   function msg(el, text, ok) {
@@ -29,7 +29,9 @@
     status = await MT.api("/api/status");
     MT.meshPill($("mesh"), status.mesh);
     renderCompanion(status.mesh);
-    [trackers, sims] = await Promise.all([MT.api("/api/trackers"), MT.can("sims.manage") ? MT.api("/api/sims") : []]);
+    [trackers, sims, tgroups] = await Promise.all([MT.api("/api/trackers"), MT.can("sims.manage") ? MT.api("/api/sims") : [],
+      MT.api("/api/tracker-groups")]);
+    renderTgroups();
     const simBy = Object.fromEntries(sims.map((s) => [s.tracker_id, s]));
     $("trackers").innerHTML = trackers.length ? trackers.map((t) => {
       const sim = simBy[t.id];
@@ -41,7 +43,8 @@
         <div class="body"><div><strong>${MT.esc(t.alias)}</strong> ${kind}${t.active ? "" : ' <span class="pill">inactief</span>'}${t.lost ? ` <span class="pill lost">verloren${t.lost_seen ? " · terug gezien " + MT.esc(MT.ago(t.lost_seen)) : ""}</span>` : ""}${t.keys ? ` <span class="pill" title="${t.keys} sleutel(s)/backup(s) op de server">sleutel op server</span>` : ""}</div>
           <div class="muted small">${MT.esc(meta)}</div>
           ${t.kind === "real" ? `<div class="mono muted small">${MT.esc(t.pubkey.slice(0, 16))}…</div>` : ""}
-          ${t.notes && t.notes !== "simulator" ? `<div class="muted small">${MT.esc(t.notes)}</div>` : ""}</div>
+          ${t.notes && t.notes !== "simulator" ? `<div class="muted small">${MT.esc(t.notes)}</div>` : ""}
+          ${(t.groups || []).length ? `<div class="chipsline">${t.groups.map((id) => tgroups.find((g) => g.id === id)).filter(Boolean).map((g) => `<span class="pill" style="border-color:${MT.esc(g.color)}">${MT.esc(g.name)}</span>`).join(" ")}</div>` : ""}</div>
         <div class="actions"><button data-edit="${t.id}">Bewerken</button>
           <button class="danger" data-del="${t.id}">Verwijderen</button></div></div>`;
     }).join("") : '<div class="empty">Nog geen trackers. Klik op "+ Tracker".</div>';
@@ -52,6 +55,56 @@
     $("unknown").innerHTML = unk.length ? unk.map((u) => `<div class="ev"><span class="mono">${MT.esc(u.pubkey_prefix)}</span>
       · ${MT.esc(u.reason)}<div class="muted small">${new Date(u.rx_ts * 1000).toLocaleString("nl-BE")} · <span class="mono">${MT.esc(u.text)}</span></div></div>`).join("")
       : '<div class="empty">geen</div>';
+  }
+
+  // ---- trackergroepen ----------------------------------------------------------------
+  function tgChecks(el, selected) {
+    el.innerHTML = trackers.map((t) => `<label class="mini"><input type="checkbox" value="${t.id}"${selected.includes(t.id) ? " checked" : ""}>
+      <i style="background:${MT.esc(t.color)}"></i>${MT.esc(t.alias)}${t.kind === "sim" ? " (sim)" : ""}</label>`).join("")
+      || '<span class="muted">Nog geen trackers.</span>';
+  }
+  function renderTgroups() {
+    $("tgcard").hidden = !MT.can("trackers.manage");
+    $("tglist").innerHTML = tgroups.map((g) => `<div class="titem">
+      <span class="tico big" style="background:${MT.esc(g.color)}"></span>
+      <div class="body"><div><strong>${MT.esc(g.name)}</strong> <span class="muted small">${g.trackers.length} tracker(s)</span></div>
+        <div class="muted small">${MT.esc(g.description || "")}</div>
+        <div class="muted small">${MT.esc(g.trackers.map((id) => (trackers.find((t) => t.id === id) || {}).alias).filter(Boolean).join(", "))}</div></div>
+      <div class="actions"><button type="button" data-tgedit="${g.id}">Bewerken</button><button type="button" class="danger" data-tgdel="${g.id}">Verwijderen</button></div></div>`).join("")
+      || '<div class="empty">Nog geen trackergroepen.</div>';
+    $("tglist").querySelectorAll("[data-tgedit]").forEach((b) => b.addEventListener("click", () => openTg(tgroups.find((g) => g.id === Number(b.dataset.tgedit)))));
+    $("tglist").querySelectorAll("[data-tgdel]").forEach((b) => b.addEventListener("click", async () => {
+      const g = tgroups.find((x) => x.id === Number(b.dataset.tgdel));
+      if (!confirm(`Trackergroep "${g.name}" verwijderen? De trackers zelf blijven; gebruikersgroepen die via deze groep keken, zien ze niet meer.`)) return;
+      try { await MT.api(`/api/tracker-groups/${g.id}`, { method: "DELETE" }); load(); } catch (e) { alert(e.message); }
+    }));
+  }
+  function openTg(g) {
+    $("tg-form").hidden = false;
+    $("tg-id").value = g ? g.id : "";
+    $("tg-name").value = g ? g.name : "";
+    $("tg-color").value = g ? g.color : "#64748b";
+    $("tg-desc").value = g ? g.description : "";
+    tgChecks($("tg-trackers"), g ? g.trackers : []);
+    msg($("tg-msg"), "");
+  }
+  $("tg-new").addEventListener("click", () => openTg(null));
+  $("tg-cancel").addEventListener("click", () => { $("tg-form").hidden = true; });
+  $("tg-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = $("tg-id").value;
+    const body = { name: $("tg-name").value.trim(), color: $("tg-color").value, description: $("tg-desc").value,
+      trackers: [...$("tg-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)) };
+    try {
+      await MT.api(id ? `/api/tracker-groups/${id}` : "/api/tracker-groups", { method: id ? "PUT" : "POST", body });
+      $("tg-form").hidden = true;
+      load();
+    } catch (err) { msg($("tg-msg"), err.message); }
+  });
+  function fillFormGroups(selected) {
+    $("f-tgwrap").hidden = !tgroups.length || !MT.can("trackers.manage");
+    $("f-tgroups").innerHTML = tgroups.map((g) => `<label class="mini"><input type="checkbox" value="${g.id}"${selected.includes(g.id) ? " checked" : ""}>
+      <i style="background:${MT.esc(g.color)}"></i>${MT.esc(g.name)}</label>`).join("");
   }
 
   // ---- rijgedrag (simulator) ----------------------------------------------------------
@@ -124,6 +177,7 @@
     $("f-genrow").hidden = !MT.can("keys.manage");
     $("f-genhelp").hidden = !MT.can("keys.manage");
     $("f-keys").hidden = true;
+    fillFormGroups([]);
     icon = "";
     setVirtual(false);
     renderIcons();
@@ -147,6 +201,7 @@
     $("f-notes").value = t.notes === "simulator" ? "" : t.notes;
     $("f-active").checked = !!t.active;
     $("f-lost").checked = !!t.lost;
+    fillFormGroups(t.groups || []);
     icon = t.icon || "";
     setVirtual(t.kind === "sim");
     $("f-virtual").disabled = true;            // soort wisselen = nieuwe tracker
@@ -239,20 +294,22 @@
     const id = $("f-id").value;
     const base = { alias: $("f-alias").value.trim(), color: $("f-color").value, icon, notes: $("f-notes").value,
                    active: $("f-active").checked, lost: $("f-lost").checked };
+    const groups = [...$("f-tgroups").querySelectorAll("input:checked")].map((c) => Number(c.value));
     try {
       let r;
       if ($("f-virtual").checked) {
         if (id) {
-          await MT.api(`/api/trackers/${id}`, { method: "PUT", body: base });
+          await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, ...(MT.can("trackers.manage") ? { groups } : {}) } });
           r = await MT.api(`/api/sims/${id}`, { method: "PUT", body: { ...simBody(), alias: base.alias, color: base.color, icon } });
         } else {
           r = await MT.api("/api/sims", { method: "POST", body: { ...simBody(), ...base } });
+          if (groups.length && r && r.tracker_id && MT.can("trackers.manage")) await MT.api(`/api/trackers/${r.tracker_id}`, { method: "PUT", body: { groups } });
         }
         msg($("fmsg"), "Bewaard. De simulator rijdt zodra zijn eerste route berekend is.", true);
       } else {
         const gen = !id && $("f-genkey").checked;
-        if (id) r = await MT.api(`/api/trackers/${id}`, { method: "PUT", body: base });
-        else r = await MT.api("/api/trackers", { method: "POST", body: { ...base, pubkey: gen ? null : $("f-pubkey").value.trim(), generate_key: gen } });
+        if (id) r = await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, groups } });
+        else r = await MT.api("/api/trackers", { method: "POST", body: { ...base, groups, pubkey: gen ? null : $("f-pubkey").value.trim(), generate_key: gen } });
         msg($("fmsg"), `Bewaard. ${r.contact || ""}`, true);
         if (gen && window.MTDevice) { await load(); MTDevice.offerProvision(r.tracker); return; }
       }
@@ -545,7 +602,7 @@
 
   MT.live((m) => {
     if (m.type === "mesh") MT.meshPill($("mesh"), m.mesh);
-    if (m.type === "tracker" || m.type === "tracker_deleted") load();
+    if (m.type === "tracker" || m.type === "tracker_deleted" || m.type === "tracker_groups") load();
   });
   MT.initHeader("/admin").then(async () => {
     applyPerms();

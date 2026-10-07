@@ -26,6 +26,28 @@
     <div id="trackers" class="tlist"></div>
   </section>
 
+  <!-- trackergroepen -->
+  <section class="card" id="tgcard">
+    <details id="tgdetails">
+      <summary class="h2sum">Trackergroepen</summary>
+      <p class="muted">Groepeer trackers, bv. per dienst of ploeg. Een tracker kan in meerdere groepen zitten. In
+        <a href="/users#groups">Gebruikers → Groepen</a> kies je welke gebruikersgroep welke trackergroepen ziet.</p>
+      <div class="row"><button class="primary" id="tg-new" type="button">+ Trackergroep</button></div>
+      <form id="tg-form" class="subform" hidden>
+        <input type="hidden" id="tg-id">
+        <div class="grid">
+          <div><label for="tg-name">Naam</label><input id="tg-name" maxlength="40" required placeholder="bv. Ziekenwagens"></div>
+          <div><label for="tg-color">Kleur</label><input id="tg-color" type="color" value="#64748b"></div>
+        </div>
+        <label for="tg-desc">Omschrijving</label><input id="tg-desc" maxlength="200">
+        <label>Trackers</label><div id="tg-trackers" class="permgrid"></div>
+        <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="tg-cancel">Annuleren</button></div>
+        <div id="tg-msg" class="msg"></div>
+      </form>
+      <div id="tglist" class="tlist"></div>
+    </details>
+  </section>
+
   <!-- toevoegen / bewerken -->
   <section class="card" id="formcard" hidden>
     <div class="cardhead">
@@ -143,6 +165,7 @@
           <button type="button" class="danger" id="f-purgeall">Alles wissen</button>
         </div>
       </fieldset>
+      <div id="f-tgwrap"><label>Trackergroepen</label><div id="f-tgroups" class="permgrid"></div></div>
       <label for="f-notes">Notities</label>
       <textarea id="f-notes" rows="2" maxlength="500"></textarea>
       <label class="switch block"><input type="checkbox" id="f-active" checked><span></span> Actief (zichtbaar op de kaart)</label>
