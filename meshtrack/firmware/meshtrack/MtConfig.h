@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#define MT_CFG_VERSION 1
+#define MT_CFG_VERSION 2   // v2: ritme volgens de ontvangst (velden achteraan, v1 wordt overgenomen)
 
 struct MtCfg {
   uint32_t magic;               // 'MTC1'
@@ -32,6 +32,14 @@ struct MtCfg {
   uint8_t  target[32];          // pubkey server-companion
   uint8_t  led_mode;            // 0 = alleen als companion, 1 = altijd, 2 = nooit (zat vroeger in de opvulling: v1 blijft leesbaar)
   uint8_t  _pad[2];
+  // ---- v2: ritme volgens de ontvangst ----
+  uint16_t fast_interval_s;     // na een snelle ACK in beweging elke x s (0 = uit)
+  uint8_t  fast_keep;           // zoveel missers na elkaar blijft hij snel
+  uint8_t  fast_ack_s;          // ACK binnen x s = goede ontvangst (0 = elke ACK)
+  uint8_t  slow_after;          // na x mislukte zendingen na elkaar trager (0 = nooit)
+  uint8_t  slow_factor;         // intervallen x factor als hij traag is
+  uint8_t  fast_retries;        // herhaalpogingen voor gewone posities bij goede ontvangst (zat in de opvulling, 0 = standaard)
+  uint8_t  _pad2[1];
   uint32_t crc;                 // crc32 over alles hiervoor
 };
 

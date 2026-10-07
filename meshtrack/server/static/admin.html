@@ -115,6 +115,11 @@
             <div><label>Bocht pas boven (km/u)</label><input data-sp="turn_min_speed_kmh" type="number" min="0" value="5"></div>
             <div><label>Nooit vaker dan 1× per (s)</label><input data-sp="min_interval_s" type="number" min="10" value="60"></div>
             <div><label>In beweging minstens 1× per (s)</label><input data-sp="max_interval_s" type="number" min="0" value="600"></div>
+            <div><label>Goede ontvangst: elke (s, 0 = uit)</label><input data-sp="fast_interval_s" type="number" min="0" value="30"></div>
+            <div><label>Goede ontvangst = ACK binnen (s)</label><input data-sp="fast_ack_s" type="number" min="0" value="10"></div>
+            <div><label>Snel blijven tot zoveel missers</label><input data-sp="fast_keep" type="number" min="0" max="10" value="2"></div>
+            <div><label>Trager na zoveel missers</label><input data-sp="slow_after" type="number" min="0" max="20" value="3"></div>
+            <div><label>Trager: intervallen maal</label><input data-sp="slow_factor" type="number" min="1" max="10" value="3"></div>
             <div><label>Stilstand na (s)</label><input data-sp="still_timeout_s" type="number" min="30" value="300"></div>
             <div><label>Heartbeat in rust (s)</label><input data-sp="heartbeat_s" type="number" min="0" value="43200"></div>
             <div><label>Pakketverlies (%)</label><input id="f-loss" type="number" min="0" max="90" value="5"></div>
@@ -226,6 +231,28 @@
             <div><label>Nooit vaker dan 1× per</label><div class="dur" data-set="min_interval"></div></div>
             <div><label>In beweging minstens 1× per</label><div class="dur" data-set="max_interval" data-off="1"></div></div>
           </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Ritme volgens de ontvangst</legend>
+          <div class="help">Komt een bevestiging (ACK) snel binnen, dan is de ontvangst goed en stuurt hij vaker: zo
+            volg je hem nauwkeurig. Lukt het verzenden een paar keer na elkaar niet (weinig repeaters in de buurt), dan
+            stuurt hij minder vaak en spaart hij de batterij. Elk bericht kost zendtijd op de mesh: zet het snelle
+            ritme niet korter dan nodig.</div>
+          <div class="grid">
+            <div><label>Goede ontvangst: in beweging elke</label><div class="dur" data-set="fast_interval" data-off="1"></div></div>
+            <div><label>Goede ontvangst = ACK binnen</label><div class="dur" data-set="fast_ack"></div>
+              <div class="help">0 = elke ACK telt</div></div>
+            <div><label>Snel blijven tot zoveel missers</label><input data-set="fast_keep" type="number" min="0" max="10">
+              <div class="help">1 misser maakt hem dan niet meteen trager</div></div>
+            <div><label>Herhaalpogingen bij goede ontvangst</label><input data-set="fast_retries" type="number" min="0" max="5">
+              <div class="help">Voor gewone posities; de volgende verse positie komt er toch zo aan. SOS, een klik,
+                stilgevallen en heartbeat krijgen altijd alle pogingen.</div></div>
+            <div><label>Trager na zoveel missers</label><input data-set="slow_after" type="number" min="0" max="20">
+              <div class="help">0 = nooit trager</div></div>
+            <div><label>Trager: intervallen maal</label><input data-set="slow_factor" type="number" min="1" max="10"></div>
+          </div>
+          <div class="help" id="s-ritme"></div>
         </fieldset>
 
         <fieldset>

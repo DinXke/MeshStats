@@ -105,7 +105,7 @@ static bool tracking_active() {
 
 static void send_report(char state, bool with_pos, bool manual, const char* reason) {
   MtNmeaProvider& g = mt_gps();
-  char lat[16] = "", lon[16] = "", alt[8] = "", spd[8] = "", crs[8] = "", hd[8] = "", age[12] = "";
+  char lat[16] = "", lon[16] = "", alt[8] = "", spd[8] = "", crs[8] = "", hd[8] = "", age[12] = "", fts[12] = "";
   double la = 0, lo = 0;
   float sp = -1, cr = -1;
   if (with_pos && g.lastValidMs() != 0) {
@@ -120,6 +120,7 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
     if (sp >= 3 && cr >= 0) snprintf(crs, sizeof(crs), "%d", ((int)(cr + 0.5f)) % 360);
     snprintf(hd, sizeof(hd), "%.1f", g.hdop());
     snprintf(age, sizeof(age), "%lu", (unsigned long)(g.fixAgeMs() / 1000));
+    if (g.lastValidUnix()) snprintf(fts, sizeof(fts), "%lu", (unsigned long)g.lastValidUnix());
   } else {
     with_pos = false;
   }
@@ -127,20 +128,37 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   char text[96];
   // 13e veld: voeding (u = USB/laden, b = batterij). Elk bericht draagt het mee,
   // zodat de server een gemiste in/uitplug-melding bij het volgende bericht inhaalt.
-  snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c|%c",
+  // 14e veld: GPS-tijd van de fix. Zo staat de positie op het juiste moment, ook na
+  // herhaalpogingen of als het bericht even in de wachtrij stond.
+  snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c|%c|%s",
            (unsigned)seq_next(), state, lat, lon, alt, spd, crs, bat < 0 ? 0 : bat, hd, age,
-           mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b');
+           mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b', fts);
   radio_wake();
-  mt_send(text, manual);
+  // Gewone posities (M, W, N) in het snelle ritme: weinig of geen herhaalpogingen,
+  // want de volgende verse positie komt er zo aan. Belangrijke berichten: alle pogingen.
+  bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B';
+  uint8_t retries = mt_cfg.ack_retries;
+  if (!keep && s_rules.fast && !s_rules.slow && mt_cfg.fast_retries < retries) retries = mt_cfg.fast_retries;
+  mt_send(text, manual, retries, keep);
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
   strncpy(s_last_reason, reason, sizeof(s_last_reason) - 1);
   s_last_tx_ms = millis();
   mt_log("tx %s (%s)", text, reason);
 }
 
-static void on_send_done(bool ok, bool manual) {
+static MtRuleParams params();
+
+static void on_send_done(bool ok, bool manual, uint32_t ack_ms) {
   if (manual) ui_task.playForced(ok ? "ok:d=16,o=7,b=200:16c,16p,16c" : "nok:d=4,o=5,b=100:4c");
-  mt_log("tx %s", ok ? "bevestigd (ACK)" : "MISLUKT na alle pogingen");
+  bool was_fast = s_rules.fast, was_slow = s_rules.slow;
+  mt_rules_link(s_rules, params(), ok, ack_ms);
+  if (ok) mt_log("tx bevestigd (ACK na %lu ms)", (unsigned long)ack_ms);
+  else mt_log("tx MISLUKT na alle pogingen (%u na elkaar)", (unsigned)s_rules.fails);
+  if (s_rules.fast != was_fast || s_rules.slow != was_slow) mt_log("ritme: %s", mt_tracker_link_str());
+}
+
+const char* mt_tracker_link_str() {
+  return s_rules.slow ? "traag" : s_rules.fast ? "snel" : "normaal";
 }
 
 // ---- toestanden ---------------------------------------------------------------
@@ -175,6 +193,11 @@ static MtRuleParams params() {
   p.turn_min_speed_kmh = mt_cfg.turn_min_speed_kmh;
   p.min_interval_s = mt_cfg.min_interval_s;
   p.max_interval_s = mt_cfg.max_interval_s;
+  p.fast_interval_s = mt_cfg.fast_interval_s;
+  p.fast_keep = mt_cfg.fast_keep;
+  p.fast_ack_s = mt_cfg.fast_ack_s;
+  p.slow_after = mt_cfg.slow_after;
+  p.slow_factor = mt_cfg.slow_factor;
   return p;
 }
 

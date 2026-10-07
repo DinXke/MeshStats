@@ -77,3 +77,18 @@ def test_manual_state():
 def test_still_without_fix_is_valid():
     r = parse("T1|20|S||||||85|||t|b")
     assert r.state == "S" and not r.has_fix
+
+
+def test_fix_ts_optional_14th_field():
+    r = parse("T1|5|M|50.93|5.33|40|120|90|80|0.9|3|t|b|1791300000")
+    assert r.fix_ts == 1791300000
+    assert parse("T1|5|M|50.93|5.33|40|120|90|80|0.9|3|t|b").fix_ts is None
+    assert parse("T1|5|N|||||80||||t|b|").fix_ts is None
+
+
+def test_fix_ts_wins_over_sender_and_receive_time():
+    from meshtrack.ingest import pick_ts
+    rx = 1791300100
+    assert pick_ts(rx - 40, rx, 2, rx - 95) == rx - 95       # GPS-tijd van de fix
+    assert pick_ts(rx - 40, rx, 2, None) == rx - 42          # oud: sender-tijd min fix_age
+    assert pick_ts(rx - 40, rx, 2, 10) == rx - 42            # onzinnige fix_ts: genegeerd

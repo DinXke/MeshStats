@@ -77,3 +77,54 @@ def test_geo_helpers():
     assert abs(haversine(50.93, 5.33, lat, lon) - 100) < 0.5
     sq = [[5.0, 50.0], [6.0, 50.0], [6.0, 51.0], [5.0, 51.0], [5.0, 50.0]]
     assert point_in_polygon(50.5, 5.5, sq) and not point_in_polygon(51.5, 5.5, sq)
+
+
+# ---- ritme volgens de ontvangst ------------------------------------------------
+
+from meshtrack.rules import intervals, link_result  # noqa: E402
+
+
+def _moving_state(p):
+    st = RuleState()
+    st.sent(0, 50.93, 5.33, 90)
+    return st
+
+
+def test_fast_after_quick_ack_sends_every_fast_interval():
+    p = Params(min_interval_s=60, max_interval_s=600, fast_interval_s=20)
+    st = _moving_state(p)
+    link_result(st, p, True, 4)
+    assert st.fast and intervals(st, p) == (20, 600)
+    # 25 s later, 60 m verder, onder de afstandsregel (100 m): toch "snel"
+    assert decide(st, p, 25, 50.93054, 5.33, 30, 90) == "snel"
+    # niet verplaatst: geen dubbel punt
+    assert decide(st, p, 25, 50.93, 5.33, 30, 90) is None
+
+
+def test_slow_ack_does_not_make_fast():
+    p = Params(fast_interval_s=20, fast_ack_s=10)
+    st = _moving_state(p)
+    link_result(st, p, True, 25)
+    assert not st.fast
+
+
+def test_fast_survives_fast_keep_misses_then_drops_and_slows():
+    p = Params(min_interval_s=60, max_interval_s=600, fast_interval_s=20, fast_keep=2, slow_after=3, slow_factor=3)
+    st = _moving_state(p)
+    link_result(st, p, True, 3)
+    link_result(st, p, False)
+    link_result(st, p, False)
+    assert st.fast and not st.slow           # twee missers: nog snel
+    link_result(st, p, False)
+    assert not st.fast and st.slow           # derde: terug, en trager
+    assert intervals(st, p) == (180, 1800)
+    assert decide(st, p, 120, 50.94, 5.33, 50, 90) is None   # binnen 3 x min_interval
+    link_result(st, p, True, 2)
+    assert st.fast and not st.slow and st.fails == 0
+
+
+def test_fast_off_when_interval_zero():
+    p = Params(fast_interval_s=0)
+    st = _moving_state(p)
+    link_result(st, p, True, 1)
+    assert not st.fast and intervals(st, p) == (p.min_interval_s, p.max_interval_s)

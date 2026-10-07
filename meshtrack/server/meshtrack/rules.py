@@ -12,6 +12,12 @@ simulator afstelt ook op de echte tracker zo werkt.
 
     zend als rate_ok EN ((snel EN afstand) OF bocht OF forceer)
 
+Ritme volgens de ontvangst (link): na een ACK die binnen fast_ack_s binnenkwam,
+gaat de tracker in "snel": in beweging elke fast_interval een positie (en
+min_interval zakt tot fast_interval). Pas na meer dan fast_keep mislukte zendingen
+na elkaar valt hij terug. Na slow_after mislukte zendingen na elkaar gaat hij in
+"traag": min_interval en max_interval x slow_factor, tot de volgende ACK.
+
 Stilstand: langer dan still_timeout onder STILL_KMH -> `S` en slapen; in rust
 elke heartbeat een `H`; beweging -> wakker, eerste fix wordt meteen verstuurd.
 """
@@ -35,6 +41,11 @@ class Params:
     max_interval_s: int = 600
     still_timeout_s: int = 300
     heartbeat_s: int = 12 * 3600
+    fast_interval_s: int = 30     # 0 = uit
+    fast_keep: int = 2            # zoveel missers na elkaar blijft hij snel
+    fast_ack_s: int = 10          # ACK moet zo snel komen om snel te worden (0 = elke ACK)
+    slow_after: int = 3           # 0 = nooit trager
+    slow_factor: int = 3
 
     @classmethod
     def from_dict(cls, d: dict) -> "Params":
@@ -55,6 +66,9 @@ class RuleState:
     sleeping: bool = False
     last_heartbeat: Optional[float] = None
     reasons: dict = field(default_factory=dict)   # telling per reden, voor statistiek
+    fast: bool = False            # goede ontvangst: snel ritme
+    slow: bool = False            # slechte ontvangst: trager
+    fails: int = 0                # mislukte zendingen na elkaar
 
     def sent(self, now: float, lat: Optional[float], lon: Optional[float], crs: Optional[float]) -> None:
         self.last_tx = now
@@ -64,23 +78,57 @@ class RuleState:
             self.last_crs = crs
 
 
+FAST_MIN_MOVE_M = 20      # snel ritme: alleen als hij echt verplaatst (geen dubbele punten)
+
+
+def link_result(st: RuleState, p: Params, ok: bool, ack_s: Optional[float] = None) -> None:
+    """Uitkomst van een zending (ACK of na alle pogingen mislukt) bijhouden."""
+    if ok:
+        st.fails = 0
+        st.slow = False
+        quick = p.fast_ack_s == 0 or (ack_s is not None and ack_s <= p.fast_ack_s)
+        st.fast = p.fast_interval_s > 0 and quick
+        return
+    st.fails += 1
+    if st.fails > p.fast_keep:
+        st.fast = False
+    if p.slow_after > 0 and st.fails >= p.slow_after:
+        st.slow = True
+
+
+def intervals(st: RuleState, p: Params) -> tuple[int, int]:
+    """(min_interval, max_interval) volgens de ontvangst."""
+    lo, hi = p.min_interval_s, p.max_interval_s
+    if st.slow:
+        f = max(1, p.slow_factor)
+        return lo * f, hi * f
+    if st.fast and p.fast_interval_s > 0:
+        return min(lo, p.fast_interval_s), hi
+    return lo, hi
+
+
 def decide(st: RuleState, p: Params, now: float, lat: float, lon: float, spd_kmh: float,
            crs: Optional[float]) -> Optional[str]:
     """Eén GPS-meting in beweging. Geeft de reden ('eerste', 'afstand', 'bocht',
-    'max_interval') als er verzonden moet worden, anders None."""
+    'snel', 'max_interval') als er verzonden moet worden, anders None."""
     if st.last_tx is None or st.last_lat is None:
         return "eerste"
     since = now - st.last_tx
-    if since < p.min_interval_s:
+    min_i, max_i = intervals(st, p)
+    if since < min_i:
         return None
-    dist_ok = haversine(st.last_lat, st.last_lon, lat, lon) >= p.min_dist_m
+    moved = haversine(st.last_lat, st.last_lon, lat, lon)
+    if (st.fast and not st.slow and p.fast_interval_s > 0 and since >= p.fast_interval_s
+            and moved >= FAST_MIN_MOVE_M):
+        return "snel"
+    dist_ok = moved >= p.min_dist_m
     fast_ok = p.min_speed_kmh == 0 or spd_kmh >= p.min_speed_kmh
     if fast_ok and dist_ok:
         return "afstand"
     if (p.turn_min_deg > 0 and crs is not None and st.last_crs is not None
             and spd_kmh >= p.turn_min_speed_kmh and angle_diff(crs, st.last_crs) >= p.turn_min_deg):
         return "bocht"
-    if p.max_interval_s > 0 and since >= p.max_interval_s:
+    if max_i > 0 and since >= max_i:
         return "max_interval"
     return None
 

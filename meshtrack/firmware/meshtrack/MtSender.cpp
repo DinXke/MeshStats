@@ -11,13 +11,14 @@
 #include "MyMesh.h"
 #include <string.h>
 
-struct Job { bool used; char text[96]; bool manual; };
+struct Job { bool used; char text[96]; bool manual; uint8_t retries; bool keep; };
 
 static Job s_cur = {}, s_next = {};
 static uint8_t s_attempt = 0;
 static uint32_t s_ts = 0;
 static uint32_t s_expected_ack = 0;
 static uint32_t s_deadline = 0;
+static uint32_t s_start_ms = 0;        // eerste poging van het huidige bericht
 static bool s_waiting = false;
 static MtSendStats s_stats = {};
 static MtSendDone s_done_cb = nullptr;
@@ -49,7 +50,7 @@ static void finish(bool ok) {
   s_stats.have_last = true;
   bool manual = s_cur.manual;
   s_cur.used = false;
-  if (s_done_cb) s_done_cb(ok, manual);
+  if (s_done_cb) s_done_cb(ok, manual, millis() - s_start_ms);
   if (s_next.used) { s_cur = s_next; s_next.used = false; s_attempt = 0; s_ts = 0; }
 }
 
@@ -57,8 +58,8 @@ static bool transmit() {
   ContactInfo* c = target_contact(true);
   if (!c) { s_stats.no_target++; return false; }
   // Laatste poging: pad vergeten zodat het via flood gaat (zoals de app).
-  if (s_attempt > 0 && s_attempt >= mt_cfg.ack_retries) the_mesh.resetPathTo(*c);
-  if (s_ts == 0) s_ts = rtc_clock.getCurrentTimeUnique();
+  if (s_attempt > 0 && s_attempt >= s_cur.retries) the_mesh.resetPathTo(*c);
+  if (s_ts == 0) { s_ts = rtc_clock.getCurrentTimeUnique(); s_start_ms = millis(); }
   uint32_t est = 0;
   int r = the_mesh.sendMessage(*c, s_ts, s_attempt, s_cur.text, s_expected_ack, est);
   if (r == MSG_SEND_FAILED) return false;
@@ -73,14 +74,19 @@ static bool transmit() {
 
 void mt_sender_set_done_cb(MtSendDone cb) { s_done_cb = cb; }
 
-bool mt_send(const char* text, bool manual) {
+bool mt_send(const char* text, bool manual, uint8_t retries, bool keep) {
   Job j;
   j.used = true;
   j.manual = manual;
+  j.retries = retries;
+  j.keep = keep;
   strncpy(j.text, text, sizeof(j.text) - 1);
   j.text[sizeof(j.text) - 1] = 0;
   if (s_cur.used) {
-    if (s_next.used) s_stats.replaced++;
+    if (s_next.used) {
+      if (s_next.keep && !j.keep) return true;   // een belangrijk bericht niet verdringen
+      s_stats.replaced++;
+    }
     s_next = j;
     return true;
   }
@@ -98,7 +104,9 @@ void mt_sender_loop() {
     return;
   }
   if ((int32_t)(millis() - s_deadline) < 0) return;
-  if (s_attempt < mt_cfg.ack_retries) {
+  // Een gewone positie niet herhalen als er al een verse klaarstaat.
+  if (!s_cur.keep && s_next.used) { s_stats.replaced++; finish(false); return; }
+  if (s_attempt < s_cur.retries) {
     s_attempt++;
     s_stats.retries++;
     if (!transmit()) finish(false);
