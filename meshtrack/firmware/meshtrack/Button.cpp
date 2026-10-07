@@ -1,4 +1,5 @@
 #include "Button.h"
+#include "MeshTrack.h"   // mt_log
 
 Button::Button(uint8_t pin, bool activeState) 
     : _pin(pin), _activeState(activeState), _isAnalog(false), _analogThreshold(20) {
@@ -12,9 +13,35 @@ Button::Button(uint8_t pin, bool activeState, bool isAnalog, uint16_t analogThre
     _lastState = _currentState;
 }
 
+uint8_t Button::s_isrPin = 0;
+bool Button::s_isrActive = HIGH;
+volatile uint32_t Button::s_presses = 0;
+volatile uint32_t Button::s_lastRelease = 0;
+volatile uint32_t Button::s_lastEdge = 0;
+
+void Button::isr() {
+    uint32_t now = millis();
+    bool pressed = digitalRead(s_isrPin) == s_isrActive;
+    if (pressed) {
+        // Alleen een echte klik: de knop was even los (dender bij het loslaten telt niet).
+        if (now - s_lastRelease >= BUTTON_ISR_RELEASED_MS) s_presses++;
+    } else {
+        s_lastRelease = now;
+    }
+    s_lastEdge = now;
+}
+
 void Button::begin() {
     _currentState = readButton();
     _lastState = _currentState;
+    if (!_isAnalog && !_useIsr) {        // één digitale knop per toestel
+        s_isrPin = _pin;
+        s_isrActive = _activeState;
+        s_lastRelease = millis();
+        attachInterrupt(digitalPinToInterrupt(_pin), Button::isr, CHANGE);
+        _useIsr = true;
+        _seenPresses = s_presses;
+    }
 }
 
 void Button::update() {
@@ -42,10 +69,28 @@ void Button::update() {
     }
     
     _lastState = newState;
-    
+
+    // MeshTrack: een klik die de interrupt zag maar de lus niet (in- en uitgedrukt
+    // tussen twee metingen). Pas als de knop alweer los is en de dender voorbij is.
+    if (_useIsr && !_currentState && !newState && _state != PRESSED) {
+        uint32_t presses = s_presses;
+        if (presses != _seenPresses && now - s_lastEdge > BUTTON_DEBOUNCE_TIME_MS) {
+            uint32_t missed = presses - _seenPresses;
+            _seenPresses = presses;
+            if (missed > 3) missed = 3;
+            while (missed--) {
+                triggerEvent(ANY_PRESS);
+                _clickCount++;
+            }
+            _releaseTime = now;
+            _state = WAITING_FOR_MULTI_CLICK;
+        }
+    }
+
     // Handle multi-click timeout
     if (_state == WAITING_FOR_MULTI_CLICK && (now - _releaseTime) > BUTTON_CLICK_TIMEOUT_MS) {
         // Timeout reached, process the clicks
+        mt_log("knop: %ux", (unsigned)_clickCount);
         if (_clickCount == 1) {
             triggerEvent(SHORT_PRESS);
         } else if (_clickCount == 2) {
@@ -91,6 +136,7 @@ void Button::handleStateChange() {
     
     if (_currentState) {
         // Button pressed
+        if (_useIsr) _seenPresses = s_presses;   // deze klik zag de lus zelf
         _pressTime = now;
         _state = PRESSED;
         _armFired = _warnFired = false;
