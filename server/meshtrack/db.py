@@ -232,6 +232,8 @@ class DB:
         for table in ("alert_rules", "shares"):   # 0.5.1: trackergroepen in regels en deellinks
             if "tracker_groups" not in {r["name"] for r in self._q(f"PRAGMA table_info({table})")}:
                 self._x(f"ALTER TABLE {table} ADD COLUMN tracker_groups TEXT NOT NULL DEFAULT '[]'")
+        if "includes" not in {r["name"] for r in self._q("PRAGMA table_info(tracker_groups)")}:   # 0.8.1: groep van groepen
+            self._x("ALTER TABLE tracker_groups ADD COLUMN includes TEXT NOT NULL DEFAULT '[]'")
         if "tracker_groups" not in {r["name"] for r in self._q("PRAGMA table_info(groups)")}:   # 0.5
             self._x("ALTER TABLE groups ADD COLUMN tracker_groups TEXT NOT NULL DEFAULT '[]'")
         if not self._q("SELECT 1 FROM user_groups LIMIT 1"):    # 0.5: groep van elke gebruiker overnemen
@@ -628,25 +630,43 @@ class DB:
     # ---- trackergroepen ---------------------------------------------------------
 
     def tracker_groups(self) -> list[dict[str, Any]]:
+        """trackers = zelf gekozen trackers; includes = andere groepen (bv. kanalen) waarvan alle
+        trackers meetellen; members = alles samen, zoals het nu is."""
         rows = self._q("SELECT * FROM tracker_groups ORDER BY name COLLATE NOCASE")
-        mem = self.tracker_group_members()
+        direct = self._direct_members()
+        full = self.tracker_group_members()
         for r in rows:
-            r["trackers"] = sorted(mem.get(r["id"], set()))
+            r["includes"] = json.loads(r.get("includes") or "[]")
+            r["trackers"] = sorted(direct.get(r["id"], set()))
+            r["members"] = sorted(full.get(r["id"], set()))
         return rows
 
-    def tracker_group_members(self) -> dict[int, set[int]]:
+    def _direct_members(self) -> dict[int, set[int]]:
         out: dict[int, set[int]] = {}
         for r in self._q("SELECT group_id, tracker_id FROM tracker_group_members"):
             out.setdefault(r["group_id"], set()).add(r["tracker_id"])
         return out
 
+    def tracker_group_members(self) -> dict[int, set[int]]:
+        """Leden per trackergroep, met de leden van de groepen die ze insluit (één niveau)."""
+        direct = self._direct_members()
+        out = {gid: set(m) for gid, m in direct.items()}
+        for r in self._q("SELECT id, includes FROM tracker_groups"):
+            for inc in json.loads(r["includes"] or "[]"):
+                if inc != r["id"]:
+                    out.setdefault(r["id"], set()).update(direct.get(inc, set()))
+        return out
+
     def save_tracker_group(self, gid: Optional[int], name: str, color: str, description: str,
-                           trackers: Optional[list[int]] = None) -> int:
+                           trackers: Optional[list[int]] = None, includes: Optional[list[int]] = None) -> int:
         if gid is None:
             gid = self._x("INSERT INTO tracker_groups(name, color, description, created) VALUES(?,?,?,?)",
                           (name, color, description, int(time.time()))).lastrowid
         else:
             self._x("UPDATE tracker_groups SET name=?, color=?, description=? WHERE id=?", (name, color, description, gid))
+        if includes is not None:
+            self._x("UPDATE tracker_groups SET includes=? WHERE id=?",
+                    (json.dumps([i for i in dict.fromkeys(includes) if i != gid]), gid))
         if trackers is not None:
             self._x("DELETE FROM tracker_group_members WHERE group_id=?", (gid,))
             for t in dict.fromkeys(trackers):
@@ -656,6 +676,10 @@ class DB:
     def delete_tracker_group(self, gid: int) -> None:
         self._x("DELETE FROM tracker_group_members WHERE group_id=?", (gid,))
         self._x("DELETE FROM tracker_groups WHERE id=?", (gid,))
+        for r in self._q("SELECT id, includes FROM tracker_groups"):
+            inc = json.loads(r["includes"] or "[]")
+            if gid in inc:
+                self._x("UPDATE tracker_groups SET includes=? WHERE id=?", (json.dumps([i for i in inc if i != gid]), r["id"]))
         for g in self.groups():            # uit de zichtbaarheid van gebruikersgroepen halen
             if gid in g["tracker_groups"]:
                 self.save_group(g["id"], {**g, "tracker_groups": [x for x in g["tracker_groups"] if x != gid]})

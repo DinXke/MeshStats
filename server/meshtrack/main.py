@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -815,6 +815,7 @@ class TrackerGroupIn(BaseModel):
     color: str = "#64748b"
     description: str = Field("", max_length=200)
     trackers: Optional[list[int]] = None
+    includes: Optional[list[int]] = None      # andere groepen (bv. kanalen) waarvan alle trackers meetellen
 
 
 @app.get("/api/tracker-groups")
@@ -827,7 +828,8 @@ async def list_tracker_groups(request: Request):
     for g in S.db.tracker_groups():
         g["channel"] = chan_of.get(g["id"])
         g["trackers"] = [t for t in g["trackers"] if p.sees(t)]
-        if manage or g["trackers"]:
+        g["members"] = [t for t in g["members"] if p.sees(t)]
+        if manage or g["members"]:
             out.append(g)
     return out
 
@@ -844,8 +846,10 @@ async def create_tracker_group(b: TrackerGroupIn, request: Request):
     p = need(request, "trackers.manage")
     _tg_check(b, None)
     known = {t["id"] for t in S.db.trackers()}
+    groups = {g["id"] for g in S.db.tracker_groups()}
     gid = S.db.save_tracker_group(None, b.name.strip(), b.color, b.description.strip(),
-                                  [t for t in (b.trackers or []) if t in known])
+                                  [t for t in (b.trackers or []) if t in known],
+                                  [g for g in (b.includes or []) if g in groups])
     _pcache.clear()
     audit(p, "trackergroep aangemaakt", b.name.strip())
     await S.hub.send({"type": "tracker_groups"})
@@ -859,8 +863,10 @@ async def update_tracker_group(gid: int, b: TrackerGroupIn, request: Request):
         raise HTTPException(404, "onbekende trackergroep")
     _tg_check(b, gid)
     known = {t["id"] for t in S.db.trackers()}
+    groups = {g["id"] for g in S.db.tracker_groups()}
     S.db.save_tracker_group(gid, b.name.strip(), b.color, b.description.strip(),
-                            None if b.trackers is None else [t for t in b.trackers if t in known])
+                            None if b.trackers is None else [t for t in b.trackers if t in known],
+                            None if b.includes is None else [g for g in b.includes if g in groups and g != gid])
     _pcache.clear()
     audit(p, "trackergroep gewijzigd", b.name.strip())
     await S.hub.send({"type": "tracker_groups"})

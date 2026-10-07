@@ -116,10 +116,11 @@
   function renderTgroups() {
     $("tglist").innerHTML = tgroups.map((g) => `<div class="titem">
       <span class="tico big" style="background:${MT.esc(g.color)}"></span>
-      <div class="body"><div><strong>${MT.esc(g.name)}</strong> <span class="muted small">${g.trackers.length} tracker(s)</span>
+      <div class="body"><div><strong>${MT.esc(g.name)}</strong> <span class="muted small">${g.members.length} tracker(s)</span>
         ${g.channel ? `<span class="pill">kanaal</span>` : ""}</div>
         <div class="muted small">${MT.esc(g.description || "")}</div>
-        <div class="muted small">${MT.esc(g.trackers.map((id) => (trackers.find((t) => t.id === id) || {}).alias).filter(Boolean).join(", "))}</div></div>
+        ${(g.includes || []).length ? `<div class="small">omvat: ${MT.esc(g.includes.map((id) => (tgroups.find((x) => x.id === id) || {}).name).filter(Boolean).join(", "))}</div>` : ""}
+        <div class="muted small">${MT.esc(g.members.map((id) => (trackers.find((t) => t.id === id) || {}).alias).filter(Boolean).join(", "))}</div></div>
       <div class="actions"><a class="btnlink" href="/?tgroup=${g.id}">Kaart</a><button type="button" data-tgedit="${g.id}">Bewerken</button></div></div>`).join("")
       || '<div class="empty">Nog geen trackergroepen. Maak er een, bv. per dienst of ploeg.</div>';
     $("tglist").querySelectorAll("[data-tgedit]").forEach((b) => b.addEventListener("click", () => openTg(tgroups.find((g) => g.id === Number(b.dataset.tgedit)))));
@@ -131,6 +132,11 @@
     $("tg-color").value = g ? g.color : "#64748b";
     $("tg-desc").value = g ? g.description : "";
     tgChecks($("tg-trackers"), g ? g.trackers : []);
+    const inc = g ? g.includes || [] : [];
+    const others = tgroups.filter((x) => !g || x.id !== g.id);
+    $("tg-includes").innerHTML = others.map((x) => `<label class="mini"><input type="checkbox" value="${x.id}"${inc.includes(x.id) ? " checked" : ""}>
+      <i style="background:${MT.esc(x.color)}"></i>${MT.esc(x.name)} <span class="muted small">(${x.trackers.length})</span></label>`).join("")
+      || '<span class="muted">Nog geen andere groepen of kanalen.</span>';
     msg($("tg-msg"), "");
     let del = $("tg-delete");
     if (!del) {
@@ -152,7 +158,8 @@
     e.preventDefault();
     const id = $("tg-id").value;
     const body = { name: $("tg-name").value.trim(), color: $("tg-color").value, description: $("tg-desc").value,
-      trackers: [...$("tg-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)) };
+      trackers: [...$("tg-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)),
+      includes: [...$("tg-includes").querySelectorAll("input:checked")].map((c) => Number(c.value)) };
     try {
       await MT.api(id ? `/api/tracker-groups/${id}` : "/api/tracker-groups", { method: id ? "PUT" : "POST", body });
       tgForm.hidden = true;

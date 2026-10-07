@@ -467,3 +467,4 @@ dialog.side .sticky-actions, dialog.side form .row:last-of-type:has(button[type=
   .toolbar .chips .chip { padding: 4px 10px; }
   .pagetabs .tab { font-size: 14px; }
 }
+.actions a.btnlink { font-size: 15px; padding: 7px 12px; }
