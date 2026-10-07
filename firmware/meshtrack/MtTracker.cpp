@@ -362,6 +362,7 @@ static void step_tracking() {
       }
       if (new_fix) {
         s_last_eval_fix = g.lastValidMs();
+        if (moving_now(g.speedKmh())) pts_sample(g);     // punt bewaren voor het volgende bericht
         double la = g.getLatitude() / 1e6, lo = g.getLongitude() / 1e6;
         float cr = g.speedKmh() >= 3 ? g.courseDeg() : -1;
         MtReason r = mt_rules_decide(s_rules, params(), now_s(), la, lo, g.speedKmh(), cr);

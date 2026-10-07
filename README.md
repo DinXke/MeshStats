@@ -9,7 +9,7 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.6.0).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.6.1).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus, één klik stuurt meteen een
     positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
   - Bewegingsregels (snelheid, afstand, bochten, ritme), stilstand en heartbeat, wakker worden via de
