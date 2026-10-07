@@ -41,6 +41,8 @@ class Params:
     max_interval_s: int = 600
     still_timeout_s: int = 300
     heartbeat_s: int = 12 * 3600
+    adaptive: int = 1             # ritme volgens de ontvangst aan (1) of uit (0)
+    sample_s: int = 15            # in beweging elke x s een punt bewaren, mee in het volgende bericht (0 = uit)
     fast_interval_s: int = 30     # 0 = uit
     fast_keep: int = 2            # zoveel missers na elkaar blijft hij snel
     fast_ack_s: int = 10          # ACK moet zo snel komen om snel te worden (0 = elke ACK)
@@ -83,6 +85,10 @@ FAST_MIN_MOVE_M = 20      # snel ritme: alleen als hij echt verplaatst (geen dub
 
 def link_result(st: RuleState, p: Params, ok: bool, ack_s: Optional[float] = None) -> None:
     """Uitkomst van een zending (ACK of na alle pogingen mislukt) bijhouden."""
+    if not p.adaptive:
+        st.fast = st.slow = False
+        st.fails = 0
+        return
     if ok:
         st.fails = 0
         st.slow = False

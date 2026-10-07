@@ -11,7 +11,7 @@
 #include "MyMesh.h"
 #include <string.h>
 
-struct Job { bool used; char text[96]; bool manual; uint8_t retries; bool keep; };
+struct Job { bool used; char text[MT_TEXT_MAX + 1]; bool manual; uint8_t retries; bool keep; uint32_t tag; };
 
 static Job s_cur = {}, s_next = {};
 static uint8_t s_attempt = 0;
@@ -49,8 +49,9 @@ static void finish(bool ok) {
   s_stats.last_ms = millis();
   s_stats.have_last = true;
   bool manual = s_cur.manual;
+  uint32_t tag = s_cur.tag;
   s_cur.used = false;
-  if (s_done_cb) s_done_cb(ok, manual, millis() - s_start_ms);
+  if (s_done_cb) s_done_cb(ok, manual, millis() - s_start_ms, tag);
   if (s_next.used) { s_cur = s_next; s_next.used = false; s_attempt = 0; s_ts = 0; }
 }
 
@@ -74,9 +75,10 @@ static bool transmit() {
 
 void mt_sender_set_done_cb(MtSendDone cb) { s_done_cb = cb; }
 
-bool mt_send(const char* text, bool manual, uint8_t retries, bool keep) {
+bool mt_send(const char* text, bool manual, uint8_t retries, bool keep, uint32_t tag) {
   Job j;
   j.used = true;
+  j.tag = tag;
   j.manual = manual;
   j.retries = retries;
   j.keep = keep;

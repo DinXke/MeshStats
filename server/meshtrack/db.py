@@ -306,6 +306,9 @@ class DB:
 
     # ---- posities -----------------------------------------------------------
 
+    def position_at(self, tid: int, ts: int) -> bool:
+        return bool(self._q("SELECT 1 FROM positions WHERE tracker_id=? AND ts=? AND lat IS NOT NULL LIMIT 1", (tid, ts)))
+
     def is_duplicate(self, tid: int, seq: int, since: int) -> bool:
         return bool(self._q(
             "SELECT 1 FROM positions WHERE tracker_id=? AND seq=? AND rx_ts>=? LIMIT 1", (tid, seq, since)))
@@ -493,7 +496,7 @@ class DB:
             rows = self._q(
                 "SELECT p.id, p.tracker_id, t.alias, t.color, t.icon, p.ts, p.rx_ts, p.state, p.lat, p.lon, p.spd, "
                 "p.bat, p.mode, p.suspect, p.hdop, p.snr, p.path_len, p.power FROM positions p JOIN trackers t ON t.id=p.tracker_id "
-                "WHERE p.rx_ts BETWEEN ? AND ?" + tf + " ORDER BY p.tracker_id, p.rx_ts", tuple(args))
+                "WHERE p.rx_ts BETWEEN ? AND ?" + tf + " ORDER BY p.tracker_id, p.ts, p.id", tuple(args))
             prev_bat: dict[int, Optional[int]] = {}
             prev_pow: dict[int, Optional[str]] = {}
             for r in rows:
@@ -518,7 +521,7 @@ class DB:
                     "g.name AS zone FROM geofence_events e JOIN trackers t ON t.id=e.tracker_id "
                     "JOIN geofences g ON g.id=e.geofence_id WHERE e.ts BETWEEN ? AND ?" + zf, tuple(args)):
                 out.append({**r, "type": "zone_in" if r["event"] == "enter" else "zone_out"})
-        out.sort(key=lambda e: e["rx_ts"], reverse=True)
+        out.sort(key=lambda e: (e["ts"], e.get("id") or 0), reverse=True)
         return out[:limit]
 
     # ---- groepen en gebruikers -------------------------------------------------

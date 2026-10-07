@@ -78,3 +78,28 @@ def test_delete_cascades():
     handle(db, cfg, KEY[:12], "T1|1|M|50.93|5.33|||||1.0|0", now=NOW)
     db.delete_tracker(tid)
     assert db.trackers() == [] and db.track(tid, 0) == []
+
+
+def test_extra_points_stored_chronologically_and_deduplicated():
+    db, cfg, tid = setup()
+    fts = NOW - 2
+    msg = f"T1|10|M|50.93000|5.33000|40|50|90|80|0.9|1|t|b|{fts}|30,-300,120,48;20,-200,80,50;10,-100,40,52"
+    out = handle(db, cfg, KEY[:12], msg, now=NOW)
+    assert [round(e["ts"]) for e in out["extras"]] == [fts - 30, fts - 20, fts - 10]   # oudste eerst
+    tr = db.track(tid, 0)
+    assert [p["ts"] for p in tr] == [fts - 30, fts - 20, fts - 10, fts]
+    assert (tr[0]["lat"], tr[0]["lon"], tr[0]["spd"]) == (50.927, 5.3312, 48)
+    assert db.tracker(tid)["last_lat"] == 50.93                 # hoofdpunt blijft de laatste positie
+    # volgend bericht herhaalt twee punten (ACK was verloren): niet dubbel
+    msg2 = f"T1|11|M|50.93100|5.33000|40|50|90|80|0.9|1|t|b|{fts + 10}|20,-100,0,50;10,-100,0,52"
+    handle(db, cfg, KEY[:12], msg2, now=NOW + 12)
+    assert [p["ts"] for p in db.track(tid, 0)] == [fts - 30, fts - 20, fts - 10, fts, fts + 10]
+
+
+def test_extra_requires_main_point():
+    import pytest
+    from meshtrack.protocol import ProtocolError, parse
+    with pytest.raises(ProtocolError):
+        parse("T1|1|N||||||80||||t|b||10,1,1,1")
+    with pytest.raises(ProtocolError):
+        parse("T1|1|M|50.9|5.3|||||1|0|t|b|1800000000|10,1,1")

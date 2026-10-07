@@ -128,3 +128,13 @@ def test_fast_off_when_interval_zero():
     st = _moving_state(p)
     link_result(st, p, True, 1)
     assert not st.fast and intervals(st, p) == (p.min_interval_s, p.max_interval_s)
+
+
+def test_adaptive_off_never_changes_rhythm():
+    p = Params(adaptive=0, fast_interval_s=20)
+    st = _moving_state(p)
+    link_result(st, p, True, 1)
+    assert not st.fast
+    for _ in range(5):
+        link_result(st, p, False)
+    assert not st.slow and intervals(st, p) == (p.min_interval_s, p.max_interval_s)

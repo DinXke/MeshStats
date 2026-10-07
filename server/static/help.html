@@ -139,8 +139,15 @@
       laatste keer via flood. Lukt ook dat niet, dan geeft hij het op; de volgende positie wordt gewoon weer
       verstuurd.</p>
 
+    <h3>Meerdere punten per bericht</h3>
+    <p>In beweging bewaart de tracker elke <em>punt bewaren elke</em> (standaard 15 s) een punt. Elk bericht neemt zoveel
+      bewaarde punten mee als erin passen (tot een achttal), elk met zijn eigen GPS-tijd. Je krijgt zo een fijn spoor met
+      weinig berichten: minder zendtijd en minder ACK's. Je stelt dus gewoon in hoe vaak hij verstuurt (de regels hierboven)
+      en hoe vaak hij een punt neemt. De punten komen chronologisch op de kaart en in het logboek. Gaat een bericht
+      verloren, dan reizen zijn punten mee met het volgende. Op 0 staat het uit.</p>
     <h3>Ritme volgens de ontvangst</h3>
-    <p>De tracker past zijn ritme aan de ontvangst aan:</p>
+    <p>Optioneel (schakelaar <em>ritme aanpassen aan de ontvangst</em>, standaard aan) past de tracker zijn ritme aan de
+      ontvangst aan:</p>
     <ul>
       <li><strong>Goede ontvangst</strong>: komt de bevestiging (ACK) snel binnen (standaard binnen 10 s), dan stuurt hij
         in beweging elke <em>goede ontvangst: elke</em> (standaard 30 s) een positie, zolang hij minstens 20 m verplaatst

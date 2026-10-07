@@ -115,6 +115,8 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "fast_interval"))  { ok = parse_dur(v, &d) && (d == 0 || d >= 10) && d <= 3600; c.fast_interval_s = d; }
   else if (!strcmp(k, "fast_keep"))      { uint16_t r; ok = parse_u16(v, 10, &r); c.fast_keep = r; }
   else if (!strcmp(k, "fast_retries"))   { uint16_t r; ok = parse_u16(v, 5, &r); c.fast_retries = r; }
+  else if (!strcmp(k, "sample"))         { ok = parse_dur(v, &d) && (d == 0 || d >= 5) && d <= 600; c.sample_s = d; }
+  else if (!strcmp(k, "adaptive"))       ok = parse_onoff(v, &c.adaptive);
   else if (!strcmp(k, "fast_ack"))       { ok = parse_dur(v, &d) && d <= 120; c.fast_ack_s = d; }
   else if (!strcmp(k, "slow_after"))     { uint16_t r; ok = parse_u16(v, 20, &r); c.slow_after = r; }
   else if (!strcmp(k, "slow_factor"))    { uint16_t r; ok = parse_u16(v, 10, &r) && r >= 1; c.slow_factor = r; }
@@ -300,6 +302,8 @@ static void cmd_status() {
   fmt_dur(a, sizeof(a), mt_cfg.fast_interval_s); fmt_dur(b, sizeof(b), mt_cfg.fast_ack_s);
   outl("fast_interval=%s fast_keep=%u fast_ack=%s fast_retries=%u slow_after=%u slow_factor=%u ritme=%s",
        a, mt_cfg.fast_keep, b, mt_cfg.fast_retries, mt_cfg.slow_after, mt_cfg.slow_factor, mt_tracker_link_str());
+  fmt_dur(a, sizeof(a), mt_cfg.sample_s);
+  outl("sample=%s adaptive=%s buffer=%u", a, mt_cfg.adaptive ? "aan" : "uit", (unsigned)mt_tracker_buffered());
   outl("cfg=%s%s", mt_cfg_load_note, mt_cfg_readonly ? " [alleen-lezen]" : "");
 }
 
@@ -311,7 +315,8 @@ static void cmd_help() {
   outl("    min_speed min_dist turn_min turn_min_speed min_interval max_interval");
   outl("    still_timeout heartbeat fix_timeout fix_timeout_hb ack_retries");
   outl("    track_in_companion on|off  accel_sens laag|midden|hoog  target <64 hex>");
-  outl("    fast_interval fast_keep fast_ack fast_retries slow_after slow_factor (ritme volgens ontvangst)");
+  outl("    adaptive on|off  fast_interval fast_keep fast_ack fast_retries slow_after slow_factor");
+  outl("    sample <tijd>   in beweging elke x een punt bewaren, mee in het volgende bericht (0 = uit)");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
@@ -355,6 +360,8 @@ static const Item WHEN[] = {
 static const Item RHYTHM[] = {
   {"Nooit vaker dan 1x per", "min_interval", 1},
   {"In beweging minstens 1x per (0 = uit)", "max_interval", 1},
+  {"Punt bewaren elke (0 = uit)", "sample", 1},
+  {"Ritme volgens ontvangst (aan/uit)", "adaptive", 2},
   {"Goede ontvangst: elke (0 = uit)", "fast_interval", 1},
   {"Goede ontvangst = ACK binnen", "fast_ack", 1},
   {"Snel blijven tot zoveel missers", "fast_keep", 0},
@@ -394,6 +401,8 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "fast_ack")) snprintf(o, n, mt_cfg.fast_ack_s ? "%u s" : "elke ACK", mt_cfg.fast_ack_s);
   else if (!strcmp(param, "fast_keep")) snprintf(o, n, "%u", mt_cfg.fast_keep);
   else if (!strcmp(param, "fast_retries")) snprintf(o, n, "%u", mt_cfg.fast_retries);
+  else if (!strcmp(param, "sample")) fmt_dur_nl(o, n, mt_cfg.sample_s);
+  else if (!strcmp(param, "adaptive")) snprintf(o, n, "%s", mt_cfg.adaptive ? "aan" : "uit");
   else if (!strcmp(param, "slow_after")) snprintf(o, n, mt_cfg.slow_after ? "%u" : "nooit", mt_cfg.slow_after);
   else if (!strcmp(param, "slow_factor")) snprintf(o, n, "x%u", mt_cfg.slow_factor);
   else if (!strcmp(param, "target")) {
@@ -467,7 +476,7 @@ static void show() {
       outl("   0  Terug");
       break;
     case SC_WHEN:   header("WANNEER EEN POSITIE STUREN"); list_items(WHEN, 4); break;
-    case SC_RHYTHM: header("RITME"); list_items(RHYTHM, 8); outl("   Ritme nu: %s", mt_tracker_link_str()); break;
+    case SC_RHYTHM: header("RITME"); list_items(RHYTHM, 10); outl("   Ritme nu: %s", mt_tracker_link_str()); break;
     case SC_REST:   header("STILSTAND EN HEARTBEAT"); list_items(REST, 3); break;
     case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, 4); break;
     case SC_MAINT:
@@ -533,7 +542,7 @@ static void menu_choice(int n) {
       show();
       return;
     case SC_WHEN: items = WHEN; count = 4; break;
-    case SC_RHYTHM: items = RHYTHM; count = 8; break;
+    case SC_RHYTHM: items = RHYTHM; count = 10; break;
     case SC_REST: items = REST; count = 3; break;
     case SC_GPS: items = GPSI; count = 4; break;
   }

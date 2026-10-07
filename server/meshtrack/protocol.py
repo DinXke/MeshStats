@@ -1,6 +1,10 @@
 """T1-berichtprotocol (zie docs/protocol.md).
 
-    T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>[|<mode>[|<power>[|<fix_ts>]]]
+    T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>[|<mode>[|<power>[|<fix_ts>[|<extra>]]]]
+
+`extra` (fw 0.5.0+): eerdere punten, gescheiden door `;`, elk `dt,dlat,dlon,spd`:
+dt = seconden vóór fix_ts, dlat/dlon = verschil met het hoofdpunt in 1e-5 graden,
+spd in km/u (mag leeg). Zo passen tot een tiental punten in één bericht.
 
 Lege velden zijn toegestaan waar de spec dat zegt; `mode` (c|t), `power`
 (u = USB/laden, b = batterij) en `fix_ts` (GPS-tijd van de fix, unix-seconden)
@@ -49,6 +53,7 @@ class Report:
     mode: Optional[str] = None
     power: Optional[str] = None
     fix_ts: Optional[int] = None
+    extra: list = None            # [(dt_s, lat, lon, spd)] eerdere punten, oud of nieuw door elkaar
 
     @property
     def has_fix(self) -> bool:
@@ -92,8 +97,8 @@ def parse(text: str) -> Report:
         raise ProtocolError("geen MeshTrack-bericht")
     if parts[0] != "T1":
         raise UnknownVersion(f"onbekende versie {parts[0]}")
-    if len(parts) not in (11, 12, 13, 14):
-        raise ProtocolError(f"verwacht 11 tot 14 velden, kreeg {len(parts)}")
+    if len(parts) not in (11, 12, 13, 14, 15):
+        raise ProtocolError(f"verwacht 11 tot 15 velden, kreeg {len(parts)}")
 
     _, seq_s, state, lat_s, lon_s, alt_s, spd_s, crs_s, bat_s, hdop_s, age_s, *rest = parts
     seq = _opt_int(seq_s, 0, 65535, "seq")
@@ -119,6 +124,26 @@ def parse(text: str) -> Report:
         if power is not None and power not in POWER:
             raise ProtocolError(f"onbekende voeding {power!r}")
     fix_ts = _opt_int(rest[2], 1_500_000_000, 4_000_000_000, "fix_ts") if len(rest) > 2 else None
+    extra = []
+    if len(rest) > 3 and rest[3]:
+        if lat is None:
+            raise ProtocolError("extra punten zonder hoofdpunt")
+        items = rest[3].split(";")
+        if len(items) > 20:
+            raise ProtocolError("te veel extra punten")
+        for it in items:
+            f = it.split(",")
+            if len(f) != 4:
+                raise ProtocolError(f"extra punt: verwacht dt,dlat,dlon,spd: {it!r}")
+            dt = _opt_int(f[0], 1, 86400, "extra dt")
+            dla = _opt_int(f[1], -2_000_000, 2_000_000, "extra dlat")
+            dlo = _opt_int(f[2], -2_000_000, 2_000_000, "extra dlon")
+            if dt is None or dla is None or dlo is None:
+                raise ProtocolError(f"extra punt onvolledig: {it!r}")
+            plat, plon = round(lat + dla / 1e5, 5), round(lon + dlo / 1e5, 5)
+            if not (-90 <= plat <= 90 and -180 <= plon <= 180):
+                raise ProtocolError("extra punt buiten bereik")
+            extra.append((dt, plat, plon, _opt_int(f[3], 0, 1000, "extra spd")))
 
     return Report(
         seq=seq,
@@ -134,6 +159,7 @@ def parse(text: str) -> Report:
         mode=mode,
         power=power,
         fix_ts=fix_ts,
+        extra=extra,
     )
 
 

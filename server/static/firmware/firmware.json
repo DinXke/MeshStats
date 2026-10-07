@@ -1,15 +1,15 @@
 {
   "releases": [
     {
-      "version": "0.4.1",
+      "version": "0.5.0",
       "date": "2026-10-07",
-      "notes": "Ritme volgens de ontvangst: na een snelle ACK in beweging vaker zenden (standaard elke 30 s), zonder herhaalpogingen voor gewone posities; na herhaalde missers trager (batterij sparen). Een gewone positie wijkt voor een verse; SOS, klik, stil en heartbeat krijgen altijd alle pogingen. Elk bericht draagt de GPS-tijd van de fix. Instelbaar via USB, CLI en menu.",
-      "zip": "meshtrack-t1000e-0.4.1.zip",
-      "zip_sha256": "f01983aef6751865ef9dc1455ba757b5862cdbfd08ff2792b8295fd61242420e",
-      "uf2": "meshtrack-t1000e-0.4.1.uf2",
-      "app_size": 386744,
+      "notes": "Meerdere punten per bericht: in beweging elke x s een punt bewaren, elk bericht neemt er zoveel mee als passen (chronologisch op de kaart, niets kwijt bij een gemist bericht). Ritme volgens de ontvangst is nu een schakelaar. Daarnaast: GPS-tijd van de fix, betrouwbare knop.",
+      "zip": "meshtrack-t1000e-0.5.0.zip",
+      "zip_sha256": "ad24858e50ffcb4aeed57495c53611e97074c9110d1487bd612e2e9491463850",
+      "uf2": "meshtrack-t1000e-0.5.0.uf2",
+      "app_size": 389080,
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.4.1"
+  "latest": "0.5.0"
 }

@@ -9,7 +9,7 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.4.1).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.5.0).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus, één klik stuurt meteen een
     positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
   - Bewegingsregels (snelheid, afstand, bochten, ritme), stilstand en heartbeat, wakker worden via de
@@ -53,6 +53,10 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
 ```
 T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>|<mode c|t>|<power u|b>|<fix_ts>
 ```
+
+Optioneel 15e veld (fw 0.5.0): eerdere punten `dt,dlat,dlon,spd;...` (seconden vóór `fix_ts`, verschil in 1e-5
+graden, km/u). De tracker bewaart in beweging elke `sample` seconden een punt en stuurt er zoveel mee als in 156
+tekens past; de server slaat ze chronologisch op en slaat dubbele punten over.
 
 `fix_ts` (vanaf firmware 0.4.0) is de GPS-tijd van de fix in unix-seconden; de server gebruikt die als tijdstip van
 de positie. Zonder `fix_ts`: sender-tijd min `fix_age_s`, of de ontvangsttijd als de klok van de tracker niet klopt.

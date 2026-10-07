@@ -137,6 +137,8 @@
             <div><label>Bocht pas boven (km/u)</label><input data-sp="turn_min_speed_kmh" type="number" min="0" value="5"></div>
             <div><label>Nooit vaker dan 1× per (s)</label><input data-sp="min_interval_s" type="number" min="10" value="60"></div>
             <div><label>In beweging minstens 1× per (s)</label><input data-sp="max_interval_s" type="number" min="0" value="600"></div>
+            <div><label>Punt bewaren elke (s, 0 = uit)</label><input data-sp="sample_s" type="number" min="0" value="15"></div>
+            <div><label>Ritme volgens ontvangst (1 = aan, 0 = uit)</label><input data-sp="adaptive" type="number" min="0" max="1" value="1"></div>
             <div><label>Goede ontvangst: elke (s, 0 = uit)</label><input data-sp="fast_interval_s" type="number" min="0" value="30"></div>
             <div><label>Goede ontvangst = ACK binnen (s)</label><input data-sp="fast_ack_s" type="number" min="0" value="10"></div>
             <div><label>Snel blijven tot zoveel missers</label><input data-sp="fast_keep" type="number" min="0" max="10" value="2"></div>
@@ -253,11 +255,15 @@
           <div class="grid">
             <div><label>Nooit vaker dan 1× per</label><div class="dur" data-set="min_interval"></div></div>
             <div><label>In beweging minstens 1× per</label><div class="dur" data-set="max_interval" data-off="1"></div></div>
+            <div><label>Punt bewaren elke</label><div class="dur" data-set="sample" data-off="1"></div>
+              <div class="help">In beweging; elk bericht neemt zoveel bewaarde punten mee als erin passen (tot ±8).
+                Zo krijg je een fijn spoor met weinig berichten.</div></div>
           </div>
         </fieldset>
 
         <fieldset>
           <legend>Ritme volgens de ontvangst</legend>
+          <label class="switch block"><input type="checkbox" data-set="adaptive" data-kind="bool"><span></span> Ritme aanpassen aan de ontvangst</label>
           <div class="help">Komt een bevestiging (ACK) snel binnen, dan is de ontvangst goed en stuurt hij vaker: zo
             volg je hem nauwkeurig. Lukt het verzenden een paar keer na elkaar niet (weinig repeaters in de buurt), dan
             stuurt hij minder vaak en spaart hij de batterij. Elk bericht kost zendtijd op de mesh: zet het snelle

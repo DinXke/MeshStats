@@ -22,6 +22,7 @@ struct MtRuleParams {
   uint32_t min_interval_s, max_interval_s;
   uint16_t fast_interval_s;
   uint8_t  fast_keep, fast_ack_s, slow_after, slow_factor;
+  uint8_t  adaptive;            // 0 = ritme volgens de ontvangst uit
 };
 
 #define MT_FAST_MIN_MOVE_M 20
