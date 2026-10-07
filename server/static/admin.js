@@ -389,6 +389,7 @@
       else el.value = v;
     });
     setMode(kv.gekozen || "tracker");
+    $("s-ritme").textContent = kv.ritme ? `Ritme nu: ${kv.ritme}.` : "Deze firmware kent het ritme volgens de ontvangst nog niet (vanaf 0.4.0).";
     const known = trackers.find((t) => t.pubkey === (kv.pubkey || "").toLowerCase());
     $("s-info").innerHTML = `<div><strong>${MT.esc(kv.naam || "?")}</strong> · firmware ${MT.esc(kv.fw || "?")}
       · batterij ${MT.esc(kv.batt || "?")} · nu ${MT.esc(kv.actief || "?")}${kv.usb === "ja" ? " (USB)" : ""}</div>
@@ -500,6 +501,7 @@
     const cmds = [];
     document.querySelectorAll("#s-form [data-set]").forEach((el) => {
       const k = el.dataset.set;
+      if (!(k in lastKv)) return;              // oudere firmware kent deze instelling niet
       let v;
       if (el.classList.contains("dur")) v = durGet(el);
       else if (el.dataset.kind === "bool") v = el.checked ? "on" : "off";

@@ -136,6 +136,30 @@
       laatste keer via flood. Lukt ook dat niet, dan geeft hij het op; de volgende positie wordt gewoon weer
       verstuurd.</p>
 
+    <h3>Ritme volgens de ontvangst</h3>
+    <p>De tracker past zijn ritme aan de ontvangst aan:</p>
+    <ul>
+      <li><strong>Goede ontvangst</strong>: komt de bevestiging (ACK) snel binnen (standaard binnen 10 s), dan stuurt hij
+        in beweging elke <em>goede ontvangst: elke</em> (standaard 30 s) een positie, zolang hij minstens 20 m verplaatst
+        is. Zo volg je hem nauwkeurig waar het net goed is. Pas na meer missers na elkaar dan <em>snel blijven tot zoveel
+        missers</em> (standaard 2) valt hij terug: één gemiste ACK maakt hem niet meteen trager.</li>
+      <li>In het snelle ritme herhaalt hij een gewone positie niet (instelling <em>herhaalpogingen bij goede
+        ontvangst</em>, standaard 0): de volgende verse positie komt er toch zo aan. Staat er al een nieuwere positie
+        klaar, dan stopt hij ook in het gewone ritme met herhalen. SOS, een klik op de knop, stilgevallen, heartbeat en
+        moduswissel krijgen altijd alle pogingen.</li>
+      <li><strong>Slechte ontvangst</strong>: lukt het verzenden <em>trager na zoveel missers</em> keer na elkaar niet
+        (standaard 3), dan worden <em>nooit vaker dan</em> en <em>minstens 1× per</em> vermenigvuldigd met <em>trager:
+        intervallen maal</em> (standaard 3). Zo spaart hij de batterij waar weinig repeaters zijn. De eerste ACK zet hem
+        terug op normaal (of snel).</li>
+    </ul>
+    <p>Elk bericht kost zendtijd op de mesh, ook voor de repeaters. Zet het snelle ritme dus niet korter dan nodig. Op 0
+      staat het uit.</p>
+    <h3>Het tijdstip van een positie</h3>
+    <p>Elk bericht bevat de <strong>GPS-tijd van de fix</strong>. De kaart en het logboek tonen dus waar de tracker was op
+      het moment dat hij zijn positie bepaalde, niet wanneer het bericht aankwam. Ook na herhaalpogingen of een wachtrij
+      staat elk punt van het spoor op de juiste plaats en tijd. Een bericht dat later aankomt dan een nieuwer bericht,
+      komt wel in het spoor maar verandert de laatste positie niet.</p>
+
     <h2 id="instellen">Instellen via USB</h2>
     <p>Ga naar <em>Beheer</em> → <em>Tracker instellen via USB</em> en klik op <em>Verbinden</em>. Dat werkt in Chrome
       of Edge op een computer of Android-toestel, via https of localhost. Het formulier toont meteen de huidige

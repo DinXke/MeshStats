@@ -15,6 +15,7 @@ bool mt_radio_paused();            // true = mesh-lus overslaan (radio slaapt)
 MtTState mt_tracker_state();
 const char* mt_tracker_state_str();
 const char* mt_tracker_last_reason();
+const char* mt_tracker_link_str();     // ritme volgens de ontvangst: snel, normaal of traag
 uint32_t mt_tracker_last_tx_ms();
 uint16_t mt_tracker_seq();
 bool mt_tracker_gps_on();

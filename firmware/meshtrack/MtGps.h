@@ -16,6 +16,7 @@ class MtNmeaProvider : public LocationProvider {
   long time_valid = 0;
   unsigned long _last_time_sync = 0;
   unsigned long _last_valid_ms = 0;
+  uint32_t _last_valid_unix = 0;     // MeshTrack: GPS-tijd van de laatste geldige fix
   static const unsigned long TIME_SYNC_INTERVAL = 1800000;
 
 public:
@@ -50,11 +51,16 @@ public:
   }
   unsigned long fixAgeMs() { return _last_valid_ms ? millis() - _last_valid_ms : 0xFFFFFFFFUL; }
   unsigned long lastValidMs() { return _last_valid_ms; }
+  // GPS-tijd (unix) van de laatste geldige fix, 0 = onbekend.
+  uint32_t lastValidUnix() { return _last_valid_ms ? _last_valid_unix : 0; }
   void forgetFix() { _last_valid_ms = 0; }
 
   void loop() override {
     while (_ser->available()) {
-      if (nmea.process((char)_ser->read()) && nmea.isValid()) _last_valid_ms = millis();
+      if (nmea.process((char)_ser->read()) && nmea.isValid()) {
+        _last_valid_ms = millis();
+        if (nmea.getYear() >= 2024) _last_valid_unix = (uint32_t)getTimestamp();   // GPS-tijd van deze fix
+      }
     }
     if (!isValid()) time_valid = 0;
     if ((long)(millis() - next_check) > 0) {

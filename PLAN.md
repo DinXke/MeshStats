@@ -56,7 +56,7 @@ Ontwerpkeuzes:
 Eén DM per positie, ASCII, velden gescheiden door `|`:
 
 ```
-T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>
+T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>[|<mode>|<power>|<fix_ts>]
 ```
 
 | Veld | Type | Toelichting |
@@ -71,12 +71,16 @@ T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_a
 | `bat_pct` | 0..100 | Via echte LiPo-curve (niet lineair, zie T1000-E-batterijbug). |
 | `hdop` | 1 decimaal | Mag leeg. |
 | `fix_age_s` | int | Seconden sinds de fix. |
+| `mode` | `c`/`t` | Companion of tracker (optioneel). |
+| `power` | `u`/`b` | USB of batterij (optioneel). |
+| `fix_ts` | unix-s | GPS-tijd van de fix (optioneel, fw 0.4.0+). Wint van alle andere tijden. |
 
 Voorbeeld: `T1|412|M|50.93012|5.33781|42|37|184|87|1.2|0` (ca. 45 bytes).
 
 Server-regels: dedup op `(tracker_pubkey, seq)` binnen 24 u; positie buiten
 Benelux+buffer of hdop > 5 wordt opgeslagen maar `suspect`; tijdstempel =
-sender-timestamp als plausibel, anders ontvangsttijd. Documenteren in
+`fix_ts` als plausibel, anders sender-timestamp min `fix_age_s`, anders ontvangsttijd. Een ouder bericht dat
+later binnenkomt gaat in het spoor maar overschrijft de laatste positie niet. Documenteren in
 `docs/protocol.md`.
 
 Later (fase 3b): server -> tracker configcommando's (`!set <param> <waarde>`,

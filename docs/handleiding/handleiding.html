@@ -89,7 +89,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Website 0.4 · firmware 0.3.1 (T1000-E) · MeshCore v1.17.1<br>
+    Website 0.4 · firmware 0.4.1 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -231,6 +231,22 @@
 </table>
 <p>Een bewegingssensor maakt hem weer wakker; de eerste positie daarna heet <em>wakker door beweging</em>. Krijgt hij geen
   ontvangstbewijs, dan probeert hij het nog enkele keren (de laatste keer via flood) en wacht daarna op de volgende positie.</p>
+
+<h3>Ritme volgens de ontvangst</h3>
+<table>
+  <tr><th>Ontvangst</th><th>Wat doet de tracker</th><th>Standaard</th></tr>
+  <tr><td class="k">Goed</td><td>De ACK komt snel binnen: in beweging stuurt hij vaker (als hij minstens 20 m verplaatst is).
+    Pas na meer missers na elkaar dan ingesteld valt hij terug, zodat één gemiste ACK hem niet meteen trager maakt.</td>
+    <td>elke 30 s, ACK binnen 10 s, 2 missers</td></tr>
+  <tr><td class="k">Herhalen</td><td>In het snelle ritme herhaalt hij gewone posities niet: de volgende verse positie komt er
+    toch zo aan. SOS, een klik, stilgevallen en heartbeat krijgen altijd alle pogingen.</td><td>0 pogingen</td></tr>
+  <tr><td class="k">Normaal</td><td>De gewone regels hierboven.</td><td></td></tr>
+  <tr><td class="k">Slecht</td><td>Na enkele mislukte zendingen na elkaar stuurt hij minder vaak en spaart hij de batterij,
+    tot de eerste ACK.</td><td>na 3 missers, intervallen × 3</td></tr>
+</table>
+<div class="note"><b>Het juiste tijdstip</b>Elk bericht bevat de GPS-tijd van de fix. Een positie staat dus op het moment
+  dat de tracker daar was, ook als het bericht pas na enkele herhaalpogingen aankwam. Bij 120 km/u maakt dat al snel
+  honderden meters verschil.</div>
 
 <h3>Statussen</h3>
 <table>

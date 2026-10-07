@@ -300,8 +300,12 @@ class DB:
         if p.get("power"):
             upd["last_power"] = p["power"]
         if p.get("lat") is not None and not p.get("suspect"):
-            upd.update(last_ts=p["ts"], last_lat=p["lat"], last_lon=p["lon"],
-                       last_spd=p.get("spd"), last_crs=p.get("crs"))
+            # Een ouder bericht dat pas later binnenkomt (herhaalpogingen, wachtrij)
+            # komt wel in het spoor, maar is niet de laatste positie.
+            cur_ts = (self._q("SELECT last_ts FROM trackers WHERE id=?", (tid,)) or [{}])[0].get("last_ts")
+            if cur_ts is None or p["ts"] >= cur_ts:
+                upd.update(last_ts=p["ts"], last_lat=p["lat"], last_lon=p["lon"],
+                           last_spd=p.get("spd"), last_crs=p.get("crs"))
         sql = "UPDATE trackers SET " + ", ".join(f"{k}=?" for k in upd) + " WHERE id=?"
         self._x(sql, tuple(upd.values()) + (tid,))
         return cur.lastrowid

@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 
 from .geo import angle_diff, bearing, haversine, offset
 from .roadgraph import SPEEDS, Leg, Router
-from .rules import STILL_KMH, Params, RuleState, decide, heartbeat_due, stillness
+from .rules import STILL_KMH, Params, RuleState, decide, heartbeat_due, link_result, stillness
 
 log = logging.getLogger("meshtrack.sim")
 
@@ -460,6 +460,7 @@ class SimTracker:
             str(int(self.batt)), f"{hdop}" if hdop is not None else "", "0" if with_pos else "",
             self.mode,
             "u" if self.charging else "b",
+            str(int(now)) if with_pos else "",     # fix_ts: tijd van de fix
         ]
         text = "|".join(fields_)
         self.seq = (self.seq + 1) % 65536
@@ -467,10 +468,12 @@ class SimTracker:
         self.stats.reasons[reason] = self.stats.reasons.get(reason, 0) + 1
         if self.rng.random() < self.loss:
             self.stats.lost += 1
+            link_result(self.rules, self.params, False)
             return
         self.stats.sent += 1
         snr = round(self.rng.uniform(-8, 10), 1)
         hops = self.rng.choice((0, 1, 1, 2, 2, 3))
+        link_result(self.rules, self.params, True, 1.5 + hops * self.rng.uniform(1.5, 4))
         self.outbox.append((self.prefix, text, int(now), snr, hops))
 
 

@@ -9,7 +9,8 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const BAD = /ongeldig|onbekend|NIET|geweigerd|gebruik:|mislukt/;
   const MT_KEYS = ["min_speed", "min_dist", "turn_min", "turn_min_speed", "min_interval", "max_interval", "still_timeout",
-    "heartbeat", "fix_timeout", "fix_timeout_hb", "ack_retries", "track_in_companion", "accel_sens", "led", "target"];
+    "heartbeat", "fix_timeout", "fix_timeout_hb", "ack_retries", "track_in_companion", "accel_sens", "led", "target",
+    "fast_interval", "fast_keep", "fast_ack", "fast_retries", "slow_after", "slow_factor"];
   let fw = null, kv = null, known = null, busy = false;
 
   function say(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); }
@@ -150,6 +151,7 @@
     const s = mt.settings || {};
     for (const k of MT_KEYS) {
       if (s[k] == null || s[k] === "" || String(s[k]).startsWith("(")) continue;
+      if (kv && !(k in kv)) continue;           // oudere firmware op het toestel
       let v = String(s[k]);
       if (["min_speed", "min_dist", "turn_min", "turn_min_speed"].includes(k)) v = v.replace(/(km\/h|deg|m)$/, "");
       if (v === "uit" && k !== "track_in_companion" && k !== "led") v = "0";

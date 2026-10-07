@@ -43,6 +43,11 @@ void mt_cfg_defaults(MtCfg& c) {
   c.heartbeat_s        = 12 * 3600;
   c.fix_timeout_s      = 90;
   c.fix_timeout_hb_s   = 30;
+  c.fast_interval_s    = 30;
+  c.fast_keep          = 2;
+  c.fast_ack_s         = 10;
+  c.slow_after         = 3;
+  c.slow_factor        = 3;
 }
 
 // Eén bestand proberen. 0 = geladen, 1 = bestand van nieuwere fw, -1 = onbruikbaar.
@@ -58,9 +63,14 @@ static int load_file(const char* path) {
   MtCfg* hdr = (MtCfg*)buf;
   if (hdr->magic != MT_CFG_MAGIC) return -1;
   if (hdr->version > MT_CFG_VERSION || hdr->size > sizeof(MtCfg)) return 1;
-  if (hdr->size != sizeof(MtCfg) || n != (int)sizeof(MtCfg)) return -1;  // v1 kent maar één indeling
-  if (cfg_crc(*hdr) != hdr->crc) return -1;
-  memcpy(&mt_cfg, buf, sizeof(MtCfg));
+  if (hdr->size != n || hdr->size < offsetof(MtCfg, _pad) + 2 + 4) return -1;
+  // Oudere versie: velden worden enkel achteraan toegevoegd, de crc staat altijd op het einde.
+  uint32_t crc;
+  memcpy(&crc, buf + hdr->size - 4, 4);
+  if (mt_crc32(0, buf, hdr->size - 4) != crc) return -1;
+  memcpy(&tmp, buf, hdr->size - 4);          // nieuwe velden houden hun standaardwaarde
+  mt_cfg = tmp;
+  if (hdr->version < MT_CFG_VERSION) return 2;
   return 0;
 }
 
@@ -91,7 +101,8 @@ bool mt_cfg_save() {
 void mt_cfg_begin() {
   mt_cfg_defaults(mt_cfg);
   int r = load_file(MT_CFG_PATH);
-  if (r == 0) { mt_cfg_load_note = "geladen v1"; return; }
+  if (r == 0) { mt_cfg_load_note = "geladen v2"; return; }
+  if (r == 2) { mt_cfg_load_note = "v1 omgezet naar v2"; mt_cfg_save(); return; }
   if (r == 1) {
     mt_cfg_readonly = true;
     mt_cfg_load_note = "DEFAULTS (bestand van nieuwere firmware, niet overschreven)";

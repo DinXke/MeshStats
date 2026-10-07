@@ -112,6 +112,12 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "fix_timeout"))    { ok = parse_dur(v, &d) && d >= 10 && d <= 600; c.fix_timeout_s = d; }
   else if (!strcmp(k, "fix_timeout_hb")) { ok = parse_dur(v, &d) && d >= 10 && d <= 600; c.fix_timeout_hb_s = d; }
   else if (!strcmp(k, "ack_retries"))    { uint16_t r; ok = parse_u16(v, 5, &r); c.ack_retries = r; }
+  else if (!strcmp(k, "fast_interval"))  { ok = parse_dur(v, &d) && (d == 0 || d >= 10) && d <= 3600; c.fast_interval_s = d; }
+  else if (!strcmp(k, "fast_keep"))      { uint16_t r; ok = parse_u16(v, 10, &r); c.fast_keep = r; }
+  else if (!strcmp(k, "fast_retries"))   { uint16_t r; ok = parse_u16(v, 5, &r); c.fast_retries = r; }
+  else if (!strcmp(k, "fast_ack"))       { ok = parse_dur(v, &d) && d <= 120; c.fast_ack_s = d; }
+  else if (!strcmp(k, "slow_after"))     { uint16_t r; ok = parse_u16(v, 20, &r); c.slow_after = r; }
+  else if (!strcmp(k, "slow_factor"))    { uint16_t r; ok = parse_u16(v, 10, &r) && r >= 1; c.slow_factor = r; }
   else if (!strcmp(k, "track_in_companion")) ok = parse_onoff(v, &c.track_in_companion);
   else if (!strcmp(k, "accel_sens")) {
     ok = true;
@@ -291,6 +297,9 @@ static void cmd_status() {
   outl("tx_ok=%lu tx_mislukt=%lu herhaald=%lu laatste=%s seq=%u reden=%s",
        (unsigned long)st.ok, (unsigned long)st.failed, (unsigned long)st.retries,
        !st.have_last ? "-" : st.last_ok ? "ok" : "mislukt", mt_tracker_seq(), mt_tracker_last_reason());
+  fmt_dur(a, sizeof(a), mt_cfg.fast_interval_s); fmt_dur(b, sizeof(b), mt_cfg.fast_ack_s);
+  outl("fast_interval=%s fast_keep=%u fast_ack=%s fast_retries=%u slow_after=%u slow_factor=%u ritme=%s",
+       a, mt_cfg.fast_keep, b, mt_cfg.fast_retries, mt_cfg.slow_after, mt_cfg.slow_factor, mt_tracker_link_str());
   outl("cfg=%s%s", mt_cfg_load_note, mt_cfg_readonly ? " [alleen-lezen]" : "");
 }
 
@@ -302,6 +311,7 @@ static void cmd_help() {
   outl("    min_speed min_dist turn_min turn_min_speed min_interval max_interval");
   outl("    still_timeout heartbeat fix_timeout fix_timeout_hb ack_retries");
   outl("    track_in_companion on|off  accel_sens laag|midden|hoog  target <64 hex>");
+  outl("    fast_interval fast_keep fast_ack fast_retries slow_after slow_factor (ritme volgens ontvangst)");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
@@ -345,6 +355,12 @@ static const Item WHEN[] = {
 static const Item RHYTHM[] = {
   {"Nooit vaker dan 1x per", "min_interval", 1},
   {"In beweging minstens 1x per (0 = uit)", "max_interval", 1},
+  {"Goede ontvangst: elke (0 = uit)", "fast_interval", 1},
+  {"Goede ontvangst = ACK binnen", "fast_ack", 1},
+  {"Snel blijven tot zoveel missers", "fast_keep", 0},
+  {"Herhaalpogingen bij goede ontvangst", "fast_retries", 0},
+  {"Trager na zoveel missers (0 = nooit)", "slow_after", 0},
+  {"Trager: intervallen maal", "slow_factor", 0},
 };
 static const Item REST[] = {
   {"Slapen na stilstand van", "still_timeout", 1},
@@ -374,6 +390,12 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "fix_timeout")) fmt_dur_nl(o, n, mt_cfg.fix_timeout_s);
   else if (!strcmp(param, "fix_timeout_hb")) fmt_dur_nl(o, n, mt_cfg.fix_timeout_hb_s);
   else if (!strcmp(param, "ack_retries")) snprintf(o, n, "%u", mt_cfg.ack_retries);
+  else if (!strcmp(param, "fast_interval")) fmt_dur_nl(o, n, mt_cfg.fast_interval_s);
+  else if (!strcmp(param, "fast_ack")) snprintf(o, n, mt_cfg.fast_ack_s ? "%u s" : "elke ACK", mt_cfg.fast_ack_s);
+  else if (!strcmp(param, "fast_keep")) snprintf(o, n, "%u", mt_cfg.fast_keep);
+  else if (!strcmp(param, "fast_retries")) snprintf(o, n, "%u", mt_cfg.fast_retries);
+  else if (!strcmp(param, "slow_after")) snprintf(o, n, mt_cfg.slow_after ? "%u" : "nooit", mt_cfg.slow_after);
+  else if (!strcmp(param, "slow_factor")) snprintf(o, n, "x%u", mt_cfg.slow_factor);
   else if (!strcmp(param, "target")) {
     if (mt_cfg.target_set) snprintf(o, n, "%02X%02X%02X%02X...", mt_cfg.target[0], mt_cfg.target[1], mt_cfg.target[2], mt_cfg.target[3]);
     else snprintf(o, n, "niet ingesteld");
@@ -445,7 +467,7 @@ static void show() {
       outl("   0  Terug");
       break;
     case SC_WHEN:   header("WANNEER EEN POSITIE STUREN"); list_items(WHEN, 4); break;
-    case SC_RHYTHM: header("RITME"); list_items(RHYTHM, 2); break;
+    case SC_RHYTHM: header("RITME"); list_items(RHYTHM, 8); outl("   Ritme nu: %s", mt_tracker_link_str()); break;
     case SC_REST:   header("STILSTAND EN HEARTBEAT"); list_items(REST, 3); break;
     case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, 4); break;
     case SC_MAINT:
@@ -511,7 +533,7 @@ static void menu_choice(int n) {
       show();
       return;
     case SC_WHEN: items = WHEN; count = 4; break;
-    case SC_RHYTHM: items = RHYTHM; count = 2; break;
+    case SC_RHYTHM: items = RHYTHM; count = 8; break;
     case SC_REST: items = REST; count = 3; break;
     case SC_GPS: items = GPSI; count = 4; break;
   }

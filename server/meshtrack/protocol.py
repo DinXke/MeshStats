@@ -1,9 +1,11 @@
 """T1-berichtprotocol (zie docs/protocol.md).
 
-    T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>[|<mode>[|<power>]]
+    T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>[|<mode>[|<power>[|<fix_ts>]]]
 
-Lege velden zijn toegestaan waar de spec dat zegt; `mode` (c|t) en `power`
-(u = USB/laden, b = batterij) zijn optioneel.
+Lege velden zijn toegestaan waar de spec dat zegt; `mode` (c|t), `power`
+(u = USB/laden, b = batterij) en `fix_ts` (GPS-tijd van de fix, unix-seconden)
+zijn optioneel. Met fix_ts staat een positie op het juiste moment, ook als het
+bericht pas na herhaalpogingen of een wachtrij aankomt.
 """
 from __future__ import annotations
 
@@ -46,6 +48,7 @@ class Report:
     fix_age_s: Optional[int]
     mode: Optional[str] = None
     power: Optional[str] = None
+    fix_ts: Optional[int] = None
 
     @property
     def has_fix(self) -> bool:
@@ -89,8 +92,8 @@ def parse(text: str) -> Report:
         raise ProtocolError("geen MeshTrack-bericht")
     if parts[0] != "T1":
         raise UnknownVersion(f"onbekende versie {parts[0]}")
-    if len(parts) not in (11, 12, 13):
-        raise ProtocolError(f"verwacht 11 tot 13 velden, kreeg {len(parts)}")
+    if len(parts) not in (11, 12, 13, 14):
+        raise ProtocolError(f"verwacht 11 tot 14 velden, kreeg {len(parts)}")
 
     _, seq_s, state, lat_s, lon_s, alt_s, spd_s, crs_s, bat_s, hdop_s, age_s, *rest = parts
     seq = _opt_int(seq_s, 0, 65535, "seq")
@@ -115,6 +118,7 @@ def parse(text: str) -> Report:
         power = rest[1] or None
         if power is not None and power not in POWER:
             raise ProtocolError(f"onbekende voeding {power!r}")
+    fix_ts = _opt_int(rest[2], 1_500_000_000, 4_000_000_000, "fix_ts") if len(rest) > 2 else None
 
     return Report(
         seq=seq,
@@ -129,6 +133,7 @@ def parse(text: str) -> Report:
         fix_age_s=_opt_int(age_s, 0, 10**7, "fix_age"),
         mode=mode,
         power=power,
+        fix_ts=fix_ts,
     )
 
 

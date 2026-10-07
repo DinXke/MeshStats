@@ -9,9 +9,11 @@ struct MtSendStats {
   uint32_t last_ms;
 };
 
-typedef void (*MtSendDone)(bool ok, bool manual);
+typedef void (*MtSendDone)(bool ok, bool manual, uint32_t ack_ms);   // ack_ms: sinds de eerste poging
 
-bool mt_send(const char* text, bool manual);   // false = meteen mislukt (geen doel/radio)
+// retries: herhaalpogingen voor dit bericht. keep = niet opgeven voor een nieuwer bericht
+// (SOS, klik, stil, heartbeat, moduswissel); een gewone positie wijkt voor een verse.
+bool mt_send(const char* text, bool manual, uint8_t retries, bool keep);   // false = meteen mislukt
 void mt_sender_loop();
 bool mt_sender_busy();                          // bericht in de lucht of wachtend op ACK
 bool mt_sender_ensure_contact();                // doel als contact aanmaken indien nodig

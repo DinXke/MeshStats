@@ -9,11 +9,14 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.3.1).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.4.1).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus, één klik stuurt meteen een
     positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
   - Bewegingsregels (snelheid, afstand, bochten, ritme), stilstand en heartbeat, wakker worden via de
     bewegingssensor, ACK met herhaalpogingen, radio en led uit in trackermodus.
+  - Ritme volgens de ontvangst (0.4.0): na een snelle ACK vaker zenden, na herhaalde missers trager; in het snelle ritme geen herhaalpogingen voor gewone posities
+    (`fast_retries`), en een gewone positie wijkt altijd voor een verse; zelfde logica
+    als `server/meshtrack/rules.py`, die ook de simulator gebruikt.
   - Genummerd serieel menu en `backup` van de opslag. De sleutel, contacten, kanalen en regio's blijven bij elke
     app-only flash behouden.
   - Klaarmaken via USB: `key import/export`, `chan list/set`, `set name|radio|tx|path_bytes|scope`. Paden altijd
@@ -44,8 +47,11 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
 ## Berichtprotocol
 
 ```
-T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>|<mode c|t>|<power u|b>
+T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>|<mode c|t>|<power u|b>|<fix_ts>
 ```
+
+`fix_ts` (vanaf firmware 0.4.0) is de GPS-tijd van de fix in unix-seconden; de server gebruikt die als tijdstip van
+de positie. Zonder `fix_ts`: sender-tijd min `fix_age_s`, of de ontvangsttijd als de klok van de tracker niet klopt.
 
 Statussen: `M` beweging, `W` wakker door beweging, `S` stilgevallen, `H` heartbeat, `N` geen fix, `P` handmatig,
 `E` SOS, `B` moduswissel of voeding gewijzigd.

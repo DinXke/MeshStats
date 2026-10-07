@@ -12,9 +12,11 @@ MAX_PAST_S = 7 * 24 * 3600   # sender-tijd ouder dan dit = klok fout
 MAX_FUTURE_S = 300
 
 
-def pick_ts(sender_ts: Optional[int], rx_ts: int, fix_age: Optional[int]) -> int:
-    """Positietijd: sender-tijd als die plausibel is, anders ontvangsttijd.
-    fix_age schuift de tijd terug naar het moment van de fix."""
+def pick_ts(sender_ts: Optional[int], rx_ts: int, fix_age: Optional[int], fix_ts: Optional[int] = None) -> int:
+    """Positietijd. Voorkeur: de GPS-tijd van de fix (fix_ts) uit het bericht. Anders
+    de sender-tijd als die plausibel is (anders ontvangsttijd), min fix_age."""
+    if fix_ts and rx_ts - MAX_PAST_S <= fix_ts <= rx_ts + MAX_FUTURE_S:
+        return fix_ts
     base = rx_ts
     if sender_ts and rx_ts - MAX_PAST_S <= sender_ts <= rx_ts + MAX_FUTURE_S:
         base = sender_ts
@@ -48,7 +50,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
         return None
 
     p = {
-        "ts": pick_ts(sender_ts, rx, r.fix_age_s) if r.has_fix else rx,
+        "ts": pick_ts(sender_ts, rx, r.fix_age_s, r.fix_ts) if r.has_fix else rx,
         "rx_ts": rx, "seq": r.seq, "state": r.state,
         "lat": r.lat, "lon": r.lon, "alt": r.alt_m, "spd": r.spd_kmh, "crs": r.crs_deg,
         "bat": r.bat_pct, "hdop": r.hdop, "fix_age": r.fix_age_s, "mode": r.mode, "power": r.power,
