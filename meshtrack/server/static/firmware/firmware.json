@@ -1,15 +1,15 @@
 {
   "releases": [
     {
-      "version": "0.6.0",
+      "version": "0.6.1",
       "date": "2026-10-07",
-      "notes": "Verzenden via DM (standaard) of een kanaal, met ondertekening (authsleutel, 8 controletekens per bericht) en regio; instelbaar via USB, CLI en menu. Compacter formaat voor extra punten (±9 per bericht). Daarnaast: meerdere punten per bericht, ritme volgens de ontvangst optioneel, GPS-tijd van de fix.",
-      "zip": "meshtrack-t1000e-0.6.0.zip",
-      "zip_sha256": "92360cb8445d06cd50f6264fd3dcd79e5002863613467e8bdd82dd38da7fe699",
-      "uf2": "meshtrack-t1000e-0.6.0.uf2",
-      "app_size": 391192,
+      "notes": "Herstelt het meesturen van punten: in beweging bewaart de tracker nu echt elke x s een punt (in 0.5.0 en 0.6.0 gebeurde dat alleen tijdens het zoeken naar een fix, zodat er onderweg geen extra punten meekwamen). Verder zoals 0.6.0: DM of kanaal met ondertekening, compacte punten.",
+      "zip": "meshtrack-t1000e-0.6.1.zip",
+      "zip_sha256": "9df6dd5985e4c6554365fefe0992fde34f669fb374515ede10ef65a3d8c16d00",
+      "uf2": "meshtrack-t1000e-0.6.1.uf2",
+      "app_size": 391288,
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.6.0"
+  "latest": "0.6.1"
 }
