@@ -27,6 +27,8 @@
 
   const trackers = new Map();   // id -> tracker
   const tracks = new Map();     // id -> [{lon,lat,spd,ts,state,bat}]
+  const sosPts = new Map();     // id -> SOS-posities in de gekozen periode (min. 24 u), los van het spoor
+  let sosMarkers = [];
   const markers = new Map();    // id -> maplibregl.Marker
   let zones = [];
   let simRoutes = {};
@@ -219,6 +221,7 @@
   }
 
   function refreshLayers() {
+    renderSos();
     const f = trackFeatures();
     if (!map.getSource("tracks")) return;
     map.getSource("tracks").setData(f.lines);
@@ -243,10 +246,35 @@
 
   // ---- trackers --------------------------------------------------------------------
   async function loadTrack(id) {
-    const h = can("map.tracks") ? hoursNow() : 0;
-    if (!h) { tracks.set(id, []); return; }
-    const pts = await MT.api(`/api/trackers/${id}/track?hours=${h}`);
-    tracks.set(id, pts.filter((p) => !p.suspect));
+    if (!can("map.tracks")) { tracks.set(id, []); sosPts.set(id, []); return; }
+    // SOS-markers ook zonder spoor: dan de laatste 24 uur.
+    const h = hoursNow() || 24;
+    const pts = (await MT.api(`/api/trackers/${id}/track?hours=${h}`)).filter((p) => !p.suspect);
+    tracks.set(id, hoursNow() ? pts : []);
+    sosPts.set(id, pts.filter((p) => p.state === "E"));
+  }
+
+  // SOS: rode cirkel met "SOS". Herhalingen van dezelfde noodoproep (binnen 5 min en 150 m) tellen één keer.
+  function renderSos() {
+    sosMarkers.forEach((m) => m.remove());
+    sosMarkers = [];
+    for (const [id, pts] of sosPts) {
+      const t = trackers.get(id);
+      if (!t || !onMap(t)) continue;
+      let prev = null;
+      for (const p of [...pts].sort((a, b) => a.ts - b.ts)) {
+        if (prev && p.ts - prev.ts < 300 && dist(prev, p) < 150) continue;
+        prev = p;
+        const el = document.createElement("div");
+        el.className = "sosmark";
+        el.textContent = "SOS";
+        el.title = `${t.alias}: SOS`;
+        const html = `<strong>${MT.esc(t.alias)}</strong> <span class="pill sos">SOS</span><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}`
+          + `<br><span class="mono">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</span>`;
+        sosMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([p.lon, p.lat])
+          .setPopup(new maplibregl.Popup({ offset: 18, closeButton: false }).setHTML(html)).addTo(map));
+      }
+    }
   }
 
   function popupHtml(t) {
@@ -799,6 +827,10 @@
       if (p.lat != null && !p.suspect && hoursNow()) {
         if (!tracks.has(t.id)) tracks.set(t.id, []);
         tracks.get(t.id).push({ lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat });
+      }
+      if (p.state === "E" && p.lat != null && !p.suspect) {
+        if (!sosPts.has(t.id)) sosPts.set(t.id, []);
+        sosPts.get(t.id).push({ lat: p.lat, lon: p.lon, ts: p.ts, state: "E" });
       }
       upsertMarker(t);
       renderList();
