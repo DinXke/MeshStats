@@ -77,12 +77,30 @@ class Principal:
                 "all_trackers": self.tracker_ids is None}
 
 
-def principal_for_user(user: dict[str, Any], group: dict[str, Any]) -> Principal:
+def principal_for_user(user: dict[str, Any], groups, tracker_group_members: Optional[dict[int, set[int]]] = None) -> Principal:
+    """Een gebruiker in één of meer groepen krijgt de som: alle rechten samen, alle
+    trackers die één van zijn groepen ziet (los gekozen of via een trackergroep), en de
+    ruimste terugblik (0 = onbeperkt wint)."""
+    if isinstance(groups, dict):
+        groups = [groups]
+    members = tracker_group_members or {}
+    perms: set[str] = set()
+    tids: Optional[set[int]] = set()
+    hours: list[int] = []
+    for g in groups:
+        perms |= set(g["perms"])
+        hours.append(int(g["history_hours"] or 0))
+        if g["all_trackers"]:
+            tids = None
+        elif tids is not None:
+            tids |= set(g["trackers"])
+            for tg in g.get("tracker_groups") or []:
+                tids |= members.get(tg, set())
+    history = 0 if not hours or 0 in hours else max(hours)
     return Principal(
         name=user["username"], display=user["display_name"] or user["username"], kind="user",
-        group=group["name"], perms=set(group["perms"]) & set(PERMS),
-        tracker_ids=None if group["all_trackers"] else set(group["trackers"]),
-        history_hours=int(group["history_hours"] or 0), user_id=user["id"])
+        group=", ".join(g["name"] for g in groups), perms=perms & set(PERMS),
+        tracker_ids=tids, history_hours=history, user_id=user["id"])
 
 
 def principal_for_share(share: dict[str, Any]) -> Principal:

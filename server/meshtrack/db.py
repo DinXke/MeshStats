@@ -150,6 +150,23 @@ CREATE TABLE IF NOT EXISTS alert_log (
   done_ts   INTEGER
 );
 CREATE INDEX IF NOT EXISTS alert_log_ts ON alert_log(ts);
+CREATE TABLE IF NOT EXISTS tracker_groups (       -- 0.5: groepen van trackers
+  id          INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  color       TEXT NOT NULL DEFAULT '#64748b',
+  description TEXT NOT NULL DEFAULT '',
+  created     INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tracker_group_members (
+  group_id    INTEGER NOT NULL,
+  tracker_id  INTEGER NOT NULL,
+  PRIMARY KEY (group_id, tracker_id)
+);
+CREATE TABLE IF NOT EXISTS user_groups (          -- 0.5: een gebruiker in meerdere groepen
+  user_id     INTEGER NOT NULL,
+  group_id    INTEGER NOT NULL,
+  PRIMARY KEY (user_id, group_id)
+);
 CREATE TABLE IF NOT EXISTS tracker_keys (
   id          INTEGER PRIMARY KEY,
   tracker_id  INTEGER NOT NULL REFERENCES trackers(id) ON DELETE CASCADE,
@@ -197,6 +214,10 @@ class DB:
             self._x("ALTER TABLE positions ADD COLUMN power TEXT")
         if "last_power" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
             self._x("ALTER TABLE trackers ADD COLUMN last_power TEXT")
+        if "tracker_groups" not in {r["name"] for r in self._q("PRAGMA table_info(groups)")}:   # 0.5
+            self._x("ALTER TABLE groups ADD COLUMN tracker_groups TEXT NOT NULL DEFAULT '[]'")
+        if not self._q("SELECT 1 FROM user_groups LIMIT 1"):    # 0.5: groep van elke gebruiker overnemen
+            self._x("INSERT OR IGNORE INTO user_groups(user_id, group_id) SELECT id, group_id FROM users")
         if "lost" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:   # 0.4: verloren
             self._x("ALTER TABLE trackers ADD COLUMN lost INTEGER NOT NULL DEFAULT 0")
             self._x("ALTER TABLE trackers ADD COLUMN lost_since INTEGER")
@@ -277,6 +298,7 @@ class DB:
 
     def delete_tracker(self, tid: int) -> None:
         self._x("DELETE FROM tracker_keys WHERE tracker_id=?", (tid,))
+        self._x("DELETE FROM tracker_group_members WHERE tracker_id=?", (tid,))
         self._x("DELETE FROM trackers WHERE id=?", (tid,))
 
     # ---- posities -----------------------------------------------------------
@@ -498,11 +520,12 @@ class DB:
     # ---- groepen en gebruikers -------------------------------------------------
 
     def groups(self) -> list[dict[str, Any]]:
-        rows = self._q("SELECT g.*, (SELECT COUNT(*) FROM users u WHERE u.group_id=g.id) AS members "
+        rows = self._q("SELECT g.*, (SELECT COUNT(*) FROM user_groups ug WHERE ug.group_id=g.id) AS members "
                        "FROM groups g ORDER BY g.id")
         for r in rows:
             r["perms"] = json.loads(r["perms"])
             r["trackers"] = json.loads(r["trackers"])
+            r["tracker_groups"] = json.loads(r.get("tracker_groups") or "[]")
             r["all_trackers"] = bool(r["all_trackers"])
         return rows
 
@@ -511,20 +534,82 @@ class DB:
 
     def save_group(self, gid: Optional[int], g: dict[str, Any]) -> int:
         vals = (g["name"], g.get("description", ""), json.dumps(g["perms"]), int(g["all_trackers"]),
-                json.dumps(g.get("trackers", [])), int(g.get("history_hours", 0)))
+                json.dumps(g.get("trackers", [])), int(g.get("history_hours", 0)), json.dumps(g.get("tracker_groups", [])))
         if gid is None:
-            return self._x("INSERT INTO groups(name, description, perms, all_trackers, trackers, history_hours, created) "
-                           "VALUES(?,?,?,?,?,?,?)", vals + (int(time.time()),)).lastrowid
-        self._x("UPDATE groups SET name=?, description=?, perms=?, all_trackers=?, trackers=?, history_hours=? "
-                "WHERE id=?", vals + (gid,))
+            return self._x("INSERT INTO groups(name, description, perms, all_trackers, trackers, history_hours, tracker_groups, "
+                           "created) VALUES(?,?,?,?,?,?,?,?)", vals + (int(time.time()),)).lastrowid
+        self._x("UPDATE groups SET name=?, description=?, perms=?, all_trackers=?, trackers=?, history_hours=?, "
+                "tracker_groups=? WHERE id=?", vals + (gid,))
         return gid
 
     def delete_group(self, gid: int) -> None:
         self._x("DELETE FROM groups WHERE id=?", (gid,))
 
     def users(self) -> list[dict[str, Any]]:
-        return self._q("SELECT u.id, u.username, u.display_name, u.group_id, u.active, u.created, u.last_login, "
-                       "g.name AS group_name FROM users u JOIN groups g ON g.id=u.group_id ORDER BY u.username")
+        rows = self._q("SELECT id, username, display_name, group_id, active, created, last_login FROM users "
+                       "ORDER BY username COLLATE NOCASE")
+        names = {g["id"]: g["name"] for g in self._q("SELECT id, name FROM groups")}
+        member: dict[int, list[int]] = {}
+        for r in self._q("SELECT user_id, group_id FROM user_groups ORDER BY group_id"):
+            member.setdefault(r["user_id"], []).append(r["group_id"])
+        for u in rows:
+            u["group_ids"] = member.get(u["id"], [])
+            u["group_name"] = ", ".join(names.get(g, "?") for g in u["group_ids"])
+        return rows
+
+    def user_group_ids(self, uid: int) -> list[int]:
+        return [r["group_id"] for r in self._q("SELECT group_id FROM user_groups WHERE user_id=? ORDER BY group_id", (uid,))]
+
+    def set_user_groups(self, uid: int, group_ids: list[int]) -> None:
+        self._x("DELETE FROM user_groups WHERE user_id=?", (uid,))
+        for g in dict.fromkeys(group_ids):
+            self._x("INSERT INTO user_groups(user_id, group_id) VALUES(?,?)", (uid, g))
+        if group_ids:   # oude kolom blijft de eerste groep (NOT NULL)
+            self._x("UPDATE users SET group_id=? WHERE id=?", (group_ids[0], uid))
+
+    # ---- trackergroepen ---------------------------------------------------------
+
+    def tracker_groups(self) -> list[dict[str, Any]]:
+        rows = self._q("SELECT * FROM tracker_groups ORDER BY name COLLATE NOCASE")
+        mem = self.tracker_group_members()
+        for r in rows:
+            r["trackers"] = sorted(mem.get(r["id"], set()))
+        return rows
+
+    def tracker_group_members(self) -> dict[int, set[int]]:
+        out: dict[int, set[int]] = {}
+        for r in self._q("SELECT group_id, tracker_id FROM tracker_group_members"):
+            out.setdefault(r["group_id"], set()).add(r["tracker_id"])
+        return out
+
+    def save_tracker_group(self, gid: Optional[int], name: str, color: str, description: str,
+                           trackers: Optional[list[int]] = None) -> int:
+        if gid is None:
+            gid = self._x("INSERT INTO tracker_groups(name, color, description, created) VALUES(?,?,?,?)",
+                          (name, color, description, int(time.time()))).lastrowid
+        else:
+            self._x("UPDATE tracker_groups SET name=?, color=?, description=? WHERE id=?", (name, color, description, gid))
+        if trackers is not None:
+            self._x("DELETE FROM tracker_group_members WHERE group_id=?", (gid,))
+            for t in dict.fromkeys(trackers):
+                self._x("INSERT INTO tracker_group_members(group_id, tracker_id) VALUES(?,?)", (gid, t))
+        return gid
+
+    def delete_tracker_group(self, gid: int) -> None:
+        self._x("DELETE FROM tracker_group_members WHERE group_id=?", (gid,))
+        self._x("DELETE FROM tracker_groups WHERE id=?", (gid,))
+        for g in self.groups():            # uit de zichtbaarheid van gebruikersgroepen halen
+            if gid in g["tracker_groups"]:
+                self.save_group(g["id"], {**g, "tracker_groups": [x for x in g["tracker_groups"] if x != gid]})
+
+    def tracker_group_ids(self, tid: int) -> list[int]:
+        return [r["group_id"] for r in self._q("SELECT group_id FROM tracker_group_members WHERE tracker_id=? "
+                                               "ORDER BY group_id", (tid,))]
+
+    def set_tracker_groups(self, tid: int, group_ids: list[int]) -> None:
+        self._x("DELETE FROM tracker_group_members WHERE tracker_id=?", (tid,))
+        for g in dict.fromkeys(group_ids):
+            self._x("INSERT INTO tracker_group_members(group_id, tracker_id) VALUES(?,?)", (g, tid))
 
     def user_by_name(self, username: str) -> Optional[dict[str, Any]]:
         r = self._q("SELECT * FROM users WHERE username=?", (username,))
@@ -534,10 +619,13 @@ class DB:
         r = self._q("SELECT * FROM users WHERE id=?", (uid,))
         return r[0] if r else None
 
-    def add_user(self, username: str, display: str, password_hash: str, group_id: int, active: bool = True) -> int:
-        return self._x("INSERT INTO users(username, display_name, password_hash, group_id, active, created) "
-                       "VALUES(?,?,?,?,?,?)", (username, display, password_hash, group_id, int(active),
-                                               int(time.time()))).lastrowid
+    def add_user(self, username: str, display: str, password_hash: str, group_id, active: bool = True) -> int:
+        ids = list(group_id) if isinstance(group_id, (list, tuple)) else [group_id]
+        uid = self._x("INSERT INTO users(username, display_name, password_hash, group_id, active, created) "
+                      "VALUES(?,?,?,?,?,?)", (username, display, password_hash, ids[0], int(active),
+                                              int(time.time()))).lastrowid
+        self.set_user_groups(uid, ids)
+        return uid
 
     def user_prefs(self, uid: int) -> dict[str, Any]:
         r = self._q("SELECT prefs FROM users WHERE id=?", (uid,))
@@ -558,6 +646,7 @@ class DB:
         self._x("UPDATE users SET " + ", ".join(parts) + " WHERE id=?", args + (uid,))
 
     def delete_user(self, uid: int) -> None:
+        self._x("DELETE FROM user_groups WHERE user_id=?", (uid,))
         self._x("DELETE FROM users WHERE id=?", (uid,))
 
     def count_users(self) -> int:

@@ -42,6 +42,7 @@
     fav: new Set(store.get("fav", [])),
     hidden: new Set(store.get("hidden", [])),
     filter: store.get("filter", "all"),
+    tgroup: store.get("tgroup", 0),       // 0 = alle trackergroepen
     trackOn: store.get("trackOn", true),
     hours: store.get("hours", 24),
     color: store.get("color", "tracker"),
@@ -49,7 +50,7 @@
     nrecent: store.get("nrecent", true),
   };
   const savePrefs = () => {
-    store.set("fav", [...prefs.fav]); store.set("hidden", [...prefs.hidden]); store.set("filter", prefs.filter);
+    store.set("fav", [...prefs.fav]); store.set("hidden", [...prefs.hidden]); store.set("filter", prefs.filter); store.set("tgroup", prefs.tgroup);
     store.set("trackOn", prefs.trackOn); store.set("hours", prefs.hours); store.set("color", prefs.color);
     store.set("ntypes", [...prefs.ntypes]); store.set("nrecent", prefs.nrecent);
   };
@@ -335,6 +336,7 @@
     if (prefs.filter === "fav" && !prefs.fav.has(t.id)) return false;
     if (prefs.filter === "real" && t.kind === "sim") return false;
     if (prefs.filter === "sim" && t.kind !== "sim") return false;
+    if (prefs.tgroup && !(t.groups || []).includes(prefs.tgroup)) return false;
     return !q || t.alias.toLowerCase().includes(q) || (t.notes || "").toLowerCase().includes(q);
   }
 
@@ -448,7 +450,20 @@
     if (first) select(Number(first.dataset.id), true);
   });
 
+  let tgroups = [];
+  async function loadTgroups() {
+    tgroups = await MT.api("/api/tracker-groups").catch(() => []);
+    const sel = $("tgfilter");
+    $("tgfilter-wrap").hidden = !tgroups.length;
+    if (prefs.tgroup && !tgroups.some((g) => g.id === prefs.tgroup)) prefs.tgroup = 0;
+    sel.innerHTML = '<option value="0">Alle trackergroepen</option>' +
+      tgroups.map((g) => `<option value="${g.id}">${MT.esc(g.name)} (${g.trackers.length})</option>`).join("");
+    sel.value = String(prefs.tgroup);
+  }
+  $("tgfilter").addEventListener("change", () => { prefs.tgroup = Number($("tgfilter").value); savePrefs(); renderList(); });
+
   async function loadAll() {
+    await loadTgroups();
     const list = await MT.api("/api/trackers");
     trackers.clear();
     list.forEach((t) => trackers.set(t.id, t));
@@ -837,7 +852,7 @@
       refreshLayers();
       if (following === t.id && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], duration: 800 });
     }
-    if (msg.type === "tracker" || msg.type === "tracker_deleted") loadAll();
+    if (msg.type === "tracker" || msg.type === "tracker_deleted" || msg.type === "tracker_groups") loadAll();
     if (msg.type === "geofences") loadZones();
     if (msg.type === "lost_seen" && msg.tracker) {
       const t = msg.tracker;
