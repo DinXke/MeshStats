@@ -354,7 +354,13 @@ def test_sos_on_channel_is_confirmed_once(client):
         def msg(seq, state):
             rest = f"{seq}|{state}|50.93|5.33|40|50|90|80|0.9|1|t|b|1800000000"
             return f"Tracker: T1C|ab12cd34|{main.channel_tag(key, f'ab12cd34|{rest}')}|{rest}"
-        run = lambda txt: asyncio.run(main.on_channel(5, txt, 1800000000, 5.0, 2))
+        main.SOS_ACK_DELAY_S = 0
+
+        async def go(txt):          # ook de bevestiging die los verstuurd wordt afwachten
+            await main.on_channel(5, txt, 1800000000, 5.0, 2)
+            while main._bg:
+                await asyncio.gather(*list(main._bg))
+        run = lambda txt: asyncio.run(go(txt))
         run(msg(7, "M"))                                   # gewone positie: geen bevestiging
         run(msg(8, "E"))                                   # SOS
         run(msg(8, "E"))                                   # zelfde SOS nog eens gehoord: niet opnieuw

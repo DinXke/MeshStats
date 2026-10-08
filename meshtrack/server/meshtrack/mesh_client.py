@@ -50,11 +50,12 @@ class MeshLink:
             self.connected = False
             self.connected_since = None
             if self.mc:
-                try:
-                    await self.mc.disconnect()
-                except Exception:  # noqa: BLE001
+                try:   # met tijdslimiet: na een weggevallen verbinding kan disconnect() blijven hangen
+                    await asyncio.wait_for(self.mc.disconnect(), timeout=5)
+                except Exception:  # noqa: BLE001 - ook TimeoutError
                     pass
                 self.mc = None
+            log.info("meshverbinding: nieuwe poging over %s s", backoff)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=backoff)
             except asyncio.TimeoutError:
@@ -133,19 +134,21 @@ class MeshLink:
     async def send_channel(self, slot: int, text: str, scope: str = "") -> None:
         """Groepsbericht op een kanaal van de companion, met de regio (scope) van dat kanaal;
         daarna weer de standaardregio van de companion."""
+        # De regio wordt niet teruggezet: dat antwoord kwam bij de companion van openHop soms pas bij het
+        # volgende commando aan (ERR_CODE_NOT_FOUND voor een geldig bericht). Alle kanalen gebruiken toch 'be'.
         mc = self._require()
-        try:
-            if scope:
+        if scope:
+            try:
                 await mc.commands.set_flood_scope(scope if scope.startswith("#") else "#" + scope)
+            except Exception:  # noqa: BLE001
+                pass
+        res = None
+        for attempt in range(2):
             res = await mc.commands.send_chan_msg(slot, text[:140])
-            if res is None or res.type == EventType.ERROR:
-                raise RuntimeError(f"kanaalbericht niet verstuurd: {getattr(res, 'payload', None)}")
-        finally:
-            if scope:
-                try:
-                    await mc.commands.set_flood_scope("")
-                except Exception:  # noqa: BLE001
-                    pass
+            if res is not None and res.type != EventType.ERROR:
+                return
+            await asyncio.sleep(1)
+        raise RuntimeError(f"kanaalbericht niet verstuurd: {getattr(res, 'payload', None)}")
 
     async def set_channel(self, slot: int, name: str, secret_hex: str) -> None:
         mc = self._require()
