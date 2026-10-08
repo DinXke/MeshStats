@@ -7,6 +7,11 @@
 //   SLEEP ──(heartbeat)──> ACQUIRE(heartbeat, korte timeout) ──> zend H of N ──> SLEEP
 //   enkele klik ──> fix (max fix_timeout_hb) ──> zend P of N, met biep-terugmelding
 //
+// Terugmelding (klik en eerste SOS): een kanaalbericht heeft geen ACK, maar de tracker
+// hoort een repeater die zijn flood-pakket herhaalt (zelfde eerste cijferblok). Gehoord
+// binnen MT_HEAR_MS = twee hoge biepjes, anders een lage toon. Op een SOS antwoordt de
+// server op hetzelfde kanaal met "T1A|<pk8>|<tag8>|<seq>": dan klinkt MT_TUNE_SOSOK.
+//
 // In trackermodus slaapt ook de radio zodra er niets te verzenden of te
 // ontvangen valt (na een kort luistervenster); de mesh-lus draait dan niet. In
 // companionmodus blijft de radio altijd luisteren (stock gedrag).
@@ -47,6 +52,19 @@ static bool s_radio_asleep = false;
 static uint32_t s_quiet_since = 0;
 static char s_last_reason[16] = "-";
 static uint32_t s_last_tx_ms = 0;
+static uint32_t s_listen_until = 0;         // radio wakker houden tot (herhaling / T1A afwachten)
+
+// herhalingen van het laatst bewaakte bericht (klik of eerste SOS)
+static uint8_t s_w_block[16];
+static bool s_w_have = false;               // er is een bewaakt bericht (gehoord= telt)
+static bool s_w_wait = false;               // wacht nog op de eerste herhaling (terugmelding)
+static uint32_t s_w_deadline = 0;
+static uint16_t s_w_heard = 0;
+
+// SOS-volgnummers van de laatste SOS-reeks (3 berichten) en welke de server bevestigde
+static uint16_t s_sos_seq[3];
+static uint8_t s_sos_n = 0, s_sos_conf = 0;  // s_sos_conf: bit per plaats in s_sos_seq
+static bool s_sos_any = false;
 
 static const char* SEQ_PATH = "/mt_seq.dat";
 #define SEQ_STEP 64
@@ -72,6 +90,21 @@ static uint16_t seq_next() {
   uint16_t v = s_seq++;
   if ((uint16_t)(s_seq - s_seq_saved) >= SEQ_STEP) seq_save(s_seq);
   return v;
+}
+
+// HMAC-SHA256(authsleutel, body), eerste 4 bytes als 8 hex; zonder sleutel "-".
+static void auth_tag(const char* body, char out[9]) {
+  if (!mt_cfg.authkey_set) { strcpy(out, "-"); return; }
+  SHA256 sha;
+  uint8_t mac[4];
+  sha.resetHMAC(mt_cfg.authkey, 16);
+  sha.update(body, strlen(body));
+  sha.finalizeHMAC(mt_cfg.authkey, 16, mac, 4);
+  snprintf(out, 9, "%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3]);
+}
+
+static void own_pk8(char out[9]) {
+  for (int i = 0; i < 4; i++) snprintf(out + 2 * i, 3, "%02x", the_mesh.self_id.pub_key[i]);
 }
 
 // ---- GPS ----------------------------------------------------------------------
@@ -164,8 +197,9 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   // zodat de server een gemiste in/uitplug-melding bij het volgende bericht inhaalt.
   // 14e veld: GPS-tijd van de fix. Zo staat de positie op het juiste moment, ook na
   // als het bericht even in de wachtrij stond.
+  uint16_t seq = seq_next();
   int n = snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c|%c|%s",
-           (unsigned)seq_next(), state, lat, lon, alt, spd, crs, bat < 0 ? 0 : bat, hd, age,
+           (unsigned)seq, state, lat, lon, alt, spd, crs, bat < 0 ? 0 : bat, hd, age,
            mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b', fts);
   // Kanaal: "T1C|<pubkey 8 hex>|<handtekening 8 hex>|<seq>|..." (zonder "T1|"); de
   // handtekening = HMAC-SHA256(authsleutel, "<pubkey8>|<rest>"), eerste 4 bytes.
@@ -209,18 +243,10 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   // Belangrijke berichten wijken niet voor een nieuwere gewone positie.
   bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B';
   {
-    char pk[9], body[MT_TEXT_MAX + 1];
-    for (int i = 0; i < 4; i++) snprintf(pk + 2 * i, 3, "%02x", the_mesh.self_id.pub_key[i]);
+    char pk[9], sig[9], body[MT_TEXT_MAX + 1];
+    own_pk8(pk);
     snprintf(body, sizeof(body), "%s|%s", pk, text + 3);          // text begint met "T1|"
-    char sig[9] = "-";
-    if (mt_cfg.authkey_set) {
-      SHA256 sha;
-      uint8_t mac[4];
-      sha.resetHMAC(mt_cfg.authkey, 16);
-      sha.update(body, strlen(body));
-      sha.finalizeHMAC(mt_cfg.authkey, 16, mac, 4);
-      snprintf(sig, sizeof(sig), "%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3]);
-    }
+    auth_tag(body, sig);
     snprintf(text, sizeof(text), "T1C|%s|%s|%s", pk, sig, body + 9);
   }
   // Eigen positie ook naar een verbonden app (alleen als companion: dan staat Bluetooth aan).
@@ -229,17 +255,85 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
   strncpy(s_last_reason, reason, sizeof(s_last_reason) - 1);
   s_last_tx_ms = millis();
+  if (state == 'E') {
+    if (s_sos_n < 3) s_sos_seq[s_sos_n++] = seq;
+    s_listen_until = millis() + 30000;     // radio wakker: antwoord (T1A) van de server afwachten
+  }
   mt_log("tx %s (%s)", text, reason);
 }
 
 static MtRuleParams params();
 
-// Een kanaalbericht kent geen ACK: "ok" = de radio heeft het verstuurd.
+// Een kanaalbericht kent geen ACK: "ok" = de radio heeft het verstuurd. Met terugmelding
+// (manual) bewaken we daarna of een repeater het herhaalt.
 static void on_send_done(bool ok, bool manual, uint32_t tag) {
   if (ok && tag) pts_sent(tag);
-  if (manual) ui_task.playForced(ok ? MT_TUNE_OK : MT_TUNE_NOK);
+  if (manual && !ok) ui_task.playForced(MT_TUNE_NOK);
+  if (manual && ok) {
+    memcpy(s_w_block, mt_sender_last_block(), 16);
+    s_w_have = s_w_wait = true;
+    s_w_heard = 0;
+    s_w_deadline = millis() + MT_HEAR_MS;
+    if ((int32_t)(s_w_deadline - s_listen_until) > 0) s_listen_until = s_w_deadline;
+  }
   if (ok) mt_log("tx op kanaal %u verstuurd", (unsigned)mt_cfg.chan_idx);
   else mt_log("tx MISLUKT: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+}
+
+static void step_watch() {
+  if (!s_w_wait || (int32_t)(millis() - s_w_deadline) < 0) return;
+  s_w_wait = false;
+  ui_task.playForced(MT_TUNE_NOK);
+  mt_log("geen herhaling gehoord binnen %u s", (unsigned)(MT_HEAR_MS / 1000));
+}
+
+// Ruw pakket: [header][4 transportcodes bij route 0/3][path_len][pad][payload]. GRP_TXT-payload
+// = [kanaalhash 1][MAC 2][cijferblokken...]; is het eerste blok het onze, dan is dit een herhaling.
+void mt_rx_raw(const uint8_t raw[], int len) {
+  if (!s_w_have || len < 2) return;
+  uint8_t route = raw[0] & 3;
+  if (((raw[0] >> 2) & 15) != PAYLOAD_TYPE_GRP_TXT) return;
+  int i = 1 + ((route == 0 || route == 3) ? 4 : 0);
+  if (i >= len) return;
+  uint8_t pl = raw[i++];
+  int hs = (pl >> 6) + 1, hc = pl & 63;
+  if (hs > 3) return;
+  int path = i;
+  i += hs * hc;
+  if (i + 3 + 16 > len || memcmp(raw + i + 3, s_w_block, 16) != 0) return;
+  s_w_heard++;
+  char rep[7] = "-";
+  if (hc) for (int k = 0; k < hs; k++) snprintf(rep + 2 * k, 3, "%02x", raw[path + (hc - 1) * hs + k]);
+  mt_log("gehoord via repeater %s (%u hops)", rep, (unsigned)hc);
+  if (s_w_wait) { s_w_wait = false; ui_task.playForced(MT_TUNE_OK); }
+}
+
+// "<naam>: T1A|<pk8>|<tag8>|<seq>" op het trackingkanaal: de server bevestigt een SOS.
+// tag8 = HMAC-SHA256(authsleutel, "<pk8>|A|<seq>"), eerste 4 bytes.
+bool mt_channel_text(uint8_t chan_idx, const char* text) {
+  if (chan_idx != mt_cfg.chan_idx) return false;
+  const char* p = strstr(text, ": ");
+  if (!p || strncmp(p + 2, "T1A|", 4) != 0) return false;
+  p += 6;
+  char pk[9], body[24], tag[9];
+  own_pk8(pk);
+  if (strncmp(p, pk, 8) != 0 || p[8] != '|' || strlen(p) < 19 || p[17] != '|') return true;   // niet voor ons
+  char* end;
+  unsigned long seq = strtoul(p + 18, &end, 10);
+  if (end == p + 18 || *end || seq > 0xFFFF) return true;
+  snprintf(body, sizeof(body), "%s|A|%lu", pk, seq);
+  auth_tag(body, tag);
+  if (!mt_cfg.authkey_set || strncmp(p + 9, tag, 8) != 0) { mt_log("T1A met foute handtekening genegeerd"); return true; }
+  for (uint8_t k = 0; k < s_sos_n; k++) {
+    if (s_sos_seq[k] != seq) continue;
+    if (s_sos_conf & (1 << k)) return true;     // al bevestigd (dubbel antwoord)
+    s_sos_conf |= 1 << k;
+    ui_task.playForced(MT_TUNE_SOSOK);
+    mt_log("SOS bevestigd door de server (seq %lu)", seq);
+    return true;
+  }
+  mt_log("T1A voor onbekende SOS (seq %lu) genegeerd", seq);
+  return true;
 }
 
 // ---- toestanden ---------------------------------------------------------------
@@ -360,10 +454,11 @@ static uint32_t s_sos_next = 0;
 
 static void step_sos() {
   if (!s_sos_left || (int32_t)(millis() - s_sos_next) < 0) return;
+  bool first = s_sos_left == 3;              // alleen de eerste met terugmelding (minder lawaai)
   s_sos_left--;
   s_sos_next = millis() + 60000;
   MtNmeaProvider& g = mt_gps();
-  send_report('E', g.lastValidMs() != 0, true, "SOS");
+  send_report('E', g.lastValidMs() != 0, first, "SOS");
 }
 
 bool mt_tracker_sos() {
@@ -372,6 +467,8 @@ bool mt_tracker_sos() {
   radio_wake();
   s_sos_left = 3;
   s_sos_next = millis();
+  s_sos_n = s_sos_conf = 0;                   // nieuwe reeks
+  s_sos_any = true;
   step_sos();
   return true;
 }
@@ -391,7 +488,7 @@ static void step_manual() {
 
 static void step_radio() {
   bool want_sleep = mt_effective_mode() == MT_MODE_TRACKER && !mt_sender_busy() && !s_manual && !s_sos_left &&
-                    !the_mesh.hasPendingWork();
+                    (int32_t)(millis() - s_listen_until) >= 0 && !the_mesh.hasPendingWork();
   if (!want_sleep) { s_quiet_since = 0; radio_wake(); return; }
   if (s_radio_asleep) return;
   if (s_quiet_since == 0) { s_quiet_since = millis(); return; }
@@ -417,6 +514,7 @@ void mt_tracker_loop() {
   else if (s_state != MT_T_OFF) enter(MT_T_OFF);
   step_manual();
   step_sos();
+  step_watch();
   step_radio();
 }
 
@@ -460,4 +558,6 @@ const char* mt_tracker_state_str() {
 const char* mt_tracker_last_reason() { return s_last_reason; }
 uint32_t mt_tracker_last_tx_ms() { return s_last_tx_ms; }
 uint16_t mt_tracker_seq() { return s_seq; }
+int mt_tracker_heard() { return s_w_have ? s_w_heard : -1; }
+const char* mt_tracker_sos_confirmed() { return !s_sos_any ? "-" : s_sos_conf ? "ja" : "nee"; }
 bool mt_tracker_gps_on() { return gps_is_on(); }

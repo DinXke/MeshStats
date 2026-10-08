@@ -17,4 +17,6 @@ const char* mt_tracker_last_reason();
 uint8_t mt_tracker_buffered();         // bewaarde punten (mee in het volgende bericht)
 uint32_t mt_tracker_last_tx_ms();
 uint16_t mt_tracker_seq();
+int mt_tracker_heard();                // herhalingen gehoord van het laatst bewaakte bericht, -1 = geen
+const char* mt_tracker_sos_confirmed();   // laatste SOS-reeks: "ja", "nee" of "-"
 bool mt_tracker_gps_on();

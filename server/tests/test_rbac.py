@@ -330,3 +330,37 @@ def test_offline_app_uses_only_maps(client):
     assert c.get("/api/trackers").status_code == 401
     login(c, "admin", "beheerder1")
     assert c.get("/api/offline/bundle").status_code == 404          # bestaat niet meer
+
+
+def test_sos_on_channel_is_confirmed_once(client):
+    import asyncio, hashlib, hmac as _hmac
+    c, main = client
+    login(c, "admin", "beheerder1")
+    tid = c.post("/api/trackers", json={"pubkey": "ab12cd34" + "00" * 28, "alias": "SOS-tracker"}).json()["tracker"]["id"]
+    _chan(c, "#ploeg3", 5)
+    key = c.get(f"/api/trackers/{tid}/authkey").json()["authkey"]
+    sent = []
+
+    class FakeMesh:
+        connected = True
+        async def send_channel(self, slot, text, scope=""):
+            sent.append((slot, text, scope))
+        def status(self):
+            return {"connected": True}
+
+    real, main.S.mesh = main.S.mesh, FakeMesh()
+    main._sos_acked.clear()
+    try:
+        def msg(seq, state):
+            rest = f"{seq}|{state}|50.93|5.33|40|50|90|80|0.9|1|t|b|1800000000"
+            return f"Tracker: T1C|ab12cd34|{main.channel_tag(key, f'ab12cd34|{rest}')}|{rest}"
+        run = lambda txt: asyncio.run(main.on_channel(5, txt, 1800000000, 5.0, 2))
+        run(msg(7, "M"))                                   # gewone positie: geen bevestiging
+        run(msg(8, "E"))                                   # SOS
+        run(msg(8, "E"))                                   # zelfde SOS nog eens gehoord: niet opnieuw
+        assert len(sent) == 1
+        slot, text, scope = sent[0]
+        tag = _hmac.new(bytes.fromhex(key), b"ab12cd34|A|8", hashlib.sha256).hexdigest()[:8]
+        assert slot == 5 and text == f"T1A|ab12cd34|{tag}|8" and scope == "be"
+    finally:
+        main.S.mesh = real

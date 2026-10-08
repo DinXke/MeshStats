@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.7.3",
+      "date": "2026-10-08",
+      "notes": "Feedback na een klik of SOS: twee hoge biepjes zodra de tracker zijn bericht via een repeater terug hoort, anders na 12 s een lage toon. De server bevestigt een SOS (ondertekend); de tracker speelt dan drie stijgende tonen. Status toont gehoord= en sos_bevestigd=.",
+      "zip": "meshtrack-t1000e-0.7.3.zip",
+      "zip_sha256": "24190085eb8254ec73915f57393141da04ba7b88897dd783aa89fafd25acf6ad",
+      "uf2": "meshtrack-t1000e-0.7.3.uf2",
+      "app_size": 391712,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.7.2",
       "date": "2026-10-08",
       "notes": "Herstel voor een beschadigde interne opslag: 'status' bleef in 0.7.1 hangen op een beschadigd bestandssysteem (meldt nu opslag_intern=BESCHADIGD); nieuw commando 'fs herstel ja' formatteert de interne opslag en herstart, alleen als ze beschadigd is of de sleutel ongeldig. Daarna de sleutel terugzetten vanaf een backup.",
@@ -51,5 +61,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.7.2"
+  "latest": "0.7.3"
 }

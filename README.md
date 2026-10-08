@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.7.1).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.7.3).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
   - Verzenden alleen via één **trackingkanaal** (`chan`), met de naam van de tracker als afzender en een handtekening
@@ -22,6 +22,10 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
   - In beweging elke `sample` seconden een punt bewaren; elk bericht neemt zoveel punten mee als erin passen.
   - In companionmodus komt een kopie van elke eigen positie in de berichtenwachtrij, zodat een app via Bluetooth ook
     de eigen posities ziet (een companion hoort zijn eigen kanaalberichten anders niet).
+  - Feedback (0.7.3): na een klik of SOS twee hoge biepjes zodra de tracker zijn eigen bericht via een repeater terug
+    hoort (eerste cipherblok vergelijken in de ruwe ontvangst), anders na 12 s een lage toon. De server bevestigt elke
+    SOS op het kanaal met `T1A|<pk8>|<tag>|<seq>` (tag = HMAC(authsleutel, `<pk8>|A|<seq>`)); de tracker speelt dan drie
+    stijgende tonen. `status`: `gehoord=` en `sos_bevestigd=`.
   - `msg_beep prive|alles|uit` (0.7.1): biep bij berichten als companion zonder app; standaard alleen privéberichten.
   - MeshTrack bewaart zijn configuratie en volgnummer op ExtraFS (0.7.1): InternalFS (7 blokken) was vol, waardoor
     0.7.0 niets meer kon bewaren. Oude bestanden worden bij het opstarten verhuisd; `status` toont
