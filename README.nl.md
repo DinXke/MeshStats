@@ -99,6 +99,7 @@ van elke repeater.
 | [`deploy/`](deploy/) | Installatie zonder Docker (venv + systemd), en een autoupdate-timer voor de Compose-deploy |
 | [`homeassistant/`](homeassistant/) | Optionele HA-integratie. Nu nodes zelf over MQTT publiceren is hij niet meer nodig — hij levert nog wel kaartposities uit adverts en haalt CLI-instellingen van repeaters over LoRa op |
 | [`proxy/`](proxy/) | Optionele TCP-fan-outproxy, voor wie geen aangepaste firmware kan flashen en toch meer dan één client op een node wil |
+| [`meshtrack/`](meshtrack/) | Apart subproject: APRS-achtige tracking over MeshCore. Trackerfirmware voor de T1000-E, een server met offline kaart, trackerbeheer, geofences en een simulator die virtuele trackers over echte wegen laat rijden |
 
 ---
 

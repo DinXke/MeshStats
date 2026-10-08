@@ -1,0 +1,22 @@
+[Unit]
+Description=MeshTrack tracking-server (kaart + openHop-companion)
+After=network-online.target openhop-repeater.service
+Wants=network-online.target
+
+[Service]
+User=meshtrack
+Group=meshtrack
+Environment=MESHTRACK_CONFIG=/etc/meshtrack/config.yaml
+WorkingDirectory=/opt/meshtrack/server
+ExecStart=/opt/meshtrack/venv/bin/python -m meshtrack.main
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/meshtrack
+ReadOnlyPaths=/etc/meshtrack
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>MeshTrack – handleiding</title>
+<style>
+  @page { size: A4; margin: 16mm 16mm 18mm; }
+  @page :first { margin: 0; }
+  :root {
+    --ink: #1c2321; --muted: #5d6a66; --line: #dfe5e2; --accent: #0b6e4f; --accent-2: #0ea5e9;
+    --soft: #eef6f2; --warn: #b45309; --warn-soft: #fff7ed; --danger: #b91c1c; --danger-soft: #fef2f2; --code: #0f1714;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { margin: 0; font: 10.5pt/1.55 "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: var(--ink); background: #fff; }
+  h1, h2, h3 { font-family: "Segoe UI Semibold", "Segoe UI", Arial, sans-serif; line-height: 1.2; color: var(--ink); }
+  h2.chap { font-size: 21pt; margin: 0 0 4mm; padding-top: 2mm; break-before: page; display: flex; align-items: baseline; gap: 4mm; }
+  h2.chap .nr { color: var(--accent); font-size: 30pt; font-weight: 700; min-width: 12mm; }
+  h3 { font-size: 13pt; margin: 7mm 0 2mm; color: var(--accent); break-after: avoid; }
+  p { margin: 0 0 2.6mm; }
+  ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+  li { margin: 0.8mm 0; }
+  .lead { font-size: 11.5pt; color: var(--muted); margin-bottom: 5mm; }
+  em { font-style: normal; font-weight: 600; color: #24413a; }
+  code { font: 9pt "Cascadia Mono", Consolas, monospace; background: var(--soft); border-radius: 3px; padding: 0 1.2mm; }
+  table { width: 100%; border-collapse: collapse; margin: 2mm 0 4mm; font-size: 9.8pt; break-inside: avoid; }
+  th { text-align: left; background: var(--accent); color: #fff; font-weight: 600; padding: 2mm 3mm; }
+  td { border-bottom: 1px solid var(--line); padding: 2mm 3mm; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7faf9; }
+  td.k { white-space: nowrap; font-weight: 600; width: 34mm; }
+  figure { margin: 3mm 0 5mm; break-inside: avoid; }
+  figure img { display: block; width: 100%; border: 1px solid var(--line); border-radius: 2.5mm; box-shadow: 0 1.5mm 4mm rgba(0,0,0,.08); }
+  figure.half img { width: 62%; margin: 0 auto; }
+  pre.term + pre.term { margin-top: 3mm; }
+  figure.phones { display: flex; gap: 6mm; justify-content: center; }
+  figure.phones div { width: 52mm; }
+  figure.phones img { border-radius: 5mm; border: 2.2mm solid #222; }
+  figcaption { font-size: 8.8pt; color: var(--muted); margin-top: 1.8mm; text-align: center; }
+  .note, .warn, .tip { border-radius: 2.5mm; padding: 3mm 4mm; margin: 3mm 0 4mm; break-inside: avoid; font-size: 10pt; }
+  .note { background: var(--soft); border-left: 1.4mm solid var(--accent); }
+  .tip { background: #eff8fe; border-left: 1.4mm solid var(--accent-2); }
+  .warn { background: var(--warn-soft); border-left: 1.4mm solid var(--warn); }
+  .note b:first-child, .tip b:first-child, .warn b:first-child { display: block; margin-bottom: .8mm; }
+  pre.term { background: var(--code); color: #c8f7dc; font: 8.2pt/1.35 "Cascadia Mono", Consolas, monospace; padding: 4mm; border-radius: 2.5mm;
+    white-space: pre; overflow: hidden; break-inside: avoid; margin: 2mm 0 4mm; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; }
+  .steps { counter-reset: s; list-style: none; padding: 0; }
+  .steps > li { counter-increment: s; position: relative; padding-left: 10mm; margin: 2.2mm 0; }
+  .steps > li::before { content: counter(s); position: absolute; left: 0; top: .2mm; width: 6.5mm; height: 6.5mm; border-radius: 50%;
+    background: var(--accent); color: #fff; font-weight: 700; font-size: 9pt; display: flex; align-items: center; justify-content: center; }
+  .pill { display: inline-block; font-size: 8.5pt; padding: 0 2mm; border-radius: 99px; border: 1px solid var(--line); }
+  .lost { background: var(--danger); color: #fff; border-color: var(--danger); font-weight: 700; }
+
+  /* omslag */
+  .cover { height: 297mm; width: 210mm; position: relative; overflow: hidden; color: #fff;
+    background: radial-gradient(circle at 80% 15%, #14a37a 0, transparent 45%), linear-gradient(160deg, #0b6e4f 0%, #073d2c 100%); }
+  .cover .in { position: absolute; left: 20mm; right: 20mm; top: 42mm; }
+  .cover h1 { color: #fff; font-size: 44pt; margin: 0; letter-spacing: -.5pt; }
+  .cover .sub { font-size: 16pt; margin-top: 4mm; color: #d5f5e8; }
+  .cover .meta { position: absolute; left: 20mm; bottom: 20mm; font-size: 10pt; color: #b9e6d4; line-height: 1.7; }
+  .cover .shot { position: absolute; left: 20mm; right: 20mm; top: 112mm; border-radius: 4mm; overflow: hidden; box-shadow: 0 6mm 18mm rgba(0,0,0,.35); }
+  .cover .shot img { display: block; width: 100%; }
+  .cover svg.mesh { position: absolute; right: -10mm; top: -10mm; width: 110mm; opacity: .18; }
+
+  /* inhoud */
+  .toc { break-before: page; }
+  .toc h2 { font-size: 21pt; margin: 0 0 6mm; }
+  .toc ol { list-style: none; padding: 0; columns: 1; }
+  .toc li { display: flex; gap: 3mm; padding: 2.2mm 0; border-bottom: 1px dotted var(--line); font-size: 11pt; }
+  .toc li span.n { color: var(--accent); font-weight: 700; width: 8mm; }
+  .toc li small { color: var(--muted); margin-left: auto; font-size: 9pt; }
+  .who { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; margin-top: 8mm; }
+  .who div { border: 1px solid var(--line); border-radius: 2.5mm; padding: 3.5mm; font-size: 9.5pt; }
+  .who b { display: block; color: var(--accent); margin-bottom: 1mm; }
+</style>
+</head>
+<body>
+
+<!-- ============================ OMSLAG ============================ -->
+<section class="cover">
+  <svg class="mesh" viewBox="0 0 200 200" fill="none" stroke="#fff" stroke-width="1.4">
+    <circle cx="40" cy="50" r="6"/><circle cx="120" cy="30" r="6"/><circle cx="170" cy="90" r="6"/><circle cx="90" cy="110" r="6"/>
+    <circle cx="40" cy="160" r="6"/><circle cx="140" cy="170" r="6"/>
+    <path d="M40 50L120 30L170 90L90 110L40 50M90 110L40 160L140 170L170 90M120 30L90 110L140 170"/>
+  </svg>
+  <div class="in">
+    <h1>MeshTrack</h1>
+    <div class="sub">Handleiding voor de tracker en de website</div>
+  </div>
+  <div class="shot"><img src="img/kaart.jpg" alt=""></div>
+  <div class="meta">
+    Website 1.0 · firmware 0.7 (T1000-E) · MeshCore v1.17.1<br>
+    Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
+  </div>
+</section>
+
+<!-- ============================ INHOUD ============================ -->
+<section class="toc">
+  <h2>Inhoud</h2>
+  <ol>
+    <li><span class="n">1</span> Wat is MeshTrack? <small>hoe het werkt</small></li>
+    <li><span class="n">2</span> De tracker <small>knop, biepjes, led, modi, SOS</small></li>
+    <li><span class="n">3</span> Wanneer stuurt hij een positie? <small>regels en statussen</small></li>
+    <li><span class="n">4</span> Inloggen en de kaart <small>computer en telefoon</small></li>
+    <li><span class="n">5</span> Logboek, zones en verloren trackers</li>
+    <li><span class="n">6</span> Meldingen via de mesh</li>
+    <li><span class="n">7</span> Trackers beheren <small>toevoegen, instellen via USB</small></li>
+    <li><span class="n">8</span> Firmware flashen <small>met behoud van de sleutel</small></li>
+    <li><span class="n">9</span> Nieuw toestel klaarmaken, sleutels en backups</li>
+    <li><span class="n">10</span> Gebruikers, rechten en instellingen <small>wie leest welk kanaal</small></li>
+    <li><span class="n">11</span> De offline-app <small>trackers volgen zonder internet</small></li>
+    <li><span class="n">12</span> Problemen oplossen</li>
+  </ol>
+  <div class="who">
+    <div><b>Iedereen</b>De tracker gebruiken (hoofdstuk 2 en 3), de kaart en het logboek lezen (4 en 5), de offline-app (11).</div>
+    <div><b>Operators</b>Trackers toevoegen en instellen, zones en meldingen (5 tot 7).</div>
+    <div><b>Beheerders</b>Firmware, sleutels en backups, gebruikers en systeeminstellingen (8 tot 10).</div>
+  </div>
+  <div class="note" style="margin-top:8mm"><b>Over de schermafbeeldingen</b>De schermen in deze handleiding komen van een
+    demo-installatie met virtuele trackers rond Hasselt. Daarom staat rechtsboven soms <em>mesh: niet verbonden</em>;
+    op de echte server staat daar de naam van de server-companion.</div>
+</section>
+
+<!-- ============================ 1 ============================ -->
+<h2 class="chap"><span class="nr">1</span>Wat is MeshTrack?</h2>
+<p class="lead">MeshTrack volgt trackers via het MeshCore-netwerk: een netwerk van radio's (LoRa) die berichten voor elkaar
+  doorgeven. Er is geen gsm-netwerk, geen simkaart en geen internet nodig.</p>
+<figure>
+  <svg viewBox="0 0 720 250" width="100%" font-family="Segoe UI, Arial" font-size="13">
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0b6e4f"/></marker>
+      <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0ea5e9"/></marker></defs>
+    <g fill="#eef6f2" stroke="#0b6e4f" stroke-width="1.6">
+      <rect x="10" y="40" width="130" height="80" rx="12"/><rect x="200" y="40" width="140" height="80" rx="12"/>
+      <rect x="400" y="40" width="140" height="80" rx="12"/><rect x="590" y="40" width="120" height="80" rx="12"/>
+    </g>
+    <rect x="400" y="160" width="310" height="70" rx="12" fill="#eff8fe" stroke="#0ea5e9" stroke-width="1.6"/>
+    <g text-anchor="middle" fill="#1c2321">
+      <text x="75" y="72" font-weight="700">Tracker</text><text x="75" y="92" fill="#5d6a66">T1000-E</text><text x="75" y="108" fill="#5d6a66">MeshTrack-firmware</text>
+      <text x="270" y="72" font-weight="700">Mesh</text><text x="270" y="92" fill="#5d6a66">repeaters geven</text><text x="270" y="108" fill="#5d6a66">het bericht door</text>
+      <text x="470" y="72" font-weight="700">Server</text><text x="470" y="92" fill="#5d6a66">companion luistert</text><text x="470" y="108" fill="#5d6a66">mee (openHop)</text>
+      <text x="650" y="72" font-weight="700">Browser</text><text x="650" y="92" fill="#5d6a66">kaart, logboek,</text><text x="650" y="108" fill="#5d6a66">beheer</text>
+      <text x="555" y="190" font-weight="700">Eigen companion + offline-app</text><text x="555" y="210" fill="#5d6a66">wie de kanaalsleutel heeft, kijkt mee zonder internet</text>
+    </g>
+    <g stroke="#0b6e4f" stroke-width="2" marker-end="url(#a)"><path d="M142 80H196"/><path d="M342 80H396"/><path d="M542 80H586"/></g>
+    <path d="M300 122V195H396" fill="none" stroke="#0ea5e9" stroke-width="2" marker-end="url(#b)"/>
+    <g font-size="11" fill="#0b6e4f" text-anchor="middle">
+      <text x="170" y="22">bericht op het</text><text x="170" y="35">trackingkanaal</text><text x="370" y="30">versleuteld (flood)</text><text x="565" y="30">live</text>
+    </g>
+    <path d="M396 140H150" stroke="#0b6e4f" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#a)"/>
+    <text x="225" y="155" font-size="11" fill="#0b6e4f" text-anchor="middle">meldingen (DM) naar personen</text>
+  </svg>
+</figure>
+<ul>
+  <li>De <strong>tracker</strong> stuurt zijn positie, snelheid, batterij en toestand als een versleuteld bericht op zijn
+    <strong>trackingkanaal</strong>, met zijn naam als afzender en controletekens die bewijzen dat het van hem komt.</li>
+  <li>De <strong>server</strong> luistert op dat kanaal mee, bewaart de posities en toont ze live op een kaart. Hij kan bij
+    gebeurtenissen (SOS, een zone binnenkomen, een verloren tracker die opduikt …) zelf een bericht via de mesh sturen.</li>
+  <li>Wie wat ziet, hangt af van de <strong>kanalen</strong>: een groep gebruikers mag een kanaal lezen op de kaart, en
+    eventueel ook de sleutel zien om het op een eigen companion te zetten (hoofdstuk 10).</li>
+  <li>Alles werkt <strong>offline</strong>: de kaart, de zoekfunctie en de simulator draaien op de server zelf.</li>
+</ul>
+<div class="tip"><b>Virtuele trackers</b>Naast echte trackers kent MeshTrack ook <em>virtuele</em> trackers (simulators). Die
+  rijden dag en nacht over echte wegen en zijn handig om te oefenen of om meldingsregels te testen. Hun berichten gaan
+  niet over de mesh.</div>
+
+<!-- ============================ 2 ============================ -->
+<h2 class="chap"><span class="nr">2</span>De tracker</h2>
+<div class="cols">
+  <div>
+    <p class="lead">De tracker is een Seeed <strong>T1000-E</strong>: zo groot als een bankkaart, met GPS, een
+      bewegingssensor, een buzzer, één knop en een led.</p>
+    <h3>Twee modi</h3>
+    <ul>
+      <li><strong>Tracker</strong>: Bluetooth staat uit en de radio slaapt tussen twee berichten. Hij stuurt alleen een
+        positie als hij beweegt. Zo gaat de batterij <em>weken</em> mee.</li>
+      <li><strong>Companion</strong>: een gewone MeshCore-companion die met de MeshCore-app verbindt. Aan USB-voeding is
+        hij <em>altijd</em> companion.</li>
+    </ul>
+  </div>
+  <figure style="margin-top:0">
+    <svg viewBox="0 0 360 260" width="100%" font-family="Segoe UI, Arial" font-size="12">
+      <rect x="105" y="20" width="150" height="220" rx="22" fill="#2b2f2e"/>
+      <rect x="115" y="30" width="130" height="200" rx="16" fill="#373c3a"/>
+      <text x="180" y="95" text-anchor="middle" fill="#9aa6a1" font-size="13" font-weight="700">T1000-E</text>
+      <circle cx="180" cy="165" r="17" fill="#4a504e" stroke="#7d8784" stroke-width="2"/>
+      <circle cx="205" cy="205" r="4.5" fill="#22c55e"/>
+      <circle cx="180" cy="40" r="5" fill="#222" stroke="#666"/>
+      <path d="M197 165H272" stroke="#0b6e4f" stroke-width="1.4"/>
+      <text x="276" y="160" fill="#1c2321" font-weight="700">knop</text>
+      <text x="276" y="175" fill="#5d6a66" font-size="10.5">klik, dubbel,</text><text x="276" y="188" fill="#5d6a66" font-size="10.5">vasthouden</text>
+      <path d="M210 205H272" stroke="#0b6e4f" stroke-width="1.4"/><text x="276" y="209" fill="#1c2321" font-weight="700">led</text>
+      <path d="M175 40H70" stroke="#0b6e4f" stroke-width="1.4"/><text x="64" y="44" fill="#5d6a66" font-size="10.5" text-anchor="end">lus</text>
+      <path d="M105 130H70" stroke="#0b6e4f" stroke-width="1.4"/>
+      <text x="64" y="122" fill="#5d6a66" font-size="10.5" text-anchor="end">laden:</text>
+      <text x="64" y="135" fill="#5d6a66" font-size="10.5" text-anchor="end">magneetkabel</text>
+      <text x="64" y="148" fill="#5d6a66" font-size="10.5" text-anchor="end">(achterkant)</text>
+    </svg>
+    <figcaption>Schematisch, niet op schaal.</figcaption>
+  </figure>
+</div>
+
+<h3>De knop en de biepjes</h3>
+<table>
+  <tr><th>Indrukken</th><th>Wat gebeurt er</th></tr>
+  <tr><td class="k">1 keer</td><td>Meteen een positie sturen. Na de modusbiep betekenen <strong>twee hoge biepjes</strong> dat het
+    bericht op het kanaal verstuurd is, en <strong>één lage toon</strong> dat het niet kon (geen trackingkanaal). Of de server
+    het ontving, zie je op de kaart: een kanaalbericht krijgt geen bevestiging. Hooguit één keer per 10 s.</td></tr>
+  <tr><td class="k">2 keer</td><td>Van modus wisselen: <strong>één biep</strong> = tracker, <strong>twee biepjes</strong> = companion.
+    Je hebt tot 0,8 s tussen de twee klikken.</td></tr>
+  <tr><td class="k">3 keer</td><td>De buzzer aan- of uitzetten.</td></tr>
+  <tr><td class="k">2 tot 8 s vasthouden</td><td><strong>SOS.</strong> Na 2 s klinken drie hoge biepjes: de SOS is gewapend.
+    Laat los en hij stuurt meteen een SOS met zijn positie, en daarna nog twee keer met een verse positie, telkens een minuut
+    later. Na 6,5 s klinkt een lage waarschuwingstoon: blijf je vasthouden, dan schakelt hij uit in plaats van een SOS te sturen.</td></tr>
+  <tr><td class="k">langer dan 8 s</td><td>Uitschakelen. Weer aanzetten: de knop enkele seconden inhouden, of aan USB hangen.</td></tr>
+</table>
+<p>Automatisch verstuurde posities maken nooit geluid.</p>
+<div class="warn"><b>SOS oefenen</b>Een SOS gaat echt over de mesh en kan meldingen naar anderen sturen. Spreek af wanneer je oefent,
+  of oefen met een virtuele tracker.</div>
+
+<h3>De led</h3>
+<p>De groene led flitst kort om de 4 seconden zolang de firmware draait. Een langere flits (een halve tel) betekent dat er
+  ongelezen berichten wachten voor de MeshCore-app. In <strong>trackermodus</strong> blijft de led standaard uit: dat
+  spaart stroom.</p>
+
+<h3>Opladen</h3>
+<p>Hang de tracker aan de magnetische laadkabel. Hij meldt meteen aan de server dat hij aan de lader hangt (en later dat hij
+  eraf gehaald is). Aan USB is hij altijd companion; haal je hem eraf, dan gaat hij terug naar de modus die je laatst koos.</p>
+
+<!-- ============================ 3 ============================ -->
+<h2 class="chap"><span class="nr">3</span>Wanneer stuurt hij een positie?</h2>
+<p class="lead">Zolang hij beweegt, stuurt hij een positie zodra aan één van deze regels voldaan is, maar nooit vaker dan
+  <em>nooit vaker dan 1× per</em> toelaat.</p>
+<table>
+  <tr><th>Regel</th><th>Wanneer</th><th>Standaard</th></tr>
+  <tr><td class="k">Afstand</td><td>Verder verplaatst dan de <em>minimale verplaatsing</em> en sneller dan de <em>minimumsnelheid</em> (0 = ook wandelen).</td><td>100 m, 10 km/u</td></tr>
+  <tr><td class="k">Bocht</td><td>Richting meer gedraaid dan <em>scherpe bocht vanaf</em>, en sneller dan <em>bochten pas boven</em>.</td><td>30°, 5 km/u</td></tr>
+  <tr><td class="k">Ritme</td><td>In beweging hoe dan ook minstens één positie per <em>in beweging minstens 1× per</em>.</td><td>10 min</td></tr>
+  <tr><td class="k">Stilstand</td><td>Langer stil dan <em>slapen na stilstand van</em>: laatste positie, daarna slapen.</td><td>5 min</td></tr>
+  <tr><td class="k">Heartbeat</td><td>In rust een teken van leven.</td><td>12 uur</td></tr>
+</table>
+<p>Een bewegingssensor maakt hem weer wakker; de eerste positie daarna heet <em>wakker door beweging</em>. Elk bericht gaat
+  één keer via het kanaal de mesh in, zonder bevestiging; gaat er een verloren, dan reizen de bewaarde punten mee met het volgende.</p>
+
+<h3>Meerdere punten per bericht</h3>
+<p>In beweging bewaart de tracker elke 15 s een punt (instelbaar). Elk bericht neemt zoveel bewaarde punten mee als erin passen,
+  elk met zijn eigen tijd. Je stelt dus in hoe vaak hij verstuurt en hoe vaak hij een punt neemt: een fijn spoor met weinig
+  berichten. De punten komen chronologisch op de kaart; gaat een bericht verloren, dan reizen ze mee met het volgende.</p>
+
+<div class="note"><b>Het juiste tijdstip</b>Elk bericht bevat de GPS-tijd van de fix. Een positie staat dus op het moment
+  dat de tracker daar was, ook als een punt pas met een later bericht meekwam. Bij 120 km/u maakt dat al snel
+  honderden meters verschil.</div>
+
+<h3>Statussen</h3>
+<table>
+  <tr><th>Code</th><th>Op de website</th><th>Betekenis</th></tr>
+  <tr><td class="k">M</td><td>positie (beweging)</td><td>Positie terwijl hij beweegt.</td></tr>
+  <tr><td class="k">W</td><td>wakker door beweging</td><td>Eerste positie na een rustperiode.</td></tr>
+  <tr><td class="k">S</td><td>stilgevallen</td><td>Laatste positie voor hij gaat slapen.</td></tr>
+  <tr><td class="k">H</td><td>heartbeat</td><td>Teken van leven in rust.</td></tr>
+  <tr><td class="k">N</td><td>geen GPS-fix</td><td>Geen positie gevonden; wel batterij en modus.</td></tr>
+  <tr><td class="k">P</td><td>handmatig verstuurd</td><td>Met één klik op de knop.</td></tr>
+  <tr><td class="k">E</td><td>SOS</td><td>Noodoproep met de knop.</td></tr>
+  <tr><td class="k">B</td><td>moduswissel</td><td>Van modus gewisseld, of aan of van de lader.</td></tr>
+</table>
+
+<!-- ============================ 4 ============================ -->
+<h2 class="chap"><span class="nr">4</span>Inloggen en de kaart</h2>
+<div class="cols">
+  <div>
+    <p class="lead">Open de website van je organisatie (bv. <code>meshtrack.meshmanager.net</code>) en log in met je
+      gebruikersnaam en wachtwoord.</p>
+    <p>Wie een <strong>deellink</strong> kreeg, ziet de kaart zonder in te loggen, maar alleen de gedeelde trackers en zolang
+      de link geldig is. Rechtsboven staat dan een knop <em>Inloggen</em>.</p>
+    <p>Klik rechtsboven op je <strong>initiaal</strong> om je wachtwoord te wijzigen of een thema te kiezen. Je voorkeuren
+      (thema, favorieten, filters) bewaart de server, zodat ze op elk toestel gelden.</p>
+  </div>
+  <figure style="margin-top:0"><img src="img/login.jpg" alt=""><figcaption>Het aanmeldscherm.</figcaption></figure>
+</div>
+
+<h3>De kaart</h3>
+<figure><img src="img/kaart.jpg" alt=""><figcaption>De kaart met de lijst links. Een rode rand en het label VERLOREN tonen een verloren tracker.</figcaption></figure>
+<ul>
+  <li>In de <strong>lijst</strong> zoek je op naam. Onder <em>Filter en zichtbaarheid</em> toon je alleen favorieten (☆),
+    echte of virtuele trackers. Met het vinkje bepaal je of een tracker op de kaart staat.</li>
+  <li>Onder <em>Spoor en kleur</em> zet je het <strong>spoor</strong> aan en kies je hoe ver het teruggaat (1 uur tot
+    7 dagen), in de kleur van de tracker of volgens de snelheid.</li>
+  <li>Een <strong>SOS</strong> staat als rode cirkel met <span class="pill" style="background:#dc2626;color:#fff;border-color:#dc2626;font-weight:700">SOS</span>
+    op de plek van de noodoproep (voor de periode van het spoor, of de laatste 24 uur). Klik erop voor de tracker en het tijdstip.</li>
+  <li>Het <strong>pijltje</strong> op een marker toont de rijrichting; een <strong>grijze</strong> marker heeft al lang niets
+    gestuurd.</li>
+  <li>Onder <em>Meshnodes op de kaart</em> toon je repeaters, rooms en companions die de server hoorde.</li>
+</ul>
+<figure><img src="img/kaart-tracker.jpg" alt=""><figcaption>Een tracker gekozen: details in de popup, afstand en snelheden in de lijst, export als GPX of CSV, en <em>centreren en volgen</em>.</figcaption></figure>
+<p>Met <em>centreren en volgen</em> blijft de tracker in het midden bij elke nieuwe positie. Zelf de kaart verslepen of de
+  knop <em>volgen stoppen</em> bovenaan beëindigt dat.</p>
+
+<h3>Op een telefoon</h3>
+<figure class="phones">
+  <div><img src="img/gsm-kaart.jpg" alt=""><figcaption>De lijst in een onderpaneel.</figcaption></div>
+  <div><img src="img/gsm-tracker.jpg" alt=""><figcaption>Een tracker gekozen.</figcaption></div>
+  <div><img src="img/gsm-beheer.jpg" alt=""><figcaption>Trackers op de telefoon.</figcaption></div>
+</figure>
+<p>Op een telefoon staat de lijst in een <strong>onderpaneel</strong>. Sleep het streepje omhoog of omlaag om het groter of
+  kleiner te maken, of helemaal naar beneden om het te verbergen. <em>☰ Lijst</em> haalt het terug.</p>
+
+<h3>Thema's</h3>
+<figure class="half"><img src="img/kaart-donker.jpg" alt=""><figcaption>Het donkere thema; er zijn er zes, of volg de instelling van je toestel.</figcaption></figure>
+
+<!-- ============================ 5 ============================ -->
+<h2 class="chap"><span class="nr">5</span>Logboek, zones en verloren trackers</h2>
+<h3>Het logboek</h3>
+<figure><img src="img/logboek.jpg" alt=""><figcaption>Het logboek met filters op tracker, soort, periode en tekst.</figcaption></figure>
+<p>Het logboek toont alle gebeurtenissen per tracker. <em>alleen bijzondere</em> verbergt de gewone posities, <em>CSV</em>
+  downloadt wat je ziet en <em>kaart</em> springt naar de plek van die gebeurtenis. Met <em>live bijwerken</em> komen nieuwe
+  gebeurtenissen er vanzelf bij.</p>
+
+<h3>Zones</h3>
+<figure><img src="img/zones.jpg" alt=""><figcaption>Het tabblad Zones: een cirkel rond het ziekenhuis en een polygoon rond de kazerne.</figcaption></figure>
+<p>Teken in het tabblad <em>Zones</em> een <strong>cirkel</strong> of een <strong>polygoon</strong> op de kaart. Een zone meldt
+  wanneer een tracker binnenkomt of vertrekt. Zonder het recht om gedeelde zones te beheren maak je een <em>eigen zone</em>,
+  die alleen jij ziet.</p>
+
+<h3>Verloren trackers</h3>
+<div class="cols">
+  <div>
+    <p>Is een tracker zoek, open hem dan in <em>Trackers</em> en zet <strong>Verloren</strong> aan. Hij krijgt een rode
+      markering <span class="pill lost">VERLOREN</span> op de kaart en in de lijsten.</p>
+    <p>Komt er daarna nog een bericht van hem binnen:</p>
+    <ul>
+      <li>gaat er een melding naar elke regel met <em>verloren tracker gezien</em>, met de positie;</li>
+      <li>verschijnt een melding op de kaart en een regel in het logboek;</li>
+      <li><strong>blijft hij verloren</strong>, zodat je ook de volgende berichten opvolgt. Pas als je <em>Verloren</em>
+        uitzet, is hij weer gewoon.</li>
+    </ul>
+  </div>
+  <div class="tip" style="align-self:start"><b>Vooraf instellen</b>Maak onder <em>Systeem</em> → <em>Meldingsregels</em> een
+    regel met <em>verloren tracker gezien</em> en de juiste ontvangers. Een cooldown van bv. 30 minuten voorkomt een DM bij
+    elk bericht.</div>
+</div>
+
+<!-- ============================ 6 ============================ -->
+<h2 class="chap"><span class="nr">6</span>Meldingen via de mesh</h2>
+<p class="lead">De server kan bij gebeurtenissen zelf een bericht (DM) via de mesh sturen, bv. naar de gsm van de wachtdienst
+  (via de MeshCore-app) of naar een andere companion.</p>
+<figure><img src="img/systeem.jpg" alt=""><figcaption>Systeem → Meldingsregels.</figcaption></figure>
+<ul>
+  <li>Voor de trackers kies je alle trackers, <strong>kanalen</strong> (dan geldt de regel ook voor trackers die later
+    op dat kanaal sturen) en/of losse trackers. Een eigen regel meldt alleen trackers die je zelf mag zien.</li>
+  <li>Een regel kiest <strong>gebeurtenissen</strong> (SOS, batterij onder 20 %, wakker door beweging, zone binnen of buiten,
+    aan of van de lader, te lang stil, verloren tracker gezien …), <strong>trackers</strong> (of alle) en
+    <strong>ontvangers</strong>.</li>
+  <li>Ontvangers kies je uit de contacten van de companion, of je plakt hun pubkey.</li>
+  <li>De <strong>cooldown</strong> voorkomt dat dezelfde tracker met dezelfde gebeurtenis te vaak een melding geeft.</li>
+  <li>Met <em>Test</em> stuur je meteen een proefbericht. Onder <em>Verzonden meldingen</em> zie je wat er weg ging en of
+    het aankwam.</li>
+</ul>
+<p>Meldingen gaan na elkaar weg, met een pauze ertussen, zodat de mesh niet overbelast raakt. Persoonlijke regels (met het
+  recht <em>Eigen meldingsregels</em>) gelden voor je eigen zones.</p>
+
+<!-- ============================ 7 ============================ -->
+<h2 class="chap"><span class="nr">7</span>Trackers beheren</h2>
+<figure><img src="img/beheer.jpg" alt=""><figcaption>Trackers: zoeken, filteren, met het trackingkanaal van elke tracker.</figcaption></figure>
+<p>De pagina <em>Trackers</em> heeft twee tabbladen: <em>Trackers</em> en <em>Genegeerde berichten</em> (met een teller als er
+  iets is). Alles met een USB-kabel staat op een aparte pagina, <em>Toestellen</em>.</p>
+<h3>Een tracker toevoegen</h3>
+<p>Klik op <em>+ Tracker</em>. Er opent een paneel met de tabbladen <em>Algemeen</em> (naam, kleur, icoon, trackingkanaal, notities),
+  <em>Toestel</em> of <em>Simulator</em>, en bij het bewerken <em>Gegevens</em> (posities opruimen, tracker verwijderen).
+  Voor een echte tracker zijn er twee manieren:</p>
+<ul>
+  <li><strong>Bestaand toestel</strong>: vul de <em>public key</em> in. Die vind je via USB (de knop <em>In MeshTrack zetten</em>), in
+    de contacten van de companion of in de MeshCore-app. Een onbekende tracker uit <em>Genegeerde berichten</em> voeg je toe met
+    <em>Als tracker toevoegen</em>.</li>
+  <li><strong>Nieuw toestel</strong>: zet <em>Nieuw toestel: de server maakt de sleutel en de instellingen</em> aan (zie hoofdstuk 9).</li>
+</ul>
+<p>Het <strong>trackingkanaal</strong> bepaalt wie de tracker ziet; zonder kanaal zien alleen beheerders hem. Stuurt een echte
+  tracker op een ander kanaal van de server, dan volgt MeshTrack dat vanzelf. Bij het bewerken ruim je ook opgeslagen posities op.</p>
+
+<h3>Instellen via USB</h3>
+<p>Ga naar <em>Toestellen</em>, steek de tracker met een USB-kabel in de computer en klik op <em>Verbinden</em>. Dat werkt in
+  <strong>Chrome of Edge</strong> op een computer of Android-toestel. Bovenaan zie je welk toestel verbonden is; daaronder staan
+  de tabbladen <em>Instellingen</em>, <em>Firmware</em>, <em>Klaarmaken &amp; backups</em> en <em>Terminal</em>.</p>
+<p>In <em>Instellingen</em> staan eerst de <strong>naam</strong> van de tracker (zo heet hij in de mesh en als afzender van
+  zijn kanaalberichten), de modus, het <strong>trackingkanaal</strong> en de belangrijkste instellingen. Een <em>voorinstelling</em> (te voet, fiets, voertuig,
+  spaarzaam) vult ze in één klik in; de rest staat achter <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de
+  tracker</em> schrijf je ze weg.</p>
+<p>Met een terminalprogramma (115200 baud) opent meteen een genummerd menu. Losse commando's (<code>status</code>,
+  <code>set …</code>, <code>mode tracker</code>, <code>help</code>) werken altijd.</p>
+<div>
+<pre class="term">  ==============================================================
+   MeshTrack T1000-E  fw 0.7.0       HOOFDMENU
+  ==============================================================
+   T1000-E Ploeg 3  |  modus companion (USB)  |  batterij 99%
+   tracker slaapt  |  GPS zoekt  |  laatste zending: OK
+  ==============================================================
+   1  Status (alles)
+   2  Modus en knop
+   3  Wanneer een positie sturen
+   4  Ritme
+   5  Stilstand en heartbeat
+   6  GPS en verzending
+   7  Nu een positie sturen
+   8  Onderhoud
+
+   0  Menu sluiten
+
+   Keuze: _</pre>
+<pre class="term">  ==============================================================
+   MeshTrack T1000-E  fw 0.7.0       MODUS EN KNOP
+  ==============================================================
+   Op batterij nu gekozen: companion.
+   Met USB altijd companion.
+
+   1  Kies tracker   (BLE uit, radio slaapt)
+   2  Kies companion (MeshCore-app)
+   3  Ook posities sturen als companion ... aan
+
+   4  Statusled ............ alleen als companion
+
+   Knop: 1x = positie nu, 2x = modus wisselen,
+         3x = buzzer aan/uit,
+         2-8 s vasthouden = SOS, langer = uit.
+
+   0  Terug</pre>
+</div>
+
+<!-- ============================ 8 ============================ -->
+<h2 class="chap"><span class="nr">8</span>Firmware flashen</h2>
+<p class="lead">In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je flasht ze
+  rechtstreeks vanuit de browser, zonder extra programma's.</p>
+<figure><img src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: backup, bootloader, flashen en de controle van de sleutel.</figcaption></figure>
+<ol class="steps">
+  <li>Verbind de tracker (<em>Verbinden</em>) en klik op <em>Flashen via de browser</em>.</li>
+  <li>Eerst komt er een <strong>backup</strong>: de volledige opslag (<code>.bin</code>) en de sleutel met de instellingen
+    (<code>.json</code>). Mag je sleutels beheren, dan gaat die ook naar de server. Lukt de backup niet, dan wordt er niets geflasht.</li>
+  <li>De tracker springt naar de <strong>bootloader</strong>. De eerste keer vraagt de browser om die poort te kiezen; daarna gaat het vanzelf.</li>
+  <li>De nieuwe firmware wordt geschreven. Dat duurt ongeveer een minuut: <strong>niet loskoppelen</strong>.</li>
+  <li>De pagina verbindt opnieuw en controleert of de <strong>pubkey nog dezelfde</strong> is. Is dat niet zo, dan verschijnt
+    een knop om de sleutel en de instellingen terug te zetten.</li>
+</ol>
+<div class="note"><b>Wat blijft er staan?</b>Alleen de app wordt vervangen. De sleutel (de identiteit van de tracker), de
+  contacten, de kanalen, de regio en alle instellingen blijven behouden.</div>
+<p>Liever zonder browser? Download het <em>DFU-pakket (.zip)</em> voor <code>adafruit-nrfutil</code>, of het <em>UF2</em>-bestand:
+  dubbelklik op de resetknop zodat er een USB-station verschijnt en sleep het bestand erop.</p>
+
+<!-- ============================ 9 ============================ -->
+<h2 class="chap"><span class="nr">9</span>Nieuw toestel klaarmaken, sleutels en backups</h2>
+<p class="lead">Een nieuwe tracker hoef je niet met de hand in te stellen: de server maakt de sleutel en zet alles in één keer
+  op het toestel.</p>
+<div class="cols">
+  <figure style="margin-top:0"><img src="img/nieuw-toestel.jpg" alt=""><figcaption>Een nieuwe tracker met een sleutel van de server.</figcaption></figure>
+  <ol class="steps">
+    <li>Klik in <em>Trackers</em> op <em>+ Tracker</em>, geef een naam, kies het <em>trackingkanaal</em> en zet onder
+      <em>Toestel</em> <em>Nieuw toestel</em> aan. De server maakt een sleutelpaar.</li>
+    <li>Verbind het nieuwe toestel met USB. Staat er nog geen MeshTrack 0.7 of nieuwer op, flash dan eerst (hoofdstuk 8).</li>
+    <li>Kies bij <em>Toestel klaarmaken of terugzetten</em> de nieuwe tracker en klik op <em>Op dit toestel zetten</em>.
+      Het toestel herstart en de pagina controleert de pubkey.</li>
+    <li>Kies in <em>Instellingen</em> het <em>trackingkanaal</em> en klik op <em>Opslaan op de tracker</em>. Klaar.</li>
+  </ol>
+</div>
+<p>Het toestel krijgt de <strong>sleutel</strong>, zijn <strong>naam</strong>, de <strong>radio</strong>-instellingen, de
+  <strong>regio</strong>, <strong>2 bytes per hop</strong> en het kanaal <em>Public</em>, en start in trackermodus; het
+  trackingkanaal zet je in de laatste stap. Had het al een andere sleutel, dan wordt die eerst als backup gedownload.</p>
+<div class="note"><b>Altijd 2 bytes per hop</b>MeshTrack gebruikt in het pad altijd minstens 2 bytes per repeater. Met 1 byte
+  botsen de korte id's van repeaters te vaak in een druk net. De firmware zet 1 byte bij het opstarten zelf om naar 2.</div>
+
+<h3>Sleutels en backups op de server</h3>
+<figure class="half"><img src="img/tracker-sleutels.jpg" alt=""><figcaption>Een tracker bewerken: Verloren, en het blok Sleutel en backups op de server.</figcaption></figure>
+<ul>
+  <li><em>Backup naar de server</em> (Toestellen → Klaarmaken &amp; backups) leest het verbonden toestel uit en bewaart het bij de juiste tracker.</li>
+  <li><em>Backup downloaden (.json)</em> geeft hetzelfde als bestand, in het formaat van de MeshCore-app;
+    <em>Volledige opslag downloaden (.bin)</em> geeft een ruwe kopie van alles, ook de contacten.</li>
+  <li><em>Export uit de MeshCore-app importeren</em> bewaart een bestand dat de app maakte.</li>
+  <li><em>Op verbonden toestel zetten</em> zet een backup terug, bv. op een vervangtoestel. Contacten worden niet
+    teruggezet; die leert het toestel opnieuw uit de adverts.</li>
+</ul>
+<div class="warn"><b>Een backup bevat de privésleutel</b>Wie de privésleutel heeft, kan zich voordoen als die tracker. De
+  server bewaart backups versleuteld en houdt in het auditlog bij wie er een ophaalt, terugzet of verwijdert. Geef het recht
+  <em>Sleutels en backups</em> alleen aan wie het echt nodig heeft, en bewaar gedownloade bestanden veilig.</div>
+
+<h3>Het trackingkanaal</h3>
+<p>Een tracker stuurt zijn posities op <strong>één kanaal</strong>. Kies je in Toestellen → Instellingen bij <em>Trackingkanaal</em>
+  een kanaal van de server, dan zet de pagina het kanaal (met sleutel en regio) en de authsleutel op de tracker. De server
+  luistert mee op de kanalen onder <em>Systeem</em> → <em>Kanalen</em>. Als afzender staat de naam van de tracker, zodat je
+  hem herkent in de MeshCore-app en in analyzers.</p>
+<div class="note"><b>Controletekens</b>Op een kanaal kan iedereen met de sleutel berichten sturen. Daarom zet de tracker in elk
+  kanaalbericht 8 controletekens, berekend uit zijn authsleutel. De server rekent ze na en weigert valse berichten. Je hoeft
+  ze nergens in te geven; enkel de authsleutel gaat (automatisch) via USB naar de tracker.</div>
+<div class="warn"><b>Oudere firmware</b>Tot firmware 0.6 kon een tracker ook via DM naar de server sturen. Dat leest de server
+  niet meer: zo'n tracker verschijnt bij <em>Genegeerde berichten</em> met <em>oude firmware</em>. Flash hem naar 0.7 of nieuwer
+  en kies een trackingkanaal.</div>
+
+<!-- ============================ 10 ============================ -->
+<h2 class="chap"><span class="nr">10</span>Gebruikers, rechten en instellingen</h2>
+<figure><img src="img/gebruikers.jpg" alt=""><figcaption>Gebruikers en groepen.</figcaption></figure>
+<p>Elke gebruiker zit in één of meer <strong>groepen</strong>. Een groep bepaalt de <strong>rechten</strong>, welke
+  <strong>trackers</strong> zichtbaar zijn en hoe ver je <strong>terug in de tijd</strong> kijkt. Zit je in meerdere groepen,
+  dan krijg je de som: alle rechten en trackers samen, en de ruimste terugblik. Standaard zijn er vier groepen:</p>
+<table>
+  <tr><th>Groep</th><th>Wat mag het</th></tr>
+  <tr><td class="k">Beheerders</td><td>Alles, ook gebruikers, systeeminstellingen, sleutels en backups.</td></tr>
+  <tr><td class="k">Operators</td><td>Dagelijks werk: trackers, zones, simulators, meldingen en deellinks. Geen sleutels.</td></tr>
+  <tr><td class="k">Kijkers</td><td>Meekijken met de lijst, de sporen en het logboek (7 dagen terug), niets wijzigen.</td></tr>
+  <tr><td class="k">Kiosk</td><td>Alleen de kaart, schermvullend, bv. op een groot scherm in de post.</td></tr>
+</table>
+<h3>Kanalen: wie ziet welke trackers</h3>
+<figure>
+  <svg viewBox="0 0 720 200" width="100%" font-family="Segoe UI, Arial" font-size="12.5">
+    <defs><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5d6a66"/></marker></defs>
+    <g text-anchor="middle" font-weight="700" fill="#5d6a66" font-size="11"><text x="80" y="16">GEBRUIKERS</text><text x="270" y="16">GROEPEN</text><text x="480" y="16">KANALEN</text><text x="650" y="16">TRACKERS</text></g>
+    <g fill="#fff" stroke="#dfe5e2" stroke-width="1.4">
+      <rect x="20" y="40" width="120" height="40" rx="8"/><rect x="20" y="120" width="120" height="40" rx="8"/>
+      <rect x="200" y="40" width="140" height="40" rx="8"/><rect x="200" y="120" width="140" height="40" rx="8"/>
+      <rect x="420" y="40" width="120" height="40" rx="8"/><rect x="420" y="120" width="120" height="40" rx="8"/>
+      <rect x="600" y="30" width="100" height="28" rx="6"/><rect x="600" y="66" width="100" height="28" rx="6"/>
+      <rect x="600" y="110" width="100" height="28" rx="6"/><rect x="600" y="146" width="100" height="28" rx="6"/>
+    </g>
+    <g text-anchor="middle" fill="#1c2321">
+      <text x="80" y="65">Els</text><text x="80" y="145">Jan</text>
+      <text x="270" y="65">Ambulancedienst</text><text x="270" y="145">Fietsbegeleiding</text>
+      <text x="480" y="65" font-weight="700">#ambu</text><text x="480" y="145" font-weight="700">#fiets</text>
+      <text x="650" y="49">Ziekenwagen 1</text><text x="650" y="85">Ziekenwagen 2</text><text x="650" y="129">Fietser A</text><text x="650" y="165">Fietser B</text>
+    </g>
+    <g stroke="#5d6a66" stroke-width="1.5" fill="none" marker-end="url(#c)">
+      <path d="M140 60H196"/><path d="M140 64L196 136"/><path d="M140 140H196"/>
+      <path d="M540 55L596 44"/><path d="M540 65L596 80"/><path d="M540 135L596 124"/><path d="M540 145L596 160"/>
+    </g>
+    <path d="M340 60H416" stroke="#0b6e4f" stroke-width="3" marker-end="url(#c)"/>
+    <path d="M340 140H416" stroke="#0ea5e9" stroke-width="3" marker-end="url(#c)"/>
+    <rect x="348" y="44" width="60" height="18" rx="9" fill="#0b6e4f"/><text x="378" y="57" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">sleutel</text>
+    <rect x="352" y="124" width="52" height="18" rx="9" fill="#0ea5e9"/><text x="378" y="137" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">kaart</text>
+    <text x="360" y="190" text-anchor="middle" fill="#5d6a66" font-size="11">Els ziet de trackers van #ambu en #fiets en kan #ambu op haar eigen companion zetten; Jan ziet alleen #fiets.</text>
+  </svg>
+</figure>
+<p>Elke tracker stuurt op één kanaal. In <em>Gebruikers</em> → <em>Groepen en rechten</em> kies je bij een groep per kanaal een niveau:</p>
+<table>
+  <tr><th>Niveau</th><th>Wat de groep krijgt</th></tr>
+  <tr><td class="k">geen</td><td>Niets van dit kanaal.</td></tr>
+  <tr><td class="k">kaart</td><td>De trackers van dit kanaal op de kaart, in het logboek, in exports en in meldingsregels.</td></tr>
+  <tr><td class="k">sleutel</td><td>Alles van <em>kaart</em>, plus de naam, de sleutel en de QR-code van het kanaal (pagina <em>Kanalen</em>
+    en <em>Toestellen</em>), om het op een eigen companion te zetten, bv. voor de offline-app.</td></tr>
+</table>
+<div class="cols">
+  <figure style="margin-top:0"><img src="img/kanaal-rechten.jpg" alt=""><figcaption>Een groep met sleutel op #ambu-demo en kaart op #fiets-demo.</figcaption></figure>
+  <div>
+    <p>Met <em>Alle kanalen</em> ziet een groep alle trackers op kaartniveau, ook van kanalen die later bijkomen; daarnaast
+      kun je nog losse trackers geven. Zit een gebruiker in meerdere groepen, dan krijgt hij per kanaal het hoogste niveau.</p>
+    <p>Stuurt een tracker later op een ander kanaal, dan volgen de rechten meteen, ook op een kaart die al open staat.</p>
+  </div>
+</div>
+<div class="warn"><b>Waarom per kanaal</b>Een kanaal is ook buiten MeshTrack te lezen door iedereen met de sleutel, bv. in de
+  MeshCore-app of de offline-app. De sleutel bepaalt dus wie echt kan meekijken. Wil je ploegen van elkaar afschermen, geef dan
+  elke ploeg een eigen kanaal en geef alleen wie het mag het niveau <em>sleutel</em>.</div>
+<div class="cols">
+  <figure style="margin-top:0"><img src="img/kaart-kanaalfilter.jpg" alt=""><figcaption>Meerdere kanalen samen op de kaart; met de keuzelijst kies je er één.</figcaption></figure>
+  <figure class="phones" style="margin-top:0"><div><img src="img/kanalen-gsm.jpg" alt=""><figcaption>Kanalen: sleutel en QR-code om te scannen.</figcaption></div></figure>
+</div>
+<p>Onder <em>Kanalen</em> in het menu ziet elke gebruiker de kanalen die hij mag lezen, met een link naar de kaart van dat
+  kanaal. Bij niveau <em>sleutel</em> toont <em>Sleutel en QR-code</em> de code om te scannen met de MeshCore-app of de offline-app.</p>
+
+<h3>Effectieve rechten controleren</h3>
+<div class="cols">
+  <figure style="margin-top:0"><img src="img/effectieve-rechten.jpg" alt=""><figcaption>Effectieve rechten: elk recht, elk kanaal en elke tracker met zijn herkomst.</figcaption></figure>
+  <p>Klik bij een gebruiker op <em>Effectieve rechten</em> om te zien wat de gebruiker écht mag en ziet: de rechten met de groep
+    waar ze vandaan komen, per kanaal het niveau, de zichtbare trackers met de reden (een kanaal, alle kanalen of een losse
+    tracker), wat niet zichtbaar is, en de terugblik. Zo ga je na of een nieuwe gebruiker alleen ziet wat de bedoeling is.</p>
+</div>
+
+<p>Met <strong>deellinks</strong> toon je de trackers van gekozen kanalen of losse trackers aan iemand zonder account, tot de link verloopt. Je kunt een link altijd
+  intrekken.</p>
+<h3>Systeeminstellingen</h3>
+<figure><img src="img/systeem-instellingen.jpg" alt=""><figcaption>Systeem → Instellingen, met onderaan de standaardwaarden voor nieuwe trackers.</figcaption></figure>
+<p>Hier stel je de pauze en het aantal pogingen voor meldingen in, de bewaartermijn van posities, wanneer een tracker grijs
+  wordt en de <strong>standaardwaarden voor nieuwe trackers</strong>: frequentie, bandbreedte, spreading factor, coding rate,
+  zendvermogen, bytes per hop, regio en het kanaal Public.</p>
+
+<!-- ============================ 11 ============================ -->
+<h2 class="chap"><span class="nr">11</span>De offline-app</h2>
+<p>Met de <strong>offline-app</strong> volg je trackers zonder internet en zonder de server, bijvoorbeeld op een
+  terrein zonder bereik. Je hebt er geen account voor nodig en de app gebruikt niets uit de database van MeshTrack: van
+  de server komen alleen de kaarten. Wie de sleutel van het kanaal kent, ziet de trackers op dat kanaal. Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus,
+  of een andere companion die op het kanaal van de trackers meeluistert. De companion ontcijfert de kanaalberichten; de
+  app leest ze, bewaart ze op de telefoon en tekent de sporen op een kaart die op de telefoon staat.</p>
+<div class="note"><b>De sleutel van het kanaal</b>De companion moet het trackingkanaal kennen. Mag je het kanaal lezen met het
+  niveau <em>sleutel</em>, dan vind je de QR-code in MeshTrack onder <em>Kanalen</em> (hoofdstuk 10).</div>
+<figure class="phones">
+  <div><img src="img/offline-gsm.jpg" alt=""><figcaption>Een rit, met elk punt van 10 seconden.</figcaption></div>
+  <div><img src="img/offline-kanalen.jpg" alt=""><figcaption>Een kanaal op de companion zetten.</figcaption></div>
+  <div><img src="img/offline-kaarten.jpg" alt=""><figcaption>Kaarten op de telefoon.</figcaption></div>
+</figure>
+<div class="cols">
+  <div>
+    <h3>Vooraf, met internet</h3>
+    <ol>
+      <li>Open <em>/offline</em> in Chrome (in het menu van de site: <em>Offline</em>).</li>
+      <li>Kies in het menu van Chrome <em>App installeren</em> of <em>Toevoegen aan startscherm</em>.</li>
+      <li>Download bij <em>Kaarten</em> een of meer kaarten die passen bij de opslag van je telefoon. Ze staan samen
+        op de kaart, de gedetailleerde bovenop.</li>
+    </ol>
+  </div>
+  <table>
+    <tr><th>Kaart</th><th>Grootte</th></tr>
+    <tr><td>Limburg, alle straten</td><td>84 MB</td></tr>
+    <tr><td>België, tot op straatniveau</td><td>286 MB</td></tr>
+    <tr><td>Benelux, overzicht / de meeste straten</td><td>44 / 276 MB</td></tr>
+    <tr><td>Frankrijk, overzicht / de meeste straten</td><td>216 MB / 1,1 GB</td></tr>
+    <tr><td>Duitsland, overzicht / de meeste straten</td><td>157 / 884 MB</td></tr>
+  </table>
+</div>
+<h3>Het kanaal op de companion</h3>
+<p>De companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: scan de QR-code (uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies een foto van een QR-code, of vul naam en
+  sleutel in. Bij een #kanaal mag de sleutel leeg blijven.</p>
+<h3>Onderweg</h3>
+<p>Tik bij <em>Verbinding</em> op <em>Verbinden</em> en kies de companion (pincode van een MeshTrack-tracker: 123456).
+  De app haalt eerst alle wachtende berichten op en daarna elk nieuw bericht zodra het binnenkomt.</p>
+<p>Bij <em>Trackers</em> kies je in de keuzelijst <em>Kanaal</em> een van de kanalen die op de companion staan; de
+  kaart en de lijst tonen dan alleen de trackers van dat kanaal. Staat het kanaal er niet bij, kies dan
+  <em>+ Kanaal toevoegen…</em>: je komt bij <em>Kanalen</em>, waar je het toevoegt met naam en sleutel, een QR-scan of een foto.</p>
+<p>De namen van de trackers komen uit de contacten van de companion; een tracker die de companion (nog) niet kent,
+  staat er met het begin van zijn sleutel. De controletekens in de berichten kan alleen de server nakijken. Verbind je met een tracker in companionmodus (firmware 0.6.2 of nieuwer), dan zie je ook zijn eigen posities,
+  gemarkeerd als <em>eigen</em>.</p>
+<div class="cols">
+  <div>
+    <h3>Chat en herhalingen</h3>
+    <p>De app houdt de trackerberichten apart. Al de rest op de kanalen van de companion, en privéberichten aan de
+      companion, staat in de <em>Chat</em>: de knop linksonder op de kaart, met het aantal nieuwe berichten. Kies een
+      kanaal om zelf een bericht te sturen.</p>
+    <p>Onder elk verstuurd bericht staat hoe vaak het via een repeater gehoord is en via welke, bijvoorbeeld
+      <em>2× gehoord via e3d3, 51f0</em>. Bij een tracker in companionmodus zie je dat ook bij zijn eigen posities.</p>
+    <p>Wat je verstuurt, gaat met de regio (scope) uit <em>Verbinding</em>, standaard <strong>be</strong>. Is de
+      companion de tracker zelf, dan geldt die regio ook voor zijn posities zolang de app verbonden is.</p>
+  </div>
+  <figure class="phones" style="margin-top:0"><div><img src="img/offline-chat.jpg" alt=""><figcaption>De chat, met de herhalingen van een verstuurd bericht.</figcaption></div></figure>
+</div>
+<p>Alles blijft op de telefoon tot je het bij <em>Gegevens</em> wist; daar exporteer je de posities ook als CSV.
+  Bluetooth werkt in Chrome op Android en op een computer, niet op een iPhone.</p>
+
+<!-- ============================ 12 ============================ -->
+<h2 class="chap"><span class="nr">12</span>Problemen oplossen</h2>
+<table>
+  <tr><th>Probleem</th><th>Wat te doen</th></tr>
+  <tr><td class="k">mesh: niet verbonden</td><td>De companion op de server is niet bereikbaar, of een ander programma is ermee verbonden
+    (er kan maar één verbinding tegelijk). Verwittig de beheerder.</td></tr>
+  <tr><td class="k">Tracker verschijnt niet</td><td>Kijk in <em>Trackers</em> → <em>Genegeerde berichten</em>. Klopt de pubkey? Heeft hij
+    een trackingkanaal dat de server kent, en de juiste authsleutel? Staat er <em>oude firmware</em>, flash dan naar 0.7. Ziet een
+    beheerder hem wel en een gebruiker niet, kijk dan naar diens <em>Effectieve rechten</em>.</td></tr>
+  <tr><td class="k">Lage toon na een klik</td><td>De tracker heeft geen (geldig) trackingkanaal. Kies er een in Toestellen → Instellingen.</td></tr>
+  <tr><td class="k">Dubbelklik: één biep</td><td>Hij zag maar één klik. Druk twee keer kort en duidelijk, met hooguit 0,8 s ertussen.</td></tr>
+  <tr><td class="k">Geen GPS-fix (N)</td><td>Binnen of onder een dak vindt hij moeilijk satellieten. Leg hem even buiten met de bovenkant naar
+    de hemel.</td></tr>
+  <tr><td class="k">De kaart blijft leeg</td><td>Herlaad de pagina met Ctrl+F5.</td></tr>
+  <tr><td class="k">Verbinden via USB lukt niet</td><td>Gebruik Chrome of Edge (geen Firefox of Safari), via https of localhost. Sluit
+    andere programma's die de poort gebruiken (terminal, MeshCore-app op de pc).</td></tr>
+  <tr><td class="k">Flashen blijft hangen</td><td>Trek de USB-kabel uit en steek hem terug in; de oude firmware start weer. Probeer opnieuw
+    en kies de bootloader-poort als de browser erom vraagt.</td></tr>
+  <tr><td class="k">"Firmware kan geen sleutel ontvangen"</td><td>Flash eerst de nieuwste firmware; klaarmaken kan pas vanaf 0.3.1.</td></tr>
+  <tr><td class="k">Andere pubkey na flashen</td><td>Klik op <em>Sleutel en instellingen terugzetten</em>, of zet de backup terug via
+    <em>Op verbonden toestel zetten</em>.</td></tr>
+</table>
+<div class="tip"><b>Meer hulp</b>De website heeft een helppagina met dezelfde uitleg (menu <em>Help</em>). Vragen over de mesh zelf
+  (repeaters, regio's) stel je aan je mesh-beheerder.</div>
+
+</body>
+</html>

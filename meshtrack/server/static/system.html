@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – systeem</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin">
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav></nav>
+  <span class="spacer"></span>
+</header>
+<main class="page">
+  <div class="tabs pagetabs" role="tablist">
+    <button class="tab on" data-tab="rules">Meldingsregels</button>
+    <button class="tab" data-tab="sent">Verzonden meldingen</button>
+    <button class="tab" data-tab="channels">Kanalen</button>
+    <button class="tab" data-tab="settings">Instellingen</button>
+    <button class="tab" data-tab="companion">Companion</button>
+  </div>
+
+  <section class="card pane" id="pane-rules">
+    <div class="cardhead"><h2>Meldingsregels</h2><button class="primary" id="r-new">+ Regel</button></div>
+    <p class="muted">Bij een gekozen gebeurtenis stuurt de server een DM via de mesh naar de ontvangers. DM's gaan na
+      elkaar weg met een pauze ertussen (zie Instellingen), zodat de mesh niet overbelast raakt.</p>
+    <form id="r-form" class="subform" hidden>
+      <input type="hidden" id="r-id">
+      <div class="grid">
+        <div><label for="r-name">Naam</label><input id="r-name" maxlength="60" required placeholder="bv. SOS en beweging naar de post"></div>
+        <div><label for="r-cool">Niet vaker dan (per tracker en gebeurtenis)</label>
+          <select id="r-cool"><option value="0">altijd</option><option value="300">elke 5 min</option><option value="900" selected>elke 15 min</option>
+            <option value="3600">elk uur</option><option value="21600">elke 6 uur</option><option value="86400">eens per dag</option></select></div>
+      </div>
+      <fieldset><legend>Bij deze gebeurtenissen</legend><div id="r-events" class="typegrid"></div></fieldset>
+      <fieldset><legend>Voor deze trackers</legend>
+        <label class="switch block"><input type="checkbox" id="r-alltr" checked><span></span> Alle trackers</label>
+        <div id="r-trwrap" hidden>
+          <label>Kanalen <span class="muted small">(ook trackers die later op het kanaal sturen)</span></label>
+          <div id="r-chans" class="permgrid"></div>
+          <label>Losse trackers</label>
+          <div id="r-trackers" class="permgrid"></div>
+        </div></fieldset>
+      <fieldset><legend>Naar deze ontvangers</legend>
+        <div id="r-rcpts" class="rcpts"></div>
+        <div class="row">
+          <select id="r-contact" style="flex:1;min-width:200px"><option value="">– kies uit de contacten van de companion –</option></select>
+          <button type="button" id="r-add">Toevoegen</button>
+        </div>
+        <div class="row"><input id="r-pk" class="mono" placeholder="of plak een pubkey (64 hex)" maxlength="64" style="flex:1;min-width:200px">
+          <input id="r-pkname" placeholder="naam" maxlength="40" style="width:160px"><button type="button" id="r-addpk">Toevoegen</button></div>
+      </fieldset>
+      <label class="switch block" id="r-personal-wrap"><input type="checkbox" id="r-personal"><span></span> Eigen regel (alleen ik beheer hem)</label>
+      <label class="switch block"><input type="checkbox" id="r-active" checked><span></span> Actief</label>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="r-cancel">Annuleren</button></div>
+      <div id="r-msg" class="msg"></div>
+    </form>
+    <div id="rules" class="tlist"></div>
+  </section>
+
+  <section class="card pane" id="pane-sent" hidden>
+    <div class="cardhead"><h2>Verzonden meldingen</h2><span class="muted small" id="q"></span></div>
+    <div id="sent"></div>
+  </section>
+
+  <section class="card pane" id="pane-channels" hidden>
+    <div class="cardhead"><h2>Kanalen</h2><button class="primary" id="c-new">+ Kanaal</button></div>
+    <p class="muted">Trackers sturen hun posities op één kanaal (hun trackingkanaal). De server luistert mee op de
+      kanalen hieronder; MeshTrack zet ze zelf op de server-companion. Wie een kanaal mag lezen (Gebruikers → Groepen:
+      <em>kaart</em> of <em>sleutel</em>), ziet de trackers ervan; met <em>sleutel</em> ook de QR-code om het kanaal op een
+      eigen companion te zetten. Een kanaalbericht wordt door het hele net geflood en krijgt geen bevestiging.</p>
+    <form id="c-form" class="subform" hidden>
+      <input type="hidden" id="c-id">
+      <div class="grid">
+        <div><label for="c-name">Naam</label><input id="c-name" maxlength="31" required placeholder="bv. #ploeg3 of Ploeg 3">
+          <div class="help">Een naam die met # begint, krijgt zijn sleutel uit de naam (zoals in de MeshCore-app).</div></div>
+        <div><label for="c-secret">Sleutel (32 hex)</label><input id="c-secret" class="mono" maxlength="32" spellcheck="false" placeholder="leeg bij een #kanaal">
+          <div class="row" style="margin:4px 0 0"><button type="button" id="c-gen">Willekeurige sleutel</button></div></div>
+        <div><label for="c-region">Regio (scope)</label><input id="c-region" maxlength="30" value="be" placeholder="bv. be; leeg = geen">
+          <div class="help">Een tracker die op dit kanaal stuurt, krijgt deze regio voor zijn floods.</div></div>
+        <div><label for="c-slot">Kanaalnummer op de server-companion</label><input id="c-slot" type="number" min="0" max="39" value="8">
+          <div class="help" id="c-slots"></div></div>
+      </div>
+      <label class="switch block"><input type="checkbox" id="c-sig" checked><span></span> Alleen ondertekende berichten aanvaarden</label>
+      <div class="help">Op een kanaal kan iedereen met de sleutel berichten sturen, en de afzender is gewone tekst. Met ondertekening
+        (een authsleutel per tracker, via USB gezet) worden valse posities geweigerd. Zet dit alleen uit voor een kanaal waarvan
+        enkel jouw eigen trackers de sleutel kennen.</div>
+      <label class="switch block"><input type="checkbox" id="c-active" checked><span></span> Actief (meeluisteren)</label>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="c-cancel">Annuleren</button></div>
+      <div id="c-msg" class="msg"></div>
+    </form>
+    <div id="c-qr" class="subform" hidden></div>
+    <div id="channels" class="tlist"></div>
+  </section>
+
+  <section class="card pane" id="pane-settings" hidden>
+    <div class="cardhead"><h2>Systeeminstellingen</h2></div>
+    <form id="set-form"><div id="settings"></div>
+      <div class="row"><button class="primary" type="submit">Opslaan</button></div>
+      <div id="set-msg" class="msg"></div></form>
+  </section>
+  <section class="card pane" id="pane-companion" hidden>
+    <div class="cardhead"><h2>Server-companion</h2></div>
+    <div class="row" style="align-items:flex-start">
+      <div id="qr" class="qrbox"></div>
+      <div style="flex:1;min-width:220px">
+        <div><strong id="cmp-name">–</strong></div>
+        <div class="mono muted" id="cmp-key">niet verbonden</div>
+        <p class="muted">Scan met de MeshCore-app om deze server als contact toe te voegen. Een MeshTrack-tracker heeft dit niet
+          nodig: die maakt het contact zelf aan uit zijn doel.</p>
+        <button id="cmp-copy" disabled>Pubkey kopiëren</button>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/static/vendor/qrcode.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/system.js"></script>
+</body>
+</html>

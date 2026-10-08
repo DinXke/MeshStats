@@ -1,0 +1,23 @@
+# MeshTrack-serverconfig. Kopieer naar /etc/meshtrack/config.yaml.
+mesh:
+  host: 127.0.0.1        # openHop-companion (frame protocol over TCP)
+  port: 5051
+  keepalive_s: 600       # openHop verbreekt na 8 u zonder verkeer van de client
+http:
+  host: 0.0.0.0
+  port: 8090
+db_path: /var/lib/meshtrack/meshtrack.sqlite3
+tiles_dir: /var/lib/meshtrack/tiles   # basemap.pmtiles + fonts/ + sprites/
+auth:
+  user: admin
+  password_hash: ""      # python -m meshtrack.auth
+  session_secret: ""     # idem
+  keystore_secret: ""    # versleutelt privésleutels en backups; leeg = afgeleid van session_secret
+  session_days: 30
+map:
+  center: [5.33, 50.93]  # lon, lat
+  zoom: 10
+region_bbox: [2.0, 49.0, 7.8, 54.0]   # posities daarbuiten = verdacht
+max_hdop: 5.0
+stale_after_s: 90000     # grijs na 25 u stilte
+retention_days: 90

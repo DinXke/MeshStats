@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – kanalen</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin">
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav></nav>
+  <span class="spacer"></span>
+</header>
+<main class="page">
+  <section class="card">
+    <div class="cardhead"><h2>Mijn kanalen</h2></div>
+    <p class="muted">Trackers sturen hun posities op een kanaal. Hier staan de kanalen die jij mag lezen. Bij
+      <strong>kaart</strong> zie je de trackers ervan op de kaart; bij <strong>sleutel</strong> krijg je ook de naam, de
+      sleutel en een QR-code om het kanaal op je eigen companion te zetten, bv. om onderweg zonder internet mee te kijken met
+      de <a href="/offline">offline-app</a>.</p>
+    <div id="chans" class="tlist"></div>
+  </section>
+</main>
+<script src="/static/icons.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/vendor/qrcode.js"></script>
+<script src="/static/kanalen.js"></script>
+</body>
+</html>

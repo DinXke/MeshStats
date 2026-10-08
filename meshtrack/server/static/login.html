@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – inloggen</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="loginbox">
+  <h1>MeshTrack</h1>
+  <form id="f" class="card">
+    <label for="u">Gebruiker</label>
+    <input id="u" autocomplete="username" value="admin" required>
+    <label for="p">Wachtwoord</label>
+    <input id="p" type="password" autocomplete="current-password" required autofocus>
+    <div class="row"><button class="primary" type="submit">Inloggen</button></div>
+    <div id="m" class="msg err"></div>
+  </form>
+</div>
+<script src="/static/login.js"></script>
+</body>
+</html>

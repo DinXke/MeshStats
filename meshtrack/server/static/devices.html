@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – toestellen</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin">
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav></nav>
+  <span class="spacer"></span>
+  <span id="mesh" class="pill">mesh …</span>
+</header>
+<main class="page wide">
+
+  <!-- verbinding -->
+  <section class="card">
+    <div class="connbar">
+      <div class="devinfo" id="s-info"><strong>Geen toestel verbonden.</strong>
+        <div class="muted small" id="serial-note">Steek de tracker met een USB-kabel in deze computer en klik op Verbinden.
+          Werkt in Chrome of Edge op een computer (of Android), via https of localhost.</div></div>
+      <span id="s-state" class="pill">niet verbonden</span>
+      <button class="primary" id="s-connect">Verbinden</button>
+      <button id="s-disconnect" hidden>Loskoppelen</button>
+      <a id="s-use" class="btnlink" hidden>In MeshTrack zetten</a>
+    </div>
+    <div id="dfu" class="dfu" hidden>
+      <ol id="dfu-steps"></ol>
+      <div class="bar"><span id="dfu-bar"></span></div>
+      <div id="dfu-act" class="row"></div>
+      <div id="dfu-msg" class="msg"></div>
+    </div>
+  </section>
+
+  <div class="tabs pagetabs" id="dtabs">
+    <button class="tab" data-tab="settings">Instellingen</button>
+    <button class="tab" data-tab="fw">Firmware <span class="badge" id="fw-badge" hidden>nieuw</span></button>
+    <button class="tab" data-tab="prov">Klaarmaken &amp; backups</button>
+    <button class="tab" data-tab="term">Terminal</button>
+  </div>
+
+  <!-- instellingen -->
+  <section class="card pane" id="pane-settings">
+    <div class="empty" id="s-none">Verbind eerst een toestel. Daarna verschijnen hier zijn instellingen.</div>
+    <div id="s-panel" hidden>
+      <form id="s-form">
+        <div class="presets">
+          <span class="small muted">Voorinstelling:</span>
+          <div class="seg" id="s-presets" role="group" aria-label="Voorinstelling">
+            <button type="button" data-p="walk">Te voet</button><button type="button" data-p="bike">Fiets</button>
+            <button type="button" data-p="car">Voertuig</button><button type="button" data-p="save">Spaarzaam</button>
+          </div>
+          <span class="help">vult de velden in; daarna nog <em>Opslaan op de tracker</em>.</span>
+        </div>
+        <div class="twocol">
+          <fieldset>
+            <legend>Naam</legend>
+            <label for="s-name">Naam van de tracker</label>
+            <input id="s-name" data-set="name" data-kv="naam" data-spaces="1" maxlength="31" autocomplete="off">
+            <div class="help">Zo heet hij in de mesh, in MeshCore-apps en als afzender van zijn kanaalberichten (firmware
+              0.6.3 of nieuwer). Een korte naam laat meer ruimte voor extra punten in een bericht.</div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Modus</legend>
+            <div class="seg wide" id="s-mode" role="radiogroup" aria-label="Modus op batterij">
+              <button type="button" data-v="tracker">Tracker</button><button type="button" data-v="companion">Companion</button>
+            </div>
+            <div class="help">Met USB-voeding is hij altijd companion. Dubbelklik op de knop wisselt ook.</div>
+            <label class="switch block"><input type="checkbox" data-set="track_in_companion" data-kind="bool"><span></span> Ook posities sturen als companion</label>
+            <label for="s-msgbeep">Biep bij berichten (companion zonder app)</label>
+            <select id="s-msgbeep" data-set="msg_beep"><option value="prive">alleen privéberichten</option>
+              <option value="alles">alle berichten (ook posities van andere trackers)</option><option value="uit">nooit</option></select>
+          </fieldset>
+
+          <fieldset>
+            <legend>Verzenden</legend>
+            <label for="s-via">Trackingkanaal</label>
+            <select id="s-via"></select>
+            <div class="help">De tracker stuurt zijn posities op dit ene kanaal, met zijn naam als afzender. Kies je een kanaal
+              van de server, dan zet de pagina het kanaal met zijn sleutel, de regio en de authsleutel zelf op de tracker.
+              Het kanaal staat daarna ook in de MeshCore-app als je de tracker als companion gebruikt. Een kanaalbericht
+              krijgt geen bevestiging en wordt door het hele net geflood.</div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Wanneer een positie sturen</legend>
+            <div class="grid">
+              <div><label>Minimum snelheid</label><div class="unit"><input data-set="min_speed" type="number" min="0" max="300"><span>km/u</span></div>
+                <div class="help">0 = altijd, ook wandelen</div></div>
+              <div><label>Minimum verplaatsing</label><div class="unit"><input data-set="min_dist" type="number" min="0" max="50000"><span>m</span></div></div>
+              <div><label>Scherpe bocht vanaf</label><div class="unit"><input data-set="turn_min" type="number" min="0" max="180"><span>°</span></div>
+                <div class="help">0 = bochten negeren</div></div>
+              <div><label>Bochten pas boven</label><div class="unit"><input data-set="turn_min_speed" type="number" min="0" max="300"><span>km/u</span></div></div>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Ritme</legend>
+            <div class="grid">
+              <div><label>Nooit vaker dan 1× per</label><div class="dur" data-set="min_interval"></div></div>
+              <div><label>In beweging minstens 1× per</label><div class="dur" data-set="max_interval" data-off="1"></div></div>
+              <div><label>Punt bewaren elke</label><div class="dur" data-set="sample" data-off="1"></div>
+                <div class="help">In beweging; elk bericht neemt zoveel bewaarde punten mee als erin passen.</div></div>
+            </div>
+          </fieldset>
+        </div>
+
+        <label class="switch block advtoggle"><input type="checkbox" id="s-adv"><span></span> Geavanceerde instellingen tonen</label>
+        <div class="twocol" id="s-advanced" hidden>
+          <fieldset>
+            <legend>Stilstand en rust</legend>
+            <div class="grid">
+              <div><label>Slapen na stilstand van</label><div class="dur" data-set="still_timeout"></div></div>
+              <div><label>Teken van leven (heartbeat) elke</label><div class="dur" data-set="heartbeat" data-off="1"></div></div>
+              <div><label>Bewegingsgevoeligheid</label>
+                <select data-set="accel_sens"><option value="laag">laag</option><option value="midden">midden</option><option value="hoog">hoog</option></select></div>
+              <div><label>Statusled</label>
+                <select data-set="led"><option value="companion">alleen als companion</option><option value="altijd">altijd</option><option value="uit">nooit</option></select>
+                <div class="help">In trackermodus spaart een uitgeschakelde led stroom.</div></div>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>GPS</legend>
+            <div class="grid">
+              <div><label>GPS-fix zoeken max.</label><div class="dur" data-set="fix_timeout"></div></div>
+              <div><label>…bij heartbeat of klik max.</label><div class="dur" data-set="fix_timeout_hb"></div></div>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Authsleutel (kanalen)</legend>
+            <div class="small" id="s-authstate">Authsleutel: …</div>
+            <button type="button" id="s-auth">Authsleutel van de server zetten</button>
+            <div class="help">Ondertekent kanaalberichten, zodat niemand anders posities voor deze tracker kan versturen. Bij
+              een kanaal van de server gebeurt dit vanzelf.</div>
+          </fieldset>
+        </div>
+
+        <div class="row sticky-actions">
+          <button class="primary" type="submit">Opslaan op de tracker</button>
+          <button type="button" id="s-reload">Opnieuw lezen</button>
+          <button type="button" id="s-defaults">Standaardwaarden</button>
+        </div>
+        <div id="s-msg" class="msg"></div>
+      </form>
+    </div>
+  </section>
+
+  <!-- firmware -->
+  <section class="card pane" id="pane-fw" hidden>
+    <div class="fwhead"><strong>Firmware</strong> <span id="fw-ver" class="pill">…</span> <span id="fw-dev" class="small muted"></span></div>
+    <details><summary class="small">Wat is nieuw in deze versie</summary><div class="muted small" id="fw-notes"></div></details>
+    <div class="row">
+      <button id="fw-flash" class="primary" disabled>Flashen via de browser</button>
+      <a id="fw-zip" class="btnlink" download hidden>DFU-pakket (.zip)</a>
+      <a id="fw-uf2" class="btnlink" download hidden>UF2 (slepen naar het USB-station)</a>
+    </div>
+    <div class="help" id="fw-why"></div>
+    <div class="help">Flashen vervangt alleen de app. Sleutel, contacten, kanalen en instellingen blijven. Eerst wordt een
+      backup gedownload; na afloop controleert de pagina of de pubkey nog dezelfde is. De voortgang zie je bovenaan.</div>
+  </section>
+
+  <!-- klaarmaken en backups -->
+  <section class="card pane" id="pane-prov" hidden>
+    <div class="empty" id="prov-none">Verbind eerst een toestel om het klaar te maken of er een backup van te nemen.</div>
+    <div id="prov" hidden>
+      <div id="prov-pending" class="note" hidden></div>
+      <h3>Toestel klaarmaken of terugzetten</h3>
+      <div class="row">
+        <select id="prov-t" style="flex:1;min-width:200px" aria-label="Tracker"></select>
+        <button id="prov-go" class="primary">Op dit toestel zetten</button>
+      </div>
+      <div class="help">Zet de sleutel van de server, de naam, de radio, de regio, 2-byte paden, de kanalen en het doel op het
+        verbonden toestel. Een andere sleutel op het toestel wordt eerst als backup gedownload.</div>
+      <h3>Backup</h3>
+      <div class="row">
+        <button id="bk-server">Backup naar de server</button>
+        <button id="bk-json">Backup downloaden (.json)</button>
+        <button id="bk-bin">Volledige opslag downloaden (.bin)</button>
+      </div>
+      <div class="help">De backups op de server zie je bij de tracker in <a href="/admin">Trackers</a> (tabblad Toestel).</div>
+      <div id="prov-msg" class="msg"></div>
+    </div>
+  </section>
+
+  <!-- terminal -->
+  <section class="card pane" id="pane-term" hidden>
+    <div class="row">
+      <input id="s-cmd" placeholder="commando, bv. help" style="flex:1" aria-label="Commando">
+      <button id="s-send">Stuur</button>
+    </div>
+    <pre class="log" id="s-log"></pre>
+  </section>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/serial.js"></script>
+<script src="/static/dfu.js"></script>
+<script src="/static/device.js"></script>
+</body>
+</html>

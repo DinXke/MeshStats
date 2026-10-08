@@ -1,0 +1,12 @@
+tiles/
+*.pmtiles
+*.bin
+*.uf2
+backup/
+__pycache__/
+.venv/
+*.sqlite3
+config.yaml
+local/
+server/static/firmware/*.zip
+server/static/firmware/*.uf2
