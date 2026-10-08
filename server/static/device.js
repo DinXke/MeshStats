@@ -351,6 +351,9 @@
       }
       step(4, "done", before && before.pubkey ? `v${st.fw}, sleutel ongewijzigd (${st.pubkey.slice(0, 8)}…)` : `v${st.fw || "?"}`);
       say($("dfu-msg"), `Klaar: firmware v${st.fw || r.version}${before && before.pubkey ? ", sleutel en instellingen behouden" : ""}.`, true);
+      // De status opnieuw lezen: tijdens het herstarten kan een statusvraag mislukt zijn, en dan dachten de
+      // andere tabbladen (back-up, klaarmaken) dat er geen MeshTrack-toestel verbonden was.
+      try { await MTDev.readStatus(); } catch (_) { /* de knop Vernieuwen bovenaan doet hetzelfde */ }
     } catch (e) {
       say($("dfu-msg"), e.message, false);
       const i = stepEls.findIndex((li) => li.className === "busy");
