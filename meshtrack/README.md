@@ -1,61 +1,63 @@
 # MeshTrack
 
 APRS-achtige tracking via MeshCore, volledig offline. Trackers (Seeed T1000-E met eigen firmware) sturen hun
-positie als versleutelde DM naar een companion die openHop host. De MeshTrack-server toont ze live op een kaart.
+positie op een versleuteld MeshCore-kanaal. De MeshTrack-server luistert mee via een companion die openHop host en
+toont de trackers live op een kaart; wie de kanaalsleutel heeft, kan ook zonder server meekijken met de offline-app.
 
 ```
-T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ (kaart, beheer, simulator)
+T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  server/ (kaart, beheer, simulator)
+                                             \-->  eigen companion  --Bluetooth-->  /offline (PWA, zonder internet)
 ```
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.6.2).
-  - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus, één klik stuurt meteen een
-    positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.7.0).
+  - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
+    één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
+  - Verzenden alleen via één **trackingkanaal** (`chan`), met de naam van de tracker als afzender en een handtekening
+    met de authsleutel (`authkey`). Sinds 0.7.0 geen DM, geen doel (server-pubkey), geen ACK-herhalingen en geen ritme
+    volgens de ontvangst meer: een kanaalbericht krijgt geen bevestiging.
   - Bewegingsregels (snelheid, afstand, bochten, ritme), stilstand en heartbeat, wakker worden via de
-    bewegingssensor, ACK met herhaalpogingen, radio en led uit in trackermodus.
-  - Ritme volgens de ontvangst (0.4.0): na een snelle ACK vaker zenden, na herhaalde missers trager; in het snelle ritme geen herhaalpogingen voor gewone posities
-    (`fast_retries`), en een gewone positie wijkt altijd voor een verse; zelfde logica
-    als `server/meshtrack/rules.py`, die ook de simulator gebruikt.
+    bewegingssensor, radio en led uit in trackermodus. Zelfde regels als `server/meshtrack/rules.py` (simulator).
+  - In beweging elke `sample` seconden een punt bewaren; elk bericht neemt zoveel punten mee als erin passen.
+  - In companionmodus komt een kopie van elke eigen positie in de berichtenwachtrij, zodat een app via Bluetooth ook
+    de eigen posities ziet (een companion hoort zijn eigen kanaalberichten anders niet).
   - Genummerd serieel menu en `backup` van de opslag. De sleutel, contacten, kanalen en regio's blijven bij elke
-    app-only flash behouden.
-  - In companionmodus komt een kopie van elke eigen positie in de berichtenwachtrij (0.6.2), zodat een app via
-    Bluetooth ook de eigen posities ziet; een companion hoort zijn eigen kanaalberichten anders niet.
-  - Klaarmaken via USB: `key import/export`, `chan list/set`, `set name|radio|tx|path_bytes|scope`. Paden altijd
-    2 bytes per hop (1 byte wordt bij het opstarten 2).
-- **server/**: FastAPI + meshcore-py.
-  - Live kaart met MapLibre en eigen pmtiles (geen externe diensten), filters, favorieten, volgen, sporen per
-    snelheid, meshnodes uit de observer-database van openHop.
-  - Gebruikers, groepen en rechten, deellinks, auditlog, logboek met filters, GPX/CSV-export.
-  - Trackergroepen (een tracker in meerdere groepen) en gebruikers in meerdere groepen: rechten en zichtbare
-    trackers worden opgeteld; een groep ziet trackergroepen en/of losse trackers. Een trackergroep kan andere groepen
-    (bv. kanaalgroepen) omvatten, zodat meerdere kanalen samen op één kaart staan. De live-updates bepalen de rechten
-    per bericht opnieuw, zodat wijzigingen meteen gelden. Per gebruiker toont *Effectieve rechten* elk recht en elke
-    zichtbare tracker met de herkomst (`/api/users/{id}/effective`).
-  - Zones (gedeeld of persoonlijk) en meldingsregels die DM's via de mesh sturen, met een wachtrij.
+    app-only flash behouden; de opgeslagen instellingen houden hetzelfde formaat (oude velden blijven ongebruikt staan).
+  - Klaarmaken via USB: `key import/export`, `chan list/set`, `set name|radio|tx|path_bytes|scope|chan|authkey`.
+    Paden altijd 2 bytes per hop.
+- **server/**: FastAPI + meshcore-py (versie 1.0.0).
+  - Live kaart met MapLibre en eigen pmtiles (geen externe diensten), filters (ook per kanaal, `?kanaal=<id>`),
+    favorieten, volgen, sporen per snelheid, meshnodes uit de observer-database van openHop.
+  - **Rechten via kanalen**: elke tracker heeft één trackingkanaal (`trackers.channel_id`, ook bijgewerkt uit zijn
+    laatste geldige bericht). Gebruikers zitten in een of meer groepen; een groep krijgt per kanaal het niveau
+    `kaart` (de trackers van dat kanaal zien) of `sleutel` (ook naam, sleutel en QR-code), of "alle kanalen". Rechten
+    en zichtbare trackers worden opgeteld; *Effectieve rechten* toont per recht, kanaal en tracker de herkomst
+    (`/api/users/{id}/effective`). Beheerders (`system.manage`) hebben `sleutel` op alles.
+  - Pagina *Kanalen* (`/kanalen`, `/api/channels/mine`): de kanalen die je mag lezen; bij `sleutel` met QR-code
+    (`meshcore://channel/add`) om het kanaal op een eigen companion te zetten.
+  - Gebruikers, groepen, deellinks (kanalen of losse trackers, nooit meer dan de maker ziet), auditlog, logboek met
+    filters, GPX/CSV-export.
+  - Zones (gedeeld of persoonlijk) en meldingsregels (per kanaal of tracker) die DM's via de mesh naar personen
+    sturen, met een wachtrij. Dat zijn de enige DM's die de server nog gebruikt.
   - Simulator: virtuele trackers rijden 24/7 over echte wegen (offline routering over de wegenlaag van de
-    kaarttegels), met een historiek in versnelde tijd. Profielen auto, fiets, voet en reiziger.
-  - Pagina's: Kaart, Logboek, Trackers (lijst met zoeken en filters, trackergroepen, genegeerde berichten; formulieren
-    in een zijpaneel), Toestellen (alles via USB: instellingen met voorinstellingen, firmware, klaarmaken en backups,
-    terminal), Gebruikers, Systeem (meldingen, kanalen, instellingen, companion-QR), Help. Toegankelijke tabbladen,
-    menuknop op gsm, eigen bevestigingsvensters.
-  - Instellen van een tracker via Web Serial, helppagina in de site, zes thema's.
+    kaarttegels), met een historiek in versnelde tijd. Profielen auto, fiets, voet en reiziger; ook zij krijgen een kanaal.
+  - Pagina's: Kaart, Logboek, Kanalen, Trackers (lijst met zoeken, filters en kanaal, genegeerde berichten; formulieren
+    in een zijpaneel), Toestellen (alles via USB: naam, trackingkanaal, instellingen met voorinstellingen, firmware,
+    klaarmaken en backups, terminal), Gebruikers, Systeem (meldingen, kanalen, instellingen, companion-QR), Offline, Help.
   - Firmware flashen in de browser (Web Serial-DFU, `static/dfu.js`): eerst een backup, alleen de app, daarna
     controle van de pubkey.
-  - Nieuw toestel klaarmaken: de server maakt het sleutelpaar en zet sleutel, naam, radio, regio, kanalen en doel
-    via USB op het toestel. Backups (met privésleutel, formaat van de MeshCore-app) staan versleuteld (AES-GCM) op
-    de server; recht `keys.manage`.
-  - Offline-app `/offline` (PWA, 0.9.0): verbindt via Web Bluetooth met een MeshCore-companion, haalt de
-    kanaalberichten op die de companion ontcijferde (ook die nog in de wachtrij staan), leest `T1C|…` volledig
-    offline (met de extra punten), bewaart alles in IndexedDB en tekent sporen zoals de online kaart. Kaarten (Limburg, België, Benelux, Frankrijk,
-    Duitsland) worden als pmtiles-bestand in de opslag van de browser (OPFS) gezet en samen getoond (per bestand een bron,
-    van grof naar gedetailleerd gestapeld). Werkt volledig zonder account
-    en gebruikt niets uit de database (0.9.2; kanaalkeuze uit de kanalen van de companion): van de server komen alleen kaarten, lettertypes en sprites (openbaar);
-    namen komen uit de contacten van de companion (`CMD_GET_CONTACTS`), de controletekens kijkt alleen de server na. Chat (0.9.1):
-    alle andere kanaal- en privéberichten in een venster, zelf sturen op een kanaal met instelbare scope (standaard
-    `be`, `CMD_SET_FLOOD_SCOPE_KEY`), herhalingen van eigen berichten en eigen trackerposities geteld via de ruwe
-    ontvangstlog (push 0x88: eerste AES-ECB-blok van het eigen pakket vergelijken); een service worker bewaart de
-    app, lettertypes en sprites. Kanalen toevoegen via QR (camera of foto) of met naam en sleutel.
+  - Nieuw toestel klaarmaken: de server maakt het sleutelpaar en zet sleutel, naam, radio, regio en kanalen via USB op
+    het toestel. Backups (met privésleutel, formaat van de MeshCore-app) staan versleuteld (AES-GCM) op de server;
+    recht `keys.manage`.
+  - Offline-app `/offline` (PWA): verbindt via Web Bluetooth met een MeshCore-companion, haalt de kanaalberichten op
+    die de companion ontcijferde, leest `T1C|…` volledig offline (met de extra punten), bewaart alles in IndexedDB en
+    tekent sporen zoals de online kaart. Werkt zonder account en gebruikt niets uit de database: van de server komen
+    alleen kaarten, lettertypes en sprites (openbaar). Kaarten (Limburg, België, Benelux, Frankrijk, Duitsland) staan
+    als pmtiles in OPFS en worden samen getoond (van grof naar gedetailleerd gestapeld). Namen uit de contacten van de
+    companion; kanaalkeuze uit de kanalen van de companion; kanalen toevoegen via QR (camera of foto) of met naam en
+    sleutel. Chat voor alle andere berichten, zelf sturen met instelbare scope (standaard `be`), herhalingen van eigen
+    berichten en eigen trackerposities via de ruwe ontvangstlog (push 0x88). Versleepbaar onderpaneel op de gsm.
   - Verloren trackers: een bericht van een verloren tracker geeft de gebeurtenis `lost_seen`; de status blijft.
 - **deploy/**: systemd-unit en `deploy.sh` (draait op de openHop-LXC, poort 8090).
 - **tools/publish_firmware.py**: zet een firmwarebuild (zip + uf2 + `firmware.json`) in `server/static/firmware/`
@@ -63,33 +65,33 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
 - **tools/build_display_tiles.py**: bouwt de weergavekaart (z0–13 voor heel het bronarchief, z14 voor de Benelux)
   zonder veel geheugen.
 - **docs/handleiding/**: handleiding voor gebruikers (HTML-bron, screenshots en de PDF, ook te downloaden vanaf de
-  helppagina van de site).
-- **PLAN.md**: ontwerp, berichtprotocol (`T1|…`) en bewegingsregels.
+  helppagina van de site) en de snelstart op één pagina.
+- **PLAN.md**: ontwerp, berichtprotocol en bewegingsregels.
 
 ## Berichtprotocol
 
+Een tracker stuurt op zijn trackingkanaal een groepsbericht `"<naam>: T1C|<pubkey 8 hex>|<tag 8 hex>|<rest>"`, met
+
 ```
-T1|<seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>|<mode c|t>|<power u|b>|<fix_ts>
+<rest> = <seq>|<state>|<lat>|<lon>|<alt_m>|<spd_kmh>|<crs_deg>|<bat_pct>|<hdop>|<fix_age_s>|<mode c|t>|<power u|b>|<fix_ts>[|<extra>]
 ```
 
-Optioneel 15e veld (fw 0.5.0): eerdere punten `dt,dlat,dlon,spd;...` (seconden vóór `fix_ts`, verschil in 1e-5
-graden, km/u). De tracker bewaart in beweging elke `sample` seconden een punt en stuurt er zoveel mee als in 156
-tekens past; de server slaat ze chronologisch op en slaat dubbele punten over.
-
-Extra punten in het compacte formaat (fw 0.6.0): `~<interval>;dlat,dlon[@s];...`, nieuwste eerst, elk punt als
-verschil met het vorige in 1e-5 graden; de server berekent de snelheid.
-
-Via een kanaal (fw 0.6.0, optioneel per tracker): `T1C|<pubkey 8 hex>|<tag 8 hex>|<seq>|...` (de rest zoals T1).
 `tag` = eerste 4 bytes HMAC-SHA256(authsleutel, `<pubkey8>|<rest>`); de authsleutel (16 bytes) maakt de server per
 tracker en gaat via USB naar de tracker. De server luistert op de kanalen uit *Systeem → Kanalen*, controleert de tag
-(of aanvaardt per kanaal ook `-`) en zet de tracker in de trackergroep van het kanaal. DM blijft de standaard; oudere
-firmware werkt ongewijzigd.
+(of aanvaardt per kanaal ook `-`) en zet het trackingkanaal van de tracker. De afzendernaam is vrij (de nodenaam) en
+wordt genegeerd: een kanaalbericht bevat geen publieke sleutel, alleen `pubkey8` en de tag identificeren de tracker.
 
-`fix_ts` (vanaf firmware 0.4.0) is de GPS-tijd van de fix in unix-seconden; de server gebruikt die als tijdstip van
-de positie. Zonder `fix_ts`: sender-tijd min `fix_age_s`, of de ontvangsttijd als de klok van de tracker niet klopt.
+Extra punten (`<extra>`): `~<interval>;dlat,dlon[@s];...`, nieuwste eerst, elk punt als verschil met het vorige in
+1e-5 graden; de server berekent de snelheid. Het oudere formaat `dt,dlat,dlon,spd;...` wordt nog gelezen.
+
+`fix_ts` is de GPS-tijd van de fix in unix-seconden; de server gebruikt die als tijdstip van de positie. Zonder
+`fix_ts`: sender-tijd min `fix_age_s`, of de ontvangsttijd als de klok van de tracker niet klopt.
 
 Statussen: `M` beweging, `W` wakker door beweging, `S` stilgevallen, `H` heartbeat, `N` geen fix, `P` handmatig,
 `E` SOS, `B` moduswissel of voeding gewijzigd.
+
+Tot firmware 0.6 konden trackers ook `T1|<rest>` als DM naar de server sturen; de server leest dat sinds 1.0 niet
+meer en noteert het bij de genegeerde berichten als "oude firmware".
 
 ## Server lokaal
 

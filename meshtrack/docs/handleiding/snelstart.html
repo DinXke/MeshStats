@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>MeshTrack – snelstart</title>
+<style>
+  @page { size: A4; margin: 0; }
+  :root { --ink: #1c2321; --muted: #5d6a66; --line: #dfe5e2; --accent: #0b6e4f; --accent-2: #0ea5e9; --soft: #eef6f2; --warn: #b45309; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { margin: 0; width: 210mm; height: 297mm; overflow: hidden; font: 9pt/1.38 "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: var(--ink); }
+  header { background: linear-gradient(150deg, #0b6e4f 0%, #073d2c 100%); color: #fff; padding: 8mm 12mm 6mm; position: relative; }
+  header h1 { margin: 0; font-size: 26pt; letter-spacing: -.3pt; }
+  header .sub { font-size: 11.5pt; color: #d5f5e8; margin-top: 1mm; }
+  header .flow { display: flex; gap: 2mm; align-items: center; margin-top: 4mm; margin-right: 62mm; font-size: 8.6pt; flex-wrap: wrap; }
+  header .flow span.b { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.35); border-radius: 99px; padding: .6mm 3mm; }
+  header .flow span.ar { color: #9fe3c6; }
+  header .qrs { position: absolute; right: 12mm; top: 7mm; display: flex; gap: 4mm; }
+  header .qr { background: #fff; border-radius: 2mm; padding: 1.6mm; text-align: center; color: var(--ink); font-size: 7pt; width: 25mm; }
+  header .qr svg { width: 100%; height: auto; display: block; }
+  main { padding: 5mm 12mm 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4mm 6mm; }
+  section { break-inside: auto; }
+  h2 { font-size: 12.5pt; margin: 0 0 2mm; color: var(--accent); display: flex; align-items: center; gap: 2.5mm; }
+  h2 .ic { width: 7mm; height: 7mm; border-radius: 50%; background: var(--accent); color: #fff; display: inline-flex; align-items: center;
+    justify-content: center; font-size: 10pt; flex: none; }
+  h2.blue { color: #0369a1; } h2.blue .ic { background: var(--accent-2); }
+  ol { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+  ol > li { counter-increment: s; position: relative; padding-left: 7.5mm; margin: 0 0 1.4mm; }
+  ol > li::before { content: counter(s); position: absolute; left: 0; top: .2mm; width: 5mm; height: 5mm; border-radius: 50%;
+    border: 1.3px solid var(--accent); color: var(--accent); font-weight: 700; font-size: 7.8pt; display: flex; align-items: center; justify-content: center; }
+  .blue + ol > li::before, ol.blue > li::before { border-color: var(--accent-2); color: #0369a1; }
+  em { font-style: normal; font-weight: 600; color: #24413a; }
+  code { font: 8.2pt "Cascadia Mono", Consolas, monospace; background: var(--soft); border-radius: 2px; padding: 0 1mm; }
+  .card { border: 1px solid var(--line); border-radius: 3mm; padding: 3mm 3.8mm; }
+  .full { grid-column: 1 / -1; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
+  td { padding: 1.1mm 1.5mm; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.k { font-weight: 700; white-space: nowrap; color: var(--accent); width: 27mm; }
+  .note { background: var(--soft); border-left: 1.2mm solid var(--accent); border-radius: 2mm; padding: 2.2mm 3mm; font-size: 8.8pt; margin-top: 2.5mm; }
+  .warn { background: #fff7ed; border-left: 1.2mm solid var(--warn); border-radius: 2mm; padding: 2.2mm 3mm; font-size: 8.8pt; margin-top: 2.5mm; }
+  .levels { display: flex; gap: 2mm; margin: 1.5mm 0; }
+  .levels div { flex: 1; border-radius: 2mm; padding: 1.8mm 2.5mm; font-size: 8.6pt; }
+  .levels .k { background: #e0f2fe; } .levels .s { background: #dcfce7; }
+  .levels b { display: block; }
+  footer { position: absolute; bottom: 3.5mm; left: 12mm; right: 12mm; display: flex; justify-content: space-between; font-size: 7.8pt;
+    color: var(--muted); border-top: 1px solid var(--line); padding-top: 2mm; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MeshTrack · snelstart</h1>
+  <div class="sub">Trackers volgen via MeshCore, zonder gsm-netwerk of internet</div>
+  <div class="flow">
+    <span class="b">Tracker (T1000-E)</span><span class="ar">→</span><span class="b">trackingkanaal</span><span class="ar">→</span>
+    <span class="b">mesh</span><span class="ar">→</span><span class="b">server + kaart</span><span class="ar">of</span><span class="b">eigen companion + offline-app</span>
+  </div>
+  <div class="qrs">
+    <div class="qr"><div id="qr-site"></div>website</div>
+    <div class="qr"><div id="qr-off"></div>offline-app</div>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2><span class="ic">1</span>Online meekijken</h2>
+    <ol>
+      <li>Open <code>meshtrack.meshmanager.net</code> en log in met het account dat je kreeg.</li>
+      <li><em>Kaart</em>: alle trackers die je mag zien, live. Klik op een tracker voor details en zijn spoor.</li>
+      <li>Meerdere kanalen? Kies er één onder <em>Filter en zichtbaarheid</em>.</li>
+      <li><em>Kanalen</em> in het menu: welke kanalen je leest, en bij <em>sleutel</em> de QR-code.</li>
+    </ol>
+    <div class="levels">
+      <div class="k"><b>kaart</b>je ziet de trackers van het kanaal</div>
+      <div class="s"><b>sleutel</b>ook de sleutel en QR om het op je eigen companion te zetten</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="blue"><span class="ic">2</span>Met je bestaande companion</h2>
+    <ol class="blue">
+      <li>Vraag een beheerder om het niveau <em>sleutel</em> op het kanaal van je ploeg.</li>
+      <li>Open in MeshTrack <em>Kanalen</em> → <em>Sleutel en QR-code</em>.</li>
+      <li>Scan de code met de <strong>MeshCore-app</strong>: je companion kent nu het kanaal en ziet de berichten.</li>
+      <li>Voor een kaart zonder internet: open de <strong>offline-app</strong> (QR rechtsboven) in Chrome op Android,
+        installeer ze, download bij <em>Kaarten</em> een kaart, en verbind bij <em>Verbinding</em> met je companion.</li>
+    </ol>
+    <div class="note">Geen account nodig voor de offline-app: wie de kanaalsleutel heeft, kijkt mee. Alles blijft op je gsm.</div>
+  </section>
+
+  <section class="card">
+    <h2><span class="ic">3</span>Nieuwe tracker klaarmaken</h2>
+    <ol>
+      <li>Beheerder: <em>Trackers</em> → <em>+ Tracker</em>, naam en <em>trackingkanaal</em> kiezen, <em>Nieuw toestel</em> aan.</li>
+      <li>T1000-E met USB aan een computer met Chrome of Edge; <em>Toestellen</em> → <em>Verbinden</em>.</li>
+      <li><em>Firmware</em> → <em>Flashen via de browser</em> (eerst gaat er automatisch een backup).</li>
+      <li><em>Klaarmaken &amp; backups</em> → kies de tracker → <em>Op dit toestel zetten</em>.</li>
+      <li><em>Instellingen</em>: controleer de naam en het <em>trackingkanaal</em> → <em>Opslaan op de tracker</em>.</li>
+      <li>Loskoppelen: hij start in trackermodus en verschijnt op de kaart zodra hij beweegt of je één keer klikt.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2><span class="ic">4</span>De knop van de tracker</h2>
+    <table>
+      <tr><td class="k">1 klik</td><td>Nu een positie sturen. Twee hoge biepjes = verstuurd; lage toon = geen trackingkanaal.</td></tr>
+      <tr><td class="k">2 klikken</td><td>Modus wisselen (tot 0,8 s ertussen): 1 biep = tracker, 2 biepjes = companion.</td></tr>
+      <tr><td class="k">3 klikken</td><td>Buzzer aan of uit.</td></tr>
+      <tr><td class="k">2–8 s vasthouden</td><td><strong>SOS</strong>: na 2 s drie hoge biepjes, dan loslaten.</td></tr>
+      <tr><td class="k">&gt; 8 s</td><td>Uitschakelen. Aanzetten: knop inhouden of aan USB.</td></tr>
+    </table>
+    <div class="note">Aan USB is hij altijd <strong>companion</strong> (Bluetooth aan, pincode <code>123456</code>): handig voor de
+      offline-app of de MeshCore-app.</div>
+  </section>
+
+  <section class="card full">
+    <h2><span class="ic">!</span>Goed om te weten</h2>
+    <table>
+      <tr><td class="k">Eén kanaal</td><td>Elke tracker stuurt op één trackingkanaal, met zijn naam als afzender. Wie dat kanaal mag lezen, ziet hem.
+        Een kanaalbericht krijgt geen bevestiging: of hij aankwam, zie je op de kaart.</td></tr>
+      <tr><td class="k">Sleutel = toegang</td><td>Wie de kanaalsleutel of QR-code heeft, kan alle posities op dat kanaal lezen. Deel hem alleen met wie mag.</td></tr>
+      <tr><td class="k">Regio</td><td>Trackers en de offline-app sturen met regio (scope) <code>be</code>; laat die staan.</td></tr>
+      <tr><td class="k">Hulp</td><td>In de site: <em>Help</em>. De volledige handleiding (PDF) staat bovenaan de helppagina.</td></tr>
+    </table>
+  </section>
+</main>
+<footer><span>MeshTrack 1.0 · firmware 0.7 (T1000-E) · MeshCore v1.17.1</span><span>meshtrack.meshmanager.net</span></footer>
+
+<script src="../../server/static/vendor/qrcode.js"></script>
+<script>
+  for (const [id, url] of [["qr-site", "https://meshtrack.meshmanager.net/"], ["qr-off", "https://meshtrack.meshmanager.net/offline"]]) {
+    const q = qrcode(0, "M"); q.addData(url); q.make();
+    document.getElementById(id).innerHTML = q.createSvgTag({ cellSize: 3, margin: 1 });
+  }
+</script>
+</body>
+</html>
