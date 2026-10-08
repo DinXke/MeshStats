@@ -11,7 +11,11 @@
 
   const PER_FT = 7;           // punten in een FastTrack-bericht (tekst), hoofdpunt inbegrepen
   const PER_L = 7;            // punten in een SlowTrack-bericht (L, tekst)
-  const PER_Q = 11;           // punten in een inhaalbericht (Q, compact binair)
+  // punten in een inhaalbericht (Q, compact binair): "<naam>: " gaat van elk bericht af (zoals de firmware)
+  const nameBytes = (s) => new TextEncoder().encode(s || "").length;
+  const perForName = (nb) => Math.max(2, 1 + Math.floor(Math.max(0, 156 - (nb + 2) - 79) / 8));
+  const LISTEN_S = 60, LISTEN_EVERY = 600;   // luistervenster bij oude punten zonder recente dekking
+  const REST_BACKOFF = [600, 1200, 2400, 3600];   // in rust zonder dekking: opnieuw luisteren na 10, 20, 40, daarna elke 60 min
   const HEAR_S = 10;          // luistervenster voor een herhaling
   const REPEATS = 6;          // aangenomen herhalingen per bericht in de mesh
   const AIR_NORMAL = 1.1, AIR_FULL = 1.4, AIR_ACK = 1.0;   // zendtijd in seconden
@@ -21,8 +25,8 @@
   const ACK_DELAY = 20, ACK_MIN_GAP = 600;   // T1F: ≈ 20 s na de reeks, per tracker hoogstens 1 per 10 min
   const STOP_KEEP = 600;      // punten rond een stilstand van meer dan 10 min blijven
   const DEF = { sample: 10, min_interval: 30, max_interval: 120, min_dist: 25, min_speed: 0, slow_log: 0, slow_send: 1800,
-    fifo_max: 500, fifo_min: 5, fifo_gap: 30, fifo_per_uur: 20, fifo_pogingen: 3, fifo_dun: 10, fifo_snr: -5, track_mode: "classic" };
-  const DURK = ["sample", "min_interval", "max_interval", "slow_log", "slow_send", "fifo_gap"];
+    fifo_max: 500, fifo_min: 5, fifo_gap: 30, fifo_per_uur: 20, fifo_pogingen: 3, fifo_dun: 10, fifo_snr: -5, fifo_wacht: 1800, still_timeout: 300, track_mode: "classic" };
+  const DURK = ["sample", "min_interval", "max_interval", "slow_log", "slow_send", "fifo_gap", "fifo_wacht", "still_timeout"];
   const NUMK = ["min_dist", "min_speed", "fifo_max", "fifo_min", "fifo_per_uur", "fifo_pogingen", "fifo_dun", "fifo_snr"];
   const dB = (n) => `${String(n).replace("-", "−")} dB`;   // met een echt minteken
   const nf = (x, d = 0) => Number(x).toLocaleString("nl-BE", { maximumFractionDigits: d });
@@ -65,6 +69,10 @@
       src[from]++;
     }
     cfg.fifoOnTracker = !!(kv && "track_mode" in kv);
+    cfg.naam = kv ? kv.naam || "" : null;
+    cfg.nameBytes = kv ? nameBytes(kv.naam) : null;
+    const pb = kv ? parseInt(kv.fifo_per_bericht, 10) : NaN;
+    cfg.perTracker = Number.isFinite(pb) ? pb : null;
     const extra = [src.f && "het tabblad Instellingen", src.d && "standaardwaarden"].filter(Boolean).join(" en ");
     cfg.source = kv ? `Instellingen van de verbonden tracker ${kv.naam || ""}`.trim() + (extra ? `, aangevuld met ${extra}` : "") + "."
       : src.f ? "Geen tracker verbonden: waarden uit het tabblad Instellingen, aangevuld met standaardwaarden."
@@ -83,7 +91,6 @@
   }
   const KIND = { ft: 1, slow: 2, fifo: 3, ack: 4 };
   const KNAME = { ft: "FastTrack-bericht", slow: "SlowTrack-bericht (L)", fifo: "Inhaalbericht (Q)" };
-  const PER = { ft: PER_FT, slow: PER_L, fifo: PER_Q };
 
   function ftInterval(cfg, speed) {
     const v = speed / 3.6;
@@ -102,23 +109,36 @@
     return [...new Set(out)];
   }
 
-  function makeSim(cfg, sc, mode) {
+  function makeSim(cfg0, sc, mode) {
+    const cfg = { ...cfg0, ...(sc.over || {}) };
     const S = { t: 0, end: Math.round(sc.dur * 60), cfg, sc, mode, iv: ftInterval(cfg, sc.speed),
       points: [], ftBuf: [], slowBuf: [], queue: [], pend: [],
       sent: { ft: 0, slow: 0, fifo: 0, ack: 0 }, ok: { ft: 0, slow: 0, fifo: 0 }, air: 0, ackAir: 0, no: { ft: 0, slow: 0, fifo: 0 },
       lastFt: -1e9, signals: [], lastAckRx: -1e9, retryAt: 0, flushing: false, flushStop: -1e9, lastFlush: -1e9, flushTimes: [],
       capNoted: false, ackDue: null, ackUpTo: 0, lastAck: -1e9, acked: 0, gaveUp: 0, thinned: 0, evicted: 0, toFifo: 0,
-      log: [], fx: [], ver: 0, done: false, snr: null, stable: false };
+      log: [], fx: [], ver: 0, done: false, snr: null, stable: false,
+      perQ: sc.perQ, lastListen: -1e9, listenUntil: -1, listenHeard: 0, listens: 0, waitSends: 0,
+      lastMotion: 0, rest: false, restListenAt: Infinity, restStep: 0, restSends: 0, nextSlow: cfg.slow_log };
+    const PER = { ft: PER_FT, slow: PER_L, fifo: S.perQ };
     const v = sc.speed / 3.6;
+    // beweging: stil tussen st0 en st1 (fracties van de tijd); afgelegde weg per seconde
+    const moving = (t) => { const f = t / S.end; return !(f >= sc.st0 && f < sc.st1); };
+    const dist = new Float64Array(S.end + 2);
+    for (let t = 1; t < dist.length; t++) dist[t] = dist[t - 1] + (moving(t - 1) ? v : 0);
+    const L = dist[S.end] || 1;
+    const posF = (t) => dist[Math.max(0, Math.min(S.end, Math.floor(t)))] / L;
     // ligging in meter: langs de weg en een zachte kronkel opzij
-    const xy = (t) => { const a = v * t; return [a, 260 * Math.sin(a / 1900) + 90 * Math.sin(a / 560 + 1)]; };
-    const covered = (t) => { const f = t / S.end; return !(f >= sc.dz0 && f < sc.dz1); };
+    const xy = (t) => { const a = dist[Math.min(S.end, t)]; return [a, 260 * Math.sin(a / 1900) + 90 * Math.sin(a / 560 + 1)]; };
+    // dekking hangt af van de plaats op de rit, niet van de tijd
+    const covered = (t) => { const f = posF(t); return !(f >= sc.dz0 && f < sc.dz1); };
+    S.moving = moving; S.posF = posF; S.cfgEff = cfg;
+    { let a = -1, b = -1; for (let t = 0; t <= S.end; t++) if (!covered(t)) { if (a < 0) a = t; b = t; } S.dzT = a >= 0 ? [a, b + 1] : null; }
     // SNR: geen ontvangst in de dode zone, zwak aan de rand, sterker verder weg
     function snrAt(t) {
       if (!covered(t)) return null;
-      const f = t / S.end;
+      const f = posF(t);
       const d = sc.dz1 > sc.dz0 ? Math.min(Math.abs(f - sc.dz0), Math.abs(f - sc.dz1)) : 1;
-      const edge = Math.min(1, (d * S.end * v) / 2500);           // na ≈ 2,5 km volle sterkte
+      const edge = Math.min(1, (d * L) / 2500);                     // na ≈ 2,5 km volle sterkte
       return Math.max(-20, Math.min(12, Math.round(-14 + 24 * edge + (hashRnd(t, 7) * 6 - 3))));
     }
     const missP = (t) => { const s = snrAt(t); return s == null ? 1 : Math.min(0.95, sc.miss + Math.max(0, -2 - s) * 0.06); };
@@ -138,7 +158,9 @@
       const u = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / L2));
       return Math.hypot(x - (x1 + u * dx), y - (y1 + u * dy));
     }
-    const stopNear = (a, p, b) => p.t - a.t > STOP_KEEP || b.t - p.t > STOP_KEEP;
+    // rond een stilstand van meer dan 10 min: een grote tijdsprong, of buren die even lang op dezelfde plek liggen
+    const stopNear = (a, p, b) => p.t - a.t > STOP_KEEP || b.t - p.t > STOP_KEEP
+      || (b.t - a.t >= STOP_KEEP && Math.hypot(b.xy[0] - a.xy[0], b.xy[1] - a.xy[1]) < 25);
     const busyPt = (p) => p.inQ || p.park;
     // in de wachtrij zetten: op tijd gesorteerd, met uitdunnen van rechte stukken en verdringen op vorm
     function fifoInsert(p, t, why) {
@@ -302,7 +324,7 @@
       S.snr = snrAt(t);
       // FastTrack
       let sentNow = false;
-      if (S.iv && t - S.lastFt >= S.iv) {
+      if (S.iv && moving(t) && t - S.lastFt >= S.iv) {
         S.lastFt = t; sentNow = true;
         const main = point(t, "ft", S.mode === "fifo" ? "buf" : "air");
         let extra;
@@ -322,9 +344,25 @@
         }
         send(t, "ft", [main, ...extra]);
       }
-      if (!sentNow && t > 0 && cfg.sample > 0 && t % cfg.sample === 0) { S.ftBuf.push(point(t, "ft", "buf")); ftBufCap(t); }
-      // SlowTrack
-      if (cfg.slow_log > 0 && t > 0 && t % cfg.slow_log === 0) {
+      if (!sentNow && moving(t) && t > 0 && cfg.sample > 0 && t % cfg.sample === 0) { S.ftBuf.push(point(t, "ft", "buf")); ftBufCap(t); }
+      // Rust: langer dan still_timeout geen beweging (versnellingsmeter of GPS ≥ 1,5 km/u)
+      const mov = moving(t);
+      if (mov) S.lastMotion = t;
+      const rest = !mov && t - S.lastMotion > cfg.still_timeout;
+      const wasRest = S.rest;
+      S.rest = rest;
+      if (rest && !wasRest) {
+        say(t, `In rust: al ${fmtDur(cfg.still_timeout)} geen beweging. SlowTrack pauzeert (de GPS blijft uit)`, "");
+        if (S.mode === "fifo" && qlen()) { S.restListenAt = t; S.restStep = 0; S.restListens = 0; }   // meteen 60 s luisteren
+      }
+      if (!rest && wasRest) {
+        S.restStep = 0; S.restListenAt = Infinity;
+        say(t, "Weer in beweging", "");
+        if (cfg.slow_log > 0) S.nextSlow = t;           // eerste beweging: meteen een SlowTrack-punt
+      }
+      // SlowTrack: alleen zolang hij beweegt (of nog niet in rust is)
+      if (cfg.slow_log > 0 && !rest && t > 0 && t >= S.nextSlow) {
+        S.nextSlow = t + cfg.slow_log;
         if (S.mode === "fifo") fifoInsert(point(t, "slow", "queue"), t);
         else S.slowBuf.push(point(t, "slow", "buf"));
       }
@@ -340,11 +378,44 @@
       // FIFO leegmaken
       if (S.mode === "fifo") {
         S.flushTimes = S.flushTimes.filter((x) => x > t - 3600);
-        const why = stableAt(t);
-        S.stable = !!why;
-        if (!S.flushing && qlen() >= cfg.fifo_min && t >= S.retryAt && why && S.signals.some((s) => s.t > S.flushStop)) {
+        const listen = (why) => {
+          S.lastListen = t; S.listenUntil = t + LISTEN_S; S.listenHeard = 0; S.listens++;
+          say(t, `Luistervenster van ${LISTEN_S} s: ${why}`, "");
+          S.fx.push({ type: "listen" });
+        };
+        if (rest) {
+          // in rust met punten: meteen luisteren; zonder dekking opnieuw na 10, 20, 40 en daarna elke 60 min
+          if (qlen() && !S.flushing && t >= S.restListenAt && t >= S.listenUntil) {
+            listen(S.restListens++ ? "in rust met punten in de wachtrij, opnieuw" : "net in rust met punten in de wachtrij");
+            S.restListenAt = t + LISTEN_S + REST_BACKOFF[Math.min(S.restStep, REST_BACKOFF.length - 1)];
+            S.restStep++;
+          }
+        } else if (cfg.fifo_wacht > 0 && qlen() && !S.flushing && t - S.queue[0].t >= cfg.fifo_wacht
+            && !S.signals.some((x) => x.t > t - LISTEN_EVERY) && t - S.lastListen >= LISTEN_EVERY) {
+          // in beweging: punten ouder dan fifo_wacht en geen recente dekking: hoogstens 1× per 10 min 60 s luisteren
+          listen(`punten ouder dan ${fmtDur(cfg.fifo_wacht)} en geen recente dekking`);
+        }
+        if (t < S.listenUntil && covered(t) && hashRnd(t, 13) < 0.05) {
+          const sn = snrAt(t);
+          signal(t, sn, "rx");
+          if (!S.listenHeard) say(t, `Pakket via een repeater gehoord tijdens het luisteren (SNR ${dB(sn)})`, "ok");
+          S.listenHeard++;
+          if (rest) { S.restStep = 0; S.restListenAt = t + REST_BACKOFF[0]; }   // dekking gevonden: terug naar 10 min
+        }
+        if (t === S.listenUntil && !S.listenHeard) say(t, `Luistervenster voorbij: niets gehoord${rest ? `; opnieuw over ${fmtDur(REST_BACKOFF[Math.min(S.restStep - 1, REST_BACKOFF.length - 1)])}` : ""}`, "");
+        const why2 = stableAt(t);
+        S.stable = !!why2;
+        const oldAge = qlen() ? t - S.queue[0].t : 0;
+        const below = qlen() > 0 && qlen() < cfg.fifo_min;
+        const byWait = !rest && cfg.fifo_wacht > 0 && below && oldAge >= cfg.fifo_wacht;
+        const byRest = rest && below;
+        if (!S.flushing && (qlen() >= cfg.fifo_min || byWait || byRest) && t >= S.retryAt && why2 && S.signals.some((s) => s.t > S.flushStop)) {
           S.flushing = true;
-          say(t, `Stabiele dekking (${why}) en ${qlen()} ≥ ${cfg.fifo_min} punten: de wachtrij wordt leeggemaakt, oudste eerst`, "info");
+          if (byWait) { S.waitSends++; S.fx.push({ type: "wait" }); }
+          if (byRest) S.restSends++;
+          say(t, byRest ? `In rust met ${pl(qlen())} en stabiele dekking (${why2}): de wachtrij wordt leeggemaakt, ook onder ${cfg.fifo_min} punten`
+            : byWait ? `${pl(qlen())} in de wachtrij, minder dan ${cfg.fifo_min}, maar het oudste wacht al ${fmtDur(Math.floor(oldAge / 60) * 60)} (langer dan ${fmtDur(cfg.fifo_wacht)}) en de dekking is stabiel (${why2}): toch versturen`
+            : `Stabiele dekking (${why2}) en ${qlen()} ≥ ${cfg.fifo_min} punten: de wachtrij wordt leeggemaakt, oudste eerst`, "info");
           S.fx.push({ type: "flush" });
         }
         if (S.flushing) {
@@ -356,9 +427,9 @@
             } else {
               S.capNoted = false;
               // eerst de gewone punten (oudste eerst); geparkeerde pas als al de rest weg is, als laatste kans
-              let pts = S.queue.filter((p) => !p.park).slice(0, PER_Q);
+              let pts = S.queue.filter((p) => !p.park).slice(0, S.perQ);
               if (!pts.length) {
-                pts = S.queue.filter((p) => p.park && !p.final).slice(0, PER_Q);
+                pts = S.queue.filter((p) => p.park && !p.final).slice(0, S.perQ);
                 pts.forEach((p) => { p.final = true; });
                 if (pts.length) say(t, `Laatste kans voor ${pl(pts.length, "geparkeerd punt", "geparkeerde punten")}`, "info");
               }
@@ -395,7 +466,7 @@
       c.sent = { ...S.sent }; c.ok = { ...S.ok }; c.air = S.air; c.mesh = (S.air + S.ackAir) * (1 + REPEATS);
       c.evicted = S.evicted; c.acked = S.acked; c.gaveUp = S.gaveUp; c.toFifo = S.toFifo;
       c.hour = S.flushTimes.filter((x) => x > S.t - 3600).length;
-      c.queue = qlen();
+      c.queue = qlen(); c.listens = S.listens; c.waitSends = S.waitSends; c.restSends = S.restSends;
       return c;
     };
     return S;
@@ -417,7 +488,7 @@
        wachtrij. Korte gaten vullen zich zo zonder één extra bericht.`],
     ["fifo", "De FIFO-wachtrij", "#sim-fifobox",
       `Voor lange gaten is er de wachtrij (FIFO: wie eerst komt, gaat eerst weg). Ze bewaart punten met hun echte GPS-tijd, tot
-       ${V("fifo_max")} stuks, ook na een herstart. In FIFO-modus logt ook SlowTrack erin.`],
+       ${V("fifo_max")} stuks, ook na een herstart. In FIFO-modus logt ook SlowTrack erin, zolang de tracker beweegt.`],
     ["dun", "Uitdunnen en verdringen", "#sim-fifobox",
       `Op een recht stuk zegt een punt tussen twee andere niets nieuws. Ligt het minder dan ${V("fifo_dun")} naast de lijn tussen
        zijn buren, dan gaat het er niet in. Is de wachtrij vol, dan valt het punt weg dat het minst over de vorm van je route zegt,
@@ -441,9 +512,26 @@
        hoogstens één per minuut per kanaal en hoogstens 20 per uur in totaal, met tot 4 trackers in één bericht. Twintig trackers
        die vooral stilstaan, hebben bijna nooit een bevestiging nodig; in het slechtste geval blijft het bij 20 kleine berichten per uur.`],
     ["bin", "Compacte codering", "#sim-c-msgs",
-      `Inhaalberichten (Q) zijn binair gecodeerd: elk punt is een klein verschil met het vorige. Zo passen er zo'n ${PER_Q} punten in
+      `Inhaalberichten (Q) zijn binair gecodeerd: elk punt is een klein verschil met het vorige. Zo passen er zo'n ${V("perq")} punten in
        één bericht, tegen ${PER_FT} in tekst. Minder berichten betekent minder belasting van het net. Op de kaart verschijnen ingehaalde
        punten als lichtere stippen, net als de gelogde punten van SlowTrack (L).`],
+    ["wacht", "Niet eindeloos wachten", "#sim-fifonote",
+      `Staan er minder punten in de wachtrij dan nodig om te beginnen, dan wacht de tracker normaal tot er genoeg zijn. Zolang hij
+       beweegt, stuurt hij ze toch als het oudste punt ouder is dan ${V("fifo_wacht")} en de dekking stabiel is; zonder recente dekking
+       luistert hij daarvoor hoogstens één keer per 10 minuten 60 seconden naar het net. Komt hij in rust met punten in de wachtrij,
+       dan luistert hij meteen 60 seconden: het radio-icoontje bij de stip. Bij stabiele dekking maakt hij de wachtrij dan leeg, ook
+       onder het minimum; de tijd tussen de berichten en de limiet per uur blijven gelden. Hoort hij niets, dan probeert hij het opnieuw
+       na 10, 20 en 40 minuten en daarna elk uur. Beweging of gevonden dekking zet dat weer op 10 minuten. Probeer het scenario
+       "Door een gat rijden, dan uren parkeren".`],
+    ["rust", "SlowTrack in rust", "#sim-strip",
+      `In rust, dus als de bewegingssensor en de GPS langer dan ${V("still_timeout")} geen beweging zien, zet SlowTrack de GPS niet meer
+       aan. Een geparkeerde tracker logt dus geen reeks punten op dezelfde plek. Bij de eerste beweging logt hij meteen een punt.
+       Uitzondering: staat FastTrack uit door een lage batterij, dan blijft SlowTrack loggen, en een SlowTrack-punt met snelheid telt
+       dan als beweging. Die uitzondering zit niet in de simulatie.`],
+    ["naam", "De naam telt mee", "#sim-namebox",
+      `Elk kanaalbericht begint met "naam: ". Hoe langer de naam van de tracker, hoe minder punten er in een inhaalbericht passen:
+       met een naam van ${V("nb")} gaan er ≈ ${V("perq")} punten in één bericht. Emoji tellen zwaar: de Belgische vlag 🇧🇪 telt als
+       8 bytes. Een korte naam zonder emoji laat meer punten toe.`],
     ["count", "Wat de tellers betekenen", "#sim-count",
       `<strong>Berichten</strong>: hoeveel FastTrack-, L- en Q-berichten de tracker stuurde, en hoeveel bevestigingen (T1F) de server.
        <strong>Zendtijd</strong>: hoe lang de tracker zelf zond. <strong>Meshbelasting</strong>: die zendtijd maal de herhalingen door
@@ -464,13 +552,18 @@
     <div class="small muted" id="sim-cfg"></div>
     <div class="sim-presets"><span class="small muted">Scenario:</span>
       <button type="button" data-preset="std">Rit van 1 uur, gat van 30 tot 70 %</button>
-      <button type="button" data-preset="long">Lange rit met gat van 3 uur</button></div>
+      <button type="button" data-preset="long">Lange rit met gat van 3 uur</button>
+      <button type="button" data-preset="stand">Door een gat rijden, dan uren parkeren</button></div>
     <div class="sim-fields">
       <div><label for="sim-speed">Snelheid</label><div class="unit"><input id="sim-speed" type="number" min="1" max="200" value="50"><span>km/u</span></div></div>
       <div><label for="sim-dur">Duur van de rit</label><div class="unit"><input id="sim-dur" type="number" min="5" max="1440" value="60"><span>min</span></div></div>
       <div><label for="sim-dz0">Dode zone begint op</label><div class="unit"><input id="sim-dz0" type="number" min="0" max="100" value="30"><span>% van de rit</span></div></div>
       <div><label for="sim-dzl">Lengte van de dode zone</label><div class="unit"><input id="sim-dzl" type="number" min="0" max="100" value="40"><span>% van de rit</span></div></div>
       <div><label for="sim-miss">Kans op een gemiste herhaling ondanks dekking</label><div class="unit"><input id="sim-miss" type="number" min="0" max="100" value="10"><span>%</span></div></div>
+      <div><label for="sim-st0">Stilstand begint op</label><div class="unit"><input id="sim-st0" type="number" min="0" max="100" value="0"><span>% van de tijd</span></div></div>
+      <div><label for="sim-stl">Lengte van de stilstand</label><div class="unit"><input id="sim-stl" type="number" min="0" max="100" value="0"><span>% van de tijd</span></div></div>
+      <div id="sim-namebox"><label for="sim-nb">Naamlengte van de tracker</label><div class="unit"><input id="sim-nb" type="number" min="1" max="31" value="11"><span>bytes</span></div>
+        <div class="help" id="sim-nbhelp"></div></div>
     </div>
     <div class="sim-play">
       <div class="seg" id="sim-mode" role="radiogroup" aria-label="Trackmodus"><button type="button" data-v="classic">Klassiek</button><button type="button" data-v="fifo">FIFO</button></div>
@@ -510,6 +603,7 @@
   if (matchMedia("(min-width: 721px)").matches) $("sim-uitleg").open = true;
 
   const X0 = 40, X1 = 960, ROUTE_Y = 105;
+  let scOver = null;
   let cfg = null, sc = null, S = null, mode = null, rate = 60, playing = false, simT = 0, lastWall = 0, logShown = 0;
   let reps = [], fx = [], marks = [], lastBoxes = 0, lastTrack = 0, loopOn = false;
   const xAt = (f) => X0 + (X1 - X0) * f;
@@ -520,7 +614,12 @@
   function readScenario() {
     const num = (id, d, lo, hi) => { const v = Number($(id).value); return Number.isFinite(v) && $(id).value !== "" ? Math.min(hi, Math.max(lo, v)) : d; };
     const dz0 = num("sim-dz0", 30, 0, 100) / 100, dzl = num("sim-dzl", 40, 0, 100) / 100;
-    return { speed: num("sim-speed", 50, 1, 200), dur: num("sim-dur", 60, 5, 1440), dz0, dz1: Math.min(1, dz0 + dzl), miss: num("sim-miss", 10, 0, 100) / 100 };
+    const st0 = num("sim-st0", 0, 0, 100) / 100, stl = num("sim-stl", 0, 0, 100) / 100;
+    const nb = Math.round(num("sim-nb", 11, 1, 64));
+    // van de tracker zelf als de naamlengte die van de tracker is, anders berekend zoals de firmware
+    const perQ = cfg.perTracker && nb === cfg.nameBytes ? cfg.perTracker : perForName(nb);
+    return { speed: num("sim-speed", 50, 1, 200), dur: num("sim-dur", 60, 5, 1440), dz0, dz1: Math.min(1, dz0 + dzl), miss: num("sim-miss", 10, 0, 100) / 100,
+      st0, st1: Math.min(1, st0 + stl), nb, perQ, over: scOver };
   }
 
   function drawStrip() {
@@ -550,10 +649,16 @@
     el("circle", { r: 8, class: "sim-dot" }, trk);
     el("text", { y: -24, class: "sim-mark", id: "sim-mark", "text-anchor": "middle" }, trk);
     el("text", { y: 36, class: "sim-snrt", id: "sim-snrt", "text-anchor": "middle" }, trk);
+    // radio-icoontje: luistervenster
+    const li = el("g", { id: "sim-listen", class: "sim-listen", transform: "translate(22,-22)" }, trk);
+    el("circle", { r: 3, class: "sim-listen-dot" }, li);
+    el("path", { d: "M-7 -5 A9 9 0 0 1 7 -5", class: "sim-listen-arc" }, li);
+    el("path", { d: "M-11 -9 A15 15 0 0 1 11 -9", class: "sim-listen-arc" }, li);
+    el("text", { x: 14, y: 4, class: "sim-listen-t" }, li).textContent = "luistert";
   }
 
   function fillVars() {
-    const val = { fifo_max: `${cfg.fifo_max}`, fifo_dun: cfg.fifo_dun ? `${cfg.fifo_dun} m` : "0 m (uitdunnen staat uit)", fifo_snr: `${dB(cfg.fifo_snr)}`,
+    const val = { nb: `${sc.nb} bytes`, perq: `${sc.perQ}`, fifo_wacht: cfg.fifo_wacht ? fmtDur(cfg.fifo_wacht) : "(uit)", still_timeout: fmtDur(cfg.still_timeout), fifo_max: `${cfg.fifo_max}`, fifo_dun: cfg.fifo_dun ? `${cfg.fifo_dun} m` : "0 m (uitdunnen staat uit)", fifo_snr: `${dB(cfg.fifo_snr)}`,
       fifo_gap: fmtDur(cfg.fifo_gap), fifo_per_uur: `${cfg.fifo_per_uur}`, fifo_per_uur_n: `${cfg.fifo_per_uur}`,
       fifo_pogingen: `${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"}` };
     pane.querySelectorAll(".sim-v").forEach((s) => { s.textContent = val[s.dataset.k] || ""; });
@@ -574,6 +679,9 @@
       + ` (nooit vaker dan ${fmtDur(cfg.min_interval)}, minstens ${fmtDur(cfg.max_interval)}, ${nf(cfg.min_dist)} m) · SlowTrack ${cfg.slow_log ? `loggen elke ${fmtDur(cfg.slow_log)}${mode === "classic" ? `, versturen elke ${fmtDur(cfg.slow_send)}` : ""}` : "uit"}`
       + (mode === "fifo" ? ` · FIFO: ${cfg.fifo_min} tot ${cfg.fifo_max} punten, elke ${fmtDur(cfg.fifo_gap)}, hoogstens ${cfg.fifo_per_uur} per uur,`
         + ` ${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"} per punt, uitdunnen ${cfg.fifo_dun ? `${cfg.fifo_dun} m` : "uit"}, SNR ≥ ${dB(cfg.fifo_snr)}.` : ".");
+    if (sc.over) $("sim-cfg").textContent += ` In dit scenario: SlowTrack elke ${fmtDur(sc.over.slow_log)}, inhalen vanaf ${sc.over.fifo_min} punten.`;
+    $("sim-nbhelp").textContent = `≈ ${sc.perQ} punten per Q-bericht` + (cfg.perTracker && sc.nb === cfg.nameBytes ? " (zoals de tracker meldt)" : "")
+      + (cfg.naam != null ? `. De naam "${cfg.naam}" telt ${cfg.nameBytes} bytes.` : ".");
     render(performance.now(), true);
   }
 
@@ -591,7 +699,7 @@
   }
 
   // ---- animatie ----------------------------------------------------------------------------
-  function trackerXY() { return [xAt(Math.min(1, simT / S.end)), ROUTE_Y]; }
+  function trackerXY() { return [xAt(S.posF(Math.min(simT, S.end))), ROUTE_Y]; }
   function nearestRep(x) {
     let best = -1, d = 1e9;
     reps.forEach((f, i) => { const dd = Math.abs(xAt(f) - x); if (dd < d) { d = dd; best = i; } });
@@ -616,12 +724,13 @@
         marks.push({ t0: now, text: "✓", cls: "ok" });
       } else if (e.type === "miss") {
         marks.push({ t0: now, text: "✗", cls: "bad" });
-      } else if (e.type === "tofifo") flyToFifo();
+      } else if (e.type === "listen") listenWall = now + 1500;   // ook bij 300× even zichtbaar
+      else if (e.type === "tofifo") flyToFifo();
       else if (e.type === "drop") { const b = $("sim-fifobox"); b.classList.remove("drop"); void b.offsetWidth; b.classList.add("drop"); }
     }
     S.fx = [];
   }
-  let flying = 0;
+  let flying = 0, listenWall = 0;
   function flyToFifo() {
     if (flying > 5 || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const a = $("sim-ftbuf"), b = $("sim-fifo");
@@ -662,8 +771,11 @@
     marks = marks.filter((k) => now - k.t0 < 900);
     const mk = $("sim-mark");
     if (mk) { const k = marks[marks.length - 1]; mk.textContent = k ? k.text : ""; mk.setAttribute("class", `sim-mark ${k ? k.cls : ""}`); }
+    const lw = $("sim-listen");
+    if (lw) lw.style.opacity = (simT < S.listenUntil && simT >= S.lastListen) || now < listenWall ? 1 : 0;
     const st = $("sim-snrt");
-    if (st) st.textContent = S.snr == null ? "geen ontvangst" : `SNR ${dB(S.snr)}`;
+    const still = S.rest ? "in rust" : !S.moving(Math.floor(simT)) ? "staat stil" : "";
+    if (st) st.textContent = still ? (S.snr == null ? `${still} · geen ontvangst` : `${still} · SNR ${dB(S.snr)}`) : S.snr == null ? "geen ontvangst" : `SNR ${dB(S.snr)}`;
     // vliegende pakketjes
     const g = $("sim-fxg");
     if (g) {
@@ -692,12 +804,17 @@
         : `${S.slowBuf.length} gelogd; versturen elke ${fmtDur(cfg.slow_send)} als één L-bericht, uitgedund tot ≈ ${PER_L} punten.`;
     } else {
       dots($("sim-fifo"), S.queue);
+      const ce = S.cfgEff;
       $("sim-fifocount").textContent = `${S.queue.length} / ${cfg.fifo_max}`;
       $("sim-fifobar").style.width = `${Math.min(100, 100 * S.queue.length / cfg.fifo_max)}%`;
       const c = S.count();
-      $("sim-fifonote").innerHTML = (S.flushing ? `<strong>Leegmaken</strong>, één Q-bericht (≈ ${PER_Q} punten) per ${fmtDur(cfg.fifo_gap)}`
+      $("sim-fifonote").innerHTML = (S.flushing ? `<strong>Leegmaken</strong>, één Q-bericht (≈ ${S.perQ} punten) per ${fmtDur(cfg.fifo_gap)}`
         : S.retryAt > simT && S.queue.length ? `Volgende poging over ${Math.ceil((S.retryAt - simT) / 60)} min`
-        : S.queue.length >= cfg.fifo_min ? "Wacht op stabiele dekking" : `Leegmaken vanaf ${cfg.fifo_min} punten`)
+        : S.queue.length >= ce.fifo_min ? "Wacht op stabiele dekking"
+        : S.rest && S.queue.length ? `In rust: leegmaken zodra de dekking stabiel is, ook onder ${ce.fifo_min} punten`
+        : `Leegmaken vanaf ${ce.fifo_min} punten` + (ce.fifo_wacht && S.queue.length ? `, of als het oudste ${fmtDur(ce.fifo_wacht)} wacht (nu ${Math.floor((simT - S.queue[0].t) / 60)} min)` : ""))
+        + (S.rest && S.queue.length && !S.flushing && Number.isFinite(S.restListenAt) ? ` · in rust: volgende luisterbeurt over ${Math.max(0, Math.ceil((S.restListenAt - simT) / 60))} min` : "")
+        + (S.listens ? ` · ${S.listens}× geluisterd` : "")
         + ` · <span class="${c.hour >= cfg.fifo_per_uur ? "warn" : ""}">${c.hour} / ${cfg.fifo_per_uur} dit uur</span>`
         + (c.park ? ` · <span class="park">geparkeerd: ${c.park}</span>` : "")
         + (c.gaveUp ? ` · opgegeven: ${c.gaveUp}` : "")
@@ -715,7 +832,7 @@
       <dt>Op de server</dt><dd><strong>${c.server}</strong> (${c.pct} %) <span class="muted">· live ${c.live}, ingehaald ${c.late}</span></dd>
       <dt>Uitgedund</dt><dd>${c.thin} <span class="muted">(overbodig op een recht stuk)</span></dd>
       <dt>Verloren</dt><dd>${c.lost}${c.wait ? ` <span class="muted">· nog op de tracker: ${c.wait}</span>` : ""}</dd>`
-      + (mode === "fifo" ? `<dt id="sim-c-ack">Serverbevestiging</dt><dd>T1F ${c.sent.ack}× · ${c.acked} punten bevestigd${c.dup ? ` <span class="muted">· ${c.dup} dubbel ontvangen (server filtert)</span>` : ""}</dd>` : "");
+      + (mode === "fifo" ? `<dt id="sim-c-ack">Serverbevestiging</dt><dd>T1F ${c.sent.ack}× · ${c.acked} punten bevestigd${c.waitSends ? ` · ${c.waitSends}× toch verstuurd na wachten` : ""}${c.restSends ? ` · ${c.restSends}× leeggemaakt in rust` : ""}${c.dup ? ` <span class="muted">· ${c.dup} dubbel ontvangen (server filtert)</span>` : ""}</dd>` : "");
     if (force || now - lastTrack > (S.points.length > 800 ? 600 : 150)) { lastTrack = now; drawTrack(); }
     // gebeurtenissen (nieuwste bovenaan)
     const ol = $("sim-log");
@@ -732,7 +849,8 @@
     const svg = $("sim-track");
     svg.textContent = "";
     const xt = (t) => X0 + (X1 - X0) * t / S.end;
-    if (sc.dz1 > sc.dz0) el("rect", { x: xAt(sc.dz0), y: 2, width: xAt(sc.dz1) - xAt(sc.dz0), height: 70, class: "sim-dz", rx: 4 }, svg);
+    if (S.dzT) el("rect", { x: xt(S.dzT[0]), y: 2, width: xt(S.dzT[1]) - xt(S.dzT[0]), height: 70, class: "sim-dz", rx: 4 }, svg);
+    if (sc.st1 > sc.st0) el("rect", { x: xt(sc.st0 * S.end), y: 74, width: xt(sc.st1 * S.end) - xt(sc.st0 * S.end), height: 10, class: "sim-stop", rx: 3 }, svg);
     const lanes = { live: 16, late: 36, lost: 56 };
     [["live", "live"], ["late", "ingehaald"], ["lost", "weg"]].forEach(([k, txt]) => { el("text", { x: 2, y: lanes[k] + 4, class: "sim-lane" }, svg).textContent = txt; });
     el("line", { x1: X0, y1: 80, x2: xt(Math.min(simT, S.end)), y2: 80, class: "sim-prog" }, svg);
@@ -774,14 +892,19 @@
     startLoop();
   });
   $("sim-reset").addEventListener("click", reset);
-  ["sim-speed", "sim-dur", "sim-dz0", "sim-dzl", "sim-miss"].forEach((id) => $(id).addEventListener("change", () => {
+  ["sim-speed", "sim-dur", "sim-dz0", "sim-dzl", "sim-miss", "sim-st0", "sim-stl", "sim-nb"].forEach((id) => $(id).addEventListener("change", () => {
     pane.querySelectorAll("[data-preset]").forEach((x) => x.classList.remove("on"));
     reset();
   }));
-  const PRESETS = { std: { speed: 50, dur: 60, dz0: 30, dzl: 40 }, long: { speed: 50, dur: 300, dz0: 20, dzl: 60 } };
+  const PRESETS = { std: { speed: 50, dur: 60, dz0: 30, dzl: 40, st0: 0, stl: 0, miss: 10 }, long: { speed: 50, dur: 300, dz0: 20, dzl: 60, st0: 0, stl: 0, miss: 10 },
+    // lang stilstaan: SlowTrack elke 5 min, inhalen pas vanaf 20 punten, zodat "toch versturen na" zichtbaar wordt
+    // door een gat rijden en punten verzamelen, dan urenlang parkeren met goed bereik, op het einde weer wegrijden
+    stand: { speed: 50, dur: 360, dz0: 25, dzl: 35, st0: 6, stl: 91, miss: 10, over: { slow_log: 300, fifo_min: 20 } } };
   pane.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
     const p = PRESETS[b.dataset.preset];
     $("sim-speed").value = p.speed; $("sim-dur").value = p.dur; $("sim-dz0").value = p.dz0; $("sim-dzl").value = p.dzl;
+    $("sim-st0").value = p.st0; $("sim-stl").value = p.stl; $("sim-miss").value = p.miss;
+    scOver = p.over || null;
     pane.querySelectorAll("[data-preset]").forEach((x) => x.classList.toggle("on", x === b));
     reset();
   }));
@@ -803,6 +926,7 @@
     const fresh = readSettings();
     const changed = !cfg || JSON.stringify(fresh) !== JSON.stringify(cfg);
     cfg = fresh;
+    if (changed && cfg.nameBytes) $("sim-nb").value = cfg.nameBytes;
     $("sim-src").textContent = cfg.source;
     const kvNow = window.MTDev && MTDev.kv && MTDev.kv.pubkey;
     if (changed) setMode(cfg.fifoOnTracker ? cfg.track_mode : kvNow ? "classic" : (mode || "fifo"));

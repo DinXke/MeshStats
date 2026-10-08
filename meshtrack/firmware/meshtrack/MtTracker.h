@@ -32,4 +32,8 @@ int mt_tracker_fifo_hour(uint32_t* wait_s);   // leegmaakberichten in het laatst
 const char* mt_tracker_fifo_state();   // leegmaken: bezig, gestopt, ...
 bool mt_tracker_fifo_clear();
 uint16_t mt_tracker_fifo_parked();
-uint32_t mt_tracker_fifo_confirmed();  // sinds de start door een T1F van de server verwijderde punten     // geparkeerde punten (pogingen >= fifo_pogingen)          // wachtrij wissen (en bewaren)
+uint32_t mt_tracker_fifo_confirmed();
+// dump (0.9.1, CLI en Bluetooth, alleen lezen): "mtdump 1", now, pos, mode, last_tx, last_heard, cov,
+// cnt, flush, pts F/S/Q (hooguit 20 punten per regel), end. o(tekst, true) = regel afsluiten.
+typedef void (*MtDumpOut)(const char* text, bool eol);
+void mt_tracker_dump(MtDumpOut o);  // sinds de start door een T1F van de server verwijderde punten     // geparkeerde punten (pogingen >= fifo_pogingen)          // wachtrij wissen (en bewaren)

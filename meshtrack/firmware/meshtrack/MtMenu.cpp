@@ -24,16 +24,31 @@ static bool s_suspended = false;      // stock rescue-CLI heeft Serial
 static bool s_conn = false;
 static bool s_in_menu = false;
 
+// Uitvoer gaat naar Serial, of (Bluetooth, alleen-lezen commando's) naar een buffer: s_cap.
+// In de buffer eindigt een regel op "\n" (niet "\r\n": scheelt bytes over Bluetooth).
+static char* s_cap = nullptr;
+static size_t s_cap_len = 0, s_cap_max = 0;
+static bool s_cap_over = false;
+static void sink(const char* t) {
+  if (!s_cap) { Serial.print(t); return; }
+  size_t n = strlen(t);
+  if (s_cap_len + n + 1 > s_cap_max) { n = s_cap_max > s_cap_len + 1 ? s_cap_max - s_cap_len - 1 : 0; s_cap_over = true; }
+  memcpy(s_cap + s_cap_len, t, n);
+  s_cap_len += n;
+  s_cap[s_cap_len] = 0;
+}
+static void sink_eol() { sink(s_cap ? "\n" : "\r\n"); }
 static void out(const char* fmt, ...) {
   char buf[200];
   va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof(buf), fmt, ap); va_end(ap);
-  Serial.print(buf);
+  sink(buf);
 }
 static void outl(const char* fmt, ...) {
   char buf[200];
   va_list ap; va_start(ap, fmt); vsnprintf(buf, sizeof(buf), fmt, ap); va_end(ap);
-  Serial.print(buf); Serial.print("\r\n");
+  sink(buf); sink_eol();
 }
+static void dump_out(const char* t, bool eol) { sink(t); if (eol) sink_eol(); }
 
 void mt_log(const char* fmt, ...) {
   if (s_suspended || !Serial || s_in_menu) return;
@@ -140,6 +155,14 @@ static const char* set_param(const char* k, const char* v) {
     ok = end != v && (*end == 0 || !strcmp(end, "m")) && r >= 0 && r <= 100;
     if (ok) c.fifo_dun = (uint8_t)r;
   }
+  else if (!strcmp(k, "fifo_wacht")) {       // "30m", "2h", "uit"/"0"; bewaard in minuten (1..254), 255 = uit
+    uint32_t s = 0;
+    if (!strcmp(v, "uit") || !strcmp(v, "off") || !strcmp(v, "0")) { c.fifo_wacht = 255; ok = true; }
+    else {
+      ok = parse_dur(v, &s) && s >= 60 && s <= 254UL * 60;
+      if (ok) c.fifo_wacht = (uint8_t)((s + 59) / 60);
+    }
+  }
   else if (!strcmp(k, "fifo_snr")) {         // "-5" of "-5dB"
     char* end;
     long r = strtol(v, &end, 10);
@@ -210,9 +233,14 @@ static void slow_ratio_warn(const char* k, const char* pre) {
 }
 
 // FIFO: hoeveel leegmaakberichten per uur er effectief weg mogen, en hoe lang een volle wachtrij
-// erover doet. MT_FIFO_PER_MSG is een schatting (zoals MT_SLOW_FIT): meestal passen er 6 à 11
-// punten in één bericht, minder bij grote afstanden of een lange naam.
-#define MT_FIFO_PER_MSG 11   // binair (Q-berichten); zelfde schatting als de webpagina
+// erover doet. Punten per Q-bericht = schatting op basis van de echte nodenaam: "<naam>: " gaat van
+// de MT_TEXT_MAX tekens af, de vaste velden kosten ~79 tekens (incl. "|f"), een binair punt ~8.
+// Dezelfde formule staat in serial.js (fifoPerMsg).
+static uint32_t fifo_per_msg() {
+  int room = MT_TEXT_MAX - the_mesh.mtSenderLen() - 79;
+  int n = 1 + (room > 0 ? room / 8 : 0);
+  return n < 2 ? 2 : n;
+}
 static void fmt_minutes(char* o, size_t n, uint32_t s) {
   uint32_t m = (s + 59) / 60;
   if (m < 60) snprintf(o, n, "%lu min", (unsigned long)(m ? m : 1));
@@ -223,7 +251,8 @@ static void fifo_summary(const char* pre) {
   uint32_t by_gap = 3600 / gap;
   bool capped = by_gap > per;                   // het uurplafond remt, niet fifo_gap
   uint32_t eff = capped ? per : by_gap;
-  uint32_t full = (mt_cfg.fifo_max + MT_FIFO_PER_MSG - 1) / MT_FIFO_PER_MSG;
+  uint32_t pm = fifo_per_msg();
+  uint32_t full = (mt_cfg.fifo_max + pm - 1) / pm;
   // Zonder plafond: elke fifo_gap één bericht. Met plafond: per uur 'per' berichten (telkens
   // fifo_gap na elkaar), dan wachten tot het oudste een uur oud is.
   uint32_t secs = !capped ? full * gap : ((full - 1) / per) * 3600 + (((full - 1) % per) + 1) * gap;
@@ -231,7 +260,12 @@ static void fifo_summary(const char* pre) {
   fmt_minutes(t, sizeof(t), secs);
   outl("%smax %lu berichten/uur (elke %lu s%s) ≈ %lu punten/uur; volle wachtrij (%u) ≈ %lu berichten, leeg in ≈ %s",
        pre, (unsigned long)eff, (unsigned long)gap, capped ? ", begrensd door fifo_per_uur" : "",
-       (unsigned long)(eff * MT_FIFO_PER_MSG), (unsigned)mt_cfg.fifo_max, (unsigned long)full, t);
+       (unsigned long)(eff * pm), (unsigned)mt_cfg.fifo_max, (unsigned long)full, t);
+  outl("%s≈ %lu punten per bericht met de naam \"%s\" (%d bytes); een kortere naam zonder emoji laat meer punten toe",
+       pre, (unsigned long)pm, the_mesh.mtSender(), the_mesh.mtSenderLen() - 2);
+  uint32_t w = mt_fifo_wacht_min();
+  if (w) outl("%sminder dan %u punten maar het oudste ouder dan %lu min, en stabiele dekking: toch versturen (fifo_wacht)",
+              pre, (unsigned)mt_cfg.fifo_min, (unsigned long)w);
   outl("%snu %u punten in de wachtrij, waarvan %u geparkeerd (na %u mislukte pogingen; laatste poging als er niets anders wacht)",
        pre, (unsigned)mt_tracker_fifo_count(), (unsigned)mt_tracker_fifo_parked(), (unsigned)mt_cfg.fifo_pogingen);
   if (capped)
@@ -239,7 +273,8 @@ static void fifo_summary(const char* pre) {
          pre, (unsigned long)gap, (unsigned long)by_gap, (unsigned long)per);
 }
 static void fifo_set_note(const char* k, const char* pre) {
-  if (!strcmp(k, "fifo_max") || !strcmp(k, "fifo_gap") || !strcmp(k, "fifo_per_uur")) fifo_summary(pre);
+  if (!strcmp(k, "fifo_max") || !strcmp(k, "fifo_gap") || !strcmp(k, "fifo_per_uur") || !strcmp(k, "fifo_wacht"))
+    fifo_summary(pre);
 }
 
 static void fmt_ago(char* o, size_t n, uint32_t ts) {
@@ -453,6 +488,9 @@ static void cmd_status() {
     outl("fifo_pogingen=%u fifo_geparkeerd=%u fifo_dun=%u fifo_snr=%d fifo_bevestigd=%lu", (unsigned)mt_cfg.fifo_pogingen,
          (unsigned)mt_tracker_fifo_parked(), (unsigned)mt_cfg.fifo_dun, (int)mt_cfg.fifo_snr,
          (unsigned long)mt_tracker_fifo_confirmed());
+    char fw[12] = "uit";
+    if (mt_fifo_wacht_min()) snprintf(fw, sizeof(fw), "%lum", (unsigned long)mt_fifo_wacht_min());
+    outl("fifo_wacht=%s fifo_per_bericht=%lu", fw, (unsigned long)fifo_per_msg());
   }
   {
     ChannelDetails ch;
@@ -487,7 +525,7 @@ static void cmd_fs(char* args) {
     outl("fs: geweigerd: de opslag is in orde en de sleutel is geldig (dit zou de sleutel wissen).");
     return;
   }
-  outl("fs: interne opslag wordt geformatteerd; daarna herstart. Zet daarna de sleutel terug vanaf een backup.");
+  outl("fs: interne opslag wordt geformatteerd; daarna herstart. Zet daarna de sleutel terug vanaf een back-up.");
   delay(100);
   bool ok = mt_fs_internal_format();
   outl("fs: formatteren %s, herstart...", ok ? "gelukt" : "MISLUKT");
@@ -507,7 +545,7 @@ static void cmd_help() {
   outl("    chan <nr>  authkey <32 hex>|-   (trackingkanaal en authsleutel; afzender = de naam)");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
   outl("    msg_beep prive|alles|uit (biep bij berichten als companion zonder app; prive = alleen privéberichten)");
-  outl("    slow_log <tijd>    SlowTrack: elke x een punt loggen, ook in rust (0 = uit; minstens 30s)");
+  outl("    slow_log <tijd>    SlowTrack: elke x een punt loggen zolang hij beweegt (0 = uit; minstens 30s)");
   outl("    slow_send <tijd>   SlowTrack: de gelogde punten elke x versturen, in één bericht (minstens 1m)");
   outl("      Tip: kies slow_log ongeveer 1/8 van slow_send (bv. slow_send 30m -> slow_log 4m). Eén bericht");
   outl("      bevat zo'n 6 à 11 punten (minder bij grote afstanden); logt hij er meer, dan vallen er");
@@ -522,13 +560,13 @@ static void cmd_help() {
   outl("      volgende berichten; lukt dat niet, dan gaat alleen het hoofdpunt (met tijd) in de wachtrij.");
   outl("      SlowTrack-punten gaan er altijd in (geen slow_send). 500 punten is bij 1 bericht per 1 à 2 min");
   outl("      zo'n 8 à 16 uur zonder bereik. Bij stabiele dekking maakt hij de wachtrij leeg: oudste eerst,");
-  outl("      zo'n 11 punten per Q-bericht.");
+  outl("      zo'n 7 à 10 punten per Q-bericht (minder bij een lange naam of emoji).");
   outl("    fifo_max <20..500>      wachtrij hooguit zoveel punten (standaard 500); vol = het minst");
   outl("      betekenisvolle punt valt weg (dat het dichtst bij de lijn tussen zijn buren ligt)");
   outl("    fifo_min <1..fifo_max>  pas leegmaken vanaf zoveel punten (standaard 5; na een onderbreking vanaf 1)");
   outl("    fifo_gap <tijd>         tussen twee leegmaakberichten minstens (15s..5m, standaard 30s)");
   outl("    fifo_per_uur <1..60>    hooguit zoveel leegmaakberichten per uur (standaard 20)");
-  outl("      Een volle wachtrij van 500 punten is zo'n 46 berichten; elk bericht wordt door meerdere");
+  outl("      Een volle wachtrij van 500 punten is zo'n 50 à 70 berichten; elk bericht wordt door meerdere");
   outl("      repeaters herhaald, dus hou fifo_gap ruim.");
   outl("    fifo_pogingen <1..10>   na zoveel niet herhaalde leegmaakberichten is een punt geparkeerd");
   outl("      (standaard 3): het blokkeert de wachtrij niet meer en krijgt een laatste poging als er niets");
@@ -537,6 +575,11 @@ static void cmd_help() {
   outl("      (standaard 10, 0 = uit); een punt bij een stop (tijdsprong > 10 min) blijft altijd");
   outl("    fifo_snr <-20..10>      een nieuwe leegmaakronde pas bij een pakket met SNR >= dit (dB, standaard -5),");
   outl("      of bij twee keer dekking binnen 60 s, of een bevestiging (T1F) van de server");
+  outl("    fifo_wacht <duur>|uit    minder dan fifo_min punten, maar het oudste is ouder dan dit en er is stabiele");
+  outl("      dekking: toch versturen (standaard 30m, 1m..4h; fifo_per_uur blijft gelden).");
+  outl("    In rust (langer dan still_timeout geen beweging) maakt hij de wachtrij meteen leeg als er");
+  outl("      repeaters in de buurt zijn, ook onder fifo_min: eerst 60 s luisteren; zonder bereik opnieuw");
+  outl("      na 10, 20, 40 en daarna elke 60 min.");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
   outl("  key export | key import <128 hex>   PRIVATE KEY (import na een reboot)");
@@ -549,6 +592,8 @@ static void cmd_help() {
   outl("          fifo_geparkeerd = punten na fifo_pogingen mislukte pogingen; fifo_bevestigd = sinds de start");
   outl("          door de server bevestigde punten (T1F)");
   outl("  fifo | fifo wis ja          wachtrij tonen (aantal, oudste en nieuwste punt) / wissen");
+  outl("  dump                        interne toestand, machineleesbaar (webpagina /tracker; ook via Bluetooth,");
+  outl("                              samen met status en fifo: alleen lezen)");
   outl("  defaults | backup | reboot | menu | q (menu sluiten)");
   outl("  rxlog aan|uit                ontvangen kanaalpakketten en -berichten loggen (tot een herstart)");
   outl("  fs | fs herstel ja          interne opslag controleren / herstellen (alleen als ze beschadigd is)");
@@ -581,8 +626,8 @@ enum Screen : uint8_t { SC_MAIN, SC_MODE, SC_WHEN, SC_RHYTHM, SC_REST, SC_GPS, S
 struct Item { const char* label; const char* param; uint8_t kind; };   // kind: 0 getal, 1 duur, 2 tekst
 #define N_ITEMS(a) ((int)(sizeof(a) / sizeof((a)[0])))
 static const Item WHEN[] = {
-  {"Minimum snelheid (km/u, 0 = altijd)", "min_speed", 0},
-  {"Minimum verplaatsing (m)", "min_dist", 0},
+  {"Minimumsnelheid (km/u, 0 = altijd)", "min_speed", 0},
+  {"Minimale verplaatsing (m)", "min_dist", 0},
   {"Scherpe bocht vanaf (graden, 0 = uit)", "turn_min", 0},
   {"Bochten pas boven (km/u)", "turn_min_speed", 0},
 };
@@ -605,6 +650,7 @@ static const Item FIFOI[] = {
   {"Pogingen voor een punt geparkeerd wordt", "fifo_pogingen", 0},
   {"Rechte lijn uitdunnen (m, 0 = uit)", "fifo_dun", 0},
   {"Nieuwe ronde vanaf SNR (dB, -20..10)", "fifo_snr", 0},
+  {"Toch versturen als het oudste punt ouder is dan", "fifo_wacht", 1},
 };
 static const Item REST[] = {
   {"Slapen na stilstand van", "still_timeout", 1},
@@ -646,6 +692,9 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "fifo_pogingen")) snprintf(o, n, "%u", (unsigned)mt_cfg.fifo_pogingen);
   else if (!strcmp(param, "fifo_dun")) snprintf(o, n, mt_cfg.fifo_dun ? "%u m" : "uit", (unsigned)mt_cfg.fifo_dun);
   else if (!strcmp(param, "fifo_snr")) snprintf(o, n, "%d dB", (int)mt_cfg.fifo_snr);
+  else if (!strcmp(param, "fifo_wacht")) {
+    if (mt_fifo_wacht_min()) fmt_dur_nl(o, n, mt_fifo_wacht_min() * 60); else snprintf(o, n, "uit");
+  }
   else if (!strcmp(param, "chan")) {
     ChannelDetails ch;
     bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
@@ -735,9 +784,9 @@ static void show() {
     case SC_REST:   header("STILSTAND EN HEARTBEAT"); list_items(REST, N_ITEMS(REST)); break;
     case SC_SLOW:
       header("SLOWTRACK");
-      outl("   Los van de gewone tracking: elke x een punt loggen, ook in rust, en die");
-      outl("   punten samen in één bericht versturen. Eén bericht bevat zo'n 6 à 11 punten");
-      outl("   (minder bij grote afstanden of een lange naam).");
+      outl("   Los van de gewone tracking: elke x een punt loggen (niet in rust: dan");
+      outl("   pas weer bij beweging) en die punten samen in één bericht versturen. Eén");
+      outl("   bericht bevat zo'n 6 à 11 punten (minder bij grote afstanden of een lange naam).");
       outl("   Tip: kies het loginterval ongeveer 1/8 van het verzendinterval");
       outl("   (bv. versturen elke 30 min -> loggen elke 4 min); logt hij meer, dan");
       outl("   vallen er tussenliggende punten weg.");
@@ -761,8 +810,8 @@ static void show() {
       outl("     wachtrij vol, dan valt het minst betekenisvolle punt weg, niet het oudste: de vorm");
       outl("     van de route blijft. Op een rechte weg vallen overbodige punten meteen weg (uitdunnen).");
       outl("   - Leegmaken pas bij stabiele dekking (sterk genoeg signaal, of twee keer dekking binnen");
-      outl("     60 s): geen verspilde berichten op de rand van het bereik. Oudste eerst, zo'n 11 punten");
-      outl("     per bericht; een volle wachtrij is zo'n 46 berichten. Elk bericht wordt door meerdere");
+      outl("     60 s): geen verspilde berichten op de rand van het bereik. Oudste eerst, zo'n 7 à 10 punten");
+      outl("     per bericht; een volle wachtrij is zo'n 50 à 70 berichten. Elk bericht wordt door meerdere");
       outl("     repeaters herhaald, dus hou fifo_gap ruim.");
       outl("   - Een punt dat na enkele pogingen niet doorraakt, wordt geparkeerd: het blokkeert de");
       outl("     rest niet. De server kan bevestigen wat hij kreeg (T1F); dat ruimt de wachtrij op.");
@@ -778,7 +827,7 @@ static void show() {
     case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, N_ITEMS(GPSI)); break;
     case SC_MAINT:
       header("ONDERHOUD");
-      outl("   1  Backup van alle opslag (bevat de PRIVATE KEY)");
+      outl("   1  Back-up van alle opslag (bevat de PRIVATE KEY)");
       outl("   2  Instellingen terug naar standaard");
       outl("   3  Herstarten");
       outl("");
@@ -905,6 +954,7 @@ static void command(char* s) {
   else if (!strcmp(s, "reboot")) { outl("herstart..."); delay(100); NVIC_SystemReset(); }
   else if (!strcmp(s, "fs")) cmd_fs(args);
   else if (!strcmp(s, "fifo")) cmd_fifo(args);
+  else if (!strcmp(s, "dump")) mt_tracker_dump(dump_out);
   else if (!strcmp(s, "menu")) open_menu();
   else if (!strcmp(s, "q")) { if (s_in_menu) { s_in_menu = false; outl(""); outl("Menu gesloten."); } }
   else outl("onbekend commando: %s ('help')", s);
@@ -932,6 +982,96 @@ static void handle_line(char* line) {
     return;
   }
   if (s_in_menu) show();
+}
+
+// ---- Bluetooth: alleen-lezen commando's (0.9.1) -----------------------------------------
+// De app (webpagina /tracker) stuurt het companion-commando [0x7E]['M']['T']<ascii-commando>.
+// Alleen status, fifo en dump: NOOIT set, key, backup, chan, fs, reboot ... over Bluetooth.
+// De uitvoer gaat in een buffer (malloc, vrijgegeven na het versturen) en daarna in stukken
+// [0x7E][volgnummer vanaf 0][utf8-tekst] naar de app, afgesloten met [0x7E][0xFF]. MyMesh stuurt
+// één stuk per lus en alleen als de verzendrij van de interface niet druk is (gewoon companion-
+// verkeer gaat voor).
+static char* s_ble = nullptr;
+static size_t s_ble_len = 0, s_ble_pos = 0;
+static uint8_t s_ble_seq = 0;
+static bool s_ble_active = false, s_ble_static = false;
+static char s_ble_small[64];
+
+static void ble_free() {
+  if (s_ble && !s_ble_static) free(s_ble);
+  s_ble = nullptr;
+  s_ble_active = s_ble_static = false;
+}
+
+void mt_ble_cli(const char* cmd, int n) {
+  ble_free();
+  char c[24];
+  int k = 0;
+  for (int i = 0; i < n && k < (int)sizeof(c) - 1; i++) c[k++] = (char)tolower((unsigned char)cmd[i]);
+  c[k] = 0;
+  while (k && (c[k - 1] == ' ' || c[k - 1] == '\r' || c[k - 1] == '\n' || c[k - 1] == 0)) c[--k] = 0;
+  int which = !strcmp(c, "status") ? 1 : !strcmp(c, "fifo") ? 2 : !strcmp(c, "dump") ? 3 : 0;
+  size_t cap = which == 3 ? 24576 : which ? 4096 : sizeof(s_ble_small);
+  char* buf = which ? (char*)malloc(cap) : nullptr;
+  if (!buf) {                                  // geweigerd commando of geen geheugen
+    snprintf(s_ble_small, sizeof(s_ble_small), which ? "fout: geen geheugen\n" : "alleen status, fifo en dump via Bluetooth\n");
+    s_ble = s_ble_small;
+    s_ble_static = true;
+    s_ble_len = strlen(s_ble_small);
+  } else {
+    s_cap = buf; s_cap_max = cap; s_cap_len = 0; s_cap_over = false;
+    buf[0] = 0;
+    if (which == 1) cmd_status();
+    else if (which == 2) cmd_fifo("");
+    else {
+      s_cap_max = cap - 24;                    // plaats voor de afsluiting als het niet past
+      mt_tracker_dump(dump_out);
+      s_cap_max = cap;
+      if (s_cap_over) sink("afgekapt\nend\n");
+    }
+    if (s_cap_over && which != 3) sink("afgekapt\n");
+    s_ble = buf;
+    s_ble_len = s_cap_len;
+    s_cap = nullptr;
+  }
+  s_ble_pos = 0;
+  s_ble_seq = 0;
+  s_ble_active = true;
+  mt_log("bluetooth: '%s' (%u bytes)", which ? c : "geweigerd", (unsigned)s_ble_len);
+}
+
+bool mt_ble_pending() { return s_ble_active; }
+void mt_ble_abort() { ble_free(); }
+
+// Volgend stuk in buf (hooguit max bytes); 0 = niets meer. mt_ble_commit() na een geslaagde verzending.
+static size_t s_ble_take = 0;
+int mt_ble_next_frame(uint8_t* buf, int max) {
+  if (!s_ble_active) return 0;
+  if (s_ble_pos >= s_ble_len) {                // einde
+    buf[0] = MT_BLE_CMD;
+    buf[1] = 0xFF;
+    s_ble_take = 0;
+    return 2;
+  }
+  size_t room = (size_t)(max - 2), rest = s_ble_len - s_ble_pos, n = rest < room ? rest : room;
+  if (n < rest) {
+    size_t cut = n;                            // op een regeleinde knippen als dat kan
+    while (cut > 0 && s_ble[s_ble_pos + cut - 1] != '\n') cut--;
+    if (cut > room / 4) n = cut;
+    else while (n > 1 && ((uint8_t)s_ble[s_ble_pos + n] & 0xC0) == 0x80) n--;   // niet midden in een UTF-8-teken
+  }
+  buf[0] = MT_BLE_CMD;
+  buf[1] = s_ble_seq;
+  memcpy(buf + 2, s_ble + s_ble_pos, n);
+  s_ble_take = n;
+  return (int)n + 2;
+}
+
+void mt_ble_commit() {
+  if (!s_ble_active) return;
+  if (s_ble_pos >= s_ble_len) { ble_free(); return; }   // eindframe verstuurd
+  s_ble_pos += s_ble_take;
+  s_ble_seq = s_ble_seq == 0xFE ? 0 : s_ble_seq + 1;     // 0xFF = einde
 }
 
 // ---- invoer ---------------------------------------------------------------------

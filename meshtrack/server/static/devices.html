@@ -39,7 +39,7 @@
   <div class="tabs pagetabs" id="dtabs">
     <button class="tab" data-tab="settings">Instellingen</button>
     <button class="tab" data-tab="fw">Firmware <span class="badge" id="fw-badge" hidden>nieuw</span></button>
-    <button class="tab" data-tab="prov">Klaarmaken &amp; backups</button>
+    <button class="tab" data-tab="prov">Klaarmaken &amp; back-ups</button>
     <button class="tab" data-tab="term">Terminal</button>
     <button class="tab" data-tab="sim">Simulatie</button>
   </div>
@@ -109,9 +109,9 @@
           <fieldset>
             <legend>Wanneer een positie sturen</legend>
             <div class="grid">
-              <div><label>Minimum snelheid</label><div class="unit"><input data-set="min_speed" type="number" min="0" max="300"><span>km/u</span></div>
+              <div><label>Minimumsnelheid</label><div class="unit"><input data-set="min_speed" type="number" min="0" max="300"><span>km/u</span></div>
                 <div class="help">0 = altijd, ook wandelen</div></div>
-              <div><label>Minimum verplaatsing</label><div class="unit"><input data-set="min_dist" type="number" min="0" max="50000"><span>m</span></div></div>
+              <div><label>Minimale verplaatsing</label><div class="unit"><input data-set="min_dist" type="number" min="0" max="50000"><span>m</span></div></div>
               <div><label>Scherpe bocht vanaf</label><div class="unit"><input data-set="turn_min" type="number" min="0" max="180"><span>°</span></div>
                 <div class="help">0 = bochten negeren</div></div>
               <div><label>Bochten pas boven</label><div class="unit"><input data-set="turn_min_speed" type="number" min="0" max="300"><span>km/u</span></div></div>
@@ -139,16 +139,16 @@
               punten volgens <em>Gelogde punten versturen elke</em>.<br>
               <strong>FIFO:</strong> na elk FastTrack-bericht kijkt de tracker of een repeater het binnen een tiental
               seconden herhaalt. Gebeurt dat niet, dan gaat alleen het hoofdpunt van dat bericht, met zijn echte GPS-tijd,
-              in een wachtrij. Ook SlowTrack logt in die wachtrij. Zodra er genoeg punten wachten en de tracker weer dekking heeft, haalt hij de
+              in een wachtrij. Ook SlowTrack logt in die wachtrij, zolang de tracker beweegt. Zodra er genoeg punten wachten en de tracker weer dekking heeft, haalt hij de
               achterstand in, de oudste punten eerst.</div>
             <details class="fifomore"><summary class="small">Meer over de FIFO-modus</summary>
               <ul class="help">
                 <li>Dekking betekent: de tracker hoort een van zijn eigen berichten herhaald, of een pakket dat via een repeater kwam.</li>
                 <li>Hij stuurt één inhaalbericht per <em>Tijd tussen inhaalberichten</em>, en hoogstens het ingestelde
-                  aantal per uur. Een bericht bevat zo'n 7 punten. Punten verlaten de wachtrij pas als
+                  aantal per uur. Een inhaalbericht bevat zo'n 9 punten; met een lange naam minder. Punten verlaten de wachtrij pas als
                   hun bericht herhaald werd. Hoort hij dat niet, dan telt dat als een mislukte poging voor die punten: hij
-                  stopt, wacht opnieuw op dekking en wacht telkens langer voor hij het nog eens probeert (1, 5, 15 en
-                  daarna 60 min).</li>
+                  stopt, wacht opnieuw op dekking en wacht telkens wat langer voor hij het nog eens probeert (1, 5, 15
+                  en daarna 60 min).</li>
                 <li>Punten die al hun pogingen op hebben, worden <em>geparkeerd</em>: ze wachten tot al de rest verstuurd
                   is, krijgen dan nog één laatste kans en worden daarna opgegeven. Waarschijnlijk kwamen ze toch aan
                   (alleen de herhaling werd niet gehoord); de server filtert dubbele punten weg. Zo houdt één koppig
@@ -160,7 +160,7 @@
                   hoofdpunt naar de wachtrij. Korte gaten vullen zich zo zonder extra berichten.</li>
                 <li>Is de wachtrij vol, dan valt het punt weg dat het minst over de vorm van het spoor zegt (het dichtst bij
                   de lijn tussen zijn buren), niet gewoon het oudste.</li>
-                <li>Een inhaalbericht (Q) is compact binair gecodeerd: er passen zo'n 11 punten in, tegen 7 in tekst.</li>
+                <li>Een inhaalbericht (Q) is compact binair gecodeerd: met een naam van 11 bytes passen er zo'n 9 punten in, tegen 7 in tekst. Een kortere naam zonder emoji laat meer punten toe.</li>
                 <li>Na een reeks inhaalberichten meldt de server tot welk tijdstip hij alles ontvangen heeft. Punten die wel
                   aankwamen maar waarvan de tracker de herhaling niet hoorde, gaan dan toch uit de wachtrij.</li>
                 <li>De server zet de ingehaalde punten op het juiste tijdstip in het spoor en filtert dubbele punten weg.
@@ -170,7 +170,7 @@
             <div class="grid" id="s-fifo">
               <div><label>Wachtrij maximaal</label><div class="unit"><input data-set="fifo_max" type="number" min="20" max="500"><span>punten</span></div>
                 <div class="help">20 tot 500; daarboven vallen de oudste weg. Per gemist FastTrack-bericht gaat alleen
-                  het hoofdpunt in de wachtrij: 500 punten is bij 1 bericht per 1 à 2 min zo'n 8 à 16 uur zonder bereik.</div></div>
+                  het hoofdpunt in de wachtrij: bij 1 bericht per 1 à 2 min volstaan 500 punten voor zo'n 8 à 16 uur zonder bereik.</div></div>
               <div><label>Inhalen vanaf</label><div class="unit"><input data-set="fifo_min" type="number" min="1" max="500"><span>punten</span></div>
                 <div class="help">1 tot het maximum van de wachtrij.</div></div>
               <div><label>Tijd tussen inhaalberichten</label><div class="dur" data-set="fifo_gap"></div>
@@ -185,6 +185,12 @@
               <div><label>Leegmaken pas vanaf</label><div class="unit"><input data-set="fifo_snr" type="number" min="-20" max="10"><span>dB SNR</span></div>
                 <div class="help">−20 tot +10. Leegmaken begint pas bij stabiele dekking: een herhaling met minstens deze
                   signaal-ruisverhouding, of twee tekens van dekking binnen 60 s, of een bevestiging van de server.</div></div>
+              <div><label>Toch versturen na</label><div class="dur" data-set="fifo_wacht" data-off="1" data-offword="uit"></div>
+                <div class="help">1 min tot 4 u. Staan er minder punten dan bij <em>Inhalen vanaf</em>, maar wacht het oudste punt al
+                  zo lang en is de dekking stabiel, dan stuurt hij ze toch, zolang hij beweegt (binnen de limiet per uur). Komt hij in
+                  rust met punten in de wachtrij, dan luistert hij meteen 60 s naar het net en maakt hij bij stabiele dekking de
+                  wachtrij leeg, ook onder <em>Inhalen vanaf</em>. Hoort hij niets, dan luistert hij opnieuw na 10, 20 en 40 min en
+                  daarna elk uur.</div></div>
             </div>
             <div class="slowtip"><strong>Let op de mesh:</strong> elk inhaalbericht wordt door meerdere repeaters herhaald.
               Hou de tijd tussen de berichten ruim (30 s of meer) en het aantal per uur beperkt (hoogstens 30).
@@ -194,8 +200,10 @@
 
           <fieldset data-since="0.8.0" data-keys="slow_log slow_send fast_min_batt">
             <legend>SlowTrack</legend>
-            <div class="help">SlowTrack werkt naast de gewone tracking (FastTrack). Het logt op een vast ritme een GPS-punt,
-              ook bij stilstand of als de tracker slaapt, en verstuurt alle gelogde punten in één keer. De server voegt ze
+            <div class="help">SlowTrack werkt naast de gewone tracking (FastTrack). Het logt op een vast ritme een GPS-punt
+              zolang de tracker beweegt, en verstuurt alle gelogde punten in één keer. In rust (langer dan <em>Slapen na
+              stilstand van</em> geen beweging) zet het vanaf firmware 0.9.1 de GPS niet meer aan; bij de eerste beweging logt het
+              meteen een punt. Staat FastTrack uit door een lage batterij, dan blijft SlowTrack wel loggen. De server voegt ze
               in de juiste volgorde in het spoor in, zodat gaten opgevuld worden.</div>
             <div class="grid">
               <div><label>GPS-punt loggen elke</label><div class="dur" data-set="slow_log"></div>
@@ -265,12 +273,12 @@
     </div>
     <div class="help" id="fw-why"></div>
     <div class="help">Flashen vervangt alleen de app. Sleutel, contacten, kanalen en instellingen blijven. Eerst wordt een
-      backup gedownload; na afloop controleert de pagina of de pubkey nog dezelfde is. De voortgang zie je bovenaan.</div>
+      back-up gedownload; na afloop controleert de pagina of de pubkey nog dezelfde is. De voortgang zie je bovenaan.</div>
   </section>
 
   <!-- klaarmaken en backups -->
   <section class="card pane" id="pane-prov" hidden>
-    <div class="empty" id="prov-none">Verbind eerst een toestel om het klaar te maken of er een backup van te nemen.</div>
+    <div class="empty" id="prov-none">Verbind eerst een toestel om het klaar te maken of er een back-up van te nemen.</div>
     <div id="prov" hidden>
       <div id="prov-pending" class="note" hidden></div>
       <h3>Toestel klaarmaken of terugzetten</h3>
@@ -279,14 +287,14 @@
         <button id="prov-go" class="primary">Op dit toestel zetten</button>
       </div>
       <div class="help">Zet de sleutel van de server, de naam, de radio, de regio, 2-byte paden, de kanalen en het doel op het
-        verbonden toestel. Een andere sleutel op het toestel wordt eerst als backup gedownload.</div>
-      <h3>Backup</h3>
+        verbonden toestel. Een andere sleutel op het toestel wordt eerst als back-up gedownload.</div>
+      <h3>Back-up</h3>
       <div class="row">
-        <button id="bk-server">Backup naar de server</button>
-        <button id="bk-json">Backup downloaden (.json)</button>
+        <button id="bk-server">Back-up naar de server</button>
+        <button id="bk-json">Back-up downloaden (.json)</button>
         <button id="bk-bin">Volledige opslag downloaden (.bin)</button>
       </div>
-      <div class="help">De backups op de server zie je bij de tracker in <a href="/admin">Trackers</a> (tabblad Toestel).</div>
+      <div class="help">De back-ups op de server zie je bij de tracker in <a href="/admin">Trackers</a> (tabblad Toestel).</div>
       <div id="prov-msg" class="msg"></div>
     </div>
   </section>

@@ -73,13 +73,23 @@
     #otabs { flex: none; }
     #opanel.sheet-hidden { display: none; }
   }
+  /* Smalle telefoon (360–420 px): sinds de link "Tracker" paste de kop niet meer en werd de
+     Bluetooth-pil afgeknipt. "online" is de gewone toestand en verdwijnt daarom; "offline" (waarschuwing)
+     blijft zichtbaar. De links krijgen een tikvlak van 44 px hoog. Alleen CSS: offline.js blijft ongewijzigd. */
+  @media (max-width: 420px) {
+    header.top { gap: 10px; }
+    header.top .netpill.on { display: none; }
+    header.top a.small { display: inline-flex; align-items: center; min-height: 44px; }
+    #btpill { max-width: 34vw; }
+  }
 </style>
 </head>
 <body class="offapp">
 <header class="top">
   <h1>MeshTrack <span class="muted small" style="font-weight:400">offline</span></h1>
   <span class="spacer"></span>
-  <a href="/" class="small" id="o-online">Online kaart</a>
+  <a href="/tracker" class="small" id="o-tracker">Tracker</a>
+  <a href="/" class="small" id="o-online" title="Volledige site: vraagt internet en aanmelden">Online kaart</a>
   <a href="/help#offline" class="small">Help</a>
   <span id="net" class="pill netpill">…</span>
   <span id="btpill" class="pill">Bluetooth: uit</span>
