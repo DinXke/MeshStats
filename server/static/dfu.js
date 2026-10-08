@@ -155,10 +155,12 @@
 
   // 1200 baud openen en sluiten: de app springt naar de bootloader.
   async function touch(port) {
-    await port.open({ baudRate: 1200 });
-    try { await port.setSignals({ dataTerminalReady: false }); } catch (_) {}
+    // Met tijdslimieten: een tracker die vastzit, mag de browser niet laten wachten.
+    const within = (pr, ms) => Promise.race([Promise.resolve(pr).catch(() => {}), sleep(ms)]);
+    await within(port.open({ baudRate: 1200 }), 3000);
+    try { await within(port.setSignals({ dataTerminalReady: false }), 1500); } catch (_) {}
     await sleep(100);
-    await port.close();
+    await within(port.close(), 2500);
   }
 
   window.MTDFU = { readPackage, flash, touch, crc16, hci };

@@ -276,11 +276,13 @@
     return lastKv.pubkey ? lastKv : null;
   }
 
+  // Een tracker die niet meer antwoordt, mag de pagina niet laten hangen: elke stap hooguit enkele seconden.
+  const within = (pr, ms) => Promise.race([Promise.resolve(pr).catch(() => {}), sleep(ms)]);
   async function closePort() {
     const p = port;
     port = null;
-    try { if (reader) await reader.cancel(); } catch (_) {}
-    try { await p.close(); } catch (_) {}
+    try { if (reader) await within(reader.cancel(), 1500); } catch (_) {}
+    try { await within(p.close(), 2500); } catch (_) {}
     disconnected();
     return p;
   }
