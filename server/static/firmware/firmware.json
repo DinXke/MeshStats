@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.7.4",
+      "date": "2026-10-08",
+      "notes": "SOS-bevestiging wordt nu ook herkend zonder afzendernaam ervoor en als het trackingkanaal op een ander nummer staat; elk geweigerd bevestigingsbericht komt met de reden in het log.",
+      "zip": "meshtrack-t1000e-0.7.4.zip",
+      "zip_sha256": "1703c63ece8e11690a56b950c9187592d9f4d6db4eaea95b6315c519df905f36",
+      "uf2": "meshtrack-t1000e-0.7.4.uf2",
+      "app_size": 391936,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.7.3",
       "date": "2026-10-08",
       "notes": "Feedback na een klik of SOS: twee hoge biepjes zodra de tracker zijn bericht via een repeater terug hoort, anders na 12 s een lage toon. De server bevestigt een SOS (ondertekend); de tracker speelt dan drie stijgende tonen. Status toont gehoord= en sos_bevestigd=.",
@@ -61,5 +71,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.7.3"
+  "latest": "0.7.4"
 }
