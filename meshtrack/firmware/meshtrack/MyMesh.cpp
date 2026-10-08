@@ -1,5 +1,5 @@
 #include "MyMesh.h"
-#include "MtHooks.h"   // MeshTrack: batterij voor de app
+#include "MtHooks.h"   // MeshTrack: batterij voor de app, herhalingen, T1A
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
@@ -285,6 +285,7 @@ uint8_t MyMesh::getExtraAckTransmitCount() const {
 }
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+  mt_rx_raw(raw, len);   // MeshTrack: herhaling van ons eigen kanaalbericht?
   if (_serial->isConnected() && len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;
@@ -556,6 +557,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   }
 
   uint8_t channel_idx = findChannelIdx(channel);
+  bool mt_ctl = mt_channel_text(channel_idx, text);   // MeshTrack: SOS-bevestiging (T1A) = zonder biep
   out_frame[i++] = channel_idx;
   uint8_t path_len = out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
 
@@ -576,7 +578,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     _serial->writeFrame(frame, 1);
   } else {
 #ifdef DISPLAY_CLASS
-    if (_ui) _ui->notify(UIEventType::channelMessage);
+    if (_ui && !mt_ctl) _ui->notify(UIEventType::channelMessage);
 #endif
   }
 #ifdef DISPLAY_CLASS

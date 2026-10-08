@@ -51,8 +51,8 @@ void mt_choose_mode(MtMode m, bool beep) {
 
 void mt_on_short_press() {
   // Positie nu versturen. De modusbiep bevestigt dat de klik binnen is; twee hoge
-  // biepjes volgen zodra het bericht op het trackingkanaal verstuurd is. Ontbreekt
-  // het trackingkanaal, dan meteen een lage toon.
+  // biepjes volgen zodra een repeater het bericht hoorbaar herhaalt, een lage toon als
+  // dat binnen 12 s niet gebeurt. Ontbreekt het trackingkanaal, dan meteen een lage toon.
   if (!mt_sender_ready()) {
     ui_task.playForced(MT_TUNE_NOK);
     mt_log("klik: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);

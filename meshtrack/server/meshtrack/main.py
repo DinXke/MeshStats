@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -243,6 +243,35 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
         S.db.log_unknown(pk, f"kanaal {ch['name']}: ongeldige handtekening", body)
         return
     await process(pk, "T1|" + rest, sender_ts, snr, path_len, via=ch)
+    fields = rest.split("|")
+    if len(fields) > 1 and fields[1] == "E" and tag != "-" and t.get("authkey"):   # SOS: bevestigen
+        await sos_ack(ch, t, pk, fields[0])
+
+
+_sos_acked: dict[tuple[int, str], float] = {}
+
+
+def sos_ack_text(authkey_hex: str, pk: str, seq: str) -> str:
+    """Bevestiging van een SOS voor de tracker: "T1A|<pk8>|<tag>|<seq>", tag = HMAC(authsleutel, "<pk8>|A|<seq>")."""
+    return f"T1A|{pk}|{channel_tag(authkey_hex, f'{pk}|A|{seq}')}|{seq}"
+
+
+async def sos_ack(ch: dict[str, Any], t: dict[str, Any], pk: str, seq: str) -> None:
+    """Eén keer per SOS-bericht een ondertekende bevestiging op hetzelfde kanaal, met de regio
+    van het kanaal. De tracker laat dan een eigen toon horen (firmware 0.7.3+)."""
+    key = (t["id"], seq)
+    now = time.time()
+    for k in [k for k, ts in _sos_acked.items() if now - ts > 3600]:
+        del _sos_acked[k]
+    if key in _sos_acked or not S.mesh.connected:
+        return
+    _sos_acked[key] = now
+    try:
+        await S.mesh.send_channel(ch["slot"], sos_ack_text(t["authkey"], pk, seq), ch.get("region") or "")
+        log.warning("SOS van %s (seq %s) bevestigd op kanaal %s", t["alias"], seq, ch["name"])
+    except Exception as e:  # noqa: BLE001
+        _sos_acked.pop(key, None)
+        log.warning("SOS-bevestiging aan %s mislukt: %s", t["alias"], e)
 
 
 async def sync_channels() -> list[str]:

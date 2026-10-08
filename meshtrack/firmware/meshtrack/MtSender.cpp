@@ -13,6 +13,7 @@ struct Job { bool used; char text[MT_TEXT_MAX + 1]; bool manual; bool keep; uint
 static Job s_cur = {}, s_next = {};
 static MtSendStats s_stats = {};
 static MtSendDone s_done_cb = nullptr;
+static uint8_t s_block[16];                     // eerste cijferblok van het laatste pakket
 
 bool mt_sender_ready() {
   ChannelDetails ch;
@@ -32,7 +33,7 @@ static void finish(bool ok) {
 }
 
 static bool transmit() {
-  if (!the_mesh.mtSendChannel(mt_cfg.chan_idx, s_cur.text)) { s_stats.no_chan++; return false; }
+  if (!the_mesh.mtSendChannel(mt_cfg.chan_idx, s_cur.text, s_block)) { s_stats.no_chan++; return false; }
   s_stats.sent_packets++;
   return true;
 }
@@ -68,3 +69,4 @@ void mt_sender_loop() {
 
 bool mt_sender_busy() { return s_cur.used; }
 const MtSendStats& mt_sender_stats() { return s_stats; }
+const uint8_t* mt_sender_last_block() { return s_block; }

@@ -311,9 +311,14 @@ static void cmd_status() {
   outl("tracker=%s gps=%s fix=%s sat=%ld beweging=%s radio=%s",
        mt_tracker_state_str(), mt_tracker_gps_on() ? "aan" : "uit", g.freshFix(5000) ? "ja" : "nee",
        g.satellitesCount(), mt_motion_mode_str(), mt_radio_paused() ? "slaapt" : "aan");
-  outl("tx_ok=%lu tx_mislukt=%lu laatste=%s seq=%u reden=%s",
-       (unsigned long)st.ok, (unsigned long)st.failed,
-       !st.have_last ? "-" : st.last_ok ? "ok" : "mislukt", mt_tracker_seq(), mt_tracker_last_reason());
+  {
+    char h[8] = "-";
+    if (mt_tracker_heard() >= 0) snprintf(h, sizeof(h), "%d", mt_tracker_heard());
+    outl("tx_ok=%lu tx_mislukt=%lu laatste=%s seq=%u reden=%s gehoord=%s sos_bevestigd=%s",
+         (unsigned long)st.ok, (unsigned long)st.failed,
+         !st.have_last ? "-" : st.last_ok ? "ok" : "mislukt", mt_tracker_seq(), mt_tracker_last_reason(), h,
+         mt_tracker_sos_confirmed());
+  }
   fmt_dur(a, sizeof(a), mt_cfg.sample_s);
   outl("sample=%s buffer=%u", a, (unsigned)mt_tracker_buffered());
   {
@@ -374,6 +379,7 @@ static void cmd_help() {
   outl("  key export | key import <128 hex>   PRIVATE KEY (import na een reboot)");
   outl("  chan list | chan set <nr> <32 hex> <naam> | chan del <nr>");
   outl("  send                        nu een positie sturen (zoals een klik)");
+  outl("  status: gehoord = herhalingen (repeaters) van de laatste klik/SOS; sos_bevestigd = antwoord van de server");
   outl("  defaults | backup | reboot | menu | q (menu sluiten)");
   outl("  fs | fs herstel ja          interne opslag controleren / herstellen (alleen als ze beschadigd is)");
 }

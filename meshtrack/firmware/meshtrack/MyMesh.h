@@ -177,11 +177,22 @@ public:
   // herkenbaar is in apps en analyzers. Zonder naam: "MT". Server en offline-app negeren de naam.
   const char* mtSender() const { return _prefs.node_name[0] ? _prefs.node_name : "MT"; }
   int mtSenderLen() const { return strlen(mtSender()) + 2; }   // "<naam>: "
-  // MeshTrack: bericht op een kanaal (flood, geen ACK).
-  bool mtSendChannel(int idx, const char* text) {
+  // MeshTrack: bericht op een kanaal (flood, geen ACK). first_block = het eerste cijferblok van
+  // het pakket (payload[3..18]), om herhalingen door repeaters te herkennen.
+  bool mtSendChannel(int idx, const char* text, uint8_t* first_block = nullptr) {
     ChannelDetails ch;
     if (!getChannel(idx, ch) || !ch.name[0]) return false;
-    return sendGroupMessage(getRTCClock()->getCurrentTimeUnique(), ch.channel, mtSender(), text, strlen(text));
+    uint32_t ts = getRTCClock()->getCurrentTimeUnique();    // één tijd: voor het pakket én het blok
+    if (first_block) {
+      uint8_t p[16] = {0};                                  // [tijd 4][0 = platte tekst]["<naam>: <tekst>"]
+      memcpy(p, &ts, 4);
+      int k = 5;
+      for (const char* s = mtSender(); *s && k < 16; ) p[k++] = *s++;
+      for (const char* s = ": "; *s && k < 16; ) p[k++] = *s++;
+      for (const char* s = text; *s && k < 16; ) p[k++] = *s++;
+      mesh::Utils::encrypt(ch.channel.secret, first_block, p, 16);
+    }
+    return sendGroupMessage(ts, ch.channel, mtSender(), text, strlen(text));
   }
   // MeshTrack: een kopie van een eigen positie in de wachtrij voor de app (Bluetooth), zodat een
   // verbonden app (bv. de offline-app) ook de eigen posities ziet. reserved1 = 1 markeert "eigen".

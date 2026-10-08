@@ -203,14 +203,15 @@
 <table>
   <tr><th>Indrukken</th><th>Wat gebeurt er</th></tr>
   <tr><td class="k">1 keer</td><td>Meteen een positie sturen. Na de modusbiep betekenen <strong>twee hoge biepjes</strong> dat het
-    bericht op het kanaal verstuurd is, en <strong>één lage toon</strong> dat het niet kon (geen trackingkanaal). Of de server
-    het ontving, zie je op de kaart: een kanaalbericht krijgt geen bevestiging. Hooguit één keer per 10 s.</td></tr>
+    bericht via een repeater terug hoorde (het is de mesh op), en <strong>één lage toon</strong> dat hij binnen 12 s geen
+    herhaling hoorde of geen trackingkanaal heeft. Of de server het ontving, zie je op de kaart. Hooguit één keer per 10 s.</td></tr>
   <tr><td class="k">2 keer</td><td>Van modus wisselen: <strong>één biep</strong> = tracker, <strong>twee biepjes</strong> = companion.
     Je hebt tot 0,8 s tussen de twee klikken.</td></tr>
   <tr><td class="k">3 keer</td><td>De buzzer aan- of uitzetten.</td></tr>
   <tr><td class="k">2 tot 8 s vasthouden</td><td><strong>SOS.</strong> Na 2 s klinken drie hoge biepjes: de SOS is gewapend.
     Laat los en hij stuurt meteen een SOS met zijn positie, en daarna nog twee keer met een verse positie, telkens een minuut
-    later. Na 6,5 s klinkt een lage waarschuwingstoon: blijf je vasthouden, dan schakelt hij uit in plaats van een SOS te sturen.</td></tr>
+    later. Na 6,5 s klinkt een lage waarschuwingstoon: blijf je vasthouden, dan schakelt hij uit in plaats van een SOS te sturen.
+    Ontvangt de server de SOS, dan bevestigt hij dat: de tracker speelt <strong>drie stijgende tonen</strong>.</td></tr>
   <tr><td class="k">langer dan 8 s</td><td>Uitschakelen. Weer aanzetten: de knop enkele seconden inhouden, of aan USB hangen.</td></tr>
 </table>
 <p>Automatisch verstuurde posities maken nooit geluid.</p>
