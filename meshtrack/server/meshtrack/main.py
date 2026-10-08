@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -245,10 +245,25 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
     await process(pk, "T1|" + rest, sender_ts, snr, path_len, via=ch)
     fields = rest.split("|")
     if len(fields) > 1 and fields[1] == "E" and tag != "-" and t.get("authkey"):   # SOS: bevestigen
-        await sos_ack(ch, t, pk, fields[0])
+        _spawn(_sos_ack_later(ch, t, pk, fields[0]))
 
 
 _sos_acked: dict[tuple[int, str], float] = {}
+_bg: set = set()
+SOS_ACK_DELAY_S = 4.0   # los van de afhandeling van het binnenkomende bericht, en na de herhalingen van de SOS
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _bg.add(task)
+    task.add_done_callback(_bg.discard)
+
+
+async def _sos_ack_later(ch: dict[str, Any], t: dict[str, Any], pk: str, seq: str) -> None:
+    """Een bevestiging verstuurd vanuit de event-afhandeling van meshcore-py kreeg wel 'OK' maar ging nooit
+    de lucht in (gezien in de analyzer); los daarvan en iets later lukt het wel."""
+    await asyncio.sleep(SOS_ACK_DELAY_S)
+    await sos_ack(ch, t, pk, seq)
 
 
 def sos_ack_text(authkey_hex: str, pk: str, seq: str) -> str:

@@ -311,16 +311,27 @@ void mt_rx_raw(const uint8_t raw[], int len) {
 // "<naam>: T1A|<pk8>|<tag8>|<seq>" op het trackingkanaal: de server bevestigt een SOS.
 // tag8 = HMAC-SHA256(authsleutel, "<pk8>|A|<seq>"), eerste 4 bytes.
 bool mt_channel_text(uint8_t chan_idx, const char* text) {
-  if (chan_idx != mt_cfg.chan_idx) return false;
-  const char* p = strstr(text, ": ");
-  if (!p || strncmp(p + 2, "T1A|", 4) != 0) return false;
-  p += 6;
+  // "T1A|" na de afzendernaam ("naam: T1A|...") of meteen aan het begin: de companion van openHop
+  // zet de naam er niet altijd voor.
+  const char* p = strncmp(text, "T1A|", 4) == 0 ? text : strstr(text, ": T1A|");
+  if (!p) return false;
+  p += p == text ? 4 : 6;
+  // Zelfde kanaal = zelfde geheim (hetzelfde kanaal kan op twee nummers staan na een terugzetting).
+  ChannelDetails a, b;
+  if (!the_mesh.mtGetChannel(chan_idx, a) || !the_mesh.mtGetChannel(mt_cfg.chan_idx, b) ||
+      memcmp(a.channel.secret, b.channel.secret, 16) != 0) {
+    mt_log("T1A op kanaal %u genegeerd (trackingkanaal is %u)", (unsigned)chan_idx, (unsigned)mt_cfg.chan_idx);
+    return true;
+  }
   char pk[9], body[24], tag[9];
   own_pk8(pk);
-  if (strncmp(p, pk, 8) != 0 || p[8] != '|' || strlen(p) < 19 || p[17] != '|') return true;   // niet voor ons
+  if (strncmp(p, pk, 8) != 0 || p[8] != '|' || strlen(p) < 19 || p[17] != '|') {
+    mt_log("T1A voor een andere tracker (%.8s)", p);
+    return true;
+  }
   char* end;
   unsigned long seq = strtoul(p + 18, &end, 10);
-  if (end == p + 18 || *end || seq > 0xFFFF) return true;
+  if (end == p + 18 || *end || seq > 0xFFFF) { mt_log("T1A met ongeldig volgnummer genegeerd"); return true; }
   snprintf(body, sizeof(body), "%s|A|%lu", pk, seq);
   auth_tag(body, tag);
   if (!mt_cfg.authkey_set || strncmp(p + 9, tag, 8) != 0) { mt_log("T1A met foute handtekening genegeerd"); return true; }
