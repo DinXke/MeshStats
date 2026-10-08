@@ -41,6 +41,7 @@
     <button class="tab" data-tab="fw">Firmware <span class="badge" id="fw-badge" hidden>nieuw</span></button>
     <button class="tab" data-tab="prov">Klaarmaken &amp; backups</button>
     <button class="tab" data-tab="term">Terminal</button>
+    <button class="tab" data-tab="sim">Simulatie</button>
   </div>
 
   <!-- instellingen -->
@@ -127,6 +128,70 @@
             </div>
           </fieldset>
 
+          <fieldset data-since="0.9.0" data-keys="track_mode fifo_max fifo_min fifo_gap fifo_per_uur">
+            <legend>Trackmodus</legend>
+            <label for="s-trackmode">Trackmodus</label>
+            <select id="s-trackmode" data-set="track_mode">
+              <option value="classic">Klassiek (FastTrack en SlowTrack)</option>
+              <option value="fifo">FIFO (gemiste punten later inhalen)</option>
+            </select>
+            <div class="help"><strong>Klassiek:</strong> FastTrack en SlowTrack zoals voorheen; SlowTrack verstuurt zijn
+              punten volgens <em>Gelogde punten versturen elke</em>.<br>
+              <strong>FIFO:</strong> na elk FastTrack-bericht kijkt de tracker of een repeater het binnen een tiental
+              seconden herhaalt. Gebeurt dat niet, dan gaat alleen het hoofdpunt van dat bericht, met zijn echte GPS-tijd,
+              in een wachtrij. Ook SlowTrack logt in die wachtrij. Zodra er genoeg punten wachten en de tracker weer dekking heeft, haalt hij de
+              achterstand in, de oudste punten eerst.</div>
+            <details class="fifomore"><summary class="small">Meer over de FIFO-modus</summary>
+              <ul class="help">
+                <li>Dekking betekent: de tracker hoort een van zijn eigen berichten herhaald, of een pakket dat via een repeater kwam.</li>
+                <li>Hij stuurt één inhaalbericht per <em>Tijd tussen inhaalberichten</em>, en hoogstens het ingestelde
+                  aantal per uur. Een bericht bevat zo'n 7 punten. Punten verlaten de wachtrij pas als
+                  hun bericht herhaald werd. Hoort hij dat niet, dan telt dat als een mislukte poging voor die punten: hij
+                  stopt, wacht opnieuw op dekking en wacht telkens langer voor hij het nog eens probeert (1, 5, 15 en
+                  daarna 60 min).</li>
+                <li>Punten die al hun pogingen op hebben, worden <em>geparkeerd</em>: ze wachten tot al de rest verstuurd
+                  is, krijgen dan nog één laatste kans en worden daarna opgegeven. Waarschijnlijk kwamen ze toch aan
+                  (alleen de herhaling werd niet gehoord); de server filtert dubbele punten weg. Zo houdt één koppig
+                  bericht de wachtrij niet tegen.</li>
+                <li>De wachtrij houdt hoogstens <em>Wachtrij maximaal</em> punten bij (de oudste vallen weg) en blijft
+                  bewaard bij een herstart.</li>
+                <li>Eerst meeliften: punten van een gemist FastTrack-bericht blijven in de FastTrack-buffer en reizen mee
+                  met de volgende berichten. Pas als zo'n punt uit die buffer valt zonder ooit gehoord te zijn, gaat het
+                  hoofdpunt naar de wachtrij. Korte gaten vullen zich zo zonder extra berichten.</li>
+                <li>Is de wachtrij vol, dan valt het punt weg dat het minst over de vorm van het spoor zegt (het dichtst bij
+                  de lijn tussen zijn buren), niet gewoon het oudste.</li>
+                <li>Een inhaalbericht (Q) is compact binair gecodeerd: er passen zo'n 11 punten in, tegen 7 in tekst.</li>
+                <li>Na een reeks inhaalberichten meldt de server tot welk tijdstip hij alles ontvangen heeft. Punten die wel
+                  aankwamen maar waarvan de tracker de herhaling niet hoorde, gaan dan toch uit de wachtrij.</li>
+                <li>De server zet de ingehaalde punten op het juiste tijdstip in het spoor en filtert dubbele punten weg.
+                  Het tabblad <em>Simulatie</em> toont het geheel in beeld.</li>
+              </ul>
+            </details>
+            <div class="grid" id="s-fifo">
+              <div><label>Wachtrij maximaal</label><div class="unit"><input data-set="fifo_max" type="number" min="20" max="500"><span>punten</span></div>
+                <div class="help">20 tot 500; daarboven vallen de oudste weg. Per gemist FastTrack-bericht gaat alleen
+                  het hoofdpunt in de wachtrij: 500 punten is bij 1 bericht per 1 à 2 min zo'n 8 à 16 uur zonder bereik.</div></div>
+              <div><label>Inhalen vanaf</label><div class="unit"><input data-set="fifo_min" type="number" min="1" max="500"><span>punten</span></div>
+                <div class="help">1 tot het maximum van de wachtrij.</div></div>
+              <div><label>Tijd tussen inhaalberichten</label><div class="dur" data-set="fifo_gap"></div>
+                <div class="help">15 s tot 300 s (5 min).</div></div>
+              <div><label>Hoogstens</label><div class="unit"><input data-set="fifo_per_uur" type="number" min="1" max="60"><span>inhaalberichten per uur</span></div>
+                <div class="help">1 tot 60.</div></div>
+              <div><label>Pogingen per punt</label><div class="unit"><input data-set="fifo_pogingen" type="number" min="1" max="10"><span>pogingen</span></div>
+                <div class="help">1 tot 10. Daarna wordt een punt geparkeerd en krijgt het pas op het einde nog één kans.</div></div>
+              <div><label>Rechte stukken uitdunnen</label><div class="unit"><input data-set="fifo_dun" type="number" min="0" max="100"><span>m</span></div>
+                <div class="help">0 tot 100; 0 = uit. Een punt dat minder dan zoveel meter naast de lijn tussen zijn buren ligt,
+                  voegt niets toe aan de vorm van het spoor en gaat er niet in. Punten rond een stilstand van meer dan 10 min blijven.</div></div>
+              <div><label>Leegmaken pas vanaf</label><div class="unit"><input data-set="fifo_snr" type="number" min="-20" max="10"><span>dB SNR</span></div>
+                <div class="help">−20 tot +10. Leegmaken begint pas bij stabiele dekking: een herhaling met minstens deze
+                  signaal-ruisverhouding, of twee tekens van dekking binnen 60 s, of een bevestiging van de server.</div></div>
+            </div>
+            <div class="slowtip"><strong>Let op de mesh:</strong> elk inhaalbericht wordt door meerdere repeaters herhaald.
+              Hou de tijd tussen de berichten ruim (30 s of meer) en het aantal per uur beperkt (hoogstens 30).
+              <div id="s-fifocalc" aria-live="polite"></div></div>
+            <div class="help fifooff" id="s-fifooff" hidden>Deze instellingen gelden alleen in de FIFO-modus.</div>
+          </fieldset>
+
           <fieldset data-since="0.8.0" data-keys="slow_log slow_send fast_min_batt">
             <legend>SlowTrack</legend>
             <div class="help">SlowTrack werkt naast de gewone tracking (FastTrack). Het logt op een vast ritme een GPS-punt,
@@ -135,7 +200,8 @@
             <div class="grid">
               <div><label>GPS-punt loggen elke</label><div class="dur" data-set="slow_log"></div>
                 <div class="help">0 = SlowTrack uit</div></div>
-              <div><label>Gelogde punten versturen elke</label><div class="dur" data-set="slow_send"></div></div>
+              <div><label>Gelogde punten versturen elke</label><div class="dur" data-set="slow_send"></div>
+                <div class="help fifonote" id="s-slowsend-fifo" hidden>Niet gebruikt in FIFO-modus: de gelogde punten gaan dan naar de wachtrij.</div></div>
               <div><label>FastTrack uit onder</label><div class="unit"><input data-set="fast_min_batt" type="number" min="0" max="100"><span>% batterij</span></div>
                 <div class="help">Daaronder blijven alleen SlowTrack, heartbeat, klik en SOS over. 0 = FastTrack nooit uitschakelen.</div></div>
             </div>
@@ -225,6 +291,9 @@
     </div>
   </section>
 
+  <!-- simulatie (opgebouwd door simulatie.js) -->
+  <section class="card pane" id="pane-sim" hidden></section>
+
   <!-- terminal -->
   <section class="card pane" id="pane-term" hidden>
     <div class="row">
@@ -238,5 +307,6 @@
 <script src="/static/serial.js"></script>
 <script src="/static/dfu.js"></script>
 <script src="/static/device.js"></script>
+<script src="/static/simulatie.js"></script>
 </body>
 </html>

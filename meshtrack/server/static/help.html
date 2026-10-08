@@ -24,6 +24,7 @@
     <a href="#knop">De knop, de biepjes en de led</a>
     <a href="#regels">Wanneer stuurt hij een positie?</a>
     <a href="#slowtrack">SlowTrack</a>
+    <a href="#fifo">Trackmodus: classic en FIFO</a>
     <a href="#instellen">Instellen via USB</a>
     <a href="#flashen">Firmware flashen</a>
     <a href="#klaarmaken">Nieuw toestel klaarmaken</a>
@@ -77,8 +78,8 @@
         De herhalingen van dezelfde noodoproep tellen één keer.</li>
       <li>Het <strong>pijltje</strong> op een marker wijst de rijrichting aan. Een <strong>grijze</strong> marker betekent
         dat die tracker al lang niets meer van zich heeft laten horen.</li>
-      <li>Punten van <a href="#slowtrack">SlowTrack</a> (status <em>L</em>) staan als <strong>kleinere, lichtere
-        stippen</strong> in het spoor. Bij een gekozen tracker tonen de popup en de lijst wanneer het laatste
+      <li>Punten van <a href="#slowtrack">SlowTrack</a> (status <em>L</em>) en punten die een tracker later
+        <a href="#fifo">inhaalde</a> (status <em>Q</em>) staan als <strong>kleinere, lichtere stippen</strong> in het spoor. Bij een gekozen tracker tonen de popup en de lijst wanneer het laatste
         SlowTrack-bericht binnenkwam (<em>SlowTrack: laatste burst 14:05</em>).</li>
       <li>De zijbalk kun je <strong>breder of smaller slepen</strong>; dubbelklik op de rand om hem terug te zetten.
         Elk blok in de zijbalk kun je in- en uitklappen.</li>
@@ -204,11 +205,123 @@
       punt verplaatst de live-positie nooit terug en geeft geen meldingen of zonewissels; die volgen alleen de nieuwste
       positie. Een bericht van een <em>verloren</em> tracker meldt de server wel, want het bewijst dat hij nu leeft. Gaat een
       SlowTrack-bericht verloren, dan blijven de punten op de tracker staan en gaan ze mee met het volgende.</p>
+    <p>Staat de tracker in de <a href="#fifo">trackmodus FIFO</a>, dan gaan de gelogde punten meteen in de wachtrij en
+      wordt <code>slow_send</code> niet gebruikt.</p>
+
+    <h2 id="fifo">Trackmodus: classic en FIFO</h2>
+    <p>Vanaf firmware 0.9.0 kies je per tracker een <strong>trackmodus</strong>: in <em>Toestellen</em> →
+      <em>Instellingen</em> → <em>Trackmodus</em>, of met <code>set track_mode classic</code> of
+      <code>set track_mode fifo</code>.</p>
+    <ul>
+      <li><strong>classic</strong> (standaard): FastTrack en SlowTrack zoals in firmware 0.8. Raakt een bericht de mesh
+        niet op, dan reizen de bewaarde punten mee met het volgende bericht. Wat daar niet meer in past, is weg.</li>
+      <li><strong>FIFO</strong>: de tracker onthoudt de posities die de mesh niet haalden en stuurt ze later alsnog,
+        zodra hij weer goed bereik heeft (<em>store-and-forward</em>). Zo overbrugt hij gaten van een paar uur tot een
+        dag, bv. een rit door een streek zonder repeaters.</li>
+    </ul>
+    <p class="note"><strong>Server 1.2.0 nodig.</strong> Firmware 0.9.0 stuurt nieuwe berichten (status <em>Q</em>) en
+      zet extra punten compact binair in het bericht, ook bij SlowTrack. Dat leest de server pas vanaf versie 1.2.0.
+      Werk dus eerst de server bij en flash daarna de trackers. Server 1.2.0 leest ook de berichten van oudere
+      firmware (0.6 tot 0.8) nog gewoon.</p>
+
+    <h3>Zo werkt de FIFO-modus</h3>
+    <ol>
+      <li><strong>Luisteren.</strong> Na elk FastTrack-bericht luistert de tracker ongeveer 12 seconden of een repeater
+        het herhaalt. Hoort hij die herhaling, dan is het bericht de mesh op en zijn de punten erin binnen.</li>
+      <li><strong>Eerst meeliften.</strong> Hoort hij niets, dan blijven de punten in zijn geheugen en reizen ze gratis
+        mee met de volgende FastTrack-berichten. Korte gaten raken zo vanzelf gevuld, zonder één bericht extra.</li>
+      <li><strong>Dan de wachtrij.</strong> Pas als het hoofdpunt van een bericht dat geheugen verlaat zonder dat de
+        tracker het ooit herhaald hoorde (omdat het geheugen vol is, of omdat het punt 10 minuten oud is), gaat het in de
+        <strong>wachtrij</strong>: één punt per gemist bericht, met zijn echte GPS-tijd. SlowTrack-punten gaan er in deze
+        modus meteen in.</li>
+      <li><strong>Wachten op stabiele dekking.</strong> Dekking betekent: de tracker hoort een herhaling van een eigen
+        bericht, of een pakket dat via een repeater kwam. Hij begint pas met inhalen bij <em>stabiele</em> dekking: een
+        pakket met een signaal-ruisverhouding (SNR) van minstens <code>fifo_snr</code>, twee keer dekking binnen 60
+        seconden, of een bevestiging van de server. Eén zwak pakket aan de rand van het bereik volstaat niet. Er moeten
+        ook minstens <code>fifo_min</code> punten wachten; werd een vorige ronde onderbroken, dan volstaat één punt.</li>
+      <li><strong>Inhalen.</strong> De tracker stuurt de wachtrij leeg, oudste punten eerst, met hoogstens één
+        <strong>inhaalbericht</strong> per <code>fifo_gap</code> en hoogstens <code>fifo_per_uur</code> per uur. Een
+        inhaalbericht heeft de status <em>Q</em> (<em>ingehaald punt (FIFO)</em>) en draagt de punten in een compacte
+        binaire vorm: zo'n 11 punten per bericht, anderhalve keer zoveel als in tekst. Het volgende bericht vertrekt pas als het vorige
+        herhaald is.</li>
+      <li><strong>Pas weg als het zeker is.</strong> Een punt verlaat de wachtrij pas als de tracker zijn inhaalbericht
+        herhaald hoorde, of als de server bevestigt dat hij het punt heeft.</li>
+    </ol>
+    <p>Hoort de tracker geen herhaling van een inhaalbericht, dan stopt hij met inhalen tot hij opnieuw dekking heeft, en
+      wachten de punten van dat bericht een tijd voor ze opnieuw meegaan: 1, 5, 15 en daarna telkens 60 minuten. Na
+      <code>fifo_pogingen</code> mislukte pogingen is een punt <strong>geparkeerd</strong>: het houdt de rest van de
+      wachtrij niet meer op, krijgt nog één laatste poging als er niets anders meer wacht, en wordt daarna opgegeven.
+      Wellicht kwam het toch aan; de server haalt dubbele punten er zelf uit.</p>
+
+    <h3>De wachtrij</h3>
+    <ul>
+      <li>Ze bevat hoogstens <code>fifo_max</code> punten, standaard 500. Bij één bericht per 1 à 2 minuten is dat zo'n
+        <strong>8 à 16 uur rijden zonder bereik</strong>.</li>
+      <li>Ze staat in het flashgeheugen en <strong>overleeft een herstart</strong>.</li>
+      <li>Is ze vol, dan valt niet het oudste punt weg, maar het punt dat het minst aan de vorm van de route toevoegt:
+        het punt dat het dichtst bij de lijn tussen zijn twee buren ligt.</li>
+      <li>Op een rechte weg vallen overbodige punten meteen weg (<code>fifo_dun</code>, standaard 10&nbsp;m). Punten rond
+        een stop van meer dan 10 minuten blijven altijd staan.</li>
+    </ul>
+
+    <h3>Instellingen</h3>
+    <table>
+      <tr><th>Instelling</th><th>Wat het doet</th><th>Standaard</th></tr>
+      <tr><td>Trackmodus<br><code>track_mode</code></td><td><code>classic</code> of <code>fifo</code>.</td><td>classic</td></tr>
+      <tr><td>Wachtrij maximaal<br><code>fifo_max</code></td><td>Hoogstens zoveel punten in de wachtrij (20 tot 500).</td><td>500</td></tr>
+      <tr><td>Inhalen vanaf<br><code>fifo_min</code></td><td>Pas beginnen met inhalen vanaf zoveel punten (1 tot <code>fifo_max</code>);
+        na een onderbroken ronde vanaf 1.</td><td>5</td></tr>
+      <tr><td>Tijd tussen inhaalberichten<br><code>fifo_gap</code></td><td>Minstens zoveel tijd tussen twee inhaalberichten
+        (15&nbsp;s tot 5&nbsp;min).</td><td>30 s</td></tr>
+      <tr><td>Per uur<br><code>fifo_per_uur</code></td><td>Hoogstens zoveel inhaalberichten per uur (1 tot 60).</td><td>20</td></tr>
+      <tr><td>Pogingen<br><code>fifo_pogingen</code></td><td>Na zoveel mislukte pogingen is een punt geparkeerd (1 tot 10).</td><td>3</td></tr>
+      <tr><td>Uitdunnen<br><code>fifo_dun</code></td><td>Een punt dat op een rechte weg binnen zoveel meter van de lijn ligt, valt
+        weg (0 tot 100; 0 = uit).</td><td>10 m</td></tr>
+      <tr><td>Stabiele dekking<br><code>fifo_snr</code></td><td>Een nieuwe ronde begint bij een pakket met minstens deze SNR
+        (−20 tot 10&nbsp;dB), of bij twee keer dekking binnen 60&nbsp;s, of een bevestiging van de server.</td><td>−5 dB</td></tr>
+    </table>
+    <p>In het seriële menu staan deze instellingen onder <em>5 SlowTrack en trackmodus (FIFO)</em> →
+      <em>4 Trackmodus en FIFO-wachtrij</em>. De terminal noemt een inhaalbericht een <em>leegmaakbericht</em>.</p>
+
+    <h3>De bevestiging van de server (T1F)</h3>
+    <p>Heeft de tracker punten verstuurd waarvan hij geen herhaling hoorde, dan vraagt hij in zijn volgende inhaalbericht om
+      een bevestiging. De server antwoordt dan op hetzelfde kanaal met een ondertekend <code>T1F</code>-bericht: "alles tot
+      dit tijdstip is binnen". De tracker ruimt die punten op, ook als hij hun herhaling nooit hoorde. Hoorde hij al zijn
+      berichten herhaald, dan vraagt hij niets en antwoordt de server niet.</p>
+    <p>De server bundelt de antwoorden voor tot 4 trackers in één bericht en houdt zich aan vaste grenzen: hoogstens één
+      bevestiging per 10 minuten per tracker, één T1F-bericht per minuut per kanaal en 20 T1F-berichten per uur in totaal,
+      hoeveel trackers er ook zijn. Met veel trackers die meestal stilstaan, blijft de server dus stil: wie niets in te
+      halen heeft, vraagt niets, en ook bij veel trackers tegelijk komen er nooit meer dan 20 bevestigingen per uur bij.</p>
+
+    <h3>Belasting van de mesh</h3>
+    <p>Elk inhaalbericht wordt door meerdere repeaters herhaald, dus één bericht kost het net al snel enkele uitzendingen.
+      Een volle wachtrij van 500 punten is zo'n <strong>46 inhaalberichten</strong>; met de standaardinstellingen (hoogstens
+      20 per uur) is ze in ongeveer <strong>2,1 uur</strong> leeg. Hou <code>fifo_gap</code> daarom ruim, en verlaag
+      <code>fifo_per_uur</code> in een druk net of bij veel trackers in FIFO-modus.</p>
+    <p>Je hoeft niet zelf te rekenen: het commando <code>fifo</code> en elke <code>set</code> van <code>fifo_max</code>,
+      <code>fifo_gap</code> of <code>fifo_per_uur</code> tonen in de terminal hoeveel berichten en punten per uur dat
+      geeft, en hoe lang een volle wachtrij erover doet. In <em>Toestellen</em> rekent de groep <em>Trackmodus</em> het
+      live voor je uit, en de statusregels tonen de punten in de wachtrij, de geparkeerde punten, wat de server
+      bevestigde en de laatste dekking.</p>
+
+    <h3>De simulatie</h3>
+    <p>In <em>Toestellen</em> staat het tabblad <strong>Simulatie</strong>: een versnelde animatie van een rit, met de
+      instellingen van de verbonden tracker (zonder tracker met de standaardwaarden). Zo zie je vóór je iets op de tracker
+      zet wat een instelling in de praktijk doet.</p>
+    <ul>
+      <li>Kies een scenario, bv. <em>Lange rit met gat van 3 uur</em>, of stel zelf de snelheid, de duur van de rit en de
+        dode zone in.</li>
+      <li>Wissel tussen <em>Klassiek</em> en <em>FIFO</em> en kies de snelheid (1×, 10×, 60× of 300×).</li>
+      <li>De tellers tonen de berichten, de zendtijd, de belasting van de mesh en hoeveel punten op de server aankomen,
+        uitgedund worden of verloren gaan; na afloop zie je het spoor dat de server kreeg.</li>
+      <li>De uitleg eronder overloopt alles stap voor stap; <em>Aanwijzen in de animatie</em> toont waar het gebeurt.</li>
+    </ul>
 
     <h2 id="instellen">Instellen via USB</h2>
     <p>Ga naar <em>Toestellen</em> en klik op <em>Verbinden</em>. Dat werkt in Chrome of Edge op een computer of
       Android-toestel, via https of localhost. Bovenaan zie je welk toestel verbonden is; daaronder staan de tabbladen
-      <em>Instellingen</em>, <em>Firmware</em>, <em>Klaarmaken &amp; backups</em> en <em>Terminal</em>.</p>
+      <em>Instellingen</em>, <em>Firmware</em>, <em>Klaarmaken &amp; backups</em>, <em>Terminal</em> en
+      <em>Simulatie</em>.</p>
     <p>In <em>Instellingen</em> staan eerst de belangrijkste instellingen (modus, verzenden, wanneer en hoe vaak). Met een
       <em>voorinstelling</em> (te voet, fiets, voertuig, spaarzaam) vul je ze in één klik in. De rest staat achter
       <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de tracker</em> schrijf je alles weg. Staat het toestel
@@ -216,7 +329,11 @@
     <p>Vanaf firmware 0.8.0 zijn er twee groepen bij: <strong>Knop en biepjes</strong> (biep bij berichten, biep bij elke
       verstuurde positie, biep als een repeater de positie doorgeeft, SOS met de knop) en <strong>SlowTrack</strong>
       (loggen, versturen en FastTrack uit onder een batterijpercentage, met een rekenhulp die toont hoeveel punten er per
-      bericht komen). Heeft de verbonden tracker oudere firmware, dan staan die velden grijs: flash eerst de nieuwste firmware.</p>
+      bericht komen). Firmware 0.9.0 voegt de groep <strong>Trackmodus</strong> toe: classic of FIFO en de instellingen
+      van de wachtrij, met een live berekening van de belasting (zie <a href="#fifo">Trackmodus: classic en FIFO</a>).
+      Heeft de verbonden tracker oudere firmware, dan staan die velden grijs: flash eerst de nieuwste firmware.</p>
+    <p>Het tabblad <strong>Simulatie</strong> speelt classic en FIFO versneld na met de instellingen van de tracker, zodat
+      je het verschil ziet voor je iets wijzigt (zie <a href="#fifo">De simulatie</a>).</p>
 
     <h2 id="flashen">Firmware flashen</h2>
     <p>In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar (met de badge <em>nieuw</em> als het verbonden toestel een oudere heeft), met de datum en de wijzigingen. Je kunt ze
@@ -273,7 +390,8 @@
         teruggezet; die leert het toestel opnieuw uit de adverts.</li>
     </ul>
     <p>Een backup bewaart ook de instellingen van firmware 0.8.0 (SlowTrack, <code>fast_min_batt</code>, SOS en de
-      biepjes). Vroeger werd een instelling die op <em>uit</em> stond soms als <em>0</em> teruggezet; dat is opgelost.</p>
+      biepjes) en 0.9.0 (de trackmodus en de instellingen van de wachtrij). Flash je 0.9.0 over 0.8.x, dan blijven alle
+      instellingen staan; de nieuwe krijgen hun standaardwaarde. Vroeger werd een instelling die op <em>uit</em> stond soms als <em>0</em> teruggezet; dat is opgelost.</p>
     <p>Wie een backup ophaalt, terugzet of verwijdert, staat in het auditlog. Geef dit recht alleen aan wie het echt
       nodig heeft: met een privésleutel kun je je als die tracker voordoen.</p>
 
@@ -310,11 +428,12 @@
       berichten</em> met de melding <em>oude firmware</em>: flash ze naar de nieuwste versie.</p>
 
     <h2 id="menu">Het seriële menu</h2>
-    <p>Verbind je met een terminalprogramma (115200 baud), dan opent meteen een genummerd menu (firmware 0.8.0):
-      1 status, 2 modus en knop, 3 wanneer een positie sturen, 4 ritme, 5 SlowTrack, 6 stilstand en heartbeat, 7 GPS en
-      verzending, 8 nu een positie sturen en 9 onderhoud (backup, standaardwaarden en herstarten). In <em>Modus en knop</em>
-      staan ook 5 SOS door vasthouden, 6 biep na elk verstuurd positiebericht en 7 biep als een repeater het herhaalt.
-      Met <code>0</code> ga je terug.</p>
+    <p>Verbind je met een terminalprogramma (115200 baud), dan opent meteen een genummerd menu (firmware 0.9.0):
+      1 status, 2 modus en knop, 3 wanneer een positie sturen, 4 ritme, 5 SlowTrack en trackmodus (FIFO), 6 stilstand en
+      heartbeat, 7 GPS en verzending, 8 nu een positie sturen en 9 onderhoud (backup, standaardwaarden en herstarten). In
+      <em>Modus en knop</em> staan ook 5 SOS door vasthouden, 6 biep na elk verstuurd positiebericht en 7 biep als een
+      repeater het herhaalt. Onder <em>SlowTrack en trackmodus</em> opent 4 het scherm <em>Trackmodus en FIFO</em>, met
+      een korte uitleg, de toestand van de wachtrij en de instellingen. Met <code>0</code> ga je terug.</p>
     <p>Losse commando's werken altijd, ook met het menu open: <code>status</code>,
       <code>set &lt;instelling&gt; &lt;waarde&gt;</code>, <code>mode tracker</code> of <code>mode companion</code>,
       <code>send</code>, <code>backup</code> en <code>help</code>. Voor het klaarmaken zijn er ook
@@ -338,6 +457,30 @@
     <p>Zet je <code>slow_log</code> en <code>slow_send</code> zo dat er meer punten per bericht komen dan erin passen, dan
       waarschuwt de tracker meteen. <code>status</code> toont ook <code>slow_buffer</code> (gelogde punten die nog weg
       moeten), <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code> en <code>slow_per_bericht=6-11</code>.</p>
+    <p>Nieuw in firmware 0.9.0 (zie <a href="#fifo">Trackmodus: classic en FIFO</a>):</p>
+    <table>
+      <tr><th>Commando</th><th>Betekenis</th></tr>
+      <tr><td><code>set track_mode classic|fifo</code></td><td>trackmodus (standaard classic)</td></tr>
+      <tr><td><code>set fifo_max</code>, <code>fifo_min</code>, <code>fifo_gap</code>, <code>fifo_per_uur</code>,
+        <code>fifo_pogingen</code>, <code>fifo_dun</code>, <code>fifo_snr</code></td><td>instellingen van de wachtrij (zie de
+        tabel bij <a href="#fifo">Instellingen</a>)</td></tr>
+      <tr><td><code>fifo</code></td><td>de wachtrij tonen: aantal punten, geparkeerde punten, oudste en nieuwste punt, of hij
+        aan het inhalen is, de laatste dekking, inhaalberichten in het laatste uur, bevestigingen van de server en de
+        berekende belasting</td></tr>
+      <tr><td><code>fifo wis ja</code></td><td>de wachtrij wissen (de punten zijn dan weg)</td></tr>
+    </table>
+    <p><code>status</code> toont vanaf 0.9.0 ook:</p>
+    <table>
+      <tr><th>Sleutel</th><th>Betekenis</th></tr>
+      <tr><td><code>track_mode</code></td><td><code>classic</code> of <code>fifo</code></td></tr>
+      <tr><td><code>fifo_max</code>, <code>fifo_min</code>, <code>fifo_gap</code>, <code>fifo_per_uur</code>,
+        <code>fifo_pogingen</code>, <code>fifo_dun</code>, <code>fifo_snr</code></td><td>de ingestelde waarden</td></tr>
+      <tr><td><code>fifo</code></td><td>punten in de wachtrij</td></tr>
+      <tr><td><code>fifo_dekking</code></td><td>seconden sinds de laatste dekking (een herhaling van een eigen bericht of een
+        pakket via een repeater); <code>-</code> = nog nooit sinds de start</td></tr>
+      <tr><td><code>fifo_geparkeerd</code></td><td>geparkeerde punten (na <code>fifo_pogingen</code> mislukte pogingen)</td></tr>
+      <tr><td><code>fifo_bevestigd</code></td><td>punten die de server sinds de start bevestigde (T1F)</td></tr>
+    </table>
     <p><strong>Diagnose</strong> (firmware 0.7.5 of nieuwer): met <code>rxlog aan</code> toont de tracker live elk
       kanaalpakket dat hij ontvangt (<code>rx kanaalpakket hash xx, N hops, N bytes</code>) en elk kanaalbericht dat hij
       kan ontcijferen (<code>rx kanaalbericht op kanaal N: …</code>). Bij het aanzetten meldt hij ook de hash van zijn
@@ -359,7 +502,12 @@
       <tr><td>B</td><td>van modus gewisseld, of aan de lader gehangen of ervan losgekoppeld</td></tr>
       <tr><td>L</td><td>gelogd punt (<a href="#slowtrack">SlowTrack</a>, firmware 0.8.0 en server 1.1.0): punten die samen
         verstuurd werden, meestal ouder dan de live-positie</td></tr>
+      <tr><td>Q</td><td>ingehaald punt (<a href="#fifo">FIFO</a>, firmware 0.9.0 en server 1.2.0): een positie die de mesh
+        eerst niet haalde en later alsnog verstuurd werd, met zijn echte GPS-tijd</td></tr>
     </table>
+    <p>Net als <em>L</em>-punten komen <em>Q</em>-punten op hun eigen tijd in het spoor. Ze verplaatsen de live-positie
+      niet terug en geven geen meldingen of zonewissels. De server houdt per tracker bij wanneer het laatste
+      inhaalbericht binnenkwam en van wanneer het nieuwste ingehaalde punt is.</p>
 
     <h2 id="beheer">Trackers beheren</h2>
     <p>Klik in <em>Trackers</em> op <em>+ Tracker</em>. Er opent een paneel met de tabbladen <em>Algemeen</em> (naam,
@@ -542,7 +690,35 @@
       <li><strong>Geen SlowTrack-punten (L)</strong>: SlowTrack staat standaard uit; zet <code>slow_log</code> op een tijd.
         De punten komen pas na <code>slow_send</code>; <code>slow_buffer</code> in <code>status</code> toont hoeveel er
         klaarstaan. Dat het spoor zich achteraf aanvult, is normaal.</li>
-      <li><strong>Velden grijs in Toestellen</strong>: de tracker heeft firmware ouder dan 0.8.0. Flash de nieuwste firmware.</li>
+      <li><strong>Velden grijs in Toestellen</strong>: de tracker heeft oudere firmware dan die velden nodig hebben (0.8.0
+        voor <em>Knop en biepjes</em> en <em>SlowTrack</em>, 0.9.0 voor <em>Trackmodus</em>). Flash de nieuwste firmware.</li>
+      <li><strong>Na het flashen van 0.9.0 ontbreken SlowTrack-punten of ingehaalde punten</strong>, of staan er berichten
+        bij <em>Genegeerde berichten</em>: de server is ouder dan 1.2.0 en kent de nieuwe berichten (status <em>Q</em>,
+        binaire extra punten) niet. Laat de beheerder de server bijwerken. Server 1.2.0 leest ook oudere firmware.</li>
+      <li><strong>De FIFO-wachtrij loopt niet leeg</strong>: typ <code>fifo</code> in de terminal.
+        <ul>
+          <li>Staat <code>track_mode=classic</code>, dan wordt er niets ingehaald; zet <code>set track_mode fifo</code>.</li>
+          <li>Wachten er minder dan <code>fifo_min</code> punten, dan begint de tracker nog niet.</li>
+          <li>Hij begint pas bij <em>stabiele</em> dekking. Toont <code>fifo_dekking</code> een groot getal of
+            <code>-</code>, dan hoort hij geen repeater. Hoort hij er wel een, maar zwak, verlaag dan <code>fifo_snr</code>
+            (bv. naar −10) of breng hem dichter bij een repeater.</li>
+          <li>Staat er <em>gepauzeerd (fifo_per_uur)</em>, dan is het uurmaximum bereikt; hij gaat vanzelf verder.</li>
+          <li>Het leegmaken stopt ook als hij een inhaalbericht niet herhaald hoort; de punten wachten dan 1, 5, 15 of
+            60 minuten.</li>
+          <li>Hij haalt alleen in zolang hij zelf posities stuurt: in trackermodus, of als companion met <em>ook posities
+            sturen als companion</em> aan.</li>
+        </ul></li>
+      <li><strong>Geparkeerde punten</strong> (<code>fifo_geparkeerd</code> groter dan 0): die punten raakten na
+        <code>fifo_pogingen</code> pogingen niet door. Ze krijgen nog één laatste poging als er niets anders wacht, en worden
+        daarna opgegeven. Meestal kwamen ze toch aan; kijk op de kaart. Je hoeft niets te doen.</li>
+      <li><strong>Veel berichten op de mesh</strong> door trackers in FIFO-modus: verhoog <code>fifo_gap</code> en verlaag
+        <code>fifo_per_uur</code>. Met <code>fifo</code> of in <em>Toestellen</em> zie je meteen wat dat geeft. Een kleinere
+        <code>fifo_max</code> of een grotere <code>fifo_dun</code> geeft minder punten om in te halen.</li>
+      <li><strong>Een <code>f</code> achteraan een bericht, of <code>T1F</code>-berichten op het kanaal</strong>: dat is
+        normaal. Met <code>f</code> vraagt de tracker een bevestiging voor punten waarvan hij geen herhaling hoorde; de
+        server antwoordt met <code>T1F</code>, hoogstens 20 keer per uur in totaal. Komt er geen <code>T1F</code>, kijk dan
+        of de tracker een authsleutel heeft (zonder handtekening bevestigt de server niets) en of de server 1.2.0 of nieuwer
+        is. Met <code>rxlog aan</code> zie je of de <code>T1F</code> op de tracker aankomt.</li>
       <li><strong>De batterij loopt sneller leeg</strong>: staat <em>biep als een repeater de positie doorgeeft</em> aan, dan
         blijft de radio na elk bericht ongeveer 12 seconden wakker. Ook een kort <code>slow_log</code> kost stroom, omdat de
         GPS dan vaker aan moet.</li>

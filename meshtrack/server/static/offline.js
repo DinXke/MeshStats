@@ -13,7 +13,7 @@
     return s < 60 ? `${s} s geleden` : s < 3600 ? `${Math.round(s / 60)} min geleden` : s < 86400 ? `${Math.round(s / 3600)} u geleden` : `${Math.round(s / 86400)} d geleden`;
   };
   const fmtSize = (b) => (b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.round(b / 1e6) + " MB");
-  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)" };
+  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)" };
 
   // ---- opslag ----------------------------------------------------------------------
   let db;
@@ -69,9 +69,45 @@
     const h = Math.sin(dp / 2) ** 2 + Math.cos(a1 * r) * Math.cos(a2 * r) * Math.sin(dl / 2) ** 2;
     return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
   }
+  // Binair (firmware 0.9.0, o.a. Q-berichten): "B" + base64url zonder opvulling. Punten van nieuw naar oud,
+  // elk t.o.v. het vorige (te beginnen bij het hoofdpunt), als drie LEB128-varints: dt in seconden (unsigned),
+  // dlat en dlon in 1e-5 graden (zigzag).
+  function extrasBin(b64, lat, lon) {
+    const out = [];
+    let bytes;
+    try {
+      const s = b64.replace(/-/g, "+").replace(/_/g, "/");
+      const bin = atob(s + "=".repeat((4 - (s.length % 4)) % 4));
+      bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    } catch (_) { return out; }
+    let i = 0;
+    const uv = () => {                              // LEB128 zonder teken; null als de bytes op zijn
+      let v = 0, mul = 1;
+      for (;;) {
+        if (i >= bytes.length) return null;
+        const b = bytes[i++];
+        v += (b & 0x7f) * mul;
+        if (!(b & 0x80)) return v;
+        mul *= 128;
+        if (mul > 2 ** 49) return null;             // onzin: afbreken
+      }
+    };
+    const zz = (v) => (v % 2 ? -(v + 1) / 2 : v / 2);
+    let dt = 0, pla = lat, plo = lon;
+    while (i < bytes.length && out.length < 200) {
+      const g = uv(), a = uv(), b = uv();
+      if (g === null || a === null || b === null) break;
+      const nla = +(pla + zz(a) / 1e5).toFixed(5), nlo = +(plo + zz(b) / 1e5).toFixed(5);
+      dt += g;
+      out.push({ dt, lat: nla, lon: nlo, spd: g > 0 ? Math.round(hav(nla, nlo, pla, plo) / g * 3.6) : null });
+      pla = nla; plo = nlo;
+    }
+    return out;
+  }
   function extras(field, lat, lon) {
     const out = [];
     if (!field) return out;
+    if (field.startsWith("B")) return extrasBin(field.slice(1), lat, lon);
     if (field.startsWith("~")) {                   // compact: ~interval;dlat,dlon[@s]
       const [head, ...items] = field.split(";");
       const step = parseInt(head.slice(1), 10);
@@ -108,8 +144,8 @@
     const out = [];
     if (lat !== null) {
       for (const e of extras(extra, lat, lon)) {
-        // SlowTrack (L): ook de meegestuurde oudere punten zijn gelogde punten
-        out.push({ ...base, k: `${pk}:${tsMain - e.dt}`, ts: tsMain - e.dt, state: state === "L" ? "L" : "M", lat: e.lat, lon: e.lon, spd: e.spd, extra: true });
+        // SlowTrack (L) en FIFO (Q): ook de meegestuurde oudere punten zijn gelogde of ingehaalde punten
+        out.push({ ...base, k: `${pk}:${tsMain - e.dt}`, ts: tsMain - e.dt, state: state === "L" || state === "Q" ? state : "M", lat: e.lat, lon: e.lon, spd: e.spd, extra: true });
       }
     }
     out.push({ ...base, k: `${pk}:${tsMain}:${state}`, ts: tsMain, state, lat, lon, alt: alt === "" ? null : +alt,
@@ -208,6 +244,7 @@
         if (!r) {                                       // geen trackerbericht: gewone chat
           const i2 = text.indexOf(": ");
           if (text.slice(i2 + 2).startsWith("T1A|")) { log("SOS-bevestiging van de server gezien"); continue; }   // voor de tracker
+          if (text.slice(i2 + 2).startsWith("T1F|")) { log("ontvangstbevestiging (FIFO) van de server gezien"); continue; }   // idem
           chats += await addChat({ chan: chanName, chanIdx: chan, from: i2 > 0 ? text.slice(0, i2) : "?",
             text: i2 > 0 ? text.slice(i2 + 2) : text, ts });
           continue;
@@ -506,11 +543,11 @@
       map.addSource("trk", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "trk", type: "line", source: "trk", paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.85 } });
       map.addSource("pts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": ["case", ["==", ["get", "state"], "L"], 2, 3], "circle-color": ["get", "color"],
-        "circle-opacity": ["case", ["==", ["get", "state"], "L"], 0.7, 1], "circle-stroke-color": "#fff", "circle-stroke-width": ["case", ["==", ["get", "state"], "L"], 0.5, 1] } });
+      map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 2, 3], "circle-color": ["get", "color"],
+        "circle-opacity": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.7, 1], "circle-stroke-color": "#fff", "circle-stroke-width": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.5, 1] } });
       map.on("click", "pts", (e) => {
         const p = e.features[0].properties;
-        new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(`<strong>${esc(p.name)}</strong><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}${p.spd !== "null" && p.spd != null ? `<br>${p.spd} km/u` : ""}${p.state === "L" ? `<br>${STATE.L}` : ""}`).addTo(map);
+        new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(`<strong>${esc(p.name)}</strong><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}${p.spd !== "null" && p.spd != null ? `<br>${p.spd} km/u` : ""}${p.state === "L" || p.state === "Q" ? `<br>${STATE[p.state]}` : ""}`).addTo(map);
       });
       renderAll();
     });

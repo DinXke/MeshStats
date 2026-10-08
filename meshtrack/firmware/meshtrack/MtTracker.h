@@ -23,3 +23,13 @@ void mt_set_rxlog(bool on);           // ontvangstlog aan/uit (niet bewaard)
 int mt_tracker_heard();                // herhalingen gehoord van het laatst bewaakte bericht, -1 = geen
 const char* mt_tracker_sos_confirmed();   // laatste SOS-reeks: "ja", "nee" of "-"
 bool mt_tracker_gps_on();
+// FIFO (track_mode fifo, 0.9)
+uint16_t mt_tracker_fifo_count();      // punten in de wachtrij
+uint32_t mt_tracker_fifo_oldest();     // fix_ts van het oudste punt (0 = leeg)
+uint32_t mt_tracker_fifo_newest();
+long mt_tracker_fifo_cov_age();        // s sinds de laatste dekking, -1 = nog nooit
+int mt_tracker_fifo_hour(uint32_t* wait_s);   // leegmaakberichten in het laatste uur; wait_s = pauze tot er weer een mag
+const char* mt_tracker_fifo_state();   // leegmaken: bezig, gestopt, ...
+bool mt_tracker_fifo_clear();
+uint16_t mt_tracker_fifo_parked();
+uint32_t mt_tracker_fifo_confirmed();  // sinds de start door een T1F van de server verwijderde punten     // geparkeerde punten (pogingen >= fifo_pogingen)          // wachtrij wissen (en bewaren)

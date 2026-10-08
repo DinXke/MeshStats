@@ -285,7 +285,7 @@ uint8_t MyMesh::getExtraAckTransmitCount() const {
 }
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
-  mt_rx_raw(raw, len);   // MeshTrack: herhaling van ons eigen kanaalbericht?
+  mt_rx_raw(snr, raw, len);   // MeshTrack: herhaling van ons eigen kanaalbericht? dekking (fifo)?
   if (_serial->isConnected() && len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;

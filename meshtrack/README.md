@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.8.0).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.0; heeft server 1.2.0 of nieuwer nodig).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
     Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
@@ -44,6 +44,31 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     `fasttrack=aan|uit(batterij)` en `slow_per_bericht`. Menu: 5 SlowTrack, 6 Stilstand, 7 GPS, 8 Nu sturen,
     9 Onderhoud; *Modus en knop* kreeg 5 SOS, 6 tx_beep, 7 heard_beep. Backups (Toestellen) bewaren de nieuwe sleutels;
     het terugzetten van `uit` als `0` is verholpen.
+  - **Trackmodus** (0.9.0): `set track_mode classic|fifo`, standaard `classic` (FastTrack + SlowTrack zoals in 0.8).
+    `fifo` = store-and-forward voor posities die de mesh niet haalden:
+    - Na elk FastTrack-bericht ~12 s luisteren naar een herhaling. Niet gehoord: de punten liften eerst mee met de
+      volgende FastTrack-berichten. Pas een hoofdpunt dat die buffer verlaat zonder ooit gehoord te zijn (buffer vol of
+      10 min oud) gaat de FIFO-wachtrij in: één punt per gemist bericht, met zijn echte GPS-tijd. SlowTrack logt in
+      fifo-modus rechtstreeks in de wachtrij (`slow_log`); `slow_send` wordt niet gebruikt.
+    - Wachtrij: `fifo_max` 20..500 (standaard 500, ~8 à 16 u rijden zonder bereik), in flash (`/mt_fifo.dat`, overleeft
+      een herstart). Vol = het punt dat het minst vorm toevoegt (dichtst bij het segment tussen zijn buren) valt weg,
+      niet het oudste. `fifo_dun` (standaard 10 m) dunt rechte stukken uit; punten rond stops > 10 min blijven.
+    - Leegmaken alleen bij stabiele dekking: SNR ≥ `fifo_snr` (standaard −5 dB), twee keer dekking binnen 60 s, of
+      een T1F. Dekking = herhaling van een eigen bericht of een flood-pakket met ≥ 1 hop. Vanaf `fifo_min` punten
+      (standaard 5; na een onderbreking vanaf 1), oudste eerst, één Q-bericht per `fifo_gap` (standaard 30 s,
+      15 s..5 min), hoogstens `fifo_per_uur` per uur (standaard 20, 1..60). Binaire extra punten: ~11 punten per Q-bericht,
+      ~1,5× zoveel als in tekst. Een punt verlaat de wachtrij pas als zijn bericht herhaald gehoord is of de server het
+      bevestigt (T1F).
+    - Pogingen: niet herhaald = backoff 1, 5, 15 en daarna 60 min. Na `fifo_pogingen` (standaard 3) geparkeerd: blokkeert
+      de wachtrij niet meer, krijgt één laatste poging als niets anders wacht en wordt dan opgegeven (de server filtert
+      dubbels).
+    - Meshbelasting: een volle wachtrij (500) ≈ 46 berichten, met de standaardwaarden in ~2,1 u leeg; elk bericht wordt
+      door meerdere repeaters herhaald, dus hou `fifo_gap` ruim. `fifo` en elke `set` van `fifo_max`/`fifo_gap`/
+      `fifo_per_uur` tonen een berekende samenvatting.
+    - Commando's `fifo` (wachtrij tonen) en `fifo wis ja`. `status`: `track_mode`, `fifo_max`, `fifo_min`, `fifo_gap`,
+      `fifo_per_uur`, `fifo`, `fifo_dekking`, `fifo_pogingen`, `fifo_geparkeerd`, `fifo_dun`, `fifo_snr`,
+      `fifo_bevestigd`. Menu: 5 *SlowTrack en trackmodus (FIFO)* → 4 *Trackmodus en FIFO-wachtrij*.
+    - Configuratie v6: flashen over 0.8.x behoudt alle instellingen; de nieuwe krijgen hun standaardwaarde.
   - MeshTrack bewaart zijn configuratie en volgnummer op ExtraFS (0.7.1): InternalFS (7 blokken) was vol, waardoor
     0.7.0 niets meer kon bewaren. Oude bestanden worden bij het opstarten verhuisd; `status` toont
     `opslag_intern`/`opslag_extra` in blokken.
@@ -55,7 +80,10 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     (`rx kanaalpakket hash xx, N hops, N bytes`) en elk ontcijferd kanaalbericht (`rx kanaalbericht op kanaal N: …`),
     tot een herstart. Handig als een SOS-bevestiging (`T1A`) niet aankomt. De tracker bewaart geen log: de regels
     verschijnen alleen live en alleen met het menu dicht (`q`). Er is geen commando `log`.
-- **server/**: FastAPI + meshcore-py (versie 1.1.0).
+- **server/**: FastAPI + meshcore-py (versie 1.2.0).
+  - 1.2.0: status `Q` (ingehaalde FIFO-punten, verwerkt zoals `L`), binaire extra punten (`B` + base64url) op `L` en
+    `Q`, FIFO-bevestiging `T1F` en de trackervelden `last_fifo_rx`/`last_fifo_ts` (zie *Berichtprotocol*). Volledig
+    achterwaarts compatibel: getest met echte berichten van firmware 0.6 tot 0.8.
   - Bij elke verbinding zet de server de openHop-companion op 2-byte padhashes (`path_hash_mode=1`), zoals de
     trackers. Sommige repeaters (bij ons e3d3) sturen pakketten met 1-byte padhashes niet door; daardoor bereikte de
     SOS-bevestiging wel de mesh, maar nooit de tracker. Log: "padhashes van de companion op 2 bytes gezet".
@@ -75,8 +103,9 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
   - Simulator: virtuele trackers rijden 24/7 over echte wegen (offline routering over de wegenlaag van de
     kaarttegels), met een historiek in versnelde tijd. Profielen auto, fiets, voet en reiziger; ook zij krijgen een kanaal.
   - Pagina's: Kaart, Logboek, Kanalen, Trackers (lijst met zoeken, filters en kanaal, genegeerde berichten; formulieren
-    in een zijpaneel), Toestellen (alles via USB: naam, trackingkanaal, instellingen met voorinstellingen, firmware,
-    klaarmaken en backups, terminal), Gebruikers, Systeem (meldingen, kanalen, instellingen, companion-QR), Offline, Help.
+    in een zijpaneel), Toestellen (alles via USB: naam, trackingkanaal, instellingen met voorinstellingen en de groep
+    Trackmodus met een live berekening, firmware, klaarmaken en backups, terminal, en het tabblad Simulatie: een
+    versnelde animatie van classic tegenover fifo met de instellingen van de tracker), Gebruikers, Systeem (meldingen, kanalen, instellingen, companion-QR), Offline, Help.
   - Firmware flashen in de browser (Web Serial-DFU, `static/dfu.js`): eerst een backup, alleen de app, daarna
     controle van de pubkey.
   - Nieuw toestel klaarmaken: de server maakt het sleutelpaar en zet sleutel, naam, radio, regio en kanalen via USB op
@@ -120,7 +149,7 @@ Extra punten (`<extra>`): `~<interval>;dlat,dlon[@s];...`, nieuwste eerst, elk p
 `fix_ts`: sender-tijd min `fix_age_s`, of de ontvangsttijd als de klok van de tracker niet klopt.
 
 Statussen: `M` beweging, `W` wakker door beweging, `S` stilgevallen, `H` heartbeat, `N` geen fix, `P` handmatig,
-`E` SOS, `B` moduswissel of voeding gewijzigd, `L` gelogd punt (SlowTrack, firmware 0.8.0+).
+`E` SOS, `B` moduswissel of voeding gewijzigd, `L` gelogd punt (SlowTrack, firmware 0.8.0+), `Q` ingehaald punt (FIFO, firmware 0.9.0+).
 
 SlowTrack (`L`, server 1.1.0+): naast de gewone tracking logt de tracker elke `slow_log` een punt en stuurt die elke
 `slow_send` samen in één `L`-bericht (firmware 0.8.0; de server aanvaardt ook meerdere `L`-berichten na elkaar, elk
@@ -132,6 +161,15 @@ voor punten die nieuwer zijn dan de live-positie (wel `lost_seen`: het bericht b
 kaart zijn `L`-punten kleinere, lichtere stippen; popup en lijst tonen "SlowTrack: laatste burst <tijd>". Seq-herhalingen worden voor `L` en de gewone tracking apart
 gecontroleerd. De trackerlijst toont `last_slow_rx` (ontvangst laatste SlowTrack-bericht) en `last_slow_ts`
 (nieuwste gelogde punt).
+
+FIFO (`Q`, server 1.2.0+): gemiste posities die de tracker later alsnog stuurt (store-and-forward); verwerkt zoals
+`L` (`last_fifo_rx`/`last_fifo_ts` in de trackerlijst). Extra punten kunnen binair: `B<base64url zonder padding>`,
+punten nieuwste eerst, elk drie LEB128-varints t.o.v. het vorige punt: dt (s), dlat en dlon (1e-5 graden, zigzag);
+tot 40 punten. Optioneel veld 16 = vlaggen; `f` = bevestiging gevraagd. Alleen dan antwoordt de server op hetzelfde
+kanaal met `T1F|<pk8>:<tag8>:<upto_ts>|...` (tot 4 trackers per bericht, tag8 = HMAC-SHA256(authsleutel van die
+tracker, `<pk8>|F|<upto_ts>`)[:4] hex, upto_ts = hoogste fix_ts van de gevraagde Q-punten). Limieten: per tracker
+~20 s na zijn laatste `f`-bericht en daarna hoogstens 1 per 10 min, per kanaal 1 T1F per 60 s, in totaal 20 per uur.
+Eigen `T1A`/`T1F`-berichten die terugkomen (echo) negeert de server.
 
 Tot firmware 0.6 konden trackers ook `T1|<rest>` als DM naar de server sturen; de server leest dat sinds 1.0 niet
 meer en noteert het bij de genegeerde berichten als "oude firmware".
