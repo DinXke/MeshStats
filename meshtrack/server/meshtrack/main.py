@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 
 # ---- live-updates -----------------------------------------------------------

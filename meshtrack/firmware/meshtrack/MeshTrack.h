@@ -11,7 +11,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#define MT_FW_VERSION "0.7.1"
+#define MT_FW_VERSION "0.7.2"
 
 // Terugmelding na een klik/SOS: twee hoge biepjes = verstuurd op het trackingkanaal,
 // lage toon = niet verstuurd (trackingkanaal ontbreekt op het toestel).

@@ -67,5 +67,7 @@ bool mt_cfg_save();
 // Kleine bestanden van MeshTrack (op ExtraFS; lezen valt terug op InternalFS van oudere firmware).
 bool mt_file_read(const char* path, void* buf, size_t len);
 bool mt_file_write(const char* path, const void* data, size_t len);
-void mt_fs_status(char* out, size_t n);   // "opslag_intern=x/7 opslag_extra=y/z" (blokken)
+void mt_fs_status(char* out, size_t n);
+bool mt_fs_internal_ok();                 // InternalFS leesbaar en niet beschadigd
+bool mt_fs_internal_format();             // InternalFS formatteren (wist identiteit en voorkeuren!)   // "opslag_intern=x/7 opslag_extra=y/z" (blokken)
 uint32_t mt_crc32(uint32_t crc, const uint8_t* p, uint32_t n);

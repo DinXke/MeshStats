@@ -113,23 +113,35 @@ bool mt_file_write(const char* path, const void* data, size_t len) {
   return true;
 }
 
-// Bezetting van een bestandssysteem in blokken (zoals DataStore van MeshCore).
+// Bezetting van een bestandssysteem in blokken (zoals DataStore van MeshCore). Op een beschadigd
+// bestandssysteem kan lfs_traverse naar onbestaande blokken wijzen of in een kring lopen (0.7.1 bleef
+// daar hangen, waardoor 'status' nooit af kwam): een onmogelijk blok of meer dan 2x het totaal = beschadigd.
+struct FsCount { uint32_t n, total; };
 static int count_block(void* p, lfs_block_t block) {
-  (void)block;
-  (*(uint32_t*)p)++;
+  FsCount* c = (FsCount*)p;
+  if (block >= c->total || ++c->n > 2 * c->total) return LFS_ERR_CORRUPT;
   return 0;
 }
-static void fs_use(Adafruit_LittleFS& fs, uint32_t& used, uint32_t& total) {
-  used = 0;
-  total = fs._getFS()->cfg->block_count;
-  if (lfs_traverse(fs._getFS(), count_block, &used)) used = 0;
+static bool fs_use(Adafruit_LittleFS& fs, uint32_t& used, uint32_t& total) {
+  FsCount c = { 0, fs._getFS()->cfg->block_count };
+  int err = lfs_traverse(fs._getFS(), count_block, &c);
+  used = c.n;
+  total = c.total;
+  return err == 0 && c.n <= c.total;
 }
+bool mt_fs_internal_ok() {
+  uint32_t u, t;
+  return fs_use(InternalFS, u, t);
+}
+bool mt_fs_internal_format() { return InternalFS.format(); }
 void mt_fs_status(char* out, size_t n) {
   uint32_t iu, it, eu = 0, et = 0;
-  fs_use(InternalFS, iu, it);
-  if (CFS_IS_EXTRA) fs_use(cfs(), eu, et);
-  snprintf(out, n, "opslag_intern=%lu/%lu opslag_extra=%lu/%lu", (unsigned long)iu, (unsigned long)it,
-           (unsigned long)eu, (unsigned long)et);
+  bool iok = fs_use(InternalFS, iu, it), eok = true;
+  if (CFS_IS_EXTRA) eok = fs_use(cfs(), eu, et);
+  char a[24], b[24];
+  if (iok) snprintf(a, sizeof(a), "%lu/%lu", (unsigned long)iu, (unsigned long)it); else snprintf(a, sizeof(a), "BESCHADIGD");
+  if (eok) snprintf(b, sizeof(b), "%lu/%lu", (unsigned long)eu, (unsigned long)et); else snprintf(b, sizeof(b), "BESCHADIGD");
+  snprintf(out, n, "opslag_intern=%s opslag_extra=%s", a, b);
 }
 
 bool mt_cfg_save() {

@@ -331,6 +331,32 @@ static void cmd_status() {
   outl("cfg=%s%s", mt_cfg_load_note, mt_cfg_readonly ? " [alleen-lezen]" : "");
 }
 
+// Interne opslag herstellen: formatteren en herstarten. Wist de identiteit en de MeshCore-voorkeuren,
+// dus alleen als die toch al verloren zijn (opslag beschadigd of sleutel ongeldig). Daarna de sleutel
+// terugzetten vanaf een back-up (Toestellen -> Klaarmaken -> Op dit toestel zetten, of key import).
+static void cmd_fs(char* args) {
+  const uint8_t* pk = the_mesh.self_id.pub_key;
+  bool all_ff = true, all_00 = true;
+  for (int i = 0; i < PUB_KEY_SIZE; i++) { all_ff &= pk[i] == 0xFF; all_00 &= pk[i] == 0x00; }
+  bool fs_ok = mt_fs_internal_ok();
+  bool broken = !fs_ok || all_ff || all_00;
+  if (strcmp(args, "herstel ja") && strcmp(args, "herstel forceer ja")) {
+    outl("fs: interne opslag %s, sleutel %s.", fs_ok ? "leesbaar" : "BESCHADIGD", all_ff || all_00 ? "ONGELDIG" : "in orde");
+    outl("gebruik: fs herstel ja   (formatteert de interne opslag en herstart; alleen als ze beschadigd is of de sleutel ongeldig)");
+    return;
+  }
+  if (!broken && strcmp(args, "herstel forceer ja")) {
+    outl("fs: geweigerd: de opslag is in orde en de sleutel is geldig (dit zou de sleutel wissen).");
+    return;
+  }
+  outl("fs: interne opslag wordt geformatteerd; daarna herstart. Zet daarna de sleutel terug vanaf een backup.");
+  delay(100);
+  bool ok = mt_fs_internal_format();
+  outl("fs: formatteren %s, herstart...", ok ? "gelukt" : "MISLUKT");
+  delay(200);
+  NVIC_SystemReset();
+}
+
 static void cmd_help() {
   outl("Commando's (ook met het menu open):");
   outl("  status | cfg                toestand, pubkey en instellingen");
@@ -349,6 +375,7 @@ static void cmd_help() {
   outl("  chan list | chan set <nr> <32 hex> <naam> | chan del <nr>");
   outl("  send                        nu een positie sturen (zoals een klik)");
   outl("  defaults | backup | reboot | menu | q (menu sluiten)");
+  outl("  fs | fs herstel ja          interne opslag controleren / herstellen (alleen als ze beschadigd is)");
 }
 
 // Ruwe dump van ExtraFS + InternalFS (0xD4000-0xF4000). Alleen lezen; bevat
@@ -602,6 +629,7 @@ static void command(char* s) {
   else if (!strcmp(s, "key")) cmd_key(args);
   else if (!strcmp(s, "chan")) cmd_chan(args);
   else if (!strcmp(s, "reboot")) { outl("herstart..."); delay(100); NVIC_SystemReset(); }
+  else if (!strcmp(s, "fs")) cmd_fs(args);
   else if (!strcmp(s, "menu")) open_menu();
   else if (!strcmp(s, "q")) { if (s_in_menu) { s_in_menu = false; outl(""); outl("Menu gesloten."); } }
   else outl("onbekend commando: %s ('help')", s);
