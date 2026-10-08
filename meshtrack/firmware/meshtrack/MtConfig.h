@@ -68,7 +68,8 @@ struct MtCfg {
   uint8_t  fifo_pogingen;       // fifo: na x niet herhaalde leegmaakberichten is een punt geparkeerd (1..10)
   uint8_t  fifo_dun;            // fifo: punt op een rechte lijn binnen x m = overbodig (0 = uit, 0..100)
   int8_t   fifo_snr;            // fifo: nieuwe leegmaakronde pas bij SNR >= x dB (-20..10), of 2x dekking / T1F
-  uint8_t  _pad6;
+  uint8_t  fifo_wacht;          // fifo (0.9.1): punten ouder dan x min bij stabiele dekking toch versturen, ook onder
+                                // fifo_min. 0 = standaard (30 min; was opvulling in 0.9.0), 255 = uit
   uint32_t crc;                 // crc32 over alles hiervoor
 };
 
@@ -80,6 +81,9 @@ static_assert(offsetof(MtCfg, track_mode) == 120, "v6-velden moeten na de v5-vel
 #define MT_TRACK_FIFO    1
 
 extern MtCfg mt_cfg;
+
+// fifo_wacht in minuten: 0 = standaard (30), 255 = uit (geeft 0 terug).
+inline uint32_t mt_fifo_wacht_min() { return mt_cfg.fifo_wacht == 0 ? 30 : mt_cfg.fifo_wacht == 255 ? 0 : mt_cfg.fifo_wacht; }
 
 // Uitkomst van het laden, voor `status` en de bootmelding.
 extern const char* mt_cfg_load_note;

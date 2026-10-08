@@ -62,7 +62,6 @@
   // ---- Trackmodus (firmware 0.9.0): classic of fifo ----------------------------------
   // In FIFO-modus gaan niet-herhaalde FastTrack-punten en de SlowTrack-punten naar een wachtrij
   // die bij dekking wordt leeggemaakt; slow_send wordt dan niet gebruikt.
-  const FIFO_PER_MSG = 11;                         // punten per inhaalbericht (Q, compact binair; in tekst waren het er 7)
   const fset = (k) => document.querySelector(`#s-form [data-set="${k}"]`);
   const fifoKnown = () => "track_mode" in lastKv;
   const isFifo = () => fifoKnown() && fset("track_mode").value === "fifo";
@@ -99,6 +98,7 @@
       dun = has("fifo_dun") ? Math.max(0, Number(fset("fifo_dun").value) || 0) : null,
       snr = has("fifo_snr") && fset("fifo_snr").value !== "" ? Number(fset("fifo_snr").value) : null;
     if (!max || !gap || !per) return;
+    const FIFO_PER_MSG = fifoPerMsg(), naam = ($("s-name").value || lastKv.naam || "").trim(), nb = nameBytes(naam);
     // effectief aantal berichten per uur: begrensd door de tussentijd of door "per uur"
     const byGap = 3600 / gap, eff = Math.max(1, Math.floor(Math.min(byGap, per)));
     const n = Math.ceil(max / FIFO_PER_MSG);
@@ -116,7 +116,16 @@
       [`Max ${eff} ${eff === 1 ? "bericht" : "berichten"} per uur (elke ${gapTxt}, ${limit}) ≈ ${eff * FIFO_PER_MSG} ingehaalde punten per uur `
         + `(compact binair, ≈ ${FIFO_PER_MSG} punten per bericht). Volle wachtrij (${max} punten) ≈ ${n} ${n === 1 ? "bericht" : "berichten"}, leeg in ≈ ${dur}.`],
     ];
+    lines.push([`≈ ${FIFO_PER_MSG} punten per bericht met de naam "${naam}" (${nb} bytes); een kortere naam zonder emoji laat meer punten toe.`]);
     if (warn) lines.push(["Opgelet: elk bericht wordt door meerdere repeaters herhaald; dit belast de mesh fel.", "warn"]);
+    if (has("fifo_wacht")) {
+      const w = durSec(fset("fifo_wacht")), wt = w % 3600 === 0 ? `${w / 3600} u` : w % 60 === 0 ? `${w / 60} min` : `${w} s`;
+      lines.push([w ? `In beweging en minder dan ${fset("fifo_min").value || "?"} punten? Is het oudste punt ouder dan ${wt} en is de dekking stabiel, dan stuurt hij toch; `
+        + "zonder recente dekking luistert hij daarvoor hoogstens 1× per 10 min 60 s naar het net."
+        : "Toch versturen staat uit: in beweging wacht hij tot er genoeg punten zijn."]);
+      lines.push(["In rust met punten in de wachtrij luistert hij meteen 60 s; bij stabiele dekking maakt hij de wachtrij leeg, ook onder het minimum. "
+        + "Zonder dekking luistert hij opnieuw na 10, 20 en 40 min en daarna elk uur. SlowTrack logt alleen zolang hij beweegt."]);
+    }
     if (dun != null) lines.push([dun ? `Rechte stukken: punten die minder dan ${dun} m naast de lijn tussen hun buren liggen, gaan er niet in.` : "Rechte stukken worden niet uitgedund."]);
     if (snr != null) lines.push([`Leegmaken begint pas bij stabiele dekking: een herhaling met SNR ≥ ${snr} dB, twee tekens van dekking binnen 60 s, of een bevestiging van de server.`]);
     if (pog) lines.push([`Een inhaalbericht dat niet gehoord wordt, krijgt tot ${pog} ${pog === 1 ? "poging" : "pogingen"} (telkens langer wachten: 1, 5, 15, daarna 60 min); daarna worden zijn punten geparkeerd en krijgen ze pas als al de rest verstuurd is nog één laatste kans.`]);
@@ -127,10 +136,19 @@
       out.appendChild(d);
     }
   }
-  ["track_mode", "fifo_max", "fifo_min", "fifo_gap", "fifo_per_uur", "fifo_pogingen", "fifo_dun", "fifo_snr"].forEach((k) => {
+  ["track_mode", "fifo_max", "fifo_min", "fifo_gap", "fifo_per_uur", "fifo_pogingen", "fifo_dun", "fifo_snr", "fifo_wacht", "name"].forEach((k) => {
     const d = fset(k);
     if (d) { d.addEventListener("input", fifoUi); d.addEventListener("change", fifoUi); }
   });
+  // Punten per Q-bericht: "<naam>: " gaat van elk bericht af. Zoals de firmware: 1 + (156 − (naam + 2) − 79) / 8, minstens 2.
+  const nameBytes = (s) => new TextEncoder().encode(s || "").length;
+  const perForName = (nb) => Math.max(2, 1 + Math.floor(Math.max(0, 156 - (nb + 2) - 79) / 8));
+  function fifoPerMsg() {
+    const naam = ($("s-name").value || "").trim();
+    const fromStatus = parseInt(lastKv.fifo_per_bericht, 10);
+    if (Number.isFinite(fromStatus) && (!naam || naam === lastKv.naam)) return fromStatus;   // de tracker weet het zelf
+    return perForName(nameBytes(naam || lastKv.naam));
+  }
   // Duur in seconden voor de statusweergave ("45 s", "12 min", "3 u")
   const ago = (s) => s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} u`;
 
@@ -370,7 +388,7 @@
     fillForm(lastKv);
     if (/^F{64}$|^0{64}$/i.test(lastKv.pubkey || "") || /BESCHADIGD/.test(lastKv.opslag_intern || ""))
       msg($("s-msg"), "De interne opslag van deze tracker is beschadigd (sleutel ongeldig). Typ in Terminal: fs herstel ja. "
-        + "Na de herstart zet je de sleutel terug via Klaarmaken & backups → Op dit toestel zetten.");
+        + "Na de herstart zet je de sleutel terug via Klaarmaken & back-ups → Op dit toestel zetten.");
     $("s-via").disabled = !lastKv.transport;
     if (lastKv.transport) await readChannels();
     else {
@@ -469,7 +487,7 @@
       const k = el.dataset.set;
       if (!((el.dataset.kv || k) in lastKv)) return;   // oudere firmware kent deze instelling niet
       let v;
-      if (el.classList.contains("dur")) v = durGet(el);
+      if (el.classList.contains("dur")) { v = durGet(el); if (v === "0" && el.dataset.offword) v = el.dataset.offword; }   // bv. fifo_wacht uit
       else if (el.dataset.kind === "bool") v = el.checked ? (el.dataset.yes || "on") : (el.dataset.no || "off");
       else v = el.value.trim();
       if (el.dataset.spaces && v === (lastKv[el.dataset.kv || k] || "")) return;   // naam ongewijzigd

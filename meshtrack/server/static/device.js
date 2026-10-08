@@ -13,9 +13,9 @@
     "sample", "chan", "msg_beep",
     "slow_log", "slow_send", "fast_min_batt", "sos", "tx_beep", "heard_beep",   // vanaf 0.8.0
     "track_mode", "fifo_max", "fifo_min", "fifo_gap", "fifo_per_uur", "fifo_pogingen",   // vanaf 0.9.0 (FIFO-modus)
-    "fifo_dun", "fifo_snr"];
+    "fifo_dun", "fifo_snr", "fifo_wacht"];   // fifo_wacht vanaf 0.9.1
   // Keuzes waarbij "uit" een geldige waarde is (bij duren en getallen wordt "uit" een 0).
-  const WORD_KEYS = ["track_in_companion", "led", "accel_sens", "msg_beep", "sos", "tx_beep", "heard_beep", "track_mode"];
+  const WORD_KEYS = ["track_in_companion", "led", "accel_sens", "msg_beep", "sos", "tx_beep", "heard_beep", "track_mode", "fifo_wacht"];
   let fw = null, kv = null, known = null, busy = false;
 
   function say(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); }
@@ -63,8 +63,8 @@
     const allowed = MT.can("keys.manage");
     $("prov").hidden = !connected || !allowed;
     $("prov-none").hidden = !$("prov").hidden;
-    $("prov-none").textContent = !allowed ? "Klaarmaken en backups vragen het recht Sleutels en backups."
-      : "Verbind eerst een toestel om het klaar te maken of er een backup van te nemen.";
+    $("prov-none").textContent = !allowed ? "Klaarmaken en back-ups vragen het recht Sleutels en back-ups."
+      : "Verbind eerst een toestel om het klaar te maken of er een back-up van te nemen.";
     if (!$("prov").hidden) {
       const ts = MTDev.trackers.filter((t) => t.kind === "real" && t.keys);
       const cur = $("prov-t").value;
@@ -92,7 +92,7 @@
       box.innerHTML = `<b>${MT.esc(t ? t.alias : "Tracker")}</b> is gekozen. Klik op <em>Op dit toestel zetten</em> om dit toestel klaar te maken.`;
       return;
     }
-    box.innerHTML = `<b>Backup terugzetten</b> voor ${MT.esc(t ? t.alias : "tracker")}. <button type="button" class="primary" id="pend-go">Backup op dit toestel zetten</button>`;
+    box.innerHTML = `<b>Back-up terugzetten</b> voor ${MT.esc(t ? t.alias : "tracker")}. <button type="button" class="primary" id="pend-go">Back-up op dit toestel zetten</button>`;
     $("pend-go").onclick = async () => {
       try {
         const doc = await MT.api(`/api/trackers/${tid}/keys/${bid}`);
@@ -133,7 +133,7 @@
     const ls = await MTDev.until("backup", /^BACKUP-END/, 60000, true);
     const begin = ls.findIndex((l) => l.startsWith("BACKUP-BEGIN"));
     const m = /start=0x([0-9A-F]+) len=0x([0-9A-F]+)/.exec(ls[begin] || "");
-    if (!m) throw new Error("backup onvolledig");
+    if (!m) throw new Error("back-up onvolledig");
     const start = parseInt(m[1], 16), len = parseInt(m[2], 16);
     const out = new Uint8Array(len);
     let got = 0;
@@ -145,7 +145,7 @@
       got += 64;
     }
     const want = /crc32=([0-9A-F]{8})/.exec(ls.find((l) => l.startsWith("BACKUP-END")) || "");
-    if (got !== len || !want || crc32(out) !== parseInt(want[1], 16)) throw new Error("backup beschadigd (CRC klopt niet); probeer opnieuw");
+    if (got !== len || !want || crc32(out) !== parseInt(want[1], 16)) throw new Error("back-up beschadigd (CRC klopt niet); probeer opnieuw");
     return out;
   }
   function crc32(u8) {
@@ -283,7 +283,7 @@
   async function flashFlow() {
     const r = fw.releases[0];
     busy = true; refresh();
-    steps(["Firmware ophalen", "Backup van het toestel", "Naar de bootloader", "Flashen", "Herstarten en sleutel controleren"]);
+    steps(["Firmware ophalen", "Back-up van het toestel", "Naar de bootloader", "Flashen", "Herstarten en sleutel controleren"]);
     let backup = null;
     const before = kv ? { ...kv } : null;
     try {
@@ -300,10 +300,10 @@
         let bin = null;
         try { bin = await dumpBin(); }
         catch (e) {
-          if (!invalid) throw new Error(`backup mislukt, er is niets geflasht: ${e.message}`);
-          if (!(await MT.confirm(`De backup lukt niet (${e.message}), maar de sleutel van dit toestel is toch al ongeldig (FFFF…): er valt niets meer te bewaren. `
-            + "Flash je de nieuwe firmware, dan kun je daarna de opslag herstellen (Terminal: fs herstel ja) en je sleutel terugzetten vanaf de server. Toch flashen zonder backup?",
-          { ok: "Toch flashen", danger: true, title: "Flashen zonder backup" }))) throw new Error("geannuleerd");
+          if (!invalid) throw new Error(`back-up mislukt, er is niets geflasht: ${e.message}`);
+          if (!(await MT.confirm(`De back-up lukt niet (${e.message}), maar de sleutel van dit toestel is toch al ongeldig (FFFF…): er valt niets meer te bewaren. `
+            + "Flash je de nieuwe firmware, dan kun je daarna de opslag herstellen (Terminal: fs herstel ja) en je sleutel terugzetten vanaf de server. Toch flashen zonder back-up?",
+          { ok: "Toch flashen", danger: true, title: "Flashen zonder back-up" }))) throw new Error("geannuleerd");
         }
         if (bin) download(`${safe(before.naam)}_opslag_${stamp()}.bin`, bin, "application/octet-stream");
       }
@@ -315,7 +315,7 @@
           step(1, "done", "opslag (.bin) en sleutel (.json) gedownload" + (MTDev.trackers.some((t) => t.pubkey === backup.public_key) && MT.can("keys.manage") ? ", ook op de server" : ""));
         } else step(1, "done", "opslag (.bin) gedownload");
       } else {
-        if (!(await MT.confirm("Op dit toestel draait geen MeshTrack (of het antwoordt niet). Er kan geen backup gemaakt worden en de sleutel niet gecontroleerd. Toch flashen?", { ok: "Toch flashen", danger: true }))) throw new Error("geannuleerd");
+        if (!(await MT.confirm("Op dit toestel draait geen MeshTrack (of het antwoordt niet). Er kan geen back-up gemaakt worden en de sleutel niet gecontroleerd. Toch flashen?", { ok: "Toch flashen", danger: true }))) throw new Error("geannuleerd");
         step(1, "done", "overgeslagen (geen MeshTrack)");
       }
 
@@ -347,7 +347,7 @@
       if (before && before.pubkey && st.pubkey !== before.pubkey) {
         step(4, "err", `pubkey is nu ${st.pubkey.slice(0, 8)}…, was ${before.pubkey.slice(0, 8)}…`);
         if (backup) offerRestore(backup);
-        throw new Error("DE SLEUTEL IS GEWIJZIGD. Zet de backup terug met de knop hieronder.");
+        throw new Error("DE SLEUTEL IS GEWIJZIGD. Zet de back-up terug met de knop hieronder.");
       }
       step(4, "done", before && before.pubkey ? `v${st.fw}, sleutel ongewijzigd (${st.pubkey.slice(0, 8)}…)` : `v${st.fw || "?"}`);
       say($("dfu-msg"), `Klaar: firmware v${st.fw || r.version}${before && before.pubkey ? ", sleutel en instellingen behouden" : ""}.`, true);
@@ -372,11 +372,11 @@
     const same = kv.pubkey.toLowerCase() === doc.public_key;
     if (!same) {
       const cur = MTDev.trackers.find((t) => t.pubkey === kv.pubkey.toLowerCase());
-      const ok = await MT.confirm(`Dit toestel (${kv.naam || "?"}, ${kv.pubkey.slice(0, 8)}…${cur ? `, in MeshTrack als ${cur.alias}` : ""}) krijgt de identiteit van ${doc.name} (${doc.public_key.slice(0, 8)}…).\n\nDe huidige sleutel wordt eerst als backup gedownload${cur && MT.can("keys.manage") ? " en op de server bewaard" : ""}. Doorgaan?`, { ok: "Doorgaan", danger: true, title: "Andere identiteit" });
+      const ok = await MT.confirm(`Dit toestel (${kv.naam || "?"}, ${kv.pubkey.slice(0, 8)}…${cur ? `, in MeshTrack als ${cur.alias}` : ""}) krijgt de identiteit van ${doc.name} (${doc.public_key.slice(0, 8)}…).\n\nDe huidige sleutel wordt eerst als back-up gedownload${cur && MT.can("keys.manage") ? " en op de server bewaard" : ""}. Doorgaan?`, { ok: "Doorgaan", danger: true, title: "Andere identiteit" });
       if (!ok) return;
     }
     busy = true; refresh();
-    steps([same ? "Toestel controleren" : "Backup van de huidige sleutel", "Instellingen zetten", "Herstarten en controleren"]);
+    steps([same ? "Toestel controleren" : "Back-up van de huidige sleutel", "Instellingen zetten", "Herstarten en controleren"]);
     try {
       step(0);
       if (!same) await backupNow(true, `voor klaarmaken als ${doc.name}`);
@@ -410,19 +410,19 @@
   // ---- knoppen ---------------------------------------------------------------------
   $("fw-flash").addEventListener("click", () => {
     const r = fw.releases[0];
-    const q = kv ? `Firmware v${r.version} flashen op ${kv.naam || "dit toestel"} (nu v${kv.fw})?\n\nEerst worden de opslag en de sleutel als backup gedownload. Niet loskoppelen tijdens het flashen (ongeveer een minuut).`
+    const q = kv ? `Firmware v${r.version} flashen op ${kv.naam || "dit toestel"} (nu v${kv.fw})?\n\nEerst worden de opslag en de sleutel als back-up gedownload. Niet loskoppelen tijdens het flashen (ongeveer een minuut).`
       : `Firmware v${r.version} flashen op het verbonden toestel?`;
     MT.confirm(q, { ok: "Flashen", title: "Firmware flashen" }).then((ok) => { if (ok) flashFlow(); });
   });
   $("prov-go").addEventListener("click", () => { if ($("prov-t").value) provisionTracker(Number($("prov-t").value)); });
   $("bk-server").addEventListener("click", async () => {
     busy = true; refresh();
-    try { const r = await backupNow(true, ""); say($("prov-msg"), `Backup ${r.where}.`, true); MTDev.reload(); }
+    try { const r = await backupNow(true, ""); say($("prov-msg"), `Back-up ${r.where}.`, true); MTDev.reload(); }
     catch (e) { say($("prov-msg"), e.message, false); } finally { busy = false; refresh(); }
   });
   $("bk-json").addEventListener("click", async () => {
     busy = true; refresh();
-    try { const r = await backupNow(false, ""); say($("prov-msg"), `Backup ${r.where} (MeshCore-app-formaat, met privésleutel).`, true); }
+    try { const r = await backupNow(false, ""); say($("prov-msg"), `Back-up ${r.where} (MeshCore-app-formaat, met privésleutel).`, true); }
     catch (e) { say($("prov-msg"), e.message, false); } finally { busy = false; refresh(); }
   });
   $("bk-bin").addEventListener("click", async () => {

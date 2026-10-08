@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.9.1",
+      "date": "2026-10-09",
+      "notes": "fifo_wacht: oude punten ook onder fifo_min versturen bij stabiel bereik; in rust de wachtrij meteen leegmaken als er repeaters in de buurt zijn (60 s luisteren, zonder bereik telkens langer wachten). SlowTrack logt alleen zolang hij beweegt (sensor of GPS-snelheid), behalve als FastTrack uit staat wegens de batterij. Schatting punten per bericht volgens de echte trackernaam. Commando dump en alleen-lezen via Bluetooth (status, fifo, dump) voor de pagina /tracker.",
+      "zip": "meshtrack-t1000e-0.9.1.zip",
+      "zip_sha256": "973853abe5ad84dc707e87e73a04f0234c4efdf89bae94afdcbb0e4a3a06bb5c",
+      "uf2": "meshtrack-t1000e-0.9.1.uf2",
+      "app_size": 435504,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.9.0",
       "date": "2026-10-09",
       "notes": "Nieuwe trackmodus fifo (set track_mode classic|fifo, standaard classic) om gaten van uren tot een dag te overbruggen. Punten van een niet herhaald FastTrack-bericht liften eerst mee met de volgende berichten; pas als dat niet meer kan, gaat het hoofdpunt (met zijn GPS-tijd) in een wachtrij van tot 500 punten, die een herstart overleeft. SlowTrack-punten gaan in fifo-modus meteen in de wachtrij. Is de wachtrij vol, dan valt het minst betekenisvolle punt weg; op een rechte weg worden overbodige punten uitgedund (fifo_dun). Bij stabiele dekking (fifo_snr, of twee keer dekking binnen 60 s) maakt de tracker de wachtrij leeg met nieuwe Q-berichten (ingehaald punt), oudste eerst, hooguit fifo_per_uur per uur. Een punt dat na fifo_pogingen pogingen niet doorraakt, wordt geparkeerd en blokkeert de rest niet. De server kan verstuurde punten bevestigen met T1F. L- en Q-berichten gebruiken nu een compactere binaire notatie voor de extra punten. Nieuwe instellingen fifo_max, fifo_min, fifo_gap, fifo_per_uur, fifo_pogingen, fifo_dun en fifo_snr; commando's 'fifo' en 'fifo wis ja'. Vereist server 0.9-protocol (Q, binaire extra punten, T1F).",
@@ -121,5 +131,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.0"
+  "latest": "0.9.1"
 }

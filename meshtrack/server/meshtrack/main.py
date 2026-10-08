@@ -190,7 +190,7 @@ async def _lost_seen(t: dict[str, Any], pos: dict[str, Any], before: Optional[di
     if before is not None and before.get("lost"):
         # De status 'verloren' blijft; elke regel met lost_seen krijgt een melding (cooldown per regel).
         S.db.mark_lost_seen(t["id"], int(time.time()))
-        log.warning("verloren tracker %s is terug opgedoken (%s)", t["alias"], pos["state"])
+        log.warning("verloren tracker %s is weer opgedoken (%s)", t["alias"], pos["state"])
         S.alerts.fire(t, "lost_seen", pos)
         await S.hub.send({"type": "lost_seen", "tracker": tracker_out(S.db.tracker(t["id"]))})
 
@@ -693,7 +693,8 @@ def audit(p: Principal, action: str, detail: str = "") -> None:
 
 PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help",
           "/offline", "/offline-sw.js", "/manifest.webmanifest", "/api/offline/maps",
-          "/tiles/offline/", "/tiles/fonts/", "/tiles/sprites/")
+          "/tiles/offline/", "/tiles/fonts/", "/tiles/sprites/",
+          "/tracker", "/tracker-sw.js", "/tracker.webmanifest")
 # De offline-app werkt volledig zonder account en gebruikt niets uit de database: wie de
 # kanaalsleutel kent, kan meelezen. Van de server komen alleen kaarten, lettertypes en
 # symbolen (gewone OpenStreetMap-gegevens).
@@ -788,6 +789,27 @@ async def offline_maps():
             out.append({"key": key, "name": name, "description": desc, "size": f.stat().st_size,
                         "url": f"/tiles/offline/{key}.pmtiles", "version": int(f.stat().st_mtime)})
     return out
+
+
+# ---- tracker-app (PWA): de binnenkant van één tracker via Bluetooth of USB ----------------
+# Zoals de offline-app: zonder account, niets uit de database; de pagina praat rechtstreeks met
+# het toestel. Van de server komen alleen de pagina en (als er geen op het toestel staan) kaarten.
+
+@app.get("/tracker")
+async def tracker_page():
+    return page("tracker.html")
+
+
+@app.get("/tracker-sw.js")
+async def tracker_sw():
+    return FileResponse(STATIC / "tracker-sw.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/tracker"})
+
+
+@app.get("/tracker.webmanifest")
+async def tracker_manifest():
+    return FileResponse(STATIC / "tracker.webmanifest", media_type="application/manifest+json",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/users")
@@ -1124,7 +1146,7 @@ async def add_key(tid: int, b: KeyIn, request: Request):
     doc["private_key"], doc["public_key"] = prv, pub
     kind = b.kind if b.kind in ("backup", "import") else "backup"
     kid = S.db.add_key(tid, kind, p.name, pub, b.note.strip(), keys.summary(doc), S.vault.seal(doc))
-    audit(p, "backup met privésleutel bewaard", f"{t['alias']} ({kind})")
+    audit(p, "back-up met privésleutel bewaard", f"{t['alias']} ({kind})")
     return {"id": kid}
 
 
@@ -1133,8 +1155,8 @@ async def get_key(tid: int, kid: int, request: Request):
     p, t = _key_tracker(request, tid)
     row = S.db.key(kid)
     if not row or row["tracker_id"] != tid:
-        raise HTTPException(404, "onbekende backup")
-    audit(p, "backup met privésleutel opgehaald", t["alias"])
+        raise HTTPException(404, "onbekende back-up")
+    audit(p, "back-up met privésleutel opgehaald", t["alias"])
     return S.vault.open(row["blob"])
 
 
@@ -1143,9 +1165,9 @@ async def delete_key(tid: int, kid: int, request: Request):
     p, t = _key_tracker(request, tid)
     row = S.db.key(kid)
     if not row or row["tracker_id"] != tid:
-        raise HTTPException(404, "onbekende backup")
+        raise HTTPException(404, "onbekende back-up")
     S.db.delete_key(kid)
-    audit(p, "backup verwijderd", t["alias"])
+    audit(p, "back-up verwijderd", t["alias"])
     return {"ok": True}
 
 
@@ -1928,7 +1950,7 @@ async def delete_user(uid: int, request: Request):
     if not u:
         raise HTTPException(404, "onbekende gebruiker")
     if p.user_id == uid:
-        raise HTTPException(409, "je kan jezelf niet verwijderen")
+        raise HTTPException(409, "je kunt jezelf niet verwijderen")
     if _admins_left(excluding_user=uid) == 0:
         raise HTTPException(409, "dit is de laatste beheerder; dat kan niet")
     S.db.delete_user(uid)

@@ -1,0 +1,16 @@
+{
+  "name": "MeshTrack Tracker",
+  "short_name": "Tracker",
+  "description": "De binnenkant van één MeshTrack-tracker, live via Bluetooth of USB.",
+  "id": "/tracker",
+  "start_url": "/tracker",
+  "scope": "/tracker",
+  "display": "standalone",
+  "background_color": "#f4f3f0",
+  "theme_color": "#0b6e4f",
+  "lang": "nl",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

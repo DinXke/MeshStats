@@ -26,7 +26,7 @@ SPEC: dict[str, tuple[Any, Any, Any, str, str]] = {
     "stale_after_h":       (25, 1, 720, "Grijs op de kaart na (uur)", "Een tracker die zo lang stil is, toont grijs."),
     "retention_days":      (90, 1, 3650, "Bewaartermijn (dagen)", "Posities ouder dan dit worden automatisch gewist."),
     "sim_history_days":    (7, 0, 30, "Historiek simulators (dagen)",
-                            "Een nieuwe simulator krijgt meteen zo veel dagen gesimuleerde geschiedenis (0 = geen)."),
+                            "Een nieuwe simulator krijgt meteen zoveel dagen gesimuleerde geschiedenis (0 = geen)."),
     # Klaarmaken van een nieuwe tracker (sleutel op de server): zo komt hij op de mesh.
     "prov_freq":           (869.618, 150.0, 2500.0, "Nieuwe tracker: frequentie (MHz)",
                             "Radio-instellingen die een nieuw toestel krijgt. Zelfde als je mesh (BE/NL: 869.618)."),

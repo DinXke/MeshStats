@@ -30,7 +30,7 @@ PERMS: dict[str, tuple[str, str]] = {
     "zones.manage":    ("Gedeelde zones beheren", "Gedeelde zones tekenen, wijzigen en verwijderen (eigen zones mag iedereen met 'Zones bekijken')."),
     "trackers.manage": ("Trackers beheren", "Trackers toevoegen, bewerken en verwijderen."),
     "trackers.serial": ("Instellen via USB", "Een tracker via Web Serial uitlezen, instellen en flashen."),
-    "keys.manage":     ("Sleutels en backups", "Privésleutels op de server maken, toestellen klaarmaken en backups (met privésleutel) bewaren en terugzetten."),
+    "keys.manage":     ("Sleutels en back-ups", "Privésleutels op de server maken, toestellen klaarmaken en back-ups (met privésleutel) bewaren en terugzetten."),
     "sims.manage":     ("Simulators", "Virtuele trackers starten, wijzigen en stoppen."),
     "companion.view":  ("Server-companion", "QR-code, pubkey en contacten van de companion."),
     "export":          ("Exporteren", "Sporen downloaden als GPX of CSV."),

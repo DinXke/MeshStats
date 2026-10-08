@@ -889,7 +889,7 @@
     if (msg.type === "lost_seen" && msg.tracker) {
       const t = msg.tracker;
       if (trackers.has(t.id)) { trackers.set(t.id, { ...trackers.get(t.id), ...t }); renderList(); }
-      toast(`Verloren tracker ${t.alias} is terug opgedoken`, "out");
+      toast(`Verloren tracker ${t.alias} is weer opgedoken`, "out");
     }
     if (msg.type === "geofence") {
       const e = msg.event;
