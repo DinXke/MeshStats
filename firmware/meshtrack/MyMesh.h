@@ -165,7 +165,6 @@ protected:
   }
 
 public:
-  void mtSaveContacts() { saveContacts(); }   // MeshTrack: doel-contact bewaren
   // MeshTrack: sleutel inladen (klaarmaken/herstellen vanaf de server). Werkt pas na een herstart.
   bool mtImportKey(const uint8_t* prv) {
     if (!mesh::LocalIdentity::validatePrivateKey(prv)) return false;
@@ -174,11 +173,15 @@ public:
     return _store->saveMainIdentity(id);
   }
   void mtExportKey(uint8_t* prv) { self_id.writeTo(prv, 64); }
-  // MeshTrack: bericht op een kanaal (flood, geen ACK). Korte afzendernaam "MT" spaart ruimte.
+  // MeshTrack: afzendernaam op een kanaal = de nodenaam (set name / website), zodat elke tracker
+  // herkenbaar is in apps en analyzers. Zonder naam: "MT". Server en offline-app negeren de naam.
+  const char* mtSender() const { return _prefs.node_name[0] ? _prefs.node_name : "MT"; }
+  int mtSenderLen() const { return strlen(mtSender()) + 2; }   // "<naam>: "
+  // MeshTrack: bericht op een kanaal (flood, geen ACK).
   bool mtSendChannel(int idx, const char* text) {
     ChannelDetails ch;
     if (!getChannel(idx, ch) || !ch.name[0]) return false;
-    return sendGroupMessage(getRTCClock()->getCurrentTimeUnique(), ch.channel, "MT", text, strlen(text));
+    return sendGroupMessage(getRTCClock()->getCurrentTimeUnique(), ch.channel, mtSender(), text, strlen(text));
   }
   // MeshTrack: een kopie van een eigen positie in de wachtrij voor de app (Bluetooth), zodat een
   // verbonden app (bv. de offline-app) ook de eigen posities ziet. reserved1 = 1 markeert "eigen".
@@ -189,12 +192,12 @@ public:
     f[i++] = 0;                  // snr
     f[i++] = 1;                  // reserved1: eigen bericht
     f[i++] = 0;
-    f[i++] = chan_idx;           // 0xFF = via DM verstuurd
+    f[i++] = chan_idx;           // trackingkanaal
     f[i++] = 0xFF;               // path_len: eigen
     f[i++] = 0;                  // TXT_TYPE_PLAIN
     uint32_t ts = getRTCClock()->getCurrentTime();
     memcpy(&f[i], &ts, 4); i += 4;
-    int n = snprintf((char*)&f[i], MAX_FRAME_SIZE - i, "MT: %s", text);
+    int n = snprintf((char*)&f[i], MAX_FRAME_SIZE - i, "%s: %s", mtSender(), text);
     if (n < 0) return;
     i += n < MAX_FRAME_SIZE - i ? n : MAX_FRAME_SIZE - i - 1;
     addToOfflineQueue(f, i);

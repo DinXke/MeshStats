@@ -61,16 +61,17 @@ def test_lost_seen_event():
     assert "Ziekenwagen 1 (VERLOREN) is terug opgedoken @51.00000,4.00000" in db.alert_log()[0]["text"]
 
 
-def test_rule_with_tracker_group_follows_membership():
+def test_rule_with_channel_follows_tracking_channel():
     db, am, t, _ = setup()
     other = db.tracker(db.add_tracker("ff" * 32, "Brandweer"))
-    gid = db.save_tracker_group(None, "Ziekenwagens", "#ff0000", "", [t["id"]])
-    db.save_alert_rule(None, {"name": "Groep", "active": True, "events": ["P"], "trackers": [], "tracker_groups": [gid],
+    cid = db.save_channel(None, {"name": "#ambu", "secret": "00" * 16, "slot": 3, "require_sig": True, "active": True})
+    db.set_tracker_channel(t["id"], cid)
+    db.save_alert_rule(None, {"name": "Kanaal", "active": True, "events": ["P"], "trackers": [], "channels": [cid],
                               "recipients": [{"pubkey": "ee" * 32, "name": "Wacht"}], "cooldown_s": 0})
-    assert am.fire(t, "P") == 1
+    assert am.fire(db.tracker(t["id"]), "P") == 1
     assert am.fire(other, "P") == 0
-    db.save_tracker_group(gid, "Ziekenwagens", "#ff0000", "", [t["id"], other["id"]])   # later toegevoegd
-    assert am.fire(other, "P") == 1
+    db.set_tracker_channel(other["id"], cid)              # stuurt later ook op dit kanaal
+    assert am.fire(db.tracker(other["id"]), "P") == 1
 
 
 def test_personal_rule_only_for_trackers_owner_sees():

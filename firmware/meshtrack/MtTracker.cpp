@@ -8,7 +8,7 @@
 //   enkele klik ──> fix (max fix_timeout_hb) ──> zend P of N, met biep-terugmelding
 //
 // In trackermodus slaapt ook de radio zodra er niets te verzenden of te
-// ontvangen valt (na het ACK-venster); de mesh-lus draait dan niet. In
+// ontvangen valt (na een kort luistervenster); de mesh-lus draait dan niet. In
 // companionmodus blijft de radio altijd luisteren (stock gedrag).
 #include "MtTracker.h"
 #include "MeshTrack.h"
@@ -100,8 +100,9 @@ bool mt_radio_paused() { return s_radio_asleep; }
 // ---- punten bewaren -------------------------------------------------------------
 // In beweging elke sample_s een punt; elk bericht met een positie neemt zoveel eerdere
 // punten mee als in 156 tekens past (oudste eerst, als dt,dlat,dlon,spd t.o.v. het
-// hoofdpunt). Pas na een ACK verdwijnen ze uit de buffer: een gemist bericht gaat dus
-// niet verloren, zijn punten reizen mee met het volgende.
+// hoofdpunt). Pas als het bericht echt verstuurd is verdwijnen ze uit de buffer: kon
+// het niet weg (geen trackingkanaal), dan reizen zijn punten mee met het volgende.
+// Een kanaalbericht heeft geen ACK; of het aankwam, weet de tracker niet.
 struct MtPt { uint32_t ts; int32_t lat, lon; uint16_t spd; };   // lat/lon in 1e-5 graden
 #define MT_PTS 24
 static MtPt s_pts[MT_PTS];
@@ -114,7 +115,7 @@ static void pts_push(uint32_t ts, double la, double lo, float sp) {
   s_pts[s_npts++] = { ts, (int32_t)lround(la * 1e5), (int32_t)lround(lo * 1e5), (uint16_t)(sp < 0 ? 0 : sp + 0.5f) };
 }
 
-static void pts_acked(uint32_t upto) {
+static void pts_sent(uint32_t upto) {
   uint8_t k = 0;
   while (k < s_npts && s_pts[k].ts <= upto) k++;
   if (k) { memmove(s_pts, s_pts + k, sizeof(MtPt) * (s_npts - k)); s_npts -= k; }
@@ -165,14 +166,14 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   // 13e veld: voeding (u = USB/laden, b = batterij). Elk bericht draagt het mee,
   // zodat de server een gemiste in/uitplug-melding bij het volgende bericht inhaalt.
   // 14e veld: GPS-tijd van de fix. Zo staat de positie op het juiste moment, ook na
-  // herhaalpogingen of als het bericht even in de wachtrij stond.
+  // als het bericht even in de wachtrij stond.
   int n = snprintf(text, sizeof(text), "T1|%u|%c|%s|%s|%s|%s|%s|%d|%s|%s|%c|%c|%s",
            (unsigned)seq_next(), state, lat, lon, alt, spd, crs, bat < 0 ? 0 : bat, hd, age,
            mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b', fts);
   // Kanaal: "T1C|<pubkey 8 hex>|<handtekening 8 hex>|<seq>|..." (zonder "T1|"); de
   // handtekening = HMAC-SHA256(authsleutel, "<pubkey8>|<rest>"), eerste 4 bytes.
-  const bool chan = mt_cfg.transport == 1;
-  const int limit = chan ? MT_CHAN_TEXT_MAX - 19 : MT_TEXT_MAX;   // ruimte voor T1C|pk|tag| (min "T1|")
+  // "<naam>: " gaat ervoor (MAX_TEXT_LEN omvat de naam), plus T1C|pk|tag| (min "T1|") en 2 bytes marge.
+  const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2;
   // 15e veld: eerdere punten, compact. "~<interval>" en daarna per punt het verschil met het
   // vorige (nieuwste eerst, te beginnen bij het hoofdpunt) in 1e-5 graden: ";dlat,dlon".
   // Wijkt de tijd tussen twee punten af van het interval, dan volgt "@<seconden>".
@@ -208,12 +209,9 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
     tag = main_ts;
   }
   radio_wake();
-  // Gewone posities (M, W, N) in het snelle ritme: weinig of geen herhaalpogingen,
-  // want de volgende verse positie komt er zo aan. Belangrijke berichten: alle pogingen.
+  // Belangrijke berichten wijken niet voor een nieuwere gewone positie.
   bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B';
-  uint8_t retries = mt_cfg.ack_retries;
-  if (!keep && s_rules.fast && !s_rules.slow && mt_cfg.fast_retries < retries) retries = mt_cfg.fast_retries;
-  if (chan) {
+  {
     char pk[9], body[MT_TEXT_MAX + 1];
     for (int i = 0; i < 4; i++) snprintf(pk + 2 * i, 3, "%02x", the_mesh.self_id.pub_key[i]);
     snprintf(body, sizeof(body), "%s|%s", pk, text + 3);          // text begint met "T1|"
@@ -227,21 +225,10 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
       snprintf(sig, sizeof(sig), "%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3]);
     }
     snprintf(text, sizeof(text), "T1C|%s|%s|%s", pk, sig, body + 9);
-    retries = 0;
   }
   // Eigen positie ook naar een verbonden app (alleen als companion: dan staat Bluetooth aan).
-  if (mt_effective_mode() == MT_MODE_COMPANION) {
-    char own[MT_TEXT_MAX + 1];
-    if (chan) strncpy(own, text, sizeof(own));
-    else {
-      char pk[9];
-      for (int i = 0; i < 4; i++) snprintf(pk + 2 * i, 3, "%02x", the_mesh.self_id.pub_key[i]);
-      snprintf(own, sizeof(own), "T1C|%s|-|%s", pk, text + 3);
-    }
-    own[MT_TEXT_MAX] = 0;
-    the_mesh.mtQueueOwn(chan ? mt_cfg.chan_idx : 0xFF, own);
-  }
-  mt_send(text, manual, retries, keep, tag);
+  if (mt_effective_mode() == MT_MODE_COMPANION) the_mesh.mtQueueOwn(mt_cfg.chan_idx, text);
+  mt_send(text, manual, keep, tag);
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
   strncpy(s_last_reason, reason, sizeof(s_last_reason) - 1);
   s_last_tx_ms = millis();
@@ -250,22 +237,12 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
 
 static MtRuleParams params();
 
-static void on_send_done(bool ok, bool manual, uint32_t ack_ms, uint32_t tag) {
-  if (ok && tag) pts_acked(tag);
-  if (ack_ms == MT_ACK_NONE) {               // kanaal: verstuurd, geen bevestiging mogelijk
-    mt_log("tx op kanaal %u verstuurd (geen ACK op een kanaal)", (unsigned)mt_cfg.chan_idx);
-    return;
-  }
-  if (manual) ui_task.playForced(ok ? "ok:d=16,o=7,b=200:16c,16p,16c" : "nok:d=4,o=5,b=100:4c");
-  bool was_fast = s_rules.fast, was_slow = s_rules.slow;
-  mt_rules_link(s_rules, params(), ok, ack_ms);
-  if (ok) mt_log("tx bevestigd (ACK na %lu ms)", (unsigned long)ack_ms);
-  else mt_log("tx MISLUKT na alle pogingen (%u na elkaar)", (unsigned)s_rules.fails);
-  if (s_rules.fast != was_fast || s_rules.slow != was_slow) mt_log("ritme: %s", mt_tracker_link_str());
-}
-
-const char* mt_tracker_link_str() {
-  return s_rules.slow ? "traag" : s_rules.fast ? "snel" : "normaal";
+// Een kanaalbericht kent geen ACK: "ok" = de radio heeft het verstuurd.
+static void on_send_done(bool ok, bool manual, uint32_t tag) {
+  if (ok && tag) pts_sent(tag);
+  if (manual) ui_task.playForced(ok ? MT_TUNE_OK : MT_TUNE_NOK);
+  if (ok) mt_log("tx op kanaal %u verstuurd", (unsigned)mt_cfg.chan_idx);
+  else mt_log("tx MISLUKT: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
 }
 
 // ---- toestanden ---------------------------------------------------------------
@@ -300,12 +277,6 @@ static MtRuleParams params() {
   p.turn_min_speed_kmh = mt_cfg.turn_min_speed_kmh;
   p.min_interval_s = mt_cfg.min_interval_s;
   p.max_interval_s = mt_cfg.max_interval_s;
-  p.fast_interval_s = mt_cfg.fast_interval_s;
-  p.fast_keep = mt_cfg.fast_keep;
-  p.fast_ack_s = mt_cfg.fast_ack_s;
-  p.slow_after = mt_cfg.slow_after;
-  p.slow_factor = mt_cfg.slow_factor;
-  p.adaptive = mt_cfg.adaptive;
   return p;
 }
 
@@ -399,7 +370,7 @@ static void step_sos() {
 }
 
 bool mt_tracker_sos() {
-  if (!mt_cfg.target_set) return false;
+  if (!mt_sender_ready()) return false;
   gps_want(true);
   radio_wake();
   s_sos_left = 3;
@@ -427,7 +398,7 @@ static void step_radio() {
   if (!want_sleep) { s_quiet_since = 0; radio_wake(); return; }
   if (s_radio_asleep) return;
   if (s_quiet_since == 0) { s_quiet_since = millis(); return; }
-  // Nog even luisteren na het laatste verkeer (late ACK, padantwoord).
+  // Nog even luisteren na het laatste verkeer (berichten voor de app, padantwoord).
   if (millis() - s_quiet_since < 3000) return;
   radio_driver.powerOff();
   s_radio_asleep = true;
@@ -439,7 +410,6 @@ void mt_tracker_begin() {
   seq_begin();
   mt_sender_set_done_cb(on_send_done);
   mt_motion_begin(mt_cfg.accel_sens);
-  if (mt_cfg.target_set) mt_sender_ensure_contact();
   s_state = MT_T_OFF;
 }
 
@@ -456,7 +426,7 @@ void mt_tracker_loop() {
 bool mt_tracker_manual() {
   if (s_manual || millis() - s_manual_last < 10000) return false;   // max 1x per 10 s
   s_manual_last = millis();
-  if (!mt_cfg.target_set) return false;
+  if (!mt_sender_ready()) return false;
   s_manual = true;
   s_manual_deadline = millis() + 1000UL * mt_cfg.fix_timeout_hb_s;
   gps_want(true);
@@ -466,7 +436,7 @@ bool mt_tracker_manual() {
 }
 
 void mt_tracker_mode_changed() {
-  if (!mt_cfg.target_set) return;
+  if (!mt_sender_ready()) return;
   send_report('B', false, false, "modus");
 }
 
@@ -474,13 +444,9 @@ void mt_tracker_mode_changed() {
 // 30 s (een wiebelende stekker mag de mesh niet vullen).
 void mt_tracker_power_changed() {
   static uint32_t last = 0;
-  if (!mt_cfg.target_set || (last && millis() - last < 30000)) return;
+  if (!mt_sender_ready() || (last && millis() - last < 30000)) return;
   last = millis();
   send_report('B', mt_gps().freshFix(60000), false, mt_usb() ? "USB in" : "USB uit");
-}
-
-void mt_tracker_target_changed() {
-  if (mt_cfg.target_set) mt_sender_ensure_contact();
 }
 
 MtTState mt_tracker_state() { return s_state; }

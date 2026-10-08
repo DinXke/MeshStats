@@ -11,7 +11,12 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#define MT_FW_VERSION "0.6.2"
+#define MT_FW_VERSION "0.7.0"
+
+// Terugmelding na een klik/SOS: twee hoge biepjes = verstuurd op het trackingkanaal,
+// lage toon = niet verstuurd (trackingkanaal ontbreekt op het toestel).
+#define MT_TUNE_OK  "ok:d=16,o=7,b=200:16c,16p,16c"
+#define MT_TUNE_NOK "nok:d=4,o=5,b=100:4c"
 
 enum MtMode : uint8_t { MT_MODE_COMPANION = 0, MT_MODE_TRACKER = 1 };
 

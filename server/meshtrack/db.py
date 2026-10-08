@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS unknown_msgs (
 );
 """
 
-TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since", "last_via")
+TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since", "last_via", "channel_id")
 
 
 class DB:
@@ -245,6 +245,52 @@ class DB:
         scols = {r["name"] for r in self._q("PRAGMA table_info(sims)")}
         if "drive" not in scols:  # 0.2.2: rijgedrag (snelheden, ritlengte, zwerven)
             self._x("ALTER TABLE sims ADD COLUMN drive TEXT NOT NULL DEFAULT '{}'")
+        self._migrate_channels()
+
+    def _migrate_channels(self) -> None:
+        """1.0: alles via kanalen. Elke tracker heeft één trackingkanaal; groepen krijgen per
+        kanaal 'kaart' of 'sleutel'; deellinks en meldingsregels kiezen kanalen. De oude
+        trackergroepen worden eenmalig omgezet (de tabellen blijven, ongebruikt, bestaan)."""
+        if "channel_id" in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
+            return
+        self._x("ALTER TABLE trackers ADD COLUMN channel_id INTEGER")
+        self._x("ALTER TABLE groups ADD COLUMN channels TEXT NOT NULL DEFAULT '{}'")
+        for table in ("alert_rules", "shares"):
+            self._x(f"ALTER TABLE {table} ADD COLUMN channels TEXT NOT NULL DEFAULT '[]'")
+        chans = self._q("SELECT id, name, tracker_group_id FROM channels")
+        by_group = {c["tracker_group_id"]: c["id"] for c in chans if c["tracker_group_id"]}
+        includes = {r["id"]: json.loads(r.get("includes") or "[]") for r in self._q("SELECT id, includes FROM tracker_groups")}
+
+        def chans_of(tgs: list[int]) -> set[int]:
+            """Kanalen achter trackergroepen (ook via een groep van groepen, één niveau)."""
+            out: set[int] = set()
+            for tg in tgs:
+                for g in [tg] + list(includes.get(tg, [])):
+                    if g in by_group:
+                        out.add(by_group[g])
+            return out
+
+        # trackers: kanaal van hun kanaalgroep, anders uit "kanaal <naam>" (laatst gebruikt)
+        for r in self._q("SELECT group_id, tracker_id FROM tracker_group_members"):
+            if r["group_id"] in by_group:
+                self._x("UPDATE trackers SET channel_id=? WHERE id=? AND channel_id IS NULL", (by_group[r["group_id"]], r["tracker_id"]))
+        names = {c["name"].lower(): c["id"] for c in chans}
+        for t in self._q("SELECT id, last_via FROM trackers WHERE channel_id IS NULL AND last_via LIKE 'kanaal %'"):
+            cid = names.get(t["last_via"][7:].lower())
+            if cid:
+                self._x("UPDATE trackers SET channel_id=? WHERE id=?", (cid, t["id"]))
+        # groepen: kanaalgroep -> 'kaart', of 'sleutel' als de groep toestellen mag instellen
+        for g in self._q("SELECT id, perms, tracker_groups FROM groups"):
+            perms = set(json.loads(g["perms"] or "[]"))
+            level = "sleutel" if perms & {"trackers.serial", "keys.manage", "system.manage"} else "kaart"
+            cs = chans_of(json.loads(g.get("tracker_groups") or "[]"))
+            if cs:
+                self._x("UPDATE groups SET channels=? WHERE id=?", (json.dumps({str(c): level for c in sorted(cs)}), g["id"]))
+        for table in ("alert_rules", "shares"):
+            for r in self._q(f"SELECT id, tracker_groups FROM {table}"):
+                cs = chans_of(json.loads(r.get("tracker_groups") or "[]"))
+                if cs:
+                    self._x(f"UPDATE {table} SET channels=? WHERE id=?", (json.dumps(sorted(cs)), r["id"]))
 
     def _q(self, sql: str, args: tuple = ()) -> list[dict[str, Any]]:
         with self._lock:
@@ -467,17 +513,17 @@ class DB:
         for r in rows:
             for k in ("events", "trackers", "recipients"):
                 r[k] = json.loads(r[k])
-            r["tracker_groups"] = json.loads(r.get("tracker_groups") or "[]")
+            r["channels"] = json.loads(r.get("channels") or "[]")
             r["active"] = bool(r["active"])
         return rows
 
     def save_alert_rule(self, rid: Optional[int], r: dict[str, Any], owner: Optional[int] = None) -> int:
         vals = (r["name"], int(r["active"]), json.dumps(r["events"]), json.dumps(r["trackers"]),
-                json.dumps(r["recipients"]), int(r["cooldown_s"]), json.dumps(r.get("tracker_groups") or []))
+                json.dumps(r["recipients"]), int(r["cooldown_s"]), json.dumps(r.get("channels") or []))
         if rid is None:
-            return self._x("INSERT INTO alert_rules(name, active, events, trackers, recipients, cooldown_s, tracker_groups, "
+            return self._x("INSERT INTO alert_rules(name, active, events, trackers, recipients, cooldown_s, channels, "
                            "created, owner) VALUES(?,?,?,?,?,?,?,?,?)", vals + (int(time.time()), owner)).lastrowid
-        self._x("UPDATE alert_rules SET name=?, active=?, events=?, trackers=?, recipients=?, cooldown_s=?, tracker_groups=? "
+        self._x("UPDATE alert_rules SET name=?, active=?, events=?, trackers=?, recipients=?, cooldown_s=?, channels=? "
                 "WHERE id=?", vals + (rid,))
         return rid
 
@@ -549,7 +595,7 @@ class DB:
         for r in rows:
             r["perms"] = json.loads(r["perms"])
             r["trackers"] = json.loads(r["trackers"])
-            r["tracker_groups"] = json.loads(r.get("tracker_groups") or "[]")
+            r["channels"] = {int(k): v for k, v in json.loads(r.get("channels") or "{}").items()}
             r["all_trackers"] = bool(r["all_trackers"])
         return rows
 
@@ -558,12 +604,13 @@ class DB:
 
     def save_group(self, gid: Optional[int], g: dict[str, Any]) -> int:
         vals = (g["name"], g.get("description", ""), json.dumps(g["perms"]), int(g["all_trackers"]),
-                json.dumps(g.get("trackers", [])), int(g.get("history_hours", 0)), json.dumps(g.get("tracker_groups", [])))
+                json.dumps(g.get("trackers", [])), int(g.get("history_hours", 0)),
+                json.dumps({str(k): v for k, v in (g.get("channels") or {}).items() if v in ("kaart", "sleutel")}))
         if gid is None:
-            return self._x("INSERT INTO groups(name, description, perms, all_trackers, trackers, history_hours, tracker_groups, "
+            return self._x("INSERT INTO groups(name, description, perms, all_trackers, trackers, history_hours, channels, "
                            "created) VALUES(?,?,?,?,?,?,?,?)", vals + (int(time.time()),)).lastrowid
         self._x("UPDATE groups SET name=?, description=?, perms=?, all_trackers=?, trackers=?, history_hours=?, "
-                "tracker_groups=? WHERE id=?", vals + (gid,))
+                "channels=? WHERE id=?", vals + (gid,))
         return gid
 
     def delete_group(self, gid: int) -> None:
@@ -617,84 +664,34 @@ class DB:
 
     def delete_channel(self, cid: int) -> None:
         self._x("DELETE FROM channels WHERE id=?", (cid,))
+        self._x("UPDATE trackers SET channel_id=NULL WHERE channel_id=?", (cid,))
+        for g in self.groups():
+            if cid in g["channels"]:
+                self.save_group(g["id"], {**g, "channels": {k: v for k, v in g["channels"].items() if k != cid}})
+        for r in self.alert_rules():
+            if cid in r["channels"]:
+                self.save_alert_rule(r["id"], {**r, "channels": [c for c in r["channels"] if c != cid]})
+        for sh in self.shares():
+            if cid in sh["channels"]:
+                self._x("UPDATE shares SET channels=? WHERE id=?", (json.dumps([c for c in sh["channels"] if c != cid]), sh["id"]))
 
     def set_authkey(self, tid: int, key: Optional[str]) -> None:
         self._x("UPDATE trackers SET authkey=? WHERE id=?", (key, tid))
 
-    def add_to_tracker_group(self, gid: int, tid: int) -> bool:
-        if self._q("SELECT 1 FROM tracker_group_members WHERE group_id=? AND tracker_id=?", (gid, tid)):
+    def set_tracker_channel(self, tid: int, cid: Optional[int]) -> bool:
+        """Trackingkanaal van een tracker zetten. True als het veranderde."""
+        r = self._q("SELECT channel_id FROM trackers WHERE id=?", (tid,))
+        if not r or r[0]["channel_id"] == cid:
             return False
-        self._x("INSERT INTO tracker_group_members(group_id, tracker_id) VALUES(?,?)", (gid, tid))
+        self._x("UPDATE trackers SET channel_id=? WHERE id=?", (cid, tid))
         return True
 
-    # ---- trackergroepen ---------------------------------------------------------
-
-    def tracker_groups(self) -> list[dict[str, Any]]:
-        """trackers = zelf gekozen trackers; includes = andere groepen (bv. kanalen) waarvan alle
-        trackers meetellen; members = alles samen, zoals het nu is."""
-        rows = self._q("SELECT * FROM tracker_groups ORDER BY name COLLATE NOCASE")
-        direct = self._direct_members()
-        full = self.tracker_group_members()
-        for r in rows:
-            r["includes"] = json.loads(r.get("includes") or "[]")
-            r["trackers"] = sorted(direct.get(r["id"], set()))
-            r["members"] = sorted(full.get(r["id"], set()))
-        return rows
-
-    def _direct_members(self) -> dict[int, set[int]]:
+    def channel_members(self) -> dict[int, set[int]]:
+        """Trackers per kanaal (hun trackingkanaal)."""
         out: dict[int, set[int]] = {}
-        for r in self._q("SELECT group_id, tracker_id FROM tracker_group_members"):
-            out.setdefault(r["group_id"], set()).add(r["tracker_id"])
+        for r in self._q("SELECT id, channel_id FROM trackers WHERE channel_id IS NOT NULL"):
+            out.setdefault(r["channel_id"], set()).add(r["id"])
         return out
-
-    def tracker_group_members(self) -> dict[int, set[int]]:
-        """Leden per trackergroep, met de leden van de groepen die ze insluit (één niveau)."""
-        direct = self._direct_members()
-        out = {gid: set(m) for gid, m in direct.items()}
-        for r in self._q("SELECT id, includes FROM tracker_groups"):
-            for inc in json.loads(r["includes"] or "[]"):
-                if inc != r["id"]:
-                    out.setdefault(r["id"], set()).update(direct.get(inc, set()))
-        return out
-
-    def save_tracker_group(self, gid: Optional[int], name: str, color: str, description: str,
-                           trackers: Optional[list[int]] = None, includes: Optional[list[int]] = None) -> int:
-        if gid is None:
-            gid = self._x("INSERT INTO tracker_groups(name, color, description, created) VALUES(?,?,?,?)",
-                          (name, color, description, int(time.time()))).lastrowid
-        else:
-            self._x("UPDATE tracker_groups SET name=?, color=?, description=? WHERE id=?", (name, color, description, gid))
-        if includes is not None:
-            self._x("UPDATE tracker_groups SET includes=? WHERE id=?",
-                    (json.dumps([i for i in dict.fromkeys(includes) if i != gid]), gid))
-        if trackers is not None:
-            self._x("DELETE FROM tracker_group_members WHERE group_id=?", (gid,))
-            for t in dict.fromkeys(trackers):
-                self._x("INSERT INTO tracker_group_members(group_id, tracker_id) VALUES(?,?)", (gid, t))
-        return gid
-
-    def delete_tracker_group(self, gid: int) -> None:
-        self._x("DELETE FROM tracker_group_members WHERE group_id=?", (gid,))
-        self._x("DELETE FROM tracker_groups WHERE id=?", (gid,))
-        for r in self._q("SELECT id, includes FROM tracker_groups"):
-            inc = json.loads(r["includes"] or "[]")
-            if gid in inc:
-                self._x("UPDATE tracker_groups SET includes=? WHERE id=?", (json.dumps([i for i in inc if i != gid]), r["id"]))
-        for g in self.groups():            # uit de zichtbaarheid van gebruikersgroepen halen
-            if gid in g["tracker_groups"]:
-                self.save_group(g["id"], {**g, "tracker_groups": [x for x in g["tracker_groups"] if x != gid]})
-        for r in self.alert_rules():       # en uit meldingsregels
-            if gid in r["tracker_groups"]:
-                self.save_alert_rule(r["id"], {**r, "tracker_groups": [x for x in r["tracker_groups"] if x != gid]})
-
-    def tracker_group_ids(self, tid: int) -> list[int]:
-        return [r["group_id"] for r in self._q("SELECT group_id FROM tracker_group_members WHERE tracker_id=? "
-                                               "ORDER BY group_id", (tid,))]
-
-    def set_tracker_groups(self, tid: int, group_ids: list[int]) -> None:
-        self._x("DELETE FROM tracker_group_members WHERE tracker_id=?", (tid,))
-        for g in dict.fromkeys(group_ids):
-            self._x("INSERT INTO tracker_group_members(group_id, tracker_id) VALUES(?,?)", (g, tid))
 
     def user_by_name(self, username: str) -> Optional[dict[str, Any]]:
         r = self._q("SELECT * FROM users WHERE username=?", (username,))
@@ -743,7 +740,7 @@ class DB:
         rows = self._q("SELECT * FROM shares ORDER BY id DESC")
         for r in rows:
             r["trackers"] = json.loads(r["trackers"])
-            r["tracker_groups"] = json.loads(r.get("tracker_groups") or "[]")
+            r["channels"] = json.loads(r.get("channels") or "[]")
         return rows
 
     def share_by_token(self, token: str) -> Optional[dict[str, Any]]:
@@ -751,14 +748,14 @@ class DB:
         if not r:
             return None
         r[0]["trackers"] = json.loads(r[0]["trackers"])
-        r[0]["tracker_groups"] = json.loads(r[0].get("tracker_groups") or "[]")
+        r[0]["channels"] = json.loads(r[0].get("channels") or "[]")
         return r[0]
 
     def add_share(self, token: str, name: str, trackers: list[int], hours: int, sidebar: bool,
-                  expires: Optional[int], created_by: str, tracker_groups: Optional[list[int]] = None) -> int:
-        return self._x("INSERT INTO shares(token, name, trackers, hours, sidebar, expires, created_by, created, tracker_groups) "
+                  expires: Optional[int], created_by: str, channels: Optional[list[int]] = None) -> int:
+        return self._x("INSERT INTO shares(token, name, trackers, hours, sidebar, expires, created_by, created, channels) "
                        "VALUES(?,?,?,?,?,?,?,?,?)", (token, name, json.dumps(trackers), hours, int(sidebar), expires,
-                                                     created_by, int(time.time()), json.dumps(tracker_groups or []))).lastrowid
+                                                     created_by, int(time.time()), json.dumps(channels or []))).lastrowid
 
     def delete_share(self, sid: int) -> None:
         self._x("DELETE FROM shares WHERE id=?", (sid,))

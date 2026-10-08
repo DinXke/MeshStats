@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "0.9.2"
+VERSION = "1.0.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -123,7 +123,6 @@ def tracker_out(t: dict[str, Any], p: Optional[Principal] = None) -> dict[str, A
     now = int(time.time())
     out = dict(t)
     out["stale"] = not t["last_rx"] or now - t["last_rx"] > S.settings["stale_after_h"] * 3600
-    out["groups"] = S.db.tracker_group_ids(t["id"])
     out["has_authkey"] = bool(t.get("authkey"))
     out.pop("authkey", None)                 # nooit in lijsten of live-berichten
     if p is not None and not p.can("map.details"):
@@ -158,10 +157,10 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
             log.info("bericht van %s genegeerd: %r", prefix, text[:60])
         return
     t = S.db.tracker(pos["tracker_id"])
-    S.db.update_tracker(t["id"], last_via=f"kanaal {via['name']}" if via else ("sim" if simulated else "DM"))
-    if via and S.db.add_to_tracker_group(_channel_group(via), t["id"]):
+    S.db.update_tracker(t["id"], last_via=f"kanaal {via['name']}" if via else "sim")
+    if via and S.db.set_tracker_channel(t["id"], via["id"]):   # trackingkanaal volgt het laatste geldige bericht
         _pcache.clear()
-        await S.hub.send({"type": "tracker_groups"})
+        await S.hub.send({"type": "channels"})
     t = S.db.tracker(t["id"])
     extras = pos.pop("extras", [])
     if not simulated:
@@ -203,7 +202,12 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
 
 
 async def on_message(prefix: str, text: str, sender_ts, snr, path_len) -> None:
-    await process(prefix, text, sender_ts, snr, path_len)
+    """DM aan de server-companion. Sinds 1.0 sturen trackers alleen nog via een kanaal;
+    een oud T1-bericht via DM wordt genoteerd bij de genegeerde berichten."""
+    if text.startswith("T1|"):
+        S.db.log_unknown(prefix, "DM van een tracker (oude firmware): flash naar kanaal-firmware", text)
+    else:
+        log.info("DM van %s genegeerd: %r", prefix, text[:60])
 
 
 # ---- kanalen -------------------------------------------------------------------------
@@ -239,19 +243,6 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
         S.db.log_unknown(pk, f"kanaal {ch['name']}: ongeldige handtekening", body)
         return
     await process(pk, "T1|" + rest, sender_ts, snr, path_len, via=ch)
-
-
-def _channel_group(ch: dict[str, Any]) -> int:
-    """Trackergroep van het kanaal (wordt aangemaakt als ze ontbreekt)."""
-    gid = ch.get("tracker_group_id")
-    if gid and any(g["id"] == gid for g in S.db.tracker_groups()):
-        return gid
-    name = f"Kanaal {ch['name']}"
-    existing = next((g for g in S.db.tracker_groups() if g["name"].lower() == name.lower()), None)
-    gid = existing["id"] if existing else S.db.save_tracker_group(None, name, "#0ea5e9",
-                                                                 f"Trackers die via kanaal {ch['name']} sturen", [])
-    S.db.save_channel(ch["id"], {**ch, "tracker_group_id": gid})
-    return gid
 
 
 async def sync_channels() -> list[str]:
@@ -317,13 +308,7 @@ def backfill_sim(tid: int, days: float) -> int:
 
 
 async def on_connect() -> None:
-    # Elke actieve tracker moet als contact op de companion staan.
-    for t in S.db.trackers():
-        if t["active"] and t["kind"] == "real":
-            try:
-                await S.mesh.ensure_contact(t["pubkey"], t["alias"])
-            except Exception as e:  # noqa: BLE001
-                log.warning("contact %s: %s", t["alias"], e)
+    # Trackers sturen via kanalen: de companion moet die kanalen kennen (geen contacten nodig).
     for issue in await sync_channels():
         log.warning("kanaal: %s", issue)
     await S.hub.send({"type": "mesh", "mesh": S.mesh.status()})
@@ -432,7 +417,7 @@ def _resolve(cookies: dict[str, str]) -> Optional[Principal]:
             gids = set(S.db.user_group_ids(user["id"]))
             groups = [g for g in S.db.groups() if g["id"] in gids]
             if groups:
-                p = rbac.principal_for_user(user, groups, S.db.tracker_group_members())
+                p = rbac.principal_for_user(user, groups, S.db.channel_members())
         _pcache[key] = (time.time() + 10, p)
         return p
     tok = cookies.get(SHARE_COOKIE)
@@ -444,8 +429,8 @@ def _resolve(cookies: dict[str, str]) -> Optional[Principal]:
         share = S.db.share_by_token(tok)
         p = None
         if share and (share["expires"] is None or share["expires"] > time.time()):
-            creator = _user_principal(share["created_by"]) if share.get("tracker_groups") else None
-            p = rbac.principal_for_share(share, S.db.tracker_group_members(), creator)
+            creator = _user_principal(share["created_by"]) if share.get("channels") else None
+            p = rbac.principal_for_share(share, S.db.channel_members(), creator)
         _pcache[key] = (time.time() + 10, p)
         return p
     return None
@@ -458,7 +443,7 @@ def _user_principal(username: str) -> Optional[Principal]:
         return None
     gids = set(S.db.user_group_ids(user["id"]))
     groups = [g for g in S.db.groups() if g["id"] in gids]
-    return rbac.principal_for_user(user, groups, S.db.tracker_group_members()) if groups else None
+    return rbac.principal_for_user(user, groups, S.db.channel_members()) if groups else None
 
 
 def _user_sees(user_id: int, tracker_id: int) -> bool:
@@ -499,7 +484,7 @@ PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", 
 # kanaalsleutel kent, kan meelezen. Van de server komen alleen kaarten, lettertypes en
 # symbolen (gewone OpenStreetMap-gegevens).
 PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "sims.manage"), "/devices": ("trackers.serial",),
-              "/users": ("users.manage", "share.manage"), "/log": ("log.view",),
+              "/users": ("users.manage", "share.manage"), "/log": ("log.view",), "/kanalen": ("map.view",),
               "/system": ("alerts.manage", "alerts.personal", "system.manage", "companion.view")}
 
 
@@ -520,7 +505,7 @@ async def guard(request: Request, call_next):
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     if path.startswith("/tiles"):
         resp.headers["Cache-Control"] = "no-cache"
-    elif path.startswith("/static") or path in ("/", "/admin", "/devices", "/login", "/users", "/help", "/log", "/system"):
+    elif path.startswith("/static") or path in ("/", "/admin", "/devices", "/login", "/users", "/help", "/log", "/system", "/kanalen"):
         # Altijd hervalideren (ETag/Last-Modified -> 304): na een update nooit
         # een oude CSS/JS naast nieuwe HTML.
         resp.headers["Cache-Control"] = "no-cache"
@@ -542,6 +527,11 @@ async def admin():
 @app.get("/devices")
 async def devices():
     return page("devices.html")
+
+
+@app.get("/kanalen")
+async def kanalen_page():
+    return page("kanalen.html")
 
 
 # ---- offline-app (PWA) -------------------------------------------------------------
@@ -753,7 +743,7 @@ class TrackerIn(BaseModel):
     active: Optional[bool] = None
     lost: Optional[bool] = None
     generate_key: bool = False        # nieuw toestel: sleutelpaar op de server maken
-    groups: Optional[list[int]] = None   # trackergroepen
+    channel_id: Optional[int] = None     # trackingkanaal (0 = geen)
 
 
 def _check_fields(b: TrackerIn) -> None:
@@ -763,19 +753,12 @@ def _check_fields(b: TrackerIn) -> None:
         raise HTTPException(422, "alias mag niet leeg zijn")
 
 
-async def _sync_contact(t: dict[str, Any]) -> str:
-    """Contact op de companion zetten of weghalen; geeft een korte status."""
-    if t["kind"] != "real":
-        return ""
-    if not S.mesh.connected:
-        return "companion niet verbonden: contact volgt bij de volgende verbinding"
-    try:
-        if t["active"]:
-            await S.mesh.ensure_contact(t["pubkey"], t["alias"])
-            return "contact staat op de companion"
-        return "inactief: contact niet aangemaakt"
-    except Exception as e:  # noqa: BLE001
-        return f"contact NIET aangemaakt: {e}"
+def _set_channel(tid: int, cid: Optional[int]) -> None:
+    """Trackingkanaal kiezen in het formulier (0/None = geen kanaal: alleen beheerders zien hem)."""
+    if cid and not S.db.channel(cid):
+        raise HTTPException(422, "onbekend kanaal")
+    if S.db.set_tracker_channel(tid, cid or None):
+        _pcache.clear()                # zichtbaarheid kan veranderd zijn
 
 
 @app.post("/api/trackers")
@@ -795,16 +778,15 @@ async def create_tracker(b: TrackerIn, request: Request):
         raise HTTPException(409, "deze tracker bestaat al")
     tid = S.db.add_tracker(pk, b.alias.strip(), b.color or "#e4572e", b.icon or "", b.notes or "",
                            True if b.active is None else b.active)
-    if b.groups is not None:
-        _set_groups(tid, b.groups)
+    if b.channel_id is not None:
+        _set_channel(tid, b.channel_id)
     if prv:
         doc = _profile(S.db.tracker(tid), prv)
         S.db.add_key(tid, "generated", p.name, pk, "nieuw sleutelpaar (server)", keys.summary(doc), S.vault.seal(doc))
     t = S.db.tracker(tid)
-    note = await _sync_contact(t)
     audit(p, "tracker toegevoegd", f"{t['alias']} ({pk[:12]}){' met sleutel van de server' if prv else ''}")
     await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
-    return {"tracker": tracker_out(t, p), "contact": note}
+    return {"tracker": tracker_out(t, p)}
 
 
 @app.put("/api/trackers/{tid}")
@@ -816,17 +798,15 @@ async def update_tracker(tid: int, b: TrackerIn, request: Request):
     _check_fields(b)
     S.db.update_tracker(tid, alias=b.alias.strip() if b.alias else None, color=b.color, icon=b.icon,
                         notes=b.notes, active=b.active)
-    if b.groups is not None:
-        need(request, "trackers.manage")
-        _set_groups(tid, b.groups)
+    if b.channel_id is not None:
+        _set_channel(tid, b.channel_id)
     if b.lost is not None and bool(b.lost) != bool(old.get("lost")):
         S.db.set_lost(tid, b.lost)
         audit(p, "tracker verloren gemeld" if b.lost else "tracker niet meer verloren", old["alias"])
     t = S.db.tracker(tid)
-    note = await _sync_contact(t) if t["active"] and not old["active"] else ""
     audit(p, "tracker gewijzigd", t["alias"])
     await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
-    return {"tracker": tracker_out(t, p), "contact": note}
+    return {"tracker": tracker_out(t, p)}
 
 
 @app.delete("/api/trackers/{tid}")
@@ -849,95 +829,31 @@ async def delete_tracker(tid: int, request: Request, keep_contact: bool = False)
     return {"ok": True, "contact": note}
 
 
-def _set_groups(tid: int, groups: list[int]) -> None:
-    known = {g["id"] for g in S.db.tracker_groups()}
-    S.db.set_tracker_groups(tid, [g for g in groups if g in known])
-    _pcache.clear()                    # zichtbaarheid kan veranderd zijn
+# ---- kanalen die je mag lezen ---------------------------------------------------------
 
-
-# ---- trackergroepen ----------------------------------------------------------------
-
-class TrackerGroupIn(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
-    color: str = "#64748b"
-    description: str = Field("", max_length=200)
-    trackers: Optional[list[int]] = None
-    includes: Optional[list[int]] = None      # andere groepen (bv. kanalen) waarvan alle trackers meetellen
-
-
-@app.get("/api/tracker-groups")
-async def list_tracker_groups(request: Request):
-    """Alle ingelogden: enkel de trackers die je ziet; beheerders ook lege groepen."""
+@app.get("/api/channels/mine")
+async def my_channels(request: Request):
+    """De kanalen die deze gebruiker mag lezen: voor het kanaalfilter op de kaart en de pagina
+    met sleutels. Naam, sleutel en QR alleen bij niveau 'sleutel' (beheerders: alles)."""
     p = who(request)
-    manage = p.can("trackers.manage") or p.can("users.manage")
-    chan_of = {c["tracker_group_id"]: c["name"] for c in S.db.channels() if c.get("tracker_group_id")}
+    members = S.db.channel_members()
     out = []
-    for g in S.db.tracker_groups():
-        g["channel"] = chan_of.get(g["id"])
-        g["trackers"] = [t for t in g["trackers"] if p.sees(t)]
-        g["members"] = [t for t in g["members"] if p.sees(t)]
-        if manage or g["members"]:
-            out.append(g)
+    for c in S.db.channels():
+        lvl = p.channel_level(c["id"])
+        if not lvl or not c["active"]:
+            continue
+        row = {"id": c["id"], "name": c["name"], "level": lvl, "region": c.get("region") or "",
+               "trackers": len([t for t in members.get(c["id"], set()) if p.sees(t)])}
+        if lvl == "sleutel":
+            row["secret"] = c["secret"]
+        out.append(row)
     return out
-
-
-def _tg_check(b: TrackerGroupIn, gid: Optional[int]) -> None:
-    if not COLOR.match(b.color):
-        raise HTTPException(422, "kleur moet #rrggbb zijn")
-    if any(g["name"].lower() == b.name.strip().lower() and g["id"] != gid for g in S.db.tracker_groups()):
-        raise HTTPException(409, "die trackergroep bestaat al")
-
-
-@app.post("/api/tracker-groups")
-async def create_tracker_group(b: TrackerGroupIn, request: Request):
-    p = need(request, "trackers.manage")
-    _tg_check(b, None)
-    known = {t["id"] for t in S.db.trackers()}
-    groups = {g["id"] for g in S.db.tracker_groups()}
-    gid = S.db.save_tracker_group(None, b.name.strip(), b.color, b.description.strip(),
-                                  [t for t in (b.trackers or []) if t in known],
-                                  [g for g in (b.includes or []) if g in groups])
-    _pcache.clear()
-    audit(p, "trackergroep aangemaakt", b.name.strip())
-    await S.hub.send({"type": "tracker_groups"})
-    return next(g for g in S.db.tracker_groups() if g["id"] == gid)
-
-
-@app.put("/api/tracker-groups/{gid}")
-async def update_tracker_group(gid: int, b: TrackerGroupIn, request: Request):
-    p = need(request, "trackers.manage")
-    if not any(g["id"] == gid for g in S.db.tracker_groups()):
-        raise HTTPException(404, "onbekende trackergroep")
-    _tg_check(b, gid)
-    known = {t["id"] for t in S.db.trackers()}
-    groups = {g["id"] for g in S.db.tracker_groups()}
-    S.db.save_tracker_group(gid, b.name.strip(), b.color, b.description.strip(),
-                            None if b.trackers is None else [t for t in b.trackers if t in known],
-                            None if b.includes is None else [g for g in b.includes if g in groups and g != gid])
-    _pcache.clear()
-    audit(p, "trackergroep gewijzigd", b.name.strip())
-    await S.hub.send({"type": "tracker_groups"})
-    return next(g for g in S.db.tracker_groups() if g["id"] == gid)
-
-
-@app.delete("/api/tracker-groups/{gid}")
-async def delete_tracker_group(gid: int, request: Request):
-    p = need(request, "trackers.manage")
-    g = next((g for g in S.db.tracker_groups() if g["id"] == gid), None)
-    if not g:
-        raise HTTPException(404, "onbekende trackergroep")
-    S.db.delete_tracker_group(gid)
-    _pcache.clear()
-    audit(p, "trackergroep verwijderd", g["name"])
-    await S.hub.send({"type": "tracker_groups"})
-    return {"ok": True}
 
 
 # ---- sleutels, klaarmaken en backups ---------------------------------------------
 
 def _profile(t: dict[str, Any], prv: str) -> dict[str, Any]:
-    target = (S.mesh.status().get("pubkey") or "").lower()
-    return keys.profile(t["alias"][:31], prv, t["pubkey"], S.settings, target)
+    return keys.profile(t["alias"][:31], prv, t["pubkey"], S.settings)
 
 
 def _key_tracker(request: Request, tid: int) -> tuple[Principal, dict[str, Any]]:
@@ -1080,13 +996,11 @@ def _channel_body(b: ChannelIn, cid: Optional[int]) -> dict[str, Any]:
 
 @app.get("/api/channels/device")
 async def channels_for_device(request: Request):
-    """Kanalen om op een tracker te zetten (USB-formulier): naam, sleutel. Beheerders (system.manage)
-    krijgen alle kanalen; anderen alleen de kanalen waarvan een van hun groepen de kanaalgroep ziet."""
+    """Kanalen om op een tracker te zetten (USB-formulier): naam, sleutel. Alleen kanalen waarop
+    een van je groepen het niveau 'sleutel' heeft (beheerders: alle)."""
     p = need(request, "trackers.serial")
-    def allowed(c: dict[str, Any]) -> bool:
-        return p.can("system.manage") or (c.get("tracker_group_id") in p.tracker_groups)
     return [{"id": c["id"], "name": c["name"], "secret": c["secret"], "region": c.get("region") or ""}
-            for c in S.db.channels() if c["active"] and allowed(c)]
+            for c in S.db.channels() if c["active"] and p.knows_key(c["id"])]
 
 
 @app.get("/api/channels")
@@ -1100,10 +1014,11 @@ async def list_channels(request: Request):
         except Exception as e:  # noqa: BLE001
             log.warning("kanalen van de companion lezen: %s", e)
     by_slot = {s["slot"]: s for s in slots}
+    members = S.db.channel_members()
     for c in chans:
         s = by_slot.get(c["slot"])
         c["on_companion"] = bool(s and s["secret"] == c["secret"])
-        c["members"] = len(next((g["trackers"] for g in S.db.tracker_groups() if g["id"] == c.get("tracker_group_id")), []))
+        c["members"] = len(members.get(c["id"], set()))
     return {"channels": chans, "companion": [{"slot": s["slot"], "name": s["name"]} for s in slots if s["name"]],
             "connected": S.mesh.connected}
 
@@ -1113,10 +1028,9 @@ async def create_channel(b: ChannelIn, request: Request):
     p = need(request, "system.manage")
     c = _channel_body(b, None)
     cid = S.db.save_channel(None, c)
-    _channel_group({**c, "id": cid})
     issues = await sync_channels()
     audit(p, "kanaal toegevoegd", f"{c['name']} (nummer {c['slot']})")
-    await S.hub.send({"type": "tracker_groups"})
+    await S.hub.send({"type": "channels"})
     return {"id": cid, "issues": issues}
 
 
@@ -1127,7 +1041,7 @@ async def update_channel(cid: int, b: ChannelIn, request: Request):
     if not old:
         raise HTTPException(404, "onbekend kanaal")
     c = _channel_body(b, cid)
-    S.db.save_channel(cid, {**c, "tracker_group_id": old.get("tracker_group_id")})
+    S.db.save_channel(cid, {**c, "tracker_group_id": None})
     if old["slot"] != c["slot"] and S.mesh.connected:
         try:
             await S.mesh.set_channel(old["slot"], "", "")      # oude plaats vrijmaken
@@ -1145,6 +1059,8 @@ async def delete_channel(cid: int, request: Request):
     if not c:
         raise HTTPException(404, "onbekend kanaal")
     S.db.delete_channel(cid)
+    _pcache.clear()                    # trackers van dit kanaal hebben geen kanaal meer
+    await S.hub.send({"type": "channels"})
     if S.mesh.connected:
         try:
             await S.mesh.set_channel(c["slot"], "", "")
@@ -1576,8 +1492,14 @@ class GroupIn(BaseModel):
     perms: list[str]
     all_trackers: bool = True
     trackers: list[int] = []
-    tracker_groups: list[int] = []
+    channels: dict[int, str] = {}       # kanaal-id -> "kaart" | "sleutel"
     history_hours: int = Field(0, ge=0, le=24 * 365)
+
+
+def _group_body(b: GroupIn) -> dict[str, Any]:
+    known = {c["id"] for c in S.db.channels()}
+    return {**b.model_dump(), "name": b.name.strip(), "perms": [x for x in b.perms if x in PERMS],
+            "channels": {k: v for k, v in b.channels.items() if k in known and v in rbac.LEVELS}}
 
 
 def _admins_left(excluding_user: Optional[int] = None, group_override: Optional[tuple[int, list[str]]] = None) -> int:
@@ -1601,7 +1523,9 @@ def _admin_groups(ids: list[int]) -> bool:
 @app.get("/api/groups")
 async def list_groups(request: Request):
     need(request, "users.manage", "share.manage")
-    return {"groups": S.db.groups(), "perms": [{"id": k, "label": v[0], "help": v[1]} for k, v in PERMS.items()]}
+    return {"groups": S.db.groups(), "perms": [{"id": k, "label": v[0], "help": v[1]} for k, v in PERMS.items()],
+            "channels": [{"id": c["id"], "name": c["name"], "active": c["active"]} for c in S.db.channels()],
+            "levels": list(rbac.LEVELS)}
 
 
 @app.post("/api/groups")
@@ -1609,7 +1533,8 @@ async def create_group(b: GroupIn, request: Request):
     p = need(request, "users.manage")
     if any(g["name"].lower() == b.name.strip().lower() for g in S.db.groups()):
         raise HTTPException(409, "die groep bestaat al")
-    gid = S.db.save_group(None, {**b.model_dump(), "name": b.name.strip(), "perms": [x for x in b.perms if x in PERMS]})
+    gid = S.db.save_group(None, _group_body(b))
+    _pcache.clear()
     audit(p, "groep aangemaakt", b.name)
     return S.db.group(gid)
 
@@ -1619,10 +1544,11 @@ async def update_group(gid: int, b: GroupIn, request: Request):
     p = need(request, "users.manage")
     if not S.db.group(gid):
         raise HTTPException(404, "onbekende groep")
-    perms = [x for x in b.perms if x in PERMS]
+    body = _group_body(b)
+    perms = body["perms"]
     if _admins_left(group_override=(gid, perms)) == 0:
         raise HTTPException(409, "dan heeft niemand nog gebruikersbeheer; dat kan niet")
-    S.db.save_group(gid, {**b.model_dump(), "name": b.name.strip(), "perms": perms})
+    S.db.save_group(gid, body)
     _pcache.clear()
     audit(p, "groep gewijzigd", f"{b.name}: {', '.join(perms)}")
     return S.db.group(gid)
@@ -1710,31 +1636,38 @@ async def update_user(uid: int, b: UserIn, request: Request):
 
 @app.get("/api/users/{uid}/effective")
 async def effective_rights(uid: int, request: Request):
-    """Wat een gebruiker echt mag en ziet, met de herkomst (welke groep, welke trackergroep)."""
+    """Wat een gebruiker echt mag en ziet, met de herkomst (welke groep, welk kanaal)."""
     need(request, "users.manage")
     u = S.db.user(uid)
     if not u:
         raise HTTPException(404, "onbekende gebruiker")
     gids = set(S.db.user_group_ids(uid))
     groups = [g for g in S.db.groups() if g["id"] in gids]
-    members = S.db.tracker_group_members()
-    tgnames = {g["id"]: g["name"] for g in S.db.tracker_groups()}
-    p = rbac.principal_for_user(u, groups, members) if groups else None
+    p = rbac.principal_for_user(u, groups, S.db.channel_members()) if groups else None
     perms = [{"id": k, "label": v[0], "via": [g["name"] for g in groups if k in g["perms"]]}
              for k, v in PERMS.items()]
+    chans = S.db.channels()
+    cname = {c["id"]: c["name"] for c in chans}
+    channels = []
+    for c in chans:
+        via = [f"{g['name']}: {g['channels'][c['id']]}" for g in groups if c["id"] in g["channels"]]
+        via += [f"{g['name']}: alle kanalen (kaart)" for g in groups if g["all_trackers"]]
+        if "system.manage" in (p.perms if p else set()):
+            via.append("beheerder: alle sleutels")
+        channels.append({"id": c["id"], "name": c["name"], "level": p.channel_level(c["id"]) if p else None, "via": via})
     trackers = []
     for t in S.db.trackers():
         via = []
         for g in groups:
             if g["all_trackers"]:
-                via.append(f"{g['name']}: alle trackers")
+                via.append(f"{g['name']}: alle kanalen")
                 continue
             if t["id"] in g["trackers"]:
                 via.append(f"{g['name']}: losse tracker")
-            for tg in g.get("tracker_groups") or []:
-                if t["id"] in members.get(tg, set()):
-                    via.append(f"{g['name']}: trackergroep {tgnames.get(tg, tg)}")
+            if t.get("channel_id") in g["channels"]:
+                via.append(f"{g['name']}: kanaal {cname.get(t['channel_id'], t['channel_id'])}")
         trackers.append({"id": t["id"], "alias": t["alias"], "kind": t["kind"], "color": t["color"],
+                         "channel": cname.get(t.get("channel_id")),
                          "active": bool(t["active"]), "sees": bool(p and p.sees(t["id"])), "via": via})
     hist_src = [g["name"] for g in groups if int(g["history_hours"] or 0) == (p.history_hours if p else -1)]
     rules = [r["name"] for r in S.db.alert_rules() if r.get("owner") == uid]
@@ -1743,6 +1676,7 @@ async def effective_rights(uid: int, request: Request):
         "groups": [g["name"] for g in groups],
         "perms": perms,
         "all_trackers": bool(p and p.tracker_ids is None),
+        "channels": channels,
         "trackers": trackers,
         "history_hours": p.history_hours if p else None,
         "history_via": hist_src,
@@ -1771,7 +1705,7 @@ async def delete_user(uid: int, request: Request):
 class ShareIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     trackers: list[int] = []
-    tracker_groups: list[int] = []
+    channels: list[int] = []
     hours: int = Field(12, ge=1, le=24 * 30)
     sidebar: bool = False
     valid_hours: int = Field(24, ge=0, le=24 * 365)   # 0 = nooit verlopen
@@ -1789,16 +1723,15 @@ async def list_shares(request: Request):
 async def create_share(b: ShareIn, request: Request):
     p = need(request, "share.manage")
     ids = [t for t in b.trackers if S.db.tracker(t) and p.sees(t)]
-    known = {g["id"] for g in S.db.tracker_groups()}
-    tgs = [g for g in dict.fromkeys(b.tracker_groups) if g in known]
-    if not ids and not tgs:
-        raise HTTPException(422, "kies minstens één tracker of trackergroep")
-    if tgs and p.kind != "user":
+    chans = [c for c in dict.fromkeys(b.channels) if S.db.channel(c) and p.sees_channel(c)]
+    if not ids and not chans:
+        raise HTTPException(422, "kies minstens één kanaal of tracker")
+    if chans and p.kind != "user":
         raise HTTPException(403, "geen toegang")
     token = secrets.token_urlsafe(18)
     expires = int(time.time() + b.valid_hours * 3600) if b.valid_hours else None
-    S.db.add_share(token, b.name.strip(), ids, b.hours, b.sidebar, expires, p.name, tgs)
-    audit(p, "deellink gemaakt", f"{b.name} ({len(ids)} trackers, {len(tgs)} trackergroepen, "
+    S.db.add_share(token, b.name.strip(), ids, b.hours, b.sidebar, expires, p.name, chans)
+    audit(p, "deellink gemaakt", f"{b.name} ({len(ids)} trackers, {len(chans)} kanalen, "
                                  f"{b.valid_hours or 'onbeperkt'} u geldig)")
     base = str(request.base_url).rstrip("/")
     return {"url": f"{base}/s/{token}"}
@@ -1848,7 +1781,7 @@ class RuleIn(BaseModel):
     active: bool = True
     events: list[str]
     trackers: list[int] = []
-    tracker_groups: list[int] = []
+    channels: list[int] = []
     recipients: list[dict]
     cooldown_s: int = Field(900, ge=0, le=7 * 86400)
 
@@ -1873,8 +1806,8 @@ def _rule(b: RuleIn) -> dict[str, Any]:
         raise HTTPException(422, "maximaal 25 ontvangers per regel")
     d = b.model_dump()
     d.pop("personal", None)
-    known = {g["id"] for g in S.db.tracker_groups()}
-    return {**d, "events": ev, "recipients": rc, "tracker_groups": [g for g in b.tracker_groups if g in known]}
+    known = {c["id"] for c in S.db.channels()}
+    return {**d, "events": ev, "recipients": rc, "channels": [c for c in dict.fromkeys(b.channels) if c in known]}
 
 
 def _rule_access(p: Principal, r: dict[str, Any]) -> bool:

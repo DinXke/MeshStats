@@ -1,7 +1,7 @@
-/* Trackers: lijst (echt en virtueel), trackergroepen, genegeerde berichten. Formulieren in een zijpaneel. */
+/* Trackers: lijst (echt en virtueel) met hun trackingkanaal, genegeerde berichten. Formulieren in een zijpaneel. */
 (function () {
   const $ = (id) => document.getElementById(id);
-  let status = null, trackers = [], sims = [], tgroups = [], unknown = [];
+  let status = null, trackers = [], sims = [], chans = [], unknown = [];
   let icon = "", filter = "all";
 
   function msg(el, text, ok) {
@@ -11,18 +11,16 @@
   const fmtTs = (ts) => (ts ? new Date(ts * 1000).toLocaleString("nl-BE") : "–");
 
   // ---- zijpanelen -------------------------------------------------------------------
-  const form = $("form"), tgForm = $("tg-form");
+  const form = $("form");
   MT.dialogize(form, "Tracker");
-  MT.dialogize(tgForm, "Trackergroep");
 
   // ---- laden --------------------------------------------------------------------------
   async function load() {
     status = await MT.api("/api/status");
     MT.meshPill($("mesh"), status.mesh);
-    [trackers, sims, tgroups] = await Promise.all([MT.api("/api/trackers"), MT.can("sims.manage") ? MT.api("/api/sims") : [],
-      MT.api("/api/tracker-groups")]);
+    [trackers, sims, chans] = await Promise.all([MT.api("/api/trackers"), MT.can("sims.manage") ? MT.api("/api/sims") : [],
+      MT.api("/api/channels/mine")]);
     renderList();
-    renderTgroups();
     if (MT.can("trackers.manage")) {
       unknown = await MT.api("/api/unknown");
       renderUnknown();
@@ -60,8 +58,8 @@
       ].join(" ");
       const sub = [t.kind === "real" ? `${t.pubkey.slice(0, 8)}…` : null, t.last_via && t.kind === "real" ? `via ${t.last_via}` : null,
         t.kind === "real" && t.keys ? "sleutel op server" : null].filter(Boolean).join(" · ");
-      const groups = (t.groups || []).map((id) => tgroups.find((g) => g.id === id)).filter(Boolean)
-        .map((g) => `<span class="pill" style="border-color:${MT.esc(g.color)}">${MT.esc(g.name)}</span>`).join(" ");
+      const ch = chans.find((c) => c.id === t.channel_id);
+      const chan = ch ? `<span class="pill">${MT.esc(ch.name)}</span>` : '<span class="muted small">geen kanaal</span>';
       return `<tr data-id="${t.id}" tabindex="0" aria-label="${MT.esc(t.alias)} bewerken">
         <td><span class="tico" style="background:${MT.esc(t.color)}">${t.icon ? MTIcons.svg(t.icon) : ""}</span></td>
         <td><div class="nm">${MT.esc(t.alias)} ${pills}</div><div class="sub">${MT.esc(sub)}</div>
@@ -69,7 +67,7 @@
         <td class="col-opt" data-ago="${t.last_rx || 0}">${MT.esc(MT.ago(t.last_rx))}</td>
         <td class="col-opt">${t.last_bat != null ? t.last_bat + " %" : "–"}</td>
         <td class="col-opt">${MT.esc(t.last_state ? MT.STATE[t.last_state] || t.last_state : "–")}</td>
-        <td class="col-opt">${groups}</td></tr>`;
+        <td class="col-opt">${chan}</td></tr>`;
     }).join("");
     $("trackers").querySelectorAll("tr").forEach((tr) => {
       const go = () => edit(Number(tr.dataset.id));
@@ -107,69 +105,12 @@
     }));
   }
 
-  // ---- trackergroepen ----------------------------------------------------------------
-  function tgChecks(el, selected) {
-    el.innerHTML = trackers.map((t) => `<label class="mini"><input type="checkbox" value="${t.id}"${selected.includes(t.id) ? " checked" : ""}>
-      <i style="background:${MT.esc(t.color)}"></i>${MT.esc(t.alias)}${t.kind === "sim" ? " (virtueel)" : ""}</label>`).join("")
-      || '<span class="muted">Nog geen trackers.</span>';
-  }
-  function renderTgroups() {
-    $("tglist").innerHTML = tgroups.map((g) => `<div class="titem">
-      <span class="tico big" style="background:${MT.esc(g.color)}"></span>
-      <div class="body"><div><strong>${MT.esc(g.name)}</strong> <span class="muted small">${g.members.length} tracker(s)</span>
-        ${g.channel ? `<span class="pill">kanaal</span>` : ""}</div>
-        <div class="muted small">${MT.esc(g.description || "")}</div>
-        ${(g.includes || []).length ? `<div class="small">omvat: ${MT.esc(g.includes.map((id) => (tgroups.find((x) => x.id === id) || {}).name).filter(Boolean).join(", "))}</div>` : ""}
-        <div class="muted small">${MT.esc(g.members.map((id) => (trackers.find((t) => t.id === id) || {}).alias).filter(Boolean).join(", "))}</div></div>
-      <div class="actions"><a class="btnlink" href="/?tgroup=${g.id}">Kaart</a><button type="button" data-tgedit="${g.id}">Bewerken</button></div></div>`).join("")
-      || '<div class="empty">Nog geen trackergroepen. Maak er een, bv. per dienst of ploeg.</div>';
-    $("tglist").querySelectorAll("[data-tgedit]").forEach((b) => b.addEventListener("click", () => openTg(tgroups.find((g) => g.id === Number(b.dataset.tgedit)))));
-  }
-  function openTg(g) {
-    tgForm.setTitle(g ? `Trackergroep: ${g.name}` : "Nieuwe trackergroep");
-    $("tg-id").value = g ? g.id : "";
-    $("tg-name").value = g ? g.name : "";
-    $("tg-color").value = g ? g.color : "#64748b";
-    $("tg-desc").value = g ? g.description : "";
-    tgChecks($("tg-trackers"), g ? g.trackers : []);
-    const inc = g ? g.includes || [] : [];
-    const others = tgroups.filter((x) => !g || x.id !== g.id);
-    $("tg-includes").innerHTML = others.map((x) => `<label class="mini"><input type="checkbox" value="${x.id}"${inc.includes(x.id) ? " checked" : ""}>
-      <i style="background:${MT.esc(x.color)}"></i>${MT.esc(x.name)} <span class="muted small">(${x.trackers.length})</span></label>`).join("")
-      || '<span class="muted">Nog geen andere groepen of kanalen.</span>';
-    msg($("tg-msg"), "");
-    let del = $("tg-delete");
-    if (!del) {
-      tgForm.querySelector(".sticky-actions").insertAdjacentHTML("beforeend", '<button type="button" class="danger" id="tg-delete" style="margin-left:auto">Verwijderen</button>');
-      del = $("tg-delete");
-      del.addEventListener("click", async () => {
-        const gg = tgroups.find((x) => String(x.id) === $("tg-id").value);
-        if (!gg || !(await MT.confirm(`Trackergroep "${gg.name}" verwijderen? De trackers zelf blijven; gebruikersgroepen die via deze groep keken, zien ze niet meer.`, { ok: "Verwijderen", danger: true }))) return;
-        try { await MT.api(`/api/tracker-groups/${gg.id}`, { method: "DELETE" }); tgForm.hidden = true; load(); } catch (e) { msg($("tg-msg"), e.message); }
-      });
-    }
-    del.hidden = !g;
-    tgForm.hidden = false;
-    $("tg-name").focus();
-  }
-  $("tg-new").addEventListener("click", () => openTg(null));
-  $("tg-cancel").addEventListener("click", () => { tgForm.hidden = true; });
-  tgForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const id = $("tg-id").value;
-    const body = { name: $("tg-name").value.trim(), color: $("tg-color").value, description: $("tg-desc").value,
-      trackers: [...$("tg-trackers").querySelectorAll("input:checked")].map((c) => Number(c.value)),
-      includes: [...$("tg-includes").querySelectorAll("input:checked")].map((c) => Number(c.value)) };
-    try {
-      await MT.api(id ? `/api/tracker-groups/${id}` : "/api/tracker-groups", { method: id ? "PUT" : "POST", body });
-      tgForm.hidden = true;
-      load();
-    } catch (err) { msg($("tg-msg"), err.message); }
-  });
-  function fillFormGroups(selected) {
-    $("f-tgwrap").hidden = !tgroups.length || !MT.can("trackers.manage");
-    $("f-tgroups").innerHTML = tgroups.map((g) => `<label class="mini"><input type="checkbox" value="${g.id}"${selected.includes(g.id) ? " checked" : ""}>
-      <i style="background:${MT.esc(g.color)}"></i>${MT.esc(g.name)}</label>`).join("");
+  // ---- trackingkanaal ------------------------------------------------------------------
+  // Echte trackers krijgen hun kanaal ook vanzelf: het kanaal van hun laatste geldige bericht.
+  function fillFormChannel(cid) {
+    $("f-channel").innerHTML = '<option value="0">Geen kanaal (alleen beheerders zien hem)</option>' +
+      chans.map((c) => `<option value="${c.id}"${c.id === cid ? " selected" : ""}>${MT.esc(c.name)}</option>`).join("");
+    $("f-chanwrap").hidden = !MT.can("trackers.manage") && !MT.can("sims.manage");
   }
 
   // ---- rijgedrag (simulator) ----------------------------------------------------------
@@ -249,7 +190,7 @@
     $("f-keys").hidden = true;
     $("f-authrow").hidden = true;
     $("f-kind").hidden = !(MT.can("trackers.manage") && MT.can("sims.manage"));
-    fillFormGroups([]);
+    fillFormChannel(chans.length ? chans[0].id : 0);
     icon = "";
     setVirtual(!MT.can("trackers.manage"));
     renderIcons();
@@ -280,7 +221,7 @@
     $("f-active").checked = !!t.active;
     $("f-lost").checked = !!t.lost;
     $("f-kind").hidden = true;
-    fillFormGroups(t.groups || []);
+    fillFormChannel(t.channel_id || 0);
     icon = t.icon || "";
     setVirtual(t.kind === "sim");
     if (t.kind === "sim") {
@@ -379,22 +320,22 @@
     const id = $("f-id").value;
     const base = { alias: $("f-alias").value.trim(), color: $("f-color").value, icon, notes: $("f-notes").value,
                    active: $("f-active").checked, lost: $("f-lost").checked };
-    const groups = [...$("f-tgroups").querySelectorAll("input:checked")].map((c) => Number(c.value));
+    const channel_id = Number($("f-channel").value) || 0;
     try {
       let r;
       if ($("f-virtual").checked) {
         if (id) {
-          await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, ...(MT.can("trackers.manage") ? { groups } : {}) } });
+          await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, channel_id } });
           r = await MT.api(`/api/sims/${id}`, { method: "PUT", body: { ...simBody(), alias: base.alias, color: base.color, icon } });
         } else {
           r = await MT.api("/api/sims", { method: "POST", body: { ...simBody(), ...base } });
-          if (groups.length && r && r.tracker_id && MT.can("trackers.manage")) await MT.api(`/api/trackers/${r.tracker_id}`, { method: "PUT", body: { groups } });
+          if (channel_id && r && r.tracker_id) await MT.api(`/api/trackers/${r.tracker_id}`, { method: "PUT", body: { channel_id } });
         }
       } else {
         const gen = !id && $("f-genkey").checked;
         if (!id && !gen && !/^[0-9a-fA-F]{64}$/.test($("f-pubkey").value.trim())) { showTab("dev"); throw new Error("Vul de pubkey in (64 hex-tekens), of kies 'Nieuw toestel'."); }
-        if (id) r = await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, groups } });
-        else r = await MT.api("/api/trackers", { method: "POST", body: { ...base, groups, pubkey: gen ? null : $("f-pubkey").value.trim(), generate_key: gen } });
+        if (id) r = await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, channel_id } });
+        else r = await MT.api("/api/trackers", { method: "POST", body: { ...base, channel_id, pubkey: gen ? null : $("f-pubkey").value.trim(), generate_key: gen } });
         if (gen && r.tracker) {
           form.hidden = true;
           if (await MT.confirm(`"${r.tracker.alias}" heeft nu een sleutel op de server. Nu het toestel klaarmaken via Toestellen?`, { ok: "Naar Toestellen", title: "Toestel klaarmaken" }))
@@ -494,7 +435,7 @@
   let showPage = null;
   MT.live((m) => {
     if (m.type === "mesh") MT.meshPill($("mesh"), m.mesh);
-    if ((m.type === "tracker" || m.type === "tracker_deleted" || m.type === "tracker_groups") && !form.dialog.open && !tgForm.dialog.open) load();
+    if ((m.type === "tracker" || m.type === "tracker_deleted" || m.type === "channels") && !form.dialog.open) load();
   });
   const startHash = location.hash;                          // vóór de tabbladen de hash herschrijven
   MT.initHeader("/admin").then(async () => {

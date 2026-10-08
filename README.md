@@ -48,7 +48,8 @@ T1000-E (firmware/)  --DM over de mesh-->  openHop-companion  --TCP-->  server/ 
   - Offline-app `/offline` (PWA, 0.9.0): verbindt via Web Bluetooth met een MeshCore-companion, haalt de
     kanaalberichten op die de companion ontcijferde (ook die nog in de wachtrij staan), leest `T1C|…` volledig
     offline (met de extra punten), bewaart alles in IndexedDB en tekent sporen zoals de online kaart. Kaarten (Limburg, België, Benelux, Frankrijk,
-    Duitsland) worden als pmtiles-bestand in de opslag van de browser (OPFS) gezet. Werkt volledig zonder account
+    Duitsland) worden als pmtiles-bestand in de opslag van de browser (OPFS) gezet en samen getoond (per bestand een bron,
+    van grof naar gedetailleerd gestapeld). Werkt volledig zonder account
     en gebruikt niets uit de database (0.9.2; kanaalkeuze uit de kanalen van de companion): van de server komen alleen kaarten, lettertypes en sprites (openbaar);
     namen komen uit de contacten van de companion (`CMD_GET_CONTACTS`), de controletekens kijkt alleen de server na. Chat (0.9.1):
     alle andere kanaal- en privéberichten in een venster, zelf sturen op een kanaal met instelbare scope (standaard

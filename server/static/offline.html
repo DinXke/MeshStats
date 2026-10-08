@@ -58,9 +58,20 @@
     header.top { gap: 6px; }
     header.top h1 .muted { display: none; }
     header.top a.small { font-size: 12px; white-space: nowrap; }
+    /* onderpaneel zoals op de online kaart: versleepbaar, klikt vast op drie hoogtes */
     .offmain { flex-direction: column; }
-    #omap { flex: 1 1 52%; }
-    #opanel { width: auto; border-left: 0; border-top: 1px solid var(--line); flex: 1 1 48%; }
+    #omap { flex: 1 1 auto; min-height: 0; }
+    #omap .maplibregl-ctrl-bottom-left, #omap .maplibregl-ctrl-bottom-right { bottom: 14px; }
+    #chat-btn { bottom: 44px; }
+    #chat { bottom: 90px; height: min(calc(100% - 110px), 460px); }
+    #opanel { width: auto; flex: none; height: 48%; position: relative; z-index: 3; margin-top: -14px; overflow: hidden;
+      border-left: 0; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0;
+      box-shadow: 0 -4px 16px rgba(0,0,0,.18); transition: height .22s ease; }
+    #opanel.dragging { transition: none; user-select: none; }
+    #opanel .sheet-handle { display: block; flex: none; touch-action: none; cursor: ns-resize; padding: 10px 0 8px; }
+    #opanel .sheet-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+    #otabs { flex: none; }
+    #opanel.sheet-hidden { display: none; }
   }
 </style>
 </head>
@@ -90,6 +101,7 @@
     </section>
   </div>
   <aside id="opanel">
+    <button type="button" id="osheet" class="sheet-handle" aria-label="Paneel groter of kleiner maken"><span></span></button>
     <div class="tabs" id="otabs">
       <button class="tab" data-tab="trk">Trackers</button>
       <button class="tab" data-tab="bt">Verbinding</button>
@@ -151,8 +163,9 @@
     </section>
 
     <section class="pane" id="pane-maps" hidden>
-      <p class="muted small">Download een kaart terwijl je internet hebt. Ze blijft op dit toestel en werkt daarna zonder
-        verbinding.</p>
+      <p class="muted small">Download kaarten terwijl je internet hebt. Ze blijven op dit toestel en werken daarna zonder
+        verbinding. Alle gedownloade kaarten staan samen op de kaart, de gedetailleerde bovenop: bv. Frankrijk en
+        Duitsland als overzicht met Limburg gedetailleerd.</p>
       <div id="maps-stored"></div>
       <h3 class="small">Beschikbaar op de server</h3>
       <div id="maps-avail" class="small muted">Alleen met internet.</div>
@@ -172,6 +185,7 @@
     </section>
   </aside>
 </div>
+<button type="button" id="osheet-show" class="sheet-show" hidden aria-label="Paneel tonen">☰ Paneel</button>
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/vendor/pmtiles.js"></script>
 <script src="/static/basemap.js"></script>

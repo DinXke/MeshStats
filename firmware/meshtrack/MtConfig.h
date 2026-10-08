@@ -8,7 +8,8 @@
 
 #include <stdint.h>
 
-#define MT_CFG_VERSION 4   // v4: verzenden via DM of kanaal + authsleutel (velden achteraan, oudere worden overgenomen)
+#define MT_CFG_VERSION 4   // v4: kanaal + authsleutel (velden achteraan, oudere worden overgenomen)
+// De indeling NOOIT wijzigen (flash-compatibel): ongebruikte velden blijven staan.
 
 struct MtCfg {
   uint32_t magic;               // 'MTC1'
@@ -17,7 +18,7 @@ struct MtCfg {
   uint8_t  mode;                // MtMode bij geen USB
   uint8_t  track_in_companion;  // ook volgen in companionmodus
   uint8_t  accel_sens;          // 0 laag, 1 midden, 2 hoog
-  uint8_t  ack_retries;
+  uint8_t  ack_retries;         // niet meer gebruikt (0.7)
   uint16_t min_speed_kmh;       // 0 = uit
   uint16_t min_dist_m;
   uint16_t turn_min_deg;        // 0 = uit
@@ -28,11 +29,11 @@ struct MtCfg {
   uint32_t heartbeat_s;         // 0 = uit
   uint16_t fix_timeout_s;
   uint16_t fix_timeout_hb_s;
-  uint8_t  target_set;
-  uint8_t  target[32];          // pubkey server-companion
+  uint8_t  target_set;          // niet meer gebruikt (0.7)
+  uint8_t  target[32];          // niet meer gebruikt (0.7; was de pubkey van de server-companion)
   uint8_t  led_mode;            // 0 = alleen als companion, 1 = altijd, 2 = nooit (zat vroeger in de opvulling: v1 blijft leesbaar)
   uint8_t  _pad[2];
-  // ---- v2: ritme volgens de ontvangst ----
+  // ---- v2: ritme volgens de ontvangst (niet meer gebruikt sinds 0.7: geen ACK's) ----
   uint16_t fast_interval_s;     // na een snelle ACK in beweging elke x s (0 = uit)
   uint8_t  fast_keep;           // zoveel missers na elkaar blijft hij snel
   uint8_t  fast_ack_s;          // ACK binnen x s = goede ontvangst (0 = elke ACK)
@@ -42,10 +43,10 @@ struct MtCfg {
   uint8_t  _pad2[1];
   // ---- v3 ----
   uint16_t sample_s;            // in beweging elke x s een punt bewaren; mee in het volgende bericht (0 = uit)
-  uint8_t  adaptive;            // ritme volgens de ontvangst: 1 aan, 0 uit
+  uint8_t  adaptive;            // niet meer gebruikt (0.7)
   uint8_t  _pad3;
   // ---- v4 ----
-  uint8_t  transport;           // 0 = DM naar het doel (standaard), 1 = kanaal
+  uint8_t  transport;           // niet meer gebruikt (0.7: altijd kanaal)
   uint8_t  chan_idx;            // kanaalnummer op dit toestel (chan list)
   uint8_t  authkey_set;
   uint8_t  _pad4;

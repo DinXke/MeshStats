@@ -65,18 +65,12 @@ class AlertManager:
             self._silent_sent.discard(tracker["id"])
         now = time.time()
         n = 0
-        members = None
         for r in self.db.alert_rules():
             if not r["active"] or event not in r["events"] or not r["recipients"]:
                 continue
-            if r["trackers"] or r.get("tracker_groups"):
-                # losse trackers of leden van de gekozen trackergroepen (zoals ze nu zijn)
-                if members is None:
-                    members = self.db.tracker_group_members()
-                ids = set(r["trackers"])
-                for tg in r.get("tracker_groups") or []:
-                    ids |= members.get(tg, set())
-                if tracker["id"] not in ids:
+            if r["trackers"] or r.get("channels"):
+                # losse trackers of trackers van de gekozen kanalen (hun huidige trackingkanaal)
+                if tracker["id"] not in r["trackers"] and tracker.get("channel_id") not in (r.get("channels") or []):
                     continue
             if r.get("owner") is not None and self.can_see and not self.can_see(r["owner"], tracker["id"]):
                 continue                      # eigen regel: alleen trackers die de eigenaar mag zien

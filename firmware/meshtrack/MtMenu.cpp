@@ -112,19 +112,10 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "heartbeat"))      { ok = parse_dur(v, &d) && (d == 0 || d >= 60) && d <= 7 * 86400UL; c.heartbeat_s = d; }
   else if (!strcmp(k, "fix_timeout"))    { ok = parse_dur(v, &d) && d >= 10 && d <= 600; c.fix_timeout_s = d; }
   else if (!strcmp(k, "fix_timeout_hb")) { ok = parse_dur(v, &d) && d >= 10 && d <= 600; c.fix_timeout_hb_s = d; }
-  else if (!strcmp(k, "ack_retries"))    { uint16_t r; ok = parse_u16(v, 5, &r); c.ack_retries = r; }
-  else if (!strcmp(k, "fast_interval"))  { ok = parse_dur(v, &d) && (d == 0 || d >= 10) && d <= 3600; c.fast_interval_s = d; }
-  else if (!strcmp(k, "fast_keep"))      { uint16_t r; ok = parse_u16(v, 10, &r); c.fast_keep = r; }
-  else if (!strcmp(k, "fast_retries"))   { uint16_t r; ok = parse_u16(v, 5, &r); c.fast_retries = r; }
   else if (!strcmp(k, "sample"))         { ok = parse_dur(v, &d) && (d == 0 || d >= 5) && d <= 600; c.sample_s = d; }
-  else if (!strcmp(k, "transport")) {
+  else if (!strcmp(k, "transport")) {         // sinds 0.7 altijd kanaal; oude scripts sturen dit nog
+    if (strcmp(v, "kanaal") && strcmp(v, "channel")) return "DM bestaat niet meer: altijd via het trackingkanaal";
     ok = true;
-    if (!strcmp(v, "dm")) c.transport = 0;
-    else if (!strcmp(v, "kanaal") || !strcmp(v, "channel")) {
-      ChannelDetails ch;
-      if (!the_mesh.mtGetChannel(c.chan_idx, ch) || !ch.name[0]) return "kies eerst een bestaand kanaal (set chan <nr>)";
-      c.transport = 1;
-    } else ok = false;
   }
   else if (!strcmp(k, "chan")) {
     uint16_t r; ChannelDetails ch;
@@ -142,10 +133,6 @@ static const char* set_param(const char* k, const char* v) {
       if (ok) c.authkey_set = 1;
     }
   }
-  else if (!strcmp(k, "adaptive"))       ok = parse_onoff(v, &c.adaptive);
-  else if (!strcmp(k, "fast_ack"))       { ok = parse_dur(v, &d) && d <= 120; c.fast_ack_s = d; }
-  else if (!strcmp(k, "slow_after"))     { uint16_t r; ok = parse_u16(v, 20, &r); c.slow_after = r; }
-  else if (!strcmp(k, "slow_factor"))    { uint16_t r; ok = parse_u16(v, 10, &r) && r >= 1; c.slow_factor = r; }
   else if (!strcmp(k, "track_in_companion")) ok = parse_onoff(v, &c.track_in_companion);
   else if (!strcmp(k, "accel_sens")) {
     ok = true;
@@ -154,7 +141,6 @@ static const char* set_param(const char* k, const char* v) {
     else if (!strcmp(v, "hoog") || !strcmp(v, "high")) c.accel_sens = 2;
     else ok = false;
   }
-  else if (!strcmp(k, "target")) { ok = parse_key(v, c.target); if (ok) c.target_set = 1; }
   else if (!strcmp(k, "led")) {
     ok = true;
     if (!strcmp(v, "companion")) c.led_mode = 0;
@@ -165,11 +151,9 @@ static const char* set_param(const char* k, const char* v) {
   else return "onbekende parameter";
   if (!ok) return "ongeldige waarde";
   bool sens_changed = c.accel_sens != mt_cfg.accel_sens;
-  bool target_changed = memcmp(c.target, mt_cfg.target, 32) != 0 || c.target_set != mt_cfg.target_set;
   mt_cfg = c;
   if (!mt_cfg_save()) return "NIET bewaard (opslag)";
   if (sens_changed) mt_motion_set_sens(c.accel_sens);
-  if (target_changed) mt_tracker_target_changed();
   return NULL;
 }
 
@@ -312,29 +296,23 @@ static void cmd_status() {
        mt_cfg.min_speed_kmh, mt_cfg.min_dist_m, mt_cfg.turn_min_deg, mt_cfg.turn_min_speed_kmh);
   outl("min_interval=%s max_interval=%s still_timeout=%s heartbeat=%s", a, b, c, d);
   fmt_dur(a, sizeof(a), mt_cfg.fix_timeout_s); fmt_dur(b, sizeof(b), mt_cfg.fix_timeout_hb_s);
-  outl("fix_timeout=%s fix_timeout_hb=%s ack_retries=%u track_in_companion=%s accel_sens=%s led=%s",
-       a, b, mt_cfg.ack_retries, mt_cfg.track_in_companion ? "aan" : "uit",
+  outl("fix_timeout=%s fix_timeout_hb=%s track_in_companion=%s accel_sens=%s led=%s",
+       a, b, mt_cfg.track_in_companion ? "aan" : "uit",
        mt_cfg.accel_sens == 0 ? "laag" : mt_cfg.accel_sens == 2 ? "hoog" : "midden",
        mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "companion");
-  out("target=");
-  if (mt_cfg.target_set) for (int i = 0; i < 32; i++) out("%02X", mt_cfg.target[i]); else out("(niet_ingesteld)");
-  outl("");
   outl("tracker=%s gps=%s fix=%s sat=%ld beweging=%s radio=%s",
        mt_tracker_state_str(), mt_tracker_gps_on() ? "aan" : "uit", g.freshFix(5000) ? "ja" : "nee",
        g.satellitesCount(), mt_motion_mode_str(), mt_radio_paused() ? "slaapt" : "aan");
-  outl("tx_ok=%lu tx_mislukt=%lu herhaald=%lu laatste=%s seq=%u reden=%s",
-       (unsigned long)st.ok, (unsigned long)st.failed, (unsigned long)st.retries,
+  outl("tx_ok=%lu tx_mislukt=%lu laatste=%s seq=%u reden=%s",
+       (unsigned long)st.ok, (unsigned long)st.failed,
        !st.have_last ? "-" : st.last_ok ? "ok" : "mislukt", mt_tracker_seq(), mt_tracker_last_reason());
-  fmt_dur(a, sizeof(a), mt_cfg.fast_interval_s); fmt_dur(b, sizeof(b), mt_cfg.fast_ack_s);
-  outl("fast_interval=%s fast_keep=%u fast_ack=%s fast_retries=%u slow_after=%u slow_factor=%u ritme=%s",
-       a, mt_cfg.fast_keep, b, mt_cfg.fast_retries, mt_cfg.slow_after, mt_cfg.slow_factor, mt_tracker_link_str());
   fmt_dur(a, sizeof(a), mt_cfg.sample_s);
-  outl("sample=%s adaptive=%s buffer=%u", a, mt_cfg.adaptive ? "aan" : "uit", (unsigned)mt_tracker_buffered());
+  outl("sample=%s buffer=%u", a, (unsigned)mt_tracker_buffered());
   {
     ChannelDetails ch;
     bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
-    out("transport=%s chan=%u authkey=%s chan_naam=", mt_cfg.transport == 1 ? "kanaal" : "dm", (unsigned)mt_cfg.chan_idx,
-        mt_cfg.authkey_set ? "ja" : "nee");
+    out("transport=kanaal chan=%u authkey=%s afzender=%s chan_naam=", (unsigned)mt_cfg.chan_idx,
+        mt_cfg.authkey_set ? "ja" : "nee", the_mesh.mtSender());
     outl("%s", have ? ch.name : "-");
   }
   outl("cfg=%s%s", mt_cfg_load_note, mt_cfg_readonly ? " [alleen-lezen]" : "");
@@ -346,11 +324,10 @@ static void cmd_help() {
   outl("  mode companion|tracker      modus bij batterij (USB = altijd companion)");
   outl("  set <param> <waarde>        tijden: 30s, 5m, 2h; 0 = uit");
   outl("    min_speed min_dist turn_min turn_min_speed min_interval max_interval");
-  outl("    still_timeout heartbeat fix_timeout fix_timeout_hb ack_retries");
-  outl("    track_in_companion on|off  accel_sens laag|midden|hoog  target <64 hex>");
-  outl("    adaptive on|off  fast_interval fast_keep fast_ack fast_retries slow_after slow_factor");
+  outl("    still_timeout heartbeat fix_timeout fix_timeout_hb");
+  outl("    track_in_companion on|off  accel_sens laag|midden|hoog");
   outl("    sample <tijd>   in beweging elke x een punt bewaren, mee in het volgende bericht (0 = uit)");
-  outl("    transport dm|kanaal  chan <nr>  authkey <32 hex>|-   (verzenden via DM of een kanaal)");
+  outl("    chan <nr>  authkey <32 hex>|-   (trackingkanaal en authsleutel; afzender = de naam)");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
@@ -385,6 +362,7 @@ static void cmd_backup() {
 enum Screen : uint8_t { SC_MAIN, SC_MODE, SC_WHEN, SC_RHYTHM, SC_REST, SC_GPS, SC_MAINT };
 
 struct Item { const char* label; const char* param; uint8_t kind; };   // kind: 0 getal, 1 duur, 2 tekst
+#define N_ITEMS(a) ((int)(sizeof(a) / sizeof((a)[0])))
 static const Item WHEN[] = {
   {"Minimum snelheid (km/u, 0 = altijd)", "min_speed", 0},
   {"Minimum verplaatsing (m)", "min_dist", 0},
@@ -395,13 +373,6 @@ static const Item RHYTHM[] = {
   {"Nooit vaker dan 1x per", "min_interval", 1},
   {"In beweging minstens 1x per (0 = uit)", "max_interval", 1},
   {"Punt bewaren elke (0 = uit)", "sample", 1},
-  {"Ritme volgens ontvangst (aan/uit)", "adaptive", 2},
-  {"Goede ontvangst: elke (0 = uit)", "fast_interval", 1},
-  {"Goede ontvangst = ACK binnen", "fast_ack", 1},
-  {"Snel blijven tot zoveel missers", "fast_keep", 0},
-  {"Herhaalpogingen bij goede ontvangst", "fast_retries", 0},
-  {"Trager na zoveel missers (0 = nooit)", "slow_after", 0},
-  {"Trager: intervallen maal", "slow_factor", 0},
 };
 static const Item REST[] = {
   {"Slapen na stilstand van", "still_timeout", 1},
@@ -411,10 +382,7 @@ static const Item REST[] = {
 static const Item GPSI[] = {
   {"GPS-fix zoeken max.", "fix_timeout", 1},
   {"GPS-fix bij heartbeat/klik max.", "fix_timeout_hb", 1},
-  {"Herhaalpogingen zonder ACK (0-5)", "ack_retries", 0},
-  {"Doel: pubkey server-companion", "target", 2},
-  {"Verzenden via (dm/kanaal)", "transport", 2},
-  {"Kanaalnummer (zie chan list)", "chan", 0},
+  {"Trackingkanaal (nummer, zie chan list)", "chan", 0},
   {"Authsleutel kanaal (32 hex, - = geen)", "authkey", 2},
 };
 
@@ -433,26 +401,14 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "accel_sens")) snprintf(o, n, "%s", mt_cfg.accel_sens == 0 ? "laag" : mt_cfg.accel_sens == 2 ? "hoog" : "midden");
   else if (!strcmp(param, "fix_timeout")) fmt_dur_nl(o, n, mt_cfg.fix_timeout_s);
   else if (!strcmp(param, "fix_timeout_hb")) fmt_dur_nl(o, n, mt_cfg.fix_timeout_hb_s);
-  else if (!strcmp(param, "ack_retries")) snprintf(o, n, "%u", mt_cfg.ack_retries);
-  else if (!strcmp(param, "fast_interval")) fmt_dur_nl(o, n, mt_cfg.fast_interval_s);
-  else if (!strcmp(param, "fast_ack")) snprintf(o, n, mt_cfg.fast_ack_s ? "%u s" : "elke ACK", mt_cfg.fast_ack_s);
-  else if (!strcmp(param, "fast_keep")) snprintf(o, n, "%u", mt_cfg.fast_keep);
-  else if (!strcmp(param, "fast_retries")) snprintf(o, n, "%u", mt_cfg.fast_retries);
   else if (!strcmp(param, "sample")) fmt_dur_nl(o, n, mt_cfg.sample_s);
-  else if (!strcmp(param, "transport")) snprintf(o, n, "%s", mt_cfg.transport == 1 ? "kanaal" : "dm");
   else if (!strcmp(param, "chan")) {
     ChannelDetails ch;
     bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
     snprintf(o, n, "%u (%s)", (unsigned)mt_cfg.chan_idx, have ? ch.name : "leeg");
   }
   else if (!strcmp(param, "authkey")) snprintf(o, n, "%s", mt_cfg.authkey_set ? "ingesteld" : "niet ingesteld");
-  else if (!strcmp(param, "adaptive")) snprintf(o, n, "%s", mt_cfg.adaptive ? "aan" : "uit");
-  else if (!strcmp(param, "slow_after")) snprintf(o, n, mt_cfg.slow_after ? "%u" : "nooit", mt_cfg.slow_after);
-  else if (!strcmp(param, "slow_factor")) snprintf(o, n, "x%u", mt_cfg.slow_factor);
-  else if (!strcmp(param, "target")) {
-    if (mt_cfg.target_set) snprintf(o, n, "%02X%02X%02X%02X...", mt_cfg.target[0], mt_cfg.target[1], mt_cfg.target[2], mt_cfg.target[3]);
-    else snprintf(o, n, "niet ingesteld");
-  } else o[0] = 0;
+  else o[0] = 0;
 }
 
 static const char* LINE = "  ==============================================================";
@@ -468,7 +424,7 @@ static void header(const char* title) {
        mt_mode_name(mt_effective_mode()), mt_usb() ? " (USB)" : "", mt_battery_pct(mv), mv);
   outl("   tracker %s  |  GPS %s  |  laatste zending: %s", mt_tracker_state_str(),
        mt_tracker_gps_on() ? (mt_gps().freshFix(5000) ? "fix" : "zoekt") : "uit",
-       !st.have_last ? "nog geen" : st.last_ok ? "OK (ACK)" : "mislukt");
+       !st.have_last ? "nog geen" : st.last_ok ? "verstuurd" : "mislukt");
   outl(LINE);
 }
 
@@ -519,10 +475,10 @@ static void show() {
       outl("");
       outl("   0  Terug");
       break;
-    case SC_WHEN:   header("WANNEER EEN POSITIE STUREN"); list_items(WHEN, 4); break;
-    case SC_RHYTHM: header("RITME"); list_items(RHYTHM, 10); outl("   Ritme nu: %s", mt_tracker_link_str()); break;
-    case SC_REST:   header("STILSTAND EN HEARTBEAT"); list_items(REST, 3); break;
-    case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, 7); break;
+    case SC_WHEN:   header("WANNEER EEN POSITIE STUREN"); list_items(WHEN, N_ITEMS(WHEN)); break;
+    case SC_RHYTHM: header("RITME"); list_items(RHYTHM, N_ITEMS(RHYTHM)); break;
+    case SC_REST:   header("STILSTAND EN HEARTBEAT"); list_items(REST, N_ITEMS(REST)); break;
+    case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, N_ITEMS(GPSI)); break;
     case SC_MAINT:
       header("ONDERHOUD");
       outl("   1  Backup van alle opslag (bevat de PRIVATE KEY)");
@@ -562,8 +518,8 @@ static void menu_choice(int n) {
         case 6: s_screen = SC_GPS; break;
         case 7:
           outl("");
-          outl(mt_tracker_manual() ? "   Positie wordt verstuurd (GPS-fix zoeken, daarna ACK afwachten)."
-                                   : "   Niet verstuurd: geen doel ingesteld, of minder dan 10 s na de vorige.");
+          outl(mt_tracker_manual() ? "   Positie wordt verstuurd (GPS-fix zoeken, daarna op het trackingkanaal)."
+                                   : "   Niet verstuurd: trackingkanaal ontbreekt, of minder dan 10 s na de vorige.");
           break;
         case 8: s_screen = SC_MAINT; break;
         default: break;
@@ -585,10 +541,10 @@ static void menu_choice(int n) {
       else if (n == 0) s_screen = SC_MAIN;
       show();
       return;
-    case SC_WHEN: items = WHEN; count = 4; break;
-    case SC_RHYTHM: items = RHYTHM; count = 10; break;
-    case SC_REST: items = REST; count = 3; break;
-    case SC_GPS: items = GPSI; count = 7; break;
+    case SC_WHEN: items = WHEN; count = N_ITEMS(WHEN); break;
+    case SC_RHYTHM: items = RHYTHM; count = N_ITEMS(RHYTHM); break;
+    case SC_REST: items = REST; count = N_ITEMS(REST); break;
+    case SC_GPS: items = GPSI; count = N_ITEMS(GPSI); break;
   }
   if (n == 0) { s_screen = SC_MAIN; show(); return; }
   if (n >= 1 && n <= count) { prompt_for(&items[n - 1]); return; }
@@ -624,7 +580,7 @@ static void command(char* s) {
     else { outl("gebruik: mode companion|tracker"); return; }
     outl("gekozen modus: %s (bewaard)", mt_mode_name(mt_cfg.mode));
   }
-  else if (!strcmp(s, "send")) outl(mt_tracker_manual() ? "positie wordt verstuurd" : "niet verstuurd (geen doel of te snel)");
+  else if (!strcmp(s, "send")) outl(mt_tracker_manual() ? "positie wordt verstuurd" : "niet verstuurd (geen trackingkanaal of te snel)");
   else if (!strcmp(s, "defaults")) { mt_cfg_defaults(mt_cfg); outl("instellingen: standaard %s", mt_cfg_save() ? "(bewaard)" : "[NIET bewaard]"); }
   else if (!strcmp(s, "backup")) cmd_backup();
   else if (!strcmp(s, "key")) cmd_key(args);

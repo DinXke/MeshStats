@@ -32,7 +32,6 @@ void mt_cfg_defaults(MtCfg& c) {
   c.mode               = MT_MODE_TRACKER;
   c.track_in_companion = 1;
   c.accel_sens         = 1;
-  c.ack_retries        = 2;
   c.min_speed_kmh      = 10;
   c.min_dist_m         = 100;
   c.turn_min_deg       = 30;
@@ -43,13 +42,7 @@ void mt_cfg_defaults(MtCfg& c) {
   c.heartbeat_s        = 12 * 3600;
   c.fix_timeout_s      = 90;
   c.fix_timeout_hb_s   = 30;
-  c.fast_interval_s    = 30;
-  c.fast_keep          = 2;
-  c.fast_ack_s         = 10;
-  c.slow_after         = 3;
-  c.slow_factor        = 3;
   c.sample_s           = 15;
-  c.adaptive           = 1;
 }
 
 // Eén bestand proberen. 0 = geladen, 1 = bestand van nieuwere fw, -1 = onbruikbaar.

@@ -81,7 +81,7 @@ const MT = {
     MT.me = await MT.api("/api/me");
     MT.applyTheme(MT.theme());
     const links = [
-      ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"],
+      ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"], ["/kanalen", "Kanalen", "map.view"],
       ["/admin", "Trackers", ["trackers.manage", "sims.manage"]],
       ["/devices", "Toestellen", "trackers.serial"],
       ["/users", "Gebruikers", ["users.manage", "share.manage"]],

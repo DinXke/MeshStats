@@ -58,6 +58,14 @@
         </div>
         <div class="twocol">
           <fieldset>
+            <legend>Naam</legend>
+            <label for="s-name">Naam van de tracker</label>
+            <input id="s-name" data-set="name" data-kv="naam" data-spaces="1" maxlength="31" autocomplete="off">
+            <div class="help">Zo heet hij in de mesh, in MeshCore-apps en als afzender van zijn kanaalberichten (firmware
+              0.6.3 of nieuwer). Een korte naam laat meer ruimte voor extra punten in een bericht.</div>
+          </fieldset>
+
+          <fieldset>
             <legend>Modus</legend>
             <div class="seg wide" id="s-mode" role="radiogroup" aria-label="Modus op batterij">
               <button type="button" data-v="tracker">Tracker</button><button type="button" data-v="companion">Companion</button>
@@ -68,16 +76,12 @@
 
           <fieldset>
             <legend>Verzenden</legend>
-            <label for="s-via">Verzenden via</label>
+            <label for="s-via">Trackingkanaal</label>
             <select id="s-via"></select>
-            <div class="help">Kies je een kanaal van de server, dan zet de pagina het kanaal met zijn sleutel, de regio en de
-              authsleutel zelf op de tracker. Het kanaal staat daarna ook in de MeshCore-app als je de tracker als companion
-              gebruikt. Een kanaal krijgt geen bevestiging en wordt door het hele net geflood.</div>
-            <label>Doel: server-companion (pubkey)</label>
-            <div class="row" style="margin-top:0">
-              <input data-set="target" class="mono" maxlength="64" style="flex:1;min-width:200px" spellcheck="false" aria-label="Doel">
-              <button type="button" id="s-target">Deze server</button>
-            </div>
+            <div class="help">De tracker stuurt zijn posities op dit ene kanaal, met zijn naam als afzender. Kies je een kanaal
+              van de server, dan zet de pagina het kanaal met zijn sleutel, de regio en de authsleutel zelf op de tracker.
+              Het kanaal staat daarna ook in de MeshCore-app als je de tracker als companion gebruikt. Een kanaalbericht
+              krijgt geen bevestiging en wordt door het hele net geflood.</div>
           </fieldset>
 
           <fieldset>
@@ -106,22 +110,6 @@
         <label class="switch block advtoggle"><input type="checkbox" id="s-adv"><span></span> Geavanceerde instellingen tonen</label>
         <div class="twocol" id="s-advanced" hidden>
           <fieldset>
-            <legend>Ritme volgens de ontvangst</legend>
-            <label class="switch block"><input type="checkbox" data-set="adaptive" data-kind="bool"><span></span> Ritme aanpassen aan de ontvangst</label>
-            <div class="help">Komt een bevestiging (ACK) snel binnen, dan stuurt hij vaker; lukt het een paar keer na elkaar niet,
-              dan minder vaak (batterij sparen). Elk bericht kost zendtijd op de mesh.</div>
-            <div class="grid">
-              <div><label>Goede ontvangst: in beweging elke</label><div class="dur" data-set="fast_interval" data-off="1"></div></div>
-              <div><label>Goede ontvangst = ACK binnen</label><div class="dur" data-set="fast_ack"></div><div class="help">0 = elke ACK telt</div></div>
-              <div><label>Snel blijven tot zoveel missers</label><input data-set="fast_keep" type="number" min="0" max="10"></div>
-              <div><label>Herhaalpogingen bij goede ontvangst</label><input data-set="fast_retries" type="number" min="0" max="5"></div>
-              <div><label>Trager na zoveel missers</label><input data-set="slow_after" type="number" min="0" max="20"><div class="help">0 = nooit trager</div></div>
-              <div><label>Trager: intervallen maal</label><input data-set="slow_factor" type="number" min="1" max="10"></div>
-            </div>
-            <div class="help" id="s-ritme"></div>
-          </fieldset>
-
-          <fieldset>
             <legend>Stilstand en rust</legend>
             <div class="grid">
               <div><label>Slapen na stilstand van</label><div class="dur" data-set="still_timeout"></div></div>
@@ -135,11 +123,10 @@
           </fieldset>
 
           <fieldset>
-            <legend>GPS en bevestiging</legend>
+            <legend>GPS</legend>
             <div class="grid">
               <div><label>GPS-fix zoeken max.</label><div class="dur" data-set="fix_timeout"></div></div>
               <div><label>…bij heartbeat of klik max.</label><div class="dur" data-set="fix_timeout_hb"></div></div>
-              <div><label>Herhaalpogingen zonder ACK</label><input data-set="ack_retries" type="number" min="0" max="5"></div>
             </div>
           </fieldset>
 

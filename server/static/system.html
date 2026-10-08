@@ -39,8 +39,8 @@
       <fieldset><legend>Voor deze trackers</legend>
         <label class="switch block"><input type="checkbox" id="r-alltr" checked><span></span> Alle trackers</label>
         <div id="r-trwrap" hidden>
-          <label>Trackergroepen <span class="muted small">(ook trackers die er later bij komen)</span></label>
-          <div id="r-tgroups" class="permgrid"></div>
+          <label>Kanalen <span class="muted small">(ook trackers die later op het kanaal sturen)</span></label>
+          <div id="r-chans" class="permgrid"></div>
           <label>Losse trackers</label>
           <div id="r-trackers" class="permgrid"></div>
         </div></fieldset>
@@ -68,10 +68,10 @@
 
   <section class="card pane" id="pane-channels" hidden>
     <div class="cardhead"><h2>Kanalen</h2><button class="primary" id="c-new">+ Kanaal</button></div>
-    <p class="muted">Trackers kunnen hun posities via DM naar de server sturen (standaard), of op een kanaal. De server
-      luistert mee op de kanalen hieronder; MeshTrack zet ze zelf op de server-companion. Elk kanaal krijgt een eigen
-      trackergroep, dus ook een eigen kaart. Let op: een kanaalbericht wordt door het hele net geflood en krijgt geen
-      bevestiging; een DM met een gekende route kost meestal minder zendtijd.</p>
+    <p class="muted">Trackers sturen hun posities op één kanaal (hun trackingkanaal). De server luistert mee op de
+      kanalen hieronder; MeshTrack zet ze zelf op de server-companion. Wie een kanaal mag lezen (Gebruikers → Groepen:
+      <em>kaart</em> of <em>sleutel</em>), ziet de trackers ervan; met <em>sleutel</em> ook de QR-code om het kanaal op een
+      eigen companion te zetten. Een kanaalbericht wordt door het hele net geflood en krijgt geen bevestiging.</p>
     <form id="c-form" class="subform" hidden>
       <input type="hidden" id="c-id">
       <div class="grid">
