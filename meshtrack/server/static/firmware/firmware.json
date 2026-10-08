@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.8.2",
+      "date": "2026-10-08",
+      "notes": "Knop: klikken, dubbelklik en vasthouden worden nu volledig op de tijdstempels van de interrupt bepaald. Een dubbelklik werd op batterij soms als één klik gezien, omdat de processor tussen gebeurtenissen slaapt.",
+      "zip": "meshtrack-t1000e-0.8.2.zip",
+      "zip_sha256": "3d8afc15bac87ea2490de9a91c250dff84bdd6d4784a704e98ad883c99e6ef90",
+      "uf2": "meshtrack-t1000e-0.8.2.uf2",
+      "app_size": 403216,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.8.1",
       "date": "2026-10-08",
       "notes": "CLI waarschuwt nu al vanaf 9 punten per periode (slow_log ongeveer 1/8 van slow_send), zoals de webpagina.",
@@ -101,5 +111,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.8.1"
+  "latest": "0.8.2"
 }

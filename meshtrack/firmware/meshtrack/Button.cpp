@@ -18,6 +18,8 @@ bool Button::s_isrActive = HIGH;
 volatile uint32_t Button::s_presses = 0;
 volatile uint32_t Button::s_lastRelease = 0;
 volatile uint32_t Button::s_lastEdge = 0;
+volatile uint32_t Button::s_pressAt = 0;
+volatile uint32_t Button::s_prevDur = 0;
 
 void Button::isr() {
     uint32_t now = millis();
@@ -25,7 +27,11 @@ void Button::isr() {
     if (pressed) {
         // Alleen een echte klik: de knop was minstens BUTTON_ISR_RELEASED_MS los
         // (dender bij indrukken/loslaten duurt korter en telt dus niet).
-        if (now - s_lastRelease >= BUTTON_ISR_RELEASED_MS) s_presses++;
+        if (now - s_lastRelease >= BUTTON_ISR_RELEASED_MS) {
+            s_prevDur = s_lastRelease - s_pressAt;   // hoe lang de vorige druk duurde
+            s_presses++;
+            s_pressAt = now;
+        }
     } else {
         s_lastRelease = now;
     }
@@ -50,6 +56,11 @@ void Button::update() {
     
     // Read button at specified interval
     if (now - _lastReadTime < BUTTON_READ_INTERVAL_MS) {
+        return;
+    }
+    if (_useIsr) {                       // MeshTrack: digitale knop met interrupt
+        _lastReadTime = now;
+        updateIsr(now);
         return;
     }
     _lastReadTime = now;
@@ -121,6 +132,81 @@ void Button::update() {
         triggerEvent(LONG_PRESS);
         _state = IDLE;  // Prevent multiple press events
         _clickCount = 0;
+    }
+}
+
+// MeshTrack 0.8.2: klikken, vasthouden en het klikvenster volledig op de tijdstempels die
+// de interrupt vastlegt. Op batterij slaapt de processor tussen twee gebeurtenissen, en dan
+// kwam de lus soms op een ongelukkig moment kijken: twee tikken werden één klik. Nu maakt
+// het niet uit wanneer de lus draait; ze beslist pas als de knop stabiel los is.
+// Een afgelopen druk afhandelen: klik, SOS (2..8 s) of uitschakelen (> 8 s).
+void Button::finishPress(uint32_t dur, uint32_t releasedAt) {
+    _isrHeld = false;
+    if (_longFired) {                     // al uitgeschakeld tijdens het vasthouden
+        _clickCount = 0;
+    } else if (dur >= BUTTON_LONG_PRESS_TIME_MS) {
+        _clickCount = 0;
+        triggerEvent(LONG_PRESS);         // de lus sliep tijdens het vasthouden
+    } else if (dur >= BUTTON_HOLD_ARM_MS) {
+        _clickCount = 0;
+        triggerEvent(HOLD_RELEASE);       // 2..8 s = SOS
+    } else {
+        if (_clickCount < 4) _clickCount++;
+        _releaseTime = releasedAt;
+        _state = WAITING_FOR_MULTI_CLICK;
+    }
+}
+
+void Button::updateIsr(uint32_t now) {
+    noInterrupts();
+    uint32_t presses = s_presses, pressAt = s_pressAt, lastRelease = s_lastRelease, lastEdge = s_lastEdge,
+             prevDur = s_prevDur;
+    interrupts();
+    bool level = readButton();
+    bool settled = now - lastEdge > BUTTON_DEBOUNCE_TIME_MS;   // geen flank meer sinds 50 ms
+
+    // Nieuwe drukken sinds de vorige keer. Een nieuwe druk telt pas na loslaten, dus alle
+    // drukken behalve de laatste zijn al voorbij.
+    uint32_t fresh = presses - _seenPresses;
+    if (fresh) {
+        _seenPresses = presses;
+        triggerEvent(ANY_PRESS);
+        // De vorige druk die we al zagen maar nog niet afhandelden (de lus sliep tot nu):
+        // met zijn duur volgens de interrupt, als er precies één nieuwe druk bij kwam.
+        if (_isrHeld) finishPress(fresh == 1 ? prevDur : 0, pressAt);
+        // Drukken die de lus helemaal niet zag: korte klikken.
+        for (uint32_t i = 1; i < fresh && _clickCount < 4; i++) _clickCount++;
+        _isrHeld = true;
+        _pressTime = pressAt;
+        _armFired = _warnFired = _longFired = false;
+    }
+
+    if (_isrHeld) {
+        if (settled && !level) {
+            // Losgelaten: hoe lang ingedrukt, volgens de interrupt.
+            uint32_t dur = (int32_t)(lastRelease - _pressTime) > 0 ? lastRelease - _pressTime : now - _pressTime;
+            finishPress(dur, lastRelease);
+        } else if (level) {
+            // Nog ingedrukt: wapenbiep, waarschuwing, uitschakelen.
+            uint32_t held = now - _pressTime;
+            if (!_armFired && held > BUTTON_HOLD_ARM_MS) { _armFired = true; triggerEvent(HOLD_ARM); }
+            if (!_warnFired && held > BUTTON_HOLD_WARN_MS) { _warnFired = true; triggerEvent(HOLD_WARN); }
+            if (!_longFired && held > BUTTON_LONG_PRESS_TIME_MS) { _longFired = true; _clickCount = 0; triggerEvent(LONG_PRESS); }
+        }
+    }
+    _currentState = _isrHeld && level;
+
+    // Klikvenster: BUTTON_CLICK_TIMEOUT_MS na het laatste loslaten (tijd van de interrupt),
+    // en alleen als de knop stabiel los is.
+    if (!_isrHeld && _clickCount && settled && !level && now - _releaseTime > BUTTON_CLICK_TIMEOUT_MS) {
+        uint8_t n = _clickCount;
+        _clickCount = 0;
+        _state = IDLE;
+        mt_log("knop: %ux", (unsigned)n);
+        if (n == 1) triggerEvent(SHORT_PRESS);
+        else if (n == 2) triggerEvent(DOUBLE_PRESS);
+        else if (n == 3) triggerEvent(TRIPLE_PRESS);
+        else triggerEvent(QUADRUPLE_PRESS);
     }
 }
 
