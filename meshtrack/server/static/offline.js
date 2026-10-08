@@ -206,6 +206,7 @@
         const r = await decode(text, ts, { own, chan: chanName });
         if (!r) {                                       // geen trackerbericht: gewone chat
           const i2 = text.indexOf(": ");
+          if (text.slice(i2 + 2).startsWith("T1A|")) { log("SOS-bevestiging van de server gezien"); continue; }   // voor de tracker
           chats += await addChat({ chan: chanName, chanIdx: chan, from: i2 > 0 ? text.slice(0, i2) : "?",
             text: i2 > 0 ? text.slice(i2 + 2) : text, ts });
           continue;

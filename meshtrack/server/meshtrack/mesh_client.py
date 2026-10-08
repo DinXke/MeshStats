@@ -130,6 +130,23 @@ class MeshLink:
             out.append({"slot": i, "name": p.get("channel_name", ""), "secret": bytes(p.get("channel_secret") or b"").hex()})
         return out
 
+    async def send_channel(self, slot: int, text: str, scope: str = "") -> None:
+        """Groepsbericht op een kanaal van de companion, met de regio (scope) van dat kanaal;
+        daarna weer de standaardregio van de companion."""
+        mc = self._require()
+        try:
+            if scope:
+                await mc.commands.set_flood_scope(scope if scope.startswith("#") else "#" + scope)
+            res = await mc.commands.send_chan_msg(slot, text[:140])
+            if res is None or res.type == EventType.ERROR:
+                raise RuntimeError(f"kanaalbericht niet verstuurd: {getattr(res, 'payload', None)}")
+        finally:
+            if scope:
+                try:
+                    await mc.commands.set_flood_scope("")
+                except Exception:  # noqa: BLE001
+                    pass
+
     async def set_channel(self, slot: int, name: str, secret_hex: str) -> None:
         mc = self._require()
         secret = bytes.fromhex(secret_hex) if secret_hex else bytes(16)

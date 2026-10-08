@@ -106,16 +106,19 @@
     <table>
       <tr><th>Indrukken</th><th>Functie</th></tr>
       <tr><td>1 keer</td><td>Meteen een positie sturen. Je hoort eerst de modusbiep. Daarna betekenen
-        <strong>twee hoge biepjes</strong> dat het bericht op het kanaal verstuurd is, en <strong>één lage toon</strong>
-        dat het niet kon (geen trackingkanaal ingesteld). Een kanaalbericht krijgt geen bevestiging: of de server het
-        ontving, zie je op de kaart. Dit kan hooguit één keer per 10 seconden.</td></tr>
+        <strong>twee hoge biepjes</strong> dat de tracker zijn bericht via een repeater terug hoorde: het is de mesh op.
+        <strong>Eén lage toon</strong>: binnen 12 seconden geen herhaling gehoord (buiten bereik van repeaters), of geen
+        trackingkanaal ingesteld. Dat de server het ontving, zie je op de kaart. Dit kan hooguit één keer per 10 seconden
+        (firmware 0.7.3 of nieuwer).</td></tr>
       <tr><td>2 keer</td><td>Van modus wisselen: <strong>één biep</strong> = tracker, <strong>twee biepjes</strong> =
         companion. Je hebt tot 0,8 seconde tussen de twee klikken.</td></tr>
       <tr><td>3 keer</td><td>De buzzer aan- of uitzetten.</td></tr>
       <tr><td>2 tot 8 s vasthouden</td><td><strong>SOS.</strong> Na 2 seconden hoor je drie hoge biepjes: de SOS is
         gewapend. Laat je nu los, dan stuurt hij meteen een SOS met zijn positie, en daarna nog twee keer met een verse
         positie, telkens een minuut later. Na 6,5 seconden klinkt een lage waarschuwingstoon: blijf je vasthouden,
-        dan schakelt hij uit in plaats van een SOS te sturen.</td></tr>
+        dan schakelt hij uit in plaats van een SOS te sturen. Na de eerste SOS hoor je net als bij een klik of een repeater
+        het bericht doorgaf. Ontvangt de server de SOS, dan stuurt hij een ondertekende bevestiging terug: de tracker speelt
+        dan <strong>drie stijgende tonen</strong>.</td></tr>
       <tr><td>langer dan 8 s</td><td>Uitschakelen. Binnen 20 seconden na het opstarten opent dit het herstelmenu.
         Weer aanzetten doe je door de knop enkele seconden in te houden of door hem aan USB te hangen.</td></tr>
     </table>

@@ -11,12 +11,15 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#define MT_FW_VERSION "0.7.2"
+#define MT_FW_VERSION "0.7.3"
 
-// Terugmelding na een klik/SOS: twee hoge biepjes = verstuurd op het trackingkanaal,
-// lage toon = niet verstuurd (trackingkanaal ontbreekt op het toestel).
-#define MT_TUNE_OK  "ok:d=16,o=7,b=200:16c,16p,16c"
-#define MT_TUNE_NOK "nok:d=4,o=5,b=100:4c"
+// Terugmelding na een klik/SOS: twee hoge biepjes = een repeater herhaalde het bericht
+// (gehoord binnen MT_HEAR_MS), lage toon = geen herhaling gehoord of niet verstuurd
+// (trackingkanaal ontbreekt). SOSOK = de server bevestigde de SOS (T1A).
+#define MT_TUNE_OK    "ok:d=16,o=7,b=200:16c,16p,16c"
+#define MT_TUNE_NOK   "nok:d=4,o=5,b=100:4c"
+#define MT_TUNE_SOSOK "sosok:d=16,o=6,b=180:16c,16e,16g,8c7"
+#define MT_HEAR_MS    12000
 
 enum MtMode : uint8_t { MT_MODE_COMPANION = 0, MT_MODE_TRACKER = 1 };
 

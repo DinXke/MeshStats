@@ -8,7 +8,7 @@ struct MtSendStats {
   uint32_t last_ms;
 };
 
-// tag: wat de afzender meegaf (bv. tijd van het nieuwste punt)
+// manual: met terugmelding (klik, eerste SOS); tag: wat de afzender meegaf (bv. tijd van het nieuwste punt)
 typedef void (*MtSendDone)(bool ok, bool manual, uint32_t tag);
 
 // Verstuurt een T1C-bericht op het trackingkanaal (flood, geen ACK mogelijk).
@@ -21,3 +21,4 @@ bool mt_sender_busy();                          // bericht wacht nog op verzendi
 bool mt_sender_ready();                         // trackingkanaal ingesteld (bestaat op het toestel)
 void mt_sender_set_done_cb(MtSendDone cb);
 const MtSendStats& mt_sender_stats();
+const uint8_t* mt_sender_last_block();          // eerste cijferblok van het laatst verstuurde pakket (16 bytes)
