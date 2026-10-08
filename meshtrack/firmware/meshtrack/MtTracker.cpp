@@ -289,7 +289,20 @@ static void step_watch() {
 
 // Ruw pakket: [header][4 transportcodes bij route 0/3][path_len][pad][payload]. GRP_TXT-payload
 // = [kanaalhash 1][MAC 2][cijferblokken...]; is het eerste blok het onze, dan is dit een herhaling.
+// Ontvangstlog (CLI 'rxlog aan', tot een herstart): elk kanaalpakket van de radio en elk ontcijferd
+// kanaalbericht, om te zien waar een bericht blijft.
+static bool s_rxlog = false;
+void mt_set_rxlog(bool on) { s_rxlog = on; }
+
 void mt_rx_raw(const uint8_t raw[], int len) {
+  if (s_rxlog && len >= 2 && ((raw[0] >> 2) & 15) == PAYLOAD_TYPE_GRP_TXT) {
+    int j = 1 + (((raw[0] & 3) == 0 || (raw[0] & 3) == 3) ? 4 : 0);
+    if (j < len) {
+      uint8_t q = raw[j];
+      int k = j + 1 + ((q >> 6) + 1) * (q & 63);
+      if (k < len) mt_log("rx kanaalpakket hash %02x, %u hops, %d bytes", raw[k], (unsigned)(q & 63), len);
+    }
+  }
   if (!s_w_have || len < 2) return;
   uint8_t route = raw[0] & 3;
   if (((raw[0] >> 2) & 15) != PAYLOAD_TYPE_GRP_TXT) return;
@@ -311,6 +324,7 @@ void mt_rx_raw(const uint8_t raw[], int len) {
 // "<naam>: T1A|<pk8>|<tag8>|<seq>" op het trackingkanaal: de server bevestigt een SOS.
 // tag8 = HMAC-SHA256(authsleutel, "<pk8>|A|<seq>"), eerste 4 bytes.
 bool mt_channel_text(uint8_t chan_idx, const char* text) {
+  if (s_rxlog) mt_log("rx kanaalbericht op kanaal %u: %.40s", (unsigned)chan_idx, text);
   // "T1A|" na de afzendernaam ("naam: T1A|...") of meteen aan het begin: de companion van openHop
   // zet de naam er niet altijd voor.
   const char* p = strncmp(text, "T1A|", 4) == 0 ? text : strstr(text, ": T1A|");

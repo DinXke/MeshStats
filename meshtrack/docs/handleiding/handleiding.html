@@ -386,6 +386,12 @@
   tracker</em> schrijf je ze weg.</p>
 <p>Met een terminalprogramma (115200 baud) opent meteen een genummerd menu. Losse commando's (<code>status</code>,
   <code>set …</code>, <code>mode tracker</code>, <code>help</code>) werken altijd.</p>
+<p><strong>Diagnose</strong> (firmware 0.7.5 of nieuwer): met <code>rxlog aan</code> toont de tracker live elk kanaalpakket dat
+  hij ontvangt (<code>rx kanaalpakket hash xx, N hops, N bytes</code>) en elk kanaalbericht dat hij kan ontcijferen
+  (<code>rx kanaalbericht op kanaal N: …</code>). Bij het aanzetten meldt hij ook de hash van zijn trackingkanaal. Dat blijft aan
+  tot <code>rxlog uit</code> of een herstart. Handig als een SOS-bevestiging niet aankomt (zie hoofdstuk 12).</p>
+<div class="note"><b>Alleen live</b>De tracker bewaart geen log: de regels verschijnen alleen terwijl je meekijkt, en alleen als het
+  menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div>
 <pre class="term">  ==============================================================
    MeshTrack T1000-E  fw 0.7.0       HOOFDMENU
@@ -645,6 +651,10 @@
     een trackingkanaal dat de server kent, en de juiste authsleutel? Staat er <em>oude firmware</em>, flash dan naar 0.7. Ziet een
     beheerder hem wel en een gebruiker niet, kijk dan naar diens <em>Effectieve rechten</em>.</td></tr>
   <tr><td class="k">Lage toon na een klik</td><td>De tracker heeft geen (geldig) trackingkanaal. Kies er een in Toestellen → Instellingen.</td></tr>
+  <tr><td class="k">SOS-bevestiging komt niet aan</td><td>Toont <code>status</code> <code>path_bytes=2</code>? Zo niet:
+    <code>set path_bytes 2</code> en <code>reboot</code>. Sommige repeaters sturen 1-byte padhashes niet door; de server (vanaf 1.0.5) zet
+    zijn companion daarom op 2 bytes (serverlog: <em>padhashes van de companion op 2 bytes gezet</em>). Met <code>rxlog aan</code>
+    zie je of de <code>T1A</code> op de tracker aankomt.</td></tr>
   <tr><td class="k">Dubbelklik: één biep</td><td>Hij zag maar één klik. Druk twee keer kort en duidelijk, met hooguit 0,8 s ertussen.</td></tr>
   <tr><td class="k">Geen GPS-fix (N)</td><td>Binnen of onder een dak vindt hij moeilijk satellieten. Leg hem even buiten met de bovenkant naar
     de hemel.</td></tr>

@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.7.3).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.7.5).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
   - Verzenden alleen via één **trackingkanaal** (`chan`), met de naam van de tracker als afzender en een handtekening
@@ -34,7 +34,14 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     app-only flash behouden; de opgeslagen instellingen houden hetzelfde formaat (oude velden blijven ongebruikt staan).
   - Klaarmaken via USB: `key import/export`, `chan list/set`, `set name|radio|tx|path_bytes|scope|chan|authkey`.
     Paden altijd 2 bytes per hop.
-- **server/**: FastAPI + meshcore-py (versie 1.0.0).
+  - Diagnose (0.7.5): `rxlog aan|uit` toont live in de seriële console elk ontvangen kanaalpakket
+    (`rx kanaalpakket hash xx, N hops, N bytes`) en elk ontcijferd kanaalbericht (`rx kanaalbericht op kanaal N: …`),
+    tot een herstart. Handig als een SOS-bevestiging (`T1A`) niet aankomt. De tracker bewaart geen log: de regels
+    verschijnen alleen live en alleen met het menu dicht (`q`). Er is geen commando `log`.
+- **server/**: FastAPI + meshcore-py (versie 1.0.5).
+  - Bij elke verbinding zet de server de openHop-companion op 2-byte padhashes (`path_hash_mode=1`), zoals de
+    trackers. Sommige repeaters (bij ons e3d3) sturen pakketten met 1-byte padhashes niet door; daardoor bereikte de
+    SOS-bevestiging wel de mesh, maar nooit de tracker. Log: "padhashes van de companion op 2 bytes gezet".
   - Live kaart met MapLibre en eigen pmtiles (geen externe diensten), filters (ook per kanaal, `?kanaal=<id>`),
     favorieten, volgen, sporen per snelheid, meshnodes uit de observer-database van openHop.
   - **Rechten via kanalen**: elke tracker heeft één trackingkanaal (`trackers.channel_id`, ook bijgewerkt uit zijn

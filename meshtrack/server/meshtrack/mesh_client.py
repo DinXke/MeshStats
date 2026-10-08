@@ -15,13 +15,17 @@ from meshcore import EventType, MeshCore
 
 log = logging.getLogger("meshtrack.mesh")
 
+PATH_HASH_MODE = 1   # 0 = 1 byte, 1 = 2 bytes, 2 = 3 bytes per hop
+
 OnMessage = Callable[[str, str, Optional[int], Optional[float], Optional[int]], Awaitable[None]]
 
 
 class MeshLink:
     def __init__(self, host: str, port: int, keepalive_s: int, on_message: OnMessage,
                  on_connect: Optional[Callable[[], Awaitable[None]]] = None):
-        self.host, self.port, self.keepalive_s = host, port, keepalive_s
+        # Hooguit 60 s: de companion-server van openHop verbreekt een verbinding na 120 s zonder verkeer
+        # (idle_timeout), en een verbroken verbinding kost bevestigingen en berichten.
+        self.host, self.port, self.keepalive_s = host, port, min(int(keepalive_s or 60), 60)
         self.on_message = on_message
         self.on_connect = on_connect
         self.on_channel: Optional[Callable[..., Awaitable[None]]] = None   # (slot, tekst, ts, snr, padlengte)
@@ -76,6 +80,7 @@ class MeshLink:
         mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_chan)
         mc.subscribe(EventType.DISCONNECTED, lambda _e: self._lost.set())
         self.self_info = dict(mc.self_info or {})
+        await self._ensure_path_hash_mode(mc)
         await mc.commands.get_contacts()
         await mc.start_auto_message_fetching()
         self.connected = True
@@ -96,6 +101,18 @@ class MeshLink:
                 res = await mc.commands.get_bat()
                 if res is None or res.type == EventType.ERROR:
                     raise ConnectionError("keepalive kreeg geen antwoord")
+
+    async def _ensure_path_hash_mode(self, mc: MeshCore) -> None:
+        """Eigen berichten met 2-byte padhashes, zoals de trackers. Repeaters zoals e3d3 sturen
+        pakketten met 1-byte padhashes niet door, en dan bereikt een SOS-bevestiging de tracker niet.
+        De companion van openHop staat standaard op 1 byte en bewaart de keuze zelf."""
+        try:
+            if await mc.commands.get_path_hash_mode() != PATH_HASH_MODE:
+                res = await mc.commands.set_path_hash_mode(PATH_HASH_MODE)
+                ok = res is not None and res.type != EventType.ERROR
+                log.info("padhashes van de companion op %d bytes gezet%s", PATH_HASH_MODE + 1, "" if ok else ": MISLUKT")
+        except Exception as e:  # noqa: BLE001 - oudere companion zonder dit commando
+            log.warning("padhashgrootte niet ingesteld: %s", e)
 
     async def _on_msg(self, event) -> None:
         p = event.payload or {}

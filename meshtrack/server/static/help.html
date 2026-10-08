@@ -276,6 +276,13 @@
       <code>set led companion</code>, <code>set led altijd</code> of <code>set led uit</code>, de biep bij berichten met
       <code>set msg_beep prive</code>, <code>alles</code> of <code>uit</code>. Tijden geef je op als <code>30s</code>,
       <code>5m</code> of <code>2h</code>.</p>
+    <p><strong>Diagnose</strong> (firmware 0.7.5 of nieuwer): met <code>rxlog aan</code> toont de tracker live elk
+      kanaalpakket dat hij ontvangt (<code>rx kanaalpakket hash xx, N hops, N bytes</code>) en elk kanaalbericht dat hij
+      kan ontcijferen (<code>rx kanaalbericht op kanaal N: …</code>). Bij het aanzetten meldt hij ook de hash van zijn
+      trackingkanaal, zodat je de juiste pakketten herkent. Dat blijft aan tot <code>rxlog uit</code> of een
+      herstart. De tracker bewaart geen log: de regels verschijnen alleen live, en alleen als het menu dicht is (typ
+      <code>q</code>). In <em>Toestellen</em> → <em>Terminal</em> is het menu al dicht. Een commando <code>log</code>
+      bestaat niet.</p>
 
     <h2 id="statussen">Statussen</h2>
     <table>
@@ -462,6 +469,19 @@
         een andere gebruiker niet, kijk dan bij die gebruiker naar <em>Effectieve rechten</em>.</li>
       <li><strong>Na een klik volgt een lage toon</strong>: de tracker heeft geen (geldig) trackingkanaal. Kies er een in
         <em>Toestellen</em>.</li>
+      <li><strong>SOS-bevestiging komt niet aan</strong> (geen stijgend deuntje, terwijl de SOS wel op de kaart staat):
+        <ul>
+          <li>Typ <code>status</code> op de tracker: daar moet <code>path_bytes=2</code> staan (anders
+            <code>set path_bytes 2</code> en <code>reboot</code>).</li>
+          <li>De server zet zijn companion bij elke verbinding op 2-byte padhashes (server 1.0.5 of nieuwer). Moest hij
+            dat aanpassen, dan staat in het serverlog <em>padhashes van de companion op 2 bytes gezet</em>. Sommige
+            repeaters sturen pakketten met 1-byte padhashes niet door; dan haalt de bevestiging de mesh wel, maar de
+            tracker niet.</li>
+          <li>Zet <code>rxlog aan</code> op de tracker (zie <a href="#menu">Het seriële menu</a>) en stuur een SOS. Komt
+            er een regel <code>rx kanaalbericht … T1A|…</code>, dan kwam de bevestiging aan. Zie je wel
+            <code>rx kanaalpakket</code> met de hash van het trackingkanaal maar geen <code>T1A</code>, of helemaal niets,
+            dan raakt het antwoord onderweg kwijt.</li>
+        </ul></li>
       <li><strong>Een dubbelklik geeft maar één biep</strong>: de tracker zag één klik. Druk twee keer kort en duidelijk,
         met hooguit 0,8 seconde ertussen.</li>
       <li><strong>De kaart blijft leeg</strong>: herlaad de pagina met Ctrl+F5.</li>
