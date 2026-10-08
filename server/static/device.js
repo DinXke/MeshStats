@@ -10,7 +10,7 @@
   const BAD = /ongeldig|onbekend|NIET|geweigerd|gebruik:|mislukt/;
   const MT_KEYS = ["min_speed", "min_dist", "turn_min", "turn_min_speed", "min_interval", "max_interval", "still_timeout",
     "heartbeat", "fix_timeout", "fix_timeout_hb", "track_in_companion", "accel_sens", "led",
-    "sample", "chan"];
+    "sample", "chan", "msg_beep"];
   let fw = null, kv = null, known = null, busy = false;
 
   function say(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); }

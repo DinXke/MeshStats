@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -1502,6 +1502,24 @@ def _group_body(b: GroupIn) -> dict[str, Any]:
             "channels": {k: v for k, v in b.channels.items() if k in known and v in rbac.LEVELS}}
 
 
+def _group_audit(name: str, body: dict[str, Any], old: Optional[dict[str, Any]] = None) -> str:
+    """Auditregel van een groep: rechten, kanaalrechten en (bij wijzigen) wat er aan de kanalen veranderde."""
+    cname = {c["id"]: c["name"] for c in S.db.channels()}
+    chans = {int(k): v for k, v in (body.get("channels") or {}).items()}
+    parts = [f"rechten: {', '.join(body['perms']) or 'geen'}",
+             "kanalen: " + (", ".join(f"{cname.get(k, k)} = {v}" for k, v in sorted(chans.items())) or "geen")
+             + (" (+ alle kanalen: kaart)" if body.get("all_trackers") else "")]
+    if old is not None:
+        before = {int(k): v for k, v in (old.get("channels") or {}).items()}
+        diff = [f"{cname.get(k, k)}: {before.get(k, 'geen')} → {chans.get(k, 'geen')}"
+                for k in sorted(set(before) | set(chans)) if before.get(k) != chans.get(k)]
+        if bool(old.get("all_trackers")) != bool(body.get("all_trackers")):
+            diff.append(f"alle kanalen: {'aan' if body.get('all_trackers') else 'uit'}")
+        if diff:
+            parts.append("gewijzigd: " + "; ".join(diff))
+    return f"{name}: " + " · ".join(parts)
+
+
 def _admins_left(excluding_user: Optional[int] = None, group_override: Optional[tuple[int, list[str]]] = None) -> int:
     """Aantal actieve gebruikers met users.manage (om buitensluiten te vermijden)."""
     groups = {g["id"]: g for g in S.db.groups()}
@@ -1533,16 +1551,18 @@ async def create_group(b: GroupIn, request: Request):
     p = need(request, "users.manage")
     if any(g["name"].lower() == b.name.strip().lower() for g in S.db.groups()):
         raise HTTPException(409, "die groep bestaat al")
-    gid = S.db.save_group(None, _group_body(b))
+    body = _group_body(b)
+    gid = S.db.save_group(None, body)
     _pcache.clear()
-    audit(p, "groep aangemaakt", b.name)
+    audit(p, "groep aangemaakt", _group_audit(body["name"], body))
     return S.db.group(gid)
 
 
 @app.put("/api/groups/{gid}")
 async def update_group(gid: int, b: GroupIn, request: Request):
     p = need(request, "users.manage")
-    if not S.db.group(gid):
+    old = S.db.group(gid)
+    if not old:
         raise HTTPException(404, "onbekende groep")
     body = _group_body(b)
     perms = body["perms"]
@@ -1550,7 +1570,7 @@ async def update_group(gid: int, b: GroupIn, request: Request):
         raise HTTPException(409, "dan heeft niemand nog gebruikersbeheer; dat kan niet")
     S.db.save_group(gid, body)
     _pcache.clear()
-    audit(p, "groep gewijzigd", f"{b.name}: {', '.join(perms)}")
+    audit(p, "groep gewijzigd", _group_audit(body["name"], body, old))
     return S.db.group(gid)
 
 

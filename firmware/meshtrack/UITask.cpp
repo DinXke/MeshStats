@@ -1,4 +1,5 @@
 #include "UITask.h"
+#include "MtConfig.h"
 #include <Arduino.h>
 #include <helpers/TxtDataHelpers.h>
 #include "MyMesh.h"
@@ -110,12 +111,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 void UITask::notify(UIEventType t) {
 #if defined(PIN_BUZZER)
 switch(t){
-  case UIEventType::contactMessage:
-    // gemini's pick
-    buzzer.play("MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7");
+  case UIEventType::contactMessage:          // MeshTrack: msg_beep 2 = nooit
+    if (mt_cfg.msg_beep != 2) buzzer.play("MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7");
     break;
-  case UIEventType::channelMessage:
-    buzzer.play("kerplop:d=16,o=6,b=120:32g#,32c#");
+  case UIEventType::channelMessage:          // MeshTrack: alleen bij msg_beep 1 (alles); posities van andere trackers zwijgen
+    if (mt_cfg.msg_beep == 1) buzzer.play("kerplop:d=16,o=6,b=120:32g#,32c#");
     break;
   case UIEventType::ack:
     buzzer.play("ack:d=32,o=8,b=120:c");

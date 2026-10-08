@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.7.1",
+      "date": "2026-10-08",
+      "notes": "Instellingen konden niet meer bewaard worden (interne opslag vol): MeshTrack bewaart ze nu op de grotere ExtraFS en verhuist ze bij de eerste start (instellingen en sleutel blijven behouden); status toont de bezetting. Nieuwe instelling msg_beep (prive/alles/uit): als companion zonder app standaard alleen een biep bij privéberichten, niet meer bij elk kanaalbericht.",
+      "zip": "meshtrack-t1000e-0.7.1.zip",
+      "zip_sha256": "3424ae891454ec57f2de9d18a7cf4f99d2a49f1cda186460b84294c052b345cd",
+      "uf2": "meshtrack-t1000e-0.7.1.uf2",
+      "app_size": 387936,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.7.0",
       "date": "2026-10-08",
       "notes": "Alleen nog via een kanaal: DM, doel (server-pubkey), ACK-herhalingen en het ritme volgens de ontvangst zijn weg. Afzender op het kanaal = de naam van de tracker. Dubbelklik betrouwbaarder (kortere loslating herkend, 0,8 s tussen de klikken).",
@@ -31,5 +41,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.7.0"
+  "latest": "0.7.1"
 }
