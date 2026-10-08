@@ -230,6 +230,9 @@
       return false;
     }
     fillForm(lastKv);
+    if (/^F{64}$|^0{64}$/i.test(lastKv.pubkey || "") || /BESCHADIGD/.test(lastKv.opslag_intern || ""))
+      msg($("s-msg"), "De interne opslag van deze tracker is beschadigd (sleutel ongeldig). Typ in Terminal: fs herstel ja. "
+        + "Na de herstart zet je de sleutel terug via Klaarmaken & backups → Op dit toestel zetten.");
     $("s-via").disabled = !lastKv.transport;
     if (lastKv.transport) await readChannels();
     else {
