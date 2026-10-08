@@ -15,9 +15,21 @@ bericht pas na herhaalpogingen of een wachtrij aankomt.
 State `L` (fw 0.8.0, SlowTrack): gelogde punten, in bursts verstuurd naast de gewone
 tracking. Het hoofdpunt is het nieuwste punt van dat stuk (met eigen fix_ts), de extra
 punten zijn oudere punten. Meestal ouder dan de live-positie: zie ingest.py.
+State `Q` (fw 0.9.0, FIFO): ingehaalde punten (store-and-forward van gemiste posities),
+verwerkt zoals `L`; de server bevestigt ze met T1F (zie main.py).
+
+Binaire extra punten (fw 0.9.0, op L en Q): `B<base64url zonder padding>`. De bytes zijn
+punten, nieuwste eerst, elk t.o.v. het vorige (het eerste t.o.v. het hoofdpunt), elk drie
+LEB128-varints: dt = vorige_ts - deze_ts (s), dlat en dlon in 1e-5 graden (zigzag).
+
+Veld 16 (optioneel, fw 0.9.0): vlaggen; `f` = bevestiging gevraagd (Q met verstuurde maar
+nog niet bevestigde punten). Alleen dan stuurt de server een T1F.
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -31,7 +43,9 @@ STATES = {
     "P": "handmatig",
     "B": "modus/boot",
     "L": "gelogd punt (SlowTrack)",
+    "Q": "ingehaald punt (FIFO)",
 }
+HISTORY_STATES = ("L", "Q")      # punten uit het verleden: nooit live-toestand, zie ingest.py
 MODES = {"c": "companion", "t": "tracker"}
 POWER = {"u": "USB", "b": "batterij"}
 
@@ -60,6 +74,11 @@ class Report:
     power: Optional[str] = None
     fix_ts: Optional[int] = None
     extra: list = None            # [(dt_s, lat, lon, spd)] eerdere punten, oud of nieuw door elkaar
+    flags: str = ""               # veld 16: letters; "f" = bevestiging gevraagd (FIFO, fw 0.9.0)
+
+    @property
+    def ack_requested(self) -> bool:
+        return "f" in self.flags
 
     @property
     def has_fix(self) -> bool:
@@ -103,8 +122,8 @@ def parse(text: str) -> Report:
         raise ProtocolError("geen MeshTrack-bericht")
     if parts[0] != "T1":
         raise UnknownVersion(f"onbekende versie {parts[0]}")
-    if len(parts) not in (11, 12, 13, 14, 15):
-        raise ProtocolError(f"verwacht 11 tot 15 velden, kreeg {len(parts)}")
+    if len(parts) not in (11, 12, 13, 14, 15, 16):
+        raise ProtocolError(f"verwacht 11 tot 16 velden, kreeg {len(parts)}")
 
     _, seq_s, state, lat_s, lon_s, alt_s, spd_s, crs_s, bat_s, hdop_s, age_s, *rest = parts
     seq = _opt_int(seq_s, 0, 65535, "seq")
@@ -117,7 +136,7 @@ def parse(text: str) -> Report:
     lon = _opt_float(lon_s, -180, 180, "lon")
     if (lat is None) != (lon is None):
         raise ProtocolError("lat en lon moeten samen gegeven zijn")
-    if state in ("M", "L") and lat is None:   # S mag zonder fix (stilgevallen binnen)
+    if state in ("M", "L", "Q") and lat is None:   # S mag zonder fix (stilgevallen binnen)
         raise ProtocolError(f"state {state} vereist een positie")
 
     mode = power = None
@@ -131,7 +150,11 @@ def parse(text: str) -> Report:
             raise ProtocolError(f"onbekende voeding {power!r}")
     fix_ts = _opt_int(rest[2], 1_500_000_000, 4_000_000_000, "fix_ts") if len(rest) > 2 else None
     extra = []
-    if len(rest) > 3 and rest[3].startswith("~"):
+    if len(rest) > 3 and rest[3].startswith("B"):
+        if lat is None:
+            raise ProtocolError("extra punten zonder hoofdpunt")
+        extra = _binary_extra(rest[3][1:], lat, lon)
+    elif len(rest) > 3 and rest[3].startswith("~"):
         if lat is None:
             raise ProtocolError("extra punten zonder hoofdpunt")
         extra = _compact_extra(rest[3], lat, lon)
@@ -170,6 +193,7 @@ def parse(text: str) -> Report:
         power=power,
         fix_ts=fix_ts,
         extra=extra,
+        flags=_flags(rest[4]) if len(rest) > 4 else "",
     )
 
 
@@ -197,6 +221,65 @@ def _compact_extra(field: str, lat: float, lon: float) -> list:
         dt += gap
         spd = round(haversine(nlat, nlon, plat, plon) / gap * 3.6)
         out.append((dt, nlat, nlon, min(spd, 1000)))
+        plat, plon = nlat, nlon
+    return out
+
+
+def _flags(v: str) -> str:
+    """Veld 16: kleine letters; onbekende letters worden verdragen (latere firmware)."""
+    if len(v) > 8 or not all("a" <= ch <= "z" for ch in v):
+        raise ProtocolError(f"ongeldige vlaggen {v!r}")
+    return v
+
+
+_B64URL = re.compile(r"^[A-Za-z0-9_-]*$")
+MAX_BINARY_EXTRA = 40
+
+
+def _varints(data: bytes) -> list[int]:
+    """LEB128 (unsigned) -> getallen; max 5 bytes per getal."""
+    out, n, shift = [], 0, 0
+    for b in data:
+        n |= (b & 0x7F) << shift
+        if b & 0x80:
+            shift += 7
+            if shift >= 35:
+                raise ProtocolError("binaire extra punten: varint te lang")
+        else:
+            out.append(n)
+            n, shift = 0, 0
+    if shift:
+        raise ProtocolError("binaire extra punten: afgebroken varint")
+    return out
+
+
+def _binary_extra(field: str, lat: float, lon: float) -> list:
+    """`B<base64url>` -> [(dt, lat, lon, spd)], dt cumulatief t.o.v. het hoofdpunt (zoals _compact_extra)."""
+    from .geo import haversine
+    if not _B64URL.match(field) or len(field) % 4 == 1:
+        raise ProtocolError("binaire extra punten: geen geldige base64url")
+    try:
+        data = base64.urlsafe_b64decode(field + "=" * (-len(field) % 4))
+    except (binascii.Error, ValueError):
+        raise ProtocolError("binaire extra punten: geen geldige base64url")
+    nums = _varints(data)
+    if len(nums) % 3:
+        raise ProtocolError("binaire extra punten: onvolledig punt")
+    if len(nums) // 3 > MAX_BINARY_EXTRA:
+        raise ProtocolError("binaire extra punten: te veel punten")
+    out, dt, plat, plon = [], 0, lat, lon
+    for i in range(0, len(nums), 3):
+        gap, zla, zlo = nums[i:i + 3]
+        dla, dlo = (zla >> 1) ^ -(zla & 1), (zlo >> 1) ^ -(zlo & 1)
+        if gap > 86400 or abs(dla) > 2_000_000 or abs(dlo) > 2_000_000:
+            raise ProtocolError("binair extra punt buiten bereik")
+        nlat, nlon = round(plat + dla / 1e5, 5), round(plon + dlo / 1e5, 5)
+        if not (-90 <= nlat <= 90 and -180 <= nlon <= 180):
+            raise ProtocolError("extra punt buiten bereik")
+        dt += gap
+        # dt 0 = zelfde tijd als het vorige punt: geen snelheid (de server slaat het als dubbel over)
+        spd = min(round(haversine(nlat, nlon, plat, plon) / gap * 3.6), 1000) if gap else None
+        out.append((dt, nlat, nlon, spd))
         plat, plon = nlat, nlon
     return out
 

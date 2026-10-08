@@ -251,6 +251,14 @@ legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
 #s-slowcalc { margin-top: 6px; font-weight: 600; }
 #s-slowcalc.warn { color: var(--warn); }
 #s-slowcalc:empty { display: none; }
+/* Trackmodus (0.9.0): FIFO-velden grijs in klassieke modus, slow_send grijs in FIFO-modus */
+#s-fifo.off label, #s-fifo.off .unit, #s-fifo.off .dur, #s-fifo.off .help, .grid > .off > label, .grid > .off > .dur, #s-fifo.off + .slowtip { opacity: .5; }
+.fifonote, .fifooff { color: var(--warn); }
+.fifomore ul { margin: 6px 0 0; padding-left: 18px; }
+.fifomore li { margin-top: 3px; }
+#s-fifocalc { margin-top: 6px; font-weight: 600; }
+#s-fifocalc.warn { color: var(--warn); }
+#s-fifocalc:empty { display: none; }
 .seg.wide { display: flex; margin-top: 4px; }
 .seg.wide button { flex: 1; padding: 9px; font-size: 14px; }
 .devinfo { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 14px; }
@@ -472,7 +480,8 @@ dialog.side .sticky-actions, dialog.side form .row:last-of-type:has(button[type=
   header.top .usermenu { margin-left: auto; }
   .ttable .mob { display: block; font-size: 12px; color: var(--muted); }
   .toolbar .chips .chip { padding: 4px 10px; }
-  .pagetabs .tab { font-size: 14px; }
+  .pagetabs { flex-wrap: wrap; }
+  .pagetabs .tab { font-size: 14px; padding-left: 3px; padding-right: 3px; min-width: 0; }
 }
 .actions a.btnlink { font-size: 15px; padding: 7px 12px; }
 
@@ -482,3 +491,105 @@ dialog.side .sticky-actions, dialog.side form .row:last-of-type:has(button[type=
 .ctable th:first-child, .ctable td:first-child { text-align: left; width: 100%; }
 .ctable th { font-weight: 600; color: var(--muted); font-size: 12px; }
 .ctable input[type=radio] { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+
+/* Toestellen → Simulatie (simulatie.js) */
+.sim-intro { margin: 0 0 8px; font-size: 14px; }
+#pane-sim > .small { margin-top: 4px; }
+.sim-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 4px 14px; margin-top: 10px; }
+.sim-play { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.sim-clock { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 18px; font-weight: 600; margin-left: auto; }
+.sim-stripwrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); margin-top: 12px; }
+.sim-stripwrap svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.sim-dz { fill: var(--muted); fill-opacity: .14; stroke: var(--muted); stroke-opacity: .4; stroke-dasharray: 5 4; }
+.sim-dzt, .sim-km, .sim-lane { fill: var(--muted); font-size: 13px; }
+.sim-lane { font-size: 11px; }
+.sim-route { stroke: var(--text); stroke-opacity: .35; stroke-width: 4; stroke-linecap: round; }
+.sim-mast { fill: none; stroke: var(--muted); stroke-width: 2.5; stroke-linejoin: round; }
+.sim-repdot { fill: var(--muted); }
+.sim-wave { fill: none; stroke: var(--muted); stroke-width: 2; opacity: .5; }
+.sim-rep.flash .sim-mast, .sim-rep.flash .sim-wave { stroke: var(--ok); animation: simflash .8s ease-out; }
+.sim-rep.flash .sim-repdot { fill: var(--ok); }
+@keyframes simflash { 0% { stroke-width: 6; opacity: 1; } 100% { stroke-width: 2.5; } }
+.sim-dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.sim-ringbg { fill: none; stroke: var(--line); stroke-width: 4; transition: opacity .2s; }
+.sim-ring { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round; }
+.sim-ring.slow { stroke: var(--warn); }
+.sim-ring.fifo { stroke: var(--text); }
+.sim-mark { font-size: 20px; font-weight: 700; }
+.sim-mark.ok { fill: var(--ok); }
+.sim-mark.bad { fill: var(--danger); }
+.sim-pkt { fill: var(--accent); }
+.sim-pkt.slow { fill: var(--warn); }
+.sim-pkt.fifo { fill: var(--text); }
+.sim-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+.sim-box { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel); min-width: 0; }
+.sim-box h4, .sim-h { margin: 0 0 6px; font-size: 14px; }
+.sim-h { margin-top: 16px; }
+.sim-box.drop { animation: simdrop .6s ease-out; }
+@keyframes simdrop { 0% { box-shadow: 0 0 0 3px var(--danger); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.sim-cap { font-weight: 400; color: var(--muted); }
+.sim-dots { display: flex; flex-wrap: wrap; gap: 3px; min-height: 14px; margin: 4px 0 6px; }
+.sim-dots .d { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: block; }
+.sim-dots.small-dots .d { width: 7px; height: 7px; }
+.sim-dots .d.slow { background: var(--warn); }
+.sim-dots .d.pend { outline: 2px solid var(--text); outline-offset: 1px; }
+.sim-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.sim-bar span { display: block; height: 100%; width: 0; background: var(--accent); }
+.sim-fly { position: fixed; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); z-index: 50; pointer-events: none; box-shadow: 0 0 0 2px var(--panel); }
+.sim-count dl, #sim-count { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 13px; }
+#sim-count dt { color: var(--muted); }
+#sim-count dd { margin: 0; }
+.sim-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-opacity: .6; }
+.sim-prog { stroke: var(--accent); stroke-width: 3; stroke-opacity: .5; }
+.tp.live { fill: var(--accent); }
+.tp.late { fill: var(--accent); fill-opacity: .35; stroke: var(--accent); stroke-width: 1.2; }
+.tp.lost { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+.tp.wait { fill: none; stroke: var(--warn); stroke-width: 1.4; }
+.sim-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; color: var(--muted); }
+.sim-legend .lg { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; font-style: normal; }
+.sim-legend .lg.live { background: var(--accent); }
+.sim-legend .lg.late { background: color-mix(in srgb, var(--accent) 35%, transparent); border: 1.2px solid var(--accent); }
+.sim-legend .lg.lost { width: auto; height: auto; color: var(--muted); font-weight: 700; line-height: 1; }
+.sim-legend .lg.wait { border: 1.4px solid var(--warn); }
+.sim-log { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; }
+.sim-log li { padding: 4px 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.sim-log li:last-child { border-bottom: 0; }
+.sim-log li.bad { color: var(--danger); }
+.sim-log li.ok { color: var(--muted); }
+.sim-log li.info { font-weight: 600; }
+@media (max-width: 720px) { .sim-clock { margin-left: 0; width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .sim-rep.flash .sim-mast, .sim-box.drop { animation: none; } }
+.sim-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.sim-presets button { font-size: 13px; padding: 6px 10px; }
+.sim-presets button.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.sim-dots .d.park { background: transparent; box-shadow: inset 0 0 0 2px var(--danger); }
+.tp.park { fill: none; stroke: var(--danger); stroke-width: 1.6; }
+.sim-legend .lg.park { border: 1.6px solid var(--danger); }
+#sim-fifonote .park { color: var(--danger); font-weight: 600; }
+#s-fifocalc > div + div { font-weight: 400; margin-top: 3px; }
+#s-fifocalc .warn { color: var(--warn); font-weight: 600; }
+.sim-uitleg { margin: 10px 0 4px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: var(--bg); }
+.sim-uitleg > summary { font-weight: 600; color: var(--text); font-size: 14px; }
+.sim-ugrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 10px; }
+.sim-usec { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; min-width: 0; }
+.sim-usec h5 { margin: 0 0 4px; font-size: 14px; }
+.sim-usec p { margin: 0 0 6px; font-size: 13px; line-height: 1.45; }
+.sim-show { font-size: 12.5px; padding: 4px 10px; }
+.sim-v { font-weight: 600; }
+.sim-hl { animation: simhl 2.6s ease-out; }
+@keyframes simhl { 0%, 60% { box-shadow: 0 0 0 4px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.sim-signal { margin-top: 10px; }
+.okc { color: var(--ok); }
+.sim-snrt { fill: var(--muted); font-size: 12px; }
+.sim-pkt.ack { fill: var(--ok); }
+.sim-mark.ack { fill: var(--ok); font-size: 14px; }
+.sim-dots .d.pf { box-shadow: 0 0 0 2px var(--warn); }
+.sim-dots .d.su { opacity: .55; }
+.sim-legend .lg.dot { background: var(--accent); }
+.sim-legend .lg.dot.slow { background: var(--warn); }
+.sim-legend .lg.pf { background: var(--accent); box-shadow: 0 0 0 2px var(--warn); }
+.sim-legend .lg.su { background: var(--accent); opacity: .55; }
+.sim-legend .lg.thin { width: 6px; height: 6px; background: var(--muted); }
+.tp.thin { fill: var(--muted); fill-opacity: .6; }
+.sim-log li.okplus { color: var(--ok); }
+@media (prefers-reduced-motion: reduce) { .sim-hl { animation: none; outline: 3px solid var(--accent); } }

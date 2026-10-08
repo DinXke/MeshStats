@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from .config import Config
 from .db import DB
-from .protocol import ProtocolError, UnknownVersion, is_meshtrack, is_suspect, parse
+from .protocol import HISTORY_STATES, ProtocolError, UnknownVersion, is_meshtrack, is_suspect, parse
 
 MAX_PAST_S = 7 * 24 * 3600   # sender-tijd ouder dan dit = klok fout
 MAX_FUTURE_S = 300
@@ -30,7 +30,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
            now: Optional[int] = None) -> Optional[dict[str, Any]]:
     """Verwerk één DM. Geeft de opgeslagen positie (voor de live kaart) terug,
     of None als het bericht genegeerd werd (onbekend, ongeldig, dubbel).
-    Bij SlowTrack (L) zegt "stored" of het hoofdpunt zelf nieuw was (anders stond die
+    Bij SlowTrack (L) en FIFO (Q) zegt "stored" of het hoofdpunt zelf nieuw was (anders stond die
     fix-tijd al in het spoor en zijn enkel de nieuwe "extras" opgeslagen)."""
     rx = int(now if now is not None else time.time())
     tracker = db.tracker_by_prefix(pubkey_prefix)
@@ -48,8 +48,8 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
             db.log_unknown(pubkey_prefix, f"ongeldig: {e}", text)
         return None
 
-    slow = r.state == "L"
-    if db.is_duplicate(tracker["id"], r.seq, rx - cfg.dedup_window_s, slow=slow):
+    slow = r.state in HISTORY_STATES          # L (SlowTrack) of Q (FIFO): punten uit het verleden
+    if db.is_duplicate(tracker["id"], r.seq, rx - cfg.dedup_window_s, r.state):
         return None
 
     p = {
@@ -70,7 +70,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
             ts = p["ts"] - dt
             if db.position_at(tracker["id"], ts):
                 continue
-            ep = {"ts": ts, "rx_ts": rx, "seq": r.seq, "state": "L" if slow else "M", "lat": lat, "lon": lon, "alt": None,
+            ep = {"ts": ts, "rx_ts": rx, "seq": r.seq, "state": r.state if slow else "M", "lat": lat, "lon": lon, "alt": None,
                   "spd": spd, "crs": None, "bat": None, "hdop": None, "fix_age": None, "mode": None, "power": None,
                   "suspect": int(not _in_bbox(lat, lon, cfg.region_bbox)), "snr": snr, "path_len": path_len,
                   "raw": f"(eerder punt uit bericht {r.seq})", "extra": 1}
@@ -81,7 +81,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
         if stored:
             db.add_position(tracker["id"], p)
         elif not extras:                       # alles al bekend: enkel "gehoord" noteren
-            db.touch_slow(tracker["id"], rx)
+            db.touch_slow(tracker["id"], rx, r.state)
             return None
         return {"tracker_id": tracker["id"], **p, "stored": stored, "extras": extras}
     db.add_position(tracker["id"], p)

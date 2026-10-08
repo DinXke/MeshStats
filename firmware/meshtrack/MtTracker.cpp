@@ -26,9 +26,33 @@
 // twee hoge biepjes (één keer per bericht), niet gehoord = stil. tx_beep: korte biep zodra
 // de radio een automatisch positiebericht echt verzonden heeft (logTx).
 //
+// Trackmodus (0.9, track_mode):
+//   classic ──> FastTrack + SlowTrack zoals hierboven (slow_send verstuurt de SlowTrack-buffer).
+//   fifo    ──> wachtrij (FIFO, op tijd gesorteerd, fifo_max punten, bewaard in /mt_fifo.dat):
+//     FastTrack-bericht met positie ──(radio verzendt)──> MT_HEAR_MS luisteren
+//        ──(herhaling gehoord)──> zijn punten zijn binnen (weg uit de FastTrack-buffer)
+//        ──(stil)──> punten blijven in de buffer en liften mee met de volgende berichten; pas als
+//           een hoofdpunt de buffer verlaat zonder ooit herhaald te zijn: dat hoofdpunt de wachtrij in
+//     SlowTrack-punt (slow_log) ──> meteen de wachtrij in (zelfde rustregel); geen slow_send
+//     dekking = een herhaling van een eigen pakket, of eender welk flood-pakket met >= 1 hop;
+//       stabiel (voor een nieuwe ronde) = SNR >= fifo_snr, twee keer binnen 60 s, of een T1F
+//     NIET ACTIEF ──(>= fifo_min punten, of >= 1 als het eerder gestopt is, én dekking < 30 s,
+//        én na de laatste stop)──> LEEGMAKEN
+//     vol = het minst betekenisvolle punt weg; fifo_dun = overbodige punten op een rechte lijn weg
+//     LEEGMAKEN ──(elke fifo_gap, hooguit fifo_per_uur per uur)──> één Q-bericht met de oudste
+//        punten (hoofdpunt = het nieuwste van dat deel, de oudere binair met hun tijd)
+//        ──(herhaald)──> die punten uit de wachtrij, bewaren, volgende
+//        ──(niet herhaald)──> punten blijven, pogingen + 1, wachttijd 1/5/15/60 min, NIET ACTIEF
+//           (wacht op nieuwe dekking). Vanaf fifo_pogingen = geparkeerd: overgeslagen zolang er
+//           gewone punten zijn; daarna één laatste poging, mislukt = opgegeven.
+//     T1F van de server (vraag "f" in het Q-bericht als er onbevestigde punten zijn) = alle verstuurde
+//        punten tot upto_ts zijn binnen.
+//     Leegmaakberichten tellen niet als FastTrack-misser (geen kringloop).
+//
 // In trackermodus slaapt ook de radio zodra er niets te verzenden of te
 // ontvangen valt (na een kort luistervenster); de mesh-lus draait dan niet. In
-// companionmodus blijft de radio altijd luisteren (stock gedrag).
+// companionmodus blijft de radio altijd luisteren (stock gedrag). Tijdens het
+// leegmaken van de FIFO blijft de radio wakker (behalve als het uurplafond bereikt is).
 #include "MtTracker.h"
 #include "MeshTrack.h"
 #include "MtConfig.h"
@@ -152,22 +176,54 @@ bool mt_radio_paused() { return s_radio_asleep; }
 // hoofdpunt). Pas als het bericht echt verstuurd is verdwijnen ze uit de buffer: kon
 // het niet weg (geen trackingkanaal), dan reizen zijn punten mee met het volgende.
 // Een kanaalbericht heeft geen ACK; of het aankwam, weet de tracker niet.
-struct MtPt { uint32_t ts; int32_t lat, lon; uint16_t spd; };   // lat/lon in 1e-5 graden
+// fifo (0.9): de punten blijven tot een bericht dat ze droeg HERHAALD is (meeliften: korte gaten
+// vullen de volgende berichten gratis op). Hoofdpunten (PT_MAIN) die de buffer verlaten zonder ooit
+// in een herhaald bericht te zitten (buffer vol, past niet meer in het venster, of ouder dan
+// 10 min) gaan de FIFO in; gewone tussenpunten vallen dan weg, zoals voorheen.
+#define MT_ALT_NONE  (-32768)          // hoogte onbekend
+#define PT_MAIN      1                 // hoofdpunt van een bericht
+struct MtPt { uint32_t ts; int32_t lat, lon; uint16_t spd; int16_t alt; uint8_t fl; };   // lat/lon in 1e-5 graden
 #define MT_PTS 24
 static MtPt s_pts[MT_PTS];
 static uint8_t s_npts = 0;
+static bool fifo_mode();
+static void fifo_take_main(const MtPt& q);
 
-static void pts_push(uint32_t ts, double la, double lo, float sp) {
+static void pts_push(uint32_t ts, double la, double lo, float sp, long alt = MT_ALT_NONE, bool main = false) {
   if (!ts) return;
+  if (s_npts && s_pts[s_npts - 1].ts == ts && main) {          // zelfde fix al als tussenpunt bewaard
+    s_pts[s_npts - 1].fl |= PT_MAIN;
+    if (alt != MT_ALT_NONE) s_pts[s_npts - 1].alt = (int16_t)(alt < -1000 ? -1000 : alt > 20000 ? 20000 : alt);
+    return;
+  }
   if (s_npts && s_pts[s_npts - 1].ts >= ts) return;            // al bewaard
-  if (s_npts == MT_PTS) { memmove(s_pts, s_pts + 1, sizeof(MtPt) * (MT_PTS - 1)); s_npts--; }
-  s_pts[s_npts++] = { ts, (int32_t)lround(la * 1e5), (int32_t)lround(lo * 1e5), (uint16_t)(sp < 0 ? 0 : sp + 0.5f) };
+  if (s_npts == MT_PTS) {
+    if (fifo_mode() && (s_pts[0].fl & PT_MAIN)) fifo_take_main(s_pts[0]);   // buffer vol
+    memmove(s_pts, s_pts + 1, sizeof(MtPt) * (MT_PTS - 1));
+    s_npts--;
+  }
+  if (alt != MT_ALT_NONE) alt = alt < -1000 ? -1000 : alt > 20000 ? 20000 : alt;
+  s_pts[s_npts++] = { ts, (int32_t)lround(la * 1e5), (int32_t)lround(lo * 1e5), (uint16_t)(sp < 0 ? 0 : sp + 0.5f),
+                      (int16_t)alt, (uint8_t)(main ? PT_MAIN : 0) };
 }
 
 static void pts_sent(uint32_t upto) {
   uint8_t k = 0;
   while (k < s_npts && s_pts[k].ts <= upto) k++;
   if (k) { memmove(s_pts, s_pts + k, sizeof(MtPt) * (s_npts - k)); s_npts -= k; }
+}
+
+// fifo: een bericht met de punten lo..hi is herhaald: die zijn binnen. Oudere punten pasten er niet
+// meer in en zullen er ook nooit meer in passen: hoofdpunten naar de FIFO, de rest weg.
+static void pts_heard(uint32_t lo, uint32_t hi) {
+  uint8_t w = 0;
+  for (uint8_t r = 0; r < s_npts; r++) {
+    const MtPt& q = s_pts[r];
+    if (q.ts >= lo && q.ts <= hi) continue;
+    if (q.ts < lo) { if (q.fl & PT_MAIN) fifo_take_main(q); continue; }
+    s_pts[w++] = q;
+  }
+  s_npts = w;
 }
 
 static void pts_sample(MtNmeaProvider& g) {
@@ -181,6 +237,245 @@ static void pts_sample(MtNmeaProvider& g) {
 }
 
 uint8_t mt_tracker_buffered() { return s_npts; }
+
+// ---- FIFO (0.9, track_mode fifo) --------------------------------------------------
+// Wachtrij van punten die de mesh (waarschijnlijk) niet haalden, op tijd gesorteerd ([0] = oudste),
+// zonder dubbele tijden. Vol = het oudste valt weg. Bewaard op ExtraFS: kop + punten, via tmp en
+// rename, met een crc; geschreven na elke 10 nieuwe punten (of een kwartier na het eerste
+// onbewaarde punt) en na elke leegmaakstap.
+// Per punt een pogingenteller: een leegmaakbericht dat niet herhaald wordt, verhoogt hem voor al
+// zijn punten en geeft ze een wachttijd (1, 5, 15, daarna 60 min). Vanaf fifo_pogingen is een punt
+// "geparkeerd": het blokkeert de wachtrij niet meer en krijgt pas een laatste poging als er niets
+// anders wacht. Lukt ook die niet, dan valt het weg.
+struct MtFPt {
+  uint32_t ts;                 // fix_ts (GPS)
+  int32_t lat, lon;            // 1e-5 graden
+  uint16_t spd;                // km/u
+  int16_t alt;                 // m, MT_ALT_NONE = onbekend
+  uint8_t tries;               // niet herhaalde leegmaakberichten met dit punt
+  uint8_t flags;               // FPT_SENT: zat al in een verstuurd leegmaakbericht (voor T1F)
+  uint16_t retry_min;          // alleen in RAM (na het laden 0): niet opnieuw voor deze minuut (sinds de start)
+};
+static_assert(sizeof(MtFPt) == 20, "MtFPt moet 20 bytes zijn (bestandsindeling v2)");
+#define FPT_SENT     1
+#define MT_FIFO_CAP  500               // grootste fifo_max
+#define MT_FIFO_MAGIC 0x3146544DUL     // "MTF1"
+#define MT_FL_HOUR 60                  // grootste fifo_per_uur
+// v1 (0.9.0-ontwikkeling): 16-byte punten zonder teller, kop zonder uurgeschiedenis. Wordt omgezet.
+// v2: kop met de verzendtijden van het laatste uur (unix, 0 = leeg), punten van 20 bytes.
+struct MtFifoHdr1 { uint32_t magic; uint16_t version, count; uint32_t crc; };
+struct MtFifoHdr { uint32_t magic; uint16_t version, count; uint32_t crc; uint32_t hist[MT_FL_HOUR]; };
+static const char* FIFO_PATH = "/mt_fifo.dat";
+static const char* FIFO_TMP  = "/mt_fifo.tmp";
+static MtFPt s_fifo[MT_FIFO_CAP];
+static uint16_t s_nfifo = 0;
+static uint16_t s_fifo_unsaved = 0;
+static uint32_t s_fifo_unsaved_since = 0;
+static bool s_cov_have = false;             // ooit dekking gezien (sinds de start)
+static uint32_t s_cov_ms = 0;               // laatste dekking (millis)
+static bool s_cov_stable = false;           // ooit stabiele dekking gezien
+static uint32_t s_cov_stable_ms = 0;        // laatste stabiele dekking (zie fifo_coverage)
+// fifo_per_uur: verzendtijden van leegmaakberichten. In RAM als millis (| 1; 0 = leeg) en, als de
+// klok gezet is, ook als unix-tijd: die gaat mee in de kop van het bestand, zodat een herstart het
+// uurplafond niet wist. Na het laden tellen de bewaarde tijden mee zodra de klok geldig is.
+static uint32_t s_fl_hist[MT_FL_HOUR];
+static uint32_t s_fl_hist_unix[MT_FL_HOUR];
+static uint8_t s_fl_hist_i = 0;
+static uint32_t s_fl_hist_loaded[MT_FL_HOUR];   // unix-tijden uit het bestand (van voor de herstart)
+
+static bool fifo_mode() { return mt_cfg.track_mode == MT_TRACK_FIFO; }
+static uint16_t fifo_cap() { return mt_cfg.fifo_max < 20 ? 20 : mt_cfg.fifo_max > MT_FIFO_CAP ? MT_FIFO_CAP : mt_cfg.fifo_max; }
+static uint16_t now_min() { return (uint16_t)(millis() / 60000UL); }
+static uint32_t rtc_unix() {
+  uint32_t t = the_mesh.getRTCClock()->getCurrentTime();
+  return t >= 1700000000UL ? t : 0;           // 0 = klok (nog) niet gezet
+}
+
+static int fifo_find_ts_pos(uint32_t ts) {
+  for (uint16_t i = 0; i < s_nfifo; i++) if (s_fifo[i].ts == ts) return i;
+  return -1;
+}
+
+static void fifo_evict_one();
+
+static bool fifo_save() {
+  MtFifoHdr h;
+  memset(&h, 0, sizeof(h));
+  h.magic = MT_FIFO_MAGIC;
+  h.version = 2;
+  h.count = s_nfifo;
+  h.crc = mt_crc32(0, (const uint8_t*)s_fifo, sizeof(MtFPt) * s_nfifo);
+  uint32_t now = rtc_unix();
+  int k = 0;
+  for (int i = 0; i < MT_FL_HOUR && k < MT_FL_HOUR; i++) {     // eigen verzendingen van het laatste uur
+    uint32_t t = s_fl_hist_unix[i];
+    if (t && now && t <= now && now - t < 3600) h.hist[k++] = t;
+  }
+  for (int i = 0; i < MT_FL_HOUR && k < MT_FL_HOUR; i++) {     // en de bewaarde van voor de herstart
+    uint32_t t = s_fl_hist_loaded[i];
+    if (t && (!now || (t <= now && now - t < 3600))) h.hist[k++] = t;
+  }
+  bool ok = mt_file_write_atomic(FIFO_PATH, FIFO_TMP, &h, sizeof(h), s_fifo, sizeof(MtFPt) * s_nfifo);
+  if (ok) s_fifo_unsaved = 0;
+  else mt_log("fifo: bewaren MISLUKT (%u punten)", (unsigned)s_nfifo);
+  return ok;
+}
+
+static bool fifo_load_file(const char* path) {
+  MtFifoHdr1 h1;
+  if (!mt_file_read_at(path, 0, &h1, sizeof(h1)) || h1.magic != MT_FIFO_MAGIC || h1.count > MT_FIFO_CAP) return false;
+  if (h1.version == 1) {                       // omzetten: punt per punt (16 bytes), teller 0
+    uint32_t crc = 0;
+    for (uint16_t i = 0; i < h1.count; i++) {
+      uint8_t b[16];
+      if (!mt_file_read_at(path, sizeof(h1) + 16UL * i, b, 16)) return false;
+      crc = mt_crc32(crc, b, 16);
+      MtFPt& p = s_fifo[i];
+      memset(&p, 0, sizeof(p));
+      memcpy(&p, b, 16);                       // ts, lat, lon, spd, alt: zelfde plaats
+    }
+    if (crc != h1.crc) return false;
+    s_nfifo = h1.count;
+    return true;
+  }
+  if (h1.version != 2) return false;
+  MtFifoHdr h;
+  if (!mt_file_read_at(path, 0, &h, sizeof(h))) return false;
+  if (h.count && !mt_file_read_at(path, sizeof(h), s_fifo, sizeof(MtFPt) * h.count)) return false;
+  if (mt_crc32(0, (const uint8_t*)s_fifo, sizeof(MtFPt) * h.count) != h.crc) return false;
+  s_nfifo = h.count;
+  memcpy(s_fl_hist_loaded, h.hist, sizeof(s_fl_hist_loaded));
+  return true;
+}
+
+static void fifo_load() {
+  s_nfifo = 0;
+  if (!fifo_load_file(FIFO_PATH) && !fifo_load_file(FIFO_TMP)) s_nfifo = 0;
+  for (uint16_t i = 0; i < s_nfifo; i++) s_fifo[i].retry_min = 0;   // wachttijden gelden niet over een herstart
+  uint16_t cap = fifo_cap();
+  while (s_nfifo > cap) fifo_evict_one();     // fifo_max verkleind: de minst betekenisvolle punten weg
+}
+
+// Afstand (m) van punt b tot het lijnstuk a-c (vlakke benadering; ruim goed genoeg voor enkele km).
+static float seg_dist_m(const MtFPt& a, const MtFPt& b, const MtFPt& c) {
+  const float ky = 1.11195f;                                      // m per 1e-5 graad breedte
+  const float kx = ky * cosf(b.lat * 1e-5f * 0.01745329f);         // m per 1e-5 graad lengte
+  float cx = (c.lon - a.lon) * kx, cy = (c.lat - a.lat) * ky;
+  float bx = (b.lon - a.lon) * kx, by = (b.lat - a.lat) * ky;
+  float l2 = cx * cx + cy * cy;
+  float t = l2 > 0 ? (bx * cx + by * cy) / l2 : 0;
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+  float dx = bx - t * cx, dy = by - t * cy;
+  return sqrtf(dx * dx + dy * dy);
+}
+
+// Volle wachtrij: het minst betekenisvolle punt weg = het punt dat het dichtst bij het lijnstuk tussen
+// zijn twee buren ligt. Het eerste en het laatste punt blijven altijd.
+static void fifo_evict_one() {
+  if (s_nfifo < 3) { if (s_nfifo) { memmove(s_fifo, s_fifo + 1, sizeof(MtFPt) * (s_nfifo - 1)); s_nfifo--; } return; }
+  uint16_t best = 1;
+  float bd = 1e30f;
+  for (uint16_t i = 1; i + 1 < s_nfifo; i++) {
+    float d = seg_dist_m(s_fifo[i - 1], s_fifo[i], s_fifo[i + 1]);
+    if (d < bd) { bd = d; best = i; }
+  }
+  memmove(s_fifo + best, s_fifo + best + 1, sizeof(MtFPt) * (s_nfifo - best - 1));
+  s_nfifo--;
+}
+
+// Eén punt toevoegen op zijn plaats in de tijd. false = dubbel (zelfde tijd).
+// Vol: eerst het minst betekenisvolle punt weg. fifo_dun: komt het nieuwe punt achteraan, en ligt het
+// vorige laatste punt dan binnen fifo_dun m van de lijn tussen zijn voorganger en het nieuwe punt
+// (rechte weg), dan is dat vorige overbodig. Een punt na of voor een tijdsprong van meer dan 10 min
+// blijft altijd (zo blijven stops zichtbaar).
+static bool fifo_add(const MtFPt& p0) {
+  MtFPt p = p0;
+  p.tries = 0;
+  p.flags = 0;
+  p.retry_min = 0;
+  if (!p.ts) return false;
+  if (fifo_find_ts_pos(p.ts) >= 0) return false;
+  if (s_nfifo >= fifo_cap() || s_nfifo >= MT_FIFO_CAP) fifo_evict_one();
+  int i = s_nfifo;
+  while (i > 0 && s_fifo[i - 1].ts > p.ts) i--;
+  memmove(s_fifo + i + 1, s_fifo + i, sizeof(MtFPt) * (s_nfifo - i));
+  s_fifo[i] = p;
+  s_nfifo++;
+  if (mt_cfg.fifo_dun && i == s_nfifo - 1 && s_nfifo >= 3) {
+    const MtFPt& a = s_fifo[s_nfifo - 3];
+    const MtFPt& b = s_fifo[s_nfifo - 2];
+    if (p.ts - b.ts <= 600 && b.ts - a.ts <= 600 && seg_dist_m(a, b, p) <= mt_cfg.fifo_dun) {
+      s_fifo[s_nfifo - 2] = p;
+      s_nfifo--;
+    }
+  }
+  if (!s_fifo_unsaved++) s_fifo_unsaved_since = millis();
+  return true;
+}
+
+static int fifo_find(uint32_t ts) { return fifo_find_ts_pos(ts); }
+
+static void fifo_remove_ts(const uint32_t* ts, int n) {
+  uint16_t w = 0;
+  for (uint16_t r = 0; r < s_nfifo; r++) {
+    bool drop = false;
+    for (int k = 0; k < n && !drop; k++) drop = s_fifo[r].ts == ts[k];
+    if (!drop) s_fifo[w++] = s_fifo[r];
+  }
+  s_nfifo = w;
+}
+
+static uint16_t fifo_parked() {
+  uint16_t n = 0;
+  for (uint16_t i = 0; i < s_nfifo; i++) n += s_fifo[i].tries >= mt_cfg.fifo_pogingen;
+  return n;
+}
+
+static MtFPt fifo_pt(uint32_t ts, double la, double lo, float sp, long alt) {
+  if (alt < -1000) alt = -1000;
+  if (alt > 20000) alt = 20000;
+  MtFPt p = { ts, (int32_t)lround(la * 1e5), (int32_t)lround(lo * 1e5), (uint16_t)(sp < 0 ? 0 : sp + 0.5f), (int16_t)alt, 0, 0, 0 };
+  return p;
+}
+
+// Een hoofdpunt dat de FastTrack-buffer verlaat zonder ooit in een herhaald bericht te zitten.
+static void fifo_take_main(const MtPt& q) {
+  MtFPt f = { q.ts, q.lat, q.lon, q.spd, q.alt, 0, 0, 0 };
+  if (fifo_add(f)) mt_log("fifo: punt toegevoegd (geen herhaling gehoord), totaal %u", (unsigned)s_nfifo);
+}
+
+// Dekking: een repeater heeft ons of iemand anders gehoord en doorgegeven. Gelogd als ze nieuw
+// is (de vorige was ouder dan 30 s), en alleen in fifo-modus (anders te veel lawaai).
+// Stabiel (mag een NIEUWE leegmaakronde starten): SNR >= fifo_snr, of twee keer dekking binnen
+// 60 s, of een geldige T1F van de server. Eén zwak pakket op de rand van het bereik is dat niet.
+static void fifo_coverage(const char* why, unsigned hops, const char* rep, bool strong) {
+  uint32_t now = millis();
+  bool fresh = s_cov_have && now - s_cov_ms < 30000;
+  if (strong || (s_cov_have && now - s_cov_ms < 60000)) { s_cov_stable = true; s_cov_stable_ms = now; }
+  s_cov_have = true;
+  s_cov_ms = now;
+  if (!fresh && fifo_mode()) mt_log("fifo: dekking (%s, %u hops, laatste repeater %s)", why, hops, rep);
+}
+
+// T1F van de server: alle punten tot en met upto die al in een leegmaakbericht verstuurd zijn, zijn
+// binnen (ook geparkeerde). Geeft het aantal verwijderde punten.
+static uint32_t s_fifo_confirmed = 0;          // sinds de start door T1F verwijderd (status fifo_bevestigd)
+static uint16_t fifo_confirm(uint32_t upto) {
+  uint16_t w = 0, n0 = s_nfifo;
+  for (uint16_t r = 0; r < s_nfifo; r++)
+    if (!((s_fifo[r].flags & FPT_SENT) && s_fifo[r].ts <= upto)) s_fifo[w++] = s_fifo[r];
+  s_nfifo = w;
+  uint16_t gone = n0 - w;
+  s_fifo_confirmed += gone;
+  if (gone) fifo_save();
+  return gone;
+}
+
+// Welke punten het FastTrack-bericht dat net naar de zender ging, meedroeg (fifo-modus). on_send_done
+// koppelt dat aan de bewaking van het bericht (zelfde tag = fix_ts van het hoofdpunt).
+static bool s_cap_set = false;
+static uint32_t s_cap_lo = 0, s_cap_hi = 0;   // oudste meegenomen punt .. hoofdpunt
 
 // ---- berichten ----------------------------------------------------------------
 
@@ -271,8 +566,15 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
         }
       }
     }
-    pts_push(main_ts, la, lo, sp);          // ook het hoofdpunt: bij een misser gaat het mee met het volgende
+    // fifo: onthouden welke punten dit bericht droeg; herhaald = die zijn binnen.
+    s_cap_set = fifo_mode();
+    s_cap_lo = pts;
+    s_cap_hi = main_ts;
+    // ook het hoofdpunt: bij een misser gaat het mee met het volgende
+    pts_push(main_ts, la, lo, sp, g.getAltitude() / 1000, true);
     tag = main_ts;
+  } else {
+    s_cap_set = false;
   }
   // Belangrijke berichten wijken niet voor een nieuwere gewone positie.
   bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B';
@@ -320,6 +622,14 @@ static void slow_take(MtNmeaProvider& g) {
   double la = g.getLatitude() / 1e6, lo = g.getLongitude() / 1e6;
   float sp = g.speedKmh();
   if (s_slow_have_prev && sp < 3 && mt_haversine_m(s_slow_prev_lat / 1e5, s_slow_prev_lon / 1e5, la, lo) < 5) return;
+  if (fifo_mode()) {                           // fifo: meteen de wachtrij in, geen eigen buffer
+    MtFPt f = fifo_pt(ts, la, lo, sp, g.getAltitude() / 1000);
+    if (fifo_add(f)) mt_log("fifo: SlowTrack-punt toegevoegd, totaal %u", (unsigned)s_nfifo);
+    s_slow_have_prev = true;
+    s_slow_prev_lat = f.lat;
+    s_slow_prev_lon = f.lon;
+    return;
+  }
   if (s_nslow == MT_SLOW_PTS) { memmove(s_slow, s_slow + 1, sizeof(MtSPt) * (MT_SLOW_PTS - 1)); s_nslow--; }
   long alt = g.getAltitude() / 1000;
   if (alt < -1000) alt = -1000;
@@ -338,10 +648,61 @@ static void slow_sent(uint32_t upto) {
   if (k) { memmove(s_slow, s_slow + k, sizeof(MtSPt) * (s_nslow - k)); s_nslow -= k; }
 }
 
-// Eén L-bericht, zelfde opbouw als send_report: hoofdpunt = het nieuwste punt (met eigen
-// fix_ts), daarna de oudere punten compact in veld 15. Passen ze niet allemaal binnen de
-// grens, dan blijven het oudste en het nieuwste en wordt gelijkmatig uitgedund; "~<step>"
-// is de vaakst voorkomende tussentijd, afwijkende tussentijden krijgen "@<s>".
+// ---- binaire extra punten (0.9; L- en Q-berichten) ----------------------------------
+// Veld 15 = "B" + base64url (A-Z a-z 0-9 - _, zonder opvulling). De bytes zijn de punten, NIEUWSTE
+// eerst na het hoofdpunt, elk t.o.v. het vorige (te beginnen bij het hoofdpunt), als drie varints
+// (LEB128): dt = vorige_ts - deze_ts (s), dlat en dlon = deze - vorige (1e-5 graden, zigzag).
+struct XPt { uint32_t ts; int32_t lat, lon; };
+
+static int varint_put(uint8_t* o, uint32_t v) {
+  int n = 0;
+  do { uint8_t b = v & 0x7F; v >>= 7; o[n++] = b | (v ? 0x80 : 0); } while (v);
+  return n;
+}
+static uint32_t zigzag(int32_t v) { return ((uint32_t)v << 1) ^ (uint32_t)(v >> 31); }
+static int b64url_len(int n) { return (n * 4 + 2) / 3; }
+static int b64url(char* o, const uint8_t* p, int n) {
+  static const char A[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  int k = 0;
+  for (int i = 0; i < n; i += 3) {
+    uint32_t v = (uint32_t)p[i] << 16 | (i + 1 < n ? (uint32_t)p[i + 1] << 8 : 0) | (i + 2 < n ? p[i + 2] : 0);
+    o[k++] = A[(v >> 18) & 63];
+    o[k++] = A[(v >> 12) & 63];
+    if (i + 1 < n) o[k++] = A[(v >> 6) & 63];
+    if (i + 2 < n) o[k++] = A[v & 63];
+  }
+  return k;
+}
+
+// x[0..c-1] van oud naar nieuw, x[c-1] = het hoofdpunt. Zet "|B..." achter text[len] en past len
+// aan; false (en text ongewijzigd) als het niet binnen limit past.
+static bool append_bin_extras(char* text, int& len, int limit, const XPt* x, int c) {
+  if (c < 2) return true;
+  uint8_t buf[128];
+  int nb = 0;
+  for (int k = c - 2; k >= 0; k--) {
+    const XPt& prev = x[k + 1];
+    const XPt& q = x[k];
+    if (prev.ts - q.ts > 86400) return false;   // de server neemt hooguit een dag tussen twee punten
+    uint8_t t[15];
+    int m = varint_put(t, prev.ts - q.ts);
+    m += varint_put(t + m, zigzag(q.lat - prev.lat));
+    m += varint_put(t + m, zigzag(q.lon - prev.lon));
+    if (nb + m > (int)sizeof(buf)) return false;
+    memcpy(buf + nb, t, m);
+    nb += m;
+  }
+  if (len + 2 + b64url_len(nb) > limit) return false;
+  text[len++] = '|';
+  text[len++] = 'B';
+  len += b64url(text + len, buf, nb);
+  text[len] = 0;
+  return true;
+}
+
+// Eén L-bericht: hoofdpunt = het nieuwste punt (met eigen fix_ts), daarna de oudere punten binair
+// in veld 15 (append_bin_extras). Passen ze niet allemaal binnen de grens, dan blijven het oudste
+// en het nieuwste en wordt gelijkmatig uitgedund.
 static void send_slow() {
   const int n = s_nslow;
   const MtSPt& m = s_slow[n - 1];
@@ -357,6 +718,7 @@ static void send_slow() {
   const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2;   // zoals send_report
   char text[MT_TEXT_MAX + 1];
   uint8_t sel[MT_SLOW_MAX_ITEMS + 1];
+  XPt x[MT_SLOW_MAX_ITEMS + 1];
   int c = n < MT_SLOW_MAX_ITEMS + 1 ? n : MT_SLOW_MAX_ITEMS + 1;
   int used = 1;
   for (; c >= 1; c--) {
@@ -367,40 +729,8 @@ static void send_slow() {
     int len = bn;
     used = 1;
     if (c == 1) break;
-    // vaakst voorkomende tussentijd = het interval in de kop
-    uint32_t step = 0;
-    int best = 0;
-    for (int i = 1; i < c; i++) {
-      uint32_t gi = s_slow[sel[i]].ts - s_slow[sel[i - 1]].ts;
-      int cnt = 0;
-      for (int j = 1; j < c; j++) cnt += (s_slow[sel[j]].ts - s_slow[sel[j - 1]].ts) == gi;
-      if (cnt > best || (cnt == best && gi < step)) { best = cnt; step = gi; }
-    }
-    if (step < 1) step = 1;
-    if (step > 86400) step = 86400;
-    char head[16];
-    int hm = snprintf(head, sizeof(head), "|~%lu", (unsigned long)step);
-    if (len + hm + 6 > limit) continue;
-    memcpy(text + len, head, hm + 1);
-    len += hm;
-    bool fits = true;
-    int32_t pla = m.lat, plo = m.lon;
-    uint32_t pts = m.ts;
-    for (int k = c - 2; k >= 0; k--) {
-      const MtSPt& q = s_slow[sel[k]];
-      uint32_t gap = pts - q.ts;
-      if (gap < 1 || gap > 86400) break;         // de server neemt hooguit een dag tussen twee punten
-      char item[40];
-      int mm = gap == step ? snprintf(item, sizeof(item), ";%ld,%ld", (long)(q.lat - pla), (long)(q.lon - plo))
-                           : snprintf(item, sizeof(item), ";%ld,%ld@%lu", (long)(q.lat - pla), (long)(q.lon - plo),
-                                      (unsigned long)gap);
-      if (len + mm > limit) { fits = false; break; }
-      memcpy(text + len, item, mm + 1);
-      len += mm;
-      used++;
-      pla = q.lat; plo = q.lon; pts = q.ts;
-    }
-    if (fits) break;                             // anders: minder punten, gelijkmatiger uitgedund
+    for (int i = 0; i < c; i++) x[i] = { s_slow[sel[i]].ts, s_slow[sel[i]].lat, s_slow[sel[i]].lon };
+    if (append_bin_extras(text, len, limit, x, c)) { used = c; break; }   // anders: minder punten
   }
   sign_and_send(text, 'L', false, true, m.ts);
   strncpy(s_last_reason, "slowtrack", sizeof(s_last_reason) - 1);
@@ -446,6 +776,21 @@ static void step_slow() {
     }
   }
 
+  // fifo: geen slow_send. Wat nog in de SlowTrack-buffer zat (van classic) gaat de wachtrij in.
+  if (fifo_mode()) {
+    if (s_nslow) {
+      for (uint8_t k = 0; k < s_nslow; k++) {
+        const MtSPt& q = s_slow[k];
+        MtFPt f = { q.ts, q.lat, q.lon, q.spd, q.alt, 0, 0, 0 };
+        fifo_add(f);
+      }
+      mt_log("fifo: %u SlowTrack-punten uit de buffer overgenomen, totaal %u", (unsigned)s_nslow, (unsigned)s_nfifo);
+      s_nslow = 0;
+    }
+    s_slow_send_due = now + send_ms;           // na een terugkeer naar classic: een volle periode
+    return;
+  }
+
   // Versturen ook als slow_log net op 0 gezet is: wat in de buffer zit gaat nog mee.
   if ((int32_t)(now - s_slow_send_due) >= 0) {
     s_slow_send_due = now + send_ms;
@@ -480,37 +825,280 @@ static void step_battery() {
 
 static MtRuleParams params();
 
+// ---- FIFO leegmaken -----------------------------------------------------------------
+// Eén leegmaakbericht tegelijk: het volgende pas als het vorige herhaald is (en fifo_gap voorbij),
+// zodat nooit dezelfde punten twee keer onderweg zijn. Niet herhaald = pogingenteller + wachttijd
+// voor die punten, en stoppen tot er nieuwe dekking is.
+static bool s_fl_active = false;            // leegmaken bezig
+static bool s_fl_pending = false;           // al eens begonnen en er bleven punten over: hervatten vanaf 1 punt
+static bool s_fl_inflight = false;          // een leegmaakbericht wacht op zijn uitkomst
+static bool s_fl_final = false;             // dat bericht is de laatste poging voor geparkeerde punten
+static bool s_fl_ever = false;              // al eens een leegmaakbericht verstuurd (sinds de start)
+static bool s_fl_stopped = false;
+static uint32_t s_fl_stop_ms = 0;           // dekking van voor deze stop telt niet om te hervatten
+static uint32_t s_fl_sent_ms = 0;
+static uint32_t s_fl_tag = 0;               // fix_ts van het hoofdpunt van het bericht onderweg
+static uint32_t s_fl_ts[MT_SLOW_MAX_ITEMS + 1];   // de punten van dat bericht
+static uint8_t s_fl_n = 0;
+
+// Leegmaakberichten in het laatste uur (eigen + bewaarde van voor de herstart); oldest_age_s = leeftijd van het oudste.
+static int fl_sent_last_hour(uint32_t* oldest_age_s = nullptr) {
+  uint32_t now = millis(), oldest = 0, unow = rtc_unix();
+  int n = 0;
+  for (int i = 0; i < MT_FL_HOUR; i++) {
+    if (!s_fl_hist[i] || now - s_fl_hist[i] >= 3600000UL) continue;
+    n++;
+    if ((now - s_fl_hist[i]) / 1000 > oldest) oldest = (now - s_fl_hist[i]) / 1000;
+  }
+  if (unow) {
+    for (int i = 0; i < MT_FL_HOUR; i++) {
+      uint32_t t = s_fl_hist_loaded[i];
+      if (!t || t > unow || unow - t >= 3600) continue;
+      n++;
+      if (unow - t > oldest) oldest = unow - t;
+    }
+  }
+  if (oldest_age_s) *oldest_age_s = oldest;
+  return n;
+}
+
+static bool fl_capped() { return fl_sent_last_hour() >= mt_cfg.fifo_per_uur; }
+
+// Wachttijd voorbij? (retry_min 0 = meteen; een onmogelijk verre waarde = vergeten, dus ook meteen)
+static bool fifo_due(const MtFPt& p) {
+  int16_t d = (int16_t)(p.retry_min - now_min());
+  return p.retry_min == 0 || d <= 0 || d > 60;
+}
+static bool fifo_is_parked(const MtFPt& p) { return p.tries >= mt_cfg.fifo_pogingen; }
+
+// Welke punten mag het volgende leegmaakbericht meenemen? Oudste eerst, op tijd gesorteerd, en
+// alleen punten waarvan de wachttijd voorbij is. Gewone punten gaan voor; geparkeerde punten krijgen
+// alleen een (laatste) poging als er geen gewone punten meer zijn, ook geen die nog wachten.
+// Geeft het aantal (hooguit max_n) en zet *final.
+static int fifo_pick(uint16_t* sel, int max_n, bool* final) {
+  bool normal_left = false;
+  for (uint16_t i = 0; i < s_nfifo && !normal_left; i++) normal_left = !fifo_is_parked(s_fifo[i]);
+  *final = !normal_left;
+  int n = 0;
+  for (uint16_t i = 0; i < s_nfifo && n < max_n; i++) {
+    const MtFPt& p = s_fifo[i];
+    if (fifo_is_parked(p) != *final || !fifo_due(p)) continue;
+    if (n && p.ts - s_fifo[sel[n - 1]].ts > 86400) break;   // de server neemt hooguit een dag tussen twee punten
+    sel[n++] = i;
+  }
+  return n;
+}
+
+static void fifo_stop(const char* why) {
+  if (s_fl_active) mt_log("fifo: leegmaken gestopt (%s), nog %u punten", why, (unsigned)s_nfifo);
+  s_fl_active = false;
+  s_fl_stopped = true;
+  s_fl_stop_ms = millis();
+  s_fl_pending = s_nfifo > 0;
+}
+
+static uint8_t fifo_backoff_min(uint8_t tries) { return tries <= 1 ? 1 : tries == 2 ? 5 : tries == 3 ? 15 : 60; }
+
+static void flush_done(bool heard) {
+  if (!s_fl_inflight) return;
+  s_fl_inflight = false;
+  mt_log("fifo: bericht met %u punten verstuurd, %s", (unsigned)s_fl_n, heard ? "gehoord" : "niet gehoord");
+  if (heard) {
+    fifo_remove_ts(s_fl_ts, s_fl_n);
+  } else if (s_fl_final) {                     // laatste poging mislukt: opgeven
+    int k = s_fl_n ? fifo_find(s_fl_ts[0]) : -1;
+    unsigned tries = k >= 0 ? s_fifo[k].tries + 1U : mt_cfg.fifo_pogingen + 1U;
+    fifo_remove_ts(s_fl_ts, s_fl_n);
+    mt_log("fifo: %u punten opgegeven na %u pogingen (wellicht toch aangekomen; de server filtert dubbels)",
+           (unsigned)s_fl_n, tries);
+  } else {                                     // teller op, wachttijd, punten blijven
+    for (int j = 0; j < s_fl_n; j++) {
+      int k = fifo_find(s_fl_ts[j]);
+      if (k < 0) continue;
+      MtFPt& p = s_fifo[k];
+      if (p.tries < 255) p.tries++;
+      uint16_t r = (uint16_t)(now_min() + fifo_backoff_min(p.tries));
+      p.retry_min = r ? r : 1;
+    }
+  }
+  fifo_save();
+  if (!s_nfifo) {
+    s_fl_active = s_fl_pending = false;
+    mt_log("fifo: wachtrij leeg");
+  }
+  if (!heard) fifo_stop("geen herhaling gehoord");
+}
+
+// Eén Q-bericht ("ingehaald punt"): hoofdpunt = het nieuwste gekozen punt (met eigen fix_ts), de
+// oudere binair in veld 15 (zie append_bin_extras), elk met zijn echte tijd. Zoveel punten als
+// passen (hooguit 31), oudste eerst gekozen.
+static void send_flush(const uint16_t* sel, int cmax, bool final) {
+  int bat = mt_battery_pct(board.getBattMilliVolts());
+  uint32_t now_unix = the_mesh.getRTCClock()->getCurrentTime();
+  uint16_t seq = seq_next();
+  // 16e veld "f": alleen als er punten verstuurd zijn waarvan geen herhaling gehoord werd; dan stuurt
+  // de server (hooguit eens per 10 min) een T1F. Anders weglaten (minder verkeer op de mesh).
+  bool want_f = false;
+  for (uint16_t i = 0; i < s_nfifo && !want_f; i++) want_f = (s_fifo[i].flags & FPT_SENT) != 0;
+  const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2 - (want_f ? 3 : 0);   // zoals send_report
+  char text[MT_TEXT_MAX + 1];
+  XPt x[MT_SLOW_MAX_ITEMS + 1];
+  int c = cmax, len = 0;
+  for (; c >= 1; c--) {
+    const MtFPt& m = s_fifo[sel[c - 1]];
+    char age[12] = "", alt[8] = "";
+    if (now_unix >= m.ts && now_unix - m.ts < 10000000UL) snprintf(age, sizeof(age), "%lu", (unsigned long)(now_unix - m.ts));
+    if (m.alt != MT_ALT_NONE) snprintf(alt, sizeof(alt), "%d", (int)m.alt);
+    len = snprintf(text, sizeof(text), "T1|%u|Q|%.5f|%.5f|%s|%u||%d||%s|%c|%c|%lu",
+                   (unsigned)seq, m.lat / 1e5, m.lon / 1e5, alt, (unsigned)m.spd, bat < 0 ? 0 : bat, age,
+                   mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b', (unsigned long)m.ts);
+    if (c == 1) break;
+    for (int i = 0; i < c; i++) x[i] = { s_fifo[sel[i]].ts, s_fifo[sel[i]].lat, s_fifo[sel[i]].lon };
+    if (append_bin_extras(text, len, limit, x, c)) break;   // anders: één punt minder
+  }
+  if (c < 1) c = 1;
+  if (want_f && len + 3 <= MT_TEXT_MAX) {
+    memcpy(text + len, c == 1 ? "||f" : "|f", c == 1 ? 4 : 3);
+    len += c == 1 ? 3 : 2;
+  }
+  s_fl_n = (uint8_t)c;
+  for (int i = 0; i < c; i++) s_fl_ts[i] = s_fifo[sel[i]].ts;
+  s_fl_tag = s_fl_ts[c - 1];
+  s_fl_final = final;
+  s_fl_inflight = s_fl_ever = true;
+  s_fl_sent_ms = millis();
+  s_fl_hist[s_fl_hist_i] = s_fl_sent_ms | 1;
+  s_fl_hist_unix[s_fl_hist_i] = rtc_unix();
+  s_fl_hist_i = (uint8_t)((s_fl_hist_i + 1) % MT_FL_HOUR);
+  uint16_t total = s_nfifo;
+  // on_send_done (meestal meteen, binnen sign_and_send) herkent het aan s_fl_inflight + tag + 'Q'.
+  sign_and_send(text, 'Q', false, true, s_fl_tag);
+  if (s_fl_inflight) {                         // verstuurd: punten markeren (T1F mag ze dan opruimen)
+    for (int i = 0; i < c; i++) { int k = fifo_find(s_fl_ts[i]); if (k >= 0) s_fifo[k].flags |= FPT_SENT; }
+  }
+  strncpy(s_last_reason, "fifo", sizeof(s_last_reason) - 1);
+  s_last_tx_ms = millis();
+  mt_log("tx %s (fifo: %d van %u punten%s%s)", text, c, (unsigned)total, final ? ", laatste poging" : "",
+         want_f ? ", vraagt T1F" : "");
+}
+
+static void pts_age_out();
+static void step_fifo() {
+  uint32_t now = millis();
+  pts_age_out();
+  uint16_t cap = fifo_cap();
+  if (s_nfifo > cap) {                         // fifo_max verkleind: de minst betekenisvolle punten weg
+    while (s_nfifo > cap) fifo_evict_one();
+    fifo_save();
+  }
+  if (s_fifo_unsaved && (s_fifo_unsaved >= 10 || now - s_fifo_unsaved_since >= 15UL * 60000UL)) fifo_save();
+  if (s_fl_inflight && now - s_fl_sent_ms > 90000UL) flush_done(false);   // nooit een uitkomst: als niet gehoord
+  if (!fifo_mode() || !tracking_active()) {
+    if (s_fl_active) fifo_stop(fifo_mode() ? "tracking uit" : "classic");
+    return;
+  }
+  if (s_fl_inflight || !s_nfifo) return;
+  uint16_t sel[MT_SLOW_MAX_ITEMS + 1];
+  bool final = false;
+  int cand = fifo_pick(sel, MT_SLOW_MAX_ITEMS + 1, &final);
+  if (!s_fl_active) {
+    uint16_t need = s_fl_pending ? 1 : mt_cfg.fifo_min;
+    // Een nieuwe ronde alleen bij stabiele dekking (fifo_snr, twee keer binnen 60 s of een T1F).
+    if (s_nfifo < need || !cand || !s_cov_stable || now - s_cov_stable_ms >= 30000UL) return;
+    if (s_fl_stopped && (int32_t)(s_cov_stable_ms - s_fl_stop_ms) <= 0) return;   // dekking van voor de stop
+    if (fl_capped()) return;
+    s_fl_active = s_fl_pending = true;
+    mt_log("fifo: leegmaken begint (%u punten, stabiele dekking %lu s geleden)", (unsigned)s_nfifo,
+           (unsigned long)((now - s_cov_stable_ms) / 1000));
+  }
+  if (!cand) {                                 // alles wacht nog (wachttijd): pauze, radio mag slapen
+    s_fl_active = false;
+    mt_log("fifo: leegmaken gepauzeerd (de %u punten wachten op een nieuwe poging)", (unsigned)s_nfifo);
+    return;
+  }
+  if (s_fl_ever && now - s_fl_sent_ms < 1000UL * mt_cfg.fifo_gap_s) return;
+  if (fl_capped() || mt_sender_busy()) return;
+  if (!mt_sender_ready()) { fifo_stop("trackingkanaal ontbreekt"); return; }
+  send_flush(sel, cand, final);
+}
+
+// fifo: hoofdpunten die al 10 min in de FastTrack-buffer zitten zonder herhaald bericht (bv. omdat
+// de tracker stilstaat en niets meer verstuurt), naar de FIFO: anders gaan ze verloren bij een herstart.
+static void pts_age_out() {
+  static uint32_t next = 0;
+  if (!fifo_mode() || (int32_t)(millis() - next) < 0) return;
+  next = millis() + 10000;
+  uint32_t now = rtc_unix();
+  if (!now) return;
+  uint8_t w = 0;
+  for (uint8_t r = 0; r < s_npts; r++) {
+    const MtPt& q = s_pts[r];
+    if ((q.fl & PT_MAIN) && q.ts <= now && now - q.ts > 600) { fifo_take_main(q); continue; }
+    s_pts[w++] = q;
+  }
+  s_npts = w;
+}
+
+// In trackermodus de radio wakker houden: leegmaken bezig (niet als het uurplafond bereikt is).
+static bool fifo_keep_awake() { return s_fl_inflight || (s_fl_active && !fl_capped()); }
+
 // Een kanaalbericht kent geen ACK: "ok" = de radio heeft het verstuurd. Met terugmelding
 // (manual) bewaken we daarna of een repeater het herhaalt.
 // Automatische berichten (niet klik/SOS) voor tx_beep en heard_beep: eerst wachten tot de
 // radio het pakket echt verzendt (mt_tx_packet), daarna MT_HEAR_MS luisteren naar herhalingen.
+// fifo: elk bericht met een positie (TXW_FIFO, ook klik en SOS, zonder biep) en elk leegmaakbericht
+// (TXW_FLUSH, toestand Q) wordt op dezelfde manier bewaakt.
 #define TXW_USED  1
 #define TXW_BEEP  2     // tx_beep: biep bij verzenden
 #define TXW_HEAR  4     // heard_beep: herhalingen bewaken
 #define TXW_SENT  8     // de radio heeft het verzonden
 #define TXW_HEARD 16    // al gebiept voor een herhaling
-struct TxWatch { uint8_t block[16]; uint32_t t; uint8_t fl; };
+#define TXW_FIFO  32    // fifo: FastTrack-bericht; herhaald = zijn punten zijn binnen (pts_heard)
+#define TXW_FLUSH 64    // fifo: leegmaakbericht
+#define TXW_REP   128   // er is een herhaling gehoord
+#define TXW_LISTEN (TXW_HEAR | TXW_FIFO | TXW_FLUSH)
+struct TxWatch { uint8_t block[16]; uint32_t t; uint8_t fl; uint32_t lo, hi; };   // lo..hi: punten van een fifo-bericht
 #define MT_TXW 6
 static TxWatch s_txw[MT_TXW];
 
-static void txw_add(const uint8_t* block, uint8_t fl) {
+// Bewaking afsluiten. FastTrack-bericht zonder herhaling: niets (zijn punten blijven in de buffer en
+// reizen mee met de volgende berichten); leegmaakbericht = uitkomst.
+static void txw_finish(TxWatch& w) {
+  if ((w.fl & (TXW_FIFO | TXW_REP)) == (TXW_FIFO | TXW_REP) && fifo_mode()) pts_heard(w.lo, w.hi);
+  if (w.fl & TXW_FLUSH) flush_done((w.fl & TXW_REP) != 0);
+  w.fl = 0;
+}
+
+static int txw_add(const uint8_t* block, uint8_t fl) {
   int k = 0;
   for (int i = 0; i < MT_TXW; i++) {
     if (!(s_txw[i].fl & TXW_USED)) { k = i; break; }
     if ((int32_t)(s_txw[i].t - s_txw[k].t) < 0) k = i;     // vol: de oudste wijkt
   }
+  if (s_txw[k].fl & TXW_USED) txw_finish(s_txw[k]);        // verdrongen: als niet gehoord
   memcpy(s_txw[k].block, block, 16);
   s_txw[k].t = millis();
   s_txw[k].fl = TXW_USED | fl;
+  return k;
 }
 
 static void on_send_done(bool ok, bool manual, uint32_t tag, char state) {
-  if (ok && tag) { if (state == 'L') slow_sent(tag); else pts_sent(tag); }
+  bool flush = s_fl_inflight && state == 'Q' && tag && tag == s_fl_tag;
+  bool fifo_watch = !flush && s_cap_set && tag && tag == s_cap_hi && state != 'L' && state != 'Q';
+  if (fifo_watch) s_cap_set = false;
+  // fifo: de punten blijven in de buffer tot een herhaling gehoord is (pts_heard), niet bij verzenden.
+  if (ok && tag && !flush) { if (state == 'L') slow_sent(tag); else if (!fifo_watch) pts_sent(tag); }
+  uint8_t fl = 0;
   // Klik en SOS hebben hun eigen terugmelding: geen tx_beep of heard_beep (geen dubbele biep).
-  if (ok && !manual && state && state != 'E' && (mt_cfg.tx_beep || mt_cfg.heard_beep)) {
-    txw_add(mt_sender_last_block(), (mt_cfg.tx_beep ? TXW_BEEP : 0) | (mt_cfg.heard_beep ? TXW_HEAR : 0));
-    if (mt_cfg.heard_beep && (int32_t)(millis() + MT_HEAR_MS - s_listen_until) > 0) s_listen_until = millis() + MT_HEAR_MS;
+  if (ok && !manual && state && state != 'E') fl |= (mt_cfg.tx_beep ? TXW_BEEP : 0) | (mt_cfg.heard_beep ? TXW_HEAR : 0);
+  if (ok && fifo_watch) fl |= TXW_FIFO;
+  if (ok && flush) fl |= TXW_FLUSH;
+  if (fl) {
+    int k = txw_add(mt_sender_last_block(), fl);
+    if (fl & TXW_FIFO) { s_txw[k].lo = s_cap_lo; s_txw[k].hi = s_cap_hi; }
+    if ((fl & TXW_LISTEN) && (int32_t)(millis() + MT_HEAR_MS - s_listen_until) > 0) s_listen_until = millis() + MT_HEAR_MS;
   }
+  if (flush && !ok) flush_done(false);
   if (manual && !ok) ui_task.playForced(MT_TUNE_NOK);
   if (manual && ok) {
     memcpy(s_w_block, mt_sender_last_block(), 16);
@@ -533,7 +1121,7 @@ void mt_tx_packet(uint8_t payload_type, const uint8_t payload[], int len) {
     w.fl |= TXW_SENT;
     w.t = millis();
     if (w.fl & TXW_BEEP) ui_task.playForced(MT_TUNE_TX);
-    if (w.fl & TXW_HEAR) {
+    if (w.fl & TXW_LISTEN) {
       if ((int32_t)(w.t + MT_HEAR_MS - s_listen_until) > 0) s_listen_until = w.t + MT_HEAR_MS;
     } else {
       w.fl = 0;
@@ -547,8 +1135,16 @@ static void step_watch_auto() {
   for (int i = 0; i < MT_TXW; i++) {
     TxWatch& w = s_txw[i];
     if (!(w.fl & TXW_USED)) continue;
-    if (!(w.fl & TXW_SENT) && now - w.t > 60000) w.fl = 0;                  // nooit verzonden
-    else if ((w.fl & TXW_SENT) && now - w.t > MT_HEAR_MS) w.fl = 0;         // luistertijd voorbij (stil)
+    if ((w.fl & (TXW_FLUSH | TXW_REP)) == (TXW_FLUSH | TXW_REP)) {   // leegmaakbericht herhaald: meteen verder
+      w.fl &= ~TXW_FLUSH;
+      flush_done(true);
+    }
+    if ((w.fl & (TXW_FIFO | TXW_REP)) == (TXW_FIFO | TXW_REP)) {     // FastTrack-bericht herhaald
+      w.fl &= ~TXW_FIFO;
+      if (fifo_mode()) pts_heard(w.lo, w.hi);
+    }
+    if (!(w.fl & TXW_SENT) && now - w.t > 60000) txw_finish(w);                  // nooit verzonden
+    else if ((w.fl & TXW_SENT) && now - w.t > MT_HEAR_MS) txw_finish(w);         // luistertijd voorbij
   }
 }
 
@@ -567,7 +1163,8 @@ static void step_watch() {
 static bool s_rxlog = false;
 void mt_set_rxlog(bool on) { s_rxlog = on; }
 
-void mt_rx_raw(const uint8_t raw[], int len) {
+void mt_rx_raw(float snr, const uint8_t raw[], int len) {
+  const bool strong = snr >= mt_cfg.fifo_snr;     // fifo: genoeg voor een nieuwe leegmaakronde
   if (s_rxlog && len >= 2 && ((raw[0] >> 2) & 15) == PAYLOAD_TYPE_GRP_TXT) {
     int j = 1 + (((raw[0] & 3) == 0 || (raw[0] & 3) == 3) ? 4 : 0);
     if (j < len) {
@@ -578,6 +1175,19 @@ void mt_rx_raw(const uint8_t raw[], int len) {
   }
   if (len < 2) return;
   uint8_t route = raw[0] & 3;
+  // Dekking (fifo): eender welk flood-pakket dat al via minstens één repeater kwam.
+  if (route == ROUTE_TYPE_FLOOD || route == ROUTE_TYPE_TRANSPORT_FLOOD) {
+    int j = 1 + (route == ROUTE_TYPE_TRANSPORT_FLOOD ? 4 : 0);
+    if (j < len) {
+      uint8_t q = raw[j];
+      int qs = (q >> 6) + 1, qc = q & 63;
+      if (qs <= 3 && qc >= 1 && j + 1 + qs * qc <= len) {
+        char rep[7];
+        for (int k = 0; k < qs; k++) snprintf(rep + 2 * k, 3, "%02x", raw[j + 1 + (qc - 1) * qs + k]);
+        fifo_coverage("pakket via repeater", (unsigned)qc, rep, strong);
+      }
+    }
+  }
   if (((raw[0] >> 2) & 15) != PAYLOAD_TYPE_GRP_TXT) return;
   int i = 1 + ((route == 0 || route == 3) ? 4 : 0);
   if (i >= len) return;
@@ -589,30 +1199,74 @@ void mt_rx_raw(const uint8_t raw[], int len) {
   if (i + 3 + 16 > len) return;
   const uint8_t* blk = raw + i + 3;
   bool manual_hit = s_w_have && memcmp(blk, s_w_block, 16) == 0;
-  int auto_hit = -1;                           // automatisch bericht met heard_beep
-  if (!manual_hit) {
-    for (int k = 0; k < MT_TXW; k++) {
-      const uint8_t need = TXW_USED | TXW_SENT | TXW_HEAR;
-      if ((s_txw[k].fl & need) == need && memcmp(blk, s_txw[k].block, 16) == 0) { auto_hit = k; break; }
-    }
-    if (auto_hit < 0) return;
+  int auto_hit = -1;                           // bewaakt bericht (heard_beep of fifo); ook bij een klik met fifo-bewaking
+  for (int k = 0; k < MT_TXW; k++) {
+    if ((s_txw[k].fl & (TXW_USED | TXW_SENT)) == (TXW_USED | TXW_SENT) && (s_txw[k].fl & TXW_LISTEN) &&
+        memcmp(blk, s_txw[k].block, 16) == 0) { auto_hit = k; break; }
   }
+  if (!manual_hit && auto_hit < 0) return;
   char rep[7] = "-";
   if (hc) for (int k = 0; k < hs; k++) snprintf(rep + 2 * k, 3, "%02x", raw[path + (hc - 1) * hs + k]);
+  fifo_coverage("eigen bericht herhaald", (unsigned)hc, rep, strong);
+  if (auto_hit >= 0) s_txw[auto_hit].fl |= TXW_REP;
   if (manual_hit) {
     s_w_heard++;
     mt_log("gehoord via repeater %s (%u hops)", rep, (unsigned)hc);
     if (s_w_wait) { s_w_wait = false; ui_task.playForced(MT_TUNE_OK); }
   } else {
-    mt_log("automatisch bericht gehoord via repeater %s (%u hops)", rep, (unsigned)hc);
-    if (!(s_txw[auto_hit].fl & TXW_HEARD)) { s_txw[auto_hit].fl |= TXW_HEARD; ui_task.playForced(MT_TUNE_OK); }
+    TxWatch& w = s_txw[auto_hit];
+    mt_log("%s gehoord via repeater %s (%u hops)", (w.fl & TXW_FLUSH) ? "fifo-bericht" : "automatisch bericht", rep, (unsigned)hc);
+    if ((w.fl & TXW_HEAR) && !(w.fl & TXW_HEARD)) { w.fl |= TXW_HEARD; ui_task.playForced(MT_TUNE_OK); }
   }
 }
 
 // "<naam>: T1A|<pk8>|<tag8>|<seq>" op het trackingkanaal: de server bevestigt een SOS.
 // tag8 = HMAC-SHA256(authsleutel, "<pk8>|A|<seq>"), eerste 4 bytes.
+// Zelfde kanaal als het trackingkanaal = zelfde geheim (hetzelfde kanaal kan op twee nummers staan).
+static bool is_track_channel(uint8_t chan_idx) {
+  ChannelDetails a, b;
+  return the_mesh.mtGetChannel(chan_idx, a) && the_mesh.mtGetChannel(mt_cfg.chan_idx, b) &&
+         memcmp(a.channel.secret, b.channel.secret, 16) == 0;
+}
+
+// "T1F|<pk8>:<tag8>:<upto>|<pk8>:<tag8>:<upto>|..." (hooguit 4 trackers): de server heeft alle
+// Q-punten tot en met upto ontvangen. tag8 = HMAC-SHA256(authsleutel, "<pk8>|F|<upto>"), eerste
+// 4 bytes. Alleen ons eigen deel telt; de andere worden genegeerd.
+static void handle_t1f(uint8_t chan_idx, const char* p) {
+  if (!is_track_channel(chan_idx)) {
+    mt_log("T1F op kanaal %u genegeerd (trackingkanaal is %u)", (unsigned)chan_idx, (unsigned)mt_cfg.chan_idx);
+    return;
+  }
+  char pk[9];
+  own_pk8(pk);
+  for (const char* e = p; e && *e; ) {
+    const char* next = strchr(e, '|');
+    if (strncmp(e, pk, 8) == 0 && e[8] == ':' && strlen(e) >= 19 && e[17] == ':') {
+      char* end;
+      unsigned long upto = strtoul(e + 18, &end, 10);
+      if (end == e + 18 || (*end && *end != '|')) { mt_log("T1F met ongeldige tijd genegeerd"); return; }
+      char body[32], tag[9];
+      snprintf(body, sizeof(body), "%s|F|%lu", pk, upto);
+      auth_tag(body, tag);
+      if (!mt_cfg.authkey_set || strncmp(e + 9, tag, 8) != 0) { mt_log("T1F met foute handtekening genegeerd"); return; }
+      fifo_coverage("T1F van de server", 0, "-", true);
+      uint16_t n = fifo_confirm((uint32_t)upto);
+      mt_log("fifo: server bevestigt alles tot %lu: %u verstuurde punten uit de wachtrij, nog %u", upto, (unsigned)n,
+             (unsigned)s_nfifo);
+      return;
+    }
+    e = next ? next + 1 : nullptr;
+  }
+  if (s_rxlog) mt_log("T1F zonder deel voor deze tracker");
+}
+
 bool mt_channel_text(uint8_t chan_idx, const char* text) {
   if (s_rxlog) mt_log("rx kanaalbericht op kanaal %u: %.40s", (unsigned)chan_idx, text);
+  {
+    const char* f = strncmp(text, "T1F|", 4) == 0 ? text + 4 : nullptr;
+    if (!f) { f = strstr(text, ": T1F|"); if (f) f += 6; }
+    if (f) { handle_t1f(chan_idx, f); return true; }
+  }
   // "T1A|" na de afzendernaam ("naam: T1A|...") of meteen aan het begin: de companion van openHop
   // zet de naam er niet altijd voor.
   const char* p = strncmp(text, "T1A|", 4) == 0 ? text : strstr(text, ": T1A|");
@@ -805,7 +1459,7 @@ static void step_manual() {
 
 static void step_radio() {
   bool want_sleep = mt_effective_mode() == MT_MODE_TRACKER && !mt_sender_busy() && !s_manual && !s_sos_left &&
-                    (int32_t)(millis() - s_listen_until) >= 0 && !the_mesh.hasPendingWork();
+                    (int32_t)(millis() - s_listen_until) >= 0 && !the_mesh.hasPendingWork() && !fifo_keep_awake();
   if (!want_sleep) { s_quiet_since = 0; radio_wake(); return; }
   if (s_radio_asleep) return;
   if (s_quiet_since == 0) { s_quiet_since = millis(); return; }
@@ -820,6 +1474,8 @@ static void step_radio() {
 void mt_tracker_begin() {
   seq_begin();
   mt_sender_set_done_cb(on_send_done);
+  fifo_load();
+  if (s_nfifo) mt_log("fifo: %u punten uit /mt_fifo.dat geladen", (unsigned)s_nfifo);
   mt_motion_begin(mt_cfg.accel_sens);
   s_state = MT_T_OFF;
 }
@@ -831,6 +1487,7 @@ void mt_tracker_loop() {
   if (tracking_active()) step_tracking();
   else if (s_state != MT_T_OFF) enter(MT_T_OFF);
   step_slow();
+  step_fifo();
   step_manual();
   step_sos();
   step_watch();
@@ -880,3 +1537,32 @@ uint16_t mt_tracker_seq() { return s_seq; }
 int mt_tracker_heard() { return s_w_have ? s_w_heard : -1; }
 const char* mt_tracker_sos_confirmed() { return !s_sos_any ? "-" : s_sos_conf ? "ja" : "nee"; }
 bool mt_tracker_gps_on() { return gps_is_on(); }
+
+uint16_t mt_tracker_fifo_count() { return s_nfifo; }
+uint32_t mt_tracker_fifo_oldest() { return s_nfifo ? s_fifo[0].ts : 0; }
+uint32_t mt_tracker_fifo_newest() { return s_nfifo ? s_fifo[s_nfifo - 1].ts : 0; }
+long mt_tracker_fifo_cov_age() { return s_cov_have ? (long)((millis() - s_cov_ms) / 1000) : -1; }
+int mt_tracker_fifo_hour(uint32_t* wait_s) {
+  uint32_t oldest = 0;
+  int n = fl_sent_last_hour(&oldest);
+  if (wait_s) *wait_s = n >= mt_cfg.fifo_per_uur ? (oldest < 3600 ? 3600 - oldest : 0) + 1 : 0;
+  return n;
+}
+uint16_t mt_tracker_fifo_parked() { return fifo_parked(); }
+uint32_t mt_tracker_fifo_confirmed() { return s_fifo_confirmed; }
+const char* mt_tracker_fifo_state() {
+  if (!fifo_mode()) return "uit (classic)";
+  if (s_fl_inflight) return "bericht onderweg";
+  if (s_fl_active) return fl_capped() ? "gepauzeerd (fifo_per_uur)" : "bezig";
+  if (s_fl_pending && s_nfifo) return "gestopt of gepauzeerd, wacht op dekking of een nieuwe poging";
+  return "wacht";
+}
+bool mt_tracker_fifo_clear() {
+  s_nfifo = 0;
+  s_fifo_unsaved = 0;
+  s_fl_active = s_fl_pending = false;
+  s_fl_inflight = false;                      // een bericht onderweg verandert niets meer
+  for (int i = 0; i < MT_TXW; i++) s_txw[i].fl &= ~TXW_FLUSH;
+  mt_file_remove(FIFO_TMP);
+  return fifo_save();
+}

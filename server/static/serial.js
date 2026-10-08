@@ -44,6 +44,7 @@
     let t = "", warn = false;
     if (lg.querySelector("input").disabled) t = "";
     else if (!every) t = "SlowTrack staat uit.";
+    else if (isFifo()) t = "FIFO-modus: de gelogde punten gaan naar de wachtrij en worden bij dekking ingehaald.";
     else if (send) {
       const n = Math.floor(send / every);
       if (n < 1) t = "Je logt minder vaak dan je verstuurt: hooguit 1 punt per bericht.";
@@ -57,6 +58,81 @@
     const d = document.querySelector(`#s-form [data-set="${k}"]`);
     if (d) { d.addEventListener("input", slowCalc); d.addEventListener("change", slowCalc); }
   });
+
+  // ---- Trackmodus (firmware 0.9.0): classic of fifo ----------------------------------
+  // In FIFO-modus gaan niet-herhaalde FastTrack-punten en de SlowTrack-punten naar een wachtrij
+  // die bij dekking wordt leeggemaakt; slow_send wordt dan niet gebruikt.
+  const FIFO_PER_MSG = 11;                         // punten per inhaalbericht (Q, compact binair; in tekst waren het er 7)
+  const fset = (k) => document.querySelector(`#s-form [data-set="${k}"]`);
+  const fifoKnown = () => "track_mode" in lastKv;
+  const isFifo = () => fifoKnown() && fset("track_mode").value === "fifo";
+  function fifoUi() {
+    const known = fifoKnown(), fifo = isFifo();
+    const box = $("s-fifo");
+    if (!box) return;
+    box.classList.toggle("off", known && !fifo);
+    // alleen in FIFO-modus, en alleen sleutels die de firmware kent
+    box.querySelectorAll("input,select").forEach((x) => { const d = x.closest("[data-set]"); x.disabled = !fifo || !(d && d.dataset.set in lastKv); });
+    $("s-fifooff").hidden = !known || fifo;
+    // slow_send: niet gebruikt in FIFO-modus
+    const sd = fset("slow_send");
+    if (sd && "slow_send" in lastKv) {
+      sd.querySelectorAll("input,select").forEach((x) => { x.disabled = fifo; });
+      sd.closest("div:not(.dur)").classList.toggle("off", fifo);
+    }
+    $("s-slowsend-fifo").hidden = !fifo;
+    const mx = Number(fset("fifo_max").value);
+    fset("fifo_min").max = mx >= 1 ? String(Math.min(500, mx)) : "500";
+    fifoCalc();
+    slowCalc();
+  }
+  function fifoCalc() {
+    const out = $("s-fifocalc");
+    if (!out) return;
+    out.textContent = "";
+    out.classList.remove("warn");
+    if (!isFifo()) return;
+    const has = (k) => k in lastKv;
+    const max = Math.max(0, Number(fset("fifo_max").value) || 0), gap = durSec(fset("fifo_gap")),
+      per = Math.max(0, Number(fset("fifo_per_uur").value) || 0),
+      pog = has("fifo_pogingen") ? Math.max(0, Number(fset("fifo_pogingen").value) || 0) : 0,
+      dun = has("fifo_dun") ? Math.max(0, Number(fset("fifo_dun").value) || 0) : null,
+      snr = has("fifo_snr") && fset("fifo_snr").value !== "" ? Number(fset("fifo_snr").value) : null;
+    if (!max || !gap || !per) return;
+    // effectief aantal berichten per uur: begrensd door de tussentijd of door "per uur"
+    const byGap = 3600 / gap, eff = Math.max(1, Math.floor(Math.min(byGap, per)));
+    const n = Math.ceil(max / FIFO_PER_MSG);
+    const nl = (x, d) => x.toLocaleString("nl-BE", { maximumFractionDigits: d });
+    // Zelfde berekening als de firmware (fifo_summary in MtMenu.cpp): zonder uurplafond elke gap één
+    // bericht; met plafond per uur 'per' berichten na elkaar, dan wachten tot het oudste een uur oud is.
+    const capped = byGap > per;
+    const s = !capped ? n * gap : Math.floor((n - 1) / per) * 3600 + (((n - 1) % per) + 1) * gap;
+    const m = Math.ceil(s / 60);
+    const dur = m < 60 ? `${Math.max(1, m)} min` : `${nl(Math.round(s / 360) / 10, 1)} u`;
+    const gapTxt = gap < 120 ? `${gap} s` : `${nl(gap / 60, 1)} min`;
+    const limit = per < byGap ? "begrensd door 'per uur'" : "begrensd door de tijd tussen de berichten";
+    const warn = gap < 30 || per > 30;
+    const lines = [
+      [`Max ${eff} ${eff === 1 ? "bericht" : "berichten"} per uur (elke ${gapTxt}, ${limit}) ≈ ${eff * FIFO_PER_MSG} ingehaalde punten per uur `
+        + `(compact binair, ≈ ${FIFO_PER_MSG} punten per bericht). Volle wachtrij (${max} punten) ≈ ${n} ${n === 1 ? "bericht" : "berichten"}, leeg in ≈ ${dur}.`],
+    ];
+    if (warn) lines.push(["Opgelet: elk bericht wordt door meerdere repeaters herhaald; dit belast de mesh fel.", "warn"]);
+    if (dun != null) lines.push([dun ? `Rechte stukken: punten die minder dan ${dun} m naast de lijn tussen hun buren liggen, gaan er niet in.` : "Rechte stukken worden niet uitgedund."]);
+    if (snr != null) lines.push([`Leegmaken begint pas bij stabiele dekking: een herhaling met SNR ≥ ${snr} dB, twee tekens van dekking binnen 60 s, of een bevestiging van de server.`]);
+    if (pog) lines.push([`Een inhaalbericht dat niet gehoord wordt, krijgt tot ${pog} ${pog === 1 ? "poging" : "pogingen"} (telkens langer wachten: 1, 5, 15, daarna 60 min); daarna worden zijn punten geparkeerd en krijgen ze pas als al de rest verstuurd is nog één laatste kans.`]);
+    for (const [t, cls] of lines) {
+      const d = document.createElement("div");
+      d.textContent = t;
+      if (cls) d.className = cls;
+      out.appendChild(d);
+    }
+  }
+  ["track_mode", "fifo_max", "fifo_min", "fifo_gap", "fifo_per_uur", "fifo_pogingen", "fifo_dun", "fifo_snr"].forEach((k) => {
+    const d = fset(k);
+    if (d) { d.addEventListener("input", fifoUi); d.addEventListener("change", fifoUi); }
+  });
+  // Duur in seconden voor de statusweergave ("45 s", "12 min", "3 u")
+  const ago = (s) => s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} u`;
 
   // ---- voorinstellingen ---------------------------------------------------------------
   const PRESETS = {
@@ -173,10 +249,12 @@
       else if (el.dataset.kind === "bool") el.checked = v === "aan" || v === "on";
       else if (["min_speed", "min_dist", "turn_min", "turn_min_speed"].includes(k)) el.value = num(v);
       else if (k === "fast_min_batt") el.value = v === "uit" ? 0 : v.replace(/%$/, "");
+      else if (["fifo_max", "fifo_min", "fifo_per_uur", "fifo_pogingen", "fifo_dun"].includes(k)) el.value = v.replace(/\D/g, "");
+      else if (k === "fifo_snr") el.value = v.replace(/[^\d-]/g, "");
       else el.value = v;
     });
     gateSince(kv);
-    slowCalc();
+    fifoUi();                                       // roept ook slowCalc op
     setMode(kv.gekozen || "tracker");
     const known = knownTracker(kv);
     $("s-authstate").textContent = kv.authkey === "ja" ? "Authsleutel: ingesteld" : kv.authkey === "nee" ? "Authsleutel: niet ingesteld" : "Authsleutel: (firmware te oud)";
@@ -185,8 +263,14 @@
     const ft = kv.fasttrack == null ? "" : kv.fasttrack === "aan" ? " · FastTrack aan"
       : ` · <span class="warn">FastTrack ${MT.esc(kv.fasttrack.replace(/\(([^)]*)\)/, " ($1)"))}</span>`;
     const sb = kv.slow_buffer == null ? "" : ` · SlowTrack: ${MT.esc(kv.slow_buffer)} ${kv.slow_buffer === "1" ? "punt" : "punten"} te versturen`;
+    // firmware 0.9.0: fifo=<punten in de wachtrij>, fifo_dekking=<seconden sinds laatste dekking | ->
+    const fn = kv.fifo == null ? "" : ` · FIFO: ${MT.esc(kv.fifo)} ${kv.fifo === "1" ? "punt" : "punten"} in de wachtrij`;
+    const dsec = parseInt(kv.fifo_dekking, 10);
+    const fp = (kv.fifo_geparkeerd == null ? "" : ` · geparkeerd: ${MT.esc(kv.fifo_geparkeerd)}`)
+      + (kv.fifo_bevestigd == null ? "" : ` · bevestigd door de server: ${MT.esc(kv.fifo_bevestigd)}`);
+    const fd = kv.fifo_dekking == null ? "" : ` · dekking: ${Number.isFinite(dsec) ? `${MT.esc(ago(dsec))} geleden` : "nog niet gezien"}`;
     $("s-info").innerHTML = `<div><strong>${MT.esc(kv.naam || "?")}</strong> · firmware ${MT.esc(kv.fw || "?")}
-      · batterij ${MT.esc(kv.batt || "?")} · nu ${MT.esc(kv.actief || "?")}${kv.usb === "ja" ? " (USB)" : ""}${ft}${sb}</div>
+      · batterij ${MT.esc(kv.batt || "?")} · nu ${MT.esc(kv.actief || "?")}${kv.usb === "ja" ? " (USB)" : ""}${ft}${sb}${fn}${fp}${fd}</div>
       <div class="mono muted small">${MT.esc(kv.pubkey || "")}</div>
       <div class="small">${known ? `In MeshTrack als <strong>${MT.esc(known.alias)}</strong>` : '<span class="warn">Nog niet in MeshTrack</span>'}</div>`;
     $("s-use").hidden = !!known || !MT.can("trackers.manage");
@@ -391,6 +475,19 @@
       if (el.dataset.spaces && v === (lastKv[el.dataset.kv || k] || "")) return;   // naam ongewijzigd
       if (v !== "" && (el.dataset.spaces || !/\s/.test(v))) cmds.push(`set ${k} ${v}`);
     });
+    // FIFO (0.9.0): fifo_min mag niet boven fifo_max. Volgorde zo kiezen dat de tracker nooit een
+    // tussentoestand met min > max ziet: verhoogt min boven het huidige max, dan eerst max.
+    if ("fifo_min" in lastKv && "fifo_max" in lastKv) {
+      const nMin = Number(fset("fifo_min").value), nMax = Number(fset("fifo_max").value);
+      if (nMin > nMax) { msg($("s-msg"), `"Inhalen vanaf" (${nMin}) mag niet groter zijn dan "Wachtrij maximaal" (${nMax}).`); return; }
+      const iMin = cmds.findIndex((c) => c.startsWith("set fifo_min ")), iMax = cmds.findIndex((c) => c.startsWith("set fifo_max "));
+      if (iMin >= 0 && iMax >= 0) {
+        const [cMin, cMax] = [cmds[iMin], cmds[iMax]];
+        const maxFirst = nMin > (parseInt(lastKv.fifo_max, 10) || 0);
+        cmds[Math.min(iMin, iMax)] = maxFirst ? cMax : cMin;
+        cmds[Math.max(iMin, iMax)] = maxFirst ? cMin : cMax;
+      }
+    }
     cmds.push(`mode ${mode}`);
     const bad = [], why = new Set();
     for (const c of cmds) {

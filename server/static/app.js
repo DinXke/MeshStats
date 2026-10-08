@@ -213,10 +213,10 @@
     map.addSource("points", { type: "geojson", data: f.points });
     map.addLayer({ id: "points", type: "circle", source: "points", minzoom: 12,
       // SlowTrack-punten (state L): kleinere, lichtere stippen; de lijn blijft chronologisch
-      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, ["case", ["==", ["get", "state"], "L"], 1.3, 2], 16, ["case", ["==", ["get", "state"], "L"], 3, 5]],
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 1.3, 2], 16, ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 3, 5]],
                "circle-color": colorSel.value === "speed" ? speedColor : ["get", "color"],
-               "circle-opacity": ["case", ["==", ["get", "state"], "L"], 0.7, 1],
-               "circle-stroke-color": dark.matches ? "#000" : "#fff", "circle-stroke-width": ["case", ["==", ["get", "state"], "L"], 0.5, 1] } });
+               "circle-opacity": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.7, 1],
+               "circle-stroke-color": dark.matches ? "#000" : "#fff", "circle-stroke-width": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.5, 1] } });
     map.addSource("draw", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "draw-fill", type: "fill", source: "draw", paint: { "fill-color": "#3b82f6", "fill-opacity": 0.15 } });
     map.addLayer({ id: "draw-line", type: "line", source: "draw", paint: { "line-color": "#3b82f6", "line-width": 2 } });

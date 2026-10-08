@@ -119,6 +119,33 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "sos"))            { uint8_t o = 1; ok = parse_onoff(v, &o); c.sos_off = o ? 0 : 1; }
   else if (!strcmp(k, "tx_beep"))        ok = parse_onoff(v, &c.tx_beep);
   else if (!strcmp(k, "heard_beep"))     ok = parse_onoff(v, &c.heard_beep);
+  else if (!strcmp(k, "track_mode")) {
+    ok = true;
+    if (!strcmp(v, "classic")) c.track_mode = MT_TRACK_CLASSIC;
+    else if (!strcmp(v, "fifo")) c.track_mode = MT_TRACK_FIFO;
+    else ok = false;
+  }
+  else if (!strcmp(k, "fifo_max")) {          // fifo_min zakt mee als hij groter zou zijn
+    uint16_t r = 0;
+    ok = parse_u16(v, 500, &r) && r >= 20;
+    if (ok) { c.fifo_max = r; if (c.fifo_min > r) c.fifo_min = r; }
+  }
+  else if (!strcmp(k, "fifo_min"))       { uint16_t r = 0; ok = parse_u16(v, c.fifo_max, &r) && r >= 1; if (ok) c.fifo_min = r; }
+  else if (!strcmp(k, "fifo_gap"))       { ok = parse_dur(v, &d) && d >= 15 && d <= 300; if (ok) c.fifo_gap_s = d; }
+  else if (!strcmp(k, "fifo_per_uur"))   { uint16_t r = 0; ok = parse_u16(v, 60, &r) && r >= 1; if (ok) c.fifo_per_uur = (uint8_t)r; }
+  else if (!strcmp(k, "fifo_pogingen"))  { uint16_t r = 0; ok = parse_u16(v, 10, &r) && r >= 1; if (ok) c.fifo_pogingen = (uint8_t)r; }
+  else if (!strcmp(k, "fifo_dun")) {         // "10" of "10m"
+    char* end;
+    long r = strtol(v, &end, 10);
+    ok = end != v && (*end == 0 || !strcmp(end, "m")) && r >= 0 && r <= 100;
+    if (ok) c.fifo_dun = (uint8_t)r;
+  }
+  else if (!strcmp(k, "fifo_snr")) {         // "-5" of "-5dB"
+    char* end;
+    long r = strtol(v, &end, 10);
+    ok = end != v && (*end == 0 || !strcmp(end, "db") || !strcmp(end, "dB")) && r >= -20 && r <= 10;
+    if (ok) c.fifo_snr = (int8_t)r;
+  }
   else if (!strcmp(k, "transport")) {         // sinds 0.7 altijd kanaal; oude scripts sturen dit nog
     if (strcmp(v, "kanaal") && strcmp(v, "channel")) return "DM bestaat niet meer: altijd via het trackingkanaal";
     ok = true;
@@ -180,6 +207,78 @@ static void slow_ratio_warn(const char* k, const char* pre) {
   uint32_t n = mt_cfg.slow_send_s / mt_cfg.slow_log_s;
   if (n <= MT_SLOW_FIT) return;   // zelfde grens als de webpagina (1/8)
   outl("%slet op: ~%lu punten per periode, er passen er ~%d in één bericht; de rest valt weg", pre, (unsigned long)n, MT_SLOW_FIT);
+}
+
+// FIFO: hoeveel leegmaakberichten per uur er effectief weg mogen, en hoe lang een volle wachtrij
+// erover doet. MT_FIFO_PER_MSG is een schatting (zoals MT_SLOW_FIT): meestal passen er 6 à 11
+// punten in één bericht, minder bij grote afstanden of een lange naam.
+#define MT_FIFO_PER_MSG 11   // binair (Q-berichten); zelfde schatting als de webpagina
+static void fmt_minutes(char* o, size_t n, uint32_t s) {
+  uint32_t m = (s + 59) / 60;
+  if (m < 60) snprintf(o, n, "%lu min", (unsigned long)(m ? m : 1));
+  else { uint32_t t = (s + 180) / 360; snprintf(o, n, "%lu,%lu u", (unsigned long)(t / 10), (unsigned long)(t % 10)); }   // 3,1 u
+}
+static void fifo_summary(const char* pre) {
+  uint32_t gap = mt_cfg.fifo_gap_s ? mt_cfg.fifo_gap_s : 30, per = mt_cfg.fifo_per_uur ? mt_cfg.fifo_per_uur : 1;
+  uint32_t by_gap = 3600 / gap;
+  bool capped = by_gap > per;                   // het uurplafond remt, niet fifo_gap
+  uint32_t eff = capped ? per : by_gap;
+  uint32_t full = (mt_cfg.fifo_max + MT_FIFO_PER_MSG - 1) / MT_FIFO_PER_MSG;
+  // Zonder plafond: elke fifo_gap één bericht. Met plafond: per uur 'per' berichten (telkens
+  // fifo_gap na elkaar), dan wachten tot het oudste een uur oud is.
+  uint32_t secs = !capped ? full * gap : ((full - 1) / per) * 3600 + (((full - 1) % per) + 1) * gap;
+  char t[24];
+  fmt_minutes(t, sizeof(t), secs);
+  outl("%smax %lu berichten/uur (elke %lu s%s) ≈ %lu punten/uur; volle wachtrij (%u) ≈ %lu berichten, leeg in ≈ %s",
+       pre, (unsigned long)eff, (unsigned long)gap, capped ? ", begrensd door fifo_per_uur" : "",
+       (unsigned long)(eff * MT_FIFO_PER_MSG), (unsigned)mt_cfg.fifo_max, (unsigned long)full, t);
+  outl("%snu %u punten in de wachtrij, waarvan %u geparkeerd (na %u mislukte pogingen; laatste poging als er niets anders wacht)",
+       pre, (unsigned)mt_tracker_fifo_count(), (unsigned)mt_tracker_fifo_parked(), (unsigned)mt_cfg.fifo_pogingen);
+  if (capped)
+    outl("%slet op: fifo_gap %lu s laat %lu berichten/uur toe, maar fifo_per_uur begrenst op %lu. Dat mag; de wachtrij loopt dan wel trager leeg.",
+         pre, (unsigned long)gap, (unsigned long)by_gap, (unsigned long)per);
+}
+static void fifo_set_note(const char* k, const char* pre) {
+  if (!strcmp(k, "fifo_max") || !strcmp(k, "fifo_gap") || !strcmp(k, "fifo_per_uur")) fifo_summary(pre);
+}
+
+static void fmt_ago(char* o, size_t n, uint32_t ts) {
+  uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+  if (!ts || now < ts) { snprintf(o, n, "?"); return; }
+  uint32_t s = now - ts;
+  if (s < 120) snprintf(o, n, "%lu s", (unsigned long)s);
+  else if (s < 7200) snprintf(o, n, "%lu min", (unsigned long)(s / 60));
+  else snprintf(o, n, "%lu u %lu min", (unsigned long)(s / 3600), (unsigned long)(s % 3600 / 60));
+}
+
+// fifo: de wachtrij tonen; fifo wis ja: wissen.
+static void cmd_fifo(const char* args) {
+  if (!strcmp(args, "wis ja")) {
+    outl(mt_tracker_fifo_clear() ? "fifo: wachtrij gewist (bewaard)" : "fifo: wachtrij gewist, maar NIET bewaard (opslag)");
+    return;
+  }
+  if (*args) { outl("gebruik: fifo | fifo wis ja"); return; }
+  uint16_t n = mt_tracker_fifo_count();
+  outl("fifo: %u punten in de wachtrij (max %u, leegmaken vanaf %u, %u geparkeerd); track_mode=%s", (unsigned)n,
+       (unsigned)mt_cfg.fifo_max, (unsigned)mt_cfg.fifo_min, (unsigned)mt_tracker_fifo_parked(),
+       mt_cfg.track_mode == MT_TRACK_FIFO ? "fifo" : "classic");
+  if (n) {
+    char a[20], b[20];
+    fmt_ago(a, sizeof(a), mt_tracker_fifo_oldest());
+    fmt_ago(b, sizeof(b), mt_tracker_fifo_newest());
+    outl("fifo: oudste=%lu (%s geleden) nieuwste=%lu (%s geleden)", (unsigned long)mt_tracker_fifo_oldest(), a,
+         (unsigned long)mt_tracker_fifo_newest(), b);
+  }
+  char cov[24] = "nog niet gezien";
+  if (mt_tracker_fifo_cov_age() >= 0) snprintf(cov, sizeof(cov), "%ld s geleden", mt_tracker_fifo_cov_age());
+  uint32_t wait = 0;
+  int hour = mt_tracker_fifo_hour(&wait);
+  char w[40] = "";
+  if (wait) snprintf(w, sizeof(w), ", weer een over %lu min", (unsigned long)((wait + 59) / 60));
+  outl("fifo: leegmaken %s; laatste dekking %s; %d leegmaakberichten in het laatste uur (max %u%s)",
+       mt_tracker_fifo_state(), cov, hour, (unsigned)mt_cfg.fifo_per_uur, w);
+  outl("fifo: sinds de start %lu punten door de server bevestigd (T1F)", (unsigned long)mt_tracker_fifo_confirmed());
+  fifo_summary("fifo: ");
 }
 
 // ---- mesh-instellingen (naam, radio, paden, regio) en de sleutel -----------------
@@ -346,6 +445,16 @@ static void cmd_status() {
   outl("slow_buffer=%u fasttrack=%s slow_per_bericht=6-11", (unsigned)mt_tracker_slow_buffered(),
        mt_tracker_fast_suspended() ? "uit(batterij)" : "aan");
   {
+    char cov[12] = "-";
+    if (mt_tracker_fifo_cov_age() >= 0) snprintf(cov, sizeof(cov), "%ld", mt_tracker_fifo_cov_age());
+    outl("track_mode=%s fifo_max=%u fifo_min=%u fifo_gap=%us fifo_per_uur=%u fifo=%u fifo_dekking=%s",
+         mt_cfg.track_mode == MT_TRACK_FIFO ? "fifo" : "classic", (unsigned)mt_cfg.fifo_max, (unsigned)mt_cfg.fifo_min,
+         (unsigned)mt_cfg.fifo_gap_s, (unsigned)mt_cfg.fifo_per_uur, (unsigned)mt_tracker_fifo_count(), cov);
+    outl("fifo_pogingen=%u fifo_geparkeerd=%u fifo_dun=%u fifo_snr=%d fifo_bevestigd=%lu", (unsigned)mt_cfg.fifo_pogingen,
+         (unsigned)mt_tracker_fifo_parked(), (unsigned)mt_cfg.fifo_dun, (int)mt_cfg.fifo_snr,
+         (unsigned long)mt_tracker_fifo_confirmed());
+  }
+  {
     ChannelDetails ch;
     bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
     out("transport=kanaal chan=%u authkey=%s afzender=%s chan_naam=", (unsigned)mt_cfg.chan_idx,
@@ -408,6 +517,26 @@ static void cmd_help() {
   outl("    sos aan|uit        SOS door 2-8 s vasthouden (uit: geen SOS, geen wapenbiep; uitschakelen blijft)");
   outl("    tx_beep aan|uit    korte biep telkens de radio een positiebericht verzonden heeft (niet bij klik/SOS)");
   outl("    heard_beep aan|uit twee hoge biepjes als een repeater een positiebericht herhaalt (niet bij klik/SOS)");
+  outl("    track_mode classic|fifo  classic = FastTrack + SlowTrack zoals voorheen; fifo = wachtrij voor posities");
+  outl("      die de mesh niet haalden. Punten van een niet herhaald FastTrack-bericht liften eerst mee met de");
+  outl("      volgende berichten; lukt dat niet, dan gaat alleen het hoofdpunt (met tijd) in de wachtrij.");
+  outl("      SlowTrack-punten gaan er altijd in (geen slow_send). 500 punten is bij 1 bericht per 1 à 2 min");
+  outl("      zo'n 8 à 16 uur zonder bereik. Bij stabiele dekking maakt hij de wachtrij leeg: oudste eerst,");
+  outl("      zo'n 11 punten per Q-bericht.");
+  outl("    fifo_max <20..500>      wachtrij hooguit zoveel punten (standaard 500); vol = het minst");
+  outl("      betekenisvolle punt valt weg (dat het dichtst bij de lijn tussen zijn buren ligt)");
+  outl("    fifo_min <1..fifo_max>  pas leegmaken vanaf zoveel punten (standaard 5; na een onderbreking vanaf 1)");
+  outl("    fifo_gap <tijd>         tussen twee leegmaakberichten minstens (15s..5m, standaard 30s)");
+  outl("    fifo_per_uur <1..60>    hooguit zoveel leegmaakberichten per uur (standaard 20)");
+  outl("      Een volle wachtrij van 500 punten is zo'n 46 berichten; elk bericht wordt door meerdere");
+  outl("      repeaters herhaald, dus hou fifo_gap ruim.");
+  outl("    fifo_pogingen <1..10>   na zoveel niet herhaalde leegmaakberichten is een punt geparkeerd");
+  outl("      (standaard 3): het blokkeert de wachtrij niet meer en krijgt een laatste poging als er niets");
+  outl("      anders wacht. Na elke mislukte poging wacht een punt 1, 5, 15 en daarna 60 min.");
+  outl("    fifo_dun <0..100>       punt op een rechte weg binnen zoveel m van de lijn = overbodig, weg");
+  outl("      (standaard 10, 0 = uit); een punt bij een stop (tijdsprong > 10 min) blijft altijd");
+  outl("    fifo_snr <-20..10>      een nieuwe leegmaakronde pas bij een pakket met SNR >= dit (dB, standaard -5),");
+  outl("      of bij twee keer dekking binnen 60 s, of een bevestiging (T1F) van de server");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
   outl("  key export | key import <128 hex>   PRIVATE KEY (import na een reboot)");
@@ -415,6 +544,11 @@ static void cmd_help() {
   outl("  send                        nu een positie sturen (zoals een klik)");
   outl("  status: gehoord = herhalingen (repeaters) van de laatste klik/SOS; sos_bevestigd = antwoord van de server");
   outl("          slow_buffer = gelogde SlowTrack-punten die nog weg moeten; fasttrack=uit(batterij) = onder fast_min_batt");
+  outl("          fifo = punten in de wachtrij; fifo_dekking = seconden sinds de laatste dekking (een repeater");
+  outl("          gehoord: herhaling van een eigen bericht of een pakket via een repeater), - = nog nooit");
+  outl("          fifo_geparkeerd = punten na fifo_pogingen mislukte pogingen; fifo_bevestigd = sinds de start");
+  outl("          door de server bevestigde punten (T1F)");
+  outl("  fifo | fifo wis ja          wachtrij tonen (aantal, oudste en nieuwste punt) / wissen");
   outl("  defaults | backup | reboot | menu | q (menu sluiten)");
   outl("  rxlog aan|uit                ontvangen kanaalpakketten en -berichten loggen (tot een herstart)");
   outl("  fs | fs herstel ja          interne opslag controleren / herstellen (alleen als ze beschadigd is)");
@@ -442,7 +576,7 @@ static void cmd_backup() {
 
 // ---- menu ---------------------------------------------------------------------
 
-enum Screen : uint8_t { SC_MAIN, SC_MODE, SC_WHEN, SC_RHYTHM, SC_REST, SC_GPS, SC_MAINT, SC_SLOW };
+enum Screen : uint8_t { SC_MAIN, SC_MODE, SC_WHEN, SC_RHYTHM, SC_REST, SC_GPS, SC_MAINT, SC_SLOW, SC_FIFO };
 
 struct Item { const char* label; const char* param; uint8_t kind; };   // kind: 0 getal, 1 duur, 2 tekst
 #define N_ITEMS(a) ((int)(sizeof(a) / sizeof((a)[0])))
@@ -461,6 +595,16 @@ static const Item SLOW[] = {
   {"Punt loggen elke (0 = SlowTrack uit)", "slow_log", 1},
   {"Gelogde punten versturen elke", "slow_send", 1},
   {"Geen FastTrack onder (% batterij, 0 = uit)", "fast_min_batt", 0},
+};
+static const Item FIFOI[] = {
+  {"Trackmodus (classic/fifo)", "track_mode", 2},
+  {"Wachtrij hooguit (punten, 20-500)", "fifo_max", 0},
+  {"Leegmaken vanaf (punten)", "fifo_min", 0},
+  {"Tussen twee leegmaakberichten minstens", "fifo_gap", 1},
+  {"Hooguit leegmaakberichten per uur (1-60)", "fifo_per_uur", 0},
+  {"Pogingen voor een punt geparkeerd wordt", "fifo_pogingen", 0},
+  {"Rechte lijn uitdunnen (m, 0 = uit)", "fifo_dun", 0},
+  {"Nieuwe ronde vanaf SNR (dB, -20..10)", "fifo_snr", 0},
 };
 static const Item REST[] = {
   {"Slapen na stilstand van", "still_timeout", 1},
@@ -494,6 +638,14 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "slow_log")) fmt_dur_nl(o, n, mt_cfg.slow_log_s);
   else if (!strcmp(param, "slow_send")) fmt_dur_nl(o, n, mt_cfg.slow_send_s);
   else if (!strcmp(param, "fast_min_batt")) snprintf(o, n, mt_cfg.fast_min_batt ? "%u %%" : "uit", (unsigned)mt_cfg.fast_min_batt);
+  else if (!strcmp(param, "track_mode")) snprintf(o, n, "%s", mt_cfg.track_mode == MT_TRACK_FIFO ? "fifo" : "classic");
+  else if (!strcmp(param, "fifo_max")) snprintf(o, n, "%u punten", (unsigned)mt_cfg.fifo_max);
+  else if (!strcmp(param, "fifo_min")) snprintf(o, n, "%u punten", (unsigned)mt_cfg.fifo_min);
+  else if (!strcmp(param, "fifo_gap")) fmt_dur_nl(o, n, mt_cfg.fifo_gap_s);
+  else if (!strcmp(param, "fifo_per_uur")) snprintf(o, n, "%u", (unsigned)mt_cfg.fifo_per_uur);
+  else if (!strcmp(param, "fifo_pogingen")) snprintf(o, n, "%u", (unsigned)mt_cfg.fifo_pogingen);
+  else if (!strcmp(param, "fifo_dun")) snprintf(o, n, mt_cfg.fifo_dun ? "%u m" : "uit", (unsigned)mt_cfg.fifo_dun);
+  else if (!strcmp(param, "fifo_snr")) snprintf(o, n, "%d dB", (int)mt_cfg.fifo_snr);
   else if (!strcmp(param, "chan")) {
     ChannelDetails ch;
     bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
@@ -521,7 +673,7 @@ static void header(const char* title) {
   outl(LINE);
 }
 
-static void list_items(const Item* it, int n) {
+static void list_items_only(const Item* it, int n) {
   char v[40];
   for (int i = 0; i < n; i++) {
     value_of(it[i].param, v, sizeof(v));
@@ -532,6 +684,10 @@ static void list_items(const Item* it, int n) {
     lab[len] = 0;
     outl("   %d  %s %s", i + 1, lab, v);
   }
+}
+
+static void list_items(const Item* it, int n) {
+  list_items_only(it, n);
   outl("");
   outl("   0  Terug");
 }
@@ -545,7 +701,7 @@ static void show() {
       outl("   2  Modus en knop");
       outl("   3  Wanneer een positie sturen");
       outl("   4  Ritme");
-      outl("   5  SlowTrack (logpunten, ook in rust)");
+      outl("   5  SlowTrack en trackmodus (FIFO)");
       outl("   6  Stilstand en heartbeat");
       outl("   7  GPS en verzending");
       outl("   8  Nu een positie sturen");
@@ -588,8 +744,37 @@ static void show() {
       outl("   Nu %u punten in de buffer; FastTrack %s.", (unsigned)mt_tracker_slow_buffered(),
            mt_tracker_fast_suspended() ? "uit (batterij te laag)" : "aan");
       outl("");
-      list_items(SLOW, N_ITEMS(SLOW));
+      list_items_only(SLOW, N_ITEMS(SLOW));
+      outl("   4  Trackmodus en FIFO-wachtrij ................ %s", mt_cfg.track_mode == MT_TRACK_FIFO ? "fifo" : "classic");
+      outl("");
+      outl("   0  Terug");
       break;
+    case SC_FIFO: {
+      header("TRACKMODUS EN FIFO");
+      outl("   classic: FastTrack en SlowTrack zoals voorheen (SlowTrack verstuurt elke slow_send).");
+      outl("   fifo: gaten van uren tot een dag overbruggen, met zo weinig mogelijk verlies en zo");
+      outl("   weinig mogelijk verkeer op de mesh:");
+      outl("   - Hoort hij geen herhaling van een FastTrack-bericht, dan liften de punten eerst gratis");
+      outl("     mee met de volgende berichten. Pas als dat niet meer kan, gaat het hoofdpunt (met");
+      outl("     zijn tijd) in de wachtrij. SlowTrack-punten gaan er altijd in.");
+      outl("   - 500 punten is bij 1 bericht per 1 à 2 min zo'n 8 à 16 uur zonder bereik. Is de");
+      outl("     wachtrij vol, dan valt het minst betekenisvolle punt weg, niet het oudste: de vorm");
+      outl("     van de route blijft. Op een rechte weg vallen overbodige punten meteen weg (uitdunnen).");
+      outl("   - Leegmaken pas bij stabiele dekking (sterk genoeg signaal, of twee keer dekking binnen");
+      outl("     60 s): geen verspilde berichten op de rand van het bereik. Oudste eerst, zo'n 11 punten");
+      outl("     per bericht; een volle wachtrij is zo'n 46 berichten. Elk bericht wordt door meerdere");
+      outl("     repeaters herhaald, dus hou fifo_gap ruim.");
+      outl("   - Een punt dat na enkele pogingen niet doorraakt, wordt geparkeerd: het blokkeert de");
+      outl("     rest niet. De server kan bevestigen wat hij kreeg (T1F); dat ruimt de wachtrij op.");
+      char cov[24] = "nog niet gezien";
+      if (mt_tracker_fifo_cov_age() >= 0) snprintf(cov, sizeof(cov), "%ld s geleden", mt_tracker_fifo_cov_age());
+      outl("   Nu %u punten in de wachtrij; leegmaken %s; laatste dekking %s.", (unsigned)mt_tracker_fifo_count(),
+           mt_tracker_fifo_state(), cov);
+      fifo_summary("   ");
+      outl("");
+      list_items(FIFOI, N_ITEMS(FIFOI));
+      break;
+    }
     case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, N_ITEMS(GPSI)); break;
     case SC_MAINT:
       header("ONDERHOUD");
@@ -660,7 +845,14 @@ static void menu_choice(int n) {
     case SC_WHEN: items = WHEN; count = N_ITEMS(WHEN); break;
     case SC_RHYTHM: items = RHYTHM; count = N_ITEMS(RHYTHM); break;
     case SC_REST: items = REST; count = N_ITEMS(REST); break;
-    case SC_SLOW: items = SLOW; count = N_ITEMS(SLOW); break;
+    case SC_SLOW:
+      if (n == 4) { s_screen = SC_FIFO; show(); return; }
+      items = SLOW; count = N_ITEMS(SLOW);
+      break;
+    case SC_FIFO:
+      if (n == 0) { s_screen = SC_SLOW; show(); return; }
+      items = FIFOI; count = N_ITEMS(FIFOI);
+      break;
     case SC_GPS: items = GPSI; count = N_ITEMS(GPSI); break;
   }
   if (n == 0) { s_screen = SC_MAIN; show(); return; }
@@ -689,7 +881,7 @@ static void command(char* s) {
       err = set_param(k, v);
     }
     if (err) outl("%s: %s (%s)", k, err, v);
-    else { outl("%s = %s (bewaard)", k, v); slow_ratio_warn(k, ""); }
+    else { outl("%s = %s (bewaard)", k, v); slow_ratio_warn(k, ""); fifo_set_note(k, ""); }
   }
   else if (!strcmp(s, "mode")) {
     if (!strcmp(args, "companion")) mt_choose_mode(MT_MODE_COMPANION, false);
@@ -712,6 +904,7 @@ static void command(char* s) {
   else if (!strcmp(s, "chan")) cmd_chan(args);
   else if (!strcmp(s, "reboot")) { outl("herstart..."); delay(100); NVIC_SystemReset(); }
   else if (!strcmp(s, "fs")) cmd_fs(args);
+  else if (!strcmp(s, "fifo")) cmd_fifo(args);
   else if (!strcmp(s, "menu")) open_menu();
   else if (!strcmp(s, "q")) { if (s_in_menu) { s_in_menu = false; outl(""); outl("Menu gesloten."); } }
   else outl("onbekend commando: %s ('help')", s);
@@ -726,7 +919,7 @@ static void handle_line(char* line) {
     if (*s) {
       const char* err = set_param(it->param, s);
       outl(err ? "   Fout: %s." : "   Bewaard.", err);
-      if (!err) slow_ratio_warn(it->param, "   ");
+      if (!err) { slow_ratio_warn(it->param, "   "); fifo_set_note(it->param, "   "); }
     }
     show();
     return;

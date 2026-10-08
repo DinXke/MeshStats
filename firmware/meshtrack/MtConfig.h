@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MT_CFG_VERSION 5   // v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep (velden achteraan, oudere worden overgenomen)
+#define MT_CFG_VERSION 6   // v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep; v6: trackmodus en FIFO (velden achteraan, oudere worden overgenomen)
 // De indeling NOOIT wijzigen (flash-compatibel): ongebruikte velden blijven staan.
 
 struct MtCfg {
@@ -59,11 +59,25 @@ struct MtCfg {
   uint8_t  sos_off;             // 1 = SOS met de knop uitgeschakeld (0 = aan, standaard)
   uint8_t  tx_beep;             // 1 = korte biep na elk verstuurd positiebericht
   uint8_t  heard_beep;          // 1 = twee hoge biepjes als een repeater een positiebericht herhaalt
+  // ---- v6 (0.9.0); v5-bestanden krijgen hier de standaardwaarden ----
+  uint8_t  track_mode;          // 0 = classic (FastTrack + SlowTrack), 1 = fifo (wachtrij voor gemiste posities)
+  uint8_t  fifo_per_uur;        // fifo: hooguit x leegmaakberichten per uur (1..60)
+  uint16_t fifo_max;            // fifo: wachtrij hooguit x punten (20..500); vol = het oudste valt weg
+  uint16_t fifo_min;            // fifo: leegmaken vanaf x punten (1..fifo_max)
+  uint16_t fifo_gap_s;          // fifo: tussen twee leegmaakberichten minstens x s (15..300)
+  uint8_t  fifo_pogingen;       // fifo: na x niet herhaalde leegmaakberichten is een punt geparkeerd (1..10)
+  uint8_t  fifo_dun;            // fifo: punt op een rechte lijn binnen x m = overbodig (0 = uit, 0..100)
+  int8_t   fifo_snr;            // fifo: nieuwe leegmaakronde pas bij SNR >= x dB (-20..10), of 2x dekking / T1F
+  uint8_t  _pad6;
   uint32_t crc;                 // crc32 over alles hiervoor
 };
 
 // Vaste indeling: een andere grootte breekt de bewaarde bestanden (zie hierboven).
-static_assert(sizeof(MtCfg) == 124, "MtCfg-indeling gewijzigd");
+static_assert(sizeof(MtCfg) == 136, "MtCfg-indeling gewijzigd");
+static_assert(offsetof(MtCfg, track_mode) == 120, "v6-velden moeten na de v5-velden komen");
+
+#define MT_TRACK_CLASSIC 0
+#define MT_TRACK_FIFO    1
 
 extern MtCfg mt_cfg;
 
@@ -77,6 +91,11 @@ bool mt_cfg_save();
 // Kleine bestanden van MeshTrack (op ExtraFS; lezen valt terug op InternalFS van oudere firmware).
 bool mt_file_read(const char* path, void* buf, size_t len);
 bool mt_file_write(const char* path, const void* data, size_t len);
+// Groter bestand (bv. de FIFO) in twee delen (kop + gegevens): eerst volledig naar tmp, dan pas
+// hernoemen naar path. Lezen vanaf een positie, alleen op de eigen plaats (ExtraFS).
+bool mt_file_write_atomic(const char* path, const char* tmp, const void* a, size_t alen, const void* b, size_t blen);
+bool mt_file_read_at(const char* path, size_t off, void* buf, size_t len);
+void mt_file_remove(const char* path);
 void mt_fs_status(char* out, size_t n);
 bool mt_fs_internal_ok();                 // InternalFS leesbaar en niet beschadigd
 bool mt_fs_internal_format();             // InternalFS formatteren (wist identiteit en voorkeuren!)   // "opslag_intern=x/7 opslag_extra=y/z" (blokken)

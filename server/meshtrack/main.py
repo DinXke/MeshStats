@@ -31,6 +31,7 @@ from . import settings as setmod
 from .alerts import EVENTS, EVENT_TEXT, AlertManager
 from .db import DB
 from .mesh_client import MeshLink, send_text
+from .protocol import HISTORY_STATES, ProtocolError, parse as parse_t1
 from .rbac import PERMS, Principal
 from .roadgraph import Router
 from .sim import SimManager, new_pubkey
@@ -41,7 +42,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -163,7 +164,7 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
         await S.hub.send({"type": "channels"})
     t = S.db.tracker(t["id"])
     extras = pos.pop("extras", [])
-    if pos["state"] == "L":
+    if pos["state"] in HISTORY_STATES:
         await _process_slow(t, pos, extras, before, simulated)
         return
     if not simulated:
@@ -219,11 +220,11 @@ async def _zones(t: dict[str, Any], pos: dict[str, Any]) -> None:
 
 async def _process_slow(t: dict[str, Any], pos: dict[str, Any], extras: list[dict[str, Any]],
                         before: Optional[dict[str, Any]], simulated: bool) -> None:
-    """SlowTrack (L): gelogde punten, meestal ouder dan de live-positie. Ze gaan chronologisch naar
+    """SlowTrack (L) en FIFO (Q): punten uit het verleden, meestal ouder dan de live-positie. Ze gaan chronologisch naar
     de live kaart als gewone "position"-berichten (de kaart voegt op ts in, de marker volgt
     tracker.last_*, die nooit terug in de tijd gaat). Elk punt krijgt "slow": 1 en, als het
     niet nieuwer is dan de live-positie van vóór dit bericht, "history": 1.
-    Geen meldingen voor de toestand L zelf; zones, batterij en voeding alleen voor punten die
+    Geen meldingen voor de toestand L/Q zelf; zones, batterij en voeding alleen voor punten die
     nieuwer zijn dan die live-positie: de zonetoestand (binnen/buiten) is de huidige, en een
     oud punt zou die terugdraaien en valse in/uit-meldingen geven. Wel 'verloren tracker
     gezien': het bericht zelf bewijst dat de tracker nu leeft."""
@@ -233,8 +234,8 @@ async def _process_slow(t: dict[str, Any], pos: dict[str, Any], extras: list[dic
         p["slow"], p["history"] = 1, int(prev_ts is not None and p["ts"] <= prev_ts)
     live = [p for p in pts if not p["history"]]
     if not simulated:
-        log.info("SlowTrack %s seq=%s: %d gelogde punten (%d nieuwer dan de live-positie)",
-                 t["alias"], pos["seq"], len(pts), len(live))
+        log.info("%s %s seq=%s: %d punten (%d nieuwer dan de live-positie)",
+                 "FIFO" if pos["state"] == "Q" else "SlowTrack", t["alias"], pos["seq"], len(pts), len(live))
     out = tracker_out(t)
     for p in pts:
         await S.hub.send({"type": "position", "position": p, "tracker": out})
@@ -269,6 +270,8 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
     if not ch:
         return
     body = text.split(": ", 1)[1] if ": " in text else text
+    if body.startswith(("T1A|", "T1F|")):     # eigen bevestigingen (echo via een repeater): negeren
+        return
     if not body.startswith("T1C|"):
         return
     parts = body.split("|", 3)
@@ -291,6 +294,15 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
     fields = rest.split("|")
     if len(fields) > 1 and fields[1] == "E" and tag != "-" and t.get("authkey"):   # SOS: bevestigen
         _spawn(_sos_ack_later(ch, t, pk, fields[0]))
+    if len(fields) > 14 and fields[1] == "Q" and tag != "-" and t.get("authkey"):   # FIFO: bevestiging gevraagd?
+        # Ook als alle punten dubbel waren: de tracker moet ze uit zijn wachtrij kunnen halen.
+        # Niet bij een ongeldig bericht: dan zou de tracker punten wissen die we nooit hadden.
+        try:
+            r = parse_t1("T1|" + rest)
+        except ProtocolError:
+            r = None
+        if r is not None and r.ack_requested and r.fix_ts:
+            fifo_request(ch, t, pk, r.fix_ts)
 
 
 _sos_acked: dict[tuple[int, str], float] = {}
@@ -298,10 +310,122 @@ _bg: set = set()
 SOS_ACK_DELAY_S = 4.0   # los van de afhandeling van het binnenkomende bericht, en na de herhalingen van de SOS
 
 
-def _spawn(coro) -> None:
+def _spawn(coro) -> asyncio.Task:
     task = asyncio.create_task(coro)
     _bg.add(task)
     task.add_done_callback(_bg.discard)
+    return task
+
+
+# ---- FIFO-bevestiging (T1F) ------------------------------------------------------------
+# Een tracker vraagt een bevestiging met vlag "f" op een Q-bericht (alleen als hij verstuurde maar
+# nog niet bevestigde punten heeft). De server bundelt: "T1F|<pk8>:<tag>:<upto>|..." met tot
+# FIFO_MAX_PER_MSG trackers van hetzelfde kanaal; tag = HMAC(authsleutel van die tracker,
+# "<pk8>|F|<upto>"), upto = hoogste fix_ts van de gevraagde Q-punten. Schaal (10-20 trackers):
+#  - per tracker: eerste keer FIFO_ACK_DELAY_S na zijn laatste "f"-bericht (debounce), daarna
+#    hoogstens één keer per FIFO_TRACKER_INTERVAL_S;
+#  - per kanaal hoogstens één T1F per FIFO_CHANNEL_INTERVAL_S, en in totaal T1F_MAX_PER_HOUR per uur.
+# Wat moet wachten blijft staan en wordt samengevoegd (per tracker de hoogste upto).
+FIFO_ACK_DELAY_S = 20.0
+FIFO_TRACKER_INTERVAL_S = 600.0
+FIFO_CHANNEL_INTERVAL_S = 60.0
+T1F_MAX_PER_HOUR = 20
+FIFO_MAX_PER_MSG = 4
+FIFO_TICK_S = 2.0
+_fifo_pending: dict[int, dict[str, Any]] = {}    # tracker-id -> {upto, ch_id, pk, ready}
+_fifo_tracker_sent: dict[int, float] = {}        # tracker-id -> laatste T1F met die tracker erin
+_fifo_chan_sent: dict[int, float] = {}           # kanaal-id -> laatste T1F op dat kanaal
+_fifo_hour: list[float] = []                     # verzendtijden van het laatste uur (alle kanalen)
+_fifo_capped: set[str] = set()                   # al gemelde begrenzingen (geen logspam)
+
+
+def fifo_entry(authkey_hex: str, pk: str, upto_ts: int) -> str:
+    """"<pk8>:<tag>:<upto_ts>", tag = HMAC(authsleutel, "<pk8>|F|<upto_ts>")."""
+    return f"{pk}:{channel_tag(authkey_hex, f'{pk}|F|{upto_ts}')}:{upto_ts}"
+
+
+def fifo_ack_text(entries: list[str]) -> str:
+    return "T1F|" + "|".join(entries)
+
+
+def fifo_request(ch: dict[str, Any], t: dict[str, Any], pk: str, fix_ts: int, now: Optional[float] = None) -> None:
+    """Q-bericht met "f": upto bijhouden en het vroegste verzendmoment voor deze tracker zetten."""
+    now = time.time() if now is None else now
+    e = _fifo_pending.get(t["id"])
+    upto = max(fix_ts, e["upto"]) if e else fix_ts
+    ready = max(now + FIFO_ACK_DELAY_S, _fifo_tracker_sent.get(t["id"], -1e18) + FIFO_TRACKER_INTERVAL_S)
+    _fifo_pending[t["id"]] = {"upto": upto, "ch_id": ch["id"], "pk": pk, "ready": ready}
+
+
+def _fifo_cap_log(key: str, msg: str, *args: Any) -> None:
+    if key not in _fifo_capped:
+        _fifo_capped.add(key)
+        log.info(msg, *args)
+
+
+async def fifo_tick(now: Optional[float] = None) -> int:
+    """Klaarstaande bevestigingen versturen binnen de limieten. Geeft het aantal T1F-berichten terug."""
+    now = time.time() if now is None else now
+    _fifo_hour[:] = [x for x in _fifo_hour if now - x < 3600]
+    ready = sorted((e["ready"], tid) for tid, e in _fifo_pending.items() if e["ready"] <= now)
+    if not ready:
+        _fifo_capped.clear()
+        return 0
+    if not S.mesh.connected:
+        return 0                               # blijven staan tot de companion terug is
+    by_ch: dict[int, list[int]] = {}
+    for _, tid in ready:
+        by_ch.setdefault(_fifo_pending[tid]["ch_id"], []).append(tid)
+    sent = 0
+    for cid, tids in by_ch.items():
+        if len(_fifo_hour) >= T1F_MAX_PER_HOUR:
+            _fifo_cap_log("hour", "FIFO-bevestiging uitgesteld: maximum %d T1F per uur bereikt (%d trackers wachten)",
+                          T1F_MAX_PER_HOUR, len(ready))
+            break
+        if now - _fifo_chan_sent.get(cid, -1e18) < FIFO_CHANNEL_INTERVAL_S:
+            _fifo_cap_log(f"ch{cid}", "FIFO-bevestiging op kanaal %s uitgesteld: max. één T1F per %d s",
+                          cid, FIFO_CHANNEL_INTERVAL_S)
+            continue
+        ch = S.db.channel(cid)
+        batch, entries = [], []
+        for tid in tids:
+            t = S.db.tracker(tid)
+            if not ch or not t or not t.get("authkey"):
+                _fifo_pending.pop(tid, None)   # kanaal of sleutel weg: niets meer te bevestigen
+                continue
+            if len(batch) < FIFO_MAX_PER_MSG:
+                e = _fifo_pending[tid]
+                batch.append((t, e))
+                entries.append(fifo_entry(t["authkey"], e["pk"], e["upto"]))
+        if not entries:
+            continue
+        for t, _ in batch:
+            _fifo_pending.pop(t["id"], None)
+        _fifo_chan_sent[cid] = now
+        _fifo_hour.append(now)
+        _fifo_capped.discard("hour")
+        _fifo_capped.discard(f"ch{cid}")
+        try:
+            await S.mesh.send_channel(ch["slot"], fifo_ack_text(entries), ch.get("region") or "")
+        except Exception as ex:  # noqa: BLE001
+            log.warning("FIFO-bevestiging op kanaal %s mislukt: %s", ch["name"], ex)
+            for t, e in batch:                 # terugzetten, tenzij er intussen een nieuwer verzoek is
+                _fifo_pending.setdefault(t["id"], {**e, "ready": now + FIFO_CHANNEL_INTERVAL_S})
+            continue
+        sent += 1
+        for t, e in batch:
+            _fifo_tracker_sent[t["id"]] = now
+            log.info("FIFO-bevestiging T1F tot %s naar %s", e["upto"], t["alias"])
+    return sent
+
+
+async def fifo_scheduler() -> None:
+    while True:
+        await asyncio.sleep(FIFO_TICK_S)
+        try:
+            await fifo_tick()
+        except Exception:  # noqa: BLE001
+            log.exception("FIFO-bevestiging")
 
 
 async def _sos_ack_later(ch: dict[str, Any], t: dict[str, Any], pk: str, seq: str) -> None:
@@ -449,7 +573,8 @@ async def lifespan(app: FastAPI):
     S.alerts = AlertManager(S.db, S.mesh, get_settings, _user_sees)
     S.mesh.on_channel = on_channel
     tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner()),
-             asyncio.create_task(S.alerts.run()), asyncio.create_task(silent_watch())]
+             asyncio.create_task(S.alerts.run()), asyncio.create_task(silent_watch()),
+             asyncio.create_task(fifo_scheduler())]
     tiles = Path(S.cfg.tiles_dir)
     if tiles.is_dir():
         app.mount("/tiles", StaticFiles(directory=tiles), name="tiles")
@@ -1512,7 +1637,7 @@ async def mesh_nodes(request: Request):
 EVENT_TYPES = {
     "M": "positie (beweging)", "W": "wakker door beweging", "S": "stilgevallen", "H": "heartbeat",
     "N": "geen GPS-fix", "E": "SOS", "P": "handmatig verstuurd", "B": "moduswissel",
-    "L": "gelogd punt (SlowTrack)",
+    "L": "gelogd punt (SlowTrack)", "Q": "ingehaald punt (FIFO)",
     "zone_in": "zone binnen", "zone_out": "zone buiten", "bat_low": "batterij onder 20 %",
     "suspect": "verdachte positie", "usb_on": "aan de lader (USB)", "usb_off": "van de lader af",
     "lost_seen": "verloren tracker gezien",
