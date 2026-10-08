@@ -455,7 +455,24 @@
 
   // ---- kaart ---------------------------------------------------------------------------
   let map = null, markers = new Map(), hours = 24, trackOn = true;
-  const dark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+  // Thema's: dezelfde als op de website, onder dezelfde sleutel (mt.theme) bewaard; ook de kaart volgt.
+  const THEMES = { auto: "Automatisch", light: "Licht", dark: "Donker", night: "Nacht (rood)", contrast: "Hoog contrast", ocean: "Oceaan" };
+  const theme = () => { try { return JSON.parse(localStorage.getItem("mt.theme") || '"auto"'); } catch (_) { return "auto"; } };
+  const dark = () => { const t = theme(); return t === "dark" || t === "night" || (t === "auto" && matchMedia("(prefers-color-scheme: dark)").matches); };
+  function applyTheme(t) {
+    if (t === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("mt.theme", JSON.stringify(t)); } catch (_) {}
+    $("d-themes").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.th === t));
+  }
+  $("d-themes").innerHTML = Object.entries(THEMES).map(([k, v]) => `<button type="button" data-th="${k}">${v}</button>`).join("");
+  $("d-themes").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    const wasDark = dark();
+    applyTheme(b.dataset.th);
+    if (dark() !== wasDark && map) initMap();          // lichte of donkere kaart
+  }));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (theme() === "auto" && map) initMap(); });
+  applyTheme(theme());
 
   async function opfs() { return navigator.storage && navigator.storage.getDirectory ? navigator.storage.getDirectory() : null; }
   // Alle kaarten op het toestel, van grof naar gedetailleerd (zoom uit de naam, "-z14"; bij
