@@ -29,7 +29,7 @@ EVENT_TEXT = {
     "H": "stuurde een heartbeat", "M": "beweegt", "zone_in": "kwam binnen in", "zone_out": "verliet",
     "bat_low": "heeft minder dan 20 % batterij", "silent": "is te lang stil",
     "usb_on": "hangt aan de lader", "usb_off": "is van de lader gehaald",
-    "lost_seen": "(VERLOREN) is terug opgedoken",
+    "lost_seen": "(VERLOREN) is weer opgedoken",
 }
 EVENTS = list(EVENT_TEXT)
 

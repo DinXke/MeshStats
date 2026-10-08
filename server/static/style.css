@@ -593,3 +593,16 @@ dialog.side .sticky-actions, dialog.side form .row:last-of-type:has(button[type=
 .tp.thin { fill: var(--muted); fill-opacity: .6; }
 .sim-log li.okplus { color: var(--ok); }
 @media (prefers-reduced-motion: reduce) { .sim-hl { animation: none; outline: 3px solid var(--accent); } }
+.sim-listen { opacity: 0; transition: opacity .2s; }
+.sim-listen-dot { fill: var(--accent); }
+.sim-listen-arc { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; }
+.sim-listen-t { fill: var(--accent); font-size: 12px; font-weight: 600; }
+.sim-stop { fill: var(--warn); fill-opacity: .35; }
+/* kopbalk: groep met de losse apps (offline-kaart, tracker live) */
+header.top nav .navapps { display: flex; align-items: center; gap: 14px; border-left: 1px solid var(--line); padding-left: 14px; }
+header.top nav .navapps-l { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+@media (max-width: 720px) {
+  header.top.navopen nav .navapps { flex-direction: column; align-items: stretch; gap: 0; border-left: 0; padding-left: 0; border-top: 2px solid var(--line); margin-top: 4px; padding-top: 6px; }
+  header.top.navopen nav .navapps-l { padding: 4px 4px 0; }
+  header.top.navopen nav .navapps a:last-child { border-bottom: 0; }
+}

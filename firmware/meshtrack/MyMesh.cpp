@@ -2020,6 +2020,8 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_TABLE_FULL);
     }
+  } else if (cmd_frame[0] == MT_BLE_CMD && len >= 3 && cmd_frame[1] == 'M' && cmd_frame[2] == 'T') {
+    mt_ble_cli((const char*)&cmd_frame[3], (int)len - 3);   // MeshTrack: alleen-lezen CLI (status, fifo, dump)
   } else {
     writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
     MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);
@@ -2233,6 +2235,12 @@ void MyMesh::checkSerialInterface() {
              4); // include the most recent lastmod, so app can update their 'since'
       _serial->writeFrame(out_frame, 5);
       _iter_started = false;
+    }
+  } else if (mt_ble_pending()) {   // MeshTrack: antwoord op [0x7E]MT<commando>, één stuk per lus
+    if (!_serial->isConnected()) mt_ble_abort();
+    else if (!_serial->isWriteBusy()) {
+      int n = mt_ble_next_frame(out_frame, MAX_FRAME_SIZE - 4);   // marge onder MAX_FRAME_SIZE
+      if (n > 0 && _serial->writeFrame(out_frame, n) == (size_t)n) mt_ble_commit();
     }
   //} else if (!_serial->isWriteBusy()) {
   //  checkConnections();    // TODO - deprecate the 'Connections' stuff

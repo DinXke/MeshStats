@@ -295,7 +295,7 @@
 
   $("f-delete").addEventListener("click", async () => {
     const t = trackers.find((x) => String(x.id) === $("f-id").value);
-    if (!t || !(await MT.confirm(`"${t.alias}" verwijderen? Alle opgeslagen posities, sleutels en backups gaan mee weg.`, { ok: "Verwijderen", danger: true, title: "Tracker verwijderen" }))) return;
+    if (!t || !(await MT.confirm(`"${t.alias}" verwijderen? Alle opgeslagen posities, sleutels en back-ups gaan mee weg.`, { ok: "Verwijderen", danger: true, title: "Tracker verwijderen" }))) return;
     try {
       await MT.api(`/api/trackers/${t.id}`, { method: "DELETE" });
       form.hidden = true;
@@ -399,7 +399,7 @@
     if (!MT.can("keys.manage") || t.kind !== "real") { $("f-keys").hidden = true; return; }
     $("f-keys").hidden = false;
     const rows = await MT.api(`/api/trackers/${t.id}/keys`);
-    const KIND = { generated: "sleutel van de server", backup: "backup van het toestel", import: "export uit de app" };
+    const KIND = { generated: "sleutel van de server", backup: "back-up van het toestel", import: "export uit de app" };
     $("f-keylist").innerHTML = rows.length ? rows.map((k) => {
       const s = k.summary || {};
       const bits = [s.radio, s.path_bytes ? `${s.path_bytes} bytes per hop` : null, s.scope ? `regio ${s.scope}` : null,
@@ -408,13 +408,13 @@
         ${k.note ? `<div class="muted">${MT.esc(k.note)}</div>` : ""}<div class="muted">${MT.esc(bits.join(" · "))}</div>
         <div class="row" style="margin-top:4px">${MT.can("trackers.serial") ? `<a class="btnlink" href="/devices#prov?tracker=${t.id}&backup=${k.id}">Op een toestel zetten</a>` : ""}
         <button type="button" data-kget="${k.id}">Downloaden</button><button type="button" class="danger" data-kdel="${k.id}">Verwijderen</button></div></div>`;
-    }).join("") : '<div class="empty">Nog geen sleutel of backup op de server. Maak er een via Toestellen ("Backup naar de server"), of importeer een export uit de MeshCore-app.</div>';
+    }).join("") : '<div class="empty">Nog geen sleutel of back-up op de server. Maak er een via Toestellen ("Back-up naar de server"), of importeer een export uit de MeshCore-app.</div>';
     $("f-keylist").querySelectorAll("[data-kget]").forEach((b) => b.addEventListener("click", async () => {
       const doc = await MT.api(`/api/trackers/${t.id}/keys/${b.dataset.kget}`);
       download(jsonName(doc), JSON.stringify(doc, null, 2), "application/json");
     }));
     $("f-keylist").querySelectorAll("[data-kdel]").forEach((b) => b.addEventListener("click", async () => {
-      if (!(await MT.confirm("Deze backup (met privésleutel) van de server verwijderen?", { ok: "Verwijderen", danger: true }))) return;
+      if (!(await MT.confirm("Deze back-up (met privésleutel) van de server verwijderen?", { ok: "Verwijderen", danger: true }))) return;
       await MT.api(`/api/trackers/${t.id}/keys/${b.dataset.kdel}`, { method: "DELETE" });
       loadKeys(t); load();
     }));

@@ -86,13 +86,15 @@ const MT = {
       ["/devices", "Toestellen", "trackers.serial"],
       ["/users", "Gebruikers", ["users.manage", "share.manage"]],
       ["/system", "Systeem", ["alerts.manage", "alerts.personal", "system.manage", "companion.view"]],
-      ["/offline", "Offline", "map.view"],
       ["/help", "Help", null],
     ];
+    // losse apps: voor elke ingelogde gebruiker, als kleine groep achteraan (op een gsm in hetzelfde menu)
+    const apps = [["/offline", "Offline-kaart"], ["/tracker", "Tracker live"]];
     const nav = document.querySelector("header.top nav");
     if (nav) {
-      nav.innerHTML = links.filter(([, , p]) => !p || (Array.isArray(p) ? p.some(MT.can) : MT.can(p)))
-        .map(([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ""}>${label}</a>`).join("");
+      const a = ([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ""}>${label}</a>`;
+      nav.innerHTML = links.filter(([, , p]) => !p || (Array.isArray(p) ? p.some(MT.can) : MT.can(p))).map(a).join("")
+        + (MT.me.kind === "user" ? `<span class="navapps" role="group" aria-label="Apps"><span class="navapps-l">Apps</span>${apps.map(a).join("")}</span>` : "");
     }
     const hdr = document.querySelector("header.top");
     if (hdr && nav && !hdr.querySelector(".navtoggle")) {     // gsm: menuknop

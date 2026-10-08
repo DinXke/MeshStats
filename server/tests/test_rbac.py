@@ -332,6 +332,27 @@ def test_offline_app_uses_only_maps(client):
     assert c.get("/api/offline/bundle").status_code == 404          # bestaat niet meer
 
 
+def test_tracker_app_without_login(client):
+    """/tracker praat rechtstreeks met het toestel: pagina, service worker en manifest zonder login."""
+    c, main = client
+    r = c.get("/tracker", follow_redirects=False)
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"
+    # cache-busting zoals de andere pagina's
+    assert '/static/tracker.js?v=' in r.text and '/static/tracker.css?v=' in r.text and '/static/basemap.js?v=' in r.text
+    assert 'href="/tracker.webmanifest"' in r.text
+    sw = c.get("/tracker-sw.js")
+    assert sw.status_code == 200 and sw.headers["content-type"].startswith("text/javascript")
+    assert sw.headers["service-worker-allowed"] == "/tracker"
+    assert "mt-tracker-" in sw.text
+    m = c.get("/tracker.webmanifest")
+    assert m.status_code == 200 and m.headers["content-type"].startswith("application/manifest+json")
+    j = m.json()
+    assert (j["start_url"], j["scope"], j["display"], j["short_name"]) == ("/tracker", "/tracker", "standalone", "Tracker")
+    assert c.get("/static/tracker.js").status_code == 200
+    assert c.get("/api/trackers").status_code == 401                 # de rest blijft dicht
+
+
 def test_sos_on_channel_is_confirmed_once(client):
     import asyncio, hashlib, hmac as _hmac
     c, main = client
