@@ -11,7 +11,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#define MT_FW_VERSION "0.7.5"
+#define MT_FW_VERSION "0.8.0"
 
 // Terugmelding na een klik/SOS: twee hoge biepjes = een repeater herhaalde het bericht
 // (gehoord binnen MT_HEAR_MS), lage toon = geen herhaling gehoord of niet verstuurd
@@ -20,6 +20,8 @@
 #define MT_TUNE_NOK   "nok:d=4,o=5,b=100:4c"
 #define MT_TUNE_SOSOK "sosok:d=16,o=6,b=180:16c,16e,16g,8c7"
 #define MT_HEAR_MS    12000
+// tx_beep: korte biep zodra de radio een positiebericht echt verzonden heeft
+#define MT_TUNE_TX    "tx:d=32,o=7,b=200:32e"
 
 enum MtMode : uint8_t { MT_MODE_COMPANION = 0, MT_MODE_TRACKER = 1 };
 

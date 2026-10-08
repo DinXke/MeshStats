@@ -8,12 +8,13 @@ struct MtSendStats {
   uint32_t last_ms;
 };
 
-// manual: met terugmelding (klik, eerste SOS); tag: wat de afzender meegaf (bv. tijd van het nieuwste punt)
-typedef void (*MtSendDone)(bool ok, bool manual, uint32_t tag);
+// manual: met terugmelding (klik, eerste SOS); tag: wat de afzender meegaf (bv. tijd van het nieuwste punt);
+// state: de toestandsletter van het T1C-bericht (M, S, H, L, ...)
+typedef void (*MtSendDone)(bool ok, bool manual, uint32_t tag, char state);
 
 // Verstuurt een T1C-bericht op het trackingkanaal (flood, geen ACK mogelijk).
 // keep = niet wijken voor een nieuwer bericht (SOS, klik, stil, heartbeat, moduswissel).
-bool mt_send(const char* text, bool manual, bool keep, uint32_t tag = 0);   // false = meteen mislukt
+bool mt_send(const char* text, bool manual, bool keep, uint32_t tag = 0, char state = 0);   // false = meteen mislukt
 #define MT_TEXT_MAX 156   // MAX_TEXT_LEN van MeshCore is 160
 // "<nodenaam>: " gaat ervoor; de ruimte hangt af van de naam (the_mesh.mtSenderLen()).
 void mt_sender_loop();

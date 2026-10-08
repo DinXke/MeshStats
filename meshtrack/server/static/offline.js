@@ -13,7 +13,7 @@
     return s < 60 ? `${s} s geleden` : s < 3600 ? `${Math.round(s / 60)} min geleden` : s < 86400 ? `${Math.round(s / 3600)} u geleden` : `${Math.round(s / 86400)} d geleden`;
   };
   const fmtSize = (b) => (b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.round(b / 1e6) + " MB");
-  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker" };
+  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)" };
 
   // ---- opslag ----------------------------------------------------------------------
   let db;
@@ -108,7 +108,8 @@
     const out = [];
     if (lat !== null) {
       for (const e of extras(extra, lat, lon)) {
-        out.push({ ...base, k: `${pk}:${tsMain - e.dt}`, ts: tsMain - e.dt, state: "M", lat: e.lat, lon: e.lon, spd: e.spd, extra: true });
+        // SlowTrack (L): ook de meegestuurde oudere punten zijn gelogde punten
+        out.push({ ...base, k: `${pk}:${tsMain - e.dt}`, ts: tsMain - e.dt, state: state === "L" ? "L" : "M", lat: e.lat, lon: e.lon, spd: e.spd, extra: true });
       }
     }
     out.push({ ...base, k: `${pk}:${tsMain}:${state}`, ts: tsMain, state, lat, lon, alt: alt === "" ? null : +alt,
@@ -505,10 +506,11 @@
       map.addSource("trk", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "trk", type: "line", source: "trk", paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.85 } });
       map.addSource("pts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": 3, "circle-color": ["get", "color"], "circle-stroke-color": "#fff", "circle-stroke-width": 1 } });
+      map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": ["case", ["==", ["get", "state"], "L"], 2, 3], "circle-color": ["get", "color"],
+        "circle-opacity": ["case", ["==", ["get", "state"], "L"], 0.7, 1], "circle-stroke-color": "#fff", "circle-stroke-width": ["case", ["==", ["get", "state"], "L"], 0.5, 1] } });
       map.on("click", "pts", (e) => {
         const p = e.features[0].properties;
-        new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(`<strong>${esc(p.name)}</strong><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}${p.spd !== "null" && p.spd != null ? `<br>${p.spd} km/u` : ""}`).addTo(map);
+        new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(`<strong>${esc(p.name)}</strong><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}${p.spd !== "null" && p.spd != null ? `<br>${p.spd} km/u` : ""}${p.state === "L" ? `<br>${STATE.L}` : ""}`).addTo(map);
       });
       renderAll();
     });
@@ -548,7 +550,7 @@
       const sel = arr.filter((p) => p.ts >= since);
       const color = colorOf(pk), name = nameOf(pk);
       if (trackOn && sel.length > 1) lines.push({ type: "Feature", properties: { color }, geometry: { type: "LineString", coordinates: sel.map((p) => [p.lon, p.lat]) } });
-      if (trackOn) for (const p of sel) pts.push({ type: "Feature", properties: { color, name, ts: p.ts, spd: p.spd }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
+      if (trackOn) for (const p of sel) pts.push({ type: "Feature", properties: { color, name, ts: p.ts, spd: p.spd, state: p.state }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
       const last = arr[arr.length - 1];
       upsertMarker(pk, last, color, name);
     }

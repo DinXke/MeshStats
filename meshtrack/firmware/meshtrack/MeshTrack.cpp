@@ -69,6 +69,10 @@ void mt_on_double_press() {
 void mt_on_cli_rescue() { mt_menu_suspend(); }
 
 void mt_on_sos() {
+  if (mt_cfg.sos_off) {                      // 'set sos uit': vasthouden doet niets (uitschakelen na 8 s blijft)
+    mt_log("SOS uitgeschakeld (set sos aan)");
+    return;
+  }
   mt_log("SOS via de knop");
   if (!mt_tracker_sos()) {
     ui_task.playForced(MT_TUNE_NOK);

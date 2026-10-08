@@ -23,6 +23,7 @@
     <a href="#tracker">De tracker (T1000-E)</a>
     <a href="#knop">De knop, de biepjes en de led</a>
     <a href="#regels">Wanneer stuurt hij een positie?</a>
+    <a href="#slowtrack">SlowTrack</a>
     <a href="#instellen">Instellen via USB</a>
     <a href="#flashen">Firmware flashen</a>
     <a href="#klaarmaken">Nieuw toestel klaarmaken</a>
@@ -76,6 +77,9 @@
         De herhalingen van dezelfde noodoproep tellen één keer.</li>
       <li>Het <strong>pijltje</strong> op een marker wijst de rijrichting aan. Een <strong>grijze</strong> marker betekent
         dat die tracker al lang niets meer van zich heeft laten horen.</li>
+      <li>Punten van <a href="#slowtrack">SlowTrack</a> (status <em>L</em>) staan als <strong>kleinere, lichtere
+        stippen</strong> in het spoor. Bij een gekozen tracker tonen de popup en de lijst wanneer het laatste
+        SlowTrack-bericht binnenkwam (<em>SlowTrack: laatste burst 14:05</em>).</li>
       <li>De zijbalk kun je <strong>breder of smaller slepen</strong>; dubbelklik op de rand om hem terug te zetten.
         Elk blok in de zijbalk kun je in- en uitklappen.</li>
       <li>Op een <strong>telefoon</strong> staat de lijst in een onderpaneel. Sleep het streepje omhoog of omlaag om het
@@ -118,11 +122,24 @@
         positie, telkens een minuut later. Na 6,5 seconden klinkt een lage waarschuwingstoon: blijf je vasthouden,
         dan schakelt hij uit in plaats van een SOS te sturen. Na de eerste SOS hoor je net als bij een klik of een repeater
         het bericht doorgaf. Ontvangt de server de SOS, dan stuurt hij een ondertekende bevestiging terug: de tracker speelt
-        dan <strong>drie stijgende tonen</strong>.</td></tr>
-      <tr><td>langer dan 8 s</td><td>Uitschakelen. Binnen 20 seconden na het opstarten opent dit het herstelmenu.
+        dan <strong>drie stijgende tonen</strong>. Staat <em>SOS met de knop</em> uit (firmware 0.8.0 of nieuwer), dan
+        gebeurt er niets: geen biepjes en geen SOS.</td></tr>
+      <tr><td>langer dan 8 s</td><td>Uitschakelen, ook als SOS uit staat. Binnen 20 seconden na het opstarten opent dit het herstelmenu.
         Weer aanzetten doe je door de knop enkele seconden in te houden of door hem aan USB te hangen.</td></tr>
     </table>
-    <p>Automatisch verstuurde posities maken nooit geluid. Als companion zonder verbonden app piept hij standaard alleen
+    <p>Automatisch verstuurde posities maken standaard geen geluid. Vanaf firmware 0.8.0 kun je dat aanzetten, als tracker
+      en als companion (<em>Toestellen</em> → <em>Knop en biepjes</em>):</p>
+    <ul>
+      <li><strong>Biep bij elke verstuurde positie</strong> (<code>set tx_beep aan</code>): een kort biepje telkens de radio
+        een automatische positie verstuurd heeft.</li>
+      <li><strong>Biep als een repeater de positie doorgeeft</strong> (<code>set heard_beep aan</code>): twee hoge biepjes
+        zodra een repeater een automatische positie herhaalt. Dat kost wat batterij, want na elk bericht blijft de radio
+        ongeveer 12 seconden wakker om te luisteren.</li>
+    </ul>
+    <p>Een klik en een SOS houden altijd hun eigen biepjes. Zit de tracker in een zak, tas of houder waar de knop ingedrukt
+      kan blijven, zet dan <strong>SOS met de knop</strong> uit (<code>set sos uit</code>): 2 tot 8 seconden vasthouden doet
+      dan niets meer, langer dan 8 seconden schakelt hem nog altijd uit.</p>
+    <p>Als companion zonder verbonden app piept hij standaard alleen
       bij een <strong>privébericht</strong>, niet bij kanaalberichten (zoals de posities van andere trackers). Met de
       instelling <em>biep bij berichten</em> (<em>Toestellen</em> of <code>set msg_beep prive|alles|uit</code>) kies je
       alleen privéberichten, alle berichten of nooit.</p>
@@ -164,6 +181,30 @@
       meekomt, staat elk punt van het spoor op de juiste plaats en tijd. Een bericht dat later aankomt dan een nieuwer bericht,
       komt wel in het spoor maar verandert de laatste positie niet.</p>
 
+    <h2 id="slowtrack">SlowTrack</h2>
+    <p>De gewone tracking (<strong>FastTrack</strong>) stuurt alleen posities als de tracker beweegt. Vanaf firmware 0.8.0
+      kan daarnaast <strong>SlowTrack</strong> meelopen: dat logt op een vast ritme een GPS-punt, ook als de tracker
+      stilstaat of slaapt, en verstuurt die punten samen in <strong>één bericht</strong> met de status <em>L</em>. Zo zie
+      je achteraf ook waar hij was tussen twee bewegingsberichten of tijdens een lange rust.</p>
+    <table>
+      <tr><th>Instelling</th><th>Wat het doet</th><th>Standaard</th></tr>
+      <tr><td>Punt loggen elke<br><code>slow_log</code></td><td>Elke zoveel tijd een GPS-punt bewaren, ook in rust. Ligt hij
+        stil en is hij minder dan 5&nbsp;m verplaatst, dan logt hij geen nieuw punt. Minstens 30&nbsp;s; 0 = SlowTrack uit.</td><td>uit</td></tr>
+      <tr><td>Versturen elke<br><code>slow_send</code></td><td>Elke zoveel tijd precies één bericht met de gelogde punten.
+        Minstens 1 minuut.</td><td>30 min</td></tr>
+      <tr><td>FastTrack uit onder<br><code>fast_min_batt</code></td><td>Onder dit batterijpercentage stopt FastTrack (geen
+        bewegingsberichten meer). SlowTrack, heartbeat, klik en SOS werken door. Vanaf 3&nbsp;% hoger gaat FastTrack weer aan;
+        aan USB geldt het nooit. 0 = uit.</td><td>0 (uit)</td></tr>
+    </table>
+    <p><strong>Tip:</strong> één bericht bevat zo'n 6 à 11 punten, naargelang de afstanden ertussen. Logt de tracker er meer,
+      dan dunt hij gelijkmatig uit; het oudste en het nieuwste punt blijven altijd. Kies het loginterval daarom ongeveer
+      <strong>1/8 van het verzendinterval</strong>, bv. elke 30 minuten versturen en elke 4 minuten loggen. In
+      <em>Toestellen</em> rekent de pagina het meteen voor je uit.</p>
+    <p>De server zet de gelogde punten op hun eigen GPS-tijd chronologisch in het spoor en vult zo de gaten op. Een ouder
+      punt verplaatst de live-positie nooit terug en geeft geen meldingen of zonewissels; die volgen alleen de nieuwste
+      positie. Een bericht van een <em>verloren</em> tracker meldt de server wel, want het bewijst dat hij nu leeft. Gaat een
+      SlowTrack-bericht verloren, dan blijven de punten op de tracker staan en gaan ze mee met het volgende.</p>
+
     <h2 id="instellen">Instellen via USB</h2>
     <p>Ga naar <em>Toestellen</em> en klik op <em>Verbinden</em>. Dat werkt in Chrome of Edge op een computer of
       Android-toestel, via https of localhost. Bovenaan zie je welk toestel verbonden is; daaronder staan de tabbladen
@@ -172,6 +213,10 @@
       <em>voorinstelling</em> (te voet, fiets, voertuig, spaarzaam) vul je ze in één klik in. De rest staat achter
       <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de tracker</em> schrijf je alles weg. Staat het toestel
       nog niet in MeshTrack, dan voeg je het toe met <em>In MeshTrack zetten</em>.</p>
+    <p>Vanaf firmware 0.8.0 zijn er twee groepen bij: <strong>Knop en biepjes</strong> (biep bij berichten, biep bij elke
+      verstuurde positie, biep als een repeater de positie doorgeeft, SOS met de knop) en <strong>SlowTrack</strong>
+      (loggen, versturen en FastTrack uit onder een batterijpercentage, met een rekenhulp die toont hoeveel punten er per
+      bericht komen). Heeft de verbonden tracker oudere firmware, dan staan die velden grijs: flash eerst de nieuwste firmware.</p>
 
     <h2 id="flashen">Firmware flashen</h2>
     <p>In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar (met de badge <em>nieuw</em> als het verbonden toestel een oudere heeft), met de datum en de wijzigingen. Je kunt ze
@@ -227,6 +272,8 @@
       <li><em>Op een toestel zetten</em> (bij de backup, in Trackers → tabblad Toestel) opent Toestellen en zet de backup terug, bv. op een vervangtoestel. Contacten worden niet
         teruggezet; die leert het toestel opnieuw uit de adverts.</li>
     </ul>
+    <p>Een backup bewaart ook de instellingen van firmware 0.8.0 (SlowTrack, <code>fast_min_batt</code>, SOS en de
+      biepjes). Vroeger werd een instelling die op <em>uit</em> stond soms als <em>0</em> teruggezet; dat is opgelost.</p>
     <p>Wie een backup ophaalt, terugzet of verwijdert, staat in het auditlog. Geef dit recht alleen aan wie het echt
       nodig heeft: met een privésleutel kun je je als die tracker voordoen.</p>
 
@@ -240,7 +287,7 @@
       <li><strong>Kanaal kiezen</strong>: in <em>Toestellen</em> → <em>Instellingen</em> → <em>Trackingkanaal</em> kies je
         een kanaal van de server. De pagina zet het kanaal met zijn sleutel, de regio en de authsleutel op de tracker. Het
         kanaal staat daarna ook in de MeshCore-app als je de tracker als companion gebruikt. Met een terminal:
-        <code>chan set</code>, <code>set chan</code> en <code>set authkey</code>, of het menu <em>6 GPS en verzending</em>.
+        <code>chan set</code>, <code>set chan</code> en <code>set authkey</code>, of het menu <em>7 GPS en verzending</em>.
         In MeshTrack zie je het kanaal bij de tracker (<em>Trackers</em>); stuurt hij op een ander kanaal van de server,
         dan volgt MeshTrack dat vanzelf.</li>
       <li><strong>Ondertekening</strong>: op een kanaal kan iedereen met de sleutel berichten sturen, en de afzender is
@@ -263,9 +310,11 @@
       berichten</em> met de melding <em>oude firmware</em>: flash ze naar de nieuwste versie.</p>
 
     <h2 id="menu">Het seriële menu</h2>
-    <p>Verbind je met een terminalprogramma (115200 baud), dan opent meteen een genummerd menu met: status, modus,
-      wanneer een positie sturen, ritme, stilstand en heartbeat, GPS en verzending, nu een positie sturen en
-      onderhoud (backup, standaardwaarden en herstarten). Met <code>0</code> ga je terug.</p>
+    <p>Verbind je met een terminalprogramma (115200 baud), dan opent meteen een genummerd menu (firmware 0.8.0):
+      1 status, 2 modus en knop, 3 wanneer een positie sturen, 4 ritme, 5 SlowTrack, 6 stilstand en heartbeat, 7 GPS en
+      verzending, 8 nu een positie sturen en 9 onderhoud (backup, standaardwaarden en herstarten). In <em>Modus en knop</em>
+      staan ook 5 SOS door vasthouden, 6 biep na elk verstuurd positiebericht en 7 biep als een repeater het herhaalt.
+      Met <code>0</code> ga je terug.</p>
     <p>Losse commando's werken altijd, ook met het menu open: <code>status</code>,
       <code>set &lt;instelling&gt; &lt;waarde&gt;</code>, <code>mode tracker</code> of <code>mode companion</code>,
       <code>send</code>, <code>backup</code> en <code>help</code>. Voor het klaarmaken zijn er ook
@@ -276,6 +325,19 @@
       <code>set led companion</code>, <code>set led altijd</code> of <code>set led uit</code>, de biep bij berichten met
       <code>set msg_beep prive</code>, <code>alles</code> of <code>uit</code>. Tijden geef je op als <code>30s</code>,
       <code>5m</code> of <code>2h</code>.</p>
+    <p>Nieuw in firmware 0.8.0:</p>
+    <table>
+      <tr><th>Commando</th><th>Betekenis</th><th>Standaard</th></tr>
+      <tr><td><code>set slow_log &lt;tijd&gt;</code></td><td>SlowTrack: elke zoveel tijd een punt loggen, ook in rust (0 = uit, minstens 30s)</td><td>uit</td></tr>
+      <tr><td><code>set slow_send &lt;tijd&gt;</code></td><td>SlowTrack: de gelogde punten elke zoveel tijd in één bericht versturen (minstens 1m)</td><td>30m</td></tr>
+      <tr><td><code>set fast_min_batt &lt;0..100&gt;</code></td><td>onder dit % batterij geen FastTrack; weer aan vanaf 3&nbsp;% hoger (0 = uit)</td><td>0</td></tr>
+      <tr><td><code>set sos aan|uit</code></td><td>SOS door 2 tot 8 s vasthouden; uit = geen SOS en geen wapenbiep, uitschakelen blijft</td><td>aan</td></tr>
+      <tr><td><code>set tx_beep aan|uit</code></td><td>kort biepje na elke automatisch verstuurde positie</td><td>uit</td></tr>
+      <tr><td><code>set heard_beep aan|uit</code></td><td>twee hoge biepjes als een repeater een automatische positie herhaalt</td><td>uit</td></tr>
+    </table>
+    <p>Zet je <code>slow_log</code> en <code>slow_send</code> zo dat er meer punten per bericht komen dan erin passen, dan
+      waarschuwt de tracker meteen. <code>status</code> toont ook <code>slow_buffer</code> (gelogde punten die nog weg
+      moeten), <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code> en <code>slow_per_bericht=6-11</code>.</p>
     <p><strong>Diagnose</strong> (firmware 0.7.5 of nieuwer): met <code>rxlog aan</code> toont de tracker live elk
       kanaalpakket dat hij ontvangt (<code>rx kanaalpakket hash xx, N hops, N bytes</code>) en elk kanaalbericht dat hij
       kan ontcijferen (<code>rx kanaalbericht op kanaal N: …</code>). Bij het aanzetten meldt hij ook de hash van zijn
@@ -295,6 +357,8 @@
       <tr><td>P</td><td>handmatig verstuurd met de knop</td></tr>
       <tr><td>E</td><td>SOS</td></tr>
       <tr><td>B</td><td>van modus gewisseld, of aan de lader gehangen of ervan losgekoppeld</td></tr>
+      <tr><td>L</td><td>gelogd punt (<a href="#slowtrack">SlowTrack</a>, firmware 0.8.0 en server 1.1.0): punten die samen
+        verstuurd werden, meestal ouder dan de live-positie</td></tr>
     </table>
 
     <h2 id="beheer">Trackers beheren</h2>
@@ -465,10 +529,23 @@
         verbonden (openHop laat maar één verbinding tegelijk toe).</li>
       <li><strong>Een tracker verschijnt niet</strong>: kijk in <em>Trackers</em> → <em>Genegeerde berichten</em> (met <em>Als tracker toevoegen</em> voor een onbekende). Klopt zijn
         pubkey? Heeft hij een trackingkanaal dat de server kent (<em>Systeem</em> → <em>Kanalen</em>) en de juiste
-        authsleutel? Staat er <em>oude firmware</em>, flash hem dan naar 0.7 of nieuwer. Zie je hem als beheerder wel en
+        authsleutel? Staat er <em>oude firmware</em>, flash hem dan naar de nieuwste firmware. Zie je hem als beheerder wel en
         een andere gebruiker niet, kijk dan bij die gebruiker naar <em>Effectieve rechten</em>.</li>
-      <li><strong>Na een klik volgt een lage toon</strong>: de tracker heeft geen (geldig) trackingkanaal. Kies er een in
-        <em>Toestellen</em>.</li>
+      <li><strong>Na een klik volgt een lage toon</strong>: de tracker heeft geen (geldig) trackingkanaal, of geen repeater
+        hoorde het bericht. Kies een kanaal in <em>Toestellen</em>, of probeer op een plek met meer bereik.</li>
+      <li><strong>Mijn tracker stuurt SOS terwijl ik niets doe</strong>: waarschijnlijk wordt de knop ingedrukt in een zak,
+        tas of houder. Kijk hoe de tracker zit, of zet <em>SOS met de knop</em> uit (<em>Toestellen</em> → <em>Knop en
+        biepjes</em>, of <code>set sos uit</code>; firmware 0.8.0). Uitschakelen door lang vasthouden blijft werken.</li>
+      <li><strong>Geen bewegingsberichten meer bij een lage batterij</strong>: toont <code>status</code>
+        <code>fasttrack=uit(batterij)</code>, dan zit de batterij onder <code>fast_min_batt</code>. Vanaf 3&nbsp;% hoger gaat
+        FastTrack weer aan; SlowTrack, heartbeat, klik en SOS werken intussen door.</li>
+      <li><strong>Geen SlowTrack-punten (L)</strong>: SlowTrack staat standaard uit; zet <code>slow_log</code> op een tijd.
+        De punten komen pas na <code>slow_send</code>; <code>slow_buffer</code> in <code>status</code> toont hoeveel er
+        klaarstaan. Dat het spoor zich achteraf aanvult, is normaal.</li>
+      <li><strong>Velden grijs in Toestellen</strong>: de tracker heeft firmware ouder dan 0.8.0. Flash de nieuwste firmware.</li>
+      <li><strong>De batterij loopt sneller leeg</strong>: staat <em>biep als een repeater de positie doorgeeft</em> aan, dan
+        blijft de radio na elk bericht ongeveer 12 seconden wakker. Ook een kort <code>slow_log</code> kost stroom, omdat de
+        GPS dan vaker aan moet.</li>
       <li><strong>SOS-bevestiging komt niet aan</strong> (geen stijgend deuntje, terwijl de SOS wel op de kaart staat):
         <ul>
           <li>Typ <code>status</code> op de tracker: daar moet <code>path_bytes=2</code> staan (anders

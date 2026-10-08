@@ -242,6 +242,9 @@ class DB:
             self._x("ALTER TABLE trackers ADD COLUMN lost INTEGER NOT NULL DEFAULT 0")
             self._x("ALTER TABLE trackers ADD COLUMN lost_since INTEGER")
             self._x("ALTER TABLE trackers ADD COLUMN lost_seen INTEGER")
+        if "last_slow_rx" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:   # 1.1: SlowTrack
+            self._x("ALTER TABLE trackers ADD COLUMN last_slow_rx INTEGER")   # ontvangst laatste SlowTrack-bericht
+            self._x("ALTER TABLE trackers ADD COLUMN last_slow_ts INTEGER")   # tijd van het nieuwste gelogde punt
         scols = {r["name"] for r in self._q("PRAGMA table_info(sims)")}
         if "drive" not in scols:  # 0.2.2: rijgedrag (snelheden, ritlengte, zwerven)
             self._x("ALTER TABLE sims ADD COLUMN drive TEXT NOT NULL DEFAULT '{}'")
@@ -372,15 +375,26 @@ class DB:
     def position_at(self, tid: int, ts: int) -> bool:
         return bool(self._q("SELECT 1 FROM positions WHERE tracker_id=? AND ts=? AND lat IS NOT NULL LIMIT 1", (tid, ts)))
 
-    def is_duplicate(self, tid: int, seq: int, since: int) -> bool:
+    def is_duplicate(self, tid: int, seq: int, since: int, slow: bool = False) -> bool:
+        """Zelfde seq binnen het venster = herhaling. SlowTrack (L) en de gewone tracking
+        worden apart vergeleken: valt een L-seq samen met een seq van de gewone tracking
+        (aparte teller in de firmware), dan is dat geen herhaling."""
+        st = "state='L'" if slow else "state<>'L'"
         return bool(self._q(
-            "SELECT 1 FROM positions WHERE tracker_id=? AND seq=? AND rx_ts>=? LIMIT 1", (tid, seq, since)))
+            f"SELECT 1 FROM positions WHERE tracker_id=? AND seq=? AND rx_ts>=? AND {st} LIMIT 1", (tid, seq, since)))
+
+    def touch_slow(self, tid: int, rx: int) -> None:
+        """SlowTrack-bericht ontvangen waarvan alle punten al bekend waren."""
+        self._x("UPDATE trackers SET last_rx=?, last_slow_rx=? WHERE id=?", (rx, rx, tid))
 
     def add_position(self, tid: int, p: dict[str, Any]) -> int:
         cols = ("tracker_id", "ts", "rx_ts", "seq", "state", "lat", "lon", "alt", "spd", "crs", "bat",
                 "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw", "power")
         vals = (tid,) + tuple(p.get(c) for c in cols[1:])
         cur = self._x(f"INSERT INTO positions({','.join(cols)}) VALUES({','.join('?' * len(cols))})", vals)
+        if p["state"] == "L":
+            self._slow_summary(tid, p)
+            return cur.lastrowid
         # tracker-samenvatting bijwerken
         upd = {"last_rx": p["rx_ts"], "last_state": p["state"], "last_seq": p["seq"],
                "last_snr": p.get("snr"), "last_path_len": p.get("path_len")}
@@ -400,6 +414,30 @@ class DB:
         sql = "UPDATE trackers SET " + ", ".join(f"{k}=?" for k in upd) + " WHERE id=?"
         self._x(sql, tuple(upd.values()) + (tid,))
         return cur.lastrowid
+
+    def _slow_summary(self, tid: int, p: dict[str, Any]) -> None:
+        """Samenvatting na een SlowTrack-punt (L). Zo'n punt is meestal ouder dan de live-positie:
+        dan alleen ontvangst en verbinding bijwerken. Is het nieuwer, dan wordt het de laatste
+        positie (met batterij, modus, voeding), maar last_state blijft de toestand van de gewone
+        tracking (stilgevallen, SOS ...); alleen zonder eerdere toestand wordt het 'L'."""
+        cur = self._q("SELECT last_ts, last_state, last_slow_ts FROM trackers WHERE id=?", (tid,))[0]
+        upd: dict[str, Any] = {"last_rx": p["rx_ts"], "last_snr": p.get("snr"), "last_path_len": p.get("path_len"),
+                               "last_slow_rx": p["rx_ts"]}
+        if cur["last_slow_ts"] is None or p["ts"] > cur["last_slow_ts"]:
+            upd["last_slow_ts"] = p["ts"]
+        if p.get("lat") is not None and not p.get("suspect") and (cur["last_ts"] is None or p["ts"] > cur["last_ts"]):
+            upd.update(last_ts=p["ts"], last_lat=p["lat"], last_lon=p["lon"], last_spd=p.get("spd"),
+                       last_crs=p.get("crs"))
+            if p.get("bat") is not None:
+                upd["last_bat"] = p["bat"]
+            if p.get("mode"):
+                upd["last_mode"] = p["mode"]
+            if p.get("power"):
+                upd["last_power"] = p["power"]
+            if cur["last_state"] is None:
+                upd["last_state"] = "L"
+        sql = "UPDATE trackers SET " + ", ".join(f"{k}=?" for k in upd) + " WHERE id=?"
+        self._x(sql, tuple(upd.values()) + (tid,))
 
     def track(self, tid: int, since: int, limit: int = 5000) -> list[dict[str, Any]]:
         return self._q(

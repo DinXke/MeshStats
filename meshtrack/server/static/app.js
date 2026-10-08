@@ -212,9 +212,11 @@
       paint: { "line-color": colorSel.value === "speed" ? speedColor : ["get", "color"], "line-width": ["case", ["==", ["get", "sel"], 1], 4, 2.5] } });
     map.addSource("points", { type: "geojson", data: f.points });
     map.addLayer({ id: "points", type: "circle", source: "points", minzoom: 12,
-      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 2, 16, 5],
+      // SlowTrack-punten (state L): kleinere, lichtere stippen; de lijn blijft chronologisch
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, ["case", ["==", ["get", "state"], "L"], 1.3, 2], 16, ["case", ["==", ["get", "state"], "L"], 3, 5]],
                "circle-color": colorSel.value === "speed" ? speedColor : ["get", "color"],
-               "circle-stroke-color": dark.matches ? "#000" : "#fff", "circle-stroke-width": 1 } });
+               "circle-opacity": ["case", ["==", ["get", "state"], "L"], 0.7, 1],
+               "circle-stroke-color": dark.matches ? "#000" : "#fff", "circle-stroke-width": ["case", ["==", ["get", "state"], "L"], 0.5, 1] } });
     map.addSource("draw", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "draw-fill", type: "fill", source: "draw", paint: { "fill-color": "#3b82f6", "fill-opacity": 0.15 } });
     map.addLayer({ id: "draw-line", type: "line", source: "draw", paint: { "line-color": "#3b82f6", "line-width": 2 } });
@@ -279,6 +281,14 @@
     }
   }
 
+  // "SlowTrack: laatste burst 14:05" (met datum als het niet vandaag was)
+  function slowLine(t) {
+    if (!t.last_slow_rx) return "";
+    const d = new Date(t.last_slow_rx * 1000);
+    const hm = d.toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" });
+    return `SlowTrack: laatste burst ${d.toDateString() === new Date().toDateString() ? hm : d.toLocaleDateString("nl-BE", { day: "numeric", month: "short" }) + " " + hm}`;
+  }
+
   function popupHtml(t) {
     const st = MT.STATE[t.last_state] || t.last_state || "–";
     return [
@@ -287,6 +297,7 @@
       t.last_spd != null ? `${t.last_spd} km/u${t.last_crs != null ? " · koers " + t.last_crs + "°" : ""}` : null,
       t.last_bat != null ? `batterij ${t.last_bat}%` : null,
       `laatst gehoord ${MT.ago(t.last_rx)}`,
+      slowLine(t) || null,
       t.last_snr != null ? `SNR ${t.last_snr} dB${t.last_path_len != null && t.last_path_len < 64 ? ", " + t.last_path_len + " hops" : ""}` : null,
       t.last_lat != null ? `<span class="mono">${t.last_lat.toFixed(5)}, ${t.last_lon.toFixed(5)}</span>` : null,
     ].filter(Boolean).join("<br>");
@@ -365,7 +376,8 @@
            · <a href="/api/trackers/${t.id}/export?fmt=csv&hours=${prefs.trackOn ? prefs.hours : 24}">CSV</a></div>` : "";
       const follow = t.id === selected && t.last_lat != null
         ? `<div class="stats"><button type="button" class="link" data-follow="${t.id}">${following === t.id ? "volgen stoppen" : "centreren en volgen"}</button></div>` : "";
-      const stats = t.id === selected ? `<div class="stats">${MT.esc(statsFor(t.id))}</div>${exp}${follow}` : "";
+      const slow = t.id === selected && t.last_slow_rx ? `<div class="stats">${MT.esc(slowLine(t))}</div>` : "";
+      const stats = t.id === selected ? `<div class="stats">${MT.esc(statsFor(t.id))}</div>${slow}${exp}${follow}` : "";
       const vis = !prefs.hidden.has(t.id);
       const ico = t.icon ? MTIcons.svg(t.icon) : "";
       return `<div class="trk${t.stale ? " stale" : ""}${t.id === selected ? " sel" : ""}${vis ? "" : " hiddenmap"}" data-id="${t.id}">
@@ -834,13 +846,18 @@
     window.addEventListener("resize", () => { if (phone()) apply(store.get("sheetFrac", 0.45)); else side.style.height = ""; });
   })();
 
+  // SlowTrack (server 1.1): een burst kan 30 berichten na elkaar zijn; lijst en lagen één keer na afloop.
+  let burstTimer = null, burstEase = false;
+  const followTo = (t) => { if (following === t.id && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], duration: 800 }); };
   MT.live((msg) => {
     if (msg.type === "mesh") MT.meshPill($("mesh"), msg.mesh);
     if (msg.type === "position") {
       const t = msg.tracker;
       trackers.set(t.id, t);
       const p = msg.position;
-      if (p.lat != null && !p.suspect && hoursNow()) {
+      // history=1: ouder gelogd punt (niet nieuwer dan de live positie); msg.tracker heeft al de juiste last_*.
+      const hist = p.history === 1;
+      if (p.lat != null && !p.suspect && hoursNow() && !(hist && p.ts < Date.now() / 1000 - hoursNow() * 3600)) {
         if (!tracks.has(t.id)) tracks.set(t.id, []);
         // Chronologisch invoegen: een bericht kan eerdere punten meebrengen.
         const arr = tracks.get(t.id), item = { lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat };
@@ -853,9 +870,19 @@
         sosPts.get(t.id).push({ lat: p.lat, lon: p.lon, ts: p.ts, state: "E" });
       }
       upsertMarker(t);
+      if (p.slow === 1) {
+        if (!hist) burstEase = true;
+        clearTimeout(burstTimer);
+        burstTimer = setTimeout(() => {
+          renderList(); refreshLayers();
+          if (burstEase) followTo(trackers.get(t.id) || t);
+          burstEase = false;
+        }, 300);
+        return;
+      }
       renderList();
       refreshLayers();
-      if (following === t.id && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], duration: 800 });
+      followTo(t);
     }
     if (msg.type === "tracker" || msg.type === "tracker_deleted" || msg.type === "channels") loadAll();
     if (msg.type === "geofences") loadZones();

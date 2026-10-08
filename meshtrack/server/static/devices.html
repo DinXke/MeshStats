@@ -72,9 +72,27 @@
             </div>
             <div class="help">Met USB-voeding is hij altijd companion. Dubbelklik op de knop wisselt ook.</div>
             <label class="switch block"><input type="checkbox" data-set="track_in_companion" data-kind="bool"><span></span> Ook posities sturen als companion</label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Knop en biepjes</legend>
             <label for="s-msgbeep">Biep bij berichten (companion zonder app)</label>
             <select id="s-msgbeep" data-set="msg_beep"><option value="prive">alleen privéberichten</option>
               <option value="alles">alle berichten (ook posities van andere trackers)</option><option value="uit">nooit</option></select>
+            <div data-since="0.8.0" data-keys="tx_beep">
+              <label class="switch block"><input type="checkbox" data-set="tx_beep" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Biep bij elke verstuurde positie</label>
+              <div class="help">Een kort biepje telkens de tracker een positie verstuurt, ook de automatische. Als tracker en als companion.</div>
+            </div>
+            <div data-since="0.8.0" data-keys="heard_beep">
+              <label class="switch block"><input type="checkbox" data-set="heard_beep" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Biep als een repeater de positie doorgeeft</label>
+              <div class="help">Twee korte biepjes zodra een repeater een positie van de tracker herhaalt. Zo hoor je dat ze
+                het net bereikt heeft. Als tracker en als companion.</div>
+            </div>
+            <div data-since="0.8.0" data-keys="sos">
+              <label class="switch block"><input type="checkbox" data-set="sos" data-kind="bool" data-yes="aan" data-no="uit"><span></span> SOS met de knop</label>
+              <div class="help">De knop 2 tot 8 seconden ingedrukt houden stuurt een SOS. Zet dit uit als de tracker in een
+                zak of houder zit en de knop per ongeluk ingedrukt kan worden.</div>
+            </div>
           </fieldset>
 
           <fieldset>
@@ -107,6 +125,24 @@
               <div><label>Punt bewaren elke</label><div class="dur" data-set="sample" data-off="1"></div>
                 <div class="help">In beweging; elk bericht neemt zoveel bewaarde punten mee als erin passen.</div></div>
             </div>
+          </fieldset>
+
+          <fieldset data-since="0.8.0" data-keys="slow_log slow_send fast_min_batt">
+            <legend>SlowTrack</legend>
+            <div class="help">SlowTrack werkt naast de gewone tracking (FastTrack). Het logt op een vast ritme een GPS-punt,
+              ook bij stilstand of als de tracker slaapt, en verstuurt alle gelogde punten in één keer. De server voegt ze
+              in de juiste volgorde in het spoor in, zodat gaten opgevuld worden.</div>
+            <div class="grid">
+              <div><label>GPS-punt loggen elke</label><div class="dur" data-set="slow_log"></div>
+                <div class="help">0 = SlowTrack uit</div></div>
+              <div><label>Gelogde punten versturen elke</label><div class="dur" data-set="slow_send"></div></div>
+              <div><label>FastTrack uit onder</label><div class="unit"><input data-set="fast_min_batt" type="number" min="0" max="100"><span>% batterij</span></div>
+                <div class="help">Daaronder blijven alleen SlowTrack, heartbeat, klik en SOS over. 0 = FastTrack nooit uitschakelen.</div></div>
+            </div>
+            <div class="slowtip"><strong>Tip:</strong> kies het loggen ongeveer 1/8 van het versturen (bv. elke 30 min
+              versturen → elke 4 min loggen). Eén bericht bevat zo'n 6 à 11 punten, naargelang de afstanden; logt hij er meer, dan laat hij
+              gelijkmatig verdeelde tussenliggende punten weg.
+              <div id="s-slowcalc" aria-live="polite"></div></div>
           </fieldset>
         </div>
 

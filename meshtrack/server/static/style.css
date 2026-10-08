@@ -244,6 +244,13 @@ legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
 .dur input { flex: 1; min-width: 70px; }
 .dur select { width: auto; }
 .dur .help { width: 100%; margin-top: 0; }
+.fwold label, .fwold .unit, .fwold .dur, .fwold .slowtip, .fwold .help:not(.fwhint) { opacity: .5; }
+.fwold .switch { cursor: not-allowed; }
+.fwhint { color: var(--warn); font-weight: 600; }
+.slowtip { font-size: 12.5px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 8px 12px; margin-top: 12px; }
+#s-slowcalc { margin-top: 6px; font-weight: 600; }
+#s-slowcalc.warn { color: var(--warn); }
+#s-slowcalc:empty { display: none; }
 .seg.wide { display: flex; margin-top: 4px; }
 .seg.wide button { flex: 1; padding: 9px; font-size: 14px; }
 .devinfo { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 14px; }

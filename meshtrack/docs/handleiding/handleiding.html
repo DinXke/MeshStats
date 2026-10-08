@@ -27,6 +27,7 @@
   th { text-align: left; background: var(--accent); color: #fff; font-weight: 600; padding: 2mm 3mm; }
   td { border-bottom: 1px solid var(--line); padding: 2mm 3mm; vertical-align: top; }
   tr:nth-child(even) td { background: #f7faf9; }
+  table.brk { break-inside: auto; } table.brk tr { break-inside: avoid; }
   td.k { white-space: nowrap; font-weight: 600; width: 34mm; }
   figure { margin: 3mm 0 5mm; break-inside: avoid; }
   figure img { display: block; width: 100%; border: 1px solid var(--line); border-radius: 2.5mm; box-shadow: 0 1.5mm 4mm rgba(0,0,0,.08); }
@@ -89,7 +90,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Website 1.0 · firmware 0.7 (T1000-E) · MeshCore v1.17.1<br>
+    Website 1.1 · firmware 0.8 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -100,7 +101,7 @@
   <ol>
     <li><span class="n">1</span> Wat is MeshTrack? <small>hoe het werkt</small></li>
     <li><span class="n">2</span> De tracker <small>knop, biepjes, led, modi, SOS</small></li>
-    <li><span class="n">3</span> Wanneer stuurt hij een positie? <small>regels en statussen</small></li>
+    <li><span class="n">3</span> Wanneer stuurt hij een positie? <small>regels, SlowTrack en statussen</small></li>
     <li><span class="n">4</span> Inloggen en de kaart <small>computer en telefoon</small></li>
     <li><span class="n">5</span> Logboek, zones en verloren trackers</li>
     <li><span class="n">6</span> Meldingen via de mesh</li>
@@ -211,12 +212,23 @@
   <tr><td class="k">2 tot 8 s vasthouden</td><td><strong>SOS.</strong> Na 2 s klinken drie hoge biepjes: de SOS is gewapend.
     Laat los en hij stuurt meteen een SOS met zijn positie, en daarna nog twee keer met een verse positie, telkens een minuut
     later. Na 6,5 s klinkt een lage waarschuwingstoon: blijf je vasthouden, dan schakelt hij uit in plaats van een SOS te sturen.
-    Ontvangt de server de SOS, dan bevestigt hij dat: de tracker speelt <strong>drie stijgende tonen</strong>.</td></tr>
-  <tr><td class="k">langer dan 8 s</td><td>Uitschakelen. Weer aanzetten: de knop enkele seconden inhouden, of aan USB hangen.</td></tr>
+    Ontvangt de server de SOS, dan bevestigt hij dat: de tracker speelt <strong>drie stijgende tonen</strong>.
+    Staat <em>SOS met de knop</em> uit (firmware 0.8.0 of nieuwer), dan gebeurt er niets: geen biepjes en geen SOS.</td></tr>
+  <tr><td class="k">langer dan 8 s</td><td>Uitschakelen, ook als SOS uit staat. Weer aanzetten: de knop enkele seconden inhouden,
+    of aan USB hangen.</td></tr>
 </table>
-<p>Automatisch verstuurde posities maken nooit geluid.</p>
-<div class="warn"><b>SOS oefenen</b>Een SOS gaat echt over de mesh en kan meldingen naar anderen sturen. Spreek af wanneer je oefent,
-  of oefen met een virtuele tracker.</div>
+<p>Automatisch verstuurde posities maken standaard geen geluid. Vanaf firmware 0.8.0 kun je dat aanzetten, als tracker en als
+  companion (<em>Toestellen</em> → <em>Knop en biepjes</em>):</p>
+<ul>
+  <li><strong>Biep bij elke verstuurde positie</strong> (<code>tx_beep</code>): een kort biepje telkens de radio een automatische
+    positie verstuurd heeft.</li>
+  <li><strong>Biep als een repeater de positie doorgeeft</strong> (<code>heard_beep</code>): twee hoge biepjes zodra een repeater
+    een automatische positie herhaalt. Dat kost wat batterij: na elk bericht blijft de radio ongeveer 12 s wakker om te luisteren.</li>
+</ul>
+<p>Een klik en een SOS houden altijd hun eigen biepjes, ook als deze twee instellingen uit staan.</p>
+<div class="warn"><b>SOS oefenen, en SOS per ongeluk</b>Een SOS gaat echt over de mesh en kan meldingen naar anderen sturen. Spreek af
+  wanneer je oefent, of oefen met een virtuele tracker. Zit de tracker in een broekzak, tas of houder waar de knop ingedrukt kan
+  blijven, zet dan <em>SOS met de knop</em> uit (<code>set sos uit</code>). Uitschakelen door lang vasthouden blijft werken.</div>
 
 <h3>De led</h3>
 <p>De groene led flitst kort om de 4 seconden zolang de firmware draait. Een langere flits (een halve tel) betekent dat er
@@ -261,8 +273,64 @@
   <tr><td class="k">N</td><td>geen GPS-fix</td><td>Geen positie gevonden; wel batterij en modus.</td></tr>
   <tr><td class="k">P</td><td>handmatig verstuurd</td><td>Met één klik op de knop.</td></tr>
   <tr><td class="k">E</td><td>SOS</td><td>Noodoproep met de knop.</td></tr>
-  <tr><td class="k">B</td><td>moduswissel</td><td>Van modus gewisseld, of aan of van de lader.</td></tr>
+  <tr><td class="k">B</td><td>modus</td><td>Van modus gewisseld, of aan of van de lader.</td></tr>
+  <tr><td class="k">L</td><td>gelogd punt (SlowTrack)</td><td>Punten die SlowTrack logde en samen verstuurde (zie hieronder; firmware 0.8.0, server 1.1.0).</td></tr>
 </table>
+
+<h3>SlowTrack: ook een spoor in rust</h3>
+<p>De gewone tracking (<strong>FastTrack</strong>) stuurt alleen posities als de tracker beweegt. Vanaf firmware 0.8.0 kan daarnaast
+  <strong>SlowTrack</strong> meelopen: dat logt op een vast ritme een GPS-punt, ook als de tracker stilstaat of slaapt, en verstuurt
+  die punten samen in <strong>één bericht</strong> met de status <em>L</em>. Zo zie je achteraf ook waar hij was tussen twee
+  bewegingsberichten, of tijdens een lange rustperiode.</p>
+<figure>
+  <svg viewBox="0 0 720 210" width="100%" font-family="Segoe UI, Arial" font-size="12">
+    <defs><marker id="d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5d6a66"/></marker></defs>
+    <text x="10" y="54" font-weight="700" fill="#0b6e4f">FastTrack</text>
+    <text x="10" y="70" fill="#5d6a66" font-size="10.5">bij beweging</text>
+    <text x="10" y="134" font-weight="700" fill="#0369a1">SlowTrack</text>
+    <text x="10" y="150" fill="#5d6a66" font-size="10.5">vast ritme</text>
+    <rect x="110" y="40" width="250" height="34" rx="6" fill="#eef6f2"/>
+    <text x="235" y="32" text-anchor="middle" fill="#5d6a66" font-size="10.5">rijdt</text>
+    <text x="530" y="32" text-anchor="middle" fill="#5d6a66" font-size="10.5">staat stil, slaapt</text>
+    <g fill="#0b6e4f"><circle cx="130" cy="57" r="6"/><circle cx="200" cy="57" r="6"/><circle cx="270" cy="57" r="6"/><circle cx="345" cy="57" r="6"/></g>
+    <g fill="#fff" font-size="8" font-weight="700" text-anchor="middle"><text x="130" y="60">W</text><text x="200" y="60">M</text><text x="270" y="60">M</text><text x="345" y="60">S</text></g>
+    <text x="530" y="61" text-anchor="middle" fill="#9aa6a1" font-size="11">geen berichten (alleen een heartbeat)</text>
+    <g fill="#7cc4ea"><circle cx="150" cy="140" r="3.5"/><circle cx="210" cy="140" r="3.5"/><circle cx="270" cy="140" r="3.5"/><circle cx="330" cy="140" r="3.5"/>
+      <circle cx="390" cy="140" r="3.5"/><circle cx="450" cy="140" r="3.5"/><circle cx="510" cy="140" r="3.5"/><circle cx="570" cy="140" r="3.5"/></g>
+    <g fill="#c4d3cd"><circle cx="420" cy="140" r="2.5"/><circle cx="480" cy="140" r="2.5"/><circle cx="540" cy="140" r="2.5"/></g>
+    <rect x="610" y="122" width="60" height="36" rx="8" fill="#0ea5e9"/>
+    <text x="640" y="138" text-anchor="middle" fill="#fff" font-weight="700">1 bericht</text>
+    <text x="640" y="151" text-anchor="middle" fill="#fff" font-size="10">status L</text>
+    <path d="M578 140H606" stroke="#0ea5e9" stroke-width="2" marker-end="url(#d)"/>
+    <path d="M110 180H690" stroke="#5d6a66" stroke-width="1.2" marker-end="url(#d)"/>
+    <text x="695" y="196" text-anchor="end" fill="#5d6a66" font-size="10.5">tijd</text>
+    <path d="M150 110V124M210 110V124" stroke="#0369a1" stroke-width="1"/><path d="M150 117H210" stroke="#0369a1" stroke-width="1"/>
+    <text x="180" y="106" text-anchor="middle" fill="#0369a1" font-size="10.5">slow_log</text>
+    <path d="M150 166H640" stroke="#0369a1" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="395" y="200" text-anchor="middle" fill="#0369a1" font-size="10.5">slow_send: alle gelogde punten van deze periode in één bericht</text>
+    <text x="510" y="121" text-anchor="middle" fill="#5d6a66" font-size="10">grijs: stil en binnen 5 m, niet gelogd</text>
+  </svg>
+  <figcaption>FastTrack en SlowTrack lopen naast elkaar. SlowTrack logt ook in rust, maar slaat punten over als de tracker
+    nauwelijks verplaatst is.</figcaption>
+</figure>
+<table>
+  <tr><th>Instelling</th><th>Wat het doet</th><th>Standaard</th></tr>
+  <tr><td class="k">Punt loggen elke<br><code>slow_log</code></td><td>Elke zoveel tijd een GPS-punt in het geheugen bewaren, ook in rust.
+    Ligt hij stil en is hij minder dan 5 m verplaatst, dan logt hij geen nieuw punt. Minstens 30 s.</td><td>uit</td></tr>
+  <tr><td class="k">Versturen elke<br><code>slow_send</code></td><td>Elke zoveel tijd precies <strong>één bericht</strong> met de gelogde
+    punten. Minstens 1 min.</td><td>30 min</td></tr>
+  <tr><td class="k">FastTrack uit onder<br><code>fast_min_batt</code></td><td>Onder dit batterijpercentage stopt FastTrack (geen
+    bewegingsberichten meer). SlowTrack, heartbeat, klik en SOS werken door. Vanaf 3 % hoger gaat FastTrack weer aan; aan USB
+    geldt het nooit. 0 = uit.</td><td>0 (uit)</td></tr>
+</table>
+<div class="tip"><b>Tip: loggen ≈ 1/8 van versturen</b>Eén bericht bevat zo'n 6 à 11 punten, naargelang de afstanden ertussen. Logt
+  de tracker er meer, dan dunt hij gelijkmatig uit: het oudste en het nieuwste punt blijven altijd. Kies het loginterval dus
+  ongeveer een achtste van het verzendinterval, bv. <strong>elke 30 min versturen → elke 4 min loggen</strong>. Toestellen rekent
+  het voor je uit.</div>
+<p>De server zet de gelogde punten op hun eigen GPS-tijd chronologisch in het spoor en vult zo de gaten op. Een ouder punt
+  verplaatst de live-positie op de kaart nooit terug, en geeft geen meldingen of zonewissels: die volgen alleen de nieuwste
+  positie. Komt er een bericht van een <em>verloren</em> tracker binnen, dan meldt de server dat wel, want het bericht bewijst dat
+  hij nu leeft.</p>
 
 <!-- ============================ 4 ============================ -->
 <h2 class="chap"><span class="nr">4</span>Inloggen en de kaart</h2>
@@ -289,6 +357,8 @@
     op de plek van de noodoproep (voor de periode van het spoor, of de laatste 24 uur). Klik erop voor de tracker en het tijdstip.</li>
   <li>Het <strong>pijltje</strong> op een marker toont de rijrichting; een <strong>grijze</strong> marker heeft al lang niets
     gestuurd.</li>
+  <li>Punten van <strong>SlowTrack</strong> (status <em>L</em>) staan als <strong>kleinere, lichtere stippen</strong> in het spoor.
+    Bij een gekozen tracker tonen de popup en de lijst wanneer het laatste SlowTrack-bericht binnenkwam (<em>SlowTrack: laatste burst 14:05</em>).</li>
   <li>Onder <em>Meshnodes op de kaart</em> toon je repeaters, rooms en companions die de server hoorde.</li>
 </ul>
 <figure><img src="img/kaart-tracker.jpg" alt=""><figcaption>Een tracker gekozen: details in de popup, afstand en snelheden in de lijst, export als GPX of CSV, en <em>centreren en volgen</em>.</figcaption></figure>
@@ -384,6 +454,44 @@
   zijn kanaalberichten), de modus, het <strong>trackingkanaal</strong> en de belangrijkste instellingen. Een <em>voorinstelling</em> (te voet, fiets, voertuig,
   spaarzaam) vult ze in één klik in; de rest staat achter <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de
   tracker</em> schrijf je ze weg.</p>
+<p>Vanaf firmware 0.8.0 zijn er twee groepen bij:</p>
+<ul>
+  <li><strong>Knop en biepjes</strong>: biep bij berichten (als companion zonder app), biep bij elke verstuurde positie, biep als
+    een repeater de positie doorgeeft, en <em>SOS met de knop</em> (zie hoofdstuk 2).</li>
+  <li><strong>SlowTrack</strong>: hoe vaak een punt loggen en hoe vaak versturen, en onder welk batterijpercentage FastTrack stopt
+    (zie hoofdstuk 3). Een rekenhulp toont meteen hoeveel punten er per bericht komen, en waarschuwt als er punten wegvallen.</li>
+</ul>
+<p>Heeft de verbonden tracker oudere firmware, dan staan die velden grijs: flash eerst naar 0.8.0 (hoofdstuk 8).</p>
+<figure class="phones">
+  <div><img src="img/gsm-knop-biepjes.jpg" alt=""><figcaption>Knop en biepjes, met SOS uit.</figcaption></div>
+  <div><img src="img/gsm-slowtrack.jpg" alt=""><figcaption>SlowTrack met de rekenhulp.</figcaption></div>
+</figure>
+
+<h3>Instellingen in de terminal</h3>
+<p>Alles uit Toestellen kun je ook met <code>set &lt;instelling&gt; &lt;waarde&gt;</code> zetten. Tijden schrijf je als
+  <code>30s</code>, <code>5m</code> of <code>2h</code>; <code>0</code> zet een tijd uit. De belangrijkste:</p>
+<table>
+  <tr><th>Instelling</th><th>Betekenis</th><th>Standaard</th></tr>
+  <tr><td class="k">min_speed, min_dist</td><td>Afstandsregel: minimumsnelheid (km/u) en minimale verplaatsing (m).</td><td>10, 100</td></tr>
+  <tr><td class="k">turn_min, turn_min_speed</td><td>Bochtregel: graden en vanaf welke snelheid.</td><td>30, 5</td></tr>
+  <tr><td class="k">min_interval, max_interval</td><td>Nooit vaker dan 1× per; in beweging minstens 1× per.</td><td>1m, 10m</td></tr>
+  <tr><td class="k">sample</td><td>In beweging elke zoveel tijd een punt bewaren voor het volgende bericht.</td><td>15s</td></tr>
+  <tr><td class="k">still_timeout, heartbeat</td><td>Slapen na stilstand van; teken van leven in rust.</td><td>5m, 12h</td></tr>
+  <tr><td class="k">fix_timeout, fix_timeout_hb</td><td>Hoe lang een GPS-fix zoeken; bij heartbeat of klik.</td><td>90s, 30s</td></tr>
+  <tr><td class="k">slow_log, slow_send</td><td>SlowTrack: punt loggen elke; gelogde punten versturen elke (0.8.0).</td><td>uit, 30m</td></tr>
+  <tr><td class="k">fast_min_batt</td><td>Onder dit % batterij geen FastTrack; 0 = uit (0.8.0).</td><td>0</td></tr>
+  <tr><td class="k">sos aan|uit</td><td>SOS door 2 tot 8 s vasthouden (0.8.0).</td><td>aan</td></tr>
+  <tr><td class="k">tx_beep aan|uit</td><td>Kort biepje na elke automatisch verstuurde positie (0.8.0).</td><td>uit</td></tr>
+  <tr><td class="k">heard_beep aan|uit</td><td>Twee hoge biepjes als een repeater een automatische positie herhaalt (0.8.0).</td><td>uit</td></tr>
+  <tr><td class="k">msg_beep</td><td>Biep bij berichten als companion zonder app: <code>prive</code>, <code>alles</code> of <code>uit</code>.</td><td>prive</td></tr>
+  <tr><td class="k">led</td><td>Statusled: <code>companion</code>, <code>altijd</code> of <code>uit</code>.</td><td>companion</td></tr>
+  <tr><td class="k">track_in_companion</td><td>Ook posities sturen als companion.</td><td>aan</td></tr>
+  <tr><td class="k">accel_sens</td><td>Bewegingsgevoeligheid: <code>laag</code>, <code>midden</code> of <code>hoog</code>.</td><td>midden</td></tr>
+</table>
+<p><code>status</code> toont vanaf 0.8.0 ook <code>slow_buffer</code> (gelogde punten die nog verstuurd moeten worden),
+  <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code> (onder <code>fast_min_batt</code>) en
+  <code>slow_per_bericht=6-11</code>. Zet je <code>slow_log</code> en <code>slow_send</code> zo dat er te veel punten per
+  bericht komen, dan waarschuwt de tracker meteen.</p>
 <p>Met een terminalprogramma (115200 baud) opent meteen een genummerd menu. Losse commando's (<code>status</code>,
   <code>set …</code>, <code>mode tracker</code>, <code>help</code>) werken altijd.</p>
 <p><strong>Diagnose</strong> (firmware 0.7.5 of nieuwer): met <code>rxlog aan</code> toont de tracker live elk kanaalpakket dat
@@ -394,38 +502,44 @@
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.7.0       HOOFDMENU
+   MeshTrack T1000-E  fw 0.8.0       HOOFDMENU
   ==============================================================
-   T1000-E Ploeg 3  |  modus companion (USB)  |  batterij 99%
-   tracker slaapt  |  GPS zoekt  |  laatste zending: OK
+   Ploeg 3  |  modus companion (USB)  |  batterij 99%
+   tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
   ==============================================================
    1  Status (alles)
    2  Modus en knop
    3  Wanneer een positie sturen
    4  Ritme
-   5  Stilstand en heartbeat
-   6  GPS en verzending
-   7  Nu een positie sturen
-   8  Onderhoud
+   5  SlowTrack (logpunten, ook in rust)
+   6  Stilstand en heartbeat
+   7  GPS en verzending
+   8  Nu een positie sturen
+   9  Onderhoud
 
    0  Menu sluiten
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.7.0       MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.8.0       MODUS EN KNOP
   ==============================================================
-   Op batterij nu gekozen: companion.
+   Op batterij nu gekozen: tracker.
    Met USB altijd companion.
 
    1  Kies tracker   (BLE uit, radio slaapt)
    2  Kies companion (MeshCore-app)
-   3  Ook posities sturen als companion ... aan
+   3  Ook posities sturen als companion ...... aan
 
-   4  Statusled ............ alleen als companion
+   4  Statusled ............... alleen als companion
+   5  SOS door vasthouden ........................ uit
+   6  Biep na elk verstuurd positiebericht ....... uit
+   7  Biep als een repeater het herhaalt ......... aan
+      (6 en 7 niet bij klik of SOS)
 
    Knop: 1x = positie nu, 2x = modus wisselen,
          3x = buzzer aan/uit,
-         2-8 s vasthouden = SOS, langer = uit.
+         2-8 s vasthouden = niets (SOS uit),
+         langer dan 8 s = uitschakelen.
 
    0  Terug</pre>
 </div>
@@ -480,6 +594,8 @@
   <li><em>Op verbonden toestel zetten</em> zet een backup terug, bv. op een vervangtoestel. Contacten worden niet
     teruggezet; die leert het toestel opnieuw uit de adverts.</li>
 </ul>
+<p>Een backup bewaart ook de instellingen van firmware 0.8.0 (SlowTrack, <code>fast_min_batt</code>, SOS en de biepjes). Vroeger
+  werd een instelling die op <em>uit</em> stond soms als <em>0</em> teruggezet; dat is opgelost.</p>
 <div class="warn"><b>Een backup bevat de privésleutel</b>Wie de privésleutel heeft, kan zich voordoen als die tracker. De
   server bewaart backups versleuteld en houdt in het auditlog bij wie er een ophaalt, terugzet of verwijdert. Geef het recht
   <em>Sleutels en backups</em> alleen aan wie het echt nodig heeft, en bewaar gedownloade bestanden veilig.</div>
@@ -643,14 +759,29 @@
 
 <!-- ============================ 12 ============================ -->
 <h2 class="chap"><span class="nr">12</span>Problemen oplossen</h2>
-<table>
+<table class="brk">
   <tr><th>Probleem</th><th>Wat te doen</th></tr>
   <tr><td class="k">mesh: niet verbonden</td><td>De companion op de server is niet bereikbaar, of een ander programma is ermee verbonden
     (er kan maar één verbinding tegelijk). Verwittig de beheerder.</td></tr>
   <tr><td class="k">Tracker verschijnt niet</td><td>Kijk in <em>Trackers</em> → <em>Genegeerde berichten</em>. Klopt de pubkey? Heeft hij
-    een trackingkanaal dat de server kent, en de juiste authsleutel? Staat er <em>oude firmware</em>, flash dan naar 0.7. Ziet een
+    een trackingkanaal dat de server kent, en de juiste authsleutel? Staat er <em>oude firmware</em>, flash dan de nieuwste firmware. Ziet een
     beheerder hem wel en een gebruiker niet, kijk dan naar diens <em>Effectieve rechten</em>.</td></tr>
-  <tr><td class="k">Lage toon na een klik</td><td>De tracker heeft geen (geldig) trackingkanaal. Kies er een in Toestellen → Instellingen.</td></tr>
+  <tr><td class="k">Lage toon na een klik</td><td>De tracker heeft geen (geldig) trackingkanaal, of geen repeater hoorde het bericht.
+    Kies een kanaal in Toestellen → Instellingen, of probeer op een plek met meer bereik.</td></tr>
+  <tr><td class="k">SOS terwijl niemand iets deed</td><td>Waarschijnlijk werd de knop ingedrukt in een zak, tas of houder. Kijk hoe de tracker
+    zit, of zet <em>SOS met de knop</em> uit (Toestellen → Knop en biepjes, of <code>set sos uit</code>; firmware 0.8.0).
+    Uitschakelen door lang vasthouden blijft werken.</td></tr>
+  <tr><td class="k">Geen bewegingsberichten meer</td><td>Toont <code>status</code> <code>fasttrack=uit(batterij)</code>? Dan zit de
+    batterij onder <code>fast_min_batt</code>. Laad hem op: vanaf 3 % hoger gaat FastTrack weer aan. SlowTrack, heartbeat, klik
+    en SOS werken intussen door.</td></tr>
+  <tr><td class="k">Geen SlowTrack-punten (L)</td><td>SlowTrack staat standaard uit: zet <em>Punt loggen elke</em> (<code>slow_log</code>)
+    op een tijd. De punten komen pas na <em>Versturen elke</em> (<code>slow_send</code>); <code>slow_buffer</code> in
+    <code>status</code> toont hoeveel er klaarstaan. Gaat een bericht verloren, dan blijven ze in de buffer voor het volgende.</td></tr>
+  <tr><td class="k">Het spoor vult zich achteraf</td><td>Normaal bij SlowTrack: gelogde punten komen later binnen en de server zet ze op
+    hun eigen tijd in het spoor. De live-positie springt daardoor niet terug.</td></tr>
+  <tr><td class="k">Velden grijs in Toestellen</td><td>De tracker heeft firmware ouder dan 0.8.0. Flash de nieuwste firmware (hoofdstuk 8).</td></tr>
+  <tr><td class="k">Batterij loopt sneller leeg</td><td>Staat <em>Biep als een repeater de positie doorgeeft</em> aan? Dan blijft de radio na
+    elk bericht ongeveer 12 s wakker. Ook een kort <code>slow_log</code> kost stroom, omdat de GPS dan vaker aan moet.</td></tr>
   <tr><td class="k">SOS-bevestiging komt niet aan</td><td>Toont <code>status</code> <code>path_bytes=2</code>? Zo niet:
     <code>set path_bytes 2</code> en <code>reboot</code>. Sommige repeaters sturen 1-byte padhashes niet door; de server (vanaf 1.0.5) zet
     zijn companion daarom op 2 bytes (serverlog: <em>padhashes van de companion op 2 bytes gezet</em>). Met <code>rxlog aan</code>
