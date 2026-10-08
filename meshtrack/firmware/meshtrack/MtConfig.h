@@ -7,6 +7,7 @@
 // NIEUWERE firmware (hogere versie) wordt nooit overschreven.
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define MT_CFG_VERSION 4   // v4: kanaal + authsleutel (velden achteraan, oudere worden overgenomen)
 // De indeling NOOIT wijzigen (flash-compatibel): ongebruikte velden blijven staan.
@@ -44,7 +45,7 @@ struct MtCfg {
   // ---- v3 ----
   uint16_t sample_s;            // in beweging elke x s een punt bewaren; mee in het volgende bericht (0 = uit)
   uint8_t  adaptive;            // niet meer gebruikt (0.7)
-  uint8_t  _pad3;
+  uint8_t  msg_beep;            // biep bij berichten als companion zonder app: 0 = alleen privé (standaard), 1 = alles, 2 = nooit (was opvulling)
   // ---- v4 ----
   uint8_t  transport;           // niet meer gebruikt (0.7: altijd kanaal)
   uint8_t  chan_idx;            // kanaalnummer op dit toestel (chan list)
@@ -63,4 +64,8 @@ extern bool mt_cfg_readonly;    // bestand van nieuwere fw: niet overschrijven
 void mt_cfg_defaults(MtCfg& c);
 void mt_cfg_begin();
 bool mt_cfg_save();
+// Kleine bestanden van MeshTrack (op ExtraFS; lezen valt terug op InternalFS van oudere firmware).
+bool mt_file_read(const char* path, void* buf, size_t len);
+bool mt_file_write(const char* path, const void* data, size_t len);
+void mt_fs_status(char* out, size_t n);   // "opslag_intern=x/7 opslag_extra=y/z" (blokken)
 uint32_t mt_crc32(uint32_t crc, const uint8_t* p, uint32_t n);

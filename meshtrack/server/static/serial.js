@@ -333,14 +333,23 @@
       if (v !== "" && (el.dataset.spaces || !/\s/.test(v))) cmds.push(`set ${k} ${v}`);
     });
     cmds.push(`mode ${mode}`);
-    const bad = [];
+    const bad = [], why = new Set();
     for (const c of cmds) {
       const out = await command(c, 250);
-      if (out.some((l) => /ongeldig|onbekend|NIET/.test(l))) bad.push(c.replace(/^set /, ""));
+      const err = out.find((l) => /ongeldig|onbekend|NIET/.test(l));
+      if (err) {
+        bad.push(c.replace(/^set /, ""));
+        const m = /(ongeldige? [^(]*|onbekend[^(]*|NIET [^(\]]*)/.exec(err);   // reden zoals de tracker ze geeft
+        why.add((m ? m[1] : err).trim());
+      }
     }
     if (lastKv.transport) await applyVia(bad);
     await readStatus();
-    if (bad.length) msg($("s-msg"), `Niet aanvaard: ${bad.join(", ")}`);
+    if (bad.length) {
+      const opslag = [...why].some((w) => /NIET bewaard/.test(w));
+      msg($("s-msg"), `Niet aanvaard: ${bad.join(", ")}. Reden van de tracker: ${[...why].join("; ") || "onbekend"}.`
+        + (opslag ? " De tracker kan zijn instellingen niet bewaren (opslag vol): flash firmware 0.7.1 of nieuwer." : ""));
+    }
     else msg($("s-msg"), "Opgeslagen op de tracker.", true);
   });
 

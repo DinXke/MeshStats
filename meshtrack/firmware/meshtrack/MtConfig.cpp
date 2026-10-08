@@ -5,6 +5,20 @@
 #include <InternalFileSystem.h>
 using namespace Adafruit_LittleFS_Namespace;
 
+// MeshTrack bewaart zijn bestanden op ExtraFS (100 kB, ook de contacten en kanalen staan daar).
+// InternalFS is maar 7 blokken van 4 kB en zit vol met de identiteit en de MeshCore-voorkeuren:
+// een extra tijdelijk bestand paste er niet meer bij, waardoor elke opslag mislukte (0.7.0).
+// Bestanden van oudere firmware op InternalFS worden bij het opstarten verhuisd.
+#if defined(EXTRAFS)
+  #include <CustomLFS.h>
+  extern CustomLFS ExtraFS;
+  static Adafruit_LittleFS& cfs() { return ExtraFS; }
+  static const bool CFS_IS_EXTRA = true;
+#else
+  static Adafruit_LittleFS& cfs() { return InternalFS; }
+  static const bool CFS_IS_EXTRA = false;
+#endif
+
 #define MT_CFG_MAGIC 0x3143544DUL   // "MTC1"
 
 static const char* MT_CFG_PATH = "/mt_cfg.dat";
@@ -46,8 +60,8 @@ void mt_cfg_defaults(MtCfg& c) {
 }
 
 // Eén bestand proberen. 0 = geladen, 1 = bestand van nieuwere fw, -1 = onbruikbaar.
-static int load_file(const char* path) {
-  File f = InternalFS.open(path, FILE_O_READ);
+static int load_file(Adafruit_LittleFS& fs, const char* path) {
+  File f = fs.open(path, FILE_O_READ);
   if (!f) return -1;
   MtCfg tmp;
   mt_cfg_defaults(tmp);
@@ -69,14 +83,53 @@ static int load_file(const char* path) {
   return 0;
 }
 
-static bool write_whole(const char* path, const void* data, size_t len) {
-  InternalFS.remove(path);
-  File f = InternalFS.open(path, FILE_O_WRITE);
+static bool write_whole(Adafruit_LittleFS& fs, const char* path, const void* data, size_t len) {
+  fs.remove(path);
+  File f = fs.open(path, FILE_O_WRITE);
   if (!f) return false;
   size_t n = f.write((const uint8_t*)data, len);
   f.close();
-  if (n != len) { InternalFS.remove(path); return false; }
+  if (n != len) { fs.remove(path); return false; }
   return true;
+}
+
+// Klein bestand (bv. het volgnummer) lezen: eerst van ExtraFS, anders nog van InternalFS (oude firmware).
+bool mt_file_read(const char* path, void* buf, size_t len) {
+  for (int i = 0; i < (CFS_IS_EXTRA ? 2 : 1); i++) {
+    Adafruit_LittleFS& fs = i == 0 ? cfs() : (Adafruit_LittleFS&)InternalFS;
+    File f = fs.open(path, FILE_O_READ);
+    if (!f) continue;
+    size_t n = f.read((uint8_t*)buf, len);
+    f.close();
+    if (n == len) return true;
+  }
+  return false;
+}
+
+// Klein bestand schrijven op ExtraFS; een oude kopie op InternalFS verdwijnt (blok vrij).
+bool mt_file_write(const char* path, const void* data, size_t len) {
+  if (!write_whole(cfs(), path, data, len)) return false;
+  if (CFS_IS_EXTRA) InternalFS.remove(path);
+  return true;
+}
+
+// Bezetting van een bestandssysteem in blokken (zoals DataStore van MeshCore).
+static int count_block(void* p, lfs_block_t block) {
+  (void)block;
+  (*(uint32_t*)p)++;
+  return 0;
+}
+static void fs_use(Adafruit_LittleFS& fs, uint32_t& used, uint32_t& total) {
+  used = 0;
+  total = fs._getFS()->cfg->block_count;
+  if (lfs_traverse(fs._getFS(), count_block, &used)) used = 0;
+}
+void mt_fs_status(char* out, size_t n) {
+  uint32_t iu, it, eu = 0, et = 0;
+  fs_use(InternalFS, iu, it);
+  if (CFS_IS_EXTRA) fs_use(cfs(), eu, et);
+  snprintf(out, n, "opslag_intern=%lu/%lu opslag_extra=%lu/%lu", (unsigned long)iu, (unsigned long)it,
+           (unsigned long)eu, (unsigned long)et);
 }
 
 bool mt_cfg_save() {
@@ -85,30 +138,40 @@ bool mt_cfg_save() {
   mt_cfg.version = MT_CFG_VERSION;
   mt_cfg.size    = sizeof(MtCfg);
   mt_cfg.crc     = cfg_crc(mt_cfg);
-  if (!write_whole(MT_CFG_TMP, &mt_cfg, sizeof(mt_cfg))) return false;  // oude blijft staan
-  if (!InternalFS.rename(MT_CFG_TMP, MT_CFG_PATH)) {
+  Adafruit_LittleFS& fs = cfs();
+  if (!write_whole(fs, MT_CFG_TMP, &mt_cfg, sizeof(mt_cfg))) return false;  // oude blijft staan
+  if (!fs.rename(MT_CFG_TMP, MT_CFG_PATH)) {
+    fs.remove(MT_CFG_PATH);
+    if (!fs.rename(MT_CFG_TMP, MT_CFG_PATH)) return false;
+  }
+  if (CFS_IS_EXTRA) {                       // oude kopieën op InternalFS opruimen
     InternalFS.remove(MT_CFG_PATH);
-    if (!InternalFS.rename(MT_CFG_TMP, MT_CFG_PATH)) return false;
+    InternalFS.remove(MT_CFG_TMP);
   }
   return true;
 }
 
 void mt_cfg_begin() {
   mt_cfg_defaults(mt_cfg);
-  int r = load_file(MT_CFG_PATH);
-  if (r == 0) { mt_cfg_load_note = "geladen v4"; return; }
-  if (r == 2) { mt_cfg_load_note = "omgezet naar v4"; mt_cfg_save(); return; }
-  if (r == 1) {
-    mt_cfg_readonly = true;
-    mt_cfg_load_note = "DEFAULTS (bestand van nieuwere firmware, niet overschreven)";
-    return;
-  }
-  if (load_file(MT_CFG_TMP) == 0) {
-    mt_cfg_load_note = "hersteld uit .tmp";
-    mt_cfg_save();
-    return;
+  // Eerst de eigen plaats (ExtraFS), daarna wat oudere firmware op InternalFS liet staan.
+  for (int i = 0; i < (CFS_IS_EXTRA ? 2 : 1); i++) {
+    Adafruit_LittleFS& fs = i == 0 ? cfs() : (Adafruit_LittleFS&)InternalFS;
+    const bool moved = i == 1;
+    int r = load_file(fs, MT_CFG_PATH);
+    if (r == 1) {
+      mt_cfg_readonly = true;
+      mt_cfg_load_note = "DEFAULTS (bestand van nieuwere firmware, niet overschreven)";
+      return;
+    }
+    if (r != 0 && r != 2 && load_file(fs, MT_CFG_TMP) == 0) r = 3;
+    if (r == 0 && !moved) { mt_cfg_load_note = "geladen v4"; return; }
+    if (r == 0 || r == 2 || r == 3) {
+      bool ok = mt_cfg_save();             // naar ExtraFS (en de oude kopie weg)
+      mt_cfg_load_note = moved ? (ok ? "verhuisd naar ExtraFS" : "geladen van InternalFS [verhuizen MISLUKT]")
+                       : r == 2 ? "omgezet naar v4" : "hersteld uit .tmp";
+      return;
+    }
   }
   mt_cfg_defaults(mt_cfg);
-  mt_cfg_load_note = InternalFS.exists(MT_CFG_PATH) ? "DEFAULTS (bestand onleesbaar)"
-                                                    : "DEFAULTS (geen bestand)";
+  mt_cfg_load_note = cfs().exists(MT_CFG_PATH) ? "DEFAULTS (bestand onleesbaar)" : "DEFAULTS (geen bestand)";
 }

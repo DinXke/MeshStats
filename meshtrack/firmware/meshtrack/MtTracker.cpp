@@ -56,16 +56,13 @@ static uint32_t now_s() { return millis() / 1000; }
 // ---- volgnummer (overleeft een herstart, anders gooit de server dubbels weg) ---
 
 static void seq_save(uint16_t v) {
-  InternalFS.remove(SEQ_PATH);
-  File f = InternalFS.open(SEQ_PATH, FILE_O_WRITE);
-  if (f) { f.write((const uint8_t*)&v, 2); f.close(); }
+  mt_file_write(SEQ_PATH, &v, 2);
   s_seq_saved = v;
 }
 
 static void seq_begin() {
   uint16_t v = 0;
-  File f = InternalFS.open(SEQ_PATH, FILE_O_READ);
-  if (f) { if (f.read((uint8_t*)&v, 2) != 2) v = 0; f.close(); }
+  if (!mt_file_read(SEQ_PATH, &v, 2)) v = 0;
   // Na een herstart altijd voorbij alles wat al verstuurd kan zijn.
   s_seq = (uint16_t)(v + SEQ_STEP);
   seq_save(s_seq);

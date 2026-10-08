@@ -119,7 +119,10 @@
       <tr><td>langer dan 8 s</td><td>Uitschakelen. Binnen 20 seconden na het opstarten opent dit het herstelmenu.
         Weer aanzetten doe je door de knop enkele seconden in te houden of door hem aan USB te hangen.</td></tr>
     </table>
-    <p>Automatisch verstuurde posities maken nooit geluid.</p>
+    <p>Automatisch verstuurde posities maken nooit geluid. Als companion zonder verbonden app piept hij standaard alleen
+      bij een <strong>privébericht</strong>, niet bij kanaalberichten (zoals de posities van andere trackers). Met de
+      instelling <em>biep bij berichten</em> (<em>Toestellen</em> of <code>set msg_beep prive|alles|uit</code>) kies je
+      alleen privéberichten, alle berichten of nooit.</p>
     <p>De <strong>groene led</strong> flitst kort om de 4 seconden zolang de firmware draait. Is de flits langer (ongeveer
       een halve tel), dan wachten er ongelezen berichten die de app nog niet opgehaald heeft. In
       <strong>trackermodus</strong> blijft de led standaard uit, omdat hij anders het stroomverbruik in rust bijna
@@ -267,7 +270,8 @@
       <code>set path_bytes 2</code>, <code>set scope be</code>, <code>chan list</code>, <code>chan set</code>,
       <code>key export</code> en <code>key import</code> (radio, zendvermogen en sleutel gelden na
       <code>reboot</code>). De statusled stel je in met
-      <code>set led companion</code>, <code>set led altijd</code> of <code>set led uit</code>. Tijden geef je op als <code>30s</code>,
+      <code>set led companion</code>, <code>set led altijd</code> of <code>set led uit</code>, de biep bij berichten met
+      <code>set msg_beep prive</code>, <code>alles</code> of <code>uit</code>. Tijden geef je op als <code>30s</code>,
       <code>5m</code> of <code>2h</code>.</p>
 
     <h2 id="statussen">Statussen</h2>

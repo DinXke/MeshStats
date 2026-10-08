@@ -141,6 +141,13 @@ static const char* set_param(const char* k, const char* v) {
     else if (!strcmp(v, "hoog") || !strcmp(v, "high")) c.accel_sens = 2;
     else ok = false;
   }
+  else if (!strcmp(k, "msg_beep")) {
+    ok = true;
+    if (!strcmp(v, "prive") || !strcmp(v, "privé") || !strcmp(v, "dm")) c.msg_beep = 0;
+    else if (!strcmp(v, "alles") || !strcmp(v, "all")) c.msg_beep = 1;
+    else if (!strcmp(v, "uit") || !strcmp(v, "nooit") || !strcmp(v, "off")) c.msg_beep = 2;
+    else ok = false;
+  }
   else if (!strcmp(k, "led")) {
     ok = true;
     if (!strcmp(v, "companion")) c.led_mode = 0;
@@ -296,10 +303,11 @@ static void cmd_status() {
        mt_cfg.min_speed_kmh, mt_cfg.min_dist_m, mt_cfg.turn_min_deg, mt_cfg.turn_min_speed_kmh);
   outl("min_interval=%s max_interval=%s still_timeout=%s heartbeat=%s", a, b, c, d);
   fmt_dur(a, sizeof(a), mt_cfg.fix_timeout_s); fmt_dur(b, sizeof(b), mt_cfg.fix_timeout_hb_s);
-  outl("fix_timeout=%s fix_timeout_hb=%s track_in_companion=%s accel_sens=%s led=%s",
+  outl("fix_timeout=%s fix_timeout_hb=%s track_in_companion=%s accel_sens=%s led=%s msg_beep=%s",
        a, b, mt_cfg.track_in_companion ? "aan" : "uit",
        mt_cfg.accel_sens == 0 ? "laag" : mt_cfg.accel_sens == 2 ? "hoog" : "midden",
-       mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "companion");
+       mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "companion",
+       mt_cfg.msg_beep == 1 ? "alles" : mt_cfg.msg_beep == 2 ? "uit" : "prive");
   outl("tracker=%s gps=%s fix=%s sat=%ld beweging=%s radio=%s",
        mt_tracker_state_str(), mt_tracker_gps_on() ? "aan" : "uit", g.freshFix(5000) ? "ja" : "nee",
        g.satellitesCount(), mt_motion_mode_str(), mt_radio_paused() ? "slaapt" : "aan");
@@ -315,6 +323,11 @@ static void cmd_status() {
         mt_cfg.authkey_set ? "ja" : "nee", the_mesh.mtSender());
     outl("%s", have ? ch.name : "-");
   }
+  {
+    char fs[64];
+    mt_fs_status(fs, sizeof(fs));
+    outl("%s", fs);
+  }
   outl("cfg=%s%s", mt_cfg_load_note, mt_cfg_readonly ? " [alleen-lezen]" : "");
 }
 
@@ -329,6 +342,7 @@ static void cmd_help() {
   outl("    sample <tijd>   in beweging elke x een punt bewaren, mee in het volgende bericht (0 = uit)");
   outl("    chan <nr>  authkey <32 hex>|-   (trackingkanaal en authsleutel; afzender = de naam)");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
+  outl("    msg_beep prive|alles|uit (biep bij berichten als companion zonder app; prive = alleen privéberichten)");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
   outl("  key export | key import <128 hex>   PRIVATE KEY (import na een reboot)");
@@ -378,6 +392,7 @@ static const Item REST[] = {
   {"Slapen na stilstand van", "still_timeout", 1},
   {"Heartbeat in rust (0 = uit)", "heartbeat", 1},
   {"Bewegingsgevoeligheid (laag/midden/hoog)", "accel_sens", 2},
+  {"Biep bij berichten zonder app (prive/alles/uit)", "msg_beep", 2},
 };
 static const Item GPSI[] = {
   {"GPS-fix zoeken max.", "fix_timeout", 1},
@@ -408,6 +423,7 @@ static void value_of(const char* param, char* o, size_t n) {
     snprintf(o, n, "%u (%s)", (unsigned)mt_cfg.chan_idx, have ? ch.name : "leeg");
   }
   else if (!strcmp(param, "authkey")) snprintf(o, n, "%s", mt_cfg.authkey_set ? "ingesteld" : "niet ingesteld");
+  else if (!strcmp(param, "msg_beep")) snprintf(o, n, "%s", mt_cfg.msg_beep == 1 ? "alles" : mt_cfg.msg_beep == 2 ? "uit" : "alleen privé");
   else o[0] = 0;
 }
 
