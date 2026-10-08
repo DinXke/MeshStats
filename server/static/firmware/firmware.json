@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.8.1",
+      "date": "2026-10-08",
+      "notes": "CLI waarschuwt nu al vanaf 9 punten per periode (slow_log ongeveer 1/8 van slow_send), zoals de webpagina.",
+      "zip": "meshtrack-t1000e-0.8.1.zip",
+      "zip_sha256": "cd7446eb2ad782e1a4e6f5e9b45a3bfb4a7d3262f34e403bf86a4a3c3e6fc41c",
+      "uf2": "meshtrack-t1000e-0.8.1.uf2",
+      "app_size": 402336,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.8.0",
       "date": "2026-10-08",
       "notes": "SlowTrack: naast de gewone tracking elke slow_log een punt loggen (ook in rust) en elke slow_send alles in één L-bericht versturen (standaard uit). fast_min_batt: onder dit batterijpercentage geen FastTrack; SlowTrack, heartbeat, klik en SOS werken door. 'set sos uit' schakelt SOS door vasthouden uit. tx_beep: korte biep na elk verstuurd positiebericht; heard_beep: twee hoge biepjes als een repeater het herhaalt (ook bij automatische berichten).",
@@ -91,5 +101,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.8.0"
+  "latest": "0.8.1"
 }

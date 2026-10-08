@@ -178,7 +178,7 @@ static void slow_ratio_warn(const char* k, const char* pre) {
   if (strcmp(k, "slow_log") && strcmp(k, "slow_send")) return;
   if (!mt_cfg.slow_log_s) return;
   uint32_t n = mt_cfg.slow_send_s / mt_cfg.slow_log_s;
-  if (n <= 12) return;
+  if (n <= MT_SLOW_FIT) return;   // zelfde grens als de webpagina (1/8)
   outl("%slet op: ~%lu punten per periode, er passen er ~%d in één bericht; de rest valt weg", pre, (unsigned long)n, MT_SLOW_FIT);
 }
 
