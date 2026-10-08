@@ -18,7 +18,6 @@
 <main class="page wide">
   <div class="tabs pagetabs" id="ptabs">
     <button class="tab" data-tab="trackers">Trackers</button>
-    <button class="tab" data-tab="groups">Trackergroepen</button>
     <button class="tab" data-tab="ignored">Genegeerde berichten <span class="badge" id="unk-count" hidden></span></button>
   </div>
 
@@ -36,20 +35,10 @@
     </div>
     <table class="ttable" id="ttable">
       <thead><tr><th style="width:36px"></th><th>Tracker</th><th class="col-opt">Laatst gehoord</th><th class="col-opt">Batterij</th>
-        <th class="col-opt">Status</th><th class="col-opt">Groepen</th></tr></thead>
+        <th class="col-opt">Status</th><th class="col-opt">Kanaal</th></tr></thead>
       <tbody id="trackers"></tbody>
     </table>
     <div id="t-empty" class="empty" hidden></div>
-  </section>
-
-  <!-- trackergroepen -->
-  <section class="card pane" id="pane-groups" hidden>
-    <div class="toolbar">
-      <p class="muted" style="margin:0;flex:1">Groepeer trackers, bv. per dienst of ploeg. Een tracker kan in meerdere groepen zitten.
-        In <a href="/users#groups">Gebruikers → Groepen en rechten</a> kies je welke gebruikersgroep welke trackergroepen ziet.</p>
-      <button class="primary" id="tg-new" type="button">+ Trackergroep</button>
-    </div>
-    <div id="tglist" class="tlist"></div>
   </section>
 
   <!-- genegeerde berichten -->
@@ -59,23 +48,6 @@
     <div id="unknown"></div>
   </section>
 </main>
-
-<!-- trackergroep (zijpaneel) -->
-<form id="tg-form" class="subform" hidden>
-  <input type="hidden" id="tg-id">
-  <div class="grid">
-    <div><label for="tg-name">Naam</label><input id="tg-name" maxlength="40" required placeholder="bv. Ziekenwagens"></div>
-    <div><label for="tg-color">Kleur</label><input id="tg-color" type="color" value="#64748b"></div>
-  </div>
-  <label for="tg-desc">Omschrijving</label><input id="tg-desc" maxlength="200">
-  <label>Ook alle trackers van deze kanalen of groepen</label>
-  <div id="tg-includes" class="permgrid"></div>
-  <div class="help">Zo combineer je bv. meerdere kanalen op één kaart. Trackers die later in die kanalen of groepen komen,
-    tellen vanzelf mee.</div>
-  <label>Losse trackers</label><div id="tg-trackers" class="permgrid"></div>
-  <div class="row sticky-actions"><button class="primary" type="submit">Opslaan</button><button type="button" id="tg-cancel">Annuleren</button></div>
-  <div id="tg-msg" class="msg"></div>
-</form>
 
 <!-- tracker (zijpaneel) -->
 <form id="form" class="subform" hidden>
@@ -98,7 +70,8 @@
     </div>
     <label>Icoon</label>
     <div id="f-icons" class="ico-picker"></div>
-    <div id="f-tgwrap"><label>Trackergroepen</label><div id="f-tgroups" class="permgrid"></div></div>
+    <div id="f-chanwrap"><label for="f-channel">Trackingkanaal</label><select id="f-channel"></select>
+      <div class="help">Wie dit kanaal mag lezen, ziet de tracker. Een echte tracker krijgt het kanaal ook vanzelf uit zijn berichten.</div></div>
     <label for="f-notes">Notities</label>
     <textarea id="f-notes" rows="2" maxlength="500"></textarea>
     <label class="switch block"><input type="checkbox" id="f-active" checked><span></span> Actief (zichtbaar op de kaart)</label>

@@ -30,18 +30,33 @@
         layers: dark ? DARK : LIGHT
       };
     },
-    // Offline-app: tegels uit een lokaal bestand (File uit OPFS), fonts en sprites uit de cache.
-    offlineStyle: function (dark, file) {
+    // Offline-app: tegels uit lokale bestanden (File's uit OPFS), fonts en sprites uit de cache.
+    // Meerdere kaarten worden gestapeld: per bestand een bron met de volledige lagenset, van
+    // grof naar gedetailleerd. Waar een gedetailleerde kaart tegels heeft, bedekt haar
+    // landvlak de grovere kaart eronder; daarbuiten blijft de grovere zichtbaar.
+    offlineStyle: function (dark, files) {
+      if (!Array.isArray(files)) files = [files];
       var p = ensureProto();
-      var src = new pmtiles.PMTiles(new pmtiles.FileSource(file));
-      p.add(src);
+      var base = dark ? DARK : LIGHT;
+      var sources = {}, layers = base.filter(function (l) { return l.type === "background"; });
+      files.forEach(function (file, i) {
+        p.add(new pmtiles.PMTiles(new pmtiles.FileSource(file)));
+        var id = "pm" + i;
+        sources[id] = { type: "vector", url: "pmtiles://" + file.name, attribution: "&copy; OpenStreetMap" };
+        base.forEach(function (l) {
+          if (l.type === "background") return;
+          var c = JSON.parse(JSON.stringify(l));
+          c.id = l.id + "__" + i; c.source = id;
+          layers.push(c);
+        });
+      });
       var o = location.origin;
       return {
         version: 8,
         glyphs: o + "/tiles/fonts/{fontstack}/{range}.pbf",
         sprite: o + "/tiles/sprites/v4/" + (dark ? "dark" : "light"),
-        sources: { protomaps: { type: "vector", url: "pmtiles://" + file.name, attribution: "&copy; OpenStreetMap" } },
-        layers: dark ? DARK : LIGHT
+        sources: sources,
+        layers: layers
       };
     }
   };

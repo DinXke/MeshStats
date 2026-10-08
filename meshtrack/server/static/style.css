@@ -468,3 +468,10 @@ dialog.side .sticky-actions, dialog.side form .row:last-of-type:has(button[type=
   .pagetabs .tab { font-size: 14px; }
 }
 .actions a.btnlink { font-size: 15px; padding: 7px 12px; }
+
+/* rechten per kanaal (groepen): geen / kaart / sleutel */
+.ctable { width: 100%; border-collapse: collapse; margin: 4px 0 10px; font-size: 14px; }
+.ctable th, .ctable td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: center; }
+.ctable th:first-child, .ctable td:first-child { text-align: left; width: 100%; }
+.ctable th { font-weight: 600; color: var(--muted); font-size: 12px; }
+.ctable input[type=radio] { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }

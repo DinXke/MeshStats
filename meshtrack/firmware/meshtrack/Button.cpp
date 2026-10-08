@@ -23,7 +23,8 @@ void Button::isr() {
     uint32_t now = millis();
     bool pressed = digitalRead(s_isrPin) == s_isrActive;
     if (pressed) {
-        // Alleen een echte klik: de knop was even los (dender bij het loslaten telt niet).
+        // Alleen een echte klik: de knop was minstens BUTTON_ISR_RELEASED_MS los
+        // (dender bij indrukken/loslaten duurt korter en telt dus niet).
         if (now - s_lastRelease >= BUTTON_ISR_RELEASED_MS) s_presses++;
     } else {
         s_lastRelease = now;
@@ -136,13 +137,20 @@ void Button::handleStateChange() {
     
     if (_currentState) {
         // Button pressed
-        if (_useIsr) _seenPresses = s_presses;   // deze klik zag de lus zelf
+        // De interrupt telde deze klik al (die reageert meteen, de lus pas na de
+        // debounce). Telde ze er meer, dan zag de lus een vorige tik niet.
+        uint32_t n = takeIsrPresses();
+        if (n > 1) _clickCount += (n - 1 > 3 ? 3 : n - 1);
         _pressTime = now;
         _state = PRESSED;
         _armFired = _warnFired = false;
         triggerEvent(ANY_PRESS);
     } else {
         // Button released
+        // MeshTrack: een snelle dubbelklik ziet de lus als één lange druk (~300-400 ms):
+        // het korte loslaten ertussen valt binnen de debounce van 50 ms. De interrupt
+        // ziet het wel; elke klik die ze tijdens deze druk telde, komt er hier bij.
+        uint32_t extra = takeIsrPresses();
         if (_state == PRESSED) {
             uint32_t pressDuration = now - _pressTime;
             
@@ -153,7 +161,7 @@ void Button::handleStateChange() {
                 triggerEvent(HOLD_RELEASE);
             } else if (pressDuration < BUTTON_LONG_PRESS_TIME_MS) {
                 // Short press detected
-                _clickCount++;
+                _clickCount += 1 + (extra > 3 ? 3 : extra);
                 _releaseTime = now;
                 _state = WAITING_FOR_MULTI_CLICK;
             } else {
@@ -163,6 +171,15 @@ void Button::handleStateChange() {
             }
         }
     }
+}
+
+// MeshTrack: aantal klikken dat de interrupt telde sinds de vorige keer.
+uint32_t Button::takeIsrPresses() {
+    if (!_useIsr) return 0;
+    uint32_t p = s_presses;
+    uint32_t n = p - _seenPresses;
+    _seenPresses = p;
+    return n;
 }
 
 void Button::triggerEvent(EventType event) {

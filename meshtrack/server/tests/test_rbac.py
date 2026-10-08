@@ -116,37 +116,44 @@ def test_export_gpx(client):
     assert any(a["action"] == "spoor geëxporteerd" for a in c.get("/api/audit").json())
 
 
-def test_tracker_groups_and_multiple_user_groups(client):
+def _chan(c, name, slot):
+    r = c.post("/api/channels", json={"name": name, "slot": slot})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_channel_rights_and_multiple_user_groups(client):
     c, main = client
     login(c, "admin", "beheerder1")
+    amb, brand = _chan(c, "#ambu", 3), _chan(c, "#brand", 4)
     ids = {n: c.post("/api/trackers", json={"pubkey": k * 32, "alias": n}).json()["tracker"]["id"]
            for n, k in (("Amb1", "a1"), ("Amb2", "a2"), ("Brand", "b1"), ("Fiets", "f1"))}
-    amb = c.post("/api/tracker-groups", json={"name": "Ziekenwagens", "trackers": [ids["Amb1"]]}).json()
-    brand = c.post("/api/tracker-groups", json={"name": "Brandweer", "trackers": [ids["Brand"], ids["Amb2"]]}).json()
-    # een tracker in meerdere groepen
-    r = c.put(f"/api/trackers/{ids['Amb2']}", json={"groups": [amb["id"], brand["id"]]})
-    assert sorted(r.json()["tracker"]["groups"]) == sorted([amb["id"], brand["id"]])
+    for n in ("Amb1", "Amb2"):
+        r = c.put(f"/api/trackers/{ids[n]}", json={"channel_id": amb})
+        assert r.status_code == 200 and r.json()["tracker"]["channel_id"] == amb
+    c.put(f"/api/trackers/{ids['Brand']}", json={"channel_id": brand})
+    assert c.put(f"/api/trackers/{ids['Fiets']}", json={"channel_id": 999}).status_code == 422
     view = ["map.view", "map.sidebar", "map.tracks"]
     g1 = c.post("/api/groups", json={"name": "Ploeg Amb", "perms": view, "all_trackers": False,
-                                     "tracker_groups": [amb["id"]], "history_hours": 6}).json()
+                                     "channels": {str(amb): "kaart"}, "history_hours": 6}).json()
+    assert g1["channels"] == {amb: "kaart"} or g1["channels"] == {str(amb): "kaart"}
     g2 = c.post("/api/groups", json={"name": "Fietsers", "perms": view + ["log.view"], "all_trackers": False,
-                                     "trackers": [ids["Fiets"]], "history_hours": 24}).json()
+                                     "trackers": [ids["Fiets"]], "channels": {str(brand): "onzin"}, "history_hours": 24}).json()
+    assert not g2["channels"]                                        # onbekend niveau valt weg
     assert c.post("/api/users", json={"username": "els", "password": "geheim123",
                                       "group_ids": [g1["id"], g2["id"]]}).status_code == 200
-    u = next(x for x in c.get("/api/users").json() if x["username"] == "els")
-    assert u["group_ids"] == [g1["id"], g2["id"]] and u["group_name"] == "Ploeg Amb, Fietsers"
     c.post("/api/logout")
     login(c, "els", "geheim123")
     me = c.get("/api/me").json()
     assert "log.view" in me["perms"] and me["history_hours"] == 24        # som van de groepen
     assert sorted(t["alias"] for t in c.get("/api/trackers").json()) == ["Amb1", "Amb2", "Fiets"]
-    tg = {g["name"]: g["trackers"] for g in c.get("/api/tracker-groups").json()}
-    assert tg == {"Ziekenwagens": sorted([ids["Amb1"], ids["Amb2"]]), "Brandweer": [ids["Amb2"]]}
-    assert c.post("/api/tracker-groups", json={"name": "X"}).status_code == 403
-    # een tracker die later in de groep komt, is meteen zichtbaar
+    mine = c.get("/api/channels/mine").json()
+    assert [(x["name"], x["level"], x["trackers"]) for x in mine] == [("#ambu", "kaart", 2)]
+    assert "secret" not in mine[0]                                   # kaartniveau: geen sleutel
+    # een tracker die later op het kanaal stuurt, is meteen zichtbaar
     c.post("/api/logout")
     login(c, "admin", "beheerder1")
-    c.put(f"/api/tracker-groups/{amb['id']}", json={"name": "Ziekenwagens", "trackers": [ids["Amb1"], ids["Amb2"], ids["Brand"]]})
+    c.put(f"/api/trackers/{ids['Brand']}", json={"channel_id": amb})
     c.post("/api/logout")
     login(c, "els", "geheim123")
     assert "Brand" in [t["alias"] for t in c.get("/api/trackers").json()]
@@ -161,126 +168,153 @@ def test_last_admin_with_multiple_groups(client):
     assert c.put(f"/api/users/{admin['id']}", json={"group_ids": [admin["group_ids"][0], kijk]}).status_code == 200
 
 
-def test_share_with_tracker_group_is_dynamic_and_limited_to_creator(client):
+def test_share_with_channel_is_dynamic_and_limited_to_creator(client):
     c, main = client
     login(c, "admin", "beheerder1")
-    a = c.post("/api/trackers", json={"pubkey": "a1" * 32, "alias": "A"}).json()["tracker"]["id"]
+    ch = _chan(c, "#ploeg", 3)
+    a = c.post("/api/trackers", json={"pubkey": "a1" * 32, "alias": "A", "channel_id": ch}).json()["tracker"]["id"]
     b = c.post("/api/trackers", json={"pubkey": "b1" * 32, "alias": "B"}).json()["tracker"]["id"]
     x = c.post("/api/trackers", json={"pubkey": "c1" * 32, "alias": "X"}).json()["tracker"]["id"]
-    tg = c.post("/api/tracker-groups", json={"name": "Ploeg", "trackers": [a]}).json()
-    # beperkte maker: ziet A en B, niet X
+    # beperkte maker: ziet kanaal #ploeg en losse tracker B, niet X
     g = c.post("/api/groups", json={"name": "Deler", "perms": ["map.view", "share.manage"], "all_trackers": False,
-                                    "trackers": [a, b]}).json()
+                                    "trackers": [b], "channels": {str(ch): "kaart"}}).json()
     c.post("/api/users", json={"username": "deler", "password": "geheim123", "group_ids": [g["id"]]})
     c.post("/api/logout")
     login(c, "deler", "geheim123")
-    url = c.post("/api/shares", json={"name": "Link", "tracker_groups": [tg["id"]], "hours": 12}).json()["url"]
+    assert c.post("/api/shares", json={"name": "Leeg", "channels": [999]}).status_code == 422
+    url = c.post("/api/shares", json={"name": "Link", "channels": [ch], "hours": 12}).json()["url"]
     token = url.rsplit("/", 1)[1]
     c.post("/api/logout")
     c.get(f"/s/{token}")
     assert [t["alias"] for t in c.get("/api/trackers").json()] == ["A"]
-    # later komen B (maker ziet die) en X (maker ziet die niet) in de groep
+    # later sturen B (maker ziet die) en X (maker ziet die niet) op het kanaal
     c.cookies.clear()
     login(c, "admin", "beheerder1")
-    c.put(f"/api/tracker-groups/{tg['id']}", json={"name": "Ploeg", "trackers": [a, b, x]})
+    c.put(f"/api/trackers/{b}", json={"channel_id": ch})
+    c.put(f"/api/trackers/{x}", json={"channel_id": ch})
     c.post("/api/logout")
     c.cookies.clear()
     main._pcache.clear()
     c.get(f"/s/{token}")
-    assert sorted(t["alias"] for t in c.get("/api/trackers").json()) == ["A", "B"]
+    # X staat nu op het kanaal van de maker en is dus ook voor hem zichtbaar
+    assert sorted(t["alias"] for t in c.get("/api/trackers").json()) == ["A", "B", "X"]
 
 
 def test_effective_rights_shows_origin(client):
     c, _ = client
     login(c, "admin", "beheerder1")
-    a = c.post("/api/trackers", json={"pubkey": "a1" * 32, "alias": "A"}).json()["tracker"]["id"]
+    ch = _chan(c, "#ploeg", 3)
+    c.post("/api/trackers", json={"pubkey": "a1" * 32, "alias": "A", "channel_id": ch})
     b = c.post("/api/trackers", json={"pubkey": "b1" * 32, "alias": "B"}).json()["tracker"]["id"]
     c.post("/api/trackers", json={"pubkey": "c1" * 32, "alias": "C"})
-    tg = c.post("/api/tracker-groups", json={"name": "Ploeg", "trackers": [a]}).json()
     g1 = c.post("/api/groups", json={"name": "G1", "perms": ["map.view"], "all_trackers": False,
-                                     "tracker_groups": [tg["id"]], "history_hours": 6}).json()
+                                     "channels": {str(ch): "sleutel"}, "history_hours": 6}).json()
     g2 = c.post("/api/groups", json={"name": "G2", "perms": ["map.view", "log.view"], "all_trackers": False,
-                                     "trackers": [b], "history_hours": 48}).json()
+                                     "trackers": [b], "channels": {str(ch): "kaart"}, "history_hours": 48}).json()
     uid = c.post("/api/users", json={"username": "piet", "password": "geheim123", "group_ids": [g1["id"], g2["id"]]}).json()["id"]
     e = c.get(f"/api/users/{uid}/effective").json()
     perms = {p["id"]: p["via"] for p in e["perms"]}
     assert perms["map.view"] == ["G1", "G2"] and perms["log.view"] == ["G2"] and perms["users.manage"] == []
+    chans = {x["name"]: x for x in e["channels"]}
+    assert chans["#ploeg"]["level"] == "sleutel" and chans["#ploeg"]["via"] == ["G1: sleutel", "G2: kaart"]
     tr = {t["alias"]: t for t in e["trackers"]}
-    assert tr["A"]["sees"] and tr["A"]["via"] == ["G1: trackergroep Ploeg"]
+    assert tr["A"]["sees"] and tr["A"]["via"] == ["G1: kanaal #ploeg", "G2: kanaal #ploeg"]
     assert tr["B"]["sees"] and tr["B"]["via"] == ["G2: losse tracker"]
     assert not tr["C"]["sees"] and e["history_hours"] == 48 and e["history_via"] == ["G2"]
 
 
-def test_channel_messages_signed_and_grouped(client):
+def test_channel_messages_signed_and_set_tracking_channel(client):
     import asyncio
     c, main = client
     login(c, "admin", "beheerder1")
     tid = c.post("/api/trackers", json={"pubkey": "ab12cd34" + "00" * 28, "alias": "Kanaaltracker"}).json()["tracker"]["id"]
-    r = c.post("/api/channels", json={"name": "#ploeg3", "slot": 5})
-    assert r.status_code == 200, r.text
+    cid = _chan(c, "#ploeg3", 5)
     ch = c.get("/api/channels").json()["channels"][0]
     assert ch["secret"] == __import__("hashlib").sha256(b"#ploeg3").hexdigest()[:32] and ch["require_sig"]
     key = c.get(f"/api/trackers/{tid}/authkey").json()["authkey"]
     rest = "3|M|50.93|5.33|40|50|90|80|0.9|1|t|b|1800000000"
     good = main.channel_tag(key, f"ab12cd34|{rest}")
     run = lambda txt: asyncio.run(main.on_channel(5, txt, 1800000000, 5.0, 2))
-    run(f"MT: T1C|ab12cd34|00000000|{rest}")                     # foute handtekening
-    run(f"MT: T1C|ab12cd34|-|{rest}")                            # niet ondertekend, kanaal eist het
+    run(f"Tracker: T1C|ab12cd34|00000000|{rest}")                # foute handtekening
+    run(f"Tracker: T1C|ab12cd34|-|{rest}")                       # niet ondertekend, kanaal eist het
     assert not c.get(f"/api/trackers/{tid}/track?hours=999999").json()
     reasons = [u["reason"] for u in c.get("/api/unknown").json()]
     assert "kanaal #ploeg3: ongeldige handtekening" in reasons and "kanaal #ploeg3: niet ondertekend" in reasons
-    run(f"MT: T1C|ab12cd34|{good}|{rest}")
+    run(f"🇧🇪 Tracker 1: T1C|ab12cd34|{good}|{rest}")             # afzender = nodenaam (mag alles zijn)
     assert len(c.get(f"/api/trackers/{tid}/track?hours=999999").json()) == 1
     t = next(x for x in c.get("/api/trackers").json() if x["id"] == tid)
     assert t["last_via"] == "kanaal #ploeg3" and t["has_authkey"] and "authkey" not in t
-    grp = next(g for g in c.get("/api/tracker-groups").json() if g["name"] == "Kanaal #ploeg3")
-    assert grp["trackers"] == [tid]                               # automatisch in de kanaalgroep
+    assert t["channel_id"] == cid                                 # trackingkanaal volgt het bericht
     run("Jan: hallo allemaal")                                    # gewone chat: genegeerd
     run(f"MT: T1C|ab12cd34|{good}|{rest}".replace("|5.33|", "|5.34|"))   # gewijzigd: handtekening klopt niet meer
     assert len(c.get(f"/api/trackers/{tid}/track?hours=999999").json()) == 1
 
 
-def test_channel_keys_only_for_admins_or_own_group(client):
+def test_dm_from_old_tracker_is_ignored(client):
+    import asyncio
     c, main = client
     login(c, "admin", "beheerder1")
-    c.post("/api/channels", json={"name": "#ambu", "slot": 6})
-    c.post("/api/channels", json={"name": "#brand", "slot": 7})
-    chans = {x["name"]: x for x in c.get("/api/channels").json()["channels"]}
+    tid = c.post("/api/trackers", json={"pubkey": "ab12cd34" + "00" * 28, "alias": "Oud"}).json()["tracker"]["id"]
+    asyncio.run(main.on_message("ab12cd340000", "T1|1|M|50.93|5.33|40|30|90|80|1.0|0", 1800000000, 5.0, 1))
+    assert not c.get(f"/api/trackers/{tid}/track?hours=999999").json()
+    assert any("oude firmware" in u["reason"] for u in c.get("/api/unknown").json())
+
+
+def test_channel_keys_only_with_key_level(client):
+    c, main = client
+    login(c, "admin", "beheerder1")
+    amb, brand = _chan(c, "#ambu", 6), _chan(c, "#brand", 7)
     assert {x["name"] for x in c.get("/api/channels/device").json()} == {"#ambu", "#brand"}   # beheerder: alles
+    assert all(x["level"] == "sleutel" and x["secret"] for x in c.get("/api/channels/mine").json())
     g = c.post("/api/groups", json={"name": "Ambu-techniek", "perms": ["map.view", "trackers.serial"], "all_trackers": False,
-                                    "tracker_groups": [chans["#ambu"]["tracker_group_id"]]}).json()
+                                    "channels": {str(amb): "sleutel", str(brand): "kaart"}}).json()
     c.post("/api/users", json={"username": "tech", "password": "geheim123", "group_ids": [g["id"]]})
     c.post("/api/logout")
     login(c, "tech", "geheim123")
     got = c.get("/api/channels/device").json()
     assert [x["name"] for x in got] == ["#ambu"] and got[0]["secret"]
+    mine = {x["name"]: x for x in c.get("/api/channels/mine").json()}
+    assert mine["#ambu"]["secret"] and "secret" not in mine["#brand"] and mine["#brand"]["level"] == "kaart"
     assert c.get("/api/channels").status_code == 403                 # volledige lijst alleen voor beheer
-
-
-def test_group_of_groups_combines_channels(client):
-    c, main = client
-    login(c, "admin", "beheerder1")
-    ids = {n: c.post("/api/trackers", json={"pubkey": k * 32, "alias": n}).json()["tracker"]["id"]
-           for n, k in (("A", "a1"), ("B", "b1"), ("C", "c1"), ("D", "d1"))}
-    ga = c.post("/api/tracker-groups", json={"name": "Kanaal #ambu", "trackers": [ids["A"]]}).json()
-    gb = c.post("/api/tracker-groups", json={"name": "Kanaal #brand", "trackers": [ids["B"]]}).json()
-    combo = c.post("/api/tracker-groups", json={"name": "Interventie", "trackers": [ids["C"]],
-                                                "includes": [ga["id"], gb["id"]]}).json()
-    assert combo["trackers"] == [ids["C"]] and combo["members"] == sorted([ids["A"], ids["B"], ids["C"]])
-    g = c.post("/api/groups", json={"name": "Coördinatie", "perms": ["map.view"], "all_trackers": False,
-                                    "tracker_groups": [combo["id"]]}).json()
-    c.post("/api/users", json={"username": "coord", "password": "geheim123", "group_ids": [g["id"]]})
-    # later komt D op kanaal #ambu: meteen zichtbaar via de gecombineerde groep
-    c.put(f"/api/tracker-groups/{ga['id']}", json={"name": "Kanaal #ambu", "trackers": [ids["A"], ids["D"]]})
-    c.post("/api/logout")
-    login(c, "coord", "geheim123")
-    assert sorted(t["alias"] for t in c.get("/api/trackers").json()) == ["A", "B", "C", "D"]
-    # een ingesloten groep verwijderen haalt hem uit de combinatie
+    # kanaal verwijderen haalt het uit de rechten
     c.post("/api/logout")
     login(c, "admin", "beheerder1")
-    c.delete(f"/api/tracker-groups/{gb['id']}")
-    combo2 = next(x for x in c.get("/api/tracker-groups").json() if x["id"] == combo["id"])
-    assert combo2["includes"] == [ga["id"]] and ids["B"] not in combo2["members"]
+    c.delete(f"/api/channels/{amb}")
+    grp = next(x for x in c.get("/api/groups").json()["groups"] if x["name"] == "Ambu-techniek")
+    assert set(grp["channels"]) == {brand} or set(grp["channels"]) == {str(brand)}
+
+
+def test_migration_from_tracker_groups(tmp_path):
+    """Een database van voor 1.0: kanaalgroepen worden kanaalrechten en trackingkanalen."""
+    import json, sqlite3, time
+    from meshtrack.db import DB, SCHEMA
+    p = tmp_path / "oud.sqlite3"
+    con = sqlite3.connect(p)
+    con.executescript(SCHEMA)
+    con.execute("ALTER TABLE groups ADD COLUMN tracker_groups TEXT NOT NULL DEFAULT '[]'")
+    con.execute("ALTER TABLE tracker_groups ADD COLUMN includes TEXT NOT NULL DEFAULT '[]'")
+    for t in ("alert_rules", "shares"):
+        con.execute(f"ALTER TABLE {t} ADD COLUMN tracker_groups TEXT NOT NULL DEFAULT '[]'")
+    now = int(time.time())
+    con.execute("INSERT INTO trackers(id, pubkey, alias, created) VALUES(1, ?, 'A', ?)", ("a1" * 32, now))
+    con.execute("INSERT INTO trackers(id, pubkey, alias, created) VALUES(2, ?, 'B', ?)", ("b1" * 32, now))
+    con.execute("INSERT INTO tracker_groups(id, name, created) VALUES(10, 'Kanaal #ambu', ?)", (now,))
+    con.execute("INSERT INTO tracker_groups(id, name, created, includes) VALUES(11, 'Interventie', ?, '[10]')", (now,))
+    con.execute("INSERT INTO tracker_group_members(group_id, tracker_id) VALUES(10, 1)")
+    con.execute("INSERT INTO channels(id, name, secret, slot, created, tracker_group_id) VALUES(5, '#ambu', ?, 3, ?, 10)",
+                ("00" * 16, now))
+    con.execute("INSERT INTO groups(id, name, perms, all_trackers, trackers, history_hours, created, tracker_groups) "
+                "VALUES(1, 'Kijk', ?, 0, '[]', 0, ?, '[11]')", (json.dumps(["map.view"]), now))
+    con.execute("INSERT INTO groups(id, name, perms, all_trackers, trackers, history_hours, created, tracker_groups) "
+                "VALUES(2, 'Tech', ?, 0, '[]', 0, ?, '[10]')", (json.dumps(["map.view", "trackers.serial"]), now))
+    con.commit()
+    con.close()
+    db = DB(str(p))
+    assert db.tracker(1)["channel_id"] == 5 and db.tracker(2)["channel_id"] is None
+    groups = {g["name"]: g["channels"] for g in db.groups()}
+    assert groups == {"Kijk": {5: "kaart"}, "Tech": {5: "sleutel"}}
+    assert db.channel_members() == {5: {1}}
+    DB(str(p))                                                     # tweede keer: niets meer te doen
 
 
 def test_offline_app_uses_only_maps(client):

@@ -141,21 +141,19 @@
   function fillForm(kv) {
     const num = (v) => (v || "").replace(/(km\/h|deg|m)$/, "");
     document.querySelectorAll("#s-form [data-set]").forEach((el) => {
-      const k = el.dataset.set;
-      if (!(k in kv)) { el.closest("div,label") && (el.disabled = true); return; }
+      const k = el.dataset.set, kk = el.dataset.kv || k;   // status meldt bv. "naam=", instellen gaat met "set name"
+      if (!(kk in kv)) { el.closest("div,label") && (el.disabled = true); return; }
       el.disabled = false;
-      const v = kv[k];
+      const v = kv[kk];
       if (el.classList.contains("dur")) durSet(el, v);
       else if (el.dataset.kind === "bool") el.checked = v === "aan" || v === "on";
       else if (["min_speed", "min_dist", "turn_min", "turn_min_speed"].includes(k)) el.value = num(v);
-      else if (k === "target") el.value = v.startsWith("(") ? "" : v;
       else el.value = v;
     });
     setMode(kv.gekozen || "tracker");
     const known = knownTracker(kv);
     $("s-authstate").textContent = kv.authkey === "ja" ? "Authsleutel: ingesteld" : kv.authkey === "nee" ? "Authsleutel: niet ingesteld" : "Authsleutel: (firmware te oud)";
     $("s-auth").disabled = !known || !kv.authkey;
-    $("s-ritme").textContent = kv.ritme ? `Ritme nu: ${kv.ritme}.` : "Deze firmware kent het ritme volgens de ontvangst nog niet (vanaf 0.4.0).";
     $("s-info").innerHTML = `<div><strong>${MT.esc(kv.naam || "?")}</strong> · firmware ${MT.esc(kv.fw || "?")}
       · batterij ${MT.esc(kv.batt || "?")} · nu ${MT.esc(kv.actief || "?")}${kv.usb === "ja" ? " (USB)" : ""}</div>
       <div class="mono muted small">${MT.esc(kv.pubkey || "")}</div>
@@ -180,13 +178,15 @@
     devChans = ls.map((l) => /^chan=(\d+)\|([0-9A-Fa-f]{32})\|(.*)$/.exec(l)).filter(Boolean)
       .map((m) => ({ slot: Number(m[1]), secret: m[2].toLowerCase(), name: m[3].trim() }));
     srvChans = await MT.api("/api/channels/device").catch(() => []);
+    // vóór 0.7 telde het kanaal alleen met transport=kanaal (anders DM, wat niet meer bestaat)
     const cur = lastKv.transport === "kanaal" ? devChans.find((d) => d.slot === Number(lastKv.chan)) : null;
     const curSrv = cur && srvChans.find((s) => s.secret === cur.secret);
     const others = devChans.filter((d) => !srvChans.some((s) => s.secret === d.secret));
-    $("s-via").innerHTML = '<option value="dm">DM naar de server (standaard)</option>'
+    $("s-via").innerHTML = '<option value="">— kies het trackingkanaal —</option>'
       + (srvChans.length ? `<optgroup label="Kanalen van de server">${srvChans.map((s) => `<option value="srv:${s.id}">${MT.esc(s.name)}</option>`).join("")}</optgroup>` : "")
       + (others.length ? `<optgroup label="Andere kanalen op het toestel">${others.map((d) => `<option value="dev:${d.slot}">${d.slot}: ${MT.esc(d.name)}</option>`).join("")}</optgroup>` : "");
-    $("s-via").value = !cur ? "dm" : curSrv ? `srv:${curSrv.id}` : `dev:${cur.slot}`;
+    $("s-via").value = !cur ? "" : curSrv ? `srv:${curSrv.id}` : `dev:${cur.slot}`;
+    if (!cur) msg($("s-msg"), "Deze tracker heeft nog geen trackingkanaal: kies er een en sla op, anders stuurt hij niets.");
   }
 
   async function applyVia(bad) {
@@ -195,7 +195,7 @@
       const out = await until(cmd, /bewaard|ongeldig|onbekend|NIET|gebruik|kies eerst/, 3000, silent);
       if (out.some((l) => /ongeldig|onbekend|NIET|gebruik|kies eerst/.test(l))) bad.push(cmd.split(" ").slice(0, 2).join(" "));
     };
-    if (v === "dm") { if (lastKv.transport !== "dm") await run("set transport dm"); return; }
+    if (!v) return;                                 // geen kanaal gekozen
     let slot;
     if (v.startsWith("srv:")) {
       const s = srvChans.find((x) => `srv:${x.id}` === v);
@@ -216,7 +216,7 @@
     if (!lastKv.scope || lastKv.scope === "-")
       msg($("s-msg"), "Let op: deze tracker heeft geen regio (scope). Berichten zonder regio worden steeds vaker geblokkeerd; zet er een (bv. be) bij de kanaalinstelling op de server.");
     await run(`set chan ${slot}`);
-    await run("set transport kanaal");
+    if (lastKv.transport !== "kanaal") await run("set transport kanaal");   // firmware 0.6: van DM naar kanaal
   }
 
   async function readStatus() {
@@ -232,7 +232,10 @@
     fillForm(lastKv);
     $("s-via").disabled = !lastKv.transport;
     if (lastKv.transport) await readChannels();
-    else $("s-via").innerHTML = '<option value="dm">DM naar de server (firmware 0.6.0+ voor kanalen)</option>';
+    else {
+      $("s-via").innerHTML = '<option value="">firmware te oud: flash eerst 0.7 of nieuwer</option>';
+      msg($("s-msg"), "Deze firmware stuurt nog via DM, wat de server niet meer leest. Flash de nieuwste firmware (tabblad Firmware).");
+    }
     $("s-panel").hidden = false;
     $("s-none").hidden = true;
     msg($("s-msg"), "");
@@ -316,23 +319,18 @@
     } catch (e) { msg($("s-msg"), e.message); }
   });
 
-  $("s-target").addEventListener("click", () => {
-    const pk = status && status.mesh && status.mesh.pubkey;
-    if (pk) document.querySelector('#s-form [data-set="target"]').value = pk;
-    else msg($("s-msg"), "De server-companion is niet verbonden; zijn pubkey is onbekend.");
-  });
-
   $("s-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const cmds = [];
     document.querySelectorAll("#s-form [data-set]").forEach((el) => {
       const k = el.dataset.set;
-      if (!(k in lastKv)) return;              // oudere firmware kent deze instelling niet
+      if (!((el.dataset.kv || k) in lastKv)) return;   // oudere firmware kent deze instelling niet
       let v;
       if (el.classList.contains("dur")) v = durGet(el);
       else if (el.dataset.kind === "bool") v = el.checked ? "on" : "off";
       else v = el.value.trim();
-      if (v !== "" && !/\s/.test(v)) cmds.push(`set ${k} ${v}`);
+      if (el.dataset.spaces && v === (lastKv[el.dataset.kv || k] || "")) return;   // naam ongewijzigd
+      if (v !== "" && (el.dataset.spaces || !/\s/.test(v))) cmds.push(`set ${k} ${v}`);
     });
     cmds.push(`mode ${mode}`);
     const bad = [];

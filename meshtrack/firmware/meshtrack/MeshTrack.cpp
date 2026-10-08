@@ -1,6 +1,7 @@
 #include "MeshTrack.h"
 #include "MtConfig.h"
 #include "MtTracker.h"
+#include "MtSender.h"
 #include "MyMesh.h"
 #include "UITask.h"
 
@@ -49,10 +50,16 @@ void mt_choose_mode(MtMode m, bool beep) {
 }
 
 void mt_on_short_press() {
-  // Positie nu versturen. De modusbiep bevestigt dat de klik binnen is; twee
-  // hoge biepjes volgen bij een ACK van de server, een lage toon bij mislukken.
+  // Positie nu versturen. De modusbiep bevestigt dat de klik binnen is; twee hoge
+  // biepjes volgen zodra het bericht op het trackingkanaal verstuurd is. Ontbreekt
+  // het trackingkanaal, dan meteen een lage toon.
+  if (!mt_sender_ready()) {
+    ui_task.playForced(MT_TUNE_NOK);
+    mt_log("klik: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+    return;
+  }
   ui_task.playModeTune(s_eff == MT_MODE_TRACKER);
-  if (!mt_tracker_manual()) mt_log("klik genegeerd (te snel na de vorige, of geen doel ingesteld)");
+  if (!mt_tracker_manual()) mt_log("klik genegeerd (te snel na de vorige)");
 }
 
 void mt_on_double_press() {
@@ -63,7 +70,10 @@ void mt_on_cli_rescue() { mt_menu_suspend(); }
 
 void mt_on_sos() {
   mt_log("SOS via de knop");
-  if (!mt_tracker_sos()) mt_log("SOS niet verstuurd: geen doel ingesteld");
+  if (!mt_tracker_sos()) {
+    ui_task.playForced(MT_TUNE_NOK);
+    mt_log("SOS niet verstuurd: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+  }
 }
 
 bool mt_led_allowed() {

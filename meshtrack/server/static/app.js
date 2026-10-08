@@ -28,7 +28,7 @@
   const trackers = new Map();   // id -> tracker
   const tracks = new Map();     // id -> [{lon,lat,spd,ts,state,bat}]
   const sosPts = new Map();     // id -> SOS-posities in de gekozen periode (min. 24 u), los van het spoor
-  let tgroups = [];             // trackergroepen en kanalen (filter)
+  let chans = [];               // kanalen die je mag lezen (filter)
   let sosMarkers = [];
   const markers = new Map();    // id -> maplibregl.Marker
   let zones = [];
@@ -43,7 +43,7 @@
     fav: new Set(store.get("fav", [])),
     hidden: new Set(store.get("hidden", [])),
     filter: store.get("filter", "all"),
-    tgroup: Number(new URLSearchParams(location.search).get("tgroup")) || store.get("tgroup", 0),   // 0 = alle
+    kanaal: Number(new URLSearchParams(location.search).get("kanaal")) || store.get("kanaal", 0),   // 0 = alle
     trackOn: store.get("trackOn", true),
     hours: store.get("hours", 24),
     color: store.get("color", "tracker"),
@@ -51,7 +51,7 @@
     nrecent: store.get("nrecent", true),
   };
   const savePrefs = () => {
-    store.set("fav", [...prefs.fav]); store.set("hidden", [...prefs.hidden]); store.set("filter", prefs.filter); store.set("tgroup", prefs.tgroup);
+    store.set("fav", [...prefs.fav]); store.set("hidden", [...prefs.hidden]); store.set("filter", prefs.filter); store.set("kanaal", prefs.kanaal);
     store.set("trackOn", prefs.trackOn); store.set("hours", prefs.hours); store.set("color", prefs.color);
     store.set("ntypes", [...prefs.ntypes]); store.set("nrecent", prefs.nrecent);
   };
@@ -337,10 +337,7 @@
     if (prefs.filter === "fav" && !prefs.fav.has(t.id)) return false;
     if (prefs.filter === "real" && t.kind === "sim") return false;
     if (prefs.filter === "sim" && t.kind !== "sim") return false;
-    if (prefs.tgroup) {                      // leden van de groep, ook via ingesloten groepen of kanalen
-      const g = tgroups.find((x) => x.id === prefs.tgroup);
-      if (g && !(g.members || g.trackers).includes(t.id)) return false;
-    }
+    if (prefs.kanaal && t.channel_id !== prefs.kanaal) return false;   // alleen trackers van dit kanaal
     return !q || t.alias.toLowerCase().includes(q) || (t.notes || "").toLowerCase().includes(q);
   }
 
@@ -454,20 +451,17 @@
     if (first) select(Number(first.dataset.id), true);
   });
 
-  // tgroups: zie bovenaan
+  // Kanaalfilter: de kanalen die je mag lezen (meer dan één = samen op de kaart, of één kiezen).
   async function loadTgroups() {
-    tgroups = await MT.api("/api/tracker-groups").catch(() => []);
+    chans = MT.me && MT.me.kind === "share" ? [] : await MT.api("/api/channels/mine").catch(() => []);
     const sel = $("tgfilter");
-    $("tgfilter-wrap").hidden = !tgroups.length;
-    if (prefs.tgroup && !tgroups.some((g) => g.id === prefs.tgroup)) prefs.tgroup = 0;
-    const chans = tgroups.filter((g) => g.channel), plain = tgroups.filter((g) => !g.channel);
-    const opt = (g, label) => `<option value="${g.id}">${MT.esc(label)} (${(g.members || g.trackers).length})</option>`;
-    sel.innerHTML = '<option value="0">Alle trackers</option>'
-      + (chans.length ? `<optgroup label="Kanalen">${chans.map((g) => opt(g, g.channel)).join("")}</optgroup>` : "")
-      + (plain.length ? `<optgroup label="Trackergroepen">${plain.map((g) => opt(g, g.name)).join("")}</optgroup>` : "");
-    sel.value = String(prefs.tgroup);
+    $("tgfilter-wrap").hidden = chans.length < 2;
+    if (prefs.kanaal && !chans.some((c) => c.id === prefs.kanaal)) prefs.kanaal = 0;
+    sel.innerHTML = '<option value="0">Alle kanalen</option>' +
+      chans.map((c) => `<option value="${c.id}">${MT.esc(c.name)} (${c.trackers})</option>`).join("");
+    sel.value = String(prefs.kanaal);
   }
-  $("tgfilter").addEventListener("change", () => { prefs.tgroup = Number($("tgfilter").value); savePrefs(); renderList(); });
+  $("tgfilter").addEventListener("change", () => { prefs.kanaal = Number($("tgfilter").value); savePrefs(); renderList(); });
 
   async function loadAll() {
     await loadTgroups();
@@ -863,7 +857,7 @@
       refreshLayers();
       if (following === t.id && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], duration: 800 });
     }
-    if (msg.type === "tracker" || msg.type === "tracker_deleted" || msg.type === "tracker_groups") loadAll();
+    if (msg.type === "tracker" || msg.type === "tracker_deleted" || msg.type === "channels") loadAll();
     if (msg.type === "geofences") loadZones();
     if (msg.type === "lost_seen" && msg.tracker) {
       const t = msg.tracker;

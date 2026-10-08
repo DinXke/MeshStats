@@ -1,5 +1,5 @@
 #include "MyMesh.h"
-#include "MtHooks.h"   // MeshTrack: ACK + batterij voor de app
+#include "MtHooks.h"   // MeshTrack: batterij voor de app
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
@@ -413,8 +413,6 @@ void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
 }
 
 ContactInfo*  MyMesh::processAck(const uint8_t *data) {
-  // MeshTrack: ACK op een eigen T1-bericht? Dan niet naar de app doorgeven.
-  if (ContactInfo* mt = mt_on_ack(data)) return mt;
   // see if matches any in a table
   for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
     if (memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient

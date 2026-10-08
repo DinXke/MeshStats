@@ -60,12 +60,14 @@
       <fieldset><legend>Rechten</legend><div id="g-perms" class="permgrid"></div>
         <div class="row"><button type="button" class="link" id="g-all">alles</button><button type="button" class="link" id="g-none">niets</button>
         <button type="button" class="link" id="g-ro">alleen kijken</button><button type="button" class="link" id="g-kiosk">kiosk</button></div></fieldset>
-      <fieldset><legend>Trackers die deze groep ziet</legend>
-        <label class="switch block"><input type="checkbox" id="g-alltr" checked><span></span> Alle trackers (ook toekomstige)</label>
+      <fieldset><legend>Kanalen die deze groep leest</legend>
+        <p class="help">Een tracker stuurt op één kanaal. <strong>Kaart</strong>: de trackers van dat kanaal zien op de kaart,
+          in het logboek en in exports. <strong>Sleutel</strong>: ook de naam, sleutel en QR-code van het kanaal, om het op een
+          eigen companion te zetten (bv. voor de offline-app).</p>
+        <div id="g-chans"></div>
+        <label class="switch block"><input type="checkbox" id="g-alltr" checked><span></span> Alle kanalen op kaartniveau (ook toekomstige)</label>
         <div id="g-trwrap" hidden>
-          <label>Trackergroepen <span class="muted small">(ook trackers die er later bij komen)</span></label>
-          <div id="g-tgroups" class="permgrid"></div>
-          <label>Losse trackers</label>
+          <label>Losse trackers <span class="muted small">(los van een kanaal)</span></label>
           <div id="g-trackers" class="permgrid"></div>
         </div></fieldset>
       <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="g-cancel">Annuleren</button></div>
@@ -77,7 +79,7 @@
   <!-- deellinks -->
   <section class="card pane" id="pane-shares" hidden>
     <div class="cardhead"><h2>Deellinks</h2><button class="primary" id="s-new">+ Deellink</button></div>
-    <p class="muted">Een link die zonder login een kaart toont met enkel de gekozen trackers, tot hij verloopt.
+    <p class="muted">Een link die zonder login een kaart toont met de trackers van de gekozen kanalen of losse trackers, tot hij verloopt.
       Handig voor een evenement, een externe dienst of een groot scherm.</p>
     <form id="s-form" class="subform" hidden>
       <div class="grid">
@@ -88,8 +90,8 @@
         <div><label for="s-hours">Spoor tonen tot</label><div class="unit"><input id="s-hours" type="number" min="1" max="720" value="12"><span>uur terug</span></div></div>
       </div>
       <label class="switch block"><input type="checkbox" id="s-sidebar"><span></span> Met zijbalk (lijst en zoeken)</label>
-      <label>Trackergroepen <span class="muted small">(trackers die er later bij komen, verschijnen ook)</span></label>
-      <div id="s-tgroups" class="permgrid"></div>
+      <label>Kanalen <span class="muted small">(trackers die later op het kanaal sturen, verschijnen ook)</span></label>
+      <div id="s-chans" class="permgrid"></div>
       <label>Losse trackers</label><div id="s-trackers" class="permgrid"></div>
       <div class="row"><button class="primary" type="submit">Link maken</button><button type="button" id="s-cancel">Annuleren</button></div>
       <div id="s-msg" class="msg"></div>

@@ -5,8 +5,11 @@
 
 // Button timing configuration
 #define BUTTON_DEBOUNCE_TIME_MS    50      // Debounce time in ms
-#define BUTTON_CLICK_TIMEOUT_MS    600     // MeshTrack: max. tijd tussen klikken (stock 500; stugge knop)
-#define BUTTON_ISR_RELEASED_MS     30      // MeshTrack: zo lang los voor een flank als nieuwe klik telt
+#define BUTTON_CLICK_TIMEOUT_MS    800     // MeshTrack: max. tijd tussen klikken (stock 500; stugge knop, rustig dubbelklikken)
+// MeshTrack: zo lang los voor een neergaande flank als nieuwe klik telt. Kort:
+// bij een snelle dubbelklik is de knop tussen de twee tikken maar ~10-30 ms los.
+// Contactdender duurt < 5 ms, dus 8 ms houdt dender er nog uit.
+#define BUTTON_ISR_RELEASED_MS     8
 // MeshTrack: vasthouden 2..8 s = SOS (bij loslaten), langer dan 8 s = uitschakelen.
 #define BUTTON_LONG_PRESS_TIME_MS  8000    // uitschakelen
 #define BUTTON_HOLD_ARM_MS         2000    // SOS gewapend (biep)
@@ -103,4 +106,5 @@ private:
     bool readButton();
     void handleStateChange();
     void triggerEvent(EventType event);
+    uint32_t takeIsrPresses();
 };

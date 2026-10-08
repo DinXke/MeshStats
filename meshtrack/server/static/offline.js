@@ -202,7 +202,7 @@
         const chan = f[o];
         const ts = dv.getUint32(o + 3, true);
         const text = new TextDecoder().decode(f.slice(o + 7)).replace(/\0+$/, "");
-        const chanName = chan === 0xFF ? "DM" : (chanNames[chan] || `kanaal ${chan}`);
+        const chanName = chanNames[chan] || `kanaal ${chan}`;   // eigen kopieën van de tracker: altijd op het volgkanaal
         const r = await decode(text, ts, { own, chan: chanName });
         if (!r) {                                       // geen trackerbericht: gewone chat
           const i2 = text.indexOf(": ");
@@ -213,7 +213,7 @@
         if (r.bad) { rejected++; log(`geweigerd (${r.bad}) ${r.pk || ""}`); continue; }
         stored += await storePositions(r.positions);
         const ch = devChans.find((c) => c.idx === chan);
-        if (own && ch && chan !== 0xFF) {                 // eigen kanaalbericht van de tracker: herhalingen tellen
+        if (own && ch) {                                  // eigen kanaalbericht van de tracker: herhalingen tellen
           const main = r.positions[r.positions.length - 1];
           watchFor("pos", main.k, ch.secret, ts, text, 2);
         }
@@ -458,17 +458,24 @@
   const dark = () => matchMedia("(prefers-color-scheme: dark)").matches;
 
   async function opfs() { return navigator.storage && navigator.storage.getDirectory ? navigator.storage.getDirectory() : null; }
-  async function mapFile(key) {
+  // Alle kaarten op het toestel, van grof naar gedetailleerd (zoom uit de naam, "-z14"; bij
+  // gelijke zoom eerst de grootste, zodat een kleinere uitsnede erbovenop ligt).
+  async function storedMaps() {
     const root = await opfs();
-    if (!root) return null;
-    try { const h = await root.getFileHandle(`${key}.pmtiles`); return await h.getFile(); } catch (_) { return null; }
+    const out = [];
+    if (root) for await (const [name, h] of root.entries()) {
+      if (!name.endsWith(".pmtiles")) continue;
+      const f = await h.getFile();
+      const key = name.replace(/\.pmtiles$/, "");
+      out.push({ key, size: f.size, file: f, zoom: Number((key.match(/-z(\d+)$/) || [0, 0])[1]) });
+    }
+    return out.sort((a, b) => a.zoom - b.zoom || b.size - a.size);
   }
 
   async function initMap() {
-    const active = await metaGet("activeMap", null);
-    const file = active ? await mapFile(active) : null;
+    const maps = await storedMaps();
     let style;
-    if (file) style = MTBasemap.offlineStyle(dark(), new File([file], `${active}.pmtiles`));
+    if (maps.length) style = MTBasemap.offlineStyle(dark(), maps.map((m) => new File([m.file], `${m.key}.pmtiles`)));
     else style = MTBasemap.style(dark(), false);      // nog geen kaart op het toestel: lege achtergrond
     const view = await metaGet("view", { center: [5.33, 50.93], zoom: 10 });
     if (map) map.remove();
@@ -487,7 +494,7 @@
       });
       renderAll();
     });
-    if (!file) say($("maps-msg"), "Nog geen kaart op dit toestel: download er hieronder een terwijl je internet hebt.", false);
+    if (!maps.length) say($("maps-msg"), "Nog geen kaart op dit toestel: download er hieronder een terwijl je internet hebt.", false);
   }
 
   function colorOf(pk) { let h = 0; for (const c of pk) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h},70%,45%)`; }
@@ -571,19 +578,16 @@
   // ---- kaarten downloaden (OPFS) -----------------------------------------------------------
   async function renderMaps() {
     const root = await opfs();
-    const stored = [];
-    if (root) for await (const [name, h] of root.entries()) if (name.endsWith(".pmtiles")) stored.push({ key: name.replace(/\.pmtiles$/, ""), size: (await h.getFile()).size });
-    const active = await metaGet("activeMap", null);
+    const stored = await storedMaps();
     const names = await metaGet("mapNames", {});
-    $("maps-stored").innerHTML = stored.length ? `<h3 class="small">Op dit toestel</h3>` + stored.map((m) => `<div class="mapbox">
-      <strong>${esc(names[m.key] || m.key)}</strong> <span class="muted small">${fmtSize(m.size)}</span> ${m.key === active ? '<span class="pill ok">in gebruik</span>' : ""}
-      <div class="row">${m.key !== active ? `<button type="button" data-use="${esc(m.key)}">Gebruiken</button>` : ""}<button type="button" class="danger" data-delmap="${esc(m.key)}">Verwijderen</button></div></div>`).join("")
+    $("maps-stored").innerHTML = stored.length ? `<h3 class="small">Op dit toestel (samen op de kaart)</h3>` + stored.slice().reverse().map((m) => `<div class="mapbox">
+      <strong>${esc(names[m.key] || m.key)}</strong> <span class="muted small">${fmtSize(m.size)}</span> <span class="pill ok">in gebruik</span>
+      <div class="row"><button type="button" class="danger" data-delmap="${esc(m.key)}">Verwijderen</button></div></div>`).join("")
       : '<div class="small muted">Nog geen offline kaart op dit toestel.</div>';
-    $("maps-stored").querySelectorAll("[data-use]").forEach((b) => b.addEventListener("click", async () => { await metaSet("activeMap", b.dataset.use); await initMap(); renderMaps(); }));
     $("maps-stored").querySelectorAll("[data-delmap]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm("Deze kaart van het toestel verwijderen?")) return;
       await root.removeEntry(`${b.dataset.delmap}.pmtiles`);
-      if (active === b.dataset.delmap) { await metaSet("activeMap", null); await initMap(); }
+      await initMap();
       renderMaps();
     }));
     if (navigator.storage && navigator.storage.estimate) {
@@ -625,7 +629,6 @@
       try { await root.removeEntry(`${m.key}.pmtiles`); } catch (_) {}
       await h.move(`${m.key}.pmtiles`);
       const names = await metaGet("mapNames", {}); names[m.key] = m.name; await metaSet("mapNames", names);
-      if (!(await metaGet("activeMap", null))) await metaSet("activeMap", m.key);
       if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: "prefetch" });
       say($("maps-msg"), `${m.name} staat op dit toestel.`, true);
       await initMap();
@@ -675,6 +678,55 @@
   $("ch-scan").addEventListener("click", scanQr);
   $("ch-file").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) qrFromFile(f); });
 
+  // Onderpaneel op een gsm, zoals op de online kaart: slepen aan de greep past de hoogte aan,
+  // tikken wisselt half/klein, helemaal naar onder verbergt het (dan een knop "Paneel").
+  // De hoogte wordt per toestel onthouden.
+  (function sheet() {
+    const panel = $("opanel"), handle = $("osheet"), showBtn = $("osheet-show");
+    const phone = () => matchMedia("(max-width: 760px)").matches;
+    const vh = () => window.innerHeight - 48;
+    const lsSetF = (v) => { try { localStorage.setItem("mt.off.sheet", String(v)); } catch (_) {} };
+    const lsGetF = () => { const v = Number(lsGet("mt.off.sheet")); return Number.isFinite(v) && lsGet("mt.off.sheet") !== null ? v : 0.48; };
+    const resize = () => { if (map) map.resize(); };
+    const apply = (frac) => {
+      if (!phone()) { panel.style.height = ""; panel.classList.remove("sheet-hidden"); showBtn.hidden = true; resize(); return; }
+      if (frac < 0.12) {
+        panel.classList.add("sheet-hidden"); showBtn.hidden = false; lsSetF(0); resize(); return;
+      }
+      panel.classList.remove("sheet-hidden"); showBtn.hidden = true;
+      frac = Math.min(0.92, Math.max(0.16, frac));
+      panel.style.height = Math.round(frac * vh()) + "px";
+      lsSetF(frac);
+      setTimeout(resize, 240);                       // na de animatie van de hoogte
+    };
+    let startY = 0, startH = 0, moved = false, dragging = false;
+    handle.addEventListener("pointerdown", (e) => {
+      if (!phone()) return;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) { /* geen echte aanwijzer */ }
+      startY = e.clientY; startH = panel.offsetHeight; moved = false; dragging = true;
+      panel.classList.add("dragging");
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dy = startY - e.clientY;
+      if (Math.abs(dy) > 6) moved = true;
+      panel.style.height = Math.max(0, startH + dy) + "px";
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      const frac = panel.offsetHeight / vh();       // eerst meten, dan pas de animatie terug aan
+      panel.classList.remove("dragging");
+      if (!moved) { apply(frac > 0.3 ? 0.18 : 0.5); return; }
+      apply(frac);
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+    showBtn.addEventListener("click", () => apply(0.48));
+    window.addEventListener("resize", () => apply(lsGetF()));
+    apply(lsGetF());
+  })();
+
   // Voor tests en foutzoeken: een bericht zoals de companion het doorgeeft verwerken.
   window.MTOffline = {
     decode,
@@ -696,8 +748,7 @@
     await loadPositions();
     await loadChat();
     chatOpen(lsGet("mt.off.chat") === "1");
-    const act = await metaGet("activeMap", null);
-    show(act && (await mapFile(act)) ? "trk" : "maps");   // eerste keer: eerst een kaart kiezen
+    show((await storedMaps()).length ? "trk" : "maps");   // eerste keer: eerst een kaart kiezen
     await initMap();
     setInterval(renderAll, 30000);
   })();
