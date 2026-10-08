@@ -277,11 +277,23 @@
       step(0, "done", `v${r.version}, ${Math.round(pkg.bin.length / 1024)} kB`);
 
       step(1);
+      // Ongeldige sleutel (FFFF/0000): de identiteit is al verloren, er valt niets te bewaren. Een tracker met
+      // 0.7.1 en een beschadigde opslag antwoordt dan zelfs niet meer op 'backup' (status bleef hangen).
+      const invalid = !!(before && /^F{64}$|^0{64}$/i.test(before.pubkey || ""));
       if (before && before.pubkey) {
-        try {
-          const bin = await dumpBin();
-          download(`${safe(before.naam)}_opslag_${stamp()}.bin`, bin, "application/octet-stream");
-        } catch (e) { throw new Error(`backup mislukt, er is niets geflasht: ${e.message}`); }
+        let bin = null;
+        try { bin = await dumpBin(); }
+        catch (e) {
+          if (!invalid) throw new Error(`backup mislukt, er is niets geflasht: ${e.message}`);
+          if (!(await MT.confirm(`De backup lukt niet (${e.message}), maar de sleutel van dit toestel is toch al ongeldig (FFFF…): er valt niets meer te bewaren. `
+            + "Flash je de nieuwe firmware, dan kun je daarna de opslag herstellen (Terminal: fs herstel ja) en je sleutel terugzetten vanaf de server. Toch flashen zonder backup?",
+          { ok: "Toch flashen", danger: true, title: "Flashen zonder backup" }))) throw new Error("geannuleerd");
+        }
+        if (bin) download(`${safe(before.naam)}_opslag_${stamp()}.bin`, bin, "application/octet-stream");
+      }
+      if (before && before.pubkey && invalid) {
+        step(1, "done", "overgeslagen: sleutel ongeldig, niets te bewaren");
+      } else if (before && before.pubkey) {
         if (newer(before.fw, "0.2.9")) {
           backup = (await backupNow(true, `voor flashen v${r.version}`)).doc;
           step(1, "done", "opslag (.bin) en sleutel (.json) gedownload" + (MTDev.trackers.some((t) => t.pubkey === backup.public_key) && MT.can("keys.manage") ? ", ook op de server" : ""));
