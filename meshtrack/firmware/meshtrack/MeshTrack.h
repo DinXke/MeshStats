@@ -11,7 +11,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#define MT_FW_VERSION "0.7.4"
+#define MT_FW_VERSION "0.7.5"
 
 // Terugmelding na een klik/SOS: twee hoge biepjes = een repeater herhaalde het bericht
 // (gehoord binnen MT_HEAR_MS), lage toon = geen herhaling gehoord of niet verstuurd

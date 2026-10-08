@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.7.5",
+      "date": "2026-10-08",
+      "notes": "Diagnose: 'rxlog aan' in de Terminal logt elk ontvangen kanaalpakket en elk ontcijferd kanaalbericht (tot een herstart).",
+      "zip": "meshtrack-t1000e-0.7.5.zip",
+      "zip_sha256": "e4eef08ced91ae22c11120e09a5517a9b6b5d6b61ce89124e083a206f345249a",
+      "uf2": "meshtrack-t1000e-0.7.5.uf2",
+      "app_size": 392592,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.7.4",
       "date": "2026-10-08",
       "notes": "SOS-bevestiging wordt nu ook herkend zonder afzendernaam ervoor en als het trackingkanaal op een ander nummer staat; elk geweigerd bevestigingsbericht komt met de reden in het log.",
@@ -71,5 +81,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.7.4"
+  "latest": "0.7.5"
 }

@@ -381,6 +381,7 @@ static void cmd_help() {
   outl("  send                        nu een positie sturen (zoals een klik)");
   outl("  status: gehoord = herhalingen (repeaters) van de laatste klik/SOS; sos_bevestigd = antwoord van de server");
   outl("  defaults | backup | reboot | menu | q (menu sluiten)");
+  outl("  rxlog aan|uit                ontvangen kanaalpakketten en -berichten loggen (tot een herstart)");
   outl("  fs | fs herstel ja          interne opslag controleren / herstellen (alleen als ze beschadigd is)");
 }
 
@@ -628,6 +629,14 @@ static void command(char* s) {
     else if (!strcmp(args, "tracker")) mt_choose_mode(MT_MODE_TRACKER, false);
     else { outl("gebruik: mode companion|tracker"); return; }
     outl("gekozen modus: %s (bewaard)", mt_mode_name(mt_cfg.mode));
+  }
+  else if (!strcmp(s, "rxlog")) {
+    bool on = !strcmp(args, "aan") || !strcmp(args, "on");
+    mt_set_rxlog(on);
+    ChannelDetails ch;
+    bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
+    outl("rxlog %s (tot een herstart); trackingkanaal %u heeft hash %02x", on ? "aan" : "uit",
+         (unsigned)mt_cfg.chan_idx, have ? ch.channel.hash[0] : 0);
   }
   else if (!strcmp(s, "send")) outl(mt_tracker_manual() ? "positie wordt verstuurd" : "niet verstuurd (geen trackingkanaal of te snel)");
   else if (!strcmp(s, "defaults")) { mt_cfg_defaults(mt_cfg); outl("instellingen: standaard %s", mt_cfg_save() ? "(bewaard)" : "[NIET bewaard]"); }
