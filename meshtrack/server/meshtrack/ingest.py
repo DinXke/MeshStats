@@ -29,7 +29,9 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
            snr: Optional[float] = None, path_len: Optional[int] = None,
            now: Optional[int] = None) -> Optional[dict[str, Any]]:
     """Verwerk één DM. Geeft de opgeslagen positie (voor de live kaart) terug,
-    of None als het bericht genegeerd werd (onbekend, ongeldig, dubbel)."""
+    of None als het bericht genegeerd werd (onbekend, ongeldig, dubbel).
+    Bij SlowTrack (L) zegt "stored" of het hoofdpunt zelf nieuw was (anders stond die
+    fix-tijd al in het spoor en zijn enkel de nieuwe "extras" opgeslagen)."""
     rx = int(now if now is not None else time.time())
     tracker = db.tracker_by_prefix(pubkey_prefix)
     if tracker is None:
@@ -46,7 +48,8 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
             db.log_unknown(pubkey_prefix, f"ongeldig: {e}", text)
         return None
 
-    if db.is_duplicate(tracker["id"], r.seq, rx - cfg.dedup_window_s):
+    slow = r.state == "L"
+    if db.is_duplicate(tracker["id"], r.seq, rx - cfg.dedup_window_s, slow=slow):
         return None
 
     p = {
@@ -59,18 +62,28 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
     }
     # Eerdere punten uit hetzelfde bericht, chronologisch. Een punt dat al binnen is (het
     # vorige bericht kwam toch aan, alleen de ACK niet) wordt overgeslagen.
+    # SlowTrack (L): het hoofdpunt is het nieuwste gelogde punt, de extra punten zijn ouder. Alles
+    # komt in hetzelfde spoor (op fix-tijd); een punt met een fix-tijd die er al is, wordt overgeslagen.
     extras = []
     if r.extra and r.has_fix:
         for dt, lat, lon, spd in sorted(r.extra, key=lambda e: -e[0]):
             ts = p["ts"] - dt
             if db.position_at(tracker["id"], ts):
                 continue
-            ep = {"ts": ts, "rx_ts": rx, "seq": r.seq, "state": "M", "lat": lat, "lon": lon, "alt": None,
+            ep = {"ts": ts, "rx_ts": rx, "seq": r.seq, "state": "L" if slow else "M", "lat": lat, "lon": lon, "alt": None,
                   "spd": spd, "crs": None, "bat": None, "hdop": None, "fix_age": None, "mode": None, "power": None,
                   "suspect": int(not _in_bbox(lat, lon, cfg.region_bbox)), "snr": snr, "path_len": path_len,
                   "raw": f"(eerder punt uit bericht {r.seq})", "extra": 1}
             db.add_position(tracker["id"], ep)
             extras.append({"tracker_id": tracker["id"], **ep})
+    if slow:
+        stored = not db.position_at(tracker["id"], p["ts"])
+        if stored:
+            db.add_position(tracker["id"], p)
+        elif not extras:                       # alles al bekend: enkel "gehoord" noteren
+            db.touch_slow(tracker["id"], rx)
+            return None
+        return {"tracker_id": tracker["id"], **p, "stored": stored, "extras": extras}
     db.add_position(tracker["id"], p)
     return {"tracker_id": tracker["id"], **p, "extras": extras}
 

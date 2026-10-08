@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.8.0",
+      "date": "2026-10-08",
+      "notes": "SlowTrack: naast de gewone tracking elke slow_log een punt loggen (ook in rust) en elke slow_send alles in één L-bericht versturen (standaard uit). fast_min_batt: onder dit batterijpercentage geen FastTrack; SlowTrack, heartbeat, klik en SOS werken door. 'set sos uit' schakelt SOS door vasthouden uit. tx_beep: korte biep na elk verstuurd positiebericht; heard_beep: twee hoge biepjes als een repeater het herhaalt (ook bij automatische berichten).",
+      "zip": "meshtrack-t1000e-0.8.0.zip",
+      "zip_sha256": "6e563b2006354254f0b904a336d768562af3e56d37e277728bbb22280b02b0f9",
+      "uf2": "meshtrack-t1000e-0.8.0.uf2",
+      "app_size": 402336,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.7.5",
       "date": "2026-10-08",
       "notes": "Diagnose: 'rxlog aan' in de Terminal logt elk ontvangen kanaalpakket en elk ontcijferd kanaalbericht (tot een herstart).",
@@ -81,5 +91,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.7.5"
+  "latest": "0.8.0"
 }

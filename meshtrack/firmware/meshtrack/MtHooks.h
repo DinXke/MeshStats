@@ -10,3 +10,5 @@ void mt_rx_raw(const uint8_t raw[], int len);
 // Ontvangen kanaalbericht "<naam>: <tekst>". true = T1A (SOS-bevestiging van de server):
 // geen berichtbiep.
 bool mt_channel_text(uint8_t chan_idx, const char* text);
+// Elk pakket dat de radio echt verzonden heeft (logTx): tx_beep, heard_beep.
+void mt_tx_packet(uint8_t payload_type, const uint8_t payload[], int len);

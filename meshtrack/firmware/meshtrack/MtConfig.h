@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MT_CFG_VERSION 4   // v4: kanaal + authsleutel (velden achteraan, oudere worden overgenomen)
+#define MT_CFG_VERSION 5   // v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep (velden achteraan, oudere worden overgenomen)
 // De indeling NOOIT wijzigen (flash-compatibel): ongebruikte velden blijven staan.
 
 struct MtCfg {
@@ -52,8 +52,18 @@ struct MtCfg {
   uint8_t  authkey_set;
   uint8_t  _pad4;
   uint8_t  authkey[16];         // ondertekent kanaalberichten (HMAC); van de server, via USB
+  // ---- v5 (0.8.0); oudere bestanden krijgen hier de standaardwaarden ----
+  uint32_t slow_log_s;          // SlowTrack: elke x s een punt loggen, ook in rust (0 = uit)
+  uint32_t slow_send_s;         // SlowTrack: gelogde punten elke x s versturen (L-berichten)
+  uint8_t  fast_min_batt;       // onder x % batterij geen FastTrack (0 = altijd FastTrack)
+  uint8_t  sos_off;             // 1 = SOS met de knop uitgeschakeld (0 = aan, standaard)
+  uint8_t  tx_beep;             // 1 = korte biep na elk verstuurd positiebericht
+  uint8_t  heard_beep;          // 1 = twee hoge biepjes als een repeater een positiebericht herhaalt
   uint32_t crc;                 // crc32 over alles hiervoor
 };
+
+// Vaste indeling: een andere grootte breekt de bewaarde bestanden (zie hierboven).
+static_assert(sizeof(MtCfg) == 124, "MtCfg-indeling gewijzigd");
 
 extern MtCfg mt_cfg;
 

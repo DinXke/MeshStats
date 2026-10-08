@@ -26,7 +26,7 @@ const MT = {
     return `${Math.round(s / 86400)} d geleden`;
   },
 
-  STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd", W: "wakker door beweging" },
+  STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd", W: "wakker door beweging", L: "gelogd punt (SlowTrack)" },
   MODE: { c: "companion", t: "tracker" },
 
   TOWNS: [

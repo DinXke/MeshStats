@@ -15,6 +15,8 @@ MtTState mt_tracker_state();
 const char* mt_tracker_state_str();
 const char* mt_tracker_last_reason();
 uint8_t mt_tracker_buffered();         // bewaarde punten (mee in het volgende bericht)
+uint8_t mt_tracker_slow_buffered();    // SlowTrack: gelogde punten die nog verstuurd moeten worden
+bool mt_tracker_fast_suspended();      // FastTrack uit wegens de batterij (fast_min_batt)
 uint32_t mt_tracker_last_tx_ms();
 uint16_t mt_tracker_seq();
 void mt_set_rxlog(bool on);           // ontvangstlog aan/uit (niet bewaard)

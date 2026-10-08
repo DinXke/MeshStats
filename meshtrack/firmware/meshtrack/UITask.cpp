@@ -87,7 +87,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _userButton->onLongPress([this]() { handleButtonLongPress(); });
   _userButton->onAnyPress([this]() { handleButtonAnyPress(); });
   // MeshTrack: SOS door vasthouden
-  _userButton->onHoldArm([this]() { playForced("arm:d=32,o=7,b=200:c,p,c,p,c"); });
+  // MeshTrack 0.8: met "set sos uit" geen wapenbiep (en geen SOS); uitschakelen na 8 s blijft
+  _userButton->onHoldArm([this]() { if (!mt_cfg.sos_off) playForced("arm:d=32,o=7,b=200:c,p,c,p,c"); });
   _userButton->onHoldWarn([this]() { playForced("warn:d=4,o=5,b=120:4c"); });
   _userButton->onHoldRelease([]() { mt_on_sos(); });
 #endif

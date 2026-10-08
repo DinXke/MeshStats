@@ -11,9 +11,11 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.7.5).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.8.0).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
+    Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
+    ongeluk in een zak of houder; uitschakelen door lang vasthouden blijft.
   - Verzenden alleen via één **trackingkanaal** (`chan`), met de naam van de tracker als afzender en een handtekening
     met de authsleutel (`authkey`). Sinds 0.7.0 geen DM, geen doel (server-pubkey), geen ACK-herhalingen en geen ritme
     volgens de ontvangst meer: een kanaalbericht krijgt geen bevestiging.
@@ -27,6 +29,21 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     SOS op het kanaal met `T1A|<pk8>|<tag>|<seq>` (tag = HMAC(authsleutel, `<pk8>|A|<seq>`)); de tracker speelt dan drie
     stijgende tonen. `status`: `gehoord=` en `sos_bevestigd=`.
   - `msg_beep prive|alles|uit` (0.7.1): biep bij berichten als companion zonder app; standaard alleen privéberichten.
+  - Biepjes bij automatische berichten (0.8.0, als tracker en als companion, standaard uit): `tx_beep aan` = korte biep
+    zodra de radio een automatisch positiebericht verzonden heeft; `heard_beep aan` = twee hoge biepjes als een repeater
+    het herhaalt (de radio blijft daarvoor ~12 s na elke zending wakker, dus wat meer verbruik). Klik en SOS houden hun
+    eigen terugmelding.
+  - **SlowTrack** (0.8.0), naast de gewone tracking (FastTrack): elke `slow_log` een GPS-punt loggen, ook in rust of
+    slaap (stilstaand en < 5 m van het vorige punt = overgeslagen); elke `slow_send` precies één bericht met state `L`.
+    Eén bericht draagt zo'n 6 à 11 punten (naargelang de afstanden); zijn er meer, dan wordt gelijkmatig uitgedund
+    (oudste en nieuwste blijven). Vuistregel: `slow_log` ≈ 1/8 van `slow_send` (bv. 30m → 4m). Standaard
+    `slow_log=uit`, `slow_send=30m`. Mislukt de zending, dan blijft de buffer (64 punten) voor de volgende keer.
+  - `fast_min_batt <0..100>` (0.8.0, 0 = uit): onder dit batterijpercentage geen FastTrack; SlowTrack, heartbeat, klik
+    en SOS blijven. Weer aan vanaf +3 %, nooit actief aan USB.
+  - `status` (0.8.0): ook `slow_log`, `slow_send`, `fast_min_batt`, `sos`, `tx_beep`, `heard_beep`, `slow_buffer`,
+    `fasttrack=aan|uit(batterij)` en `slow_per_bericht`. Menu: 5 SlowTrack, 6 Stilstand, 7 GPS, 8 Nu sturen,
+    9 Onderhoud; *Modus en knop* kreeg 5 SOS, 6 tx_beep, 7 heard_beep. Backups (Toestellen) bewaren de nieuwe sleutels;
+    het terugzetten van `uit` als `0` is verholpen.
   - MeshTrack bewaart zijn configuratie en volgnummer op ExtraFS (0.7.1): InternalFS (7 blokken) was vol, waardoor
     0.7.0 niets meer kon bewaren. Oude bestanden worden bij het opstarten verhuisd; `status` toont
     `opslag_intern`/`opslag_extra` in blokken.
@@ -38,7 +55,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     (`rx kanaalpakket hash xx, N hops, N bytes`) en elk ontcijferd kanaalbericht (`rx kanaalbericht op kanaal N: …`),
     tot een herstart. Handig als een SOS-bevestiging (`T1A`) niet aankomt. De tracker bewaart geen log: de regels
     verschijnen alleen live en alleen met het menu dicht (`q`). Er is geen commando `log`.
-- **server/**: FastAPI + meshcore-py (versie 1.0.5).
+- **server/**: FastAPI + meshcore-py (versie 1.1.0).
   - Bij elke verbinding zet de server de openHop-companion op 2-byte padhashes (`path_hash_mode=1`), zoals de
     trackers. Sommige repeaters (bij ons e3d3) sturen pakketten met 1-byte padhashes niet door; daardoor bereikte de
     SOS-bevestiging wel de mesh, maar nooit de tracker. Log: "padhashes van de companion op 2 bytes gezet".
@@ -103,7 +120,18 @@ Extra punten (`<extra>`): `~<interval>;dlat,dlon[@s];...`, nieuwste eerst, elk p
 `fix_ts`: sender-tijd min `fix_age_s`, of de ontvangsttijd als de klok van de tracker niet klopt.
 
 Statussen: `M` beweging, `W` wakker door beweging, `S` stilgevallen, `H` heartbeat, `N` geen fix, `P` handmatig,
-`E` SOS, `B` moduswissel of voeding gewijzigd.
+`E` SOS, `B` moduswissel of voeding gewijzigd, `L` gelogd punt (SlowTrack, firmware 0.8.0+).
+
+SlowTrack (`L`, server 1.1.0+): naast de gewone tracking logt de tracker elke `slow_log` een punt en stuurt die elke
+`slow_send` samen in één `L`-bericht (firmware 0.8.0; de server aanvaardt ook meerdere `L`-berichten na elkaar, elk
+met eigen seq). Het hoofdpunt is het nieuwste punt van dat bericht, de extra punten zijn oudere (zelfde formaat als
+bij `M`). De server zet alles op fix-tijd in hetzelfde spoor en slaat een punt met een fix-tijd
+die al bekend is over. Een `L`-punt verplaatst de live-positie alleen als het nieuwer is dan die positie, en
+verandert de laatste toestand niet. Geen meldingen voor `L` zelf; zones, batterij en voeding worden alleen getoetst
+voor punten die nieuwer zijn dan de live-positie (wel `lost_seen`: het bericht bewijst dat de tracker leeft). Op de
+kaart zijn `L`-punten kleinere, lichtere stippen; popup en lijst tonen "SlowTrack: laatste burst <tijd>". Seq-herhalingen worden voor `L` en de gewone tracking apart
+gecontroleerd. De trackerlijst toont `last_slow_rx` (ontvangst laatste SlowTrack-bericht) en `last_slow_ts`
+(nieuwste gelogde punt).
 
 Tot firmware 0.6 konden trackers ook `T1|<rest>` als DM naar de server sturen; de server leest dat sinds 1.0 niet
 meer en noteert het bij de genegeerde berichten als "oude firmware".
