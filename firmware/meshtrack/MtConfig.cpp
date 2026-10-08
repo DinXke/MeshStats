@@ -57,6 +57,8 @@ void mt_cfg_defaults(MtCfg& c) {
   c.fix_timeout_s      = 90;
   c.fix_timeout_hb_s   = 30;
   c.sample_s           = 15;
+  c.slow_log_s         = 0;          // SlowTrack standaard uit
+  c.slow_send_s        = 30 * 60;
 }
 
 // Eén bestand proberen. 0 = geladen, 1 = bestand van nieuwere fw, -1 = onbruikbaar.
@@ -176,11 +178,11 @@ void mt_cfg_begin() {
       return;
     }
     if (r != 0 && r != 2 && load_file(fs, MT_CFG_TMP) == 0) r = 3;
-    if (r == 0 && !moved) { mt_cfg_load_note = "geladen v4"; return; }
+    if (r == 0 && !moved) { mt_cfg_load_note = "geladen v5"; return; }
     if (r == 0 || r == 2 || r == 3) {
       bool ok = mt_cfg_save();             // naar ExtraFS (en de oude kopie weg)
       mt_cfg_load_note = moved ? (ok ? "verhuisd naar ExtraFS" : "geladen van InternalFS [verhuizen MISLUKT]")
-                       : r == 2 ? "omgezet naar v4" : "hersteld uit .tmp";
+                       : r == 2 ? "omgezet naar v5" : "hersteld uit .tmp";
       return;
     }
   }

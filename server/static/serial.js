@@ -33,6 +33,30 @@
     const n = Number(d.querySelector("input").value);
     return n > 0 ? `${n}${d.querySelector("select").value}` : "0";
   }
+  const durSec = (d) => Math.max(0, Number(d.querySelector("input").value) || 0) * UNITS.find((u) => u[0] === d.querySelector("select").value)[1];
+
+  // ---- SlowTrack: hoeveel gelogde punten in één bericht (firmware dunt uit tot zo'n 8; 6 à 11 naargelang de afstanden) ----
+  const SLOW_MAX = 8;
+  function slowCalc() {
+    const out = $("s-slowcalc"), lg = document.querySelector('#s-form [data-set="slow_log"]'), sd = document.querySelector('#s-form [data-set="slow_send"]');
+    if (!out || !lg || !sd) return;
+    const every = durSec(lg), send = durSec(sd);
+    let t = "", warn = false;
+    if (lg.querySelector("input").disabled) t = "";
+    else if (!every) t = "SlowTrack staat uit.";
+    else if (send) {
+      const n = Math.floor(send / every);
+      if (n < 1) t = "Je logt minder vaak dan je verstuurt: hooguit 1 punt per bericht.";
+      else if (n > SLOW_MAX) { t = `≈ ${n} punten per periode; er passen er zo'n ${SLOW_MAX} in één bericht, dus ongeveer ${n - SLOW_MAX} worden weggelaten.`; warn = true; }
+      else t = `≈ ${n} ${n === 1 ? "punt" : "punten"} per bericht: alles past erin.`;
+    }
+    out.textContent = t;
+    out.classList.toggle("warn", warn);
+  }
+  ["slow_log", "slow_send"].forEach((k) => {
+    const d = document.querySelector(`#s-form [data-set="${k}"]`);
+    if (d) { d.addEventListener("input", slowCalc); d.addEventListener("change", slowCalc); }
+  });
 
   // ---- voorinstellingen ---------------------------------------------------------------
   const PRESETS = {
@@ -148,19 +172,49 @@
       if (el.classList.contains("dur")) durSet(el, v);
       else if (el.dataset.kind === "bool") el.checked = v === "aan" || v === "on";
       else if (["min_speed", "min_dist", "turn_min", "turn_min_speed"].includes(k)) el.value = num(v);
+      else if (k === "fast_min_batt") el.value = v === "uit" ? 0 : v.replace(/%$/, "");
       else el.value = v;
     });
+    gateSince(kv);
+    slowCalc();
     setMode(kv.gekozen || "tracker");
     const known = knownTracker(kv);
     $("s-authstate").textContent = kv.authkey === "ja" ? "Authsleutel: ingesteld" : kv.authkey === "nee" ? "Authsleutel: niet ingesteld" : "Authsleutel: (firmware te oud)";
     $("s-auth").disabled = !known || !kv.authkey;
+    // firmware 0.8.0: fasttrack=aan | uit(batterij), slow_buffer=<aantal gelogde punten>
+    const ft = kv.fasttrack == null ? "" : kv.fasttrack === "aan" ? " · FastTrack aan"
+      : ` · <span class="warn">FastTrack ${MT.esc(kv.fasttrack.replace(/\(([^)]*)\)/, " ($1)"))}</span>`;
+    const sb = kv.slow_buffer == null ? "" : ` · SlowTrack: ${MT.esc(kv.slow_buffer)} ${kv.slow_buffer === "1" ? "punt" : "punten"} te versturen`;
     $("s-info").innerHTML = `<div><strong>${MT.esc(kv.naam || "?")}</strong> · firmware ${MT.esc(kv.fw || "?")}
-      · batterij ${MT.esc(kv.batt || "?")} · nu ${MT.esc(kv.actief || "?")}${kv.usb === "ja" ? " (USB)" : ""}</div>
+      · batterij ${MT.esc(kv.batt || "?")} · nu ${MT.esc(kv.actief || "?")}${kv.usb === "ja" ? " (USB)" : ""}${ft}${sb}</div>
       <div class="mono muted small">${MT.esc(kv.pubkey || "")}</div>
       <div class="small">${known ? `In MeshTrack als <strong>${MT.esc(known.alias)}</strong>` : '<span class="warn">Nog niet in MeshTrack</span>'}</div>`;
     $("s-use").hidden = !!known || !MT.can("trackers.manage");
     $("s-use").href = `/admin#new?pubkey=${encodeURIComponent((kv.pubkey || "").toLowerCase())}&alias=${encodeURIComponent(kv.naam || "")}`;
     if (window.MTDevice) MTDevice.onStatus(kv, known);
+  }
+
+  // Instellingen van nieuwere firmware ([data-since] met [data-keys]): kent het toestel ze niet
+  // (de sleutel ontbreekt in status), dan uitgeschakeld met een hint. Opslaan slaat ze dan over.
+  function gateSince(kv) {
+    document.querySelectorAll("#s-form [data-since]").forEach((box) => {
+      const ok = box.dataset.keys.split(/\s+/).every((k) => k in kv);
+      box.classList.toggle("fwold", !ok);
+      box.querySelectorAll("input,select").forEach((x) => { x.disabled = !ok; });
+      let hint = box.querySelector(":scope > .fwhint");
+      if (!hint) {
+        hint = document.createElement("div");
+        hint.className = "help fwhint";
+        hint.textContent = `Vanaf firmware ${box.dataset.since}: flash de nieuwste firmware (tabblad Firmware) om dit in te stellen.`;
+        const lg = box.querySelector(":scope > legend");
+        if (lg) lg.after(hint); else box.prepend(hint);
+      }
+      hint.hidden = ok;
+    });
+    // één hint per groep is genoeg
+    document.querySelectorAll("#s-form fieldset").forEach((fs) => {
+      [...fs.querySelectorAll(".fwhint:not([hidden])")].slice(1).forEach((h) => { h.hidden = true; });
+    });
   }
 
   let mode = "tracker";
@@ -332,7 +386,7 @@
       if (!((el.dataset.kv || k) in lastKv)) return;   // oudere firmware kent deze instelling niet
       let v;
       if (el.classList.contains("dur")) v = durGet(el);
-      else if (el.dataset.kind === "bool") v = el.checked ? "on" : "off";
+      else if (el.dataset.kind === "bool") v = el.checked ? (el.dataset.yes || "on") : (el.dataset.no || "off");
       else v = el.value.trim();
       if (el.dataset.spaces && v === (lastKv[el.dataset.kv || k] || "")) return;   // naam ongewijzigd
       if (v !== "" && (el.dataset.spaces || !/\s/.test(v))) cmds.push(`set ${k} ${v}`);

@@ -113,6 +113,12 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "fix_timeout"))    { ok = parse_dur(v, &d) && d >= 10 && d <= 600; c.fix_timeout_s = d; }
   else if (!strcmp(k, "fix_timeout_hb")) { ok = parse_dur(v, &d) && d >= 10 && d <= 600; c.fix_timeout_hb_s = d; }
   else if (!strcmp(k, "sample"))         { ok = parse_dur(v, &d) && (d == 0 || d >= 5) && d <= 600; c.sample_s = d; }
+  else if (!strcmp(k, "slow_log"))       { ok = parse_dur(v, &d) && (d == 0 || d >= 30) && d <= 86400; c.slow_log_s = d; }
+  else if (!strcmp(k, "slow_send"))      { ok = parse_dur(v, &d) && d >= 60 && d <= 7 * 86400UL; c.slow_send_s = d; }
+  else if (!strcmp(k, "fast_min_batt"))  { uint16_t r = 0; ok = parse_u16(v, 100, &r); c.fast_min_batt = (uint8_t)r; }
+  else if (!strcmp(k, "sos"))            { uint8_t o = 1; ok = parse_onoff(v, &o); c.sos_off = o ? 0 : 1; }
+  else if (!strcmp(k, "tx_beep"))        ok = parse_onoff(v, &c.tx_beep);
+  else if (!strcmp(k, "heard_beep"))     ok = parse_onoff(v, &c.heard_beep);
   else if (!strcmp(k, "transport")) {         // sinds 0.7 altijd kanaal; oude scripts sturen dit nog
     if (strcmp(v, "kanaal") && strcmp(v, "channel")) return "DM bestaat niet meer: altijd via het trackingkanaal";
     ok = true;
@@ -162,6 +168,18 @@ static const char* set_param(const char* k, const char* v) {
   if (!mt_cfg_save()) return "NIET bewaard (opslag)";
   if (sens_changed) mt_motion_set_sens(c.accel_sens);
   return NULL;
+}
+
+// SlowTrack: één L-bericht per slow_send met zo'n 6 à 11 punten (minder bij grote afstanden of een lange
+// naam; gemeten met een simulatie van send_slow). Logt hij er per periode
+// veel meer, dan vallen tussenliggende punten weg (gelijkmatig uitgedund).
+#define MT_SLOW_FIT 8
+static void slow_ratio_warn(const char* k, const char* pre) {
+  if (strcmp(k, "slow_log") && strcmp(k, "slow_send")) return;
+  if (!mt_cfg.slow_log_s) return;
+  uint32_t n = mt_cfg.slow_send_s / mt_cfg.slow_log_s;
+  if (n <= 12) return;
+  outl("%slet op: ~%lu punten per periode, er passen er ~%d in één bericht; de rest valt weg", pre, (unsigned long)n, MT_SLOW_FIT);
 }
 
 // ---- mesh-instellingen (naam, radio, paden, regio) en de sleutel -----------------
@@ -321,6 +339,12 @@ static void cmd_status() {
   }
   fmt_dur(a, sizeof(a), mt_cfg.sample_s);
   outl("sample=%s buffer=%u", a, (unsigned)mt_tracker_buffered());
+  fmt_dur(a, sizeof(a), mt_cfg.slow_log_s); fmt_dur(b, sizeof(b), mt_cfg.slow_send_s);
+  outl("slow_log=%s slow_send=%s fast_min_batt=%u sos=%s tx_beep=%s heard_beep=%s", a, b,
+       (unsigned)mt_cfg.fast_min_batt, mt_cfg.sos_off ? "uit" : "aan", mt_cfg.tx_beep ? "aan" : "uit",
+       mt_cfg.heard_beep ? "aan" : "uit");
+  outl("slow_buffer=%u fasttrack=%s slow_per_bericht=6-11", (unsigned)mt_tracker_slow_buffered(),
+       mt_tracker_fast_suspended() ? "uit(batterij)" : "aan");
   {
     ChannelDetails ch;
     bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
@@ -374,12 +398,23 @@ static void cmd_help() {
   outl("    chan <nr>  authkey <32 hex>|-   (trackingkanaal en authsleutel; afzender = de naam)");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
   outl("    msg_beep prive|alles|uit (biep bij berichten als companion zonder app; prive = alleen privéberichten)");
+  outl("    slow_log <tijd>    SlowTrack: elke x een punt loggen, ook in rust (0 = uit; minstens 30s)");
+  outl("    slow_send <tijd>   SlowTrack: de gelogde punten elke x versturen, in één bericht (minstens 1m)");
+  outl("      Tip: kies slow_log ongeveer 1/8 van slow_send (bv. slow_send 30m -> slow_log 4m). Eén bericht");
+  outl("      bevat zo'n 6 à 11 punten (minder bij grote afstanden); logt hij er meer, dan vallen er");
+  outl("      tussenliggende punten weg (gelijkmatig; het oudste en het nieuwste blijven).");
+  outl("    fast_min_batt <0..100>  onder dit % batterij geen FastTrack (bewegingsberichten); SlowTrack,");
+  outl("      heartbeat, klik en SOS werken door; weer aan vanaf 3 % hoger (0 = altijd FastTrack)");
+  outl("    sos aan|uit        SOS door 2-8 s vasthouden (uit: geen SOS, geen wapenbiep; uitschakelen blijft)");
+  outl("    tx_beep aan|uit    korte biep telkens de radio een positiebericht verzonden heeft (niet bij klik/SOS)");
+  outl("    heard_beep aan|uit twee hoge biepjes als een repeater een positiebericht herhaalt (niet bij klik/SOS)");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
   outl("  key export | key import <128 hex>   PRIVATE KEY (import na een reboot)");
   outl("  chan list | chan set <nr> <32 hex> <naam> | chan del <nr>");
   outl("  send                        nu een positie sturen (zoals een klik)");
   outl("  status: gehoord = herhalingen (repeaters) van de laatste klik/SOS; sos_bevestigd = antwoord van de server");
+  outl("          slow_buffer = gelogde SlowTrack-punten die nog weg moeten; fasttrack=uit(batterij) = onder fast_min_batt");
   outl("  defaults | backup | reboot | menu | q (menu sluiten)");
   outl("  rxlog aan|uit                ontvangen kanaalpakketten en -berichten loggen (tot een herstart)");
   outl("  fs | fs herstel ja          interne opslag controleren / herstellen (alleen als ze beschadigd is)");
@@ -407,7 +442,7 @@ static void cmd_backup() {
 
 // ---- menu ---------------------------------------------------------------------
 
-enum Screen : uint8_t { SC_MAIN, SC_MODE, SC_WHEN, SC_RHYTHM, SC_REST, SC_GPS, SC_MAINT };
+enum Screen : uint8_t { SC_MAIN, SC_MODE, SC_WHEN, SC_RHYTHM, SC_REST, SC_GPS, SC_MAINT, SC_SLOW };
 
 struct Item { const char* label; const char* param; uint8_t kind; };   // kind: 0 getal, 1 duur, 2 tekst
 #define N_ITEMS(a) ((int)(sizeof(a) / sizeof((a)[0])))
@@ -421,6 +456,11 @@ static const Item RHYTHM[] = {
   {"Nooit vaker dan 1x per", "min_interval", 1},
   {"In beweging minstens 1x per (0 = uit)", "max_interval", 1},
   {"Punt bewaren elke (0 = uit)", "sample", 1},
+};
+static const Item SLOW[] = {
+  {"Punt loggen elke (0 = SlowTrack uit)", "slow_log", 1},
+  {"Gelogde punten versturen elke", "slow_send", 1},
+  {"Geen FastTrack onder (% batterij, 0 = uit)", "fast_min_batt", 0},
 };
 static const Item REST[] = {
   {"Slapen na stilstand van", "still_timeout", 1},
@@ -451,6 +491,9 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "fix_timeout")) fmt_dur_nl(o, n, mt_cfg.fix_timeout_s);
   else if (!strcmp(param, "fix_timeout_hb")) fmt_dur_nl(o, n, mt_cfg.fix_timeout_hb_s);
   else if (!strcmp(param, "sample")) fmt_dur_nl(o, n, mt_cfg.sample_s);
+  else if (!strcmp(param, "slow_log")) fmt_dur_nl(o, n, mt_cfg.slow_log_s);
+  else if (!strcmp(param, "slow_send")) fmt_dur_nl(o, n, mt_cfg.slow_send_s);
+  else if (!strcmp(param, "fast_min_batt")) snprintf(o, n, mt_cfg.fast_min_batt ? "%u %%" : "uit", (unsigned)mt_cfg.fast_min_batt);
   else if (!strcmp(param, "chan")) {
     ChannelDetails ch;
     bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
@@ -502,10 +545,11 @@ static void show() {
       outl("   2  Modus en knop");
       outl("   3  Wanneer een positie sturen");
       outl("   4  Ritme");
-      outl("   5  Stilstand en heartbeat");
-      outl("   6  GPS en verzending");
-      outl("   7  Nu een positie sturen");
-      outl("   8  Onderhoud");
+      outl("   5  SlowTrack (logpunten, ook in rust)");
+      outl("   6  Stilstand en heartbeat");
+      outl("   7  GPS en verzending");
+      outl("   8  Nu een positie sturen");
+      outl("   9  Onderhoud");
       outl("");
       outl("   0  Menu sluiten (commando's; 'menu' opent het weer)");
       break;
@@ -519,15 +563,33 @@ static void show() {
       outl("");
       outl("   4  Statusled ................................. %s",
            mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "alleen als companion");
+      outl("   5  SOS door vasthouden ....................... %s", mt_cfg.sos_off ? "uit" : "aan");
+      outl("   6  Biep na elk verstuurd positiebericht ...... %s", mt_cfg.tx_beep ? "aan" : "uit");
+      outl("   7  Biep als een repeater het herhaalt ........ %s", mt_cfg.heard_beep ? "aan" : "uit");
+      outl("      (6 en 7 niet bij klik of SOS: die hebben hun eigen terugmelding)");
       outl("");
       outl("   Knop: 1x = positie nu, 2x = modus wisselen, 3x = buzzer aan/uit,");
-      outl("         2-8 s vasthouden en loslaten = SOS, langer dan 8 s = uitschakelen.");
+      if (mt_cfg.sos_off) outl("         2-8 s vasthouden = niets (SOS uit), langer dan 8 s = uitschakelen.");
+      else outl("         2-8 s vasthouden en loslaten = SOS, langer dan 8 s = uitschakelen.");
       outl("");
       outl("   0  Terug");
       break;
     case SC_WHEN:   header("WANNEER EEN POSITIE STUREN"); list_items(WHEN, N_ITEMS(WHEN)); break;
     case SC_RHYTHM: header("RITME"); list_items(RHYTHM, N_ITEMS(RHYTHM)); break;
     case SC_REST:   header("STILSTAND EN HEARTBEAT"); list_items(REST, N_ITEMS(REST)); break;
+    case SC_SLOW:
+      header("SLOWTRACK");
+      outl("   Los van de gewone tracking: elke x een punt loggen, ook in rust, en die");
+      outl("   punten samen in één bericht versturen. Eén bericht bevat zo'n 6 à 11 punten");
+      outl("   (minder bij grote afstanden of een lange naam).");
+      outl("   Tip: kies het loginterval ongeveer 1/8 van het verzendinterval");
+      outl("   (bv. versturen elke 30 min -> loggen elke 4 min); logt hij meer, dan");
+      outl("   vallen er tussenliggende punten weg.");
+      outl("   Nu %u punten in de buffer; FastTrack %s.", (unsigned)mt_tracker_slow_buffered(),
+           mt_tracker_fast_suspended() ? "uit (batterij te laag)" : "aan");
+      outl("");
+      list_items(SLOW, N_ITEMS(SLOW));
+      break;
     case SC_GPS:    header("GPS EN VERZENDING"); list_items(GPSI, N_ITEMS(GPSI)); break;
     case SC_MAINT:
       header("ONDERHOUD");
@@ -564,14 +626,15 @@ static void menu_choice(int n) {
         case 2: s_screen = SC_MODE; break;
         case 3: s_screen = SC_WHEN; break;
         case 4: s_screen = SC_RHYTHM; break;
-        case 5: s_screen = SC_REST; break;
-        case 6: s_screen = SC_GPS; break;
-        case 7:
+        case 5: s_screen = SC_SLOW; break;
+        case 6: s_screen = SC_REST; break;
+        case 7: s_screen = SC_GPS; break;
+        case 8:
           outl("");
           outl(mt_tracker_manual() ? "   Positie wordt verstuurd (GPS-fix zoeken, daarna op het trackingkanaal)."
                                    : "   Niet verstuurd: trackingkanaal ontbreekt, of minder dan 10 s na de vorige.");
           break;
-        case 8: s_screen = SC_MAINT; break;
+        case 9: s_screen = SC_MAINT; break;
         default: break;
       }
       show();
@@ -581,6 +644,9 @@ static void menu_choice(int n) {
       else if (n == 2) mt_choose_mode(MT_MODE_COMPANION, false);
       else if (n == 3) set_param("track_in_companion", mt_cfg.track_in_companion ? "off" : "on");
       else if (n == 4) set_param("led", mt_cfg.led_mode == 0 ? "altijd" : mt_cfg.led_mode == 1 ? "uit" : "companion");
+      else if (n == 5) set_param("sos", mt_cfg.sos_off ? "aan" : "uit");
+      else if (n == 6) set_param("tx_beep", mt_cfg.tx_beep ? "uit" : "aan");
+      else if (n == 7) set_param("heard_beep", mt_cfg.heard_beep ? "uit" : "aan");
       else if (n == 0) s_screen = SC_MAIN;
       show();
       return;
@@ -594,6 +660,7 @@ static void menu_choice(int n) {
     case SC_WHEN: items = WHEN; count = N_ITEMS(WHEN); break;
     case SC_RHYTHM: items = RHYTHM; count = N_ITEMS(RHYTHM); break;
     case SC_REST: items = REST; count = N_ITEMS(REST); break;
+    case SC_SLOW: items = SLOW; count = N_ITEMS(SLOW); break;
     case SC_GPS: items = GPSI; count = N_ITEMS(GPSI); break;
   }
   if (n == 0) { s_screen = SC_MAIN; show(); return; }
@@ -622,7 +689,7 @@ static void command(char* s) {
       err = set_param(k, v);
     }
     if (err) outl("%s: %s (%s)", k, err, v);
-    else outl("%s = %s (bewaard)", k, v);
+    else { outl("%s = %s (bewaard)", k, v); slow_ratio_warn(k, ""); }
   }
   else if (!strcmp(s, "mode")) {
     if (!strcmp(args, "companion")) mt_choose_mode(MT_MODE_COMPANION, false);
@@ -659,6 +726,7 @@ static void handle_line(char* line) {
     if (*s) {
       const char* err = set_param(it->param, s);
       outl(err ? "   Fout: %s." : "   Bewaard.", err);
+      if (!err) slow_ratio_warn(it->param, "   ");
     }
     show();
     return;

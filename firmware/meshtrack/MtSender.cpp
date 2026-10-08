@@ -8,7 +8,7 @@
 #include "MyMesh.h"
 #include <string.h>
 
-struct Job { bool used; char text[MT_TEXT_MAX + 1]; bool manual; bool keep; uint32_t tag; };
+struct Job { bool used; char text[MT_TEXT_MAX + 1]; bool manual; bool keep; uint32_t tag; char state; };
 
 static Job s_cur = {}, s_next = {};
 static MtSendStats s_stats = {};
@@ -27,8 +27,9 @@ static void finish(bool ok) {
   s_stats.have_last = true;
   bool manual = s_cur.manual;
   uint32_t tag = s_cur.tag;
+  char state = s_cur.state;
   s_cur.used = false;
-  if (s_done_cb) s_done_cb(ok, manual, tag);
+  if (s_done_cb) s_done_cb(ok, manual, tag, state);
   if (s_next.used) { s_cur = s_next; s_next.used = false; }
 }
 
@@ -40,10 +41,11 @@ static bool transmit() {
 
 void mt_sender_set_done_cb(MtSendDone cb) { s_done_cb = cb; }
 
-bool mt_send(const char* text, bool manual, bool keep, uint32_t tag) {
+bool mt_send(const char* text, bool manual, bool keep, uint32_t tag, char state) {
   Job j;
   j.used = true;
   j.tag = tag;
+  j.state = state;
   j.manual = manual;
   j.keep = keep;
   strncpy(j.text, text, sizeof(j.text) - 1);

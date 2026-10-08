@@ -41,7 +41,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.0.5"
+VERSION = "1.1.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -163,6 +163,9 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
         await S.hub.send({"type": "channels"})
     t = S.db.tracker(t["id"])
     extras = pos.pop("extras", [])
+    if pos["state"] == "L":
+        await _process_slow(t, pos, extras, before, simulated)
+        return
     if not simulated:
         log.info("positie %s seq=%s state=%s%s", t["alias"], pos["seq"], pos["state"],
                  f" (+{len(extras)} eerdere punten)" if extras else "")
@@ -176,29 +179,71 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
                 S.alerts.fire(t, "zone_in" if ev["event"] == "enter" else "zone_out", ep, ev["geofence"], ev.get("owner"))
     await S.hub.send({"type": "position", "position": pos, "tracker": tracker_out(t)})
     S.alerts.fire(t, pos["state"], pos)
+    await _lost_seen(t, pos, before)
+    _bat_power_alerts(t, pos, before)
+    if pos["lat"] is not None and not pos["suspect"]:
+        await _zones(t, pos)
+
+
+async def _lost_seen(t: dict[str, Any], pos: dict[str, Any], before: Optional[dict[str, Any]]) -> None:
     if before is not None and before.get("lost"):
         # De status 'verloren' blijft; elke regel met lost_seen krijgt een melding (cooldown per regel).
         S.db.mark_lost_seen(t["id"], int(time.time()))
         log.warning("verloren tracker %s is terug opgedoken (%s)", t["alias"], pos["state"])
         S.alerts.fire(t, "lost_seen", pos)
         await S.hub.send({"type": "lost_seen", "tracker": tracker_out(S.db.tracker(t["id"]))})
+
+
+def _bat_power_alerts(t: dict[str, Any], pos: dict[str, Any], before: Optional[dict[str, Any]]) -> None:
     if pos["bat"] is not None and pos["bat"] < 20 and (before is None or before["last_bat"] is None
                                                           or before["last_bat"] >= 20):
         S.alerts.fire(t, "bat_low", pos)
     if pos.get("power") and before is not None and before.get("last_power") and before["last_power"] != pos["power"]:
         S.alerts.fire(t, "usb_on" if pos["power"] == "u" else "usb_off", pos)
-    if pos["lat"] is not None and not pos["suspect"]:
-        for ev in geofence.evaluate(S.db, t["id"], pos["lat"], pos["lon"], pos["ts"]):
-            ev["tracker"] = t["alias"]
-            log.info("geofence: %s %s %s", t["alias"], ev["event"], ev["geofence"])
-            await S.hub.send({"type": "geofence", "event": ev})
-            S.alerts.fire(t, "zone_in" if ev["event"] == "enter" else "zone_out", pos, ev["geofence"], ev.get("owner"))
-            if ev["notify_pubkey"] and S.mesh.connected:
-                verb = "is binnengekomen in" if ev["event"] == "enter" else "heeft verlaten:"
-                try:
-                    await send_text(S.mesh, ev["notify_pubkey"], f"MeshTrack: {t['alias']} {verb} {ev['geofence']}")
-                except Exception as e:  # noqa: BLE001
-                    log.warning("geofence-DM mislukt: %s", e)
+
+
+async def _zones(t: dict[str, Any], pos: dict[str, Any]) -> None:
+    """Zones toetsen voor een nieuwe (live) positie, met meldingen en de DM van de zone."""
+    for ev in geofence.evaluate(S.db, t["id"], pos["lat"], pos["lon"], pos["ts"]):
+        ev["tracker"] = t["alias"]
+        log.info("geofence: %s %s %s", t["alias"], ev["event"], ev["geofence"])
+        await S.hub.send({"type": "geofence", "event": ev})
+        S.alerts.fire(t, "zone_in" if ev["event"] == "enter" else "zone_out", pos, ev["geofence"], ev.get("owner"))
+        if ev["notify_pubkey"] and S.mesh.connected:
+            verb = "is binnengekomen in" if ev["event"] == "enter" else "heeft verlaten:"
+            try:
+                await send_text(S.mesh, ev["notify_pubkey"], f"MeshTrack: {t['alias']} {verb} {ev['geofence']}")
+            except Exception as e:  # noqa: BLE001
+                log.warning("geofence-DM mislukt: %s", e)
+
+
+async def _process_slow(t: dict[str, Any], pos: dict[str, Any], extras: list[dict[str, Any]],
+                        before: Optional[dict[str, Any]], simulated: bool) -> None:
+    """SlowTrack (L): gelogde punten, meestal ouder dan de live-positie. Ze gaan chronologisch naar
+    de live kaart als gewone "position"-berichten (de kaart voegt op ts in, de marker volgt
+    tracker.last_*, die nooit terug in de tijd gaat). Elk punt krijgt "slow": 1 en, als het
+    niet nieuwer is dan de live-positie van vóór dit bericht, "history": 1.
+    Geen meldingen voor de toestand L zelf; zones, batterij en voeding alleen voor punten die
+    nieuwer zijn dan die live-positie: de zonetoestand (binnen/buiten) is de huidige, en een
+    oud punt zou die terugdraaien en valse in/uit-meldingen geven. Wel 'verloren tracker
+    gezien': het bericht zelf bewijst dat de tracker nu leeft."""
+    prev_ts = before.get("last_ts") if before else None
+    pts = extras + ([pos] if pos.pop("stored", True) else [])
+    for p in pts:
+        p["slow"], p["history"] = 1, int(prev_ts is not None and p["ts"] <= prev_ts)
+    live = [p for p in pts if not p["history"]]
+    if not simulated:
+        log.info("SlowTrack %s seq=%s: %d gelogde punten (%d nieuwer dan de live-positie)",
+                 t["alias"], pos["seq"], len(pts), len(live))
+    out = tracker_out(t)
+    for p in pts:
+        await S.hub.send({"type": "position", "position": p, "tracker": out})
+    await _lost_seen(t, pos, before)
+    if live and live[-1] is pos:
+        _bat_power_alerts(t, pos, before)
+    for p in live:
+        if p["lat"] is not None and not p["suspect"]:
+            await _zones(t, p)
 
 
 async def on_message(prefix: str, text: str, sender_ts, snr, path_len) -> None:
@@ -1467,6 +1512,7 @@ async def mesh_nodes(request: Request):
 EVENT_TYPES = {
     "M": "positie (beweging)", "W": "wakker door beweging", "S": "stilgevallen", "H": "heartbeat",
     "N": "geen GPS-fix", "E": "SOS", "P": "handmatig verstuurd", "B": "moduswissel",
+    "L": "gelogd punt (SlowTrack)",
     "zone_in": "zone binnen", "zone_out": "zone buiten", "bat_low": "batterij onder 20 %",
     "suspect": "verdachte positie", "usb_on": "aan de lader (USB)", "usb_off": "van de lader af",
     "lost_seen": "verloren tracker gezien",

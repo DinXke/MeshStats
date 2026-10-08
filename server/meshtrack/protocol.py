@@ -11,6 +11,10 @@ Lege velden zijn toegestaan waar de spec dat zegt; `mode` (c|t), `power`
 (u = USB/laden, b = batterij) en `fix_ts` (GPS-tijd van de fix, unix-seconden)
 zijn optioneel. Met fix_ts staat een positie op het juiste moment, ook als het
 bericht pas na herhaalpogingen of een wachtrij aankomt.
+
+State `L` (fw 0.8.0, SlowTrack): gelogde punten, in bursts verstuurd naast de gewone
+tracking. Het hoofdpunt is het nieuwste punt van dat stuk (met eigen fix_ts), de extra
+punten zijn oudere punten. Meestal ouder dan de live-positie: zie ingest.py.
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ STATES = {
     "E": "SOS",
     "P": "handmatig",
     "B": "modus/boot",
+    "L": "gelogd punt (SlowTrack)",
 }
 MODES = {"c": "companion", "t": "tracker"}
 POWER = {"u": "USB", "b": "batterij"}
@@ -112,7 +117,7 @@ def parse(text: str) -> Report:
     lon = _opt_float(lon_s, -180, 180, "lon")
     if (lat is None) != (lon is None):
         raise ProtocolError("lat en lon moeten samen gegeven zijn")
-    if state == "M" and lat is None:      # S mag zonder fix (stilgevallen binnen)
+    if state in ("M", "L") and lat is None:   # S mag zonder fix (stilgevallen binnen)
         raise ProtocolError(f"state {state} vereist een positie")
 
     mode = power = None

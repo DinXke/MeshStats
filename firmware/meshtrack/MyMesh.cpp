@@ -298,6 +298,11 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   }
 }
 
+// MeshTrack: de radio heeft dit pakket echt verzonden (Dispatcher, na isSendComplete).
+void MyMesh::logTx(mesh::Packet* pkt, int len) {
+  mt_tx_packet(pkt->getPayloadType(), pkt->payload, pkt->payload_len);
+}
+
 bool MyMesh::isAutoAddEnabled() const {
   return (_prefs.manual_add_contacts & 1) == 0;
 }
