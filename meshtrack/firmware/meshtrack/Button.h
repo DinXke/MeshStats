@@ -87,8 +87,16 @@ private:
     static volatile uint32_t s_presses;
     static volatile uint32_t s_lastRelease;
     static volatile uint32_t s_lastEdge;
+    static volatile uint32_t s_pressAt;   // tijdstip van de laatst getelde druk
+    static volatile uint32_t s_prevDur;   // duur van de druk daarvoor (bij de volgende druk vastgelegd)
+    void finishPress(uint32_t dur, uint32_t releasedAt);
     uint32_t _seenPresses = 0;
     bool _useIsr = false;
+    // MeshTrack 0.8.2: alles op de tijdstempels van de interrupt (indrukken, loslaten,
+    // klikvenster), niet op wanneer de lus toevallig wakker is.
+    bool _isrHeld = false;                // een getelde druk is nog niet afgehandeld
+    bool _longFired = false;
+    void updateIsr(uint32_t now);
     
     // Callbacks
     EventCallback _onShortPress = nullptr;
