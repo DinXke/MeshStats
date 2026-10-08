@@ -21,7 +21,9 @@ OnMessage = Callable[[str, str, Optional[int], Optional[float], Optional[int]], 
 class MeshLink:
     def __init__(self, host: str, port: int, keepalive_s: int, on_message: OnMessage,
                  on_connect: Optional[Callable[[], Awaitable[None]]] = None):
-        self.host, self.port, self.keepalive_s = host, port, keepalive_s
+        # Hooguit 60 s: de companion-server van openHop verbreekt een verbinding na 120 s zonder verkeer
+        # (idle_timeout), en een verbroken verbinding kost bevestigingen en berichten.
+        self.host, self.port, self.keepalive_s = host, port, min(int(keepalive_s or 60), 60)
         self.on_message = on_message
         self.on_connect = on_connect
         self.on_channel: Optional[Callable[..., Awaitable[None]]] = None   # (slot, tekst, ts, snr, padlengte)
