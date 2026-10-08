@@ -59,6 +59,28 @@ void mt_cfg_defaults(MtCfg& c) {
   c.sample_s           = 15;
   c.slow_log_s         = 0;          // SlowTrack standaard uit
   c.slow_send_s        = 30 * 60;
+  c.track_mode         = MT_TRACK_CLASSIC;
+  c.fifo_max           = 500;
+  c.fifo_min           = 5;
+  c.fifo_gap_s         = 30;
+  c.fifo_per_uur       = 20;
+  c.fifo_pogingen      = 3;
+  c.fifo_dun           = 10;
+  c.fifo_snr           = -5;
+}
+
+// Waarden buiten het toegelaten bereik (beschadigd of met de hand gemaakt) terug naar standaard.
+static void cfg_sanitize(MtCfg& c) {
+  MtCfg d;
+  mt_cfg_defaults(d);
+  if (c.track_mode > MT_TRACK_FIFO) c.track_mode = d.track_mode;
+  if (c.fifo_max < 20 || c.fifo_max > 500) c.fifo_max = d.fifo_max;
+  if (c.fifo_min < 1 || c.fifo_min > c.fifo_max) c.fifo_min = c.fifo_max < d.fifo_min ? c.fifo_max : d.fifo_min;
+  if (c.fifo_gap_s < 15 || c.fifo_gap_s > 300) c.fifo_gap_s = d.fifo_gap_s;
+  if (c.fifo_per_uur < 1 || c.fifo_per_uur > 60) c.fifo_per_uur = d.fifo_per_uur;
+  if (c.fifo_pogingen < 1 || c.fifo_pogingen > 10) c.fifo_pogingen = d.fifo_pogingen;
+  if (c.fifo_dun > 100) c.fifo_dun = d.fifo_dun;
+  if (c.fifo_snr < -20 || c.fifo_snr > 10) c.fifo_snr = d.fifo_snr;
 }
 
 // Eén bestand proberen. 0 = geladen, 1 = bestand van nieuwere fw, -1 = onbruikbaar.
@@ -80,6 +102,7 @@ static int load_file(Adafruit_LittleFS& fs, const char* path) {
   memcpy(&crc, buf + hdr->size - 4, 4);
   if (mt_crc32(0, buf, hdr->size - 4) != crc) return -1;
   memcpy(&tmp, buf, hdr->size - 4);          // nieuwe velden houden hun standaardwaarde
+  cfg_sanitize(tmp);
   mt_cfg = tmp;
   if (hdr->version < MT_CFG_VERSION) return 2;
   return 0;
@@ -114,6 +137,34 @@ bool mt_file_write(const char* path, const void* data, size_t len) {
   if (CFS_IS_EXTRA) InternalFS.remove(path);
   return true;
 }
+
+// Eerst alles naar tmp; pas als dat volledig gelukt is, tmp hernoemen naar path. Mislukt het
+// onderweg, dan blijft het oude bestand staan (de lezer valt terug op tmp als path ontbreekt).
+bool mt_file_write_atomic(const char* path, const char* tmp, const void* a, size_t alen, const void* b, size_t blen) {
+  Adafruit_LittleFS& fs = cfs();
+  fs.remove(tmp);
+  File f = fs.open(tmp, FILE_O_WRITE);
+  if (!f) return false;
+  size_t n = f.write((const uint8_t*)a, alen);
+  if (blen) n += f.write((const uint8_t*)b, blen);
+  f.close();
+  if (n != alen + blen) { fs.remove(tmp); return false; }
+  if (!fs.rename(tmp, path)) {
+    fs.remove(path);
+    if (!fs.rename(tmp, path)) return false;
+  }
+  return true;
+}
+
+bool mt_file_read_at(const char* path, size_t off, void* buf, size_t len) {
+  File f = cfs().open(path, FILE_O_READ);
+  if (!f) return false;
+  bool ok = f.seek(off) && f.read((uint8_t*)buf, len) == (int)len;
+  f.close();
+  return ok;
+}
+
+void mt_file_remove(const char* path) { cfs().remove(path); }
 
 // Bezetting van een bestandssysteem in blokken (zoals DataStore van MeshCore). Op een beschadigd
 // bestandssysteem kan lfs_traverse naar onbestaande blokken wijzen of in een kring lopen (0.7.1 bleef
@@ -178,11 +229,11 @@ void mt_cfg_begin() {
       return;
     }
     if (r != 0 && r != 2 && load_file(fs, MT_CFG_TMP) == 0) r = 3;
-    if (r == 0 && !moved) { mt_cfg_load_note = "geladen v5"; return; }
+    if (r == 0 && !moved) { mt_cfg_load_note = "geladen v6"; return; }
     if (r == 0 || r == 2 || r == 3) {
       bool ok = mt_cfg_save();             // naar ExtraFS (en de oude kopie weg)
       mt_cfg_load_note = moved ? (ok ? "verhuisd naar ExtraFS" : "geladen van InternalFS [verhuizen MISLUKT]")
-                       : r == 2 ? "omgezet naar v5" : "hersteld uit .tmp";
+                       : r == 2 ? "omgezet naar v6" : "hersteld uit .tmp";
       return;
     }
   }

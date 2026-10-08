@@ -11,9 +11,11 @@
   const MT_KEYS = ["min_speed", "min_dist", "turn_min", "turn_min_speed", "min_interval", "max_interval", "still_timeout",
     "heartbeat", "fix_timeout", "fix_timeout_hb", "track_in_companion", "accel_sens", "led",
     "sample", "chan", "msg_beep",
-    "slow_log", "slow_send", "fast_min_batt", "sos", "tx_beep", "heard_beep"];   // vanaf 0.8.0
+    "slow_log", "slow_send", "fast_min_batt", "sos", "tx_beep", "heard_beep",   // vanaf 0.8.0
+    "track_mode", "fifo_max", "fifo_min", "fifo_gap", "fifo_per_uur", "fifo_pogingen",   // vanaf 0.9.0 (FIFO-modus)
+    "fifo_dun", "fifo_snr"];
   // Keuzes waarbij "uit" een geldige waarde is (bij duren en getallen wordt "uit" een 0).
-  const WORD_KEYS = ["track_in_companion", "led", "accel_sens", "msg_beep", "sos", "tx_beep", "heard_beep"];
+  const WORD_KEYS = ["track_in_companion", "led", "accel_sens", "msg_beep", "sos", "tx_beep", "heard_beep", "track_mode"];
   let fw = null, kv = null, known = null, busy = false;
 
   function say(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); }
@@ -193,8 +195,18 @@
       let v = String(s[k]);
       if (["min_speed", "min_dist", "turn_min", "turn_min_speed"].includes(k)) v = v.replace(/(km\/h|deg|m)$/, "");
       if (k === "fast_min_batt") v = v.replace(/%$/, "");
+      if (["fifo_max", "fifo_min", "fifo_per_uur", "fifo_pogingen", "fifo_dun"].includes(k)) v = v.replace(/\D/g, "");
+      if (k === "fifo_snr") v = v.replace(/[^\d-]/g, "");
       if (v === "uit" && !WORD_KEYS.includes(k)) v = "0";
       steps.push([`set ${k} ${v}`, k]);
+    }
+    // fifo_min mag nooit boven fifo_max komen: gaat min boven het huidige max, dan max eerst, anders min eerst
+    const iMin = steps.findIndex((x) => x[1] === "fifo_min"), iMax = steps.findIndex((x) => x[1] === "fifo_max");
+    if (iMin >= 0 && iMax >= 0 && kv) {
+      const maxFirst = (parseInt(s.fifo_min, 10) || 0) > (parseInt(kv.fifo_max, 10) || 0);
+      const [a, b] = [steps[iMin], steps[iMax]];
+      steps[Math.min(iMin, iMax)] = maxFirst ? b : a;
+      steps[Math.max(iMin, iMax)] = maxFirst ? a : b;
     }
     if (mt.authkey && /^[0-9a-f]{32}$/i.test(mt.authkey) && (!kv || "authkey" in kv)) steps.push([`set authkey ${mt.authkey}`, "authsleutel", true]);
     if (mt.mode) steps.push([`mode ${mt.mode}`, "modus"]);
