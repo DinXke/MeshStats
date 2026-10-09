@@ -145,7 +145,7 @@
               <ul class="help">
                 <li>Dekking betekent: de tracker hoort een van zijn eigen berichten herhaald, of een pakket dat via een repeater kwam.</li>
                 <li>Hij stuurt één inhaalbericht per <em>Tijd tussen inhaalberichten</em>, en hoogstens het ingestelde
-                  aantal per uur. Een inhaalbericht bevat zo'n 9 punten; met een lange naam minder. Punten verlaten de wachtrij pas als
+                  aantal herhaalde (doorgegeven) berichten per uur, met daarnaast een veiligheidsgrens van 2× zoveel pogingen per uur. Een inhaalbericht bevat zo'n 9 punten; met een lange naam minder. Punten verlaten de wachtrij pas als
                   hun bericht herhaald werd. Hoort hij dat niet, dan telt dat als een mislukte poging voor die punten: hij
                   stopt, wacht opnieuw op dekking en wacht telkens wat langer voor hij het nog eens probeert (1, 5, 15
                   en daarna 60 min).</li>
@@ -153,8 +153,7 @@
                   is, krijgen dan nog één laatste kans en worden daarna opgegeven. Waarschijnlijk kwamen ze toch aan
                   (alleen de herhaling werd niet gehoord); de server filtert dubbele punten weg. Zo houdt één koppig
                   bericht de wachtrij niet tegen.</li>
-                <li>De wachtrij houdt hoogstens <em>Wachtrij maximaal</em> punten bij (de oudste vallen weg) en blijft
-                  bewaard bij een herstart.</li>
+                <li>De wachtrij houdt hoogstens <em>Wachtrij maximaal</em> punten bij en blijft bewaard bij een herstart.</li>
                 <li>Eerst meeliften: punten van een gemist FastTrack-bericht blijven in de FastTrack-buffer en reizen mee
                   met de volgende berichten. Pas als zo'n punt uit die buffer valt zonder ooit gehoord te zijn, gaat het
                   hoofdpunt naar de wachtrij. Korte gaten vullen zich zo zonder extra berichten.</li>
@@ -169,14 +168,16 @@
             </details>
             <div class="grid" id="s-fifo">
               <div><label>Wachtrij maximaal</label><div class="unit"><input data-set="fifo_max" type="number" min="20" max="500"><span>punten</span></div>
-                <div class="help">20 tot 500; daarboven vallen de oudste weg. Per gemist FastTrack-bericht gaat alleen
+                <div class="help">20 tot 500; daarboven valt het punt weg dat het minst over de vorm van het spoor zegt. Per gemist FastTrack-bericht gaat alleen
                   het hoofdpunt in de wachtrij: bij 1 bericht per 1 à 2 min volstaan 500 punten voor zo'n 8 à 16 uur zonder bereik.</div></div>
               <div><label>Inhalen vanaf</label><div class="unit"><input data-set="fifo_min" type="number" min="1" max="500"><span>punten</span></div>
                 <div class="help">1 tot het maximum van de wachtrij.</div></div>
               <div><label>Tijd tussen inhaalberichten</label><div class="dur" data-set="fifo_gap"></div>
                 <div class="help">15 s tot 300 s (5 min).</div></div>
-              <div><label>Hoogstens</label><div class="unit"><input data-set="fifo_per_uur" type="number" min="1" max="60"><span>inhaalberichten per uur</span></div>
-                <div class="help">1 tot 60.</div></div>
+              <div><label>Herhaalde leegmaakberichten per uur</label><div class="unit"><input data-set="fifo_per_uur" type="number" min="1" max="60"><span>per uur</span></div>
+                <div class="help">1 tot 60. Alleen inhaalberichten waarvan de herhaling gehoord werd, of die de server later
+                  bevestigde, tellen mee. Pogingen zonder gehoorde herhaling tellen niet, maar het blijft bij hoogstens 2× zoveel
+                  pogingen per uur, om de zendtijd van de tracker te sparen.</div></div>
               <div><label>Pogingen per punt</label><div class="unit"><input data-set="fifo_pogingen" type="number" min="1" max="10"><span>pogingen</span></div>
                 <div class="help">1 tot 10. Daarna wordt een punt geparkeerd en krijgt het pas op het einde nog één kans.</div></div>
               <div><label>Rechte stukken uitdunnen</label><div class="unit"><input data-set="fifo_dun" type="number" min="0" max="100"><span>m</span></div>

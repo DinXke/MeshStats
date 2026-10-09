@@ -28,7 +28,9 @@ uint16_t mt_tracker_fifo_count();      // punten in de wachtrij
 uint32_t mt_tracker_fifo_oldest();     // fix_ts van het oudste punt (0 = leeg)
 uint32_t mt_tracker_fifo_newest();
 long mt_tracker_fifo_cov_age();        // s sinds de laatste dekking, -1 = nog nooit
-int mt_tracker_fifo_hour(uint32_t* wait_s);   // leegmaakberichten in het laatste uur; wait_s = pauze tot er weer een mag
+int mt_tracker_fifo_hour(uint32_t* wait_s);   // getelde leegmaakberichten (herhaald of T1F) in het laatste uur; wait_s = pauze door een plafond
+int mt_tracker_fifo_tries();           // alle leegmaakpogingen in het laatste uur (grens 2x fifo_per_uur)
+int mt_tracker_fifo_cap();             // 0 = geen plafond bereikt, 1 = fifo_per_uur, 2 = pogingen   // leegmaakberichten in het laatste uur; wait_s = pauze tot er weer een mag
 const char* mt_tracker_fifo_state();   // leegmaken: bezig, gestopt, ...
 bool mt_tracker_fifo_clear();
 uint16_t mt_tracker_fifo_parked();

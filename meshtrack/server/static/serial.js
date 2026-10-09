@@ -110,11 +110,13 @@
     const m = Math.ceil(s / 60);
     const dur = m < 60 ? `${Math.max(1, m)} min` : `${nl(Math.round(s / 360) / 10, 1)} u`;
     const gapTxt = gap < 120 ? `${gap} s` : `${nl(gap / 60, 1)} min`;
-    const limit = per < byGap ? "begrensd door 'per uur'" : "begrensd door de tijd tussen de berichten";
+    const limit = per < byGap ? "begrensd door het aantal herhaalde berichten per uur" : "begrensd door de tijd tussen de berichten";
     const warn = gap < 30 || per > 30;
     const lines = [
-      [`Max ${eff} ${eff === 1 ? "bericht" : "berichten"} per uur (elke ${gapTxt}, ${limit}) ≈ ${eff * FIFO_PER_MSG} ingehaalde punten per uur `
-        + `(compact binair, ≈ ${FIFO_PER_MSG} punten per bericht). Volle wachtrij (${max} punten) ≈ ${n} ${n === 1 ? "bericht" : "berichten"}, leeg in ≈ ${dur}.`],
+      [`Max ${eff} doorgegeven ${eff === 1 ? "bericht" : "berichten"} per uur (elke ${gapTxt}, ${limit}) ≈ ${eff * FIFO_PER_MSG} ingehaalde punten per uur `
+        + `(compact binair, ≈ ${FIFO_PER_MSG} punten per bericht). Volle wachtrij (${max} punten) ≈ ${n} ${n === 1 ? "bericht" : "berichten"}, leeg in ≈ ${dur}, als elke herhaling gehoord wordt.`],
+      [`Alleen berichten waarvan de herhaling gehoord werd of die de server later bevestigde, tellen voor de ${per} per uur. `
+        + `Pogingen zonder gehoorde herhaling tellen niet, maar het blijft bij hoogstens ${2 * per} pogingen per uur.`],
     ];
     lines.push([`≈ ${FIFO_PER_MSG} punten per bericht met de naam "${naam}" (${nb} bytes); een kortere naam zonder emoji laat meer punten toe.`]);
     if (warn) lines.push(["Opgelet: elk bericht wordt door meerdere repeaters herhaald; dit belast de mesh fel.", "warn"]);
