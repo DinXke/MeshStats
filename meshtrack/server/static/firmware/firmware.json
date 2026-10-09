@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.9.4",
+      "date": "2026-10-09",
+      "notes": "Belangrijke oplossing voor gegevensverlies: 0.9.3 kon na een bevestiging (T1F) van de server punten uit de wachtrij wissen die de server nooit gekregen had, omdat die bevestiging gold voor alle punten tot een bepaald tijdstip. Vanaf 0.9.4 bevestigt de server per inhaalbericht (volgnummer): elk Q-bericht vraagt dat met de letter g, en alleen de punten van de bevestigde berichten verdwijnen. De oude bevestiging met een tijdstip wordt genegeerd. Punten worden ook nooit meer opgegeven na te veel pogingen: geparkeerde punten krijgen alleen een lagere voorrang en 60 min wachttijd, en in rust of als companion krijgen ze bij sterke dekking (hooguit eens per 30 min) een nieuwe kans. Een punt verdwijnt alleen nog als een repeater zijn bericht herhaalt, als de server dat bericht bevestigt, of als de wachtrij overloopt.",
+      "zip": "meshtrack-t1000e-0.9.4.zip",
+      "zip_sha256": "c8724b4fd370bf91584971fd74b8c406dddf4687eb36bc11cfc8b4f17d67c1d7",
+      "uf2": "meshtrack-t1000e-0.9.4.uf2",
+      "app_size": 441568,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.9.3",
       "date": "2026-10-09",
       "notes": "Minder inhaalberichten met maar 1 of 2 punten. Een vol inhaalbericht (zoveel punten als er volgens de nodenaam in één bericht passen) volgt de gewone regels. Een niet-vol inhaalbericht gaat hooguit één keer per fifo_wacht weg (standaard 30 min), geslaagd of niet, en pas als het laatste geslaagde inhaalbericht (herhaald door een repeater of bevestigd met een T1F) minstens zo lang geleden is. Het gaat bovendien alleen weg bij sterke dekking (SNR >= fifo_snr of een T1F) en als de radio toch al wakker is: de tracker wekt de radio er nooit voor. Dat geldt ook na een onderbreking en in rust; in rust luistert hij alleen nog naar repeaters als er een vol bericht klaarstaat. Beide tijden overleven een herstart (nieuwe kop van /mt_fifo.dat; de oude wordt overgenomen). 'fifo' toont het laatste geslaagde inhaalbericht en wanneer een niet-vol bericht weer mag; 'dump' toont vol=, deel_na= en deel_snr=.",
@@ -151,5 +161,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.3"
+  "latest": "0.9.4"
 }

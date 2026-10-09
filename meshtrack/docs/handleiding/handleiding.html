@@ -90,7 +90,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Firmware 0.9.3 (T1000-E) · MeshCore v1.17.1<br>
+    Firmware 0.9.4 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -431,7 +431,7 @@
     <!-- mislukt: terug naar de wachtrij -->
     <path d="M385 286V306H600V290" fill="none" stroke="#b45309" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#fo)"/>
     <text x="492" y="322" text-anchor="middle" fill="#b45309" font-size="10.5">niet herhaald: stoppen tot nieuwe dekking, wachttijd 1 · 5 · 15 · 60 min;</text>
-    <text x="492" y="336" text-anchor="middle" fill="#b45309" font-size="10.5">na fifo_pogingen geparkeerd (nog één laatste poging als niets anders wacht)</text>
+    <text x="492" y="336" text-anchor="middle" fill="#b45309" font-size="10.5">na fifo_pogingen geparkeerd: lagere voorrang, 60 min wachten, nooit opgegeven</text>
   </svg>
   <figcaption>De FIFO-modus van bericht tot bevestiging. Groen: de gewone FastTrack-weg; blauw: de wachtrij en het inhalen; oranje: een
     mislukte poging.</figcaption>
@@ -456,8 +456,9 @@
     anderhalve keer zoveel als in tekst, zo'n 7 à 10 punten per bericht, afhankelijk van de lengte van de trackernaam. Het volgende vertrekt pas als het vorige herhaald is.
     Een <strong>vol</strong> inhaalbericht gaat weg volgens deze regels; een bericht met minder punten is <strong>niet vol</strong> en
     volgt strengere regels (zie <em>Volle en niet-volle inhaalberichten</em> hieronder).</li>
-  <li><strong>Pas weg als het zeker is.</strong> Een punt verlaat de wachtrij pas als de tracker zijn inhaalbericht herhaald hoorde,
-    of als de server bevestigt dat hij het punt heeft.</li>
+  <li><strong>Pas weg als het zeker is.</strong> Een punt verlaat de wachtrij alleen als de tracker zijn inhaalbericht herhaald
+    hoorde, als de server precies dat bericht bevestigde, of als de wachtrij overloopt (dan valt het punt weg dat het minst aan de vorm
+    van de route toevoegt).</li>
 </ol>
 
 <div class="cols">
@@ -477,17 +478,23 @@
     <h3>Mislukte pogingen</h3>
     <p>Hoort de tracker geen herhaling van een inhaalbericht, dan stopt hij met inhalen tot hij opnieuw dekking heeft. De punten van
       dat bericht wachten eerst 1, dan 5, dan 15 en daarna telkens 60 minuten voor ze opnieuw meegaan.</p>
-    <p>Na <code>fifo_pogingen</code> mislukte pogingen (standaard 3) is een punt <strong>geparkeerd</strong>: het houdt de rest
-      niet meer op, krijgt nog één laatste poging als er niets anders meer wacht, en wordt daarna opgegeven. Wellicht kwam het toch
-      aan: de server haalt dubbele punten er zelf uit.</p>
+    <p>Na <code>fifo_pogingen</code> mislukte pogingen (standaard 3) is een punt <strong>geparkeerd</strong>: het krijgt een lagere
+      voorrang, zodat het de rest niet ophoudt, en wacht telkens 60 minuten voor een nieuwe poging. Een punt wordt <strong>nooit
+      opgegeven</strong> omdat het te vaak mislukte. Ligt de tracker in rust of staat hij in companionmodus, en hoort hij sterke dekking
+      (SNR ≥ <code>fifo_snr</code>), dan krijgen geparkeerde punten een nieuwe kans: hun teller gaat terug op nul, hooguit één keer per
+      30 minuten. Dat gebeurt meestal thuis.</p>
   </div>
 </div>
 
 <h3>De bevestiging van de server (T1F)</h3>
-<p>Heeft de tracker punten verstuurd waarvan hij geen herhaling hoorde, dan vraagt hij in zijn volgende inhaalbericht om een
-  bevestiging. De server antwoordt op hetzelfde kanaal met een ondertekend <code>T1F</code>-bericht: "alles tot dit tijdstip is
-  binnen". De tracker ruimt die punten dan op, ook al hoorde hij hun herhaling nooit. Hoorde hij al zijn berichten herhaald, dan
-  vraagt hij niets en zwijgt de server.</p>
+<p>De tracker vraagt een bevestiging voor de inhaalberichten die hij verstuurde maar niet herhaald hoorde. De server antwoordt op
+  hetzelfde kanaal met een ondertekend <code>T1F</code>-bericht met de <strong>volgnummers</strong> van de inhaalberichten die hij
+  echt ontving. De tracker verwijdert dan precies de punten van die berichten, ook al hoorde hij hun herhaling nooit. Hoorde hij al
+  zijn berichten herhaald, dan vraagt hij niets en zwijgt de server.</p>
+<div class="warn"><b>Werk trackers met firmware 0.9.0 tot 0.9.3 bij</b>In die versies bevestigde de server "alles tot dit tijdstip is
+  binnen". Daardoor wiste de tracker ook oudere punten die nooit waren aangekomen: punten gingen verloren. Sinds server 1.3.1 krijgt
+  zulke firmware geen bevestiging meer; ze wist alleen nog wat een repeater herhaalde. Flash daarom firmware 0.9.4 of nieuwer
+  (hoofdstuk 9).</div>
 <div class="note"><b>Weinig verkeer, ook met veel trackers</b>De server bundelt de antwoorden voor tot 4 trackers in één bericht en
   stuurt hoogstens één bevestiging per 10 minuten per tracker, één T1F-bericht per minuut per kanaal en 20 T1F-berichten per uur in
   totaal, hoeveel trackers er ook zijn. Trackers die meestal stilstaan of niets in te halen hebben, vragen niets: de server blijft
@@ -529,7 +536,8 @@
   <tr><td class="k">Tijd ertussen<br><code>fifo_gap</code></td><td>Minstens zoveel tijd tussen twee inhaalberichten (15 s tot 5 min).</td><td>30 s</td></tr>
   <tr><td class="k">Per uur<br><code>fifo_per_uur</code></td><td>Hoogstens zoveel <em>herhaalde</em> inhaalberichten per uur (1 tot 60).
     Pogingen die geen repeater herhaalde, tellen niet mee; in totaal hoogstens het dubbele aan pogingen.</td><td>20</td></tr>
-  <tr><td class="k">Pogingen<br><code>fifo_pogingen</code></td><td>Na zoveel mislukte pogingen is een punt geparkeerd (1 tot 10).</td><td>3</td></tr>
+  <tr><td class="k">Pogingen<br><code>fifo_pogingen</code></td><td>Na zoveel mislukte pogingen is een punt geparkeerd: lagere voorrang
+    en 60 min wachten, maar nooit opgegeven (1 tot 10).</td><td>3</td></tr>
   <tr><td class="k">Uitdunnen<br><code>fifo_dun</code></td><td>Een punt dat op een rechte weg binnen zoveel meter van de lijn ligt, valt weg
     (0 tot 100; 0 = uit).</td><td>10 m</td></tr>
   <tr><td class="k">Stabiele dekking<br><code>fifo_snr</code></td><td>Een nieuwe ronde begint bij een pakket met minstens deze SNR (−20 tot
@@ -586,7 +594,7 @@
     <code>fifo_dun</code>, <code>fifo_snr</code>).</td></tr>
   <tr><td class="k">status: fifo</td><td>Punten in de wachtrij.</td></tr>
   <tr><td class="k">status: fifo_dekking</td><td>Seconden sinds de laatste dekking; <code>-</code> = nog nooit sinds de start.</td></tr>
-  <tr><td class="k">status: fifo_geparkeerd</td><td>Geparkeerde punten.</td></tr>
+  <tr><td class="k">status: fifo_geparkeerd</td><td>Geparkeerde punten (lagere voorrang, nooit opgegeven).</td></tr>
   <tr><td class="k">status: fifo_bevestigd</td><td>Punten die de server sinds de start bevestigde (T1F).</td></tr>
   <tr><td class="k">status: fifo_wacht</td><td>De wachttijd voor een niet-vol bericht, bv. <code>30m</code> of <code>uit</code>.</td></tr>
   <tr><td class="k">status: fifo_per_bericht</td><td>Hoeveel punten er met de naam van deze tracker in één inhaalbericht passen.</td></tr>
@@ -607,8 +615,8 @@ fifo: laatste geslaagde inhaalbericht: 4 min geleden; niet-vol bericht weer moge
 fifo: een vol bericht = minstens 9 punten; een niet-vol inhaalbericht hooguit één keer
       per 30 min (fifo_wacht), geslaagd of niet, alleen bij sterke dekking (SNR >= -5 dB
       of T1F) en als de radio toch al wakker is
-fifo: nu 37 punten in de wachtrij, waarvan 0 geparkeerd (na 3 mislukte pogingen;
-      laatste poging als er niets anders wacht)
+fifo: nu 37 punten in de wachtrij, waarvan 0 geparkeerd (na 3 mislukte pogingen:
+      lagere voorrang, nooit opgegeven)
 fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begrenst op 20.
       Dat mag; de wachtrij loopt dan wel trager leeg.
 fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de server
@@ -778,7 +786,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
 <h3>Tracker live: in de tracker kijken</h3>
 <p>Onder <em>Apps</em> → <em>Tracker live</em> (<code>/tracker</code>) staat een aparte app die toont wat er op dat moment in één
-  tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij (ook of er een vol inhaalbericht klaarstaat en wanneer een niet-vol bericht weer mag), wat hij
+  tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij (het totaal met de verdeling <em>nog niet verstuurd · verstuurd, onbevestigd · geparkeerd</em>, geparkeerde punten
+  in het oranje, en ook of er een vol inhaalbericht klaarstaat en wanneer een niet-vol bericht weer mag), wat hij
   verstuurde en wat hij hoorde, met een tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
 <ul>
   <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
@@ -828,7 +837,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.3       HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.4       HOOFDMENU
   ==============================================================
    Ploeg 3  |  modus companion (USB)  |  batterij 99%
    tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
@@ -847,7 +856,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.3       MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.9.4       MODUS EN KNOP
   ==============================================================
    Op batterij nu gekozen: tracker.
    Met USB altijd companion.
@@ -874,7 +883,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <h2 class="chap"><span class="nr">9</span>Firmware flashen</h2>
 <p class="lead">In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je flasht ze
   rechtstreeks vanuit de browser, zonder extra programma's.</p>
-<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.3. Heeft een tracker oudere firmware, dan kent hij
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.4. Heeft een tracker oudere firmware, dan kent hij
   sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
   (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
 <figure class="half"><img src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: back-up, bootloader, flashen en de controle van de sleutel.
@@ -1126,15 +1135,17 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     gaat hij vanzelf verder. Na een niet herhaald inhaalbericht wacht hij 1, 5, 15 of 60 min. Hij haalt alleen in zolang
     hij zelf posities stuurt (trackermodus, of companion met posities aan).</td></tr>
   <tr><td class="k">Geparkeerde punten</td><td><code>fifo_geparkeerd</code> groter dan 0: die punten raakten na <code>fifo_pogingen</code>
-    pogingen niet door. Ze krijgen nog één laatste poging als niets anders wacht en worden dan opgegeven. Meestal kwamen ze toch
-    aan; kijk op de kaart. Je hoeft niets te doen.</td></tr>
+    pogingen niet door. Ze blijven in de wachtrij met een lagere voorrang en worden nooit opgegeven. Leg de tracker thuis of op een plek
+    met goed bereik (in rust of in companionmodus): bij sterke dekking krijgen ze een nieuwe kans. Tracker live toont ze in het
+    oranje.</td></tr>
   <tr><td class="k">Veel berichten op de mesh</td><td>Trackers in FIFO-modus die inhalen: verhoog <code>fifo_gap</code>, verlaag
     <code>fifo_per_uur</code>, kies een kleinere <code>fifo_max</code> of een grotere <code>fifo_dun</code>, of geef de tracker een
     kortere naam zonder emoji. <code>fifo</code>
     en Toestellen tonen meteen wat dat geeft.</td></tr>
   <tr><td class="k">"f" of T1F-berichten</td><td>Normaal. Met <code>f</code> achteraan een inhaalbericht vraagt de tracker een
     bevestiging; de server antwoordt met <code>T1F</code>, hoogstens 20 keer per uur in totaal. Komt er nooit een T1F, kijk dan of de
-    tracker een authsleutel heeft (zonder handtekening bevestigt de server niets). Met <code>rxlog aan</code> zie je of de T1F aankomt.</td></tr>
+    tracker firmware 0.9.4 of nieuwer heeft (oudere krijgt geen bevestiging meer) en een authsleutel (zonder handtekening bevestigt
+    de server niets). Met <code>rxlog aan</code> zie je of de T1F aankomt.</td></tr>
   <tr><td class="k">Bewegingssensor voelt niets (goed geveerde auto)</td><td>Ook de GPS-snelheid telt als beweging: de tracker gaat pas
     slapen als hij langer dan <code>still_timeout</code> (standaard 5 min) geen van beide merkt. Voor een rood licht valt hij dus niet in
     slaap. Pas na een stop die langer duurt dan <code>still_timeout</code> moet de sensor hem alleen wekken. Voor een heel soepele auto:

@@ -276,7 +276,7 @@ static void fifo_summary(const char* pre) {
          (int)mt_cfg.fifo_snr);
   }
   else outl("%seen vol bericht = minstens %lu punten; niet-volle berichten nooit (fifo_wacht uit)", pre, (unsigned long)fifo_per_msg());
-  outl("%snu %u punten in de wachtrij, waarvan %u geparkeerd (na %u mislukte pogingen; laatste poging als er niets anders wacht)",
+  outl("%snu %u punten in de wachtrij, waarvan %u geparkeerd (na %u mislukte pogingen: lagere voorrang, nooit opgegeven)",
        pre, (unsigned)mt_tracker_fifo_count(), (unsigned)mt_tracker_fifo_parked(), (unsigned)mt_cfg.fifo_pogingen);
   if (capped)
     outl("%slet op: fifo_gap %lu s laat %lu berichten/uur toe, maar fifo_per_uur begrenst op %lu. Dat mag; de wachtrij loopt dan wel trager leeg.",
@@ -586,8 +586,11 @@ static void cmd_help() {
   outl("      Een volle wachtrij van 500 punten is zo'n 50 à 70 berichten; elk bericht wordt door meerdere");
   outl("      repeaters herhaald, dus hou fifo_gap ruim.");
   outl("    fifo_pogingen <1..10>   na zoveel niet herhaalde leegmaakberichten is een punt geparkeerd");
-  outl("      (standaard 3): het blokkeert de wachtrij niet meer en krijgt een laatste poging als er niets");
-  outl("      anders wacht. Na elke mislukte poging wacht een punt 1, 5, 15 en daarna 60 min.");
+  outl("      (standaard 3): lagere voorrang en 60 min wachttijd, zodat het de wachtrij niet blokkeert.");
+  outl("      Daarvoor wacht een punt na elke mislukte poging 1, 5 en 15 min. Een punt wordt nooit");
+  outl("      opgegeven: het verdwijnt pas als een repeater zijn bericht herhaalt, als de server dat bericht");
+  outl("      bevestigt (T1F per volgnummer) of als de wachtrij overloopt. In rust of als companion, met");
+  outl("      sterke dekking, krijgen geparkeerde punten (hooguit eens per 30 min) een nieuwe kans.");
   outl("    fifo_dun <0..100>       punt op een rechte weg binnen zoveel m van de lijn = overbodig, weg");
   outl("      (standaard 10, 0 = uit); een punt bij een stop (tijdsprong > 10 min) blijft altijd");
   outl("    fifo_snr <-20..10>      een nieuwe leegmaakronde pas bij een pakket met SNR >= dit (dB, standaard -5),");
@@ -609,8 +612,8 @@ static void cmd_help() {
   outl("          slow_buffer = gelogde SlowTrack-punten die nog weg moeten; fasttrack=uit(batterij) = onder fast_min_batt");
   outl("          fifo = punten in de wachtrij; fifo_dekking = seconden sinds de laatste dekking (een repeater");
   outl("          gehoord: herhaling van een eigen bericht of een pakket via een repeater), - = nog nooit");
-  outl("          fifo_geparkeerd = punten na fifo_pogingen mislukte pogingen; fifo_bevestigd = sinds de start");
-  outl("          door de server bevestigde punten (T1F)");
+  outl("          fifo_geparkeerd = punten na fifo_pogingen mislukte pogingen (lagere voorrang); fifo_bevestigd =");
+  outl("          sinds de start door de server bevestigde punten (T1F, per bericht)");
   outl("  fifo | fifo wis ja          wachtrij tonen (aantal, oudste en nieuwste punt) / wissen");
   outl("  dump                        interne toestand, machineleesbaar (webpagina /tracker; ook via Bluetooth,");
   outl("                              samen met status en fifo: alleen lezen)");
@@ -833,8 +836,9 @@ static void show() {
       outl("     60 s): geen verspilde berichten op de rand van het bereik. Oudste eerst, zo'n 7 à 10 punten");
       outl("     per bericht; een volle wachtrij is zo'n 50 à 70 berichten. Elk bericht wordt door meerdere");
       outl("     repeaters herhaald, dus hou fifo_gap ruim.");
-      outl("   - Een punt dat na enkele pogingen niet doorraakt, wordt geparkeerd: het blokkeert de");
-      outl("     rest niet. De server kan bevestigen wat hij kreeg (T1F); dat ruimt de wachtrij op.");
+      outl("   - Een punt dat na enkele pogingen niet doorraakt, wordt geparkeerd: lagere voorrang, het");
+      outl("     blokkeert de rest niet, maar het wordt nooit opgegeven. De server bevestigt per bericht");
+      outl("     wat hij kreeg (T1F); alleen die punten verdwijnen uit de wachtrij.");
       char cov[24] = "nog niet gezien";
       if (mt_tracker_fifo_cov_age() >= 0) snprintf(cov, sizeof(cov), "%ld s geleden", mt_tracker_fifo_cov_age());
       outl("   Nu %u punten in de wachtrij; leegmaken %s; laatste dekking %s.", (unsigned)mt_tracker_fifo_count(),

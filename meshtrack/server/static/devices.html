@@ -152,10 +152,11 @@
                 <li>Een vol inhaalbericht heeft minstens zoveel punten als er in één bericht passen. Wat te weinig is voor een
                   vol bericht, gaat hooguit 1× per <em>Niet-vol inhaalbericht hooguit 1× per</em> mee in een niet-vol bericht, alleen bij
                   sterke dekking en als de radio toch wakker is. In rust luistert de tracker alleen als er een vol bericht klaarstaat.</li>
-                <li>Punten die al hun pogingen op hebben, worden <em>geparkeerd</em>: ze wachten tot al de rest verstuurd
-                  is, krijgen dan nog één laatste kans en worden daarna opgegeven. Waarschijnlijk kwamen ze toch aan
-                  (alleen de herhaling werd niet gehoord); de server filtert dubbele punten weg. Zo houdt één koppig
-                  bericht de wachtrij niet tegen.</li>
+                <li>Punten die al hun pogingen op hebben, worden <em>geparkeerd</em>: ze krijgen een lagere voorrang en
+                  wachten 60 min, zodat één koppig bericht de wachtrij niet tegenhoudt. Opgegeven worden ze nooit. In rust of
+                  als companion krijgen ze bij sterke dekking een nieuwe kans (pogingen weer op 0), hoogstens 1× per 30 min.
+                  Een punt gaat pas uit de wachtrij als zijn bericht herhaald werd, als de server precies dat bericht bevestigde,
+                  of als de wachtrij overloopt.</li>
                 <li>De wachtrij houdt hoogstens <em>Wachtrij maximaal</em> punten bij en blijft bewaard bij een herstart.</li>
                 <li>Eerst meeliften: punten van een gemist FastTrack-bericht blijven in de FastTrack-buffer en reizen mee
                   met de volgende berichten. Pas als zo'n punt uit die buffer valt zonder ooit gehoord te zijn, gaat het
@@ -163,8 +164,8 @@
                 <li>Is de wachtrij vol, dan valt het punt weg dat het minst over de vorm van het spoor zegt (het dichtst bij
                   de lijn tussen zijn buren), niet gewoon het oudste.</li>
                 <li>Een inhaalbericht (Q) is compact binair gecodeerd: met een naam van 11 bytes passen er zo'n 9 punten in, tegen 7 in tekst. Een kortere naam zonder emoji laat meer punten toe.</li>
-                <li>Na een reeks inhaalberichten meldt de server tot welk tijdstip hij alles ontvangen heeft. Punten die wel
-                  aankwamen maar waarvan de tracker de herhaling niet hoorde, gaan dan toch uit de wachtrij.</li>
+                <li>Na een reeks inhaalberichten bevestigt de server, per volgnummer, welke inhaalberichten aankwamen. De punten
+                  van die berichten gaan dan uit de wachtrij, ook als de tracker de herhaling niet hoorde.</li>
                 <li>De server zet de ingehaalde punten op het juiste tijdstip in het spoor en filtert dubbele punten weg.
                   Het tabblad <em>Simulatie</em> toont het geheel in beeld.</li>
               </ul>
@@ -182,7 +183,8 @@
                   bevestigde, tellen mee. Pogingen zonder gehoorde herhaling tellen niet, maar het blijft bij hoogstens 2× zoveel
                   pogingen per uur, om de zendtijd van de tracker te sparen.</div></div>
               <div><label>Pogingen per punt</label><div class="unit"><input data-set="fifo_pogingen" type="number" min="1" max="10"><span>pogingen</span></div>
-                <div class="help">1 tot 10. Daarna wordt een punt geparkeerd en krijgt het pas op het einde nog één kans.</div></div>
+                <div class="help">1 tot 10. Daarna wordt een punt geparkeerd: het krijgt een lagere voorrang en wacht 60 min, maar
+                  wordt nooit opgegeven.</div></div>
               <div><label>Rechte stukken uitdunnen</label><div class="unit"><input data-set="fifo_dun" type="number" min="0" max="100"><span>m</span></div>
                 <div class="help">0 tot 100; 0 = uit. Een punt dat minder dan zoveel meter naast de lijn tussen zijn buren ligt,
                   voegt niets toe aan de vorm van het spoor en gaat er niet in. Punten rond een stilstand van meer dan 10 min blijven.</div></div>

@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.3; heeft server 1.2.0 of nieuwer nodig).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.4; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
     Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
@@ -71,9 +71,16 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
       Menulabel: *Herhaalde leegmaakberichten per uur (1-60)*. Binaire extra punten, ~1,5× zoveel als in
       tekst: zo'n 7 à 10 punten per Q-bericht, afhankelijk van de lengte van de trackernaam. Een punt verlaat de wachtrij pas als zijn bericht herhaald gehoord is of de server het
       bevestigt (T1F).
-    - Pogingen: niet herhaald = wachttijd van 1, 5, 15 en daarna 60 min. Na `fifo_pogingen` (standaard 3) geparkeerd: blokkeert
-      de wachtrij niet meer, krijgt één laatste poging als niets anders wacht en wordt dan opgegeven (de server filtert
-      dubbels).
+    - Pogingen: niet herhaald = wachttijd van 1, 5, 15 en daarna 60 min. Na `fifo_pogingen` (standaard 3) geparkeerd:
+      lagere voorrang en 60 min wachttijd, maar sinds 0.9.4 nooit opgegeven. Een punt verlaat de wachtrij alleen als zijn
+      bericht herhaald gehoord is, als de server precies dat bericht bevestigt (T1F per volgnummer), of bij overloop (het
+      punt dat het minst vorm toevoegt). In rust of in companionmodus met sterke dekking (SNR ≥ `fifo_snr`) gaat de teller
+      van geparkeerde punten terug op 0, hooguit eens per 30 min (meestal thuis).
+    - Bevestiging (0.9.4 + server 1.3.1): elk Q-bericht draagt vlag `g`; `f` vraagt een bevestiging voor verstuurde maar
+      niet gehoorde punten. De server bevestigt de seqs van de Q-berichten die hij echt kreeg en de tracker wist precies
+      die punten. 0.9.0–0.9.3 ("ontvangen tot tijdstip X") wiste ook oudere punten die nooit aankwamen; die firmware krijgt
+      geen T1F meer: bijwerken naar 0.9.4. `/tracker` toont het totaal in de FIFO als "nog niet verstuurd · verstuurd,
+      onbevestigd · geparkeerd" (geparkeerd in het oranje).
     - Vol en niet-vol (0.9.3): een vol Q-bericht heeft minstens `fifo_per_bericht` punten (≈ 9 met een korte naam) en
       volgt de gewone regels. Een niet-vol bericht (minder punten; neemt alles mee wat wacht) gaat alleen weg als de
       vorige niet-volle poging (geslaagd of niet) én het laatste geslaagde Q-bericht (herhaald of met T1F bevestigd)
@@ -112,7 +119,10 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     verschijnen alleen live en alleen met het menu dicht (`q`). Er is geen commando `log`.
   - `dump` (0.9.1): de interne toestand machineleesbaar (`mtdump 1` …), voor de webapp `/tracker` (*Tracker live*).
     Via Bluetooth (companionmodus) aanvaardt de tracker alleen `status`, `fifo` en `dump`: alleen lezen.
-- **server/**: FastAPI + meshcore-py (versie 1.3.0).
+- **server/**: FastAPI + meshcore-py (versie 1.3.1).
+  - 1.3.1: **dataverlies-fix FIFO**: exacte bevestiging `T1F|<pk8>:<tag8>:s<seqs>` per ontvangen Q-seq, alleen voor
+    trackers met vlag `g` (firmware 0.9.4+). Firmware 0.9.0–0.9.3 krijgt geen T1F meer (de oude "tot ts"-bevestiging
+    deed die trackers nooit ontvangen punten wissen). Zie *Berichtprotocol*.
   - 1.3.0: statistiek-API `/api/stats/*` (samenvatting, tijdreeks, verdelingen, FIFO-inhaalwerk, tellers, repeaters;
     zie `docs/api-stats.md`). Nieuwe tabellen `stats_events` (dubbele punten/berichten, ongeldig, onbekend, verstuurde
     `T1A`/`T1F`, DM's van oude firmware) en `message_paths` (pad van elke gehoorde kopie van een trackerbericht, uit de
@@ -205,11 +215,16 @@ gecontroleerd. De trackerlijst toont `last_slow_rx` (ontvangst laatste SlowTrack
 FIFO (`Q`, server 1.2.0+): gemiste posities die de tracker later alsnog stuurt (store-and-forward); verwerkt zoals
 `L` (`last_fifo_rx`/`last_fifo_ts` in de trackerlijst). Extra punten kunnen binair: `B<base64url zonder padding>`,
 punten nieuwste eerst, elk drie LEB128-varints t.o.v. het vorige punt: dt (s), dlat en dlon (1e-5 graden, zigzag);
-tot 40 punten. Optioneel veld 16 = vlaggen; `f` = bevestiging gevraagd. Alleen dan antwoordt de server op hetzelfde
-kanaal met `T1F|<pk8>:<tag8>:<upto_ts>|...` (tot 4 trackers per bericht, tag8 = HMAC-SHA256(authsleutel van die
-tracker, `<pk8>|F|<upto_ts>`)[:4] hex, upto_ts = hoogste fix_ts van de gevraagde Q-punten). Limieten: per tracker
-~20 s na zijn laatste `f`-bericht en daarna hoogstens 1 per 10 min, per kanaal 1 T1F per 60 s, in totaal 20 per uur.
-Eigen `T1A`/`T1F`-berichten die terugkomen (echo) negeert de server.
+tot 40 punten. Optioneel veld 16 = vlaggen; `f` = bevestiging gevraagd, `g` = exacte bevestiging (firmware 0.9.4
+zet `g` op elk Q-bericht). Server 1.3.1+: alleen voor een Q-bericht met `g` antwoordt de server op hetzelfde kanaal
+met `T1F|<pk8>:<tag8>:s<seqs>|...` (tot 4 trackers per bericht). `<seqs>` = de seqs van de Q-berichten die de server
+van die tracker echt ontving sinds de vorige bevestiging (ook dubbel ontvangen), oplopend, met reeksen `a-b`, bv.
+`s12-15,18`; tag8 = HMAC-SHA256(authsleutel van die tracker, `<pk8>|F|s<seqs>`)[:4] hex. De tracker wist enkel die
+berichten. Past een lijst niet in de kanaaltekst (140 tekens), dan gaan de laatst ontvangen seqs mee en volgt de rest
+in een volgende T1F. **Trackers zonder `g` (firmware 0.9.0–0.9.3) krijgen geen T1F meer**: de oude bevestiging
+`<upto_ts>` ("alles tot ts") liet die firmware ook verloren punten wissen. Zij wissen alleen nog wat een repeater
+hoorbaar herhaalde. Limieten: per tracker ~20 s na zijn laatste Q-bericht en daarna hoogstens 1 per 10 min, per
+kanaal 1 T1F per 60 s, in totaal 20 per uur. Eigen `T1A`/`T1F`-berichten die terugkomen (echo) negeert de server.
 
 Tot firmware 0.6 konden trackers ook `T1|<rest>` als DM naar de server sturen; de server leest dat sinds 1.0 niet
 meer en noteert het bij de genegeerde berichten als "oude firmware".
