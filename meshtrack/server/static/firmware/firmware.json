@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.9.2",
+      "date": "2026-10-09",
+      "notes": "fifo_per_uur telt nu alleen leegmaakberichten die de mesh echt belastten: berichten die een repeater herhaalde, of die de server achteraf met een T1F bevestigde. Pogingen zonder herhaling tellen niet meer mee, maar er geldt een vaste veiligheidsgrens van hooguit 2x fifo_per_uur pogingen per uur, voor de eigen zendtijd. Beide tellingen overleven een herstart (nieuwe kop van /mt_fifo.dat; de oude wordt overgenomen). 'fifo' en de samenvatting tonen beide tellingen; 'dump' toont tries= en bij een pauze welk plafond bereikt is (cap=uur of cap=pogingen).",
+      "zip": "meshtrack-t1000e-0.9.2.zip",
+      "zip_sha256": "2c64e600ffc36e3b997a764bc84da8c1127bf26e0b1b5760835a611a3351ec5e",
+      "uf2": "meshtrack-t1000e-0.9.2.uf2",
+      "app_size": 438640,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.9.1",
       "date": "2026-10-09",
       "notes": "fifo_wacht: oude punten ook onder fifo_min versturen bij stabiel bereik; in rust de wachtrij meteen leegmaken als er repeaters in de buurt zijn (60 s luisteren, zonder bereik telkens langer wachten). SlowTrack logt alleen zolang hij beweegt (sensor of GPS-snelheid), behalve als FastTrack uit staat wegens de batterij. Schatting punten per bericht volgens de echte trackernaam. Commando dump en alleen-lezen via Bluetooth (status, fifo, dump) voor de pagina /tracker.",
@@ -131,5 +141,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.1"
+  "latest": "0.9.2"
 }

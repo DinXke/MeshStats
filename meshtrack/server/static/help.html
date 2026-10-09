@@ -243,7 +243,8 @@
         ook minstens <code>fifo_min</code> punten wachten; werd een vorige ronde onderbroken, dan volstaat één punt. Zijn
         het er minder, maar wacht het oudste punt al langer dan <code>fifo_wacht</code> (standaard 30 minuten), dan stuurt hij bij stabiele dekking toch.</li>
       <li><strong>Inhalen.</strong> De tracker stuurt de wachtrij leeg, oudste punten eerst, met hoogstens één
-        <strong>inhaalbericht</strong> per <code>fifo_gap</code> en hoogstens <code>fifo_per_uur</code> per uur. Een
+        <strong>inhaalbericht</strong> per <code>fifo_gap</code> en hoogstens <code>fifo_per_uur</code> <em>herhaalde</em>
+        inhaalberichten per uur (zie <a href="#fifo-uur">Wat telt mee voor het uurmaximum?</a>). Een
         inhaalbericht heeft de status <em>Q</em> (<em>ingehaald punt (FIFO)</em>) en draagt de punten in een compacte
         binaire vorm, anderhalve keer zoveel als in tekst: zo'n 7 à 10 punten per bericht, afhankelijk van de lengte
         van de <a href="#fifo-naam">trackernaam</a>. Het volgende bericht vertrekt pas als het vorige
@@ -287,7 +288,8 @@
         na een onderbroken ronde vanaf 1.</td><td>5</td></tr>
       <tr><td>Tijd tussen inhaalberichten<br><code>fifo_gap</code></td><td>Minstens zoveel tijd tussen twee inhaalberichten
         (15&nbsp;s tot 5&nbsp;min).</td><td>30 s</td></tr>
-      <tr><td>Per uur<br><code>fifo_per_uur</code></td><td>Hoogstens zoveel inhaalberichten per uur (1 tot 60).</td><td>20</td></tr>
+      <tr><td>Per uur<br><code>fifo_per_uur</code></td><td>Hoogstens zoveel <em>herhaalde</em> inhaalberichten per uur (1 tot
+        60). Pogingen die geen repeater herhaalde, tellen niet mee; in totaal hoogstens het dubbele aan pogingen.</td><td>20</td></tr>
       <tr><td>Pogingen<br><code>fifo_pogingen</code></td><td>Na zoveel mislukte pogingen is een punt geparkeerd (1 tot 10).</td><td>3</td></tr>
       <tr><td>Uitdunnen<br><code>fifo_dun</code></td><td>Een punt dat op een rechte weg binnen zoveel meter van de lijn ligt, valt
         weg (0 tot 100; 0 = uit).</td><td>10 m</td></tr>
@@ -298,7 +300,8 @@
         <code>fifo_per_uur</code> blijft gelden).</td><td>30 min</td></tr>
     </table>
     <p>In het seriële menu staan deze instellingen onder <em>5 SlowTrack en trackmodus (FIFO)</em> →
-      <em>4 Trackmodus en FIFO-wachtrij</em>. De terminal noemt een inhaalbericht een <em>leegmaakbericht</em>.</p>
+      <em>4 Trackmodus en FIFO-wachtrij</em>. De terminal noemt een inhaalbericht een <em>leegmaakbericht</em>; <code>fifo_per_uur</code> heet daar
+      <em>Herhaalde leegmaakberichten per uur (1-60)</em>.</p>
 
     <h3>De bevestiging van de server (T1F)</h3>
     <p>Heeft de tracker punten verstuurd waarvan hij geen herhaling hoorde, dan vraagt hij in zijn volgende inhaalbericht om
@@ -314,10 +317,18 @@
     <p>Elk inhaalbericht wordt door meerdere repeaters herhaald, dus één bericht kost het net al snel enkele uitzendingen.
       Hou <code>fifo_gap</code> daarom ruim, en verlaag <code>fifo_per_uur</code> in een druk net of bij veel trackers in
       FIFO-modus.</p>
+    <p id="fifo-uur"><strong>Wat telt mee voor het uurmaximum?</strong> <code>fifo_per_uur</code> telt alleen de
+      inhaalberichten die een repeater herhaalde (de tracker hoorde dat), of die de server achteraf bevestigde met een
+      <code>T1F</code>. Alleen die belasten de mesh echt. Een poging die niemand herhaalde, telt niet mee. Toch geldt een
+      vast plafond van <strong>2 × <code>fifo_per_uur</code> pogingen per uur</strong>, om de eigen zendtijd van de tracker
+      te beschermen (in de band 869,4–869,65&nbsp;MHz mag een zender hoogstens 10&nbsp;% van de tijd uitzenden). Met de
+      standaardwaarde 20 zijn dat 40 pogingen per uur, zo'n minuut zendtijd. Het commando <code>fifo</code> toont beide
+      tellers, bv. <em>6 getelde berichten (max 20) en 9 pogingen (max 40)</em>; <a href="#trackerlive">Tracker live</a>
+      toont <em>Doorgegeven 6 / 20</em> en <em>Pogingen 9 / 40</em>.</p>
     <p id="fifo-naam"><strong>De naam van de tracker telt mee.</strong> Elk bericht begint met
       <code>&lt;naam&gt;: </code>, dus elke byte van de naam kost plaats. Een emoji telt voor meerdere bytes (🇧🇪 = 8 bytes).
       De naam van het kanaal speelt geen rol: die wordt nooit meegestuurd, alleen een hash van 1 byte. Met de
-      standaardinstellingen (hoogstens 20 inhaalberichten per uur):</p>
+      standaardinstellingen (hoogstens 20 herhaalde inhaalberichten per uur):</p>
     <table>
       <tr><th>Naam van de tracker</th><th>Punten per bericht</th><th>Volle wachtrij (500)</th><th>Leeg na (standaard)</th></tr>
       <tr><td>6 tot 11 bytes, bv. <em>Ploeg 3</em></td><td>≈ 9</td><td>≈ 56 berichten</td><td>≈ 2,1 uur</td></tr>
@@ -496,7 +507,8 @@
         <code>fifo_pogingen</code>, <code>fifo_dun</code>, <code>fifo_snr</code>, <code>fifo_wacht</code></td><td>instellingen van de wachtrij (zie de
         tabel bij <a href="#fifo">Instellingen</a>)</td></tr>
       <tr><td><code>fifo</code></td><td>de wachtrij tonen: aantal punten, geparkeerde punten, oudste en nieuwste punt, of hij
-        aan het inhalen is, de laatste dekking, inhaalberichten in het laatste uur, bevestigingen van de server en de
+        aan het inhalen is, de laatste dekking, het laatste uur (getelde berichten en pogingen, elk met hun maximum),
+        bevestigingen van de server en de
         berekende belasting</td></tr>
       <tr><td><code>fifo wis ja</code></td><td>de wachtrij wissen (de punten zijn dan weg)</td></tr>
     </table>
@@ -748,7 +760,8 @@
           <li>Hij begint pas bij <em>stabiele</em> dekking. Toont <code>fifo_dekking</code> een groot getal of
             <code>-</code>, dan hoort hij geen repeater. Hoort hij er wel een, maar zwak, verlaag dan <code>fifo_snr</code>
             (bv. naar −10) of breng hem dichter bij een repeater.</li>
-          <li>Staat er <em>gepauzeerd (fifo_per_uur)</em>, dan is het uurmaximum bereikt; hij gaat vanzelf verder.</li>
+          <li>Staat er <em>gepauzeerd (fifo_per_uur bereikt)</em>, dan is het uurmaximum aan herhaalde berichten bereikt; bij
+            <em>gepauzeerd (2x fifo_per_uur pogingen bereikt)</em> het plafond voor pogingen. Hij gaat vanzelf verder.</li>
           <li>Het leegmaken stopt ook als hij een inhaalbericht niet herhaald hoort; de punten wachten dan 1, 5, 15 of
             60 minuten.</li>
           <li>Hij haalt alleen in zolang hij zelf posities stuurt: in trackermodus, of als companion met <em>ook posities

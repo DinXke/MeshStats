@@ -261,10 +261,14 @@ static_assert(sizeof(MtFPt) == 20, "MtFPt moet 20 bytes zijn (bestandsindeling v
 #define MT_FIFO_CAP  500               // grootste fifo_max
 #define MT_FIFO_MAGIC 0x3146544DUL     // "MTF1"
 #define MT_FL_HOUR 60                  // grootste fifo_per_uur
+#define MT_FL_TRIES (2 * MT_FL_HOUR)   // pogingen per uur: hooguit 2x fifo_per_uur
 // v1 (0.9.0-ontwikkeling): 16-byte punten zonder teller, kop zonder uurgeschiedenis. Wordt omgezet.
-// v2: kop met de verzendtijden van het laatste uur (unix, 0 = leeg), punten van 20 bytes.
+// v2 (0.9.0/0.9.1): kop met de verzendtijden van het laatste uur (unix, 0 = leeg), punten van 20 bytes.
+// v3 (0.9.2): kop met twee ringen: getelde berichten (herhaald of door T1F bevestigd) en alle
+//   pogingen. Een v2-kop wordt overgenomen: zijn tijden tellen voor beide ringen (voorzichtig).
 struct MtFifoHdr1 { uint32_t magic; uint16_t version, count; uint32_t crc; };
-struct MtFifoHdr { uint32_t magic; uint16_t version, count; uint32_t crc; uint32_t hist[MT_FL_HOUR]; };
+struct MtFifoHdr2 { uint32_t magic; uint16_t version, count; uint32_t crc; uint32_t hist[MT_FL_HOUR]; };
+struct MtFifoHdr { uint32_t magic; uint16_t version, count; uint32_t crc; uint32_t counted[MT_FL_HOUR]; uint32_t tries[MT_FL_TRIES]; };
 static const char* FIFO_PATH = "/mt_fifo.dat";
 static const char* FIFO_TMP  = "/mt_fifo.tmp";
 static MtFPt s_fifo[MT_FIFO_CAP];
@@ -275,13 +279,22 @@ static bool s_cov_have = false;             // ooit dekking gezien (sinds de sta
 static uint32_t s_cov_ms = 0;               // laatste dekking (millis)
 static bool s_cov_stable = false;           // ooit stabiele dekking gezien
 static uint32_t s_cov_stable_ms = 0;        // laatste stabiele dekking (zie fifo_coverage)
-// fifo_per_uur: verzendtijden van leegmaakberichten. In RAM als millis (| 1; 0 = leeg) en, als de
-// klok gezet is, ook als unix-tijd: die gaat mee in de kop van het bestand, zodat een herstart het
-// uurplafond niet wist. Na het laden tellen de bewaarde tijden mee zodra de klok geldig is.
-static uint32_t s_fl_hist[MT_FL_HOUR];
-static uint32_t s_fl_hist_unix[MT_FL_HOUR];
-static uint8_t s_fl_hist_i = 0;
-static uint32_t s_fl_hist_loaded[MT_FL_HOUR];   // unix-tijden uit het bestand (van voor de herstart)
+// Uurplafonds (0.9.2). fifo_per_uur telt alleen leegmaakberichten die de mesh echt belastten: een
+// repeater herhaalde ze, of de server bevestigde ze later met een T1F. Daarnaast een vaste
+// veiligheidsgrens voor de eigen zendtijd: hooguit 2x fifo_per_uur pogingen (herhaald of niet) per uur.
+// Elke ring houdt verzendtijden bij, in RAM als millis (| 1; 0 = leeg) en, als de klok gezet is, ook
+// als unix-tijd: die gaan mee in de kop van het bestand, zodat een herstart de plafonds niet wist. Na
+// het laden tellen de bewaarde tijden mee zodra de klok geldig is.
+struct MtRing { uint32_t* ms; uint32_t* ux; uint32_t* ld; uint8_t n; };
+static uint32_t s_rc_ms[MT_FL_HOUR], s_rc_ux[MT_FL_HOUR], s_rc_ld[MT_FL_HOUR];
+static uint32_t s_rt_ms[MT_FL_TRIES], s_rt_ux[MT_FL_TRIES], s_rt_ld[MT_FL_TRIES];
+static MtRing s_ring_cnt = { s_rc_ms, s_rc_ux, s_rc_ld, MT_FL_HOUR };     // getelde berichten
+static MtRing s_ring_try = { s_rt_ms, s_rt_ux, s_rt_ld, MT_FL_TRIES };    // alle pogingen
+// Verstuurde leegmaakberichten zonder gehoorde herhaling (laatste uur): telt een latere T1F hun
+// oudste punt mee, dan tellen ze alsnog, op hun verzendtijd. Alleen in RAM.
+struct MtUnheard { uint32_t ms, ux, min_ts; };
+#define MT_UNHEARD 40
+static MtUnheard s_unheard[MT_UNHEARD];
 
 static bool fifo_mode() { return mt_cfg.track_mode == MT_TRACK_FIFO; }
 static uint16_t fifo_cap() { return mt_cfg.fifo_max < 20 ? 20 : mt_cfg.fifo_max > MT_FIFO_CAP ? MT_FIFO_CAP : mt_cfg.fifo_max; }
@@ -289,6 +302,75 @@ static uint16_t now_min() { return (uint16_t)(millis() / 60000UL); }
 static uint32_t rtc_unix() {
   uint32_t t = the_mesh.getRTCClock()->getCurrentTime();
   return t >= 1700000000UL ? t : 0;           // 0 = klok (nog) niet gezet
+}
+
+// Een verzendtijd toevoegen (ook een vroegere, bij een T1F): een lege of verlopen plaats, anders de oudste.
+static void ring_add(MtRing& r, uint32_t ms, uint32_t ux) {
+  uint32_t now = millis();
+  int k = 0;
+  uint32_t best = 0;
+  for (int i = 0; i < r.n; i++) {
+    if (!r.ms[i] || now - r.ms[i] >= 3600000UL) { k = i; break; }
+    if (now - r.ms[i] > best) { best = now - r.ms[i]; k = i; }
+  }
+  r.ms[k] = ms | 1;
+  r.ux[k] = ux;
+}
+
+// Aantal in het laatste uur (eigen + bewaarde van voor de herstart); oldest_age_s = leeftijd van het oudste.
+static int ring_count(const MtRing& r, uint32_t* oldest_age_s = nullptr) {
+  uint32_t now = millis(), oldest = 0, unow = rtc_unix();
+  int n = 0;
+  for (int i = 0; i < r.n; i++) {
+    if (!r.ms[i] || now - r.ms[i] >= 3600000UL) continue;
+    n++;
+    if ((now - r.ms[i]) / 1000 > oldest) oldest = (now - r.ms[i]) / 1000;
+  }
+  if (unow) {
+    for (int i = 0; i < r.n; i++) {
+      uint32_t t = r.ld[i];
+      if (!t || t > unow || unow - t >= 3600) continue;
+      n++;
+      if (unow - t > oldest) oldest = unow - t;
+    }
+  }
+  if (oldest_age_s) *oldest_age_s = oldest;
+  return n;
+}
+
+// Unix-tijden van het laatste uur voor de kop van het bestand.
+static void ring_store(const MtRing& r, uint32_t* out) {
+  uint32_t now = rtc_unix();
+  int k = 0;
+  for (int i = 0; i < r.n && k < r.n; i++) {     // eigen verzendingen van het laatste uur
+    uint32_t t = r.ux[i];
+    if (t && now && t <= now && now - t < 3600 && r.ms[i] && millis() - r.ms[i] < 3600000UL) out[k++] = t;
+  }
+  for (int i = 0; i < r.n && k < r.n; i++) {     // en de bewaarde van voor de herstart
+    uint32_t t = r.ld[i];
+    if (t && (!now || (t <= now && now - t < 3600))) out[k++] = t;
+  }
+}
+
+static void unheard_add(uint32_t ms, uint32_t ux, uint32_t min_ts) {
+  int k = 0;
+  for (int i = 0; i < MT_UNHEARD; i++) {
+    if (!s_unheard[i].ms || millis() - s_unheard[i].ms >= 3600000UL) { k = i; break; }
+    if ((int32_t)(s_unheard[i].ms - s_unheard[k].ms) < 0) k = i;   // vol: de oudste wijkt
+  }
+  s_unheard[k] = { ms | 1, ux, min_ts };
+}
+
+// T1F tot upto: elk niet gehoord leegmaakbericht van het laatste uur met een punt <= upto kwam aan.
+static int unheard_confirm(uint32_t upto) {
+  int n = 0;
+  for (int i = 0; i < MT_UNHEARD; i++) {
+    MtUnheard& u = s_unheard[i];
+    if (!u.ms) continue;
+    if (millis() - u.ms >= 3600000UL) { u.ms = 0; continue; }
+    if (u.min_ts <= upto) { ring_add(s_ring_cnt, u.ms, u.ux); u.ms = 0; n++; }
+  }
+  return n;
 }
 
 static int fifo_find_ts_pos(uint32_t ts) {
@@ -299,22 +381,14 @@ static int fifo_find_ts_pos(uint32_t ts) {
 static void fifo_evict_one();
 
 static bool fifo_save() {
-  MtFifoHdr h;
+  static MtFifoHdr h;               // 732 bytes: niet op de stapel
   memset(&h, 0, sizeof(h));
   h.magic = MT_FIFO_MAGIC;
-  h.version = 2;
+  h.version = 3;
   h.count = s_nfifo;
   h.crc = mt_crc32(0, (const uint8_t*)s_fifo, sizeof(MtFPt) * s_nfifo);
-  uint32_t now = rtc_unix();
-  int k = 0;
-  for (int i = 0; i < MT_FL_HOUR && k < MT_FL_HOUR; i++) {     // eigen verzendingen van het laatste uur
-    uint32_t t = s_fl_hist_unix[i];
-    if (t && now && t <= now && now - t < 3600) h.hist[k++] = t;
-  }
-  for (int i = 0; i < MT_FL_HOUR && k < MT_FL_HOUR; i++) {     // en de bewaarde van voor de herstart
-    uint32_t t = s_fl_hist_loaded[i];
-    if (t && (!now || (t <= now && now - t < 3600))) h.hist[k++] = t;
-  }
+  ring_store(s_ring_cnt, h.counted);
+  ring_store(s_ring_try, h.tries);
   bool ok = mt_file_write_atomic(FIFO_PATH, FIFO_TMP, &h, sizeof(h), s_fifo, sizeof(MtFPt) * s_nfifo);
   if (ok) s_fifo_unsaved = 0;
   else mt_log("fifo: bewaren MISLUKT (%u punten)", (unsigned)s_nfifo);
@@ -338,13 +412,25 @@ static bool fifo_load_file(const char* path) {
     s_nfifo = h1.count;
     return true;
   }
-  if (h1.version != 2) return false;
-  MtFifoHdr h;
+  if (h1.version == 2) {                       // 0.9.0/0.9.1: één ring; telt voor beide (voorzichtig)
+    MtFifoHdr2 h;
+    if (!mt_file_read_at(path, 0, &h, sizeof(h))) return false;
+    if (h.count && !mt_file_read_at(path, sizeof(h), s_fifo, sizeof(MtFPt) * h.count)) return false;
+    if (mt_crc32(0, (const uint8_t*)s_fifo, sizeof(MtFPt) * h.count) != h.crc) return false;
+    s_nfifo = h.count;
+    memcpy(s_rc_ld, h.hist, sizeof(s_rc_ld));
+    memset(s_rt_ld, 0, sizeof(s_rt_ld));
+    memcpy(s_rt_ld, h.hist, sizeof(h.hist));
+    return true;
+  }
+  if (h1.version != 3) return false;
+  static MtFifoHdr h;               // 732 bytes: niet op de stapel
   if (!mt_file_read_at(path, 0, &h, sizeof(h))) return false;
   if (h.count && !mt_file_read_at(path, sizeof(h), s_fifo, sizeof(MtFPt) * h.count)) return false;
   if (mt_crc32(0, (const uint8_t*)s_fifo, sizeof(MtFPt) * h.count) != h.crc) return false;
   s_nfifo = h.count;
-  memcpy(s_fl_hist_loaded, h.hist, sizeof(s_fl_hist_loaded));
+  memcpy(s_rc_ld, h.counted, sizeof(s_rc_ld));
+  memcpy(s_rt_ld, h.tries, sizeof(s_rt_ld));
   return true;
 }
 
@@ -469,6 +555,8 @@ static void fifo_coverage(const char* why, unsigned hops, const char* rep, bool 
 // binnen (ook geparkeerde). Geeft het aantal verwijderde punten.
 static uint32_t s_fifo_confirmed = 0;          // sinds de start door T1F verwijderd (status fifo_bevestigd)
 static uint16_t fifo_confirm(uint32_t upto) {
+  int late = unheard_confirm(upto);
+  if (late) mt_log("fifo: %d niet gehoorde leegmaakberichten toch aangekomen (T1F), tellen mee voor fifo_per_uur", late);
   uint16_t w = 0, n0 = s_nfifo;
   for (uint16_t r = 0; r < s_nfifo; r++)
     if (!((s_fifo[r].flags & FPT_SENT) && s_fifo[r].ts <= upto)) s_fifo[w++] = s_fifo[r];
@@ -868,32 +956,29 @@ static bool s_fl_ever = false;              // al eens een leegmaakbericht verst
 static bool s_fl_stopped = false;
 static uint32_t s_fl_stop_ms = 0;           // dekking van voor deze stop telt niet om te hervatten
 static uint32_t s_fl_sent_ms = 0;
+static uint32_t s_fl_sent_unix = 0;
 static uint32_t s_fl_tag = 0;               // fix_ts van het hoofdpunt van het bericht onderweg
 static uint32_t s_fl_ts[MT_SLOW_MAX_ITEMS + 1];   // de punten van dat bericht
 static uint8_t s_fl_n = 0;
 
-// Leegmaakberichten in het laatste uur (eigen + bewaarde van voor de herstart); oldest_age_s = leeftijd van het oudste.
-static int fl_sent_last_hour(uint32_t* oldest_age_s = nullptr) {
-  uint32_t now = millis(), oldest = 0, unow = rtc_unix();
-  int n = 0;
-  for (int i = 0; i < MT_FL_HOUR; i++) {
-    if (!s_fl_hist[i] || now - s_fl_hist[i] >= 3600000UL) continue;
-    n++;
-    if ((now - s_fl_hist[i]) / 1000 > oldest) oldest = (now - s_fl_hist[i]) / 1000;
-  }
-  if (unow) {
-    for (int i = 0; i < MT_FL_HOUR; i++) {
-      uint32_t t = s_fl_hist_loaded[i];
-      if (!t || t > unow || unow - t >= 3600) continue;
-      n++;
-      if (unow - t > oldest) oldest = unow - t;
-    }
-  }
-  if (oldest_age_s) *oldest_age_s = oldest;
-  return n;
-}
+// Getelde berichten (herhaald of door T1F bevestigd) en alle pogingen in het laatste uur.
+static int fl_sent_last_hour(uint32_t* oldest_age_s = nullptr) { return ring_count(s_ring_cnt, oldest_age_s); }
+static int fl_tries_last_hour(uint32_t* oldest_age_s = nullptr) { return ring_count(s_ring_try, oldest_age_s); }
 
-static bool fl_capped() { return fl_sent_last_hour() >= mt_cfg.fifo_per_uur; }
+// Welk plafond is bereikt? 0 = geen, 1 = fifo_per_uur (getelde berichten), 2 = pogingen (2x fifo_per_uur).
+// wait_s = tot wanneer (het langste van de bereikte plafonds).
+static int fl_cap(uint32_t* wait_s = nullptr) {
+  uint32_t oc = 0, ot = 0, w = 0;
+  int cap = 0;
+  if (fl_tries_last_hour(&ot) >= 2 * mt_cfg.fifo_per_uur) { cap = 2; w = ot < 3600 ? 3600 - ot : 0; }
+  if (fl_sent_last_hour(&oc) >= mt_cfg.fifo_per_uur) {
+    uint32_t wc = oc < 3600 ? 3600 - oc : 0;
+    if (!cap || wc > w) { cap = 1; w = wc; }
+  }
+  if (wait_s) *wait_s = cap ? w + 1 : 0;
+  return cap;
+}
+static bool fl_capped() { return fl_cap() != 0; }
 
 // Wachttijd voorbij? (retry_min 0 = meteen; een onmogelijk verre waarde = vergeten, dus ook meteen)
 static bool fifo_due(const MtFPt& p) {
@@ -934,6 +1019,8 @@ static void flush_done(bool heard) {
   if (!s_fl_inflight) return;
   s_fl_inflight = false;
   mt_log("fifo: bericht met %u punten verstuurd, %s", (unsigned)s_fl_n, heard ? "gehoord" : "niet gehoord");
+  if (heard) ring_add(s_ring_cnt, s_fl_sent_ms, s_fl_sent_unix);    // belastte de mesh: telt voor fifo_per_uur
+  else if (s_fl_n && !s_fl_final) unheard_add(s_fl_sent_ms, s_fl_sent_unix, s_fl_ts[0]);
   if (heard) {
     fifo_remove_ts(s_fl_ts, s_fl_n);
   } else if (s_fl_final) {                     // laatste poging mislukt: opgeven
@@ -998,9 +1085,8 @@ static void send_flush(const uint16_t* sel, int cmax, bool final) {
   s_fl_final = final;
   s_fl_inflight = s_fl_ever = true;
   s_fl_sent_ms = millis();
-  s_fl_hist[s_fl_hist_i] = s_fl_sent_ms | 1;
-  s_fl_hist_unix[s_fl_hist_i] = rtc_unix();
-  s_fl_hist_i = (uint8_t)((s_fl_hist_i + 1) % MT_FL_HOUR);
+  s_fl_sent_unix = rtc_unix();
+  ring_add(s_ring_try, s_fl_sent_ms, s_fl_sent_unix);   // elke poging telt voor de veiligheidsgrens
   uint16_t total = s_nfifo;
   // on_send_done (meestal meteen, binnen sign_and_send) herkent het aan s_fl_inflight + tag + 'Q'.
   sign_and_send(text, 'Q', false, true, s_fl_tag);
@@ -1656,18 +1742,20 @@ void mt_tracker_dump(MtDumpOut o) {
     snprintf(b, sizeof(b), "cov %s %s %d", t, sn, s_cov_last_stable ? 1 : 0);
   } else snprintf(b, sizeof(b), "cov -");
   o(b, true);
-  snprintf(b, sizeof(b), "cnt fast=%lu slow=%lu q=%lu heard=%lu missed=%lu t1f=%lu hour=%d/%u", (unsigned long)s_cnt_fast,
-           (unsigned long)s_cnt_slow, (unsigned long)s_cnt_q, (unsigned long)s_cnt_heard, (unsigned long)s_cnt_missed,
-           (unsigned long)s_fifo_confirmed, fl_sent_last_hour(), (unsigned)mt_cfg.fifo_per_uur);
+  snprintf(b, sizeof(b), "cnt fast=%lu slow=%lu q=%lu heard=%lu missed=%lu t1f=%lu hour=%d/%u tries=%d/%u",
+           (unsigned long)s_cnt_fast, (unsigned long)s_cnt_slow, (unsigned long)s_cnt_q, (unsigned long)s_cnt_heard,
+           (unsigned long)s_cnt_missed, (unsigned long)s_fifo_confirmed, fl_sent_last_hour(), (unsigned)mt_cfg.fifo_per_uur,
+           fl_tries_last_hour(), 2U * mt_cfg.fifo_per_uur);
   o(b, true);
-  // leegmaken: actief (of gepauzeerd door fifo_per_uur), gestopt (wacht op dekking) of gepauzeerd (wachttijden)
+  // leegmaken: actief (of gepauzeerd door een uurplafond, cap=uur|pogingen), gestopt (wacht op dekking) of gepauzeerd (wachttijden)
   const char* fs = "idle";
+  const char* capw = "-";
   strcpy(t, "-");
   if (fifo_mode() && (s_fl_active || s_fl_inflight)) {
-    uint32_t oldest = 0, wait = 0;
-    bool capped = fl_sent_last_hour(&oldest) >= mt_cfg.fifo_per_uur;
-    fs = capped ? "gepauzeerd" : "actief";
-    if (capped) wait = oldest < 3600 ? 3600 - oldest : 0;
+    uint32_t wait = 0;
+    int cap = fl_cap(&wait);
+    fs = cap ? "gepauzeerd" : "actief";
+    capw = cap == 1 ? "uur" : cap == 2 ? "pogingen" : "-";
     uint32_t el = (millis() - s_fl_sent_ms) / 1000;
     if (s_fl_ever && el < mt_cfg.fifo_gap_s && mt_cfg.fifo_gap_s - el > wait) wait = mt_cfg.fifo_gap_s - el;
     dump_unix(t, sizeof(t), now_unix + wait);
@@ -1676,7 +1764,7 @@ void mt_tracker_dump(MtDumpOut o) {
     bool fin;
     fs = fifo_pick(sel, MT_SLOW_MAX_ITEMS + 1, &fin) ? "gestopt" : "gepauzeerd";
   }
-  snprintf(b, sizeof(b), "flush %s next=%s", fs, t);
+  snprintf(b, sizeof(b), "flush %s next=%s cap=%s", fs, t, capw);
   o(b, true);
   // punten, hooguit 20 per regel
   for (int i = 0; i < s_npts; i++) {
@@ -1717,17 +1805,20 @@ uint32_t mt_tracker_fifo_oldest() { return s_nfifo ? s_fifo[0].ts : 0; }
 uint32_t mt_tracker_fifo_newest() { return s_nfifo ? s_fifo[s_nfifo - 1].ts : 0; }
 long mt_tracker_fifo_cov_age() { return s_cov_have ? (long)((millis() - s_cov_ms) / 1000) : -1; }
 int mt_tracker_fifo_hour(uint32_t* wait_s) {
-  uint32_t oldest = 0;
-  int n = fl_sent_last_hour(&oldest);
-  if (wait_s) *wait_s = n >= mt_cfg.fifo_per_uur ? (oldest < 3600 ? 3600 - oldest : 0) + 1 : 0;
-  return n;
+  fl_cap(wait_s);
+  return fl_sent_last_hour();
 }
+int mt_tracker_fifo_tries() { return fl_tries_last_hour(); }
+int mt_tracker_fifo_cap() { return fl_cap(); }
 uint16_t mt_tracker_fifo_parked() { return fifo_parked(); }
 uint32_t mt_tracker_fifo_confirmed() { return s_fifo_confirmed; }
 const char* mt_tracker_fifo_state() {
   if (!fifo_mode()) return "uit (classic)";
   if (s_fl_inflight) return "bericht onderweg";
-  if (s_fl_active) return fl_capped() ? "gepauzeerd (fifo_per_uur)" : "bezig";
+  if (s_fl_active) {
+    int cap = fl_cap();
+    return cap == 1 ? "gepauzeerd (fifo_per_uur bereikt)" : cap == 2 ? "gepauzeerd (2x fifo_per_uur pogingen bereikt)" : "bezig";
+  }
   if (s_fl_pending && s_nfifo) return "gestopt of gepauzeerd, wacht op dekking of een nieuwe poging";
   return "wacht";
 }

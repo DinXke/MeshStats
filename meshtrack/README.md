@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.1; heeft server 1.2.0 of nieuwer nodig).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.2; heeft server 1.2.0 of nieuwer nodig).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
     Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
@@ -62,7 +62,13 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     - Leegmaken alleen bij stabiele dekking: SNR ≥ `fifo_snr` (standaard −5 dB), twee keer dekking binnen 60 s, of
       een T1F. Dekking = herhaling van een eigen bericht of een flood-pakket met ≥ 1 hop. Vanaf `fifo_min` punten
       (standaard 5; na een onderbreking vanaf 1), oudste eerst, één Q-bericht per `fifo_gap` (standaard 30 s,
-      15 s..5 min), hoogstens `fifo_per_uur` per uur (standaard 20, 1..60). Binaire extra punten, ~1,5× zoveel als in
+      15 s..5 min), hoogstens `fifo_per_uur` herhaalde Q-berichten per uur (standaard 20, 1..60). Sinds 0.9.2 telt
+      `fifo_per_uur` alleen berichten die een repeater herhaalde (gehoord) of die de server met een T1F bevestigde;
+      pogingen zonder gehoorde herhaling tellen niet. Vast plafond: hoogstens 2 × `fifo_per_uur` pogingen per uur in
+      totaal, om de eigen zendtijd te beschermen (10 % duty cycle in 869,4–869,65 MHz; standaard 40 pogingen ≈ 1 min
+      zendtijd). `fifo` toont "N getelde berichten (max P) en M pogingen (max 2P)", `/tracker` "Doorgegeven x / 20" en
+      "Pogingen y / 40"; status `gepauzeerd (fifo_per_uur bereikt)` of `gepauzeerd (2x fifo_per_uur pogingen bereikt)`.
+      Menulabel: *Herhaalde leegmaakberichten per uur (1-60)*. Binaire extra punten, ~1,5× zoveel als in
       tekst: zo'n 7 à 10 punten per Q-bericht, afhankelijk van de lengte van de trackernaam. Een punt verlaat de wachtrij pas als zijn bericht herhaald gehoord is of de server het
       bevestigt (T1F).
     - Pogingen: niet herhaald = wachttijd van 1, 5, 15 en daarna 60 min. Na `fifo_pogingen` (standaard 3) geparkeerd: blokkeert

@@ -16,6 +16,9 @@
   const COL = { pos: "#0b6e4f", F: "#2563eb", pend: "#f59e0b", S: "#16a34a", Q: "#7c3aed", park: "#dc2626" };
   const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)" };
   const FLUSH = { idle: "wacht", actief: "bezig met leegmaken", gepauzeerd: "gepauzeerd", gestopt: "gestopt" };
+  const CAPWHY = { uur: "uurgrens bereikt", pogingen: "te veel pogingen" };
+  // Toestand van het leegmaken, met de reden als een plafond het pauzeert ("gepauzeerd: uurgrens bereikt").
+  const flushText = (f) => { const t = FLUSH[f.state] || f.state; return f.cap && f.state !== "actief" && f.state !== "idle" ? `${t}: ${CAPWHY[f.cap] || f.cap}` : t; };
   const SETNAME = { F: "FastTrack", S: "SlowTrack", Q: "FIFO" };
 
   // ---- tijd ----------------------------------------------------------------------------
@@ -87,12 +90,15 @@
             const i = x.indexOf("=");
             if (i <= 0) continue;
             const k = x.slice(0, i), v = x.slice(i + 1);
-            if (k === "hour") { const [a, b] = v.split("/"); d.cnt.hour = int(a); d.cnt.hourLimit = int(b); } else d.cnt[k] = int(v);
+            // hour=<doorgegeven>/<fifo_per_uur>, sinds 0.9.2 ook tries=<pogingen>/<2×fifo_per_uur>
+            if (k === "hour" || k === "tries") { const [a, b] = v.split("/"); d.cnt[k] = int(a); d.cnt[k + "Limit"] = int(b); } else d.cnt[k] = int(v);
           }
           break;
         case "flush": {
           const nx = rest.find((x) => x.startsWith("next="));
-          d.flush = { state: rest[0] || "?", next: nx ? int(nx.slice(5)) : null };
+          const cp = rest.find((x) => x.startsWith("cap="));                    // sinds 0.9.2: cap=uur|pogingen|-
+          const capv = cp ? cp.slice(4) : "";
+          d.flush = { state: rest[0] || "?", next: nx ? int(nx.slice(5)) : null, cap: capv && capv !== "-" ? capv : null };
           break;
         }
         case "pts": {
@@ -507,7 +513,7 @@
         <div class="tk-meterlbl"><span>${esc(dur(oldAge))} oud</span><span>${wacht ? `toch versturen na ${esc(dur(wacht))}` : "toch versturen staat uit"}</span></div></div>`;
     }
     if (dump.flush) {
-      body += `<div class="tk-block">${kv([["Leegmaken", esc(FLUSH[dump.flush.state] || dump.flush.state), dump.flush.next ? `volgende poging ${esc(clock(dump.flush.next))} (${dump.flush.next > trackerNow() ? `over ${esc(dur(dump.flush.next - trackerNow()))}` : "nu"})` : ""]])}</div>`;
+      body += `<div class="tk-block">${kv([["Leegmaken", esc(flushText(dump.flush)), dump.flush.next ? `volgende poging ${esc(clock(dump.flush.next))} (${dump.flush.next > trackerNow() ? `over ${esc(dur(dump.flush.next - trackerNow()))}` : "nu"})` : ""]])}</div>`;
     }
     if (!fifoMode) body += '<p class="tk-note">De tracker staat in de klassieke modus: de FIFO-wachtrij wordt niet gebruikt.</p>';
     return card("FIFO-wachtrij", body, "", id);
@@ -540,9 +546,19 @@
     const n = dump.cnt;
     const lim = n.hourLimit || int(status.fifo_per_uur) || 0;
     const h = n.hour ?? 0;
-    return card("Uurplafond", `<div class="tk-bigrow"><div class="tk-big q"><b>${h} / ${lim || "–"}</b><span>dit uur</span></div></div>` +
-      (lim ? meter([[pct(h, lim), h >= lim ? "missed" : "q"]]) : "") +
-      `<p class="tk-note">${lim && h >= lim ? "Het plafond is bereikt: de volgende inhaalberichten wachten tot het oudste bericht een uur oud is." : "Inhaalberichten (FIFO) die dit uur al vertrokken zijn."}</p>`);
+    // Sinds 0.9.2: alleen doorgegeven inhaalberichten tellen voor het plafond; pogingen hebben een eigen grens (2×).
+    const hasTries = n.tries != null;
+    const tLim = n.triesLimit || (hasTries && lim ? 2 * lim : 0), t = n.tries ?? 0;
+    const cap = dump.flush && dump.flush.cap;
+    const row = (lbl, val, max, full) => `<div class="tk-block"><h3>${lbl}</h3>${max ? meter([[pct(val, max), full ? "missed" : "q"]]) : ""}
+      <div class="tk-meterlbl"><span><b>${val} / ${max || "–"}</b> dit uur</span><span>${full ? "grens bereikt" : ""}</span></div></div>`;
+    const hFull = lim > 0 && h >= lim, tFull = tLim > 0 && t >= tLim;
+    let note;
+    if (cap === "pogingen" || (!cap && tFull)) note = "Te veel pogingen dit uur: de volgende inhaalberichten wachten tot de oudste poging een uur oud is.";
+    else if (cap === "uur" || hFull) note = "De uurgrens is bereikt: de volgende inhaalberichten wachten tot het oudste doorgegeven bericht een uur oud is.";
+    else note = hasTries ? "Alleen inhaalberichten (FIFO) die een repeater herhaalde of die de server bevestigde, tellen als doorgegeven. Pogingen zonder herhaling tellen niet mee, maar per uur mogen er hoogstens twee keer zoveel pogingen zijn."
+      : "Inhaalberichten (FIFO) die dit uur al vertrokken zijn.";
+    return card("Uurplafond", row(hasTries ? "Doorgegeven" : "Verstuurd", h, lim, hFull) + (hasTries ? row("Pogingen", t, tLim, tFull) : "") + `<p class="tk-note">${note}</p>`);
   }
   function spark(title, key, unit, digits = 0) {
     const vals = history.map((h) => h[key]).filter((v) => v != null);
@@ -600,7 +616,7 @@
     const fl = dump.flush && (dump.flush.state === "gepauzeerd" || dump.flush.state === "gestopt") ? dump.flush : null;
     const tile = (lbl, val, sub, cls = "") => `<div class="tk-tile${cls ? " " + cls : ""}"><span class="tk-tilelbl">${lbl}</span><b>${val}</b><span class="tk-tilesub">${sub || "&nbsp;"}</span></div>`;
     const agoHtml = (ts) => `${esc(dur(trackerNow() - ts))} <small>geleden</small>`;
-    const qSub = !c.Q ? "leeg" : !unsent ? "alles verstuurd" : est ? `leeg in ≈ ${esc(dur(est.s))}${fl ? ` · ${esc(FLUSH[fl.state])}` : ""}` : "";
+    const qSub = !c.Q ? "leeg" : !unsent ? "alles verstuurd" : est ? `leeg in ≈ ${esc(dur(est.s))}${fl ? ` · ${esc(flushText(fl))}` : ""}` : "";
     const upd = gotAt ? new Date(gotAt).toLocaleTimeString("nl-BE") : "";
     const foot = conn ? `Bijgewerkt om ${upd} · ${autoSec() ? `elke ${autoSec()} s` : "auto uit"}` : `Niet verbonden · gegevens van ${upd}`;
     $("ov-hero").innerHTML = `<section class="card tk-hero ${v.lvl}" aria-labelledby="tk-herot">
