@@ -79,62 +79,45 @@ def test_geo_helpers():
     assert point_in_polygon(50.5, 5.5, sq) and not point_in_polygon(51.5, 5.5, sq)
 
 
-# ---- ritme volgens de ontvangst ------------------------------------------------
+# ---- vaste intervallen (geen ritme volgens de ontvangst sinds firmware 0.7.0) ---------
 
-from meshtrack.rules import intervals, link_result  # noqa: E402
-
-
-def _moving_state(p):
-    st = RuleState()
-    st.sent(0, 50.93, 5.33, 90)
-    return st
+def test_from_dict_ignores_legacy_and_unknown_keys():
+    p = Params.from_dict({"min_interval_s": 45, "adaptive": 1, "fast_interval_s": 20, "fast_keep": 2,
+                          "fast_ack_s": 10, "slow_after": 3, "slow_factor": 3, "onzin": "x", "sample_s": None})
+    assert p.min_interval_s == 45 and p.sample_s == Params().sample_s
+    assert not any(hasattr(p, k) for k in ("adaptive", "fast_interval_s", "slow_factor"))
 
 
-def test_fast_after_quick_ack_sends_every_fast_interval():
-    p = Params(min_interval_s=60, max_interval_s=600, fast_interval_s=20)
-    st = _moving_state(p)
-    link_result(st, p, True, 4)
-    assert st.fast and intervals(st, p) == (20, 600)
-    # 25 s later, 60 m verder, onder de afstandsregel (100 m): toch "snel"
-    assert decide(st, p, 25, 50.93054, 5.33, 30, 90) == "snel"
-    # niet verplaatst: geen dubbel punt
-    assert decide(st, p, 25, 50.93, 5.33, 30, 90) is None
+def test_min_interval_blocks_turn_and_max_interval():
+    p = Params(min_interval_s=120, max_interval_s=60)
+    st = started()
+    lat, lon = moved(20)
+    assert decide(st, p, 119, lat, lon, 30, 90) is None          # ook bocht en max_interval wachten
+    assert decide(st, p, 120, lat, lon, 30, 90) == "bocht"
 
 
-def test_slow_ack_does_not_make_fast():
-    p = Params(fast_interval_s=20, fast_ack_s=10)
-    st = _moving_state(p)
-    link_result(st, p, True, 25)
-    assert not st.fast
+def test_max_interval_zero_never_forces():
+    p = Params(max_interval_s=0)
+    st = started()
+    lat, lon = moved(10)
+    assert decide(st, p, 10 ** 6, lat, lon, 5, 0) is None
 
 
-def test_fast_survives_fast_keep_misses_then_drops_and_slows():
-    p = Params(min_interval_s=60, max_interval_s=600, fast_interval_s=20, fast_keep=2, slow_after=3, slow_factor=3)
-    st = _moving_state(p)
-    link_result(st, p, True, 3)
-    link_result(st, p, False)
-    link_result(st, p, False)
-    assert st.fast and not st.slow           # twee missers: nog snel
-    link_result(st, p, False)
-    assert not st.fast and st.slow           # derde: terug, en trager
-    assert intervals(st, p) == (180, 1800)
-    assert decide(st, p, 120, 50.94, 5.33, 50, 90) is None   # binnen 3 x min_interval
-    link_result(st, p, True, 2)
-    assert st.fast and not st.slow and st.fails == 0
+def test_turn_needs_known_course():
+    st = started()
+    lat, lon = moved(20)
+    assert decide(st, P, 60, lat, lon, 20, None) is None         # geen koers (onder 3 km/u)
+    st2 = RuleState()
+    st2.sent(0, LAT, LON, None)                                  # vorige zending zonder koers
+    assert decide(st2, P, 60, lat, lon, 20, 90) is None
 
 
-def test_fast_off_when_interval_zero():
-    p = Params(fast_interval_s=0)
-    st = _moving_state(p)
-    link_result(st, p, True, 1)
-    assert not st.fast and intervals(st, p) == (p.min_interval_s, p.max_interval_s)
-
-
-def test_adaptive_off_never_changes_rhythm():
-    p = Params(adaptive=0, fast_interval_s=20)
-    st = _moving_state(p)
-    link_result(st, p, True, 1)
-    assert not st.fast
-    for _ in range(5):
-        link_result(st, p, False)
-    assert not st.slow and intervals(st, p) == (p.min_interval_s, p.max_interval_s)
+def test_intervals_fixed_whatever_happens():
+    """Geen ACK-afhankelijk ritme: na elke zending gelden dezelfde min/max-intervallen."""
+    st = started()
+    for k in range(1, 6):
+        t = k * 600
+        lat, lon = moved(10 * k)
+        assert decide(st, P, t - 1, lat, lon, 5, 0) is None
+        assert decide(st, P, t, lat, lon, 5, 0) == "max_interval"
+        st.sent(t, lat, lon, 0)

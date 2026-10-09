@@ -82,6 +82,7 @@ const MT = {
     MT.applyTheme(MT.theme());
     const links = [
       ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"], ["/kanalen", "Kanalen", "map.view"],
+      ["/statistieken", "Statistieken", "map.view"],
       ["/admin", "Trackers", ["trackers.manage", "sims.manage"]],
       ["/devices", "Toestellen", "trackers.serial"],
       ["/users", "Gebruikers", ["users.manage", "share.manage"]],
@@ -93,7 +94,8 @@ const MT = {
     const nav = document.querySelector("header.top nav");
     if (nav) {
       const a = ([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ""}>${label}</a>`;
-      nav.innerHTML = links.filter(([, , p]) => !p || (Array.isArray(p) ? p.some(MT.can) : MT.can(p))).map(a).join("")
+      nav.innerHTML = links.filter(([href, , p]) => (!p || (Array.isArray(p) ? p.some(MT.can) : MT.can(p)))
+          && !(href === "/statistieken" && MT.me.kind !== "user")).map(a).join("")
         + (MT.me.kind === "user" ? `<span class="navapps" role="group" aria-label="Apps"><span class="navapps-l">Apps</span>${apps.map(a).join("")}</span>` : "");
     }
     const hdr = document.querySelector("header.top");
@@ -125,6 +127,7 @@ const MT = {
       document.getElementById("um-out").addEventListener("click", async () => { await MT.api("/api/logout", { method: "POST" }); location.href = "/login"; });
       document.getElementById("um-pw").addEventListener("click", MT.passwordDialog);
     }
+    MT.pwa.ui();
     return MT.me;
   },
 
@@ -256,3 +259,108 @@ const MT = {
     open();
   },
 };
+
+/* ---- de site als app (PWA): service worker, nieuwe versie, installeren ----------------
+   /sw.js (scope "/") bewaart alleen scripts, stijl en iconen, nooit pagina's of gegevens.
+   /offline en /tracker hebben elk hun eigen worker; die zetten we hier alvast klaar, zodat
+   ze ook zonder verbinding openen (de pagina "Geen verbinding" verwijst ernaar). */
+MT.pwa = (() => {
+  let prompt = null;                     // uitgesteld beforeinstallprompt-event
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* geen opslag */ } },
+  };
+  const standalone = () => {
+    try { return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (_) { return false; }
+  };
+  const ios = () => /iphone|ipad|ipod/i.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);     // iPadOS doet zich voor als Mac
+
+  // "Installeren": in het gebruikersmenu, anders (deellink) in de kopbalk.
+  function installButton() {
+    let b = document.getElementById("mt-install");
+    const want = !!prompt && !standalone();
+    if (!b && want) {
+      const menu = document.querySelector("#usermenu .menu");
+      const hdr = document.querySelector("header.top");
+      if (menu) {
+        const pw = menu.querySelector("#um-pw");
+        (pw || menu).insertAdjacentHTML(pw ? "beforebegin" : "beforeend", '<button type="button" id="mt-install">Installeren</button>');
+      } else if (hdr) {
+        hdr.insertAdjacentHTML("beforeend", '<button type="button" id="mt-install" class="hdrinstall">Installeren</button>');
+      } else return;
+      b = document.getElementById("mt-install");
+      b.addEventListener("click", async () => {
+        const p = prompt;
+        if (!p) return;
+        prompt = null;
+        try { p.prompt(); await p.userChoice; } catch (_) { /* geweigerd of niet meer geldig */ }
+        installButton();
+      });
+    }
+    if (b) b.hidden = !want;
+  }
+
+  // iPhone/iPad kent geen installeerknop: één keer uitleggen hoe het wel gaat.
+  function iosHint() {
+    if (!ios() || standalone() || store.get("mt.pwa.ioshint") || document.getElementById("mt-ioshint")) return;
+    store.set("mt.pwa.ioshint", "1");
+    document.body.insertAdjacentHTML("beforeend", `<div id="mt-ioshint" class="pwahint" role="note">
+      <span>Installeer MeshTrack als app: tik op <strong>Deel</strong> en kies <strong>Zet op beginscherm</strong>.</span>
+      <button type="button" class="ghost" aria-label="Sluiten">✕</button></div>`);
+    const h = document.getElementById("mt-ioshint");
+    h.querySelector("button").addEventListener("click", () => h.remove());
+  }
+
+  function offerUpdate(w) {
+    if (!w || !navigator.serviceWorker.controller) return;       // eerste installatie: niets te melden
+    let b = document.getElementById("mt-update");
+    if (!b) {
+      document.body.insertAdjacentHTML("beforeend",
+        '<button type="button" id="mt-update" class="swupdate">Nieuwe versie beschikbaar – vernieuwen</button>');
+      b = document.getElementById("mt-update");
+    }
+    b.hidden = false;
+    b.onclick = () => { reloading = true; b.disabled = true; w.postMessage({ type: "skip" }); };
+  }
+
+  // De losse apps alvast installeren (alleen als hun eigen worker er nog niet staat).
+  async function primeApps() {
+    for (const [script, scope] of [["/offline-sw.js", "/offline"], ["/tracker-sw.js", "/tracker"]]) {
+      try {
+        const r = await navigator.serviceWorker.getRegistration(scope);
+        if (r && new URL(r.scope).pathname === scope) continue;
+        await navigator.serviceWorker.register(script, { scope });
+      } catch (_) { /* niet erg: de app installeert zich ook bij het eerste bezoek */ }
+    }
+  }
+
+  let reloading = false;
+  function register() {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).then((reg) => {
+      if (reg.waiting) offerUpdate(reg.waiting);
+      reg.addEventListener("updatefound", () => {
+        const w = reg.installing;
+        if (w) w.addEventListener("statechange", () => { if (w.state === "installed") offerUpdate(w); });
+      });
+      navigator.serviceWorker.ready.then(() => setTimeout(primeApps, 3000));
+    }).catch(() => {});
+  }
+
+  if ("serviceWorker" in navigator && window.isSecureContext) {
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (reloading) location.reload(); });
+    if (document.readyState === "complete") register(); else window.addEventListener("load", register);
+  }
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();                  // geen eigen balk van de browser: de knop staat in het menu
+    prompt = e;
+    installButton();
+  });
+  window.addEventListener("appinstalled", () => { prompt = null; installButton(); });
+
+  return {
+    ui() { installButton(); iosHint(); },
+    standalone,
+    canInstall: () => !!prompt && !standalone(),
+  };
+})();

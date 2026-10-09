@@ -25,8 +25,9 @@
 
   <section class="card pane" id="pane-rules">
     <div class="cardhead"><h2>Meldingsregels</h2><button class="primary" id="r-new">+ Regel</button></div>
-    <p class="muted">Bij een gekozen gebeurtenis stuurt de server een DM via de mesh naar de ontvangers. DM's gaan na
-      elkaar weg met een pauze ertussen (zie Instellingen), zodat de mesh niet overbelast raakt.</p>
+    <p class="muted">Bij een gekozen gebeurtenis stuurt de server een melding als privébericht (DM) via de mesh naar de
+      ontvangers, bv. de gsm van de wachtdienst. Meldingen gaan na elkaar weg met een pauze ertussen (zie Instellingen),
+      zodat de mesh niet overbelast raakt. Dit staat los van de tracking: trackers sturen hun posities op hun kanaal.</p>
     <form id="r-form" class="subform" hidden>
       <input type="hidden" id="r-id">
       <div class="grid">
@@ -110,7 +111,7 @@
         <div><strong id="cmp-name">–</strong></div>
         <div class="mono muted" id="cmp-key">niet verbonden</div>
         <p class="muted">Scan met de MeshCore-app om deze server als contact toe te voegen. Een MeshTrack-tracker heeft dit niet
-          nodig: die maakt het contact zelf aan uit zijn doel.</p>
+          nodig: hij stuurt zijn posities op zijn trackingkanaal, niet rechtstreeks naar de server.</p>
         <button id="cmp-copy" disabled>Pubkey kopiëren</button>
       </div>
     </div>

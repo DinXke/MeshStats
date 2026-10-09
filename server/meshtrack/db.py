@@ -198,7 +198,34 @@ CREATE TABLE IF NOT EXISTS unknown_msgs (
   reason TEXT NOT NULL,
   text TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stats_events (         -- 1.3: tellers voor wat niet in positions staat
+  ts         INTEGER NOT NULL,
+  kind       TEXT NOT NULL,                   -- zie STAT_KINDS
+  tracker_id INTEGER,
+  channel_id INTEGER,
+  n          INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS stats_events_ts ON stats_events(ts);
+CREATE TABLE IF NOT EXISTS message_paths (        -- 1.3: pad van elke gehoorde kopie van een trackerbericht
+  id         INTEGER PRIMARY KEY,
+  tracker_id INTEGER NOT NULL,
+  seq        INTEGER NOT NULL,
+  state      TEXT NOT NULL,
+  rx_ts      INTEGER NOT NULL,
+  path       TEXT NOT NULL DEFAULT '',        -- hex-hashes met komma's, eerste hop (bij de tracker) eerst
+  hash_size  INTEGER,
+  hops       INTEGER NOT NULL DEFAULT 0,
+  snr REAL, rssi INTEGER,
+  radio      TEXT,                            -- antenne van openHop (dak/bureau); NULL bij de companion
+  source     TEXT NOT NULL,                   -- companion | openhop
+  channel_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS message_paths_rx ON message_paths(rx_ts);
+CREATE INDEX IF NOT EXISTS message_paths_tracker_rx ON message_paths(tracker_id, rx_ts);
 """
+
+# 1.3: soorten in stats_events
+STAT_KINDS = ("t1a_sent", "t1f_sent", "t1f_msg", "dup_points", "dup_msg", "invalid", "unknown", "old_fw_dm")
 
 TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since", "last_via", "channel_id")
 
@@ -253,6 +280,13 @@ class DB:
         scols = {r["name"] for r in self._q("PRAGMA table_info(sims)")}
         if "drive" not in scols:  # 0.2.2: rijgedrag (snelheden, ritlengte, zwerven)
             self._x("ALTER TABLE sims ADD COLUMN drive TEXT NOT NULL DEFAULT '{}'")
+        if "extra" not in {r["name"] for r in self._q("PRAGMA table_info(positions)")}:   # 1.3: statistieken
+            # 1 = eerder punt uit een bericht (geen hoofdpunt); bestaande rijen herkennen aan hun raw-tekst
+            self._x("ALTER TABLE positions ADD COLUMN extra INTEGER NOT NULL DEFAULT 0")
+            self._x("UPDATE positions SET extra=1 WHERE raw LIKE '(eerder punt%'")
+        # dekkende index voor de statistieken (bereik op ontvangsttijd, zonder de tabel zelf te lezen)
+        self._x("CREATE INDEX IF NOT EXISTS positions_stats ON positions(rx_ts, tracker_id, state, extra, ts, seq, "
+                "snr, path_len, bat, lat)")
         self._migrate_channels()
 
     def _migrate_channels(self) -> None:
@@ -398,8 +432,8 @@ class DB:
 
     def add_position(self, tid: int, p: dict[str, Any]) -> int:
         cols = ("tracker_id", "ts", "rx_ts", "seq", "state", "lat", "lon", "alt", "spd", "crs", "bat",
-                "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw", "power")
-        vals = (tid,) + tuple(p.get(c) for c in cols[1:])
+                "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw", "power", "extra")
+        vals = (tid,) + tuple(p.get(c) for c in cols[1:-1]) + (int(p.get("extra") or 0),)
         cur = self._x(f"INSERT INTO positions({','.join(cols)}) VALUES({','.join('?' * len(cols))})", vals)
         if p["state"] in HISTORY_STATES:
             self._slow_summary(tid, p)
@@ -470,7 +504,41 @@ class DB:
         self._x("DELETE FROM audit WHERE ts<?", (older_than - 275 * 86400,))   # audit: ~1 jaar
         self._x("DELETE FROM alert_log WHERE ts<?", (older_than,))
         self._x("DELETE FROM unknown_msgs WHERE rx_ts<?", (older_than,))
+        self._x("DELETE FROM stats_events WHERE ts<?", (older_than,))
+        self._x("DELETE FROM message_paths WHERE rx_ts<?", (older_than,))
         return n
+
+    def add_paths(self, rows: list[dict[str, Any]]) -> None:
+        """Paden van trackerberichten (zie paths.py), in één transactie."""
+        if not rows:
+            return
+        with self._lock:
+            self._c.execute("BEGIN")
+            try:
+                self._c.executemany(
+                    "INSERT INTO message_paths(tracker_id, seq, state, rx_ts, path, hash_size, hops, snr, rssi, radio, "
+                    "source, channel_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [(r["tracker_id"], r["seq"], r["state"], int(r["rx_ts"]), ",".join(r["path"]), r.get("hash_size"),
+                      int(r.get("hops") or len(r["path"])), r.get("snr"), r.get("rssi"), r.get("radio"), r["source"],
+                      r.get("channel_id")) for r in rows])
+                self._c.execute("COMMIT")
+            except Exception:
+                self._c.execute("ROLLBACK")
+                raise
+
+    # ---- statistieken ----------------------------------------------------------
+
+    def stat(self, kind: str, tracker_id: Optional[int] = None, channel_id: Optional[int] = None,
+             n: int = 1, ts: Optional[int] = None) -> None:
+        """Eén teller in stats_events (één INSERT, geen lezen)."""
+        if n > 0:
+            self._x("INSERT INTO stats_events(ts, kind, tracker_id, channel_id, n) VALUES(?,?,?,?,?)",
+                    (int(ts if ts is not None else time.time()), kind, tracker_id, channel_id, int(n)))
+
+    def rows(self, sql: str, args: tuple = ()) -> list[tuple]:
+        """Ruwe tuples (sneller dan dicts) voor de statistiek-aggregaten."""
+        with self._lock:
+            return self._c.execute(sql, args).fetchall()
 
     # ---- simulator ----------------------------------------------------------
 
