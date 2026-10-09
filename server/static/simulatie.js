@@ -114,7 +114,7 @@
     const S = { t: 0, end: Math.round(sc.dur * 60), cfg, sc, mode, iv: ftInterval(cfg, sc.speed),
       points: [], ftBuf: [], slowBuf: [], queue: [], pend: [],
       sent: { ft: 0, slow: 0, fifo: 0, ack: 0 }, ok: { ft: 0, slow: 0, fifo: 0 }, air: 0, ackAir: 0, no: { ft: 0, slow: 0, fifo: 0 },
-      lastFt: -1e9, signals: [], lastAckRx: -1e9, retryAt: 0, flushing: false, flushStop: -1e9, lastFlush: -1e9, flushTimes: [],
+      lastFt: -1e9, signals: [], lastAckRx: -1e9, retryAt: 0, flushing: false, flushStop: -1e9, lastFlush: -1e9, flushTimes: [], countTimes: [], qMsgs: [], capWhy: "",
       capNoted: false, ackDue: null, ackUpTo: 0, lastAck: -1e9, acked: 0, gaveUp: 0, thinned: 0, evicted: 0, toFifo: 0,
       log: [], fx: [], ver: 0, done: false, snr: null, stable: false,
       perQ: sc.perQ, lastListen: -1e9, listenUntil: -1, listenHeard: 0, listens: 0, waitSends: 0,
@@ -233,6 +233,7 @@
       const n = m.pts.length;
       if (m.ok) {
         S.ok[m.kind]++;
+        if (m.kind === "fifo" && !m.counted) { m.counted = true; S.countTimes.push(m.t); }   // doorgegeven: telt voor fifo_per_uur
         const snr = snrAt(m.t);
         signal(t, snr, "rep");
         S.fx.push({ type: "ok", kind: m.kind });
@@ -311,9 +312,13 @@
       let k = 0;
       S.queue = S.queue.filter((p) => { if (p.srv && p.t <= upTo && !p.inQ) { p.st = "gone"; p.acked = true; k++; return false; } return true; });
       S.acked += k;
+      // aangekomen maar niet gehoorde Q-berichten tellen alsnog mee, op hun verzendtijd (als dat binnen het uur valt)
+      let late = 0;
+      for (const m of S.qMsgs) if (!m.counted && m.srvGot && m.t > t - 3600 && m.pts.every((p) => p.t <= upTo)) { m.counted = true; S.countTimes.push(m.t); late++; }
       S.fx.push({ type: "ack" });
       say(t, `Server stuurt T1F "ontvangen tot ${clock(upTo).slice(0, 5)}" → ` + (k ? `${pl(k)} uit de wachtrij (wel aangekomen, herhaling niet gehoord)`
-        : "niets meer te schrappen: die punten waren intussen al via een gehoorde herhaling weg"), "info");
+        : "niets meer te schrappen: die punten waren intussen al via een gehoorde herhaling weg")
+        + (late ? `; ${late === 1 ? "1 inhaalbericht telt" : `${late} inhaalberichten tellen`} alsnog als doorgegeven` : ""), "info");
     }
 
     S.step = function () {
@@ -378,6 +383,8 @@
       // FIFO leegmaken
       if (S.mode === "fifo") {
         S.flushTimes = S.flushTimes.filter((x) => x > t - 3600);
+        S.countTimes = S.countTimes.filter((x) => x > t - 3600);
+        S.qMsgs = S.qMsgs.filter((m) => m.t > t - 3600);
         const listen = (why) => {
           S.lastListen = t; S.listenUntil = t + LISTEN_S; S.listenHeard = 0; S.listens++;
           say(t, `Luistervenster van ${LISTEN_S} s: ${why}`, "");
@@ -422,8 +429,15 @@
           const busy = S.pend.some((m) => m.kind === "fifo");
           if (!busy && !qlen()) { S.flushing = false; say(t, "Wachtrij leeg: alles ingehaald", "ok"); }
           else if (!busy && t - S.lastFlush >= cfg.fifo_gap && t >= S.retryAt) {
-            if (S.flushTimes.length >= cfg.fifo_per_uur) {
-              if (!S.capNoted) { S.capNoted = true; say(t, `Uurlimiet bereikt (${cfg.fifo_per_uur} / ${cfg.fifo_per_uur} dit uur): wachten`, "info"); }
+            // twee plafonds: doorgegeven berichten (fifo_per_uur) en alle pogingen (2 × fifo_per_uur)
+            const capWhy = S.countTimes.length >= cfg.fifo_per_uur ? "uur" : S.flushTimes.length >= 2 * cfg.fifo_per_uur ? "pogingen" : "";
+            S.capWhy = capWhy;
+            if (capWhy) {
+              if (!S.capNoted) {
+                S.capNoted = true;
+                say(t, capWhy === "uur" ? `Uurlimiet bereikt: ${cfg.fifo_per_uur} / ${cfg.fifo_per_uur} doorgegeven berichten in het voorbije uur; wachten`
+                  : `Veiligheidsgrens bereikt: ${2 * cfg.fifo_per_uur} / ${2 * cfg.fifo_per_uur} pogingen in het voorbije uur (zendtijd van de tracker); wachten`, "info");
+              }
             } else {
               S.capNoted = false;
               // eerst de gewone punten (oudste eerst); geparkeerde pas als al de rest weg is, als laatste kans
@@ -437,7 +451,7 @@
                 const f = S.queue.some((p) => p.su);     // alleen om bevestiging vragen bij verstuurde, niet-gehoorde punten
                 pts.forEach((p) => { p.inQ = true; });
                 S.lastFlush = t; S.flushTimes.push(t);
-                send(t, "fifo", pts, { f });
+                S.qMsgs.push(send(t, "fifo", pts, { f }));
               }
             }
           }
@@ -465,7 +479,8 @@
       c.pct = c.logged ? Math.round(100 * c.server / c.logged) : 0;
       c.sent = { ...S.sent }; c.ok = { ...S.ok }; c.air = S.air; c.mesh = (S.air + S.ackAir) * (1 + REPEATS);
       c.evicted = S.evicted; c.acked = S.acked; c.gaveUp = S.gaveUp; c.toFifo = S.toFifo;
-      c.hour = S.flushTimes.filter((x) => x > S.t - 3600).length;
+      c.hour = S.countTimes.filter((x) => x > S.t - 3600).length;
+      c.tries = S.flushTimes.filter((x) => x > S.t - 3600).length;
       c.queue = qlen(); c.listens = S.listens; c.waitSends = S.waitSends; c.restSends = S.restSends;
       return c;
     };
@@ -498,8 +513,11 @@
        herhaling met een signaal-ruisverhouding (SNR) van minstens ${V("fifo_snr")}, of twee tekens van dekking binnen 60 seconden,
        of een bevestiging van de server. In de simulatie stijgt de SNR naarmate de tracker uit de dode zone rijdt.`],
     ["flush", "Leegmaken", "#sim-fifonote",
-      `Daarna stuurt de tracker één inhaalbericht per ${V("fifo_gap")}, oudste punten eerst, en hoogstens ${V("fifo_per_uur")} per uur
-       (de teller "x / ${V("fifo_per_uur_n")} dit uur"). Een punt verlaat de wachtrij pas als de herhaling gehoord werd.`],
+      `Daarna stuurt de tracker één inhaalbericht per ${V("fifo_gap")}, oudste punten eerst. Een punt verlaat de wachtrij pas als de
+       herhaling gehoord werd. Per uur mogen hoogstens ${V("fifo_per_uur")} berichten doorgegeven worden: alleen berichten waarvan de
+       herhaling gehoord werd of die de server later bevestigde (T1F), tellen mee (de teller "x / ${V("fifo_per_uur_n")} doorgegeven").
+       Pogingen zonder gehoorde herhaling tellen niet, maar om de zendtijd van de tracker te sparen geldt een vaste veiligheidsgrens van
+       ${V("fifo_tries")} pogingen per uur (de teller "pogingen"). Is een van beide bereikt, dan pauzeert het leegmaken.`],
     ["park", "Pogingen en parkeren", "#sim-fifobox",
       `Wordt een inhaalbericht niet gehoord, dan telt dat als een poging voor zijn punten en wacht de tracker telkens langer: 1, 5, 15
        en daarna 60 minuten. Na ${V("fifo_pogingen")} worden de punten geparkeerd (rode ring): ze komen pas aan de beurt als al de rest
@@ -659,7 +677,7 @@
 
   function fillVars() {
     const val = { nb: `${sc.nb} bytes`, perq: `${sc.perQ}`, fifo_wacht: cfg.fifo_wacht ? fmtDur(cfg.fifo_wacht) : "(uit)", still_timeout: fmtDur(cfg.still_timeout), fifo_max: `${cfg.fifo_max}`, fifo_dun: cfg.fifo_dun ? `${cfg.fifo_dun} m` : "0 m (uitdunnen staat uit)", fifo_snr: `${dB(cfg.fifo_snr)}`,
-      fifo_gap: fmtDur(cfg.fifo_gap), fifo_per_uur: `${cfg.fifo_per_uur}`, fifo_per_uur_n: `${cfg.fifo_per_uur}`,
+      fifo_gap: fmtDur(cfg.fifo_gap), fifo_per_uur: `${cfg.fifo_per_uur}`, fifo_per_uur_n: `${cfg.fifo_per_uur}`, fifo_tries: `${2 * cfg.fifo_per_uur}`,
       fifo_pogingen: `${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"}` };
     pane.querySelectorAll(".sim-v").forEach((s) => { s.textContent = val[s.dataset.k] || ""; });
   }
@@ -677,7 +695,7 @@
     const iv = S.iv;
     $("sim-cfg").textContent = `Gebruikt: punt bewaren elke ${fmtDur(cfg.sample)} · FastTrack-bericht elke ${iv ? fmtDur(iv) : "– (rijdt te traag)"}`
       + ` (nooit vaker dan ${fmtDur(cfg.min_interval)}, minstens ${fmtDur(cfg.max_interval)}, ${nf(cfg.min_dist)} m) · SlowTrack ${cfg.slow_log ? `loggen elke ${fmtDur(cfg.slow_log)}${mode === "classic" ? `, versturen elke ${fmtDur(cfg.slow_send)}` : ""}` : "uit"}`
-      + (mode === "fifo" ? ` · FIFO: ${cfg.fifo_min} tot ${cfg.fifo_max} punten, elke ${fmtDur(cfg.fifo_gap)}, hoogstens ${cfg.fifo_per_uur} per uur,`
+      + (mode === "fifo" ? ` · FIFO: ${cfg.fifo_min} tot ${cfg.fifo_max} punten, elke ${fmtDur(cfg.fifo_gap)}, hoogstens ${cfg.fifo_per_uur} doorgegeven en ${2 * cfg.fifo_per_uur} pogingen per uur,`
         + ` ${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"} per punt, uitdunnen ${cfg.fifo_dun ? `${cfg.fifo_dun} m` : "uit"}, SNR ≥ ${dB(cfg.fifo_snr)}.` : ".");
     if (sc.over) $("sim-cfg").textContent += ` In dit scenario: SlowTrack elke ${fmtDur(sc.over.slow_log)}, inhalen vanaf ${sc.over.fifo_min} punten.`;
     $("sim-nbhelp").textContent = `≈ ${sc.perQ} punten per Q-bericht` + (cfg.perTracker && sc.nb === cfg.nameBytes ? " (zoals de tracker meldt)" : "")
@@ -815,7 +833,9 @@
         : `Leegmaken vanaf ${ce.fifo_min} punten` + (ce.fifo_wacht && S.queue.length ? `, of als het oudste ${fmtDur(ce.fifo_wacht)} wacht (nu ${Math.floor((simT - S.queue[0].t) / 60)} min)` : ""))
         + (S.rest && S.queue.length && !S.flushing && Number.isFinite(S.restListenAt) ? ` · in rust: volgende luisterbeurt over ${Math.max(0, Math.ceil((S.restListenAt - simT) / 60))} min` : "")
         + (S.listens ? ` · ${S.listens}× geluisterd` : "")
-        + ` · <span class="${c.hour >= cfg.fifo_per_uur ? "warn" : ""}">${c.hour} / ${cfg.fifo_per_uur} dit uur</span>`
+        + ` · <span class="${c.hour >= cfg.fifo_per_uur ? "warn" : ""}">${c.hour} / ${cfg.fifo_per_uur} doorgegeven</span>`
+        + ` · <span class="${c.tries >= 2 * cfg.fifo_per_uur ? "warn" : ""}">${c.tries} / ${2 * cfg.fifo_per_uur} pogingen</span>`
+        + (S.capWhy && S.flushing ? ` · <strong class="warn">${S.capWhy === "uur" ? "uurlimiet" : "veiligheidsgrens"} bereikt</strong>` : "")
         + (c.park ? ` · <span class="park">geparkeerd: ${c.park}</span>` : "")
         + (c.gaveUp ? ` · opgegeven: ${c.gaveUp}` : "")
         + (c.evicted ? ` · <span class="warn">${c.evicted} verdrongen</span>` : "");

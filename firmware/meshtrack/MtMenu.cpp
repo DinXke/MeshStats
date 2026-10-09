@@ -271,6 +271,10 @@ static void fifo_summary(const char* pre) {
   if (capped)
     outl("%slet op: fifo_gap %lu s laat %lu berichten/uur toe, maar fifo_per_uur begrenst op %lu. Dat mag; de wachtrij loopt dan wel trager leeg.",
          pre, (unsigned long)gap, (unsigned long)by_gap, (unsigned long)per);
+  outl("%sfifo_per_uur telt alleen berichten die een repeater herhaalde (of die de server bevestigde); pogingen",
+       pre);
+  outl("%szonder herhaling tellen niet, maar nooit meer dan %lu pogingen per uur (2x fifo_per_uur).", pre,
+       (unsigned long)(2 * per));
 }
 static void fifo_set_note(const char* k, const char* pre) {
   if (!strcmp(k, "fifo_max") || !strcmp(k, "fifo_gap") || !strcmp(k, "fifo_per_uur") || !strcmp(k, "fifo_wacht"))
@@ -308,10 +312,11 @@ static void cmd_fifo(const char* args) {
   if (mt_tracker_fifo_cov_age() >= 0) snprintf(cov, sizeof(cov), "%ld s geleden", mt_tracker_fifo_cov_age());
   uint32_t wait = 0;
   int hour = mt_tracker_fifo_hour(&wait);
-  char w[40] = "";
-  if (wait) snprintf(w, sizeof(w), ", weer een over %lu min", (unsigned long)((wait + 59) / 60));
-  outl("fifo: leegmaken %s; laatste dekking %s; %d leegmaakberichten in het laatste uur (max %u%s)",
-       mt_tracker_fifo_state(), cov, hour, (unsigned)mt_cfg.fifo_per_uur, w);
+  char w[48] = "";
+  if (wait) snprintf(w, sizeof(w), "; weer een over %lu min", (unsigned long)((wait + 59) / 60));
+  outl("fifo: leegmaken %s; laatste dekking %s", mt_tracker_fifo_state(), cov);
+  outl("fifo: laatste uur %d getelde berichten (max %u) en %d pogingen (max %u)%s", hour, (unsigned)mt_cfg.fifo_per_uur,
+       mt_tracker_fifo_tries(), 2U * mt_cfg.fifo_per_uur, w);
   outl("fifo: sinds de start %lu punten door de server bevestigd (T1F)", (unsigned long)mt_tracker_fifo_confirmed());
   fifo_summary("fifo: ");
 }
@@ -565,7 +570,9 @@ static void cmd_help() {
   outl("      betekenisvolle punt valt weg (dat het dichtst bij de lijn tussen zijn buren ligt)");
   outl("    fifo_min <1..fifo_max>  pas leegmaken vanaf zoveel punten (standaard 5; na een onderbreking vanaf 1)");
   outl("    fifo_gap <tijd>         tussen twee leegmaakberichten minstens (15s..5m, standaard 30s)");
-  outl("    fifo_per_uur <1..60>    hooguit zoveel leegmaakberichten per uur (standaard 20)");
+  outl("    fifo_per_uur <1..60>    hooguit zoveel leegmaakberichten per uur (standaard 20). Telt alleen berichten");
+  outl("      die een repeater herhaalde (of die de server bevestigde); pogingen zonder herhaling tellen niet,");
+  outl("      maar nooit meer dan 2x zoveel pogingen per uur (vaste grens voor de eigen zendtijd).");
   outl("      Een volle wachtrij van 500 punten is zo'n 50 à 70 berichten; elk bericht wordt door meerdere");
   outl("      repeaters herhaald, dus hou fifo_gap ruim.");
   outl("    fifo_pogingen <1..10>   na zoveel niet herhaalde leegmaakberichten is een punt geparkeerd");
@@ -646,7 +653,7 @@ static const Item FIFOI[] = {
   {"Wachtrij hooguit (punten, 20-500)", "fifo_max", 0},
   {"Leegmaken vanaf (punten)", "fifo_min", 0},
   {"Tussen twee leegmaakberichten minstens", "fifo_gap", 1},
-  {"Hooguit leegmaakberichten per uur (1-60)", "fifo_per_uur", 0},
+  {"Herhaalde leegmaakberichten per uur (1-60)", "fifo_per_uur", 0},
   {"Pogingen voor een punt geparkeerd wordt", "fifo_pogingen", 0},
   {"Rechte lijn uitdunnen (m, 0 = uit)", "fifo_dun", 0},
   {"Nieuwe ronde vanaf SNR (dB, -20..10)", "fifo_snr", 0},
