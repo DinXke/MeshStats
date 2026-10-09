@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.2; heeft server 1.2.0 of nieuwer nodig).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.3; heeft server 1.2.0 of nieuwer nodig).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
     Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
@@ -74,13 +74,20 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     - Pogingen: niet herhaald = wachttijd van 1, 5, 15 en daarna 60 min. Na `fifo_pogingen` (standaard 3) geparkeerd: blokkeert
       de wachtrij niet meer, krijgt één laatste poging als niets anders wacht en wordt dan opgegeven (de server filtert
       dubbels).
-    - `fifo_wacht` (0.9.1, `set fifo_wacht <duur>|uit`, 1m..4h, standaard 30m): minder dan `fifo_min` punten, maar het
-      oudste ouder dan `fifo_wacht` en stabiele dekking = toch versturen (`fifo_per_uur` blijft gelden); vooral voor
-      onderweg. In rust (0.9.1, langer dan `still_timeout` geen beweging) wordt de wachtrij meteen leeggemaakt: de tracker
-      luistert meteen 60 s naar repeaters en stuurt bij stabiele dekking ook onder `fifo_min` (`fifo_gap` en
-      `fifo_per_uur` blijven gelden). Geen dekking: opnieuw luisteren na 10, 20, 40 en daarna elke 60 min (spaart de
-      batterij op een plek zonder bereik); beweging of gevonden dekking zet dat terug op 10 min. Onderweg luistert hij
-      voor punten ouder dan `fifo_wacht` zonder recente dekking ook 60 s.
+    - Vol en niet-vol (0.9.3): een vol Q-bericht heeft minstens `fifo_per_bericht` punten (≈ 9 met een korte naam) en
+      volgt de gewone regels. Een niet-vol bericht (minder punten; neemt alles mee wat wacht) gaat alleen weg als de
+      vorige niet-volle poging (geslaagd of niet) én het laatste geslaagde Q-bericht (herhaald of met T1F bevestigd)
+      minstens `fifo_wacht` geleden zijn, bij sterke dekking (SNR ≥ `fifo_snr` of een T1F; twee keer dekking binnen 60 s
+      volstaat niet) en alleen als de radio toch al wakker is: de tracker wekt of luistert er nooit apart voor. Dat
+      voorkomt een stroom berichten met 1 punt (in de praktijk 7 berichten in 6 u met 1 à 5 punten).
+    - `fifo_wacht` (`set fifo_wacht <duur>|uit`, 1m..4h, standaard 30m; menu *Wachttijd voor een niet-vol bericht*;
+      Toestellen: 15 min, 30 min, 60 min, nooit of anders): niet-vol Q-bericht hooguit 1× per fifo_wacht; `uit` = nooit
+      een niet-vol bericht. De oude betekenis (oudste punt ouder dan…, 0.9.1–0.9.2) bestaat niet meer.
+    - In rust (langer dan `still_timeout` geen beweging) luistert de tracker alleen 60 s naar repeaters als er minstens
+      één vol bericht klaarstaat; geen dekking: opnieuw na 10, 20, 40 en daarna elke 60 min.
+    - `fifo` toont ook "laatste geslaagde inhaalbericht: X min geleden; niet-vol bericht weer mogelijk over Y min" en
+      "een vol bericht = minstens N punten …"; `dump` (flush) heeft `vol=`, `deel_na=` en `deel_snr=`; `/tracker` toont
+      of er een vol bericht klaarstaat en wanneer een niet-vol bericht weer mag.
     - Punten per Q-bericht hangen af van de nodenaam: `"<naam>: "` zit in elk bericht, elke byte telt (emoji tellen voor
       meerdere bytes, 🇧🇪 = 8). De kanaalnaam gaat nooit mee (alleen een hash van 1 byte). Naam van 6 à 11 bytes ≈ 9
       punten per bericht, volle wachtrij (500) ≈ 56 berichten, met de standaardwaarden (20/u) in ~2,1 u leeg; naam van

@@ -240,15 +240,16 @@
         bericht, of een pakket dat via een repeater kwam. Hij begint pas met inhalen bij <em>stabiele</em> dekking: een
         pakket met een signaal-ruisverhouding (SNR) van minstens <code>fifo_snr</code>, twee keer dekking binnen 60
         seconden, of een bevestiging van de server. Eén zwak pakket aan de rand van het bereik volstaat niet. Er moeten
-        ook minstens <code>fifo_min</code> punten wachten; werd een vorige ronde onderbroken, dan volstaat één punt. Zijn
-        het er minder, maar wacht het oudste punt al langer dan <code>fifo_wacht</code> (standaard 30 minuten), dan stuurt hij bij stabiele dekking toch.</li>
+        ook minstens <code>fifo_min</code> punten wachten; werd een vorige ronde onderbroken, dan volstaat één punt.</li>
       <li><strong>Inhalen.</strong> De tracker stuurt de wachtrij leeg, oudste punten eerst, met hoogstens één
         <strong>inhaalbericht</strong> per <code>fifo_gap</code> en hoogstens <code>fifo_per_uur</code> <em>herhaalde</em>
         inhaalberichten per uur (zie <a href="#fifo-uur">Wat telt mee voor het uurmaximum?</a>). Een
         inhaalbericht heeft de status <em>Q</em> (<em>ingehaald punt (FIFO)</em>) en draagt de punten in een compacte
         binaire vorm, anderhalve keer zoveel als in tekst: zo'n 7 à 10 punten per bericht, afhankelijk van de lengte
         van de <a href="#fifo-naam">trackernaam</a>. Het volgende bericht vertrekt pas als het vorige
-        herhaald is.</li>
+        herhaald is. Een <strong>vol</strong> inhaalbericht gaat weg volgens deze regels; een bericht met minder punten is
+        <strong>niet vol</strong> en volgt strengere regels (zie <a href="#fifo-vol">Volle en niet-volle
+        inhaalberichten</a>).</li>
       <li><strong>Pas weg als het zeker is.</strong> Een punt verlaat de wachtrij pas als de tracker zijn inhaalbericht
         herhaald hoorde, of als de server bevestigt dat hij het punt heeft.</li>
     </ol>
@@ -258,15 +259,29 @@
       wachtrij niet meer op, krijgt nog één laatste poging als er niets anders meer wacht, en wordt daarna opgegeven.
       Wellicht kwam het toch aan; de server haalt dubbele punten er zelf uit.</p>
 
-    <p><strong>In rust meteen inhalen.</strong> Stilstaan is het beste moment om de wachtrij leeg te
-      maken: de plek verandert niet en het bereik is stabiel. Ligt de tracker in rust (langer dan
-      <code>still_timeout</code> geen beweging), dan luistert hij meteen 60 seconden naar repeaters. Vindt hij stabiele
-      dekking, dan stuurt hij, ook als er minder dan <code>fifo_min</code> punten wachten; <code>fifo_gap</code> en
-      <code>fifo_per_uur</code> blijven gelden. Vindt hij geen dekking, dan luistert hij opnieuw na 10, 20 en 40 minuten en
-      daarna elk uur, zodat hij op een plek zonder bereik zijn batterij niet leegluistert. Beweging of gevonden dekking
-      zet die wachttijd terug op 10 minuten.</p>
-    <p>Onderweg geldt <code>fifo_wacht</code>: wachten er punten die ouder zijn dan <code>fifo_wacht</code> en hoorde hij de
-      laatste tijd geen dekking, dan luistert hij ook 60 seconden. Dat kost een klein beetje batterij.</p>
+    <h3 id="fifo-vol">Volle en niet-volle inhaalberichten</h3>
+    <p>Een <strong>vol</strong> inhaalbericht bevat minstens <code>fifo_per_bericht</code> punten: zoveel als er in één
+      bericht passen (≈ 9 met een korte naam). Het gaat weg volgens de gewone regels. Een <strong>niet-vol</strong> bericht
+      heeft minder punten en neemt alles mee wat nog wacht. Zo'n bericht kost evenveel zendtijd voor weinig punten; zonder
+      extra regels gaf dat in de praktijk een reeks kleine berichten (7 berichten in 6 uur met 1 tot 5 punten). Daarom gaat
+      een niet-vol bericht alleen weg als:</p>
+    <ul>
+      <li>de vorige niet-volle poging minstens <code>fifo_wacht</code> geleden is (standaard 30 minuten), geslaagd of
+        niet;</li>
+      <li>het laatste <em>geslaagde</em> inhaalbericht (herhaald door een repeater of bevestigd met een T1F) ook minstens
+        <code>fifo_wacht</code> geleden is;</li>
+      <li>de dekking sterk is: een pakket met SNR ≥ <code>fifo_snr</code> of een bevestiging van de server (twee keer
+        dekking binnen 60 seconden volstaat hier niet);</li>
+      <li>de radio toch al wakker is voor iets anders. Voor een niet-vol bericht wekt de tracker de radio nooit en luistert
+        hij nooit apart.</li>
+    </ul>
+    <p>Met <code>fifo_wacht</code> op <code>uit</code> gaan er nooit niet-volle berichten weg: de laatste punten wachten dan
+      tot er genoeg zijn voor een vol bericht.</p>
+    <p><strong>In rust inhalen.</strong> Stilstaan is een goed moment om de wachtrij leeg te maken: de plek verandert niet
+      en het bereik is stabiel. Ligt de tracker in rust (langer dan <code>still_timeout</code> geen beweging) en staat er
+      minstens één <em>vol</em> bericht klaar, dan luistert hij 60 seconden naar repeaters. Vindt hij geen dekking, dan
+      luistert hij opnieuw na 10, 20 en 40 minuten en daarna elk uur, zodat hij op een plek zonder bereik zijn batterij niet
+      leegluistert. Voor een niet-vol bericht luistert hij in rust niet.</p>
 
     <h3>De wachtrij</h3>
     <ul>
@@ -295,13 +310,14 @@
         weg (0 tot 100; 0 = uit).</td><td>10 m</td></tr>
       <tr><td>Stabiele dekking<br><code>fifo_snr</code></td><td>Een nieuwe ronde begint bij een pakket met minstens deze SNR
         (−20 tot 10&nbsp;dB), of bij twee keer dekking binnen 60&nbsp;s, of een bevestiging van de server.</td><td>−5 dB</td></tr>
-      <tr><td>Toch versturen na<br><code>fifo_wacht</code></td><td>Minder dan <code>fifo_min</code> punten, maar het oudste
-        wacht al langer dan dit: bij stabiele dekking toch versturen (1&nbsp;min tot 4&nbsp;u, of <code>uit</code>;
-        <code>fifo_per_uur</code> blijft gelden).</td><td>30 min</td></tr>
+      <tr><td>Niet-vol bericht<br><code>fifo_wacht</code></td><td>Een niet-vol inhaalbericht hooguit één keer per zoveel
+        tijd, geslaagd of niet; ook het laatste geslaagde inhaalbericht moet minstens zo lang geleden zijn. Keuze in
+        <em>Toestellen</em>: 15 min, 30 min, 60 min, nooit (<code>uit</code>) of anders (1&nbsp;min tot 4&nbsp;u).</td><td>30 min</td></tr>
     </table>
     <p>In het seriële menu staan deze instellingen onder <em>5 SlowTrack en trackmodus (FIFO)</em> →
       <em>4 Trackmodus en FIFO-wachtrij</em>. De terminal noemt een inhaalbericht een <em>leegmaakbericht</em>; <code>fifo_per_uur</code> heet daar
-      <em>Herhaalde leegmaakberichten per uur (1-60)</em>.</p>
+      <em>Herhaalde leegmaakberichten per uur (1-60)</em> en <code>fifo_wacht</code>
+      <em>Wachttijd voor een niet-vol bericht</em>.</p>
 
     <h3>De bevestiging van de server (T1F)</h3>
     <p>Heeft de tracker punten verstuurd waarvan hij geen herhaling hoorde, dan vraagt hij in zijn volgende inhaalbericht om
@@ -523,7 +539,7 @@
         pakket via een repeater); <code>-</code> = nog nooit sinds de start</td></tr>
       <tr><td><code>fifo_geparkeerd</code></td><td>geparkeerde punten (na <code>fifo_pogingen</code> mislukte pogingen)</td></tr>
       <tr><td><code>fifo_bevestigd</code></td><td>punten die de server sinds de start bevestigde (T1F)</td></tr>
-      <tr><td><code>fifo_wacht</code></td><td>de ingestelde wachttijd, bv. <code>30m</code> of <code>uit</code></td></tr>
+      <tr><td><code>fifo_wacht</code></td><td>de wachttijd voor een niet-vol bericht, bv. <code>30m</code> of <code>uit</code></td></tr>
       <tr><td><code>fifo_per_bericht</code></td><td>hoeveel punten er met de naam van deze tracker in één inhaalbericht
         passen</td></tr>
     </table>
@@ -537,7 +553,8 @@
 
     <h2 id="trackerlive">Tracker live: in de tracker kijken</h2>
     <p>Onder <em>Apps</em> → <a href="/tracker">Tracker live</a> staat een aparte app die toont wat er op dat moment in één
-      tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij, wat hij verstuurde en wat hij hoorde, met
+      tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij (ook of er een vol inhaalbericht klaarstaat en wanneer een
+      niet-vol bericht weer mag), wat hij verstuurde en wat hij hoorde, met
       een tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
     <ul>
       <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
@@ -755,8 +772,10 @@
       <li><strong>De FIFO-wachtrij loopt niet leeg</strong>: typ <code>fifo</code> in de terminal.
         <ul>
           <li>Staat <code>track_mode=classic</code>, dan wordt er niets ingehaald; zet <code>set track_mode fifo</code>.</li>
-          <li>Wachten er minder dan <code>fifo_min</code> punten, dan begint de tracker pas als het oudste punt ouder is
-            dan <code>fifo_wacht</code> (of nooit, als die op <code>uit</code> staat).</li>
+          <li>Wachten er minder punten dan in één bericht passen (<code>fifo_per_bericht</code>), dan is het een niet-vol
+            bericht: dat gaat hooguit één keer per <code>fifo_wacht</code>, alleen bij sterke dekking en alleen als de radio
+            toch wakker is (nooit als <code>fifo_wacht</code> op <code>uit</code> staat). <code>fifo</code> toont wanneer
+            het weer mag.</li>
           <li>Hij begint pas bij <em>stabiele</em> dekking. Toont <code>fifo_dekking</code> een groot getal of
             <code>-</code>, dan hoort hij geen repeater. Hoort hij er wel een, maar zwak, verlaag dan <code>fifo_snr</code>
             (bv. naar −10) of breng hem dichter bij een repeater.</li>

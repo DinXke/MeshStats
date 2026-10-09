@@ -149,6 +149,9 @@
                   hun bericht herhaald werd. Hoort hij dat niet, dan telt dat als een mislukte poging voor die punten: hij
                   stopt, wacht opnieuw op dekking en wacht telkens wat langer voor hij het nog eens probeert (1, 5, 15
                   en daarna 60 min).</li>
+                <li>Een vol inhaalbericht heeft minstens zoveel punten als er in één bericht passen. Wat te weinig is voor een
+                  vol bericht, gaat hooguit 1× per <em>Niet-vol inhaalbericht hooguit 1× per</em> mee in een niet-vol bericht, alleen bij
+                  sterke dekking en als de radio toch wakker is. In rust luistert de tracker alleen als er een vol bericht klaarstaat.</li>
                 <li>Punten die al hun pogingen op hebben, worden <em>geparkeerd</em>: ze wachten tot al de rest verstuurd
                   is, krijgen dan nog één laatste kans en worden daarna opgegeven. Waarschijnlijk kwamen ze toch aan
                   (alleen de herhaling werd niet gehoord); de server filtert dubbele punten weg. Zo houdt één koppig
@@ -185,13 +188,18 @@
                   voegt niets toe aan de vorm van het spoor en gaat er niet in. Punten rond een stilstand van meer dan 10 min blijven.</div></div>
               <div><label>Leegmaken pas vanaf</label><div class="unit"><input data-set="fifo_snr" type="number" min="-20" max="10"><span>dB SNR</span></div>
                 <div class="help">−20 tot +10. Leegmaken begint pas bij stabiele dekking: een herhaling met minstens deze
-                  signaal-ruisverhouding, of twee tekens van dekking binnen 60 s, of een bevestiging van de server.</div></div>
-              <div><label>Toch versturen na</label><div class="dur" data-set="fifo_wacht" data-off="1" data-offword="uit"></div>
-                <div class="help">1 min tot 4 u. Staan er minder punten dan bij <em>Inhalen vanaf</em>, maar wacht het oudste punt al
-                  zo lang en is de dekking stabiel, dan stuurt hij ze toch, zolang hij beweegt (binnen de limiet per uur). Komt hij in
-                  rust met punten in de wachtrij, dan luistert hij meteen 60 s naar het net en maakt hij bij stabiele dekking de
-                  wachtrij leeg, ook onder <em>Inhalen vanaf</em>. Hoort hij niets, dan luistert hij opnieuw na 10, 20 en 40 min en
-                  daarna elk uur.</div></div>
+                  signaal-ruisverhouding, of twee tekens van dekking binnen 60 s, of een bevestiging van de server. Voor een
+                  niet-vol bericht tellen alleen een herhaling met minstens deze SNR of een bevestiging van de server.</div></div>
+              <div><label for="s-wacht">Niet-vol inhaalbericht hooguit 1× per</label>
+                <div class="wachtsel" data-set="fifo_wacht" data-kind="wacht">
+                  <select id="s-wacht"><option value="15m">15 min</option><option value="30m">30 min (standaard)</option>
+                    <option value="60m">60 min</option><option value="uit">nooit</option><option value="anders">anders…</option></select>
+                  <div class="dur" hidden></div>
+                </div>
+                <div class="help">Een vol bericht heeft minstens zoveel punten als er in één bericht passen. Wat overblijft, gaat in
+                  een niet-vol bericht: hooguit 1× per deze tijd (geslaagd of niet), alleen bij sterke dekking (SNR boven de grens
+                  of een bevestiging van de server) en alleen als de radio toch al wakker is. Daarvoor wekt de tracker zijn radio
+                  nooit. <em>Anders…</em>: 1 min tot 4 u.</div></div>
             </div>
             <div class="slowtip"><strong>Let op de mesh:</strong> elk inhaalbericht wordt door meerdere repeaters herhaald.
               Hou de tijd tussen de berichten ruim (30 s of meer) en het aantal per uur beperkt (hoogstens 30).

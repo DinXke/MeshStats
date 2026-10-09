@@ -621,3 +621,7 @@ header.top nav .navapps-l { font-size: 11px; text-transform: uppercase; letter-s
   border-radius: 999px; background: color-mix(in srgb, var(--panel) 85%, transparent); color: var(--muted); border: 1px solid var(--line); }
 /* gsm: het onderpaneel ligt over de onderkant van de kaart */
 @media (max-width: 720px) { .mapsrc { top: 8px; bottom: auto; } }
+.wachtsel { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.wachtsel > select { width: auto; flex: 1 1 160px; }
+.wachtsel > .dur { flex: 1 1 100%; }
+.wachtsel > .dur[hidden] { display: none; }
