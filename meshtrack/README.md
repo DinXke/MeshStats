@@ -17,10 +17,13 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
     ongeluk in een zak of houder; uitschakelen door lang vasthouden blijft.
   - Verzenden alleen via één **trackingkanaal** (`chan`), met de naam van de tracker als afzender en een handtekening
-    met de authsleutel (`authkey`). Sinds 0.7.0 geen DM, geen doel (server-pubkey), geen ACK-herhalingen en geen ritme
-    volgens de ontvangst meer: een kanaalbericht krijgt geen bevestiging.
-  - Bewegingsregels (snelheid, afstand, bochten, ritme), stilstand en heartbeat, wakker worden via de
-    bewegingssensor, radio en led uit in trackermodus. Zelfde regels als `server/meshtrack/rules.py` (simulator).
+    met de authsleutel (`authkey`). Sinds 0.7.0 stuurt de tracker zijn posities nooit meer als DM (privébericht) naar de
+    server: geen doel (server-pubkey), geen ACK-herhalingen, geen ritme volgens de ontvangst en geen trackergroepen meer.
+    Een kanaalbericht krijgt geen bevestiging; alleen op SOS (`T1A`) en FIFO-punten (`T1F`) antwoordt de server op het
+    kanaal. DM's bestaan nog wel voor de meldingen van de server aan personen en als privéberichten in companionmodus
+    (`msg_beep`).
+  - Bewegingsregels (snelheid, afstand, bochten, minimum- en maximuminterval), stilstand en heartbeat, wakker worden via de
+    bewegingssensor, radio en led uit in trackermodus. Zelfde bewegingsregels als `server/meshtrack/rules.py` (simulator).
   - In beweging elke `sample` seconden een punt bewaren; elk bericht neemt zoveel punten mee als erin passen.
   - In companionmodus komt een kopie van elke eigen positie in de berichtenwachtrij, zodat een app via Bluetooth ook
     de eigen posities ziet (een companion hoort zijn eigen kanaalberichten anders niet).
@@ -94,7 +97,14 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     (`rx kanaalpakket hash xx, N hops, N bytes`) en elk ontcijferd kanaalbericht (`rx kanaalbericht op kanaal N: …`),
     tot een herstart. Handig als een SOS-bevestiging (`T1A`) niet aankomt. De tracker bewaart geen log: de regels
     verschijnen alleen live en alleen met het menu dicht (`q`). Er is geen commando `log`.
-- **server/**: FastAPI + meshcore-py (versie 1.2.0).
+  - `dump` (0.9.1): de interne toestand machineleesbaar (`mtdump 1` …), voor de webapp `/tracker` (*Tracker live*).
+    Via Bluetooth (companionmodus) aanvaardt de tracker alleen `status`, `fifo` en `dump`: alleen lezen.
+- **server/**: FastAPI + meshcore-py (versie 1.3.0).
+  - 1.3.0: statistiek-API `/api/stats/*` (samenvatting, tijdreeks, verdelingen, FIFO-inhaalwerk, tellers, repeaters;
+    zie `docs/api-stats.md`). Nieuwe tabellen `stats_events` (dubbele punten/berichten, ongeldig, onbekend, verstuurde
+    `T1A`/`T1F`, DM's van oude firmware) en `message_paths` (pad van elke gehoorde kopie van een trackerbericht, uit de
+    rauwe pakketten van de companion en uit de pakketdatabase van openHop, alleen lezen). Kolom `positions.extra` en
+    een dekkende index voor de statistieken; de migratie is automatisch en verliest niets.
   - 1.2.0: status `Q` (ingehaalde FIFO-punten, verwerkt zoals `L`), binaire extra punten (`B` + base64url) op `L` en
     `Q`, FIFO-bevestiging `T1F` en de trackervelden `last_fifo_rx`/`last_fifo_ts` (zie *Berichtprotocol*). Volledig
     achterwaarts compatibel: getest met echte berichten van firmware 0.6 tot 0.8.
@@ -112,14 +122,17 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     (`meshcore://channel/add`) om het kanaal op een eigen companion te zetten.
   - Gebruikers, groepen, deellinks (kanalen of losse trackers, nooit meer dan de maker ziet), auditlog, logboek met
     filters, GPX/CSV-export.
-  - Zones (gedeeld of persoonlijk) en meldingsregels (per kanaal of tracker) die DM's via de mesh naar personen
-    sturen, met een wachtrij. Dat zijn de enige DM's die de server nog gebruikt.
+  - Zones (gedeeld of persoonlijk) en meldingsregels (per kanaal of tracker) die meldingen als DM (privébericht) via de
+    mesh naar personen sturen (bv. de gsm van de wachtdienst), met een wachtrij. Dat zijn de enige DM's die de server
+    nog verstuurt; trackers sturen nooit DM's naar de server.
   - Simulator: virtuele trackers rijden 24/7 over echte wegen (offline routering over de wegenlaag van de
     kaarttegels), met een historiek in versnelde tijd. Profielen auto, fiets, voet en reiziger; ook zij krijgen een kanaal.
   - Pagina's: Kaart, Logboek, Kanalen, Trackers (lijst met zoeken, filters en kanaal, genegeerde berichten; formulieren
     in een zijpaneel), Toestellen (alles via USB: naam, trackingkanaal, instellingen met voorinstellingen en de groep
     Trackmodus met een live berekening, firmware, klaarmaken en back-ups, terminal, en het tabblad Simulatie: een
-    versnelde animatie van classic tegenover fifo met de instellingen van de tracker), Gebruikers, Systeem (meldingen, kanalen, instellingen, companion-QR), Offline, Help.
+    versnelde animatie van classic tegenover fifo met de instellingen van de tracker), Gebruikers, Systeem (meldingen, kanalen, instellingen, companion-QR), Help, en onder *Apps*
+    de Offline-kaart (`/offline`) en Tracker live (`/tracker`: PWA die via USB of Bluetooth `status`, `fifo` en `dump` van
+    één tracker leest en zijn buffers, wachtrij, tijdlijn en kaart live toont).
   - Firmware flashen in de browser (Web Serial-DFU, `static/dfu.js`): eerst een back-up, alleen de app, daarna
     controle van de pubkey.
   - Nieuw toestel klaarmaken: de server maakt het sleutelpaar en zet sleutel, naam, radio, regio en kanalen via USB op

@@ -15,15 +15,44 @@
   const status = await MT.api("/api/status");
   MT.meshPill($("mesh"), status.mesh);
 
+  // Basiskaart: kaarten die de offline-app op dit toestel bewaarde (OPFS) bovenaan, de kaart van
+  // de server eronder voor de rest. Geen kaarten op het toestel (of geen OPFS): alleen de server.
+  const devMaps = await MTBasemap.deviceMaps();
+  const baseStyle = () => {
+    if (devMaps.length) {
+      try { return MTBasemap.deviceStyle(dark.matches, devMaps, status.tiles); } catch (_) { /* terug naar de server */ }
+    }
+    return MTBasemap.style(dark.matches, status.tiles);
+  };
   const map = new maplibregl.Map({
     container: "map",
-    style: MTBasemap.style(dark.matches, status.tiles),
+    style: baseStyle(),
     center: status.map.center,
     zoom: status.map.zoom,
     attributionControl: { compact: true },
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
+  if (devMaps.length || status.tiles) {          // waar komt de achtergrond vandaan?
+    const src = document.createElement("div");
+    src.id = "mapsrc";
+    src.className = "mapsrc";
+    map.getContainer().appendChild(src);
+    // Wat staat er nu in beeld: een kaart van het toestel (gebied en zoom), anders die van de server.
+    const showSrc = () => {
+      // (zonder serverkaart komt alles wat er te zien is van het toestel)
+      const dev = devMaps.length > 0 && (!status.tiles || MTBasemap.deviceCovers(devMaps, map.getCenter(), map.getZoom(), true));
+      src.textContent = dev ? "Kaart: op dit toestel" : "Kaart: server";
+      src.title = dev
+        ? "Deze kaart komt uit de offline-app op dit toestel."
+        : devMaps.length
+          ? "Hier (of op deze zoom) heeft dit toestel geen kaart: de kaart komt van de server."
+          : "De kaart komt van de server. Download je een kaart in de offline-app, dan laadt deze pagina die van dit toestel.";
+    };
+    showSrc();
+    map.on("moveend", showSrc);
+  }
+  window.MTApp = { map: () => map };     // testhaak (alleen lezen)
 
   const trackers = new Map();   // id -> tracker
   const tracks = new Map();     // id -> [{lon,lat,spd,ts,state,bat}]
@@ -751,7 +780,7 @@
     }
   });
   map.on("style.load", () => { addLayers(); refreshLayers(); });
-  const restyle = () => map.setStyle(MTBasemap.style(dark.matches, status.tiles));
+  const restyle = () => map.setStyle(baseStyle());
   document.addEventListener("mt-theme", restyle);
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (MT.theme() === "auto") restyle(); });
   async function reloadTracks() { await Promise.all([...trackers.keys()].map(loadTrack)); refreshLayers(); renderList(); }

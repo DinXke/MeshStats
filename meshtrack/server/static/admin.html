@@ -85,7 +85,7 @@
   <div data-fp="dev" hidden id="f-real">
     <label class="switch block" id="f-genrow" hidden><input type="checkbox" id="f-genkey"><span></span> Nieuw toestel: de server maakt de sleutel en de instellingen</label>
     <div class="help" id="f-genhelp">Na het opslaan zet je alles in één keer op het toestel via <em>Toestellen</em> (sleutel, naam,
-      radio, regio, 2-byte paden en het doel).</div>
+      radio, regio en 2-byte paden); het trackingkanaal kies je daarna in <em>Toestellen</em> → <em>Instellingen</em>.</div>
     <div id="f-pubrow">
       <label for="f-pubkey">Public key (pubkey) van de tracker</label>
       <input id="f-pubkey" class="mono" maxlength="64" placeholder="64 hex-tekens" autocomplete="off" spellcheck="false">
@@ -104,7 +104,7 @@
         <button type="button" id="f-authnew">Nieuwe sleutel</button>
       </div>
       <div class="help">Ondertekent de kanaalberichten van deze tracker. Via <a href="/devices">Toestellen</a> zet de pagina hem zelf;
-        met een terminal: <code>set authkey</code> gevolgd door de sleutel (spaties mogen), of in het menu onder <em>6 GPS en verzending</em>.</div>
+        met een terminal: <code>set authkey</code> gevolgd door de sleutel (spaties mogen), of in het menu onder <em>7 GPS en verzending</em>.</div>
     </div>
     <fieldset id="f-keys" hidden>
       <legend>Sleutel en back-ups op de server</legend>
@@ -154,12 +154,6 @@
         <div><label>Nooit vaker dan 1× per</label><div class="unit"><input data-sp="min_interval_s" type="number" min="10" value="60"><span>s</span></div></div>
         <div><label>In beweging minstens 1× per</label><div class="unit"><input data-sp="max_interval_s" type="number" min="0" value="600"><span>s</span></div></div>
         <div><label>Punt bewaren elke (0 = uit)</label><div class="unit"><input data-sp="sample_s" type="number" min="0" value="15"><span>s</span></div></div>
-        <div><label class="switch block"><input type="checkbox" data-sp="adaptive" data-kind="bool" checked><span></span> Ritme volgens de ontvangst</label></div>
-        <div><label>Goede ontvangst: elke (0 = uit)</label><div class="unit"><input data-sp="fast_interval_s" type="number" min="0" value="30"><span>s</span></div></div>
-        <div><label>Goede ontvangst = ACK binnen</label><div class="unit"><input data-sp="fast_ack_s" type="number" min="0" value="10"><span>s</span></div></div>
-        <div><label>Snel blijven tot zoveel missers</label><input data-sp="fast_keep" type="number" min="0" max="10" value="2"></div>
-        <div><label>Trager na zoveel missers</label><input data-sp="slow_after" type="number" min="0" max="20" value="3"></div>
-        <div><label>Trager: intervallen maal</label><input data-sp="slow_factor" type="number" min="1" max="10" value="3"></div>
         <div><label>Stilstand na</label><div class="unit"><input data-sp="still_timeout_s" type="number" min="30" value="300"><span>s</span></div></div>
         <div><label>Teken van leven (heartbeat) in rust</label><div class="unit"><input data-sp="heartbeat_s" type="number" min="0" value="43200"><span>s</span></div></div>
         <div><label>Pakketverlies</label><div class="unit"><input id="f-loss" type="number" min="0" max="90" value="5"><span>%</span></div></div>

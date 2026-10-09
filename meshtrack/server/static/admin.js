@@ -238,7 +238,7 @@
         form.querySelectorAll("[data-sp]").forEach((el) => {
           const v = s.params[el.dataset.sp];
           if (v == null) return;
-          if (el.dataset.kind === "bool") el.checked = !!Number(v); else el.value = v;
+          el.value = v;
         });
         $("f-histrow").hidden = false;
         fillDrive(s.drive);
@@ -305,7 +305,7 @@
 
   function simBody() {
     const params = {};
-    form.querySelectorAll("[data-sp]").forEach((el) => { params[el.dataset.sp] = el.dataset.kind === "bool" ? (el.checked ? 1 : 0) : Number(el.value); });
+    form.querySelectorAll("[data-sp]").forEach((el) => { params[el.dataset.sp] = Number(el.value); });
     const sel = $("f-town");
     let lat, lon;
     if (sel.value === "custom") { lat = Number(sel.dataset.lat); lon = Number(sel.dataset.lon); }

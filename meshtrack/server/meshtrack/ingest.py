@@ -27,30 +27,37 @@ def pick_ts(sender_ts: Optional[int], rx_ts: int, fix_age: Optional[int], fix_ts
 
 def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Optional[int] = None,
            snr: Optional[float] = None, path_len: Optional[int] = None,
-           now: Optional[int] = None) -> Optional[dict[str, Any]]:
+           now: Optional[int] = None, channel_id: Optional[int] = None) -> Optional[dict[str, Any]]:
     """Verwerk één DM. Geeft de opgeslagen positie (voor de live kaart) terug,
     of None als het bericht genegeerd werd (onbekend, ongeldig, dubbel).
     Bij SlowTrack (L) en FIFO (Q) zegt "stored" of het hoofdpunt zelf nieuw was (anders stond die
-    fix-tijd al in het spoor en zijn enkel de nieuwe "extras" opgeslagen)."""
+    fix-tijd al in het spoor en zijn enkel de nieuwe "extras" opgeslagen).
+    Statistiek (stats_events): unknown, invalid, dup_msg en dup_points worden hier geteld, ook
+    als het bericht daardoor None oplevert; "dup_points" staat ook in het resultaat."""
     rx = int(now if now is not None else time.time())
     tracker = db.tracker_by_prefix(pubkey_prefix)
     if tracker is None:
         if is_meshtrack(text):
             db.log_unknown(pubkey_prefix, "onbekende tracker", text)
+            db.stat("unknown", None, channel_id, ts=rx)
         return None
     try:
         r = parse(text)
     except UnknownVersion as e:
         db.log_unknown(pubkey_prefix, str(e), text)
+        db.stat("invalid", tracker["id"], channel_id, ts=rx)
         return None
     except ProtocolError as e:
         if is_meshtrack(text):
             db.log_unknown(pubkey_prefix, f"ongeldig: {e}", text)
+            db.stat("invalid", tracker["id"], channel_id, ts=rx)
         return None
 
     slow = r.state in HISTORY_STATES          # L (SlowTrack) of Q (FIFO): punten uit het verleden
     if db.is_duplicate(tracker["id"], r.seq, rx - cfg.dedup_window_s, r.state):
+        db.stat("dup_msg", tracker["id"], channel_id, ts=rx)
         return None
+    dup = 0                                   # punten overgeslagen omdat hun fix-tijd al bestond
 
     p = {
         "ts": pick_ts(sender_ts, rx, r.fix_age_s, r.fix_ts) if r.has_fix else rx,
@@ -69,6 +76,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
         for dt, lat, lon, spd in sorted(r.extra, key=lambda e: -e[0]):
             ts = p["ts"] - dt
             if db.position_at(tracker["id"], ts):
+                dup += 1
                 continue
             ep = {"ts": ts, "rx_ts": rx, "seq": r.seq, "state": r.state if slow else "M", "lat": lat, "lon": lon, "alt": None,
                   "spd": spd, "crs": None, "bat": None, "hdop": None, "fix_age": None, "mode": None, "power": None,
@@ -78,14 +86,17 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
             extras.append({"tracker_id": tracker["id"], **ep})
     if slow:
         stored = not db.position_at(tracker["id"], p["ts"])
+        dup += not stored
+        db.stat("dup_points", tracker["id"], channel_id, n=dup, ts=rx)
         if stored:
             db.add_position(tracker["id"], p)
         elif not extras:                       # alles al bekend: enkel "gehoord" noteren
             db.touch_slow(tracker["id"], rx, r.state)
             return None
-        return {"tracker_id": tracker["id"], **p, "stored": stored, "extras": extras}
+        return {"tracker_id": tracker["id"], **p, "stored": stored, "extras": extras, "dup_points": dup}
+    db.stat("dup_points", tracker["id"], channel_id, n=dup, ts=rx)
     db.add_position(tracker["id"], p)
-    return {"tracker_id": tracker["id"], **p, "extras": extras}
+    return {"tracker_id": tracker["id"], **p, "extras": extras, "dup_points": dup}
 
 
 def _in_bbox(lat: float, lon: float, bbox) -> bool:

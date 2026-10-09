@@ -606,3 +606,18 @@ header.top nav .navapps-l { font-size: 11px; text-transform: uppercase; letter-s
   header.top.navopen nav .navapps-l { padding: 4px 4px 0; }
   header.top.navopen nav .navapps a:last-child { border-bottom: 0; }
 }
+
+/* ---- de site als app (PWA): nieuwe versie, installeren, iPhone-uitleg, kaartbron ---- */
+.swupdate:not([hidden]) { position: fixed; left: 50%; transform: translateX(-50%); bottom: max(18px, env(safe-area-inset-bottom)); z-index: 60;
+  max-width: calc(100% - 32px); border-radius: 999px; padding: 10px 18px; background: var(--accent); color: var(--accent-text);
+  border: 0; box-shadow: var(--shadow); font-weight: 600; }
+.hdrinstall { padding: 4px 9px; font-size: 13px; }
+.pwahint { position: fixed; left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); z-index: 59; display: flex; gap: 10px;
+  align-items: flex-start; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+  border-radius: 10px; box-shadow: var(--shadow); padding: 10px 12px; font-size: 14px; line-height: 1.45; max-width: 480px; margin: 0 auto; }
+.pwahint span { flex: 1; }
+.pwahint button { flex: none; padding: 2px 8px; }
+.mapsrc { position: absolute; left: 8px; bottom: 8px; z-index: 3; pointer-events: none; font-size: 12px; padding: 2px 8px;
+  border-radius: 999px; background: color-mix(in srgb, var(--panel) 85%, transparent); color: var(--muted); border: 1px solid var(--line); }
+/* gsm: het onderpaneel ligt over de onderkant van de kaart */
+@media (max-width: 720px) { .mapsrc { top: 8px; bottom: auto; } }
