@@ -35,6 +35,39 @@
   }
   const durSec = (d) => Math.max(0, Number(d.querySelector("input").value) || 0) * UNITS.find((u) => u[0] === d.querySelector("select").value)[1];
 
+  // ---- fifo_wacht (0.9.3): keuzelijst 15/30/60 min, nooit (= uit) of anders… (duur 1 min tot 4 u) ----
+  const WACHT_FIXED = { 900: "15m", 1800: "30m", 3600: "60m" };
+  const parseSec = (v) => {
+    if (v == null || v === "" || v === "uit" || v === "0") return 0;
+    const m = /^(\d+)([smh]?)$/.exec(String(v).trim());
+    return m ? Number(m[1]) * ({ s: 1, m: 60, h: 3600 }[m[2] || "s"]) : 0;
+  };
+  const wachtParts = (el) => [el.querySelector(":scope > select"), el.querySelector(":scope > .dur")];
+  function wachtSet(el, v) {
+    const [sel, d] = wachtParts(el), s = parseSec(v);
+    if (!s) sel.value = "uit";
+    else if (WACHT_FIXED[s]) sel.value = WACHT_FIXED[s];
+    else { sel.value = "anders"; durSet(d, s % 3600 === 0 ? `${s / 3600}h` : s % 60 === 0 ? `${s / 60}m` : `${s}s`); }
+    d.hidden = sel.value !== "anders";
+  }
+  function wachtGet(el) {
+    const [sel, d] = wachtParts(el);
+    if (sel.value !== "anders") return sel.value;
+    const v = durGet(d);
+    return v === "0" ? "uit" : v;
+  }
+  function wachtSec(el) {
+    const [sel, d] = wachtParts(el);
+    return sel.value === "anders" ? durSec(d) : parseSec(sel.value);
+  }
+  document.querySelectorAll('#s-form [data-kind="wacht"]').forEach((el) => {
+    const [sel, d] = wachtParts(el);
+    sel.addEventListener("change", () => {
+      d.hidden = sel.value !== "anders";
+      if (sel.value === "anders" && !d.querySelector("input").value) durSet(d, "45m");
+    });
+  });
+
   // ---- SlowTrack: hoeveel gelogde punten in één bericht (firmware dunt uit tot zo'n 8; 6 à 11 naargelang de afstanden) ----
   const SLOW_MAX = 8;
   function slowCalc() {
@@ -120,16 +153,17 @@
     ];
     lines.push([`≈ ${FIFO_PER_MSG} punten per bericht met de naam "${naam}" (${nb} bytes); een kortere naam zonder emoji laat meer punten toe.`]);
     if (warn) lines.push(["Opgelet: elk bericht wordt door meerdere repeaters herhaald; dit belast de mesh fel.", "warn"]);
+    lines.push([`Een vol bericht = minstens ${FIFO_PER_MSG} punten; volle berichten gaan bij stabiele dekking, elke ${gapTxt}, binnen de limieten per uur.`]);
     if (has("fifo_wacht")) {
-      const w = durSec(fset("fifo_wacht")), wt = w % 3600 === 0 ? `${w / 3600} u` : w % 60 === 0 ? `${w / 60} min` : `${w} s`;
-      lines.push([w ? `In beweging en minder dan ${fset("fifo_min").value || "?"} punten? Is het oudste punt ouder dan ${wt} en is de dekking stabiel, dan stuurt hij toch; `
-        + "zonder recente dekking luistert hij daarvoor hoogstens 1× per 10 min 60 s naar het net."
-        : "Toch versturen staat uit: in beweging wacht hij tot er genoeg punten zijn."]);
-      lines.push(["In rust met punten in de wachtrij luistert hij meteen 60 s; bij stabiele dekking maakt hij de wachtrij leeg, ook onder het minimum. "
-        + "Zonder dekking luistert hij opnieuw na 10, 20 en 40 min en daarna elk uur. SlowTrack logt alleen zolang hij beweegt."]);
+      const w = wachtSec(fset("fifo_wacht")), wt = w % 3600 === 0 ? `${w / 3600} u` : w % 60 === 0 ? `${w / 60} min` : `${w} s`;
+      lines.push([w ? `Een niet-vol bericht hooguit 1× per ${wt}, geslaagd of niet, alleen bij sterke dekking en als de radio toch wakker is `
+        + "(na een eigen bericht, in companionmodus of tijdens een ronde volle berichten). Daarvoor wekt de tracker zijn radio nooit."
+        : "Niet-volle berichten staan uit (nooit): wat te weinig is voor een vol bericht, wacht tot er genoeg punten zijn."]);
+      lines.push(["In rust luistert hij alleen 60 s als er een vol bericht klaarstaat; zonder dekking opnieuw na 10, 20 en 40 min en daarna elk uur. "
+        + "SlowTrack logt alleen zolang hij beweegt."]);
     }
     if (dun != null) lines.push([dun ? `Rechte stukken: punten die minder dan ${dun} m naast de lijn tussen hun buren liggen, gaan er niet in.` : "Rechte stukken worden niet uitgedund."]);
-    if (snr != null) lines.push([`Leegmaken begint pas bij stabiele dekking: een herhaling met SNR ≥ ${snr} dB, twee tekens van dekking binnen 60 s, of een bevestiging van de server.`]);
+    if (snr != null) lines.push([`Leegmaken begint pas bij stabiele dekking: een herhaling met SNR ≥ ${snr} dB, twee tekens van dekking binnen 60 s, of een bevestiging van de server. Een niet-vol bericht vraagt een herhaling met SNR ≥ ${snr} dB of een bevestiging van de server.`]);
     if (pog) lines.push([`Een inhaalbericht dat niet gehoord wordt, krijgt tot ${pog} ${pog === 1 ? "poging" : "pogingen"} (telkens langer wachten: 1, 5, 15, daarna 60 min); daarna worden zijn punten geparkeerd en krijgen ze pas als al de rest verstuurd is nog één laatste kans.`]);
     for (const [t, cls] of lines) {
       const d = document.createElement("div");
@@ -266,6 +300,7 @@
       el.disabled = false;
       const v = kv[kk];
       if (el.classList.contains("dur")) durSet(el, v);
+      else if (el.dataset.kind === "wacht") wachtSet(el, v);
       else if (el.dataset.kind === "bool") el.checked = v === "aan" || v === "on";
       else if (["min_speed", "min_dist", "turn_min", "turn_min_speed"].includes(k)) el.value = num(v);
       else if (k === "fast_min_batt") el.value = v === "uit" ? 0 : v.replace(/%$/, "");
@@ -490,6 +525,7 @@
       if (!((el.dataset.kv || k) in lastKv)) return;   // oudere firmware kent deze instelling niet
       let v;
       if (el.classList.contains("dur")) { v = durGet(el); if (v === "0" && el.dataset.offword) v = el.dataset.offword; }   // bv. fifo_wacht uit
+      else if (el.dataset.kind === "wacht") v = wachtGet(el);
       else if (el.dataset.kind === "bool") v = el.checked ? (el.dataset.yes || "on") : (el.dataset.no || "off");
       else v = el.value.trim();
       if (el.dataset.spaces && v === (lastKv[el.dataset.kv || k] || "")) return;   // naam ongewijzigd

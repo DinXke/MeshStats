@@ -118,7 +118,7 @@
       capNoted: false, ackDue: null, ackUpTo: 0, lastAck: -1e9, acked: 0, gaveUp: 0, thinned: 0, evicted: 0, toFifo: 0,
       log: [], fx: [], ver: 0, done: false, snr: null, stable: false,
       perQ: sc.perQ, lastListen: -1e9, listenUntil: -1, listenHeard: 0, listens: 0, waitSends: 0,
-      lastMotion: 0, rest: false, restListenAt: Infinity, restStep: 0, restSends: 0, nextSlow: cfg.slow_log };
+      lastMotion: 0, lastOwnSend: -1e9, lastSuccess: -1e9, lastPartial: -1e9, partials: 0, partialCat: "", partialLogged: "", partialLogT: -1e9, rest: false, restListenAt: Infinity, restStep: 0, restSends: 0, nextSlow: cfg.slow_log };
     const PER = { ft: PER_FT, slow: PER_L, fifo: S.perQ };
     const v = sc.speed / 3.6;
     // beweging: stil tussen st0 en st1 (fracties van de tijd); afgelegde weg per seconde
@@ -217,6 +217,7 @@
       const m = { kind, no: S.no[kind], t, ok, srvGot, res: ok ? t + 2 + Math.floor(hashRnd(t, 9) * 3) : t + HEAR_S, pts, ...extra };
       S.air += pts.length >= PER[kind] ? AIR_FULL : AIR_NORMAL;
       S.pend.push(m);
+      if (kind !== "fifo") S.lastOwnSend = t;
       S.fx.push({ type: "send", kind });
       return m;
     }
@@ -233,7 +234,7 @@
       const n = m.pts.length;
       if (m.ok) {
         S.ok[m.kind]++;
-        if (m.kind === "fifo" && !m.counted) { m.counted = true; S.countTimes.push(m.t); }   // doorgegeven: telt voor fifo_per_uur
+        if (m.kind === "fifo" && !m.counted) { m.counted = true; S.countTimes.push(m.t); S.lastSuccess = t; }   // doorgegeven: telt voor fifo_per_uur
         const snr = snrAt(m.t);
         signal(t, snr, "rep");
         S.fx.push({ type: "ok", kind: m.kind });
@@ -314,7 +315,7 @@
       S.acked += k;
       // aangekomen maar niet gehoorde Q-berichten tellen alsnog mee, op hun verzendtijd (als dat binnen het uur valt)
       let late = 0;
-      for (const m of S.qMsgs) if (!m.counted && m.srvGot && m.t > t - 3600 && m.pts.every((p) => p.t <= upTo)) { m.counted = true; S.countTimes.push(m.t); late++; }
+      for (const m of S.qMsgs) if (!m.counted && m.srvGot && m.t > t - 3600 && m.pts.every((p) => p.t <= upTo)) { m.counted = true; S.countTimes.push(m.t); late++; S.lastSuccess = t; }
       S.fx.push({ type: "ack" });
       say(t, `Server stuurt T1F "ontvangen tot ${clock(upTo).slice(0, 5)}" → ` + (k ? `${pl(k)} uit de wachtrij (wel aangekomen, herhaling niet gehoord)`
         : "niets meer te schrappen: die punten waren intussen al via een gehoorde herhaling weg")
@@ -380,27 +381,25 @@
         send(t, "slow", pts);
         if (drop.length) say(t, `SlowTrack: ${drop.length + pts.length} gelogde punten, uitgedund tot ${pts.length} in één L-bericht`, "");
       }
-      // FIFO leegmaken
+      // FIFO leegmaken: volle berichten (≥ perQ punten) en hooguit af en toe een niet-vol bericht
       if (S.mode === "fifo") {
         S.flushTimes = S.flushTimes.filter((x) => x > t - 3600);
         S.countTimes = S.countTimes.filter((x) => x > t - 3600);
         S.qMsgs = S.qMsgs.filter((m) => m.t > t - 3600);
+        // punten die nu aan de beurt zijn: eerst de gewone (oudste eerst), geparkeerde pas als al de rest weg is
+        const normal = S.queue.filter((p) => !p.park && !p.inQ);
+        const due = normal.length ? normal : S.queue.filter((p) => p.park && !p.final && !p.inQ);
+        const fullReady = due.length >= S.perQ && qlen() >= cfg.fifo_min;
         const listen = (why) => {
           S.lastListen = t; S.listenUntil = t + LISTEN_S; S.listenHeard = 0; S.listens++;
           say(t, `Luistervenster van ${LISTEN_S} s: ${why}`, "");
           S.fx.push({ type: "listen" });
         };
-        if (rest) {
-          // in rust met punten: meteen luisteren; zonder dekking opnieuw na 10, 20, 40 en daarna elke 60 min
-          if (qlen() && !S.flushing && t >= S.restListenAt && t >= S.listenUntil) {
-            listen(S.restListens++ ? "in rust met punten in de wachtrij, opnieuw" : "net in rust met punten in de wachtrij");
-            S.restListenAt = t + LISTEN_S + REST_BACKOFF[Math.min(S.restStep, REST_BACKOFF.length - 1)];
-            S.restStep++;
-          }
-        } else if (cfg.fifo_wacht > 0 && qlen() && !S.flushing && t - S.queue[0].t >= cfg.fifo_wacht
-            && !S.signals.some((x) => x.t > t - LISTEN_EVERY) && t - S.lastListen >= LISTEN_EVERY) {
-          // in beweging: punten ouder dan fifo_wacht en geen recente dekking: hoogstens 1× per 10 min 60 s luisteren
-          listen(`punten ouder dan ${fmtDur(cfg.fifo_wacht)} en geen recente dekking`);
+        // in rust: alleen luisteren als er een vol bericht klaarstaat; zonder dekking opnieuw na 10, 20, 40 en daarna elke 60 min
+        if (rest && fullReady && !S.flushing && t >= S.restListenAt && t >= S.listenUntil) {
+          listen(S.restListens++ ? "in rust, een vol bericht staat klaar, opnieuw" : "net in rust en er staat een vol bericht klaar");
+          S.restListenAt = t + LISTEN_S + REST_BACKOFF[Math.min(S.restStep, REST_BACKOFF.length - 1)];
+          S.restStep++;
         }
         if (t < S.listenUntil && covered(t) && hashRnd(t, 13) < 0.05) {
           const sn = snrAt(t);
@@ -412,23 +411,38 @@
         if (t === S.listenUntil && !S.listenHeard) say(t, `Luistervenster voorbij: niets gehoord${rest ? `; opnieuw over ${fmtDur(REST_BACKOFF[Math.min(S.restStep - 1, REST_BACKOFF.length - 1)])}` : ""}`, "");
         const why2 = stableAt(t);
         S.stable = !!why2;
-        const oldAge = qlen() ? t - S.queue[0].t : 0;
-        const below = qlen() > 0 && qlen() < cfg.fifo_min;
-        const byWait = !rest && cfg.fifo_wacht > 0 && below && oldAge >= cfg.fifo_wacht;
-        const byRest = rest && below;
-        if (!S.flushing && (qlen() >= cfg.fifo_min || byWait || byRest) && t >= S.retryAt && why2 && S.signals.some((s) => s.t > S.flushStop)) {
+        // ronde volle berichten: stabiele dekking (SNR, twee tekens binnen 60 s of T1F)
+        if (!S.flushing && fullReady && t >= S.retryAt && why2 && S.signals.some((s) => s.t > S.flushStop)) {
           S.flushing = true;
-          if (byWait) { S.waitSends++; S.fx.push({ type: "wait" }); }
-          if (byRest) S.restSends++;
-          say(t, byRest ? `In rust met ${pl(qlen())} en stabiele dekking (${why2}): de wachtrij wordt leeggemaakt, ook onder ${cfg.fifo_min} punten`
-            : byWait ? `${pl(qlen())} in de wachtrij, minder dan ${cfg.fifo_min}, maar het oudste wacht al ${fmtDur(Math.floor(oldAge / 60) * 60)} (langer dan ${fmtDur(cfg.fifo_wacht)}) en de dekking is stabiel (${why2}): toch versturen`
-            : `Stabiele dekking (${why2}) en ${qlen()} ≥ ${cfg.fifo_min} punten: de wachtrij wordt leeggemaakt, oudste eerst`, "info");
+          say(t, `Stabiele dekking (${why2}) en een vol bericht klaar (${qlen()} punten, ≥ ${S.perQ} per bericht): leegmaken, oudste eerst`, "info");
           S.fx.push({ type: "flush" });
         }
-        if (S.flushing) {
-          const busy = S.pend.some((m) => m.kind === "fifo");
-          if (!busy && !qlen()) { S.flushing = false; say(t, "Wachtrij leeg: alles ingehaald", "ok"); }
-          else if (!busy && t - S.lastFlush >= cfg.fifo_gap && t >= S.retryAt) {
+        // niet-vol bericht: alle voorwaarden samen
+        const busy = S.pend.some((m) => m.kind === "fifo");
+        const partialWant = due.length > 0 && due.length < S.perQ && !busy;
+        let partialWhy = "";
+        if (partialWant) {
+          const last = S.signals[S.signals.length - 1];
+          const strong = last && t - last.t < 30 && (last.why === "ack" || (last.snr != null && last.snr >= cfg.fifo_snr));
+          const awake = S.flushing || (t >= S.lastOwnSend && t <= S.lastOwnSend + HEAR_S);
+          if (!cfg.fifo_wacht) partialWhy = "uit|niet-volle berichten staan uit (nooit)";
+          else if (t - S.lastSuccess < cfg.fifo_wacht) partialWhy = `succ|laatste geslaagde inhaalbericht minder dan ${fmtDur(cfg.fifo_wacht)} geleden`;
+          else if (t - S.lastPartial < cfg.fifo_wacht) partialWhy = `part|vorige niet-volle poging minder dan ${fmtDur(cfg.fifo_wacht)} geleden`;
+          else if (t < S.retryAt) partialWhy = "back|wachttijd na een mislukte poging";
+          else if (!awake) partialWhy = "wake|de radio is niet wakker voor iets anders (hij wordt er niet voor gewekt)";
+          else if (!strong) partialWhy = `snr|geen sterke dekking in de laatste 30 s (SNR ≥ ${dB(cfg.fifo_snr)} of een serverbevestiging)`;
+          const cat = partialWhy.split("|")[0];
+          // de reden loggen als ze verandert, maar niet vaker dan om de 2 min (radio wakker/slapend wisselt elk bericht)
+          if (cat && cat !== S.partialLogged && t - S.partialLogT >= 120) {
+            say(t, `Niet-vol bericht (${pl(due.length)}) wacht: ${partialWhy.split("|")[1]}`, "");
+            S.partialLogged = cat; S.partialLogT = t;
+          }
+          S.partialCat = cat;
+        } else S.partialCat = "";
+        const partialOk = partialWant && !partialWhy;
+        if ((S.flushing || partialOk) && !busy) {
+          if (S.flushing && !qlen()) { S.flushing = false; say(t, "Wachtrij leeg: alles ingehaald", "ok"); }
+          else if (t - S.lastFlush >= cfg.fifo_gap && t >= S.retryAt) {
             // twee plafonds: doorgegeven berichten (fifo_per_uur) en alle pogingen (2 × fifo_per_uur)
             const capWhy = S.countTimes.length >= cfg.fifo_per_uur ? "uur" : S.flushTimes.length >= 2 * cfg.fifo_per_uur ? "pogingen" : "";
             S.capWhy = capWhy;
@@ -438,21 +452,26 @@
                 say(t, capWhy === "uur" ? `Uurlimiet bereikt: ${cfg.fifo_per_uur} / ${cfg.fifo_per_uur} doorgegeven berichten in het voorbije uur; wachten`
                   : `Veiligheidsgrens bereikt: ${2 * cfg.fifo_per_uur} / ${2 * cfg.fifo_per_uur} pogingen in het voorbije uur (zendtijd van de tracker); wachten`, "info");
               }
-            } else {
+            } else if (due.length >= S.perQ || partialOk) {
               S.capNoted = false;
-              // eerst de gewone punten (oudste eerst); geparkeerde pas als al de rest weg is, als laatste kans
-              let pts = S.queue.filter((p) => !p.park).slice(0, S.perQ);
-              if (!pts.length) {
-                pts = S.queue.filter((p) => p.park && !p.final).slice(0, S.perQ);
+              const partial = due.length < S.perQ;
+              const pts = due.slice(0, S.perQ);
+              if (!normal.length) {
                 pts.forEach((p) => { p.final = true; });
-                if (pts.length) say(t, `Laatste kans voor ${pl(pts.length, "geparkeerd punt", "geparkeerde punten")}`, "info");
+                say(t, `Laatste kans voor ${pl(pts.length, "geparkeerd punt", "geparkeerde punten")}`, "info");
               }
-              if (pts.length) {
-                const f = S.queue.some((p) => p.su);     // alleen om bevestiging vragen bij verstuurde, niet-gehoorde punten
-                pts.forEach((p) => { p.inQ = true; });
-                S.lastFlush = t; S.flushTimes.push(t);
-                S.qMsgs.push(send(t, "fifo", pts, { f }));
+              const f = S.queue.some((p) => p.su);     // alleen om bevestiging vragen bij verstuurde, niet-gehoorde punten
+              pts.forEach((p) => { p.inQ = true; });
+              S.lastFlush = t; S.flushTimes.push(t);
+              if (partial) {
+                S.lastPartial = t; S.partials++;
+                say(t, `Niet-vol inhaalbericht met ${pl(pts.length)}: sterke dekking, de radio is toch wakker en het vorige is lang genoeg geleden`, "info");
               }
+              S.qMsgs.push(send(t, "fifo", pts, { f, partial }));
+            } else if (S.flushing) {
+              // ronde klaar: wat overblijft, is te weinig voor een vol bericht
+              S.flushing = false;
+              say(t, `Geen vol bericht meer (${pl(due.length)} over): de ronde stopt; de rest wacht op een niet-vol bericht`, "");
             }
           }
         }
@@ -481,7 +500,7 @@
       c.evicted = S.evicted; c.acked = S.acked; c.gaveUp = S.gaveUp; c.toFifo = S.toFifo;
       c.hour = S.countTimes.filter((x) => x > S.t - 3600).length;
       c.tries = S.flushTimes.filter((x) => x > S.t - 3600).length;
-      c.queue = qlen(); c.listens = S.listens; c.waitSends = S.waitSends; c.restSends = S.restSends;
+      c.queue = qlen(); c.listens = S.listens; c.waitSends = S.waitSends; c.restSends = S.restSends; c.partials = S.partials;
       return c;
     };
     return S;
@@ -512,12 +531,14 @@
       `Aan de rand van het bereik is het signaal zwak en wisselvallig. Leegmaken begint daarom pas bij stabiele dekking: een
        herhaling met een signaal-ruisverhouding (SNR) van minstens ${V("fifo_snr")}, of twee tekens van dekking binnen 60 seconden,
        of een bevestiging van de server. In de simulatie stijgt de SNR naarmate de tracker uit de dode zone rijdt.`],
-    ["flush", "Leegmaken", "#sim-fifonote",
-      `Daarna stuurt de tracker één inhaalbericht per ${V("fifo_gap")}, oudste punten eerst. Een punt verlaat de wachtrij pas als de
-       herhaling gehoord werd. Per uur mogen hoogstens ${V("fifo_per_uur")} berichten doorgegeven worden: alleen berichten waarvan de
-       herhaling gehoord werd of die de server later bevestigde (T1F), tellen mee (de teller "x / ${V("fifo_per_uur_n")} doorgegeven").
-       Pogingen zonder gehoorde herhaling tellen niet, maar om de zendtijd van de tracker te sparen geldt een vaste veiligheidsgrens van
-       ${V("fifo_tries")} pogingen per uur (de teller "pogingen"). Is een van beide bereikt, dan pauzeert het leegmaken.`],
+    ["flush", "Leegmaken met volle berichten", "#sim-fifonote",
+      `Een vol inhaalbericht bevat minstens ${V("perq")} punten. Staat er zo een klaar en is de dekking stabiel, dan stuurt de tracker
+       één vol bericht per ${V("fifo_gap")}, oudste punten eerst. Een punt verlaat de wachtrij pas als de herhaling gehoord werd. Per uur
+       mogen hoogstens ${V("fifo_per_uur")} berichten doorgegeven worden: alleen berichten waarvan de herhaling gehoord werd of die de
+       server later bevestigde (T1F), tellen mee (de teller "x / ${V("fifo_per_uur_n")} doorgegeven"). Pogingen zonder gehoorde herhaling
+       tellen niet, maar om de zendtijd van de tracker te sparen geldt een vaste veiligheidsgrens van ${V("fifo_tries")} pogingen per uur
+       (de teller "pogingen"). Is een van beide bereikt, dan pauzeert het leegmaken. Blijft er te weinig over voor een vol bericht,
+       dan stopt de ronde.`],
     ["park", "Pogingen en parkeren", "#sim-fifobox",
       `Wordt een inhaalbericht niet gehoord, dan telt dat als een poging voor zijn punten en wacht de tracker telkens langer: 1, 5, 15
        en daarna 60 minuten. Na ${V("fifo_pogingen")} worden de punten geparkeerd (rode ring): ze komen pas aan de beurt als al de rest
@@ -533,14 +554,15 @@
       `Inhaalberichten (Q) zijn binair gecodeerd: elk punt is een klein verschil met het vorige. Zo passen er zo'n ${V("perq")} punten in
        één bericht, tegen ${PER_FT} in tekst. Minder berichten betekent minder belasting van het net. Op de kaart verschijnen ingehaalde
        punten als lichtere stippen, net als de gelogde punten van SlowTrack (L).`],
-    ["wacht", "Niet eindeloos wachten", "#sim-fifonote",
-      `Staan er minder punten in de wachtrij dan nodig om te beginnen, dan wacht de tracker normaal tot er genoeg zijn. Zolang hij
-       beweegt, stuurt hij ze toch als het oudste punt ouder is dan ${V("fifo_wacht")} en de dekking stabiel is; zonder recente dekking
-       luistert hij daarvoor hoogstens één keer per 10 minuten 60 seconden naar het net. Komt hij in rust met punten in de wachtrij,
-       dan luistert hij meteen 60 seconden: het radio-icoontje bij de stip. Bij stabiele dekking maakt hij de wachtrij dan leeg, ook
-       onder het minimum; de tijd tussen de berichten en de limiet per uur blijven gelden. Hoort hij niets, dan probeert hij het opnieuw
-       na 10, 20 en 40 minuten en daarna elk uur. Beweging of gevonden dekking zet dat weer op 10 minuten. Probeer het scenario
-       "Door een gat rijden, dan uren parkeren".`],
+    ["wacht", "Niet-volle berichten", "#sim-fifonote",
+      `Wat te weinig is voor een vol bericht, gaat in een niet-vol bericht, maar alleen als alles samen klopt: het laatste geslaagde
+       inhaalbericht en de vorige niet-volle poging (geslaagd of niet) zijn allebei minstens ${V("fifo_wacht")} geleden; de jongste
+       dekking (minder dan 30 s oud) had een SNR van minstens ${V("fifo_snr")} of was een bevestiging van de server (twee tekens binnen
+       60 s volstaan hier niet); en de radio is toch al wakker, na een eigen bericht en zijn luistervenster, in companionmodus of tijdens
+       een ronde volle berichten. Voor een niet-vol bericht wekt de tracker zijn radio nooit en luistert hij nooit apart. Staat
+       "nooit" ingesteld, dan gaan er geen niet-volle berichten. Komt de tracker in rust terwijl er een vol bericht klaarstaat, dan
+       luistert hij meteen 60 seconden: het radio-icoontje bij de stip. Hoort hij niets, dan opnieuw na 10, 20 en 40 minuten en daarna
+       elk uur; beweging of gevonden dekking zet dat weer op 10 minuten. Probeer het scenario "Door een gat rijden, dan uren parkeren".`],
     ["rust", "SlowTrack in rust", "#sim-strip",
       `In rust, dus als de bewegingssensor en de GPS langer dan ${V("still_timeout")} geen beweging zien, zet SlowTrack de GPS niet meer
        aan. Een geparkeerde tracker logt dus geen reeks punten op dezelfde plek. Bij de eerste beweging logt hij meteen een punt.
@@ -676,7 +698,7 @@
   }
 
   function fillVars() {
-    const val = { nb: `${sc.nb} bytes`, perq: `${sc.perQ}`, fifo_wacht: cfg.fifo_wacht ? fmtDur(cfg.fifo_wacht) : "(uit)", still_timeout: fmtDur(cfg.still_timeout), fifo_max: `${cfg.fifo_max}`, fifo_dun: cfg.fifo_dun ? `${cfg.fifo_dun} m` : "0 m (uitdunnen staat uit)", fifo_snr: `${dB(cfg.fifo_snr)}`,
+    const val = { nb: `${sc.nb} bytes`, perq: `${sc.perQ}`, fifo_wacht: cfg.fifo_wacht ? fmtDur(cfg.fifo_wacht) : "(nooit: niet-volle berichten staan uit)", still_timeout: fmtDur(cfg.still_timeout), fifo_max: `${cfg.fifo_max}`, fifo_dun: cfg.fifo_dun ? `${cfg.fifo_dun} m` : "0 m (uitdunnen staat uit)", fifo_snr: `${dB(cfg.fifo_snr)}`,
       fifo_gap: fmtDur(cfg.fifo_gap), fifo_per_uur: `${cfg.fifo_per_uur}`, fifo_per_uur_n: `${cfg.fifo_per_uur}`, fifo_tries: `${2 * cfg.fifo_per_uur}`,
       fifo_pogingen: `${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"}` };
     pane.querySelectorAll(".sim-v").forEach((s) => { s.textContent = val[s.dataset.k] || ""; });
@@ -696,8 +718,8 @@
     $("sim-cfg").textContent = `Gebruikt: punt bewaren elke ${fmtDur(cfg.sample)} · FastTrack-bericht elke ${iv ? fmtDur(iv) : "– (rijdt te traag)"}`
       + ` (nooit vaker dan ${fmtDur(cfg.min_interval)}, minstens ${fmtDur(cfg.max_interval)}, ${nf(cfg.min_dist)} m) · SlowTrack ${cfg.slow_log ? `loggen elke ${fmtDur(cfg.slow_log)}${mode === "classic" ? `, versturen elke ${fmtDur(cfg.slow_send)}` : ""}` : "uit"}`
       + (mode === "fifo" ? ` · FIFO: ${cfg.fifo_min} tot ${cfg.fifo_max} punten, elke ${fmtDur(cfg.fifo_gap)}, hoogstens ${cfg.fifo_per_uur} doorgegeven en ${2 * cfg.fifo_per_uur} pogingen per uur,`
-        + ` ${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"} per punt, uitdunnen ${cfg.fifo_dun ? `${cfg.fifo_dun} m` : "uit"}, SNR ≥ ${dB(cfg.fifo_snr)}.` : ".");
-    if (sc.over) $("sim-cfg").textContent += ` In dit scenario: SlowTrack elke ${fmtDur(sc.over.slow_log)}, inhalen vanaf ${sc.over.fifo_min} punten.`;
+        + ` ${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"} per punt, uitdunnen ${cfg.fifo_dun ? `${cfg.fifo_dun} m` : "uit"}, niet-vol bericht ${cfg.fifo_wacht ? `hooguit 1× per ${fmtDur(cfg.fifo_wacht)}` : "nooit"}, SNR ≥ ${dB(cfg.fifo_snr)}.` : ".");
+    if (sc.over) $("sim-cfg").textContent += ` In dit scenario: SlowTrack elke ${fmtDur(sc.over.slow_log)}.`;
     $("sim-nbhelp").textContent = `≈ ${sc.perQ} punten per Q-bericht` + (cfg.perTracker && sc.nb === cfg.nameBytes ? " (zoals de tracker meldt)" : "")
       + (cfg.naam != null ? `. De naam "${cfg.naam}" telt ${cfg.nameBytes} bytes.` : ".");
     render(performance.now(), true);
@@ -826,12 +848,17 @@
       $("sim-fifocount").textContent = `${S.queue.length} / ${cfg.fifo_max}`;
       $("sim-fifobar").style.width = `${Math.min(100, 100 * S.queue.length / cfg.fifo_max)}%`;
       const c = S.count();
-      $("sim-fifonote").innerHTML = (S.flushing ? `<strong>Leegmaken</strong>, één Q-bericht (≈ ${S.perQ} punten) per ${fmtDur(cfg.fifo_gap)}`
+      // volgend niet-vol bericht: ten vroegste fifo_wacht na het laatste geslaagde en na de vorige niet-volle poging
+      const nextPartial = Math.max(S.lastSuccess, S.lastPartial) + ce.fifo_wacht - simT;
+      const dueN = S.queue.filter((p) => !p.inQ).length;
+      $("sim-fifonote").innerHTML = (S.flushing ? `<strong>Leegmaken</strong>, volle Q-berichten (${S.perQ} punten) elke ${fmtDur(cfg.fifo_gap)}`
         : S.retryAt > simT && S.queue.length ? `Volgende poging over ${Math.ceil((S.retryAt - simT) / 60)} min`
-        : S.queue.length >= ce.fifo_min ? "Wacht op stabiele dekking"
-        : S.rest && S.queue.length ? `In rust: leegmaken zodra de dekking stabiel is, ook onder ${ce.fifo_min} punten`
-        : `Leegmaken vanaf ${ce.fifo_min} punten` + (ce.fifo_wacht && S.queue.length ? `, of als het oudste ${fmtDur(ce.fifo_wacht)} wacht (nu ${Math.floor((simT - S.queue[0].t) / 60)} min)` : ""))
-        + (S.rest && S.queue.length && !S.flushing && Number.isFinite(S.restListenAt) ? ` · in rust: volgende luisterbeurt over ${Math.max(0, Math.ceil((S.restListenAt - simT) / 60))} min` : "")
+        : dueN >= S.perQ && S.queue.length >= ce.fifo_min ? `Vol bericht klaar; wacht op stabiele dekking`
+        : !S.queue.length ? "Wachtrij leeg"
+        : !ce.fifo_wacht ? `Te weinig voor een vol bericht (${S.perQ} punten); niet-volle berichten staan uit`
+        : nextPartial > 0 ? `Te weinig voor een vol bericht (${S.perQ} punten); volgend niet-vol bericht ten vroegste over ${Math.ceil(nextPartial / 60)} min`
+        : "Te weinig voor een vol bericht; een niet-vol bericht mag, bij sterke dekking en als de radio toch wakker is")
+        + (S.rest && S.queue.length && !S.flushing && dueN >= S.perQ && Number.isFinite(S.restListenAt) ? ` · in rust: volgende luisterbeurt over ${Math.max(0, Math.ceil((S.restListenAt - simT) / 60))} min` : "")
         + (S.listens ? ` · ${S.listens}× geluisterd` : "")
         + ` · <span class="${c.hour >= cfg.fifo_per_uur ? "warn" : ""}">${c.hour} / ${cfg.fifo_per_uur} doorgegeven</span>`
         + ` · <span class="${c.tries >= 2 * cfg.fifo_per_uur ? "warn" : ""}">${c.tries} / ${2 * cfg.fifo_per_uur} pogingen</span>`
@@ -852,7 +879,7 @@
       <dt>Op de server</dt><dd><strong>${c.server}</strong> (${c.pct} %) <span class="muted">· live ${c.live}, ingehaald ${c.late}</span></dd>
       <dt>Uitgedund</dt><dd>${c.thin} <span class="muted">(overbodig op een recht stuk)</span></dd>
       <dt>Verloren</dt><dd>${c.lost}${c.wait ? ` <span class="muted">· nog op de tracker: ${c.wait}</span>` : ""}</dd>`
-      + (mode === "fifo" ? `<dt id="sim-c-ack">Serverbevestiging</dt><dd>T1F ${c.sent.ack}× · ${c.acked} punten bevestigd${c.waitSends ? ` · ${c.waitSends}× toch verstuurd na wachten` : ""}${c.restSends ? ` · ${c.restSends}× leeggemaakt in rust` : ""}${c.dup ? ` <span class="muted">· ${c.dup} dubbel ontvangen (server filtert)</span>` : ""}</dd>` : "");
+      + (mode === "fifo" ? `<dt id="sim-c-ack">Serverbevestiging</dt><dd>T1F ${c.sent.ack}× · ${c.acked} punten bevestigd${c.partials ? ` · ${c.partials} niet-volle ${c.partials === 1 ? "bericht" : "berichten"}` : ""}${c.dup ? ` <span class="muted">· ${c.dup} dubbel ontvangen (server filtert)</span>` : ""}</dd>` : "");
     if (force || now - lastTrack > (S.points.length > 800 ? 600 : 150)) { lastTrack = now; drawTrack(); }
     // gebeurtenissen (nieuwste bovenaan)
     const ol = $("sim-log");
@@ -919,7 +946,7 @@
   const PRESETS = { std: { speed: 50, dur: 60, dz0: 30, dzl: 40, st0: 0, stl: 0, miss: 10 }, long: { speed: 50, dur: 300, dz0: 20, dzl: 60, st0: 0, stl: 0, miss: 10 },
     // lang stilstaan: SlowTrack elke 5 min, inhalen pas vanaf 20 punten, zodat "toch versturen na" zichtbaar wordt
     // door een gat rijden en punten verzamelen, dan urenlang parkeren met goed bereik, op het einde weer wegrijden
-    stand: { speed: 50, dur: 360, dz0: 25, dzl: 35, st0: 6, stl: 91, miss: 10, over: { slow_log: 300, fifo_min: 20 } } };
+    stand: { speed: 50, dur: 360, dz0: 25, dzl: 35, st0: 6, stl: 91, miss: 10, over: { slow_log: 300 } } };
   pane.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => {
     const p = PRESETS[b.dataset.preset];
     $("sim-speed").value = p.speed; $("sim-dur").value = p.dur; $("sim-dz0").value = p.dz0; $("sim-dzl").value = p.dzl;

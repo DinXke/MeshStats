@@ -29,7 +29,11 @@ uint32_t mt_tracker_fifo_oldest();     // fix_ts van het oudste punt (0 = leeg)
 uint32_t mt_tracker_fifo_newest();
 long mt_tracker_fifo_cov_age();        // s sinds de laatste dekking, -1 = nog nooit
 int mt_tracker_fifo_hour(uint32_t* wait_s);   // getelde leegmaakberichten (herhaald of T1F) in het laatste uur; wait_s = pauze door een plafond
-int mt_tracker_fifo_tries();           // alle leegmaakpogingen in het laatste uur (grens 2x fifo_per_uur)
+int mt_tracker_fifo_tries();
+long mt_tracker_fifo_last_ok_age();    // s sinds het laatste geslaagde inhaalbericht, -1 = nooit
+long mt_tracker_fifo_partial_wait();   // s tot een niet-vol inhaalbericht in de tijd mag: 0 = nu, -1 = nooit (fifo_wacht uit)
+long mt_tracker_fifo_last_partial_age();   // s sinds de laatste poging met een niet-vol bericht, -1 = nooit
+uint32_t mt_fifo_per_msg();            // geschatte punten per Q-bericht (nodenaam); "vol" = minstens zoveel           // alle leegmaakpogingen in het laatste uur (grens 2x fifo_per_uur)
 int mt_tracker_fifo_cap();             // 0 = geen plafond bereikt, 1 = fifo_per_uur, 2 = pogingen   // leegmaakberichten in het laatste uur; wait_s = pauze tot er weer een mag
 const char* mt_tracker_fifo_state();   // leegmaken: bezig, gestopt, ...
 bool mt_tracker_fifo_clear();
