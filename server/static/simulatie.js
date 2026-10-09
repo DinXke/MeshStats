@@ -21,6 +21,7 @@
   const AIR_NORMAL = 1.1, AIR_FULL = 1.4, AIR_ACK = 1.0;   // zendtijd in seconden
   const FT_BUF = 20;          // plaatsen in de FastTrack-buffer (aanname voor de simulatie)
   const BACKOFF = [1, 5, 15, 60];   // minuten wachten na de 1e, 2e, 3e en volgende mislukte poging
+  const PARK_WAIT = 3600;    // geparkeerd: 60 min wachten (en lagere voorrang)
   const SRV_ONLY = 0.25;      // kans dat een niet-gehoord inhaalbericht toch op de server aankomt
   const ACK_DELAY = 20, ACK_MIN_GAP = 600;   // T1F: ≈ 20 s na de reeks, per tracker hoogstens 1 per 10 min
   const STOP_KEEP = 600;      // punten rond een stilstand van meer dan 10 min blijven
@@ -115,7 +116,7 @@
       points: [], ftBuf: [], slowBuf: [], queue: [], pend: [],
       sent: { ft: 0, slow: 0, fifo: 0, ack: 0 }, ok: { ft: 0, slow: 0, fifo: 0 }, air: 0, ackAir: 0, no: { ft: 0, slow: 0, fifo: 0 },
       lastFt: -1e9, signals: [], lastAckRx: -1e9, retryAt: 0, flushing: false, flushStop: -1e9, lastFlush: -1e9, flushTimes: [], countTimes: [], qMsgs: [], capWhy: "",
-      capNoted: false, ackDue: null, ackUpTo: 0, lastAck: -1e9, acked: 0, gaveUp: 0, thinned: 0, evicted: 0, toFifo: 0,
+      capNoted: false, ackDue: null, srvMsgs: [], lastAck: -1e9, acked: 0, lastParkReset: -1e9, parkResets: 0, thinned: 0, evicted: 0, toFifo: 0,
       log: [], fx: [], ver: 0, done: false, snr: null, stable: false,
       perQ: sc.perQ, lastListen: -1e9, listenUntil: -1, listenHeard: 0, listens: 0, waitSends: 0,
       lastMotion: 0, lastOwnSend: -1e9, lastSuccess: -1e9, lastPartial: -1e9, partials: 0, partialCat: "", partialLogged: "", partialLogT: -1e9, rest: false, restListenAt: Infinity, restStep: 0, restSends: 0, nextSlow: cfg.slow_log };
@@ -145,7 +146,7 @@
     S.covered = covered; S.snrAt = snrAt;
     const say = (t, text, cls) => S.log.push({ t, text, cls });
     const point = (t, kind, st) => {
-      const p = { id: S.points.length, t, kind, st, srv: 0, srvLate: false, tries: 0, park: false, final: false, pf: false, missed: false, su: false, thin: false, xy: xy(t) };
+      const p = { id: S.points.length, t, kind, st, srv: 0, srvLate: false, tries: 0, park: false, parkUntil: 0, pf: false, missed: false, su: false, thin: false, xy: xy(t) };
       S.points.push(p); return p;
     };
     const toServer = (p, late) => { if (!p.srv) p.srvLate = late; p.srv++; };
@@ -254,11 +255,11 @@
           say(t, `${KNAME.slow} #${m.no} gehoord ✓: ${pl(n, "gelogd punt", "gelogde punten")} aangekomen`, "ok");
         } else {
           let k = 0;
-          const fin = m.pts.some((p) => p.final);
+          const wasPark = m.pts.some((p) => p.park);
           m.pts.forEach((p) => { p.inQ = false; toServer(p, true); if (p.st === "queue") { k++; p.st = "gone"; const i = S.queue.indexOf(p); if (i >= 0) S.queue.splice(i, 1); } });
-          say(t, `${KNAME.fifo} #${m.no} gehoord ✓: ${pl(k, fin ? "geparkeerd punt" : "punt", fin ? "geparkeerde punten" : "punten")} ingehaald, nog ${qlen()} in de wachtrij`, "ok");
+          say(t, `${KNAME.fifo} #${m.no} gehoord ✓: ${pl(k, wasPark ? "geparkeerd punt" : "punt", wasPark ? "geparkeerde punten" : "punten")} ingehaald, nog ${qlen()} in de wachtrij`, "ok");
         }
-        if (m.kind === "fifo" && m.f) serverAckRequest(t, m);
+        if (m.kind === "fifo") serverGot(t, m);
         return;
       }
       S.fx.push({ type: "miss", kind: m.kind });
@@ -278,46 +279,58 @@
       } else {
         // wel op de server aangekomen, maar de herhaling niet gehoord: de server heeft ze al
         if (m.srvGot) m.pts.forEach((p) => toServer(p, true));
-        // mislukte poging: teller per punt omhoog, telkens langer wachten; op = geparkeerd; laatste kans mislukt = opgegeven
-        let level = 0, shown = 0, parked = 0, gave = 0;
+        // mislukte poging: teller per punt omhoog, telkens langer wachten; op = geparkeerd (lagere voorrang, 60 min wachten).
+        // Een punt wordt nooit opgegeven: het gaat pas weg als zijn bericht gehoord of door de server bevestigd werd, of bij overloop.
+        let level = 0, shown = 0, parked = 0;
         m.pts.forEach((p) => {
           p.inQ = false;
           if (p.st !== "queue") return;
           p.tries++; p.su = true;
-          if (p.final) { p.st = "gone"; p.gaveup = true; gave++; const i = S.queue.indexOf(p); if (i >= 0) S.queue.splice(i, 1); return; }
-          if (p.tries >= cfg.fifo_pogingen) { if (!p.park) parked++; p.park = true; }
+          if (p.tries >= cfg.fifo_pogingen) { if (!p.park) parked++; p.park = true; p.parkUntil = t + PARK_WAIT; }
           else level = Math.max(level, p.tries);      // geparkeerde punten houden de rest niet op
           shown = Math.max(shown, p.tries);
         });
-        S.gaveUp += gave;
         const wait = level ? BACKOFF[Math.min(level, BACKOFF.length) - 1] : 0;
         S.retryAt = t + wait * 60;
         S.flushing = false; S.flushStop = t;
         say(t, `${KNAME.fifo} #${m.no} niet gehoord ✗${m.srvGot ? " (maar wel aangekomen op de server)" : ""}`
-          + (gave ? ` → laatste kans mislukt: ${gave} geparkeerde punten opgegeven` : ` (poging ${shown} van ${cfg.fifo_pogingen})` + (parked ? ` → ${parked} punten geparkeerd tot de rest verstuurd is` : ""))
+          + ` (poging ${shown} van ${cfg.fifo_pogingen})` + (parked ? ` → ${parked} punten geparkeerd: lagere voorrang, ten vroegste over 60 min opnieuw` : "")
           + (wait ? `; volgende poging ten vroegste over ${wait} min, bij stabiele dekking` : "; de volgende punten gaan door zodra de dekking weer stabiel is"), "bad");
-        if (m.srvGot && m.f) serverAckRequest(t, m);
+        if (m.srvGot) serverGot(t, m);
       }
     }
-    // server: bevestiging alleen als erom gevraagd werd, ≈ 20 s na de reeks, per tracker hoogstens 1 per 10 min
-    function serverAckRequest(t, m) {
-      for (const p of m.pts) if (p.srv && p.t > S.ackUpTo) S.ackUpTo = p.t;   // tijdstip van het jongste ontvangen inhaalpunt
-      S.ackDue = Math.max(t + ACK_DELAY, S.lastAck + ACK_MIN_GAP);
+    // server: onthoudt welke Q-berichten (volgnummers) aankwamen; bevestigt alleen als erom gevraagd werd,
+    // ≈ 20 s na de reeks, per tracker hoogstens 1 per 10 min
+    function serverGot(t, m) {
+      if (!m.ok) S.srvMsgs.push(m);                      // gehoord = de tracker weet het al
+      if (m.f) S.ackDue = Math.max(t + ACK_DELAY, S.lastAck + ACK_MIN_GAP);
     }
     function serverAck(t) {
-      S.ackDue = null; S.lastAck = t; S.sent.ack++; S.ackAir += AIR_ACK;
+      S.ackDue = null;
+      if (!S.srvMsgs.length) return;                      // niets te bevestigen: de server zwijgt
+      S.lastAck = t; S.sent.ack++; S.ackAir += AIR_ACK;
       const heard = covered(t) && hashRnd(t, KIND.ack) >= missP(t);
-      const upTo = S.ackUpTo;
-      if (!heard) { say(t, `Server stuurt T1F "ontvangen tot ${clock(upTo).slice(0, 5)}", maar de tracker hoort het niet`, "bad"); return; }
+      const msgs = S.srvMsgs.slice(-8);                    // de bevestigde volgnummers
+      const nos = msgs.map((m) => `#${m.no}`).join(", ");
+      if (!heard) { say(t, `Server stuurt T1F voor Q ${nos}, maar de tracker hoort het niet`, "bad"); return; }
       signal(t, snrAt(t), "ack"); S.lastAckRx = t;
-      let k = 0;
-      S.queue = S.queue.filter((p) => { if (p.srv && p.t <= upTo && !p.inQ) { p.st = "gone"; p.acked = true; k++; return false; } return true; });
+      S.srvMsgs = [];
+      // alleen de punten van precies die berichten gaan uit de wachtrij
+      let k = 0, late = 0;
+      for (const m of msgs) {
+        for (const p of m.pts) {
+          if (p.st !== "queue" || p.inQ) continue;
+          const i = S.queue.indexOf(p);
+          if (i >= 0) S.queue.splice(i, 1);
+          p.st = "gone"; p.acked = true; k++;
+        }
+        // aangekomen maar niet gehoord: telt alsnog als doorgegeven, op de verzendtijd (als dat binnen het uur valt)
+        if (!m.counted && m.t > t - 3600) { m.counted = true; S.countTimes.push(m.t); late++; }
+        S.lastSuccess = t;
+      }
       S.acked += k;
-      // aangekomen maar niet gehoorde Q-berichten tellen alsnog mee, op hun verzendtijd (als dat binnen het uur valt)
-      let late = 0;
-      for (const m of S.qMsgs) if (!m.counted && m.srvGot && m.t > t - 3600 && m.pts.every((p) => p.t <= upTo)) { m.counted = true; S.countTimes.push(m.t); late++; S.lastSuccess = t; }
       S.fx.push({ type: "ack" });
-      say(t, `Server stuurt T1F "ontvangen tot ${clock(upTo).slice(0, 5)}" → ` + (k ? `${pl(k)} uit de wachtrij (wel aangekomen, herhaling niet gehoord)`
+      say(t, `Server stuurt T1F voor Q ${nos} → ` + (k ? `${pl(k)} uit de wachtrij (wel aangekomen, herhaling niet gehoord)`
         : "niets meer te schrappen: die punten waren intussen al via een gehoorde herhaling weg")
         + (late ? `; ${late === 1 ? "1 inhaalbericht telt" : `${late} inhaalberichten tellen`} alsnog als doorgegeven` : ""), "info");
     }
@@ -388,7 +401,18 @@
         S.qMsgs = S.qMsgs.filter((m) => m.t > t - 3600);
         // punten die nu aan de beurt zijn: eerst de gewone (oudste eerst), geparkeerde pas als al de rest weg is
         const normal = S.queue.filter((p) => !p.park && !p.inQ);
-        const due = normal.length ? normal : S.queue.filter((p) => p.park && !p.final && !p.inQ);
+        const due = normal.length ? normal : S.queue.filter((p) => p.park && !p.inQ && t >= p.parkUntil);
+        // in rust (of companion) met sterke dekking: geparkeerde punten krijgen een nieuwe kans, hoogstens 1× per 30 min
+        {
+          const last = S.signals[S.signals.length - 1];
+          const strongNow = last && t - last.t < 30 && (last.why === "ack" || (last.snr != null && last.snr >= cfg.fifo_snr));
+          const parkedPts = S.queue.filter((p) => p.park);
+          if (rest && strongNow && parkedPts.length && t - S.lastParkReset >= 1800) {
+            parkedPts.forEach((p) => { p.park = false; p.tries = 0; p.parkUntil = 0; });
+            S.lastParkReset = t; S.parkResets++;
+            say(t, `In rust met sterke dekking: ${pl(parkedPts.length, "geparkeerd punt krijgt", "geparkeerde punten krijgen")} een nieuwe kans (pogingen weer op 0)`, "info");
+          }
+        }
         const fullReady = due.length >= S.perQ && qlen() >= cfg.fifo_min;
         const listen = (why) => {
           S.lastListen = t; S.listenUntil = t + LISTEN_S; S.listenHeard = 0; S.listens++;
@@ -456,10 +480,7 @@
               S.capNoted = false;
               const partial = due.length < S.perQ;
               const pts = due.slice(0, S.perQ);
-              if (!normal.length) {
-                pts.forEach((p) => { p.final = true; });
-                say(t, `Laatste kans voor ${pl(pts.length, "geparkeerd punt", "geparkeerde punten")}`, "info");
-              }
+              if (!normal.length) say(t, `Geparkeerde punten weer aan de beurt (${pts.length}), na hun wachttijd van 60 min`, "info");
               const f = S.queue.some((p) => p.su);     // alleen om bevestiging vragen bij verstuurde, niet-gehoorde punten
               pts.forEach((p) => { p.inQ = true; });
               S.lastFlush = t; S.flushTimes.push(t);
@@ -497,7 +518,7 @@
       c.server = c.live + c.late;
       c.pct = c.logged ? Math.round(100 * c.server / c.logged) : 0;
       c.sent = { ...S.sent }; c.ok = { ...S.ok }; c.air = S.air; c.mesh = (S.air + S.ackAir) * (1 + REPEATS);
-      c.evicted = S.evicted; c.acked = S.acked; c.gaveUp = S.gaveUp; c.toFifo = S.toFifo;
+      c.evicted = S.evicted; c.acked = S.acked; c.parkResets = S.parkResets; c.toFifo = S.toFifo;
       c.hour = S.countTimes.filter((x) => x > S.t - 3600).length;
       c.tries = S.flushTimes.filter((x) => x > S.t - 3600).length;
       c.queue = qlen(); c.listens = S.listens; c.waitSends = S.waitSends; c.restSends = S.restSends; c.partials = S.partials;
@@ -541,13 +562,14 @@
        dan stopt de ronde.`],
     ["park", "Pogingen en parkeren", "#sim-fifobox",
       `Wordt een inhaalbericht niet gehoord, dan telt dat als een poging voor zijn punten en wacht de tracker telkens langer: 1, 5, 15
-       en daarna 60 minuten. Na ${V("fifo_pogingen")} worden de punten geparkeerd (rode ring): ze komen pas aan de beurt als al de rest
-       weg is, krijgen dan nog één kans en worden daarna opgegeven. Meestal kwamen ze toch aan; alleen de herhaling werd niet gehoord.
-       Zo houdt één koppig bericht de rest niet tegen.`],
+       en daarna 60 minuten. Na ${V("fifo_pogingen")} worden de punten geparkeerd (rode ring): ze krijgen een lagere voorrang en wachten
+       60 minuten, zodat één koppig bericht de rest niet tegenhoudt. Opgegeven worden ze nooit. In rust (of als companion) met sterke
+       dekking krijgen geparkeerde punten een nieuwe kans, met hun pogingen weer op 0, hoogstens één keer per 30 minuten. Een punt gaat
+       pas uit de wachtrij als zijn bericht herhaald werd, als de server precies dat bericht bevestigde, of als de wachtrij overloopt.`],
     ["ack", "De bevestiging van de server", "#sim-c-ack",
       `Soms komt een inhaalbericht wel aan, maar hoort de tracker de herhaling niet. Heeft hij zulke punten, dan vraagt hij in zijn
-       volgende inhaalbericht om een bevestiging. Zo'n 20 seconden na de reeks antwoordt de server "ontvangen tot tijdstip X" (T1F),
-       en die punten gaan alsnog uit de wachtrij. De server blijft zuinig: per tracker hoogstens één bevestiging per 10 minuten,
+       volgende inhaalbericht om een bevestiging. Zo'n 20 seconden na de reeks bevestigt de server precies welke inhaalberichten
+       aankwamen, per volgnummer (T1F). Alleen de punten van die berichten gaan alsnog uit de wachtrij. De server blijft zuinig: per tracker hoogstens één bevestiging per 10 minuten,
        hoogstens één per minuut per kanaal en hoogstens 20 per uur in totaal, met tot 4 trackers in één bericht. Twintig trackers
        die vooral stilstaan, hebben bijna nooit een bevestiging nodig; in het slechtste geval blijft het bij 20 kleine berichten per uur.`],
     ["bin", "Compacte codering", "#sim-c-msgs",
@@ -864,7 +886,7 @@
         + ` · <span class="${c.tries >= 2 * cfg.fifo_per_uur ? "warn" : ""}">${c.tries} / ${2 * cfg.fifo_per_uur} pogingen</span>`
         + (S.capWhy && S.flushing ? ` · <strong class="warn">${S.capWhy === "uur" ? "uurlimiet" : "veiligheidsgrens"} bereikt</strong>` : "")
         + (c.park ? ` · <span class="park">geparkeerd: ${c.park}</span>` : "")
-        + (c.gaveUp ? ` · opgegeven: ${c.gaveUp}` : "")
+        + (c.parkResets ? ` · ${c.parkResets}× nieuwe kans voor geparkeerde punten` : "")
         + (c.evicted ? ` · <span class="warn">${c.evicted} verdrongen</span>` : "");
     }
     // tellers

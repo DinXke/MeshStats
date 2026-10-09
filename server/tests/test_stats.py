@@ -246,7 +246,7 @@ def test_events_recorded_from_ingest_and_acks(app):
     t, ch = main.S.db.tracker(tid), main.S.db.channel(cid)
     c.portal.call(main.sos_ack, ch, t, PK8, "9")
     assert ev(main, "t1a_sent") == [{"tracker_id": tid, "channel_id": cid, "n": 1}]
-    main.fifo_request(ch, t, PK8, now - 600, now=1000)
+    main.fifo_request(ch, t, PK8, 5, now=1000)
     assert c.portal.call(main.fifo_tick, 1025) == 1
     assert ev(main, "t1f_msg") == [{"tracker_id": None, "channel_id": cid, "n": 1}]
     assert ev(main, "t1f_sent") == [{"tracker_id": tid, "channel_id": cid, "n": 1}]

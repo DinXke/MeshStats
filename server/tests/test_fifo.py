@@ -193,64 +193,134 @@ def test_flags_field_16():
     assert parse(q(1, NOW) + "||fx").ack_requested            # onbekende vlaggen verdragen
     with pytest.raises(ProtocolError):
         parse(q(1, NOW) + "||F!")
+    assert parse(q(1, NOW) + "||fg").exact_ack and not parse(q(1, NOW) + "||f").exact_ack
+
+
+# ---- T1F 1.3.1: exacte bevestiging per seq, alleen met vlag "g" ------------------------------
+
+def tag_of(key, pk, body):
+    return hmac.new(bytes.fromhex(key), f"{pk}|F|{body}".encode(), hashlib.sha256).hexdigest()[:8]
+
+
+def test_compress_seqs():
+    from meshtrack.main import compress_seqs
+    assert compress_seqs([]) == ""
+    assert compress_seqs([7]) == "7"
+    assert compress_seqs([9, 3, 4, 5]) == "3-5,9"
+    assert compress_seqs([1, 2, 4, 5, 6, 8, 10, 11]) == "1-2,4-6,8,10-11"
+    assert compress_seqs([5, 5, 6]) == "5-6"
+    assert compress_seqs([65535, 0, 1]) == "0-1,65535"
 
 
 def test_fifo_entry_tag_and_bundle_text():
     from meshtrack.main import fifo_ack_text, fifo_entry
-    tag = hmac.new(bytes.fromhex(AUTH), f"{PK8}|F|{NOW}".encode(), hashlib.sha256).hexdigest()[:8]
-    assert fifo_entry(AUTH, PK8, NOW) == f"{PK8}:{tag}:{NOW}"
-    assert fifo_ack_text(["a:b:1", "c:d:2"]) == "T1F|a:b:1|c:d:2"
+    assert fifo_entry(AUTH, PK8, [3, 4, 5, 9]) == f"{PK8}:{tag_of(AUTH, PK8, 's3-5,9')}:s3-5,9"
+    assert fifo_ack_text(["a:b:s1", "c:d:s2"]) == "T1F|a:b:s1|c:d:s2"
 
 
-def test_t1f_only_on_request_and_debounced(app):
+def test_fit_seqs_keeps_most_recent():
+    from meshtrack.main import compress_seqs, fit_seqs
+    seqs = list(range(100, 160, 2))                     # 30 losse seqs, in ontvangstvolgorde
+    got = fit_seqs(seqs, 20)
+    assert got == seqs[-len(got):] and 1 + len(compress_seqs(got)) <= 20 and len(got) < len(seqs)
+    assert fit_seqs([1, 2, 3], 20) == [1, 2, 3]
+    assert fit_seqs([12345], 3) == []
+
+
+def test_no_t1f_without_g(app):
     main, mp, mesh, tid, cid, chan, tick = app
     t0 = time.time()
     now = int(t0)
-    chan(rest_of(1, now - 900))                          # zonder "f": nooit een T1F
-    assert main._fifo_pending == {}
-    chan(rest_of(2, now - 600, flags="f"))
-    chan(rest_of(3, now - 700, flags="f"))               # ouder punt: upto blijft het hoogste
-    assert len(main.S.db.track(tid, 0)) == 3
-    assert tick(t0 + 10) == 0                            # debounce: nog niet
-    assert tick(t0 + 25) == 1
-    (pk, tag, upto), = parse_t1f(mesh.sent[0][1])
-    assert (pk, int(upto)) == (PK8, now - 600) and (mesh.sent[0][0], mesh.sent[0][2]) == (3, "be")
-    assert tag == main.channel_tag(AUTH, f"{PK8}|F|{now - 600}")
-    assert main._fifo_pending == {}
+    chan(rest_of(1, now - 900))                          # zonder vlaggen
+    chan(rest_of(2, now - 600, flags="f"))               # fw 0.9.0-0.9.3: "f" zonder "g"
+    assert len(main.S.db.track(tid, 0)) == 2
+    assert main._fifo_pending == {} and tick(t0 + 30) == 0 and mesh.sent == []
 
 
-def test_debounce_restarts_on_each_flagged_q(app):
-    main, mp, mesh, tid, cid, chan, tick = app
-    t, ch = main.S.db.tracker(tid), main.S.db.channel(cid)
-    main.fifo_request(ch, t, PK8, NOW - 500, now=1000)
-    main.fifo_request(ch, t, PK8, NOW - 400, now=1015)
-    assert tick(1025) == 0                               # 20 s na het LAATSTE verzoek
-    assert tick(1035) == 1 and parse_t1f(mesh.sent[0][1])[0][2] == str(NOW - 400)
-
-
-def test_t1f_for_duplicates_not_for_invalid_or_unsigned(app):
+def test_g_exact_seqs_debounced(app):
     main, mp, mesh, tid, cid, chan, tick = app
     t0 = time.time()
     now = int(t0)
-    chan(rest_of(1, now - 900, flags="f"))
+    for seq, ts in ((7, now - 900), (8, now - 800), (9, now - 700), (12, now - 600)):
+        chan(rest_of(seq, ts, flags="fg"))
+    assert main._fifo_pending[tid]["seqs"] == [7, 8, 9, 12]
+    assert tick(t0 + 10) == 0                            # debounce: 20 s na het laatste Q-bericht
     assert tick(t0 + 25) == 1
-    chan(rest_of(1, now - 900, flags="f"))               # exacte herhaling (dubbel): toch bevestigen
-    assert tid in main._fifo_pending and len(main.S.db.track(tid, 0)) == 1
+    (pk, tag, body), = parse_t1f(mesh.sent[0][1])
+    assert (pk, body, tag) == (PK8, "s7-9,12", tag_of(AUTH, PK8, "s7-9,12"))
+    assert (mesh.sent[0][0], mesh.sent[0][2]) == (3, "be") and main._fifo_pending == {}
+    chan(rest_of(13, now - 500, flags="g"))              # "g" zonder "f" telt ook
+    assert main._fifo_pending[tid]["seqs"] == [13]
+
+
+def test_duplicates_included_invalid_and_unsigned_not(app):
+    main, mp, mesh, tid, cid, chan, tick = app
+    t0 = time.time()
+    now = int(t0)
+    chan(rest_of(1, now - 900, flags="g"))
+    assert tick(t0 + 25) == 1
+    chan(rest_of(1, now - 900, flags="g"))               # exacte herhaling (dubbel): toch bevestigen
+    chan(rest_of(2, now - 900, flags="g"))               # andere seq, zelfde punten (alles dubbel): ook
+    assert main._fifo_pending[tid]["seqs"] == [1, 2] and len(main.S.db.track(tid, 0)) == 1
     main._fifo_pending.clear()
-    chan(rest_of(5, now - 100, extra="BA", flags="f"))   # ongeldig binair: geen T1F, wel gelogd
+    chan(rest_of(5, now - 100, extra="BA", flags="g"))   # ongeldig binair: geen T1F, wel gelogd
     assert main._fifo_pending == {} and main.S.db.unknown()[0]["reason"].startswith("ongeldig")
     main.S.db.save_channel(cid, {"name": "trk", "secret": "00" * 16, "slot": 3, "require_sig": 0,
                                  "active": 1, "region": "be"})
-    chan(rest_of(6, now - 50, flags="f"), signed=False)  # niet ondertekend: geen T1F
+    chan(rest_of(6, now - 50, flags="g"), signed=False)  # niet ondertekend: geen T1F
     assert main._fifo_pending == {}
 
 
-def test_bundling_per_channel_with_tag_per_entry(app):
+def test_truncation_sends_newest_rest_later(app):
+    main, mp, mesh, tid, cid, chan, tick = app
+    t, ch = main.S.db.tracker(tid), main.S.db.channel(cid)
+    seqs = list(range(1000, 1200, 3))                    # 67 losse seqs: past nooit in één T1F
+    for s in seqs:
+        main.fifo_request(ch, t, PK8, s, now=1000)
+    assert tick(1025) == 1
+    text = mesh.sent[0][1]
+    assert len(text) <= main.T1F_MAX_TEXT
+    (pk, tag, body), = parse_t1f(text)
+    sent = [int(x) for x in body[1:].split(",")]
+    assert sent == seqs[-len(sent):] and tag == tag_of(AUTH, PK8, body)
+    assert main._fifo_pending[tid]["seqs"] == seqs[:-len(sent)]          # rest wacht
+    assert tick(1100) == 0                               # tracker: hoogstens één per 10 min
+    assert tick(1626) == 1
+    body2 = parse_t1f(mesh.sent[1][1])[0][2]
+    assert [int(x) for x in body2[1:].split(",")] == seqs[:-len(sent)][-len(body2[1:].split(",")):]
+
+
+def test_bundle_mixed_g_and_old_trackers(app):
+    main, mp, mesh, tid, cid, chan, tick = app
+    ch = main.S.db.channel(cid)
+    trk = [add_tracker(main, i) for i in range(1, 7)]
+    t0 = time.time()
+    now = int(t0)
+
+    def send(i, seq, flags):
+        t, pk, key = trk[i]
+        rest = rest_of(seq, now - 300 + seq, flags=flags)
+        tg = hmac.new(bytes.fromhex(key), f"{pk}|{rest}".encode(), hashlib.sha256).hexdigest()[:8]
+        main_chan = f"T{i + 1}: T1C|{pk}|{tg}|{rest}"
+        chan("", text=main_chan)
+    for i in range(6):
+        send(i, 10 + i, "fg" if i % 2 == 0 else "f")     # 3 nieuwe (g) en 3 oude (alleen f) trackers
+    assert sorted(main._fifo_pending) == sorted(trk[i][0]["id"] for i in (0, 2, 4))
+    assert tick(t0 + 25) == 1
+    got = parse_t1f(mesh.sent[0][1])
+    keys = {pk: key for _, pk, key in trk}
+    assert sorted(pk for pk, _, _ in got) == sorted(trk[i][1] for i in (0, 2, 4))     # alleen g-trackers
+    for pk, tag, body in got:
+        assert body.startswith("s") and tag == tag_of(keys[pk], pk, body)
+    assert main._fifo_pending == {}
+
+
+def test_bundling_max_4_per_message(app):
     main, mp, mesh, tid, cid, chan, tick = app
     ch = main.S.db.channel(cid)
     trk = [add_tracker(main, i) for i in range(1, 7)]
     for n, (t, pk, _) in enumerate(trk):
-        main.fifo_request(ch, t, pk, NOW + n, now=1000)
+        main.fifo_request(ch, t, pk, 100 + n, now=1000)
     assert tick(1025) == 1
     first = parse_t1f(mesh.sent[0][1])
     assert len(first) == 4
@@ -259,10 +329,8 @@ def test_bundling_per_channel_with_tag_per_entry(app):
     second = parse_t1f(mesh.sent[1][1])
     assert len(second) == 2 and main._fifo_pending == {}
     keys = {pk: key for _, pk, key in trk}
-    got = first + second
-    assert sorted(pk for pk, _, _ in got) == sorted(keys)
-    for pk, tag, upto in got:                            # elke tag met de sleutel van die tracker
-        assert tag == hmac.new(bytes.fromhex(keys[pk]), f"{pk}|F|{upto}".encode(), hashlib.sha256).hexdigest()[:8]
+    for pk, tag, body in first + second:
+        assert tag == tag_of(keys[pk], pk, body)
 
 
 def test_two_channels_send_separately(app):
@@ -270,22 +338,22 @@ def test_two_channels_send_separately(app):
     cid2 = main.S.db.save_channel(None, {"name": "trk2", "secret": "11" * 16, "slot": 4, "require_sig": 1,
                                          "active": 1, "region": "nl"})
     (a, pa, _), (b, pb, _) = add_tracker(main, 1), add_tracker(main, 2)
-    main.fifo_request(main.S.db.channel(cid), a, pa, NOW, now=1000)
-    main.fifo_request(main.S.db.channel(cid2), b, pb, NOW, now=1000)
+    main.fifo_request(main.S.db.channel(cid), a, pa, 1, now=1000)
+    main.fifo_request(main.S.db.channel(cid2), b, pb, 1, now=1000)
     assert tick(1025) == 2
     assert sorted((s[0], s[2]) for s in mesh.sent) == [(3, "be"), (4, "nl")]
 
 
-def test_per_tracker_interval_and_merge(app):
+def test_per_tracker_interval(app):
     main, mp, mesh, tid, cid, chan, tick = app
     t, ch = main.S.db.tracker(tid), main.S.db.channel(cid)
-    main.fifo_request(ch, t, PK8, NOW, now=1000)
+    main.fifo_request(ch, t, PK8, 1, now=1000)
     assert tick(1025) == 1
-    main.fifo_request(ch, t, PK8, NOW + 100, now=1100)
-    main.fifo_request(ch, t, PK8, NOW + 50, now=1110)    # samenvoegen: hoogste upto blijft
+    main.fifo_request(ch, t, PK8, 2, now=1100)
+    main.fifo_request(ch, t, PK8, 3, now=1110)
     assert tick(1200) == 0 and tick(1600) == 0           # hoogstens één per 10 min per tracker
     assert tick(1626) == 1
-    assert parse_t1f(mesh.sent[1][1])[0][2] == str(NOW + 100)
+    assert parse_t1f(mesh.sent[1][1])[0][2] == "s2-3"    # alleen wat na de vorige T1F binnenkwam
 
 
 def test_hourly_cap_delays_and_logs(app, caplog):
@@ -295,7 +363,7 @@ def test_hourly_cap_delays_and_logs(app, caplog):
     ch = main.S.db.channel(cid)
     for i in range(1, 4):
         t, pk, _ = add_tracker(main, i)
-        main.fifo_request(ch, t, pk, NOW, now=1000)
+        main.fifo_request(ch, t, pk, i, now=1000)
     caplog.set_level("INFO", logger="meshtrack")
     assert tick(1025) == 1 and tick(1090) == 1
     assert tick(1200) == 0                               # uurlimiet bereikt
@@ -304,21 +372,37 @@ def test_hourly_cap_delays_and_logs(app, caplog):
     assert tick(1025 + 3600) == 1 and main._fifo_pending == {}
 
 
-def test_no_mesh_keeps_pending(app):
+def test_no_mesh_keeps_pending_and_failed_send_restores(app):
     main, mp, mesh, tid, cid, chan, tick = app
-    main.fifo_request(main.S.db.channel(cid), main.S.db.tracker(tid), PK8, NOW, now=1000)
+    t, ch = main.S.db.tracker(tid), main.S.db.channel(cid)
+    main.fifo_request(ch, t, PK8, 4, now=1000)
     mesh.connected = False
     assert tick(1025) == 0 and tid in main._fifo_pending
     mesh.connected = True
-    assert tick(1026) == 1
+
+    fail = {"on": True}
+    orig = mesh.send_channel
+
+    async def flaky(*a, **k):
+        if fail["on"]:
+            raise RuntimeError("weg")
+        await orig(*a, **k)
+    mp.setattr(mesh, "send_channel", flaky)
+    assert tick(1026) == 0 and main._fifo_pending[tid]["seqs"] == [4]     # mislukt: terugzetten
+    main.fifo_request(ch, t, PK8, 5, now=1027)
+    assert main._fifo_pending[tid]["seqs"] == [4, 5]
+    fail["on"] = False
+    assert tick(1100) == 1 and parse_t1f(mesh.sent[-1][1])[0][2] == "s4-5"
 
 
 def test_own_acks_echoed_back_are_ignored(app):
     main, mp, mesh, tid, cid, chan, tick = app
-    t1f = main.fifo_ack_text([main.fifo_entry(AUTH, PK8, NOW)])
-    for body in (t1f, main.sos_ack_text(AUTH, PK8, "7")):
+    t1f = main.fifo_ack_text([main.fifo_entry(AUTH, PK8, [1, 2])])
+    old = f"T1F|{PK8}:{tag_of(AUTH, PK8, str(NOW))}:{NOW}"          # oud formaat (echo van een oude server)
+    for body in (t1f, old, main.sos_ack_text(AUTH, PK8, "7")):
         chan("", text=f"MeshTrack: {body}")             # echo via een repeater
     assert main.S.db.unknown() == [] and main.S.db.track(tid, 0) == []
     from meshtrack.protocol import is_meshtrack
     assert not is_meshtrack(t1f)
     assert handle(main.S.db, Config(), PK, t1f) is None and main.S.db.unknown() == []
+

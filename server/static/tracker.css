@@ -102,6 +102,9 @@ body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dv
 .tk-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .tk-tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; min-width: 0; }
 .tk-tile.warn { border-color: var(--warn); box-shadow: inset 3px 0 0 var(--warn); }
+/* telefoon: de wachtrij over de volle breedte (de opsplitsing past niet in een halve tegel) */
+.tk-tile.wide { grid-column: 1 / -1; }
+.tk-meter .qs { background: color-mix(in srgb, var(--tk-fifo) 45%, var(--panel)); }
 .tk-tilelbl { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
 .tk-tile b { display: block; font-size: 21px; line-height: 1.2; margin: 2px 0 1px; font-variant-numeric: tabular-nums; }
 .tk-tile b small { font-size: 13px; font-weight: 400; color: var(--muted); }
@@ -290,6 +293,7 @@ body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dv
   .tk-intro { max-width: 760px; }
   .tk-hero { padding: 16px 18px; }
   .tk-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .tk-tile.wide { grid-column: auto; }
   .tk-mapslot-ov { height: 46vh; max-height: 560px; }
   .tk-kv, .tk-intro p, .tk-intro ul { font-size: 14px; }
 }

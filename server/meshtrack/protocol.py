@@ -23,7 +23,8 @@ punten, nieuwste eerst, elk t.o.v. het vorige (het eerste t.o.v. het hoofdpunt),
 LEB128-varints: dt = vorige_ts - deze_ts (s), dlat en dlon in 1e-5 graden (zigzag).
 
 Veld 16 (optioneel, fw 0.9.0): vlaggen; `f` = bevestiging gevraagd (Q met verstuurde maar
-nog niet bevestigde punten). Alleen dan stuurt de server een T1F.
+nog niet bevestigde punten); `g` (fw 0.9.4) = de tracker verstaat de exacte bevestiging per seq.
+Sinds server 1.3.1 krijgt alleen een tracker met `g` een T1F (zie main.py); zonder `g` geen T1F.
 """
 from __future__ import annotations
 
@@ -79,6 +80,11 @@ class Report:
     @property
     def ack_requested(self) -> bool:
         return "f" in self.flags
+
+    @property
+    def exact_ack(self) -> bool:
+        """Vlag "g" (fw 0.9.4+): de tracker verstaat de exacte T1F-bevestiging per seq (zie main.py)."""
+        return "g" in self.flags
 
     @property
     def has_fix(self) -> bool:

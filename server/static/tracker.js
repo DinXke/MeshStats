@@ -452,7 +452,8 @@
   // ---- berekeningen ----------------------------------------------------------------------------
   function fifoEstimate() {
     const per = int(status.fifo_per_bericht), gap = durSec(status.fifo_gap), cap = int(status.fifo_per_uur) || 0;
-    const q = dump ? dump.Q.filter((p) => !qInfo(p.flags).sent).length : 0;
+    // Alle punten in de wachtrij tellen: ook verstuurde-maar-onbevestigde en geparkeerde punten moeten er nog door.
+    const q = dump ? dump.Q.length : 0;
     if (!per || !gap) return null;
     const n = Math.ceil(q / per);
     if (!n) return { n: 0, s: 0, q, per, gap, cap };
@@ -464,11 +465,19 @@
   }
   function counts() {
     const d = dump;
-    const r = { F: d.F.length, S: d.S.length, Q: d.Q.length, pend: 0, parked: 0, sent: 0, tries: 0 };
+    const r = { F: d.F.length, S: d.S.length, Q: d.Q.length, pend: 0, parked: 0, sent: 0, tries: 0, waiting: 0 };
     d.F.forEach((p) => { if (fInfo(p.flags).pending) r.pend++; });
-    d.Q.forEach((p) => { const i = qInfo(p.flags); if (i.parked) r.parked++; if (i.sent) r.sent++; if (i.tries) r.tries++; });
+    d.Q.forEach((p) => { const i = qInfo(p.flags); if (i.parked) r.parked++; else if (i.sent) r.sent++; else r.waiting++; if (i.tries) r.tries++; });
     return r;
   }
+  // Opsplitsing van de wachtrij: "N nog niet verstuurd · M verstuurd, onbevestigd · K geparkeerd" (lege delen weg).
+  const qBreak = (c) => [c.waiting && `${c.waiting} nog niet verstuurd`, c.sent && `${c.sent} verstuurd, onbevestigd`, c.parked && `${c.parked} geparkeerd`].filter(Boolean).join(" · ");
+  // Firmwareversie vergelijken ("0.9.4" of nieuwer); onbekend = oud.
+  const fwAtLeast = (v) => { const a = String(status.fw || "0").split(".").map(Number), b = v.split(".").map(Number); for (let i = 0; i < 3; i++) { const x = a[i] || 0, y = b[i] || 0; if (x !== y) return x > y; } return true; };
+  // Sinds 0.9.4 geeft de tracker geparkeerde punten niet meer op: lagere voorrang, nieuwe kans in rust bij sterke dekking.
+  const parkedNote = (n) => fwAtLeast("0.9.4")
+    ? `${n} ${n === 1 ? "punt" : "punten"} geparkeerd: lagere voorrang, ${n === 1 ? "krijgt" : "krijgen"} een nieuwe kans in rust bij sterke dekking.`
+    : `${n} ${n === 1 ? "punt" : "punten"} geparkeerd na te veel mislukte pogingen.`;
 
   // ---- weergave: kaarten (cards) ----------------------------------------------------------------
   const kv = (rows) => `<dl class="tk-kv">${rows.filter(Boolean).map(([k, v, sub]) => `<dt>${esc(k)}</dt><dd>${v}${sub ? `<span class="sub">${sub}</span>` : ""}</dd>`).join("")}</dl>`;
@@ -523,12 +532,14 @@
     const oldAge = oldest ? trackerNow() - oldest : 0;
     const fifoMode = (dump.mode && dump.mode.track === "fifo") || status.track_mode === "fifo";
     let body = "";
-    body += `<div class="tk-block"><h3>Vulling</h3>${meter([[pct(c.Q - c.parked, max || Math.max(c.Q, 1)), "q"], [pct(c.parked, max || Math.max(c.Q, 1)), "k"]])}
-      <div class="tk-meterlbl"><span>${c.Q} ${max ? `/ ${max}` : ""} punten</span><span>${c.parked ? `${c.parked} geparkeerd` : ""}</span></div></div>`;
+    const base = max || Math.max(c.Q, 1);
+    body += `<div class="tk-block"><h3>Vulling</h3>${meter([[pct(c.waiting, base), "q"], [pct(c.sent, base), "qs"], [pct(c.parked, base), "k"]])}
+      <div class="tk-meterlbl"><span>${c.Q}${max ? ` / ${max}` : ""} punten</span><span>${c.Q ? "" : "leeg, alles bevestigd"}</span></div>
+      ${c.Q ? `<p class="tk-note">${esc(qBreak(c))}</p>` : ""}</div>`;
     if (est) {
       body += `<div class="tk-block">${kv([
         ["Berichten nodig", est.n ? `${est.n}` : "0", `${est.per} punten per bericht`],
-        ["Leeg in", est.n ? `≈ ${esc(dur(est.s))}` : "leeg", est.n ? `elke ${esc(dur(est.gap))}${est.cap ? ` · hoogstens ${est.cap} per uur` : ""}${est.capped ? " (plafond telt)" : ""}` : ""],
+        ["Leeg in", est.n ? `≈ ${esc(dur(est.s))}` : "leeg, alles bevestigd", est.n ? `elke ${esc(dur(est.gap))}${est.cap ? ` · hoogstens ${est.cap} per uur` : ""}${est.capped ? " (plafond telt)" : ""}` : ""],
       ])}</div>`;
     }
     if (oldest) {
@@ -550,8 +561,9 @@
       <div class="tk-big s"><b>${c.S}</b><span>SlowTrack</span></div>
       <div class="tk-big q"><b>${c.Q}</b><span>FIFO</span></div></div>` + kv([
       ["FastTrack wacht op FIFO", `${c.pend}`],
+      ["FIFO nog niet verstuurd", `${c.waiting}`],
       ["FIFO verstuurd, onbevestigd", `${c.sent}`],
-      ["FIFO geparkeerd", `<span class="${c.parked ? "tk-bad" : ""}">${c.parked}</span>`],
+      ["FIFO geparkeerd", `<span class="${c.parked ? "tk-warn" : ""}">${c.parked}</span>`],
       ["FIFO met mislukte pogingen", `${c.tries}`],
     ]), "", id);
   }
@@ -636,24 +648,24 @@
   function renderHero() {
     if (!dump) return;
     const v = verdict(), c = counts(), est = fifoEstimate();
-    const unsent = dump.Q.filter((p) => !qInfo(p.flags).sent).length;
     const t = dump.lastTx, m = dump.mode || {}, pos = dump.pos;
     const fl = dump.flush && (dump.flush.state === "gepauzeerd" || dump.flush.state === "gestopt") ? dump.flush : null;
     const tile = (lbl, val, sub, cls = "") => `<div class="tk-tile${cls ? " " + cls : ""}"><span class="tk-tilelbl">${lbl}</span><b>${val}</b><span class="tk-tilesub">${sub || "&nbsp;"}</span></div>`;
     const agoHtml = (ts) => `${esc(dur(trackerNow() - ts))} <small>geleden</small>`;
     const nm = nextMsg();
-    const qSub = [!c.Q ? "leeg" : !unsent ? "alles verstuurd" : est ? `leeg in ≈ ${esc(dur(est.s))}${fl ? ` · ${esc(flushText(fl))}` : ""}` : "", nm ? esc(nm.tile) : ""].filter(Boolean).join("<br>");
+    // Alleen "leeg" als er echt niets meer in de wachtrij zit; anders het totaal met opsplitsing.
+    const qSub = !c.Q ? "leeg, alles bevestigd" : [esc(qBreak(c)), est ? `leeg in ≈ ${esc(dur(est.s))}${fl ? ` · ${esc(flushText(fl))}` : ""}` : "", nm ? esc(nm.tile) : ""].filter(Boolean).join("<br>");
     const upd = gotAt ? new Date(gotAt).toLocaleTimeString("nl-BE") : "";
     const foot = conn ? `Bijgewerkt om ${upd} · ${autoSec() ? `elke ${autoSec()} s` : "auto uit"}` : `Niet verbonden · gegevens van ${upd}`;
     $("ov-hero").innerHTML = `<section class="card tk-hero ${v.lvl}" aria-labelledby="tk-herot">
       <div class="tk-verdict">${ICON[v.lvl]}<div><span class="tk-lvl">${LVL[v.lvl]}</span><h2 id="tk-herot">${esc(v.title)}</h2><p>${esc(v.sub)}</p></div></div>
       <div class="tk-tiles">
-        ${tile("Wachtrij", unsent ? `${unsent} <small>te versturen</small>` : "0", qSub)}
+        ${tile("Wachtrij", c.Q ? `${c.Q} <small>${c.Q === 1 ? "punt" : "punten"}</small>` : "0", qSub, "wide")}
         ${tile("Laatst verstuurd", t ? agoHtml(t.ts) : "nog niets", t ? `${esc(STATE[t.st] || t.st)} · ${t.ok ? "verzonden" : '<span class="tk-bad">mislukt</span>'}` : "")}
         ${tile("GPS", pos ? agoHtml(pos.ts) : "geen fix", pos && pos.sats != null ? `${pos.sats} satellieten` : "", pos ? "" : "warn")}
         ${tile("Batterij", m.bat != null ? `${m.bat}%` : "?", m.usb ? "aan USB" : "", m.bat != null && m.bat < 20 ? "warn" : "")}
       </div>
-      ${c.parked ? `<p class="tk-heronote">${ICON.warn}${c.parked} ${c.parked === 1 ? "punt" : "punten"} geparkeerd na te veel mislukte pogingen.</p>` : ""}
+      ${c.parked ? `<p class="tk-heronote">${ICON.warn}${esc(parkedNote(c.parked))}</p>` : ""}
       <p class="tk-herofoot">${esc(foot)}</p></section>`;
     if (v.lvl !== lastLvl) { $("tk-sr").textContent = `${LVL[v.lvl]}: ${v.title.charAt(0).toLowerCase()}${v.title.slice(1)}`; lastLvl = v.lvl; }
   }

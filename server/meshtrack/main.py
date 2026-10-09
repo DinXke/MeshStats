@@ -42,7 +42,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -301,15 +301,17 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
     fields = rest.split("|")
     if len(fields) > 1 and fields[1] == "E" and tag != "-" and t.get("authkey"):   # SOS: bevestigen
         _spawn(_sos_ack_later(ch, t, pk, fields[0]))
-    if len(fields) > 14 and fields[1] == "Q" and tag != "-" and t.get("authkey"):   # FIFO: bevestiging gevraagd?
+    if len(fields) > 14 and fields[1] == "Q" and tag != "-" and t.get("authkey"):   # FIFO: te bevestigen?
         # Ook als alle punten dubbel waren: de tracker moet ze uit zijn wachtrij kunnen halen.
         # Niet bij een ongeldig bericht: dan zou de tracker punten wissen die we nooit hadden.
+        # Alleen met vlag "g" (fw 0.9.4+): de oude "tot ts"-bevestiging deed fw 0.9.0-0.9.3 ook
+        # verloren punten wissen; die trackers krijgen geen T1F meer (herhalen tot ze gehoord worden).
         try:
             r = parse_t1("T1|" + rest)
         except ProtocolError:
             r = None
-        if r is not None and r.ack_requested and r.fix_ts:
-            fifo_request(ch, t, pk, r.fix_ts)
+        if r is not None and r.exact_ack:
+            fifo_request(ch, t, pk, r.seq)
 
 
 # ---- paden van trackerberichten (1.3, zie paths.py) -------------------------------------
@@ -362,43 +364,81 @@ def _spawn(coro) -> asyncio.Task:
 
 
 # ---- FIFO-bevestiging (T1F) ------------------------------------------------------------
-# Een tracker vraagt een bevestiging met vlag "f" op een Q-bericht (alleen als hij verstuurde maar
-# nog niet bevestigde punten heeft). De server bundelt: "T1F|<pk8>:<tag>:<upto>|..." met tot
-# FIFO_MAX_PER_MSG trackers van hetzelfde kanaal; tag = HMAC(authsleutel van die tracker,
-# "<pk8>|F|<upto>"), upto = hoogste fix_ts van de gevraagde Q-punten. Schaal (10-20 trackers):
-#  - per tracker: eerste keer FIFO_ACK_DELAY_S na zijn laatste "f"-bericht (debounce), daarna
+# 1.3.1: exacte bevestiging per seq. Een Q-bericht met vlag "g" (fw 0.9.4+, op elk Q-bericht) zet
+# zijn seq in de wachtrij van die tracker, ook als het bericht dubbel was. De server bundelt:
+# "T1F|<pk8>:<tag>:s<seqs>|..." met tot FIFO_MAX_PER_MSG trackers van hetzelfde kanaal; <seqs> =
+# de ontvangen Q-seqs sinds de vorige bevestiging, oplopend, met reeksen "a-b" (bv. s3-5,9);
+# tag = eerste 4 bytes HMAC-SHA256(authsleutel, "<pk8>|F|s<seqs>"). Past het niet in de
+# kanaaltekst, dan gaan de laatst ontvangen seqs mee en blijft de rest voor de volgende T1F.
+# Trackers zonder "g" (fw 0.9.0-0.9.3) krijgen GEEN T1F: hun "tot ts"-bevestiging (upto) liet ze
+# ook verloren punten wissen. Ze herhalen tot ze gehoord worden. (Echo's van T1F blijven genegeerd.)
+# Schaal (10-20 trackers):
+#  - per tracker: eerste keer FIFO_ACK_DELAY_S na zijn laatste Q-bericht (debounce), daarna
 #    hoogstens één keer per FIFO_TRACKER_INTERVAL_S;
 #  - per kanaal hoogstens één T1F per FIFO_CHANNEL_INTERVAL_S, en in totaal T1F_MAX_PER_HOUR per uur.
-# Wat moet wachten blijft staan en wordt samengevoegd (per tracker de hoogste upto).
 FIFO_ACK_DELAY_S = 20.0
 FIFO_TRACKER_INTERVAL_S = 600.0
 FIFO_CHANNEL_INTERVAL_S = 60.0
 T1F_MAX_PER_HOUR = 20
 FIFO_MAX_PER_MSG = 4
 FIFO_TICK_S = 2.0
-_fifo_pending: dict[int, dict[str, Any]] = {}    # tracker-id -> {upto, ch_id, pk, ready}
+T1F_MAX_TEXT = 140                               # send_channel kapt kanaaltekst af op 140 tekens
+_fifo_pending: dict[int, dict[str, Any]] = {}    # tracker-id -> {seqs (ontvangstvolgorde), ch_id, pk, ready}
 _fifo_tracker_sent: dict[int, float] = {}        # tracker-id -> laatste T1F met die tracker erin
 _fifo_chan_sent: dict[int, float] = {}           # kanaal-id -> laatste T1F op dat kanaal
 _fifo_hour: list[float] = []                     # verzendtijden van het laatste uur (alle kanalen)
 _fifo_capped: set[str] = set()                   # al gemelde begrenzingen (geen logspam)
 
 
-def fifo_entry(authkey_hex: str, pk: str, upto_ts: int) -> str:
-    """"<pk8>:<tag>:<upto_ts>", tag = HMAC(authsleutel, "<pk8>|F|<upto_ts>")."""
-    return f"{pk}:{channel_tag(authkey_hex, f'{pk}|F|{upto_ts}')}:{upto_ts}"
+def compress_seqs(seqs) -> str:
+    """{9, 3, 4, 5} -> "3-5,9" (oplopend, reeksen van minstens twee als a-b)."""
+    out, s = [], sorted(set(seqs))
+    i = 0
+    while i < len(s):
+        j = i
+        while j + 1 < len(s) and s[j + 1] == s[j] + 1:
+            j += 1
+        out.append(str(s[i]) if i == j else f"{s[i]}-{s[j]}")
+        i = j + 1
+    return ",".join(out)
+
+
+def fifo_entry(authkey_hex: str, pk: str, seqs) -> str:
+    """"<pk8>:<tag>:s<seqs>", tag = HMAC(authsleutel, "<pk8>|F|s<seqs>")."""
+    body = "s" + compress_seqs(seqs)
+    return f"{pk}:{channel_tag(authkey_hex, f'{pk}|F|{body}')}:{body}"
+
+
+def fit_seqs(seqs: list[int], budget: int) -> list[int]:
+    """Zoveel mogelijk van de laatst ontvangen seqs (achteraan in de lijst) waarvan "s<seqs>" in budget past."""
+    for n in range(len(seqs), 0, -1):          # van alles naar minder: het eerste dat past
+        if 1 + len(compress_seqs(seqs[-n:])) <= budget:
+            return seqs[-n:]
+    return []
 
 
 def fifo_ack_text(entries: list[str]) -> str:
     return "T1F|" + "|".join(entries)
 
 
-def fifo_request(ch: dict[str, Any], t: dict[str, Any], pk: str, fix_ts: int, now: Optional[float] = None) -> None:
-    """Q-bericht met "f": upto bijhouden en het vroegste verzendmoment voor deze tracker zetten."""
+def fifo_request(ch: dict[str, Any], t: dict[str, Any], pk: str, seq: int, now: Optional[float] = None) -> None:
+    """Q-bericht met "g": zijn seq bijhouden (ook bij een dubbel bericht) en het vroegste verzendmoment zetten."""
     now = time.time() if now is None else now
     e = _fifo_pending.get(t["id"])
-    upto = max(fix_ts, e["upto"]) if e else fix_ts
+    seqs = [s for s in (e["seqs"] if e else []) if s != seq] + [seq]
     ready = max(now + FIFO_ACK_DELAY_S, _fifo_tracker_sent.get(t["id"], -1e18) + FIFO_TRACKER_INTERVAL_S)
-    _fifo_pending[t["id"]] = {"upto": upto, "ch_id": ch["id"], "pk": pk, "ready": ready}
+    _fifo_pending[t["id"]] = {"seqs": seqs, "ch_id": ch["id"], "pk": pk, "ready": ready}
+
+
+def _fifo_merge(tid: int, e: dict[str, Any], seqs: list[int], ready: float) -> None:
+    """Niet (of niet allemaal) verstuurde seqs terugzetten, samen met wat er intussen bijkwam."""
+    if not seqs:
+        return
+    cur = _fifo_pending.get(tid)
+    if cur is None:
+        _fifo_pending[tid] = {**e, "seqs": list(seqs), "ready": ready}
+    else:
+        cur["seqs"] = list(seqs) + [s for s in cur["seqs"] if s not in seqs]
 
 
 def _fifo_cap_log(key: str, msg: str, *args: Any) -> None:
@@ -431,20 +471,36 @@ async def fifo_tick(now: Optional[float] = None) -> int:
                           cid, FIFO_CHANNEL_INTERVAL_S)
             continue
         ch = S.db.channel(cid)
-        batch, entries = [], []
+        cand = []
         for tid in tids:
             t = S.db.tracker(tid)
-            if not ch or not t or not t.get("authkey"):
+            if not ch or not t or not t.get("authkey") or not _fifo_pending[tid].get("seqs"):
                 _fifo_pending.pop(tid, None)   # kanaal of sleutel weg: niets meer te bevestigen
                 continue
-            if len(batch) < FIFO_MAX_PER_MSG:
-                e = _fifo_pending[tid]
-                batch.append((t, e))
-                entries.append(fifo_entry(t["authkey"], e["pk"], e["upto"]))
+            if len(cand) < FIFO_MAX_PER_MSG:
+                cand.append((t, _fifo_pending[tid]))
+        if not cand:
+            continue
+        # tekstruimte verdelen: "T1F|" + n x ("<pk8>:<tag8>:" + "s<seqs>") + (n-1) x "|"; korte lijsten eerst,
+        # wat zij overlaten gaat naar de langere
+        room = T1F_MAX_TEXT - 4 - (len(cand) - 1) - 18 * len(cand)
+        order = sorted(range(len(cand)), key=lambda i: len(compress_seqs(cand[i][1]["seqs"])))
+        chosen: dict[int, list[int]] = {}
+        for k, i in enumerate(order):
+            share = room // (len(cand) - k)
+            chosen[i] = fit_seqs(cand[i][1]["seqs"], share)
+            room -= 1 + len(compress_seqs(chosen[i])) if chosen[i] else 0
+        batch, entries = [], []
+        for i, (t, e) in enumerate(cand):
+            if chosen[i]:
+                batch.append((t, e, chosen[i]))
+                entries.append(fifo_entry(t["authkey"], e["pk"], chosen[i]))
         if not entries:
             continue
-        for t, _ in batch:
+        for t, e, sent_seqs in batch:          # verstuurde seqs eruit; de rest wacht op de volgende T1F
             _fifo_pending.pop(t["id"], None)
+            rest = [s for s in e["seqs"] if s not in sent_seqs]
+            _fifo_merge(t["id"], e, rest, now + FIFO_TRACKER_INTERVAL_S)
         _fifo_chan_sent[cid] = now
         _fifo_hour.append(now)
         _fifo_capped.discard("hour")
@@ -453,15 +509,16 @@ async def fifo_tick(now: Optional[float] = None) -> int:
             await S.mesh.send_channel(ch["slot"], fifo_ack_text(entries), ch.get("region") or "")
         except Exception as ex:  # noqa: BLE001
             log.warning("FIFO-bevestiging op kanaal %s mislukt: %s", ch["name"], ex)
-            for t, e in batch:                 # terugzetten, tenzij er intussen een nieuwer verzoek is
-                _fifo_pending.setdefault(t["id"], {**e, "ready": now + FIFO_CHANNEL_INTERVAL_S})
+            for t, e, sent_seqs in batch:      # terugzetten, samen met wat er intussen bijkwam
+                _fifo_merge(t["id"], e, sent_seqs, now + FIFO_CHANNEL_INTERVAL_S)
+                _fifo_pending[t["id"]]["ready"] = min(_fifo_pending[t["id"]]["ready"], now + FIFO_CHANNEL_INTERVAL_S)
             continue
         sent += 1
         S.db.stat("t1f_msg", None, cid)
-        for t, e in batch:
+        for t, e, sent_seqs in batch:
             S.db.stat("t1f_sent", t["id"], cid)
             _fifo_tracker_sent[t["id"]] = now
-            log.info("FIFO-bevestiging T1F tot %s naar %s", e["upto"], t["alias"])
+            log.info("FIFO-bevestiging T1F s%s naar %s", compress_seqs(sent_seqs), t["alias"])
     return sent
 
 
