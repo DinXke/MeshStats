@@ -164,7 +164,7 @@
     }
     if (dun != null) lines.push([dun ? `Rechte stukken: punten die minder dan ${dun} m naast de lijn tussen hun buren liggen, gaan er niet in.` : "Rechte stukken worden niet uitgedund."]);
     if (snr != null) lines.push([`Leegmaken begint pas bij stabiele dekking: een herhaling met SNR ≥ ${snr} dB, twee tekens van dekking binnen 60 s, of een bevestiging van de server. Een niet-vol bericht vraagt een herhaling met SNR ≥ ${snr} dB of een bevestiging van de server.`]);
-    if (pog) lines.push([`Een inhaalbericht dat niet gehoord wordt, krijgt tot ${pog} ${pog === 1 ? "poging" : "pogingen"} (telkens langer wachten: 1, 5, 15, daarna 60 min); daarna worden zijn punten geparkeerd en krijgen ze pas als al de rest verstuurd is nog één laatste kans.`]);
+    if (pog) lines.push([`Een inhaalbericht dat niet gehoord wordt, krijgt tot ${pog} ${pog === 1 ? "poging" : "pogingen"} (telkens langer wachten: 1, 5, 15, daarna 60 min); daarna worden zijn punten geparkeerd: lagere voorrang en 60 min wachten, maar nooit opgegeven. In rust of als companion krijgen ze bij sterke dekking een nieuwe kans, hoogstens 1× per 30 min.`]);
     for (const [t, cls] of lines) {
       const d = document.createElement("div");
       d.textContent = t;

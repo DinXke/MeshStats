@@ -43,10 +43,10 @@
 //        punten (hoofdpunt = het nieuwste van dat deel, de oudere binair met hun tijd)
 //        ──(herhaald)──> die punten uit de wachtrij, bewaren, volgende
 //        ──(niet herhaald)──> punten blijven, pogingen + 1, wachttijd 1/5/15/60 min, NIET ACTIEF
-//           (wacht op nieuwe dekking). Vanaf fifo_pogingen = geparkeerd: overgeslagen zolang er
-//           gewone punten zijn; daarna één laatste poging, mislukt = opgegeven.
-//     T1F van de server (vraag "f" in het Q-bericht als er onbevestigde punten zijn) = alle verstuurde
-//        punten tot upto_ts zijn binnen.
+//           (wacht op nieuwe dekking). Vanaf fifo_pogingen = geparkeerd: lagere voorrang en 60 min
+//           wachttijd, maar NOOIT opgegeven (0.9.4). Thuis/companion met sterke dekking: teller op 0.
+//     T1F van de server per volgnummer (elk Q-bericht draagt "g", plus "f" als er onbevestigde punten
+//        zijn) = precies de punten van die berichten zijn binnen. Het oude upto_ts wordt genegeerd.
 //     Vol bericht (>= punten per bericht klaar) = gewone regels; niet-vol bericht (0.9.3) alleen als het
 //        laatste geslaagde inhaalbericht EN de laatste niet-volle poging minstens fifo_wacht geleden zijn,
 //        de laatste dekking sterk was (SNR >= fifo_snr of T1F) en de radio toch al wakker is.
@@ -243,13 +243,14 @@ uint8_t mt_tracker_buffered() { return s_npts; }
 
 // ---- FIFO (0.9, track_mode fifo) --------------------------------------------------
 // Wachtrij van punten die de mesh (waarschijnlijk) niet haalden, op tijd gesorteerd ([0] = oudste),
-// zonder dubbele tijden. Vol = het oudste valt weg. Bewaard op ExtraFS: kop + punten, via tmp en
+// zonder dubbele tijden. Vol = het minst betekenisvolle punt valt weg. Bewaard op ExtraFS: kop + punten, via tmp en
 // rename, met een crc; geschreven na elke 10 nieuwe punten (of een kwartier na het eerste
 // onbewaarde punt) en na elke leegmaakstap.
 // Per punt een pogingenteller: een leegmaakbericht dat niet herhaald wordt, verhoogt hem voor al
 // zijn punten en geeft ze een wachttijd (1, 5, 15, daarna 60 min). Vanaf fifo_pogingen is een punt
-// "geparkeerd": het blokkeert de wachtrij niet meer en krijgt pas een laatste poging als er niets
-// anders wacht. Lukt ook die niet, dan valt het weg.
+// "geparkeerd": lagere voorrang en 60 min wachttijd, zodat het de wachtrij niet blokkeert. Een punt
+// wordt nooit opgegeven (0.9.4): het verdwijnt alleen na een herhaling van zijn bericht, een T1F per
+// volgnummer, of als de wachtrij overloopt (het minst betekenisvolle punt).
 struct MtFPt {
   uint32_t ts;                 // fix_ts (GPS)
   int32_t lat, lon;            // 1e-5 graden
@@ -297,9 +298,15 @@ static uint32_t s_rc_ms[MT_FL_HOUR], s_rc_ux[MT_FL_HOUR], s_rc_ld[MT_FL_HOUR];
 static uint32_t s_rt_ms[MT_FL_TRIES], s_rt_ux[MT_FL_TRIES], s_rt_ld[MT_FL_TRIES];
 static MtRing s_ring_cnt = { s_rc_ms, s_rc_ux, s_rc_ld, MT_FL_HOUR };     // getelde berichten
 static MtRing s_ring_try = { s_rt_ms, s_rt_ux, s_rt_ld, MT_FL_TRIES };    // alle pogingen
-// Verstuurde leegmaakberichten zonder gehoorde herhaling (laatste uur): telt een latere T1F hun
-// oudste punt mee, dan tellen ze alsnog, op hun verzendtijd. Alleen in RAM.
-struct MtUnheard { uint32_t ms, ux, min_ts; };
+// Verstuurde leegmaakberichten (0.9.4): volgnummer, verzendtijd en PRECIES welke punten ze droegen.
+// Een T1F bevestigt per volgnummer ("s<seqs>"); alleen die punten verdwijnen, nooit een tijdsbereik
+// (0.9.3 wiste zo punten die de server nooit kreeg). Alleen in RAM: na een herstart blijven de punten
+// gewoon in de wachtrij en gaan ze opnieuw mee (de server filtert dubbels).
+#define MT_SENT_MSGS 40
+#define MT_SENT_PTS  31                     // = MT_SLOW_MAX_ITEMS + 1
+struct MtSentMsg { uint32_t ms, ux; uint16_t seq; uint8_t n, ok; uint32_t ts[MT_SENT_PTS]; };
+static MtSentMsg s_sent[MT_SENT_MSGS];      // ms = 0: leeg
+static uint8_t s_sent_i = 0;
 // Laatste geslaagde inhaalbericht (herhaald of door T1F bevestigd), op zijn verzendtijd. fifo_wacht
 // (0.9.3): een niet-vol inhaalbericht pas als dit minstens fifo_wacht geleden is. Nooit = lang geleden.
 static uint32_t s_ok_ms = 0;                // millis | 1 (deze start), 0 = niet in deze start
@@ -309,8 +316,6 @@ static void last_ok_set(uint32_t ms, uint32_t ux) {
   if (!s_ok_ms || (int32_t)(ms - s_ok_ms) > 0) s_ok_ms = ms | 1;
   if (ux && ux > s_ok_ux) s_ok_ux = ux;
 }
-#define MT_UNHEARD 40
-static MtUnheard s_unheard[MT_UNHEARD];
 
 static bool fifo_mode() { return mt_cfg.track_mode == MT_TRACK_FIFO; }
 static uint16_t fifo_cap() { return mt_cfg.fifo_max < 20 ? 20 : mt_cfg.fifo_max > MT_FIFO_CAP ? MT_FIFO_CAP : mt_cfg.fifo_max; }
@@ -368,25 +373,46 @@ static void ring_store(const MtRing& r, uint32_t* out) {
   }
 }
 
-static void unheard_add(uint32_t ms, uint32_t ux, uint32_t min_ts) {
-  int k = 0;
-  for (int i = 0; i < MT_UNHEARD; i++) {
-    if (!s_unheard[i].ms || millis() - s_unheard[i].ms >= 3600000UL) { k = i; break; }
-    if ((int32_t)(s_unheard[i].ms - s_unheard[k].ms) < 0) k = i;   // vol: de oudste wijkt
-  }
-  s_unheard[k] = { ms | 1, ux, min_ts };
+static void sent_add(uint16_t seq, uint32_t ms, uint32_t ux, const uint32_t* ts, int n) {
+  MtSentMsg& m = s_sent[s_sent_i];
+  s_sent_i = (uint8_t)((s_sent_i + 1) % MT_SENT_MSGS);
+  m.ms = ms | 1;
+  m.ux = ux;
+  m.seq = seq;
+  m.ok = 0;
+  m.n = (uint8_t)(n > MT_SENT_PTS ? MT_SENT_PTS : n);
+  memcpy(m.ts, ts, sizeof(uint32_t) * m.n);
 }
 
-// T1F tot upto: elk niet gehoord leegmaakbericht van het laatste uur met een punt <= upto kwam aan.
-static int unheard_confirm(uint32_t upto) {
-  int n = 0;
-  for (int i = 0; i < MT_UNHEARD; i++) {
-    MtUnheard& u = s_unheard[i];
-    if (!u.ms) continue;
-    if (millis() - u.ms >= 3600000UL) { u.ms = 0; continue; }
-    if (u.min_ts <= upto) { ring_add(s_ring_cnt, u.ms, u.ux); last_ok_set(u.ms, u.ux); u.ms = 0; n++; }
+static void sent_mark_ok(uint16_t seq) {
+  for (int i = 0; i < MT_SENT_MSGS; i++) if (s_sent[i].ms && s_sent[i].seq == seq) s_sent[i].ok = 1;
+}
+
+// Staat seq in "2301,2305-2307" (len tekens)?
+static bool seq_in_list(const char* l, int len, uint16_t seq) {
+  int i = 0;
+  while (i < len) {
+    char* end;
+    unsigned long a = strtoul(l + i, &end, 10), b = a;
+    int j = end - l;
+    if (j == i) return false;                  // geen getal: ongeldig
+    if (j < len && l[j] == '-') {
+      i = j + 1;
+      b = strtoul(l + i, &end, 10);
+      j = end - l;
+      if (j == i) return false;
+    }
+    if (a <= 0xFFFF && b <= 0xFFFF && a <= b && seq >= a && seq <= b) return true;
+    if (j < len && l[j] != ',') return false;
+    i = j + 1;
   }
-  return n;
+  return false;
+}
+
+static bool seq_list_valid(const char* l, int len) {
+  if (len <= 0) return false;
+  for (int i = 0; i < len; i++) if (!((l[i] >= '0' && l[i] <= '9') || l[i] == ',' || l[i] == '-')) return false;
+  return true;
 }
 
 static int fifo_find_ts_pos(uint32_t ts) {
@@ -575,19 +601,28 @@ static void fifo_coverage(const char* why, unsigned hops, const char* rep, bool 
   if (!fresh && fifo_mode()) mt_log("fifo: dekking (%s, %u hops, laatste repeater %s)", why, hops, rep);
 }
 
-// T1F van de server: alle punten tot en met upto die al in een leegmaakbericht verstuurd zijn, zijn
-// binnen (ook geparkeerde). Geeft het aantal verwijderde punten.
+// T1F van de server per volgnummer: precies de punten van die leegmaakberichten zijn binnen. Een niet
+// gehoord bericht telt dan alsnog als geslaagd (fifo_per_uur op zijn verzendtijd als dat in het laatste
+// uur viel, en voor fifo_wacht). msgs = aantal herkende berichten; geeft het aantal verwijderde punten.
 static uint32_t s_fifo_confirmed = 0;          // sinds de start door T1F verwijderd (status fifo_bevestigd)
-static uint16_t fifo_confirm(uint32_t upto) {
-  int late = unheard_confirm(upto);
-  if (late) mt_log("fifo: %d niet gehoorde leegmaakberichten toch aangekomen (T1F), tellen mee voor fifo_per_uur", late);
-  uint16_t w = 0, n0 = s_nfifo;
-  for (uint16_t r = 0; r < s_nfifo; r++)
-    if (!((s_fifo[r].flags & FPT_SENT) && s_fifo[r].ts <= upto)) s_fifo[w++] = s_fifo[r];
-  s_nfifo = w;
-  uint16_t gone = n0 - w;
+static uint16_t fifo_confirm_seqs(const char* l, int len, int* msgs, int* late) {
+  uint16_t n0 = s_nfifo;
+  *msgs = *late = 0;
+  for (int i = 0; i < MT_SENT_MSGS; i++) {
+    MtSentMsg& m = s_sent[i];
+    if (!m.ms || !seq_in_list(l, len, m.seq)) continue;
+    (*msgs)++;
+    fifo_remove_ts(m.ts, m.n);
+    if (!m.ok) {
+      if (millis() - m.ms < 3600000UL) ring_add(s_ring_cnt, m.ms, m.ux);
+      last_ok_set(m.ms, m.ux);
+      (*late)++;
+    }
+    m.ms = 0;                                  // afgehandeld
+  }
+  uint16_t gone = n0 - s_nfifo;
   s_fifo_confirmed += gone;
-  if (gone) fifo_save();
+  if (gone || *late) fifo_save();
   return gone;
 }
 
@@ -975,7 +1010,7 @@ static MtRuleParams params();
 static bool s_fl_active = false;            // leegmaken bezig
 static bool s_fl_pending = false;           // al eens begonnen en er bleven punten over: hervatten vanaf 1 punt
 static bool s_fl_inflight = false;          // een leegmaakbericht wacht op zijn uitkomst
-static bool s_fl_final = false;             // dat bericht is de laatste poging voor geparkeerde punten
+static uint16_t s_fl_seq = 0;               // volgnummer van het bericht onderweg (T1F per volgnummer)
 static bool s_fl_ever = false;              // al eens een leegmaakbericht verstuurd (sinds de start)
 static bool s_fl_stopped = false;
 static uint32_t s_fl_stop_ms = 0;           // dekking van voor deze stop telt niet om te hervatten
@@ -1012,17 +1047,18 @@ static bool fifo_due(const MtFPt& p) {
 static bool fifo_is_parked(const MtFPt& p) { return p.tries >= mt_cfg.fifo_pogingen; }
 
 // Welke punten mag het volgende leegmaakbericht meenemen? Oudste eerst, op tijd gesorteerd, en
-// alleen punten waarvan de wachttijd voorbij is. Gewone punten gaan voor; geparkeerde punten krijgen
-// alleen een (laatste) poging als er geen gewone punten meer zijn, ook geen die nog wachten.
-// Geeft het aantal (hooguit max_n) en zet *final.
-static int fifo_pick(uint16_t* sel, int max_n, bool* final) {
-  bool normal_left = false;
-  for (uint16_t i = 0; i < s_nfifo && !normal_left; i++) normal_left = !fifo_is_parked(s_fifo[i]);
-  *final = !normal_left;
+// alleen punten waarvan de wachttijd voorbij is. Gewone punten gaan voor; geparkeerde punten (lagere
+// voorrang, 60 min wachttijd) gaan mee als er geen gewone punten klaarstaan. Een punt wordt NOOIT
+// opgegeven (0.9.4): het verdwijnt alleen na een herhaling, een T1F per volgnummer of als de wachtrij
+// overloopt. Geeft het aantal (hooguit max_n) en zet *parked.
+static int fifo_pick(uint16_t* sel, int max_n, bool* parked) {
+  bool normal_due = false;
+  for (uint16_t i = 0; i < s_nfifo && !normal_due; i++) normal_due = !fifo_is_parked(s_fifo[i]) && fifo_due(s_fifo[i]);
+  *parked = !normal_due;
   int n = 0;
   for (uint16_t i = 0; i < s_nfifo && n < max_n; i++) {
     const MtFPt& p = s_fifo[i];
-    if (fifo_is_parked(p) != *final || !fifo_due(p)) continue;
+    if (fifo_is_parked(p) != *parked || !fifo_due(p)) continue;
     if (n && p.ts - s_fifo[sel[n - 1]].ts > 86400) break;   // de server neemt hooguit een dag tussen twee punten
     sel[n++] = i;
   }
@@ -1037,7 +1073,10 @@ static void fifo_stop(const char* why) {
   s_fl_pending = s_nfifo > 0;
 }
 
-static uint8_t fifo_backoff_min(uint8_t tries) { return tries <= 1 ? 1 : tries == 2 ? 5 : tries == 3 ? 15 : 60; }
+static uint8_t fifo_backoff_min(uint8_t tries) {
+  if (tries >= mt_cfg.fifo_pogingen) return 60;   // geparkeerd: lange wachttijd
+  return tries <= 1 ? 1 : tries == 2 ? 5 : tries == 3 ? 15 : 60;
+}
 
 static void flush_done(bool heard) {
   if (!s_fl_inflight) return;
@@ -1046,17 +1085,9 @@ static void flush_done(bool heard) {
   if (heard) {                                // belastte de mesh: telt voor fifo_per_uur, en is geslaagd
     ring_add(s_ring_cnt, s_fl_sent_ms, s_fl_sent_unix);
     last_ok_set(s_fl_sent_ms, s_fl_sent_unix);
-  }
-  else if (s_fl_n && !s_fl_final) unheard_add(s_fl_sent_ms, s_fl_sent_unix, s_fl_ts[0]);
-  if (heard) {
+    sent_mark_ok(s_fl_seq);                   // een latere T1F voor dit bericht telt niet nog eens
     fifo_remove_ts(s_fl_ts, s_fl_n);
-  } else if (s_fl_final) {                     // laatste poging mislukt: opgeven
-    int k = s_fl_n ? fifo_find(s_fl_ts[0]) : -1;
-    unsigned tries = k >= 0 ? s_fifo[k].tries + 1U : mt_cfg.fifo_pogingen + 1U;
-    fifo_remove_ts(s_fl_ts, s_fl_n);
-    mt_log("fifo: %u punten opgegeven na %u pogingen (wellicht toch aangekomen; de server filtert dubbels)",
-           (unsigned)s_fl_n, tries);
-  } else {                                     // teller op, wachttijd, punten blijven
+  } else {                                     // teller op, wachttijd, punten blijven (nooit opgeven)
     for (int j = 0; j < s_fl_n; j++) {
       int k = fifo_find(s_fl_ts[j]);
       if (k < 0) continue;
@@ -1077,15 +1108,17 @@ static void flush_done(bool heard) {
 // Eén Q-bericht ("ingehaald punt"): hoofdpunt = het nieuwste gekozen punt (met eigen fix_ts), de
 // oudere binair in veld 15 (zie append_bin_extras), elk met zijn echte tijd. Zoveel punten als
 // passen (hooguit 31), oudste eerst gekozen.
-static void send_flush(const uint16_t* sel, int cmax, bool final) {
+static void send_flush(const uint16_t* sel, int cmax, bool parked) {
   int bat = mt_battery_pct(board.getBattMilliVolts());
   uint32_t now_unix = the_mesh.getRTCClock()->getCurrentTime();
   uint16_t seq = seq_next();
-  // 16e veld "f": alleen als er punten verstuurd zijn waarvan geen herhaling gehoord werd; dan stuurt
-  // de server (hooguit eens per 10 min) een T1F. Anders weglaten (minder verkeer op de mesh).
+  // 16e veld, letters: "g" in ELK Q-bericht = "bevestig mij per volgnummer" (T1F met s<seqs>, 0.9.4);
+  // "f" erbij alleen als er punten verstuurd zijn waarvan geen herhaling gehoord werd: dan stuurt de
+  // server (hooguit eens per 10 min) een T1F.
   bool want_f = false;
   for (uint16_t i = 0; i < s_nfifo && !want_f; i++) want_f = (s_fifo[i].flags & FPT_SENT) != 0;
-  const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2 - (want_f ? 3 : 0);   // zoals send_report
+  const char* flags = want_f ? "fg" : "g";
+  const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2 - (int)strlen(flags) - 2;   // zoals send_report
   char text[MT_TEXT_MAX + 1];
   XPt x[MT_SLOW_MAX_ITEMS + 1];
   int c = cmax, len = 0;
@@ -1102,14 +1135,11 @@ static void send_flush(const uint16_t* sel, int cmax, bool final) {
     if (append_bin_extras(text, len, limit, x, c)) break;   // anders: één punt minder
   }
   if (c < 1) c = 1;
-  if (want_f && len + 3 <= MT_TEXT_MAX) {
-    memcpy(text + len, c == 1 ? "||f" : "|f", c == 1 ? 4 : 3);
-    len += c == 1 ? 3 : 2;
-  }
+  len += snprintf(text + len, sizeof(text) - len, c == 1 ? "||%s" : "|%s", flags);   // veld 15 leeg bij 1 punt
   s_fl_n = (uint8_t)c;
   for (int i = 0; i < c; i++) s_fl_ts[i] = s_fifo[sel[i]].ts;
   s_fl_tag = s_fl_ts[c - 1];
-  s_fl_final = final;
+  s_fl_seq = seq;
   s_fl_inflight = s_fl_ever = true;
   s_fl_sent_ms = millis();
   s_fl_sent_unix = rtc_unix();
@@ -1117,13 +1147,14 @@ static void send_flush(const uint16_t* sel, int cmax, bool final) {
   uint16_t total = s_nfifo;
   // on_send_done (meestal meteen, binnen sign_and_send) herkent het aan s_fl_inflight + tag + 'Q'.
   sign_and_send(text, 'Q', false, true, s_fl_tag);
-  if (s_fl_inflight) {                         // verstuurd: punten markeren (T1F mag ze dan opruimen)
+  if (s_fl_inflight) {                         // verstuurd: punten markeren en het bericht onthouden (T1F)
     for (int i = 0; i < c; i++) { int k = fifo_find(s_fl_ts[i]); if (k >= 0) s_fifo[k].flags |= FPT_SENT; }
+    sent_add(seq, s_fl_sent_ms, s_fl_sent_unix, s_fl_ts, c);
   }
   strncpy(s_last_reason, "fifo", sizeof(s_last_reason) - 1);
   s_last_tx_ms = millis();
-  mt_log("tx %s (fifo: %d van %u punten%s%s)", text, c, (unsigned)total, final ? ", laatste poging" : "",
-         want_f ? ", vraagt T1F" : "");
+  mt_log("tx %s (fifo: seq %u, %d van %u punten%s%s)", text, (unsigned)seq, c, (unsigned)total,
+         parked ? ", geparkeerde punten" : "", want_f ? ", vraagt T1F" : "");
 }
 
 // Punten per Q-bericht (schatting op basis van de echte nodenaam): "<naam>: " gaat van de MT_TEXT_MAX
@@ -1182,12 +1213,31 @@ static void step_fifo() {
   }
   if (s_fl_inflight || !s_nfifo) return;
   uint16_t sel[MT_SLOW_MAX_ITEMS + 1];
-  bool final = false;
-  int cand = fifo_pick(sel, MT_SLOW_MAX_ITEMS + 1, &final);
+  bool parked = false;
+  int cand = fifo_pick(sel, MT_SLOW_MAX_ITEMS + 1, &parked);
+  // Thuis of in companionmodus met sterke dekking: geparkeerde punten krijgen een nieuwe kans (teller
+  // op 0), hooguit eens per 30 min. Zo raakt thuis alles weg.
+  {
+    static uint32_t reset_ms = 0;
+    static bool reset_ever = false;
+    if ((at_rest() || mt_effective_mode() == MT_MODE_COMPANION) && partial_snr_ok() &&
+        (!reset_ever || now - reset_ms >= 30UL * 60000UL)) {
+      uint16_t n = 0;
+      for (uint16_t i = 0; i < s_nfifo; i++)
+        if (fifo_is_parked(s_fifo[i])) { s_fifo[i].tries = 0; s_fifo[i].retry_min = 0; n++; }
+      if (n) {
+        reset_ever = true;
+        reset_ms = now;
+        fifo_save();
+        mt_log("fifo: sterke dekking in rust: %u geparkeerde punten krijgen een nieuwe kans", (unsigned)n);
+        cand = fifo_pick(sel, MT_SLOW_MAX_ITEMS + 1, &parked);
+      }
+    }
+  }
   // 0.9.3: een VOL inhaalbericht (minstens mt_fifo_per_msg() punten klaar) volgt de gewone regels; een
   // NIET-VOL bericht mag alleen als het laatste geslaagde inhaalbericht minstens fifo_wacht geleden is
   // (fifo_wacht uit = nooit). Zo komen er geen reeksen berichten met maar 1 of 2 punten meer.
-  // Geldt ook voor hervatten na een stop, voor in rust en voor geparkeerde punten (laatste poging).
+  // Geldt ook voor hervatten na een stop, voor in rust en voor geparkeerde punten.
   bool full = cand >= (int)mt_fifo_per_msg();
   s_fifo_full = full;
   // Niet-vol: alleen als de radio toch al wakker is (na een eigen bericht en zijn luistervenster, als
@@ -1247,7 +1297,7 @@ static void step_fifo() {
     s_pa_ms = millis() | 1;
     s_pa_ux = rtc_unix();
   }
-  send_flush(sel, cand, final);
+  send_flush(sel, cand, parked);
 }
 
 // fifo: hoofdpunten die al 10 min in de FastTrack-buffer zitten zonder herhaald bericht (bv. omdat
@@ -1482,9 +1532,10 @@ static bool is_track_channel(uint8_t chan_idx) {
          memcmp(a.channel.secret, b.channel.secret, 16) == 0;
 }
 
-// "T1F|<pk8>:<tag8>:<upto>|<pk8>:<tag8>:<upto>|..." (hooguit 4 trackers): de server heeft alle
-// Q-punten tot en met upto ontvangen. tag8 = HMAC-SHA256(authsleutel, "<pk8>|F|<upto>"), eerste
-// 4 bytes. Alleen ons eigen deel telt; de andere worden genegeerd.
+// "T1F|<pk8>:<tag8>:s<seqs>|<pk8>:<tag8>:s<seqs>|..." (hooguit 4 trackers, 0.9.4): de server kreeg de
+// Q-berichten met die volgnummers ("2301,2305-2307"). tag8 = HMAC-SHA256(authsleutel, "<pk8>|F|s<seqs>"),
+// eerste 4 bytes. Alleen ons eigen deel telt. De oude vorm "<pk8>:<tag8>:<upto>" wordt genegeerd: een
+// tijdsbereik wiste in 0.9.3 punten die de server nooit gekregen had.
 static void handle_t1f(uint8_t chan_idx, const char* p) {
   if (!is_track_channel(chan_idx)) {
     mt_log("T1F op kanaal %u genegeerd (trackingkanaal is %u)", (unsigned)chan_idx, (unsigned)mt_cfg.chan_idx);
@@ -1494,18 +1545,23 @@ static void handle_t1f(uint8_t chan_idx, const char* p) {
   own_pk8(pk);
   for (const char* e = p; e && *e; ) {
     const char* next = strchr(e, '|');
-    if (strncmp(e, pk, 8) == 0 && e[8] == ':' && strlen(e) >= 19 && e[17] == ':') {
-      char* end;
-      unsigned long upto = strtoul(e + 18, &end, 10);
-      if (end == e + 18 || (*end && *end != '|')) { mt_log("T1F met ongeldige tijd genegeerd"); return; }
-      char body[32], tag[9];
-      snprintf(body, sizeof(body), "%s|F|%lu", pk, upto);
+    int elen = next ? (int)(next - e) : (int)strlen(e);
+    if (elen >= 19 && strncmp(e, pk, 8) == 0 && e[8] == ':' && e[17] == ':') {
+      const char* v = e + 18;
+      int vlen = elen - 18;
+      if (*v != 's') { mt_log("T1F met tijdsbereik genegeerd (0.9.4: alleen bevestiging per volgnummer)"); return; }
+      const char* l = v + 1;
+      int llen = vlen - 1;
+      if (!seq_list_valid(l, llen) || llen > 120) { mt_log("T1F met ongeldige volgnummerlijst genegeerd"); return; }
+      char body[140], tag[9];
+      snprintf(body, sizeof(body), "%s|F|s%.*s", pk, llen, l);
       auth_tag(body, tag);
       if (!mt_cfg.authkey_set || strncmp(e + 9, tag, 8) != 0) { mt_log("T1F met foute handtekening genegeerd"); return; }
       fifo_coverage("T1F van de server", 0, "-", true, MT_SNR_NONE);
-      uint16_t n = fifo_confirm((uint32_t)upto);
-      mt_log("fifo: server bevestigt alles tot %lu: %u verstuurde punten uit de wachtrij, nog %u", upto, (unsigned)n,
-             (unsigned)s_nfifo);
+      int msgs, late;
+      uint16_t n = fifo_confirm_seqs(l, llen, &msgs, &late);
+      mt_log("fifo: server bevestigt s%.*s: %d bekende berichten (%d niet gehoord), %u punten uit de wachtrij, nog %u",
+             llen > 60 ? 60 : llen, l, msgs, late, (unsigned)n, (unsigned)s_nfifo);
       return;
     }
     e = next ? next + 1 : nullptr;
