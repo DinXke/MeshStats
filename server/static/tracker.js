@@ -99,6 +99,13 @@
           const cp = rest.find((x) => x.startsWith("cap="));                    // sinds 0.9.2: cap=uur|pogingen|-
           const capv = cp ? cp.slice(4) : "";
           d.flush = { state: rest[0] || "?", next: nx ? int(nx.slice(5)) : null, cap: capv && capv !== "-" ? capv : null };
+          // sinds 0.9.3: vol=0|1 deel_na=<unix|-> deel_snr=0|1. Ontbreekt een veld (oudere firmware), dan blijft het undefined;
+          // deel_na=- (fifo_wacht uit) wordt null.
+          const fv = (k) => { const x = rest.find((y) => y.startsWith(k + "=")); return x === undefined ? undefined : x.slice(k.length + 1); };
+          const vol = fv("vol"), dn = fv("deel_na"), ds = fv("deel_snr");
+          if (vol !== undefined) d.flush.vol = vol === "1";
+          if (dn !== undefined) d.flush.deelNa = dn === "-" ? null : int(dn);
+          if (ds !== undefined) d.flush.deelSnr = ds === "1";
           break;
         }
         case "pts": {
@@ -491,6 +498,22 @@
       ["Laatste dekking", c ? esc(ago(c.ts)) : "geen", c ? `${c.snr != null ? `SNR ${nl(c.snr, 1)} dB · ` : ""}${c.stable ? '<span class="tk-good">stabiel</span>' : '<span class="tk-warn">niet stabiel</span>'}` : ""],
     ]));
   }
+  // Volgend inhaalbericht (firmware 0.9.3+): vol of niet-vol, en wanneer een niet-vol bericht mag.
+  // Niet-vol gaat alleen bij sterke dekking, als de radio toch wakker is, en hooguit eens per fifo_wacht.
+  function nextMsg() {
+    const f = dump.flush;
+    if (!f || f.vol === undefined) return null;
+    const unsent = dump.Q.filter((p) => !qInfo(p.flags).sent).length;
+    if (!unsent) return null;
+    const m = int(status.fifo_per_bericht);
+    if (f.vol) return { head: "Vol bericht klaar", line: "", tile: "vol bericht klaar" };
+    const head = `Niet-vol: ${unsent} ${unsent === 1 ? "punt wacht" : "punten wachten"} (vol = ${m || "?"})`;
+    const now = trackerNow();
+    if (f.deelNa === null) return { head, line: "niet-volle berichten uit", tile: "niet-vol: uit" };
+    if (f.deelNa !== undefined && f.deelNa > now) return { head, line: `niet-vol bericht ten vroegste over ${dur(f.deelNa - now)}`, tile: `niet-vol over ${dur(f.deelNa - now)}` };
+    if (f.deelSnr) return { head, line: "niet-vol bericht mag nu; de dekking is sterk genoeg, het gaat mee zodra de radio wakker is", tile: "niet-vol mag nu, dekking sterk" };
+    return { head, line: "niet-vol bericht mag nu, wacht op sterke dekking terwijl de radio wakker is", tile: "niet-vol mag nu, wacht op sterke dekking" };
+  }
   function cardFifo(id) {
     const c = counts();
     const max = int(status.fifo_max);
@@ -512,6 +535,8 @@
       body += `<div class="tk-block"><h3>Oudste punt</h3>${wacht ? meter([[pct(oldAge, wacht), oldAge >= wacht ? "warn" : "q"]]) : ""}
         <div class="tk-meterlbl"><span>${esc(dur(oldAge))} oud</span><span>${wacht ? `toch versturen na ${esc(dur(wacht))}` : "toch versturen staat uit"}</span></div></div>`;
     }
+    const nm = nextMsg();
+    if (nm) body += `<div class="tk-block">${kv([["Volgend bericht", esc(nm.head), esc(nm.line)]])}</div>`;
     if (dump.flush) {
       body += `<div class="tk-block">${kv([["Leegmaken", esc(flushText(dump.flush)), dump.flush.next ? `volgende poging ${esc(clock(dump.flush.next))} (${dump.flush.next > trackerNow() ? `over ${esc(dur(dump.flush.next - trackerNow()))}` : "nu"})` : ""]])}</div>`;
     }
@@ -616,7 +641,8 @@
     const fl = dump.flush && (dump.flush.state === "gepauzeerd" || dump.flush.state === "gestopt") ? dump.flush : null;
     const tile = (lbl, val, sub, cls = "") => `<div class="tk-tile${cls ? " " + cls : ""}"><span class="tk-tilelbl">${lbl}</span><b>${val}</b><span class="tk-tilesub">${sub || "&nbsp;"}</span></div>`;
     const agoHtml = (ts) => `${esc(dur(trackerNow() - ts))} <small>geleden</small>`;
-    const qSub = !c.Q ? "leeg" : !unsent ? "alles verstuurd" : est ? `leeg in ≈ ${esc(dur(est.s))}${fl ? ` · ${esc(flushText(fl))}` : ""}` : "";
+    const nm = nextMsg();
+    const qSub = [!c.Q ? "leeg" : !unsent ? "alles verstuurd" : est ? `leeg in ≈ ${esc(dur(est.s))}${fl ? ` · ${esc(flushText(fl))}` : ""}` : "", nm ? esc(nm.tile) : ""].filter(Boolean).join("<br>");
     const upd = gotAt ? new Date(gotAt).toLocaleTimeString("nl-BE") : "";
     const foot = conn ? `Bijgewerkt om ${upd} · ${autoSec() ? `elke ${autoSec()} s` : "auto uit"}` : `Niet verbonden · gegevens van ${upd}`;
     $("ov-hero").innerHTML = `<section class="card tk-hero ${v.lvl}" aria-labelledby="tk-herot">

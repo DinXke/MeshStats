@@ -236,11 +236,7 @@ static void slow_ratio_warn(const char* k, const char* pre) {
 // erover doet. Punten per Q-bericht = schatting op basis van de echte nodenaam: "<naam>: " gaat van
 // de MT_TEXT_MAX tekens af, de vaste velden kosten ~79 tekens (incl. "|f"), een binair punt ~8.
 // Dezelfde formule staat in serial.js (fifoPerMsg).
-static uint32_t fifo_per_msg() {
-  int room = MT_TEXT_MAX - the_mesh.mtSenderLen() - 79;
-  int n = 1 + (room > 0 ? room / 8 : 0);
-  return n < 2 ? 2 : n;
-}
+static uint32_t fifo_per_msg() { return mt_fifo_per_msg(); }   // formule in MtTracker.cpp
 static void fmt_minutes(char* o, size_t n, uint32_t s) {
   uint32_t m = (s + 59) / 60;
   if (m < 60) snprintf(o, n, "%lu min", (unsigned long)(m ? m : 1));
@@ -264,8 +260,22 @@ static void fifo_summary(const char* pre) {
   outl("%s≈ %lu punten per bericht met de naam \"%s\" (%d bytes); een kortere naam zonder emoji laat meer punten toe",
        pre, (unsigned long)pm, the_mesh.mtSender(), the_mesh.mtSenderLen() - 2);
   uint32_t w = mt_fifo_wacht_min();
-  if (w) outl("%sminder dan %u punten maar het oudste ouder dan %lu min, en stabiele dekking: toch versturen (fifo_wacht)",
-              pre, (unsigned)mt_cfg.fifo_min, (unsigned long)w);
+  {
+    char a[24] = "nog geen", b[40];
+    long age = mt_tracker_fifo_last_ok_age(), pw = mt_tracker_fifo_partial_wait();
+    if (age >= 0) { fmt_minutes(a, sizeof(a), (uint32_t)age); strncat(a, " geleden", sizeof(a) - strlen(a) - 1); }
+    if (pw < 0) snprintf(b, sizeof(b), "nooit (fifo_wacht uit)");
+    else if (pw == 0) snprintf(b, sizeof(b), "nu");
+    else { char m[16]; fmt_minutes(m, sizeof(m), (uint32_t)pw); snprintf(b, sizeof(b), "over %s", m); }
+    outl("%slaatste geslaagde inhaalbericht: %s; niet-vol bericht weer mogelijk %s", pre, a, b);
+  }
+  if (w) {
+    outl("%seen vol bericht = minstens %lu punten; een niet-vol inhaalbericht hooguit één keer per %lu min (fifo_wacht),",
+         pre, (unsigned long)fifo_per_msg(), (unsigned long)w);
+    outl("%sgeslaagd of niet, alleen bij sterke dekking (SNR >= %d dB of T1F) en als de radio toch al wakker is", pre,
+         (int)mt_cfg.fifo_snr);
+  }
+  else outl("%seen vol bericht = minstens %lu punten; niet-volle berichten nooit (fifo_wacht uit)", pre, (unsigned long)fifo_per_msg());
   outl("%snu %u punten in de wachtrij, waarvan %u geparkeerd (na %u mislukte pogingen; laatste poging als er niets anders wacht)",
        pre, (unsigned)mt_tracker_fifo_count(), (unsigned)mt_tracker_fifo_parked(), (unsigned)mt_cfg.fifo_pogingen);
   if (capped)
@@ -582,11 +592,14 @@ static void cmd_help() {
   outl("      (standaard 10, 0 = uit); een punt bij een stop (tijdsprong > 10 min) blijft altijd");
   outl("    fifo_snr <-20..10>      een nieuwe leegmaakronde pas bij een pakket met SNR >= dit (dB, standaard -5),");
   outl("      of bij twee keer dekking binnen 60 s, of een bevestiging (T1F) van de server");
-  outl("    fifo_wacht <duur>|uit    minder dan fifo_min punten, maar het oudste is ouder dan dit en er is stabiele");
-  outl("      dekking: toch versturen (standaard 30m, 1m..4h; fifo_per_uur blijft gelden).");
-  outl("    In rust (langer dan still_timeout geen beweging) maakt hij de wachtrij meteen leeg als er");
-  outl("      repeaters in de buurt zijn, ook onder fifo_min: eerst 60 s luisteren; zonder bereik opnieuw");
-  outl("      na 10, 20, 40 en daarna elke 60 min.");
+  outl("    fifo_wacht <duur>|uit    een niet-vol inhaalbericht hooguit één keer per fifo_wacht, geslaagd of niet");
+  outl("      (standaard 30 min; 1m..4h; uit = nooit een niet-vol bericht). Bovendien moet het laatste geslaagde");
+  outl("      inhaalbericht (herhaald door een repeater of bevestigd met een T1F) minstens zo lang geleden zijn.");
+  outl("      Een niet-vol bericht gaat alleen weg bij sterke dekking (SNR >= fifo_snr of een T1F; twee keer");
+  outl("      dekking binnen 60 s volstaat niet) en als de radio toch al wakker is: de tracker wekt de radio er");
+  outl("      nooit voor. Een vol bericht (zoveel punten als er in één bericht passen) volgt de gewone regels.");
+  outl("    In rust (langer dan still_timeout geen beweging) en met minstens één vol bericht in de wachtrij");
+  outl("      luistert hij 60 s naar repeaters; zonder bereik opnieuw na 10, 20, 40 en daarna elke 60 min.");
   outl("  set name <naam> | set radio <MHz> <BW> <SF> <CR> | set tx <dBm>");
   outl("  set path_bytes 2|3 | set scope <regio>|-   (radio en tx na een reboot)");
   outl("  key export | key import <128 hex>   PRIVATE KEY (import na een reboot)");
@@ -657,7 +670,7 @@ static const Item FIFOI[] = {
   {"Pogingen voor een punt geparkeerd wordt", "fifo_pogingen", 0},
   {"Rechte lijn uitdunnen (m, 0 = uit)", "fifo_dun", 0},
   {"Nieuwe ronde vanaf SNR (dB, -20..10)", "fifo_snr", 0},
-  {"Toch versturen als het oudste punt ouder is dan", "fifo_wacht", 1},
+  {"Wachttijd voor een niet-vol bericht", "fifo_wacht", 1},
 };
 static const Item REST[] = {
   {"Slapen na stilstand van", "still_timeout", 1},

@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.9.3",
+      "date": "2026-10-09",
+      "notes": "Minder inhaalberichten met maar 1 of 2 punten. Een vol inhaalbericht (zoveel punten als er volgens de nodenaam in één bericht passen) volgt de gewone regels. Een niet-vol inhaalbericht gaat hooguit één keer per fifo_wacht weg (standaard 30 min), geslaagd of niet, en pas als het laatste geslaagde inhaalbericht (herhaald door een repeater of bevestigd met een T1F) minstens zo lang geleden is. Het gaat bovendien alleen weg bij sterke dekking (SNR >= fifo_snr of een T1F) en als de radio toch al wakker is: de tracker wekt de radio er nooit voor. Dat geldt ook na een onderbreking en in rust; in rust luistert hij alleen nog naar repeaters als er een vol bericht klaarstaat. Beide tijden overleven een herstart (nieuwe kop van /mt_fifo.dat; de oude wordt overgenomen). 'fifo' toont het laatste geslaagde inhaalbericht en wanneer een niet-vol bericht weer mag; 'dump' toont vol=, deel_na= en deel_snr=.",
+      "zip": "meshtrack-t1000e-0.9.3.zip",
+      "zip_sha256": "a98e4c10b3451d00cb22d91e66081e5d077adeab9df264c5a8ccd27a820b5cbb",
+      "uf2": "meshtrack-t1000e-0.9.3.uf2",
+      "app_size": 441664,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.9.2",
       "date": "2026-10-09",
       "notes": "fifo_per_uur telt nu alleen leegmaakberichten die de mesh echt belastten: berichten die een repeater herhaalde, of die de server achteraf met een T1F bevestigde. Pogingen zonder herhaling tellen niet meer mee, maar er geldt een vaste veiligheidsgrens van hooguit 2x fifo_per_uur pogingen per uur, voor de eigen zendtijd. Beide tellingen overleven een herstart (nieuwe kop van /mt_fifo.dat; de oude wordt overgenomen). 'fifo' en de samenvatting tonen beide tellingen; 'dump' toont tries= en bij een pauze welk plafond bereikt is (cap=uur of cap=pogingen).",
@@ -141,5 +151,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.2"
+  "latest": "0.9.3"
 }
