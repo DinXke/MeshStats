@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 
 from .geo import angle_diff, bearing, haversine, offset
 from .roadgraph import SPEEDS, Leg, Router
-from .rules import STILL_KMH, Params, RuleState, decide, heartbeat_due, link_result, stillness
+from .rules import STILL_KMH, Params, RuleState, decide, heartbeat_due, stillness
 
 log = logging.getLogger("meshtrack.sim")
 
@@ -500,13 +500,11 @@ class SimTracker:
         self.stats.reasons[reason] = self.stats.reasons.get(reason, 0) + 1
         if self.rng.random() < self.loss:
             self.stats.lost += 1
-            link_result(self.rules, self.params, False)
             return                                 # punten blijven bewaard voor het volgende bericht
         self.__dict__["pts"] = []                  # bevestigd: buffer leeg
         self.stats.sent += 1
         snr = round(self.rng.uniform(-8, 10), 1)
         hops = self.rng.choice((0, 1, 1, 2, 2, 3))
-        link_result(self.rules, self.params, True, 1.5 + hops * self.rng.uniform(1.5, 4))
         self.outbox.append((self.prefix, text, int(now), snr, hops))
 
 

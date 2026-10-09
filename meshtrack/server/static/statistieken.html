@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeshTrack – statistieken</title>
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/statistieken.css">
+</head>
+<body class="admin">
+<header class="top">
+  <h1>MeshTrack</h1>
+  <nav></nav>
+  <span class="spacer"></span>
+</header>
+<main class="page wide st">
+  <div class="st-head">
+    <h2 class="st-title">Statistieken</h2>
+    <span class="muted small" id="st-updated" aria-live="polite"></span>
+  </div>
+
+  <!-- filterbalk -->
+  <section class="card st-filters" aria-label="Filters">
+    <div class="st-frow">
+      <div class="st-fgroup">
+        <span class="st-flabel" id="lbl-period">Periode</span>
+        <div class="seg" id="f-period" role="group" aria-labelledby="lbl-period">
+          <button type="button" data-p="24h">24 u</button>
+          <button type="button" data-p="7d">7 d</button>
+          <button type="button" data-p="30d">30 d</button>
+          <button type="button" data-p="custom">Eigen</button>
+        </div>
+      </div>
+      <div class="st-fgroup st-custom" id="f-customwrap" hidden>
+        <label for="f-from" class="st-flabel">Van</label>
+        <input type="datetime-local" id="f-from">
+        <label for="f-to" class="st-flabel">Tot</label>
+        <input type="datetime-local" id="f-to">
+        <button type="button" id="f-apply" class="primary">Toepassen</button>
+      </div>
+      <!-- gsm: tracker, kanaal en vernieuwen zitten achter deze knop -->
+      <button type="button" class="st-ftoggle" id="f-toggle" aria-expanded="false" aria-controls="f-extra">
+        <span class="st-ftl">Meer filters</span><span class="st-fsum" id="f-sum"></span><span class="st-chev" aria-hidden="true"></span>
+      </button>
+      <div class="st-fextra" id="f-extra">
+        <div class="st-fgroup">
+          <label for="f-tracker" class="st-flabel">Tracker</label>
+          <select id="f-tracker"><option value="">Alle trackers</option></select>
+        </div>
+        <div class="st-fgroup">
+          <label for="f-channel" class="st-flabel">Kanaal</label>
+          <select id="f-channel"><option value="">Alle kanalen</option></select>
+        </div>
+        <div class="st-fgroup st-fauto">
+          <label class="switch"><input type="checkbox" id="f-auto"><span></span> Elke minuut vernieuwen</label>
+          <button type="button" id="f-refresh" class="ghost" aria-label="Nu vernieuwen" title="Nu vernieuwen">⟳</button>
+        </div>
+      </div>
+    </div>
+    <div class="st-active" id="f-active" hidden></div>
+  </section>
+
+  <div class="msg err" id="st-err" role="alert" hidden></div>
+
+  <!-- in één zin: komt alles binnen, hoe is de ontvangst, hoeveel werd ingehaald -->
+  <p class="st-summary" id="st-summary" aria-live="polite" hidden></p>
+
+  <!-- kerncijfers -->
+  <section class="st-kpis" id="kpis" aria-label="Kerncijfers"></section>
+  <button type="button" class="st-kmore" id="kpi-more" aria-expanded="false" aria-controls="kpis">Meer kerncijfers</button>
+
+  <div class="tabs pagetabs st-tabs" aria-label="Onderdelen">
+    <button class="tab on" data-tab="verkeer">Verkeer</button>
+    <button class="tab" data-tab="ontvangst">Ontvangst</button>
+    <button class="tab" data-tab="fifo">Inhalen (FIFO)</button>
+    <button class="tab" data-tab="trackers">Trackers</button>
+    <button class="tab" data-tab="repeaters">Repeaters</button>
+    <button class="tab" data-tab="kwaliteit">Kwaliteit</button>
+  </div>
+
+  <!-- Verkeer -->
+  <div id="pane-verkeer" class="st-pane">
+    <figure class="card st-chart" id="c-points">
+      <figcaption><h3>Locatiepunten in de tijd</h3>
+        <p class="st-cap">Elke kleur is een soort punt: <strong>live</strong> (meteen verstuurd), <strong>extra</strong> (meegestuurd
+          in hetzelfde bericht), <strong>SlowTrack</strong> (gelogd en later in één keer doorgestuurd) en <strong>FIFO</strong>
+          (achteraf ingehaald). Zo zie je of een spoor live binnenkomt of vooral achteraf wordt aangevuld.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <figure class="card st-chart" id="c-messages">
+      <figcaption><h3>Berichten in de tijd</h3>
+        <p class="st-cap">Het aantal berichten dat de server van de trackers ontving. Eén bericht kan meerdere punten bevatten,
+          dus deze lijn ligt meestal lager dan de punten hierboven.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <div class="st-two">
+      <figure class="card st-chart" id="c-states">
+        <figcaption><h3>Soort berichten</h3>
+          <p class="st-cap">Welke toestand de trackers meldden: rijdend, stilgevallen, levensteken (heartbeat), zonder GPS-fix… Een groot aandeel
+            zonder fix wijst op toestellen die binnen liggen of geen zicht op de hemel hebben.</p></figcaption>
+        <div class="st-body"></div>
+      </figure>
+      <figure class="card st-chart" id="c-hours">
+        <figcaption><h3>Actief per uur van de dag</h3>
+          <p class="st-cap">Hoeveel berichten er per uur van de dag binnenkwamen, over de hele periode samengeteld. Zo zie je
+            wanneer de trackers het drukst zijn.</p></figcaption>
+        <div class="st-body"></div>
+      </figure>
+    </div>
+    <figure class="card st-chart" id="c-heat">
+      <figcaption><h3>Per weekdag en uur</h3>
+        <p class="st-cap">Elk vakje is één uur op één weekdag; hoe donkerder, hoe meer berichten. Handig om vaste ritmes te
+          herkennen, zoals ploegwissels of nachtelijke stilte.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+  </div>
+
+  <!-- Ontvangst -->
+  <div id="pane-ontvangst" class="st-pane" hidden>
+    <figure class="card st-chart" id="c-snr">
+      <figcaption><h3>Signaalkwaliteit (SNR) in de tijd</h3>
+        <p class="st-cap">De SNR (signaal-ruisverhouding) zegt hoe duidelijk onze antenne een tracker hoorde. De lijn is het
+          gemiddelde, de band loopt van de zwakste tot de sterkste ontvangst. Hoger is beter; onder ongeveer −10 dB wordt de
+          ontvangst onbetrouwbaar en gaan er berichten verloren.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <div class="st-two">
+      <figure class="card st-chart" id="c-snrhist">
+        <figcaption><h3>Verdeling van de SNR</h3>
+          <p class="st-cap">Hoeveel berichten er binnen elke SNR-strook vielen. Ligt de piek links, dan zitten de trackers vaak
+            aan de rand van het bereik.</p></figcaption>
+        <div class="st-body"></div>
+      </figure>
+      <figure class="card st-chart" id="c-hops">
+        <figcaption><h3>Aantal hops</h3>
+          <p class="st-cap">Via hoeveel repeaters een bericht reisde. Bij 0 hops hoorde onze antenne de tracker
+            rechtstreeks. Elke extra hop kost zendtijd en vergroot de kans dat een bericht verloren gaat.</p></figcaption>
+        <div class="st-body"></div>
+      </figure>
+    </div>
+  </div>
+
+  <!-- Inhalen (FIFO) -->
+  <div id="pane-fifo" class="st-pane" hidden>
+    <section class="card st-explain" aria-labelledby="fifo-h">
+      <div class="st-explain-txt">
+        <h3 id="fifo-h">Wat is inhalen?</h3>
+        <p>Valt de verbinding even weg, dan bewaart de tracker zijn posities in een wachtrij (FIFO). Zodra de mesh hem
+          opnieuw hoort, stuurt hij die achterstand alsnog door. De punten komen dus <em>later</em> binnen, maar vallen
+          op hun eigen tijdstip in het spoor: het gat in de lijn wordt achteraf opgevuld.</p>
+        <p class="muted small">De server bevestigt elk ingehaald bericht (T1F), zodat de tracker weet wat hij uit zijn
+          wachtrij mag schrappen.</p>
+      </div>
+      <div class="st-illus" id="fifo-illus" role="img"
+        aria-label="Animatie: op een tijdlijn komen eerst live punten binnen, dan valt er een gat, en daarna vallen de ingehaalde punten van boven in dat gat."></div>
+    </section>
+    <figure class="card st-chart" id="c-fifo">
+      <figcaption><h3>Ingehaald per tracker</h3>
+        <p class="st-cap">Per tracker het aantal ingehaalde berichten en punten, en hoeveel punten er gemiddeld in één
+          inhaalbericht zaten. Veel inhaalwerk betekent dat de tracker vaak buiten bereik is.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <figure class="card st-chart" id="c-gaps">
+      <figcaption><h3>Opgevulde gaten</h3>
+        <p class="st-cap">Elke balk is een periode waarin een tracker niet live gehoord werd en die later via de wachtrij werd
+          aangevuld. Hoe langer de balk, hoe langer het gat. De grootste gaten staan in de tabel eronder.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <figure class="card st-chart" id="c-delay">
+      <figcaption><h3>Afleververtraging</h3>
+        <p class="st-cap">De tijd tussen het moment waarop een positie gemeten werd en het moment waarop ze op de server
+          aankwam. Live punten zitten links; ingehaalde punten vormen de staart naar rechts.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+  </div>
+
+  <!-- Trackers -->
+  <div id="pane-trackers" class="st-pane" hidden>
+    <section class="card">
+      <div class="cardhead"><h2>Per tracker</h2><span class="muted small" id="trk-count"></span></div>
+      <p class="st-cap">Kies een tracker om de hele pagina op die tracker te filteren; sorteren doe je met de kolomtitels.
+        De kleine grafiekjes tonen hoe het aantal berichten en de gemiddelde SNR over de gekozen periode verliepen.</p>
+      <div class="st-body" id="trk-table"></div>
+    </section>
+  </div>
+
+  <!-- Repeaters -->
+  <div id="pane-repeaters" class="st-pane" hidden>
+    <section class="card st-explain st-explain-rep" aria-labelledby="rep-h">
+      <div class="st-explain-txt">
+        <h3 id="rep-h">Hoe reist een bericht?</h3>
+        <p>Een tracker zendt zijn bericht uit; repeaters die het horen, sturen het door tot het bij onze antenne
+          (de server-companion) aankomt. Het <strong>pad</strong> is de reeks repeaters die het bericht onderweg doorgaf.</p>
+        <p>De <strong>eerste hop</strong> is de repeater die de tracker zelf hoort: die bepaalt of een tracker in een gebied
+          bereik heeft. De <strong>laatste hop</strong> is de repeater die onze antenne bereikt: valt die weg, dan komt er
+          niets meer binnen, hoe goed de rest van de mesh ook werkt.</p>
+        <p class="muted small">In een pad staat elke repeater met een korte code: het begin van zijn publieke sleutel. Bij één
+          byte zijn er maar 256 codes, dus twee repeaters kunnen dezelfde code hebben. Dan tonen we bv. “a3 (2 kandidaten)”.
+          Daarom gebruiken de trackers twee bytes: dat geeft 65&nbsp;536 codes en zo goed als nooit verwarring.</p>
+      </div>
+      <div class="st-illus" id="rep-illus" role="img"
+        aria-label="Schema: tracker, eerste hop, tussenliggende repeater, laatste hop en onze antenne, met een bolletje dat van de tracker naar de antenne reist."></div>
+    </section>
+    <figure class="card st-chart" id="c-rep">
+      <figcaption><h3>Repeaters die het meeste doorgaven</h3>
+        <p class="st-cap">Per repeater het aantal berichten van onze trackers dat erlangs kwam, opgesplitst naar zijn plaats in
+          het pad. Rechts staat de gemiddelde SNR waarmee onze antenne hem hoorde wanneer hij de laatste hop was. Een repeater met veel eerste of laatste hops
+          is een sleutelschakel: zonder hem verlies je bereik.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <figure class="card st-chart" id="c-paths">
+      <figcaption><h3>Meest gebruikte routes</h3>
+        <p class="st-cap">De routes die het vaakst voorkwamen, van tracker naar onze antenne. Komt bijna alles via één route
+          binnen, dan hangt de ontvangst af van die ene reeks repeaters.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <figure class="card st-chart" id="c-hopstrk">
+      <figcaption><h3>Hops per tracker</h3>
+        <p class="st-cap">Welk deel van de berichten van elke tracker rechtstreeks binnenkwam en welk deel via repeaters.
+          Rechts staat het gemiddelde aantal hops. Meer hops betekent meer zendtijd en meer kans op verlies.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+  </div>
+
+  <!-- Kwaliteit -->
+  <div id="pane-kwaliteit" class="st-pane" hidden>
+    <figure class="card st-chart" id="c-quality">
+      <figcaption><h3>Weggefilterd in de tijd</h3>
+        <p class="st-cap">Berichten en punten die de server niet in het spoor opnam. Een paar duplicaten zijn normaal in een
+          mesh; een plotse piek aan ongeldige of onbekende berichten, of berichten van oude firmware, verdient een nadere blik.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <figure class="card st-chart" id="c-acks">
+      <figcaption><h3>Bevestigingen verstuurd</h3>
+        <p class="st-cap">Hoeveel bevestigingen de server naar de trackers terugstuurde: T1A voor een SOS-melding, T1F
+          voor ingehaalde punten. Zonder bevestiging weet een tracker niet dat zijn melding of zijn achterstand is aangekomen.</p></figcaption>
+      <div class="st-body"></div>
+    </figure>
+    <section class="card">
+      <h2>Wat betekent dit?</h2>
+      <dl class="st-dl">
+        <dt>Dubbele punten</dt>
+        <dd>Punten met een fixtijd die de server al had, bv. omdat hetzelfde punt in een later bericht nog eens
+          meekwam. Ze worden overgeslagen; het spoor bevat elk punt maar één keer.</dd>
+        <dt>Dubbele berichten</dt>
+        <dd>Een bericht met een volgnummer dat al binnen was, bv. omdat het via twee wegen aankwam of omdat de tracker
+          het opnieuw verstuurde.</dd>
+        <dt>Ongeldig</dt>
+        <dd>Een bericht op het kanaal dat de server niet kon vertrouwen of lezen: een foute of ontbrekende handtekening,
+          of een T1-bericht dat niet te ontcijferen viel.</dd>
+        <dt>Onbekend</dt>
+        <dd>Een MeshTrack-bericht van een tracker die de server niet kent, bv. een toestel dat (nog) niet is
+          toegevoegd.</dd>
+        <dt>Oude firmware (DM)</dt>
+        <dd>Een T1-bericht dat als privébericht (DM) binnenkwam in plaats van op het kanaal: dat doet alleen oude
+          firmware. Zulke trackers zijn best aan een update toe.</dd>
+        <dt>T1A</dt>
+        <dd>Bevestiging van een SOS-melding: de tracker weet dan dat zijn noodoproep is aangekomen.</dd>
+        <dt>T1F</dt>
+        <dd>Bevestiging van ingehaalde berichten uit de wachtrij, zodat de tracker die punten mag schrappen. Eén
+          T1F-bericht kan meerdere trackers tegelijk bevestigen.</dd>
+      </dl>
+    </section>
+  </div>
+</main>
+<div class="st-tip" id="st-tip" role="status" hidden></div>
+<script src="/static/icons.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/statistieken.js"></script>
+</body>
+</html>

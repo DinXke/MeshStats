@@ -29,6 +29,7 @@ class MeshLink:
         self.on_message = on_message
         self.on_connect = on_connect
         self.on_channel: Optional[Callable[..., Awaitable[None]]] = None   # (slot, tekst, ts, snr, padlengte)
+        self.on_rx_log: Optional[Callable[..., Awaitable[None]]] = None    # (rauw pakket, snr, rssi)
         self.mc: Optional[MeshCore] = None
         self.connected = False
         self.self_info: dict[str, Any] = {}
@@ -78,6 +79,7 @@ class MeshLink:
         self.mc = mc
         mc.subscribe(EventType.CONTACT_MSG_RECV, self._on_msg)
         mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_chan)
+        mc.subscribe(EventType.RX_LOG_DATA, self._on_rx_log)    # 1.3: rauwe pakketten (pad van trackerberichten)
         mc.subscribe(EventType.DISCONNECTED, lambda _e: self._lost.set())
         self.self_info = dict(mc.self_info or {})
         await self._ensure_path_hash_mode(mc)
@@ -133,6 +135,22 @@ class MeshLink:
                                   p.get("SNR"), p.get("path_len"))
         except Exception:  # noqa: BLE001
             log.exception("fout bij verwerken van kanaalbericht")
+
+    async def _on_rx_log(self, event) -> None:
+        """PUSH_CODE_LOG_RX_DATA (0x88): openHop duwt elk ontvangen pakket rauw door, met SNR en RSSI."""
+        p = event.payload or {}
+        if not self.on_rx_log or not p.get("payload"):
+            return
+        try:
+            await self.on_rx_log(bytes.fromhex(p["payload"]), p.get("snr"), p.get("rssi"))
+        except Exception:  # noqa: BLE001
+            log.exception("fout bij verwerken van rauw pakket")
+
+    def contact_list(self) -> list[dict[str, Any]]:
+        """Contacten zoals de companion ze laatst gaf (geen commando, ook zonder verbinding)."""
+        mc = self.mc
+        return [{"public_key": k, "name": c.get("adv_name", ""), "type": c.get("type")}
+                for k, c in ((mc.contacts if mc else None) or {}).items()]
 
     # ---- kanalen op de companion ----------------------------------------------
 

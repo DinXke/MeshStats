@@ -58,6 +58,64 @@
         sources: sources,
         layers: layers
       };
+    },
+    // Kaarten die de offline-app op dit toestel bewaarde (OPFS, zelfde oorsprong), van grof naar
+    // gedetailleerd. Geen OPFS (Safari-privévenster, oude browser) of een fout: lege lijst.
+    deviceMaps: async function () {
+      try {
+        var root = navigator.storage && navigator.storage.getDirectory ? await navigator.storage.getDirectory() : null;
+        var out = [];
+        if (!root || !root.entries) return [];
+        for await (var entry of root.entries()) {
+          var name = entry[0], h = entry[1];
+          if (h.kind !== "file" || !/\.pmtiles$/.test(name)) continue;    // .pmtiles.part = download bezig
+          var f = await h.getFile();
+          if (!f.size) continue;
+          var key = name.replace(/\.pmtiles$/, "");
+          out.push({ key: key, size: f.size, file: f, zoom: Number((key.match(/-z(\d+)$/) || [0, 0])[1]) });
+        }
+        out.sort(function (a, b) { return a.zoom - b.zoom || b.size - a.size; });
+        var files = [];
+        for (var i = 0; i < out.length; i++) {
+          var file = new File([out[i].file], out[i].key + ".pmtiles");
+          // Zoomniveaus en gebied uit de kop van het bestand; onleesbaar = overslaan.
+          try {
+            var hd = await new pmtiles.PMTiles(new pmtiles.FileSource(file)).getHeader();
+            file.info = { minZoom: hd.minZoom, maxZoom: hd.maxZoom, bounds: [hd.minLon, hd.minLat, hd.maxLon, hd.maxLat] };
+            files.push(file);
+          } catch (_) { /* geen geldig pmtiles-bestand */ }
+        }
+        return files;
+      } catch (_) { return []; }
+    },
+    // Site: de kaarten op het toestel bovenaan, met de kaart van de server eronder voor alles
+    // buiten de gedownloade gebieden (withServer = de server heeft een basiskaart). Voorbij de
+    // hoogste zoom van een bestand (+1, een beetje uitvergroten mag) toont alleen de server nog
+    // tegels, zodat een grove kaart de gedetailleerde van de server niet bedekt.
+    deviceStyle: function (dark, files, withServer) {
+      var st = this.offlineStyle(dark, files);
+      if (!withServer) return st;
+      var server = this.style(dark, true);
+      var bg = st.layers.filter(function (l) { return l.type === "background"; });
+      var rest = st.layers.filter(function (l) { return l.type !== "background"; });
+      rest.forEach(function (l) {
+        var f = files[Number(String(l.source).slice(2))];
+        if (!f || !f.info) return;
+        var cap = f.info.maxZoom + 1;
+        l.maxzoom = l.maxzoom === undefined ? cap : Math.min(l.maxzoom, cap);
+      });
+      st.sources.protomaps = server.sources.protomaps;
+      st.layers = bg.concat(server.layers.filter(function (l) { return l.type !== "background"; }), rest);
+      return st;
+    },
+    // Toont een kaart op het toestel iets op deze plek en zoom? (midden van het beeld)
+    deviceCovers: function (files, center, zoom, withServer) {
+      return files.some(function (f) {
+        var i = f.info;
+        if (!i) return false;
+        if (zoom < i.minZoom || (withServer && zoom >= i.maxZoom + 1)) return false;
+        return center.lng >= i.bounds[0] && center.lng <= i.bounds[2] && center.lat >= i.bounds[1] && center.lat <= i.bounds[3];
+      });
     }
   };
 })();

@@ -3,8 +3,8 @@
      zonder internet opent en na een update de nieuwe versie neemt.
    - Lettertypes en kaartsymbolen (/tiles/fonts, /tiles/sprites): cache eerst.
    - Kaarttegels zelf staan als bestand op het toestel (OPFS), niet in deze cache. */
-const CACHE = "mt-offline-v4";
-const SHELL = ["/offline", "/manifest.webmanifest", "/static/icon-192.png", "/static/icon-512.png", "/static/favicon.svg",
+const CACHE = "mt-offline-v5";
+const SHELL = ["/offline", "/offline.webmanifest", "/static/icon-192.png", "/static/icon-512.png", "/static/favicon.svg",
   "/static/style.css", "/static/vendor/maplibre-gl.css", "/static/vendor/maplibre-gl.js", "/static/vendor/pmtiles.js",
   "/static/basemap.js", "/static/offline.js"];
 const GLYPHS = ["Noto Sans Regular", "Noto Sans Medium", "Noto Sans Italic"];
@@ -20,7 +20,9 @@ self.addEventListener("install", (e) => {
 
 self.addEventListener("activate", (e) => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+    // Alleen eigen oude caches opruimen; die van de site (mt-site-*) en de tracker-app
+    // (mt-tracker-*) blijven staan.
+    for (const k of await caches.keys()) if (k.startsWith("mt-offline-") && k !== CACHE) await caches.delete(k);
     await self.clients.claim();
   })());
 });
@@ -55,7 +57,7 @@ self.addEventListener("fetch", (e) => {
     })());
     return;
   }
-  if (p === "/offline" || p.startsWith("/static/") || p === "/manifest.webmanifest") {
+  if (p === "/offline" || p.startsWith("/static/") || p === "/offline.webmanifest") {
     e.respondWith((async () => {
       const c = await caches.open(CACHE);
       try {

@@ -90,7 +90,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Website 1.2 · firmware 0.9 (T1000-E) · MeshCore v1.17.1<br>
+    Firmware 0.9.1 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -105,8 +105,8 @@
     <li><span class="n">4</span> Trackmodus: classic en FIFO <small>gemiste posities later inhalen</small></li>
     <li><span class="n">5</span> Inloggen en de kaart <small>computer en telefoon</small></li>
     <li><span class="n">6</span> Logboek, zones en verloren trackers</li>
-    <li><span class="n">7</span> Meldingen via de mesh</li>
-    <li><span class="n">8</span> Trackers beheren <small>toevoegen, instellen via USB</small></li>
+    <li><span class="n">7</span> Meldingen via de mesh <small>privéberichten naar personen</small></li>
+    <li><span class="n">8</span> Trackers beheren <small>toevoegen, instellen via USB, Tracker live</small></li>
     <li><span class="n">9</span> Firmware flashen <small>met behoud van de sleutel</small></li>
     <li><span class="n">10</span> Nieuw toestel klaarmaken, sleutels en back-ups</li>
     <li><span class="n">11</span> Gebruikers, rechten en instellingen <small>wie leest welk kanaal</small></li>
@@ -120,7 +120,8 @@
   </div>
   <div class="note" style="margin-top:8mm"><b>Over de schermafbeeldingen</b>De schermen in deze handleiding komen van een
     demo-installatie met virtuele trackers rond Hasselt. Daarom staat rechtsboven soms <em>mesh: niet verbonden</em>;
-    op de echte server staat daar de naam van de server-companion.</div>
+    op de echte server staat daar de naam van de server-companion. De menubalk kan er op jouw server iets anders uitzien,
+    bv. met extra onderdelen onder <em>Apps</em>.</div>
 </section>
 
 <!-- ============================ 1 ============================ -->
@@ -149,14 +150,17 @@
       <text x="170" y="22">bericht op het</text><text x="170" y="35">trackingkanaal</text><text x="370" y="30">versleuteld (flood)</text><text x="565" y="30">live</text>
     </g>
     <path d="M396 140H150" stroke="#0b6e4f" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#a)"/>
-    <text x="225" y="155" font-size="11" fill="#0b6e4f" text-anchor="middle">meldingen (DM) naar personen</text>
+    <text x="222" y="155" font-size="11" fill="#0b6e4f" text-anchor="middle">meldingen naar personen</text>
+    <text x="222" y="168" font-size="11" fill="#0b6e4f" text-anchor="middle">(privébericht, DM)</text>
   </svg>
 </figure>
 <ul>
   <li>De <strong>tracker</strong> stuurt zijn positie, snelheid, batterij en toestand als een versleuteld bericht op zijn
     <strong>trackingkanaal</strong>, met zijn naam als afzender en controletekens die bewijzen dat het van hem komt.</li>
   <li>De <strong>server</strong> luistert op dat kanaal mee, bewaart de posities en toont ze live op een kaart. Hij kan bij
-    gebeurtenissen (SOS, een zone binnenkomen, een verloren tracker die opduikt …) zelf een bericht via de mesh sturen.</li>
+    gebeurtenissen (SOS, een zone binnenkomen, een verloren tracker die opduikt …) een melding sturen: een privébericht (DM)
+    via de mesh naar de gsm van de wachtdienst of een andere companion (hoofdstuk 7). De tracking zelf gebruikt geen DM's:
+    posities gaan altijd over het trackingkanaal.</li>
   <li>Wie wat ziet, hangt af van de <strong>kanalen</strong>: een groep gebruikers mag een kanaal lezen op de kaart, en
     eventueel ook de sleutel zien om het op een eigen companion te zetten (hoofdstuk 11).</li>
   <li>Alles werkt <strong>offline</strong>: de kaart, de zoekfunctie en de simulator draaien op de server zelf.</li>
@@ -214,11 +218,11 @@
     Laat los en hij stuurt meteen een SOS met zijn positie, en daarna nog twee keer met een verse positie, telkens een minuut
     later. Na 6,5 s klinkt een lage waarschuwingstoon: blijf je vasthouden, dan schakelt hij uit in plaats van een SOS te sturen.
     Ontvangt de server de SOS, dan bevestigt hij dat: de tracker speelt <strong>drie stijgende tonen</strong>.
-    Staat <em>SOS met de knop</em> uit (firmware 0.8.0 of nieuwer), dan gebeurt er niets: geen biepjes en geen SOS.</td></tr>
+    Staat <em>SOS met de knop</em> uit, dan gebeurt er niets: geen biepjes en geen SOS.</td></tr>
   <tr><td class="k">langer dan 8 s</td><td>Uitschakelen, ook als SOS uit staat. Weer aanzetten: de knop enkele seconden inhouden,
     of aan USB hangen.</td></tr>
 </table>
-<p>Automatisch verstuurde posities maken standaard geen geluid. Vanaf firmware 0.8.0 kun je dat aanzetten, als tracker en als
+<p>Automatisch verstuurde posities maken standaard geen geluid. Je kunt dat aanzetten, als tracker en als
   companion (<em>Toestellen</em> → <em>Knop en biepjes</em>):</p>
 <ul>
   <li><strong>Biep bij elke verstuurde positie</strong> (<code>tx_beep</code>): een kort biepje telkens de radio een automatische
@@ -227,6 +231,9 @@
     een automatische positie herhaalt. Dat kost wat batterij: na elk bericht blijft de radio ongeveer 12 s wakker om te luisteren.</li>
 </ul>
 <p>Een klik en een SOS houden altijd hun eigen biepjes, ook als deze twee instellingen uit staan.</p>
+<p>Als companion zonder verbonden app piept hij standaard alleen bij een <strong>privébericht</strong> (een DM aan de tracker,
+  bv. vanuit de MeshCore-app van een collega), niet bij kanaalberichten zoals de posities van andere trackers. Met
+  <em>Biep bij berichten</em> (<code>msg_beep</code>) kies je: alleen privéberichten, alle berichten of nooit.</p>
 <div class="warn"><b>SOS oefenen, en SOS per ongeluk</b>Een SOS gaat echt over de mesh en kan meldingen naar anderen sturen. Spreek af
   wanneer je oefent, of oefen met een virtuele tracker. Zit de tracker in een broekzak, tas of houder waar de knop ingedrukt kan
   blijven, zet dan <em>SOS met de knop</em> uit (<code>set sos uit</code>). Uitschakelen door lang vasthouden blijft werken.</div>
@@ -243,7 +250,7 @@
 <!-- ============================ 3 ============================ -->
 <h2 class="chap"><span class="nr">3</span>Wanneer stuurt hij een positie?</h2>
 <p class="lead">Zolang hij beweegt, stuurt hij een positie zodra aan een van deze regels voldaan is, maar nooit vaker dan
-  <em>nooit vaker dan 1× per</em> toelaat.</p>
+  de instelling <em>Nooit vaker dan 1× per</em> toelaat (standaard 1 min).</p>
 <table>
   <tr><th>Regel</th><th>Wanneer</th><th>Standaard</th></tr>
   <tr><td class="k">Afstand</td><td>Verder verplaatst dan de <em>minimale verplaatsing</em> en sneller dan de <em>minimumsnelheid</em> (0 = ook wandelen).</td><td>100 m, 10 km/u</td></tr>
@@ -275,17 +282,17 @@
   <tr><td class="k">P</td><td>handmatig verstuurd</td><td>Met één klik op de knop.</td></tr>
   <tr><td class="k">E</td><td>SOS</td><td>Noodoproep met de knop.</td></tr>
   <tr><td class="k">B</td><td>modus</td><td>Van modus gewisseld, of aan of van de lader.</td></tr>
-  <tr><td class="k">L</td><td>gelogd punt (SlowTrack)</td><td>Punten die SlowTrack logde en samen verstuurde (zie hieronder; firmware 0.8.0, server 1.1.0).</td></tr>
+  <tr><td class="k">L</td><td>gelogd punt (SlowTrack)</td><td>Punten die SlowTrack logde en samen verstuurde (zie hieronder).</td></tr>
   <tr><td class="k">Q</td><td>ingehaald punt (FIFO)</td><td>Een positie die de mesh eerst niet haalde en later alsnog verstuurd werd, met
-    haar echte GPS-tijd (hoofdstuk 4; firmware 0.9.0, server 1.2.0).</td></tr>
+    haar echte GPS-tijd (hoofdstuk 4).</td></tr>
 </table>
 
 <h3>SlowTrack: een spoor met weinig berichten</h3>
-<p>De gewone tracking (<strong>FastTrack</strong>) stuurt alleen posities als de tracker beweegt. Vanaf firmware 0.8.0 kan daarnaast
+<p>De gewone tracking (<strong>FastTrack</strong>) stuurt alleen posities als de tracker beweegt. Daarnaast kan
   <strong>SlowTrack</strong> meelopen: dat logt op een vast ritme een GPS-punt zolang de tracker beweegt, en verstuurt die punten
   samen in <strong>één bericht</strong> met de status <em>L</em>. Zo krijg je met weinig berichten een spoor, ook tussen twee
   bewegingsberichten of als FastTrack uit staat wegens de batterij.</p>
-<div class="note"><b>In rust logt SlowTrack niet (firmware 0.9.1)</b>In rust betekent: langer dan <em>slapen na stilstand van</em>
+<div class="note"><b>In rust logt SlowTrack niet</b>In rust betekent: langer dan <em>slapen na stilstand van</em>
   (<code>still_timeout</code>, standaard 5 min) geen beweging. Beweging is een signaal van de bewegingssensor <em>of</em> een GPS-fix
   met minstens 1,5 km/u. In rust zet SlowTrack de GPS niet aan, want het punt zou toch op dezelfde plek liggen; de eerste beweging
   logt meteen een punt. Uitzondering: staat FastTrack uit wegens <code>fast_min_batt</code>, dan blijft SlowTrack loggen en telt een
@@ -349,10 +356,10 @@
 <!-- ============================ 4 ============================ -->
 <h2 class="chap"><span class="nr">4</span>Trackmodus: classic en FIFO</h2>
 <p class="lead">Buiten het bereik van repeaters raken posities de mesh niet op. In de trackmodus FIFO onthoudt de tracker ze en
-  stuurt hij ze later alsnog, zodra hij weer goed bereik heeft. Daarvoor heb je firmware 0.9.0 en server 1.2.0 nodig.</p>
+  stuurt hij ze later alsnog, zodra hij weer goed bereik heeft.</p>
 <table>
   <tr><th>Modus</th><th>Wat de tracker doet</th><th>Geschikt voor</th></tr>
-  <tr><td class="k">classic<br><span style="font-weight:400">(standaard)</span></td><td>FastTrack en SlowTrack zoals in firmware 0.8. Raakt
+  <tr><td class="k">classic<br><span style="font-weight:400">(standaard)</span></td><td>FastTrack en SlowTrack zoals in hoofdstuk 3. Raakt
     een bericht de mesh niet op, dan reizen de bewaarde punten mee met het volgende bericht. Wat daar niet meer in past, is weg.</td>
     <td>Gebieden met overal bereik.</td></tr>
   <tr><td class="k">FIFO</td><td>Onthoudt de posities die de mesh niet haalden in een <strong>wachtrij</strong> en haalt ze later in
@@ -443,7 +450,7 @@
     een pakket dat via een repeater kwam. Hij begint pas met inhalen bij <em>stabiele</em> dekking: een pakket met een
     signaal-ruisverhouding (SNR) van minstens <code>fifo_snr</code>, twee keer dekking binnen 60 seconden, of een bevestiging van de
     server. Er moeten ook minstens <code>fifo_min</code> punten wachten; na een onderbroken ronde volstaat één punt. Zijn het er
-    minder, maar wacht het oudste punt al langer dan <code>fifo_wacht</code> (standaard 30 min, firmware 0.9.1), dan stuurt hij bij
+    minder, maar wacht het oudste punt al langer dan <code>fifo_wacht</code> (standaard 30 min), dan stuurt hij bij
     stabiele dekking toch.</li>
   <li><strong>Inhalen.</strong> Oudste punten eerst, met hoogstens één <strong>inhaalbericht</strong> per <code>fifo_gap</code> en
     hoogstens <code>fifo_per_uur</code> per uur. Een inhaalbericht heeft de status <em>Q</em> en draagt de punten compact binair:
@@ -518,10 +525,9 @@
   <tr><td class="k">Stabiele dekking<br><code>fifo_snr</code></td><td>Een nieuwe ronde begint bij een pakket met minstens deze SNR (−20 tot
     10 dB), of bij twee keer dekking binnen 60 s, of een bevestiging van de server.</td><td>−5 dB</td></tr>
   <tr><td class="k">Toch versturen na<br><code>fifo_wacht</code></td><td>Minder dan <code>fifo_min</code> punten, maar het oudste wacht al
-    langer dan dit: bij stabiele dekking toch versturen (1 min tot 4 u, of <code>uit</code>; <code>fifo_per_uur</code> blijft gelden).
-    Firmware 0.9.1.</td><td>30 min</td></tr>
+    langer dan dit: bij stabiele dekking toch versturen (1 min tot 4 u, of <code>uit</code>; <code>fifo_per_uur</code> blijft gelden).</td><td>30 min</td></tr>
 </table>
-<div class="note"><b>In rust meteen inhalen (firmware 0.9.1)</b>Stilstaan is het beste moment om de wachtrij leeg te maken: de plek
+<div class="note"><b>In rust meteen inhalen</b>Stilstaan is het beste moment om de wachtrij leeg te maken: de plek
   verandert niet en het bereik is stabiel. Ligt de tracker in rust (langer dan <code>still_timeout</code> geen beweging), dan luistert
   hij meteen 60 s naar repeaters. Vindt hij stabiele dekking, dan stuurt hij, ook onder <code>fifo_min</code>; <code>fifo_gap</code>
   en <code>fifo_per_uur</code> blijven gelden. Vindt hij geen dekking, dan luistert hij opnieuw na 10, 20 en 40 min en daarna elk uur,
@@ -536,7 +542,8 @@
       de geparkeerde punten, wat de server bevestigde en de laatste dekking.</p>
     <p>In de terminal zet je ze met <code>set</code>, of via het menu <em>5 SlowTrack en trackmodus (FIFO)</em> →
       <em>4 Trackmodus en FIFO-wachtrij</em>. De terminal noemt een inhaalbericht een <em>leegmaakbericht</em>.</p>
-    <p>Flash je 0.9.0 over 0.8.x, dan blijven alle bestaande instellingen staan; de nieuwe krijgen hun standaardwaarde.</p>
+    <p>Flash je nieuwe firmware, dan blijven alle bestaande instellingen staan; instellingen die er nog niet waren, krijgen hun
+      standaardwaarde.</p>
   </div>
   <figure class="phones" style="margin-top:0"><div style="width:44mm"><img src="img/gsm-trackmodus.jpg" alt=""><figcaption>De groep Trackmodus met
     de live berekening.</figcaption></div></figure>
@@ -555,8 +562,8 @@
   <tr><td class="k">status: fifo_dekking</td><td>Seconden sinds de laatste dekking; <code>-</code> = nog nooit sinds de start.</td></tr>
   <tr><td class="k">status: fifo_geparkeerd</td><td>Geparkeerde punten.</td></tr>
   <tr><td class="k">status: fifo_bevestigd</td><td>Punten die de server sinds de start bevestigde (T1F).</td></tr>
-  <tr><td class="k">status: fifo_wacht</td><td>De ingestelde wachttijd, bv. <code>30m</code> of <code>uit</code> (0.9.1).</td></tr>
-  <tr><td class="k">status: fifo_per_bericht</td><td>Hoeveel punten er met de naam van deze tracker in één inhaalbericht passen (0.9.1).</td></tr>
+  <tr><td class="k">status: fifo_wacht</td><td>De ingestelde wachttijd, bv. <code>30m</code> of <code>uit</code>.</td></tr>
+  <tr><td class="k">status: fifo_per_bericht</td><td>Hoeveel punten er met de naam van deze tracker in één inhaalbericht passen.</td></tr>
 </table>
 <figure style="margin:2mm 0 4mm">
 <pre class="term" style="margin:0">fifo
@@ -666,14 +673,16 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
     </ul>
   </div>
   <div class="tip" style="align-self:start"><b>Vooraf instellen</b>Maak onder <em>Systeem</em> → <em>Meldingsregels</em> een
-    regel met <em>verloren tracker gezien</em> en de juiste ontvangers. Een cooldown van bv. 30 minuten voorkomt een DM bij
-    elk bericht.</div>
+    regel met <em>verloren tracker gezien</em> en de juiste ontvangers. Een cooldown van bv. 30 minuten voorkomt dat de
+    ontvangers bij elk bericht van de tracker een melding krijgen.</div>
 </div>
 
 <!-- ============================ 7 ============================ -->
 <h2 class="chap"><span class="nr">7</span>Meldingen via de mesh</h2>
-<p class="lead">De server kan bij gebeurtenissen zelf een bericht (DM) via de mesh sturen, bv. naar de gsm van de wachtdienst
-  (via de MeshCore-app) of naar een andere companion.</p>
+<p class="lead">De server kan bij gebeurtenissen een melding sturen: een privébericht (DM) via de mesh, bv. naar de gsm van de
+  wachtdienst (via de MeshCore-app) of naar een andere companion.</p>
+<div class="note"><b>Meldingen, geen tracking</b>Een melding is het enige privébericht (DM) dat de server verstuurt: van de server naar
+  een persoon. De trackers zelf sturen hun posities nooit als DM, maar altijd op hun trackingkanaal (hoofdstuk 10).</div>
 <figure><img src="img/systeem.jpg" alt=""><figcaption>Systeem → Meldingsregels.</figcaption></figure>
 <ul>
   <li>Voor de trackers kies je alle trackers, <strong>kanalen</strong> (dan geldt de regel ook voor trackers die later
@@ -686,7 +695,9 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   <li>Met <em>Test</em> stuur je meteen een proefbericht. Onder <em>Verzonden meldingen</em> zie je wat er wegging en of
     het aankwam.</li>
 </ul>
-<p>Meldingen gaan na elkaar weg, met een pauze ertussen, zodat de mesh niet overbelast raakt. Persoonlijke regels (met het
+<p>Meldingen gaan na elkaar weg, met een pauze ertussen, zodat de mesh niet overbelast raakt. Komt een melding niet aan,
+  dan probeert de server het nog enkele keren; hoe vaak en met welke pauze, stelt een beheerder in onder <em>Systeem</em> →
+  <em>Instellingen</em>. Persoonlijke regels (met het
   recht <em>Eigen meldingsregels</em>) gelden voor je eigen zones.</p>
 
 <!-- ============================ 8 ============================ -->
@@ -715,23 +726,36 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   zijn kanaalberichten), de modus, het <strong>trackingkanaal</strong> en de belangrijkste instellingen. Een <em>voorinstelling</em> (te voet, fiets, voertuig,
   spaarzaam) vult ze in één klik in; de rest staat achter <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de
   tracker</em> schrijf je ze weg.</p>
-<p>Vanaf firmware 0.8.0 zijn er twee groepen bij:</p>
+<p>Daarnaast zijn er drie groepen:</p>
 <ul>
   <li><strong>Knop en biepjes</strong>: biep bij berichten (als companion zonder app), biep bij elke verstuurde positie, biep als
     een repeater de positie doorgeeft, en <em>SOS met de knop</em> (zie hoofdstuk 2).</li>
   <li><strong>SlowTrack</strong>: hoe vaak een punt loggen en hoe vaak versturen, en onder welk batterijpercentage FastTrack stopt
     (zie hoofdstuk 3). Een rekenhulp toont meteen hoeveel punten er per bericht komen, en waarschuwt als er punten wegvallen.</li>
+  <li><strong>Trackmodus</strong>: classic of FIFO en de instellingen van de wachtrij, met een live berekening van de belasting
+    van de mesh (zie hoofdstuk 4).</li>
 </ul>
-<p>Firmware 0.9.0 voegt de groep <strong>Trackmodus</strong> toe: classic of FIFO en de instellingen van de wachtrij, met een live
-  berekening van de belasting van de mesh (zie hoofdstuk 4). Het tabblad <strong>Simulatie</strong> speelt beide modi versneld na
-  met de instellingen van de tracker.</p>
-<p>Heeft de verbonden tracker oudere firmware, dan staan de nieuwe velden grijs: flash eerst de nieuwste firmware (hoofdstuk 9).</p>
+<p>Het tabblad <strong>Simulatie</strong> speelt beide trackmodi versneld na met de instellingen van de tracker.
+  Heeft de verbonden tracker oudere firmware, dan staan de velden die hij nog niet kent grijs: flash eerst de nieuwste
+  firmware (hoofdstuk 9).</p>
 <figure class="phones">
   <div><img src="img/gsm-knop-biepjes.jpg" alt=""><figcaption>Knop en biepjes, met SOS uit.</figcaption></div>
   <div><img src="img/gsm-slowtrack.jpg" alt=""><figcaption>SlowTrack met de rekenhulp.</figcaption></div>
 </figure>
 
-<h3>Instellingen in de terminal</h3>
+<h3>Tracker live: in de tracker kijken</h3>
+<p>Onder <em>Apps</em> → <em>Tracker live</em> (<code>/tracker</code>) staat een aparte app die toont wat er op dat moment in één
+  tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij, wat hij verstuurde en wat hij hoorde, met een
+  tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
+<ul>
+  <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
+    companionmodus staat; pincode de eerste keer 123456). Chrome of Edge op Android of een computer; niet op een iPhone.</li>
+  <li>De app <strong>leest alleen</strong>: ze gebruikt de commando's <code>status</code>, <code>fifo</code> en <code>dump</code>
+    (de interne toestand in een vorm voor programma's). Via Bluetooth aanvaardt de tracker ook niets anders. Instellingen wijzig
+    je in <em>Toestellen</em>.</li>
+</ul>
+
+<h3 style="break-before: page">Instellingen in de terminal</h3>
 <p>Alles uit Toestellen kun je ook met <code>set &lt;instelling&gt; &lt;waarde&gt;</code> zetten. Tijden schrijf je als
   <code>30s</code>, <code>5m</code> of <code>2h</code>; <code>0</code> zet een tijd uit. De belangrijkste:</p>
 <table>
@@ -742,26 +766,28 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   <tr><td class="k">sample</td><td>In beweging elke zoveel tijd een punt bewaren voor het volgende bericht.</td><td>15s</td></tr>
   <tr><td class="k">still_timeout, heartbeat</td><td>Slapen na stilstand van; teken van leven in rust.</td><td>5m, 12h</td></tr>
   <tr><td class="k">fix_timeout, fix_timeout_hb</td><td>Hoe lang een GPS-fix zoeken; bij heartbeat of klik.</td><td>90s, 30s</td></tr>
-  <tr><td class="k">slow_log, slow_send</td><td>SlowTrack: punt loggen elke; gelogde punten versturen elke (0.8.0).</td><td>uit, 30m</td></tr>
-  <tr><td class="k">fast_min_batt</td><td>Onder dit % batterij geen FastTrack; 0 = uit (0.8.0).</td><td>0</td></tr>
-  <tr><td class="k">sos aan|uit</td><td>SOS door 2 tot 8 s vasthouden (0.8.0).</td><td>aan</td></tr>
-  <tr><td class="k">tx_beep aan|uit</td><td>Kort biepje na elke automatisch verstuurde positie (0.8.0).</td><td>uit</td></tr>
-  <tr><td class="k">heard_beep aan|uit</td><td>Twee hoge biepjes als een repeater een automatische positie herhaalt (0.8.0).</td><td>uit</td></tr>
+  <tr><td class="k">slow_log, slow_send</td><td>SlowTrack: punt loggen elke; gelogde punten versturen elke.</td><td>uit, 30m</td></tr>
+  <tr><td class="k">fast_min_batt</td><td>Onder dit % batterij geen FastTrack; 0 = uit.</td><td>0</td></tr>
+  <tr><td class="k">sos aan|uit</td><td>SOS door 2 tot 8 s vasthouden.</td><td>aan</td></tr>
+  <tr><td class="k">tx_beep aan|uit</td><td>Kort biepje na elke automatisch verstuurde positie.</td><td>uit</td></tr>
+  <tr><td class="k">heard_beep aan|uit</td><td>Twee hoge biepjes als een repeater een automatische positie herhaalt.</td><td>uit</td></tr>
   <tr><td class="k">track_mode, fifo_…</td><td>Trackmodus <code>classic</code> of <code>fifo</code> en de instellingen van de wachtrij
-    (0.9.0, zie hoofdstuk 4).</td><td>classic</td></tr>
-  <tr><td class="k">msg_beep</td><td>Biep bij berichten als companion zonder app: <code>prive</code>, <code>alles</code> of <code>uit</code>.</td><td>prive</td></tr>
+    (zie hoofdstuk 4).</td><td>classic</td></tr>
+  <tr><td class="k">msg_beep</td><td>Biep bij berichten als companion zonder app: <code>prive</code> (alleen privéberichten aan de
+    tracker), <code>alles</code> (ook kanaalberichten) of <code>uit</code>.</td><td>prive</td></tr>
   <tr><td class="k">led</td><td>Statusled: <code>companion</code>, <code>altijd</code> of <code>uit</code>.</td><td>companion</td></tr>
   <tr><td class="k">track_in_companion</td><td>Ook posities sturen als companion.</td><td>aan</td></tr>
   <tr><td class="k">accel_sens</td><td>Bewegingsgevoeligheid: <code>laag</code>, <code>midden</code> of <code>hoog</code>.</td><td>midden</td></tr>
 </table>
-<p><code>status</code> toont vanaf 0.8.0 ook <code>slow_buffer</code> (gelogde punten die nog verstuurd moeten worden),
-  <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code> (onder <code>fast_min_batt</code>) en
-  <code>slow_per_bericht=6-11</code>. Zet je <code>slow_log</code> en <code>slow_send</code> zo dat er te veel punten per
-  bericht komen, dan waarschuwt de tracker meteen. Vanaf 0.9.0 toont <code>status</code> ook de trackmodus en de toestand van de
-  FIFO-wachtrij, en is er het commando <code>fifo</code> (zie hoofdstuk 4).</p>
+<p><code>status</code> toont ook <code>slow_buffer</code> (gelogde punten die nog verstuurd moeten worden),
+  <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code> (onder <code>fast_min_batt</code>),
+  <code>slow_per_bericht=6-11</code>, de trackmodus en de toestand van de FIFO-wachtrij. Zet je <code>slow_log</code> en
+  <code>slow_send</code> zo dat er te veel punten per bericht komen, dan waarschuwt de tracker meteen. Het commando
+  <code>fifo</code> toont de wachtrij (zie hoofdstuk 4).</p>
 <p>Met een terminalprogramma (115200 baud) opent meteen een genummerd menu. Losse commando's (<code>status</code>,
-  <code>set …</code>, <code>mode tracker</code>, <code>help</code>) werken altijd.</p>
-<p><strong>Diagnose</strong> (firmware 0.7.5 of nieuwer): met <code>rxlog aan</code> toont de tracker live elk kanaalpakket dat
+  <code>set …</code>, <code>mode tracker</code>, <code>send</code>, <code>backup</code>, <code>help</code>) werken altijd,
+  ook met het menu open.</p>
+<p><strong>Diagnose</strong>: met <code>rxlog aan</code> toont de tracker live elk kanaalpakket dat
   hij ontvangt (<code>rx kanaalpakket hash xx, N hops, N bytes</code>) en elk kanaalbericht dat hij kan ontcijferen
   (<code>rx kanaalbericht op kanaal N: …</code>). Bij het aanzetten meldt hij ook de hash van zijn trackingkanaal. Dat blijft aan
   tot <code>rxlog uit</code> of een herstart. Handig als een SOS-bevestiging niet aankomt (zie hoofdstuk 13).</p>
@@ -815,7 +841,11 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
 <h2 class="chap"><span class="nr">9</span>Firmware flashen</h2>
 <p class="lead">In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je flasht ze
   rechtstreeks vanuit de browser, zonder extra programma's.</p>
-<figure><img src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: back-up, bootloader, flashen en de controle van de sleutel.</figcaption></figure>
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.1. Heeft een tracker oudere firmware, dan kent hij
+  sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
+  (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
+<figure class="half"><img src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: back-up, bootloader, flashen en de controle van de sleutel.
+  De versienummers en tabbladen zien er bij jou anders uit.</figcaption></figure>
 <ol class="steps">
   <li>Verbind de tracker (<em>Verbinden</em>) en klik op <em>Flashen via de browser</em>.</li>
   <li>Eerst komt er een <strong>back-up</strong>: de volledige opslag (<code>.bin</code>) en de sleutel met de instellingen
@@ -830,6 +860,7 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
 <p>Liever zonder browser? Download het <em>DFU-pakket (.zip)</em> voor <code>adafruit-nrfutil</code>, of het <em>UF2</em>-bestand:
   dubbelklik op de resetknop zodat er een USB-station verschijnt en sleep het bestand erop.</p>
 
+
 <!-- ============================ 10 ============================ -->
 <h2 class="chap"><span class="nr">10</span>Nieuw toestel klaarmaken, sleutels en back-ups</h2>
 <p class="lead">Een nieuwe tracker hoef je niet met de hand in te stellen: de server maakt de sleutel en zet alles in één keer
@@ -839,7 +870,7 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   <ol class="steps">
     <li>Klik in <em>Trackers</em> op <em>+ Tracker</em>, geef een naam, kies het <em>trackingkanaal</em> en zet onder
       <em>Toestel</em> <em>Nieuw toestel</em> aan. De server maakt een sleutelpaar.</li>
-    <li>Verbind het nieuwe toestel met USB. Staat er nog geen MeshTrack 0.7 of nieuwer op, flash dan eerst (hoofdstuk 9).</li>
+    <li>Verbind het nieuwe toestel met USB. Staat er nog geen recente MeshTrack-firmware op, flash dan eerst (hoofdstuk 9).</li>
     <li>Kies bij <em>Toestel klaarmaken of terugzetten</em> de nieuwe tracker en klik op <em>Op dit toestel zetten</em>.
       Het toestel herstart en de pagina controleert de pubkey.</li>
     <li>Kies in <em>Instellingen</em> het <em>trackingkanaal</em> en klik op <em>Opslaan op de tracker</em>. Klaar.</li>
@@ -852,7 +883,7 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   botsen de korte id's van repeaters te vaak in een druk net. De firmware zet 1 byte bij het opstarten zelf om naar 2.</div>
 
 <h3>Sleutels en back-ups op de server</h3>
-<figure class="half"><img src="img/tracker-sleutels.jpg" alt=""><figcaption>Een tracker bewerken: Verloren, en het blok Sleutel en back-ups op de server.</figcaption></figure>
+<figure class="half"><img src="img/tracker-sleutels.jpg" alt=""><figcaption>Een tracker bewerken, tabblad Toestel: de authsleutel en het blok Sleutel en back-ups op de server.</figcaption></figure>
 <ul>
   <li><em>Back-up naar de server</em> (Toestellen → Klaarmaken &amp; back-ups) leest het verbonden toestel uit en bewaart het bij de juiste tracker.</li>
   <li><em>Back-up downloaden (.json)</em> geeft hetzelfde als bestand, in het formaat van de MeshCore-app;
@@ -861,9 +892,8 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   <li><em>Op verbonden toestel zetten</em> zet een back-up terug, bv. op een vervangtoestel. Contacten worden niet
     teruggezet; die leert het toestel opnieuw uit de adverts.</li>
 </ul>
-<p>Een back-up bewaart ook de instellingen van firmware 0.8.0 (SlowTrack, <code>fast_min_batt</code>, SOS en de biepjes) en 0.9.0
-  (de trackmodus en de instellingen van de wachtrij). Vroeger
-  werd een instelling die op <em>uit</em> stond soms als <em>0</em> teruggezet; dat is opgelost.</p>
+<p>Een back-up bewaart ook alle trackerinstellingen: SlowTrack, <code>fast_min_batt</code>, SOS, de biepjes, de trackmodus en
+  de instellingen van de wachtrij.</p>
 <div class="warn"><b>Een back-up bevat de privésleutel</b>Wie de privésleutel heeft, kan zich voordoen als die tracker. De
   server bewaart back-ups versleuteld en houdt in het auditlog bij wie er een ophaalt, terugzet of verwijdert. Geef het recht
   <em>Sleutels en back-ups</em> alleen aan wie het echt nodig heeft, en bewaar gedownloade bestanden veilig.</div>
@@ -876,9 +906,13 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
 <div class="note"><b>Controletekens</b>Op een kanaal kan iedereen met de sleutel berichten sturen. Daarom zet de tracker in elk
   kanaalbericht 8 controletekens, berekend uit zijn authsleutel. De server rekent ze na en weigert valse berichten. Je hoeft
   ze nergens in te geven; enkel de authsleutel gaat (automatisch) via USB naar de tracker.</div>
-<div class="warn"><b>Oudere firmware</b>Tot firmware 0.6 kon een tracker ook via DM naar de server sturen. Dat leest de server
-  niet meer: zo'n tracker verschijnt bij <em>Genegeerde berichten</em> met <em>oude firmware</em>. Flash hem naar 0.7 of nieuwer
-  en kies een trackingkanaal.</div>
+<div class="note"><b>Geen bevestiging, één keer de mesh in</b>Een positiebericht krijgt geen ontvangstbevestiging (geen ACK) en
+  wordt niet opnieuw verstuurd: het gaat één keer de mesh in en de repeaters geven het door binnen de regio. Gaat er een verloren, dan reizen
+  de bewaarde punten mee met het volgende bericht, en in de trackmodus FIFO haalt de tracker ze later in (hoofdstuk 4). Alleen
+  op een SOS (<code>T1A</code>) en op ingehaalde punten (<code>T1F</code>) antwoordt de server, op hetzelfde kanaal.</div>
+<div class="warn"><b>Heel oude firmware</b>Tot firmware 0.6 kon een tracker zijn posities ook als privébericht (DM) rechtstreeks naar
+  de server sturen. Dat bestaat niet meer: de server leest zulke berichten niet. Zo'n tracker verschijnt bij <em>Genegeerde
+  berichten</em> met <em>oude firmware</em>. Flash hem naar de nieuwste firmware en kies een trackingkanaal.</div>
 
 <!-- ============================ 11 ============================ -->
 <h2 class="chap"><span class="nr">11</span>Gebruikers, rechten en instellingen</h2>
@@ -982,7 +1016,7 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   <div>
     <h3>Vooraf, met internet</h3>
     <ol>
-      <li>Open <em>/offline</em> in Chrome (in het menu van de site: <em>Offline</em>).</li>
+      <li>Open <em>/offline</em> in Chrome (in het menu van de site: <em>Apps</em> → <em>Offline-kaart</em>).</li>
       <li>Kies in het menu van Chrome <em>App installeren</em> of <em>Toevoegen aan startscherm</em>.</li>
       <li>Download bij <em>Kaarten</em> een of meer kaarten die passen bij de opslag van je telefoon. Ze staan samen
         op de kaart, de gedetailleerde bovenop.</li>
@@ -1007,13 +1041,13 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   kaart en de lijst tonen dan alleen de trackers van dat kanaal. Staat het kanaal er niet bij, kies dan
   <em>+ Kanaal toevoegen…</em>: je komt bij <em>Kanalen</em>, waar je het toevoegt met naam en sleutel, een QR-scan of een foto.</p>
 <p>De namen van de trackers komen uit de contacten van de companion; een tracker die de companion (nog) niet kent,
-  staat er met het begin van zijn sleutel. De controletekens in de berichten kan alleen de server nakijken. Verbind je met een tracker in companionmodus (firmware 0.6.2 of nieuwer), dan zie je ook zijn eigen posities,
+  staat er met het begin van zijn sleutel. De controletekens in de berichten kan alleen de server nakijken. Verbind je met een tracker in companionmodus, dan zie je ook zijn eigen posities,
   gemarkeerd als <em>eigen</em>.</p>
 <div class="cols">
   <div>
     <h3>Chat en herhalingen</h3>
-    <p>De app houdt de trackerberichten apart. De rest op de kanalen van de companion, en privéberichten aan de
-      companion, staat in de <em>Chat</em>: de knop linksonder op de kaart, met het aantal nieuwe berichten. Kies een
+    <p>De app houdt de trackerberichten apart. De rest op de kanalen van de companion, en privéberichten (DM's) aan de
+      companion, bv. een melding van de server, staat in de <em>Chat</em>: de knop linksonder op de kaart, met het aantal nieuwe berichten. Kies een
       kanaal om zelf een bericht te sturen.</p>
     <p>Onder elk verstuurd bericht staat hoe vaak het via een repeater gehoord is en via welke, bijvoorbeeld
       <em>2× gehoord via e3d3, 51f0</em>. Bij een tracker in companionmodus zie je dat ook bij zijn eigen posities.</p>
@@ -1037,21 +1071,18 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   <tr><td class="k">Lage toon na een klik</td><td>De tracker heeft geen (geldig) trackingkanaal, of geen repeater hoorde het bericht.
     Kies een kanaal in Toestellen → Instellingen, of probeer op een plek met meer bereik.</td></tr>
   <tr><td class="k">SOS terwijl niemand iets deed</td><td>Waarschijnlijk werd de knop ingedrukt in een zak, tas of houder. Kijk hoe de tracker
-    zit, of zet <em>SOS met de knop</em> uit (Toestellen → Knop en biepjes, of <code>set sos uit</code>; firmware 0.8.0).
+    zit, of zet <em>SOS met de knop</em> uit (Toestellen → Knop en biepjes, of <code>set sos uit</code>).
     Uitschakelen door lang vasthouden blijft werken.</td></tr>
   <tr><td class="k">Geen bewegingsberichten meer</td><td>Toont <code>status</code> <code>fasttrack=uit(batterij)</code>? Dan zit de
     batterij onder <code>fast_min_batt</code>. Laad hem op: vanaf 3 % hoger gaat FastTrack weer aan. SlowTrack, heartbeat, klik
     en SOS werken intussen door.</td></tr>
   <tr><td class="k">Geen SlowTrack-punten (L)</td><td>SlowTrack staat standaard uit: zet <em>Punt loggen elke</em> (<code>slow_log</code>)
     op een tijd. De punten komen pas na <em>Versturen elke</em> (<code>slow_send</code>); <code>slow_buffer</code> in
-    <code>status</code> toont hoeveel er klaarstaan. In rust logt SlowTrack niet (firmware 0.9.1). Gaat een bericht verloren, dan blijven de punten in de buffer voor het volgende.</td></tr>
+    <code>status</code> toont hoeveel er klaarstaan. In rust logt SlowTrack niet. Gaat een bericht verloren, dan blijven de punten in de buffer voor het volgende.</td></tr>
   <tr><td class="k">Het spoor vult zich achteraf</td><td>Normaal bij SlowTrack: gelogde punten komen later binnen en de server zet ze op
     hun eigen tijd in het spoor. De live-positie springt daardoor niet terug.</td></tr>
-  <tr><td class="k">Velden grijs in Toestellen</td><td>De tracker heeft oudere firmware dan die velden nodig hebben (0.8.0 voor Knop en
-    biepjes en SlowTrack, 0.9.0 voor Trackmodus). Flash de nieuwste firmware (hoofdstuk 9).</td></tr>
-  <tr><td class="k">Na 0.9.0 ontbreken punten</td><td>Ontbreken SlowTrack- of ingehaalde punten, of staan er berichten bij <em>Genegeerde
-    berichten</em>? Dan is de server ouder dan 1.2.0 en kent hij de nieuwe berichten niet. Laat de beheerder eerst de server
-    bijwerken; server 1.2.0 leest ook oudere firmware.</td></tr>
+  <tr><td class="k">Velden grijs in Toestellen</td><td>De tracker heeft oudere firmware die deze instellingen nog niet kent. Flash de
+    nieuwste firmware (hoofdstuk 9).</td></tr>
   <tr><td class="k">FIFO-wachtrij loopt niet leeg</td><td>Typ <code>fifo</code>. Staat <code>track_mode=classic</code>, typ dan
     <code>set track_mode fifo</code>. Wachten er minder dan <code>fifo_min</code> punten, dan begint hij pas als het oudste ouder is dan
     <code>fifo_wacht</code>. Hij haalt pas in bij stabiele
@@ -1068,8 +1099,7 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
     en Toestellen tonen meteen wat dat geeft.</td></tr>
   <tr><td class="k">"f" of T1F-berichten</td><td>Normaal. Met <code>f</code> achteraan een inhaalbericht vraagt de tracker een
     bevestiging; de server antwoordt met <code>T1F</code>, hoogstens 20 keer per uur in totaal. Komt er nooit een T1F, kijk dan of de
-    tracker een authsleutel heeft (zonder handtekening bevestigt de server niets) en of de server 1.2.0 of nieuwer is.
-    Met <code>rxlog aan</code> zie je of de T1F aankomt.</td></tr>
+    tracker een authsleutel heeft (zonder handtekening bevestigt de server niets). Met <code>rxlog aan</code> zie je of de T1F aankomt.</td></tr>
   <tr><td class="k">Bewegingssensor voelt niets (goed geveerde auto)</td><td>Ook de GPS-snelheid telt als beweging: de tracker gaat pas
     slapen als hij langer dan <code>still_timeout</code> (standaard 5 min) geen van beide merkt. Voor een rood licht valt hij dus niet in
     slaap. Pas na een stop die langer duurt dan <code>still_timeout</code> moet de sensor hem alleen wekken. Voor een heel soepele auto:
@@ -1077,7 +1107,7 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
   <tr><td class="k">Batterij loopt sneller leeg</td><td>Staat <em>Biep als een repeater de positie doorgeeft</em> aan? Dan blijft de radio na
     elk bericht ongeveer 12 s wakker. Ook een kort <code>slow_log</code> kost stroom, omdat de GPS dan vaker aan moet.</td></tr>
   <tr><td class="k">SOS-bevestiging komt niet aan</td><td>Toont <code>status</code> <code>path_bytes=2</code>? Zo niet:
-    <code>set path_bytes 2</code> en <code>reboot</code>. Sommige repeaters sturen 1-byte padhashes niet door; de server (vanaf 1.0.5) zet
+    <code>set path_bytes 2</code> en <code>reboot</code>. Sommige repeaters sturen 1-byte padhashes niet door; de server zet
     zijn companion daarom op 2 bytes (serverlog: <em>padhashes van de companion op 2 bytes gezet</em>). Met <code>rxlog aan</code>
     zie je of de <code>T1A</code> op de tracker aankomt.</td></tr>
   <tr><td class="k">Dubbelklik: één biep</td><td>Hij zag maar één klik. Druk twee keer kort en duidelijk, met hooguit 0,8 s ertussen.</td></tr>
@@ -1088,7 +1118,7 @@ fifo: let op: fifo_gap 30 s laat 120 berichten/uur toe, maar fifo_per_uur begren
     andere programma's die de poort gebruiken (terminal, MeshCore-app op de pc).</td></tr>
   <tr><td class="k">Flashen blijft hangen</td><td>Trek de USB-kabel uit en steek hem terug in; de oude firmware start weer. Probeer opnieuw
     en kies de bootloader-poort als de browser erom vraagt.</td></tr>
-  <tr><td class="k">"Firmware kan geen sleutel ontvangen"</td><td>Flash eerst de nieuwste firmware; klaarmaken kan pas vanaf 0.3.1.</td></tr>
+  <tr><td class="k">"Firmware kan geen sleutel ontvangen"</td><td>Op het toestel staat heel oude MeshTrack-firmware of andere firmware. Flash eerst de nieuwste MeshTrack-firmware.</td></tr>
   <tr><td class="k">Andere pubkey na flashen</td><td>Klik op <em>Sleutel en instellingen terugzetten</em>, of zet de back-up terug via
     <em>Op verbonden toestel zetten</em>.</td></tr>
 </table>

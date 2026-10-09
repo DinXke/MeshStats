@@ -21,12 +21,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, config, geofence, ingest, keys, nodes, rbac
+from . import auth, config, geofence, ingest, keys, nodes, paths, rbac, stats
 from . import settings as setmod
 from .alerts import EVENTS, EVENT_TEXT, AlertManager
 from .db import DB
@@ -42,7 +42,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -152,7 +152,7 @@ def strip_msg(msg: dict[str, Any]) -> dict[str, Any]:
 async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: bool = False,
                   via: Optional[dict[str, Any]] = None) -> None:
     before = S.db.tracker_by_prefix(prefix)
-    pos = ingest.handle(S.db, S.cfg, prefix, text, sender_ts, snr, path_len)
+    pos = ingest.handle(S.db, S.cfg, prefix, text, sender_ts, snr, path_len, channel_id=via["id"] if via else None)
     if not pos:
         if not simulated:
             log.info("bericht van %s genegeerd: %r", prefix, text[:60])
@@ -164,6 +164,7 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
         await S.hub.send({"type": "channels"})
     t = S.db.tracker(t["id"])
     extras = pos.pop("extras", [])
+    pos.pop("dup_points", None)
     if pos["state"] in HISTORY_STATES:
         await _process_slow(t, pos, extras, before, simulated)
         return
@@ -252,6 +253,8 @@ async def on_message(prefix: str, text: str, sender_ts, snr, path_len) -> None:
     een oud T1-bericht via DM wordt genoteerd bij de genegeerde berichten."""
     if text.startswith("T1|"):
         S.db.log_unknown(prefix, "DM van een tracker (oude firmware): flash naar kanaal-firmware", text)
+        t = S.db.tracker_by_prefix(prefix)
+        S.db.stat("old_fw_dm", t["id"] if t else None)
     else:
         log.info("DM van %s genegeerd: %r", prefix, text[:60])
 
@@ -277,18 +280,22 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
     parts = body.split("|", 3)
     if len(parts) < 4 or len(parts[1]) != 8:
         S.db.log_unknown("?", f"kanaal {ch['name']}: ongeldig", body)
+        S.db.stat("invalid", None, ch["id"])
         return
     _, pk, tag, rest = parts
     t = S.db.tracker_by_prefix(pk)
     if not t or t["kind"] != "real":
         S.db.log_unknown(pk, f"kanaal {ch['name']}: onbekende tracker", body)
+        S.db.stat("unknown", None, ch["id"])
         return
     if tag == "-":
         if ch["require_sig"]:
             S.db.log_unknown(pk, f"kanaal {ch['name']}: niet ondertekend", body)
+            S.db.stat("invalid", t["id"], ch["id"])
             return
     elif not t.get("authkey") or not hmac.compare_digest(channel_tag(t["authkey"], f"{pk}|{rest}"), tag.lower()):
         S.db.log_unknown(pk, f"kanaal {ch['name']}: ongeldige handtekening", body)
+        S.db.stat("invalid", t["id"], ch["id"])
         return
     await process(pk, "T1|" + rest, sender_ts, snr, path_len, via=ch)
     fields = rest.split("|")
@@ -303,6 +310,43 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
             r = None
         if r is not None and r.ack_requested and r.fix_ts:
             fifo_request(ch, t, pk, r.fix_ts)
+
+
+# ---- paden van trackerberichten (1.3, zie paths.py) -------------------------------------
+
+_path_channels: dict[str, Any] = {"at": 0.0, "list": []}
+OPENHOP_POLL_S = 30
+
+
+def _channels_for_paths() -> list[dict[str, Any]]:
+    """Onze kanalen met hun AES-sleutel en hash, 30 s gecachet (elk rauw pakket kijkt erin)."""
+    if time.time() - _path_channels["at"] > 30:
+        _path_channels.update(at=time.time(), list=paths.prepare_channels(S.db.channels()))
+    return _path_channels["list"]
+
+
+async def on_rx_log(raw: bytes, snr, rssi) -> None:
+    """Rauw pakket van de companion (0x88): is het een trackerbericht op een van onze kanalen,
+    dan zijn pad opslaan (bron "companion")."""
+    chans = _channels_for_paths()
+    if not chans:
+        return
+    m = paths.match(S.db, raw, chans, channel_tag)
+    if m:
+        S.db.add_paths([{**m, "rx_ts": int(time.time()), "snr": snr, "rssi": rssi, "radio": None, "source": "companion"}])
+
+
+async def openhop_path_poller() -> None:
+    """Elke 30 s de nieuwe pakketten uit de database van openHop (alleen lezen) op paden nakijken."""
+    while True:
+        try:
+            since = int(time.time()) - S.settings["retention_days"] * 86400
+            n = await asyncio.to_thread(paths.poll_openhop, S.db, S.cfg.openhop_db, channel_tag, since)
+            if n:
+                log.debug("paden uit openHop: %d nieuw", n)
+        except Exception as e:  # noqa: BLE001
+            log.warning("paden uit openHop: %s", e)
+        await asyncio.sleep(OPENHOP_POLL_S)
 
 
 _sos_acked: dict[tuple[int, str], float] = {}
@@ -413,7 +457,9 @@ async def fifo_tick(now: Optional[float] = None) -> int:
                 _fifo_pending.setdefault(t["id"], {**e, "ready": now + FIFO_CHANNEL_INTERVAL_S})
             continue
         sent += 1
+        S.db.stat("t1f_msg", None, cid)
         for t, e in batch:
+            S.db.stat("t1f_sent", t["id"], cid)
             _fifo_tracker_sent[t["id"]] = now
             log.info("FIFO-bevestiging T1F tot %s naar %s", e["upto"], t["alias"])
     return sent
@@ -452,6 +498,7 @@ async def sos_ack(ch: dict[str, Any], t: dict[str, Any], pk: str, seq: str) -> N
     _sos_acked[key] = now
     try:
         await S.mesh.send_channel(ch["slot"], sos_ack_text(t["authkey"], pk, seq), ch.get("region") or "")
+        S.db.stat("t1a_sent", t["id"], ch["id"])
         log.warning("SOS van %s (seq %s) bevestigd op kanaal %s", t["alias"], seq, ch["name"])
     except Exception as e:  # noqa: BLE001
         _sos_acked.pop(key, None)
@@ -572,9 +619,10 @@ async def lifespan(app: FastAPI):
     S.sims = SimManager(make_router, on_sim_message, make_wide_router)
     S.alerts = AlertManager(S.db, S.mesh, get_settings, _user_sees)
     S.mesh.on_channel = on_channel
+    S.mesh.on_rx_log = on_rx_log
     tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner()),
              asyncio.create_task(S.alerts.run()), asyncio.create_task(silent_watch()),
-             asyncio.create_task(fifo_scheduler())]
+             asyncio.create_task(fifo_scheduler()), asyncio.create_task(openhop_path_poller())]
     tiles = Path(S.cfg.tiles_dir)
     if tiles.is_dir():
         app.mount("/tiles", StaticFiles(directory=tiles), name="tiles")
@@ -599,16 +647,46 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 _ASSET = re.compile(r'((?:src|href)="/static/[^"?]+\.(?:js|css|svg))"')
 
 
+def _static_url(rel: str) -> str:
+    """/static/<rel> met dezelfde versie als page() erachter zet (alleen js, css en svg)."""
+    f = STATIC / rel
+    if rel.rsplit(".", 1)[-1] in ("js", "css", "svg"):
+        return f"/static/{rel}?v={int(f.stat().st_mtime) if f.exists() else 0}"
+    return f"/static/{rel}"
+
+
+# Pagina's van de site zelf (niet /offline en /tracker, die hebben hun eigen manifest):
+# installeerbaar als één app met scope "/".
+_SITE_HEAD = ('<meta name="theme-color" content="#0b6e4f">\n'
+              '<link rel="manifest" href="/manifest.webmanifest">\n'
+              '<link rel="apple-touch-icon" href="/static/icon-192.png">\n'
+              '<meta name="mobile-web-app-capable" content="yes">\n'
+              '<meta name="apple-mobile-web-app-capable" content="yes">\n'
+              '<meta name="apple-mobile-web-app-title" content="MeshTrack">\n')
+
+
 def page(name: str) -> HTMLResponse:
     """HTML-pagina met een versie achter elk script en stylesheet (?v=<wijzigtijd>).
-    Cloudflare laat de browser /static 4 uur cachen; zo krijgt elke update een nieuwe URL."""
+    Cloudflare laat de browser /static 4 uur cachen; zo krijgt elke update een nieuwe URL.
+    Pagina's zonder eigen manifest krijgen dat van de site (centraal, zodat elke pagina meedoet)."""
     html = (STATIC / name).read_text(encoding="utf-8")
 
     def ver(m: re.Match) -> str:
-        f = STATIC / m.group(1).split('"/static/', 1)[1]
-        v = int(f.stat().st_mtime) if f.exists() else 0
-        return f'{m.group(1)}?v={v}"'
-    return HTMLResponse(_ASSET.sub(ver, html), headers={"Cache-Control": "no-cache"})
+        attr, rel = m.group(1).split('"/static/', 1)
+        return f'{attr}"{_static_url(rel)}"'
+    html = _ASSET.sub(ver, html)
+    if 'rel="manifest"' not in html:
+        html = html.replace("</head>", _SITE_HEAD + "</head>", 1)
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
+# Bestanden die de service worker van de site (/sw.js) vooraf bewaart: wat de aangemelde
+# pagina's laden. Geen HTML met gegevens, geen firmware, geen pdf's.
+SITE_ASSETS = ("style.css", "statistieken.css", "vendor/maplibre-gl.css",
+               "common.js", "app.js", "admin.js", "device.js", "dfu.js", "serial.js", "simulatie.js", "icons.js",
+               "kanalen.js", "log.js", "users.js", "system.js", "statistieken.js", "basemap.js",
+               "vendor/maplibre-gl.js", "vendor/pmtiles.js", "vendor/qrcode.js",
+               "favicon.svg", "icon-192.png", "icon-512.png")
 
 
 
@@ -694,12 +772,14 @@ def audit(p: Principal, action: str, detail: str = "") -> None:
 PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", "/help",
           "/offline", "/offline-sw.js", "/manifest.webmanifest", "/api/offline/maps",
           "/tiles/offline/", "/tiles/fonts/", "/tiles/sprites/",
-          "/tracker", "/tracker-sw.js", "/tracker.webmanifest")
+          "/tracker", "/tracker-sw.js", "/tracker.webmanifest",
+          "/sw.js", "/offline-site.html", "/offline.webmanifest")
 # De offline-app werkt volledig zonder account en gebruikt niets uit de database: wie de
 # kanaalsleutel kent, kan meelezen. Van de server komen alleen kaarten, lettertypes en
 # symbolen (gewone OpenStreetMap-gegevens).
 PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "sims.manage"), "/devices": ("trackers.serial",),
               "/users": ("users.manage", "share.manage"), "/log": ("log.view",), "/kanalen": ("map.view",),
+              "/statistieken": ("map.view",),
               "/system": ("alerts.manage", "alerts.personal", "system.manage", "companion.view")}
 
 
@@ -720,7 +800,8 @@ async def guard(request: Request, call_next):
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     if path.startswith("/tiles"):
         resp.headers["Cache-Control"] = "no-cache"
-    elif path.startswith("/static") or path in ("/", "/admin", "/devices", "/login", "/users", "/help", "/log", "/system", "/kanalen"):
+    elif path.startswith("/static") or path in ("/", "/admin", "/devices", "/login", "/users", "/help", "/log", "/system", "/kanalen",
+                                                       "/statistieken"):
         # Altijd hervalideren (ETag/Last-Modified -> 304): na een update nooit
         # een oude CSS/JS naast nieuwe HTML.
         resp.headers["Cache-Control"] = "no-cache"
@@ -749,6 +830,11 @@ async def kanalen_page():
     return page("kanalen.html")
 
 
+@app.get("/statistieken")
+async def statistieken_page():
+    return page("statistieken.html")
+
+
 # ---- offline-app (PWA) -------------------------------------------------------------
 
 @app.get("/offline")
@@ -762,9 +848,43 @@ async def offline_sw():
                         headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
 
+@app.get("/offline.webmanifest")
+async def offline_manifest():
+    return FileResponse(STATIC / "offline.webmanifest", media_type="application/manifest+json",
+                        headers={"Cache-Control": "no-cache"})
+
+
+# ---- de volledige site als app (PWA, scope "/") ---------------------------------------
+# Manifest, service worker en de pagina "geen verbinding" zijn openbaar: ze bevatten geen gegevens.
+
 @app.get("/manifest.webmanifest")
 async def manifest():
-    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json",
+                        headers={"Cache-Control": "no-cache"})
+
+
+def site_sw() -> str:
+    """sw.js met de lijst vooraf te bewaren bestanden (met hun ?v=) en een BUILD die verandert
+    zodra één van die bestanden wijzigt: dan ziet de browser een nieuwe worker en toont de
+    pagina "Nieuwe versie beschikbaar – vernieuwen"."""
+    src = (STATIC / "sw.js").read_text(encoding="utf-8")
+    assets = [_static_url(a) for a in SITE_ASSETS]
+    page_html = STATIC / "offline-site.html"
+    stamp = "|".join(assets + [str(int(page_html.stat().st_mtime))])
+    build = hashlib.sha256(stamp.encode()).hexdigest()[:12]
+    src = src.replace('const BUILD = "dev";', f'const BUILD = "{build}";', 1)
+    return src.replace("const ASSETS = [];", f"const ASSETS = {json.dumps(assets)};", 1)
+
+
+@app.get("/sw.js")
+async def sw_js():
+    return Response(site_sw(), media_type="text/javascript",
+                    headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
+@app.get("/offline-site.html")
+async def offline_site():
+    return page("offline-site.html")
 
 
 OFFLINE_MAPS = {   # bestand -> (naam, omschrijving)
@@ -1719,6 +1839,162 @@ async def log_page():
 async def unknown(request: Request):
     need(request, "trackers.manage")
     return S.db.unknown()
+
+
+# ---- statistieken (1.3, zie docs/api-stats.md) --------------------------------------
+
+STATS_CACHE_S = 30
+_stats_cache: dict[tuple, tuple[float, Any]] = {}
+
+
+def _stats_cached(request: Request, p: Principal, fn) -> Any:
+    """Resultaat 30 s bewaren per principal en per query (pad + parameters)."""
+    key = (p.kind, p.name, p.user_id, request.url.path, tuple(sorted(request.query_params.multi_items())))
+    now = time.time()
+    hit = _stats_cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    res = fn()
+    if len(_stats_cache) >= 500:
+        for k in [k for k, v in _stats_cache.items() if v[0] <= now]:
+            del _stats_cache[k]
+        if len(_stats_cache) >= 500:
+            _stats_cache.clear()
+    _stats_cache[key] = (now + STATS_CACHE_S, res)
+    return res
+
+
+def _stats_principal(request: Request) -> Principal:
+    p = need(request, "map.view")
+    if p.kind != "user":                    # deellinks: geen statistieken
+        raise HTTPException(403, "geen toegang")
+    return p
+
+
+def _stats_scope(p: Principal, frm: Optional[int], to: Optional[int], tracker: Optional[int],
+                 channel: Optional[int]) -> tuple[stats.Scope, list[dict[str, Any]], dict[int, str]]:
+    """Bereik (standaard de laatste 7 dagen, begrensd door de terugblik van de gebruiker) en de
+    trackers die de principal mag zien, eventueel beperkt tot één tracker of één kanaal."""
+    now = int(time.time())
+    to = now if to is None else int(to)
+    frm = to - 7 * 86400 if frm is None else int(frm)
+    if frm > to:
+        raise HTTPException(400, "from ligt na to")
+    if p.history_hours > 0:
+        frm = max(frm, now - p.history_hours * 3600)
+    vis = [t for t in S.db.trackers() if p.sees(t["id"])]
+    if tracker is not None:
+        vis = [t for t in vis if t["id"] == tracker]
+        if not vis:
+            raise HTTPException(404, "onbekende tracker")
+    chans = S.db.channels()
+    if channel is not None:
+        if not any(c["id"] == channel for c in chans):
+            raise HTTPException(404, "onbekend kanaal")
+        vis = [t for t in vis if t.get("channel_id") == channel]
+    ids = None if p.tracker_ids is None and tracker is None and channel is None else [t["id"] for t in vis]
+    ev_chans: set[int] = set()
+    if ids is not None and tracker is None:
+        ev_chans = {c["id"] for c in chans if (channel is None or c["id"] == channel) and p.sees_channel(c["id"])}
+    if frm > to:                            # helemaal buiten de terugblik: leeg
+        frm, ids, ev_chans = to, [], set()
+    names = {c["id"]: c["name"] for c in chans if p.sees_channel(c["id"])}
+    return stats.Scope(frm, to, ids, ev_chans), vis, names
+
+
+def _bucket(bucket: str, sc: stats.Scope) -> str:
+    if bucket not in ("", "auto", "hour", "day"):
+        raise HTTPException(400, "bucket: hour, day of auto")
+    b = stats.pick_bucket(bucket, sc.frm, sc.to)
+    if len(stats.bucket_starts(b, sc.frm, sc.to)) > stats.MAX_BUCKETS:
+        raise HTTPException(400, f"te veel emmers (max. {stats.MAX_BUCKETS}): kies een kleiner bereik of bucket=day")
+    return b
+
+
+@app.get("/api/stats/summary")
+async def stats_summary(request: Request, frm: Optional[int] = Query(None, alias="from"), to: Optional[int] = None,
+                        tracker: Optional[int] = None, channel: Optional[int] = None):
+    p = _stats_principal(request)
+
+    def run():
+        sc, vis, names = _stats_scope(p, frm, to, tracker, channel)
+        return stats.summary(S.db, sc, vis, names, _hop_names())
+    return _stats_cached(request, p, run)
+
+
+def _hop_names():
+    """Padhash -> naam via de adverts van openHop en de contacten van de companion."""
+    cl = getattr(S.__dict__.get("mesh"), "contact_list", None)
+    known = paths.known_nodes(S.cfg.openhop_db, cl() if cl else [])
+    memo: dict[str, dict[str, Any]] = {}
+
+    def names(h: str) -> dict[str, Any]:
+        if h not in memo:
+            memo[h] = paths.resolve(h, known)
+        return memo[h]
+    return names
+
+
+@app.get("/api/stats/repeaters")
+async def stats_repeaters(request: Request, frm: Optional[int] = Query(None, alias="from"), to: Optional[int] = None,
+                          tracker: Optional[int] = None, channel: Optional[int] = None, source: str = "auto"):
+    p = _stats_principal(request)
+    if source not in ("auto", "openhop", "companion"):
+        raise HTTPException(400, "source: auto, openhop of companion")
+
+    def run():
+        sc, vis, _ = _stats_scope(p, frm, to, tracker, channel)
+        return stats.repeaters(S.db, sc, vis, _hop_names(), stats.path_source(S.db, sc, source))
+    return _stats_cached(request, p, run)
+
+
+@app.get("/api/stats/timeseries")
+async def stats_timeseries(request: Request, frm: Optional[int] = Query(None, alias="from"), to: Optional[int] = None,
+                           tracker: Optional[int] = None, channel: Optional[int] = None, bucket: str = "auto"):
+    p = _stats_principal(request)
+
+    def run():
+        sc, _, _ = _stats_scope(p, frm, to, tracker, channel)
+        return stats.timeseries(S.db, sc, _bucket(bucket, sc))
+    return _stats_cached(request, p, run)
+
+
+@app.get("/api/stats/distributions")
+async def stats_distributions(request: Request, frm: Optional[int] = Query(None, alias="from"), to: Optional[int] = None,
+                              tracker: Optional[int] = None, channel: Optional[int] = None):
+    p = _stats_principal(request)
+
+    def run():
+        sc, _, _ = _stats_scope(p, frm, to, tracker, channel)
+        return stats.distributions(S.db, sc)
+    return _stats_cached(request, p, run)
+
+
+@app.get("/api/stats/fifo")
+async def stats_fifo(request: Request, frm: Optional[int] = Query(None, alias="from"), to: Optional[int] = None,
+                     tracker: Optional[int] = None, channel: Optional[int] = None):
+    p = _stats_principal(request)
+
+    def run():
+        sc, vis, _ = _stats_scope(p, frm, to, tracker, channel)
+        return stats.fifo(S.db, sc, vis if sc.ids != [] else [])
+    return _stats_cached(request, p, run)
+
+
+@app.get("/api/stats/events")
+async def stats_events(request: Request, frm: Optional[int] = Query(None, alias="from"), to: Optional[int] = None,
+                       tracker: Optional[int] = None, channel: Optional[int] = None, kind: str = "",
+                       bucket: str = "auto"):
+    p = _stats_principal(request)
+    try:
+        kinds = stats.parse_kinds(kind)
+    except ValueError as e:
+        raise HTTPException(400, f"onbekende soort: {e}")
+
+    def run():
+        sc, _, _ = _stats_scope(p, frm, to, tracker, channel)
+        return stats.events_series(S.db, sc, _bucket(bucket, sc), kinds)
+    return _stats_cached(request, p, run)
 
 
 # ---- gebruikers, groepen, deellinks, audit -------------------------------------

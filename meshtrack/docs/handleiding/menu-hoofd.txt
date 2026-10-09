@@ -1,18 +1,19 @@
   ==============================================================
-   MeshTrack T1000-E  fw 0.3.1       HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.1       HOOFDMENU
   ==============================================================
-   T1000-E Ploeg 3   |  modus companion (USB)  |  batterij 99% (4187 mV)
-   tracker slaapt  |  GPS zoekt  |  laatste zending: OK (ACK)
+   Ploeg 3  |  modus companion (USB)  |  batterij 99% (4187 mV)
+   tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
   ==============================================================
    1  Status (alles)
    2  Modus en knop
    3  Wanneer een positie sturen
    4  Ritme
-   5  Stilstand en heartbeat
-   6  GPS en verzending
-   7  Nu een positie sturen
-   8  Onderhoud
+   5  SlowTrack en trackmodus (FIFO)
+   6  Stilstand en heartbeat
+   7  GPS en verzending
+   8  Nu een positie sturen
+   9  Onderhoud
 
    0  Menu sluiten (commando's; 'menu' opent het weer)
 
-   Keuze: 
+   Keuze:
