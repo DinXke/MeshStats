@@ -211,7 +211,30 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     amberkleurig doelwit met legende *Op verzoek*. Meshbelasting: "alle" op een kanaal met N trackers = N antwoorden.
     Via Bluetooth (companionmodus) aanvaardt de tracker zonder beheercode alleen `status`, `fifo` en `dump` (alleen lezen);
     na het ontgrendelen met de beheercode (0.9.11) ook de gewone instellingen.
-- **server/**: FastAPI + meshcore-py (versie 1.4.2).
+- **server/**: FastAPI + meshcore-py (versie 1.5.0).
+  - 1.5.0: **één app** (site, offline en tracker samen): openbare pagina `/start`; `/sw.js` bewaart ook de
+    bestanden van `/start`, `/offline` en `/tracker` vooraf, de BUILD (en `PAGES_V`) volgt ook de wijzigtijd van
+    die pagina's, ontbrekende bestanden worden overgeslagen. `/offline-sw.js` en `/tracker-sw.js` blijven voor
+    oude installaties (ontbreekt het bestand, dan een ingebouwde worker die zich afmeldt). **Glijdende sessie**:
+    wie de site gebruikt, krijgt hoogstens één keer per dag een verlengde cookie (zelfde generatie, dus uitloggen,
+    een nieuw wachtwoord of deactiveren werkt nog altijd). **`/login?next=<pad>`**: een paginavraag zonder sessie
+    gaat naar `/login?next=...`; `POST /api/login` geeft `next` gecontroleerd terug (alleen eigen paden, nooit
+    `//` of `/\`), een aangemelde gebruiker op `/login?next=` gaat meteen door. **Bladeren**: `GET /api/events`
+    kent `offset` (antwoord met `offset` en `more`), `GET /api/audit` kent `offset` en `before_id`.
+    Gebruik: de app één keer installeren vanaf de site (*Meer* → *Installeren*); beginscherm met **Online** (volledige
+    site, via *Aanmelden* indien nodig) en **Offline** (Offline-kaart en Tracker live, zonder netwerk of login); zonder
+    verbinding staat Offline bovenaan; *Volgende keer meteen zo openen* (terug via *Meer* → *Beginscherm*);
+    snelkoppelingen Online, Offline-kaart, Tracker live, Statistieken; op een computer een schakelaar *Online | Offline*
+    in de kopbalk. Oude /offline- en /tracker-installaties schakelen vanzelf over; een eenmalige banner vraagt de nieuwe
+    app te installeren en de oude te verwijderen zonder *ook gegevens wissen* (offline-kaarten, berichten en instellingen
+    blijven; op een iPhone heeft elk icoon eigen opslag, dus kaarten opnieuw downloaden). Navigatie op de gsm: onderbalk
+    Kaart · Trackers (of Logboek) · Tracker live · Meer; Offline-kaart: Trackers · Chat · Verbinding · Kaarten · Meer;
+    bovenaan in Offline-kaart en Tracker live een wisselband; tablet: wat niet past onder *Meer ▾*. Vijf thema's met
+    kleurstalen: Automatisch, Licht, Donker, Nacht (rood, voor 's nachts in het voertuig) en Zon (hoog contrast, vroeger
+    "Hoog contrast"; "Oceaan" is weg), ook op de kaarten; knop *Nachtmodus* in Meer. Overal *Aanmelden/Afmelden*;
+    afmelden vraagt een bevestiging. Logboek met 200 regels en *Meer laden*, inklapbare filters, op de gsm kaartjes;
+    *Verwijderen* in het bewerkvenster (gebruikers, groepen, meldingsregels, kanalen); *Prioritair* als schakelaar;
+    "levensteken" in plaats van "heartbeat"; tabbladen op één regel, verschuifbaar.
   - 1.4.2: **niet-ondertekend aanvaarden** per tracker (`trackers.allow_unsigned`, schrijfbaar via `PUT /api/trackers/{id}`,
     met auditregel): een kanaalbericht zonder handtekening (`-`) wordt dan ook op een kanaal met `require_sig` verwerkt.
     Elk opgeslagen punt van een niet-ondertekend bericht (ook de extra punten, en ook op een kanaal zonder `require_sig`)

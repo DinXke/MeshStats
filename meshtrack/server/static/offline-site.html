@@ -18,17 +18,20 @@
   .nc .acts { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
   .nc .acts a, .nc .acts button { display: block; text-align: center; padding: 11px 14px; border-radius: 8px; font-size: 15px; text-decoration: none; }
   .nc .acts a { border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .nc .acts a, .nc .acts button { min-height: 44px; box-sizing: border-box; }
+  .nc .acts a.nc-main { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
 <main class="nc">
   <h1>Geen verbinding met de server</h1>
   <p>MeshTrack kan de server nu niet bereiken. Controleer je internetverbinding en probeer het opnieuw.</p>
-  <p class="muted">De offline-kaart en Tracker live werken ook zonder verbinding, als je ze op dit toestel al eens geopend hebt.</p>
+  <p class="muted">Zonder internet werkt MeshTrack <strong>Offline</strong>: posities via Bluetooth op je offline-kaart, en Tracker live. Daarvoor heb je geen account nodig.</p>
   <div class="acts">
-    <button type="button" class="primary" id="nc-retry">Opnieuw proberen</button>
-    <a href="/offline">Offline-kaart</a>
+    <a href="/offline" class="nc-main">Offline-kaart openen</a>
     <a href="/tracker">Tracker live</a>
+    <button type="button" id="nc-retry">Opnieuw proberen</button>
+    <a href="/start?kies=1">Beginscherm</a>
   </div>
 </main>
 <script>

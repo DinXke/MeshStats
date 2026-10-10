@@ -2,8 +2,8 @@
   "id": "/",
   "name": "MeshTrack",
   "short_name": "MeshTrack",
-  "description": "Trackers live op de kaart, met logboek, zones en statistieken.",
-  "start_url": "/",
+  "description": "Trackers live op de kaart (online) en zonder internet: offline-kaart via Bluetooth en Tracker live.",
+  "start_url": "/start",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f4f3f0",
@@ -16,9 +16,9 @@
     { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Kaart", "url": "/", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
-    { "name": "Tracker live", "url": "/tracker", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
-    { "name": "Offline-kaart", "url": "/offline", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
-    { "name": "Statistieken", "url": "/statistieken", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+    { "name": "Online", "short_name": "Online", "description": "De volledige site: kaart, logboek en beheer", "url": "/", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Offline-kaart", "short_name": "Offline-kaart", "description": "Posities via Bluetooth, zonder internet", "url": "/start?ga=offline", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Tracker live", "short_name": "Tracker live", "description": "De binnenkant van één tracker via Bluetooth of USB", "url": "/start?ga=tracker", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Statistieken", "short_name": "Statistieken", "url": "/statistieken", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
   ]
 }

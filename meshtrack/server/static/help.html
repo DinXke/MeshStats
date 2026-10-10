@@ -15,9 +15,11 @@
   <span class="spacer"></span>
 </header>
 <main class="page help">
-  <aside class="toc card">
-    <strong>Inhoud</strong>
+  <details class="toc card" id="toc" open>
+    <summary><strong>Inhoud</strong></summary>
+    <nav class="toclinks" aria-label="Inhoud">
     <a href="#wat">Wat is MeshTrack?</a>
+    <a href="#app">De MeshTrack-app</a>
     <a href="#kaart">De kaart</a>
     <a href="#logboek">Het logboek</a>
     <a href="#tracker">De tracker</a>
@@ -47,7 +49,8 @@
     <a href="#verzoek">Positie vragen</a>
     <a href="#voertuig">Voertuigtracker RAK3401</a>
     <a href="#problemen">Problemen oplossen</a>
-  </aside>
+    </nav>
+  </details>
 
   <article class="card doc">
     <p class="note"><a href="/static/MeshTrack-snelstart.pdf" download>Snelstart op één pagina (PDF)</a>: meteen op weg
@@ -66,6 +69,43 @@
     <p>Alles werkt offline: de kaart, de routes van de simulator en de lijst met meshnodes komen allemaal van de
       server zelf.</p>
 
+    <h2 id="app">De MeshTrack-app</h2>
+    <p>Op een telefoon of tablet installeer je MeshTrack <strong>één keer</strong>, vanaf deze site: <em>Meer</em> →
+      <em>Installeren</em> (op een iPhone of iPad: <em>Deel</em> → <em>Zet op beginscherm</em>). Open je de app, dan kies je op
+      het <strong>beginscherm</strong>:</p>
+    <ul>
+      <li><strong>Online</strong>: de volledige site, eventueel eerst via <em>Aanmelden</em>.</li>
+      <li><strong>Offline</strong>: de <a href="#offline">Offline-kaart</a> en <a href="#trackerlive">Tracker live</a>, zonder
+        netwerk en zonder account.</li>
+    </ul>
+    <p>Zonder verbinding staat <em>Offline</em> bovenaan. <em>Volgende keer meteen zo openen</em> onthoudt je keuze; dat zet je
+      terug via <em>Meer</em> → <em>Beginscherm</em>. Houd het app-icoon lang ingedrukt voor snelkoppelingen naar Online,
+      Offline-kaart, Tracker live en Statistieken. Op een computer is er geen beginscherm: daar wissel je met <em>Online |
+      Offline</em> in de kopbalk.</p>
+    <h3>Navigeren op een telefoon of tablet</h3>
+    <ul>
+      <li><strong>Online</strong>: onderaan een balk met <em>Kaart</em> · <em>Trackers</em> (of <em>Logboek</em>) ·
+        <em>Tracker live</em> · <em>Meer</em>. <em>Meer</em> bevat de andere pagina's, <em>Offline</em>, het thema,
+        <em>Nachtmodus</em>, <em>Help</em>, <em>Installeren</em>, <em>Wachtwoord wijzigen</em> en <em>Afmelden</em>.</li>
+      <li><strong>Offline-kaart</strong>: onderaan <em>Trackers</em> · <em>Chat</em> · <em>Verbinding</em> · <em>Kaarten</em> ·
+        <em>Meer</em>. Bovenaan de Offline-kaart en Tracker live wissel je met een band tussen die twee, of ga je naar
+        <em>Online</em>.</li>
+      <li><strong>Tablet</strong>: de pagina's staan in de kopbalk; wat niet past, staat onder <em>Meer ▾</em>.</li>
+      <li>Tabbladen staan op één regel; zijn het er te veel, dan schuif je ze opzij. Op een telefoon klap je de inhoud van deze
+        helppagina in en uit.</li>
+    </ul>
+    <h3>Aanmelden en afmelden</h3>
+    <p>Na het aanmelden kom je terug op de pagina waar je was. De sessie verlengt zich vanzelf zolang je MeshTrack gebruikt,
+      tot 30 dagen na het laatste gebruik. <em>Afmelden</em> vraagt eerst een bevestiging; de offline-gegevens op je toestel
+      blijven staan.</p>
+    <h3>Overstappen van de oude apps</h3>
+    <p>Had je de oude losse apps <code>/offline</code> of <code>/tracker</code> geïnstalleerd, dan schakelen die vanzelf over. Een
+      eenmalige banner vraagt je de nieuwe app te installeren en daarna de oude te verwijderen. Je offline-kaarten, berichten
+      en instellingen blijven bewaard.</p>
+    <p class="note"><strong>Bij het verwijderen: NIET "ook gegevens wissen".</strong> Vink dat niet aan, anders verdwijnen je
+      offline-kaarten. Op een iPhone heeft elk icoon op het beginscherm zijn eigen opslag: kaarten in een oud icoon gaan niet
+      mee; download ze opnieuw in de nieuwe app.</p>
+
     <h2 id="kaart">De kaart</h2>
     <ul>
       <li>In de <strong>lijst links</strong> zoek je op naam en filter je op <em>favorieten</em> (☆), <em>echte</em> of
@@ -73,12 +113,12 @@
         <em>alleen deze lijst</em> toont enkel de trackers die na je zoekopdracht of filter overblijven.</li>
       <li>Het <strong>spoor</strong> zet je aan of uit, en je kiest hoe ver het teruggaat (van 1 uur tot 7 dagen).
         Het spoor krijgt de kleur van de tracker of een kleur volgens de snelheid.</li>
-      <li><strong>Klik op een tracker</strong> voor de details, de afgelegde afstand en de maximale en gemiddelde
+      <li><strong>Tik of klik op een tracker</strong> voor de details, de afgelegde afstand en de maximale en gemiddelde
         snelheid. Heb je het recht, dan kun je het spoor ook als <strong>GPX</strong> of <strong>CSV</strong>
         downloaden. Met <em>centreren en volgen</em> houdt de kaart de tracker in het midden bij elke nieuwe positie;
         zelf de kaart verslepen of de knop <em>volgen stoppen</em> bovenaan beëindigt dat.</li>
       <li>Een <strong>SOS</strong> staat als rode cirkel met "SOS" op de plek waar de noodoproep vertrok, voor de gekozen
-        periode van het spoor (of de laatste 24 uur als het spoor uit staat). Klik erop voor de tracker en het tijdstip.
+        periode van het spoor (of de laatste 24 uur als het spoor uit staat). Tik erop voor de tracker en het tijdstip.
         De herhalingen van dezelfde noodoproep tellen één keer.</li>
       <li>Het <strong>pijltje</strong> op een marker wijst de rijrichting aan. Een <strong>grijze</strong> marker betekent
         dat die tracker al lang niets meer van zich heeft laten horen.</li>
@@ -102,11 +142,12 @@
 
     <h2 id="logboek">Het logboek</h2>
     <p>Het logboek toont alle gebeurtenissen per tracker: gewone posities, wakker worden door beweging, stilvallen,
-      heartbeats, SOS, handmatig verstuurde posities, moduswissels, aan of van de lader, het binnenkomen in of verlaten
+      levenstekens, SOS, handmatig verstuurde posities, moduswissels, aan of van de lader, het binnenkomen in of verlaten
       van een zone, een batterij onder 20 % en verdachte posities.</p>
     <p>Je filtert op tracker, soort gebeurtenis, periode of vrije tekst. De knop <em>alleen bijzondere</em> verbergt
       de gewone posities. Met <em>CSV</em> download je wat je op dat moment ziet, en met <em>kaart</em> spring je naar
-      de plek van die gebeurtenis.</p>
+      de plek van die gebeurtenis. Het logboek toont 200 regels; met <em>Meer laden</em> haal je de volgende. De filters klap
+      je in en uit; op een telefoon staat elke gebeurtenis op een eigen kaartje.</p>
 
     <h2 id="tracker">De tracker</h2>
     <p>De tracker kent twee modi:</p>
@@ -198,7 +239,7 @@
     </ul>
     <p>Ligt hij langer stil dan <em>slapen na stilstand van</em>, dan stuurt hij een laatste positie
       (<em>stilgevallen</em>) en gaat hij slapen. De bewegingssensor maakt hem weer wakker; zijn eerste positie
-      daarna krijgt de status <em>wakker door beweging</em>. In rust laat hij elke <em>heartbeat</em> een teken van
+      daarna krijgt de status <em>wakker door beweging</em>. In rust stuurt hij op vaste tijden een <em>levensteken</em>: een teken van
       leven horen.</p>
     <p>Elk bericht gaat één keer via het kanaal de mesh in (flood binnen de regio) en krijgt geen bevestiging. Gaat er een
       verloren, dan reizen de bewaarde punten mee met het volgende bericht.</p>
@@ -233,7 +274,7 @@
       <tr><td>Versturen elke<br><code>slow_send</code></td><td>Elke zoveel tijd precies één bericht met de gelogde punten.
         Minstens 1 minuut.</td><td>30 min</td></tr>
       <tr><td>FastTrack uit onder<br><code>fast_min_batt</code></td><td>Onder dit batterijpercentage stopt FastTrack (geen
-        bewegingsberichten meer). SlowTrack, heartbeat, klik en SOS werken door. Vanaf 3&nbsp;% hoger gaat FastTrack weer aan;
+        bewegingsberichten meer). SlowTrack, levensteken, klik en SOS werken door. Vanaf 3&nbsp;% hoger gaat FastTrack weer aan;
         aan USB geldt het nooit. 0 = uit.</td><td>0 (uit)</td></tr>
     </table>
     <p><strong>Tip:</strong> één bericht bevat zo'n 6 à 11 punten, naargelang de afstanden ertussen. Logt de tracker er meer,
@@ -647,12 +688,13 @@
       bestaat niet.</p>
 
     <h2 id="trackerlive">Tracker live: in de tracker kijken</h2>
-    <p>Onder <em>Apps</em> → <a href="/tracker">Tracker live</a> staat een aparte app die toont wat er op dat moment in één
+    <p><a href="/tracker">Tracker live</a> open je in de MeshTrack-app via <em>Offline</em>, de balk onderaan of <em>Meer</em>.
+      Het toont wat er op dat moment in één
       tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij (het totaal met de verdeling <em>nog niet verstuurd · verstuurd, onbevestigd ·
       geparkeerd</em>, geparkeerde punten in het oranje, en ook of er een vol inhaalbericht klaarstaat en wanneer een
       niet-vol bericht weer mag), zijn GPS (zonder actuele fix: <em>Laatst gekende positie: X geleden</em>, met een grijze
       gestippelde marker op de kaart), wat hij verstuurde en wat hij hoorde, met
-      een tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
+      een tijdlijn en een kaart.</p>
     <ul>
       <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
         companionmodus staat; koppelcode standaard 123456, of de eigen code). Chrome of Edge op Android of een computer;
@@ -723,7 +765,7 @@
       <tr><td>M</td><td>positie terwijl hij beweegt</td></tr>
       <tr><td>W</td><td>wakker geworden door beweging (eerste positie na een rustperiode)</td></tr>
       <tr><td>S</td><td>stilgevallen (laatste positie voor hij gaat slapen)</td></tr>
-      <tr><td>H</td><td>heartbeat in rust</td></tr>
+      <tr><td>H</td><td>levensteken in rust (heartbeat)</td></tr>
       <tr><td>N</td><td>geen GPS-fix (het bericht bevat wel de batterij en de modus)</td></tr>
       <tr><td>P</td><td>handmatig verstuurd met de knop</td></tr>
       <tr><td>E</td><td>SOS</td></tr>
@@ -741,7 +783,7 @@
     <h2 id="beheer">Trackers beheren</h2>
     <p>Klik in <em>Trackers</em> op <em>+ Tracker</em>. Er opent een paneel met de tabbladen <em>Algemeen</em> (naam,
       kleur, icoon, trackingkanaal, notities), <em>Toestel</em> of <em>Simulator</em>, en bij het bewerken <em>Gegevens</em>
-      (posities opruimen en de tracker verwijderen). Klik in de lijst op een tracker om hem te bewerken; met het zoekveld en
+      (posities opruimen en de tracker verwijderen). Tik of klik in de lijst op een tracker om hem te bewerken; met het zoekveld en
       de filters (echt, virtueel, verloren, inactief) vind je hem snel. Voor een echte tracker vul
       je ook de <em>public key</em> in. Die vind je via USB, in de contacten van de companion of in de MeshCore-app.</p>
     <p>Het <em>trackingkanaal</em> bepaalt wie de tracker ziet. Zonder kanaal zien alleen beheerders hem. Vink je
@@ -786,7 +828,7 @@
       sporen en gebeurtenissen in het logboek.</p>
 
     <h2 id="zones">Zones</h2>
-    <p>Open op de kaart het tabblad <em>Zones</em>, klik op <em>+ Cirkel</em> of <em>+ Polygoon</em> en teken de zone op
+    <p>Open op de kaart het tabblad <em>Zones</em>, kies <em>+ Cirkel</em> of <em>+ Polygoon</em> en teken de zone op
       de kaart. Kies daarna of je een melding wilt bij binnenkomen, bij vertrekken of bij allebei, en voor welke
       trackers. Meldingen verschijnen live op de kaart en in het logboek.</p>
     <p>Een <strong>eigen zone</strong> zie alleen jij, en ook de meldingen ervan krijg alleen jij. Een
@@ -806,7 +848,8 @@
     <p>De meldingen gaan na elkaar weg, met een pauze ertussen, zodat de mesh niet overbelast raakt. Per bericht volgen
       enkele pogingen; lukt het dan nog niet, dan probeert de server het later opnieuw. Hoe lang die pauze is en
       hoeveel pogingen er komen, stelt een beheerder in onder <em>Systeem</em> → <em>Instellingen</em>. Onder
-      <em>Verzonden meldingen</em> zie je wat er verstuurd is en of het aangekomen is.</p>
+      <em>Verzonden meldingen</em> zie je wat er verstuurd is en of het aangekomen is. Een regel verwijder je in zijn
+      bewerkvenster; dat geldt ook voor gebruikers, groepen en kanalen.</p>
 
     <h2 id="nodes">Meshnodes</h2>
     <p>Onder <em>Meshnodes op de kaart</em> zet je repeaters, rooms, companions en sensoren op de kaart: alles wat
@@ -847,7 +890,7 @@
       link naar de kaart van dat kanaal. Bij niveau <em>sleutel</em> toont <em>Sleutel en QR-code</em> de code om te scannen
       met de MeshCore-app of de offline-app.</p>
     <h3>Effectieve rechten controleren</h3>
-    <p>Klik bij een gebruiker op <em>Effectieve rechten</em>. Je ziet dan in welke groepen de gebruiker zit, welke rechten
+    <p>Kies bij een gebruiker <em>Effectieve rechten</em>. Je ziet dan in welke groepen de gebruiker zit, welke rechten
       dat oplevert (en via welke groep), per kanaal het niveau en de groep waar het vandaan komt, welke trackers zichtbaar
       zijn met de reden (een kanaal, alle kanalen of een losse tracker), welke niet, de terugblik en de eigen
       meldingsregels. Handig om na te gaan of iemand echt alleen ziet wat de bedoeling is.</p>
@@ -856,24 +899,27 @@
 
     <h2 id="profiel">Je profiel en thema's</h2>
     <p>Je favorieten, welke trackers je toont, je spoor- en kleurinstellingen, de breedte van de zijbalk en je thema
-      worden in je profiel op de server bewaard. Log je op een ander toestel in, dan ziet alles er hetzelfde uit.</p>
-    <p>Klik rechtsboven op je initiaal om een <strong>thema</strong> te kiezen of je wachtwoord te wijzigen. Er zijn zes
-      thema's: automatisch, licht, donker, nacht (rood, om je nachtzicht te sparen), hoog contrast (voor buiten in de
-      zon) en oceaan.</p>
+      worden in je profiel op de server bewaard. Meld je je op een ander toestel aan, dan ziet alles er hetzelfde uit.</p>
+    <p>Tik of klik rechtsboven op je initiaal om een <strong>thema</strong> te kiezen (met kleurstalen) of je wachtwoord te
+      wijzigen. Er zijn vijf thema's: <em>Automatisch</em> (volgt je toestel), <em>Licht</em>, <em>Donker</em>, <em>Nacht</em>
+      (rood en gedimd: 's nachts in het voertuig, zonder verblinding) en <em>Zon</em> (hoog contrast voor fel zonlicht, met
+      dikkere lijnen; vroeger <em>Hoog contrast</em>). Het thema geldt overal, ook in de Offline-kaart, Tracker live en op de
+      kaarten zelf. Op de gsm staan de thema's en de knop <em>Nachtmodus</em> onder <strong>Meer</strong>.</p>
 
     <h2 id="delen">Deellinks</h2>
     <p>Onder <em>Gebruikers</em> → <em>Deellinks</em> maak je een link die zonder login een kaart toont met alleen de
       trackers van de gekozen kanalen of losse trackers, tot de link verloopt. Stuurt er later een tracker op zo'n kanaal,
-      dan verschijnt hij ook in de link, maar alleen als de maker van de link hem zelf mag zien. Je kunt een link altijd intrekken. Ben je zelf ingelogd en open je een
-      deellink, dan blijf je gewoon ingelogd; wie via een deellink kijkt, ziet rechtsboven een knop
-      <em>Inloggen</em>.</p>
+      dan verschijnt hij ook in de link, maar alleen als de maker van de link hem zelf mag zien. Je kunt een link altijd intrekken. Ben je zelf aangemeld en open je een
+      deellink, dan blijf je gewoon aangemeld; wie via een deellink kijkt, ziet rechtsboven een knop
+      <em>Aanmelden</em>.</p>
 
     <h2 id="offline">Offline werken en de offline-app</h2>
     <p>De server heeft geen internet nodig: kaarttegels, lettertypes en iconen staan op de server zelf, en trackers en
       nodes komen via de mesh binnen. Hij draait op dezelfde machine als openHop (een LXC, een Raspberry Pi of een
       NUC).</p>
     <h3>De offline-app</h3>
-    <p>Zonder internet en zonder verbinding met de server volg je trackers met de <a href="/offline">offline-app</a>.
+    <p>Zonder internet en zonder verbinding met de server volg je trackers met de <a href="/offline">Offline-kaart</a> in
+      de MeshTrack-app (vroeger een losse offline-app).
       Je hebt er <strong>geen account</strong> voor nodig en de app gebruikt niets uit de database van MeshTrack: van de
       server komen alleen de kaarten. Wie de sleutel van het kanaal kent, ziet de trackers op dat kanaal.
       Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus, of een andere
@@ -881,9 +927,8 @@
       ze, bewaart ze op de telefoon en tekent de sporen op een kaart die op de telefoon staat. De sleutel van het kanaal
       vind je in MeshTrack onder <em>Kanalen</em> (met het niveau <em>sleutel</em>).</p>
     <ol>
-      <li><strong>Vooraf, met internet:</strong> open <code>/offline</code> in Chrome (menu <em>Apps</em> →
-        <em>Offline-kaart</em>) en kies in het menu van Chrome
-        <em>App installeren</em> (of <em>Toevoegen aan startscherm</em>). Download bij <em>Kaarten</em> een kaart.
+      <li><strong>Vooraf, met internet:</strong> installeer de <a href="#app">MeshTrack-app</a> en kies op het beginscherm
+        <em>Offline</em> → <em>Offline-kaart</em>. Download bij <em>Kaarten</em> een kaart.
         Je mag er meerdere downloaden: ze staan samen op de kaart, de gedetailleerde bovenop (bv. Frankrijk en
         Duitsland als overzicht met Limburg gedetailleerd). Kies kaarten die passen bij de opslag van je telefoon: Limburg (84 MB),
         België (286 MB), Benelux, Frankrijk of Duitsland in een overzichts- en een gedetailleerde versie.</li>
@@ -955,7 +1000,7 @@
       <em>+ Kanaal toevoegen…</em>: je komt bij <em>Kanalen</em>, waar je het toevoegt met naam en sleutel, een QR-scan of een foto.</p>
     <p>De namen van de trackers komen uit de contacten van de companion; een tracker die de companion (nog) niet kent,
       staat er met het begin van zijn sleutel. De controletekens in de berichten kan alleen de server nakijken. Verbind je met een tracker in companionmodus, dan zie je ook zijn eigen posities, gemarkeerd als <em>eigen</em>. Alles blijft op de telefoon tot je
-      het bij <em>Gegevens</em> wist; daar exporteer je de posities ook als CSV. Bij <em>Gegevens</em> kies je ook het <em>thema</em>, dezelfde zes als op de website (de kaart wordt donker bij Donker en Nacht). Bluetooth werkt in Chrome op Android en
+      het bij <em>Gegevens</em> wist; daar exporteer je de posities ook als CSV. Bij <em>Gegevens</em> kies je ook het <em>thema</em>, dezelfde vijf als op de website (de kaart volgt: donker bij Donker, gedimd rood bij Nacht, met dikkere lijnen bij Zon). Bluetooth werkt in Chrome op Android en
       op een computer, niet op een iPhone.</p>
 
     <h2 id="voertuig">Voertuigtracker RAK3401 en prioritair rijden</h2>
@@ -1129,7 +1174,7 @@
         <em>Systeem</em> → <em>Instellingen</em> (<em>Prioritair: vasthouden</em>, <code>prio_hold_s</code>, standaard 300&nbsp;s).
         Een bericht zonder vlag beëindigt het meteen.</li>
       <li>Meldingsregels kennen <em>rijdt prioritair</em> en <em>rijdt niet langer prioritair</em>.</li>
-      <li>Om te oefenen heeft elke simulator in <em>Trackers</em> een knop <em>Prioritair aan/uit</em>.</li>
+      <li>Om te oefenen heeft elke simulator in <em>Trackers</em> een schakelaar <em>Prioritair</em>.</li>
     </ul>
 
     <h2 id="problemen">Problemen oplossen</h2>
@@ -1156,7 +1201,7 @@
         biepjes</em>, of <code>set sos uit</code>). Uitschakelen door lang vasthouden blijft werken.</li>
       <li><strong>Geen bewegingsberichten meer bij een lage batterij</strong>: toont <code>status</code>
         <code>fasttrack=uit(batterij)</code>, dan zit de batterij onder <code>fast_min_batt</code>. Vanaf 3&nbsp;% hoger gaat
-        FastTrack weer aan; SlowTrack, heartbeat, klik en SOS werken intussen door.</li>
+        FastTrack weer aan; SlowTrack, levensteken, klik en SOS werken intussen door.</li>
       <li><strong>Geen SlowTrack-punten (L)</strong>: SlowTrack staat standaard uit; zet <code>slow_log</code> op een tijd.
         De punten komen pas na <code>slow_send</code>; <code>slow_buffer</code> in <code>status</code> toont hoeveel er
         klaarstaan. In rust logt SlowTrack niet: dat is normaal. Dat het spoor zich achteraf aanvult, ook.</li>
@@ -1237,6 +1282,12 @@
   </article>
 </main>
 <script>
+  // Inhoud: op een gsm dicht (de tekst komt eerst); na een keuze weer dicht.
+  (function () {
+    const toc = document.getElementById("toc"), small = () => matchMedia("(max-width: 860px)").matches;
+    if (small()) toc.open = false;
+    toc.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => { if (small()) toc.open = false; }));
+  })();
   fetch("/api/health").then((r) => r.json()).then((h) => { document.getElementById("ver").textContent = "MeshTrack " + h.version; }).catch(() => {});
 </script>
 </body>

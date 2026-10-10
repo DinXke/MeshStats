@@ -138,7 +138,7 @@
         <label>Thuisbasis</label>
         <div class="row" style="margin-top:0">
           <select id="s-town" style="flex:1"></select>
-          <button type="button" id="s-pick" title="Klik daarna op de kaart">Kies op kaart</button>
+          <button type="button" id="s-pick" title="Tik daarna op de kaart">Kies op kaart</button>
         </div>
         <div class="mono muted" id="s-home"></div>
         <details>
@@ -151,7 +151,7 @@
             <div><label>Min. interval s</label><input data-p="min_interval_s" type="number" value="60"></div>
             <div><label>Max. interval s</label><input data-p="max_interval_s" type="number" value="600"></div>
             <div><label>Stilstand na s</label><input data-p="still_timeout_s" type="number" value="300"></div>
-            <div><label>Heartbeat s</label><input data-p="heartbeat_s" type="number" value="43200"></div>
+            <div><label>Levensteken s</label><input data-p="heartbeat_s" type="number" value="43200"></div>
             <div><label>Pakketverlies %</label><input id="s-loss" type="number" min="0" max="90" value="5"></div>
             <div><label>Batterij x sneller</label><input id="s-batt" type="number" min="1" max="100" value="4"></div>
           </div>
@@ -196,6 +196,7 @@
 <script src="/static/basemap.js"></script>
 <script src="/static/icons.js"></script>
 <script src="/static/common.js"></script>
+<script src="/static/tabs.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

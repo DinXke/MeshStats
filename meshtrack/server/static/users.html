@@ -40,7 +40,8 @@
         <div class="help">Een gebruiker kan in meerdere groepen zitten en krijgt dan alle rechten en alle trackers van
           die groepen samen, en de ruimste terugblik.</div></fieldset>
       <label class="switch block"><input type="checkbox" id="u-active" checked><span></span> Actief</label>
-      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="u-cancel">Annuleren</button></div>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="u-cancel">Annuleren</button>
+        <button type="button" class="danger rowend" id="u-del" hidden>Gebruiker verwijderen</button></div>
       <div id="u-msg" class="msg"></div>
     </form>
     <div id="u-eff" class="subform" hidden></div>
@@ -70,7 +71,9 @@
           <label>Losse trackers <span class="muted small">(los van een kanaal)</span></label>
           <div id="g-trackers" class="permgrid"></div>
         </div></fieldset>
-      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="g-cancel">Annuleren</button></div>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="g-cancel">Annuleren</button>
+        <button type="button" class="danger rowend" id="g-del" hidden>Groep verwijderen</button></div>
+      <div class="help" id="g-delhint" hidden>Een groep met leden kan je niet verwijderen: haal eerst de leden eruit.</div>
       <div id="g-msg" class="msg"></div>
     </form>
     <div id="groups" class="tlist"></div>
@@ -101,11 +104,12 @@
 
   <!-- audit -->
   <section class="card pane" id="pane-audit" hidden>
-    <div class="cardhead"><h2>Activiteitenlog</h2><input id="a-filter" type="search" placeholder="Filter op gebruiker of actie" style="max-width:280px"></div>
+    <div class="cardhead"><h2>Activiteitenlog</h2><input id="a-filter" type="search" placeholder="Filter op gebruiker of actie" aria-label="Filter op gebruiker of actie" style="max-width:280px"></div>
     <div id="audit"></div>
   </section>
 </main>
 <script src="/static/common.js"></script>
+<script src="/static/tabs.js"></script>
 <script src="/static/users.js"></script>
 </body>
 </html>

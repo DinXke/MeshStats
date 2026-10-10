@@ -17,6 +17,22 @@
   --tk-fast-txt: #7aa7ff; --tk-pend-txt: #fbbf24; --tk-slow-txt: #4ade80; --tk-fifo-txt: #b69cff; --tk-park-txt: #fb8a8a;
   --tk-ans: #ffc83d;
 }
+/* Nacht: alleen rode en oranje tinten (nachtzicht); de lagen blijven uit elkaar te houden door
+   helderheid en vorm (rondje, vierkant, ruit, ring). */
+:root[data-theme="night"] {
+  --tk-fast: #ff6a55; --tk-pend: #ffad66; --tk-slow: #b8402f; --tk-fifo: #ff9e8f; --tk-park: #ff2d1f; --tk-pos: #e0483a;
+  --tk-fast-txt: #ff8a7a; --tk-pend-txt: #ffad66; --tk-slow-txt: #f07a68; --tk-fifo-txt: #ffb3a8; --tk-park-txt: #ff6b5c;
+  --tk-ans: #ff9b5c;
+}
+:root[data-theme="night"] .tk-toast.ok, :root[data-theme="night"] .tk-toast.err, :root[data-theme="night"] .pill.tk-pub { color: #050303; }
+:root[data-theme="night"] .tk-pos, :root[data-theme="night"] .tk-sw.p { border-color: #0d0707; }
+/* Zon: verzadigde, donkere kleuren op wit (tekst minstens 7:1) */
+:root[data-theme="contrast"] {
+  --tk-fast: #0033cc; --tk-pend: #b35c00; --tk-slow: #00661f; --tk-fifo: #5a00b3; --tk-park: #b30000; --tk-pos: #004d36;
+  --tk-fast-txt: #002a99; --tk-pend-txt: #6b3600; --tk-slow-txt: #00501a; --tk-fifo-txt: #48008f; --tk-park-txt: #8f0000;
+  --tk-ans: #8a5a00;
+}
+:root[data-theme="contrast"] .card, :root[data-theme="contrast"] .tk-chip, :root[data-theme="contrast"] .tk-tabs { border-color: #000; }
 
 body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; background: var(--bg); }
 .tk-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

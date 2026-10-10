@@ -14,7 +14,7 @@
   };
   const fmtSize = (b) => (b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.round(b / 1e6) + " MB");
   const V_OLD_S = 120;                              // ouder dan 2 min: "laatst gekend"
-  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)", V: "op verzoek" };
+  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "levensteken", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)", V: "op verzoek" };
 
   // ---- opslag ----------------------------------------------------------------------
   let db;
@@ -461,6 +461,8 @@
   function renderChat() {
     const b = $("chat-badge");
     b.textContent = unread > 99 ? "99+" : String(unread); b.hidden = !unread;
+    const ob = $("obar-badge");                     // zelfde teller in de tabbalk (gsm)
+    if (ob) { ob.textContent = b.textContent; ob.hidden = !unread; }
     const sel = $("chat-chan"), cur = sel.value;
     const names = [...new Set(devChans.map((c) => c.name).concat(chatLog.map((m) => m.chan)))];
     sel.innerHTML = '<option value="">Alle kanalen</option>' +
@@ -479,6 +481,8 @@
   }
   function chatOpen(on) {
     $("chat").hidden = !on; $("chat-btn").setAttribute("aria-expanded", String(on));
+    const cb = document.querySelector('#obar [data-go="chat"]');
+    if (cb) { cb.setAttribute("aria-expanded", String(on)); cb.classList.toggle("on", on); }
     lsSet("mt.off.chat", on ? "1" : "0");
     if (on) unread = 0;
     renderChat();
@@ -509,24 +513,16 @@
 
   // ---- kaart ---------------------------------------------------------------------------
   let map = null, markers = new Map(), hours = 24, trackOn = true;
-  // Thema's: dezelfde als op de website, onder dezelfde sleutel (mt.theme) bewaard; ook de kaart volgt.
-  const THEMES = { auto: "Automatisch", light: "Licht", dark: "Donker", night: "Nacht (rood)", contrast: "Hoog contrast", ocean: "Oceaan" };
-  const theme = () => { try { return JSON.parse(localStorage.getItem("mt.theme") || '"auto"'); } catch (_) { return "auto"; } };
-  const dark = () => { const t = theme(); return t === "dark" || t === "night" || (t === "auto" && matchMedia("(prefers-color-scheme: dark)").matches); };
-  function applyTheme(t) {
-    if (t === "auto") document.documentElement.removeAttribute("data-theme");
-    else document.documentElement.setAttribute("data-theme", t);
-    try { localStorage.setItem("mt.theme", JSON.stringify(t)); } catch (_) {}
-    $("d-themes").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.th === t));
-  }
-  $("d-themes").innerHTML = Object.entries(THEMES).map(([k, v]) => `<button type="button" data-th="${k}">${v}</button>`).join("");
-  $("d-themes").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
-    const wasDark = dark();
-    applyTheme(b.dataset.th);
-    if (dark() !== wasDark && map) initMap();          // lichte of donkere kaart
-  }));
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (theme() === "auto" && map) initMap(); });
-  applyTheme(theme());
+  // Thema's: dezelfde vijf als op de website, onder dezelfde sleutel (mt.theme); gedeeld via appnav.js
+  // (MTApp.theme). De kaart volgt: licht, donker, nacht (gedimd rood) of zon (hoog contrast).
+  const TH = window.MTApp && MTApp.theme;
+  const dark = () => (TH ? TH.isDark() : matchMedia("(prefers-color-scheme: dark)").matches);
+  let mapVariant = MTBasemap.variant(dark());
+  if (TH) TH.picker($("d-themes"));
+  document.addEventListener("mt-theme", () => {
+    const v = MTBasemap.variant(dark());
+    if (v !== mapVariant) { mapVariant = v; if (map) initMap(); }
+  });
 
   async function opfs() { return navigator.storage && navigator.storage.getDirectory ? navigator.storage.getDirectory() : null; }
   // Alle kaarten op het toestel, van grof naar gedetailleerd (zoom uit de naam, "-z14"; bij
@@ -910,14 +906,62 @@
   });
 
   // ---- tabbladen en start --------------------------------------------------------------------
+  // Breed scherm: tabs in het zijpaneel (ARIA-tabs, pijltjestoetsen). Gsm: dezelfde panelen via de
+  // tabbalk onderaan (#obar) en het Meer-venster; het onderpaneel gaat dan open.
   const tabs = [...document.querySelectorAll("#otabs .tab")];
-  function show(name) {
-    tabs.forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
-    document.querySelectorAll("#opanel .pane").forEach((p) => { p.hidden = p.id !== "pane-" + name; });
+  const otabs = $("otabs");
+  otabs.setAttribute("aria-label", "Paneel");
+  tabs.forEach((b) => { b.id = "otab-" + b.dataset.tab; });
+  // Na elke wissel: tabbalk onderaan bijwerken en het paneel vullen.
+  function shown(name) {
+    document.querySelectorAll("#obar [data-go]").forEach((b) => {
+      if (b.dataset.go === "chat") return;
+      const on = b.dataset.go === name || (b.dataset.go === "meer" && (name === "ch" || name === "data"));
+      b.classList.toggle("on", on);
+      if (b.dataset.go !== "meer") { if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); }
+    });
     if (name === "maps") renderMaps();
     if (name === "data") renderStats();
   }
-  tabs.forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
+  // Gedeelde helper (tabs.js) als die geladen is; anders (oude cache) dezelfde ARIA-tabs hier.
+  const show = window.MTTabs ? MTTabs.init(otabs, { onShow: shown, initial: "trk" }) : (() => {
+    otabs.setAttribute("role", "tablist");
+    const sh = (name) => {
+      tabs.forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
+      document.querySelectorAll("#opanel .pane").forEach((p) => { p.hidden = p.id !== "pane-" + name; });
+      shown(name);
+    };
+    tabs.forEach((b) => {
+      const pane = $("pane-" + b.dataset.tab);
+      b.setAttribute("role", "tab"); b.type = "button";
+      b.setAttribute("aria-controls", pane.id);
+      pane.setAttribute("role", "tabpanel"); pane.setAttribute("aria-labelledby", b.id);
+      b.addEventListener("click", () => sh(b.dataset.tab));
+      b.addEventListener("keydown", (e) => {
+        const i = tabs.indexOf(b);
+        const n = { ArrowRight: tabs[(i + 1) % tabs.length], ArrowLeft: tabs[(i - 1 + tabs.length) % tabs.length], Home: tabs[0], End: tabs[tabs.length - 1] }[e.key];
+        if (n) { e.preventDefault(); sh(n.dataset.tab); n.focus(); }
+      });
+    });
+    return sh;
+  })();
+  let sheetApi = null;                       // zie sheet() hieronder
+  function go(name) {
+    if (name === "chat") { chatOpen($("chat").hidden); return; }
+    if (name === "meer") { const d = $("omeer"); if (!d.open) d.showModal(); return; }
+    show(name);
+    if (sheetApi) sheetApi.open();
+    const pane = $("pane-" + name);
+    if (pane) pane.scrollTop = 0;
+  }
+  document.querySelectorAll("#obar [data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
+  $("omeer").querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => { $("omeer").close(); go(b.dataset.go); }));
+  $("omeer-close").addEventListener("click", () => $("omeer").close());
+  $("omeer").addEventListener("click", (e) => { if (e.target === $("omeer")) $("omeer").close(); });   // tik naast het venster
+  // Installeren van de ene MeshTrack-app (als de browser het aanbiedt).
+  const syncInstall = () => { const can = window.MTApp && MTApp.canInstall(); $("d-install").hidden = $("omeer-install").hidden = !can; };
+  document.addEventListener("mt-installable", syncInstall);
+  for (const id of ["d-install", "omeer-install"]) $(id).addEventListener("click", () => { $("omeer").close(); MTApp.install(); });
   function net() { const on = navigator.onLine; $("net").textContent = on ? "online" : "offline"; $("net").className = "pill netpill " + (on ? "on" : "off"); }
   addEventListener("online", net); addEventListener("offline", net);
 
@@ -935,7 +979,8 @@
   (function sheet() {
     const panel = $("opanel"), handle = $("osheet"), showBtn = $("osheet-show");
     const phone = () => matchMedia("(max-width: 760px)").matches;
-    const vh = () => window.innerHeight - 48;
+    // Beschikbare hoogte: alles tussen de kop (met band "Offline-modus") en de tabbalk.
+    const vh = () => panel.parentElement.clientHeight || (window.innerHeight - 48);
     const lsSetF = (v) => { try { localStorage.setItem("mt.off.sheet", String(v)); } catch (_) {} };
     const lsGetF = () => { const v = Number(lsGet("mt.off.sheet")); return Number.isFinite(v) && lsGet("mt.off.sheet") !== null ? v : 0.48; };
     const resize = () => { if (map) map.resize(); };
@@ -976,6 +1021,8 @@
     showBtn.addEventListener("click", () => apply(0.48));
     window.addEventListener("resize", () => apply(lsGetF()));
     apply(lsGetF());
+    // Tabbalk: een paneel kiezen opent het onderpaneel als het verborgen of heel klein is.
+    sheetApi = { open() { if (phone() && (panel.classList.contains("sheet-hidden") || panel.offsetHeight < 0.3 * vh())) apply(0.5); } };
   })();
 
   // Voor tests en foutzoeken: een bericht zoals de companion het doorgeeft verwerken.
@@ -995,7 +1042,13 @@
 
   (async () => {
     net();
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/offline-sw.js", { scope: "/offline" }).catch(() => {});
+    // Eén app: de service worker van "/" (bewaart deze pagina vooraf). De oude worker van
+    // /offline meldt zich zelf af zodra die klaar is (zie offline-sw.js en appnav.js).
+    if (window.MTApp) {
+      MTApp.registerSW();
+      MTApp.migrationBanner(document.querySelector(".modenav"));
+      syncInstall();
+    }
     db = await openDb();
     contactNames = await metaGet("names", {});
     chanFilter = await metaGet("chanFilter", "");

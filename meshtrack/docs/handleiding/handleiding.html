@@ -105,14 +105,14 @@
     <li><span class="n">2</span> De tracker <small>knop, biepjes, led, modi, SOS</small></li>
     <li><span class="n">3</span> Wanneer stuurt hij een positie? <small>regels, SlowTrack en statussen</small></li>
     <li><span class="n">4</span> Trackmodus: classic en FIFO <small>gemiste posities later inhalen</small></li>
-    <li><span class="n">5</span> Inloggen en de kaart <small>computer en telefoon</small></li>
+    <li><span class="n">5</span> De app, aanmelden en de kaart <small>beginscherm, navigatie, thema's</small></li>
     <li><span class="n">6</span> Logboek, zones en verloren trackers</li>
     <li><span class="n">7</span> Meldingen via de mesh <small>privéberichten naar personen</small></li>
     <li><span class="n">8</span> Trackers beheren <small>toevoegen, instellen via USB, Tracker live</small></li>
     <li><span class="n">9</span> Firmware flashen <small>met behoud van de sleutel</small></li>
     <li><span class="n">10</span> Nieuw toestel klaarmaken, sleutels en back-ups</li>
     <li><span class="n">11</span> Gebruikers, rechten en instellingen <small>wie leest welk kanaal</small></li>
-    <li><span class="n">12</span> De offline-app <small>trackers volgen zonder internet, positie vragen</small></li>
+    <li><span class="n">12</span> De offline-app (Offline-kaart) <small>trackers volgen zonder internet, positie vragen</small></li>
     <li><span class="n">13</span> Voertuigtracker RAK3401 en prioritair rijden <small>GPS, pin 31, blauwe lichten</small></li>
     <li><span class="n">14</span> Problemen oplossen</li>
   </ol>
@@ -123,8 +123,8 @@
   </div>
   <div class="note" style="margin-top:8mm"><b>Over de schermafbeeldingen</b>De schermen in deze handleiding komen van een
     demo-installatie met virtuele trackers rond Hasselt. Daarom staat rechtsboven soms <em>mesh: niet verbonden</em>;
-    op de echte server staat daar de naam van de server-companion. De menubalk kan er op jouw server iets anders uitzien,
-    bv. met extra onderdelen onder <em>Apps</em>.</div>
+    op de echte server staat daar de naam van de server-companion. Sommige oudere schermafbeeldingen
+    tonen nog de vroegere menubalk; de pagina's zelf werken zoals beschreven.</div>
 </section>
 
 <!-- ============================ 1 ============================ -->
@@ -287,7 +287,7 @@
   <tr><td class="k">Bocht</td><td>Richting meer gedraaid dan <em>scherpe bocht vanaf</em>, en sneller dan <em>bochten pas boven</em>.</td><td>30°, 5 km/u</td></tr>
   <tr><td class="k">Ritme</td><td>In beweging hoe dan ook minstens één positie per <em>in beweging minstens 1× per</em>.</td><td>10 min</td></tr>
   <tr><td class="k">Stilstand</td><td>Langer stil dan <em>slapen na stilstand van</em>: laatste positie, daarna slapen.</td><td>5 min</td></tr>
-  <tr><td class="k">Heartbeat</td><td>In rust een teken van leven.</td><td>12 uur</td></tr>
+  <tr><td class="k">Levensteken</td><td>In rust een teken van leven (instelling <code>heartbeat</code>).</td><td>12 uur</td></tr>
 </table>
 <p>Een bewegingssensor maakt hem weer wakker (zonder sensor kijkt de GPS af en toe; zie <em>Drie toestellen</em> in hoofdstuk 2);
   de eerste positie daarna heet <em>wakker door beweging</em>. Elk bericht gaat
@@ -308,7 +308,7 @@
   <tr><td class="k">M</td><td>positie (beweging)</td><td>Positie terwijl hij beweegt.</td></tr>
   <tr><td class="k">W</td><td>wakker door beweging</td><td>Eerste positie na een rustperiode.</td></tr>
   <tr><td class="k">S</td><td>stilgevallen</td><td>Laatste positie voor hij gaat slapen.</td></tr>
-  <tr><td class="k">H</td><td>heartbeat</td><td>Teken van leven in rust.</td></tr>
+  <tr><td class="k">H</td><td>levensteken</td><td>Teken van leven in rust (vroeger <em>heartbeat</em>).</td></tr>
   <tr><td class="k">N</td><td>geen GPS-fix</td><td>Geen positie gevonden; wel batterij en modus.</td></tr>
   <tr><td class="k">P</td><td>handmatig verstuurd</td><td>Met één klik op de knop.</td></tr>
   <tr><td class="k">E</td><td>SOS</td><td>Noodoproep met de knop.</td></tr>
@@ -682,21 +682,73 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   en wacht op stabiele dekking.</figcaption></figure>
 
 <!-- ============================ 5 ============================ -->
-<h2 class="chap"><span class="nr">5</span>Inloggen en de kaart</h2>
+<h2 class="chap"><span class="nr">5</span>De app, aanmelden en de kaart</h2>
 <div class="cols">
   <div>
-    <p class="lead">Open de website van je organisatie (bv. <code>meshtrack.meshmanager.net</code>) en log in met je
+    <p class="lead">Open de website van je organisatie (bv. <code>meshtrack.meshmanager.net</code>) en meld je aan met je
       gebruikersnaam en wachtwoord.</p>
-    <p>Wie een <strong>deellink</strong> kreeg, ziet de kaart zonder in te loggen, maar alleen de gedeelde trackers en zolang
-      de link geldig is. Rechtsboven staat dan een knop <em>Inloggen</em>.</p>
-    <p>Klik rechtsboven op je <strong>initiaal</strong> om je wachtwoord te wijzigen of een thema te kiezen. Je voorkeuren
-      (thema, favorieten, filters) bewaart de server, zodat ze op elk toestel gelden.</p>
+    <p>Na het aanmelden kom je terug op de pagina waar je was. Je blijft aangemeld zolang je MeshTrack gebruikt: de sessie
+      verlengt zich vanzelf, tot 30 dagen na het laatste gebruik. <em>Afmelden</em> (in <em>Meer</em> of in het menu van je initiaal)
+      vraagt eerst een bevestiging; de offline-gegevens op je toestel blijven staan.</p>
+    <p>Wie een <strong>deellink</strong> kreeg, ziet de kaart zonder aan te melden, maar alleen de gedeelde trackers en zolang de
+      link geldig is. Rechtsboven staat dan een knop <em>Aanmelden</em>.</p>
+    <p>Je voorkeuren (thema, favorieten, filters) bewaart de server, zodat ze op elk toestel gelden.</p>
   </div>
   <figure style="margin-top:0"><img src="img/login.jpg" alt=""><figcaption>Het aanmeldscherm.</figcaption></figure>
 </div>
 
+<h3>Eén app voor alles</h3>
+<p>Op een telefoon of tablet installeer je MeshTrack <strong>één keer</strong>, vanaf de website: <em>Meer</em> → <em>Installeren</em>
+  (op een iPhone of iPad: <em>Deel</em> → <em>Zet op beginscherm</em>). Open je de app, dan kies je op het <strong>beginscherm</strong>:</p>
+<ul>
+  <li><strong>Online</strong>: de volledige site, met alle trackers live, het logboek, de kanalen en het beheer. Ben je nog niet aangemeld,
+    dan eerst via <em>Aanmelden</em>.</li>
+  <li><strong>Offline</strong>: de <em>Offline-kaart</em> en <em>Tracker live</em>, zonder netwerk en zonder account (hoofdstuk 12 en 8).</li>
+</ul>
+<p>Zonder verbinding staat <em>Offline</em> bovenaan. Met <em>Volgende keer meteen zo openen</em> onthoudt de app je keuze; dat zet je
+  terug via <em>Meer</em> → <em>Beginscherm</em>. Houd je het app-icoon lang ingedrukt, dan krijg je snelkoppelingen naar Online,
+  Offline-kaart, Tracker live en Statistieken. Op een computer is er geen beginscherm: daar wissel je met <em>Online | Offline</em> in de
+  kopbalk.</p>
+<figure class="phones">
+  <div><img src="img/app-start.jpg" alt=""><figcaption>Het beginscherm, aangemeld.</figcaption></div>
+  <div><img src="img/app-start-offline.jpg" alt=""><figcaption>Zonder verbinding staat Offline bovenaan.</figcaption></div>
+  <div><img src="img/app-kaart.jpg" alt=""><figcaption>Online: de kaart met de balk onderaan.</figcaption></div>
+</figure>
+
+<h3>Navigeren op een telefoon of tablet</h3>
+<ul>
+  <li><strong>Online</strong> staat onderaan een balk met <em>Kaart</em> · <em>Trackers</em> (of <em>Logboek</em>) · <em>Tracker live</em> ·
+    <em>Meer</em>. Onder <em>Meer</em> vind je de andere pagina's, <em>Offline</em>, het thema, <em>Nachtmodus</em>, <em>Help</em>,
+    <em>Installeren</em>, <em>Wachtwoord wijzigen</em> en <em>Afmelden</em>.</li>
+  <li>In de <strong>Offline-kaart</strong> staat onderaan <em>Trackers</em> · <em>Chat</em> · <em>Verbinding</em> · <em>Kaarten</em> ·
+    <em>Meer</em>.</li>
+  <li>Bovenaan de Offline-kaart en Tracker live wissel je met een band tussen die twee, of ga je naar <em>Online</em>.</li>
+  <li>Op een <strong>tablet</strong> staan de pagina's in de kopbalk; wat niet past, staat onder <em>Meer ▾</em>.</li>
+  <li>Tabbladen staan op één regel; zijn het er te veel, dan schuif je ze opzij.</li>
+</ul>
+<figure class="phones">
+  <div><img src="img/app-meer.jpg" alt=""><figcaption>Meer: pagina's, Offline en het thema.</figcaption></div>
+  <div><img src="img/app-offline.jpg" alt=""><figcaption>De Offline-kaart met haar eigen balk.</figcaption></div>
+  <div><img src="img/app-tracker.jpg" alt=""><figcaption>Tracker live.</figcaption></div>
+</figure>
+
+<h3>Overstappen van de oude apps</h3>
+<div class="cols">
+  <div>
+    <p>Had je de oude losse apps <em>/offline</em> of <em>/tracker</em> geïnstalleerd, dan schakelen die vanzelf over. Een eenmalige
+      banner vraagt je de nieuwe app te installeren en daarna de oude te verwijderen. Je offline-kaarten, berichten en instellingen
+      blijven bewaard.</p>
+    <div class="warn"><b>Bij het verwijderen: NIET "ook gegevens wissen"</b>Vink bij het verwijderen van een oude app <em>ook gegevens
+      wissen</em> niet aan, anders verdwijnen je offline-kaarten. Op een iPhone heeft elk icoon op het beginscherm zijn eigen opslag:
+      kaarten in een oud icoon gaan niet mee. Download ze daar opnieuw in de nieuwe app.</div>
+  </div>
+  <figure class="phones" style="margin-top:0"><div style="width:42mm"><img src="img/app-overstap.jpg" alt=""><figcaption>De eenmalige
+    banner in een oude app.</figcaption></div></figure>
+</div>
+
 <h3>De kaart</h3>
-<figure><img src="img/kaart.jpg" alt=""><figcaption>De kaart met de lijst links. Een rode rand en het label VERLOREN tonen een verloren tracker.</figcaption></figure>
+<figure><img src="img/kaart.jpg" alt=""><figcaption>De kaart met de lijst links. Een rode rand en het label VERLOREN tonen een verloren tracker.
+  De kopbalk ziet er nu iets anders uit (Online | Offline, Meer).</figcaption></figure>
 <ul>
   <li>In de <strong>lijst</strong> zoek je op naam. Onder <em>Filter en zichtbaarheid</em> toon je alleen favorieten (☆),
     echte of virtuele trackers. Met het vinkje bepaal je of een tracker op de kaart staat.</li>
@@ -720,17 +772,27 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <p>Met <em>centreren en volgen</em> blijft de tracker in het midden bij elke nieuwe positie. Zelf de kaart verslepen of de
   knop <em>volgen stoppen</em> bovenaan beëindigt dat.</p>
 
-<h3>Op een telefoon</h3>
-<figure class="phones">
-  <div><img src="img/gsm-kaart.jpg" alt=""><figcaption>De lijst in een onderpaneel.</figcaption></div>
-  <div><img src="img/gsm-tracker.jpg" alt=""><figcaption>Een tracker gekozen.</figcaption></div>
-  <div><img src="img/gsm-beheer.jpg" alt=""><figcaption>Trackers op de telefoon.</figcaption></div>
-</figure>
+<h3>De lijst op een telefoon</h3>
 <p>Op een telefoon staat de lijst in een <strong>onderpaneel</strong>. Sleep het streepje omhoog of omlaag om het groter of
   kleiner te maken, of helemaal naar beneden om het te verbergen. <em>☰ Lijst</em> haalt het terug.</p>
 
 <h3>Thema's</h3>
-<figure class="half"><img src="img/kaart-donker.jpg" alt=""><figcaption>Het donkere thema; er zijn er zes, of volg de instelling van je toestel.</figcaption></figure>
+<p>Er zijn vijf thema's, die je kiest met kleurstalen (onder <em>Meer</em>, of in het menu van je initiaal):</p>
+<table>
+  <tr><th>Thema</th><th>Wanneer</th></tr>
+  <tr><td class="k">Automatisch</td><td>Volgt de instelling van je toestel (licht of donker).</td></tr>
+  <tr><td class="k">Licht</td><td>Overdag, binnen.</td></tr>
+  <tr><td class="k">Donker</td><td>Weinig licht.</td></tr>
+  <tr><td class="k">Nacht</td><td>Rood en gedimd: 's nachts in het voertuig, zonder verblinding. De knop <em>Nachtmodus</em> onder <em>Meer</em>
+    zet het snel aan of uit.</td></tr>
+  <tr><td class="k">Zon</td><td>Hoog contrast voor fel zonlicht (vroeger <em>Hoog contrast</em>), met dikkere lijnen op de kaart.</td></tr>
+</table>
+<p>Het thema geldt overal, ook in de Offline-kaart, Tracker live en op de kaarten zelf.</p>
+<figure class="phones">
+  <div><img src="img/thema-donker.jpg" alt=""><figcaption>Donker.</figcaption></div>
+  <div><img src="img/thema-nacht.jpg" alt=""><figcaption>Nacht: rood gedimde kaart.</figcaption></div>
+  <div><img src="img/thema-zon.jpg" alt=""><figcaption>Zon: hoog contrast.</figcaption></div>
+</figure>
 
 <!-- ============================ 6 ============================ -->
 <h2 class="chap"><span class="nr">6</span>Logboek, zones en verloren trackers</h2>
@@ -738,7 +800,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <figure><img src="img/logboek.jpg" alt=""><figcaption>Het logboek met filters op tracker, soort, periode en tekst.</figcaption></figure>
 <p>Het logboek toont alle gebeurtenissen per tracker. <em>alleen bijzondere</em> verbergt de gewone posities, <em>CSV</em>
   downloadt wat je ziet en <em>kaart</em> springt naar de plek van die gebeurtenis. Met <em>live bijwerken</em> komen nieuwe
-  gebeurtenissen er vanzelf bij.</p>
+  gebeurtenissen er vanzelf bij. Het logboek toont 200 regels; met <em>Meer laden</em> haal je de volgende. De filters klap je in en
+  uit; op een telefoon staat elke gebeurtenis op een eigen kaartje.</p>
 
 <h3>Zones</h3>
 <figure><img src="img/zones.jpg" alt=""><figcaption>Het tabblad Zones: een cirkel rond het ziekenhuis en een polygoon rond de kazerne.</figcaption></figure>
@@ -779,6 +842,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     <strong>ontvangers</strong>.</li>
   <li>Ontvangers kies je uit de contacten van de companion, of je plakt hun pubkey.</li>
   <li>De <strong>cooldown</strong> voorkomt dat dezelfde tracker met dezelfde gebeurtenis te vaak een melding geeft.</li>
+  <li><em>Verwijderen</em> staat in het bewerkvenster van een regel.</li>
   <li>Met <em>Test</em> stuur je meteen een proefbericht. Onder <em>Verzonden meldingen</em> zie je wat er wegging en of
     het aankwam.</li>
 </ul>
@@ -853,11 +917,12 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 </figure>
 
 <h3>Tracker live: in de tracker kijken</h3>
-<p>Onder <em>Apps</em> → <em>Tracker live</em> (<code>/tracker</code>) staat een aparte app die toont wat er op dat moment in één
+<p><em>Tracker live</em> (<code>/tracker</code>) open je in de MeshTrack-app via <em>Offline</em>, via de balk onderaan of via
+  <em>Meer</em>. Het toont wat er op dat moment in één
   tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij (het totaal met de verdeling <em>nog niet verstuurd · verstuurd, onbevestigd · geparkeerd</em>, geparkeerde punten
   in het oranje, en ook of er een vol inhaalbericht klaarstaat en wanneer een niet-vol bericht weer mag), zijn GPS (zonder actuele
   fix: <em>Laatst gekende positie: X geleden</em>, met een grijze gestippelde marker op de kaart), wat hij
-  verstuurde en wat hij hoorde, met een tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
+  verstuurde en wat hij hoorde, met een tijdlijn en een kaart.</p>
 <ul>
   <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
     companionmodus staat; koppelcode standaard 123456, of de eigen code). Chrome of Edge op Android of een computer; niet op een
@@ -1127,7 +1192,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <figure><img src="img/gebruikers.jpg" alt=""><figcaption>Gebruikers en groepen.</figcaption></figure>
 <p>Elke gebruiker zit in een of meer <strong>groepen</strong>. Een groep bepaalt de <strong>rechten</strong>, welke
   <strong>trackers</strong> zichtbaar zijn en hoe ver je <strong>terug in de tijd</strong> kijkt. Zit je in meerdere groepen,
-  dan krijg je de som: alle rechten en trackers samen, en de ruimste terugblik. Standaard zijn er vier groepen:</p>
+  dan krijg je de som: alle rechten en trackers samen, en de ruimste terugblik. Een gebruiker, groep of kanaal verwijder je in zijn
+  bewerkvenster. Standaard zijn er vier groepen:</p>
 <table>
   <tr><th>Groep</th><th>Wat mag het</th></tr>
   <tr><td class="k">Beheerders</td><td>Alles, ook gebruikers, systeeminstellingen, sleutels en back-ups.</td></tr>
@@ -1208,8 +1274,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   prioritair blijft (<em>Prioritair: vasthouden</em>, <code>prio_hold_s</code>; hoofdstuk 13), stel je hier in.</p>
 
 <!-- ============================ 12 ============================ -->
-<h2 class="chap"><span class="nr">12</span>De offline-app</h2>
-<p>Met de <strong>offline-app</strong> volg je trackers zonder internet en zonder de server, bijvoorbeeld op een
+<h2 class="chap"><span class="nr">12</span>De offline-app (Offline-kaart)</h2>
+<p>Met de <strong>Offline-kaart</strong> in de MeshTrack-app (op het beginscherm: <em>Offline</em>; vroeger een losse offline-app) volg je trackers zonder internet en zonder de server, bijvoorbeeld op een
   terrein zonder bereik. Je hebt er geen account voor nodig en de app gebruikt niets uit de database van MeshTrack: van
   de server komen alleen de kaarten. Wie de sleutel van het kanaal kent, ziet de trackers op dat kanaal. Je telefoon verbindt via Bluetooth met een MeshCore-companion: een tracker in companionmodus,
   of een andere companion die op het kanaal van de trackers meeluistert. De companion ontcijfert de kanaalberichten; de
@@ -1221,12 +1287,14 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <div><img src="img/offline-kanalen.jpg" alt=""><figcaption>Een kanaal op de companion zetten.</figcaption></div>
   <div><img src="img/offline-kaarten.jpg" alt=""><figcaption>Kaarten op de telefoon.</figcaption></div>
 </figure>
+<p style="font-size:9pt;color:#5d6a66">Deze schermen tonen nog de vroegere kopbalk; nu staat onderaan een balk met <em>Trackers</em> ·
+  <em>Chat</em> · <em>Verbinding</em> · <em>Kaarten</em> · <em>Meer</em> (hoofdstuk 5).</p>
 <div class="cols">
   <div>
     <h3>Vooraf, met internet</h3>
     <ol>
-      <li>Open <em>/offline</em> in Chrome (in het menu van de site: <em>Apps</em> → <em>Offline-kaart</em>).</li>
-      <li>Kies in het menu van Chrome <em>App installeren</em> of <em>Toevoegen aan startscherm</em>.</li>
+      <li>Installeer de MeshTrack-app (<em>Meer</em> → <em>Installeren</em>, hoofdstuk 5) en kies op het beginscherm
+        <em>Offline</em> → <em>Offline-kaart</em>.</li>
       <li>Download bij <em>Kaarten</em> een of meer kaarten die passen bij de opslag van je telefoon. Ze staan samen
         op de kaart, de gedetailleerde bovenop.</li>
     </ol>
@@ -1515,7 +1583,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     <em>Systeem</em> → <em>Instellingen</em> (<em>Prioritair: vasthouden</em>, <code>prio_hold_s</code>, standaard 300 s). Een bericht
     zonder vlag beëindigt het meteen.</li>
   <li>Meldingsregels kennen de gebeurtenissen <em>rijdt prioritair</em> en <em>rijdt niet langer prioritair</em> (hoofdstuk 7).</li>
-  <li>Om te oefenen heeft elke simulator in <em>Trackers</em> een knop <em>Prioritair aan/uit</em>.</li>
+  <li>Om te oefenen heeft elke simulator in <em>Trackers</em> een schakelaar <em>Prioritair</em>.</li>
 </ul>
 
 <!-- ============================ 14 ============================ -->

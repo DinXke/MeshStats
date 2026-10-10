@@ -54,6 +54,22 @@ def make_session(user: str, secret: str, days: int, gen: int = 0) -> str:
 
 def check_session(token: str | None, secret: str) -> tuple[str, int] | None:
     """(gebruiker, generatie) bij een geldige, niet-verlopen sessie, anders None."""
+    info = session_info(token, secret)
+    return (info[0], info[1]) if info else None
+
+
+def needs_renewal(token: str | None, secret: str, days: int, now: float | None = None) -> bool:
+    """Glijdende sessie: vernieuwen als de sessie al minstens een dag oud is (vervaldatum meer
+    dan een dag vroeger dan bij een verse sessie). Zo hoogstens één nieuwe cookie per dag."""
+    info = session_info(token, secret)
+    if not info:
+        return False
+    now = time.time() if now is None else now
+    return info[2] < now + days * 86400 - 86400
+
+
+def session_info(token: str | None, secret: str) -> tuple[str, int, int] | None:
+    """(gebruiker, generatie, vervaltijd) bij een geldige, niet-verlopen sessie, anders None."""
     if not token or not secret or "." not in token:
         return None
     try:
@@ -67,9 +83,19 @@ def check_session(token: str | None, secret: str) -> tuple[str, int] | None:
             user, exp, gen = parts[0], parts[1], "0"
         else:
             user, gen, exp = parts[0], parts[1], parts[2]
-        return (user, int(gen)) if int(exp) > time.time() else None
+        return (user, int(gen), int(exp)) if int(exp) > time.time() else None
     except (ValueError, UnicodeDecodeError):
         return None
+
+
+def safe_next(target: str | None) -> str | None:
+    """Doel na het inloggen: alleen een relatief pad op deze site ("/..."), nooit "//host" of
+    "/\\host" (de browser maakt daar een andere site van) en geen stuurtekens. Anders None."""
+    if not target or len(target) > 2000 or not target.startswith("/"):
+        return None
+    if target[1:2] in ("/", "\\") or any(ord(ch) < 32 or ord(ch) == 127 for ch in target):
+        return None
+    return target
 
 
 def password_problem(pw: str) -> str | None:

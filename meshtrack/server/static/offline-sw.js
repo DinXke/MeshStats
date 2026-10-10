@@ -1,72 +1,95 @@
-/* Service worker van de MeshTrack offline-app (/offline).
-   - De app zelf (HTML, scripts, stijl): netwerk eerst, anders uit de cache, zodat ze ook
-     zonder internet opent en na een update de nieuwe versie neemt.
-   - Lettertypes en kaartsymbolen (/tiles/fonts, /tiles/sprites): cache eerst.
-   - Kaarttegels zelf staan als bestand op het toestel (OPFS), niet in deze cache. */
+/* Service worker van de vroegere losse offline-app (/offline) – LAATSTE versie (afmelden).
+   MeshTrack is nu één app: /sw.js (scope "/") bewaart /offline, /tracker en alles wat ze nodig
+   hebben. Deze worker blijft de pagina bedienen zoals vroeger (netwerk eerst, anders de oude
+   cache) tot de hoofdworker actief is én zijn vooraf bewaarde bestanden compleet zijn (merkteken
+   /__mt-ready in een cache mt-app-*). Pas dan:
+     1. lettertypes en kaartsymbolen overzetten naar de cache van de hoofdworker (mt-maps-v1);
+     2. zichzelf afmelden;
+     3. de eigen cache wissen.
+   Nooit eerder: zonder internet zou /offline anders niet meer openen.
+   Gegevens van de app (IndexedDB "mt-offline", kaarten in OPFS, localStorage) horen bij de
+   oorsprong, niet bij deze worker: die blijven onaangeroerd. */
+const APP = "offline";
 const CACHE = "mt-offline-v6";
-const SHELL = ["/offline", "/offline.webmanifest", "/static/icon-192.png", "/static/icon-512.png", "/static/favicon.svg",
-  "/static/style.css", "/static/vendor/maplibre-gl.css", "/static/vendor/maplibre-gl.js", "/static/vendor/pmtiles.js",
-  "/static/basemap.js", "/static/offline.js"];
-const GLYPHS = ["Noto Sans Regular", "Noto Sans Medium", "Noto Sans Italic"];
-const RANGES = ["0-255", "256-511", "512-767", "7680-7935", "8192-8447"];
+const OWN = (p) => p === "/offline" || p.startsWith("/static/") || p === "/offline.webmanifest";
+const MAPS = "mt-maps-v1";
+const MAPASSET_RE = /^\/tiles\/(fonts|sprites)\//;
 
-self.addEventListener("install", (e) => {
-  e.waitUntil((async () => {
-    const c = await caches.open(CACHE);
-    await Promise.all(SHELL.map((u) => c.add(u).catch(() => {})));
-    self.skipWaiting();
-  })());
-});
+self.addEventListener("install", () => { self.skipWaiting(); });
+
+async function mainReady() {
+  for (const k of await caches.keys()) {
+    if (!k.startsWith("mt-app-")) continue;
+    const c = await caches.open(k);
+    if (await c.match("/__mt-ready") && await c.match("/offline") && await c.match("/tracker")) return true;
+  }
+  return false;
+}
+
+let retiring = null;
+function retire() {
+  if (!retiring) {
+    retiring = (async () => {
+      if (!(await mainReady())) return false;
+      const dst = await caches.open(MAPS);
+      if (await caches.has(CACHE)) {
+        const src = await caches.open(CACHE);
+        for (const req of await src.keys()) {
+          if (!MAPASSET_RE.test(new URL(req.url).pathname)) continue;
+          if (await dst.match(req, { ignoreSearch: true })) continue;
+          const r = await src.match(req);
+          if (r) await dst.put(req, r);
+        }
+      }
+      const ok = await self.registration.unregister();
+      if (ok) {
+        await caches.delete(CACHE);
+        for (const cl of await self.clients.matchAll({ includeUncontrolled: true })) cl.postMessage({ type: "mt-old-sw-retired", app: APP });
+      }
+      return ok;
+    })().catch(() => false).then((ok) => { if (!ok) retiring = null; return ok; });
+  }
+  return retiring;
+}
 
 self.addEventListener("activate", (e) => {
   e.waitUntil((async () => {
-    // Alleen eigen oude caches opruimen; die van de site (mt-site-*) en de tracker-app
-    // (mt-tracker-*) blijven staan.
-    for (const k of await caches.keys()) if (k.startsWith("mt-offline-") && k !== CACHE) await caches.delete(k);
     await self.clients.claim();
+    await retire();
   })());
 });
 
-// Op vraag van de app: lettertypes en sprites alvast ophalen (terwijl er nog internet is).
 self.addEventListener("message", (e) => {
-  if (!e.data || e.data.type !== "prefetch") return;
-  e.waitUntil((async () => {
-    const c = await caches.open(CACHE);
-    const urls = [];
-    for (const f of GLYPHS) for (const r of RANGES) urls.push(`/tiles/fonts/${encodeURIComponent(f)}/${r}.pbf`);
-    for (const t of ["light", "dark"]) for (const x of ["", "@2x"]) for (const ext of [".json", ".png"]) urls.push(`/tiles/sprites/v4/${t}${x}${ext}`);
-    let ok = 0;
-    for (const u of urls) { try { const r = await fetch(u, { credentials: "same-origin" }); if (r.ok) { await c.put(u, r); ok++; } } catch (_) {} }
-    const cl = await self.clients.get(e.source && e.source.id);
-    if (cl) cl.postMessage({ type: "prefetched", ok, total: urls.length });
-  })());
+  const d = e.data || {};
+  if (d.type === "retire-check" || d.type === "prefetch" || d.type === "skip") e.waitUntil(retire());
 });
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
   const p = url.pathname;
-  if (p.startsWith("/tiles/fonts/") || p.startsWith("/tiles/sprites/")) {
+  if (e.request.mode === "navigate") e.waitUntil(retire());
+  if (MAPASSET_RE.test(p)) {
     e.respondWith((async () => {
-      const c = await caches.open(CACHE);
-      const hit = await c.match(e.request, { ignoreSearch: true });
+      const hit = await caches.match(e.request, { ignoreSearch: true });   // eigen cache of die van de hoofdworker
       if (hit) return hit;
-      const r = await fetch(e.request);
-      if (r.ok) c.put(e.request, r.clone());
-      return r;
+      return fetch(e.request);
     })());
     return;
   }
-  if (p === "/offline" || p.startsWith("/static/") || p === "/offline.webmanifest") {
+  if (OWN(p)) {
     e.respondWith((async () => {
-      const c = await caches.open(CACHE);
       try {
         const r = await fetch(e.request);
-        if (r.ok && r.type === "basic") c.put(e.request, r.clone());
+        if (r.ok && r.type === "basic" && !retiring && await caches.has(CACHE)) {
+          const copy = r.clone();
+          (await caches.open(CACHE)).put(e.request, copy).catch(() => {});
+        }
         return r;
       } catch (_) {
-        // Scripts komen met ?v=<versie>; offline is elke bewaarde versie beter dan niets.
-        const hit = await c.match(e.request) || await c.match(e.request, { ignoreSearch: true });
+        // Offline: elke bewaarde versie is beter dan niets (eigen cache of die van de hoofdworker).
+        const hit = await caches.match(e.request) || await caches.match(e.request, { ignoreSearch: true })
+          || (e.request.mode === "navigate" ? await caches.match("/" + APP) : null);
         if (hit) return hit;
         return new Response("Offline en nog niet bewaard. Open de app één keer met internet.", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
       }

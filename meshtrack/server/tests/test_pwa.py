@@ -34,30 +34,52 @@ def test_manifest_public_and_valid(client):
     assert r.headers["content-type"].startswith("application/manifest+json")
     assert r.headers["cache-control"] == "no-cache"
     j = r.json()
-    assert (j["id"], j["start_url"], j["scope"], j["display"]) == ("/", "/", "/", "standalone")
+    # Eén app: id en scope "/", opent op het beginscherm (Online of Offline kiezen).
+    assert (j["id"], j["start_url"], j["scope"], j["display"]) == ("/", "/start", "/", "standalone")
+    r = c.get(j["start_url"], follow_redirects=False)
+    assert r.status_code == 200 and "set-cookie" not in r.headers          # openbaar, zonder login
+    assert 'href="/manifest.webmanifest"' in r.text
     assert j["name"] == "MeshTrack" and j["short_name"] == "MeshTrack"
     assert j["theme_color"] == "#0b6e4f" and j["background_color"] == "#f4f3f0"
     sizes = {(i["sizes"], i["purpose"]) for i in j["icons"]}
     assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= sizes
     for i in j["icons"]:
         assert c.get(i["src"]).status_code == 200
-    assert [s["url"] for s in j["shortcuts"]] == ["/", "/tracker", "/offline", "/statistieken"]
-    assert [s["name"] for s in j["shortcuts"]] == ["Kaart", "Tracker live", "Offline-kaart", "Statistieken"]
+    assert [s["url"] for s in j["shortcuts"]] == ["/", "/start?ga=offline", "/start?ga=tracker", "/statistieken"]
+    assert [s["name"] for s in j["shortcuts"]] == ["Online", "Offline-kaart", "Tracker live", "Statistieken"]
+    for s in j["shortcuts"][1:3]:
+        assert c.get(s["url"], follow_redirects=False).status_code == 200, s["url"]
 
 
-def test_offline_app_keeps_own_manifest(client):
+def test_old_offline_apps_migrate_safely(client):
+    """/offline en /tracker zijn pagina's van de ene app (manifest van "/"). De oude manifesten en
+    workers blijven bestaan voor bestaande installaties; die workers melden zich pas af als de
+    hoofdworker klaar is en wissen nooit gegevens (IndexedDB, OPFS, localStorage)."""
     c, _ = client
-    r = c.get("/offline.webmanifest")
-    assert r.status_code == 200 and r.headers["content-type"].startswith("application/manifest+json")
-    assert (r.json()["start_url"], r.json()["scope"], r.json()["id"]) == ("/offline", "/offline", "/offline")
-    page = c.get("/offline").text
-    assert 'href="/offline.webmanifest"' in page and 'href="/manifest.webmanifest"' not in page
-    sw = c.get("/offline-sw.js").text
-    assert '"/offline.webmanifest"' in sw and '"/manifest.webmanifest"' not in sw
-    # ruimt alleen de eigen caches op
-    assert 'k.startsWith("mt-offline-")' in sw
-    t = c.get("/tracker").text
-    assert 'href="/tracker.webmanifest"' in t and 'href="/manifest.webmanifest"' not in t
+    for app, cache in (("offline", "mt-offline-v6"), ("tracker", "mt-tracker-v13")):
+        page = c.get(f"/{app}").text
+        assert page.count('rel="manifest"') == 1 and 'href="/manifest.webmanifest"' in page, app
+        assert f'href="/{app}.webmanifest"' not in page, app
+        js = c.get(f"/static/{app}.js").text
+        assert f'register("/{app}-sw.js"' not in js and "MTApp.registerSW" in js, app
+        # oud manifest blijft geldig voor wie de losse app nog heeft
+        r = c.get(f"/{app}.webmanifest")
+        assert r.status_code == 200 and r.headers["content-type"].startswith("application/manifest+json"), app
+        assert (r.json()["start_url"], r.json()["scope"], r.json()["id"]) == (f"/{app}", f"/{app}", f"/{app}"), app
+        # laatste versie van de oude worker: afmelden pas na het merkteken van de hoofdworker
+        sw = c.get(f"/{app}-sw.js").text
+        assert f'const CACHE = "{cache}";' in sw, app
+        assert "self.registration.unregister()" in sw and '"/__mt-ready"' in sw, app
+        assert sw.index("mainReady()") < sw.index("self.registration.unregister()"), app
+        assert sw.index("dst.put(") < sw.index("caches.delete(CACHE)"), app            # eerst lettertypes overzetten
+        code = sw.split("*/", 1)[1]                                   # zonder de uitleg bovenaan
+        for bad in ("indexedDB", "deleteDatabase", "getDirectory", "removeEntry", "localStorage"):
+            assert bad not in code, (app, bad)
+    main_sw = c.get("/sw.js").text
+    assert 'const READY = "/__mt-ready";' in main_sw
+    assert '"/start", "/offline", "/tracker"' in main_sw
+    # de hoofdworker ruimt de caches van de oude apps NIET zomaar op (alleen op vraag, na overnemen)
+    assert 'k.startsWith("mt-site-")' in main_sw
 
 
 def test_service_worker_public_with_headers(client):
@@ -86,7 +108,12 @@ def test_service_worker_public_with_headers(client):
     # stabiel zolang er niets wijzigt
     assert c.get("/sw.js").text == js
     # alleen de eigen caches opruimen
-    assert 'k.startsWith("mt-site-")' in js and "mt-site-v1" in js
+    # eigen caches (mt-app-<build>) en die van de vroegere site-worker (mt-site-*) opruimen
+    assert 'const PREFIX = "mt-app";' in js and 'k.startsWith("mt-site-")' in js
+    # het offline-deel staat in de precache: de pagina's en hun scripts
+    for f in ("offline.js", "tracker.js", "tracker.css", "start.js", "appnav.js", "vendor/pmtiles.js"):
+        assert f'"/static/{f}?v=' in assets, f
+    assert re.search(r'const PAGES_V = "[0-9a-f]{12}";', js)
 
 
 def test_sw_build_changes_with_assets(client, tmp_path, monkeypatch):
@@ -112,6 +139,7 @@ def test_offline_site_page_public_without_data(client):
     assert "set-cookie" not in r.headers
     assert "Geen verbinding met de server" in r.text
     assert 'href="/offline"' in r.text and 'href="/tracker"' in r.text and "Opnieuw proberen" in r.text
+    assert 'href="/start?kies=1"' in r.text
     # alleen de openbare gezondheidscheck (om te weten of de server terug is), verder geen API
     assert set(re.findall(r"/api/[\w/]+", r.text)) == {"/api/health"}
 
