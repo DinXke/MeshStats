@@ -79,6 +79,28 @@
     <div id="ov-hero"></div>
     <p class="tk-sr" id="tk-sr" aria-live="polite"></p>
     <div class="tk-mapslot tk-mapslot-ov" id="slot-ov"></div>
+    <!-- Positie vragen: buiten #ov-cards, want die worden elke 5 s opnieuw opgebouwd (keuze zou verspringen) -->
+    <section class="card tk-card tk-ask" id="tk-ask" aria-labelledby="tk-ask-h" hidden>
+      <h2 id="tk-ask-h">Positie vragen</h2>
+      <label class="tk-asklbl" for="tk-ask-to">Aan wie</label>
+      <select id="tk-ask-to"></select>
+      <button type="button" class="primary" id="tk-ask-btn">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="10" r="3"/><path d="M12 21s-7-6.2-7-11a7 7 0 0114 0c0 4.8-7 11-7 11z"/></svg><span>Positie vragen</span>
+      </button>
+      <p class="tk-askhint" id="tk-ask-hint" aria-live="polite"></p>
+      <details class="tk-askwho">
+        <summary>Wie kan antwoorden?</summary>
+        <ul>
+          <li>Trackers in <strong>companionmodus</strong> horen de vraag altijd.</li>
+          <li>Rijdende of stappende trackers alleen met firmware <strong>0.9.5 of nieuwer</strong> en <strong>rx_beweging</strong> aan.</li>
+          <li>Stilstaande trackers in trackermodus horen de vraag niet.</li>
+        </ul>
+        <p>Je kunt alle trackers hooguit eens per 2 minuten vragen, één tracker eens per 30 seconden.</p>
+      </details>
+      <h3 class="tk-anshead">Antwoorden</h3>
+      <p class="tk-empty" id="tk-ask-none">Nog geen antwoorden.</p>
+      <ol class="tk-anslist" id="tk-ask-list"></ol>
+    </section>
     <div class="tk-grid" id="ov-cards"></div>
   </section>
 

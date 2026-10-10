@@ -13,13 +13,13 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} },
   };
   const nl = (x, d = 0) => Number(x).toLocaleString("nl-BE", { maximumFractionDigits: d });
-  const COL = { pos: "#0b6e4f", F: "#2563eb", pend: "#f59e0b", S: "#16a34a", Q: "#7c3aed", park: "#dc2626" };
-  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)" };
+  const COL = { ans: "#e0a400", ansDark: "#ffc83d", pos: "#0b6e4f", F: "#2563eb", pend: "#f59e0b", S: "#16a34a", Q: "#7c3aed", park: "#dc2626" };
+  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", V: "op verzoek", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)" };
   const FLUSH = { idle: "wacht", actief: "bezig met leegmaken", gepauzeerd: "gepauzeerd", gestopt: "gestopt" };
   const CAPWHY = { uur: "uurgrens bereikt", pogingen: "te veel pogingen" };
   // Toestand van het leegmaken, met de reden als een plafond het pauzeert ("gepauzeerd: uurgrens bereikt").
   const flushText = (f) => { const t = FLUSH[f.state] || f.state; return f.cap && f.state !== "actief" && f.state !== "idle" ? `${t}: ${CAPWHY[f.cap] || f.cap}` : t; };
-  const SETNAME = { F: "FastTrack", S: "SlowTrack", Q: "FIFO" };
+  const SETNAME = { F: "FastTrack", S: "SlowTrack", Q: "FIFO", A: "Antwoord" };
 
   // ---- tijd ----------------------------------------------------------------------------
   // Leeftijden rekenen we tegen de klok van de tracker ("now" in de dump) plus de tijd sinds ontvangst,
@@ -158,6 +158,7 @@
     $("tk-intro").hidden = on || !!dump;
     $("slot-ov").hidden = !dump;
     if (dump) renderHero();
+    renderAsk(true);
   }
   // Tijdens het verbinden: beide knoppen uit, tekst en draaiend icoon op de gekozen knop.
   function connecting(btn) {
@@ -204,7 +205,7 @@
     function onFrame(f) {
       if (!f.length) return;
       if (f[0] === 0x7e) { if (collector) collector(f); return; }      // MeshTrack-antwoord
-      if (f[0] >= 0x80) return;                                       // pushes van de companion: hier niet nodig
+      if (f[0] >= 0x80) { if (f[0] === 0x83) syncMsgs(); return; }    // 0x83: bericht wacht in de companion
       if (waiter && waiter.codes.includes(f[0])) { const w = waiter; waiter = null; w.resolve(f); }
     }
     function ask(bytes, codes, ms = 3000) {
@@ -213,6 +214,38 @@
         waiter = { codes, resolve: (f) => { clearTimeout(t); resolve(f); } };
         write(bytes).catch((e) => { clearTimeout(t); waiter = null; reject(e); });
       });
+    }
+    // Companion-vragen (berichten ophalen, versturen) nooit tegelijk: er is maar één "waiter".
+    const askQ = queued((bytes, codes, ms) => ask(bytes, codes, ms));
+    // Binnenkomende berichten ophalen zoals de offline-app: CMD_SYNC_NEXT_MESSAGE (10) tot "geen berichten meer" (10).
+    // Kanaalbericht v3 (17): [17, snr, 0, 0, kanaal, pad, teksttype, ts u32 LE, tekst]; ouder (8): zonder de eerste drie.
+    let syncing = false, again = false;
+    async function syncMsgs() {
+      if (!rxc || !conn || conn.kind !== "ble") return;
+      if (syncing) { again = true; return; }
+      syncing = true; again = false;
+      try {
+        for (let i = 0; i < 100; i++) {
+          const f = await askQ(new Uint8Array([10]), [16, 17, 7, 8, 10], 5000);
+          if (f[0] === 10) break;
+          if (f[0] !== 17 && f[0] !== 8) continue;                  // privéberichten: hier niet nodig
+          const o = f[0] === 17 ? 4 : 1;
+          const ts = new DataView(f.buffer, f.byteOffset).getUint32(o + 3, true);
+          onChanMsg(f[o], ts, new TextDecoder().decode(f.slice(o + 7)).replace(/\0+$/, ""));
+        }
+      } catch (e) { log(`berichten ophalen: ${e.message}`); }
+      finally { syncing = false; }
+      if (again) setTimeout(syncMsgs, 50);
+    }
+    // CMD_SEND_CHANNEL_TXT_MSG (3): [3, teksttype 0, kanaal, ts u32 LE, tekst] -> OK (0) of fout (1).
+    async function sendChan(idx, text) {
+      const body = new TextEncoder().encode(text);
+      const f = new Uint8Array(7 + body.length);
+      f.set([3, 0, idx]);
+      new DataView(f.buffer).setUint32(3, Math.round(Date.now() / 1000), true);
+      f.set(body, 7);
+      const r = await askQ(f, [0, 1], 5000);
+      if (r[0] === 1) throw new Error("de companion weigerde het bericht (bestaat kanaal " + idx + "?)");
     }
     // Eén MeshTrack-commando: stukken (hooguit 170 bytes tekst) in volgorde van aankomst tot [0x7E, 0xFF].
     // Het volgnummer loopt na 0xFE weer vanaf 0; BLE-meldingen komen in volgorde aan, dus sorteren we niet.
@@ -265,11 +298,12 @@
         devName = new TextDecoder().decode(self.slice(58)).replace(/\0.*$/, "") || devName;
       } catch (e) { log(`companion-opstart: ${e.message}`); }
       log(`Bluetooth verbonden met ${devName}`);
-      setConn({ kind: "ble", label: devName, run: queued(run), close: async () => { try { dev.gatt.disconnect(); } catch (_) {} } });
+      setConn({ kind: "ble", label: devName, run: queued(run), sendChan, close: async () => { try { dev.gatt.disconnect(); } catch (_) {} } });
       say("Verbonden via Bluetooth.", "ok");
       $("tk-who").textContent = devName;
       await refresh(true);
       startAutoIfWanted();
+      syncMsgs();                                   // berichten die al klaarstaan
     } catch (e) {
       say(`Verbinden via Bluetooth mislukt: ${e.message}. Staat de tracker in companionmodus?`, "err");
       log(`Bluetooth mislukt: ${e.message}`);
@@ -393,7 +427,7 @@
           const st = checkReply(await conn.run("status"));
           $("tk-rawstatus").textContent = st;
           const kv = parseStatus(st);
-          if (Object.keys(kv).length) { status = kv; statusAt = Date.now(); }
+          if (Object.keys(kv).length) { status = kv; statusAt = Date.now(); renderAsk(true); }
         } catch (e) { log(`status: ${e.message}`); }
       }
       if (!conn) return;
@@ -835,8 +869,9 @@
     { id: "S", label: "SlowTrack", sw: "s" },
     { id: "Q", label: "FIFO", sw: "q" },
     { id: "lines", label: "Lijnen", sw: "line" },
+    { id: "A", label: "Op verzoek", sw: "a" },
   ];
-  const vis = Object.assign({ pos: true, F: true, S: true, Q: true, lines: true }, store.get("mt.tracker.layers", {}));
+  const vis = Object.assign({ pos: true, F: true, S: true, Q: true, lines: true, A: true }, store.get("mt.tracker.layers", {}));
   // Schakelbare lagen als chips (44 px); de betekenis van ringen en vormen als gewone tekstregel eronder.
   $("tk-legend").innerHTML = LAYERS.map((l) => `<label class="tk-chip"><input type="checkbox" data-layer="${l.id}" ${vis[l.id] ? "checked" : ""}><i class="tk-sw ${l.sw}" aria-hidden="true"></i>${l.label}</label>`).join("");
   $("tk-key").innerHTML = '<span><i class="tk-sw p" aria-hidden="true"></i>wacht op FIFO</span><span><i class="tk-sw qs" aria-hidden="true"></i>verstuurd, onbevestigd</span><span><i class="tk-sw k" aria-hidden="true"></i>geparkeerd</span>';
@@ -904,6 +939,7 @@
       const empty = { type: "FeatureCollection", features: [] };
       map.addSource("tk-lines", { type: "geojson", data: empty });
       map.addSource("tk-pts", { type: "geojson", data: empty });
+      map.addSource("tk-ans", { type: "geojson", data: empty });
       for (const k of ["S", "F", "Q"]) {
         map.addLayer({ id: `line-${k}`, type: "line", source: "tk-lines", filter: ["==", ["get", "set"], k],
           layout: { "line-join": "round", "line-cap": "round" },
@@ -918,8 +954,10 @@
       sym("pts-F", ["==", ["get", "set"], "F"], ["case", ["get", "pending"], "tk-Fp", "tk-F"]);
       sym("pts-Q", ["all", ["==", ["get", "set"], "Q"], ["!", ["get", "sent"]]], ["case", ["get", "parked"], "tk-K", "tk-Q"]);
       sym("pts-Q-sent", ["all", ["==", ["get", "set"], "Q"], ["get", "sent"]], "tk-Qs");
+      // antwoorden op "Positie vragen" (toestand V): amber doelwit-symbool, zelfde stijl als /offline en de hoofdkaart
+      map.addLayer({ id: "pts-A", type: "symbol", source: "tk-ans", layout: { "icon-image": "tk-A", "icon-allow-overlap": true, "icon-ignore-placement": true } });
       // Tikken met een vinger: zoek in een vierkant van 28 px rond de tik, niet alleen op de stip zelf.
-      const PTS = ["pts-S", "pts-F", "pts-Q", "pts-Q-sent"];
+      const PTS = ["pts-S", "pts-F", "pts-Q", "pts-Q-sent", "pts-A"];
       const near = (pt, r) => map.queryRenderedFeatures([[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]], { layers: PTS.filter((id) => map.getLayer(id)) });
       map.on("click", (e) => {
         const fs = near(e.point, 14);
@@ -931,6 +969,7 @@
       map.on("mousemove", (e) => { map.getCanvas().style.cursor = near(e.point, 6).length ? "pointer" : ""; });
       mapReady = true;
       renderMap();
+      renderAnswersMap();
     });
   }
   // Puntsymbolen tekenen (canvas, 2× scherpte) en aan de kaartstijl toevoegen.
@@ -960,12 +999,24 @@
     draw("tk-Q", "circle", 5.5, COL.Q);
     draw("tk-Qs", "circle", 5.5, COL.Q, null, true);
     draw("tk-K", "diamond", 5, COL.park);
+    // "Op verzoek": stip met twee ringen (doelwit), herkenbaar aan de vorm
+    if (!map.hasImage("tk-A")) {
+      const cv = document.createElement("canvas");
+      cv.width = cv.height = S;
+      const g = cv.getContext("2d"), col = dark() ? COL.ansDark : COL.ans;
+      const ring = (r, w, st) => { g.beginPath(); g.arc(c, c, r * R, 0, Math.PI * 2); g.lineWidth = w * R; g.strokeStyle = st; g.stroke(); };
+      ring(9.5, 3.4, "rgba(255,255,255,.9)"); ring(9.5, 1.8, col);         // buitenring met witte rand
+      ring(6, 3.4, "rgba(255,255,255,.9)"); ring(6, 1.8, col);              // binnenring
+      g.beginPath(); g.arc(c, c, 3.6 * R, 0, Math.PI * 2); g.fillStyle = "#fff"; g.fill();
+      g.beginPath(); g.arc(c, c, 2.6 * R, 0, Math.PI * 2); g.fillStyle = col; g.fill();
+      map.addImage("tk-A", g.getImageData(0, 0, S, S), { pixelRatio: R });
+    }
   }
   function popup(p, ll) {
     const set = p.set;
     const fl = String(p.flags || "-");
     const el = document.createElement("div");
-    el.innerHTML = `<strong>${esc(SETNAME[set] || set)}</strong><br>${esc(dateTime(p.ts))}<br><span class="muted">${esc(dur(trackerNow() - p.ts))} geleden</span><br>${flagPills(set, fl)}`;
+    el.innerHTML = `<strong>${esc(set === "A" ? `Antwoord van ${p.name}` : SETNAME[set] || set)}</strong><br>${esc(dateTime(p.ts))}<br><span class="muted">${esc(dur(trackerNow() - p.ts))} geleden</span><br>${flagPills(set, fl)}`;
     new maplibregl.Popup({ closeButton: true, maxWidth: "260px" }).setLngLat(ll).setDOMContent(el).addTo(map);
   }
   function applyVis() {
@@ -973,6 +1024,7 @@
     const set = (id, on) => { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on ? "visible" : "none"); };
     for (const k of ["F", "S", "Q"]) { set(`pts-${k}`, vis[k]); set(`line-${k}`, vis[k] && vis.lines); }
     set("pts-Q-sent", vis.Q);
+    set("pts-A", vis.A);
     if (posMarker) posMarker.getElement().hidden = !vis.pos;
   }
   function renderMap() {
@@ -1048,6 +1100,121 @@
       showTab(tabBtns[(i + d + tabBtns.length) % tabBtns.length].dataset.tab, true);
     });
   });
+
+  // ---- positie vragen (T1R) -------------------------------------------------------------------
+  // Via de verbonden tracker (companionmodus, Bluetooth) een kanaalbericht "T1R|<doel>|<nonce>" op zijn volgkanaal (chan=).
+  // doel = "*" (alle trackers) of de pk8 van één tracker. Antwoorden zijn T1C-berichten met toestand V ("op verzoek").
+  const answers = [], heard = new Map(), lastAsk = {};
+  const ASK_WAIT = { all: 120, one: 30 };
+  let askTimer = null, askMsg = "";
+  const ownPk = () => String(status.pubkey || "").slice(0, 8).toLowerCase();
+  function onChanMsg(chan, ts, text) {
+    const i = text.indexOf(": ");
+    const from = i > 0 ? text.slice(0, i) : "", body = i > 0 ? text.slice(i + 2) : text;
+    if (body.startsWith("T1R|")) { log(`positievraag gezien van ${from || "?"}: ${body}`); return; }
+    if (!body.startsWith("T1C|")) return;
+    const p = body.split("|");
+    if (p.length < 7) return;
+    const pk = String(p[1] || "").toLowerCase(), state = p[4];
+    if (!/^[0-9a-f]{8}$/.test(pk)) return;
+    const lat = p[5] === "" ? null : Number(p[5]), lon = p[6] === "" ? null : Number(p[6]);
+    const fix = Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0);
+    const now = Date.now() / 1000;
+    const known = heard.get(pk);
+    heard.set(pk, { pk, name: from || (known && known.name) || pk, at: now });
+    if (state === "V") {
+      answers.unshift({ pk, name: from || pk, at: now, ts: ts || Math.round(now), lat: fix ? lat : null, lon: fix ? lon : null, chan });
+      if (answers.length > 50) answers.pop();
+      log(`antwoord op positievraag van ${from || pk}: ${fix ? "met positie" : "geen fix"}`);
+      $("tk-sr").textContent = `Antwoord van ${from || pk}: ${fix ? "met positie" : "geen fix"}.`;
+      renderAnswersMap();
+      if (fix) pingAt(lon, lat);
+    }
+    renderAsk(!known);
+  }
+  // Waarom de knop niet werkt (of "" als hij werkt).
+  function askBlocked() {
+    if (!conn) return "Niet verbonden.";
+    if (conn.kind !== "ble" || !conn.sendChan) return "Alleen via Bluetooth (companionmodus).";
+    if (int(status.chan) === null) return "De tracker meldt geen volgkanaal (chan=) in zijn status; positie vragen kan dan niet.";
+    return "";
+  }
+  function askWait(target) {
+    const key = target === "*" ? "*" : target;
+    const lim = target === "*" ? ASK_WAIT.all : ASK_WAIT.one;
+    return lastAsk[key] ? Math.ceil(lim - (Date.now() / 1000 - lastAsk[key])) : 0;
+  }
+  function renderAsk(targets) {
+    const box = $("tk-ask");
+    box.hidden = !conn && !answers.length;
+    if (box.hidden) return;
+    const sel = $("tk-ask-to");
+    if (targets || !sel.options.length) {
+      const cur = sel.value || "*", own = ownPk();
+      const list = [...heard.values()].filter((h) => h.pk !== own).sort((a, b) => a.name.localeCompare(b.name, "nl"));
+      sel.innerHTML = '<option value="*">Alle trackers</option>' + list.map((h) => `<option value="${h.pk}">${esc(h.name === h.pk ? h.pk : `${h.name} (${h.pk})`)}</option>`).join("");
+      sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "*";
+    }
+    const blocked = askBlocked(), wait = blocked ? 0 : askWait(sel.value);
+    const btn = $("tk-ask-btn");
+    btn.disabled = !!blocked || wait > 0;
+    sel.disabled = !!blocked;
+    btn.querySelector("span").textContent = wait > 0 ? `Opnieuw over ${wait} s` : "Positie vragen";
+    const hint = $("tk-ask-hint");
+    hint.textContent = blocked || askMsg;
+    hint.className = "tk-askhint" + (blocked ? " off" : askMsg.startsWith("Versturen mislukt") ? " err" : "");
+    clearTimeout(askTimer);
+    if (wait > 0) askTimer = setTimeout(() => renderAsk(false), 1000);
+    const ul = $("tk-ask-list");
+    ul.innerHTML = answers.map((a, i) => `<li><span class="tk-sw ${a.lat !== null ? "a" : "nofix"}" aria-hidden="true"></span><span class="tk-ansbody"><strong>${esc(a.name)}</strong>
+      <span class="tk-anssub">${esc(clockS(a.at))} · ${a.lat !== null ? "met positie" : "geen fix"}</span></span>${a.lat !== null ? `<button type="button" data-i="${i}">Op kaart</button>` : ""}</li>`).join("");
+    $("tk-ask-none").hidden = !!answers.length;
+  }
+  $("tk-ask-to").addEventListener("change", () => renderAsk(false));
+  $("tk-ask-btn").addEventListener("click", async () => {
+    const target = $("tk-ask-to").value || "*";
+    if (askBlocked() || askWait(target) > 0) return;
+    const nonce = [...crypto.getRandomValues(new Uint8Array(3))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const text = `T1R|${target}|${nonce}`;
+    const who = target === "*" ? "alle trackers" : (heard.get(target) || {}).name || target;
+    try {
+      $("tk-ask-btn").disabled = true;
+      await conn.sendChan(int(status.chan), text);
+      lastAsk[target] = Date.now() / 1000;
+      askMsg = `Gevraagd aan ${who} om ${clockS(lastAsk[target])}. Antwoorden verschijnen hieronder en op de kaart.`;
+      log(`positievraag verstuurd: ${text} op kanaal ${status.chan}`);
+    } catch (e) {
+      askMsg = `Versturen mislukt: ${e.message}`;
+      log(`positievraag: ${e.message}`);
+    }
+    renderAsk(false);
+  });
+  $("tk-ask-list").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-i]");
+    const a = b && answers[Number(b.dataset.i)];
+    if (!a) return;
+    showTab("kaart");
+    if (map) requestAnimationFrame(() => map.flyTo({ center: [a.lon, a.lat], zoom: Math.max(map.getZoom(), 15), duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 800 }));
+  });
+  // Nieuw antwoord: twee uitdijende ringen (2,4 s); met "minder beweging" alleen een korte vaste ring.
+  function pingAt(lon, lat) {
+    if (!map || typeof maplibregl === "undefined") return;
+    const el = document.createElement("div");
+    el.className = "tk-ping";
+    el.setAttribute("aria-hidden", "true");
+    const mk = new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(map);
+    setTimeout(() => mk.remove(), 2600);
+  }
+  function renderAnswersMap() {
+    if (!map || !mapReady || !map.getSource("tk-ans")) return;
+    const seen = new Set(), feats = [];
+    for (const a of answers) {                      // per tracker alleen het nieuwste antwoord met positie
+      if (a.lat === null || seen.has(a.pk)) continue;
+      seen.add(a.pk);
+      feats.push({ type: "Feature", geometry: { type: "Point", coordinates: [a.lon, a.lat] }, properties: { set: "A", ts: a.ts, name: a.name, flags: "-" } });
+    }
+    map.getSource("tk-ans").setData({ type: "FeatureCollection", features: feats });
+  }
 
   function renderAll() {
     $("tk-intro").hidden = true;
@@ -1125,5 +1292,5 @@
   initMap().catch((e) => log(`kaart: ${e.message}`));
 
   // Testhaak (alleen lezen): ontleden zonder toestel.
-  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice() }), map: () => map };
+  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), answers: answers.slice(), heard: [...heard.keys()] }), map: () => map };
 })();

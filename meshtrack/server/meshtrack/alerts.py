@@ -25,7 +25,8 @@ log = logging.getLogger("meshtrack.alerts")
 
 EVENT_TEXT = {
     "W": "is wakker geworden door beweging", "S": "is stilgevallen", "E": "stuurt SOS",
-    "N": "heeft geen GPS-fix", "P": "stuurde handmatig een positie", "B": "wisselde van modus",
+    "N": "heeft geen GPS-fix", "P": "stuurde handmatig een positie",
+    "V": "stuurde een positie op verzoek", "B": "wisselde van modus",
     "H": "stuurde een heartbeat", "M": "beweegt", "zone_in": "kwam binnen in", "zone_out": "verliet",
     "bat_low": "heeft minder dan 20 % batterij", "silent": "is te lang stil",
     "usb_on": "hangt aan de lader", "usb_off": "is van de lader gehaald",

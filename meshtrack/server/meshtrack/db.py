@@ -225,7 +225,8 @@ CREATE INDEX IF NOT EXISTS message_paths_tracker_rx ON message_paths(tracker_id,
 """
 
 # 1.3: soorten in stats_events
-STAT_KINDS = ("t1a_sent", "t1f_sent", "t1f_msg", "dup_points", "dup_msg", "invalid", "unknown", "old_fw_dm")
+STAT_KINDS = ("t1a_sent", "t1f_sent", "t1f_msg", "dup_points", "dup_msg", "invalid", "unknown", "old_fw_dm",
+              "loc_request")   # 1.3.2: T1R-verzoek om een positie (van een companion/telefoon)
 
 TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since", "last_via", "channel_id")
 

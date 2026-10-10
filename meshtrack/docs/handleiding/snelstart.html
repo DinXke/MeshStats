@@ -34,7 +34,7 @@
   .card { border: 1px solid var(--line); border-radius: 3mm; padding: 3mm 3.8mm; }
   .full { grid-column: 1 / -1; }
   table { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
-  td { padding: 1.1mm 1.5mm; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td { padding: 0.85mm 1.5mm; border-bottom: 1px solid var(--line); vertical-align: top; }
   td.k { font-weight: 700; white-space: nowrap; color: var(--accent); width: 27mm; }
   .note { background: var(--soft); border-left: 1.2mm solid var(--accent); border-radius: 2mm; padding: 2.2mm 3mm; font-size: 8.8pt; margin-top: 2.5mm; }
   .warn { background: #fff7ed; border-left: 1.2mm solid var(--warn); border-radius: 2mm; padding: 2.2mm 3mm; font-size: 8.8pt; margin-top: 2.5mm; }
@@ -118,12 +118,12 @@
       <tr><td class="k">Eén kanaal</td><td>Elke tracker stuurt op één trackingkanaal, nooit als DM; wie dat kanaal mag lezen, ziet hem op de kaart. Alleen de server stuurt privéberichten (DM): meldingen bij bv. SOS naar de gsm van de wachtdienst.</td></tr>
       <tr><td class="k">Sleutel = toegang</td><td>Wie de kanaalsleutel of QR-code heeft, leest alle posities op dat kanaal. Deel hem alleen met wie mag.</td></tr>
       <tr><td class="k">Buiten bereik</td><td>Trackmodus <strong>FIFO</strong>: gemiste posities later inhalen. In <em>Toestellen</em> → <em>Trackmodus</em>.</td></tr>
-      <tr><td class="k">Regio</td><td>Trackers en de offline-app sturen met regio (scope) <code>be</code>; laat die staan.</td></tr>
-      <tr><td class="k">Hulp</td><td>In de site: <em>Help</em>. De volledige handleiding (PDF) staat bovenaan de helppagina.</td></tr>
+      <tr><td class="k">Positie vragen</td><td>Offline-app: <em>Trackers</em> → <em>Positie vragen</em>. Trackers in rust slapen en antwoorden niet.</td></tr>
+      <tr><td class="k">Regio en hulp</td><td>Regio (scope) <code>be</code> laten staan. Uitleg: <em>Help</em> in de site, met de handleiding (PDF).</td></tr>
     </table>
   </section>
 </main>
-<footer><span>MeshTrack · firmware 0.9.4 (T1000-E) · MeshCore v1.17.1</span><span>meshtrack.meshmanager.net</span></footer>
+<footer><span>MeshTrack · firmware 0.9.5 (T1000-E) · MeshCore v1.17.1</span><span>meshtrack.meshmanager.net</span></footer>
 
 <script src="../../server/static/vendor/qrcode.js"></script>
 <script>

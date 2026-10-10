@@ -96,6 +96,20 @@
             </div>
           </fieldset>
 
+          <fieldset data-since="0.9.5" data-keys="verzoek rx_beweging">
+            <legend>Locatieverzoeken</legend>
+            <div class="help">Met <em>Positie vragen</em> in de offline-app vraag je een tracker om meteen zijn
+              positie te sturen. Hij antwoordt met een positie "op verzoek".</div>
+            <label class="switch block"><input type="checkbox" data-set="verzoek" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Locatieverzoeken beantwoorden</label>
+            <label class="switch block"><input type="checkbox" data-set="rx_beweging" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Radio luistert tijdens beweging</label>
+            <div class="help">Nodig om verzoeken te horen in trackermodus. Kost ongeveer 15 à 20 % extra stroom tijdens het
+              rijden. Bij stilstand slaapt de radio; als companion luistert hij altijd.</div>
+            <div data-since="0.9.5" data-keys="verzoek_beep">
+              <label class="switch block"><input type="checkbox" data-set="verzoek_beep" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Piepje bij een locatieverzoek</label>
+              <div class="help">Een kort, eigen deuntje zodra de tracker een verzoek beantwoordt, ook als de buzzer stil staat.</div>
+            </div>
+          </fieldset>
+
           <fieldset>
             <legend>Verzenden</legend>
             <label for="s-via">Trackingkanaal</label>

@@ -405,3 +405,104 @@ def test_paths_from_companion_and_openhop(app):
     main.S.db.prune(now + 10)
     assert main.S.db._q("SELECT COUNT(*) n FROM message_paths")[0]["n"] == 0
     assert main.S.db._q("SELECT COUNT(*) n FROM stats_events")[0]["n"] == 0
+
+
+# ---- 1.3.2: toestand V (op verzoek) en T1R-verzoeken -------------------------------------------
+
+def test_state_V_parses_and_updates_live():
+    from meshtrack.protocol import parse
+    assert parse(msg(5, NOW, state="V")).state == "V"
+    assert parse("T1|6|V||||||80||").lat is None                 # zonder fix toegelaten, zoals N/P
+    db = DB(":memory:")
+    tid = db.add_tracker(KEY, "Björn")
+    handle(db, Config(), PK, msg(1, NOW - 600), now=NOW - 590)
+    out = handle(db, Config(), PK, msg(2, NOW - 10, state="V", lat=51.0), now=NOW)
+    assert out and out["state"] == "V"
+    t = db.tracker(tid)
+    assert (t["last_state"], t["last_ts"], t["last_lat"]) == ("V", NOW - 10, 51.0)
+    handle(db, Config(), PK, msg(3, NOW - 900, state="V", lat=52.0), now=NOW + 5)    # ouder: niet de laatste positie
+    assert db.tracker(tid)["last_lat"] == 51.0
+    s = stats.summary(db, stats.Scope(NOW - 86400, NOW + 10), db.trackers(), {})
+    assert s["totals"]["messages_by_state"]["V"] == 2 and s["totals"]["points_by_kind"]["live"] == 3
+
+
+def test_T1R_ignored_and_counted(app):
+    c, main, tid, cid, chan, _ = app
+    chan("", text=f"Telefoon: T1R|{PK8}|a1b2c3")
+    chan("", text="Telefoon: T1R|*|ffee01")
+    chan("", text="Telefoon: T1R|deadbeef|0001")                  # onbekende tracker: toch stil
+    assert main.S.db.unknown() == []
+    assert ev(main, "invalid") == [] and ev(main, "unknown") == []
+    rows = ev(main, "loc_request")
+    assert sorted((r["tracker_id"] or 0, r["channel_id"]) for r in rows) == sorted([(tid, cid), (0, cid), (0, cid)])
+    login(c, "admin", "beheerder1")
+    e = c.get("/api/stats/events", params={"kind": "loc_request"}).json()
+    assert e["totals"] == {"loc_request": 3}
+    assert "loc_request" in c.get("/api/stats/events").json()["kinds"]
+    assert main.EVENT_TYPES["V"] and "V" in main.EVENTS
+
+# ---- locatieverzoek vanaf de website (POST /api/channels/{id}/request) ----------------------
+
+def test_loc_request_send_limits_audit_and_echo(app):
+    c, main, tid, cid, chan, _ = app
+    for d in (main._locreq_all, main._locreq_trk, main._locreq_nonces):
+        d.clear()
+    db, mesh = main.S.db, main.S.mesh
+    db.set_tracker_channel(tid, cid)
+    login(c, "admin", "beheerder1")
+    r = c.post(f"/api/channels/{cid}/request", json={"target": "*"})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["ok"] and j["target"] == "*" and len(j["nonce"]) == 6 and int(j["nonce"], 16) >= 0
+    assert mesh.sent[-1] == (3, f"T1R|*|{j['nonce']}", "be")
+    r2 = c.post(f"/api/channels/{cid}/request", json={"target": "*"})
+    assert r2.status_code == 429 and 115 <= r2.json()["retry_after"] <= 120 and "Probeer opnieuw" in r2.json()["detail"]
+    r3 = c.post(f"/api/channels/{cid}/request", json={"target": tid})
+    assert r3.status_code == 200 and r3.json()["target"] == tid
+    assert mesh.sent[-1] == (3, f"T1R|{PK8}|{r3.json()['nonce']}", "be")
+    assert c.post(f"/api/channels/{cid}/request", json={"target": tid}).status_code == 429
+    st = c.get(f"/api/channels/{cid}/request").json()
+    assert st["all_wait"] > 100 and st["trackers"][0]["id"] == tid and 25 <= st["trackers"][0]["wait"] <= 30
+    assert (st["all_interval"], st["tracker_interval"], st["connected"]) == (120, 30, True)
+    # audit en statistiek; de echo van ons eigen verzoek telt niet nog eens
+    acts = [a for a in db.audit_log() if a["action"] == "locatieverzoek"]
+    assert len(acts) == 2 and acts[0]["who"] == "admin" and "Björn" in acts[0]["detail"]
+    chan("", text=f"MeshTrack: T1R|*|{j['nonce']}")
+    rows = ev(main, "loc_request")
+    assert sorted((r["tracker_id"] or 0) for r in rows) == [0, tid] and all(r["channel_id"] == cid for r in rows)
+    # na de wachttijd weer mogelijk
+    main._locreq_all[cid] -= 121
+    assert c.post(f"/api/channels/{cid}/request", json={"target": "*"}).status_code == 200
+
+
+def test_loc_request_errors_and_permissions(app):
+    c, main, tid, cid, chan, _ = app
+    for d in (main._locreq_all, main._locreq_trk, main._locreq_nonces):
+        d.clear()
+    db, mesh = main.S.db, main.S.mesh
+    cid2 = db.save_channel(None, {"name": "ander", "secret": "11" * 16, "slot": 4, "require_sig": 1, "active": 1})
+    other = db.add_tracker(KEY_B, "Bert")
+    db.set_tracker_channel(tid, cid)
+    db.set_tracker_channel(other, cid2)
+    assert c.post(f"/api/channels/{cid}/request", json={"target": "*"}).status_code == 401
+    login(c, "admin", "beheerder1")
+    assert c.post(f"/api/channels/{cid}/request", json={"target": other}).status_code == 404     # ander kanaal
+    assert c.post(f"/api/channels/999/request", json={"target": "*"}).status_code == 404
+    assert c.post(f"/api/channels/{cid}/request", json={"target": "x"}).status_code == 400
+    mesh.connected = False
+    assert c.post(f"/api/channels/{cid}/request", json={"target": "*"}).status_code == 503
+    mesh.connected = True
+    assert cid not in main._locreq_all and mesh.sent == []                                        # niets verbruikt
+    g = c.post("/api/groups", json={"name": "Ploeg", "perms": ["map.view"], "all_trackers": False,
+                                    "channels": {str(cid2): "kaart"}}).json()
+    assert c.post("/api/users", json={"username": "jan", "password": "geheim123", "group_id": g["id"]}).status_code == 200
+    c.post("/api/logout")
+    login(c, "jan", "geheim123")
+    assert c.post(f"/api/channels/{cid}/request", json={"target": "*"}).status_code == 403
+    assert c.get(f"/api/channels/{cid}/request").status_code == 403
+    r = c.post(f"/api/channels/{cid2}/request", json={"target": other})
+    assert r.status_code == 200 and mesh.sent[-1][1] == f"T1R|{KEY_B[:8]}|{r.json()['nonce']}"
+    # live-bericht alleen voor wie het kanaal ziet
+    p_jan = main._resolve(dict(c.cookies))
+    msg_ = {"type": "loc_request", "channel_id": cid2, "target": other, "sent_at": 1, "by": "jan"}
+    assert main.Hub._allowed(p_jan, msg_) and not main.Hub._allowed(p_jan, {**msg_, "channel_id": cid})

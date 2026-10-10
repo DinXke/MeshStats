@@ -4,15 +4,18 @@
 :root {
   --tk-fast: #2563eb; --tk-pend: #f59e0b; --tk-slow: #16a34a; --tk-fifo: #7c3aed; --tk-park: #dc2626; --tk-pos: #0b6e4f;
   --tk-fast-txt: #1d4ed8; --tk-pend-txt: #a14d00; --tk-slow-txt: #15803d; --tk-fifo-txt: #6d28d9; --tk-park-txt: #b91c1c;
+  --tk-ans: #e0a400;
   --tk-gap: 12px; --tk-touch: 44px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]), :root[data-theme="auto"] {
     --tk-fast-txt: #7aa7ff; --tk-pend-txt: #fbbf24; --tk-slow-txt: #4ade80; --tk-fifo-txt: #b69cff; --tk-park-txt: #fb8a8a;
+    --tk-ans: #ffc83d;
   }
 }
 :root[data-theme="dark"] {
   --tk-fast-txt: #7aa7ff; --tk-pend-txt: #fbbf24; --tk-slow-txt: #4ade80; --tk-fifo-txt: #b69cff; --tk-park-txt: #fb8a8a;
+  --tk-ans: #ffc83d;
 }
 
 body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; background: var(--bg); }
@@ -187,6 +190,9 @@ body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dv
 .tk-sw.q { background: var(--tk-fifo); width: 13px; height: 13px; }
 .tk-sw.qs { background: radial-gradient(circle, #fff 0 2.4px, var(--tk-fifo) 2.9px); width: 13px; height: 13px; }
 .tk-sw.k { background: var(--tk-park); border-radius: 1px; width: 10px; height: 10px; transform: rotate(45deg); margin: 0 1px; }
+/* op verzoek (V): doelwit = stip met ring, amber */
+.tk-sw.a { width: 15px; height: 15px; background: radial-gradient(circle, var(--tk-ans) 0 2.6px, transparent 3.2px 4.6px, var(--tk-ans) 5.1px 6.6px, transparent 7.1px); }
+.tk-sw.nofix { border: 2px dashed var(--muted); background: none; }
 .tk-sw.line { border-radius: 2px; height: 3px; width: 16px; background: var(--muted); }
 .tk-mapnote { position: absolute; left: 10px; right: 64px; top: 62px; z-index: 3; margin: 0; font-size: 13px; background: var(--panel); color: var(--text); padding: 6px 10px; border-radius: 8px; box-shadow: var(--shadow); }
 .tk-mapnote:empty { display: none; }
@@ -305,4 +311,37 @@ body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dv
   .tk-tabs button svg { padding: 4px 12px; }
   .tk-tiles { gap: 6px; }
   .tk-tile b { font-size: 19px; }
+}
+
+/* ---- positie vragen ---- */
+.tk-ask { margin-bottom: var(--tk-gap); }
+.tk-asklbl { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.tk-ask select { min-height: var(--tk-touch); font-size: 16px; border-radius: 10px; }
+#tk-ask-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: var(--tk-touch); margin-top: 8px; font-size: 16px; font-weight: 600; border-radius: 10px; }
+#tk-ask-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tk-askhint { margin: 8px 0 0; font-size: 14px; line-height: 1.4; }
+.tk-askhint:empty { display: none; }
+.tk-askhint.off { color: var(--muted); border-left: 3px solid var(--warn); padding-left: 8px; }
+.tk-askhint.err { color: var(--danger); font-weight: 600; }
+.tk-askwho { margin-top: 10px; font-size: 14px; line-height: 1.45; }
+.tk-askwho > summary { min-height: var(--tk-touch); display: flex; align-items: center; cursor: pointer; font-weight: 600; color: var(--accent); }
+.tk-askwho ul { margin: 0 0 6px; padding-left: 20px; }
+.tk-askwho p { margin: 0; color: var(--muted); }
+.tk-anshead { font-size: 13px; color: var(--muted); font-weight: 600; margin: 12px 0 6px; }
+.tk-anslist { list-style: none; margin: 0; padding: 0; }
+.tk-anslist li { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 4px 0; border-top: 1px solid var(--line); }
+.tk-anslist li:first-child { border-top: 0; }
+.tk-ansbody { flex: 1; min-width: 0; }
+.tk-ansbody strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-anssub { font-size: 13px; color: var(--muted); }
+.tk-anslist button { min-height: var(--tk-touch); flex: none; border-radius: 10px; font-size: 14px; }
+@media (min-width: 900px) { .tk-ask { max-width: 640px; } }
+/* puls bij een nieuw antwoord op de kaart */
+.tk-ping { width: 22px; height: 22px; border-radius: 50%; pointer-events: none; }   /* geen position: de marker zet zelf absolute */
+.tk-ping::before, .tk-ping::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--tk-ans); opacity: 0; animation: tk-ping 1.2s ease-out 2; }
+.tk-ping::after { animation-delay: .4s; }
+@keyframes tk-ping { 0% { transform: scale(.6); opacity: .95; } 100% { transform: scale(3); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .tk-ping::before { animation: none; opacity: .9; transform: scale(1.6); }
+  .tk-ping::after { display: none; }
 }

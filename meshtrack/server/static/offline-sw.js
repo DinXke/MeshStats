@@ -3,7 +3,7 @@
      zonder internet opent en na een update de nieuwe versie neemt.
    - Lettertypes en kaartsymbolen (/tiles/fonts, /tiles/sprites): cache eerst.
    - Kaarttegels zelf staan als bestand op het toestel (OPFS), niet in deze cache. */
-const CACHE = "mt-offline-v5";
+const CACHE = "mt-offline-v6";
 const SHELL = ["/offline", "/offline.webmanifest", "/static/icon-192.png", "/static/icon-512.png", "/static/favicon.svg",
   "/static/style.css", "/static/vendor/maplibre-gl.css", "/static/vendor/maplibre-gl.js", "/static/vendor/pmtiles.js",
   "/static/basemap.js", "/static/offline.js"];
