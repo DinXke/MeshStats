@@ -728,7 +728,7 @@ static void sign_and_send(char* text, char state, bool manual, bool keep, uint32
     snprintf(text, MT_TEXT_MAX + 1, "T1C|%s|%s|%s", pk, sig, body + 9);
   }
   // Eigen positie ook naar een verbonden app (alleen als companion: dan staat Bluetooth aan).
-  if (mt_effective_mode() == MT_MODE_COMPANION) the_mesh.mtQueueOwn(mt_cfg.chan_idx, text);
+  if (mt_effective_mode() == MT_MODE_COMPANION && mt_sender_ready()) the_mesh.mtQueueOwn(mt_cfg.chan_idx, text);
   mt_send(text, manual, keep, tag, state);
 }
 
@@ -2168,6 +2168,13 @@ void mt_tracker_dump(MtDumpOut o) {
   uint32_t now_unix = the_mesh.getRTCClock()->getCurrentTime();
   o("mtdump 1", true);
   o("board " MT_BOARD_ID, true);
+  {                                              // trackingkanaal: index of -, en ok/geen/ontbreekt/openbaar
+    MtChanState cs = mt_chan_state();
+    char ci[6] = "-";
+    if (mt_cfg.chan_idx != MT_CHAN_NONE_IDX) snprintf(ci, sizeof(ci), "%u", (unsigned)mt_cfg.chan_idx);
+    snprintf(b, sizeof(b), "chan %s %s", ci, cs == MT_CHAN_OK ? "ok" : mt_chan_state_str(cs));
+    o(b, true);
+  }
   snprintf(b, sizeof(b), "now %lu", (unsigned long)now_unix);
   o(b, true);
   if (g.lastValidMs()) {

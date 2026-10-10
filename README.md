@@ -11,7 +11,16 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.9; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.10; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
+  - **Nooit op een openbaar kanaal** (0.9.10): geen posities, SOS, verzoekantwoorden of inhaalberichten op Public of een
+    #hashtag-kanaal waarvan de sleutel uit de naam volgt; een klik geeft de lage toon; `status` `kanaal_fout=openbaar` met
+    een LET OP-regel (aanleiding: een niet-klaargemaakte WisMesh Tag stuurde posities en SOS ongetekend op Public). Een
+    nieuwe of gereset tracker heeft geen trackingkanaal (`chan=-`, `kanaal_fout=geen`) en stuurt niets tot hij klaargemaakt
+    is; bestaande trackers met Public als trackingkanaal zijn eenmalig op geen gezet. `set chan -` = geen; `set chan <nr>`
+    weigert openbare kanalen. Rechtzetten zonder nieuwe firmware: USB → Toestellen → Verbinden → Instellingen →
+    Trackingkanaal → MeshTrack-kanaal → Opslaan (kanaal op een vrij nummer, Public blijft, authsleutel gemaakt en gezet,
+    regio en trackingkanaal ingesteld; controle: `authkey=ja`, `chan_naam=…`). Niet via Bluetooth (authsleutel en
+    kanaalnummer alleen via USB); *Klaarmaken* is niet nodig als de tracker zijn eigen sleutel houdt.
   - Bluetooth-koppelcode (0.9.9): `set blepin <6 cijfers>|standaard` (werkt na een herstart), `blepin toon` (alleen USB),
     status `blepin=eigen|standaard`, menu *Modus en knop* → 11 *Bluetooth-koppelcode*; in Toestellen het veld
     *Bluetooth-code* (oudere firmware: via Tracker live → Instellingen). De code zit nooit in een back-up. RAK3401 met
@@ -183,7 +192,10 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     live posities met het amberkleurige icoon en een antwoordpaneel. Op de kaarten (/offline, /tracker, site) een
     amberkleurig doelwit met legende *Op verzoek*. Meshbelasting: "alle" op een kanaal met N trackers = N antwoorden.
     Via Bluetooth (companionmodus) aanvaardt de tracker alleen `status`, `fifo` en `dump`: alleen lezen.
-- **server/**: FastAPI + meshcore-py (versie 1.4.0).
+- **server/**: FastAPI + meshcore-py (versie 1.4.1).
+  - 1.4.1: een gekende tracker die op het kanaal **Public** stuurt (niet klaargemaakt) wordt herkend in de rauwe
+    pakketten (companion en openHop): `trackers.public_leak_ts`, `op_public` in de trackerlijst (laatste 24 u), auditregel
+    (hoogstens 1 per 6 u per tracker) en meldingsgebeurtenis `op_public`. Die posities worden nooit opgeslagen.
   - 1.4.0: **prioritair** (blauwe lichten): vlag `p` in veld 16 van elk bericht. Een live bericht met `p` maakt de tracker
     prioritair tot ontvangst + `prio_hold_s` (Systeem, standaard 300 s); een live bericht zonder `p` beëindigt het meteen.
     L/Q-punten bewaren de vlag per punt (`positions.prio`) zonder de live-toestand te wijzigen. Trackers krijgen `prio` en

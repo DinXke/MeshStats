@@ -63,6 +63,7 @@
       return `<tr data-id="${t.id}" tabindex="0" aria-label="${MT.esc(t.alias)} bewerken">
         <td><span class="tico" style="background:${MT.esc(t.color)}">${t.icon ? MTIcons.svg(t.icon) : ""}</span></td>
         <td><div class="nm">${MT.esc(t.alias)} ${pills}</div><div class="sub">${MT.esc(sub)}</div>${t.kind === "sim" ? prioCtl(t, sim) : ""}
+          ${t.op_public ? `<div class="pubwarn"><a class="lostbadge" href="/devices#prov" title="Open Toestellen → Klaarmaken &amp; back-ups">stuurt op Public – klaarmaken</a>${MT.publicSeen(t) ? ` <span class="small muted">laatst gezien op Public om ${MT.esc(MT.publicSeen(t))}</span>` : ""}</div>` : ""}
           <div class="mob">${MT.esc([MT.ago(t.last_rx), t.last_bat != null ? t.last_bat + " %" : null].filter(Boolean).join(" · "))}</div></td>
         <td class="col-opt" data-ago="${t.last_rx || 0}">${MT.esc(MT.ago(t.last_rx))}</td>
         <td class="col-opt">${t.last_bat != null ? t.last_bat + " %" : "–"}</td>
@@ -71,7 +72,7 @@
     }).join("");
     $("trackers").querySelectorAll("tr").forEach((tr) => {
       const go = () => edit(Number(tr.dataset.id));
-      tr.addEventListener("click", go);
+      tr.addEventListener("click", (e) => { if (!e.target.closest("a")) go(); });   // de link naar Klaarmaken niet onderscheppen
       tr.addEventListener("keydown", (e) => { if (e.target === tr && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(); } });
     });
     bindPrio($("trackers"));

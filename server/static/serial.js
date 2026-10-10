@@ -320,6 +320,8 @@
     gateSince(kv);
     applyNeeds(kv);
     bleUi(kv);
+    const cp = chanProblem(kv);
+    $("s-chanwarn").textContent = cp; $("s-chanwarn").hidden = !cp;
     prioUi();
     fifoUi();                                       // roept ook slowCalc op
     setMode(kv.gekozen || "tracker");
@@ -616,6 +618,8 @@
 
   // ---- verzenden via (DM of kanaal) ---------------------------------------------------
   let devChans = [], srvChans = [];
+  const PUBLIC_SECRET = "8b3387e9c5cdea6ac9e5edbaa115cd72";   // het standaardkanaal Public van MeshCore
+  const isPublicChan = (c) => !!c && (c.secret === PUBLIC_SECRET || /^#/.test(c.name || "") || /^public$/i.test((c.name || "").trim()));
   async function readChannels() {
     let ls = [];
     try { ls = await until("chan list", /^chan=einde/, 3000, true); } catch (_) { /* oude firmware */ }
@@ -626,9 +630,12 @@
     const cur = lastKv.transport === "kanaal" ? devChans.find((d) => d.slot === Number(lastKv.chan)) : null;
     const curSrv = cur && srvChans.find((s) => s.secret === cur.secret);
     const others = devChans.filter((d) => !srvChans.some((s) => s.secret === d.secret));
+    // Public en #kanalen zijn openbaar: nooit als trackingkanaal (firmware 0.9.10 weigert ze ook)
+    const pubOpt = (c) => (isPublicChan(c) ? ' disabled' : "");
+    const pubLab = (c) => (isPublicChan(c) ? " (openbaar)" : "");
     $("s-via").innerHTML = '<option value="">— kies het trackingkanaal —</option>'
-      + (srvChans.length ? `<optgroup label="Kanalen van de server">${srvChans.map((s) => `<option value="srv:${s.id}">${MT.esc(s.name)}</option>`).join("")}</optgroup>` : "")
-      + (others.length ? `<optgroup label="Andere kanalen op het toestel">${others.map((d) => `<option value="dev:${d.slot}">${d.slot}: ${MT.esc(d.name)}</option>`).join("")}</optgroup>` : "");
+      + (srvChans.length ? `<optgroup label="Kanalen van de server">${srvChans.map((s) => `<option value="srv:${s.id}"${pubOpt(s)}>${MT.esc(s.name)}${pubLab(s)}</option>`).join("")}</optgroup>` : "")
+      + (others.length ? `<optgroup label="Andere kanalen op het toestel">${others.map((d) => `<option value="dev:${d.slot}"${pubOpt(d)}>${d.slot}: ${MT.esc(d.name)}${pubLab(d)}</option>`).join("")}</optgroup>` : "");
     $("s-via").value = !cur ? "" : curSrv ? `srv:${curSrv.id}` : `dev:${cur.slot}`;
     if (!cur) msg($("s-msg"), "Deze tracker heeft nog geen trackingkanaal: kies er een en sla op, anders stuurt hij niets.");
   }
@@ -636,8 +643,8 @@
   async function applyVia(bad) {
     const v = $("s-via").value;
     const run = async (cmd, silent) => {
-      const out = await until(cmd, /bewaard|ongeldig|onbekend|NIET|gebruik|kies eerst/, 3000, silent);
-      if (out.some((l) => /ongeldig|onbekend|NIET|gebruik|kies eerst/.test(l))) bad.push(cmd.split(" ").slice(0, 2).join(" "));
+      const out = await until(cmd, /bewaard|ongeldig|onbekend|NIET|gebruik|kies eerst|openbaar/, 3000, silent);
+      if (out.some((l) => /ongeldig|onbekend|NIET|gebruik|kies eerst|openbaar/.test(l))) bad.push(cmd.split(" ").slice(0, 2).join(" "));
     };
     if (!v) return;                                 // geen kanaal gekozen
     let slot;
@@ -845,6 +852,9 @@
     }
     const t = det.pubkey ? trackers.find((x) => x.pubkey === det.pubkey) : null;
     det.known = t ? { alias: t.alias, id: t.id, chan: await detChannel(t) } : null;
+    det.opPublic = !!(t && t.op_public);
+    det.publicSeen = t ? MT.publicSeen(t) : "";
+    det.chanProblem = kind === "meshtrack" ? chanProblem(lastKv) : "";
     renderDet();
     if (window.MTDevice && MTDevice.onDetect) MTDevice.onDetect(det);
   }
@@ -877,11 +887,26 @@
     $("det-act").hidden = !act;
     if (act) { $("det-act").textContent = act.label; $("det-act").dataset.go = act.go; }
     $("det-actnote").textContent = act ? act.note || "" : "";
+    const warn = [d.opPublic ? `Deze tracker stuurt zijn posities op Public${d.publicSeen ? ` (laatst om ${d.publicSeen})` : ""}. Maak hem nu klaar.` : "",
+      d.chanProblem || ""].filter(Boolean);
+    $("det-warn").textContent = warn.join(" ");
+    $("det-warn").hidden = !warn.length;
     $("det-use").hidden = !(d.pubkey && !d.known && MT.can("trackers.manage") && (d.kind === "meshtrack" || d.kind === "meshcore"));
     $("det-use").href = `/admin#new?pubkey=${encodeURIComponent(d.pubkey || "")}&alias=${encodeURIComponent(d.naam || "")}`;
     card.hidden = false;
   }
+  // Firmware 0.9.10: chan=- (geen trackingkanaal) of kanaal_fout=openbaar (trackingkanaal is openbaar)
+  function chanProblem(kv) {
+    if (!kv) return "";
+    if (kv.kanaal_fout === "openbaar") return "Het trackingkanaal is openbaar (Public of een #kanaal): maak het toestel klaar met een privékanaal.";
+    if (kv.kanaal_fout === "ontbreekt") return "Het trackingkanaal staat niet (meer) op het toestel: maak het toestel klaar.";
+    if (kv.kanaal_fout === "geen" || kv.chan === "-") return "Geen trackingkanaal: maak het toestel klaar.";
+    return "";
+  }
   function detAction(d) {
+    // eerst klaarmaken als de posities nergens of op een openbaar kanaal terechtkomen
+    if (d.kind === "meshtrack" && (d.opPublic || d.chanProblem))
+      return { label: "Klaarmaken", go: "prov", note: "Zet de sleutel, het trackingkanaal en de regio van de server op dit toestel." };
     const latest = window.MTDevice && MTDevice.latestVersion ? MTDevice.latestVersion(d.board || "t1000e") : null;
     if (d.kind === "bootloader") return { label: "Naar Firmware", go: "fw", note: "Het toestel staat in de bootloader: sleep het .uf2-bestand op het USB-station, of trek de kabel uit en weer in om terug te gaan." };
     if (d.kind === "meshcore") return { label: "MeshTrack flashen", go: "fw", note: "Eerst wordt de sleutel van MeshCore als back-up gedownload." };

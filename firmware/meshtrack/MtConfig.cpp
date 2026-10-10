@@ -59,6 +59,7 @@ void mt_cfg_defaults(MtCfg& c) {
   c.sample_s           = 15;
   c.slow_log_s         = 0;          // SlowTrack standaard uit
   c.slow_send_s        = 30 * 60;
+  c.chan_idx           = 0xFF;        // 0.9.10: geen trackingkanaal tot het toestel klaargemaakt is (niet Public!)
   c.track_mode         = MT_TRACK_CLASSIC;
   c.fifo_max           = 500;
   c.fifo_min           = 5;

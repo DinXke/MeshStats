@@ -92,7 +92,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Firmware 0.9.9 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
+    Firmware 0.9.10 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -235,7 +235,7 @@
   <tr><th>Indrukken</th><th>Wat gebeurt er</th></tr>
   <tr><td class="k">1 keer</td><td>Meteen een positie sturen. Na de modusbiep betekenen <strong>twee hoge biepjes</strong> dat de tracker zijn
     bericht via een repeater terug hoorde (het is de mesh op), en <strong>één lage toon</strong> dat hij binnen 12 s geen
-    herhaling hoorde of geen trackingkanaal heeft. Of de server het ontving, zie je op de kaart. Hooguit één keer per 10 s.</td></tr>
+    herhaling hoorde, of geen trackingkanaal heeft (of een openbaar kanaal zoals Public). Of de server het ontving, zie je op de kaart. Hooguit één keer per 10 s.</td></tr>
   <tr><td class="k">2 keer</td><td>Van modus wisselen: <strong>één biep</strong> = tracker, <strong>twee biepjes</strong> = companion.
     Je hebt tot 0,8 s tussen de twee klikken.</td></tr>
   <tr><td class="k">3 keer</td><td>De buzzer aan- of uitzetten.</td></tr>
@@ -709,6 +709,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     met de legende <em>Op verzoek</em>. In de weergave van één kanaal kun je zelf een <strong>positie vragen</strong> (hoofdstuk 12).</li>
   <li>Een voertuig dat <strong>prioritair</strong> rijdt (blauwe lichten), knippert blauw, met blauwe stukken in het spoor en een
     sirene-badge; onder <em>Filter en zichtbaarheid</em> toont <em>Alleen prioritair</em> alleen die voertuigen (hoofdstuk 13).</li>
+  <li>Een tracker met de badge <em>stuurt op Public – klaarmaken</em> is niet klaargemaakt: maak hem in orde via USB (hoofdstuk 10).</li>
   <li>Onder <em>Meshnodes op de kaart</em> toon je repeaters, rooms en companions die de server hoorde.</li>
 </ul>
 <figure><img src="img/kaart-tracker.jpg" alt=""><figcaption>Een tracker gekozen: details in de popup, afstand en snelheden in de lijst, export als GPX of CSV, en <em>centreren en volgen</em>.</figcaption></figure>
@@ -770,7 +771,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <li>Voor de trackers kies je alle trackers, <strong>kanalen</strong> (dan geldt de regel ook voor trackers die later
     op dat kanaal sturen) en/of losse trackers. Een eigen regel meldt alleen trackers die je zelf mag zien.</li>
   <li>Een regel kiest <strong>gebeurtenissen</strong> (SOS, batterij onder 20 %, wakker door beweging, zone binnen of buiten,
-    aan of van de lader, te lang stil, verloren tracker gezien, rijdt prioritair, rijdt niet langer prioritair …), <strong>trackers</strong> (of alle) en
+    aan of van de lader, te lang stil, verloren tracker gezien, rijdt prioritair, rijdt niet langer prioritair, stuurt op Public: niet klaargemaakt …), <strong>trackers</strong> (of alle) en
     <strong>ontvangers</strong>.</li>
   <li>Ontvangers kies je uit de contacten van de companion, of je plakt hun pubkey.</li>
   <li>De <strong>cooldown</strong> voorkomt dat dezelfde tracker met dezelfde gebeurtenis te vaak een melding geeft.</li>
@@ -869,7 +870,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     voorlopig alleen via USB in <em>Toestellen</em>. Een latere firmware voegt er meer toe.</li>
 </ul>
 <div class="warn"><b>Verander de standaardcode 123456</b>Wie de koppelcode kent, kan via Bluetooth de naam, de kanalen en de code van de
-  tracker wijzigen. Stel dus een eigen code in: hier, in <em>Toestellen</em> (veld <em>Bluetooth-code</em>, firmware 0.9.9) of met
+  tracker wijzigen. Stel dus een eigen code in: hier, in <em>Toestellen</em> (veld <em>Bluetooth-code</em>, vanaf firmware 0.9.9) of met
   <code>set blepin</code>. De code staat nooit in een back-up.</div>
 
 <h3 style="break-before: page">Instellingen in de terminal</h3>
@@ -921,7 +922,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div class="cols menus" style="gap:3mm">
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.9       HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.10      HOOFDMENU
   ==============================================================
    Ploeg 3  |  modus companion (USB)  |  batterij 99%
    tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
@@ -940,7 +941,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.9       MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.9.10      MODUS EN KNOP
   ==============================================================
    Op batterij nu gekozen: tracker.
    Met USB altijd companion.
@@ -977,7 +978,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <div class="warn"><b>Het juiste pakket</b>De bootloader beschermt je alleen tussen de T1000-E en de RAK-borden (ze hebben een andere
   SoftDevice). Tussen de WisMesh Tag en de RAK3401 beschermt alleen de website: controleer dus zelf het gekozen toestel als je
   een pakket downloadt en met de hand flasht.</div>
-<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.9. Heeft een tracker oudere firmware, dan kent hij
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.10. Heeft een tracker oudere firmware, dan kent hij
   sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
   (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
 <ol class="steps">
@@ -1014,7 +1015,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 </div>
 <p>Het toestel krijgt de <strong>sleutel</strong>, zijn <strong>naam</strong>, de <strong>radio</strong>-instellingen, de
   <strong>regio</strong>, <strong>2 bytes per hop</strong> en het kanaal <em>Public</em>, en start in trackermodus; het
-  trackingkanaal zet je in de laatste stap. Had het al een andere sleutel, dan wordt die eerst als back-up gedownload.</p>
+  trackingkanaal zet je in de laatste stap. Tot dan stuurt het niets: op Public stuurt een tracker nooit. Had het al een andere
+  sleutel, dan wordt die eerst als back-up gedownload.</p>
 <div class="note"><b>Altijd 2 bytes per hop</b>MeshTrack gebruikt in het pad altijd minstens 2 bytes per repeater. Met 1 byte
   botsen de korte id's van repeaters te vaak in een druk net. De firmware zet 1 byte bij het opstarten zelf om naar 2.</div>
 
@@ -1039,13 +1041,31 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   een kanaal van de server, dan zet de pagina het kanaal (met sleutel en regio) en de authsleutel op de tracker. De server
   luistert mee op de kanalen onder <em>Systeem</em> → <em>Kanalen</em>. Als afzender staat de naam van de tracker, zodat je
   hem herkent in de MeshCore-app en in analyzers.</p>
+<div class="warn"><b>Nooit op een openbaar kanaal</b>De tracker stuurt nooit iets op een openbaar kanaal: niet op <em>Public</em>, en niet op
+  een #hashtag-kanaal waarvan de sleutel uit de naam volgt. Geen posities, geen SOS, geen antwoorden op verzoeken en geen
+  inhaalberichten; een klik geeft de lage toon. <code>status</code> toont dan <code>kanaal_fout=openbaar</code> met een regel
+  <em>LET OP</em>. Aanleiding: een WisMesh Tag die niet was klaargemaakt, stuurde zijn posities en een SOS zonder handtekening op
+  Public, voor iedereen zichtbaar.</div>
+<p>Een <strong>nieuwe of teruggezette tracker heeft geen trackingkanaal</strong> (<code>chan=-</code>, <code>kanaal_fout=geen</code>)
+  en stuurt niets tot hij klaargemaakt is. Bestaande trackers waarvan het trackingkanaal naar Public wees, zijn eenmalig op
+  <em>geen</em> gezet. Met <code>set chan -</code> zet je het trackingkanaal op geen; <code>set chan &lt;nr&gt;</code> weigert een
+  openbaar kanaal.</p>
+<h3>Zo maak je een tracker zonder trackingkanaal in orde</h3>
+<p>Daar is geen nieuwe firmware voor nodig, en ook geen <em>Klaarmaken</em> als de tracker zijn eigen sleutel houdt:</p>
+<ol class="steps">
+  <li>Steek de tracker met USB in de computer, ga naar <em>Toestellen</em> en klik op <em>Verbinden</em>.</li>
+  <li>Kies in <em>Instellingen</em> bij <em>Trackingkanaal</em> het MeshTrack-kanaal en klik op <em>Opslaan op de tracker</em>. De pagina
+    zet het kanaal op een vrij nummer (Public blijft staan), maakt de authsleutel en zet hem erop, en stelt de regio en het
+    trackingkanaal in.</li>
+  <li>Controleer met <code>status</code>: <code>authkey=ja</code> en <code>chan_naam=</code> met de naam van het MeshTrack-kanaal.</li>
+</ol>
+<p><strong>Via Bluetooth (Tracker live) lukt dit niet</strong>: de authsleutel en het kanaalnummer kun je alleen via USB instellen.</p>
+<p>Stuurt een gekende tracker toch op Public (oudere firmware), dan herkent de server hem, zonder zijn posities te bewaren. Hij krijgt
+  de badge <em>stuurt op Public – klaarmaken</em> in <em>Trackers</em> en op de kaart, en <em>Toestellen</em> en Tracker live tonen een
+  waarschuwing. Een meldingsregel met <em>stuurt op Public: niet klaargemaakt</em> verwittigt je.</p>
 <div class="note"><b>Controletekens</b>Op een kanaal kan iedereen met de sleutel berichten sturen. Daarom zet de tracker in elk
   kanaalbericht 8 controletekens, berekend uit zijn authsleutel. De server rekent ze na en weigert valse berichten. Je hoeft
   ze nergens in te geven; enkel de authsleutel gaat (automatisch) via USB naar de tracker.</div>
-<div class="note"><b>Geen bevestiging, één keer de mesh in</b>Een positiebericht krijgt geen ontvangstbevestiging (geen ACK) en
-  wordt niet opnieuw verstuurd: het gaat één keer de mesh in en de repeaters geven het door binnen de regio. Gaat er een verloren, dan reizen
-  de bewaarde punten mee met het volgende bericht, en in de trackmodus FIFO haalt de tracker ze later in (hoofdstuk 4). Alleen
-  op een SOS (<code>T1A</code>) en op ingehaalde punten (<code>T1F</code>) antwoordt de server, op hetzelfde kanaal.</div>
 <div class="warn"><b>Heel oude firmware</b>Tot firmware 0.6 kon een tracker zijn posities ook als privébericht (DM) rechtstreeks naar
   de server sturen. Dat bestaat niet meer: de server leest zulke berichten niet. Zo'n tracker verschijnt bij <em>Genegeerde
   berichten</em> met <em>oude firmware</em>. Flash hem naar de nieuwste firmware en kies een trackingkanaal.</div>
@@ -1455,8 +1475,12 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <tr><td class="k">Tracker verschijnt niet</td><td>Kijk in <em>Trackers</em> → <em>Genegeerde berichten</em>. Klopt de pubkey? Heeft hij
     een trackingkanaal dat de server kent, en de juiste authsleutel? Staat er <em>oude firmware</em>, flash dan de nieuwste firmware. Ziet een
     beheerder hem wel en een gebruiker niet, kijk dan naar diens <em>Effectieve rechten</em>.</td></tr>
-  <tr><td class="k">Lage toon na een klik</td><td>De tracker heeft geen (geldig) trackingkanaal, of geen repeater hoorde het bericht.
-    Kies een kanaal in Toestellen → Instellingen, of probeer op een plek met meer bereik.</td></tr>
+  <tr><td class="k">Lage toon na een klik</td><td>De tracker heeft geen (geldig) trackingkanaal, zijn trackingkanaal is openbaar
+    (<code>kanaal_fout=geen</code> of <code>openbaar</code> in <code>status</code>), of geen repeater hoorde het bericht. Kies een kanaal in
+    Toestellen → Instellingen (hoofdstuk 10), of probeer op een plek met meer bereik.</td></tr>
+  <tr><td class="k">Badge "stuurt op Public – klaarmaken"</td><td>De tracker is niet klaargemaakt en stuurt op Public (oudere firmware).
+    De server bewaart die posities niet. Maak hem in orde via USB: Toestellen → Instellingen → Trackingkanaal (hoofdstuk 10). Via
+    Bluetooth lukt dat niet.</td></tr>
   <tr><td class="k">SOS terwijl niemand iets deed</td><td>Waarschijnlijk werd de knop ingedrukt in een zak, tas of houder. Kijk hoe de tracker
     zit, of zet <em>SOS met de knop</em> uit (Toestellen → Knop en biepjes, of <code>set sos uit</code>).
     Uitschakelen door lang vasthouden blijft werken.</td></tr>
