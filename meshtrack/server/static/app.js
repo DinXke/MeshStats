@@ -33,6 +33,12 @@
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
+  // Het kaartvak verandert ook zonder venster-resize (lay-out nog niet klaar, zijbalk, onderpaneel,
+  // tablet): dan meteen meeschalen, anders blijft een strook grijs zonder tegels.
+  if (window.ResizeObserver) {
+    let rz = 0;
+    new ResizeObserver(() => { cancelAnimationFrame(rz); rz = requestAnimationFrame(() => map.resize()); }).observe(map.getContainer());
+  }
   if (devMaps.length || status.tiles) {          // waar komt de achtergrond vandaan?
     const src = document.createElement("div");
     src.id = "mapsrc";
@@ -128,12 +134,13 @@
   }
 
   // ---- tabs ------------------------------------------------------------------------
-  document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === b));
-    document.querySelectorAll(".pane").forEach((p) => { p.hidden = p.id !== "pane-" + b.dataset.tab; });
-    if (b.dataset.tab === "sim") refreshSims();
-    if (b.dataset.tab === "zones") refreshEvents();
-  }));
+  // role=tab, aria-selected en pijltjestoetsen via tabs.js; tabs zonder recht (hidden) worden overgeslagen
+  MTTabs.init(document.querySelector("#side .tabs"), {
+    onShow(n) {
+      if (n === "sim") refreshSims();
+      if (n === "zones") refreshEvents();
+    },
+  });
 
   // ---- kaartlagen --------------------------------------------------------------------
   function trackFeatures() {
@@ -464,6 +471,15 @@
   }
 
   function renderList() {
+    // De lijst wordt bij elk bericht opnieuw getekend: focus (toetsenbord) daarna terugzetten.
+    const fe = document.activeElement, fRow = fe && fe.closest && fe.closest("#list .trk");
+    const fKey = fRow ? [fRow.dataset.id, fe.classList.contains("fav") ? ".fav" : fe.classList.contains("vis") ? ".vis" : fe.dataset.follow ? "[data-follow]" : ".trkname"] : null;
+    try { drawList(); } finally {
+      if (fKey) { const el = $("list").querySelector(`.trk[data-id="${fKey[0]}"] ${fKey[1]}`); if (el) el.focus({ preventScroll: true }); }
+    }
+  }
+
+  function drawList() {
     const items = filtered();
     if (!items.length) {
       const any = [...trackers.values()].some((t) => t.active);
@@ -488,7 +504,8 @@
       return `<div class="trk${t.stale ? " stale" : ""}${t.id === selected ? " sel" : ""}${vis ? "" : " hiddenmap"}" data-id="${t.id}">
         <input type="checkbox" class="vis" data-vis="${t.id}"${vis ? " checked" : ""} aria-label="${MT.esc(t.alias)} op de kaart tonen" title="Op de kaart tonen">
         <span class="tico" style="background:${MT.esc(t.color)}">${ico}</span>
-        <div class="body"><div class="name">${MT.esc(t.alias)}${sim}${sos}</div>
+        <div class="body"><div class="name"><button type="button" class="trkname" aria-expanded="${t.id === selected}"
+          title="Details en spoor tonen">${MT.esc(t.alias)}</button>${sim}${sos}</div>
         <div class="meta">${MT.esc(meta)}</div><div class="meta">${MT.ago(t.last_rx)}</div>${stats}</div>
         <button class="fav${prefs.fav.has(t.id) ? " on" : ""}" data-fav="${t.id}" aria-label="Favoriet" title="Favoriet">${prefs.fav.has(t.id) ? "★" : "☆"}</button></div>`;
     }).join("");
@@ -558,6 +575,9 @@
     if (m && !m.getPopup().isOpen()) m.togglePopup();
     renderList();
     refreshLayers();
+    // de details (afstand, export, volgen) in beeld in de lijst of het onderpaneel
+    const row = $("list").querySelector(".trk.sel");
+    if (row) row.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }
 
   $("search").addEventListener("input", renderList);
@@ -609,8 +629,8 @@
     $("z-form").hidden = true;
     $("z-help").hidden = false;
     $("z-help").textContent = kind === "circle"
-      ? "Klik het middelpunt, beweeg en klik opnieuw voor de straal. Esc = stoppen."
-      : "Klik de hoekpunten. Dubbelklik of klik op het eerste punt om te sluiten. Esc = stoppen.";
+      ? "Tik of klik het middelpunt, beweeg en tik opnieuw voor de straal. Esc = stoppen."
+      : "Tik of klik de hoekpunten. Dubbeltik of tik op het eerste punt om te sluiten. Esc = stoppen.";
   }
 
   function endDraw() {
@@ -1022,7 +1042,7 @@
   const rqChanName = (cid) => ((chans.find((c) => c.id === cid) || {}).name || `kanaal ${cid}`);
   async function rqFetch(path, opts = {}) {             // zoals MT.api, maar met status en het antwoord van de server
     const r = await fetch(path, { ...opts, headers: opts.body ? { "Content-Type": "application/json" } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined });
-    if (r.status === 401) { location.href = "/login"; throw new Error("niet ingelogd"); }
+    if (r.status === 401) { location.href = "/login"; throw new Error("niet aangemeld"); }
     const j = await r.json().catch(() => ({}));
     return { status: r.status, ok: r.ok, j, retry: Number(j.retry_after || r.headers.get("Retry-After") || 0) };
   }

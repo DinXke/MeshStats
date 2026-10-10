@@ -3,11 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MeshTrack – offline</title>
+<title>MeshTrack – Offline-kaart</title>
+<!-- Deel van de ene MeshTrack-app (manifest en service worker van "/"). Het vroegere eigen
+     manifest (/offline.webmanifest) en de worker /offline-sw.js bestaan nog voor oude installaties. -->
 <meta name="theme-color" content="#0b6e4f">
-<link rel="manifest" href="/offline.webmanifest">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MeshTrack">
 <script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
 <link rel="stylesheet" href="/static/style.css">
@@ -90,8 +95,12 @@
     #opanel.dragging { transition: none; user-select: none; }
     #opanel .sheet-handle { display: block; flex: none; touch-action: none; cursor: ns-resize; padding: 10px 0 8px; }
     #opanel .sheet-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-    #otabs { flex: none; }
+    #otabs { display: none; }               /* de tabbalk onderaan (#obar) neemt het over */
+    #chat-btn { display: none; }            /* idem: "Chat" in de tabbalk */
     #opanel.sheet-hidden { display: none; }
+    #opanel .pane { padding-bottom: 12px; }
+    .sheet-show:not([hidden]) { bottom: calc(var(--mnav-h) + 12px + env(safe-area-inset-bottom)); }
+    #chat { bottom: 12px; height: min(calc(100% - 24px), 460px); }
   }
   /* Smalle telefoon (360–420 px): sinds de link "Tracker" paste de kop niet meer en werd de
      Bluetooth-pil afgeknipt. "online" is de gewone toestand en verdwijnt daarom; "offline" (waarschuwing)
@@ -106,14 +115,20 @@
 </head>
 <body class="offapp">
 <header class="top">
-  <h1>MeshTrack <span class="muted small" style="font-weight:400">offline</span></h1>
+  <h1>Offline-kaart</h1>
   <span class="spacer"></span>
-  <a href="/tracker" class="small" id="o-tracker">Tracker</a>
-  <a href="/" class="small" id="o-online" title="Volledige site: vraagt internet en aanmelden">Online kaart</a>
-  <a href="/help#offline" class="small">Help</a>
   <span id="net" class="pill netpill">…</span>
   <span id="btpill" class="pill">Bluetooth: uit</span>
 </header>
+<nav class="modenav" aria-label="Offline-modus">
+  <span class="modenav-l" title="Offline-modus: gegevens blijven op dit toestel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M8.5 16.1a5 5 0 017 0M5 12.5a10 10 0 014.2-2.4M2 8.8a15 15 0 014.1-2.6M14.8 10.3A10 10 0 0119 12.5M10.6 5.1A15 15 0 0122 8.8"/></svg><span class="modenav-t">Offline-modus</span><span class="modenav-x"> · gegevens blijven op dit toestel</span></span>
+  <span class="modeseg" role="group" aria-label="Offline-deel">
+    <a href="/offline" aria-current="page" id="o-map-link">Offline-kaart</a>
+    <a href="/tracker" id="o-tracker">Tracker live</a>
+  </span>
+  <a href="/help#offline" class="modehelp">Help</a>
+  <a href="/" class="modeonline" id="o-online" title="Volledige site: vraagt internet en aanmelden"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.8a15 15 0 0120 0M5 12.5a10 10 0 0114 0M8.5 16.1a5 5 0 017 0"/><circle cx="12" cy="19.5" r="1"/></svg><span>Online</span></a>
+</nav>
 <div class="offmain">
   <div id="omap">
     <button type="button" id="chat-btn" aria-controls="chat" aria-expanded="false">Chat <span id="chat-badge" hidden>0</span></button>
@@ -213,8 +228,8 @@
     <section class="pane" id="pane-data" hidden>
       <h3 class="small" style="margin-top:0">Thema</h3>
       <div class="themes" id="d-themes" role="group" aria-label="Thema"></div>
-      <p class="muted small" style="margin-top:6px">Hetzelfde thema als op de website van MeshTrack; nacht (rood) spaart je nachtzicht,
-        hoog contrast leest beter buiten in de zon.</p>
+      <p class="muted small" style="margin-top:6px">Hetzelfde thema als op de website van MeshTrack, ook voor de kaart. Nacht (rood) spaart je
+        nachtzicht; Zon (hoog contrast) leest beter buiten in fel licht.</p>
       <p class="muted small">De app haalt van de server alleen de kaarten. Wat je ontvangt, blijft op dit toestel; de
         namen van de trackers komen uit de contacten van de companion.</p>
       <h3 class="small">Op dit toestel</h3>
@@ -223,9 +238,37 @@
         <button id="d-export">Posities exporteren (CSV)</button>
         <button class="danger" id="d-clear">Alle posities wissen</button>
       </div>
+      <h3 class="small">App</h3>
+      <div class="row">
+        <button type="button" id="d-install" hidden>MeshTrack installeren</button>
+        <a class="btnlike" href="/start?kies=1" id="d-start">Beginscherm (Online of Offline)</a>
+      </div>
     </section>
   </aside>
 </div>
+<!-- gsm: tabbalk onderaan (zelfde patroon als Tracker live en de online site) -->
+<nav class="obar" id="obar" aria-label="Offline-kaart">
+  <button type="button" data-go="trk" aria-controls="pane-trk"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg><span>Trackers</span></button>
+  <button type="button" data-go="chat" aria-controls="chat" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Chat</span><b class="obadge" id="obar-badge" hidden>0</b></button>
+  <button type="button" data-go="bt" aria-controls="pane-bt"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg><span>Verbinding</span></button>
+  <button type="button" data-go="maps" aria-controls="pane-maps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg><span>Kaarten</span></button>
+  <button type="button" data-go="meer" aria-haspopup="dialog" aria-controls="omeer"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg><span>Meer</span></button>
+</nav>
+<dialog class="msheet" id="omeer" aria-labelledby="omeer-h">
+  <div class="msheet-grip" aria-hidden="true"></div>
+  <h2 id="omeer-h" class="msheet-h">Meer</h2>
+  <div class="msheet-list">
+    <button type="button" data-go="ch">Kanalen op de companion</button>
+    <button type="button" data-go="data">Gegevens en thema</button>
+    <button type="button" class="daynight" data-daynight aria-pressed="false"><svg class="dn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/></svg><span>Nachtmodus (rood)</span></button>
+    <a href="/tracker">Tracker live</a>
+    <button type="button" id="omeer-install" hidden>MeshTrack installeren</button>
+    <a href="/help#offline">Help</a>
+    <a href="/start?kies=1">Beginscherm (Online of Offline)</a>
+    <a href="/" class="msheet-online">Naar Online</a>
+  </div>
+  <button type="button" class="msheet-close" id="omeer-close">Sluiten</button>
+</dialog>
 <dialog id="ask-dlg" class="dlg" aria-labelledby="ask-h">
   <form id="ask-form" method="dialog">
     <h2 id="ask-h">Positie vragen</h2>
@@ -254,6 +297,8 @@
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/vendor/pmtiles.js"></script>
 <script src="/static/basemap.js"></script>
+<script src="/static/appnav.js"></script>
+<script src="/static/tabs.js"></script>
 <script src="/static/offline.js"></script>
 </body>
 </html>

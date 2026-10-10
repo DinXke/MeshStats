@@ -20,6 +20,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -42,7 +43,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.4.2"
+VERSION = "1.5.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -859,12 +860,16 @@ def page(name: str) -> HTMLResponse:
 
 
 # Bestanden die de service worker van de site (/sw.js) vooraf bewaart: wat de aangemelde
-# pagina's laden. Geen HTML met gegevens, geen firmware, geen pdf's.
-SITE_ASSETS = ("style.css", "statistieken.css", "vendor/maplibre-gl.css",
+# pagina's laden, sinds 1.5 ook die van /start, /offline en /tracker (één app). Geen HTML met
+# gegevens, geen firmware, geen pdf's. Een bestand dat (nog) niet bestaat, wordt overgeslagen.
+SITE_ASSETS = ("style.css", "statistieken.css", "vendor/maplibre-gl.css", "tracker.css", "offline.css",
                "common.js", "app.js", "admin.js", "device.js", "dfu.js", "serial.js", "simulatie.js", "icons.js",
                "kanalen.js", "log.js", "users.js", "system.js", "statistieken.js", "basemap.js",
+               "offline.js", "tracker.js", "start.js", "appnav.js", "tabs.js",
                "vendor/maplibre-gl.js", "vendor/pmtiles.js", "vendor/qrcode.js",
                "favicon.svg", "icon-192.png", "icon-512.png")
+# Openbare pagina's zonder gegevens waarvan de wijzigtijd meetelt in de BUILD van /sw.js.
+SITE_PAGES = ("offline-site.html", "start.html", "offline.html", "tracker.html")
 
 
 
@@ -951,7 +956,7 @@ PUBLIC = ("/login", "/api/login", "/static/", "/api/health", "/favicon", "/s/", 
           "/offline", "/offline-sw.js", "/manifest.webmanifest", "/api/offline/maps",
           "/tiles/offline/", "/tiles/fonts/", "/tiles/sprites/",
           "/tracker", "/tracker-sw.js", "/tracker.webmanifest",
-          "/sw.js", "/offline-site.html", "/offline.webmanifest")
+          "/sw.js", "/offline-site.html", "/offline.webmanifest", "/start")
 # De offline-app werkt volledig zonder account en gebruikt niets uit de database: wie de
 # kanaalsleutel kent, kan meelezen. Van de server komen alleen kaarten, lettertypes en
 # symbolen (gewone OpenStreetMap-gegevens).
@@ -959,6 +964,38 @@ PAGE_PERMS = {"/": ("map.view",), "/admin": ("trackers.manage", "sims.manage"), 
               "/users": ("users.manage", "share.manage"), "/log": ("log.view",), "/kanalen": ("map.view",),
               "/statistieken": ("map.view",),
               "/system": ("alerts.manage", "alerts.personal", "system.manage", "companion.view")}
+
+
+def _login_url(request: Request) -> str:
+    """/login, voor een gewone paginavraag met ?next=<pad> om daarna terug te keren."""
+    target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if request.method != "GET" or request.url.path == "/" or not auth.safe_next(target):
+        return "/login"
+    return "/login?" + urlencode({"next": target})
+
+
+def _secure(request: Request) -> bool:
+    return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+
+
+def _set_session(resp: Response, request: Request, username: str, gen: int) -> None:
+    resp.set_cookie(auth.COOKIE, auth.make_session(username, S.cfg.session_secret, S.cfg.session_days, gen),
+                    max_age=S.cfg.session_days * 86400, httponly=True, samesite="lax", secure=_secure(request))
+
+
+def _renew_session(request: Request, resp: Response) -> None:
+    """Glijdende sessie (1.5): wie de site gebruikt, blijft aangemeld. Hoogstens één keer per dag
+    een nieuwe cookie (zelfde gebruiker en generatie, dus een nieuw wachtwoord of deactiveren maakt
+    ook de vernieuwde sessie ongeldig). Niet als het antwoord zelf al de sessie zet of wist
+    (inloggen, uitloggen, wachtwoord wijzigen). Alles zonder schrijven in de database."""
+    tok = request.cookies.get(auth.COOKIE)
+    if not auth.needs_renewal(tok, S.cfg.session_secret, S.cfg.session_days):
+        return
+    if any(v.startswith(f"{auth.COOKIE}=") for v in resp.headers.getlist("set-cookie")):
+        return
+    info = auth.session_info(tok, S.cfg.session_secret)
+    if info:
+        _set_session(resp, request, info[0], info[1])
 
 
 @app.middleware("http")
@@ -969,17 +1006,19 @@ async def guard(request: Request, call_next):
     if p is None and not path.startswith(PUBLIC):
         if path.startswith("/api/") or path.startswith("/tiles"):
             return JSONResponse({"detail": "niet ingelogd"}, status_code=401)
-        return RedirectResponse("/login")
+        return RedirectResponse(_login_url(request))
     if p is not None and path in PAGE_PERMS and not any(p.can(x) for x in PAGE_PERMS[path]):
         return RedirectResponse("/" if p.can("map.view") and path != "/" else "/login?geen_toegang=1")
     resp: Response = await call_next(request)
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    if p is not None and p.kind == "user":
+        _renew_session(request, resp)
     if path.startswith("/tiles"):
         resp.headers["Cache-Control"] = "no-cache"
     elif path.startswith("/static") or path in ("/", "/admin", "/devices", "/login", "/users", "/help", "/log", "/system", "/kanalen",
-                                                       "/statistieken"):
+                                                       "/statistieken", "/start"):
         # Altijd hervalideren (ETag/Last-Modified -> 304): na een update nooit
         # een oude CSS/JS naast nieuwe HTML.
         resp.headers["Cache-Control"] = "no-cache"
@@ -1020,10 +1059,36 @@ async def offline_page():
     return page("offline.html")
 
 
+# Sinds 1.5 is er één app (scope "/"). Oude installaties van /offline en /tracker vragen hun eigen
+# worker en manifest nog op: die routes blijven. Ontbreekt het bestand, dan een ingebouwde
+# kill-switch (worker meldt zich af), nooit een 404 die de oude worker laat staan.
+_SW_KILL = ('self.addEventListener("install", () => self.skipWaiting());\n'
+            'self.addEventListener("activate", (e) => e.waitUntil(self.registration.unregister()));\n')
+
+
+def _sw_file(name: str, scope: str) -> Response:
+    headers = {"Cache-Control": "no-cache", "Service-Worker-Allowed": scope}
+    f = STATIC / name
+    if f.exists():
+        return FileResponse(f, media_type="text/javascript", headers=headers)
+    return Response(_SW_KILL, media_type="text/javascript", headers=headers)
+
+
+def _public_page(name: str) -> Response:
+    """Openbare pagina; bestaat het bestand (nog) niet, dan een nette 404 in plaats van een fout."""
+    if not (STATIC / name).exists():
+        return PlainTextResponse("Deze pagina bestaat niet.", status_code=404, headers={"Cache-Control": "no-cache"})
+    return page(name)
+
+
+@app.get("/start")
+async def start_page():
+    return _public_page("start.html")
+
+
 @app.get("/offline-sw.js")
 async def offline_sw():
-    return FileResponse(STATIC / "offline-sw.js", media_type="text/javascript",
-                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+    return _sw_file("offline-sw.js", "/")
 
 
 @app.get("/offline.webmanifest")
@@ -1044,13 +1109,15 @@ async def manifest():
 def site_sw() -> str:
     """sw.js met de lijst vooraf te bewaren bestanden (met hun ?v=) en een BUILD die verandert
     zodra één van die bestanden wijzigt: dan ziet de browser een nieuwe worker en toont de
-    pagina "Nieuwe versie beschikbaar – vernieuwen"."""
+    pagina "Nieuwe versie beschikbaar – vernieuwen".
+    De BUILD telt alle vooraf bewaarde bestanden mee (hun ?v=) plus de wijzigtijd van de openbare
+    pagina's (SITE_PAGES); dezelfde waarde komt in PAGES_V. Ontbrekende bestanden tellen niet mee."""
     src = (STATIC / "sw.js").read_text(encoding="utf-8")
-    assets = [_static_url(a) for a in SITE_ASSETS]
-    page_html = STATIC / "offline-site.html"
-    stamp = "|".join(assets + [str(int(page_html.stat().st_mtime))])
-    build = hashlib.sha256(stamp.encode()).hexdigest()[:12]
+    assets = [_static_url(a) for a in SITE_ASSETS if (STATIC / a).exists()]
+    pages = [f"{n}:{int((STATIC / n).stat().st_mtime)}" for n in SITE_PAGES if (STATIC / n).exists()]
+    build = hashlib.sha256("|".join(assets + pages).encode()).hexdigest()[:12]
     src = src.replace('const BUILD = "dev";', f'const BUILD = "{build}";', 1)
+    src = src.replace('const PAGES_V = "";', f'const PAGES_V = "{build}";', 1)
     return src.replace("const ASSETS = [];", f"const ASSETS = {json.dumps(assets)};", 1)
 
 
@@ -1100,8 +1167,7 @@ async def tracker_page():
 
 @app.get("/tracker-sw.js")
 async def tracker_sw():
-    return FileResponse(STATIC / "tracker-sw.js", media_type="text/javascript",
-                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/tracker"})
+    return _sw_file("tracker-sw.js", "/tracker")
 
 
 @app.get("/tracker.webmanifest")
@@ -1121,7 +1187,13 @@ async def help_page():
 
 
 @app.get("/login")
-async def login_page():
+async def login_page(request: Request, next: str = ""):
+    """Loginpagina. Is de gebruiker al aangemeld en staat er een geldig ?next=, dan meteen daarheen
+    (bv. een geïnstalleerde app met een nog geldige sessie)."""
+    p = getattr(request.state, "p", None)
+    target = auth.safe_next(next)
+    if p is not None and p.kind == "user" and target:
+        return RedirectResponse(target)
     return page("login.html")
 
 
@@ -1144,13 +1216,14 @@ async def open_share(token: str, request: Request):
 class Login(BaseModel):
     user: str
     password: str
+    next: Optional[str] = None      # 1.5: waarheen na het inloggen (ook als ?next= op /api/login)
 
 
 _fails: dict[str, list[float]] = {}
 
 
 @app.post("/api/login")
-async def login(body: Login, request: Request):
+async def login(body: Login, request: Request, next: str = ""):
     ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
     recent = [t for t in _fails.get(ip, []) if t > time.time() - 300]
     if len(recent) >= 10:
@@ -1163,11 +1236,9 @@ async def login(body: Login, request: Request):
     _fails.pop(ip, None)
     S.db.update_user(user["id"], last_login=int(time.time()))
     S.db.audit(user["username"], "ingelogd", ip)
-    resp = JSONResponse({"ok": True})
-    secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
-    resp.set_cookie(auth.COOKIE, auth.make_session(user["username"], S.cfg.session_secret, S.cfg.session_days,
-                                                   user["session_gen"]),
-                    max_age=S.cfg.session_days * 86400, httponly=True, samesite="lax", secure=secure)
+    # Het doel komt al gecontroleerd terug: alleen een eigen pad, anders "/".
+    resp = JSONResponse({"ok": True, "next": auth.safe_next(body.next or next) or "/"})
+    _set_session(resp, request, user["username"], user["session_gen"])
     resp.delete_cookie(SHARE_COOKIE)
     return resp
 
@@ -2090,8 +2161,12 @@ EVENT_TYPES = {
 
 @app.get("/api/events")
 async def events(request: Request, tracker: str = "", types: str = "", hours: float = 24, since: int = 0,
-                 until: int = 0, limit: int = 500):
+                 until: int = 0, limit: int = 500, offset: int = 0):
+    """Logboek. 1.5: bladeren met offset (+ limit); "more" zegt of er nog oudere zijn. Voor
+    stabiele pagina's geeft de pagina voor "Meer laden" de since/until van het eerste antwoord mee."""
     p = need(request, "log.view")
+    limit = min(max(limit, 1), 5000)
+    offset = min(max(offset, 0), 100_000)
     now = int(time.time())
     until = until or now
     since = since or int(until - p.max_hours(min(max(hours, 0.1), 24 * 365)) * 3600)
@@ -2104,7 +2179,7 @@ async def events(request: Request, tracker: str = "", types: str = "", hours: fl
     if not p.can("zones.view"):
         wanted = [w for w in wanted if not w.startswith("zone")]
     rows = S.db.events(ids, [w for w in wanted if len(w) == 1], since, until, "zone_in" in wanted or "zone_out" in wanted,
-                       "bat_low" in wanted, "suspect" in wanted, min(max(limit, 1), 5000),
+                       "bat_low" in wanted, "suspect" in wanted, offset + limit + 1,
                        "usb_on" in wanted or "usb_off" in wanted)
     rows = [r for r in rows if not r["type"].startswith("usb") or r["type"] in wanted]
     if "lost_seen" in wanted:
@@ -2116,7 +2191,9 @@ async def events(request: Request, tracker: str = "", types: str = "", hours: fl
         rows = [r for r in rows if r["type"] != "zone_out"]
     if not p.can("map.details"):
         rows = [{k: v for k, v in r.items() if k not in ("snr", "path_len", "hdop")} for r in rows]
-    return {"types": EVENT_TYPES, "since": since, "until": until, "events": rows}
+    more = len(rows) > offset + limit
+    return {"types": EVENT_TYPES, "since": since, "until": until, "events": rows[offset:offset + limit],
+            "offset": offset, "more": more}
 
 
 def _lost_events(ids: Optional[list[int]], since: int, until: int) -> list[dict[str, Any]]:
@@ -2715,9 +2792,11 @@ async def alerts_log(request: Request, limit: int = 200):
 
 
 @app.get("/api/audit")
-async def audit_log(request: Request, limit: int = 200):
+async def audit_log(request: Request, limit: int = 200, offset: int = 0, before_id: int = 0):
+    """Auditregels, nieuwste eerst. 1.5: bladeren met before_id (id van de laatst getoonde regel,
+    stabiel als er intussen regels bijkomen) of offset."""
     need(request, "users.manage")
-    return S.db.audit_log(min(max(limit, 1), 1000))
+    return S.db.audit_log(min(max(limit, 1), 1000), max(offset, 0), max(before_id, 0))
 
 
 # ---- live ------------------------------------------------------------------------

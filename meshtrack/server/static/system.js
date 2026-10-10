@@ -32,14 +32,9 @@
       <div class="chipsline">${x.events.map((e) => `<span class="pill">${MT.esc(events[e] || e)}</span>`).join(" ")}</div>
       <div class="muted small">${x.trackers.length || (x.channels || []).length ? [...(x.channels || []).map((id) => "kanaal " + MT.esc(chName(id))), ...x.trackers.map((id) => MT.esc((trackers.find((t) => t.id === id) || {}).alias || "#" + id))].join(", ") : "alle trackers"}
         → ${x.recipients.map((c) => MT.esc(c.name || c.pubkey.slice(0, 8))).join(", ")}</div></div>
-      <div class="actions"><button data-test="${x.id}">Test</button><button data-edit="${x.id}">Bewerken</button>
-        <button class="danger" data-del="${x.id}">Verwijderen</button></div></div>`).join("")
+      <div class="actions"><button data-test="${x.id}">Test</button><button data-edit="${x.id}">Bewerken</button></div></div>`).join("")
       || '<div class="empty">Nog geen meldingsregels.</div>';
     document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => openRule(rules.find((r) => r.id === Number(b.dataset.edit)))));
-    document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
-      if (!(await MT.confirm("Deze meldingsregel verwijderen?", { ok: "Verwijderen", danger: true }))) return;
-      await MT.api(`/api/alerts/${b.dataset.del}`, { method: "DELETE" }); loadRules();
-    }));
     document.querySelectorAll("[data-test]").forEach((b) => b.addEventListener("click", async () => {
       const r = await MT.api(`/api/alerts/${b.dataset.test}/test`, { method: "POST" });
       b.textContent = `${r.queued} in de wachtrij`;
@@ -74,12 +69,19 @@
     $("r-personal").checked = r ? !!r.mine : !canShared;
     $("r-personal").disabled = !!r || !(canShared && canPersonal);
     $("r-personal-wrap").hidden = !(canShared && canPersonal) && !r;
+    $("r-del").hidden = !r;                    // verwijderen: in het bewerkvenster, niet in de lijst
     msg($("r-msg"), "");
     $("r-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
   $("r-alltr").addEventListener("change", () => { $("r-trwrap").hidden = $("r-alltr").checked; });
   $("r-new").addEventListener("click", () => openRule(null));
   $("r-cancel").addEventListener("click", () => { $("r-form").hidden = true; });
+  $("r-del").addEventListener("click", async () => {
+    const id = $("r-id").value;
+    if (!id || !(await MT.confirm("Deze meldingsregel verwijderen?", { ok: "Verwijderen", danger: true }))) return;
+    try { await MT.api(`/api/alerts/${id}`, { method: "DELETE" }); $("r-form").hidden = true; loadRules(); }
+    catch (err) { msg($("r-msg"), err.message); }
+  });
   $("r-add").addEventListener("click", () => {
     const pk = $("r-contact").value;
     if (!pk || rcpts.some((c) => c.pubkey === pk)) return;
@@ -133,7 +135,7 @@
           ${c.require_sig ? '<span class="pill">ondertekend</span>' : '<span class="pill warn">ook niet-ondertekend</span>'}</div>
         <div class="muted small">regio ${MT.esc(c.region || "geen")} · ${c.members} tracker(s) sturen via dit kanaal ·
           <a href="/?kanaal=${c.id}">kaart van dit kanaal</a></div></div>
-      <div class="actions"><button data-cqr="${c.id}">QR-code</button><button data-cedit="${c.id}">Bewerken</button><button class="danger" data-cdel="${c.id}">Verwijderen</button></div></div>`).join("")
+      <div class="actions"><button data-cqr="${c.id}">QR-code</button><button data-cedit="${c.id}">Bewerken</button></div></div>`).join("")
       || '<div class="empty">Nog geen kanalen. Maak er een: trackers sturen alleen via een kanaal.</div>';
     document.querySelectorAll("[data-cedit]").forEach((b) => b.addEventListener("click", () => openChannel(chans.find((c) => c.id === Number(b.dataset.cedit)))));
     document.querySelectorAll("[data-cqr]").forEach((b) => b.addEventListener("click", () => {
@@ -152,12 +154,14 @@
       $("c-qrclose").addEventListener("click", () => { $("c-qr").hidden = true; });
       $("c-qr").scrollIntoView({ behavior: "smooth", block: "nearest" });
     }));
-    document.querySelectorAll("[data-cdel]").forEach((b) => b.addEventListener("click", async () => {
-      const c = chans.find((x) => x.id === Number(b.dataset.cdel));
-      if (!(await MT.confirm(`Kanaal "${c.name}" verwijderen? De server luistert dan niet meer mee; trackers die erop sturen, worden niet meer ontvangen.`, { ok: "Verwijderen", danger: true }))) return;
-      await MT.api(`/api/channels/${c.id}`, { method: "DELETE" }); loadChannels();
-    }));
   }
+  // verwijderen: in het bewerkvenster
+  $("c-del").addEventListener("click", async () => {
+    const c = chans.find((x) => x.id === Number($("c-id").value));
+    if (!c || !(await MT.confirm(`Kanaal "${c.name}" verwijderen? De server luistert dan niet meer mee; trackers die erop sturen, worden niet meer ontvangen.`, { ok: "Verwijderen", danger: true }))) return;
+    try { await MT.api(`/api/channels/${c.id}`, { method: "DELETE" }); $("c-form").hidden = true; loadChannels(); }
+    catch (err) { msg($("c-msg"), err.message); }
+  });
   function openChannel(c) {
     $("c-form").hidden = false;
     $("c-id").value = c ? c.id : "";
@@ -170,6 +174,7 @@
     $("c-sig").checked = c ? c.require_sig : true;
     $("c-region").value = c ? (c.region || "") : "be";
     $("c-active").checked = c ? c.active : true;
+    $("c-del").hidden = !c;
     msg($("c-msg"), "");
   }
   $("c-new").addEventListener("click", () => openChannel(null));

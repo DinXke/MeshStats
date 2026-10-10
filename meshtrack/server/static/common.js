@@ -6,7 +6,7 @@ const MT = {
       headers: opts.body ? { "Content-Type": "application/json" } : {},
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
-    if (r.status === 401) { location.href = "/login"; throw new Error("niet ingelogd"); }
+    if (r.status === 401) { location.href = MT.loginUrl(); throw new Error("niet ingelogd"); }
     if (r.status === 403 && !opts.quiet403) throw new Error("geen toegang");
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || r.statusText);
@@ -34,7 +34,7 @@ const MT = {
     return `${Math.round(s / 86400)} d geleden`;
   },
 
-  STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd", W: "wakker door beweging", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)", V: "op verzoek" },
+  STATE: { M: "rijdt/stapt", S: "stilgevallen", H: "levensteken", N: "geen GPS-fix", E: "SOS", B: "modus", P: "handmatig verstuurd", W: "wakker door beweging", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)", V: "op verzoek" },
   MODE: { c: "companion", t: "tracker" },
 
   TOWNS: [
@@ -68,8 +68,11 @@ const MT = {
   },
 
   // ---- thema's --------------------------------------------------------------------
-  THEMES: { auto: "Automatisch", light: "Licht", dark: "Donker", night: "Nacht (rood)", contrast: "Hoog contrast", ocean: "Oceaan" },
-  theme() { return MT.prefGet("theme", "auto"); },
+  // Vijf thema's, ook in /start, Offline-kaart en Tracker live (appnav.js, zelfde sleutel mt.theme).
+  // "contrast" heet Zon (sleutel blijft); een oude keuze "ocean" valt terug op Automatisch.
+  THEMES: { auto: "Automatisch", light: "Licht", dark: "Donker", night: "Nacht (rood)", contrast: "Zon (hoog contrast)" },
+  THEME_SHORT: { auto: "Auto", light: "Licht", dark: "Donker", night: "Nacht", contrast: "Zon" },
+  theme() { const t = MT.prefGet("theme", "auto"); return MT.THEMES[t] ? t : "auto"; },
   isDark() {
     const t = MT.theme();
     if (t === "dark" || t === "night") return true;
@@ -81,13 +84,57 @@ const MT = {
     else document.documentElement.setAttribute("data-theme", t);
     document.dispatchEvent(new CustomEvent("mt-theme"));
   },
-  setTheme(t) { MT.prefSet("theme", t); MT.applyTheme(t); },
+  setTheme(t) {
+    if (!MT.THEMES[t]) t = "auto";
+    MT.prefSet("theme", t);
+    if (t !== "night") { try { localStorage.setItem("mt.theme.day", t); } catch (_) { /* geen opslag */ } }
+    MT.applyTheme(t);
+    MT.drawThemes();
+  },
+  // Dag/Nacht in één tik: tussen het laatst gebruikte dagthema en Nacht.
+  toggleNight() {
+    let day = "auto";
+    try { day = localStorage.getItem("mt.theme.day") || "auto"; } catch (_) { /* geen opslag */ }
+    MT.setTheme(MT.theme() === "night" ? (MT.THEMES[day] && day !== "night" ? day : "auto") : "night");
+  },
+  /* Themakiezer: kleine voorbeelden (kleuren van elk thema, naam eronder), aria-pressed. */
+  drawThemes() {
+    const cur = MT.theme();
+    document.querySelectorAll("#um-themes, #ms-themes").forEach((tb) => {
+      tb.classList.add("thpick");
+      tb.innerHTML = Object.entries(MT.THEMES).map(([k, v]) => `<button type="button" class="thsw" data-th="${k}" aria-pressed="${cur === k}" aria-label="${v}" title="${v}"><span class="thsw-p" aria-hidden="true"><i></i><b></b></span><span class="thsw-n" aria-hidden="true">${MT.THEME_SHORT[k]}</span></button>`).join("");
+      tb.querySelectorAll("[data-th]").forEach((b) => b.addEventListener("click", () => MT.setTheme(b.dataset.th)));
+    });
+    document.querySelectorAll("[data-daynight]").forEach((b) => b.setAttribute("aria-pressed", String(cur === "night")));
+  },
   can(perm) { return !!(MT.me && MT.me.perms.includes(perm)); },
 
-  /* Kopbalk: menu volgens de rechten, gebruikersmenu met wachtwoord en uitloggen. */
+  /* Aanmeldpagina met de weg terug (/login?next=<deze pagina>). */
+  loginUrl() {
+    const here = location.pathname + location.search + location.hash;
+    return here && here !== "/" && !here.startsWith("/login") ? "/login?next=" + encodeURIComponent(here) : "/login";
+  },
+
+  /* Afmelden: bevestigen (offline-gegevens blijven), de bewaarde startkeuze vergeten. */
+  async logout() {
+    const ok = await MT.confirm("Je wordt afgemeld op dit toestel. Offline-kaarten, posities en chat van de offline-modus blijven bewaard.",
+      { ok: "Afmelden", title: "Afmelden" });
+    if (!ok) return;
+    try { localStorage.removeItem("mt.start"); } catch (_) { /* geen opslag */ }
+    try { await MT.api("/api/logout", { method: "POST" }); } catch (_) { /* toch naar de aanmeldpagina */ }
+    location.href = "/login";
+  },
+
+  /* Kopbalk en navigatie (één app voor gsm, tablet en computer):
+     - gsm (≤ 720 px): tabbalk onderaan (Kaart · Trackers · Tracker live · Meer) en een Meer-venster
+       met de andere pagina's volgens de rechten, Offline, thema, help, installeren en afmelden;
+     - breder: de pagina's in de kopbalk; wat niet past, schuift in "Meer ▾" (nooit horizontaal
+       scrollen), plus de schakelaar Online | Offline en het gebruikersmenu. */
   async initHeader(active) {
     MT.me = await MT.api("/api/me");
     MT.applyTheme(MT.theme());
+    try { if (MT.pwa.standalone()) sessionStorage.setItem("mt.inapp", "1"); } catch (_) { /* geen opslag */ }
+    const allowed = (p) => !p || (Array.isArray(p) ? p.some(MT.can) : MT.can(p));
     const links = [
       ["/", "Kaart", "map.view"], ["/log", "Logboek", "log.view"], ["/kanalen", "Kanalen", "map.view"],
       ["/statistieken", "Statistieken", "map.view"],
@@ -95,46 +142,107 @@ const MT = {
       ["/devices", "Toestellen", "trackers.serial"],
       ["/users", "Gebruikers", ["users.manage", "share.manage"]],
       ["/system", "Systeem", ["alerts.manage", "alerts.personal", "system.manage", "companion.view"]],
-      ["/help", "Help", null],
-    ];
-    // losse apps: voor elke ingelogde gebruiker, als kleine groep achteraan (op een gsm in hetzelfde menu)
-    const apps = [["/offline", "Offline-kaart"], ["/tracker", "Tracker live"]];
-    const nav = document.querySelector("header.top nav");
-    if (nav) {
-      const a = ([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ""}>${label}</a>`;
-      nav.innerHTML = links.filter(([href, , p]) => (!p || (Array.isArray(p) ? p.some(MT.can) : MT.can(p)))
-          && !(href === "/statistieken" && MT.me.kind !== "user")).map(a).join("")
-        + (MT.me.kind === "user" ? `<span class="navapps" role="group" aria-label="Apps"><span class="navapps-l">Apps</span>${apps.map(a).join("")}</span>` : "");
-    }
+    ].filter(([href, , p]) => allowed(p) && !(href === "/statistieken" && MT.me.kind !== "user"));
+    const offline = [["/offline", "Offline-kaart"], ["/tracker", "Tracker live"], ["/start?kies=1", "Beginscherm"]];
+    const esc = MT.esc;
+    const a = ([href, label], cls = "") => `<a href="${href}"${href === active ? ' class="on" aria-current="page"' : (cls ? ` class="${cls}"` : "")}>${esc(label)}</a>`;
     const hdr = document.querySelector("header.top");
-    if (hdr && nav && !hdr.querySelector(".navtoggle")) {     // gsm: menuknop
-      hdr.querySelector("h1").insertAdjacentHTML("beforebegin",
-        '<button type="button" class="navtoggle" aria-label="Menu" aria-expanded="false">☰</button>');
-      const tg = hdr.querySelector(".navtoggle");
-      tg.addEventListener("click", () => {
-        const open = hdr.classList.toggle("navopen");
-        tg.setAttribute("aria-expanded", String(open));
-      });
+    const nav = hdr && hdr.querySelector("nav");
+    const user = MT.me.kind === "user";
+
+    // ---- breed scherm: kopbalk -------------------------------------------------------
+    if (nav) {
+      nav.setAttribute("aria-label", "Pagina's");
+      nav.innerHTML = links.map((l) => a(l)).join("")
+        + `<details class="navmore"><summary>Meer</summary><div class="menu" role="group" aria-label="Meer pagina's">
+            <div class="navmore-over"></div>
+            <div class="navmore-l">Offline</div>${offline.map((l) => a(l)).join("")}
+            <div class="navmore-sep"></div>${a(["/help", "Help"])}</div></details>`;
+      nav.insertAdjacentHTML("afterend", `<span class="modesw" role="group" aria-label="Online of offline">
+        <a href="/" aria-current="true" title="Online: de volledige site (je bent hier)">Online</a><a href="/offline" title="Offline-kaart en Tracker live, zonder internet">Offline</a></span>`);
+      const more = nav.querySelector(".navmore");
+      const over = more.querySelector(".navmore-over");
+      const items = [...nav.querySelectorAll(":scope > a")];
+      // "Priority+": de laatste pagina's naar Meer tot de kopbalk past. De actieve pagina blijft zichtbaar.
+      const fit = () => {
+        items.forEach((x) => more.before(x));
+        if (innerWidth <= 720) return;
+        const tooWide = () => hdr.scrollWidth > hdr.clientWidth + 1;
+        for (let i = items.length - 1; i > 0 && tooWide(); i--) {
+          if (items[i].classList.contains("on") && i > 1) { over.prepend(items[i - 1]); i--; continue; }
+          over.prepend(items[i]);
+        }
+      };
+      MT._fitHeader = fit;
+      let t = null;
+      addEventListener("resize", () => { clearTimeout(t); t = setTimeout(fit, 80); });
+      fit();
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+      document.addEventListener("click", (e) => { if (more.open && !more.contains(e.target)) more.open = false; });
+      more.addEventListener("keydown", (e) => { if (e.key === "Escape") { more.open = false; more.querySelector("summary").focus(); } });
     }
     document.querySelectorAll(".msg").forEach((m) => { if (!m.hasAttribute("aria-live")) m.setAttribute("aria-live", "polite"); });
     if (hdr && MT.me.kind === "share" && !document.getElementById("sharelogin")) {
-      hdr.insertAdjacentHTML("beforeend", '<a id="sharelogin" class="btnlink" href="/login">Inloggen</a>');
+      hdr.insertAdjacentHTML("beforeend", `<a id="sharelogin" class="btnlink" href="${MT.loginUrl()}">Aanmelden</a>`);
     }
-    if (hdr && !document.getElementById("usermenu") && MT.me.kind === "user") {
-      hdr.insertAdjacentHTML("beforeend", `<details id="usermenu" class="usermenu"><summary title="${MT.esc(MT.me.group)}">
-        <span class="avatar">${MT.esc((MT.me.display || "?").slice(0, 1).toUpperCase())}</span></summary>
-        <div class="menu"><div class="who"><strong>${MT.esc(MT.me.display)}</strong><div class="muted small">${MT.esc(MT.me.group)}</div></div>
-        <div class="muted small">Thema</div><div class="themes" id="um-themes"></div>
-        <button type="button" id="um-pw">Wachtwoord wijzigen</button><button type="button" id="um-out">Uitloggen</button></div></details>`);
-      const tb = document.getElementById("um-themes");
-      const drawThemes = () => {
-        tb.innerHTML = Object.entries(MT.THEMES).map(([k, v]) => `<button type="button" data-th="${k}"${MT.theme() === k ? ' class="on"' : ""}>${v}</button>`).join("");
-        tb.querySelectorAll("[data-th]").forEach((b) => b.addEventListener("click", () => { MT.setTheme(b.dataset.th); drawThemes(); }));
-      };
-      drawThemes();
-      document.getElementById("um-out").addEventListener("click", async () => { await MT.api("/api/logout", { method: "POST" }); location.href = "/login"; });
+    if (hdr && !document.getElementById("usermenu") && user) {
+      hdr.insertAdjacentHTML("beforeend", `<details id="usermenu" class="usermenu"><summary title="${esc(MT.me.group)}" aria-label="Gebruikersmenu">
+        <span class="avatar">${esc((MT.me.display || "?").slice(0, 1).toUpperCase())}</span></summary>
+        <div class="menu"><div class="who"><strong>${esc(MT.me.display)}</strong><div class="muted small">${esc(MT.me.group)}</div></div>
+        <div class="muted small">Thema</div><div class="themes" id="um-themes" role="group" aria-label="Thema"></div>
+        <button type="button" class="daynight" data-daynight aria-pressed="false"><svg class="dn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/></svg><span>Nachtmodus (rood)</span></button>
+        <button type="button" id="um-pw">Wachtwoord wijzigen</button><button type="button" id="um-out">Afmelden</button></div></details>`);
+      document.getElementById("um-out").addEventListener("click", MT.logout);
       document.getElementById("um-pw").addEventListener("click", MT.passwordDialog);
     }
+
+    // ---- gsm: tabbalk onderaan + Meer-venster ---------------------------------------------
+    if (hdr && !document.getElementById("mnav")) {
+      const has = (h) => links.some(([x]) => x === h);
+      const ico = {
+        map: '<path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/>',
+        trk: '<circle cx="12" cy="10" r="3"/><path d="M12 21s-7-6.2-7-11a7 7 0 0114 0c0 4.8-7 11-7 11z"/>',
+        log: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+        live: '<path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+        more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+      };
+      const tab = (href, label, i) => `<a href="${href}"${href === active ? ' class="on" aria-current="page"' : ""}><svg viewBox="0 0 24 24" aria-hidden="true">${ico[i]}</svg><span>${esc(label)}</span></a>`;
+      const second = has("/admin") ? ["/admin", "Trackers", "trk"] : has("/log") ? ["/log", "Logboek", "log"] : null;
+      const inBar = ["/", second && second[0], "/tracker"].filter(Boolean);
+      document.body.insertAdjacentHTML("beforeend", `<nav class="mnav" id="mnav" aria-label="Hoofdmenu">
+        ${has("/") ? tab("/", "Kaart", "map") : ""}${second ? tab(...second) : ""}${tab("/tracker", "Tracker live", "live")}
+        <button type="button" id="mnav-more" aria-haspopup="dialog" aria-controls="msheet"${!inBar.includes(active) ? ' class="on"' : ""}><svg viewBox="0 0 24 24" aria-hidden="true">${ico.more}</svg><span>Meer</span></button></nav>
+        <dialog class="msheet" id="msheet" aria-labelledby="msheet-h">
+          <div class="msheet-grip" aria-hidden="true"></div>
+          ${user ? `<div class="msheet-who"><span class="avatar">${esc((MT.me.display || "?").slice(0, 1).toUpperCase())}</span><div><strong id="msheet-h">${esc(MT.me.display)}</strong><div class="muted small">${esc(MT.me.group)}</div></div></div>`
+            : `<h2 class="msheet-h" id="msheet-h">Meer</h2>`}
+          <div class="msheet-list">
+            ${links.filter(([h]) => !inBar.includes(h)).length ? `<div class="msheet-l">Pagina's</div>${links.filter(([h]) => !inBar.includes(h)).map((l) => a(l)).join("")}` : ""}
+            <div class="msheet-l">Offline</div>
+            <a href="/offline" class="msheet-off">Naar offline-modus (Offline-kaart)</a>
+            <a href="/start?kies=1">Beginscherm (Online of Offline)</a>
+            <div class="msheet-l">Thema</div><div class="themes" id="ms-themes" role="group" aria-label="Thema"></div>
+            <button type="button" class="daynight" data-daynight aria-pressed="false"><svg class="dn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/></svg><span>Nachtmodus (rood)</span></button>
+            ${a(["/help", "Help"])}
+            <button type="button" id="ms-install" hidden>Installeren</button>
+            ${user ? '<button type="button" id="ms-pw">Wachtwoord wijzigen</button><button type="button" id="ms-out">Afmelden</button>'
+              : `<a href="${MT.loginUrl()}">Aanmelden</a>`}
+          </div>
+          <button type="button" class="msheet-close" id="msheet-close">Sluiten</button>
+        </dialog>`);
+      document.body.classList.add("has-mnav");
+      const sh = document.getElementById("msheet");
+      document.getElementById("mnav-more").addEventListener("click", () => sh.showModal());
+      document.getElementById("msheet-close").addEventListener("click", () => sh.close());
+      sh.addEventListener("click", (e) => { if (e.target === sh) sh.close(); });          // tik naast het venster
+      if (user) {
+        document.getElementById("ms-out").addEventListener("click", () => { sh.close(); MT.logout(); });
+        document.getElementById("ms-pw").addEventListener("click", () => { sh.close(); MT.passwordDialog(); });
+      }
+    }
+    // Thema-knoppen (gebruikersmenu en Meer-venster)
+    document.querySelectorAll("[data-daynight]").forEach((b) => b.addEventListener("click", () => MT.toggleNight()));
+    MT.drawThemes();
     MT.pwa.ui();
     return MT.me;
   },
@@ -260,7 +368,7 @@ const MT = {
       ws.onopen = () => { delay = 1000; };
       ws.onmessage = (e) => onMsg(JSON.parse(e.data));
       ws.onclose = (e) => {
-        if (e.code === 4401) { location.href = "/login"; return; }
+        if (e.code === 4401) { location.href = MT.loginUrl(); return; }
         setTimeout(open, delay); delay = Math.min(delay * 2, 30000);
       };
     };
@@ -268,10 +376,11 @@ const MT = {
   },
 };
 
-/* ---- de site als app (PWA): service worker, nieuwe versie, installeren ----------------
-   /sw.js (scope "/") bewaart alleen scripts, stijl en iconen, nooit pagina's of gegevens.
-   /offline en /tracker hebben elk hun eigen worker; die zetten we hier alvast klaar, zodat
-   ze ook zonder verbinding openen (de pagina "Geen verbinding" verwijst ernaar). */
+/* ---- de ene MeshTrack-app (PWA): service worker, nieuwe versie, installeren -------------
+   /sw.js (scope "/") bewaart het offline-deel (/start, /offline, /tracker) vooraf, plus scripts,
+   stijl en iconen; nooit pagina's of gegevens van de online site. De vroegere losse workers van
+   /offline en /tracker melden zich zelf af zodra deze klaar is; hier vragen we alleen hun update
+   (zodat die laatste versie binnenkomt). Zelfde logica als appnav.js (offline-deel). */
 MT.pwa = (() => {
   let prompt = null;                     // uitgesteld beforeinstallprompt-event
   const store = {
@@ -307,6 +416,21 @@ MT.pwa = (() => {
       });
     }
     if (b) b.hidden = !want;
+    const ms = document.getElementById("ms-install");          // Meer-venster (gsm)
+    if (ms) {
+      ms.hidden = !want;
+      if (!ms.dataset.on) {
+        ms.dataset.on = "1";
+        ms.addEventListener("click", async () => {
+          const p = prompt;
+          if (!p) return;
+          prompt = null;
+          const sh = document.getElementById("msheet"); if (sh && sh.open) sh.close();
+          try { p.prompt(); await p.userChoice; } catch (_) { /* geweigerd of niet meer geldig */ }
+          installButton();
+        });
+      }
+    }
   }
 
   // iPhone/iPad kent geen installeerknop: één keer uitleggen hoe het wel gaat.
@@ -332,15 +456,26 @@ MT.pwa = (() => {
     b.onclick = () => { reloading = true; b.disabled = true; w.postMessage({ type: "skip" }); };
   }
 
-  // De losse apps alvast installeren (alleen als hun eigen worker er nog niet staat).
-  async function primeApps() {
-    for (const [script, scope] of [["/offline-sw.js", "/offline"], ["/tracker-sw.js", "/tracker"]]) {
-      try {
-        const r = await navigator.serviceWorker.getRegistration(scope);
-        if (r && new URL(r.scope).pathname === scope) continue;
-        await navigator.serviceWorker.register(script, { scope });
-      } catch (_) { /* niet erg: de app installeert zich ook bij het eerste bezoek */ }
+  // Oude losse apps (/offline, /tracker met een eigen worker): update vragen zodat hun laatste,
+  // afmeldende versie binnenkomt. Hun worker meldt zich pas af als /sw.js klaar is. Zijn ze al weg
+  // maar staat hun cache er nog, dan ruimt /sw.js die op (na de lettertypes over te nemen).
+  async function retireOld() {
+    if (!navigator.serviceWorker.getRegistrations) return;
+    const has = { offline: false, tracker: false };
+    for (const r of await navigator.serviceWorker.getRegistrations()) {
+      const scope = new URL(r.scope).pathname.replace(/\/$/, "");
+      const app = scope === "/offline" ? "offline" : scope === "/tracker" ? "tracker" : null;
+      if (!app) continue;
+      has[app] = true;
+      try { await r.update(); } catch (_) { /* geen netwerk: later */ }
+      const w = r.active || r.waiting || r.installing;
+      if (w) w.postMessage({ type: "retire-check" });
     }
+    const keys = await caches.keys().catch(() => []);
+    const left = { offline: !has.offline && keys.some((k) => k.startsWith("mt-offline-")), tracker: !has.tracker && keys.some((k) => k.startsWith("mt-tracker-")) };
+    if (!left.offline && !left.tracker) return;
+    const reg = await navigator.serviceWorker.ready;
+    if (reg.active) reg.active.postMessage({ type: "cleanup-old", ...left });
   }
 
   let reloading = false;
@@ -351,7 +486,7 @@ MT.pwa = (() => {
         const w = reg.installing;
         if (w) w.addEventListener("statechange", () => { if (w.state === "installed") offerUpdate(w); });
       });
-      navigator.serviceWorker.ready.then(() => setTimeout(primeApps, 3000));
+      navigator.serviceWorker.ready.then(() => setTimeout(() => retireOld().catch(() => {}), 3000));
     }).catch(() => {});
   }
 

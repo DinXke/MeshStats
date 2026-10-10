@@ -48,15 +48,16 @@
       <fieldset><legend>Naar deze ontvangers</legend>
         <div id="r-rcpts" class="rcpts"></div>
         <div class="row">
-          <select id="r-contact" style="flex:1;min-width:200px"><option value="">– kies uit de contacten van de companion –</option></select>
+          <select id="r-contact" aria-label="Ontvanger uit de contacten van de companion" style="flex:1;min-width:200px"><option value="">– kies uit de contacten van de companion –</option></select>
           <button type="button" id="r-add">Toevoegen</button>
         </div>
-        <div class="row"><input id="r-pk" class="mono" placeholder="of plak een pubkey (64 hex)" maxlength="64" style="flex:1;min-width:200px">
-          <input id="r-pkname" placeholder="naam" maxlength="40" style="width:160px"><button type="button" id="r-addpk">Toevoegen</button></div>
+        <div class="row"><input id="r-pk" class="mono" aria-label="Pubkey van de ontvanger (64 hex)" placeholder="of plak een pubkey (64 hex)" maxlength="64" style="flex:1;min-width:200px">
+          <input id="r-pkname" aria-label="Naam van de ontvanger" placeholder="naam" maxlength="40" style="width:160px"><button type="button" id="r-addpk">Toevoegen</button></div>
       </fieldset>
       <label class="switch block" id="r-personal-wrap"><input type="checkbox" id="r-personal"><span></span> Eigen regel (alleen ik beheer hem)</label>
       <label class="switch block"><input type="checkbox" id="r-active" checked><span></span> Actief</label>
-      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="r-cancel">Annuleren</button></div>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="r-cancel">Annuleren</button>
+        <button type="button" class="danger rowend" id="r-del" hidden>Regel verwijderen</button></div>
       <div id="r-msg" class="msg"></div>
     </form>
     <div id="rules" class="tlist"></div>
@@ -90,7 +91,8 @@
         (een authsleutel per tracker, via USB gezet) worden valse posities geweigerd. Zet dit alleen uit voor een kanaal waarvan
         enkel jouw eigen trackers de sleutel kennen.</div>
       <label class="switch block"><input type="checkbox" id="c-active" checked><span></span> Actief (meeluisteren)</label>
-      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="c-cancel">Annuleren</button></div>
+      <div class="row"><button class="primary" type="submit">Opslaan</button><button type="button" id="c-cancel">Annuleren</button>
+        <button type="button" class="danger rowend" id="c-del" hidden>Kanaal verwijderen</button></div>
       <div id="c-msg" class="msg"></div>
     </form>
     <div id="c-qr" class="subform" hidden></div>
@@ -119,6 +121,7 @@
 </main>
 <script src="/static/vendor/qrcode.js"></script>
 <script src="/static/common.js"></script>
+<script src="/static/tabs.js"></script>
 <script src="/static/system.js"></script>
 </body>
 </html>
