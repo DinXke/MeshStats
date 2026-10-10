@@ -114,6 +114,26 @@
             </div>
           </fieldset>
 
+          <!-- Beheercode (vanaf 0.9.11, alleen via USB): ontgrendelt het wijzigen van instellingen via Bluetooth in Tracker live.
+               Op de tracker staat alleen een hash; de code gaat nooit in een back-up of in de terminal. -->
+          <fieldset data-since="0.9.11" data-keys="ble_beheer" id="s-beheerbox">
+            <legend>Instellingen via Bluetooth</legend>
+            <div class="small" id="s-beheerstate"></div>
+            <div class="grid">
+              <div><label for="s-beheer1">Beheercode</label><input id="s-beheer1" type="password" maxlength="32"
+                autocomplete="new-password" spellcheck="false" autocapitalize="off"></div>
+              <div><label for="s-beheer2">Beheercode nog eens</label><input id="s-beheer2" type="password" maxlength="32"
+                autocomplete="new-password" spellcheck="false" autocapitalize="off"></div>
+            </div>
+            <div class="help">6 tot 32 tekens, zonder spaties. Kies een andere code dan de Bluetooth-code waarmee je koppelt. De
+              authsleutel, de beheercode en de Bluetooth-code kunnen nooit via Bluetooth gewijzigd worden.</div>
+            <div class="row">
+              <button type="button" id="s-beheerset">Beheercode instellen</button>
+              <button type="button" id="s-beheerdel">Beheercode verwijderen</button>
+            </div>
+            <div id="s-beheermsg" class="msg" aria-live="polite"></div>
+          </fieldset>
+
           <!-- RAK3401 + 1 W met firmware die pin31= meldt: drukknop of prioriteit (blauwe lichten) -->
           <fieldset id="s-pin31box" data-needs="board:rak3401_1w key:pin31">
             <legend>Ingang pin 31 (knop of blauwe lichten)</legend>

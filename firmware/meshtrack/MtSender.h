@@ -25,6 +25,7 @@ bool mt_sender_ready();                         // trackingkanaal ingesteld, bes
 enum MtChanState : uint8_t { MT_CHAN_OK, MT_CHAN_NONE, MT_CHAN_MISSING, MT_CHAN_PUBLIC };
 MtChanState mt_chan_state();
 const char* mt_chan_state_str(MtChanState s);   // "-", "geen", "ontbreekt", "openbaar"
+const char* mt_chan_problem();                  // zin voor het log, "" als het kanaal in orde is
 #define MT_CHAN_NONE_IDX 0xFF                    // chan_idx: geen trackingkanaal (standaard vanaf 0.9.10)
 void mt_sender_set_done_cb(MtSendDone cb);
 const MtSendStats& mt_sender_stats();

@@ -1079,7 +1079,7 @@ static void step_slow() {
     s_slow_send_due = now + send_ms;
     if (!s_nslow) return;
     if (!mt_sender_ready()) {
-      mt_log("slowtrack: %u punten wachten, trackingkanaal %u ontbreekt", (unsigned)s_nslow, (unsigned)mt_cfg.chan_idx);
+      mt_log("slowtrack: %u punten wachten, %s", (unsigned)s_nslow, mt_chan_problem());
       return;
     }
     send_slow();
@@ -1517,7 +1517,7 @@ static void on_send_done(bool ok, bool manual, uint32_t tag, char state) {
     if ((int32_t)(s_w_deadline - s_listen_until) > 0) s_listen_until = s_w_deadline;
   }
   if (ok) mt_log("tx op kanaal %u verstuurd", (unsigned)mt_cfg.chan_idx);
-  else mt_log("tx MISLUKT: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+  else mt_log("tx MISLUKT: %s", mt_chan_problem());
 }
 
 // De radio heeft een pakket verzonden (MyMesh::logTx). Een GRP_TXT met het eerste cijferblok
@@ -1766,7 +1766,7 @@ static void step_req() {
   }
   if (!fresh && (int32_t)(millis() - s_req_deadline) < 0) return;
   if (!mt_sender_ready()) {
-    mt_log("verzoek niet beantwoord: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+    mt_log("verzoek niet beantwoord: %s", mt_chan_problem());
   } else {
     if (fresh || !s_lf.ts) {
       send_report('V', fresh, false, "verzoek");

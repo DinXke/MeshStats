@@ -150,6 +150,23 @@
         <p class="tk-note tk-top" id="in-viewnote">Nog niet gelezen.</p>
         <div id="in-groups"></div>
       </article>
+
+      <article class="card tk-card tk-wide" id="in-unlock">
+        <h2>Ontgrendelen</h2>
+        <p class="tk-note tk-top" id="in-ul-info"></p>
+        <div id="in-ul-form" hidden>
+          <label class="tk-flbl" for="in-ul-code">Beheercode</label>
+          <input id="in-ul-code" type="password" class="tk-big-in" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-describedby="in-ul-err">
+          <p class="tk-ferr" id="in-ul-err"></p>
+          <button type="button" class="primary tk-wbtn" id="in-ul-go">Ontgrendelen</button>
+          <button type="button" class="tk-wbtn" id="in-ul-again" hidden>Opnieuw ontgrendelen (zonder code)</button>
+        </div>
+        <div id="in-ul-on" hidden>
+          <p class="tk-unlocked" id="in-ul-left" role="status">Ontgrendeld</p>
+          <button type="button" class="tk-wbtn" id="in-ul-lock">Vergrendelen</button>
+        </div>
+        <p class="tk-res" id="in-ul-msg" role="status"></p>
+      </article>
       <article class="card tk-card">
         <h2>Naam</h2>
         <p class="tk-note tk-top">Zo heet de tracker in de mesh en in Bluetooth-lijsten. Nu: <strong id="in-curname">–</strong></p>
@@ -209,6 +226,11 @@
           <input type="file" id="in-qr-file" accept="image/*" capture="environment" class="tk-sr">
         </div>
         <p class="tk-res" id="in-qr-msg" role="status"></p>
+        <div id="in-ch-tbox" hidden>
+          <label class="tk-flbl" for="in-ch-target">Trackingkanaal op kanaalnummer</label>
+          <select id="in-ch-target" class="tk-big-in"></select>
+          <p class="tk-note">Kies je een bestaand kanaal, dan mogen naam en sleutel leeg blijven. Openbare kanalen staan er niet bij.</p>
+        </div>
         <label class="tk-flbl" for="in-ch-name">Kanaalnaam</label>
         <input id="in-ch-name" class="tk-big-in" maxlength="31" autocomplete="off" enterkeyhint="next" aria-describedby="in-ch-err">
         <label class="tk-flbl" for="in-ch-secret">Sleutel (32 tekens, 0-9 en a-f)</label>

@@ -56,7 +56,7 @@ void mt_on_short_press() {
   // dat binnen 12 s niet gebeurt. Ontbreekt het trackingkanaal, dan meteen een lage toon.
   if (!mt_sender_ready()) {
     ui_task.playForced(MT_TUNE_NOK);
-    mt_log("klik: niet verstuurd, trackingkanaal: %s", mt_chan_state_str(mt_chan_state()));
+    mt_log("klik: niet verstuurd, %s", mt_chan_problem());
     return;
   }
   ui_task.playModeTune(s_eff == MT_MODE_TRACKER);
@@ -77,7 +77,7 @@ void mt_on_sos() {
   mt_log("SOS via de knop");
   if (!mt_tracker_sos()) {
     ui_task.playForced(MT_TUNE_NOK);
-    mt_log("SOS niet verstuurd, trackingkanaal: %s", mt_chan_state_str(mt_chan_state()));
+    mt_log("SOS niet verstuurd, %s", mt_chan_problem());
   }
 }
 

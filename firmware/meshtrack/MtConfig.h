@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MT_CFG_VERSION 8   // v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep; v6: trackmodus en FIFO; v7: verzoeken, rx_beweging; v8: GPS-pinnen, rust_gps_check, analoge knop (velden achteraan, oudere worden overgenomen)
+#define MT_CFG_VERSION 9   // v9: beheercode voor Bluetooth; v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep; v6: trackmodus en FIFO; v7: verzoeken, rx_beweging; v8: GPS-pinnen, rust_gps_check, analoge knop (velden achteraan, oudere worden overgenomen)
 // De indeling NOOIT wijzigen (flash-compatibel): ongebruikte velden blijven staan.
 
 struct MtCfg {
@@ -84,11 +84,16 @@ struct MtCfg {
   uint8_t  prio_niveau;         // prio: 0 = actief laag (optocoupler naar massa, standaard), 1 = actief hoog
   uint8_t  prio_houd;           // prio: na de laatste actieve periode nog x min prioritair (0 = standaard 5, 1..60, 255 = volgt de ingang)
   uint8_t  prio_interval;       // prio: FastTrack hooguit elke x s (0 = standaard 30, 255 = geen wijziging)
+  // ---- v9 (0.9.11); oudere bestanden krijgen hier 0 = geen beheercode ----
+  uint8_t  ble_admin_set;       // 1 = beheercode ingesteld (instellingen via Bluetooth na ontgrendelen)
+  uint8_t  _pad9[3];
+  uint8_t  ble_admin_hash[16];  // SHA256(beheercode)[0:16]; de code zelf wordt nergens bewaard
   uint32_t crc;                 // crc32 over alles hiervoor
 };
 
 // Vaste indeling: een andere grootte breekt de bewaarde bestanden (zie hierboven).
-static_assert(sizeof(MtCfg) == 148, "MtCfg-indeling gewijzigd");
+static_assert(sizeof(MtCfg) == 168, "MtCfg-indeling gewijzigd");
+static_assert(offsetof(MtCfg, ble_admin_set) == 144, "v9-velden moeten na de v8-velden komen");
 static_assert(offsetof(MtCfg, gps_rx) == 136, "v8-velden moeten na de v7-velden komen");
 static_assert(offsetof(MtCfg, verzoek_uit) == 132, "v7-velden moeten na de v6-velden komen");
 static_assert(offsetof(MtCfg, track_mode) == 120, "v6-velden moeten na de v5-velden komen");
