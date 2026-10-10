@@ -154,6 +154,7 @@
   let conn = null, busy = false;
   function setConn(c) {
     conn = c;
+    if (!c && typeof lockLocal === "function") lockLocal(true);
     const on = !!c;
     $("tk-connect").hidden = on;
     $("tk-live").hidden = !on;
@@ -1339,7 +1340,8 @@
     { label: "FIFO-wachtrij", via: "mt" }, { label: "SlowTrack", via: "mt" }, { label: "Biepjes", via: "mt" },
     { label: "Modus (tracker/companion)", via: "mt" }, { label: "Regio", via: "mt" }, { label: "Authsleutel", via: "mt" },
   ];
-  const mtWritable = () => fwAtLeast("0.9.9") && status.ble_schrijven === "ja";
+  // Firmware 0.9.11+: MeshTrack-instellingen via Bluetooth na ontgrendelen met de beheercode (ble_schrijven=ja, ble_beheer=ingesteld)
+  const mtWritable = () => status.ble_schrijven === "ja" && status.ble_beheer !== "niet";
   const groupNeeds = (g) => (g.via === "companion" ? true : mtWritable());
   // Slot van het trackingkanaal: chan= uit de status; anders (oude firmware) de keuze in de lijst, met een gok voorgeselecteerd.
   function trackingSlot() {
@@ -1408,18 +1410,30 @@
       sel.value = cur !== "" && chans.some((c) => String(c.idx) === cur) ? cur : g !== null ? String(g) : "";
     }
     const slot = trackingSlot();
-    $("in-chslot").textContent = noTrackChan() ? "De tracker heeft geen (geldig) trackingkanaal."
+    $("in-chslot").textContent = !off && unlocked() ? "Ontgrendeld: kies het kanaalnummer en eventueel een nieuw kanaal (naam en sleutel)."
+      : noTrackChan() ? "De tracker heeft geen (geldig) trackingkanaal."
       : known ? `De tracker stuurt zijn posities op kanaalnummer ${slot}. Dat kanaal vervang je hier.`
       : conn && conn.noMt ? "Firmware zonder alleen-lezen-toegang: kies zelf het trackingkanaal."
       : "De tracker meldt (nog) geen volgkanaal (chan=): kies zelf het trackingkanaal.";
-    const bad = !off && trackChanBad();
+    const mtOn = !off && unlocked();
+    const bad = !off && trackChanBad() && !mtOn;
     $("in-chpub").hidden = !bad;
     $("in-chform").hidden = bad;
+    $("in-ch-tbox").hidden = !mtOn;
+    $("in-ch-set").textContent = mtOn ? "Trackingkanaal instellen" : "Op het trackingkanaal zetten";
+    if (mtOn && chans) {
+      const sel = $("in-ch-target"), cur = sel.value, ts = int(status.chan);
+      const opts = chans.filter((c) => !isPublicCh(c));
+      sel.innerHTML = opts.map((c) => `<option value="${c.idx}">Nr. ${c.idx}: ${esc(c.empty ? "leeg (nieuw kanaal)" : c.name || "(zonder naam)")}${c.idx === ts ? " (nu)" : ""}</option>`).join("");
+      const def = opts.find((c) => c.idx === ts) || opts.find((c) => c.empty) || opts[0];
+      sel.value = cur !== "" && opts.some((c) => String(c.idx) === cur) ? cur : def ? String(def.idx) : "";
+    }
     if (bad && noTrackChan()) $("in-slotbox").hidden = true;
-    $("in-ch-set").disabled = !!off || slot === null || bad;
+    $("in-ch-set").disabled = !!off || (slot === null && !mtOn) || bad;
+    renderUnlock();
     $("in-caps").innerHTML = SETTING_GROUPS.map((g) => {
       const ok = groupNeeds(g);
-      return `<li><span class="tk-capname">${esc(g.label)}</span><span class="tk-cap ${ok ? "ok" : "no"}">${ok ? (g.via === "companion" ? "Kan op deze firmware" : "Kan op deze firmware (nog niet op deze pagina; gebruik Toestellen)") : "Vraagt firmware 0.9.9 of nieuwer (bijwerken via Toestellen)"}</span></li>`;
+      return `<li><span class="tk-capname">${esc(g.label)}</span><span class="tk-cap ${ok ? "ok" : "no"}">${ok ? (g.via === "companion" ? "Kan op deze firmware" : "Kan op deze firmware, na ontgrendelen") : !("ble_schrijven" in status) ? "Vraagt firmware 0.9.11 of nieuwer (bijwerken via Toestellen)" : "Stel eerst een beheercode in via USB (Toestellen)"}</span></li>`;
     }).join("");
     if (read && !off && !viewRead) readAll();
   }
@@ -1576,8 +1590,11 @@
     const c = capsOfStatus(status), hasMt = Object.keys(status).length > 0 && !conn?.noMt;
     // open/dicht onthouden
     box.querySelectorAll("details[data-g]").forEach((d) => { if (d.open) openGroups.add(d.dataset.g); else openGroups.delete(d.dataset.g); });
-    const roNote = mtWritable() ? "Wijzigen via USB (Toestellen); via Bluetooth kan deze firmware het al, maar deze pagina nog niet."
-      : "Wijzigen via USB (Toestellen), of via Bluetooth vanaf een latere firmware (0.9.9 of nieuwer).";
+    const ed = unlocked();
+    const roNote = ed ? "Radio en firmware wijzig je via USB (Toestellen)."
+      : mtWritable() ? "Ontgrendel hieronder met de beheercode om te wijzigen, of wijzig via USB (Toestellen)."
+      : !("ble_schrijven" in status) ? "Wijzigen via USB (Toestellen), of via Bluetooth vanaf firmware 0.9.11."
+      : "Wijzigen via USB (Toestellen). Via Bluetooth kan het na het instellen van een beheercode (via USB).";
     box.innerHTML = GROUPS.map((g) => {
       if (g.needs && !g.needs(c)) return "";
       const rows = g.rows.filter((r) => (!r.needs || r.needs(c))).map((r) => {
@@ -1585,17 +1602,25 @@
         if (v == null || v === "") return "";
         if (r.key && r.fmt) v = r.fmt(String(v));
         const sub = (r.sub ? r.sub() : "") || r.note || "";
+        const ctl = ed && r.key && CTL[r.key];
+        if (ctl) return ctlRow(r, ctl);
         const tail = r.edit ? `<button type="button" class="tk-sedit" data-edit="${r.edit}">Wijzigen</button>`
           : `<span class="tk-slock" title="Alleen lezen" aria-label="alleen lezen">${LOCK}</span>`;
         return `<div class="tk-srow"><div class="tk-sbody"><span class="tk-slbl">${esc(r.lbl)}</span><span class="tk-sval">${esc(v)}</span>${sub ? `<span class="tk-ssub">${esc(sub)}</span>` : ""}</div>${tail}</div>`;
       }).join("");
       if (!rows) return "";
-      const ro = g.rows.some((r) => !r.edit);
+      const editable = ed && g.rows.some((r) => r.key && CTL[r.key] && status[r.key] != null && (!r.needs || r.needs(c)));
+      const ro = g.rows.some((r) => !r.edit && !(ed && r.key && CTL[r.key]) && (r.get ? r.get() : status[r.key]) != null);
+      const res = saveRes[g.id] || [];
       return `<details class="tk-grp" data-g="${g.id}"${openGroups.has(g.id) ? " open" : ""}><summary>${esc(g.title)}</summary>${rows}
+        ${editable || res.length ? `<div class="tk-gsave">${editable ? `<button type="button" class="primary tk-wbtn" data-save="${g.id}">Opslaan</button>` : ""}
+          ${res.length ? `<ul class="tk-saveres">${res.map((x) => `<li class="${x.ok ? "ok" : "err"}"><strong>${esc(x.lbl)}</strong>: ${esc(x.ok ? "opgeslagen" : x.reply)}</li>`).join("")}</ul>` : ""}</div>` : ""}
         ${ro ? `<p class="tk-gnote">${LOCK}${esc(roNote)}</p>` : ""}</details>`;
     }).join("");
-    $("in-viewnote").textContent = hasMt ? `Gelezen om ${new Date().toLocaleTimeString("nl-BE")}. Wat je via Bluetooth kunt wijzigen, heeft een knop Wijzigen.`
+    $("in-viewnote").textContent = hasMt && ed ? "Ontgrendeld: wijzig de waarden en tik per groep op Opslaan."
+      : hasMt ? `Gelezen om ${new Date().toLocaleTimeString("nl-BE")}. Wat je via Bluetooth kunt wijzigen, heeft een knop Wijzigen.`
       : "Alleen de companion-instellingen zijn te lezen. De MeshTrack-instellingen vragen firmware 0.9.1 of nieuwer via Bluetooth, of USB in Toestellen.";
+    box.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", () => saveGroup(b.dataset.save)));
     box.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => {
       const el = $(b.dataset.edit);
       if (!el) return;
@@ -1765,6 +1790,7 @@
   $("in-ch-read").addEventListener("click", () => { chans = null; readChannels(); });
   $("in-ch-slot").addEventListener("change", () => { renderChans(); });
   $("in-ch-set").addEventListener("click", () => {
+    if (unlocked()) { chSetMt(); return; }
     const slot = trackingSlot(), name = $("in-ch-name").value.trim(), secret = $("in-ch-secret").value.replace(/[\s:-]/g, "").toLowerCase();
     const nb = enc.encode(name);
     const err = !name ? "Vul een kanaalnaam in." : nb.length > 31 ? `Naam te lang: ${nb.length} bytes, hoogstens 31.` : !/^[0-9a-f]{32}$/.test(secret) ? "De sleutel moet uit 32 hexadecimale tekens (0-9, a-f) bestaan." : slot === null ? "Kies eerst het kanaalnummer van het trackingkanaal." : "";
@@ -1792,6 +1818,255 @@
       chans = null; await readChannels();
     } catch (e) { toast(`Mislukt: ${e.message}`, "err"); }
     renderInst(false);
+  }
+
+  // ---- ontgrendelen en schrijven via Bluetooth (firmware 0.9.11+) -----------------------------------------
+  // "ontgrendel" -> "nonce <32 hex>" (60 s, één poging); sleutel = SHA-256(code)[0:16]; mac = HMAC-SHA256(sleutel, nonce)[0:16];
+  // "ontgrendel <mac>" -> "ontgrendeld: … 15 min …" of "fout: …". De sessie loopt 15 min (verlengt niet) en stopt bij
+  // "vergrendel" of als de verbinding wegvalt. De code bewaren we nooit; de afgeleide sleutel alleen in het geheugen.
+  let unl = { until: 0, key: null }, unlTimer = null;
+  const saveRes = {};
+  const unlocked = () => unl.until > Date.now() && !!conn && conn.kind === "ble";
+  const FAIL_RE = /ongeldig|onbekend|niet via|vergrendeld:|fout|gebruik:|kies eerst|openbaar|geweigerd|^mislukt|\bniet toegestaan/i;
+  async function deriveKey(code) { return new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(code))).slice(0, 16); }
+  async function hmac16(keyBytes, data) {
+    const k = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    return hex(new Uint8Array(await crypto.subtle.sign("HMAC", k, data)).slice(0, 16));
+  }
+  async function unlockMac(code, nonceHex) { return hmac16(await deriveKey(code), unhex(nonceHex)); }
+  function lockLocal(forget) {
+    unl.until = 0;
+    if (forget) unl.key = null;
+    clearInterval(unlTimer); unlTimer = null;
+  }
+  const mmss = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  function renderUnlock() {
+    const off = instBlocked(), card = $("in-unlock");
+    card.hidden = !!off;
+    if (off) return;
+    const info = $("in-ul-info");
+    const has = "ble_schrijven" in status, can = mtWritable();
+    $("in-ul-form").hidden = !can || unlocked();
+    $("in-ul-on").hidden = !unlocked();
+    $("in-ul-again").hidden = !unl.key || unlocked();
+    if (conn.noMt || !has) info.innerHTML = 'MeshTrack-instellingen via Bluetooth wijzigen vraagt firmware 0.9.11 of nieuwer. Tot dan: via USB in <a href="/devices">Toestellen</a>.';
+    else if (!can) info.innerHTML = 'Stel eerst een beheercode in via USB (<a href="/devices">Toestellen</a>). Daarna kun je hier met die code ontgrendelen.';
+    else if (unlocked()) info.textContent = "De instellingen hierboven zijn nu te wijzigen. De sessie verlengt niet bij gebruik.";
+    else info.textContent = "Met de beheercode kun je MeshTrack-instellingen via Bluetooth wijzigen, telkens 15 minuten. De code wordt nergens bewaard.";
+    if (unlocked()) $("in-ul-left").textContent = `Ontgrendeld nog ${mmss(unl.until - Date.now())}`;
+  }
+  function tick() {
+    if (unlocked()) { $("in-ul-left").textContent = `Ontgrendeld nog ${mmss(unl.until - Date.now())}`; return; }
+    lockLocal(false);
+    toast("Vergrendeld: de 15 minuten zijn om.", "err");
+    renderInst(false); renderView();
+  }
+  async function doUnlock(again) {
+    if (instBlocked()) return;
+    let key = unl.key;
+    if (!again) {
+      const code = $("in-ul-code").value;
+      fieldErr("in-ul-err", code ? "" : "Vul de beheercode in.");
+      if (!code) return;
+      key = await deriveKey(code);
+      $("in-ul-code").value = "";
+    }
+    $("in-ul-go").disabled = $("in-ul-again").disabled = true;
+    resMsg("in-ul-msg", "Ontgrendelen…");
+    try {
+      const r1 = (await conn.run("ontgrendel")).trim();
+      const m = /nonce\s+([0-9a-f]{32})/i.exec(r1);
+      if (!m) { resMsg("in-ul-msg", r1 || "Geen antwoord op de vraag om te ontgrendelen.", "err"); return; }
+      const mac = await hmac16(key, unhex(m[1].toLowerCase()));
+      const r2 = (await conn.run(`ontgrendel ${mac}`)).trim();
+      if (/^ontgrendeld/i.test(r2)) {
+        const mins = parseInt((/(\d+)\s*min/.exec(r2) || [])[1], 10) || 15;
+        unl = { until: Date.now() + mins * 60000, key };
+        clearInterval(unlTimer); unlTimer = setInterval(tick, 1000);
+        resMsg("in-ul-msg", "");
+        toast(`Ontgrendeld voor ${mins} min`, "ok");
+        log("ontgrendeld via Bluetooth");
+      } else {
+        unl.key = null;
+        resMsg("in-ul-msg", r2.replace(/^fout:\s*/i, "") || "Ontgrendelen mislukt.", "err");
+        try { navigator.vibrate && navigator.vibrate([40, 60, 40]); } catch (_) {}
+      }
+    } catch (e) { resMsg("in-ul-msg", `Ontgrendelen mislukt: ${e.message}`, "err"); }
+    finally {
+      $("in-ul-go").disabled = $("in-ul-again").disabled = false;
+      renderInst(false); renderView();
+    }
+  }
+  $("in-ul-go").addEventListener("click", () => doUnlock(false));
+  $("in-ul-code").addEventListener("keydown", (e) => { if (e.key === "Enter") doUnlock(false); });
+  $("in-ul-again").addEventListener("click", () => doUnlock(true));
+  $("in-ul-lock").addEventListener("click", async () => {
+    try { await conn.run("vergrendel"); } catch (_) {}
+    lockLocal(true);
+    toast("Vergrendeld", "ok");
+    renderInst(false); renderView();
+  });
+
+  // Bedieningen per instelling (zelfde labels, eenheden en grenzen als Toestellen)
+  const CTL = {
+    gekozen: { t: "sel", opts: [["tracker", "Tracker"], ["companion", "Companion"]], cmd: (v) => `mode ${v}`, danger: true, help: "Met USB-voeding is hij altijd companion." },
+    track_in_companion: { t: "bool", yes: "on", no: "off" },
+    scope: { t: "text", danger: true, help: "De regio (scope) van zijn berichten, bv. be of be-limburg." },
+    path_bytes: { t: "sel", opts: [["1", "uit (1 byte)"], ["2", "aan (2 bytes)"]], danger: true },
+    min_speed: { t: "num", min: 0, max: 300, unit: "km/u", help: "0 = altijd, ook wandelen" },
+    min_dist: { t: "num", min: 0, max: 50000, unit: "m" },
+    turn_min: { t: "num", min: 0, max: 180, unit: "°", help: "0 = bochten negeren" },
+    turn_min_speed: { t: "num", min: 0, max: 300, unit: "km/u" },
+    min_interval: { t: "dur" }, max_interval: { t: "dur", off: true }, sample: { t: "dur", off: true, help: "In beweging; elk bericht neemt zoveel bewaarde punten mee als erin passen." },
+    fast_min_batt: { t: "num", min: 0, max: 100, unit: "% batterij", help: "Daaronder blijven alleen SlowTrack, heartbeat, klik en SOS over. 0 = FastTrack nooit uitschakelen." },
+    slow_log: { t: "dur" }, slow_send: { t: "dur" },
+    track_mode: { t: "sel", opts: [["classic", "Klassiek (FastTrack en SlowTrack)"], ["fifo", "FIFO (gemiste punten later inhalen)"]] },
+    fifo_max: { t: "num", min: 20, max: 500, unit: "punten" },
+    fifo_punten: { t: "sel", opts: [["alle", "Alle punten (standaard)"], ["hoofd", "Alleen hoofdpunten"]] },
+    fifo_min: { t: "num", min: 1, max: 500, unit: "punten" },
+    fifo_gap: { t: "dur" }, fifo_per_uur: { t: "num", min: 1, max: 60, unit: "per uur" },
+    fifo_pogingen: { t: "num", min: 1, max: 10, unit: "pogingen" }, fifo_dun: { t: "num", min: 0, max: 100, unit: "m" },
+    fifo_snr: { t: "num", min: -20, max: 10, unit: "dB SNR" }, fifo_wacht: { t: "dur", off: true, offword: "uit" },
+    still_timeout: { t: "dur" }, heartbeat: { t: "dur", off: true }, rust_gps_check: { t: "dur", off: true, offword: "uit" },
+    accel_sens: { t: "sel", opts: [["laag", "laag"], ["midden", "midden"], ["hoog", "hoog"]] },
+    fix_timeout: { t: "dur" }, fix_timeout_hb: { t: "dur" },
+    led: { t: "sel", opts: [["companion", "alleen als companion"], ["altijd", "altijd"], ["uit", "nooit"]] },
+    msg_beep: { t: "sel", opts: [["prive", "alleen privéberichten"], ["alles", "alle berichten (ook posities van andere trackers)"], ["uit", "nooit"]] },
+    tx_beep: { t: "bool" }, heard_beep: { t: "bool" }, sos: { t: "bool" }, verzoek: { t: "bool" },
+    rx_beweging: { t: "bool", help: "Nodig om verzoeken te horen in trackermodus. Kost ongeveer 15 à 20 % extra stroom tijdens het rijden." },
+    verzoek_beep: { t: "bool" },
+    pin31: { t: "sel", opts: [["uit", "niet gebruikt"], ["knop", "drukknop"], ["prio", "prioriteit (blauwe lichten)"]] },
+    prio_niveau: { t: "sel", opts: [["hoog", "hoog (spanning = aan)"], ["laag", "laag (massa = aan)"]] },
+    prio_houd: { t: "num", min: 1, max: 60, unit: "min", suffix: "m" },
+    prio_interval: { t: "num", min: 0, max: 3600, unit: "s", suffix: "s", help: "0 = gewone interval" },
+  };
+  const DUR_U = [["s", 1, "sec"], ["m", 60, "min"], ["h", 3600, "uur"]];
+  const isOn = (v) => /^(aan|on|ja|1)$/i.test(String(v));
+  function ctlRow(r, c) {
+    const id = `ed-${r.key}`, v = String(status[r.key]);
+    let field;
+    if (c.t === "num") {
+      const n = parseFloat(v);
+      field = `<div class="tk-unit"><input id="${id}" type="number" inputmode="numeric" min="${c.min}" max="${c.max}" step="1" value="${Number.isFinite(n) ? n : ""}" class="tk-big-in"><span>${esc(c.unit || "")}</span></div>`;
+    } else if (c.t === "dur") {
+      const s = durSec(v);
+      const u = s && s % 3600 === 0 ? "h" : s && s % 60 === 0 ? "m" : "s", n = s ? s / DUR_U.find((x) => x[0] === u)[1] : 0;
+      field = `<div class="tk-unit"><input id="${id}" type="number" inputmode="numeric" min="0" step="1" value="${n}" class="tk-big-in" aria-label="${esc(r.lbl)}: waarde">
+        <select id="${id}-u" aria-label="${esc(r.lbl)}: eenheid" class="tk-big-in">${DUR_U.map((x) => `<option value="${x[0]}"${x[0] === (s ? u : "m") ? " selected" : ""}>${x[2]}</option>`).join("")}</select></div>${c.off ? '<span class="tk-ssub">0 = uit</span>' : ""}`;
+    } else if (c.t === "sel") {
+      field = `<select id="${id}" class="tk-big-in">${c.opts.map(([k, lbl]) => `<option value="${esc(k)}"${k === v ? " selected" : ""}>${esc(lbl)}</option>`).join("")}${c.opts.some((o) => o[0] === v) ? "" : `<option value="${esc(v)}" selected>${esc(v)}</option>`}</select>`;
+    } else if (c.t === "bool") {
+      field = `<label class="switch tk-sw2"><input type="checkbox" id="${id}"${isOn(v) ? " checked" : ""} aria-label="${esc(r.lbl)}"><span></span></label>`;
+    } else {
+      field = `<input id="${id}" class="tk-big-in" value="${esc(v === "-" ? "" : v)}" autocomplete="off" autocapitalize="off" spellcheck="false">`;
+    }
+    const lab = c.t === "bool" ? `<span class="tk-slbl">${esc(r.lbl)}</span>` : `<label class="tk-slbl" for="${id}">${esc(r.lbl)}</label>`;
+    return `<div class="tk-srow tk-erow"><div class="tk-sbody">${lab}${field}${c.help ? `<span class="tk-ssub">${esc(c.help)}</span>` : ""}${c.danger ? '<span class="tk-ssub tk-danger-txt">Gevoelige instelling</span>' : ""}<span class="tk-ferr" id="${id}-err"></span></div></div>`;
+  }
+  // nieuwe waarde zoals de tracker ze verwacht, of null als ongewijzigd; fout -> {err}
+  function ctlValue(key, c) {
+    const el = $(`ed-${key}`);
+    if (!el) return null;
+    const cur = String(status[key]);
+    if (c.t === "num") {
+      const raw = el.value.trim(), n = Number(raw);
+      if (raw === "" || !Number.isFinite(n) || n < c.min || n > c.max || !Number.isInteger(n)) return { err: `Kies een geheel getal van ${c.min} tot ${c.max}.` };
+      if (n === parseFloat(cur)) return null;
+      return { v: c.suffix && n > 0 ? `${n}${c.suffix}` : String(n) };
+    }
+    if (c.t === "dur") {
+      const n = Number(el.value), u = $(`ed-${key}-u`).value;
+      if (!Number.isInteger(n) || n < 0) return { err: "Kies een geheel getal, 0 of meer." };
+      if (n === 0 && !c.off) return { err: "Mag niet 0 zijn." };
+      const sec = n * DUR_U.find((x) => x[0] === u)[1];
+      if (sec === durSec(cur) || (sec === 0 && /^(0|uit|-)$/.test(cur))) return null;
+      return { v: sec ? `${n}${u}` : c.offword || "0" };
+    }
+    if (c.t === "bool") { const on = el.checked; if (on === isOn(cur)) return null; return { v: on ? c.yes || "aan" : c.no || "uit" }; }
+    const v = el.value.trim();
+    if (c.t === "text" && /\s/.test(v)) return { err: "Geen spaties." };
+    if (v === cur || (v === "" && cur === "-")) return null;
+    return { v: v || "-" };
+  }
+  async function rereadStatus() {
+    try {
+      const st = checkReply(await conn.run("status"));
+      const kv = parseStatus(st);
+      if (Object.keys(kv).length) { status = kv; statusAt = Date.now(); $("tk-rawstatus").textContent = st; }
+    } catch (e) { log(`status lezen: ${e.message}`); }
+  }
+  async function saveGroup(gid) {
+    const g = GROUPS.find((x) => x.id === gid);
+    if (!g || instBlocked()) return;
+    if (!unlocked()) { toast("Ontgrendel eerst met de beheercode.", "err"); renderView(); return; }
+    const changes = [];
+    let bad = false;
+    for (const r of g.rows) {
+      const c = r.key && CTL[r.key];
+      if (!c || !$(`ed-${r.key}`)) continue;
+      const res = ctlValue(r.key, c);
+      $(`ed-${r.key}-err`).textContent = res && res.err ? res.err : "";
+      if (res && res.err) { bad = true; continue; }
+      const el = $(`ed-${r.key}`);
+      if (res) changes.push({ key: r.key, lbl: r.lbl, cmd: c.cmd ? c.cmd(res.v) : `set ${r.key} ${res.v}`, danger: !!c.danger, v: res.v,
+        show: c.t === "sel" ? el.options[el.selectedIndex].text : c.t === "bool" ? (el.checked ? "aan" : "uit") : res.v });
+    }
+    if (bad) { toast("Controleer de gemarkeerde velden.", "err"); return; }
+    if (!changes.length) { toast("Niets gewijzigd.", "ok"); return; }
+    // fifo_min mag nooit boven fifo_max uitkomen, ook niet tussendoor
+    const cMin = changes.find((x) => x.key === "fifo_min"), cMax = changes.find((x) => x.key === "fifo_max");
+    const nMin = cMin ? Number(cMin.v) : Number(status.fifo_min), nMax = cMax ? Number(cMax.v) : Number(status.fifo_max);
+    if (nMin > nMax) { $("ed-fifo_min-err").textContent = "Mag niet groter zijn dan Wachtrij maximaal."; return; }
+    if (cMin && cMax && nMin > Number(status.fifo_max)) changes.sort((a, b) => (a.key === "fifo_max" ? -1 : b.key === "fifo_max" ? 1 : 0));
+    if (changes.some((x) => x.danger) && !(await sheet("Gevoelige instelling wijzigen?",
+      `Verkeerde radio-instellingen kunnen de tracker onbereikbaar maken. Je wijzigt: ${changes.filter((x) => x.danger).map((x) => `${x.lbl} → ${x.show}`).join(", ")}.`, "Toch opslaan", true))) return;
+    const out = [];
+    for (const x of changes) {
+      let reply = "";
+      try { reply = (await conn.run(x.cmd)).trim(); } catch (e) { reply = `geen antwoord (${e.message})`; }
+      const ok = !!reply && !FAIL_RE.test(reply) && !/^geen antwoord/.test(reply);
+      out.push({ lbl: x.lbl, ok, reply: reply.replace(/^fout:\s*/i, "") });
+      if (/vergrendeld: ontgrendel eerst/i.test(reply)) { lockLocal(false); break; }
+    }
+    saveRes[gid] = out;
+    const nOk = out.filter((x) => x.ok).length;
+    toast(nOk === out.length ? `${nOk} ${nOk === 1 ? "instelling" : "instellingen"} opgeslagen` : `${out.length - nOk} van ${out.length} niet opgeslagen`, nOk === out.length ? "ok" : "err");
+    log(`instellingen ${gid}: ${out.map((x) => `${x.lbl} ${x.ok ? "ok" : "fout"}`).join(", ")}`);
+    await rereadStatus();
+    openGroups.add(gid);
+    renderView(); renderInst(false); renderWarn();
+  }
+  // Ontgrendeld: trackingkanaal (nummer en eventueel nieuw kanaal) via MeshTrack-opdrachten
+  async function chSetMt() {
+    const t = Number($("in-ch-target").value), name = $("in-ch-name").value.trim(), secret = $("in-ch-secret").value.replace(/[\s:-]/g, "").toLowerCase();
+    const tc = chanAt(t);
+    const need = !tc || tc.empty || name || secret;
+    const err = $("in-ch-target").value === "" ? "Kies een kanaalnummer."
+      : need && !name ? "Vul een kanaalnaam in." : need && enc.encode(name).length > 31 ? "Naam te lang: hoogstens 31 bytes."
+      : need && !/^[0-9a-f]{32}$/.test(secret) ? "De sleutel moet uit 32 hexadecimale tekens (0-9, a-f) bestaan."
+      : need && secret === PUBLIC_SECRET ? "Dat is de sleutel van Public: openbare kanalen kunnen geen trackingkanaal zijn." : "";
+    fieldErr("in-ch-err", err);
+    if (err || instBlocked()) return;
+    const cmds = [];
+    if (need) cmds.push(`chan set ${t} ${secret} ${name}`);
+    if (String(t) !== String(status.chan)) cmds.push(`set chan ${t}`);
+    if (!cmds.length) { toast("Niets gewijzigd.", "ok"); return; }
+    const what = need ? `Kanaal ${name} op kanaalnummer ${t} zetten${tc && !tc.empty ? ` (vervangt ${tc.name || "een kanaal zonder naam"})` : ""} en als trackingkanaal gebruiken.`
+      : `Kanaalnummer ${t} (${tc.name}) als trackingkanaal gebruiken.`;
+    if (!(await sheet("Trackingkanaal wijzigen?", `${what} Een verkeerd kanaal maakt de tracker onzichtbaar voor de server.`, "Bevestigen", true))) return;
+    $("in-ch-set").disabled = true;
+    const fails = [];
+    for (const c of cmds) {
+      let reply = "";
+      try { reply = (await conn.run(c)).trim(); } catch (e) { reply = e.message; }
+      if (!reply || FAIL_RE.test(reply)) fails.push(reply || "geen antwoord");
+    }
+    if (fails.length) toast(`Mislukt: ${fails[0]}`, "err");
+    else { toast(`Gelukt: trackingkanaal is nu kanaalnummer ${t}`, "ok"); $("in-ch-name").value = ""; $("in-ch-secret").value = ""; }
+    log(`trackingkanaal via MeshTrack: ${cmds.join(" ; ")} -> ${fails.length ? "fout" : "ok"}`);
+    await rereadStatus();
+    chans = null; await readChannels();
+    renderView(); renderInst(false); renderWarn();
   }
 
   function renderAll() {
@@ -1870,5 +2145,5 @@
   initMap().catch((e) => log(`kaart: ${e.message}`));
 
   // Testhaak (alleen lezen): ontleden zonder toestel.
-  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), comp, answers: answers.slice(), heard: [...heard.keys()], chans: chans && chans.slice(), heardOnPublic: [...heard.values()].filter((h) => isPublicCh(chanAt(h.chan))).map((h) => h.pk) }), map: () => map, parseChannelQr };
+  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), comp, unlockedUntil: unl.until, answers: answers.slice(), heard: [...heard.keys()], chans: chans && chans.slice(), heardOnPublic: [...heard.values()].filter((h) => isPublicCh(chanAt(h.chan))).map((h) => h.pk) }), map: () => map, parseChannelQr, unlockMac };
 })();

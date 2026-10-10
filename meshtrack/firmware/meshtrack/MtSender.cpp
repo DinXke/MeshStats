@@ -58,6 +58,18 @@ const char* mt_chan_state_str(MtChanState s) {
 
 bool mt_sender_ready() { return mt_chan_state() == MT_CHAN_OK; }
 
+const char* mt_chan_problem() {
+  static char b[72];
+  switch (mt_chan_state()) {
+    case MT_CHAN_OK: return "";
+    case MT_CHAN_NONE: return "geen trackingkanaal: maak het toestel klaar via Toestellen";
+    case MT_CHAN_PUBLIC: return "trackingkanaal is openbaar (Public): maak het toestel klaar via Toestellen";
+    default:
+      snprintf(b, sizeof(b), "trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+      return b;
+  }
+}
+
 static void finish(bool ok) {
   if (ok) { s_stats.ok++; s_stats.last_ok = true; }
   else { s_stats.failed++; s_stats.last_ok = false; }

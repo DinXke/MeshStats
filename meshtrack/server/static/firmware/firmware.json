@@ -1,6 +1,60 @@
 {
   "releases": [
     {
+      "version": "0.9.11",
+      "date": "2026-10-10",
+      "notes": "Instellingen wijzigen via Bluetooth, beveiligd met een beheercode. Stel de code eerst via USB in met 'set ble_beheer <code>' (6 tot 32 tekens; bewaard als hash). Daarna kan de webpagina /tracker de tracker via Bluetooth ontgrendelen (vraag-en-antwoord, de code zelf gaat nooit over de lucht) en 15 minuten instellingen wijzigen, tot de verbinding wegvalt. Gevaarlijke dingen kunnen nooit via Bluetooth: sleutel, authsleutel, beheercode, koppelcode, backup, opslag formatteren, standaardwaarden en herstarten. Vijf foute pogingen blokkeren 10 minuten. Zonder trackingkanaal zeggen log en status nu duidelijk: geen trackingkanaal, maak het toestel klaar via Toestellen. Instellingen v9 (v8 wordt overgenomen).",
+      "meshcore": "v1.17.1",
+      "boards": {
+        "t1000e": {
+          "name": "Seeed T1000-E",
+          "zip": "meshtrack-t1000e-0.9.11.zip",
+          "zip_sha256": "a659d1bee082f8988d00a6a1394a84ee5d16748b4ecc182e8ecc3c95159eb336",
+          "uf2": "meshtrack-t1000e-0.9.11.uf2",
+          "uf2_sha256": "f9f4b8ee4a2e50b1d980b33e3c4d9ff0cf625449db4fdd4597c9e3f5ec643069",
+          "app_size": 460960,
+          "app_start": "0x27000",
+          "sd_req": [
+            "0x0123"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "wismesh_tag": {
+          "name": "RAK WisMesh Tag",
+          "zip": "meshtrack-wismesh-tag-0.9.11.zip",
+          "zip_sha256": "bc86819fd653841130fed2fbcdee0914d88a71b366b902fe5bade58d8b5cb1fd",
+          "uf2": "meshtrack-wismesh-tag-0.9.11.uf2",
+          "uf2_sha256": "7376ea052e01b3c184a215295e0620b55c267fd91c7dcc506ac7d7fd70421506",
+          "app_size": 524244,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "rak3401_1w": {
+          "name": "RAK19007 + RAK3401 + RAK13302 (1 W)",
+          "zip": "meshtrack-rak3401-1w-0.9.11.zip",
+          "zip_sha256": "5463c23ae465e6fa3fd3d4c8863e797fd0e2ead0adb6bb3e524c8eccc9efc326",
+          "uf2": "meshtrack-rak3401-1w-0.9.11.uf2",
+          "uf2_sha256": "91a53841da627813c35763776c02c084aebdb4f44e8cb395fe1b6aff3c91a463",
+          "app_size": 543880,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        }
+      },
+      "zip": "meshtrack-t1000e-0.9.11.zip",
+      "zip_sha256": "a659d1bee082f8988d00a6a1394a84ee5d16748b4ecc182e8ecc3c95159eb336",
+      "uf2": "meshtrack-t1000e-0.9.11.uf2",
+      "app_size": 460960
+    },
+    {
       "version": "0.9.10",
       "date": "2026-10-10",
       "notes": "Belangrijke privacyfout opgelost: een tracker die nooit klaargemaakt werd, stond op trackingkanaal 0 (Public) en verstuurde zijn posities en SOS-berichten daar, voor iedereen leesbaar. Vanaf 0.9.10 verstuurt de tracker nooit iets op een openbaar kanaal (Public, of een #kanaal waarvan de sleutel uit de naam volgt): een klik geeft dan een lage toon. Nieuwe toestellen hebben standaard geen trackingkanaal (chan=-) tot ze klaargemaakt zijn via Toestellen; een bestaand trackingkanaal dat naar Public wijst, wordt bij het opstarten 'geen'. Privékanalen blijven ongewijzigd. Status en dump tonen kanaal_fout (geen, ontbreekt of openbaar).",
@@ -383,5 +437,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.10"
+  "latest": "0.9.11"
 }

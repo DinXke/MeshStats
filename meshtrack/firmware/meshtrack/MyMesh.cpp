@@ -2249,6 +2249,7 @@ void MyMesh::checkSerialInterface() {
 
 void MyMesh::loop() {
   BaseChatMesh::loop();
+  mt_ble_conn(_serial->isConnected());   // MeshTrack: schrijfsessie via Bluetooth eindigt bij het verbreken
 
   if (_cli_rescue) {
     checkCLIRescueCmd();
