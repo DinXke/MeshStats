@@ -13,6 +13,7 @@
     return s < 60 ? `${s} s geleden` : s < 3600 ? `${Math.round(s / 60)} min geleden` : s < 86400 ? `${Math.round(s / 3600)} u geleden` : `${Math.round(s / 86400)} d geleden`;
   };
   const fmtSize = (b) => (b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.round(b / 1e6) + " MB");
+  const V_OLD_S = 120;                              // ouder dan 2 min: "laatst gekend"
   const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)", V: "op verzoek" };
 
   // ---- opslag ----------------------------------------------------------------------
@@ -148,7 +149,10 @@
         out.push({ ...base, k: `${pk}:${tsMain - e.dt}`, ts: tsMain - e.dt, state: state === "L" || state === "Q" ? state : "M", lat: e.lat, lon: e.lon, spd: e.spd, extra: true });
       }
     }
-    out.push({ ...base, k: `${pk}:${tsMain}:${state}`, ts: tsMain, state, lat, lon, alt: alt === "" ? null : +alt,
+    // Op verzoek (V) zonder verse fix: laatst gekende positie, met de echte fix-tijd (meer dan 2 min voor de ontvangst)
+    const rxTs = frameTs || Math.round(Date.now() / 1000);
+    const old = state === "V" && lat !== null && rxTs - tsMain > V_OLD_S;
+    out.push({ ...base, k: `${pk}:${tsMain}:${state}`, ts: tsMain, state, lat, lon, old, alt: alt === "" ? null : +alt,
       spd: spd === "" ? null : +spd, crs: crs === "" ? null : +crs, hdop: hdop === "" ? null : +hdop });
     return { positions: out, pk, state };
   }
@@ -545,8 +549,9 @@
       map.addSource("trk", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "trk", type: "line", source: "trk", paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.85 } });
       map.addSource("pts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 2, 3], "circle-color": ["case", ["==", ["get", "state"], "V"], vAmber(), ["get", "color"]],
-        "circle-opacity": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.7, 1], "circle-stroke-color": "#fff", "circle-stroke-width": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.5, 1] } });
+      map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 2, 3], "circle-color": ["case", ["all", ["==", ["get", "state"], "V"], ["==", ["get", "old"], 1]], "rgba(0,0,0,0)", ["==", ["get", "state"], "V"], vAmber(), ["get", "color"]],
+        "circle-opacity": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.7, 1], "circle-stroke-color": ["case", ["all", ["==", ["get", "state"], "V"], ["==", ["get", "old"], 1]], vAmber(), "#fff"],
+        "circle-stroke-width": ["case", ["all", ["==", ["get", "state"], "V"], ["==", ["get", "old"], 1]], 1.5, ["match", ["get", "state"], ["L", "Q"], true, false], 0.5, 1] } });
       // Op verzoek (V): amber stip met een kleine ring, bescheiden in het spoor (zelfde stijl als op de site)
       map.addLayer({ id: "pts-v", type: "circle", source: "pts", filter: ["==", ["get", "state"], "V"],
         paint: { "circle-radius": 6, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": vAmber(), "circle-stroke-width": 1.5 } });
@@ -593,7 +598,7 @@
       const sel = arr.filter((p) => p.ts >= since);
       const color = colorOf(pk), name = nameOf(pk);
       if (trackOn && sel.length > 1) lines.push({ type: "Feature", properties: { color }, geometry: { type: "LineString", coordinates: sel.map((p) => [p.lon, p.lat]) } });
-      if (trackOn) for (const p of sel) pts.push({ type: "Feature", properties: { color, name, ts: p.ts, spd: p.spd, state: p.state }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
+      if (trackOn) for (const p of sel) pts.push({ type: "Feature", properties: { color, name, ts: p.ts, spd: p.spd, state: p.state, old: p.old ? 1 : 0 }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
       const last = arr[arr.length - 1];
       upsertMarker(pk, last, color, name);
     }
@@ -616,7 +621,8 @@
     const mk = el.querySelector(".omark");
     mk.style.background = color;
     // antwoord op een locatieverzoek: amber ring; bij een nieuw antwoord een korte puls
-    mk.classList.toggle("vreq", p.state === "V");
+    mk.classList.toggle("vreq", p.state === "V" && !p.old);
+    mk.classList.toggle("vold", p.state === "V" && !!p.old);
     if (p.state === "V" && mk.dataset.vk !== p.k) {
       if (mk.dataset.vk !== undefined || Date.now() / 1000 - (p.rx || 0) < 120) {
         mk.classList.remove("vpulse"); void mk.offsetWidth; mk.classList.add("vpulse");
@@ -633,7 +639,7 @@
     $("o-list").innerHTML = items.length ? items.map(({ pk, last, n }) => {
       return `<div class="otrk" data-pk="${esc(pk)}"><span class="omark" style="background:${esc(colorOf(pk))}"></span>
         <div class="body"><div class="nm">${esc(nameOf(pk))} ${last.own ? '<span class="pill">eigen</span>' : ""} ${last.state === "E" ? '<span class="pill sos">SOS</span>' : ""}</div>
-        <div class="sub">${esc(ago(last.ts))} · ${last.state === "V" ? '<i class="vping" aria-hidden="true"></i> ' : ""}${esc(STATE[last.state] || last.state || "")}${last.bat != null ? " · " + last.bat + " %" : ""} · ${esc(last.chan || "")} · ${n} punten</div>
+        <div class="sub">${esc(ago(last.ts))} · ${last.state === "V" ? `<i class="vping${last.old ? " old" : ""}" aria-hidden="true"></i> ` : ""}${esc(STATE[last.state] || last.state || "")}${last.bat != null ? " · " + last.bat + " %" : ""} · ${esc(last.chan || "")} · ${n} punten</div>
         ${last.own && last.rep ? `<div class="sub"><span class="pill">${esc(repText(last.rep))}</span></div>` : ""}</div></div>`;
     }).join("") : '<div class="empty">Nog geen posities. Verbind met een companion (tabblad Verbinding).</div>';
     $("o-list").querySelectorAll(".otrk").forEach((el) => el.addEventListener("click", () => {
@@ -730,7 +736,7 @@
     const main = r.positions[r.positions.length - 1];
     if (main.chan && main.chan !== askReq.chan) return;
     if ((main.rx || nowS()) < askReq.ts - 5) return;
-    askReq.answers.set(r.pk, { ts: main.ts, rx: main.rx || nowS(), fix: main.lat != null, lat: main.lat, lon: main.lon });
+    askReq.answers.set(r.pk, { ts: main.ts, rx: main.rx || nowS(), fix: main.lat != null, old: !!main.old, lat: main.lat, lon: main.lon });
     renderAsk();
     focusAnswers();
   }
@@ -756,7 +762,7 @@
       const x = a.answers.get(pk);
       return `<li data-pk="${esc(pk)}"${x ? "" : ' class="wait"'}><span class="omark sm" style="background:${esc(colorOf(pk))}"></span>
         <span class="nm">${esc(nameOf(pk))} <span class="mono muted small">${esc(pk)}</span></span>
-        <span class="small">${x ? `${esc(hms(x.rx))} · ${x.fix ? "met positie" : '<span class="warn">geen fix</span>'}` : "nog geen antwoord"}</span></li>`;
+        <span class="small">${x ? `${esc(hms(x.rx))} · ${!x.fix ? '<span class="warn">geen fix</span>' : x.old ? `<i class="vping old" aria-hidden="true"></i> laatst gekend, ${esc(ago(x.ts))}` : '<i class="vping" aria-hidden="true"></i> met positie'}` : "nog geen antwoord"}</span></li>`;
     }).join("");
     box.innerHTML = `<div class="askhead"><div><strong>Verzoek verstuurd om ${esc(hms(a.ts))}</strong>
         <div class="small muted">${all ? `Alle trackers op ${esc(a.chan)}` : `${esc(nameOf(a.target))} op ${esc(a.chan)}`}</div>

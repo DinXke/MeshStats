@@ -192,6 +192,7 @@ body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dv
 .tk-sw.k { background: var(--tk-park); border-radius: 1px; width: 10px; height: 10px; transform: rotate(45deg); margin: 0 1px; }
 /* op verzoek (V): doelwit = stip met ring, amber */
 .tk-sw.a { width: 15px; height: 15px; background: radial-gradient(circle, var(--tk-ans) 0 2.6px, transparent 3.2px 4.6px, var(--tk-ans) 5.1px 6.6px, transparent 7.1px); }
+.tk-sw.a.old { background: none; border: 2px dashed var(--tk-ans); }
 .tk-sw.nofix { border: 2px dashed var(--muted); background: none; }
 .tk-sw.line { border-radius: 2px; height: 3px; width: 16px; background: var(--muted); }
 .tk-mapnote { position: absolute; left: 10px; right: 64px; top: 62px; z-index: 3; margin: 0; font-size: 13px; background: var(--panel); color: var(--text); padding: 6px 10px; border-radius: 8px; box-shadow: var(--shadow); }
@@ -203,6 +204,7 @@ body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dv
 .tk-pos::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; background: var(--tk-pos); opacity: .5; animation: tk-pulse 1.8s ease-out infinite; z-index: -1; }
 .tk-pos.old { background: var(--muted); }
 .tk-pos.old::after { animation: none; opacity: 0; }
+.tk-pos.last { background: var(--muted); border-style: dashed; opacity: .9; }   /* laatst gekende positie (geen fix) */
 @keyframes tk-pulse { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(3.2); opacity: 0; } }
 /* zonder beweging: een vaste halo in plaats van kloppen */
 @media (prefers-reduced-motion: reduce) {

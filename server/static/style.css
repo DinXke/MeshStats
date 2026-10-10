@@ -660,3 +660,7 @@ header.top nav .navapps-l { font-size: 11px; text-transform: uppercase; letter-s
 #rq-targets { max-height: 40vh; overflow: auto; }
 .askwho { padding-left: 18px; margin: 6px 0; }
 .marker.asked { outline: 2px dashed var(--accent); outline-offset: 6px; }
+/* Op verzoek met een oude fix ("laatst gekend"): holle, gestippelde ring, duidelijk niet actueel */
+.vping.old { background: none; box-shadow: none; border: 2px dashed var(--vreq); }
+.legend i.vping.old { background: none; }
+.marker.vold, .omark.vold { box-shadow: 0 0 0 2px var(--panel); outline: 2px dashed var(--vreq); outline-offset: 2px; }
