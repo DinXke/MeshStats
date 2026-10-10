@@ -2149,7 +2149,7 @@ async def mesh_nodes(request: Request):
 
 
 EVENT_TYPES = {
-    "M": "positie (beweging)", "W": "wakker door beweging", "S": "stilgevallen", "H": "heartbeat",
+    "M": "positie (beweging)", "W": "wakker door beweging", "S": "stilgevallen", "H": "levensteken",
     "N": "geen GPS-fix", "E": "SOS", "P": "handmatig verstuurd", "V": "op verzoek verstuurd",
     "B": "moduswissel", "L": "gelogd punt (SlowTrack)", "Q": "ingehaald punt (FIFO)",
     "zone_in": "zone binnen", "zone_out": "zone buiten", "bat_low": "batterij onder 20 %",
