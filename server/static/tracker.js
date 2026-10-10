@@ -14,7 +14,7 @@
   };
   const nl = (x, d = 0) => Number(x).toLocaleString("nl-BE", { maximumFractionDigits: d });
   const COL = { ans: "#e0a400", ansDark: "#ffc83d", pos: "#0b6e4f", F: "#2563eb", pend: "#f59e0b", S: "#16a34a", Q: "#7c3aed", park: "#dc2626" };
-  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", V: "op verzoek", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)" };
+  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "levensteken", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", V: "op verzoek", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)" };
   const FLUSH = { idle: "wacht", actief: "bezig met leegmaken", gepauzeerd: "gepauzeerd", gestopt: "gestopt" };
   const CAPWHY = { uur: "uurgrens bereikt", pogingen: "te veel pogingen" };
   // Toestand van het leegmaken, met de reden als een plafond het pauzeert ("gepauzeerd: uurgrens bereikt").
@@ -882,23 +882,15 @@
   document.querySelectorAll("#buf-seg button").forEach((b) => b.addEventListener("click", () => { listSet = b.dataset.b; store.set("mt.tracker.list", listSet); renderList(); }));
 
   // ---- kaart ---------------------------------------------------------------------------------
-  const THEMES = { auto: "Automatisch", light: "Licht", dark: "Donker", night: "Nacht (rood)", contrast: "Hoog contrast", ocean: "Oceaan" };
-  const theme = () => store.get("mt.theme", "auto");
-  const dark = () => { const t = theme(); return t === "dark" || t === "night" || (t === "auto" && matchMedia("(prefers-color-scheme: dark)").matches); };
-  function applyTheme(t) {
-    if (t === "auto") document.documentElement.removeAttribute("data-theme");
-    else document.documentElement.setAttribute("data-theme", t);
-    store.set("mt.theme", t);
-    $("tk-themes").querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b.dataset.th === t); b.setAttribute("aria-pressed", String(b.dataset.th === t)); });
-  }
-  $("tk-themes").innerHTML = Object.entries(THEMES).map(([k, v]) => `<button type="button" data-th="${k}">${v}</button>`).join("");
-  $("tk-themes").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
-    const wasDark = dark();
-    applyTheme(b.dataset.th);
-    if (dark() !== wasDark) initMap();
-  }));
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (theme() === "auto") initMap(); });
-  applyTheme(theme());
+  // Thema's: dezelfde vijf als op de website en de offline-kaart (mt.theme), gedeeld via appnav.js.
+  const TH = window.MTApp && MTApp.theme;
+  const dark = () => (TH ? TH.isDark() : matchMedia("(prefers-color-scheme: dark)").matches);
+  let mapVariant = MTBasemap.variant(dark());
+  if (TH) TH.picker($("tk-themes"));
+  document.addEventListener("mt-theme", () => {
+    const v = MTBasemap.variant(dark());
+    if (v !== mapVariant) { mapVariant = v; initMap(); }
+  });
 
   const LAYERS = [
     { id: "pos", label: "Nu", sw: "pos" },
@@ -2187,24 +2179,15 @@
     say("De volledige site vraagt internet en aanmelden. Deze pagina en de offline-kaart werken wel zonder.", "err");
   });
 
-  if ("serviceWorker" in navigator) {
-    let reloading = false;
-    navigator.serviceWorker.addEventListener("controllerchange", () => { if (reloading) location.reload(); });
-    navigator.serviceWorker.register("/tracker-sw.js", { scope: "/tracker" }).then((reg) => {
-      const offer = (w) => {
-        if (!w || !navigator.serviceWorker.controller) return;     // eerste installatie: niets te melden
-        const b = $("tk-update");
-        b.hidden = false;
-        b.onclick = () => { reloading = true; w.postMessage({ type: "skip" }); };
-      };
-      if (reg.waiting) offer(reg.waiting);
-      reg.addEventListener("updatefound", () => {
-        const w = reg.installing;
-        if (w) w.addEventListener("statechange", () => { if (w.state === "installed") offer(w); });
-      });
+  // Eén app: de service worker van "/" bewaart deze pagina, de kaartbestanden en de lettertypes
+  // vooraf. De oude worker van /tracker meldt zich zelf af zodra die klaar is (tracker-sw.js).
+  if (window.MTApp) {
+    MTApp.registerSW({ updateButton: $("tk-update") });
+    MTApp.migrationBanner(document.querySelector(".modenav"));
+    if ("serviceWorker" in navigator) {
       // Lettertypes en symbolen alvast bewaren zolang er internet is.
-      navigator.serviceWorker.ready.then((r) => { if (navigator.onLine && r.active) r.active.postMessage({ type: "prefetch" }); });
-    }).catch(() => {});
+      navigator.serviceWorker.ready.then((r) => { if (navigator.onLine && r.active) r.active.postMessage({ type: "prefetch" }); }).catch(() => {});
+    }
   }
 
   // ---- start -----------------------------------------------------------------------------------

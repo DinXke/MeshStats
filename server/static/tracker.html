@@ -3,10 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MeshTrack – tracker</title>
+<title>MeshTrack – Tracker live</title>
 <meta name="description" content="De binnenkant van één MeshTrack-tracker, live via Bluetooth of USB.">
+<!-- Deel van de ene MeshTrack-app (manifest en service worker van "/"). Het vroegere eigen
+     manifest (/tracker.webmanifest) en de worker /tracker-sw.js bestaan nog voor oude installaties. -->
 <meta name="theme-color" content="#0b6e4f">
-<link rel="manifest" href="/tracker.webmanifest">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MeshTrack">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon-192.png">
 <script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
@@ -17,19 +22,20 @@
 <body class="tkapp">
 <header class="tk-head">
   <div class="tk-title">
-    <h1>Tracker</h1>
+    <h1>Tracker live</h1>
     <p class="tk-who" id="tk-who">Niet verbonden</p>
   </div>
   <span class="pill tk-state" id="tk-state" role="status">niet verbonden</span>
-  <nav class="tk-links" aria-label="Andere pagina's">
-    <a href="/offline" class="tk-headlink" aria-label="Offline-kaart">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M7 7.5A5 5 0 007 18h10.5M20.6 16A3.8 3.8 0 0017 10.2h-.9A6 6 0 0010 6.1"/></svg><span class="tk-long">Offline-kaart</span><span class="tk-short" aria-hidden="true">Offline</span>
-    </a>
-    <a href="/" class="tk-headlink" id="tk-site" aria-label="Volledige site">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7M5 9.5V20h5v-6h4v6h5V9.5"/></svg><span class="tk-long">Volledige site</span><span class="tk-short" aria-hidden="true">Site</span>
-    </a>
-  </nav>
 </header>
+<nav class="modenav" aria-label="Offline-modus">
+  <span class="modenav-l" title="Offline-modus: gegevens blijven op dit toestel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M8.5 16.1a5 5 0 017 0M5 12.5a10 10 0 014.2-2.4M2 8.8a15 15 0 014.1-2.6M14.8 10.3A10 10 0 0119 12.5M10.6 5.1A15 15 0 0122 8.8"/></svg><span class="modenav-t">Offline-modus</span><span class="modenav-x"> · gegevens blijven op dit toestel</span></span>
+  <span class="modeseg" role="group" aria-label="Offline-deel">
+    <a href="/offline" id="tk-offline">Offline-kaart</a>
+    <a href="/tracker" aria-current="page">Tracker live</a>
+  </span>
+  <a href="/help#tracker" class="modehelp">Help</a>
+  <a href="/" class="modeonline" id="tk-site" title="Volledige site: vraagt internet en aanmelden"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.8a15 15 0 0120 0M5 12.5a10 10 0 0114 0M8.5 16.1a5 5 0 017 0"/><circle cx="12" cy="19.5" r="1"/></svg><span>Online</span></a>
+</nav>
 
 <div class="tk-bar" id="tk-bar">
   <div class="tk-connect" id="tk-connect" role="group" aria-label="Verbinden met de tracker">
@@ -272,7 +278,9 @@
       <article class="card tk-card tk-wide">
         <h2>Weergave</h2>
         <div class="themes" id="tk-themes" role="group" aria-label="Thema"></div>
-        <p class="muted tk-small">Hetzelfde thema als op de website en in de offline-app.</p>
+        <button type="button" class="tk-wbtn daynight" data-daynight aria-pressed="false"><svg class="dn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/></svg><span>Nachtmodus (rood)</span></button>
+        <p class="muted tk-small">Hetzelfde thema als op de website en op de offline-kaart.</p>
+        <p class="tk-small"><a href="/start?kies=1" id="tk-start">Beginscherm (Online of Offline)</a></p>
       </article>
     </div>
   </section>
@@ -336,6 +344,7 @@
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/vendor/pmtiles.js"></script>
 <script src="/static/basemap.js"></script>
+<script src="/static/appnav.js"></script>
 <script src="/static/tracker.js"></script>
 </body>
 </html>

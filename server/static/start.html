@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MeshTrack</title>
+<meta name="description" content="Kies Online (de volledige site) of Offline (offline-kaart en Tracker live, zonder internet).">
+<!-- Beginscherm van de app (start_url). Openbaar, zonder gegevens, vooraf bewaard door /sw.js:
+     opent ook zonder netwerk. Op een computer (breed scherm met muis) gaat het meteen door naar
+     de site, tenzij iemand bewust het beginscherm kiest (/start?kies=1). -->
+<script id="mt-early-theme">try{var t=JSON.parse(localStorage.getItem("mt.theme")||"\"auto\"");if(t!=="auto")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<script>
+  // Zo vroeg mogelijk doorsturen, vóór er iets getekend wordt.
+  (function () {
+    try {
+      var q = new URLSearchParams(location.search), ga = q.get("ga");
+      if (matchMedia("(display-mode: standalone)").matches || navigator.standalone) sessionStorage.setItem("mt.inapp", "1");
+      if (ga === "offline" || ga === "tracker") { location.replace("/" + ga); return; }
+      if (ga === "online") { location.replace("/"); return; }
+      if (q.has("kies")) return;
+      var keep = localStorage.getItem("mt.start");
+      if (keep === "offline") { location.replace("/offline"); return; }
+      if (!keep && matchMedia("(min-width: 1024px) and (pointer: fine)").matches) location.replace("/");
+    } catch (e) { /* gewoon het beginscherm tonen */ }
+  })();
+</script>
+<meta name="theme-color" content="#0b6e4f">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MeshTrack">
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body.startpg { min-height: 100vh; min-height: 100dvh; margin: 0; display: flex; justify-content: center;
+    padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    box-sizing: border-box; }
+  .st { width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 14px; }
+  .st-brand { display: flex; gap: 12px; align-items: center; margin: 8px 0 4px; }
+  .st-logo { width: 44px; height: 44px; border-radius: 12px; background: var(--accent); color: var(--accent-text); display: flex; align-items: center; justify-content: center; flex: none; }
+  .st-logo svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .st-brand h1 { font-size: 24px; margin: 0; line-height: 1.1; }
+  .st-brand p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+  .st-cards { display: flex; flex-direction: column; gap: 14px; }
+  .st-card { display: block; width: 100%; text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px 18px 16px; box-shadow: var(--shadow); font: inherit; cursor: pointer; text-decoration: none; }
+  .st-card.first { border: 2px solid var(--accent); }
+  .st-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .st-card .st-h { display: flex; align-items: center; gap: 12px; }
+  .st-ico { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex: none;
+    background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--accent); }
+  .st-card.off .st-ico { background: color-mix(in srgb, var(--offc) 16%, var(--panel)); color: var(--offc); }
+  .st-ico svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .st-card h2 { margin: 0; font-size: 22px; }
+  .st-card .st-d { margin: 10px 0 8px; color: var(--muted); font-size: 15px; line-height: 1.45; }
+  .st-state { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; font-weight: 600; margin: 0; }
+  .st-state::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; margin-top: 5px; }
+  .st-state.ok { color: var(--ok); }
+  .st-state.warn { color: var(--warn); }
+  .st-state.busy { color: var(--muted); }
+  .st-state.busy::before { background: none; border: 2px dotted currentColor; width: 7px; height: 7px; }
+  .st-state.info { color: var(--offc); }
+  .st-sub { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .st-sub a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); text-decoration: none; color: var(--text); background: var(--bg); font-size: 15px; }
+  .st-keep { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 15px; color: var(--text); margin: 4px 0 0; cursor: pointer; }
+  .st-keep input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); flex: none; }
+  .st-note { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; }
+  .st-foot { margin-top: auto; padding-top: 12px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .st-foot a { display: inline-block; padding: 10px 4px; }
+  #st-install { min-height: 44px; }
+  @media (min-width: 700px) { .st { max-width: 560px; } body.startpg { align-items: center; } }
+</style>
+</head>
+<body class="startpg">
+<main class="st">
+  <div class="st-brand">
+    <span class="st-logo" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11a7 7 0 0114 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.6"/></svg></span>
+    <div><h1>MeshTrack</h1><p>Waar wil je mee verder?</p></div>
+  </div>
+
+  <div class="st-cards" id="st-cards">
+    <a class="st-card on first" id="st-online" href="/">
+      <span class="st-h"><span class="st-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 8.8a15 15 0 0120 0M5 12.5a10 10 0 0114 0M8.5 16.1a5 5 0 017 0"/><circle cx="12" cy="19.5" r="1"/></svg></span><h2>Online</h2></span>
+      <p class="st-d">Alle trackers live op de kaart, logboek, kanalen, statistieken en beheer.</p>
+      <p class="st-state busy" id="st-on-state" role="status" aria-live="polite">Verbinding met de server controleren…</p>
+    </a>
+    <div class="st-card off" id="st-offline" role="group" aria-labelledby="st-off-h">
+      <a href="/offline" id="st-offline-go" class="st-cardlink" style="display:block;color:inherit;text-decoration:none">
+        <span class="st-h"><span class="st-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/><path d="M3 3l18 18"/></svg></span><h2 id="st-off-h">Offline</h2></span>
+        <p class="st-d">Zonder internet en zonder account: posities via Bluetooth van je companion op je eigen offline-kaart, en Tracker live.</p>
+        <p class="st-state info" id="st-off-state">Kaarten op dit toestel tellen…</p>
+      </a>
+      <div class="st-sub"><a href="/offline" id="st-go-map">Offline-kaart</a><a href="/tracker" id="st-go-tracker">Tracker live</a></div>
+    </div>
+  </div>
+
+  <label class="st-keep"><input type="checkbox" id="st-keep"> Volgende keer meteen zo openen</label>
+  <p class="st-note" id="st-keep-note" hidden></p>
+  <button type="button" id="st-install" hidden>MeshTrack installeren als app</button>
+  <p class="st-note" id="st-ios" hidden>Installeren op een iPhone of iPad: tik op <strong>Deel</strong> en kies <strong>Zet op beginscherm</strong>.</p>
+
+  <p class="st-foot">Keuze later wisselen: <strong>Meer → Beginscherm</strong> · <a href="/help#offline">Help</a></p>
+</main>
+<script src="/static/appnav.js"></script>
+<script src="/static/start.js"></script>
+</body>
+</html>

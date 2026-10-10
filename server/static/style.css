@@ -9,7 +9,8 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]), :root[data-theme="auto"] {
+  /* "ocean" bestaat niet meer: een oude bewaarde keuze valt terug op Automatisch */
+  :root:not([data-theme]), :root[data-theme="auto"], :root[data-theme="ocean"] {
     --bg: #15181c; --panel: #1f2328; --text: #e6e8ea; --muted: #9aa3ab; --line: #30363d;
     --accent: #3fb68b; --accent-text: #0d1512; --danger: #f2766b; --warn: #e3b341; --ok: #56d364;
     --shadow: 0 1px 3px rgba(0,0,0,.4); --field-border: #57606a;
@@ -27,17 +28,11 @@
   --accent: #e0483a; --accent-text: #050303; --danger: #ff5f4f; --warn: #ff9b5c; --ok: #ff8a7a;
   --shadow: none; color-scheme: dark;
 }
-/* Hoog contrast: zwart op wit, dikke lijnen (buiten in de zon) */
+/* Zon (key "contrast", zo blijven bewaarde voorkeuren werken): zwart op wit, dikke lijnen, voor buiten in de zon */
 :root[data-theme="contrast"] {
   --bg: #ffffff; --panel: #ffffff; --text: #000000; --muted: #2b2b2b; --line: #000000; --field-border: #000000;
-  --accent: #0040c0; --accent-text: #ffffff; --danger: #b00000; --warn: #7a4a00; --ok: #006b1f;
+  --accent: #0040c0; --accent-text: #ffffff; --danger: #b00000; --warn: #7a4a00; --ok: #005a1a;
   --shadow: none; color-scheme: light;
-}
-/* Oceaan: blauwe accenten, licht */
-:root[data-theme="ocean"] {
-  --bg: #eef4f8; --panel: #ffffff; --text: #0f2233; --muted: #5a6f80; --line: #cfdde8; --field-border: #94afc4;
-  --accent: #1366a8; --accent-text: #ffffff; --danger: #b3261e; --warn: #9a6700; --ok: #1a7f37;
-  color-scheme: light;
 }
 :root[data-theme="contrast"] .card, :root[data-theme="contrast"] button { border-width: 2px; }
 
@@ -739,3 +734,281 @@ header.top nav .navapps-l { font-size: 11px; text-transform: uppercase; letter-s
 .marker.unsigned:not(.lost):not(.asked):not(.vold) { outline: 2px dashed var(--unsig); outline-offset: 2px; }
 .unsig-txt { color: var(--unsig); font-weight: 600; }
 .detwarn { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--danger); border-left-width: 4px; color: var(--danger); font-weight: 600; background: var(--panel); }
+
+/* ==== UX 1.5 – pagina-inhoud (tabs, kaartlijst, beheerlijsten, logboek, login, help) ====
+   Eén blok onderaan; kopbalk en navigatie staan hier bewust niet in. */
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.lbl { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+
+/* tabstroken: nooit afbreken of overlappen; te breed = schuiven, met een vervaging als hint (tabs.js) */
+.pagetabs, #side .tabs { overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+.pagetabs::-webkit-scrollbar, #side .tabs::-webkit-scrollbar { display: none; }
+.pagetabs .tab { flex: 1 0 auto; white-space: nowrap; min-height: 44px; padding: 10px 14px; scroll-snap-align: center; }
+.pagetabs.more-r, #side .tabs.more-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); }
+.pagetabs.more-l, #side .tabs.more-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px); mask-image: linear-gradient(90deg, transparent, #000 36px); }
+.pagetabs.more-l.more-r, #side .tabs.more-l.more-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 36px), transparent); }
+#side .tab { min-height: 44px; white-space: nowrap; }
+@media (max-width: 720px) {
+  .pagetabs { flex-wrap: nowrap; }
+  .pagetabs .tab { font-size: 15px; padding: 10px 14px; min-width: auto; }
+}
+
+/* kaart: trackernaam als knop (toetsenbord), details van de gekozen tracker niet onder de tabs */
+.trk .trkname { border: 0; background: none; padding: 0; margin: 0; font: inherit; font-weight: 600; color: inherit; text-align: left;
+  cursor: pointer; border-radius: 4px; overflow-wrap: anywhere; }
+.trk { scroll-margin-top: 52px; scroll-margin-bottom: 8px; }
+@media (max-width: 720px) {
+  .sheet-handle { padding: 19px 0 20px; }                        /* greep: 44 px hoog, streepje blijft klein */
+  .sidehead.small { flex-wrap: wrap; row-gap: 0; }
+  .sidehead .link, details.sect .row .link { min-height: 44px; min-width: 44px; padding: 0 6px; }
+  .chip, .seg button, .item button { min-height: 44px; }
+  .trk .fav { min-width: 44px; min-height: 44px; margin: -8px -10px -8px 0; }
+  .trk .vis { width: 24px; height: 24px; margin-top: 0; }
+  details.sect > summary, .viewopts > summary { min-height: 44px; }
+  label.mini { min-height: 36px; }
+  .maplibregl-ctrl-group button { width: 44px; height: 44px; }
+  .maplibregl-ctrl-group button .maplibregl-ctrl-icon { background-size: 30px; }
+  #rq-btn { min-height: 44px; }
+}
+
+/* beheerlijsten: knoppen over de volle breedte op de gsm; verwijderen staat in het bewerkvenster */
+.row .rowend { margin-left: auto; }
+@media (max-width: 720px) {
+  .titem .actions { padding-left: 0; gap: 8px; }
+  .titem .actions button, .titem .actions a.btnlink { min-height: 44px; flex: 1 1 auto; }
+  .row button, .row a.btnlink, dialog.side .dlghead button { min-height: 44px; }
+  button.link { min-height: 44px; min-width: 44px; }
+  .row .rowend { margin-left: 0; flex-basis: 100%; }
+}
+
+/* Prioritair (virtuele tracker): schakelaar i.p.v. knop die op een status lijkt */
+.prioctl .priobtn[role="switch"] { display: inline-flex; align-items: center; gap: 8px; }
+.priobtn .sw { width: 34px; height: 20px; border-radius: 999px; background: var(--line); position: relative; flex: none; transition: background .15s; }
+.priobtn .sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
+.priobtn[aria-checked="true"] .sw { background: #fff; }
+.priobtn[aria-checked="true"] .sw::after { left: 16px; background: var(--prio); }
+.prioctl .priobtn[aria-checked="true"] { background: var(--prio); border-color: var(--prio); color: #fff; font-weight: 600; }
+.priobtn .prio-state { font-size: 12px; opacity: .85; text-transform: uppercase; letter-spacing: .04em; }
+@media (prefers-reduced-motion: reduce) { .priobtn .sw, .priobtn .sw::after { transition: none; } }
+
+/* logboek: inklapbare filters, vaste zoek- en knoppenbalk, kaartjes op de gsm */
+details.logfilters { margin: 0; border: 1px solid var(--line); border-radius: var(--radius); }
+details.logfilters > summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; min-height: 44px;
+  color: var(--text); font-size: 14px; font-weight: 600; list-style: none; }
+details.logfilters > summary::-webkit-details-marker { display: none; }
+details.logfilters > summary::before { content: "▸"; transition: transform .15s; }
+details.logfilters[open] > summary::before { transform: rotate(90deg); }
+details.logfilters > summary #f-sum { font-weight: 400; }
+details.logfilters > .filters { padding: 0 12px 12px; }
+.logbar { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: flex-end; margin-top: 4px; }
+.logbar .logsearch { flex: 1 1 220px; max-width: 420px; }
+.logbar .row { margin-top: 8px; }
+.logmore { justify-content: center; }
+@media (max-width: 720px) {
+  .typegrid label.mini { min-height: 40px; }
+  table.log thead { display: none; }
+  table.log, table.log tbody { display: block; }
+  table.log tr { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+  table.log td { display: block; padding: 0; border: 0; }
+  table.log td.lt { grid-column: 1; grid-row: 1; color: var(--muted); }
+  table.log td.ltrk { grid-column: 1; grid-row: 2; font-weight: 600; overflow-wrap: anywhere; }
+  table.log td.lev { grid-column: 2; grid-row: 1 / span 2; align-self: center; text-align: right; }
+  table.log td.hide-sm.ldet { display: block; grid-column: 1; grid-row: 3; }   /* details ook op de gsm */
+  table.log td.ldet:empty { display: none; }
+  table.log td.lmap { grid-column: 2; grid-row: 3; text-align: right; }
+  table.log td.lmap a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; }
+}
+
+/* help: inhoud als uitklapper (gsm: dicht) */
+details.toc { margin: 0; }
+details.toc > summary { list-style: none; cursor: pointer; color: var(--text); font-size: 15px; min-height: 32px; display: flex; align-items: center; gap: 6px; }
+details.toc > summary::-webkit-details-marker { display: none; }
+details.toc > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+details.toc[open] > summary::before { transform: rotate(90deg); }
+.toclinks { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+@media (max-width: 860px) {
+  details.toc > summary { min-height: 44px; }
+  .toclinks { gap: 0; }
+  .toclinks a { display: flex; align-items: center; min-height: 44px; border-top: 1px solid var(--line); }
+}
+/* activiteitenlog: details onder de actie op de gsm (UX 1.5) */
+.auditmob { display: none; }
+@media (max-width: 720px) { .auditmob { display: block; margin-top: 2px; overflow-wrap: anywhere; } }
+
+/* =====================================================================================
+   Eén app: kopbalk, navigatie en offline-modus (common.js initHeader, appnav.js, start.html)
+   - breed: pagina's in de kop, wat niet past in "Meer ▾" (JS, nooit horizontaal scrollen),
+     schakelaar Online | Offline, gebruikersmenu;
+   - gsm (≤ 720 px): tabbalk onderaan (.mnav) + Meer-venster (.msheet);
+   - offline-deel: band "Offline-modus" (.modenav) met eigen accentkleur (--offc).
+   ===================================================================================== */
+:root { --offc: #2f5d8a; --offc-bg: #e8eff7; --mnav-h: 60px; }
+:root[data-theme="dark"] { --offc: #8fb8e8; --offc-bg: #17222e; }
+:root[data-theme="night"] { --offc: #ff9b8c; --offc-bg: #1d0d0b; }
+:root[data-theme="contrast"] { --offc: #003a80; --offc-bg: #e6eefb; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]), :root[data-theme="auto"] { --offc: #8fb8e8; --offc-bg: #17222e; } }
+
+a.btnlike { display: inline-flex; align-items: center; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  border-radius: 8px; padding: 6px 10px; text-decoration: none; font-size: 14px; }
+
+/* ---- kopbalk (breed) ---- */
+header.top { min-width: 0; }
+header.top h1 { white-space: nowrap; flex: none; }
+header.top nav { flex: none; align-items: center; }               /* krimpt niet: wat niet past, schuift in Meer (JS) */
+header.top nav > a { white-space: nowrap; flex: none; }
+.navmore { position: relative; flex: none; }
+.navmore > summary { list-style: none; cursor: pointer; color: var(--muted); white-space: nowrap; padding: 0 2px; display: flex; align-items: center; min-height: 32px; }
+.navmore > summary::-webkit-details-marker { display: none; }
+.navmore > summary::after { content: ""; display: inline-block; margin-left: 5px; vertical-align: 2px; border: 4px solid transparent; border-top-color: currentColor; border-bottom: 0; }
+.navmore[open] > summary, .navmore > summary:hover { color: var(--text); }
+.navmore:has(.navmore-over a.on) > summary { color: var(--text); font-weight: 600; }
+.navmore .menu { position: absolute; left: 0; top: calc(100% + 10px); z-index: 30; min-width: 210px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column; }
+.navmore .menu a { display: flex; align-items: center; min-height: 40px; padding: 0 10px; border-radius: 8px; color: var(--text); text-decoration: none; white-space: nowrap; }
+.navmore .menu a:hover { background: var(--bg); }
+.navmore .menu a.on { font-weight: 600; color: var(--accent); }
+.navmore-over:empty { display: none; }
+.navmore-over { display: flex; flex-direction: column; border-bottom: 1px solid var(--line); margin-bottom: 4px; padding-bottom: 4px; }
+.navmore-l { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 10px 2px; }
+.navmore-sep { border-top: 1px solid var(--line); margin: 4px 0; }
+.modesw { display: inline-flex; flex: none; border: 1px solid var(--line); border-radius: 999px; padding: 2px; background: var(--bg); margin-left: auto; }
+.modesw a { display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  color: var(--muted); text-decoration: none; white-space: nowrap; }
+.modesw a[aria-current] { background: var(--accent); color: var(--accent-text); }
+.modesw a:not([aria-current]):hover { color: var(--offc); }
+header.top .modesw ~ .spacer { display: none; }
+header.top #mesh { flex: 0 1 auto; min-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header.top .usermenu, header.top #sharelogin, header.top .hdrinstall { flex: none; }
+
+/* ---- gsm: tabbalk onderaan + Meer-venster ---- */
+.mnav { display: none; }
+@media (max-width: 720px) {
+  body.has-mnav header.top nav, header.top .modesw, body.has-mnav header.top .usermenu, body.has-mnav header.top .navtoggle, body.has-mnav header.top .hdrinstall { display: none !important; }
+  body:not(.has-mnav) header.top nav { display: flex; }          /* openbare pagina zonder tabbalk (help): eigen links tonen */
+  header.top .spacer { display: block; flex: 1; }
+  .mnav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: var(--panel); border-top: 1px solid var(--line);
+    box-shadow: 0 -2px 8px rgba(0,0,0,.06); padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  body.has-mnav .mapwrap { height: calc(100% - 48px - var(--mnav-h) - env(safe-area-inset-bottom)); }
+  body.has-mnav main.page, body.has-mnav main { padding-bottom: calc(var(--mnav-h) + 24px + env(safe-area-inset-bottom)); }
+  body.has-mnav .sheet-show:not([hidden]) { bottom: calc(var(--mnav-h) + 14px + env(safe-area-inset-bottom)); }
+  body.has-mnav .swupdate:not([hidden]) { bottom: calc(var(--mnav-h) + 14px + env(safe-area-inset-bottom)); }
+  body.has-mnav .pwahint { bottom: calc(var(--mnav-h) + 12px + env(safe-area-inset-bottom)); }
+  body.kiosk .mnav { display: none; }
+  body.kiosk.has-mnav .mapwrap { height: calc(100% - 48px); }
+}
+.mnav > a, .mnav > button, .obar > button { flex: 1 1 0; min-width: 0; min-height: var(--mnav-h); border: 0; border-radius: 0; background: none; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 6px 2px 5px; font-size: 12px;
+  text-decoration: none; position: relative; -webkit-tap-highlight-color: transparent; }
+.mnav svg, .obar svg { width: 22px; height: 22px; padding: 4px 16px; box-sizing: content-box; border-radius: 999px; fill: none; stroke: currentColor;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: background .15s; }
+.mnav span, .obar span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mnav > .on, .obar > .on { color: var(--accent); font-weight: 700; }
+.mnav > .on svg, .obar > .on svg { background: color-mix(in srgb, var(--accent) 16%, transparent); stroke-width: 2.4; }
+.mnav > :focus-visible, .obar > :focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
+@media (max-width: 380px) { .mnav svg, .obar svg { padding: 4px 10px; } }
+
+dialog.msheet { margin: auto auto 0; width: 100%; max-width: 560px; max-height: 85vh; max-height: 85dvh; box-sizing: border-box; border: 1px solid var(--line);
+  border-bottom: 0; border-radius: 16px 16px 0 0; background: var(--panel); color: var(--text); padding: 0 0 env(safe-area-inset-bottom); overflow: auto; }
+dialog.msheet[open] { display: flex; flex-direction: column; animation: msheet-in .18s ease-out; }
+dialog.msheet::backdrop { background: rgba(0,0,0,.4); }
+@keyframes msheet-in { from { transform: translateY(24px); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { dialog.msheet[open] { animation: none; } }
+.msheet-grip { width: 44px; height: 5px; border-radius: 3px; background: var(--line); margin: 10px auto 4px; flex: none; }
+.msheet-who { display: flex; gap: 12px; align-items: center; padding: 8px 18px 12px; border-bottom: 1px solid var(--line); }
+.msheet-who .avatar { width: 40px; height: 40px; font-size: 17px; flex: none; }
+.msheet-h { font-size: 17px; margin: 6px 18px 8px; }
+.msheet-list { display: flex; flex-direction: column; padding: 4px 8px; }
+.msheet-list > a, .msheet-list > button { display: flex; align-items: center; min-height: 48px; padding: 0 10px; border: 0; border-radius: 8px; background: none;
+  color: var(--text); text-decoration: none; font-size: 16px; text-align: left; width: 100%; }
+.msheet-list > a:hover, .msheet-list > button:hover { background: var(--bg); }
+.msheet-list > a.on { color: var(--accent); font-weight: 600; }
+.msheet-list > a.msheet-off, .msheet-list > a.msheet-online { color: var(--offc); font-weight: 600; }
+.msheet-list > a.msheet-online { color: var(--accent); }
+.msheet-l { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 14px 10px 4px; border-top: 1px solid var(--line); margin-top: 6px; }
+.msheet-list > .msheet-l:first-child { border-top: 0; margin-top: 0; }
+.msheet-list .themes { padding: 4px 10px 8px; }
+.msheet-list .themes button { min-height: 44px; }
+.msheet-close { margin: 8px 16px 14px; min-height: 48px; flex: none; }
+/* een gewone .avatar buiten het gebruikersmenu (Meer-venster) */
+.msheet .avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-weight: 700; }
+
+/* ---- offline-deel: band "Offline-modus" (Offline-kaart | Tracker live | Online) ---- */
+.modenav { display: flex; align-items: center; gap: 8px; flex: none; min-height: 48px; box-sizing: border-box;
+  padding: 4px max(12px, env(safe-area-inset-right)) 4px max(12px, env(safe-area-inset-left));
+  background: var(--offc-bg); color: var(--offc); border-bottom: 1px solid var(--line); font-size: 14px; }
+.modenav svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.modenav-l { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.modenav-x { font-weight: 400; }
+.modeseg { display: inline-flex; flex: none; border: 1px solid color-mix(in srgb, var(--offc) 45%, var(--line)); border-radius: 999px; padding: 2px; background: var(--panel); }
+.modeseg a { display: inline-flex; align-items: center; min-height: 36px; padding: 0 12px; border-radius: 999px; text-decoration: none; color: var(--text);
+  font-weight: 600; font-size: 14px; white-space: nowrap; }
+.modeseg a[aria-current] { background: var(--offc); color: var(--panel); }
+.modehelp { margin-left: auto; color: var(--offc); white-space: nowrap; display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; }
+.modeonline { display: inline-flex; align-items: center; gap: 6px; flex: none; min-height: 40px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--accent); color: var(--accent); background: var(--panel); text-decoration: none; font-weight: 600; white-space: nowrap; }
+.modeonline svg { width: 18px; height: 18px; }
+.modenav a:focus-visible { outline: 2px solid var(--offc); outline-offset: 2px; }
+@media (max-width: 900px) { .modenav-x { display: none; } }
+@media (max-width: 760px) {
+  .modenav { gap: 6px; }
+  .modenav-t, .modehelp { display: none; }
+  .modenav-l { flex: none; }
+  .modeseg { margin-right: auto; }
+}
+@media (max-width: 360px) {
+  .modeseg a { padding: 0 9px; font-size: 13px; }
+  .modeonline { padding: 0 9px; }
+}
+
+/* offline-kaart: tabbalk onderaan op de gsm (in de flow, onder het onderpaneel) */
+.obar { display: none; }
+@media (max-width: 760px) {
+  .obar { display: flex; flex: none; position: relative; z-index: 4; background: var(--panel); border-top: 1px solid var(--line);
+    box-shadow: 0 -2px 8px rgba(0,0,0,.06); padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+}
+.obadge { position: absolute; top: 4px; left: calc(50% + 8px); min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 999px;
+  background: var(--danger); color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 700; }
+
+/* oude, apart geïnstalleerde /offline- of /tracker-app: één keer uitleg over de overstap */
+.migrbanner { flex: none; background: var(--panel); border-bottom: 1px solid var(--line); border-left: 4px solid var(--warn);
+  padding: 10px max(14px, env(safe-area-inset-right)) 12px max(14px, env(safe-area-inset-left)); font-size: 14px; line-height: 1.45; }
+.migrbanner p { margin: 0 0 6px; }
+.migrbanner .migrsub { color: var(--muted); font-size: 13px; }
+.migrbanner .migrbtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.migrbanner .migrbtns > * { min-height: 44px; }
+/* Prioritair uit: gewoon een schakelaar met label (geen kader); aan: blauwe pil (UX 1.5) */
+.prioctl .priobtn[role="switch"][aria-checked="false"] { border-color: transparent; background: none; padding-left: 0; }
+
+/* ---- thema kiezen: kleine voorbeelden (common.js, appnav.js) ---- */
+.themes.thpick { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; flex-wrap: nowrap; }
+.thpick .thsw { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 44px; min-width: 44px; padding: 4px 2px 5px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); font-size: 12px; line-height: 1.2; cursor: pointer; }
+.thpick .thsw[aria-pressed="true"] { border: 2px solid var(--accent); padding: 3px 1px 4px; font-weight: 700; background: var(--panel); color: var(--text); }
+.thpick .thsw-p { position: relative; display: block; width: 100%; max-width: 52px; height: 30px; border-radius: 6px; overflow: hidden;
+  background: var(--sw-bg); border: 1px solid rgba(0,0,0,.25); }
+.thpick .thsw-p i { position: absolute; left: 4px; right: 4px; top: 4px; height: 12px; border-radius: 3px; background: var(--sw-panel); }
+.thpick .thsw-p i::after { content: ""; position: absolute; left: 3px; top: 4px; width: 60%; height: 3px; border-radius: 2px; background: var(--sw-text); }
+.thpick .thsw-p b { position: absolute; left: 4px; bottom: 4px; width: 22px; height: 7px; border-radius: 4px; background: var(--sw-acc); }
+.thpick .thsw-n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.thsw[data-th="light"] { --sw-bg: #f4f3f0; --sw-panel: #ffffff; --sw-text: #1d2125; --sw-acc: #0b6e4f; }
+.thsw[data-th="dark"] { --sw-bg: #15181c; --sw-panel: #1f2328; --sw-text: #e6e8ea; --sw-acc: #3fb68b; }
+.thsw[data-th="night"] { --sw-bg: #050303; --sw-panel: #0d0707; --sw-text: #ff8a7a; --sw-acc: #e0483a; }
+.thsw[data-th="contrast"] { --sw-bg: #ffffff; --sw-panel: #ffffff; --sw-text: #000000; --sw-acc: #0040c0; }
+.thsw[data-th="contrast"] .thsw-p i { outline: 2px solid #000; }
+.thsw[data-th="auto"] { --sw-panel: #ffffff; --sw-text: #1d2125; --sw-acc: #0b6e4f; }
+.thsw[data-th="auto"] .thsw-p { background: linear-gradient(135deg, #f4f3f0 0 50%, #15181c 50% 100%); }
+.usermenu .menu .thpick { min-width: 290px; }
+/* Dag/Nacht in één tik (Meer-venster) */
+.daynight { display: flex; align-items: center; gap: 10px; }
+.daynight .dn-ico { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.daynight[aria-pressed="true"] { color: var(--accent); font-weight: 600; }
+/* Zon: alles wat een rand heeft, krijgt een duidelijke rand; focus extra dik */
+:root[data-theme="contrast"] :where(button, a, input, select, textarea, summary):focus-visible { outline-width: 3px; }
+:root[data-theme="contrast"] .pill, :root[data-theme="contrast"] .mnav, :root[data-theme="contrast"] .obar, :root[data-theme="contrast"] .modenav { border-color: #000; }
+/* Nacht: ook de zoomknoppen van de kaart donker en rood (geen witte vlakken in het donker) */
+:root[data-theme="night"] .maplibregl-ctrl-group { background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+:root[data-theme="night"] .maplibregl-ctrl-group button + button { border-top-color: var(--line); }
+:root[data-theme="night"] .maplibregl-ctrl-group .maplibregl-ctrl-icon { filter: invert(1) sepia(1) saturate(6) hue-rotate(-40deg) brightness(.75); }
+:root[data-theme="night"] .maplibregl-ctrl-attrib, :root[data-theme="night"] .maplibregl-ctrl-scale { background: var(--panel); color: var(--muted); }

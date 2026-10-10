@@ -33,12 +33,11 @@
       <span class="avatar">${MT.esc((u.display_name || u.username).slice(0, 1).toUpperCase())}</span>
       <div class="body"><div><strong>${MT.esc(u.display_name || u.username)}</strong> <span class="muted">@${MT.esc(u.username)}</span>
         ${u.active ? "" : ' <span class="pill bad">gedeactiveerd</span>'}</div>
-        <div class="muted small">${MT.esc(u.group_name)} · laatst ingelogd ${MT.esc(fmtTs(u.last_login))}</div></div>
-      <div class="actions"><button data-ueff="${u.id}">Effectieve rechten</button><button data-uedit="${u.id}">Bewerken</button><button class="danger" data-udel="${u.id}">Verwijderen</button></div></div>`).join("")
+        <div class="muted small">${MT.esc(u.group_name)} · laatst aangemeld ${MT.esc(fmtTs(u.last_login))}</div></div>
+      <div class="actions"><button data-ueff="${u.id}">Effectieve rechten</button><button data-uedit="${u.id}">Bewerken</button></div></div>`).join("")
       || '<div class="empty">Nog geen gebruikers.</div>';
     document.querySelectorAll("[data-uedit]").forEach((b) => b.addEventListener("click", () => editUser(Number(b.dataset.uedit))));
     document.querySelectorAll("[data-ueff]").forEach((b) => b.addEventListener("click", () => showEffective(Number(b.dataset.ueff))));
-    document.querySelectorAll("[data-udel]").forEach((b) => b.addEventListener("click", () => delUser(Number(b.dataset.udel))));
   }
   function openUser(u) {
     $("u-form").hidden = false;
@@ -53,6 +52,8 @@
     $("u-pw").required = !u;
     $("u-pwhint").textContent = u ? "(leeg = ongewijzigd)" : "(min. 8 tekens)";
     $("u-active").checked = u ? !!u.active : true;
+    $("u-del").hidden = !u;                    // verwijderen: in het bewerkvenster, niet in de lijst
+    if (u) $("u-del").textContent = `${u.display_name || u.username} verwijderen`;
     msg($("u-msg"), "");
     $("u-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -91,9 +92,10 @@
   async function delUser(id) {
     const u = users.find((x) => x.id === id);
     if (!(await MT.confirm(`Gebruiker "${u.username}" verwijderen?`, { ok: "Verwijderen", danger: true }))) return;
-    try { await MT.api(`/api/users/${id}`, { method: "DELETE" }); users = await MT.api("/api/users"); renderUsers(); }
-    catch (e) { alert(e.message); }
+    try { await MT.api(`/api/users/${id}`, { method: "DELETE" }); $("u-form").hidden = true; users = await MT.api("/api/users"); renderUsers(); }
+    catch (e) { msg($("u-msg"), e.message); }
   }
+  $("u-del").addEventListener("click", () => delUser(Number($("u-id").value)));
   $("u-new").addEventListener("click", () => openUser(null));
   $("u-cancel").addEventListener("click", () => { $("u-form").hidden = true; });
   $("u-gen").addEventListener("click", () => {
@@ -126,14 +128,16 @@
         <div class="muted small">${[g.all_trackers ? "alle kanalen (kaart)" : null, chanSummary(g.channels),
           !g.all_trackers && g.trackers.length ? g.trackers.length + " losse tracker(s)" : null].filter(Boolean).join(" · ") || "geen kanalen"}
           · terugblik ${g.history_hours ? g.history_hours + " u" : "onbeperkt"}</div></div>
-      <div class="actions"><button data-gedit="${g.id}">Bewerken</button>${g.members ? "" : `<button class="danger" data-gdel="${g.id}">Verwijderen</button>`}</div></div>`).join("");
+      <div class="actions"><button data-gedit="${g.id}">Bewerken</button></div></div>`).join("");
     document.querySelectorAll("[data-gedit]").forEach((b) => b.addEventListener("click", () => openGroup(groups.find((g) => g.id === Number(b.dataset.gedit)))));
-    document.querySelectorAll("[data-gdel]").forEach((b) => b.addEventListener("click", async () => {
-      const g = groups.find((x) => x.id === Number(b.dataset.gdel));
-      if (!(await MT.confirm(`Groep "${g.name}" verwijderen?`, { ok: "Verwijderen", danger: true }))) return;
-      try { await MT.api(`/api/groups/${g.id}`, { method: "DELETE" }); await loadBase(); renderGroups(); renderUsers(); } catch (e) { alert(e.message); }
-    }));
   }
+  // verwijderen: in het bewerkvenster (alleen een groep zonder leden, zoals voorheen)
+  $("g-del").addEventListener("click", async () => {
+    const g = groups.find((x) => x.id === Number($("g-id").value));
+    if (!g || !(await MT.confirm(`Groep "${g.name}" verwijderen?`, { ok: "Verwijderen", danger: true }))) return;
+    try { await MT.api(`/api/groups/${g.id}`, { method: "DELETE" }); $("g-form").hidden = true; await loadBase(); renderGroups(); renderUsers(); }
+    catch (e) { msg($("g-msg"), e.message); }
+  });
   const chanName = (id) => (chans.find((c) => c.id === Number(id)) || {}).name || `#${id}`;
   function chanSummary(cs) {
     const e = Object.entries(cs || {});
@@ -166,6 +170,8 @@
     trackerChecks($("g-trackers"), g ? g.trackers : []);
     chanTable($("g-chans"), g ? g.channels : {});
     $("g-trwrap").hidden = $("g-alltr").checked;
+    $("g-del").hidden = !g || !!g.members;
+    $("g-delhint").hidden = !g || !g.members;
     msg($("g-msg"), "");
     $("g-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -236,17 +242,37 @@
   });
 
   // ---- audit ------------------------------------------------------------------------
-  let auditRows = [];
+  // Per 200 (server 1.5: before_id = id van de laatst getoonde regel, stabiel als er nieuwe bijkomen).
+  const APAGE = 200;
+  let auditRows = [], auditMore = false;
   async function loadAudit() {
-    auditRows = await MT.api("/api/audit?limit=500");
+    auditRows = await MT.api(`/api/audit?limit=${APAGE}`);
+    auditMore = auditRows.length === APAGE;
     renderAudit();
+  }
+  async function moreAudit() {
+    const last = auditRows[auditRows.length - 1];
+    const b = $("a-more");
+    if (b) { b.disabled = true; b.textContent = "Laden…"; }
+    try {
+      const r = await MT.api(`/api/audit?limit=${APAGE}&before_id=${last ? last.id : 0}`);
+      auditRows = auditRows.concat(r);
+      auditMore = r.length === APAGE;
+      renderAudit();
+    } catch (_) { if (b) { b.disabled = false; b.textContent = "Opnieuw proberen"; } }
   }
   function renderAudit() {
     const q = $("a-filter").value.trim().toLowerCase();
     const rows = auditRows.filter((a) => !q || `${a.who} ${a.action} ${a.detail}`.toLowerCase().includes(q));
-    $("audit").innerHTML = rows.length ? `<table><thead><tr><th>Tijd</th><th>Wie</th><th>Actie</th><th class="hide-sm">Details</th></tr></thead><tbody>` +
-      rows.map((a) => `<tr><td class="small">${MT.esc(fmtTs(a.ts))}</td><td>${MT.esc(a.who)}</td><td>${MT.esc(a.action)}</td>
-        <td class="hide-sm muted small">${MT.esc(a.detail)}</td></tr>`).join("") + "</tbody></table>" : '<div class="empty">Niets gevonden.</div>';
+    // details: aparte kolom op een groot scherm, onder de actie op een gsm
+    $("audit").innerHTML = (rows.length ? `<table><thead><tr><th>Tijd</th><th>Wie</th><th>Actie</th><th class="hide-sm">Details</th></tr></thead><tbody>` +
+      rows.map((a) => `<tr><td class="small">${MT.esc(fmtTs(a.ts))}</td><td>${MT.esc(a.who)}</td><td>${MT.esc(a.action)}
+        ${a.detail ? `<div class="auditmob muted small">${MT.esc(a.detail)}</div>` : ""}</td>
+        <td class="hide-sm muted small">${MT.esc(a.detail)}</td></tr>`).join("") + "</tbody></table>" : '<div class="empty">Niets gevonden.</div>')
+      + (auditMore ? `<div class="row logmore"><button type="button" id="a-more">Meer laden (oudere)</button>
+          ${q ? '<span class="muted small">Filteren gebeurt in wat geladen is.</span>' : ""}</div>` : "");
+    const b = $("a-more");
+    if (b) b.addEventListener("click", moreAudit);
   }
   $("a-filter").addEventListener("input", renderAudit);
 

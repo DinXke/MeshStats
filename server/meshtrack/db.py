@@ -915,8 +915,12 @@ class DB:
         self._x("INSERT INTO audit(ts, who, action, detail) VALUES(?,?,?,?)",
                 (int(time.time()), who, action, detail[:300]))
 
-    def audit_log(self, limit: int = 200) -> list[dict[str, Any]]:
-        return self._q("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))
+    def audit_log(self, limit: int = 200, offset: int = 0, before_id: int = 0) -> list[dict[str, Any]]:
+        """Nieuwste eerst; before_id > 0: alleen regels ouder dan die id (bladeren)."""
+        if before_id > 0:
+            return self._q("SELECT * FROM audit WHERE id<? ORDER BY id DESC LIMIT ? OFFSET ?",
+                           (before_id, limit, offset))
+        return self._q("SELECT * FROM audit ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
 
     # ---- onbekende berichten ------------------------------------------------
 

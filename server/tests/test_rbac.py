@@ -340,7 +340,7 @@ def test_tracker_app_without_login(client):
     assert r.headers["cache-control"] == "no-cache"
     # cache-busting zoals de andere pagina's
     assert '/static/tracker.js?v=' in r.text and '/static/tracker.css?v=' in r.text and '/static/basemap.js?v=' in r.text
-    assert 'href="/tracker.webmanifest"' in r.text
+    assert 'href="/manifest.webmanifest"' in r.text                   # sinds 1.5 deel van de ene app
     sw = c.get("/tracker-sw.js")
     assert sw.status_code == 200 and sw.headers["content-type"].startswith("text/javascript")
     assert sw.headers["service-worker-allowed"] == "/tracker"

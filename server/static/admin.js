@@ -90,7 +90,7 @@
     if (!sim || !MT.can("sims.manage")) return "";
     const on = !!sim.prio;
     return `<div class="prioctl" data-prio="${t.id}">
-      <button type="button" class="priobtn" aria-pressed="${on}" title="${on ? "Klik om prioritair uit te zetten" : "Klik om prioritair te laten rijden"}">${on ? "Prioritair aan" : "Prioritair uit"}</button>
+      <button type="button" class="priobtn" role="switch" aria-checked="${on}" title="${on ? "Prioritair uitzetten" : "Prioritair laten rijden (blauwe lichten)"}"><span class="sw" aria-hidden="true"></span>Prioritair<span class="prio-state" aria-hidden="true">${on ? "aan" : "uit"}</span></button>
       ${on ? `<span class="pill prio" data-prio-until="${Number(t.prio_until) || 0}">${MT.esc(prioBadge(t))}</span>` : ""}
       <span class="prio-err" role="alert"></span></div>`;
   }
@@ -209,11 +209,8 @@
   function renderIcons() { MTIcons.picker($("f-icons"), icon, $("f-color").value, (id) => { icon = id; }); }
   $("f-color").addEventListener("input", renderIcons);
 
-  function showTab(name) {
-    $("f-tabs").querySelectorAll("[data-ft]").forEach((b) => b.classList.toggle("on", b.dataset.ft === name));
-    form.querySelectorAll("[data-fp]").forEach((p) => { p.hidden = p.dataset.fp !== name; });
-  }
-  $("f-tabs").querySelectorAll("[data-ft]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.ft)));
+  // tabbladen in het paneel: role=tab, aria-selected en pijltjestoetsen via tabs.js
+  const showTab = MTTabs.init($("f-tabs"), { key: "ft", pane: (n) => form.querySelector(`[data-fp="${n}"]`), initial: "gen" });
 
   function setVirtual(v) {
     $("f-virtual").checked = v;

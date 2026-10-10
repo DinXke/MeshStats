@@ -1187,7 +1187,7 @@
     if (MT.me.kind !== "user") {          // deellinks: de statistiek-API geeft 403
       document.querySelectorAll(".st-filters, .st-kpis, .st-kmore, .st-tabs, .st-pane").forEach((e) => { e.hidden = true; });
       $("st-err").hidden = false;
-      $("st-err").textContent = "Statistieken zijn alleen beschikbaar als je ingelogd bent met een eigen account.";
+      $("st-err").textContent = "Statistieken zijn alleen beschikbaar als je aangemeld bent met een eigen account.";
       return;
     }
     readFilters();
