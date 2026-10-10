@@ -1550,12 +1550,12 @@
     ] },
     { id: "rust", title: "Stilstand, GPS en led", rows: [
       { lbl: "Slapen na stilstand van", key: "still_timeout", fmt: V.dur },
-      { lbl: "Teken van leven (heartbeat) elke", key: "heartbeat", fmt: V.dur },
+      { lbl: "Levensteken (heartbeat) elke", key: "heartbeat", fmt: V.dur },
       { lbl: "In rust de GPS controleren elke", key: "rust_gps_check", fmt: V.dur, needs: (c) => !c.accel },
       { lbl: "Bewegingsgevoeligheid", key: "accel_sens", needs: (c) => c.accel },
       { lbl: "GPS-pinnen", key: "gps_pinnen", fmt: (v) => (v === "-" ? "nog niet gevonden" : v === "zoekt" ? "worden gezocht…" : v), needs: (c) => c.gpsdetect },
       { lbl: "GPS-fix zoeken max.", key: "fix_timeout", fmt: V.dur },
-      { lbl: "…bij heartbeat of klik max.", key: "fix_timeout_hb", fmt: V.dur },
+      { lbl: "…bij levensteken of klik max.", key: "fix_timeout_hb", fmt: V.dur },
       { lbl: "Statusled", key: "led", fmt: V.map({ companion: "alleen als companion", altijd: "altijd", uit: "nooit" }), needs: (c) => c.led },
     ] },
     { id: "knop", title: "Knop en biepjes", rows: [
@@ -1916,7 +1916,7 @@
     turn_min: { t: "num", min: 0, max: 180, unit: "°", help: "0 = bochten negeren" },
     turn_min_speed: { t: "num", min: 0, max: 300, unit: "km/u" },
     min_interval: { t: "dur" }, max_interval: { t: "dur", off: true }, sample: { t: "dur", off: true, help: "In beweging; elk bericht neemt zoveel bewaarde punten mee als erin passen." },
-    fast_min_batt: { t: "num", min: 0, max: 100, unit: "% batterij", help: "Daaronder blijven alleen SlowTrack, heartbeat, klik en SOS over. 0 = FastTrack nooit uitschakelen." },
+    fast_min_batt: { t: "num", min: 0, max: 100, unit: "% batterij", help: "Daaronder blijven alleen SlowTrack, levensteken, klik en SOS over. 0 = FastTrack nooit uitschakelen." },
     slow_log: { t: "dur" }, slow_send: { t: "dur" },
     track_mode: { t: "sel", opts: [["classic", "Klassiek (FastTrack en SlowTrack)"], ["fifo", "FIFO (gemiste punten later inhalen)"]] },
     fifo_max: { t: "num", min: 20, max: 500, unit: "punten" },
