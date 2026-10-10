@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.10; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.11; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
   - **Nooit op een openbaar kanaal** (0.9.10): geen posities, SOS, verzoekantwoorden of inhaalberichten op Public of een
     #hashtag-kanaal waarvan de sleutel uit de naam volgt; een klik geeft de lage toon; `status` `kanaal_fout=openbaar` met
     een LET OP-regel (aanleiding: een niet-klaargemaakte WisMesh Tag stuurde posities en SOS ongetekend op Public). Een
@@ -19,8 +19,17 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     is; bestaande trackers met Public als trackingkanaal zijn eenmalig op geen gezet. `set chan -` = geen; `set chan <nr>`
     weigert openbare kanalen. Rechtzetten zonder nieuwe firmware: USB → Toestellen → Verbinden → Instellingen →
     Trackingkanaal → MeshTrack-kanaal → Opslaan (kanaal op een vrij nummer, Public blijft, authsleutel gemaakt en gezet,
-    regio en trackingkanaal ingesteld; controle: `authkey=ja`, `chan_naam=…`). Niet via Bluetooth (authsleutel en
-    kanaalnummer alleen via USB); *Klaarmaken* is niet nodig als de tracker zijn eigen sleutel houdt.
+    regio en trackingkanaal ingesteld; controle: `authkey=ja`, `chan_naam=…`). Niet via Bluetooth (de authsleutel kan alleen via USB); *Klaarmaken* is niet nodig als de tracker zijn eigen sleutel houdt.
+  - **Beheercode** (0.9.11): `set ble_beheer <code>` (6–32 tekens, geen spaties) of `uit`, alleen via USB (ook in
+    Toestellen; menu *Modus en knop* → 12), bewaard als hash. Zonder beheercode blijft Bluetooth alleen-lezen voor de
+    MeshTrack-instellingen. Status `ble_beheer=ingesteld|niet ble_schrijven=ja|nee`. Ontgrendelen in Tracker live →
+    Instellingen met uitdaging-antwoord (HMAC; de code gaat nooit leesbaar door de lucht); daarna 15 min schrijven, tot
+    *Vergrendelen* of tot de verbinding wegvalt; na 5 foute pogingen 10 min op slot. Wijzigbaar na ontgrendelen: alle
+    gewone instellingen (FastTrack, SlowTrack, FIFO, knop en biepjes, locatieverzoeken, modus, regio, radio, zendvermogen,
+    nummer van het trackingkanaal en privékanalen, `gps zoek`, FIFO wissen); radio, modus en trackingkanaal met extra
+    bevestiging. Nooit via Bluetooth: authsleutel, beheercode, koppelcode (alleen companioncommando/USB), sleutels en
+    back-ups, formatteren, defaults. Advies: beheercode ≠ koppelcode, en verander 123456. De tekst "trackingkanaal 255"
+    is nu "geen trackingkanaal: maak het toestel klaar via Toestellen".
   - Bluetooth-koppelcode (0.9.9): `set blepin <6 cijfers>|standaard` (werkt na een herstart), `blepin toon` (alleen USB),
     status `blepin=eigen|standaard`, menu *Modus en knop* → 11 *Bluetooth-koppelcode*; in Toestellen het veld
     *Bluetooth-code* (oudere firmware: via Tracker live → Instellingen). De code zit nooit in een back-up. RAK3401 met

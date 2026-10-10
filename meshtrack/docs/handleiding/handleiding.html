@@ -92,7 +92,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Firmware 0.9.10 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
+    Firmware 0.9.11 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -846,8 +846,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     companionmodus staat; koppelcode standaard 123456, of de eigen code). Chrome of Edge op Android of een computer; niet op een
     iPhone.</li>
   <li>Voor de toestand gebruikt de app de commando's <code>status</code>, <code>fifo</code> en <code>dump</code> (de interne toestand in
-    een vorm voor programma's); via Bluetooth aanvaardt de tracker van MeshTrack geen andere commando's. Een paar gewone
-    companioninstellingen wijzig je op het tabblad <em>Instellingen</em> (hieronder); de rest in <em>Toestellen</em>.</li>
+    een vorm voor programma's). Instellingen wijzigen kan op het tabblad <em>Instellingen</em> (hieronder): een paar altijd, de rest pas
+    na het ontgrendelen met de beheercode.</li>
   <li>Via Bluetooth kun je op het tabblad <em>Overzicht</em> ook een <strong>positie vragen</strong> aan de andere trackers op het kanaal
     (hoofdstuk 12); de antwoorden staan in een lijst, met <em>Op kaart</em>.</li>
 </ul>
@@ -860,8 +860,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   Trackmodus/FIFO, Stilstand/GPS/led, Knop en biepjes, Locatieverzoeken en Voertuig.</p>
 <p>De <strong>naam</strong>, de <strong>Bluetooth-code</strong> en het <strong>trackingkanaal</strong> kun je hier wijzigen: ze staan
   ingevuld, met een knop <em>Wijzigen</em>. Daarvoor gebruikt de app alleen gewone MeshCore-companioncommando's, dus dat werkt met elke
-  MeshTrack-firmware. De rest is alleen te lezen (met een slotje en <em>Wijzigen via USB (Toestellen)</em>). Bij firmware ouder dan 0.9.1
-  toont het tabblad alleen de MeshCore-gegevens.</p>
+  MeshTrack-firmware. De rest is alleen te lezen (met een slotje en <em>Wijzigen via USB (Toestellen)</em>), tenzij je ontgrendelt met de
+  beheercode (zie hieronder). Bij firmware ouder dan 0.9.1 toont het tabblad alleen de MeshCore-gegevens.</p>
 <ul>
   <li><strong>Bluetooth-code</strong>: 6 cijfers, of de standaardcode 123456. De nieuwe code werkt na een herstart; vergeet de tracker
     daarna in de Bluetooth-instellingen van je telefoon en koppel opnieuw.</li>
@@ -873,14 +873,37 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     kanaal terug ter controle. Het kanaal moet bestaan onder <em>Kanalen</em> in MeshTrack; de authsleutel blijft dezelfde.</li>
   <li><strong>Oudere firmware</strong> (ouder dan 0.9.1): kies zelf het nummer van het trackingkanaal. Dat zie je via USB in
     <em>Toestellen</em> (<code>chan=</code> in de status).</li>
-  <li><strong>Wat kan via Bluetooth?</strong> De MeshTrack-instellingen (FIFO, SlowTrack, biepjes, modus, regio, authsleutel) wijzig je
-    voorlopig alleen via USB in <em>Toestellen</em>. Een latere firmware voegt er meer toe.</li>
+  <li><strong>Wat kan via Bluetooth?</strong> Zonder beheercode zijn de MeshTrack-instellingen alleen te lezen. Met de beheercode
+    (firmware 0.9.11) wijzig je de gewone instellingen ook via Bluetooth; zie hieronder.</li>
 </ul>
-<div class="warn"><b>Verander de standaardcode 123456</b>Wie de koppelcode kent, kan via Bluetooth de naam, de kanalen en de code van de
-  tracker wijzigen. Stel dus een eigen code in: hier, in <em>Toestellen</em> (veld <em>Bluetooth-code</em>, vanaf firmware 0.9.9) of met
-  <code>set blepin</code>. De code staat nooit in een back-up.</div>
+<h3>Ontgrendelen met de beheercode</h3>
+<p>Zonder beheercode zijn de MeshTrack-instellingen via Bluetooth alleen te lezen. Met een <strong>beheercode</strong> kun je ze ook via
+  Bluetooth wijzigen:</p>
+<ol class="steps">
+  <li>Stel de beheercode in via USB: in <em>Toestellen</em>, met <code>set ble_beheer &lt;code&gt;</code> (6 tot 32 tekens, geen spaties)
+    of in het menu <em>Modus en knop</em> → 12. De tracker bewaart alleen een hash van de code. <code>set ble_beheer uit</code> haalt hem
+    weg. <code>status</code> toont <code>ble_beheer=ingesteld</code> of <code>niet</code>, en <code>ble_schrijven=ja</code> of
+    <code>nee</code>.</li>
+  <li>Tik in Tracker live → <em>Instellingen</em> op ontgrendelen en geef de beheercode in. Die gaat nooit leesbaar door de lucht: de app
+    en de tracker gebruiken een uitdaging-antwoord met HMAC.</li>
+  <li>Daarna kun je 15 minuten lang instellingen wijzigen, tot je op <em>Vergrendelen</em> tikt of de verbinding wegvalt. Na 5 foute
+    pogingen blijft het 10 minuten op slot.</li>
+</ol>
+<table>
+  <tr><th>Na het ontgrendelen via Bluetooth</th><th>Nooit via Bluetooth</th></tr>
+  <tr><td>Alle gewone instellingen: FastTrack, SlowTrack, FIFO, knop en biepjes, locatieverzoeken, modus, regio, radio, zendvermogen,
+    het nummer van het trackingkanaal en privékanalen, GPS zoeken en de FIFO-wachtrij wissen. Gevaarlijke instellingen (radio, modus,
+    trackingkanaal) vragen een extra bevestiging.</td>
+    <td>De authsleutel, de beheercode, de koppelcode (die alleen met het companioncommando of via USB), sleutels en back-ups,
+    formatteren en terug naar de standaardinstellingen.</td></tr>
+</table>
 
-<h3 style="break-before: page">Instellingen in de terminal</h3>
+<div class="warn"><b>Verander de standaardcode 123456, en kies een aparte beheercode</b>Wie de koppelcode kent, kan via Bluetooth de naam,
+  de kanalen en de code van de tracker wijzigen. Stel dus een eigen koppelcode in: hier, in <em>Toestellen</em> (veld <em>Bluetooth-code</em>,
+  vanaf firmware 0.9.9) of met <code>set blepin</code>. Kies een beheercode die verschilt van de koppelcode. Geen van beide staat in een
+  back-up.</div>
+
+<h3>Instellingen in de terminal</h3>
 <p>Alles uit Toestellen kun je ook met <code>set &lt;instelling&gt; &lt;waarde&gt;</code> zetten. Tijden schrijf je als
   <code>30s</code>, <code>5m</code> of <code>2h</code>; <code>0</code> zet een tijd uit. De belangrijkste:</p>
 <table class="brk">
@@ -909,6 +932,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <tr><td class="k">blepin &lt;6 cijfers&gt;|standaard</td><td>Bluetooth-koppelcode (100000 tot 999999), of terug naar 123456. Werkt na
     een herstart. <code>blepin toon</code> toont de code, alleen via USB; <code>status</code> toont <code>blepin=eigen</code> of
     <code>standaard</code>. In <em>Toestellen</em>: het veld <em>Bluetooth-code</em>.</td><td>standaard</td></tr>
+  <tr><td class="k">ble_beheer &lt;code&gt;|uit</td><td>Beheercode voor instellingen via Bluetooth (6 tot 32 tekens, geen spaties; alleen via
+    USB; bewaard als hash). <code>uit</code> haalt hem weg: dan zijn de MeshTrack-instellingen via Bluetooth alleen te lezen.</td><td>niet</td></tr>
   <tr><td class="k">verzoek_beep aan|uit</td><td>Kort, herkenbaar deuntje als de tracker een locatieverzoek aanvaardt, ook met de
     buzzer uit.</td><td>uit</td></tr>
 </table>
@@ -929,7 +954,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div class="cols menus" style="gap:3mm">
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.10      HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.11      HOOFDMENU
   ==============================================================
    Ploeg 3  |  modus companion (USB)  |  batterij 99%
    tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
@@ -948,7 +973,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.10      MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.9.11      MODUS EN KNOP
   ==============================================================
    Op batterij nu gekozen: tracker.
    Met USB altijd companion.
@@ -966,6 +991,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
    9  Radio luistert in beweging ................ aan
   10  Deuntje bij een locatieverzoek ............ uit
   11  Bluetooth-koppelcode ...................... eigen code
+  12  Beheercode (instellingen via Bluetooth) ... ingesteld
 
    Knop: 1x = positie nu, 2x = modus wisselen,
          3x = buzzer aan/uit,
@@ -985,7 +1011,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <div class="warn"><b>Het juiste pakket</b>De bootloader beschermt je alleen tussen de T1000-E en de RAK-borden (ze hebben een andere
   SoftDevice). Tussen de WisMesh Tag en de RAK3401 beschermt alleen de website: controleer dus zelf het gekozen toestel als je
   een pakket downloadt en met de hand flasht.</div>
-<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.10. Heeft een tracker oudere firmware, dan kent hij
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.11. Heeft een tracker oudere firmware, dan kent hij
   sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
   (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
 <ol class="steps">
@@ -1066,7 +1092,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     trackingkanaal in.</li>
   <li>Controleer met <code>status</code>: <code>authkey=ja</code> en <code>chan_naam=</code> met de naam van het MeshTrack-kanaal.</li>
 </ol>
-<p><strong>Via Bluetooth (Tracker live) lukt dit niet</strong>: de authsleutel en het kanaalnummer kun je alleen via USB instellen.</p>
+<p><strong>Via Bluetooth (Tracker live) lukt dit niet</strong>: de authsleutel kun je alleen via USB instellen.</p>
 <p>Stuurt een gekende tracker toch op Public (oudere firmware), dan herkent de server hem, zonder zijn posities te bewaren. Hij krijgt
   de badge <em>stuurt op Public – klaarmaken</em> in <em>Trackers</em> en op de kaart, en <em>Toestellen</em> en Tracker live tonen een
   waarschuwing. Een meldingsregel met <em>stuurt op Public: niet klaargemaakt</em> verwittigt je.</p>

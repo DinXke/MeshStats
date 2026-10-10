@@ -60,6 +60,8 @@ extern UITask ui_task;
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <SHA256.h>
+#include <nrf_soc.h>
 
 // ---- uitvoer -------------------------------------------------------------------
 
@@ -158,6 +160,24 @@ static bool parse_key(const char* s, uint8_t* o) {
 static bool parse_hex(const char* s, uint8_t* o, int n);   // verderop
 static const char* set_param(const char* k, const char* v) {
   if (!key_exists(k)) return "bestaat niet op dit toestel";
+  if (!strcmp(k, "ble_beheer")) {             // beheercode voor instellingen via Bluetooth (0.9.11); alleen via USB
+    if (!strcmp(v, "uit") || !strcmp(v, "off")) {
+      mt_cfg.ble_admin_set = 0;
+      memset(mt_cfg.ble_admin_hash, 0, sizeof(mt_cfg.ble_admin_hash));
+    } else {
+      size_t l = strlen(v);
+      if (l < 6 || l > 32) return "ongeldige code (6 tot 32 tekens)";
+      for (size_t i = 0; i < l; i++) if ((uint8_t)v[i] < 0x21 || (uint8_t)v[i] > 0x7E) return "ongeldige code (alleen zichtbare tekens, geen spaties)";
+      SHA256 sha;
+      uint8_t h[32];
+      sha.reset();
+      sha.update(v, l);
+      sha.finalize(h, sizeof(h));
+      memcpy(mt_cfg.ble_admin_hash, h, 16);   // alleen de hash; de code zelf wordt nergens bewaard
+      mt_cfg.ble_admin_set = 1;
+    }
+    return mt_cfg_save() ? NULL : "NIET bewaard (opslag)";
+  }
   if (!strcmp(k, "blepin")) {                 // Bluetooth-koppelcode (0.9.9), zoals CMD_SET_DEVICE_PIN van de app
     uint32_t pin = 0;
     if (strcmp(v, "standaard") && strcmp(v, "default")) {
@@ -655,8 +675,9 @@ static void cmd_status() {
   outl("slow_log=%s slow_send=%s fast_min_batt=%u sos=%s tx_beep=%s heard_beep=%s", a, b,
        (unsigned)mt_cfg.fast_min_batt, mt_cfg.sos_off ? "uit" : "aan", mt_cfg.tx_beep ? "aan" : "uit",
        mt_cfg.heard_beep ? "aan" : "uit");
-  outl("verzoek=%s rx_beweging=%s blepin=%s verzoek_beep=%s", mt_cfg.verzoek_uit ? "uit" : "aan", mt_cfg.rx_beweging_uit ? "uit" : "aan",
-       the_mesh.getNodePrefs()->ble_pin ? "eigen" : "standaard",
+  outl("verzoek=%s rx_beweging=%s blepin=%s ble_beheer=%s ble_schrijven=%s verzoek_beep=%s", mt_cfg.verzoek_uit ? "uit" : "aan",
+       mt_cfg.rx_beweging_uit ? "uit" : "aan", the_mesh.getNodePrefs()->ble_pin ? "eigen" : "standaard",
+       mt_cfg.ble_admin_set ? "ingesteld" : "niet", mt_cfg.ble_admin_set ? "ja" : "nee",
        mt_cfg.verzoek_beep ? "aan" : "uit");
   outl("slow_buffer=%u fasttrack=%s slow_per_bericht=6-11", (unsigned)mt_tracker_slow_buffered(),
        mt_tracker_fast_suspended() ? "uit(batterij)" : "aan");
@@ -794,6 +815,10 @@ static void cmd_help() {
   outl("    blepin <6 cijfers>|standaard  Bluetooth-koppelcode (100000..999999; standaard = %06lu). Werkt na een", (unsigned long)BLE_PIN_CODE);
   outl("      herstart; vergeet daarna de tracker in de Bluetooth-instellingen en koppel opnieuw.");
   outl("  blepin toon                 de code tonen (alleen via USB)");
+  outl("    ble_beheer <code>|uit  beheercode (6 tot 32 tekens, geen spaties; alleen via USB): daarmee kan de");
+  outl("      webpagina /tracker via Bluetooth instellingen wijzigen, na ontgrendelen (15 min, tot de verbinding");
+  outl("      wegvalt). Bewaard als hash. Via Bluetooth kan nooit: sleutel, authkey, ble_beheer, blepin, backup,");
+  outl("      fs, defaults, reboot. Vijf foute pogingen = 10 min geblokkeerd.");
   outl("    rx_beweging aan|uit  in trackermodus de radio laten luisteren zolang de tracker beweegt, zodat");
   outl("      hij verzoeken hoort (standaard aan; kost wat batterij). In rust slaapt de radio zoals gewoonlijk.");
   outl("    track_mode classic|fifo  classic = FastTrack + SlowTrack zoals voorheen; fifo = wachtrij voor posities");
@@ -960,6 +985,7 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "fifo_pogingen")) snprintf(o, n, "%u", (unsigned)mt_cfg.fifo_pogingen);
   else if (!strcmp(param, "fifo_dun")) snprintf(o, n, mt_cfg.fifo_dun ? "%u m" : "uit", (unsigned)mt_cfg.fifo_dun);
   else if (!strcmp(param, "blepin")) snprintf(o, n, "%s", the_mesh.getNodePrefs()->ble_pin ? "eigen code" : "standaard");
+  else if (!strcmp(param, "ble_beheer")) snprintf(o, n, "%s", mt_cfg.ble_admin_set ? "ingesteld" : "niet");
   else if (!strcmp(param, "rust_gps_check")) {
     if (mt_rust_gps_check_min()) fmt_dur_nl(o, n, 60UL * mt_rust_gps_check_min()); else snprintf(o, n, "uit");
   }
@@ -1056,6 +1082,7 @@ static void show() {
       outl("   9  Radio luistert in beweging ................ %s", mt_cfg.rx_beweging_uit ? "uit" : "aan");
       outl("  10  Deuntje bij een locatieverzoek ............ %s", mt_cfg.verzoek_beep ? "aan" : "uit");
       outl("  11  Bluetooth-koppelcode ...................... %s", the_mesh.getNodePrefs()->ble_pin ? "eigen code" : "standaard");
+      outl("  12  Beheercode (instellingen via Bluetooth) ... %s", mt_cfg.ble_admin_set ? "ingesteld" : "niet");
       outl("      (9: zo hoort de tracker verzoeken onderweg; in rust slaapt de radio)");
       outl("");
       outl("   Knop: 1x = positie nu, 2x = modus wisselen, 3x = buzzer aan/uit,");
@@ -1171,6 +1198,7 @@ static void menu_choice(int n) {
       else if (n == 9) set_param("rx_beweging", mt_cfg.rx_beweging_uit ? "aan" : "uit");
       else if (n == 10) set_param("verzoek_beep", mt_cfg.verzoek_beep ? "uit" : "aan");
       else if (n == 11) { static const Item BLEPIN = {"Bluetooth-koppelcode (6 cijfers of standaard)", "blepin", 2}; prompt_for(&BLEPIN); return; }
+      else if (n == 12) { static const Item BLEADM = {"Beheercode Bluetooth (6-32 tekens of uit)", "ble_beheer", 2}; prompt_for(&BLEADM); return; }
       else if (n == 0) s_screen = SC_MAIN;
       show();
       return;
@@ -1216,12 +1244,13 @@ static void command(char* s) {
     const char* err = set_mesh(k, v, &handled);
     if (!handled) {
       char* sp = strchr(v, ' ');              // gewone parameters: één woord (de authsleutel mag spaties hebben)
-      if (sp && strcmp(k, "authkey")) *sp = 0;
+      if (sp && strcmp(k, "authkey") && strcmp(k, "ble_beheer")) *sp = 0;   // beheercode: spaties worden geweigerd
       err = set_param(k, v);
     }
     if (err) outl("%s: %s (%s)", k, err, v);
     else {
       if (!strcmp(k, "blepin")) outl("blepin bewaard (%s)", the_mesh.getNodePrefs()->ble_pin ? "eigen code" : "standaard");
+      else if (!strcmp(k, "ble_beheer")) outl("ble_beheer %s", mt_cfg.ble_admin_set ? "ingesteld (bewaard als hash)" : "verwijderd");
       else outl("%s = %s (bewaard)", k, v);
       slow_ratio_warn(k, ""); fifo_set_note(k, ""); blepin_note(k, "");
     }
@@ -1310,18 +1339,149 @@ static void ble_free() {
   s_ble_active = s_ble_static = false;
 }
 
+// ---- schrijven via Bluetooth na ontgrendelen (0.9.11) ----
+// "ontgrendel" -> "nonce <32 hex>" (60 s geldig, één poging); "ontgrendel <32 hex>" met
+// HMAC-SHA256(sleutel = SHA256(beheercode)[0:16], bericht = de 16 nonce-bytes)[0:16] -> 15 min schrijven,
+// tot de Bluetooth-verbinding wegvalt of "vergrendel". 5 foute pogingen = 10 min geblokkeerd.
+static uint8_t s_nonce[16];
+static bool s_nonce_ok = false;
+static uint32_t s_nonce_ms = 0;
+static bool s_unlocked = false;
+static uint32_t s_unlock_ms = 0;
+static uint8_t s_fails = 0;
+static uint32_t s_lock_until = 0;
+static bool s_lock_active = false;
+
+static bool unlocked_now() {
+  if (s_unlocked && millis() - s_unlock_ms >= 15UL * 60000UL) { s_unlocked = false; mt_log("bluetooth: schrijfsessie verlopen"); }
+  return s_unlocked;
+}
+
+void mt_ble_conn(bool connected) {             // MyMesh: verbinding weg = sessie en nonce weg
+  static bool was = false;
+  if (was && !connected) {
+    if (s_unlocked) mt_log("bluetooth: verbinding weg, vergrendeld");
+    s_unlocked = false;
+    s_nonce_ok = false;
+  }
+  was = connected;
+}
+
+static void random_bytes(uint8_t* b, uint8_t n) {
+  uint8_t avail = 0;
+  if (sd_rand_application_bytes_available_get(&avail) == NRF_SUCCESS && avail >= n &&
+      sd_rand_application_vector_get(b, n) == NRF_SUCCESS) return;
+  the_mesh.getRNG()->random(b, n);               // terugval: MeshCore-RNG (geseed uit radioruis)
+}
+
+static bool hex16(const char* s, uint8_t* o) {
+  for (int i = 0; i < 16; i++) {
+    int a = hexval(s[2 * i]), b = hexval(s[2 * i + 1]);
+    if (a < 0 || b < 0) return false;
+    o[i] = (uint8_t)(a << 4 | b);
+  }
+  return s[32] == 0;
+}
+
+static void ble_unlock(const char* arg) {
+  uint32_t now = millis();
+  if (s_lock_active && (int32_t)(now - s_lock_until) < 0) {
+    outl("geblokkeerd: te veel foute pogingen, nog %lu min", (unsigned long)((s_lock_until - now) / 60000UL + 1));
+    mt_log("bluetooth: ontgrendelen geweigerd (geblokkeerd)");
+    return;
+  }
+  s_lock_active = false;
+  if (!mt_cfg.ble_admin_set) { outl("geen beheercode ingesteld (set ble_beheer via USB)"); return; }
+  if (!*arg) {                                     // stap 1: nonce
+    random_bytes(s_nonce, 16);
+    s_nonce_ok = true;
+    s_nonce_ms = now;
+    out("nonce ");
+    for (int i = 0; i < 16; i++) out("%02x", s_nonce[i]);
+    outl("");
+    mt_log("bluetooth: ontgrendelen gevraagd (nonce uitgegeven)");
+    return;
+  }
+  uint8_t got[16];
+  bool fresh = s_nonce_ok && now - s_nonce_ms < 60000UL;
+  s_nonce_ok = false;                              // één poging per nonce
+  if (!fresh) { outl("fout: vraag eerst een nonce (ontgrendel), 60 s geldig"); mt_log("bluetooth: ontgrendelen zonder geldige nonce"); return; }
+  bool ok = hex16(arg, got);
+  uint8_t mac[16];
+  SHA256 sha;
+  sha.resetHMAC(mt_cfg.ble_admin_hash, 16);
+  sha.update(s_nonce, 16);
+  sha.finalizeHMAC(mt_cfg.ble_admin_hash, 16, mac, 16);
+  uint8_t diff = ok ? 0 : 1;                        // constante tijd: altijd alle 16 bytes vergelijken
+  for (int i = 0; i < 16; i++) diff |= (uint8_t)(mac[i] ^ got[i]);
+  if (!diff) {
+    s_unlocked = true;
+    s_unlock_ms = now;
+    s_fails = 0;
+    outl("ontgrendeld: instellingen wijzigen kan 15 min (tot de verbinding wegvalt)");
+    mt_log("bluetooth: ontgrendeld");
+    return;
+  }
+  s_fails++;
+  mt_log("bluetooth: ontgrendelen MISLUKT (%u/5)", (unsigned)s_fails);
+  if (s_fails >= 5) {
+    s_fails = 0;
+    s_lock_active = true;
+    s_lock_until = now + 10UL * 60000UL;
+    outl("fout: verkeerde code; 10 min geblokkeerd");
+    mt_log("bluetooth: 5 foute pogingen, 10 min geblokkeerd");
+  } else {
+    outl("fout: verkeerde code (%u/5)", (unsigned)s_fails);
+  }
+}
+
+// Mag dit commando (na ontgrendelen) via Bluetooth? NOOIT: key, authkey, ble_beheer, blepin, backup, fs,
+// defaults, reboot (en alles wat niet in deze lijst staat).
+static bool ble_write_allowed(const char* cmd, const char* args) {
+  if (!strcmp(cmd, "set")) {
+    char key[24];
+    size_t i = 0;
+    while (args[i] && args[i] != ' ' && i < sizeof(key) - 1) { key[i] = args[i]; i++; }
+    key[i] = 0;
+    static const char* const NEVER[] = { "authkey", "ble_beheer", "blepin" };
+    for (const char* nk : NEVER) if (!strcmp(key, nk)) return false;
+    return true;
+  }
+  if (!strcmp(cmd, "chan")) return !strncmp(args, "set ", 4);
+  if (!strcmp(cmd, "gps")) return !strcmp(args, "zoek");
+  if (!strcmp(cmd, "mode")) return true;
+  if (!strcmp(cmd, "fifo")) return !strcmp(args, "wis ja");
+  return false;
+}
+
 void mt_ble_cli(const char* cmd, int n) {
   ble_free();
-  char c[24];
+  // eerste woord in kleine letters; de rest blijft zoals ze is (namen, codes)
+  char c[180];
   int k = 0;
-  for (int i = 0; i < n && k < (int)sizeof(c) - 1; i++) c[k++] = (char)tolower((unsigned char)cmd[i]);
+  for (int i = 0; i < n && k < (int)sizeof(c) - 1; i++) c[k++] = cmd[i];
   c[k] = 0;
   while (k && (c[k - 1] == ' ' || c[k - 1] == '\r' || c[k - 1] == '\n' || c[k - 1] == 0)) c[--k] = 0;
+  char word[16];
+  int w = 0;
+  while (c[w] && c[w] != ' ' && w < (int)sizeof(word) - 1) { word[w] = (char)tolower((unsigned char)c[w]); w++; }
+  word[w] = 0;
+  const char* args = c + w;
+  while (*args == ' ') args++;
   int which = !strcmp(c, "status") ? 1 : !strcmp(c, "fifo") ? 2 : !strcmp(c, "dump") ? 3 : 0;
+  // 4 = ontgrendel, 5 = vergrendel, 6 = schrijven (na ontgrendelen), 7 = vergrendeld, 8 = nooit via Bluetooth
+  if (!which) {
+    if (!strcmp(word, "ontgrendel")) which = 4;
+    else if (!strcmp(word, "vergrendel") && !*args) which = 5;
+    else if (ble_write_allowed(word, args)) which = unlocked_now() ? 6 : 7;
+    else if (!strcmp(word, "set") || !strcmp(word, "chan") || !strcmp(word, "gps") || !strcmp(word, "mode") ||
+             !strcmp(word, "fifo")) which = 8;
+  }
   size_t cap = which == 3 ? 24576 : which ? 4096 : sizeof(s_ble_small);
   char* buf = which ? (char*)malloc(cap) : nullptr;
   if (!buf) {                                  // geweigerd commando of geen geheugen
-    snprintf(s_ble_small, sizeof(s_ble_small), which ? "fout: geen geheugen\n" : "alleen status, fifo en dump via Bluetooth\n");
+    snprintf(s_ble_small, sizeof(s_ble_small), which ? "fout: geen geheugen\n"
+             : "alleen status, fifo, dump, ontgrendel en vergrendel via Bluetooth\n");
     s_ble = s_ble_small;
     s_ble_static = true;
     s_ble_len = strlen(s_ble_small);
@@ -1330,12 +1490,22 @@ void mt_ble_cli(const char* cmd, int n) {
     buf[0] = 0;
     if (which == 1) cmd_status();
     else if (which == 2) cmd_fifo("");
-    else {
+    else if (which == 3) {
       s_cap_max = cap - 24;                    // plaats voor de afsluiting als het niet past
       mt_tracker_dump(dump_out);
       s_cap_max = cap;
       if (s_cap_over) sink("afgekapt\nend\n");
     }
+    else if (which == 4) ble_unlock(args);
+    else if (which == 5) { s_unlocked = false; outl("vergrendeld"); mt_log("bluetooth: vergrendeld"); }
+    else if (which == 6) {
+      char line[180];
+      snprintf(line, sizeof(line), "%s", c);
+      mt_log("bluetooth: schrijven: %.40s", word);
+      command(line);                           // zelfde tekst als via USB
+    }
+    else if (which == 7) outl("vergrendeld: ontgrendel eerst met de beheercode");
+    else outl("niet via Bluetooth (alleen via USB)");
     if (s_cap_over && which != 3) sink("afgekapt\n");
     s_ble = buf;
     s_ble_len = s_cap_len;
@@ -1344,7 +1514,7 @@ void mt_ble_cli(const char* cmd, int n) {
   s_ble_pos = 0;
   s_ble_seq = 0;
   s_ble_active = true;
-  mt_log("bluetooth: '%s' (%u bytes)", which ? c : "geweigerd", (unsigned)s_ble_len);
+  mt_log("bluetooth: '%s' (%u bytes)", which ? word : "geweigerd", (unsigned)s_ble_len);
 }
 
 bool mt_ble_pending() { return s_ble_active; }

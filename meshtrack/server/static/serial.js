@@ -320,6 +320,7 @@
     gateSince(kv);
     applyNeeds(kv);
     bleUi(kv);
+    beheerUi(kv);
     const cp = chanProblem(kv);
     $("s-chanwarn").textContent = cp; $("s-chanwarn").hidden = !cp;
     prioUi();
@@ -587,6 +588,43 @@
   });
   // Enter in een codeveld: de code instellen, niet het hele formulier opslaan
   ["s-blepin1", "s-blepin2"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("s-bleset").click(); } }));
+  // ---- beheercode (firmware 0.9.11, alleen via USB) ----------------------------------------------
+  // status ble_beheer=ingesteld|niet, ble_schrijven=ja|nee; set ble_beheer <code> | uit. Stille opdrachten: nooit in de terminal.
+  function beheerUi(kv) {
+    const has = "ble_beheer" in kv, on = kv.ble_beheer === "ingesteld";
+    $("s-beheerset").disabled = !has;
+    $("s-beheerdel").disabled = !has || !on;
+    $("s-beheerstate").textContent = !has ? "" : on
+      ? "Ingesteld: instellingen kunnen via Bluetooth gewijzigd worden na ontgrendelen (Tracker live)."
+      : "Niet ingesteld: Bluetooth is alleen-lezen.";
+  }
+  const beheerMsg = (t, ok) => msg($("s-beheermsg"), t, ok);
+  async function beheerRun(cmd) {
+    const out = await until(cmd, /bewaard|verwijderd|uit|ongeldig|onbekend|NIET|fout|gebruik/, 3000, true);
+    const bad = out.find((l) => /ongeldig|onbekend|NIET|fout|gebruik/.test(l));
+    if (bad) throw new Error(bad.replace(/ble_beheer\s+\S+/g, "ble_beheer …").trim());
+  }
+  $("s-beheerset").addEventListener("click", async () => {
+    const a = $("s-beheer1").value, b = $("s-beheer2").value;
+    if (!/^\S{6,32}$/.test(a)) { beheerMsg("De beheercode moet 6 tot 32 tekens lang zijn, zonder spaties."); return; }
+    if (a.toLowerCase() === "uit") { beheerMsg("\"uit\" kan geen beheercode zijn."); return; }
+    if (a !== b) { beheerMsg("De twee beheercodes zijn niet gelijk."); return; }
+    try {
+      await beheerRun(`set ble_beheer ${a}`);
+      $("s-beheer1").value = $("s-beheer2").value = "";
+      lastKv.ble_beheer = "ingesteld"; beheerUi(lastKv);
+      beheerMsg("Beheercode bewaard. In Tracker live kun je de instellingen nu via Bluetooth wijzigen na ontgrendelen.", true);
+    } catch (e) { beheerMsg(`Niet aanvaard: ${e.message}`); }
+  });
+  $("s-beheerdel").addEventListener("click", async () => {
+    if (!(await MT.confirm("De beheercode verwijderen? Daarna kan niemand de instellingen nog via Bluetooth wijzigen; Bluetooth wordt alleen-lezen.", { ok: "Verwijderen", danger: true, title: "Beheercode" }))) return;
+    try {
+      await beheerRun("set ble_beheer uit");
+      lastKv.ble_beheer = "niet"; beheerUi(lastKv);
+      beheerMsg("Beheercode verwijderd: Bluetooth is nu alleen-lezen.", true);
+    } catch (e) { beheerMsg(`Niet aanvaard: ${e.message}`); }
+  });
+  ["s-beheer1", "s-beheer2"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("s-beheerset").click(); } }));
   let bleTimer = null;
   $("s-bleshow").addEventListener("click", async () => {
     try {

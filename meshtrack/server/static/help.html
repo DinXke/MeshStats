@@ -559,8 +559,7 @@
         trackingkanaal in.</li>
       <li>Controleer met <code>status</code>: <code>authkey=ja</code> en <code>chan_naam=</code> met de naam van het kanaal.</li>
     </ol>
-    <p>Via Bluetooth (Tracker live) lukt dit <strong>niet</strong>: de authsleutel en het kanaalnummer kun je alleen via USB
-      instellen. Stuurt een gekende tracker toch op Public (oudere firmware), dan herkent de server hem zonder zijn posities te
+    <p>Via Bluetooth (Tracker live) lukt dit <strong>niet</strong>: de authsleutel kun je alleen via USB instellen. Stuurt een gekende tracker toch op Public (oudere firmware), dan herkent de server hem zonder zijn posities te
       bewaren: badge <em>stuurt op Public – klaarmaken</em> in <em>Trackers</em> en op de kaart, een waarschuwing in
       <em>Toestellen</em> en Tracker live, en de meldingsgebeurtenis <em>stuurt op Public: niet klaargemaakt</em>.</p>
     <p>Een positiebericht krijgt geen ontvangstbevestiging (geen ACK), wordt niet opnieuw verstuurd en wordt door het hele
@@ -588,7 +587,8 @@
       <code>set led companion</code>, <code>set led altijd</code> of <code>set led uit</code>, de biep bij berichten met
       <code>set msg_beep prive</code>, <code>alles</code> of <code>uit</code>, de Bluetooth-koppelcode met <code>set blepin
       &lt;6 cijfers&gt;</code> of <code>set blepin standaard</code> (werkt na een herstart; <code>blepin toon</code> toont hem, alleen
-      via USB; status <code>blepin=eigen|standaard</code>; menu <em>Modus en knop</em> → 11), locatieverzoeken met <code>set verzoek
+      via USB; status <code>blepin=eigen|standaard</code>; menu <em>Modus en knop</em> → 11), de beheercode voor instellingen via Bluetooth met <code>set ble_beheer &lt;code&gt;</code>
+      of <code>set ble_beheer uit</code> (alleen via USB; menu → 12), locatieverzoeken met <code>set verzoek
       aan|uit</code>, <code>set rx_beweging aan|uit</code> en <code>set verzoek_beep aan|uit</code>. Tijden geef je op als <code>30s</code>,
       <code>5m</code> of <code>2h</code>.</p>
     <p>SlowTrack, SOS en de biepjes:</p>
@@ -654,9 +654,8 @@
         companionmodus staat; koppelcode standaard 123456, of de eigen code). Chrome of Edge op Android of een computer;
         niet op een iPhone.</li>
       <li>Voor de toestand gebruikt de app de commando's <code>status</code>, <code>fifo</code> en <code>dump</code> (de
-        interne toestand in een vorm voor programma's); via Bluetooth aanvaardt de tracker van MeshTrack geen andere
-        commando's. Een paar gewone companioninstellingen wijzig je op het tabblad <a href="#tl-instellingen">Instellingen</a>;
-        de rest in <em>Toestellen</em>.</li>
+        interne toestand in een vorm voor programma's). Instellingen wijzigen kan op het tabblad <a
+        href="#tl-instellingen">Instellingen</a>: een paar altijd, de rest pas na het ontgrendelen met de beheercode.</li>
       <li>Via Bluetooth kun je op het tabblad <em>Overzicht</em> ook een <a href="#verzoek">positie vragen</a> aan de andere
         trackers op het kanaal; de antwoorden staan in een lijst, met <em>Op kaart</em>.</li>
     </ul>
@@ -671,7 +670,7 @@
     <p>De <strong>naam</strong>, de <strong>Bluetooth-code</strong> en het <strong>trackingkanaal</strong> kun je hier wijzigen:
       ze staan ingevuld, met een knop <em>Wijzigen</em>. Daarvoor gebruikt de app alleen gewone MeshCore-companioncommando's,
       dus dat werkt met elke MeshTrack-firmware. De rest is alleen te lezen (met een slotje en <em>Wijzigen via USB
-      (Toestellen)</em>). Bij firmware ouder dan 0.9.1 toont het tabblad alleen de MeshCore-gegevens.</p>
+      (Toestellen)</em>), tenzij je ontgrendelt met de beheercode (zie hieronder). Bij firmware ouder dan 0.9.1 toont het tabblad alleen de MeshCore-gegevens.</p>
     <ul>
       <li><strong>Bluetooth-code</strong>: 6 cijfers, of de standaardcode 123456. De nieuwe code werkt na een herstart; vergeet
         de tracker daarna in de Bluetooth-instellingen van je telefoon en koppel opnieuw.</li>
@@ -685,12 +684,31 @@
         <em>Kanalen</em>; de authsleutel blijft dezelfde.</li>
       <li><strong>Oudere firmware</strong> (ouder dan 0.9.1): kies zelf het nummer van het trackingkanaal; dat zie je via USB
         in <em>Toestellen</em> (<code>chan=</code>).</li>
-      <li><strong>Wat kan via Bluetooth?</strong> De MeshTrack-instellingen (FIFO, SlowTrack, biepjes, modus, regio,
-        authsleutel) wijzig je voorlopig alleen via USB in <em>Toestellen</em>. Een latere firmware voegt er meer toe.</li>
+      <li><strong>Wat kan via Bluetooth?</strong> Zonder beheercode zijn de MeshTrack-instellingen alleen te lezen. Met de
+        beheercode (firmware 0.9.11) wijzig je de gewone instellingen ook via Bluetooth; zie hieronder.</li>
     </ul>
-    <p class="note"><strong>Verander de standaardcode 123456.</strong> Wie de koppelcode kent, kan via Bluetooth de naam, de
-      kanalen en de code van de tracker wijzigen. Stel een eigen code in: hier, in <em>Toestellen</em> (veld
-      <em>Bluetooth-code</em>, vanaf firmware 0.9.9) of met <code>set blepin</code>. De code staat nooit in een back-up.</p>
+    <h3>Ontgrendelen met de beheercode</h3>
+    <p>Zonder beheercode zijn de MeshTrack-instellingen via Bluetooth alleen te lezen. Met een <strong>beheercode</strong> kun je
+      ze ook via Bluetooth wijzigen.</p>
+    <ol>
+      <li>Stel de beheercode in via USB: in <em>Toestellen</em>, met <code>set ble_beheer &lt;code&gt;</code> (6 tot 32 tekens,
+        geen spaties) of in het menu <em>Modus en knop</em> → 12. De tracker bewaart alleen een hash. <code>set ble_beheer
+        uit</code> haalt hem weg. Status: <code>ble_beheer=ingesteld|niet</code> en <code>ble_schrijven=ja|nee</code>.</li>
+      <li>In Tracker live → <em>Instellingen</em>: ontgrendelen met de beheercode. Die gaat nooit leesbaar door de lucht
+        (uitdaging-antwoord met HMAC).</li>
+      <li>Daarna kun je 15 minuten lang wijzigen, tot <em>Vergrendelen</em> of tot de verbinding wegvalt. Na 5 foute pogingen
+        blijft het 10 minuten op slot.</li>
+    </ol>
+    <p><strong>Na het ontgrendelen via Bluetooth:</strong> alle gewone instellingen (FastTrack, SlowTrack, FIFO, knop en
+      biepjes, locatieverzoeken, modus, regio, radio, zendvermogen, het nummer van het trackingkanaal en privékanalen, GPS
+      zoeken, de FIFO-wachtrij wissen). Gevaarlijke instellingen (radio, modus, trackingkanaal) vragen een extra bevestiging.
+      <strong>Nooit via Bluetooth:</strong> de authsleutel, de beheercode, de koppelcode (alleen met het companioncommando of via
+      USB), sleutels en back-ups, formatteren en de standaardinstellingen.</p>
+
+    <p class="note"><strong>Verander de standaardcode 123456, en kies een aparte beheercode.</strong> Wie de koppelcode kent,
+      kan via Bluetooth de naam, de kanalen en de code van de tracker wijzigen. Stel een eigen koppelcode in: hier, in
+      <em>Toestellen</em> (veld <em>Bluetooth-code</em>, vanaf firmware 0.9.9) of met <code>set blepin</code>. Kies een
+      beheercode die verschilt van de koppelcode. Geen van beide staat in een back-up.</p>
 
     <h2 id="statussen">Statussen</h2>
     <table>

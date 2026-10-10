@@ -473,3 +473,27 @@ a.tk-wbtn.primary { background: var(--accent); color: var(--accent-text); }
 .tk-grp > summary { color: var(--text); }
 /* scrollIntoView mag alleen de inhoud (tk-main) verschuiven, nooit de hele pagina met kop en tabbalk */
 body.tkapp { position: fixed; inset: 0; height: auto; overflow: hidden; }
+
+/* ---- ontgrendelen en bewerken via Bluetooth ---- */
+.tk-unlocked { margin: 0; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--ok) 12%, var(--panel)); border: 1px solid var(--ok);
+  font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tk-unlocked::before { content: "🔓 "; }
+.tk-erow .tk-sbody { gap: 4px; }
+.tk-erow label.tk-slbl { margin: 0; }
+.tk-unit { display: flex; gap: 8px; align-items: center; }
+.tk-unit input { flex: 1 1 auto; min-width: 0; width: auto; }
+.tk-unit select { flex: 0 0 auto; width: auto; }
+.tk-unit > span { flex: none; color: var(--muted); font-size: 15px; }
+.tk-erow input:not([type=checkbox]), .tk-erow select { border-radius: 10px; }
+.tk-erow .tk-sw2 { margin: 2px 0 0; font-size: 16px; }
+.tk-danger-txt { color: var(--warn); font-weight: 600; }
+.tk-danger-txt::before { content: "⚠ "; }
+.tk-gsave { padding: 4px 14px 14px; border-top: 1px solid var(--line); }
+.tk-saveres { list-style: none; margin: 10px 0 0; padding: 0; font-size: 14px; }
+.tk-saveres li { padding: 6px 0; border-top: 1px solid var(--line); }
+.tk-saveres li.ok { color: var(--ok); }
+.tk-saveres li.ok::before { content: "✓ "; }
+.tk-saveres li.err { color: var(--danger); }
+.tk-saveres li.err::before { content: "✕ "; }
+.tk-unit input.tk-big-in { flex: 1 1 90px; min-width: 80px; width: auto; }
+.tk-unit select.tk-big-in { flex: 0 0 auto; width: auto !important; min-width: 92px; }

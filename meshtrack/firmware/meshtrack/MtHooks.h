@@ -20,3 +20,4 @@ bool mt_ble_pending();
 int mt_ble_next_frame(uint8_t* buf, int max);   // 0 = niets; anders de lengte van het frame in buf
 void mt_ble_commit();                            // het frame van mt_ble_next_frame is verstuurd
 void mt_ble_abort();                             // verbinding weg: sessie stoppen
+void mt_ble_conn(bool connected);                // elke lus: Bluetooth verbonden? (weg = schrijfsessie dicht)
