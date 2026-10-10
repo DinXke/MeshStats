@@ -152,8 +152,12 @@
         lines.push({ type: "Feature", properties: { color: t.color, sel, spd: 0 },
           geometry: { type: "LineString", coordinates: pts.map((p) => [p.lon, p.lat]) } });
       }
+      for (let i = 1; i < pts.length; i++) {
+        if (pts[i - 1].prio && pts[i].prio) lines.push({ type: "Feature", properties: { prio: 1, sel, color: PRIO, spd: 0 },
+          geometry: { type: "LineString", coordinates: [[pts[i - 1].lon, pts[i - 1].lat], [pts[i].lon, pts[i].lat]] } });
+      }
       for (const p of pts) {
-        points.push({ type: "Feature", properties: { tid: id, alias: t.alias, color: t.color, spd: p.spd ?? -1, ts: p.ts, state: p.state, bat: p.bat ?? -1, old: p.old || (p.state === "V" && p.fix_age > 120) ? 1 : 0 },
+        points.push({ type: "Feature", properties: { tid: id, prio: p.prio ? 1 : 0, alias: t.alias, color: t.color, spd: p.spd ?? -1, ts: p.ts, state: p.state, bat: p.bat ?? -1, old: p.old || (p.state === "V" && p.fix_age > 120) ? 1 : 0 },
           geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
       }
     }
@@ -220,6 +224,16 @@
   const vIsOld = ["all", ["==", ["get", "state"], "V"], ["==", ["get", "old"], 1]];
   const vColor = (c) => ["case", vIsOld, "rgba(0,0,0,0)", ["==", ["get", "state"], "V"], vAmber(), c];   // oud: hol
 
+  // Prioritair (blauwe lichten, server 1.4.0): t.prio + t.prio_until (unix-tijd); per spoorpunt p.prio.
+  const PRIO = "#1565ff";
+  const isPrio = (t) => !!(t && t.prio) && (!t.prio_until || t.prio_until > Date.now() / 1000);
+  const prioText = (t) => {
+    if (!t.prio_until) return "Prioritair";
+    const m = Math.max(1, Math.ceil((t.prio_until - Date.now() / 1000) / 60));
+    return `Prioritair, nog ${m} min`;
+  };
+  const prioPill = (t) => (isPrio(t) ? ` <span class="pill prio">${prioText(t)}</span>` : "");
+
   function addLayers() {
     if (map.getSource("tracks")) return;
     const f = trackFeatures();
@@ -244,8 +258,11 @@
     map.addSource("tracks", { type: "geojson", data: f.lines });
     map.addLayer({ id: "tracks-casing", type: "line", source: "tracks", layout: { "line-join": "round", "line-cap": "round" },
       paint: { "line-color": dark.matches ? "#000" : "#fff", "line-width": ["case", ["==", ["get", "sel"], 1], 7, 5], "line-opacity": 0.7 } });
-    map.addLayer({ id: "tracks", type: "line", source: "tracks", layout: { "line-join": "round", "line-cap": "round" },
+    map.addLayer({ id: "tracks", type: "line", source: "tracks", filter: ["!=", ["get", "prio"], 1], layout: { "line-join": "round", "line-cap": "round" },
       paint: { "line-color": colorSel.value === "speed" ? speedColor : ["get", "color"], "line-width": ["case", ["==", ["get", "sel"], 1], 4, 2.5] } });
+    // gereden met prioriteit (blauwe lichten): blauw en iets breder, bovenop het gewone spoor
+    map.addLayer({ id: "tracks-prio", type: "line", source: "tracks", filter: ["==", ["get", "prio"], 1], layout: { "line-join": "round", "line-cap": "round" },
+      paint: { "line-color": PRIO, "line-width": ["case", ["==", ["get", "sel"], 1], 5, 3.5] } });
     map.addSource("points", { type: "geojson", data: f.points });
     map.addLayer({ id: "points", type: "circle", source: "points", minzoom: 12,
       // SlowTrack-punten (state L): kleinere, lichtere stippen; de lijn blijft chronologisch
@@ -284,7 +301,7 @@
     if (drawing) return;
     const p = e.features[0].properties;
     const lines = [`<strong>${MT.esc(p.alias)}</strong>`, new Date(p.ts * 1000).toLocaleString("nl-BE"),
-      MT.esc(MT.STATE[p.state] || p.state), p.spd >= 0 ? `${p.spd} km/u` : null, p.bat >= 0 ? `batterij ${p.bat}%` : null];
+      MT.esc(MT.STATE[p.state] || p.state) + (p.prio === 1 ? ' <span class="pill prio">Prioritair</span>' : ""), p.spd >= 0 ? `${p.spd} km/u` : null, p.bat >= 0 ? `batterij ${p.bat}%` : null];
     new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(lines.filter(Boolean).join("<br>")).addTo(map);
   });
   map.on("mouseenter", "points", () => { if (!drawing) map.getCanvas().style.cursor = "pointer"; });
@@ -334,7 +351,7 @@
   function popupHtml(t) {
     const st = MT.STATE[t.last_state] || t.last_state || "–";
     return [
-      `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">virtueel</span>' : ""}${t.lost ? ' <span class="lostbadge">VERLOREN</span>' : ""}`,
+      `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">virtueel</span>' : ""}${t.lost ? ' <span class="lostbadge">VERLOREN</span>' : ""}${prioPill(t)}`,
       `${MT.esc(st)}${t.last_mode ? " · " + MT.esc(MT.MODE[t.last_mode] || t.last_mode) : ""}`,
       t.last_spd != null ? `${t.last_spd} km/u${t.last_crs != null ? " · koers " + t.last_crs + "°" : ""}` : null,
       t.last_bat != null ? `batterij ${t.last_bat}%` : null,
@@ -374,6 +391,9 @@
       el.dataset.vts = String(t.last_ts);
     }
     el.classList.toggle("lost", !!t.lost);
+    // blauwe lichten: knippert blauw/gewone kleur (~1 Hz) met sirene-badge; minder beweging: vaste blauwe ring
+    el.classList.toggle("prio", isPrio(t));
+    el.setAttribute("aria-label", isPrio(t) ? `${t.alias}: ${prioText(t)}` : t.alias);
     const moving = t.last_crs != null && (t.last_spd || 0) >= 3;
     el.classList.toggle("has-crs", moving);
     if (moving) el.querySelector(".arrow").style.transform = `rotate(${t.last_crs}deg)`;
@@ -399,6 +419,7 @@
     if (prefs.filter === "fav" && !prefs.fav.has(t.id)) return false;
     if (prefs.filter === "real" && t.kind === "sim") return false;
     if (prefs.filter === "sim" && t.kind !== "sim") return false;
+    if (prefs.filter === "prio" && !isPrio(t)) return false;
     if (prefs.kanaal && t.channel_id !== prefs.kanaal) return false;   // alleen trackers van dit kanaal
     return !q || t.alias.toLowerCase().includes(q) || (t.notes || "").toLowerCase().includes(q);
   }
@@ -418,7 +439,7 @@
       return;
     }
     $("list").innerHTML = items.map((t) => {
-      const sos = (t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "") + (t.lost ? ' <span class="lostbadge">VERLOREN</span>' : "");
+      const sos = (t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "") + (t.lost ? ' <span class="lostbadge">VERLOREN</span>' : "") + prioPill(t);
       const sim = t.kind === "sim" ? ' <span class="pill">virtueel</span>' : "";
       const meta = [MT.STATE[t.last_state] || "nog niets ontvangen", t.last_bat != null ? `${t.last_bat}%` : null,
                     t.last_spd ? `${t.last_spd} km/u` : null].filter(Boolean).join(" · ");
@@ -912,7 +933,7 @@
       if (p.lat != null && !p.suspect && hoursNow() && !(hist && p.ts < Date.now() / 1000 - hoursNow() * 3600)) {
         if (!tracks.has(t.id)) tracks.set(t.id, []);
         // Chronologisch invoegen: een bericht kan eerdere punten meebrengen.
-        const arr = tracks.get(t.id), item = { lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat, old: vOld(p) ? 1 : 0 };
+        const arr = tracks.get(t.id), item = { lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat, old: vOld(p) ? 1 : 0, prio: p.prio ? 1 : 0 };
         let i = arr.length;
         while (i > 0 && arr[i - 1].ts > item.ts) i--;
         if (!(i > 0 && arr[i - 1].ts === item.ts)) arr.splice(i, 0, item);
@@ -937,7 +958,11 @@
       refreshLayers();
       followTo(t);
     }
-    if (msg.type === "tracker" || msg.type === "tracker_deleted" || msg.type === "channels") loadAll();
+    // Bekende tracker (o.a. begin/einde/afloop van prioriteit): alleen die bijwerken; anders alles opnieuw laden.
+    if (msg.type === "tracker" && msg.tracker && trackers.has(msg.tracker.id)) {
+      trackers.set(msg.tracker.id, { ...trackers.get(msg.tracker.id), ...msg.tracker });
+      upsertMarker(trackers.get(msg.tracker.id)); renderList();
+    } else if (msg.type === "tracker" || msg.type === "tracker_deleted" || msg.type === "channels") loadAll();
     if (msg.type === "geofences") loadZones();
     if (msg.type === "loc_request") rqEvent(msg);
     if (msg.type === "lost_seen" && msg.tracker) {

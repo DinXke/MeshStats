@@ -1,4 +1,6 @@
-// Bewegingsdetectie met de QMA6100P (driver uit MU-companion).
+// Bewegingsdetectie: QMA6100P op de T1000-E (driver uit MU-companion), LIS2DH op de RAK WisMesh Tag
+// (0.9.7; alleen pollen, de INT-pin is niet gedocumenteerd). Zonder sensor (of na "fout") beslist de
+// tracker op GPS-snelheid; dan slaapt hij nooit (anders zou hij niet meer wakker worden).
 //
 // Voorkeur: de any-motion-interrupt op P1.2 (de ISR zet alleen een vlag, nooit
 // I2C). Lukt het instellen van die interrupt niet (read-back faalt), dan valt
@@ -7,10 +9,23 @@
 // beslist de tracker alleen op GPS-snelheid. Een hangende I2C-bus mag de lus
 // nooit bevriezen (les uit MU-companion v1.0.1).
 #include "MtMotion.h"
-#include "QMA6100P.h"
 #include <math.h>
-
-static QMA6100P accel;
+#if defined(T1000_E)
+  #include "QMA6100P.h"
+  static QMA6100P accel;
+  #define MT_ACCEL_INT_PIN QMA_6100P_INT_PIN
+#elif defined(RAK_WISMESH_TAG)
+  #include "LIS2DH.h"
+  static MtLIS2DH accel;                    // geen interrupt: pollen
+#else
+  // Bord zonder bewegingssensor (RAK3401): altijd "afwezig"; de tracker gebruikt rust via GPS.
+  struct MtNoAccel {
+    bool begin() { return false; }
+    bool configMotionInterrupt(uint8_t) { return false; }
+    bool read(float&, float&, float&) { return false; }
+  };
+  static MtNoAccel accel;
+#endif
 static volatile bool s_irq = false;
 static MtMotionMode s_mode = MT_MOTION_NONE;
 static uint32_t s_last_motion = 0;
@@ -31,13 +46,17 @@ void mt_motion_begin(uint8_t sens) {
   s_last_motion = millis();
   s_poll_th = sens == 0 ? 0.15f : sens == 2 ? 0.04f : 0.08f;
   if (!accel.begin()) { s_mode = MT_MOTION_NONE; return; }
+#ifdef MT_ACCEL_INT_PIN
   if (accel.configMotionInterrupt(threshold_for(sens))) {
-    pinMode(QMA_6100P_INT_PIN, INPUT);
-    attachInterrupt(digitalPinToInterrupt(QMA_6100P_INT_PIN), isr, RISING);
+    pinMode(MT_ACCEL_INT_PIN, INPUT);
+    attachInterrupt(digitalPinToInterrupt(MT_ACCEL_INT_PIN), isr, RISING);
     s_mode = MT_MOTION_INT;
-  } else {
-    s_mode = MT_MOTION_POLL;
+    return;
   }
+#else
+  (void)isr;
+#endif
+  s_mode = MT_MOTION_POLL;
 }
 
 void mt_motion_set_sens(uint8_t sens) {
@@ -67,6 +86,17 @@ bool mt_motion_available() { return s_mode == MT_MOTION_INT || s_mode == MT_MOTI
 uint32_t mt_motion_last() { return s_last_motion; }
 void mt_motion_touch() { s_last_motion = millis(); }
 MtMotionMode mt_motion_mode() { return s_mode; }
+
+const char* mt_motion_type() {
+  if (s_mode == MT_MOTION_NONE) return "-";
+#if defined(T1000_E)
+  return "qma6100p";
+#elif defined(RAK_WISMESH_TAG)
+  return "lis2dh";
+#else
+  return "-";
+#endif
+}
 
 const char* mt_motion_mode_str() {
   switch (s_mode) {

@@ -88,6 +88,11 @@ class Report:
         return "g" in self.flags
 
     @property
+    def prio(self) -> bool:
+        """Vlag "p" (1.4): het voertuig rijdt prioritair (blauwe lichten). Geldt voor elke toestand."""
+        return "p" in self.flags
+
+    @property
     def has_fix(self) -> bool:
         return self.lat is not None and self.lon is not None
 

@@ -42,7 +42,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.3.2"
+VERSION = "1.4.0"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -127,6 +127,8 @@ def tracker_out(t: dict[str, Any], p: Optional[Principal] = None) -> dict[str, A
     out = dict(t)
     out["stale"] = not t["last_rx"] or now - t["last_rx"] > S.settings["stale_after_h"] * 3600
     out["has_authkey"] = bool(t.get("authkey"))
+    out["prio_until"] = int(t.get("prio_until") or 0)
+    out["prio"] = now < out["prio_until"]    # 1.4: rijdt prioritair (blauwe lichten)
     out.pop("authkey", None)                 # nooit in lijsten of live-berichten
     if p is not None and not p.can("map.details"):
         out = strip_tracker(out)
@@ -167,9 +169,12 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
     t = S.db.tracker(t["id"])
     extras = pos.pop("extras", [])
     pos.pop("dup_points", None)
-    if pos["state"] in HISTORY_STATES:
+    if pos["state"] in HISTORY_STATES:         # L/Q: vlag "p" staat per punt, de live-toestand blijft
         await _process_slow(t, pos, extras, before, simulated)
         return
+    prio_ev = _update_prio(t, bool(pos.get("prio")), pos["rx_ts"])
+    if prio_ev:
+        t = S.db.tracker(t["id"])
     if not simulated:
         log.info("positie %s seq=%s state=%s%s", t["alias"], pos["seq"], pos["state"],
                  f" (+{len(extras)} eerdere punten)" if extras else "")
@@ -183,10 +188,60 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
                 S.alerts.fire(t, "zone_in" if ev["event"] == "enter" else "zone_out", ep, ev["geofence"], ev.get("owner"))
     await S.hub.send({"type": "position", "position": pos, "tracker": tracker_out(t)})
     S.alerts.fire(t, pos["state"], pos)
+    if prio_ev:                                # begin/einde ook als losse tracker-update
+        await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
+        S.alerts.fire(t, prio_ev, pos)
     await _lost_seen(t, pos, before)
     _bat_power_alerts(t, pos, before)
     if pos["lat"] is not None and not pos["suspect"]:
         await _zones(t, pos)
+
+
+# ---- prioritair (1.4, vlag "p") ------------------------------------------------------------
+PRIO_TICK_S = 10.0
+
+
+def _update_prio(t: dict[str, Any], flag: bool, rx: int) -> Optional[str]:
+    """Live bericht: met "p" prioritair tot rx + prio_hold_s, zonder "p" meteen voorbij.
+    Geeft "prio_start" of "prio_end" bij een wissel, anders None."""
+    until = int(t.get("prio_until") or 0)
+    active = time.time() < until
+    if flag:
+        S.db.set_prio(t["id"], rx + int(S.settings.get("prio_hold_s", 300)))
+        if not active:
+            S.db.stat("prio_start", t["id"], t.get("channel_id"))
+            log.info("%s rijdt prioritair", t["alias"])
+            return "prio_start"
+        return None
+    if until:
+        S.db.set_prio(t["id"], 0)
+        log.info("%s rijdt niet langer prioritair", t["alias"])
+        return "prio_end"
+    return None
+
+
+async def prio_tick(now: Optional[float] = None) -> int:
+    """Verlopen prioritair-toestanden afsluiten: prio_until op 0, live-update en melding prio_end."""
+    now = time.time() if now is None else now
+    n = 0
+    for t in S.db.trackers():
+        until = int(t.get("prio_until") or 0)
+        if until and until <= now:
+            S.db.set_prio(t["id"], 0)
+            t = S.db.tracker(t["id"])
+            await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
+            S.alerts.fire(t, "prio_end")
+            n += 1
+    return n
+
+
+async def prio_watch() -> None:
+    while True:
+        await asyncio.sleep(PRIO_TICK_S)
+        try:
+            await prio_tick()
+        except Exception:  # noqa: BLE001
+            log.exception("prioritair-controle")
 
 
 async def _lost_seen(t: dict[str, Any], pos: dict[str, Any], before: Optional[dict[str, Any]]) -> None:
@@ -689,7 +744,8 @@ async def lifespan(app: FastAPI):
     S.mesh.on_rx_log = on_rx_log
     tasks = [asyncio.create_task(S.mesh.run()), asyncio.create_task(pruner()),
              asyncio.create_task(S.alerts.run()), asyncio.create_task(silent_watch()),
-             asyncio.create_task(fifo_scheduler()), asyncio.create_task(openhop_path_poller())]
+             asyncio.create_task(fifo_scheduler()), asyncio.create_task(openhop_path_poller()),
+             asyncio.create_task(prio_watch())]
     tiles = Path(S.cfg.tiles_dir)
     if tiles.is_dir():
         app.mount("/tiles", StaticFiles(directory=tiles), name="tiles")
@@ -1727,7 +1783,26 @@ def _sim_out(row: dict[str, Any]) -> dict[str, Any]:
     st = S.sims.status(row["tracker_id"]) or {"running": False}
     if row["tracker_id"] in _building:
         st = {**st, "note": "historiek wordt opgebouwd", "building": True}
-    return {**row, "status": st}
+    return {**row, "prio": bool(row.get("prio")), "status": st}
+
+
+class SimPrioIn(BaseModel):
+    on: bool
+
+
+@app.post("/api/sims/{tid}/prio")
+async def sim_prio(tid: int, b: SimPrioIn, request: Request):
+    """1.4: simulator prioritair laten rijden (vlag "p" in zijn berichten), of niet meer."""
+    p = need(request, "sims.manage")
+    row = S.db.sim(tid)
+    if not row or not p.sees(tid):
+        raise HTTPException(404, "onbekende simulator")
+    S.db.set_sim_prio(tid, b.on)
+    s = S.sims.sims.get(tid)
+    if s is not None:
+        s.prio = b.on                          # lopende simulator: vanaf zijn volgende bericht
+    audit(p, "simulator prioritair" if b.on else "simulator niet prioritair", row["alias"])
+    return _sim_out(S.db.sim(tid))
 
 
 @app.get("/api/sims")

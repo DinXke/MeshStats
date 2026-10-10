@@ -71,6 +71,8 @@
   /* geantwoord op het lopende verzoek: omlijnd (de amber ring van "op verzoek" blijft zichtbaar) */
   .omark.asked { outline: 2px dashed var(--accent); outline-offset: 7px; }
   .olegend { display: flex; gap: 6px; align-items: center; margin: 2px 0 6px; }
+  /* prioritair spoorstuk (blauw), zoals .legend i.prio in style.css */
+  .olegend i.prio { display: inline-block; flex: none; width: 14px; height: 5px; border-radius: 2px; background: var(--prio, #1565ff); }
   #btpill { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
   @media (max-width: 760px) {
     header.top { gap: 6px; }
@@ -154,6 +156,7 @@
         <span id="o-ask-note" class="msg small"></span>
       </div>
       <div class="olegend small muted"><i class="vping" aria-hidden="true"></i> Op verzoek: antwoord op een locatieverzoek <i class="vping old" aria-hidden="true"></i> laatst gekende positie</div>
+      <div class="olegend small muted"><i class="prio" aria-hidden="true"></i> Prioritair (blauwe lichten)</div>
       <div id="o-ask" class="askpanel" hidden aria-live="polite"></div>
       <div id="o-list"></div>
     </section>

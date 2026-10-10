@@ -31,6 +31,7 @@ EVENT_TEXT = {
     "bat_low": "heeft minder dan 20 % batterij", "silent": "is te lang stil",
     "usb_on": "hangt aan de lader", "usb_off": "is van de lader gehaald",
     "lost_seen": "(VERLOREN) is weer opgedoken",
+    "prio_start": "rijdt prioritair", "prio_end": "rijdt niet langer prioritair",
 }
 EVENTS = list(EVENT_TEXT)
 

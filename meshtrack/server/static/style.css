@@ -664,3 +664,60 @@ header.top nav .navapps-l { font-size: 11px; text-transform: uppercase; letter-s
 .vping.old { background: none; box-shadow: none; border: 2px dashed var(--vreq); }
 .legend i.vping.old { background: none; }
 .marker.vold, .omark.vold { box-shadow: 0 0 0 2px var(--panel); outline: 2px dashed var(--vreq); outline-offset: 2px; }
+.hwoff { opacity: .5; }
+/* Toestellen: herkend toestel */
+.detcard .dethead { display: flex; gap: 10px; align-items: center; }
+.detcard .detico { width: 36px; height: 36px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; color: var(--accent); flex: none; }
+.detcard .detico svg { width: 22px; height: 22px; }
+.detcard .detgrid { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 10px 0 4px; font-size: 14px; }
+.detcard .detgrid dt { color: var(--muted); }
+.detcard .detgrid dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ---- Prioritair (blauwe lichten) ----
+   Zelfde stijl op de kaart van de site (.marker), in /offline (.omark) en in /tracker.
+   Knipperen: ongeveer 1 Hz tussen blauw (met gloed) en de gewone kleur. Altijd een blauw sirene-badge,
+   zodat het ook zonder kleur en zonder beweging herkenbaar is. Minder beweging: vaste blauwe ring + badge. */
+:root { --prio: #1565ff; --prio-txt: #0b4fd6; }
+:root[data-theme="dark"], :root[data-theme="night"] { --prio-txt: #7fa8ff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]), :root[data-theme="auto"] { --prio-txt: #7fa8ff; } }
+.marker.prio, .omark.prio { animation: prio-blink 1s steps(1, end) infinite; }
+@keyframes prio-blink {
+  0% { background: var(--prio); border-color: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 0 10px 5px rgba(21,101,255,.75); }
+  50% { box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+}
+/* sirene-badge rechtsboven (koepel met voet) */
+.marker.prio::before, .omark.prio::before {
+  content: ""; position: absolute; top: -9px; right: -10px; width: 14px; height: 14px; border-radius: 50%; z-index: 2;
+  background: var(--prio) no-repeat center / 10px 10px
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2.5 7V5a2.5 2.5 0 015 0v2z' fill='white'/%3E%3Crect x='1.5' y='7.3' width='7' height='1.6' rx='.5' fill='white'/%3E%3C/svg%3E");
+  border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.3);
+}
+.omark.prio { position: relative; }
+@media (prefers-reduced-motion: reduce) {
+  .marker.prio, .omark.prio { animation: none; box-shadow: 0 0 0 2px #fff, 0 0 0 5px var(--prio); }
+}
+/* badge in lijsten en popups: "Prioritair, nog 4 min" */
+.pill.prio { display: inline-flex; align-items: center; gap: 4px; background: var(--prio); color: #fff; border-color: var(--prio); font-weight: 600; }
+.pill.prio::before { content: ""; width: 10px; height: 10px; flex: none;
+  background: no-repeat center / 10px 10px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2.5 7V5a2.5 2.5 0 015 0v2z' fill='white'/%3E%3Crect x='1.5' y='7.3' width='7' height='1.6' rx='.5' fill='white'/%3E%3C/svg%3E"); }
+/* legende: blauw spoorstuk */
+.legend i.prio { background: var(--prio); height: 5px; }
+.marker.sos.prio { animation: sos 1s infinite; }   /* SOS gaat voor */
+
+/* ---- Prioritair: beheer (knop per simulator) en Toestellen (ingang pin 31) ---- */
+.prioctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.prioctl .priobtn { padding: 4px 10px; font-size: 13px; }
+.prioctl .priobtn[aria-pressed="true"] { background: var(--prio); border-color: var(--prio); color: #fff; font-weight: 600; }
+.prioctl .prio-err { color: var(--danger); font-size: 12.5px; font-weight: 600; }
+.prioctl .prio-err:empty { display: none; }
+#f-prio { margin: 6px 0 10px; }
+@media (max-width: 720px) { .prioctl .priobtn { min-height: 44px; min-width: 44px; } }
+.prio-warn { display: flex; gap: 10px; align-items: flex-start; border: 2px solid var(--danger); border-left-width: 6px; border-radius: 8px;
+  background: var(--bg); color: var(--text); padding: 10px 12px; margin: 2px 0 10px; font-size: 14px; }
+.prio-warn svg { width: 24px; height: 24px; flex: none; color: var(--danger); }
+#s-pin31box .fielderr { color: var(--danger); font-size: 12.5px; font-weight: 600; margin-top: 2px; }
+#s-pin31box input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+#s-pin31box .priostat { margin-top: 8px; font-size: 14px; }
+#s-pin31box .priostat:empty { display: none; }
+.priofout { display: inline-flex; gap: 5px; align-items: center; color: var(--danger); font-weight: 600; }
+.priofout .ico { width: 16px; height: 16px; flex: none; }

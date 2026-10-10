@@ -4,6 +4,7 @@
 #include "MtSender.h"
 #include "MyMesh.h"
 #include "UITask.h"
+#include "MtGpsScan.h"
 
 extern UITask ui_task;
 
@@ -95,6 +96,7 @@ void mt_begin() {
   s_usb = board.isExternalPowered();
   apply_mode(wanted_mode());
   mt_tracker_begin();
+  mt_gps_scan_begin();     // RAK3401: GPS-pinnen zetten of zoeken (niet-blokkerend)
   mt_menu_begin();
 }
 
@@ -104,6 +106,7 @@ void mt_loop() {
     bool usb = board.isExternalPowered();
     if (usb != s_usb) { s_usb = usb; reevaluate(true, true); }
   }
+  mt_gps_scan_loop();
   mt_tracker_loop();
   mt_menu_loop();
 }

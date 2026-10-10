@@ -506,3 +506,111 @@ def test_loc_request_errors_and_permissions(app):
     p_jan = main._resolve(dict(c.cookies))
     msg_ = {"type": "loc_request", "channel_id": cid2, "target": other, "sent_at": 1, "by": "jan"}
     assert main.Hub._allowed(p_jan, msg_) and not main.Hub._allowed(p_jan, {**msg_, "channel_id": cid})
+
+# ---- 1.4: prioritair (vlag "p") -----------------------------------------------------------
+
+def test_prio_flag_parsed_on_any_state():
+    from meshtrack.protocol import parse
+    assert parse(msg(1, NOW) + "||p").prio
+    assert parse(msg(2, NOW, state="S") + "||p").prio
+    assert parse("T1|3|N||||||80|||||||p").prio                       # zonder fix
+    assert parse(msg(4, NOW, extra="~15;1,1") + "|gp").prio and not parse(msg(5, NOW) + "||g").prio
+    assert not parse(msg(6, NOW)).prio
+
+
+def test_prio_live_set_cleared_and_history_ignored(app):
+    c, main, tid, cid, chan, _ = app
+    db = main.S.db
+    sent = []
+    orig = main.S.hub.send
+
+    async def cap(m):
+        sent.append(m)
+        await orig(m)
+    main.S.hub.send = cap
+    try:
+        now = int(time.time())
+        chan(msg(1, now - 5)[3:] + "||p")
+        t = db.tracker(tid)
+        assert t["prio_until"] >= now + 290 and t["prio_until"] <= int(time.time()) + 300
+        assert any(m["type"] == "tracker" and m["tracker"]["prio"] for m in sent)
+        chan(msg(2, now - 3, state="S")[3:] + "||p")                    # blijft prioritair: geen tweede start
+        assert len(ev(main, "prio_start")) == 1
+        login(c, "admin", "beheerder1")
+        tr = next(x for x in c.get("/api/trackers").json() if x["id"] == tid)
+        assert tr["prio"] is True and tr["prio_until"] == db.tracker(tid)["prio_until"]
+        pts = c.get(f"/api/trackers/{tid}/track").json()
+        assert [p["prio"] for p in pts] == [1, 1]
+        # FIFO-punt met "p": opgeslagen met de vlag, live-toestand onveranderd
+        before = db.tracker(tid)["prio_until"]
+        chan(msg(9, now - 3000, state="Q")[3:] + "||p")
+        assert db.tracker(tid)["prio_until"] == before
+        assert db._q("SELECT prio FROM positions WHERE state='Q'")[0]["prio"] == 1
+        # live bericht zonder "p": meteen voorbij
+        sent.clear()
+        chan(msg(3, now - 1)[3:])
+        assert db.tracker(tid)["prio_until"] == 0
+        assert any(m["type"] == "tracker" and m["tracker"]["prio"] is False for m in sent)
+        chan(msg(4, now)[3:] + "||p")                                   # opnieuw: tweede start
+        assert len(ev(main, "prio_start")) == 2
+        # Q zonder "p" beëindigt het niet
+        chan(msg(10, now - 2000, state="Q")[3:])
+        assert db.tracker(tid)["prio_until"] > now
+        s = c.get("/api/stats/summary").json()["totals"]
+        assert "prio_start" in c.get("/api/stats/events").json()["kinds"]
+    finally:
+        main.S.hub.send = orig
+
+
+def test_prio_expiry_broadcast(app):
+    c, main, tid, cid, chan, _ = app
+    db = main.S.db
+    sent = []
+
+    async def cap(m):
+        sent.append(m)
+    orig = main.S.hub.send
+    main.S.hub.send = cap
+    try:
+        now = int(time.time())
+        db.set_prio(tid, now + 100)
+        assert c.portal.call(main.prio_tick, now) == 0 and sent == []          # nog niet verlopen
+        assert c.portal.call(main.prio_tick, now + 101) == 1
+        assert sent[0]["type"] == "tracker" and sent[0]["tracker"]["id"] == tid and sent[0]["tracker"]["prio"] is False
+        assert db.tracker(tid)["prio_until"] == 0
+        assert c.portal.call(main.prio_tick, now + 200) == 0                   # maar één keer
+    finally:
+        main.S.hub.send = orig
+    assert "prio_start" in main.EVENTS and "prio_end" in main.EVENTS
+
+
+def test_sim_prio_toggle_and_permission(app):
+    c, main, tid, cid, chan, _ = app
+    db = main.S.db
+    sid = db.add_tracker("cd" * 32, "Ziekenwagen", kind="sim")
+    db.save_sim(sid, "car", 50.93, 5.33, {}, 0, 4, False, {})
+    login(c, "admin", "beheerder1")
+    r = c.post(f"/api/sims/{sid}/prio", json={"on": True})
+    assert r.status_code == 200 and r.json()["prio"] is True
+    assert next(s for s in c.get("/api/sims").json() if s["tracker_id"] == sid)["prio"] is True
+    assert db._q("SELECT action, detail FROM audit WHERE action LIKE 'simulator%prioritair' ORDER BY id DESC")[0] == \
+           {"action": "simulator prioritair", "detail": "Ziekenwagen"}
+    assert c.post("/api/sims/99999/prio", json={"on": True}).status_code == 404
+    # de simulator zet de vlag in zijn berichten, en de hele keten verwerkt hem
+    from meshtrack.sim import SimTracker
+    s = SimTracker(db.sim(sid), None, None)
+    s._send(time.time(), "M", "test")
+    prefix, text, ts, snr, hops = s.outbox[-1]
+    assert text.endswith("|p") and text.count("|") == 15
+    c.portal.call(main.process, prefix, text, ts, snr, hops, True)
+    assert db.tracker(sid)["prio_until"] > time.time()
+    assert c.post(f"/api/sims/{sid}/prio", json={"on": False}).json()["prio"] is False
+    s2 = SimTracker(db.sim(sid), None, None)
+    s2._send(time.time(), "M", "test")
+    assert not s2.outbox[-1][1].endswith("|p")
+    # zonder sims.manage: 403
+    g = c.post("/api/groups", json={"name": "Kijk", "perms": ["map.view"], "all_trackers": True}).json()
+    assert c.post("/api/users", json={"username": "kim", "password": "geheim123", "group_id": g["id"]}).status_code == 200
+    c.post("/api/logout")
+    login(c, "kim", "geheim123")
+    assert c.post(f"/api/sims/{sid}/prio", json={"on": True}).status_code == 403

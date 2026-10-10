@@ -1,3 +1,5 @@
+// MeshTrack 0.9.7: alleen voor de T1000-E (de WisMesh Tag heeft MtTargetTag.cpp / LIS2DH.cpp).
+#if defined(T1000_E)
 // MeshTrack: kopie van variants/t1000-e/target.cpp (v1.17.1). Enige wijziging:
 // de GPS-provider (MtGps.h) geeft ook snelheid, koers, HDOP en de leeftijd van de fix.
 #include <Arduino.h>
@@ -187,3 +189,4 @@ bool T1000SensorManager::setSettingValue(const char* name, const char* value) {
   }
   return false;  // not supported
 }
+#endif   // T1000_E

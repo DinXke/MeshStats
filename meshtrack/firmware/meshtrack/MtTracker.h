@@ -24,7 +24,8 @@ int mt_tracker_heard();                // herhalingen gehoord van het laatst bew
 const char* mt_tracker_sos_confirmed();   // laatste SOS-reeks: "ja", "nee" of "-"
 bool mt_tracker_gps_on();
 // laatst gekende fix (0.9.6): bewaard op ExtraFS; voor een locatieverzoek zonder verse fix
-uint32_t mt_tracker_lastfix_ts();      // GPS-tijd, 0 = nooit
+uint32_t mt_tracker_lastfix_ts();
+uint32_t mt_tracker_prio_left();       // prioritair: resterende tijd in s (0 = niet actief)      // GPS-tijd, 0 = nooit
 void mt_tracker_save_lastfix();        // nu bewaren (voor een herstart of uitschakeling)
 // FIFO (track_mode fifo, 0.9)
 uint16_t mt_tracker_fifo_count();      // punten in de wachtrij

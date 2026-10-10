@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MT_CFG_VERSION 7   // v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep; v6: trackmodus en FIFO; v7: verzoeken, rx_beweging (velden achteraan, oudere worden overgenomen)
+#define MT_CFG_VERSION 8   // v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep; v6: trackmodus en FIFO; v7: verzoeken, rx_beweging; v8: GPS-pinnen, rust_gps_check, analoge knop (velden achteraan, oudere worden overgenomen)
 // De indeling NOOIT wijzigen (flash-compatibel): ongebruikte velden blijven staan.
 
 struct MtCfg {
@@ -74,12 +74,22 @@ struct MtCfg {
   uint8_t  verzoek_uit;         // 1 = locatieverzoeken (T1R) niet beantwoorden; 0 = wel (standaard)
   uint8_t  rx_beweging_uit;     // 1 = radio ook in beweging laten slapen; 0 = in beweging blijven luisteren (standaard)
   uint8_t  verzoek_beep;        // 1 = deuntje bij een aanvaard locatieverzoek; 0 = uit (standaard)
-  uint8_t  _pad7;
+  uint8_t  fifo_punten_hoofd;   // fifo: 0 = alle punten van gemiste berichten naar de FIFO (standaard), 1 = alleen hoofdpunten
+  // ---- v8 (0.9.7); oudere bestanden krijgen hier 0 = standaard ----
+  uint8_t  gps_rx;              // RAK3401: GPS-UART, RX-pin van de nRF (0 = nog niet gevonden: zoeken)
+  uint8_t  gps_tx;              // RAK3401: TX-pin van de nRF
+  uint8_t  gps_baud;            // RAK3401: 0 = onbekend, anders MT_GPS_BAUDS[code-1]
+  uint8_t  rust_gps_check;      // zonder bewegingssensor: in rust elke x min kort de GPS (0 = standaard 5, 255 = uit: GPS blijft aan)
+  uint8_t  pin31;               // RAK3401, P0.31: 0 = uit (pin nooit lezen, standaard), 1 = analoge knop, 2 = prioriteitsingang
+  uint8_t  prio_niveau;         // prio: 0 = actief laag (optocoupler naar massa, standaard), 1 = actief hoog
+  uint8_t  prio_houd;           // prio: na de laatste actieve periode nog x min prioritair (0 = standaard 5, 1..60, 255 = volgt de ingang)
+  uint8_t  prio_interval;       // prio: FastTrack hooguit elke x s (0 = standaard 30, 255 = geen wijziging)
   uint32_t crc;                 // crc32 over alles hiervoor
 };
 
 // Vaste indeling: een andere grootte breekt de bewaarde bestanden (zie hierboven).
-static_assert(sizeof(MtCfg) == 140, "MtCfg-indeling gewijzigd");
+static_assert(sizeof(MtCfg) == 148, "MtCfg-indeling gewijzigd");
+static_assert(offsetof(MtCfg, gps_rx) == 136, "v8-velden moeten na de v7-velden komen");
 static_assert(offsetof(MtCfg, verzoek_uit) == 132, "v7-velden moeten na de v6-velden komen");
 static_assert(offsetof(MtCfg, track_mode) == 120, "v6-velden moeten na de v5-velden komen");
 
@@ -90,6 +100,11 @@ extern MtCfg mt_cfg;
 
 // fifo_wacht in minuten: 0 = standaard (30), 255 = uit (geeft 0 terug).
 inline uint32_t mt_fifo_wacht_min() { return mt_cfg.fifo_wacht == 0 ? 30 : mt_cfg.fifo_wacht == 255 ? 0 : mt_cfg.fifo_wacht; }
+// rust_gps_check in minuten: 0 = standaard (5), 255 = uit (geeft 0 terug: de GPS blijft aan, geen rust).
+inline uint32_t mt_rust_gps_check_min() { return mt_cfg.rust_gps_check == 0 ? 5 : mt_cfg.rust_gps_check == 255 ? 0 : mt_cfg.rust_gps_check; }
+// GPS-baudcodes (gps_baud): 1..5
+static const uint32_t MT_GPS_BAUDS[] = { 9600, 38400, 115200, 4800, 57600 };
+#define MT_GPS_NBAUDS 5
 
 // Uitkomst van het laden, voor `status` en de bootmelding.
 extern const char* mt_cfg_load_note;

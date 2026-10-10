@@ -64,7 +64,11 @@
   }
 
   // ---- berichten ontcijferen ---------------------------------------------------------
-  // "T1C|<pk8>|<tag>|<seq>|<state>|<lat>|<lon>|<alt>|<spd>|<crs>|<bat>|<hdop>|<age>|<mode>|<power>|<fix_ts>|<extra>"
+  // "T1C|<pk8>|<tag>|<seq>|<state>|<lat>|<lon>|<alt>|<spd>|<crs>|<bat>|<hdop>|<age>|<mode>|<power>|<fix_ts>|<extra>|<vlaggen>"
+  // Vlaggen: kleine letters NA de extra punten (index 17 na split op "|"; het "16e veld" van T1 in
+  // protocol.py, rest[4]). De firmware laat extra leeg als er geen extra punten zijn ("||fg").
+  // "p" (1.4) = prioritair (blauwe lichten). Oude berichten hebben het veld niet.
+  const PRIO_S = 300;                               // prioritair tot 5 min na het laatste live bericht met "p"
   function hav(a1, o1, a2, o2) {
     const R = 6371008.8, r = Math.PI / 180, dp = (a2 - a1) * r, dl = (o2 - o1) * r;
     const h = Math.sin(dp / 2) ** 2 + Math.cos(a1 * r) * Math.cos(a2 * r) * Math.sin(dl / 2) ** 2;
@@ -138,10 +142,15 @@
     if (parts.length < 15) return { bad: "onvolledig" };
     const [, pk0, , ...f] = parts;                 // controletekens: alleen de server kan ze nakijken
     const pk = pk0.toLowerCase();
-    const [seq, state, la, lo, alt, spd, crs, bat, hdop, age, mode, power, fts, extra] = f;
+    let [seq, state, la, lo, alt, spd, crs, bat, hdop, age, mode, power, fts, extra, flags] = f;
+    // Verdraagzaam: staat er in het extra-veld (index 16) enkel een korte reeks kleine letters (bv. "p"),
+    // dan zijn dat vlaggen zonder extra punten. Extra punten beginnen altijd met "B", "~" of een cijfer/min.
+    if (!flags && extra && /^[a-z]{1,8}$/.test(extra)) { flags = extra; extra = ""; }
+    const prio = /^[a-z]{0,8}$/.test(flags || "") && (flags || "").includes("p");
     const lat = la === "" ? null : +la, lon = lo === "" ? null : +lo;
     const tsMain = fts ? +fts : (frameTs || Math.round(Date.now() / 1000)) - (+age || 0);
     const base = { pk, seq: +seq, bat: bat === "" ? null : +bat, mode, power, own: !!meta.own, chan: meta.chan, rx: Math.round(Date.now() / 1000) };
+    if (prio) base.prio = true;                     // zoals de server: ook de extra punten van het bericht
     const out = [];
     if (lat !== null) {
       for (const e of extras(extra, lat, lon)) {
@@ -547,7 +556,9 @@
     map.on("moveend", () => metaSet("view", { center: map.getCenter().toArray(), zoom: map.getZoom() }));
     map.on("load", () => {
       map.addSource("trk", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: "trk", type: "line", source: "trk", paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.85 } });
+      map.addLayer({ id: "trk", type: "line", source: "trk", filter: ["!=", ["get", "prio"], 1], paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.85 } });
+      // Prioritair: spoorstukken tussen twee opeenvolgende punten met vlag "p", blauw en erbovenop
+      map.addLayer({ id: "trk-prio", type: "line", source: "trk", filter: ["==", ["get", "prio"], 1], paint: { "line-color": "#1565ff", "line-width": 4, "line-opacity": 0.95 } });
       map.addSource("pts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 2, 3], "circle-color": ["case", ["all", ["==", ["get", "state"], "V"], ["==", ["get", "old"], 1]], "rgba(0,0,0,0)", ["==", ["get", "state"], "V"], vAmber(), ["get", "color"]],
         "circle-opacity": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.7, 1], "circle-stroke-color": ["case", ["all", ["==", ["get", "state"], "V"], ["==", ["get", "old"], 1]], vAmber(), "#fff"],
@@ -556,8 +567,9 @@
       map.addLayer({ id: "pts-v", type: "circle", source: "pts", filter: ["==", ["get", "state"], "V"],
         paint: { "circle-radius": 6, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": vAmber(), "circle-stroke-width": 1.5 } });
       map.on("click", "pts", (e) => {
+        if (e.originalEvent && e.originalEvent.target.closest(".maplibregl-marker")) return;   // marker heeft een eigen popup
         const p = e.features[0].properties;
-        new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(`<strong>${esc(p.name)}</strong><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}${p.spd !== "null" && p.spd != null ? `<br>${p.spd} km/u` : ""}${["L", "Q", "V"].includes(p.state) ? `<br>${STATE[p.state]}` : ""}`).addTo(map);
+        new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(`<strong>${esc(p.name)}</strong><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}${p.spd !== "null" && p.spd != null ? `<br>${p.spd} km/u` : ""}${["L", "Q", "V"].includes(p.state) ? `<br>${STATE[p.state]}` : ""}${p.prio ? '<br><span class="pill prio">Prioritair</span>' : ""}`).addTo(map);
       });
       renderAll();
     });
@@ -585,6 +597,22 @@
     if ($("o-chan").value === "__add") { $("o-chan").value = chanFilter; show("ch"); $("ch-name").focus(); return; }
     chanFilter = $("o-chan").value; metaSet("chanFilter", chanFilter); renderAll(); });
 
+  // Prioritair: het LAATSTE live bericht (hoofdpunt, geen gelogd/ingehaald punt L/Q) had vlag "p" en
+  // kwam minder dan 5 min geleden binnen (ontvangsttijd rx). Geeft de resterende seconden, anders 0.
+  let prioTimer = null;
+  function prioLeft(cf, now) {
+    const live = {};
+    for (const p of posAll) {
+      if (p.extra || p.state === "L" || p.state === "Q" || (cf && p.chan !== cf)) continue;
+      const q = live[p.pk];
+      if (!q || (p.rx || 0) > (q.rx || 0) || ((p.rx || 0) === (q.rx || 0) && p.ts > q.ts)) live[p.pk] = p;
+    }
+    const out = {};
+    for (const [pk, p] of Object.entries(live)) out[pk] = p.prio ? Math.max(0, Math.round((p.rx || 0) + PRIO_S - now)) : 0;
+    return out;
+  }
+  const prioPill = (left) => `<span class="pill prio" title="Blauwe lichten; nog ongeveer ${Math.max(1, Math.ceil(left / 60))} min">Prioritair</span>`;
+
   function renderAll() {
     const now = Date.now() / 1000, since = now - hours * 3600;
     const by = {};
@@ -592,34 +620,48 @@
     const cf = $("o-chan").value;
     for (const p of posAll) if (p.lat != null && (!cf || p.chan === cf)) (by[p.pk] = by[p.pk] || []).push(p);
     for (const [pk, m] of markers) if (!by[pk]) { m.remove(); markers.delete(pk); }   // ander kanaal: marker weg
+    const prio = prioLeft(cf, now);
     const lines = [], pts = [];
     for (const [pk, arr] of Object.entries(by)) {
       arr.sort((a, b) => a.ts - b.ts);
       const sel = arr.filter((p) => p.ts >= since);
       const color = colorOf(pk), name = nameOf(pk);
       if (trackOn && sel.length > 1) lines.push({ type: "Feature", properties: { color }, geometry: { type: "LineString", coordinates: sel.map((p) => [p.lon, p.lat]) } });
-      if (trackOn) for (const p of sel) pts.push({ type: "Feature", properties: { color, name, ts: p.ts, spd: p.spd, state: p.state, old: p.old ? 1 : 0 }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
+      if (trackOn) {                                // blauwe stukken: opeenvolgende prioritaire punten
+        let run = [];
+        const flush = () => { if (run.length > 1) lines.push({ type: "Feature", properties: { prio: 1 }, geometry: { type: "LineString", coordinates: run } }); run = []; };
+        for (const p of sel) { if (p.prio) run.push([p.lon, p.lat]); else flush(); }
+        flush();
+      }
+      if (trackOn) for (const p of sel) pts.push({ type: "Feature", properties: { color, name, ts: p.ts, spd: p.spd, state: p.state, old: p.old ? 1 : 0, prio: p.prio ? 1 : 0 }, geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
       const last = arr[arr.length - 1];
-      upsertMarker(pk, last, color, name);
+      upsertMarker(pk, last, color, name, prio[pk] || 0);
     }
     if (map && map.getSource("trk")) {
       map.getSource("trk").setData({ type: "FeatureCollection", features: lines });
       map.getSource("pts").setData({ type: "FeatureCollection", features: pts });
     }
-    renderList(by);
+    renderList(by, prio);
+    // precies op het einde van de prioritaire periode opnieuw tekenen (naast de 30 s-timer)
+    const next = Math.min(...Object.values(prio).filter((s) => s > 0));
+    clearTimeout(prioTimer);
+    if (Number.isFinite(next)) prioTimer = setTimeout(renderAll, next * 1000 + 500);
   }
-  function upsertMarker(pk, p, color, name) {
+  function upsertMarker(pk, p, color, name, prioS) {
     if (!map) return;
     let m = markers.get(pk);
     if (!m) {
       const el = document.createElement("div");
       el.innerHTML = `<div style="position:relative"><div class="omark"></div><span class="olabel"></span></div>`;
-      m = new maplibregl.Marker({ element: el }).setLngLat([p.lon, p.lat]).addTo(map);
+      m = new maplibregl.Marker({ element: el }).setLngLat([p.lon, p.lat]).setPopup(new maplibregl.Popup({ closeButton: false, offset: 16 })).addTo(map);
       markers.set(pk, m);
     }
     const el = m.getElement();
     const mk = el.querySelector(".omark");
     mk.style.background = color;
+    mk.classList.toggle("prio", prioS > 0);         // knipperen en sirene-badge: zie style.css
+    m.getPopup().setHTML(`<strong>${esc(name)}</strong><br>${esc(new Date(p.ts * 1000).toLocaleString("nl-BE"))}`
+      + `<br>${esc(STATE[p.state] || p.state || "")}${p.spd != null ? ` · ${esc(p.spd)} km/u` : ""}${prioS > 0 ? `<br>${prioPill(prioS)}` : ""}`);
     // antwoord op een locatieverzoek: amber ring; bij een nieuw antwoord een korte puls
     mk.classList.toggle("vreq", p.state === "V" && !p.old);
     mk.classList.toggle("vold", p.state === "V" && !!p.old);
@@ -633,12 +675,13 @@
     el.querySelector(".olabel").textContent = name;
     m.setLngLat([p.lon, p.lat]);
   }
-  function renderList(by) {
+  function renderList(by, prio) {
     const items = Object.entries(by).map(([pk, arr]) => ({ pk, last: arr[arr.length - 1], n: arr.length }))
       .sort((a, b) => b.last.ts - a.last.ts);
     $("o-list").innerHTML = items.length ? items.map(({ pk, last, n }) => {
-      return `<div class="otrk" data-pk="${esc(pk)}"><span class="omark" style="background:${esc(colorOf(pk))}"></span>
-        <div class="body"><div class="nm">${esc(nameOf(pk))} ${last.own ? '<span class="pill">eigen</span>' : ""} ${last.state === "E" ? '<span class="pill sos">SOS</span>' : ""}</div>
+      const ps = (prio && prio[pk]) || 0;
+      return `<div class="otrk" data-pk="${esc(pk)}"><span class="omark${ps > 0 ? " prio" : ""}" style="background:${esc(colorOf(pk))}"></span>
+        <div class="body"><div class="nm">${esc(nameOf(pk))} ${last.own ? '<span class="pill">eigen</span>' : ""} ${last.state === "E" ? '<span class="pill sos">SOS</span>' : ""} ${ps > 0 ? prioPill(ps) : ""}</div>
         <div class="sub">${esc(ago(last.ts))} · ${last.state === "V" ? `<i class="vping${last.old ? " old" : ""}" aria-hidden="true"></i> ` : ""}${esc(STATE[last.state] || last.state || "")}${last.bat != null ? " · " + last.bat + " %" : ""} · ${esc(last.chan || "")} · ${n} punten</div>
         ${last.own && last.rep ? `<div class="sub"><span class="pill">${esc(repText(last.rep))}</span></div>` : ""}</div></div>`;
     }).join("") : '<div class="empty">Nog geen posities. Verbind met een companion (tabblad Verbinding).</div>';
@@ -860,8 +903,8 @@
   });
   $("d-export").addEventListener("click", async () => {
     const all = await req(tx("pos", "readonly").getAll());
-    const rows = [["tracker", "naam", "tijd", "toestand", "lat", "lon", "km/u", "batterij", "via"]]
-      .concat(all.sort((a, b) => a.ts - b.ts).map((p) => [p.pk, nameOf(p.pk), new Date(p.ts * 1000).toISOString(), p.state, p.lat, p.lon, p.spd ?? "", p.bat ?? "", p.chan || ""]));
+    const rows = [["tracker", "naam", "tijd", "toestand", "lat", "lon", "km/u", "batterij", "via", "prioritair"]]
+      .concat(all.sort((a, b) => a.ts - b.ts).map((p) => [p.pk, nameOf(p.pk), new Date(p.ts * 1000).toISOString(), p.state, p.lat, p.lon, p.spd ?? "", p.bat ?? "", p.chan || "", p.prio ? "ja" : ""]));
     const blob = new Blob([rows.map((r) => r.join(";")).join("\n")], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `meshtrack-offline-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
   });
@@ -938,7 +981,7 @@
   // Voor tests en foutzoeken: een bericht zoals de companion het doorgeeft verwerken.
   window.MTOffline = {
     decode,
-    addChat, onFrame, onRawRx,
+    addChat, onFrame, onRawRx, renderAll, map: () => map,
     // nep-companion voor tests: { write(bytes) } die antwoorden via MTOffline.onFrame teruggeeft
     async attach(fake, name) { rxc = { properties: { write: true }, writeValue: async (b) => fake.write(b) }; selfName = name; setBt(true, name); await readChannels(); await readContacts(); await applyScope(); await syncAll(); },
     async ingest(text, ts, meta) {

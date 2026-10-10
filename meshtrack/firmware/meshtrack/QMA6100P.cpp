@@ -1,3 +1,5 @@
+// MeshTrack 0.9.7: alleen voor de T1000-E (de WisMesh Tag heeft MtTargetTag.cpp / LIS2DH.cpp).
+#if defined(T1000_E)
 #include "QMA6100P.h"
 #include <Wire.h>
 
@@ -136,3 +138,4 @@ bool QMA6100P::read(float& gx, float& gy, float& gz) {
   gz = rz / _counts_per_g;
   return true;
 }
+#endif   // T1000_E
