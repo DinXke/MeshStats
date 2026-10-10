@@ -152,7 +152,11 @@
         positie, telkens een minuut later. Na 6,5 seconden klinkt een lage waarschuwingstoon: blijf je vasthouden,
         dan schakelt hij uit in plaats van een SOS te sturen. Na de eerste SOS hoor je net als bij een klik of een repeater
         het bericht doorgaf. Ontvangt de server de SOS, dan stuurt hij een ondertekende bevestiging terug: de tracker speelt
-        dan <strong>drie stijgende tonen</strong>. Staat <em>SOS met de knop</em> uit, dan
+        dan <strong>drie stijgende tonen</strong>.
+        Na het loslaten betekent een <strong>lange lage toon</strong>: <em>SOS niet verstuurd</em>, meestal omdat de
+        tracker geen trackingkanaal heeft (maak hem klaar via <em>Toestellen</em>). Dat is een andere toon dan de
+        waarschuwing na 6,5 seconden (<em>nog even en hij schakelt uit</em>). Een korte hapering van je duim tijdens het
+        vasthouden, bv. bij de SOS-biep, onderbreekt de druk niet (vanaf firmware 0.9.12). Staat <em>SOS met de knop</em> uit, dan
         gebeurt er niets: geen biepjes en geen SOS.</td></tr>
       <tr><td>langer dan 8 s</td><td>Uitschakelen, ook als SOS uit staat. Binnen 20 seconden na het opstarten opent dit het herstelmenu.
         Weer aanzetten doe je door de knop enkele seconden in te houden of door hem aan USB te hangen.</td></tr>
@@ -685,7 +689,7 @@
       <li><strong>Oudere firmware</strong> (ouder dan 0.9.1): kies zelf het nummer van het trackingkanaal; dat zie je via USB
         in <em>Toestellen</em> (<code>chan=</code>).</li>
       <li><strong>Wat kan via Bluetooth?</strong> Zonder beheercode zijn de MeshTrack-instellingen alleen te lezen. Met de
-        beheercode (firmware 0.9.11) wijzig je de gewone instellingen ook via Bluetooth; zie hieronder.</li>
+        beheercode (vanaf firmware 0.9.11) wijzig je de gewone instellingen ook via Bluetooth; zie hieronder.</li>
     </ul>
     <h3>Ontgrendelen met de beheercode</h3>
     <p>Zonder beheercode zijn de MeshTrack-instellingen via Bluetooth alleen te lezen. Met een <strong>beheercode</strong> kun je
@@ -1203,6 +1207,9 @@
             <code>rx kanaalpakket</code> met de hash van het trackingkanaal maar geen <code>T1A</code>, of helemaal niets,
             dan raakt het antwoord onderweg kwijt.</li>
         </ul></li>
+      <li><strong>Een lange lage toon na een SOS</strong>: de SOS is niet verstuurd, meestal omdat de tracker geen
+        trackingkanaal heeft. Maak hem klaar via USB (<em>Toestellen</em> → <em>Instellingen</em> → <em>Trackingkanaal</em>). Niet
+        te verwarren met de waarschuwingstoon na 6,5 seconden vasthouden.</li>
       <li><strong>Een dubbelklik geeft maar één biep</strong>: de tracker zag één klik. Druk twee keer kort en duidelijk,
         met hooguit 0,8 seconde ertussen.</li>
       <li><strong>De kaart blijft leeg</strong>: herlaad de pagina met Ctrl+F5.</li>

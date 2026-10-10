@@ -92,7 +92,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Firmware 0.9.11 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
+    Firmware 0.9.12 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -243,6 +243,10 @@
     Laat los en hij stuurt meteen een SOS met zijn positie, en daarna nog twee keer met een verse positie, telkens een minuut
     later. Na 6,5 s klinkt een lage waarschuwingstoon: blijf je vasthouden, dan schakelt hij uit in plaats van een SOS te sturen.
     Ontvangt de server de SOS, dan bevestigt hij dat: de tracker speelt <strong>drie stijgende tonen</strong>.
+    Na het loslaten betekent een <strong>lange lage toon</strong>: <em>SOS niet verstuurd</em>, meestal omdat de tracker geen
+    trackingkanaal heeft (maak hem klaar via <em>Toestellen</em>). Dat is een andere toon dan de waarschuwing na 6,5 s (<em>nog even en
+    hij schakelt uit</em>). Een korte hapering van je duim tijdens het vasthouden, bv. bij de SOS-biep, onderbreekt de druk niet
+    (vanaf firmware 0.9.12).
     Staat <em>SOS met de knop</em> uit, dan gebeurt er niets: geen biepjes en geen SOS.</td></tr>
   <tr><td class="k">langer dan 8 s</td><td>Uitschakelen, ook als SOS uit staat. Weer aanzetten: de knop enkele seconden inhouden,
     of aan USB hangen.</td></tr>
@@ -874,7 +878,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <li><strong>Oudere firmware</strong> (ouder dan 0.9.1): kies zelf het nummer van het trackingkanaal. Dat zie je via USB in
     <em>Toestellen</em> (<code>chan=</code> in de status).</li>
   <li><strong>Wat kan via Bluetooth?</strong> Zonder beheercode zijn de MeshTrack-instellingen alleen te lezen. Met de beheercode
-    (firmware 0.9.11) wijzig je de gewone instellingen ook via Bluetooth; zie hieronder.</li>
+    (vanaf firmware 0.9.11) wijzig je de gewone instellingen ook via Bluetooth; zie hieronder.</li>
 </ul>
 <h3>Ontgrendelen met de beheercode</h3>
 <p>Zonder beheercode zijn de MeshTrack-instellingen via Bluetooth alleen te lezen. Met een <strong>beheercode</strong> kun je ze ook via
@@ -956,7 +960,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div class="cols menus" style="gap:3mm">
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.11      HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.12      HOOFDMENU
   ==============================================================
    Ploeg 3  |  modus companion (USB)  |  batterij 99%
    tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
@@ -975,7 +979,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.11      MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.9.12      MODUS EN KNOP
   ==============================================================
    Op batterij nu gekozen: tracker.
    Met USB altijd companion.
@@ -1013,7 +1017,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <div class="warn"><b>Het juiste pakket</b>De bootloader beschermt je alleen tussen de T1000-E en de RAK-borden (ze hebben een andere
   SoftDevice). Tussen de WisMesh Tag en de RAK3401 beschermt alleen de website: controleer dus zelf het gekozen toestel als je
   een pakket downloadt en met de hand flasht.</div>
-<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.11. Heeft een tracker oudere firmware, dan kent hij
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.12. Heeft een tracker oudere firmware, dan kent hij
   sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
   (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
 <ol class="steps">
@@ -1566,6 +1570,9 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     <code>set path_bytes 2</code> en <code>reboot</code>. Sommige repeaters sturen 1-byte padhashes niet door; de server zet
     zijn companion daarom op 2 bytes (serverlog: <em>padhashes van de companion op 2 bytes gezet</em>). Met <code>rxlog aan</code>
     zie je of de <code>T1A</code> op de tracker aankomt.</td></tr>
+  <tr><td class="k">Lange lage toon na een SOS</td><td>De SOS is niet verstuurd, meestal omdat de tracker geen trackingkanaal heeft.
+    Maak hem klaar via USB: Toestellen → Instellingen → Trackingkanaal (hoofdstuk 10). Niet te verwarren met de waarschuwingstoon na
+    6,5 s vasthouden.</td></tr>
   <tr><td class="k">Dubbelklik: één biep</td><td>Hij zag maar één klik. Druk twee keer kort en duidelijk, met hooguit 0,8 s ertussen.</td></tr>
   <tr><td class="k">RAK3401: geen GPS</td><td>Toont <code>status</code> geen <code>gps_pinnen=</code> of nooit een fix? Typ
     <code>gps zoek</code>, of leg de pinnen vast met <code>set gps_pinnen 15/16@9600</code> (hoofdstuk 13). Controleer de bedrading van de

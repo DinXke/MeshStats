@@ -11,7 +11,12 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.11; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.12; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
+  - **Knop vasthouden** (0.9.12): een korte loslating (< 150 ms) na minstens 1 s vasthouden is een hapering en geen
+    nieuwe druk. Vroeger werd het vasthouden dan halverwege als SOS afgehandeld (wapenbiep, meteen de lage toon, nog eens
+    wapenbiep) en schakelde hij na 8 s niet uit. Het loslaten na een SOS wordt 100 ms later herkend. Een lange lage toon
+    meteen na het loslaten = SOS niet verstuurd (meestal geen trackingkanaal); dat is een andere toon dan de waarschuwing
+    na 6,5 s.
   - **Nooit op een openbaar kanaal** (0.9.10): geen posities, SOS, verzoekantwoorden of inhaalberichten op Public of een
     #hashtag-kanaal waarvan de sleutel uit de naam volgt; een klik geeft de lage toon; `status` `kanaal_fout=openbaar` met
     een LET OP-regel (aanleiding: een niet-klaargemaakte WisMesh Tag stuurde posities en SOS ongetekend op Public). Een

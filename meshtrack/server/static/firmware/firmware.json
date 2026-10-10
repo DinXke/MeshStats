@@ -1,6 +1,60 @@
 {
   "releases": [
     {
+      "version": "0.9.12",
+      "date": "2026-10-10",
+      "notes": "Knop vasthouden (SOS): een korte loslating (minder dan 150 ms) na minstens 1 s vasthouden is een hapering en geen nieuwe druk. Vroeger werd de vasthoud dan halverwege als SOS afgehandeld: wapenbiep, meteen de lage toon (SOS zonder trackingkanaal), opnieuw een wapenbiep, en na 8 s niet uitgeschakeld (gezien op een WisMesh Tag). Ook een korte piek die de interrupt pas na de flank leest, of een lus die de knop leest voor de interrupt liep, telt niet meer als loslaten. Loslaten na een SOS-vasthoud wordt 100 ms later herkend.",
+      "meshcore": "v1.17.1",
+      "boards": {
+        "t1000e": {
+          "name": "Seeed T1000-E",
+          "zip": "meshtrack-t1000e-0.9.12.zip",
+          "zip_sha256": "cb0b11873e0d44938db4b728348ce002df9a87d4bfc54486bd324ef8f1baef7e",
+          "uf2": "meshtrack-t1000e-0.9.12.uf2",
+          "uf2_sha256": "2e6fff3f94d8065ac55f77fd9c4860582a900018b85bf3bf80f5f1d52c4e6a55",
+          "app_size": 461120,
+          "app_start": "0x27000",
+          "sd_req": [
+            "0x0123"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "wismesh_tag": {
+          "name": "RAK WisMesh Tag",
+          "zip": "meshtrack-wismesh-tag-0.9.12.zip",
+          "zip_sha256": "f2cd46b5a597692133e77d82e3caebef319149b0d6cbe8c022f93f6015e235b7",
+          "uf2": "meshtrack-wismesh-tag-0.9.12.uf2",
+          "uf2_sha256": "6e742241cf11ee2686e1c4cdccad0e55395c278d4ab83337bbb889c43ac92299",
+          "app_size": 524420,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "rak3401_1w": {
+          "name": "RAK19007 + RAK3401 + RAK13302 (1 W)",
+          "zip": "meshtrack-rak3401-1w-0.9.12.zip",
+          "zip_sha256": "c331b13f92bd5767708ff3dbc6c08f60fdce517c130ce274785c1856728e3bc0",
+          "uf2": "meshtrack-rak3401-1w-0.9.12.uf2",
+          "uf2_sha256": "f84eedf9022a240807554382df69f0f7698d33c7d7e1115f1ef927594d082277",
+          "app_size": 544056,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        }
+      },
+      "zip": "meshtrack-t1000e-0.9.12.zip",
+      "zip_sha256": "cb0b11873e0d44938db4b728348ce002df9a87d4bfc54486bd324ef8f1baef7e",
+      "uf2": "meshtrack-t1000e-0.9.12.uf2",
+      "app_size": 461120
+    },
+    {
       "version": "0.9.11",
       "date": "2026-10-10",
       "notes": "Instellingen wijzigen via Bluetooth, beveiligd met een beheercode. Stel de code eerst via USB in met 'set ble_beheer <code>' (6 tot 32 tekens; bewaard als hash). Daarna kan de webpagina /tracker de tracker via Bluetooth ontgrendelen (vraag-en-antwoord, de code zelf gaat nooit over de lucht) en 15 minuten instellingen wijzigen, tot de verbinding wegvalt. Gevaarlijke dingen kunnen nooit via Bluetooth: sleutel, authsleutel, beheercode, koppelcode, backup, opslag formatteren, standaardwaarden en herstarten. Vijf foute pogingen blokkeren 10 minuten. Zonder trackingkanaal zeggen log en status nu duidelijk: geen trackingkanaal, maak het toestel klaar via Toestellen. Instellingen v9 (v8 wordt overgenomen).",
@@ -437,5 +491,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.11"
+  "latest": "0.9.12"
 }
