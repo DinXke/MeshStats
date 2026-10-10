@@ -571,6 +571,8 @@
   });
 
   window.MTDevice = {
+    // herstarten en controleren of het dezelfde tracker terugkomt (bv. na een nieuwe Bluetooth-code)
+    restart: (onStep) => rebootAndCheck(kv && kv.pubkey, onStep || (() => {})),
     latestVersion: (board) => { const x = latestFor(board); return x ? x.version : null; },
     isNewer: (a, b) => newer(a, b),
     // herkend toestel: de keuze in Firmware volgt (MeshTrack met board= doet dat ook via onStatus)

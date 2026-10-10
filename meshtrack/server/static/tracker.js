@@ -163,6 +163,7 @@
     $("slot-ov").hidden = !dump;
     if (dump) renderHero();
     renderAsk(true);
+    if (typeof renderInst === "function") renderInst(false);
   }
   // Tijdens het verbinden: beide knoppen uit, tekst en draaiend icoon op de gekozen knop.
   function connecting(btn) {
@@ -204,7 +205,7 @@
   const NUS = "6e400001-b5a3-f393-e0a9-e50e24dcca9e", RXC = "6e400002-b5a3-f393-e0a9-e50e24dcca9e", TXC = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
   async function connectBle() {
     if (!navigator.bluetooth) { say("Deze browser kan geen Bluetooth. Gebruik Chrome of Edge op Android of op een computer.", "err"); return; }
-    let dev, rxc, waiter = null, collector = null;
+    let dev, rxc, waiter = null, collector = null, devInfo = {};
     const write = (bytes) => (rxc.properties.write ? rxc.writeValue(bytes) : rxc.writeValueWithoutResponse(bytes));
     function onFrame(f) {
       if (!f.length) return;
@@ -297,12 +298,17 @@
       // Zelfde opstart als de offline-app; antwoordt de companion niet, dan proberen we toch verder.
       let devName = dev.name || "tracker";
       try {
-        await ask(new Uint8Array([22, 3]), [13]);
+        // RESP_CODE_DEVICE_INFO: [13, fw, max_contacts/2, max_kanalen, ble_pin u32 LE, bouwdatum 12, fabrikant 40, versie 20, ...]
+        const di = await ask(new Uint8Array([22, 3]), [13]);
+        devInfo = { maxCh: di.length > 3 ? di[3] : 0, pin: di.length >= 8 ? new DataView(di.buffer, di.byteOffset).getUint32(4, true) : null,
+          ver: di.length >= 80 ? new TextDecoder().decode(di.slice(60, 80)).replace(/\0.*$/, "") : "" };
         const self = await ask(new Uint8Array([1, 3, 0, 0, 0, 0, 0, 0, ...new TextEncoder().encode("MeshTrack tracker")]), [5]);
         devName = new TextDecoder().decode(self.slice(58)).replace(/\0.*$/, "") || devName;
       } catch (e) { log(`companion-opstart: ${e.message}`); }
       log(`Bluetooth verbonden met ${devName}`);
-      setConn({ kind: "ble", label: devName, run: queued(run), sendChan, close: async () => { try { dev.gatt.disconnect(); } catch (_) {} } });
+      // cmd: willekeurig companioncommando via de wachtrij; fire: schrijven zonder antwoord (herstarten)
+      const fire = queued(async (bytes) => { await write(bytes); });
+      setConn({ kind: "ble", label: devName, run: queued(run), sendChan, info: devInfo, cmd: (b, codes, ms) => askQ(b, codes, ms), fire, close: async () => { try { dev.gatt.disconnect(); } catch (_) {} } });
       say("Verbonden via Bluetooth.", "ok");
       $("tk-who").textContent = devName;
       await refresh(true);
@@ -450,6 +456,14 @@
       renderAll();
     } catch (e) {
       const m = String(e.message || e);
+      // Firmware ouder dan 0.9.1 antwoordt niet op MeshTrack-vragen (0x7E) via Bluetooth: rustig terugvallen.
+      if (conn && conn.kind === "ble" && !dump && /geen \(volledig\) antwoord/.test(m)) {
+        conn.noMt = true; stopAuto();
+        say("Deze firmware kan via Bluetooth geen MeshTrack-gegevens tonen (ouder dan 0.9.1). Instellingen via Bluetooth werken wel: tabblad Instellingen.", "err");
+        log("geen MeshTrack-antwoord via Bluetooth: oude firmware");
+        renderInst(false);
+        return;
+      }
       say(`Vernieuwen mislukt. ${m.charAt(0).toUpperCase()}${m.slice(1)}${/[.?!]$/.test(m) ? "" : "."}${dump ? " De vorige gegevens blijven staan." : ""}`, "err");
       log(`dump: ${e.message}`);
     } finally {
@@ -1097,7 +1111,7 @@
   $("tk-fit").addEventListener("click", fit);
 
   // ---- tabs ------------------------------------------------------------------------------------
-  const TABS = ["ov", "kaart", "buf", "stat", "ruw"];
+  const TABS = ["ov", "kaart", "buf", "stat", "inst", "ruw"];
   function placeMap(tab) {
     const slot = tab === "kaart" ? $("slot-kaart") : tab === "ov" ? $("slot-ov") : null;
     const m = $("tk-map");
@@ -1118,6 +1132,7 @@
     $("tk-main").scrollTop = 0;
     placeMap(name);
     if (name === "buf") renderList();
+    if (name === "inst") renderInst(true);
     store.set("mt.tracker.tab", name);
   }
   const tabBtns = [...document.querySelectorAll(".tk-tabs [role=tab]")];
@@ -1134,7 +1149,7 @@
   // ---- positie vragen (T1R) -------------------------------------------------------------------
   // Via de verbonden tracker (companionmodus, Bluetooth) een kanaalbericht "T1R|<doel>|<nonce>" op zijn volgkanaal (chan=).
   // doel = "*" (alle trackers) of de pk8 van één tracker. Antwoorden zijn T1C-berichten met toestand V ("op verzoek").
-  const answers = [], heard = new Map(), lastAsk = {};
+  const answers = [], heard = new Map(), lastAsk = {}, t1cSlots = new Map();
   const ASK_WAIT = { all: 120, one: 30 };
   let askTimer = null, askMsg = "";
   const ownPk = () => String(status.pubkey || "").slice(0, 8).toLowerCase();
@@ -1143,6 +1158,7 @@
     const from = i > 0 ? text.slice(0, i) : "", body = i > 0 ? text.slice(i + 2) : text;
     if (body.startsWith("T1R|")) { log(`positievraag gezien van ${from || "?"}: ${body}`); return; }
     if (!body.startsWith("T1C|")) return;
+    t1cSlots.set(chan, (t1cSlots.get(chan) || 0) + 1);
     const p = body.split("|");
     if (p.length < 7) return;
     const pk = String(p[1] || "").toLowerCase(), state = p[4];
@@ -1257,6 +1273,294 @@
     map.getSource("tk-ans").setData({ type: "FeatureCollection", features: feats });
   }
 
+  // ---- instellingen via Bluetooth (alleen standaard MeshCore-companioncommando's) -------------------------
+  // Nagekeken tegen MeshCore companion_radio/MyMesh.cpp (v1.17.1):
+  //   CMD_SET_ADVERT_NAME 8  [8, naam utf8]               -> OK (0); naam wordt op 31 bytes afgekapt
+  //   CMD_REBOOT 19          [19, "reboot"]               -> geen antwoord, het toestel herstart
+  //   CMD_GET_CHANNEL 31     [31, idx]                    -> CHANNEL_INFO [18, idx, naam 32, sleutel 16] of ERR (1)
+  //   CMD_SET_CHANNEL 32     [32, idx, naam 32, sleutel 16] (50 bytes) -> OK of ERR
+  //   CMD_SET_DEVICE_PIN 37  [37, pin u32 LE] 0 of 100000..999999 -> OK of ERR; geldt na een herstart
+  // De MeshTrack-opdrachtregel via Bluetooth kan alleen lezen; MeshTrack-instellingen gaan via USB (Toestellen).
+  const enc = new TextEncoder();
+  let chans = null;
+  const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const unhex = (s) => Uint8Array.from(s.match(/../g).map((x) => parseInt(x, 16)));
+  const resMsg = (id, text, kind) => { const el = $(id); el.textContent = text || ""; el.className = "tk-res" + (kind ? " " + kind : ""); };
+  // Duidelijke terugmelding: toast boven de tabbalk + korte trilling (als de telefoon dat kan)
+  let toastT = null;
+  function toast(text, kind) {
+    const el = $("tk-toast");
+    el.textContent = text; el.className = "tk-toast" + (kind ? " " + kind : ""); el.hidden = false;
+    clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, kind === "err" ? 7000 : 4000);
+    try { if (navigator.vibrate) navigator.vibrate(kind === "err" ? [40, 60, 40] : 30); } catch (_) {}
+  }
+  // Bevestigen in een bottom sheet: resolve(true/false)
+  function sheet(title, text, yes, danger) {
+    return new Promise((resolve) => {
+      const back = document.activeElement;
+      $("tk-sheet-t").textContent = title; $("tk-sheet-d").textContent = text;
+      const y = $("tk-sheet-yes"); y.textContent = yes || "Bevestigen"; y.className = "tk-wbtn " + (danger ? "danger" : "primary");
+      $("tk-sheet").hidden = $("tk-sheetbg").hidden = false;
+      requestAnimationFrame(() => $("tk-sheet").classList.add("open"));
+      y.focus();
+      const done = (v) => {
+        $("tk-sheet").classList.remove("open");
+        $("tk-sheet").hidden = $("tk-sheetbg").hidden = true;
+        $("tk-sheet-yes").onclick = $("tk-sheet-no").onclick = $("tk-sheetbg").onclick = null;
+        document.removeEventListener("keydown", esc_);
+        if (back && back.focus) back.focus();
+        resolve(v);
+      };
+      const esc_ = (e) => { if (e.key === "Escape") done(false); };
+      document.addEventListener("keydown", esc_);
+      $("tk-sheet-yes").onclick = () => done(true);
+      $("tk-sheet-no").onclick = $("tk-sheetbg").onclick = () => done(false);
+    });
+  }
+  // invoervelden niet achter het toetsenbord: na het openen ervan in beeld schuiven
+  $("p-inst").addEventListener("focusin", (e) => {
+    if (!e.target.matches("input:not([type=checkbox]):not([type=file]), select")) return;
+    setTimeout(() => { try { e.target.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); } catch (_) {} }, 350);
+  });
+  const fieldErr = (id, text) => { $(id).textContent = text || ""; };
+  // Instellingengroepen met een "needs"-regel (fase 2: MeshTrack-schrijven via Bluetooth vanaf firmware 0.9.9 met ble_schrijven=ja)
+  const SETTING_GROUPS = [
+    { label: "Naam", via: "companion" },
+    { label: "Bluetooth-code", via: "companion" },
+    { label: "Trackingkanaal (naam en sleutel)", via: "companion" },
+    { label: "FIFO-wachtrij", via: "mt" }, { label: "SlowTrack", via: "mt" }, { label: "Biepjes", via: "mt" },
+    { label: "Modus (tracker/companion)", via: "mt" }, { label: "Regio", via: "mt" }, { label: "Authsleutel", via: "mt" },
+  ];
+  const mtWritable = () => fwAtLeast("0.9.9") && status.ble_schrijven === "ja";
+  const groupNeeds = (g) => (g.via === "companion" ? true : mtWritable());
+  // Slot van het trackingkanaal: chan= uit de status; anders (oude firmware) de keuze in de lijst, met een gok voorgeselecteerd.
+  function trackingSlot() {
+    const s = int(status.chan);
+    if (s !== null) return s;
+    const v = $("in-ch-slot").value;
+    return v === "" ? null : Number(v);
+  }
+  function guessSlot() {
+    let best = null, n = 0;
+    for (const [idx, c] of t1cSlots) if (c > n) { best = idx; n = c; }
+    if (best !== null) return best;
+    const byName = chans && chans.find((c) => !c.empty && /meshtrack/i.test(c.name));
+    return byName ? byName.idx : null;
+  }
+  function instBlocked() {
+    if (!conn) return "Verbind eerst met de tracker via Bluetooth (companionmodus).";
+    if (conn.kind !== "ble" || !conn.cmd) return "Via USB: gebruik Toestellen om instellingen te wijzigen.";
+    return "";
+  }
+  function renderInst(read) {
+    const off = instBlocked();
+    $("in-off").hidden = !off;
+    $("in-off").innerHTML = off ? `${esc(off)}${conn && conn.kind !== "ble" ? ' <a href="/devices">Naar Toestellen</a>' : ""}` : "";
+    $("in-cards").querySelectorAll("input, button, label.tk-filebtn").forEach((el) => {
+      if (el.id === "in-ch-read" || el.closest(".tk-caps")) return;
+      if ("disabled" in el && el.tagName !== "LABEL") el.disabled = !!off; else el.classList.toggle("off", !!off);
+    });
+    $("in-ch-read").disabled = !!off;
+    if ($("in-pindef").checked) $("in-pin1").disabled = $("in-pin2").disabled = true;
+    $("in-curname").textContent = conn && conn.label ? conn.label : "–";
+    const info = conn && conn.info ? conn.info : {};
+    $("in-pinstate").textContent = info.pin == null ? "Huidige code: onbekend." : info.pin === 0 ? "Huidige code: de standaardcode (123456)." : "Huidige code: een eigen code is ingesteld (die tonen we niet).";
+    const known = int(status.chan) !== null;
+    $("in-slotbox").hidden = known || !!off;
+    if (!known && chans) {
+      const sel = $("in-ch-slot"), cur = sel.value, g = guessSlot();
+      sel.innerHTML = '<option value="">Kies het kanaalnummer</option>' + chans.map((c) => `<option value="${c.idx}">Nr. ${c.idx}: ${esc(c.empty ? "leeg" : c.name || "(zonder naam)")}${c.idx === g ? " (vermoedelijk)" : ""}</option>`).join("");
+      sel.value = cur !== "" && chans.some((c) => String(c.idx) === cur) ? cur : g !== null ? String(g) : "";
+    }
+    const slot = trackingSlot();
+    $("in-chslot").textContent = known ? `De tracker stuurt zijn posities op kanaalnummer ${slot}. Dat kanaal vervang je hier.`
+      : conn && conn.noMt ? "Firmware zonder alleen-lezen-toegang: kies zelf het trackingkanaal."
+      : "De tracker meldt (nog) geen volgkanaal (chan=): kies zelf het trackingkanaal.";
+    $("in-ch-set").disabled = !!off || slot === null;
+    $("in-caps").innerHTML = SETTING_GROUPS.map((g) => {
+      const ok = groupNeeds(g);
+      return `<li><span class="tk-capname">${esc(g.label)}</span><span class="tk-cap ${ok ? "ok" : "no"}">${ok ? (g.via === "companion" ? "Kan op deze firmware" : "Kan op deze firmware (nog niet op deze pagina; gebruik Toestellen)") : "Vraagt firmware 0.9.9 of nieuwer (bijwerken via Toestellen)"}</span></li>`;
+    }).join("");
+    if (read && !off && !chans) readChannels();
+  }
+  async function readChannels() {
+    if (instBlocked()) return;
+    const max = (conn.info && conn.info.maxCh) || 40;
+    const list = [];
+    $("in-chlist").innerHTML = '<li class="tk-empty">Kanalen lezen…</li>';
+    try {
+      for (let i = 0; i < max; i++) {
+        const f = await conn.cmd(new Uint8Array([31, i]), [18, 1], 3000);
+        if (f[0] !== 18) break;                       // ERR: geen kanaal meer op dit nummer
+        const name = new TextDecoder().decode(f.slice(2, 34)).replace(/\0.*$/, "");
+        const secret = f.slice(34, 50);
+        list.push({ idx: f[1], name, secret: hex(secret), empty: !name && secret.every((b) => b === 0) });
+      }
+      for (const c of list) c.tag = c.empty ? "" : hex(new Uint8Array(await crypto.subtle.digest("SHA-256", unhex(c.secret)))).slice(0, 6);
+      chans = list;
+    } catch (e) { chans = list.length ? list : null; log(`kanalen lezen: ${e.message}`); }
+    renderChans();
+  }
+  function renderChans() {
+    renderInst(false);
+    const slot = trackingSlot();
+    if (!chans) { $("in-chlist").innerHTML = '<li class="tk-empty">Kon de kanalen niet lezen.</li>'; return; }
+    $("in-chlist").innerHTML = chans.filter((c) => !c.empty || c.idx === slot).map((c) => `<li${c.idx === slot ? ' class="trk"' : ""}>
+      <span class="tk-chidx">${c.idx}</span><span class="tk-chname">${c.empty ? '<em class="muted">leeg</em>' : esc(c.name || "(zonder naam)")}${c.idx === slot ? ' <span class="pill tk-trackpill">trackingkanaal</span>' : ""}</span>
+      <span class="tk-chtag" title="Kenmerk van de sleutel (niet de sleutel zelf)">${c.tag ? `kenmerk ${c.tag}` : ""}</span></li>`).join("") || '<li class="tk-empty">Geen kanalen.</li>';
+  }
+  // QR-inhoud: meshcore://channel/add?name=…&secret=… (MeshCore-app en onze pagina Kanalen) of alleen de sleutel in hex
+  function parseChannelQr(text) {
+    const t = String(text || "").trim();
+    const clean = (s) => (s || "").replace(/[\s:-]/g, "").toLowerCase();
+    if (/^meshcore:\/\/channel\/add\b/i.test(t)) {
+      const q = new URLSearchParams(t.slice(t.indexOf("?") + 1));
+      const secret = clean(q.get("secret"));
+      if (!/^[0-9a-f]{32}$/.test(secret)) return { error: "De QR-code bevat geen geldige sleutel (32 hexadecimale tekens)." };
+      return { name: (q.get("name") || "").trim(), secret };
+    }
+    if (/^[0-9a-f]{32}$/.test(clean(t))) return { name: "", secret: clean(t) };
+    return { error: "Dit is geen kanaal-QR-code van MeshCore." };
+  }
+  function useQr(text) {
+    const r = parseChannelQr(text);
+    if (r.error) { resMsg("in-qr-msg", r.error, "err"); return; }
+    if (r.name) $("in-ch-name").value = r.name;
+    $("in-ch-secret").value = r.secret;
+    resMsg("in-qr-msg", r.name ? `Gelezen: kanaal ${r.name}. Controleer en zet het op het trackingkanaal.` : "Sleutel gelezen; vul nog een kanaalnaam in.", "ok");
+    toast(r.name ? `QR-code gelezen: ${r.name}` : "Sleutel gelezen", "ok");
+  }
+  let qrStream = null, torchOn = false;
+  function qrStop() {
+    if (qrStream) qrStream.getTracks().forEach((t) => t.stop());
+    qrStream = null; torchOn = false;
+    $("tk-scan").hidden = true; document.body.classList.remove("tk-noscroll");
+    $("in-qr-scan").focus();
+  }
+  $("in-qr-scan").addEventListener("click", async () => {
+    if (!("BarcodeDetector" in window)) { resMsg("in-qr-msg", "Deze browser kan geen QR-codes lezen (lukt wel in Chrome op Android). Vul naam en sleutel hieronder in.", "err"); return; }
+    const det = new BarcodeDetector({ formats: ["qr_code"] });
+    try { qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } }); }
+    catch (e) { resMsg("in-qr-msg", `Camera niet beschikbaar: ${e.message}. Kies anders een foto.`, "err"); return; }
+    const v = $("in-qr-video");
+    v.srcObject = qrStream;
+    $("tk-scan").hidden = false; document.body.classList.add("tk-noscroll");
+    $("tk-scanhint").textContent = "Richt de camera op de QR-code van het kanaal.";
+    // lamp (torch) alleen tonen als de camera dat kan
+    const track = qrStream.getVideoTracks()[0];
+    const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+    $("in-qr-torch").hidden = !caps.torch;
+    $("in-qr-torch").textContent = "Lamp aan"; $("in-qr-torch").setAttribute("aria-pressed", "false");
+    $("in-qr-stop").focus();
+    try { await v.play(); } catch (_) {}
+    const t0 = Date.now();
+    const loop = async () => {
+      if (!qrStream) return;
+      if (Date.now() - t0 > 45000) { qrStop(); resMsg("in-qr-msg", "Geen QR-code gevonden. Probeer opnieuw of kies een foto.", "err"); return; }
+      try { const r = await det.detect(v); if (r.length) { qrStop(); useQr(r[0].rawValue); return; } } catch (_) {}
+      requestAnimationFrame(loop);
+    };
+    loop();
+  });
+  $("in-qr-torch").addEventListener("click", async () => {
+    const track = qrStream && qrStream.getVideoTracks()[0];
+    if (!track) return;
+    try {
+      torchOn = !torchOn;
+      await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+      $("in-qr-torch").textContent = torchOn ? "Lamp uit" : "Lamp aan"; $("in-qr-torch").setAttribute("aria-pressed", String(torchOn));
+    } catch (_) { $("in-qr-torch").hidden = true; }
+  });
+  $("in-qr-stop").addEventListener("click", () => { qrStop(); });
+  $("tk-scan").addEventListener("keydown", (e) => { if (e.key === "Escape") qrStop(); });
+  $("in-qr-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0]; e.target.value = "";
+    if (!file) return;
+    if (!("BarcodeDetector" in window)) { resMsg("in-qr-msg", "Deze browser kan geen QR-codes op een foto lezen (lukt wel in Chrome op Android). Vul naam en sleutel hieronder in.", "err"); return; }
+    try {
+      const r = await new BarcodeDetector({ formats: ["qr_code"] }).detect(await createImageBitmap(file));
+      if (r.length) useQr(r[0].rawValue); else resMsg("in-qr-msg", "Geen QR-code gevonden op de foto.", "err");
+    } catch (err) { resMsg("in-qr-msg", `De foto kon niet gelezen worden: ${err.message}`, "err"); }
+  });
+  // naam
+  $("in-name-save").addEventListener("click", async () => {
+    const name = $("in-name").value.trim(), bytes = enc.encode(name);
+    fieldErr("in-name-err", !name ? "Vul een naam in." : bytes.length > 31 ? `Te lang: ${bytes.length} bytes, hoogstens 31.` : "");
+    if (!name || bytes.length > 31 || instBlocked()) return;
+    $("in-name-save").disabled = true;
+    try {
+      const f = await conn.cmd(new Uint8Array([8, ...bytes]), [0, 1], 4000);
+      if (f[0] !== 0) throw new Error("de tracker weigerde de naam");
+      conn.label = name; $("tk-who").textContent = name; $("in-name").value = "";
+      toast(`Naam opgeslagen: ${name}`, "ok"); log(`naam gewijzigd naar ${name}`);
+    } catch (e) { toast(`Opslaan mislukt: ${e.message}`, "err"); }
+    renderInst(false);
+  });
+  // Bluetooth-code
+  $("in-pindef").addEventListener("change", () => { const d = $("in-pindef").checked; $("in-pin1").disabled = $("in-pin2").disabled = d || !!instBlocked(); fieldErr("in-pin-err", ""); });
+  $("in-pin-save").addEventListener("click", async () => {
+    let pin = 0;
+    if (!$("in-pindef").checked) {
+      const a = $("in-pin1").value.trim(), b = $("in-pin2").value.trim();
+      const err = !/^\d{6}$/.test(a) ? "De code moet uit 6 cijfers bestaan." : Number(a) < 100000 ? "De code mag niet met een 0 beginnen (100000 tot 999999)." : a !== b ? "De twee codes zijn niet gelijk." : "";
+      fieldErr("in-pin-err", err);
+      if (err) return;
+      pin = Number(a);
+    } else fieldErr("in-pin-err", "");
+    if (instBlocked()) return;
+    const f0 = new Uint8Array(5); f0[0] = 37; new DataView(f0.buffer).setUint32(1, pin, true);
+    $("in-pin-save").disabled = true;
+    try {
+      const f = await conn.cmd(f0, [0, 1], 4000);
+      if (f[0] !== 0) throw new Error("de tracker weigerde de code");
+      $("in-pin1").value = $("in-pin2").value = "";
+      if (conn.info) conn.info.pin = pin;
+      toast(pin ? "Nieuwe code opgeslagen; herstart de tracker" : "Standaardcode (123456) opgeslagen; herstart de tracker", "ok");
+      $("in-pin-after").hidden = false;
+      log(pin ? "Bluetooth-code gewijzigd" : "Bluetooth-code terug naar standaard");
+    } catch (e) { toast(`Opslaan mislukt: ${e.message}`, "err"); }
+    renderInst(false);
+  });
+  // herstarten, met bevestiging
+  $("in-reboot").addEventListener("click", async () => {
+    if (instBlocked()) return;
+    if (!(await sheet("Tracker herstarten?", "De tracker herstart en de Bluetooth-verbinding valt weg. Verbind daarna opnieuw (met de nieuwe code als je die wijzigde).", "Herstarten", true))) return;
+    try { await conn.fire(new Uint8Array([19, ...enc.encode("reboot")])); log("herstart gevraagd"); toast("De tracker herstart. Verbind daarna opnieuw.", "ok"); }
+    catch (e) { say(`Herstarten mislukt: ${e.message}`, "err"); }
+  });
+  // trackingkanaal vervangen
+  $("in-ch-read").addEventListener("click", () => { chans = null; readChannels(); });
+  $("in-ch-slot").addEventListener("change", () => { renderChans(); });
+  $("in-ch-set").addEventListener("click", () => {
+    const slot = trackingSlot(), name = $("in-ch-name").value.trim(), secret = $("in-ch-secret").value.replace(/[\s:-]/g, "").toLowerCase();
+    const nb = enc.encode(name);
+    const err = !name ? "Vul een kanaalnaam in." : nb.length > 31 ? `Naam te lang: ${nb.length} bytes, hoogstens 31.` : !/^[0-9a-f]{32}$/.test(secret) ? "De sleutel moet uit 32 hexadecimale tekens (0-9, a-f) bestaan." : slot === null ? "Kies eerst het kanaalnummer van het trackingkanaal." : "";
+    fieldErr("in-ch-err", err);
+    if (err || instBlocked()) return;
+    const old = chans && chans.find((c) => c.idx === slot);
+    const what = `Kanaal ${name} op kanaalnummer ${slot} zetten (vervangt ${old ? (old.empty ? "een leeg kanaalnummer" : old.name || "een kanaal zonder naam") : "het huidige kanaal"}).`;
+    chSet({ slot, name, secret }, what);
+  });
+  async function chSet(p, what) {
+    if (!(await sheet("Trackingkanaal vervangen?", what, "Bevestigen"))) return;
+    if (instBlocked()) return;
+    $("in-ch-set").disabled = true;
+    const f0 = new Uint8Array(50);
+    f0[0] = 32; f0[1] = p.slot; f0.set(enc.encode(p.name).slice(0, 31), 2); f0.set(unhex(p.secret), 34);
+    try {
+      const r = await conn.cmd(f0, [0, 1], 4000);
+      if (r[0] !== 0) throw new Error("de tracker weigerde het kanaal");
+      const back = await conn.cmd(new Uint8Array([31, p.slot]), [18, 1], 3000);
+      const bn = back[0] === 18 ? new TextDecoder().decode(back.slice(2, 34)).replace(/\0.*$/, "") : null, bs = back[0] === 18 ? hex(back.slice(34, 50)) : null;
+      if (bn !== p.name || bs !== p.secret) throw new Error("teruglezen klopt niet; lees de kanalen opnieuw en probeer nog eens");
+      toast(`Gelukt: kanaalnummer ${p.slot} is nu ${p.name} (teruggelezen en gecontroleerd)`, "ok");
+      log(`trackingkanaal (nummer ${p.slot}) vervangen door ${p.name}`);
+      $("in-ch-name").value = ""; $("in-ch-secret").value = ""; resMsg("in-qr-msg", "");
+      chans = null; await readChannels();
+    } catch (e) { toast(`Mislukt: ${e.message}`, "err"); }
+    renderInst(false);
+  }
+
   function renderAll() {
     $("tk-intro").hidden = true;
     $("tk-fit").hidden = false;
@@ -1333,5 +1637,5 @@
   initMap().catch((e) => log(`kaart: ${e.message}`));
 
   // Testhaak (alleen lezen): ontleden zonder toestel.
-  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), answers: answers.slice(), heard: [...heard.keys()] }), map: () => map };
+  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), answers: answers.slice(), heard: [...heard.keys()], chans: chans && chans.slice() }), map: () => map, parseChannelQr };
 })();

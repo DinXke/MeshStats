@@ -137,6 +137,81 @@
     <div class="tk-grid" id="stat-cards"></div>
   </section>
 
+  <!-- Instellingen: alleen standaard MeshCore-companioncommando's (Bluetooth, companionmodus) -->
+  <section class="tk-panel" id="p-inst" role="tabpanel" aria-labelledby="t-inst" hidden>
+    <p class="tk-warnbox" id="in-off" hidden></p>
+    <div class="tk-grid tk-inst" id="in-cards">
+      <article class="card tk-card">
+        <h2>Naam</h2>
+        <p class="tk-note tk-top">Zo heet de tracker in de mesh en in Bluetooth-lijsten. Nu: <strong id="in-curname">–</strong></p>
+        <label class="tk-flbl" for="in-name">Nieuwe naam</label>
+        <input id="in-name" class="tk-big-in" maxlength="31" autocomplete="off" enterkeyhint="done" aria-describedby="in-name-err">
+        <p class="tk-ferr" id="in-name-err"></p>
+        <button type="button" class="primary tk-wbtn" id="in-name-save">Naam opslaan</button>
+      </article>
+
+      <article class="card tk-card">
+        <h2>Bluetooth-code</h2>
+        <p class="tk-note tk-top" id="in-pinstate">Huidige code: onbekend.</p>
+        <label class="tk-flbl" for="in-pin1">Nieuwe code (6 cijfers)</label>
+        <input id="in-pin1" class="tk-big-in tk-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" enterkeyhint="next" aria-describedby="in-pin-err">
+        <label class="tk-flbl" for="in-pin2">Herhaal de code</label>
+        <input id="in-pin2" class="tk-big-in tk-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" enterkeyhint="done" aria-describedby="in-pin-err">
+        <label class="switch tk-sw2"><input type="checkbox" id="in-pindef"><span></span>Terug naar de standaardcode (123456)</label>
+        <p class="tk-ferr" id="in-pin-err"></p>
+        <div class="tk-after" id="in-pin-after" hidden>
+          <p><strong>De nieuwe code werkt pas na een herstart.</strong> Daarna: vergeet de tracker in de Bluetooth-instellingen van je telefoon en koppel opnieuw met de nieuwe code.</p>
+        </div>
+        <button type="button" class="primary tk-wbtn" id="in-pin-save">Code opslaan</button>
+      </article>
+
+      <article class="card tk-card">
+        <h2>Herstarten</h2>
+        <p class="tk-note tk-top">Nodig na een nieuwe Bluetooth-code. De verbinding valt even weg; verbind daarna opnieuw.</p>
+        <button type="button" class="tk-wbtn" id="in-reboot">Tracker herstarten</button>
+      </article>
+
+      <article class="card tk-card">
+        <div class="tk-cardhead">
+          <h2>Kanalen op de tracker</h2>
+          <button type="button" id="in-ch-read">Opnieuw lezen</button>
+        </div>
+        <ul class="tk-chlist" id="in-chlist"><li class="tk-empty">Nog niet gelezen.</li></ul>
+      </article>
+
+      <article class="card tk-card">
+        <h2>Trackingkanaal vervangen</h2>
+        <p class="tk-note tk-top" id="in-chslot">De tracker stuurt zijn posities op zijn trackingkanaal.</p>
+        <div id="in-slotbox" hidden>
+          <label class="tk-flbl" for="in-ch-slot">Kanaalnummer van het trackingkanaal</label>
+          <select id="in-ch-slot" class="tk-big-in"></select>
+          <p class="tk-note">Weet je het niet? Bekijk het via USB in <a href="/devices">Toestellen</a> (chan=).</p>
+        </div>
+        <div class="tk-row2">
+          <button type="button" class="tk-wbtn tk-qrbtn" id="in-qr-scan">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4M8 12h8"/></svg>Scan QR-code</button>
+          <label class="tk-wbtn tk-filebtn" for="in-qr-file">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.2"/></svg>Foto kiezen</label>
+          <input type="file" id="in-qr-file" accept="image/*" capture="environment" class="tk-sr">
+        </div>
+        <p class="tk-res" id="in-qr-msg" role="status"></p>
+        <label class="tk-flbl" for="in-ch-name">Kanaalnaam</label>
+        <input id="in-ch-name" class="tk-big-in" maxlength="31" autocomplete="off" enterkeyhint="next" aria-describedby="in-ch-err">
+        <label class="tk-flbl" for="in-ch-secret">Sleutel (32 tekens, 0-9 en a-f)</label>
+        <input id="in-ch-secret" class="tk-big-in mono" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-describedby="in-ch-err">
+        <p class="tk-ferr" id="in-ch-err"></p>
+        <p class="tk-warnbox tk-top">Een tracker op een nieuw kanaal verschijnt alleen op de server als dat kanaal ook in MeshTrack bestaat (<a href="/kanalen">Kanalen</a>) en de authsleutel klopt. De authsleutel is een MeshTrack-instelling en blijft dezelfde.</p>
+        <button type="button" class="primary tk-wbtn" id="in-ch-set">Op het trackingkanaal zetten</button>
+      </article>
+
+      <article class="card tk-card">
+        <h2>Wat kan via Bluetooth?</h2>
+        <ul class="tk-caps" id="in-caps"></ul>
+        <p class="tk-note">Andere MeshTrack-instellingen wijzig je via USB in <a href="/devices">Toestellen</a>.</p>
+      </article>
+    </div>
+  </section>
+
   <!-- Ruw -->
   <section class="tk-panel" id="p-ruw" role="tabpanel" aria-labelledby="t-ruw" hidden>
     <div class="tk-grid">
@@ -177,12 +252,35 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Buffers</span>
   </button>
   <button type="button" role="tab" id="t-stat" data-tab="stat" aria-controls="p-stat">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Statistieken</span>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span><span class="tk-long">Statistieken</span><span class="tk-short">Cijfers</span></span>
+  </button>
+  <button type="button" role="tab" id="t-inst" data-tab="inst" aria-controls="p-inst">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg><span><span class="tk-long">Instellingen</span><span class="tk-short">Instellen</span></span>
   </button>
   <button type="button" role="tab" id="t-ruw" data-tab="ruw" aria-controls="p-ruw">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg><span>Ruw</span>
   </button>
 </nav>
+
+<!-- bevestigen als bottom sheet -->
+<div class="tk-sheetbg" id="tk-sheetbg" hidden></div>
+<div class="tk-sheet" id="tk-sheet" role="dialog" aria-modal="true" aria-labelledby="tk-sheet-t" aria-describedby="tk-sheet-d" hidden>
+  <div class="tk-grip" aria-hidden="true"></div>
+  <h2 id="tk-sheet-t"></h2>
+  <p id="tk-sheet-d"></p>
+  <div class="tk-sheetbtns"><button type="button" class="tk-wbtn" id="tk-sheet-no">Annuleren</button><button type="button" class="primary tk-wbtn" id="tk-sheet-yes">Bevestigen</button></div>
+</div>
+<!-- QR-scanner over het hele scherm -->
+<div class="tk-scan" id="tk-scan" role="dialog" aria-modal="true" aria-label="QR-code scannen" hidden>
+  <video id="in-qr-video" playsinline muted></video>
+  <div class="tk-finder" aria-hidden="true"></div>
+  <p class="tk-scanhint" id="tk-scanhint">Richt de camera op de QR-code van het kanaal.</p>
+  <div class="tk-scanbar">
+    <button type="button" class="tk-wbtn" id="in-qr-torch" hidden aria-pressed="false">Lamp aan</button>
+    <button type="button" class="tk-wbtn" id="in-qr-stop">Sluiten</button>
+  </div>
+</div>
+<div class="tk-toast" id="tk-toast" role="status" aria-live="polite" hidden></div>
 
 <div class="tk-map" id="tk-map">
   <div class="tk-mapcanvas" id="tk-mapcanvas"></div>
