@@ -7,7 +7,8 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const BAD = /ongeldig|onbekend|NIET|geweigerd|gebruik:|mislukt/;
+  // \bmislukt\b: de samenvatting na "set fifo_…" bevat "na 3 mislukte pogingen" en is geen fout
+  const BAD = /ongeldig|onbekend|NIET|geweigerd|gebruik:|\bmislukt\b/;
   const MT_KEYS = ["min_speed", "min_dist", "turn_min", "turn_min_speed", "min_interval", "max_interval", "still_timeout",
     "heartbeat", "fix_timeout", "fix_timeout_hb", "track_in_companion", "accel_sens", "led",
     "sample", "chan", "msg_beep",
