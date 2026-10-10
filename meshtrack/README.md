@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.5; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.6; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
     Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
@@ -118,11 +118,17 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     tot een herstart. Handig als een SOS-bevestiging (`T1A`) niet aankomt. De tracker bewaart geen log: de regels
     verschijnen alleen live en alleen met het menu dicht (`q`). Er is geen commando `log`.
   - `dump` (0.9.1): de interne toestand machineleesbaar (`mtdump 1` …), voor de webapp `/tracker` (*Tracker live*).
-    Sinds 0.9.5 met `req last= answered= ignored=`.
+    Sinds 0.9.5 met `req last= answered= ignored=`, sinds 0.9.6 met `lastfix <ts> <lat5> <lon5>`.
+  - Laatst gekende fix (0.9.6): bewaard in flash bij de eerste fix, bij het ingaan van rust, voor een herstart of
+    uitschakelen, en onderweg hooguit elke 10 min bij > 20 m verplaatsing; overleeft herstart en flashen. `status`:
+    `laatste_fix=<leeftijd>` (bv. 2u15m, `-` = nooit). `/tracker`: zonder actuele fix "Laatst gekende positie: X geleden"
+    met een grijze gestippelde marker. Tip: na het flashen één keer buiten tot er een fix is.
   - **Locatieverzoeken** (0.9.5): /offline (tab Trackers) en /tracker (Overzicht, alleen via Bluetooth) sturen met
     *Positie vragen* via de verbonden companion op het trackingkanaal `T1R|<*|pk8>|<nonce>` (alle trackers of één).
-    Trackers antwoorden met toestand `V` (op verzoek): meteen met een verse fix, anders GPS even aan, zonder fix zonder
-    positie. "Alle" = antwoord willekeurig gespreid over 2–20 s, gericht = 1–3 s. Grenzen: "alle" hooguit 1× per 2 min,
+    Trackers antwoorden met toestand `V` (op verzoek): meteen met een verse fix, anders GPS even aan (hooguit
+    `fix_timeout_hb`); geen fix = de laatst gekende positie met het echte tijdstip van die fix (0.9.6), zonder positie alleen
+    als er nooit een fix was. Apps en site tonen dat als "laatst gekend, X geleden" met een holle, gestippelde amberkleurige
+    ring; de live-marker springt niet terug, het punt komt op zijn echte tijd in het spoor. "Alle" = antwoord willekeurig gespreid over 2–20 s, gericht = 1–3 s. Grenzen: "alle" hooguit 1× per 2 min,
     gericht 1× per 30 s per tracker (de apps houden zich eraan), elke nonce maar één keer. Wie het hoort: companionmodus
     altijd; trackermodus alleen in beweging met `rx_beweging aan` (standaard aan; radio luistert dan onderweg, ~15–20 %
     extra verbruik tijdens het rijden); in rust slaapt de radio. Instellingen `verzoek aan|uit`, `rx_beweging aan|uit` en

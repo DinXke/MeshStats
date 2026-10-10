@@ -153,7 +153,7 @@
           geometry: { type: "LineString", coordinates: pts.map((p) => [p.lon, p.lat]) } });
       }
       for (const p of pts) {
-        points.push({ type: "Feature", properties: { tid: id, alias: t.alias, color: t.color, spd: p.spd ?? -1, ts: p.ts, state: p.state, bat: p.bat ?? -1 },
+        points.push({ type: "Feature", properties: { tid: id, alias: t.alias, color: t.color, spd: p.spd ?? -1, ts: p.ts, state: p.state, bat: p.bat ?? -1, old: p.old || (p.state === "V" && p.fix_age > 120) ? 1 : 0 },
           geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
       }
     }
@@ -214,8 +214,11 @@
   }
 
   // Op verzoek (toestand V): amber, in het donker lichter (zelfde kleur als --vreq in style.css)
+  // V met een fix van meer dan 2 min voor de ontvangst: "laatst gekend" (fix_age als de server die meestuurt)
+  const vOld = (p, rx) => p.state === "V" && p.lat != null && (p.fix_age != null ? p.fix_age > 120 : (rx || Date.now() / 1000) - p.ts > 120);
   const vAmber = () => (dark.matches ? "#ffc83d" : "#e0a400");
-  const vColor = (c) => ["case", ["==", ["get", "state"], "V"], vAmber(), c];
+  const vIsOld = ["all", ["==", ["get", "state"], "V"], ["==", ["get", "old"], 1]];
+  const vColor = (c) => ["case", vIsOld, "rgba(0,0,0,0)", ["==", ["get", "state"], "V"], vAmber(), c];   // oud: hol
 
   function addLayers() {
     if (map.getSource("tracks")) return;
@@ -249,7 +252,8 @@
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 1.3, 2], 16, ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 3, 5]],
                "circle-color": vColor(colorSel.value === "speed" ? speedColor : ["get", "color"]),
                "circle-opacity": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.7, 1],
-               "circle-stroke-color": dark.matches ? "#000" : "#fff", "circle-stroke-width": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.5, 1] } });
+               "circle-stroke-color": ["case", vIsOld, vAmber(), dark.matches ? "#000" : "#fff"],
+               "circle-stroke-width": ["case", vIsOld, 1.5, ["match", ["get", "state"], ["L", "Q"], true, false], 0.5, 1] } });
     // Op verzoek (V): amber stip met een kleine ring, bescheiden in het spoor
     map.addLayer({ id: "points-v", type: "circle", source: "points", minzoom: 12, filter: ["==", ["get", "state"], "V"],
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 16, 8], "circle-color": "rgba(0,0,0,0)",
@@ -908,7 +912,7 @@
       if (p.lat != null && !p.suspect && hoursNow() && !(hist && p.ts < Date.now() / 1000 - hoursNow() * 3600)) {
         if (!tracks.has(t.id)) tracks.set(t.id, []);
         // Chronologisch invoegen: een bericht kan eerdere punten meebrengen.
-        const arr = tracks.get(t.id), item = { lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat };
+        const arr = tracks.get(t.id), item = { lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat, old: vOld(p) ? 1 : 0 };
         let i = arr.length;
         while (i > 0 && arr[i - 1].ts > item.ts) i--;
         if (!(i > 0 && arr[i - 1].ts === item.ts)) arr.splice(i, 0, item);
@@ -1052,7 +1056,7 @@
     if (!q || p.state !== "V" || p.history === 1) return;
     if (t.channel_id !== q.cid || (q.target !== "*" && t.id !== q.target)) return;
     if (nowS() < q.sent - 5) return;
-    q.answers.set(t.id, { at: nowS(), fix: p.lat != null && !p.suspect, lat: p.lat, lon: p.lon });
+    q.answers.set(t.id, { at: nowS(), fix: p.lat != null && !p.suspect, old: vOld(p), fixTs: p.ts, lat: p.lat, lon: p.lon });
     rqRender();
     const pts = [...q.answers.values()].filter((a) => a.fix);
     if (pts.length === 1) map.flyTo({ center: [pts[0].lon, pts[0].lat], zoom: Math.max(map.getZoom(), 14) });
@@ -1073,7 +1077,7 @@
       const a = q.answers.get(id), tr = trackers.get(id) || {};
       return `<li data-id="${id}"${a ? "" : ' class="wait"'}><span class="askdot" style="background:${MT.esc(tr.color || "#888")}"></span>
         <span class="nm">${MT.esc(nameOf(id))}</span>
-        <span class="small">${a ? `${rqHms(a.at)} · ${a.fix ? '<i class="vping" aria-hidden="true"></i> met positie' : '<span class="warn">geen fix</span>'}` : "nog geen antwoord"}</span></li>`;
+        <span class="small">${a ? `${rqHms(a.at)} · ${!a.fix ? '<span class="warn">geen fix</span>' : a.old ? `<i class="vping old" aria-hidden="true"></i> laatst gekend, ${MT.esc(MT.ago(a.fixTs))}` : '<i class="vping" aria-hidden="true"></i> met positie'}` : "nog geen antwoord"}</span></li>`;
     }).join("");
     box.innerHTML = `<div class="askhead"><div><strong>Verzoek verstuurd om ${rqHms(q.sent)}</strong>
         <div class="small muted">${all ? `Alle trackers op ${MT.esc(rqChanName(q.cid))}` : `${MT.esc(nameOf(q.target))} op ${MT.esc(rqChanName(q.cid))}`}</div>

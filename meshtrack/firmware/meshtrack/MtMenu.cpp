@@ -478,9 +478,20 @@ static void cmd_status() {
        mt_cfg.accel_sens == 0 ? "laag" : mt_cfg.accel_sens == 2 ? "hoog" : "midden",
        mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "companion",
        mt_cfg.msg_beep == 1 ? "alles" : mt_cfg.msg_beep == 2 ? "uit" : "prive");
-  outl("tracker=%s gps=%s fix=%s sat=%ld beweging=%s radio=%s",
-       mt_tracker_state_str(), mt_tracker_gps_on() ? "aan" : "uit", g.freshFix(5000) ? "ja" : "nee",
-       g.satellitesCount(), mt_motion_mode_str(), mt_radio_paused() ? "slaapt" : "aan");
+  {
+    char lf[16] = "-";                          // leeftijd van de laatst gekende fix, bv. 2u15m
+    uint32_t t = mt_tracker_lastfix_ts(), now = the_mesh.getRTCClock()->getCurrentTime();
+    if (t && now >= t) {
+      uint32_t a = now - t;
+      if (a < 60) snprintf(lf, sizeof(lf), "%lus", (unsigned long)a);
+      else if (a < 3600) snprintf(lf, sizeof(lf), "%lum", (unsigned long)(a / 60));
+      else if (a < 86400) snprintf(lf, sizeof(lf), "%luu%02lum", (unsigned long)(a / 3600), (unsigned long)(a % 3600 / 60));
+      else snprintf(lf, sizeof(lf), "%lud%luu", (unsigned long)(a / 86400), (unsigned long)(a % 86400 / 3600));
+    }
+    outl("tracker=%s gps=%s fix=%s sat=%ld beweging=%s radio=%s laatste_fix=%s",
+         mt_tracker_state_str(), mt_tracker_gps_on() ? "aan" : "uit", g.freshFix(5000) ? "ja" : "nee",
+         g.satellitesCount(), mt_motion_mode_str(), mt_radio_paused() ? "slaapt" : "aan", lf);
+  }
   {
     char h[8] = "-";
     if (mt_tracker_heard() >= 0) snprintf(h, sizeof(h), "%d", mt_tracker_heard());
@@ -577,7 +588,8 @@ static void cmd_help() {
   outl("    heard_beep aan|uit twee hoge biepjes als een repeater een positiebericht herhaalt (niet bij klik/SOS)");
   outl("    verzoek aan|uit    locatieverzoeken (T1R) van de app beantwoorden met een V-bericht (standaard aan).");
   outl("      Voor iedereen (*) hooguit 1x per 120 s, na 2-20 s; gericht aan deze tracker hooguit 1x per 30 s,");
-  outl("      na 1-3 s. Zonder verse fix gaat de GPS kort aan (hooguit fix_timeout_hb).");
+  outl("      na 1-3 s. Zonder verse fix gaat de GPS kort aan (hooguit fix_timeout_hb); lukt dat niet, dan");
+  outl("      antwoordt hij met de laatst gekende plek en haar echte tijd (ook na een herstart bewaard).");
   outl("    verzoek_beep aan|uit  kort deuntje telkens de tracker een locatieverzoek aanvaardt (standaard uit;");
   outl("      niet bij genegeerde verzoeken of verzoeken voor een andere tracker; klinkt ook met de buzzer gedempt)");
   outl("    rx_beweging aan|uit  in trackermodus de radio laten luisteren zolang de tracker beweegt, zodat");
@@ -622,6 +634,7 @@ static void cmd_help() {
   outl("  send                        nu een positie sturen (zoals een klik)");
   outl("  status: gehoord = herhalingen (repeaters) van de laatste klik/SOS; sos_bevestigd = antwoord van de server");
   outl("          slow_buffer = gelogde SlowTrack-punten die nog weg moeten; fasttrack=uit(batterij) = onder fast_min_batt");
+  outl("          laatste_fix = ouderdom van de laatst gekende fix (bv. 2u15m; bewaard over een herstart), - = nooit");
   outl("          fifo = punten in de wachtrij; fifo_dekking = seconden sinds de laatste dekking (een repeater");
   outl("          gehoord: herhaling van een eigen bericht of een pakket via een repeater), - = nog nooit");
   outl("          fifo_geparkeerd = punten na fifo_pogingen mislukte pogingen (lagere voorrang); fifo_bevestigd =");
@@ -930,7 +943,7 @@ static void menu_choice(int n) {
     case SC_MAINT:
       if (n == 1) { outl(""); cmd_backup(); }
       else if (n == 2) { mt_cfg_defaults(mt_cfg); outl("   %s", mt_cfg_save() ? "Standaardwaarden bewaard." : "NIET bewaard."); }
-      else if (n == 3) { outl("   Herstarten..."); delay(100); NVIC_SystemReset(); }
+      else if (n == 3) { outl("   Herstarten..."); mt_tracker_save_lastfix(); delay(100); NVIC_SystemReset(); }
       else if (n == 0) s_screen = SC_MAIN;
       show();
       return;
@@ -994,7 +1007,7 @@ static void command(char* s) {
   else if (!strcmp(s, "backup")) cmd_backup();
   else if (!strcmp(s, "key")) cmd_key(args);
   else if (!strcmp(s, "chan")) cmd_chan(args);
-  else if (!strcmp(s, "reboot")) { outl("herstart..."); delay(100); NVIC_SystemReset(); }
+  else if (!strcmp(s, "reboot")) { outl("herstart..."); mt_tracker_save_lastfix(); delay(100); NVIC_SystemReset(); }
   else if (!strcmp(s, "fs")) cmd_fs(args);
   else if (!strcmp(s, "fifo")) cmd_fifo(args);
   else if (!strcmp(s, "dump")) mt_tracker_dump(dump_out);

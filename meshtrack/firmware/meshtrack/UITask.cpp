@@ -4,6 +4,7 @@
 #include <helpers/TxtDataHelpers.h>
 #include "MyMesh.h"
 #include "MeshTrack.h"
+#include "MtTracker.h"
 
 #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #define BOOT_SCREEN_MILLIS   3000   // 3 seconds
@@ -421,6 +422,7 @@ void UITask::userLedHandler() {
   hardware-agnostic pre-shutdown activity should be done here 
 */
 void UITask::shutdown(bool restart){
+  mt_tracker_save_lastfix();   // MeshTrack: laatst gekende fix bewaren voor het uitschakelen
 
   #ifdef PIN_BUZZER
   /* note: we have a choice here -

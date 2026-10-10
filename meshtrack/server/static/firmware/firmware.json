@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.9.6",
+      "date": "2026-10-10",
+      "notes": "Locatieverzoek binnen zonder GPS-ontvangst: de tracker bewaart nu zijn laatst gekende fix (tijd, plaats, hoogte, nauwkeurigheid) in het flashgeheugen, ook over een herstart of een nieuwe firmware. Lukt het niet om binnen fix_timeout_hb een verse fix te krijgen, dan antwoordt hij op een verzoek met die laatst gekende plek en haar echte tijd, in plaats van 'geen fix'. Alleen als er nog nooit een fix was, volgt een V zonder positie. Het bewaren gebeurt zuinig: bij het in rust gaan, voor een herstart of uitschakeling, en onderweg hooguit eens per 10 minuten als de tracker meer dan 20 m verplaatst is. 'status' toont laatste_fix (ouderdom), 'dump' toont een regel lastfix.",
+      "zip": "meshtrack-t1000e-0.9.6.zip",
+      "zip_sha256": "64e63d2262e84725e6add447bdef39557e3731aa93ab58a373a7603e90738d57",
+      "uf2": "meshtrack-t1000e-0.9.6.uf2",
+      "app_size": 448624,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.9.5",
       "date": "2026-10-10",
       "notes": "Nieuw: locatieverzoeken. De app kan via het trackingkanaal vragen waar een tracker is (T1R, voor iedereen of voor één tracker); de tracker antwoordt met een positiebericht V (op verzoek), met positie als er een fix is. Zonder verse fix gaat de GPS kort aan. Dubbele verzoeken worden genegeerd; voor iedereen hooguit eens per 2 minuten (na 2 tot 20 s, zodat niet alle trackers tegelijk zenden), gericht hooguit eens per 30 s. Nieuwe instellingen: verzoek aan|uit (standaard aan), verzoek_beep aan|uit (standaard uit: een kort deuntje als de tracker een verzoek aanvaardt) en rx_beweging aan|uit (standaard aan: in trackermodus blijft de radio luisteren zolang de tracker beweegt, zodat hij verzoeken onderweg hoort; in rust slaapt de radio zoals gewoonlijk). Instellingen v7 (v6 wordt overgenomen). 'dump' toont een regel req.",
@@ -171,5 +181,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.5"
+  "latest": "0.9.6"
 }

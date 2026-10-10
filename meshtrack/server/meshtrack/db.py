@@ -486,7 +486,8 @@ class DB:
 
     def track(self, tid: int, since: int, limit: int = 5000) -> list[dict[str, Any]]:
         return self._q(
-            "SELECT ts, lat, lon, alt, spd, crs, bat, state, suspect, seq, snr, path_len FROM positions "
+            # fix_age: een antwoord op verzoek (V) met een oude fix tekent de kaart hol ("laatst gekend")
+            "SELECT ts, lat, lon, alt, spd, crs, bat, state, suspect, seq, snr, path_len, fix_age FROM positions "
             "WHERE tracker_id=? AND ts>=? AND lat IS NOT NULL ORDER BY ts LIMIT ?", (tid, since, limit))
 
     def purge_positions(self, tid: int, older_than: Optional[int] = None) -> int:
