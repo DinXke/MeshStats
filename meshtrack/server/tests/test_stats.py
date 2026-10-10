@@ -614,3 +614,56 @@ def test_sim_prio_toggle_and_permission(app):
     c.post("/api/logout")
     login(c, "kim", "geheim123")
     assert c.post(f"/api/sims/{sid}/prio", json={"on": True}).status_code == 403
+
+# ---- 1.4.1: gekende tracker stuurt op Public ----------------------------------------------------
+
+def test_public_detection_unit():
+    db = DB(":memory:")
+    tid = db.add_tracker(KEY, "Björn")
+    sim = db.add_tracker("cd" * 32, "Sim", kind="sim")
+    ours = paths.prepare_channels([{"id": 1, "name": "trk", "secret": "22" * 16, "active": True}])
+    rest = msg(1, NOW)[3:]
+    pkt = grp_packet(paths.PUBLIC_SECRET, f"Björn: T1C|{PK8}|-|{rest}", ["e3d3"])
+    assert paths.public_tracker(db, pkt, ours)["id"] == tid
+    assert paths.match(db, pkt, ours, lambda k, b: "") is None                 # nooit als trackerbericht
+    assert paths.public_tracker(db, grp_packet(paths.PUBLIC_SECRET, f"X: T1C|abcdef12|-|{rest}", []), ours) is None
+    assert paths.public_tracker(db, grp_packet(paths.PUBLIC_SECRET, f"S: T1C|cdcdcdcd|-|{rest}", []), ours) is None
+    assert paths.public_tracker(db, grp_packet(paths.PUBLIC_SECRET, "Jan: hallo", []), ours) is None
+    assert paths.public_tracker(db, grp_packet("22" * 16, f"Björn: T1C|{PK8}|-|{rest}", []), ours) is None
+    pub_is_ours = paths.prepare_channels([{"id": 2, "name": "Public", "secret": paths.PUBLIC_SECRET, "active": True}])
+    assert paths.public_tracker(db, pkt, pub_is_ours) is None                  # Public is dan gewoon ons kanaal
+
+
+def test_public_seen_flag_audit_rate_limit_and_no_ingest(app):
+    c, main, tid, cid, chan, tmp = app
+    main._public_noted.clear()
+    db = main.S.db
+    # in deze fixture IS het trackingkanaal Public; hier een eigen sleutel, zoals het hoort
+    db.save_channel(cid, {"name": "trk", "secret": "22" * 16, "slot": 3, "require_sig": 1, "active": 1, "region": "be"})
+    main._path_channels.update(at=0.0, list=[])
+    now = int(time.time())
+    rest = msg(1, now - 5)[3:]
+    pkt = grp_packet(paths.PUBLIC_SECRET, f"Björn: T1C|{PK8}|-|{rest}", ["e3d3"])
+    c.portal.call(main.on_rx_log, pkt, 5.0, -80)
+    c.portal.call(main.on_rx_log, pkt, 5.0, -80)                              # tweede keer: geen nieuwe auditregel
+    assert db.track(tid, 0) == [] and db._q("SELECT COUNT(*) n FROM message_paths")[0]["n"] == 0
+    assert db.tracker(tid)["public_leak_ts"] >= now
+    audits = [a for a in db.audit_log() if a["action"] == "tracker op Public"]
+    assert len(audits) == 1 and "Björn" in audits[0]["detail"]
+    login(c, "admin", "beheerder1")
+    tr = next(x for x in c.get("/api/trackers").json() if x["id"] == tid)
+    assert tr["op_public"] is True and tr["public_leak_ts"] >= now
+    # openHop-pakketten: ook gedetecteerd, oude pakketten niet gemeld
+    oh = str(tmp / "openhop.db")
+    make_openhop(oh, [(now - 7200, 5, -99, 2.0, "dak", pkt.hex())])
+    hits = []
+    assert paths.poll_openhop(db, oh, main.channel_tag, now - 86400, hits) == 0
+    assert hits == [(tid, now - 7200)]
+    main._public_noted.clear()
+    c.portal.call(main.public_seen, tid, now - 7200)                          # ouder dan 1 u: niet melden
+    assert len([a for a in db.audit_log() if a["action"] == "tracker op Public"]) == 1
+    assert db.tracker(tid)["public_leak_ts"] >= now                           # nooit terug in de tijd
+    # na 24 u zonder Public: geen badge meer
+    db._x("UPDATE trackers SET public_leak_ts=? WHERE id=?", (now - 90000, tid))
+    assert next(x for x in c.get("/api/trackers").json() if x["id"] == tid)["op_public"] is False
+    assert "op_public" in main.EVENTS

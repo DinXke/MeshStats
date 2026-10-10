@@ -122,15 +122,39 @@ def match(db, raw: bytes, channels: list[dict[str, Any]], sign) -> Optional[dict
             "hash_size": p["hash_size"], "hops": p["hops"], "channel_id": ch["id"]}
 
 
+# ---- 1.4.1: trackers die op Public sturen (niet klaargemaakt) --------------------------------
+# Alleen om te DETECTEREN: zulke berichten zijn niet ondertekend en staan op het verkeerde kanaal;
+# hun posities worden nooit opgeslagen.
+PUBLIC_SECRET = "8b3387e9c5cdea6ac9e5edbaa115cd72"
+_PUBLIC = prepare_channels([{"id": None, "name": "Public", "secret": PUBLIC_SECRET, "active": True}])
+
+
+def public_tracker(db, raw: bytes, channels: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Rauw pakket -> gekende (echte) tracker als het een T1C-bericht op Public is, anders None.
+    Staat Public zelf tussen onze kanalen, dan is het geen lek maar gewone tracking."""
+    if any(c.get("_key") == _PUBLIC[0]["_key"] for c in channels):
+        return None
+    p = parse_raw(raw)
+    if p is None or p["type"] != PAYLOAD_GRP_TXT:
+        return None
+    dec = decrypt_grp(p["payload"], _PUBLIC)
+    m = t1c(dec[1]) if dec else None
+    if m is None:
+        return None
+    t = db.tracker_by_prefix(m["pk"])
+    return t if t and t.get("kind") == "real" else None
+
+
 # ---- bron B: de pakketdatabase van openHop -----------------------------------------------
 
 CURSOR_KEY = "_openhop_paths_cursor"
 BATCH = 5000
 
 
-def poll_openhop(db, openhop_db: str, sign, since_ts: int) -> int:
+def poll_openhop(db, openhop_db: str, sign, since_ts: int, public_hits: Optional[list] = None) -> int:
     """Nieuwe GRP_TXT-pakketten (id > cursor) uit openHop lezen en hun paden opslaan. Alleen lezen
-    (mode=ro). Eerste keer: vanaf since_ts. Geeft het aantal opgeslagen paden terug."""
+    (mode=ro). Eerste keer: vanaf since_ts. Geeft het aantal opgeslagen paden terug.
+    public_hits: (tracker_id, ts) van gekende trackers die op Public stuurden komen erbij."""
     p = Path(openhop_db)
     if not p.exists():
         return 0
@@ -157,6 +181,10 @@ def poll_openhop(db, openhop_db: str, sign, since_ts: int) -> int:
                     continue
                 m = match(db, raw, channels, sign) if channels else None
                 if m is None:
+                    if public_hits is not None:
+                        t = public_tracker(db, raw, channels)
+                        if t:
+                            public_hits.append((t["id"], int(ts)))
                     continue
                 if not m["path"] and opath:     # pad ontbreekt in raw_packet: dan original_path
                     try:

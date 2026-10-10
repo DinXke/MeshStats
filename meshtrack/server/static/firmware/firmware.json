@@ -1,6 +1,60 @@
 {
   "releases": [
     {
+      "version": "0.9.10",
+      "date": "2026-10-10",
+      "notes": "Belangrijke privacyfout opgelost: een tracker die nooit klaargemaakt werd, stond op trackingkanaal 0 (Public) en verstuurde zijn posities en SOS-berichten daar, voor iedereen leesbaar. Vanaf 0.9.10 verstuurt de tracker nooit iets op een openbaar kanaal (Public, of een #kanaal waarvan de sleutel uit de naam volgt): een klik geeft dan een lage toon. Nieuwe toestellen hebben standaard geen trackingkanaal (chan=-) tot ze klaargemaakt zijn via Toestellen; een bestaand trackingkanaal dat naar Public wijst, wordt bij het opstarten 'geen'. Privékanalen blijven ongewijzigd. Status en dump tonen kanaal_fout (geen, ontbreekt of openbaar).",
+      "meshcore": "v1.17.1",
+      "boards": {
+        "t1000e": {
+          "name": "Seeed T1000-E",
+          "zip": "meshtrack-t1000e-0.9.10.zip",
+          "zip_sha256": "42d0f04be4080c9e7a8c82b2b35c27c7280cff72bedf46470e7d6736cdccefa1",
+          "uf2": "meshtrack-t1000e-0.9.10.uf2",
+          "uf2_sha256": "0d4cc174dc7b2ca0745537cb5960878b0a5d25e1e5d40a3bfc8e08f34e8a5ebd",
+          "app_size": 456992,
+          "app_start": "0x27000",
+          "sd_req": [
+            "0x0123"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "wismesh_tag": {
+          "name": "RAK WisMesh Tag",
+          "zip": "meshtrack-wismesh-tag-0.9.10.zip",
+          "zip_sha256": "1337571d126abe1149462e5a0d6e2221df012969750dc5280187bafaaa3df1e1",
+          "uf2": "meshtrack-wismesh-tag-0.9.10.uf2",
+          "uf2_sha256": "432ae08bca975199800330d8e67e9460ab4767b8abb20822865ac1c1e1fa33c9",
+          "app_size": 520100,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "rak3401_1w": {
+          "name": "RAK19007 + RAK3401 + RAK13302 (1 W)",
+          "zip": "meshtrack-rak3401-1w-0.9.10.zip",
+          "zip_sha256": "f3d120cb8c38132372e64a97a1b59bb04ea46a7b1b193351dbe1e291f2e1d5cb",
+          "uf2": "meshtrack-rak3401-1w-0.9.10.uf2",
+          "uf2_sha256": "4bbdb5de8587c6f084e10170cf6083b8b9f40202681a5f566dea1b4271d124f7",
+          "app_size": 539784,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        }
+      },
+      "zip": "meshtrack-t1000e-0.9.10.zip",
+      "zip_sha256": "42d0f04be4080c9e7a8c82b2b35c27c7280cff72bedf46470e7d6736cdccefa1",
+      "uf2": "meshtrack-t1000e-0.9.10.uf2",
+      "app_size": 456992
+    },
+    {
       "version": "0.9.9",
       "date": "2026-10-10",
       "notes": "De Bluetooth-koppelcode is nu via USB te wijzigen, op alle borden: 'set blepin <6 cijfers>' of 'set blepin standaard', ook in het menu Modus en knop. De nieuwe code werkt na een herstart; vergeet daarna de tracker in de Bluetooth-instellingen en koppel opnieuw. 'blepin toon' toont de code, alleen via USB; status toont alleen blepin=eigen of blepin=standaard.",
@@ -329,5 +383,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.9"
+  "latest": "0.9.10"
 }

@@ -721,3 +721,8 @@ header.top nav .navapps-l { font-size: 11px; text-transform: uppercase; letter-s
 #s-pin31box .priostat:empty { display: none; }
 .priofout { display: inline-flex; gap: 5px; align-items: center; color: var(--danger); font-weight: 600; }
 .priofout .ico { width: 16px; height: 16px; flex: none; }
+
+/* tracker stuurt op Public / geen trackingkanaal */
+.pubwarn { margin-top: 3px; }
+.pubwarn a.lostbadge { text-decoration: none; display: inline-block; }
+.detwarn { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--danger); border-left-width: 4px; color: var(--danger); font-weight: 600; background: var(--panel); }

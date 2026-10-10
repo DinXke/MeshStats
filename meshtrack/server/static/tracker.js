@@ -74,6 +74,7 @@
       const dash = rest[0] === "-";
       switch (key) {
         case "now": d.now = int(rest[0]); break;
+        case "chan": d.chan = { nr: rest[0] === "-" ? null : int(rest[0]), state: rest[1] || null }; break;   // sinds 0.9.10
         case "lastfix": if (!dash && rest.length >= 3 && int(rest[1]) !== null && int(rest[2]) !== null) d.lastFix = { ts: int(rest[0]), lat: int(rest[1]) / 1e5, lon: int(rest[2]) / 1e5 }; break;   // sinds 0.9.6
         case "pos": if (!dash && rest.length >= 3) d.pos = { ts: int(rest[0]), lat: int(rest[1]) / 1e5, lon: int(rest[2]) / 1e5, spd: num(rest[3]), sats: int(rest[4]), hdop: num(rest[5]) }; break;
         case "mode": {
@@ -130,6 +131,8 @@
     const nm = ls.find((l) => l.trim().startsWith("naam="));
     if (nm) kv.naam = nm.trim().slice(5).trim();          // namen mogen spaties bevatten
     // prioriteit (blauwe lichten): "prio=aan (nog 3m12s)", "prio=uit" of "prio=fout" (zwevende ingang)
+    const lo = ls.find((l) => /^\s*LET OP:/i.test(l));
+    if (lo) kv.let_op = lo.trim().replace(/^LET OP:\s*/i, "");
     const pm = /\bprio=(aan|uit|fout)(?:\s*\(nog\s+([^)]+)\))?/.exec(text);
     if (pm) { kv.prio = pm[1]; kv.prio_nog = pm[2] || ""; }
     return kv;
@@ -163,7 +166,7 @@
     $("slot-ov").hidden = !dump;
     if (dump) renderHero();
     renderAsk(true);
-    if (typeof renderInst === "function") renderInst(false);
+    if (typeof renderInst === "function") { renderInst(false); renderWarn(); }
   }
   // Tijdens het verbinden: beide knoppen uit, tekst en draaiend icoon op de gekozen knop.
   function connecting(btn) {
@@ -314,6 +317,7 @@
       await refresh(true);
       startAutoIfWanted();
       syncMsgs();                                   // berichten die al klaarstaan
+      if (!chans) readChannels();                   // openbaar trackingkanaal herkennen (ook op oude firmware)
     } catch (e) {
       say(`Verbinden via Bluetooth mislukt: ${e.message}. Staat de tracker in companionmodus?`, "err");
       log(`Bluetooth mislukt: ${e.message}`);
@@ -437,7 +441,7 @@
           const st = checkReply(await conn.run("status"));
           $("tk-rawstatus").textContent = st;
           const kv = parseStatus(st);
-          if (Object.keys(kv).length) { status = kv; statusAt = Date.now(); renderAsk(true); }
+          if (Object.keys(kv).length) { status = kv; statusAt = Date.now(); renderAsk(true); renderWarn(); renderInst(false); }
         } catch (e) { log(`status: ${e.message}`); }
       }
       if (!conn) return;
@@ -525,7 +529,9 @@
   // Opsplitsing van de wachtrij: "N nog niet verstuurd · M verstuurd, onbevestigd · K geparkeerd" (lege delen weg).
   const qBreak = (c) => [c.waiting && `${c.waiting} nog niet verstuurd`, c.sent && `${c.sent} verstuurd, onbevestigd`, c.parked && `${c.parked} geparkeerd`].filter(Boolean).join(" · ");
   // Firmwareversie vergelijken ("0.9.4" of nieuwer); onbekend = oud.
-  const fwAtLeast = (v) => { const a = String(status.fw || "0").split(".").map(Number), b = v.split(".").map(Number); for (let i = 0; i < 3; i++) { const x = a[i] || 0, y = b[i] || 0; if (x !== y) return x > y; } return true; };
+  // Numeriek per deel (0.9.10 > 0.9.9); achtervoegsels zoals "-beta" tellen niet mee.
+  const fwParts = (s) => String(s || "0").split(".").map((x) => parseInt(x, 10) || 0);
+  const fwAtLeast = (v) => { const a = fwParts(status.fw), b = fwParts(v); for (let i = 0; i < 3; i++) { const x = a[i] || 0, y = b[i] || 0; if (x !== y) return x > y; } return true; };
   // Sinds 0.9.4 geeft de tracker geparkeerde punten niet meer op: lagere voorrang, nieuwe kans in rust bij sterke dekking.
   const parkedNote = (n) => fwAtLeast("0.9.4")
     ? `${n} ${n === 1 ? "punt" : "punten"} geparkeerd: lagere voorrang, ${n === 1 ? "krijgt" : "krijgen"} een nieuwe kans in rust bij sterke dekking.`
@@ -698,6 +704,8 @@
   const LVL = { ok: "In orde", warn: "Let op", bad: "Probleem" };
   let lastLvl = "";
   function verdict() {
+    // openbaar of geen trackingkanaal gaat voor alles: dan is het nooit "in orde"
+    if (ovChanBad()) return { lvl: "bad", title: "Trackingkanaal niet in orde", sub: "De posities gaan naar een openbaar kanaal of er is geen trackingkanaal; zie de melding hierboven." };
     const now = trackerNow(), h = dump.lastHeard;
     const fifoMode = (dump.mode && dump.mode.track === "fifo") || status.track_mode === "fifo";
     const age = h ? now - h.ts : Infinity;
@@ -1176,7 +1184,7 @@
     // letters, dan is dat het vlaggenveld (extra punten beginnen met B, ~, een cijfer of een minteken). Zelfde regel als /offline.
     const flags = p[17] !== undefined ? p[17] : /^[a-z]{1,8}$/.test(p[16] || "") ? p[16] : "";
     const prio = flags.includes("p");
-    heard.set(pk, { pk, name: from || (known && known.name) || pk, at: now, prio });
+    heard.set(pk, { pk, name: from || (known && known.name) || pk, at: now, prio, chan });
     if (state === "V") {
       const old = fix && fixAge !== null && fixAge > 120;           // meer dan ~2 min oud: laatst gekend
       answers.unshift({ pk, prio, name: from || pk, at: now, ts: ts || Math.round(now), lat: fix ? lat : null, lon: fix ? lon : null, chan, old, fixAt: fix && fixAge !== null ? now - fixAge : now });
@@ -1209,7 +1217,7 @@
     if (targets || !sel.options.length) {
       const cur = sel.value || "*", own = ownPk();
       const list = [...heard.values()].filter((h) => h.pk !== own).sort((a, b) => a.name.localeCompare(b.name, "nl"));
-      sel.innerHTML = '<option value="*">Alle trackers</option>' + list.map((h) => `<option value="${h.pk}">${esc(h.name === h.pk ? h.pk : `${h.name} (${h.pk})`)}${h.prio ? " · prioritair" : ""}</option>`).join("");
+      sel.innerHTML = '<option value="*">Alle trackers</option>' + list.map((h) => `<option value="${h.pk}">${esc(h.name === h.pk ? h.pk : `${h.name} (${h.pk})`)}${h.prio ? " · prioritair" : ""}${isPublicCh(chanAt(h.chan)) ? " · op Public!" : ""}</option>`).join("");
       sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "*";
     }
     const blocked = askBlocked(), wait = blocked ? 0 : askWait(sel.value);
@@ -1223,7 +1231,7 @@
     clearTimeout(askTimer);
     if (wait > 0) askTimer = setTimeout(() => renderAsk(false), 1000);
     const ul = $("tk-ask-list");
-    ul.innerHTML = answers.map((a, i) => `<li><span class="tk-sw ${a.lat === null ? "nofix" : a.old ? "a old" : "a"}" aria-hidden="true"></span><span class="tk-ansbody"><strong>${esc(a.name)}${a.prio ? ' <span class="pill prio">Prioritair</span>' : ""}</strong>
+    ul.innerHTML = answers.map((a, i) => `<li><span class="tk-sw ${a.lat === null ? "nofix" : a.old ? "a old" : "a"}" aria-hidden="true"></span><span class="tk-ansbody"><strong>${esc(a.name)}${a.prio ? ' <span class="pill prio">Prioritair</span>' : ""}${isPublicCh(chanAt(a.chan)) ? ' <span class="pill tk-pub">op Public!</span>' : ""}</strong>
       <span class="tk-anssub">${esc(clockS(a.at))} · ${a.lat === null ? "geen fix" : a.old ? `laatst gekend, ${esc(dur(Date.now() / 1000 - a.fixAt))} geleden` : "met positie"}</span></span>${a.lat !== null ? `<button type="button" data-i="${i}">Op kaart</button>` : ""}</li>`).join("");
     $("tk-ask-none").hidden = !!answers.length;
   }
@@ -1282,7 +1290,7 @@
   //   CMD_SET_DEVICE_PIN 37  [37, pin u32 LE] 0 of 100000..999999 -> OK of ERR; geldt na een herstart
   // De MeshTrack-opdrachtregel via Bluetooth kan alleen lezen; MeshTrack-instellingen gaan via USB (Toestellen).
   const enc = new TextEncoder();
-  let chans = null;
+  let chans = null, chReading = false;
   const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, "0")).join("");
   const unhex = (s) => Uint8Array.from(s.match(/../g).map((x) => parseInt(x, 16)));
   const resMsg = (id, text, kind) => { const el = $(id); el.textContent = text || ""; el.className = "tk-res" + (kind ? " " + kind : ""); };
@@ -1347,6 +1355,33 @@
     const byName = chans && chans.find((c) => !c.empty && /meshtrack/i.test(c.name));
     return byName ? byName.idx : null;
   }
+  // Openbaar kanaal: de bekende Public-sleutel, de naam "Public", of een hashtag-kanaal ("#…", sleutel afgeleid van de naam).
+  const PUBLIC_SECRET = "8b3387e9c5cdea6ac9e5edbaa115cd72";
+  const isPublicCh = (c) => !!c && !c.empty && (c.secret === PUBLIC_SECRET || c.hashtag || /^public$/i.test(c.name.trim()) || c.name.trim().startsWith("#"));
+  const chanAt = (idx) => (chans && idx !== null && idx !== undefined ? chans.find((c) => c.idx === idx) : null);
+  // Geen trackingkanaal volgens de firmware (0.9.10+: chan=- of kanaal_fout=…)
+  const chanFault = () => {
+    const kf = status.kanaal_fout;
+    if (kf && kf !== "-") return kf;                                  // geen | ontbreekt | openbaar
+    if (dump && dump.chan && dump.chan.state && dump.chan.state !== "ok") return dump.chan.state;
+    if (status.chan === "-" || (dump && dump.chan && dump.chan.nr === null)) return "geen";
+    return "";
+  };
+  const noTrackChan = () => !!chanFault();
+  // Het trackingkanaal is openbaar of ontbreekt: dan niet overschrijven, maar klaarmaken via USB.
+  const trackChanBad = () => noTrackChan() || isPublicCh(chanAt(trackingSlot()));
+  // Voor het overzicht: alleen wat zeker is (chan=- / kanaal_fout, of chan= wijst naar een openbaar kanaal)
+  function ovChanBad() { return noTrackChan() || (int(status.chan) !== null && isPublicCh(chanAt(int(status.chan)))); }
+  function renderWarn() {
+    const show = ovChanBad();
+    $("ov-warn").innerHTML = show ? `<section class="card tk-pubwarn" role="alert">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></svg>
+      <div><h2>Openbaar kanaal of geen trackingkanaal</h2>
+      <p>Deze tracker stuurt zijn posities op een openbaar kanaal (Public) of heeft geen trackingkanaal. Maak hem klaar via Toestellen (USB).</p>
+      ${(() => { const f = chanFault(); const why = { geen: "Er is geen trackingkanaal ingesteld.", ontbreekt: "Het trackingkanaal bestaat niet (meer) op de tracker.", openbaar: "Het trackingkanaal is openbaar; de firmware weigert daarop te zenden." }[f] || (f ? `Kanaalfout: ${f}.` : "");
+        return (why ? `<p class="tk-pubwhy">${esc(why)}</p>` : "") + (status.let_op ? `<p class="tk-pubwhy">Tracker meldt: ${esc(status.let_op)}</p>` : ""); })()}
+      <a class="tk-wbtn primary tk-linkbtn" href="/devices">Naar Toestellen</a></div></section>` : "";
+  }
   function instBlocked() {
     if (!conn) return "Verbind eerst met de tracker via Bluetooth (companionmodus).";
     if (conn.kind !== "ble" || !conn.cmd) return "Via USB: gebruik Toestellen om instellingen te wijzigen.";
@@ -1373,10 +1408,15 @@
       sel.value = cur !== "" && chans.some((c) => String(c.idx) === cur) ? cur : g !== null ? String(g) : "";
     }
     const slot = trackingSlot();
-    $("in-chslot").textContent = known ? `De tracker stuurt zijn posities op kanaalnummer ${slot}. Dat kanaal vervang je hier.`
+    $("in-chslot").textContent = noTrackChan() ? "De tracker heeft geen (geldig) trackingkanaal."
+      : known ? `De tracker stuurt zijn posities op kanaalnummer ${slot}. Dat kanaal vervang je hier.`
       : conn && conn.noMt ? "Firmware zonder alleen-lezen-toegang: kies zelf het trackingkanaal."
       : "De tracker meldt (nog) geen volgkanaal (chan=): kies zelf het trackingkanaal.";
-    $("in-ch-set").disabled = !!off || slot === null;
+    const bad = !off && trackChanBad();
+    $("in-chpub").hidden = !bad;
+    $("in-chform").hidden = bad;
+    if (bad && noTrackChan()) $("in-slotbox").hidden = true;
+    $("in-ch-set").disabled = !!off || slot === null || bad;
     $("in-caps").innerHTML = SETTING_GROUPS.map((g) => {
       const ok = groupNeeds(g);
       return `<li><span class="tk-capname">${esc(g.label)}</span><span class="tk-cap ${ok ? "ok" : "no"}">${ok ? (g.via === "companion" ? "Kan op deze firmware" : "Kan op deze firmware (nog niet op deze pagina; gebruik Toestellen)") : "Vraagt firmware 0.9.9 of nieuwer (bijwerken via Toestellen)"}</span></li>`;
@@ -1384,7 +1424,8 @@
     if (read && !off && !chans) readChannels();
   }
   async function readChannels() {
-    if (instBlocked()) return;
+    if (instBlocked() || chReading) return;
+    chReading = true;
     const max = (conn.info && conn.info.maxCh) || 40;
     const list = [];
     $("in-chlist").innerHTML = '<li class="tk-empty">Kanalen lezen…</li>';
@@ -1396,17 +1437,27 @@
         const secret = f.slice(34, 50);
         list.push({ idx: f[1], name, secret: hex(secret), empty: !name && secret.every((b) => b === 0) });
       }
-      for (const c of list) c.tag = c.empty ? "" : hex(new Uint8Array(await crypto.subtle.digest("SHA-256", unhex(c.secret)))).slice(0, 6);
+      for (const c of list) {
+        c.tag = c.empty ? "" : hex(new Uint8Array(await crypto.subtle.digest("SHA-256", unhex(c.secret)))).slice(0, 6);
+        if (!c.empty && c.name) {
+          const tagName = "#" + c.name.trim().replace(/^#/, "");
+          c.hashtag = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(tagName)))).slice(0, 32) === c.secret;
+        }
+      }
       chans = list;
     } catch (e) { chans = list.length ? list : null; log(`kanalen lezen: ${e.message}`); }
+    chReading = false;
     renderChans();
   }
   function renderChans() {
     renderInst(false);
+    renderWarn();
+    if (dump) renderHero();
+    if (answers.length) renderAsk(false);
     const slot = trackingSlot();
     if (!chans) { $("in-chlist").innerHTML = '<li class="tk-empty">Kon de kanalen niet lezen.</li>'; return; }
     $("in-chlist").innerHTML = chans.filter((c) => !c.empty || c.idx === slot).map((c) => `<li${c.idx === slot ? ' class="trk"' : ""}>
-      <span class="tk-chidx">${c.idx}</span><span class="tk-chname">${c.empty ? '<em class="muted">leeg</em>' : esc(c.name || "(zonder naam)")}${c.idx === slot ? ' <span class="pill tk-trackpill">trackingkanaal</span>' : ""}</span>
+      <span class="tk-chidx">${c.idx}</span><span class="tk-chname">${c.empty ? '<em class="muted">leeg</em>' : esc(c.name || "(zonder naam)")}${c.idx === slot ? ' <span class="pill tk-trackpill">trackingkanaal</span>' : ""}${isPublicCh(c) ? ' <span class="pill tk-pub">openbaar</span>' : ""}</span>
       <span class="tk-chtag" title="Kenmerk van de sleutel (niet de sleutel zelf)">${c.tag ? `kenmerk ${c.tag}` : ""}</span></li>`).join("") || '<li class="tk-empty">Geen kanalen.</li>';
   }
   // QR-inhoud: meshcore://channel/add?name=…&secret=… (MeshCore-app en onze pagina Kanalen) of alleen de sleutel in hex
@@ -1637,5 +1688,5 @@
   initMap().catch((e) => log(`kaart: ${e.message}`));
 
   // Testhaak (alleen lezen): ontleden zonder toestel.
-  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), answers: answers.slice(), heard: [...heard.keys()], chans: chans && chans.slice() }), map: () => map, parseChannelQr };
+  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), answers: answers.slice(), heard: [...heard.keys()], chans: chans && chans.slice(), heardOnPublic: [...heard.values()].filter((h) => isPublicCh(chanAt(h.chan))).map((h) => h.pk) }), map: () => map, parseChannelQr };
 })();

@@ -24,8 +24,9 @@
   let fw = null, kv = null, known = null, busy = false;
 
   function say(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); }
-  const fwNum = (v) => (v || "0").split(".").map((x) => parseInt(x, 10) || 0);
-  const newer = (a, b) => { const x = fwNum(a), y = fwNum(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
+  // Versies per onderdeel als getal vergelijken: "0.9.10" is nieuwer dan "0.9.9" (ook met "v" ervoor of "-rc1" erachter).
+  const fwNum = (v) => { const p = String(v || "0").trim().replace(/^v/i, "").split(".").map((x) => parseInt(x, 10) || 0); while (p.length < 3) p.push(0); return p; };
+  const newer = (a, b) => { const x = fwNum(a), y = fwNum(b); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
   const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})/, "$1-");
   const safe = (s) => (s || "toestel").replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/^_+|_+$/g, "") || "toestel";
 
@@ -120,6 +121,8 @@
   }
   async function loadFirmware() {
     try { fw = await MT.api("/api/firmware"); } catch (_) { fw = null; }
+    // nieuwste eerst, per onderdeel als getal ("0.9.10" voor "0.9.9"), ook als firmware.json anders gesorteerd is
+    if (fw && Array.isArray(fw.releases)) fw.releases.sort((x, y) => (newer(x.version, y.version) ? -1 : newer(y.version, x.version) ? 1 : 0));
     renderFirmware();
   }
   // Keuze van het toestel: bij een verbonden tracker met board= volgt de keuze die; anders de laatste keuze.
