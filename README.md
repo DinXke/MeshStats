@@ -11,7 +11,18 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.8; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.9; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
+  - Bluetooth-koppelcode (0.9.9): `set blepin <6 cijfers>|standaard` (werkt na een herstart), `blepin toon` (alleen USB),
+    status `blepin=eigen|standaard`, menu *Modus en knop* → 11 *Bluetooth-koppelcode*; in Toestellen het veld
+    *Bluetooth-code* (oudere firmware: via Tracker live → Instellingen). De code zit nooit in een back-up. RAK3401 met
+    OLED en standaardcode: MeshCore kiest per sessie een willekeurige code; `blepin toon` geeft de actieve.
+  - `/tracker` tabblad *Instellingen* (Bluetooth, companionmodus; alleen standaard MeshCore-companioncommando's, dus ook
+    voor firmware ouder dan 0.9.1): Bluetooth-code, naam, herstarten, kanalenlijst met vingerafdruk (nooit de sleutel;
+    trackingkanaal gemarkeerd), trackingkanaal vervangen via QR (`meshcore://channel/add?name=…&secret=…`, camera met
+    zaklamp of foto; iPhone zonder QR: overtikken) of met de hand (naam + 32 hex), met bevestiging en terugleescontrole;
+    het kanaal moet in /kanalen bestaan, de authsleutel blijft. Oudere firmware (< 0.9.1): kanaalnummer zelf kiezen (via
+    USB `chan=`). MeshTrack-instellingen (FIFO, SlowTrack, biepjes, modus, regio, authsleutel) voorlopig alleen via USB.
+    Wie de koppelcode kent, kan dit wijzigen: verander 123456.
   - **Drie borden**, elke release voor alle drie: Seeed T1000-E (`board=t1000e`, getest); RAK WisMesh Tag (`wismesh_tag`:
     knop, buzzer, LIS2DH-bewegingssensor, AT6558R-GPS); RAK3401 + RAK13302 1 W (`rak3401_1w`: voertuigtracker op een
     RAK19007 met losse UART-GPS, geen buzzer, geen bewegingssensor, terugmelding met de led, max. ≈ 27 dBm na de
