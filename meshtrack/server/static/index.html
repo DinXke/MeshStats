@@ -30,6 +30,11 @@
       <div class="sidehead">
         <input id="search" type="search" placeholder="Zoek tracker…" autocomplete="off" aria-label="Zoek tracker">
       </div>
+      <div class="sidehead askbar" id="rq-wrap" hidden>
+        <button type="button" id="rq-btn" aria-haspopup="dialog">Positie vragen</button>
+        <span class="small muted" id="rq-lbl"></span>
+      </div>
+      <div id="rq-panel" class="askpanel" hidden aria-live="polite"></div>
       <details class="sect" data-sect="filter" open>
         <summary>Filter en zichtbaarheid</summary>
         <div class="chips" role="group" aria-label="Filter">
@@ -68,6 +73,7 @@
           <span><i style="background:#eab308"></i>&lt;50</span><span><i style="background:#f97316"></i>&lt;90</span>
           <span><i style="background:#dc2626"></i>90+ km/u</span>
         </div>
+        <div class="legend"><span><i class="vping"></i>Op verzoek: antwoord op een locatieverzoek</span></div>
       </details>
       <details class="sect" data-sect="nodes">
         <summary>Meshnodes op de kaart</summary>
@@ -159,6 +165,30 @@
   <div id="map"><button id="followbtn" class="followbtn" hidden>Volgen stoppen</button></div>
 </div>
 <div id="toasts"></div>
+<dialog id="rq-dlg" class="dlg" aria-labelledby="rq-h">
+  <form id="rq-form" method="dialog">
+    <h2 id="rq-h">Positie vragen</h2>
+    <p class="muted small" style="margin-top:0">De server stuurt een verzoek op het kanaal. Trackers die het horen, sturen meteen
+      hun positie.</p>
+    <label for="rq-chan">Kanaal</label>
+    <select id="rq-chan"></select>
+    <fieldset class="askfs"><legend class="small">Aan wie?</legend><div id="rq-targets"></div></fieldset>
+    <details class="small"><summary>Wie antwoordt?</summary>
+      <ul class="muted askwho">
+        <li>Een tracker in companionmodus hoort het verzoek altijd.</li>
+        <li>Een tracker in trackermodus die rijdt of stapt, antwoordt alleen met firmware 0.9.5 of nieuwer en met
+          <em>rx_beweging</em> aan.</li>
+        <li>Een tracker in trackermodus die stilstaat, slaapt en hoort het verzoek niet.</li>
+      </ul>
+      <p class="muted">Om het net te sparen kan "alle trackers" hoogstens 1× per 2 min, één tracker hoogstens 1× per 30 s.</p>
+    </details>
+    <div id="rq-msg" class="msg"></div>
+    <div class="row" style="justify-content:flex-end">
+      <button type="button" id="rq-cancel">Annuleren</button>
+      <button type="submit" class="primary" id="rq-send">Versturen</button>
+    </div>
+  </form>
+</dialog>
 <button id="sheet-show" class="sheet-show" hidden aria-label="Lijst tonen">☰ Lijst</button>
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/vendor/pmtiles.js"></script>

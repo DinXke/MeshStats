@@ -11,7 +11,7 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.4; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.5; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
     Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
@@ -118,8 +118,29 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     tot een herstart. Handig als een SOS-bevestiging (`T1A`) niet aankomt. De tracker bewaart geen log: de regels
     verschijnen alleen live en alleen met het menu dicht (`q`). Er is geen commando `log`.
   - `dump` (0.9.1): de interne toestand machineleesbaar (`mtdump 1` …), voor de webapp `/tracker` (*Tracker live*).
+    Sinds 0.9.5 met `req last= answered= ignored=`.
+  - **Locatieverzoeken** (0.9.5): /offline (tab Trackers) en /tracker (Overzicht, alleen via Bluetooth) sturen met
+    *Positie vragen* via de verbonden companion op het trackingkanaal `T1R|<*|pk8>|<nonce>` (alle trackers of één).
+    Trackers antwoorden met toestand `V` (op verzoek): meteen met een verse fix, anders GPS even aan, zonder fix zonder
+    positie. "Alle" = antwoord willekeurig gespreid over 2–20 s, gericht = 1–3 s. Grenzen: "alle" hooguit 1× per 2 min,
+    gericht 1× per 30 s per tracker (de apps houden zich eraan), elke nonce maar één keer. Wie het hoort: companionmodus
+    altijd; trackermodus alleen in beweging met `rx_beweging aan` (standaard aan; radio luistert dan onderweg, ~15–20 %
+    extra verbruik tijdens het rijden); in rust slaapt de radio. Instellingen `verzoek aan|uit`, `rx_beweging aan|uit` en
+    `verzoek_beep aan|uit` (standaard uit: kort herkenbaar deuntje als de tracker een verzoek aanvaardt, ook met de buzzer
+    uit, zodat de drager weet dat iemand zijn positie vroeg) (Toestellen, groep *Locatieverzoeken*; menu *Modus en knop* 8, 9 en 10 *Deuntje bij een locatieverzoek*:
+    twee snelle stijgende tonen, pauze, één toon). Ook op de kaart van de site, in de kanaalweergave (`?kanaal=`):
+    de server stuurt het verzoek via zijn eigen companion op dat kanaal; mag voor wie het kanaal op de kaart ziet
+    (`kaart` of `sleutel`); grenzen per kanaal voor alle gebruikers samen ("alle" 1× per 2 min, één tracker 1× per
+    30 s); elk verzoek in het auditlog; andere gebruikers met die kaart open krijgen een korte melding; antwoorden als
+    live posities met het amberkleurige icoon en een antwoordpaneel. Op de kaarten (/offline, /tracker, site) een
+    amberkleurig doelwit met legende *Op verzoek*. Meshbelasting: "alle" op een kanaal met N trackers = N antwoorden.
     Via Bluetooth (companionmodus) aanvaardt de tracker alleen `status`, `fifo` en `dump`: alleen lezen.
-- **server/**: FastAPI + meshcore-py (versie 1.3.1).
+- **server/**: FastAPI + meshcore-py (versie 1.3.2).
+  - 1.3.2: toestand `V` (positie op verzoek, firmware 0.9.5), verwerkt zoals `P`: live, ook zonder fix toegelaten, eigen
+    meldingsgebeurtenis. Verzoeken `T1R|<*|pk8>|<nonce>` van companions/telefoons op het trackingkanaal negeert de
+    server stil (geen onbekend/ongeldig) en telt ze als `loc_request` in de statistieken.
+    Vanaf de website: `POST /api/channels/{id}/request` (`{"target": "*" | tracker-id}`) stuurt zelf een `T1R`, met
+    limieten per kanaal (alle trackers 1x per 120 s, een tracker 1x per 30 s), auditlog en live-bericht `loc_request`.
   - 1.3.1: **dataverlies-fix FIFO**: exacte bevestiging `T1F|<pk8>:<tag8>:s<seqs>` per ontvangen Q-seq, alleen voor
     trackers met vlag `g` (firmware 0.9.4+). Firmware 0.9.0–0.9.3 krijgt geen T1F meer (de oude "tot ts"-bevestiging
     deed die trackers nooit ontvangen punten wissen). Zie *Berichtprotocol*.
@@ -199,7 +220,8 @@ Extra punten (`<extra>`): `~<interval>;dlat,dlon[@s];...`, nieuwste eerst, elk p
 `fix_ts`: de verzendtijd min `fix_age_s`, of de ontvangsttijd als de klok van de tracker niet klopt.
 
 Statussen: `M` beweging, `W` wakker door beweging, `S` stilgevallen, `H` heartbeat, `N` geen fix, `P` handmatig,
-`E` SOS, `B` moduswissel of voeding gewijzigd, `L` gelogd punt (SlowTrack, firmware 0.8.0+), `Q` ingehaald punt (FIFO, firmware 0.9.0+).
+`E` SOS, `B` moduswissel of voeding gewijzigd, `L` gelogd punt (SlowTrack, firmware 0.8.0+), `Q` ingehaald punt (FIFO, firmware 0.9.0+),
+`V` positie op verzoek (antwoord op `T1R`, firmware 0.9.5+, server 1.3.2+).
 
 SlowTrack (`L`, server 1.1.0+): naast de gewone tracking logt de tracker elke `slow_log` een punt en stuurt die elke
 `slow_send` samen in één `L`-bericht (firmware 0.8.0; de server aanvaardt ook meerdere `L`-berichten na elkaar, elk

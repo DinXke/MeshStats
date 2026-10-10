@@ -13,7 +13,7 @@
     return s < 60 ? `${s} s geleden` : s < 3600 ? `${Math.round(s / 60)} min geleden` : s < 86400 ? `${Math.round(s / 3600)} u geleden` : `${Math.round(s / 86400)} d geleden`;
   };
   const fmtSize = (b) => (b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.round(b / 1e6) + " MB");
-  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)" };
+  const STATE = { M: "rijdt/stapt", S: "stilgevallen", H: "heartbeat", N: "geen GPS-fix", E: "SOS", B: "modus/voeding", P: "handmatig", W: "wakker", L: "gelogd punt (SlowTrack)", Q: "ingehaald punt (FIFO)", V: "op verzoek" };
 
   // ---- opslag ----------------------------------------------------------------------
   let db;
@@ -245,12 +245,14 @@
           const i2 = text.indexOf(": ");
           if (text.slice(i2 + 2).startsWith("T1A|")) { log("SOS-bevestiging van de server gezien"); continue; }   // voor de tracker
           if (text.slice(i2 + 2).startsWith("T1F|")) { log("ontvangstbevestiging (FIFO) van de server gezien"); continue; }   // idem
+          if (text.slice(i2 + 2).startsWith("T1R|")) { log("positieverzoek gezien"); continue; }   // verzoek aan de trackers
           chats += await addChat({ chan: chanName, chanIdx: chan, from: i2 > 0 ? text.slice(0, i2) : "?",
             text: i2 > 0 ? text.slice(i2 + 2) : text, ts });
           continue;
         }
         if (r.bad) { rejected++; log(`geweigerd (${r.bad}) ${r.pk || ""}`); continue; }
         stored += await storePositions(r.positions);
+        noteAnswer(r);
         const ch = devChans.find((c) => c.idx === chan);
         if (own && ch) {                                  // eigen kanaalbericht van de tracker: herhalingen tellen
           const main = r.positions[r.positions.length - 1];
@@ -543,17 +545,21 @@
       map.addSource("trk", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "trk", type: "line", source: "trk", paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.85 } });
       map.addSource("pts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 2, 3], "circle-color": ["get", "color"],
+      map.addLayer({ id: "pts", type: "circle", source: "pts", paint: { "circle-radius": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 2, 3], "circle-color": ["case", ["==", ["get", "state"], "V"], vAmber(), ["get", "color"]],
         "circle-opacity": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.7, 1], "circle-stroke-color": "#fff", "circle-stroke-width": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.5, 1] } });
+      // Op verzoek (V): amber stip met een kleine ring, bescheiden in het spoor (zelfde stijl als op de site)
+      map.addLayer({ id: "pts-v", type: "circle", source: "pts", filter: ["==", ["get", "state"], "V"],
+        paint: { "circle-radius": 6, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": vAmber(), "circle-stroke-width": 1.5 } });
       map.on("click", "pts", (e) => {
         const p = e.features[0].properties;
-        new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(`<strong>${esc(p.name)}</strong><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}${p.spd !== "null" && p.spd != null ? `<br>${p.spd} km/u` : ""}${p.state === "L" || p.state === "Q" ? `<br>${STATE[p.state]}` : ""}`).addTo(map);
+        new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(`<strong>${esc(p.name)}</strong><br>${new Date(p.ts * 1000).toLocaleString("nl-BE")}${p.spd !== "null" && p.spd != null ? `<br>${p.spd} km/u` : ""}${["L", "Q", "V"].includes(p.state) ? `<br>${STATE[p.state]}` : ""}`).addTo(map);
       });
       renderAll();
     });
     if (!maps.length) say($("maps-msg"), "Nog geen kaart op dit toestel: download er hieronder een terwijl je internet hebt.", false);
   }
 
+  const vAmber = () => (dark() ? "#ffc83d" : "#e0a400");   // Op verzoek (V); zelfde als --vreq in style.css
   function colorOf(pk) { let h = 0; for (const c of pk) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h},70%,45%)`; }
   function nameOf(pk) { return contactNames[pk] || `tracker ${pk}`; }
 
@@ -607,7 +613,17 @@
       markers.set(pk, m);
     }
     const el = m.getElement();
-    el.querySelector(".omark").style.background = color;
+    const mk = el.querySelector(".omark");
+    mk.style.background = color;
+    // antwoord op een locatieverzoek: amber ring; bij een nieuw antwoord een korte puls
+    mk.classList.toggle("vreq", p.state === "V");
+    if (p.state === "V" && mk.dataset.vk !== p.k) {
+      if (mk.dataset.vk !== undefined || Date.now() / 1000 - (p.rx || 0) < 120) {
+        mk.classList.remove("vpulse"); void mk.offsetWidth; mk.classList.add("vpulse");
+        setTimeout(() => mk.classList.remove("vpulse"), 3600);
+      }
+      mk.dataset.vk = p.k;
+    }
     el.querySelector(".olabel").textContent = name;
     m.setLngLat([p.lon, p.lat]);
   }
@@ -617,7 +633,7 @@
     $("o-list").innerHTML = items.length ? items.map(({ pk, last, n }) => {
       return `<div class="otrk" data-pk="${esc(pk)}"><span class="omark" style="background:${esc(colorOf(pk))}"></span>
         <div class="body"><div class="nm">${esc(nameOf(pk))} ${last.own ? '<span class="pill">eigen</span>' : ""} ${last.state === "E" ? '<span class="pill sos">SOS</span>' : ""}</div>
-        <div class="sub">${esc(ago(last.ts))} · ${esc(STATE[last.state] || last.state || "")}${last.bat != null ? " · " + last.bat + " %" : ""} · ${esc(last.chan || "")} · ${n} punten</div>
+        <div class="sub">${esc(ago(last.ts))} · ${last.state === "V" ? '<i class="vping" aria-hidden="true"></i> ' : ""}${esc(STATE[last.state] || last.state || "")}${last.bat != null ? " · " + last.bat + " %" : ""} · ${esc(last.chan || "")} · ${n} punten</div>
         ${last.own && last.rep ? `<div class="sub"><span class="pill">${esc(repText(last.rep))}</span></div>` : ""}</div></div>`;
     }).join("") : '<div class="empty">Nog geen posities. Verbind met een companion (tabblad Verbinding).</div>';
     $("o-list").querySelectorAll(".otrk").forEach((el) => el.addEventListener("click", () => {
@@ -631,6 +647,135 @@
     renderAll();
   }));
   $("o-trackon").addEventListener("change", () => { trackOn = $("o-trackon").checked; renderAll(); });
+
+  // ---- positie vragen (T1R) ------------------------------------------------------------------
+  // "T1R|<doel>|<nonce>" als kanaalbericht op het trackingkanaal; doel = "*" (alle trackers) of de pk8
+  // van één tracker. Trackers (firmware 0.9.5+) antwoorden met een gewoon T1C-bericht met toestand V.
+  const ASK_ALL_S = 120, ASK_ONE_S = 30;            // de app zelf: "alle" hoogstens 1× per 2 min, één tracker 1× per 30 s
+  let askReq = null, askAllAt = 0;
+  const askOneAt = {};
+  const nowS = () => Math.floor(Date.now() / 1000);
+  const hms = (ts) => new Date(ts * 1000).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  // Trackingkanalen: kanalen op de companion waarop al trackerposities binnenkwamen (anders alle kanalen).
+  function trackChans() {
+    const seen = new Set(posAll.map((p) => p.chan).filter(Boolean));
+    const mt = devChans.filter((c) => seen.has(c.name));
+    return mt.length ? mt : devChans;
+  }
+  function defaultChan(list) {                      // het kanaal met de jongste trackerpositie
+    let best = null, bt = -1;
+    for (const p of posAll) if (p.ts > bt && list.some((c) => c.name === p.chan)) { bt = p.ts; best = p.chan; }
+    return (list.find((c) => c.name === best) || list[0] || {}).idx;
+  }
+  function trackersOn(chanName) {
+    return [...new Set(posAll.filter((p) => p.chan === chanName).map((p) => p.pk))].sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+  }
+  const askWait = (target) => Math.max(0, (target === "*" ? askAllAt + ASK_ALL_S : (askOneAt[target] || 0) + ASK_ONE_S) - nowS());
+  const askTarget = () => (document.querySelector('#ask-targets input[name="ask-t"]:checked') || {}).value || "*";
+  function askTick() {                              // aftellen op de knoppen
+    const w = askWait(askTarget()), b = $("ask-send");
+    b.disabled = w > 0 || !rxc;
+    b.textContent = w > 0 ? `Versturen (nog ${w} s)` : "Versturen";
+    const wa = askWait("*");
+    $("o-ask-btn").textContent = wa > 0 ? `Positie vragen (alle: nog ${wa} s)` : "Positie vragen";
+  }
+  function renderAskTargets() {
+    const ch = devChans.find((c) => c.idx === Number($("ask-chan").value));
+    const pks = ch ? trackersOn(ch.name) : [];
+    const cur = askTarget();
+    $("ask-targets").innerHTML = `<label class="askopt"><input type="radio" name="ask-t" value="*"> Alle trackers op dit kanaal${pks.length ? ` (${pks.length} gezien)` : ""}</label>`
+      + pks.map((pk) => `<label class="askopt"><input type="radio" name="ask-t" value="${esc(pk)}"><span class="omark sm" style="background:${esc(colorOf(pk))}"></span>
+        <span>${esc(nameOf(pk))} <span class="mono muted">${esc(pk)}</span></span></label>`).join("");
+    const radios = [...$("ask-targets").querySelectorAll('input[name="ask-t"]')];
+    (radios.find((x) => x.value === cur) || radios[0]).checked = true;
+    radios.forEach((x) => x.addEventListener("change", askTick));
+    askTick();
+  }
+  function openAsk() {
+    say($("o-ask-note"), "");
+    if (!rxc) { say($("o-ask-note"), "Verbind eerst met een companion (tabblad Verbinding).", false); return; }
+    const list = trackChans();
+    if (!list.length) { say($("o-ask-note"), "Er staat nog geen kanaal op de companion (tabblad Kanalen).", false); return; }
+    $("ask-chan").innerHTML = list.map((c) => `<option value="${c.idx}">${esc(c.name)}</option>`).join("");
+    $("ask-chan").value = String(defaultChan(list));
+    say($("ask-msg"), "");
+    renderAskTargets();
+    $("ask-dlg").showModal();
+  }
+  async function sendAsk(e) {
+    e.preventDefault();
+    const ch = devChans.find((c) => c.idx === Number($("ask-chan").value));
+    const target = askTarget();
+    if (!ch || !rxc || askWait(target) > 0) return;
+    const nonce = hex(crypto.getRandomValues(new Uint8Array(3)));
+    const text = `T1R|${target}|${nonce}`, ts = nowS();
+    const body = new TextEncoder().encode(text);
+    const f = new Uint8Array(7 + body.length);      // CMD_SEND_CHANNEL_TXT_MSG: [3, type 0, kanaal, ts (u32 LE), tekst]
+    f.set([3, 0, ch.idx]); new DataView(f.buffer).setUint32(3, ts, true); f.set(body, 7);
+    $("ask-send").disabled = true;
+    try {
+      const r = await ask(f, [0, 1, 6]);
+      if (r[0] === 1) throw new Error("de companion weigerde het bericht (kanaal onbekend?)");
+      if (target === "*") askAllAt = ts; else askOneAt[target] = ts;
+      askReq = { ts, target, nonce, chan: ch.name, expect: target === "*" ? trackersOn(ch.name) : [target], answers: new Map() };
+      $("ask-dlg").close();
+      log(`positieverzoek verstuurd op ${ch.name}: ${text}`);
+      renderAsk();
+    } catch (err) { say($("ask-msg"), err.message, false); askTick(); }
+  }
+  // Antwoord: een T1C-bericht met toestand V, na het verzoek, op hetzelfde kanaal.
+  function noteAnswer(r) {
+    if (!askReq || !r || r.state !== "V") return;
+    if (askReq.target !== "*" && r.pk !== askReq.target) return;
+    const main = r.positions[r.positions.length - 1];
+    if (main.chan && main.chan !== askReq.chan) return;
+    if ((main.rx || nowS()) < askReq.ts - 5) return;
+    askReq.answers.set(r.pk, { ts: main.ts, rx: main.rx || nowS(), fix: main.lat != null, lat: main.lat, lon: main.lon });
+    renderAsk();
+    focusAnswers();
+  }
+  function focusAnswers() {
+    if (!map || !askReq) return;
+    const pts = [...askReq.answers.values()].filter((a) => a.fix);
+    if (!pts.length) return;
+    if (pts.length === 1) { map.flyTo({ center: [pts[0].lon, pts[0].lat], zoom: Math.max(map.getZoom(), 14) }); return; }
+    const b = new maplibregl.LngLatBounds();
+    pts.forEach((p) => b.extend([p.lon, p.lat]));
+    map.fitBounds(b, { padding: 60, maxZoom: 15, duration: 600 });
+  }
+  function askHighlight() {                         // de trackers die antwoordden, laten oplichten op de kaart
+    for (const [pk, m] of markers) m.getElement().querySelector(".omark").classList.toggle("asked", !!askReq && askReq.answers.has(pk));
+  }
+  function renderAsk() {
+    const box = $("o-ask");
+    if (!askReq) { box.hidden = true; box.innerHTML = ""; askHighlight(); return; }
+    const a = askReq, all = a.target === "*";
+    const pks = [...new Set([...a.expect, ...a.answers.keys()])];
+    const got = a.answers.size;
+    const rows = pks.map((pk) => {
+      const x = a.answers.get(pk);
+      return `<li data-pk="${esc(pk)}"${x ? "" : ' class="wait"'}><span class="omark sm" style="background:${esc(colorOf(pk))}"></span>
+        <span class="nm">${esc(nameOf(pk))} <span class="mono muted small">${esc(pk)}</span></span>
+        <span class="small">${x ? `${esc(hms(x.rx))} · ${x.fix ? "met positie" : '<span class="warn">geen fix</span>'}` : "nog geen antwoord"}</span></li>`;
+    }).join("");
+    box.innerHTML = `<div class="askhead"><div><strong>Verzoek verstuurd om ${esc(hms(a.ts))}</strong>
+        <div class="small muted">${all ? `Alle trackers op ${esc(a.chan)}` : `${esc(nameOf(a.target))} op ${esc(a.chan)}`}</div>
+        ${all ? `<div class="small">${got} van ${pks.length} ${pks.length === 1 ? "tracker" : "trackers"} geantwoord</div>` : ""}</div>
+        <button type="button" id="o-ask-close" aria-label="Verzoek sluiten">✕</button></div>
+      <ul>${rows || '<li class="wait">Nog geen trackers gezien op dit kanaal; antwoorden verschijnen hier.</li>'}</ul>`;
+    box.hidden = false;
+    $("o-ask-close").addEventListener("click", () => { askReq = null; renderAsk(); });
+    box.querySelectorAll("li[data-pk]").forEach((li) => li.addEventListener("click", () => {
+      const x = a.answers.get(li.dataset.pk);
+      if (x && x.fix && map) map.flyTo({ center: [x.lon, x.lat], zoom: Math.max(map.getZoom(), 15) });
+    }));
+    askHighlight();
+  }
+  $("o-ask-btn").addEventListener("click", openAsk);
+  $("ask-chan").addEventListener("change", renderAskTargets);
+  $("ask-form").addEventListener("submit", sendAsk);
+  $("ask-cancel").addEventListener("click", () => $("ask-dlg").close());
+  setInterval(askTick, 1000);
 
   // ---- kaarten downloaden (OPFS) -----------------------------------------------------------
   async function renderMaps() {
@@ -790,7 +935,13 @@
     addChat, onFrame, onRawRx,
     // nep-companion voor tests: { write(bytes) } die antwoorden via MTOffline.onFrame teruggeeft
     async attach(fake, name) { rxc = { properties: { write: true }, writeValue: async (b) => fake.write(b) }; selfName = name; setBt(true, name); await readChannels(); await readContacts(); await applyScope(); await syncAll(); },
-    async ingest(text, ts, meta) { const r = await decode(text, ts, meta || {}); return r && r.positions ? storePositions(r.positions) : r; },
+    async ingest(text, ts, meta) {
+      const r = await decode(text, ts, meta || {});
+      if (!r || !r.positions) return r;
+      const n = await storePositions(r.positions);
+      noteAnswer(r);
+      return n;
+    },
   };
 
   (async () => {

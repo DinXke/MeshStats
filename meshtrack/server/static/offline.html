@@ -53,6 +53,24 @@
   #chat-msg { padding: 0 8px 6px; }
   .msglog { font-family: ui-monospace, Consolas, monospace; font-size: 11px; max-height: 160px; overflow: auto; background: var(--bg); border-radius: 8px; padding: 6px; white-space: pre-wrap; }
   header.top h1 { white-space: nowrap; }
+  /* positie vragen */
+  .askpanel { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 8px 0; background: var(--bg); }
+  .askpanel .askhead { display: flex; gap: 8px; align-items: flex-start; }
+  .askpanel .askhead > div { flex: 1; min-width: 0; }
+  .askpanel ul { list-style: none; margin: 6px 0 0; padding: 0; }
+  .askpanel li { display: flex; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); cursor: pointer; flex-wrap: wrap; }
+  .askpanel li.wait { opacity: .6; cursor: default; }
+  .askpanel li .nm { font-weight: 600; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .omark.sm { width: 14px; height: 14px; border-width: 1px; display: inline-block; vertical-align: -2px; flex: none; }
+  .askfs { border: 0; padding: 0; margin: 10px 0 0; }
+  .askopt { display: flex; gap: 8px; align-items: center; padding: 7px 2px; border-bottom: 1px solid var(--line); font-weight: 400; min-height: 40px; overflow-wrap: anywhere; }
+  .askopt input { width: auto; margin: 0; flex: none; }
+  #ask-targets { max-height: 40vh; overflow: auto; }
+  .askwho { padding-left: 18px; margin: 6px 0; }
+  .omark { position: relative; }
+  /* geantwoord op het lopende verzoek: omlijnd (de amber ring van "op verzoek" blijft zichtbaar) */
+  .omark.asked { outline: 2px dashed var(--accent); outline-offset: 7px; }
+  .olegend { display: flex; gap: 6px; align-items: center; margin: 2px 0 6px; }
   #btpill { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
   @media (max-width: 760px) {
     header.top { gap: 6px; }
@@ -131,6 +149,12 @@
         <label for="o-chan" style="margin:0">Kanaal</label>
         <select id="o-chan" style="flex:1;min-width:0"><option value="">Alle kanalen</option></select>
       </div>
+      <div class="row" style="align-items:center;gap:8px">
+        <button type="button" id="o-ask-btn" aria-haspopup="dialog">Positie vragen</button>
+        <span id="o-ask-note" class="msg small"></span>
+      </div>
+      <div class="olegend small muted"><i class="vping" aria-hidden="true"></i> Op verzoek: antwoord op een locatieverzoek</div>
+      <div id="o-ask" class="askpanel" hidden aria-live="polite"></div>
       <div id="o-list"></div>
     </section>
 
@@ -199,6 +223,30 @@
     </section>
   </aside>
 </div>
+<dialog id="ask-dlg" class="dlg" aria-labelledby="ask-h">
+  <form id="ask-form" method="dialog">
+    <h2 id="ask-h">Positie vragen</h2>
+    <p class="muted small" style="margin-top:0">De app stuurt via de companion een verzoek op het trackingkanaal. Trackers die het
+      horen, sturen meteen hun positie.</p>
+    <label for="ask-chan">Kanaal</label>
+    <select id="ask-chan"></select>
+    <fieldset class="askfs"><legend class="small">Aan wie?</legend><div id="ask-targets"></div></fieldset>
+    <details class="small"><summary>Wie antwoordt?</summary>
+      <ul class="muted askwho">
+        <li>Een tracker in companionmodus hoort het verzoek altijd.</li>
+        <li>Een tracker in trackermodus die rijdt of stapt, antwoordt alleen met firmware 0.9.5 of nieuwer en met
+          <em>rx_beweging</em> aan.</li>
+        <li>Een tracker in trackermodus die stilstaat, slaapt en hoort het verzoek niet.</li>
+      </ul>
+      <p class="muted">Om het net te sparen kan "alle trackers" hoogstens 1× per 2 min, één tracker hoogstens 1× per 30 s.</p>
+    </details>
+    <div id="ask-msg" class="msg"></div>
+    <div class="row" style="justify-content:flex-end">
+      <button type="button" id="ask-cancel">Annuleren</button>
+      <button type="submit" class="primary" id="ask-send">Versturen</button>
+    </div>
+  </form>
+</dialog>
 <button type="button" id="osheet-show" class="sheet-show" hidden aria-label="Paneel tonen">☰ Paneel</button>
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/vendor/pmtiles.js"></script>

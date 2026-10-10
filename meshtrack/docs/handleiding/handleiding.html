@@ -33,6 +33,8 @@
   figure img { display: block; width: 100%; border: 1px solid var(--line); border-radius: 2.5mm; box-shadow: 0 1.5mm 4mm rgba(0,0,0,.08); }
   figure.half img { width: 62%; margin: 0 auto; }
   pre.term + pre.term { margin-top: 3mm; }
+  .menus pre.term { font-size: 6.4pt; padding: 3mm; margin: 0; }
+  .cols.menus pre.term + pre.term { margin-top: 0; }
   figure.phones { display: flex; gap: 6mm; justify-content: center; }
   figure.phones div { width: 52mm; }
   figure.phones img { border-radius: 5mm; border: 2.2mm solid #222; }
@@ -90,7 +92,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Firmware 0.9.4 (T1000-E) · MeshCore v1.17.1<br>
+    Firmware 0.9.5 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -110,7 +112,7 @@
     <li><span class="n">9</span> Firmware flashen <small>met behoud van de sleutel</small></li>
     <li><span class="n">10</span> Nieuw toestel klaarmaken, sleutels en back-ups</li>
     <li><span class="n">11</span> Gebruikers, rechten en instellingen <small>wie leest welk kanaal</small></li>
-    <li><span class="n">12</span> De offline-app <small>trackers volgen zonder internet</small></li>
+    <li><span class="n">12</span> De offline-app <small>trackers volgen zonder internet, positie vragen</small></li>
     <li><span class="n">13</span> Problemen oplossen</li>
   </ol>
   <div class="who">
@@ -177,8 +179,9 @@
       bewegingssensor, een buzzer, één knop en een led.</p>
     <h3>Twee modi</h3>
     <ul>
-      <li><strong>Tracker</strong>: Bluetooth staat uit en de radio slaapt tussen twee berichten. Hij stuurt alleen een
-        positie als hij beweegt. Zo gaat de batterij <em>weken</em> mee.</li>
+      <li><strong>Tracker</strong>: Bluetooth staat uit en de radio slaapt tussen twee berichten (onderweg luistert ze
+        standaard mee voor locatieverzoeken). Hij stuurt alleen een positie als hij beweegt. Zo gaat de batterij <em>weken</em>
+        mee.</li>
       <li><strong>Companion</strong>: een gewone MeshCore-companion die met de MeshCore-app verbindt. Aan USB-voeding is
         hij <em>altijd</em> companion.</li>
     </ul>
@@ -230,7 +233,8 @@
   <li><strong>Biep als een repeater de positie doorgeeft</strong> (<code>heard_beep</code>): twee hoge biepjes zodra een repeater
     een automatische positie herhaalt. Dat kost wat batterij: na elk bericht blijft de radio ongeveer 12 s wakker om te luisteren.</li>
 </ul>
-<p>Een klik en een SOS houden altijd hun eigen biepjes, ook als deze twee instellingen uit staan.</p>
+<p>Een klik en een SOS houden altijd hun eigen biepjes, ook als deze twee instellingen uit staan. Met <em>Piepje bij een
+  locatieverzoek</em> (<code>verzoek_beep</code>, standaard uit) hoor je bovendien wanneer iemand je positie opvraagt (hoofdstuk 12).</p>
 <p>Als companion zonder verbonden app piept hij standaard alleen bij een <strong>privébericht</strong> (een DM aan de tracker,
   bv. vanuit de MeshCore-app van een collega), niet bij kanaalberichten zoals de posities van andere trackers. Met
   <em>Biep bij berichten</em> (<code>msg_beep</code>) kies je: alleen privéberichten, alle berichten of nooit.</p>
@@ -282,6 +286,7 @@
   <tr><td class="k">P</td><td>handmatig verstuurd</td><td>Met één klik op de knop.</td></tr>
   <tr><td class="k">E</td><td>SOS</td><td>Noodoproep met de knop.</td></tr>
   <tr><td class="k">B</td><td>modus</td><td>Van modus gewisseld, of aan of van de lader.</td></tr>
+  <tr><td class="k">V</td><td>op verzoek</td><td>Antwoord op een locatieverzoek uit de offline-app of Tracker live (hoofdstuk 12).</td></tr>
   <tr><td class="k">L</td><td>gelogd punt (SlowTrack)</td><td>Punten die SlowTrack logde en samen verstuurde (zie hieronder).</td></tr>
   <tr><td class="k">Q</td><td>ingehaald punt (FIFO)</td><td>Een positie die de mesh eerst niet haalde en later alsnog verstuurd werd, met
     haar echte GPS-tijd (hoofdstuk 4).</td></tr>
@@ -668,6 +673,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <li>Punten van <strong>SlowTrack</strong> (status <em>L</em>) en ingehaalde punten uit de <strong>FIFO</strong>-wachtrij (status
     <em>Q</em>) staan als <strong>kleinere, lichtere stippen</strong> in het spoor.
     Bij een gekozen tracker tonen de popup en de lijst wanneer het laatste SlowTrack-bericht binnenkwam (<em>SlowTrack: laatste burst 14:05</em>).</li>
+  <li>Een antwoord op een <strong>locatieverzoek</strong> (status <em>V</em>) staat als een amberkleurig doelwit (stip met ringen),
+    met de legende <em>Op verzoek</em>. In de weergave van één kanaal kun je zelf een <strong>positie vragen</strong> (hoofdstuk 12).</li>
   <li>Onder <em>Meshnodes op de kaart</em> toon je repeaters, rooms en companions die de server hoorde.</li>
 </ul>
 <figure><img src="img/kaart-tracker.jpg" alt=""><figcaption>Een tracker gekozen: details in de popup, afstand en snelheden in de lijst, export als GPX of CSV, en <em>centreren en volgen</em>.</figcaption></figure>
@@ -767,7 +774,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   zijn kanaalberichten), de modus, het <strong>trackingkanaal</strong> en de belangrijkste instellingen. Een <em>voorinstelling</em> (te voet, fiets, voertuig,
   spaarzaam) vult ze in één klik in; de rest staat achter <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de
   tracker</em> schrijf je ze weg.</p>
-<p>Daarnaast zijn er drie groepen:</p>
+<p>Daarnaast zijn er vier groepen:</p>
 <ul>
   <li><strong>Knop en biepjes</strong>: biep bij berichten (als companion zonder app), biep bij elke verstuurde positie, biep als
     een repeater de positie doorgeeft, en <em>SOS met de knop</em> (zie hoofdstuk 2).</li>
@@ -775,13 +782,15 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     (zie hoofdstuk 3). Een rekenhulp toont meteen hoeveel punten er per bericht komen, en waarschuwt als er punten wegvallen.</li>
   <li><strong>Trackmodus</strong>: classic of FIFO en de instellingen van de wachtrij, met een live berekening van de belasting
     van de mesh (zie hoofdstuk 4).</li>
+  <li><strong>Locatieverzoeken</strong>: verzoeken beantwoorden, de radio laten luisteren zolang de tracker beweegt, en een
+    piepje bij een verzoek (zie hoofdstuk 12).</li>
 </ul>
 <p>Het tabblad <strong>Simulatie</strong> speelt beide trackmodi versneld na met de instellingen van de tracker.
   Heeft de verbonden tracker oudere firmware, dan staan de velden die hij nog niet kent grijs: flash eerst de nieuwste
   firmware (hoofdstuk 9).</p>
 <figure class="phones">
-  <div><img src="img/gsm-knop-biepjes.jpg" alt=""><figcaption>Knop en biepjes, met SOS uit.</figcaption></div>
-  <div><img src="img/gsm-slowtrack.jpg" alt=""><figcaption>SlowTrack met de rekenhulp.</figcaption></div>
+  <div style="width:44mm"><img src="img/gsm-knop-biepjes.jpg" alt=""><figcaption>Knop en biepjes, met SOS uit.</figcaption></div>
+  <div style="width:44mm"><img src="img/gsm-slowtrack.jpg" alt=""><figcaption>SlowTrack met de rekenhulp.</figcaption></div>
 </figure>
 
 <h3>Tracker live: in de tracker kijken</h3>
@@ -792,15 +801,17 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <ul>
   <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
     companionmodus staat; pincode de eerste keer 123456). Chrome of Edge op Android of een computer; niet op een iPhone.</li>
-  <li>De app <strong>leest alleen</strong>: ze gebruikt de commando's <code>status</code>, <code>fifo</code> en <code>dump</code>
-    (de interne toestand in een vorm voor programma's). Via Bluetooth aanvaardt de tracker ook niets anders. Instellingen wijzig
-    je in <em>Toestellen</em>.</li>
+  <li>De app <strong>wijzigt niets</strong> op de tracker: ze gebruikt de commando's <code>status</code>, <code>fifo</code> en
+    <code>dump</code> (de interne toestand in een vorm voor programma's). Via Bluetooth aanvaardt de tracker ook geen andere
+    commando's. Instellingen wijzig je in <em>Toestellen</em>.</li>
+  <li>Via Bluetooth kun je op het tabblad <em>Overzicht</em> ook een <strong>positie vragen</strong> aan de andere trackers op het kanaal
+    (hoofdstuk 12); de antwoorden staan in een lijst, met <em>Op kaart</em>.</li>
 </ul>
 
-<h3 style="break-before: page">Instellingen in de terminal</h3>
+<h3>Instellingen in de terminal</h3>
 <p>Alles uit Toestellen kun je ook met <code>set &lt;instelling&gt; &lt;waarde&gt;</code> zetten. Tijden schrijf je als
   <code>30s</code>, <code>5m</code> of <code>2h</code>; <code>0</code> zet een tijd uit. De belangrijkste:</p>
-<table>
+<table class="brk">
   <tr><th>Instelling</th><th>Betekenis</th><th>Standaard</th></tr>
   <tr><td class="k">min_speed, min_dist</td><td>Afstandsregel: minimumsnelheid (km/u) en minimale verplaatsing (m).</td><td>10, 100</td></tr>
   <tr><td class="k">turn_min, turn_min_speed</td><td>Bochtregel: graden en vanaf welke snelheid.</td><td>30, 5</td></tr>
@@ -820,6 +831,11 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <tr><td class="k">led</td><td>Statusled: <code>companion</code>, <code>altijd</code> of <code>uit</code>.</td><td>companion</td></tr>
   <tr><td class="k">track_in_companion</td><td>Ook posities sturen als companion.</td><td>aan</td></tr>
   <tr><td class="k">accel_sens</td><td>Bewegingsgevoeligheid: <code>laag</code>, <code>midden</code> of <code>hoog</code>.</td><td>midden</td></tr>
+  <tr><td class="k">verzoek aan|uit</td><td>Locatieverzoeken beantwoorden (hoofdstuk 12).</td><td>aan</td></tr>
+  <tr><td class="k">rx_beweging aan|uit</td><td>In trackermodus de radio laten luisteren zolang hij beweegt, zodat hij verzoeken
+    hoort.</td><td>aan</td></tr>
+  <tr><td class="k">verzoek_beep aan|uit</td><td>Kort, herkenbaar deuntje als de tracker een locatieverzoek aanvaardt, ook met de
+    buzzer uit.</td><td>uit</td></tr>
 </table>
 <p><code>status</code> toont ook <code>slow_buffer</code> (gelogde punten die nog verstuurd moeten worden),
   <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code> (onder <code>fast_min_batt</code>),
@@ -835,9 +851,9 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   tot <code>rxlog uit</code> of een herstart. Handig als een SOS-bevestiging niet aankomt (zie hoofdstuk 13).</p>
 <div class="note"><b>Alleen live</b>De tracker bewaart geen log: de regels verschijnen alleen terwijl je meekijkt, en alleen als het
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
-<div>
+<div class="cols menus" style="gap:3mm">
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.4       HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.5       HOOFDMENU
   ==============================================================
    Ploeg 3  |  modus companion (USB)  |  batterij 99%
    tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
@@ -856,7 +872,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.4       MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.9.5       MODUS EN KNOP
   ==============================================================
    Op batterij nu gekozen: tracker.
    Met USB altijd companion.
@@ -870,6 +886,9 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
    6  Biep na elk verstuurd positiebericht ....... uit
    7  Biep als een repeater het herhaalt ......... aan
       (6 en 7 niet bij klik of SOS)
+   8  Locatieverzoeken beantwoorden ............. aan
+   9  Radio luistert in beweging ................ aan
+  10  Deuntje bij een locatieverzoek ............ uit
 
    Knop: 1x = positie nu, 2x = modus wisselen,
          3x = buzzer aan/uit,
@@ -883,7 +902,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <h2 class="chap"><span class="nr">9</span>Firmware flashen</h2>
 <p class="lead">In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je flasht ze
   rechtstreeks vanuit de browser, zonder extra programma's.</p>
-<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.4. Heeft een tracker oudere firmware, dan kent hij
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.5. Heeft een tracker oudere firmware, dan kent hij
   sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
   (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
 <figure class="half"><img src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: back-up, bootloader, flashen en de controle van de sleutel.
@@ -1085,6 +1104,46 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <p>De namen van de trackers komen uit de contacten van de companion; een tracker die de companion (nog) niet kent,
   staat er met het begin van zijn sleutel. De controletekens in de berichten kan alleen de server nakijken. Verbind je met een tracker in companionmodus, dan zie je ook zijn eigen posities,
   gemarkeerd als <em>eigen</em>.</p>
+<h3>Positie vragen (locatieverzoek)</h3>
+<p>Wil je weten waar de trackers nu zijn, dan vraag je hun positie op. Tik bij <em>Trackers</em> op <strong>Positie vragen</strong>
+  en kies <em>Alle trackers op dit kanaal</em> of één tracker. De app stuurt het verzoek via de verbonden companion op het
+  trackingkanaal (dat kan ook in <em>Tracker live</em>, via Bluetooth, op het tabblad <em>Overzicht</em>).</p>
+<ul>
+  <li>Een tracker antwoordt met zijn positie, met de status <strong>V</strong> (<em>op verzoek</em>). Heeft hij een verse fix, dan
+    antwoordt hij meteen; anders zet hij de GPS even aan, en vindt hij geen fix, dan antwoordt hij zonder positie.</li>
+  <li>Bij <em>Alle trackers</em> spreiden de trackers hun antwoord willekeurig over 2 tot 20 seconden, zodat ze elkaar niet storen;
+    één gevraagde tracker antwoordt binnen 1 tot 3 seconden.</li>
+  <li>Het paneel met de antwoorden toont <em>x van y trackers geantwoord</em>, met positie of <em>geen fix</em>. Op de kaart staat
+    een antwoord als een amberkleurig <strong>doelwit</strong> (stip met ringen) dat even oplicht, met de legende
+    <em>Op verzoek</em>. Ook de website toont het zo.</li>
+</ul>
+<table>
+  <tr><th>Wie hoort het verzoek?</th><th>Antwoordt</th></tr>
+  <tr><td class="k">Companionmodus</td><td>Altijd.</td></tr>
+  <tr><td class="k">Trackermodus, rijdend</td><td>Alleen met <em>Radio luistert in beweging</em> (<code>rx_beweging aan</code>, standaard
+    aan): de radio blijft dan luisteren zolang de tracker beweegt. Dat kost onderweg zo'n 15 à 20 % extra stroom.</td></tr>
+  <tr><td class="k">Trackermodus, in rust</td><td>Nee: de radio slaapt en hoort het verzoek niet.</td></tr>
+</table>
+<p><strong>Op de website.</strong> Ook op de kaart van de website kun je een positie vragen, in de weergave van één kanaal (kies
+  het kanaal onder <em>Filter en zichtbaarheid</em>, of open <em>kaart van dit kanaal</em> bij <em>Kanalen</em>). De server stuurt
+  het verzoek dan via zijn eigen companion op dat kanaal.</p>
+<ul>
+  <li>Dat mag iedereen die dat kanaal op de kaart ziet (niveau <em>kaart</em> of <em>sleutel</em>).</li>
+  <li>De grenzen gelden per kanaal en voor alle gebruikers samen: <em>Alle trackers</em> hooguit één keer per 2 minuten, één tracker
+    hooguit één keer per 30 seconden.</li>
+  <li>Elk verzoek komt in het auditlog, en wie dezelfde kaart open heeft, krijgt een korte melding.</li>
+  <li>De antwoorden komen als live posities met het amberkleurige doelwit, met een paneel met de antwoorden.</li>
+</ul>
+<div class="note"><b>Privacy: horen dat iemand vroeg</b>De tracker kan ook laten horen dat iemand zijn positie vroeg: met <em>Piepje bij een locatieverzoek</em>
+  (<code>verzoek_beep aan|uit</code>, standaard uit) speelt hij een kort, herkenbaar deuntje (twee snelle stijgende tonen, een pauze en nog één toon) telkens hij een verzoek aanvaardt, ook als
+  de buzzer uit staat. Zo weet de drager dat iemand zijn positie opvroeg.</div>
+<div class="warn"><b>Niet te vaak vragen</b>Op een kanaal met N trackers geeft <em>Alle trackers</em> N antwoorden op de mesh. Een
+  tracker antwoordt daarom op <em>Alle</em> hooguit één keer per 2 minuten en op een gericht verzoek hooguit één keer per 30 seconden;
+  de apps houden zich aan dezelfde grenzen. Hetzelfde verzoek beantwoordt een tracker maar één keer.</div>
+<p>In <em>Toestellen</em> → <em>Instellingen</em> → <em>Locatieverzoeken</em> (of het menu <em>Modus en knop</em>, punt 8 tot 10) zet
+  je <em>Locatieverzoeken beantwoorden</em> (<code>verzoek aan|uit</code>), <em>Radio luistert in beweging</em>
+  (<code>rx_beweging aan|uit</code>) en <em>Piepje bij een locatieverzoek</em> (<code>verzoek_beep aan|uit</code>). De server telt de verzoeken in zijn statistieken en behandelt een V-antwoord als een gewone live
+  positie.</p>
 <div class="cols">
   <div>
     <h3>Chat en herhalingen</h3>
@@ -1151,7 +1210,13 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     slaap. Pas na een stop die langer duurt dan <code>still_timeout</code> moet de sensor hem alleen wekken. Voor een heel soepele auto:
     <code>set accel_sens hoog</code>, of een langere <code>still_timeout</code> (bv. 10 min).</td></tr>
   <tr><td class="k">Batterij loopt sneller leeg</td><td>Staat <em>Biep als een repeater de positie doorgeeft</em> aan? Dan blijft de radio na
-    elk bericht ongeveer 12 s wakker. Ook een kort <code>slow_log</code> kost stroom, omdat de GPS dan vaker aan moet.</td></tr>
+    elk bericht ongeveer 12 s wakker. Ook een kort <code>slow_log</code> kost stroom, omdat de GPS dan vaker aan moet. En met
+    <code>rx_beweging aan</code> (standaard) luistert de radio onderweg mee voor locatieverzoeken: zo'n 15 à 20 % extra tijdens het
+    rijden. Heb je geen verzoeken nodig, zet het dan uit.</td></tr>
+  <tr><td class="k">Geen antwoord op een locatieverzoek</td><td>Een tracker in trackermodus die stilstaat, slaapt en hoort niets; een
+    rijdende hoort het alleen met <code>rx_beweging aan</code>. Staat <code>verzoek</code> uit? Een tracker antwoordt op <em>Alle</em>
+    hooguit één keer per 2 min en op een gericht verzoek één keer per 30 s. <em>Geen fix</em>: hij antwoordde wel, maar vond geen
+    GPS-positie.</td></tr>
   <tr><td class="k">SOS-bevestiging komt niet aan</td><td>Toont <code>status</code> <code>path_bytes=2</code>? Zo niet:
     <code>set path_bytes 2</code> en <code>reboot</code>. Sommige repeaters sturen 1-byte padhashes niet door; de server zet
     zijn companion daarom op 2 bytes (serverlog: <em>padhashes van de companion op 2 bytes gezet</em>). Met <code>rxlog aan</code>

@@ -213,6 +213,10 @@
     })) };
   }
 
+  // Op verzoek (toestand V): amber, in het donker lichter (zelfde kleur als --vreq in style.css)
+  const vAmber = () => (dark.matches ? "#ffc83d" : "#e0a400");
+  const vColor = (c) => ["case", ["==", ["get", "state"], "V"], vAmber(), c];
+
   function addLayers() {
     if (map.getSource("tracks")) return;
     const f = trackFeatures();
@@ -243,9 +247,13 @@
     map.addLayer({ id: "points", type: "circle", source: "points", minzoom: 12,
       // SlowTrack-punten (state L): kleinere, lichtere stippen; de lijn blijft chronologisch
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 1.3, 2], 16, ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 3, 5]],
-               "circle-color": colorSel.value === "speed" ? speedColor : ["get", "color"],
+               "circle-color": vColor(colorSel.value === "speed" ? speedColor : ["get", "color"]),
                "circle-opacity": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.7, 1],
                "circle-stroke-color": dark.matches ? "#000" : "#fff", "circle-stroke-width": ["case", ["match", ["get", "state"], ["L", "Q"], true, false], 0.5, 1] } });
+    // Op verzoek (V): amber stip met een kleine ring, bescheiden in het spoor
+    map.addLayer({ id: "points-v", type: "circle", source: "points", minzoom: 12, filter: ["==", ["get", "state"], "V"],
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 16, 8], "circle-color": "rgba(0,0,0,0)",
+               "circle-stroke-color": vAmber(), "circle-stroke-width": 1.5 } });
     map.addSource("draw", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "draw-fill", type: "fill", source: "draw", paint: { "fill-color": "#3b82f6", "fill-opacity": 0.15 } });
     map.addLayer({ id: "draw-line", type: "line", source: "draw", paint: { "line-color": "#3b82f6", "line-width": 2 } });
@@ -264,7 +272,8 @@
     map.getSource("nodes").setData(nodeFeatures());
     const c = colorSel.value === "speed" ? speedColor : ["get", "color"];
     map.setPaintProperty("tracks", "line-color", c);
-    map.setPaintProperty("points", "circle-color", c);
+    map.setPaintProperty("points", "circle-color", vColor(c));
+    map.setPaintProperty("points-v", "circle-stroke-color", vAmber());
   }
 
   map.on("click", "points", (e) => {
@@ -351,6 +360,15 @@
     el.style.background = t.color;
     el.classList.toggle("stale", t.stale);
     el.classList.toggle("sos", t.last_state === "E");
+    // antwoord op een locatieverzoek: amber ring; bij een nieuw antwoord een korte puls
+    el.classList.toggle("vreq", t.last_state === "V");
+    if (t.last_state === "V" && el.dataset.vts !== String(t.last_ts)) {
+      if (el.dataset.vts !== undefined || Date.now() / 1000 - (t.last_rx || 0) < 120) {
+        el.classList.remove("vpulse"); void el.offsetWidth; el.classList.add("vpulse");
+        setTimeout(() => el.classList.remove("vpulse"), 3600);
+      }
+      el.dataset.vts = String(t.last_ts);
+    }
     el.classList.toggle("lost", !!t.lost);
     const moving = t.last_crs != null && (t.last_spd || 0) >= 3;
     el.classList.toggle("has-crs", moving);
@@ -501,8 +519,9 @@
     sel.innerHTML = '<option value="0">Alle kanalen</option>' +
       chans.map((c) => `<option value="${c.id}">${MT.esc(c.name)} (${c.trackers})</option>`).join("");
     sel.value = String(prefs.kanaal);
+    if (typeof rqUpdBar === "function") rqUpdBar();
   }
-  $("tgfilter").addEventListener("change", () => { prefs.kanaal = Number($("tgfilter").value); savePrefs(); renderList(); });
+  $("tgfilter").addEventListener("change", () => { prefs.kanaal = Number($("tgfilter").value); savePrefs(); renderList(); rqUpdBar(); });
 
   async function loadAll() {
     await loadTgroups();
@@ -879,7 +898,7 @@
   let burstTimer = null, burstEase = false;
   const followTo = (t) => { if (following === t.id && t.last_lat != null) map.easeTo({ center: [t.last_lon, t.last_lat], duration: 800 }); };
   MT.live((msg) => {
-    if (msg.type === "mesh") MT.meshPill($("mesh"), msg.mesh);
+    if (msg.type === "mesh") { MT.meshPill($("mesh"), msg.mesh); status.mesh = msg.mesh; if (msg.mesh && msg.mesh.connected && rq.info) rq.info.connected = true; rqUpdBar(); }
     if (msg.type === "position") {
       const t = msg.tracker;
       trackers.set(t.id, t);
@@ -899,6 +918,7 @@
         sosPts.get(t.id).push({ lat: p.lat, lon: p.lon, ts: p.ts, state: "E" });
       }
       upsertMarker(t);
+      rqNote(t, p);
       if (p.slow === 1) {
         if (!hist) burstEase = true;
         clearTimeout(burstTimer);
@@ -915,6 +935,7 @@
     }
     if (msg.type === "tracker" || msg.type === "tracker_deleted" || msg.type === "channels") loadAll();
     if (msg.type === "geofences") loadZones();
+    if (msg.type === "loc_request") rqEvent(msg);
     if (msg.type === "lost_seen" && msg.tracker) {
       const t = msg.tracker;
       if (trackers.has(t.id)) { trackers.set(t.id, { ...trackers.get(t.id), ...t }); renderList(); }
@@ -926,6 +947,163 @@
       if (!$("pane-zones").hidden) refreshEvents();
     }
   });
+
+  // ---- positie vragen (locatieverzoek via de server) ------------------------------------------
+  // POST /api/channels/{cid}/request {target:"*"|id} laat de server "T1R|..." op het kanaal sturen; trackers
+  // (0.9.5+) antwoorden met een gewone positie met toestand V. GET geeft de wachttijden en de trackers.
+  const rqSay = (el, t, ok) => { el.textContent = t || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); };
+  const rq = { req: null, info: null, until: {} };      // until: "cid:*" of "cid:id" -> tijdstip (s) tot wanneer wachten
+  const nowS = () => Date.now() / 1000;
+  const rqWait = (cid, target) => Math.max(0, Math.ceil((rq.until[`${cid}:${target}`] || 0) - nowS()));
+  const rqHms = (ts) => new Date(ts * 1000).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const rqChanName = (cid) => ((chans.find((c) => c.id === cid) || {}).name || `kanaal ${cid}`);
+  async function rqFetch(path, opts = {}) {             // zoals MT.api, maar met status en het antwoord van de server
+    const r = await fetch(path, { ...opts, headers: opts.body ? { "Content-Type": "application/json" } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined });
+    if (r.status === 401) { location.href = "/login"; throw new Error("niet ingelogd"); }
+    const j = await r.json().catch(() => ({}));
+    return { status: r.status, ok: r.ok, j, retry: Number(j.retry_after || r.headers.get("Retry-After") || 0) };
+  }
+  function rqUpdBar() {
+    const show = !kiosk && MT.me && MT.me.kind === "user" && chans.length > 0;
+    $("rq-wrap").hidden = !show;
+    if (!show) return;
+    const cid = prefs.kanaal || 0;
+    const w = cid ? rqWait(cid, "*") : 0;
+    // zonder verbinding met de mesh kan de server niets versturen
+    const off = !!(status.mesh && status.mesh.connected === false) || !!(rq.info && rq.info.cid === cid && rq.info.connected === false);
+    $("rq-btn").disabled = off;
+    $("rq-btn").textContent = w && !off ? `Positie vragen (alle: nog ${w} s)` : "Positie vragen";
+    $("rq-lbl").textContent = off ? "De server is niet met de mesh verbonden" : cid ? `op ${rqChanName(cid)}` : "";
+  }
+  function rqTarget() { return (document.querySelector('#rq-targets input[name="rq-t"]:checked') || {}).value || "*"; }
+  function rqTick() {
+    rqUpdBar();
+    if (!$("rq-dlg").open) return;
+    const cid = Number($("rq-chan").value), b = $("rq-send");
+    if (rq.info && rq.info.connected === false) { b.disabled = true; b.textContent = "Versturen"; return; }
+    const w = rqWait(cid, rqTarget());
+    b.disabled = w > 0;
+    b.textContent = w ? `Versturen (nog ${w} s)` : "Versturen";
+  }
+  setInterval(rqTick, 1000);
+  async function rqLoad() {                              // wachttijden en trackers van het gekozen kanaal
+    const cid = Number($("rq-chan").value);
+    $("rq-targets").innerHTML = '<div class="small muted">Laden…</div>';
+    rqSay($("rq-msg"), "");
+    const r = await rqFetch(`/api/channels/${cid}/request`).catch((e) => ({ ok: false, j: { detail: e.message } }));
+    if (!r.ok) {
+      rq.info = null;
+      $("rq-targets").innerHTML = "";
+      rqSay($("rq-msg"), r.status === 403 ? "Je mag geen positie vragen op dit kanaal." : (r.j.detail || "Kon de wachttijden niet ophalen."), false);
+      $("rq-send").disabled = true;
+      return;
+    }
+    rq.info = { ...r.j, cid };
+    const t0 = nowS();
+    rq.until[`${cid}:*`] = t0 + (r.j.all_wait || 0);
+    (r.j.trackers || []).forEach((t) => { rq.until[`${cid}:${t.id}`] = t0 + (t.wait || 0); });
+    const cur = rqTarget();
+    const list = (r.j.trackers || []).slice().sort((a, b) => String(a.alias).localeCompare(String(b.alias)));
+    $("rq-targets").innerHTML = `<label class="askopt"><input type="radio" name="rq-t" value="*"> Alle trackers op dit kanaal (${list.length})</label>`
+      + list.map((t) => { const tr = trackers.get(t.id) || {};
+        return `<label class="askopt"><input type="radio" name="rq-t" value="${t.id}"><span class="askdot" style="background:${MT.esc(tr.color || "#888")}"></span>
+          <span>${MT.esc(t.alias)}</span></label>`; }).join("");
+    const radios = [...$("rq-targets").querySelectorAll('input[name="rq-t"]')];
+    (radios.find((x) => x.value === cur) || radios[0]).checked = true;
+    radios.forEach((x) => x.addEventListener("change", rqTick));
+    if (r.j.connected === false) rqSay($("rq-msg"), "De server is niet met de mesh verbonden.", false);
+    rqTick();
+  }
+  function rqOpen() {
+    const sel = $("rq-chan");
+    sel.innerHTML = chans.map((c) => `<option value="${c.id}">${MT.esc(c.name)}</option>`).join("");
+    sel.value = String(prefs.kanaal && chans.some((c) => c.id === prefs.kanaal) ? prefs.kanaal : chans[0].id);
+    $("rq-dlg").showModal();
+    rqLoad();
+  }
+  async function rqSend(e) {
+    e.preventDefault();
+    const cid = Number($("rq-chan").value), tv = rqTarget();
+    const target = tv === "*" ? "*" : Number(tv);
+    if (rqWait(cid, tv) > 0) return;
+    $("rq-send").disabled = true;
+    const r = await rqFetch(`/api/channels/${cid}/request`, { method: "POST", body: { target } }).catch((err) => ({ ok: false, j: { detail: err.message } }));
+    if (!r.ok) {
+      if (r.status === 429 && r.retry) rq.until[`${cid}:${tv}`] = nowS() + r.retry;
+      const why = r.status === 503 ? "De server is niet met de mesh verbonden; het verzoek kon niet weg."
+        : r.status === 502 ? "Versturen mislukt; probeer het zo opnieuw."
+        : r.status === 403 ? "Je mag geen positie vragen op dit kanaal."
+        : r.j.detail || "Versturen mislukt.";
+      rqSay($("rq-msg"), why, false);
+      rqTick();
+      return;
+    }
+    const sent = r.j.sent_at || nowS();
+    const info = rq.info && rq.info.cid === cid ? rq.info : { trackers: [], all_interval: 120, tracker_interval: 30 };
+    rq.until[`${cid}:${tv}`] = sent + (tv === "*" ? info.all_interval || 120 : info.tracker_interval || 30);
+    rq.req = { cid, target, sent, mine: true,
+      expect: target === "*" ? (info.trackers || []).map((t) => t.id) : [target], answers: new Map() };
+    $("rq-dlg").close();
+    rqRender();
+  }
+  // Antwoord: een live positie met toestand V van een tracker op dat kanaal, na het verzoek.
+  function rqNote(t, p) {
+    const q = rq.req;
+    if (!q || p.state !== "V" || p.history === 1) return;
+    if (t.channel_id !== q.cid || (q.target !== "*" && t.id !== q.target)) return;
+    if (nowS() < q.sent - 5) return;
+    q.answers.set(t.id, { at: nowS(), fix: p.lat != null && !p.suspect, lat: p.lat, lon: p.lon });
+    rqRender();
+    const pts = [...q.answers.values()].filter((a) => a.fix);
+    if (pts.length === 1) map.flyTo({ center: [pts[0].lon, pts[0].lat], zoom: Math.max(map.getZoom(), 14) });
+    else if (pts.length > 1) {
+      const b = new maplibregl.LngLatBounds();
+      pts.forEach((a) => b.extend([a.lon, a.lat]));
+      map.fitBounds(b, { padding: 60, maxZoom: 15, duration: 600 });
+    }
+  }
+  function rqRender() {
+    const box = $("rq-panel"), q = rq.req;
+    for (const [id, m] of markers) m.getElement().classList.toggle("asked", !!q && q.answers.has(id));
+    if (!q) { box.hidden = true; box.innerHTML = ""; return; }
+    const all = q.target === "*";
+    const ids = [...new Set([...q.expect, ...q.answers.keys()])];
+    const nameOf = (id) => (trackers.get(id) || {}).alias || `tracker ${id}`;
+    const rows = ids.map((id) => {
+      const a = q.answers.get(id), tr = trackers.get(id) || {};
+      return `<li data-id="${id}"${a ? "" : ' class="wait"'}><span class="askdot" style="background:${MT.esc(tr.color || "#888")}"></span>
+        <span class="nm">${MT.esc(nameOf(id))}</span>
+        <span class="small">${a ? `${rqHms(a.at)} · ${a.fix ? '<i class="vping" aria-hidden="true"></i> met positie' : '<span class="warn">geen fix</span>'}` : "nog geen antwoord"}</span></li>`;
+    }).join("");
+    box.innerHTML = `<div class="askhead"><div><strong>Verzoek verstuurd om ${rqHms(q.sent)}</strong>
+        <div class="small muted">${all ? `Alle trackers op ${MT.esc(rqChanName(q.cid))}` : `${MT.esc(nameOf(q.target))} op ${MT.esc(rqChanName(q.cid))}`}</div>
+        ${all ? `<div class="small">${q.answers.size} van ${ids.length} ${ids.length === 1 ? "tracker" : "trackers"} geantwoord</div>` : ""}</div>
+        <button type="button" class="ghost" id="rq-close" aria-label="Verzoek sluiten">✕</button></div>
+      <ul>${rows || '<li class="wait">Nog geen trackers op dit kanaal; antwoorden verschijnen hier.</li>'}</ul>`;
+    box.hidden = false;
+    $("rq-close").addEventListener("click", () => { rq.req = null; rqRender(); });
+    box.querySelectorAll("li[data-id]").forEach((li) => li.addEventListener("click", () => {
+      const a = q.answers.get(Number(li.dataset.id));
+      if (a && a.fix) map.flyTo({ center: [a.lon, a.lat], zoom: Math.max(map.getZoom(), 15) });
+    }));
+  }
+  // Verzoek van iemand anders op een kanaal dat je ziet: melding, en de wachttijd ook hier laten tellen.
+  function rqEvent(m) {
+    const cid = m.channel_id, tv = String(m.target);
+    const sent = m.sent_at || nowS();
+    const keep = rq.info && rq.info.cid === cid ? rq.info : {};
+    rq.until[`${cid}:${tv}`] = Math.max(rq.until[`${cid}:${tv}`] || 0, sent + (tv === "*" ? keep.all_interval || 120 : keep.tracker_interval || 30));
+    const own = rq.req && rq.req.mine && rq.req.cid === cid && String(rq.req.target) === tv && Math.abs(rq.req.sent - sent) < 5;
+    if (own) return;
+    const who = m.by ? String(m.by) : "Iemand";
+    const what = tv === "*" ? "alle trackers" : ((trackers.get(Number(tv)) || {}).alias || "een tracker");
+    toast(`${who} vroeg de positie van ${what} op ${rqChanName(cid)}`);
+    rqTick();
+  }
+  $("rq-btn").addEventListener("click", rqOpen);
+  $("rq-chan").addEventListener("change", rqLoad);
+  $("rq-form").addEventListener("submit", rqSend);
+  $("rq-cancel").addEventListener("click", () => $("rq-dlg").close());
 
   setInterval(() => { renderList(); for (const t of trackers.values()) upsertMarker(t); }, 30000);
   if (kiosk) {

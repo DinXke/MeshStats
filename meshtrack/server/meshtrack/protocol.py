@@ -42,6 +42,7 @@ STATES = {
     "N": "geen fix",
     "E": "SOS",
     "P": "handmatig",
+    "V": "op verzoek",             # fw 0.9.5: antwoord op een T1R-verzoek; live, zoals P
     "B": "modus/boot",
     "L": "gelogd punt (SlowTrack)",
     "Q": "ingehaald punt (FIFO)",

@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.9.5",
+      "date": "2026-10-10",
+      "notes": "Nieuw: locatieverzoeken. De app kan via het trackingkanaal vragen waar een tracker is (T1R, voor iedereen of voor één tracker); de tracker antwoordt met een positiebericht V (op verzoek), met positie als er een fix is. Zonder verse fix gaat de GPS kort aan. Dubbele verzoeken worden genegeerd; voor iedereen hooguit eens per 2 minuten (na 2 tot 20 s, zodat niet alle trackers tegelijk zenden), gericht hooguit eens per 30 s. Nieuwe instellingen: verzoek aan|uit (standaard aan), verzoek_beep aan|uit (standaard uit: een kort deuntje als de tracker een verzoek aanvaardt) en rx_beweging aan|uit (standaard aan: in trackermodus blijft de radio luisteren zolang de tracker beweegt, zodat hij verzoeken onderweg hoort; in rust slaapt de radio zoals gewoonlijk). Instellingen v7 (v6 wordt overgenomen). 'dump' toont een regel req.",
+      "zip": "meshtrack-t1000e-0.9.5.zip",
+      "zip_sha256": "a18ecf28488d52c9d222b1690fa5ffbd4c5ded01d9286b0320c16537151e22ab",
+      "uf2": "meshtrack-t1000e-0.9.5.uf2",
+      "app_size": 445872,
+      "meshcore": "v1.17.1"
+    },
+    {
       "version": "0.9.4",
       "date": "2026-10-09",
       "notes": "Belangrijke oplossing voor gegevensverlies: 0.9.3 kon na een bevestiging (T1F) van de server punten uit de wachtrij wissen die de server nooit gekregen had, omdat die bevestiging gold voor alle punten tot een bepaald tijdstip. Vanaf 0.9.4 bevestigt de server per inhaalbericht (volgnummer): elk Q-bericht vraagt dat met de letter g, en alleen de punten van de bevestigde berichten verdwijnen. De oude bevestiging met een tijdstip wordt genegeerd. Punten worden ook nooit meer opgegeven na te veel pogingen: geparkeerde punten krijgen alleen een lagere voorrang en 60 min wachttijd, en in rust of als companion krijgen ze bij sterke dekking (hooguit eens per 30 min) een nieuwe kans. Een punt verdwijnt alleen nog als een repeater zijn bericht herhaalt, als de server dat bericht bevestigt, of als de wachtrij overloopt.",
@@ -161,5 +171,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.4"
+  "latest": "0.9.5"
 }

@@ -134,6 +134,9 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "sos"))            { uint8_t o = 1; ok = parse_onoff(v, &o); c.sos_off = o ? 0 : 1; }
   else if (!strcmp(k, "tx_beep"))        ok = parse_onoff(v, &c.tx_beep);
   else if (!strcmp(k, "heard_beep"))     ok = parse_onoff(v, &c.heard_beep);
+  else if (!strcmp(k, "verzoek"))        { uint8_t o = 1; ok = parse_onoff(v, &o); c.verzoek_uit = o ? 0 : 1; }
+  else if (!strcmp(k, "verzoek_beep"))   ok = parse_onoff(v, &c.verzoek_beep);
+  else if (!strcmp(k, "rx_beweging"))    { uint8_t o = 1; ok = parse_onoff(v, &o); c.rx_beweging_uit = o ? 0 : 1; }
   else if (!strcmp(k, "track_mode")) {
     ok = true;
     if (!strcmp(v, "classic")) c.track_mode = MT_TRACK_CLASSIC;
@@ -492,6 +495,8 @@ static void cmd_status() {
   outl("slow_log=%s slow_send=%s fast_min_batt=%u sos=%s tx_beep=%s heard_beep=%s", a, b,
        (unsigned)mt_cfg.fast_min_batt, mt_cfg.sos_off ? "uit" : "aan", mt_cfg.tx_beep ? "aan" : "uit",
        mt_cfg.heard_beep ? "aan" : "uit");
+  outl("verzoek=%s rx_beweging=%s verzoek_beep=%s", mt_cfg.verzoek_uit ? "uit" : "aan", mt_cfg.rx_beweging_uit ? "uit" : "aan",
+       mt_cfg.verzoek_beep ? "aan" : "uit");
   outl("slow_buffer=%u fasttrack=%s slow_per_bericht=6-11", (unsigned)mt_tracker_slow_buffered(),
        mt_tracker_fast_suspended() ? "uit(batterij)" : "aan");
   {
@@ -570,6 +575,13 @@ static void cmd_help() {
   outl("    sos aan|uit        SOS door 2-8 s vasthouden (uit: geen SOS, geen wapenbiep; uitschakelen blijft)");
   outl("    tx_beep aan|uit    korte biep telkens de radio een positiebericht verzonden heeft (niet bij klik/SOS)");
   outl("    heard_beep aan|uit twee hoge biepjes als een repeater een positiebericht herhaalt (niet bij klik/SOS)");
+  outl("    verzoek aan|uit    locatieverzoeken (T1R) van de app beantwoorden met een V-bericht (standaard aan).");
+  outl("      Voor iedereen (*) hooguit 1x per 120 s, na 2-20 s; gericht aan deze tracker hooguit 1x per 30 s,");
+  outl("      na 1-3 s. Zonder verse fix gaat de GPS kort aan (hooguit fix_timeout_hb).");
+  outl("    verzoek_beep aan|uit  kort deuntje telkens de tracker een locatieverzoek aanvaardt (standaard uit;");
+  outl("      niet bij genegeerde verzoeken of verzoeken voor een andere tracker; klinkt ook met de buzzer gedempt)");
+  outl("    rx_beweging aan|uit  in trackermodus de radio laten luisteren zolang de tracker beweegt, zodat");
+  outl("      hij verzoeken hoort (standaard aan; kost wat batterij). In rust slaapt de radio zoals gewoonlijk.");
   outl("    track_mode classic|fifo  classic = FastTrack + SlowTrack zoals voorheen; fifo = wachtrij voor posities");
   outl("      die de mesh niet haalden. Punten van een niet herhaald FastTrack-bericht liften eerst mee met de");
   outl("      volgende berichten; lukt dat niet, dan gaat alleen het hoofdpunt (met tijd) in de wachtrij.");
@@ -795,6 +807,10 @@ static void show() {
       outl("   6  Biep na elk verstuurd positiebericht ...... %s", mt_cfg.tx_beep ? "aan" : "uit");
       outl("   7  Biep als een repeater het herhaalt ........ %s", mt_cfg.heard_beep ? "aan" : "uit");
       outl("      (6 en 7 niet bij klik of SOS: die hebben hun eigen terugmelding)");
+      outl("   8  Locatieverzoeken beantwoorden ............. %s", mt_cfg.verzoek_uit ? "uit" : "aan");
+      outl("   9  Radio luistert in beweging ................ %s", mt_cfg.rx_beweging_uit ? "uit" : "aan");
+      outl("  10  Deuntje bij een locatieverzoek ............ %s", mt_cfg.verzoek_beep ? "aan" : "uit");
+      outl("      (9: zo hoort de tracker verzoeken onderweg; in rust slaapt de radio)");
       outl("");
       outl("   Knop: 1x = positie nu, 2x = modus wisselen, 3x = buzzer aan/uit,");
       if (mt_cfg.sos_off) outl("         2-8 s vasthouden = niets (SOS uit), langer dan 8 s = uitschakelen.");
@@ -905,6 +921,9 @@ static void menu_choice(int n) {
       else if (n == 5) set_param("sos", mt_cfg.sos_off ? "aan" : "uit");
       else if (n == 6) set_param("tx_beep", mt_cfg.tx_beep ? "uit" : "aan");
       else if (n == 7) set_param("heard_beep", mt_cfg.heard_beep ? "uit" : "aan");
+      else if (n == 8) set_param("verzoek", mt_cfg.verzoek_uit ? "aan" : "uit");
+      else if (n == 9) set_param("rx_beweging", mt_cfg.rx_beweging_uit ? "aan" : "uit");
+      else if (n == 10) set_param("verzoek_beep", mt_cfg.verzoek_beep ? "uit" : "aan");
       else if (n == 0) s_screen = SC_MAIN;
       show();
       return;
