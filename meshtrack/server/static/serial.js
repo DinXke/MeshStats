@@ -319,6 +319,7 @@
     });
     gateSince(kv);
     applyNeeds(kv);
+    bleUi(kv);
     prioUi();
     fifoUi();                                       // roept ook slowCalc op
     setMode(kv.gekozen || "tracker");
@@ -541,6 +542,70 @@
   }
   window.MTCaps = { capsOf, keyState, capsSummary, BOARD_CAPS };
   window.MTHasMotionSensor = (kv) => capsOf(kv).accel;   // de simulatie: zonder sensor alleen rust via de GPS
+
+  // ---- Bluetooth-code (firmware 0.9.9, alleen via USB) -------------------------------------------
+  // status blepin=eigen|standaard; set blepin <6 cijfers> | standaard; "blepin toon" geeft de huidige code.
+  // De code gaat nooit mee in een back-up en staat niet in de terminal (stille opdrachten).
+  function bleUi(kv) {
+    const has = "blepin" in kv;
+    ["s-bleset", "s-bledef", "s-bleshow"].forEach((id) => { $(id).disabled = !has; });
+    const st = $("s-blestate");
+    st.textContent = !has ? "" : kv.blepin === "eigen" ? "Eigen code ingesteld." : "Standaardcode 123456 (af te raden).";
+    st.className = "small" + (has && kv.blepin !== "eigen" ? " warn" : "");
+    // oudere MeshTrack: USB kent alleen de tekst-CLI, dus via Bluetooth in Tracker live
+    const hint = document.querySelector("#s-blebox > .fwhint");
+    if (hint && !has) hint.innerHTML = 'Vanaf firmware 0.9.9 (of via Bluetooth in <a href="/tracker">Tracker live</a> → Instellingen).';
+  }
+  const bleMsg = (t, ok) => msg($("s-blemsg"), t, ok);
+  async function bleRun(cmd) {
+    const out = await until(cmd, /bewaard|ongeldig|onbekend|NIET|fout|gebruik/, 3000, true);
+    const bad = out.find((l) => /ongeldig|onbekend|NIET|fout|gebruik/.test(l));
+    if (bad) throw new Error(bad.replace(/[0-9]{6}/g, "••••••").trim());
+  }
+  $("s-bleset").addEventListener("click", async () => {
+    const a = $("s-blepin1").value.trim(), b = $("s-blepin2").value.trim();
+    if (!/^[1-9][0-9]{5}$/.test(a)) { bleMsg("De code moet uit 6 cijfers bestaan, van 100000 tot 999999."); return; }
+    if (a !== b) { bleMsg("De twee codes zijn niet gelijk."); return; }
+    try {
+      await bleRun(`set blepin ${a}`);
+      $("s-blepin1").value = $("s-blepin2").value = "";
+      lastKv.blepin = "eigen"; bleUi(lastKv);
+      bleMsg("Code bewaard op de tracker.", true);
+      $("s-bleafter").hidden = false;
+    } catch (e) { bleMsg(`Niet aanvaard: ${e.message}`); }
+  });
+  $("s-bledef").addEventListener("click", async () => {
+    if (!(await MT.confirm("De standaardcode 123456 terugzetten? Iedereen die de standaardcode kent, kan dan met de tracker koppelen.", { ok: "Standaard", title: "Bluetooth-code" }))) return;
+    try {
+      await bleRun("set blepin standaard");
+      lastKv.blepin = "standaard"; bleUi(lastKv);
+      bleMsg("Standaardcode 123456 bewaard op de tracker.", true);
+      $("s-bleafter").hidden = false;
+    } catch (e) { bleMsg(`Niet aanvaard: ${e.message}`); }
+  });
+  // Enter in een codeveld: de code instellen, niet het hele formulier opslaan
+  ["s-blepin1", "s-blepin2"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("s-bleset").click(); } }));
+  let bleTimer = null;
+  $("s-bleshow").addEventListener("click", async () => {
+    try {
+      const out = await until("blepin toon", /\b[0-9]{6}\b|onbekend|alleen|fout/, 3000, true);
+      const m = out.join(" ").match(/\b([0-9]{6})\b/);
+      if (!m) throw new Error("de tracker gaf geen code");
+      bleMsg(`Huidige code: ${m[1]}`, true);
+      clearTimeout(bleTimer);
+      bleTimer = setTimeout(() => bleMsg(""), 15000);     // niet blijven staan
+    } catch (e) { bleMsg(e.message); }
+  });
+  $("s-blereboot").addEventListener("click", async () => {
+    if (!window.MTDevice || !MTDevice.restart) return;
+    $("s-blereboot").disabled = true;
+    try {
+      bleMsg("Herstarten…", true);
+      await MTDevice.restart((t) => bleMsg(t, true));
+      bleMsg("Herstart. Vergeet de tracker nu in de Bluetooth-instellingen van je gsm en koppel hem opnieuw met de nieuwe code.", true);
+      $("s-bleafter").hidden = true;
+    } catch (e) { bleMsg(e.message); } finally { $("s-blereboot").disabled = false; }
+  });
 
   let mode = "tracker";
   function setMode(v) {

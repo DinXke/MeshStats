@@ -158,6 +158,18 @@ static bool parse_key(const char* s, uint8_t* o) {
 static bool parse_hex(const char* s, uint8_t* o, int n);   // verderop
 static const char* set_param(const char* k, const char* v) {
   if (!key_exists(k)) return "bestaat niet op dit toestel";
+  if (!strcmp(k, "blepin")) {                 // Bluetooth-koppelcode (0.9.9), zoals CMD_SET_DEVICE_PIN van de app
+    uint32_t pin = 0;
+    if (strcmp(v, "standaard") && strcmp(v, "default")) {
+      char* end;
+      unsigned long x = strtoul(v, &end, 10);
+      if (end == v || *end || x < 100000 || x > 999999) return "ongeldige code (6 cijfers, 100000..999999, of standaard)";
+      pin = (uint32_t)x;
+    }
+    the_mesh.getNodePrefs()->ble_pin = pin;      // 0 = standaard (BLE_PIN_CODE)
+    the_mesh.savePrefs();
+    return NULL;
+  }
   MtCfg c = mt_cfg;
   bool ok = false;
   uint32_t d;
@@ -374,6 +386,10 @@ static void fifo_summary(const char* pre) {
        pre);
   outl("%szonder herhaling tellen niet, maar nooit meer dan %lu pogingen per uur (2x fifo_per_uur).", pre,
        (unsigned long)(2 * per));
+}
+static void blepin_note(const char* k, const char* pre) {
+  if (!strcmp(k, "blepin"))
+    outl("%snieuwe code werkt na een herstart; vergeet daarna de tracker in de Bluetooth-instellingen en koppel opnieuw", pre);
 }
 static void fifo_set_note(const char* k, const char* pre) {
   if (!strcmp(k, "fifo_max") || !strcmp(k, "fifo_gap") || !strcmp(k, "fifo_per_uur") || !strcmp(k, "fifo_wacht"))
@@ -629,7 +645,8 @@ static void cmd_status() {
   outl("slow_log=%s slow_send=%s fast_min_batt=%u sos=%s tx_beep=%s heard_beep=%s", a, b,
        (unsigned)mt_cfg.fast_min_batt, mt_cfg.sos_off ? "uit" : "aan", mt_cfg.tx_beep ? "aan" : "uit",
        mt_cfg.heard_beep ? "aan" : "uit");
-  outl("verzoek=%s rx_beweging=%s verzoek_beep=%s", mt_cfg.verzoek_uit ? "uit" : "aan", mt_cfg.rx_beweging_uit ? "uit" : "aan",
+  outl("verzoek=%s rx_beweging=%s blepin=%s verzoek_beep=%s", mt_cfg.verzoek_uit ? "uit" : "aan", mt_cfg.rx_beweging_uit ? "uit" : "aan",
+       the_mesh.getNodePrefs()->ble_pin ? "eigen" : "standaard",
        mt_cfg.verzoek_beep ? "aan" : "uit");
   outl("slow_buffer=%u fasttrack=%s slow_per_bericht=6-11", (unsigned)mt_tracker_slow_buffered(),
        mt_tracker_fast_suspended() ? "uit(batterij)" : "aan");
@@ -755,6 +772,9 @@ static void cmd_help() {
   outl("    tx: met de 1W-versterker (RAK13302, tot +%d dB) hooguit %d dBm instellen (≈ %d dBm, 500 mW)",
        (int)MT_TX_GAIN_DB, (int)MAX_LORA_TX_POWER, (int)MAX_LORA_TX_POWER + MT_TX_GAIN_DB);
 #endif
+  outl("    blepin <6 cijfers>|standaard  Bluetooth-koppelcode (100000..999999; standaard = %06lu). Werkt na een", (unsigned long)BLE_PIN_CODE);
+  outl("      herstart; vergeet daarna de tracker in de Bluetooth-instellingen en koppel opnieuw.");
+  outl("  blepin toon                 de code tonen (alleen via USB)");
   outl("    rx_beweging aan|uit  in trackermodus de radio laten luisteren zolang de tracker beweegt, zodat");
   outl("      hij verzoeken hoort (standaard aan; kost wat batterij). In rust slaapt de radio zoals gewoonlijk.");
   outl("    track_mode classic|fifo  classic = FastTrack + SlowTrack zoals voorheen; fifo = wachtrij voor posities");
@@ -920,6 +940,7 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "fifo_per_uur")) snprintf(o, n, "%u", (unsigned)mt_cfg.fifo_per_uur);
   else if (!strcmp(param, "fifo_pogingen")) snprintf(o, n, "%u", (unsigned)mt_cfg.fifo_pogingen);
   else if (!strcmp(param, "fifo_dun")) snprintf(o, n, mt_cfg.fifo_dun ? "%u m" : "uit", (unsigned)mt_cfg.fifo_dun);
+  else if (!strcmp(param, "blepin")) snprintf(o, n, "%s", the_mesh.getNodePrefs()->ble_pin ? "eigen code" : "standaard");
   else if (!strcmp(param, "rust_gps_check")) {
     if (mt_rust_gps_check_min()) fmt_dur_nl(o, n, 60UL * mt_rust_gps_check_min()); else snprintf(o, n, "uit");
   }
@@ -1013,6 +1034,7 @@ static void show() {
       outl("   8  Locatieverzoeken beantwoorden ............. %s", mt_cfg.verzoek_uit ? "uit" : "aan");
       outl("   9  Radio luistert in beweging ................ %s", mt_cfg.rx_beweging_uit ? "uit" : "aan");
       outl("  10  Deuntje bij een locatieverzoek ............ %s", mt_cfg.verzoek_beep ? "aan" : "uit");
+      outl("  11  Bluetooth-koppelcode ...................... %s", the_mesh.getNodePrefs()->ble_pin ? "eigen code" : "standaard");
       outl("      (9: zo hoort de tracker verzoeken onderweg; in rust slaapt de radio)");
       outl("");
       outl("   Knop: 1x = positie nu, 2x = modus wisselen, 3x = buzzer aan/uit,");
@@ -1127,6 +1149,7 @@ static void menu_choice(int n) {
       else if (n == 8) set_param("verzoek", mt_cfg.verzoek_uit ? "aan" : "uit");
       else if (n == 9) set_param("rx_beweging", mt_cfg.rx_beweging_uit ? "aan" : "uit");
       else if (n == 10) set_param("verzoek_beep", mt_cfg.verzoek_beep ? "uit" : "aan");
+      else if (n == 11) { static const Item BLEPIN = {"Bluetooth-koppelcode (6 cijfers of standaard)", "blepin", 2}; prompt_for(&BLEPIN); return; }
       else if (n == 0) s_screen = SC_MAIN;
       show();
       return;
@@ -1176,7 +1199,11 @@ static void command(char* s) {
       err = set_param(k, v);
     }
     if (err) outl("%s: %s (%s)", k, err, v);
-    else { outl("%s = %s (bewaard)", k, v); slow_ratio_warn(k, ""); fifo_set_note(k, ""); }
+    else {
+      if (!strcmp(k, "blepin")) outl("blepin bewaard (%s)", the_mesh.getNodePrefs()->ble_pin ? "eigen code" : "standaard");
+      else outl("%s = %s (bewaard)", k, v);
+      slow_ratio_warn(k, ""); fifo_set_note(k, ""); blepin_note(k, "");
+    }
   }
   else if (!strcmp(s, "mode")) {
     if (!strcmp(args, "companion")) mt_choose_mode(MT_MODE_COMPANION, false);
@@ -1199,6 +1226,14 @@ static void command(char* s) {
   else if (!strcmp(s, "chan")) cmd_chan(args);
   else if (!strcmp(s, "reboot")) { outl("herstart..."); mt_tracker_save_lastfix(); delay(100); NVIC_SystemReset(); }
   else if (!strcmp(s, "fs")) cmd_fs(args);
+  else if (!strcmp(s, "blepin")) {           // alleen via USB (Bluetooth laat alleen status, fifo en dump toe)
+    if (strcmp(args, "toon")) outl("gebruik: blepin toon   (de code instellen: set blepin <6 cijfers>|standaard)");
+    else {
+      uint32_t pin = the_mesh.getNodePrefs()->ble_pin;
+      outl("blepin: bewaard %s; nu actief %06lu", pin ? "eigen code" : "standaard", (unsigned long)the_mesh.getBLEPin());
+      if (pin && pin != the_mesh.getBLEPin()) outl("blepin: bewaarde code %06lu werkt na een herstart", (unsigned long)pin);
+    }
+  }
   else if (!strcmp(s, "gps")) {
     if (strcmp(args, "zoek")) { outl("gebruik: gps zoek"); }
     else if (!mt_gps_scan_start()) outl("gps zoek: bestaat niet op dit toestel (de GPS zit vast op het bord)");
@@ -1220,7 +1255,7 @@ static void handle_line(char* line) {
     if (*s) {
       const char* err = set_param(it->param, s);
       outl(err ? "   Fout: %s." : "   Bewaard.", err);
-      if (!err) { slow_ratio_warn(it->param, "   "); fifo_set_note(it->param, "   "); }
+      if (!err) { slow_ratio_warn(it->param, "   "); fifo_set_note(it->param, "   "); blepin_note(it->param, "   "); }
     }
     show();
     return;
