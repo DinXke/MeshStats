@@ -347,3 +347,7 @@ body.tkapp { display: flex; flex-direction: column; height: 100vh; height: 100dv
   .tk-ping::before { animation: none; opacity: .9; transform: scale(1.6); }
   .tk-ping::after { display: none; }
 }
+/* prioritair (blauwe lichten): badge in de samenvatting; .pill.prio komt uit style.css */
+.tk-prio { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; font-size: 14px; font-weight: 600; color: var(--prio-txt); }
+.tk-prio .pill.prio { font-size: 14px; padding: 3px 10px; }
+.tk-ansbody strong .pill { font-size: 12px; vertical-align: 1px; }

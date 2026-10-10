@@ -36,6 +36,19 @@
     </div>
   </section>
 
+  <!-- herkend toestel (serial.js: USB-id, MeshTrack-status of MeshCore-companion) -->
+  <section class="card detcard" id="det" hidden aria-live="polite" aria-labelledby="det-h">
+    <h2 id="det-h" class="small muted" style="margin:0 0 6px">Herkend toestel</h2>
+    <div class="dethead"><span class="detico" id="det-ico"></span>
+      <div><strong id="det-hw"></strong><div class="small" id="det-fw"></div></div></div>
+    <dl class="detgrid" id="det-dl"></dl>
+    <div class="row" style="align-items:center">
+      <button type="button" class="primary" id="det-act"></button>
+      <a id="det-use" class="btnlink" hidden>In MeshTrack zetten</a>
+    </div>
+    <div class="help" id="det-actnote"></div>
+  </section>
+
   <div class="tabs pagetabs" id="dtabs">
     <button class="tab" data-tab="settings">Instellingen</button>
     <button class="tab" data-tab="fw">Firmware <span class="badge" id="fw-badge" hidden>nieuw</span></button>
@@ -71,25 +84,65 @@
             <div class="seg wide" id="s-mode" role="radiogroup" aria-label="Modus op batterij">
               <button type="button" data-v="tracker">Tracker</button><button type="button" data-v="companion">Companion</button>
             </div>
-            <div class="help">Met USB-voeding is hij altijd companion. Dubbelklik op de knop wisselt ook.</div>
+            <div class="help">Met USB-voeding is hij altijd companion.<span data-needs="knop"> Dubbelklik op de knop wisselt ook.</span></div>
             <label class="switch block"><input type="checkbox" data-set="track_in_companion" data-kind="bool"><span></span> Ook posities sturen als companion</label>
+          </fieldset>
+
+          <!-- RAK3401 + 1 W met firmware die pin31= meldt: drukknop of prioriteit (blauwe lichten) -->
+          <fieldset id="s-pin31box" data-needs="board:rak3401_1w key:pin31">
+            <legend>Ingang pin 31 (knop of blauwe lichten)</legend>
+            <div class="prio-warn" role="note">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20L12 3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17.3" r="1.3" fill="currentColor"/></svg>
+              <div><strong>Opgelet:</strong> 12/24 V nooit rechtstreeks aansluiten: gebruik een optocoupler of een spanningsdeler met zenerdiode, max. 3,3 V op de pin.</div>
+            </div>
+            <label for="s-pin31">Gebruik van ingang pin 31</label>
+            <select id="s-pin31" data-set="pin31">
+              <option value="uit">niet gebruikt</option>
+              <option value="knop">drukknop</option>
+              <option value="prio">prioriteit (blauwe lichten)</option>
+            </select>
+            <div class="help" id="s-prio-off">Kies <em>prioriteit (blauwe lichten)</em> om de ingang aan de blauwe lichten van het
+              voertuig te hangen. Zolang ze branden, rijdt de tracker prioritair: blauw op de kaart en sneller verzenden.</div>
+            <div class="grid" id="s-prio" hidden>
+              <div><label for="s-prioniveau">Actief niveau van de ingang</label>
+                <select id="s-prioniveau" data-set="prio_niveau"><option value="hoog">hoog (spanning = aan)</option>
+                  <option value="laag">laag (massa = aan)</option></select></div>
+              <div><label for="s-priohoud-sel">Nalooptijd na uitschakelen</label>
+                <select id="s-priohoud-sel" aria-describedby="s-priohoud-help">
+                  <option value="0">volgt de ingang (0)</option><option value="1">1 min</option>
+                  <option value="5">5 min (standaard)</option><option value="anders">anders…</option></select>
+                <div class="unit" id="s-priohoud-anders" hidden><input id="s-priohoud" data-set="prio_houd" data-unit="m" type="number" min="0" max="60" step="1" inputmode="numeric"
+                  aria-label="Nalooptijd in minuten" aria-describedby="s-priohoud-help s-priohoud-err"><span>min</span></div>
+                <div class="help" id="s-priohoud-help">0 tot 60 min: zo lang blijft hij prioritair nadat de ingang uitgaat. 0 voor een
+                  schakelaar op het bedieningspaneel; 5 min voor knipperende zwaailichten.</div>
+                <div class="fielderr" id="s-priohoud-err" role="alert" hidden></div></div>
+              <div><label for="s-priointerval">Verzendinterval tijdens prioriteit</label>
+                <div class="unit"><input id="s-priointerval" data-set="prio_interval" data-unit="s" type="number" min="0" max="3600" step="1" inputmode="numeric"
+                  aria-describedby="s-priointerval-help s-priointerval-err"><span>s</span></div>
+                <div class="help" id="s-priointerval-help">0 = gewone interval (standaard 30 s).</div>
+                <div class="fielderr" id="s-priointerval-err" role="alert" hidden></div></div>
+            </div>
+            <div class="priostat" id="s-priostat" aria-live="polite"></div>
           </fieldset>
 
           <fieldset>
             <legend>Knop en biepjes</legend>
-            <label for="s-msgbeep">Biep bij berichten (companion zonder app)</label>
-            <select id="s-msgbeep" data-set="msg_beep"><option value="prive">alleen privéberichten</option>
-              <option value="alles">alle berichten (ook posities van andere trackers)</option><option value="uit">nooit</option></select>
-            <div data-since="0.8.0" data-keys="tx_beep">
+            <div class="help fwhint" id="s-hwnote" hidden></div>
+            <div data-needs="buzzer">
+              <label for="s-msgbeep">Biep bij berichten (companion zonder app)</label>
+              <select id="s-msgbeep" data-set="msg_beep"><option value="prive">alleen privéberichten</option>
+                <option value="alles">alle berichten (ook posities van andere trackers)</option><option value="uit">nooit</option></select>
+            </div>
+            <div data-since="0.8.0" data-keys="tx_beep" data-needs="buzzer">
               <label class="switch block"><input type="checkbox" data-set="tx_beep" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Biep bij elke verstuurde positie</label>
               <div class="help">Een kort biepje telkens de tracker een positie verstuurt, ook de automatische. Als tracker en als companion.</div>
             </div>
-            <div data-since="0.8.0" data-keys="heard_beep">
+            <div data-since="0.8.0" data-keys="heard_beep" data-needs="buzzer">
               <label class="switch block"><input type="checkbox" data-set="heard_beep" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Biep als een repeater de positie doorgeeft</label>
               <div class="help">Twee korte biepjes zodra een repeater een positie van de tracker herhaalt. Zo hoor je dat ze
                 het net bereikt heeft. Als tracker en als companion.</div>
             </div>
-            <div data-since="0.8.0" data-keys="sos">
+            <div data-since="0.8.0" data-keys="sos" data-needs="knop">
               <label class="switch block"><input type="checkbox" data-set="sos" data-kind="bool" data-yes="aan" data-no="uit"><span></span> SOS met de knop</label>
               <div class="help">De knop 2 tot 8 seconden ingedrukt houden stuurt een SOS. Zet dit uit als de tracker in een
                 zak of houder zit en de knop per ongeluk ingedrukt kan worden.</div>
@@ -104,7 +157,7 @@
             <label class="switch block"><input type="checkbox" data-set="rx_beweging" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Radio luistert tijdens beweging</label>
             <div class="help">Nodig om verzoeken te horen in trackermodus. Kost ongeveer 15 à 20 % extra stroom tijdens het
               rijden. Bij stilstand slaapt de radio; als companion luistert hij altijd.</div>
-            <div data-since="0.9.5" data-keys="verzoek_beep">
+            <div data-since="0.9.5" data-keys="verzoek_beep" data-needs="buzzer">
               <label class="switch block"><input type="checkbox" data-set="verzoek_beep" data-kind="bool" data-yes="aan" data-no="uit"><span></span> Piepje bij een locatieverzoek</label>
               <div class="help">Een kort, eigen deuntje zodra de tracker een verzoek beantwoordt, ook als de buzzer stil staat.</div>
             </div>
@@ -152,8 +205,8 @@
             <div class="help"><strong>Klassiek:</strong> FastTrack en SlowTrack zoals voorheen; SlowTrack verstuurt zijn
               punten volgens <em>Gelogde punten versturen elke</em>.<br>
               <strong>FIFO:</strong> na elk FastTrack-bericht kijkt de tracker of een repeater het binnen een tiental
-              seconden herhaalt. Gebeurt dat niet, dan gaat alleen het hoofdpunt van dat bericht, met zijn echte GPS-tijd,
-              in een wachtrij. Ook SlowTrack logt in die wachtrij, zolang de tracker beweegt. Zodra er genoeg punten wachten en de tracker weer dekking heeft, haalt hij de
+              seconden herhaalt. Gebeurt dat niet, dan gaan de punten van dat bericht met hun echte GPS-tijd in een
+              wachtrij: alle punten, of alleen het hoofdpunt (zie <em>Wat gaat in de wachtrij</em>). Ook SlowTrack logt in die wachtrij, zolang de tracker beweegt. Zodra er genoeg punten wachten en de tracker weer dekking heeft, haalt hij de
               achterstand in, de oudste punten eerst.</div>
             <details class="fifomore"><summary class="small">Meer over de FIFO-modus</summary>
               <ul class="help">
@@ -174,7 +227,7 @@
                 <li>De wachtrij houdt hoogstens <em>Wachtrij maximaal</em> punten bij en blijft bewaard bij een herstart.</li>
                 <li>Eerst meeliften: punten van een gemist FastTrack-bericht blijven in de FastTrack-buffer en reizen mee
                   met de volgende berichten. Pas als zo'n punt uit die buffer valt zonder ooit gehoord te zijn, gaat het
-                  hoofdpunt naar de wachtrij. Korte gaten vullen zich zo zonder extra berichten.</li>
+                  naar de wachtrij (met <em>Alleen hoofdpunten</em> alleen het hoofdpunt). Korte gaten vullen zich zo zonder extra berichten.</li>
                 <li>Is de wachtrij vol, dan valt het punt weg dat het minst over de vorm van het spoor zegt (het dichtst bij
                   de lijn tussen zijn buren), niet gewoon het oudste.</li>
                 <li>Een inhaalbericht (Q) is compact binair gecodeerd: met een naam van 11 bytes passen er zo'n 9 punten in, tegen 7 in tekst. Een kortere naam zonder emoji laat meer punten toe.</li>
@@ -186,8 +239,15 @@
             </details>
             <div class="grid" id="s-fifo">
               <div><label>Wachtrij maximaal</label><div class="unit"><input data-set="fifo_max" type="number" min="20" max="500"><span>punten</span></div>
-                <div class="help">20 tot 500; daarboven valt het punt weg dat het minst over de vorm van het spoor zegt. Per gemist FastTrack-bericht gaat alleen
-                  het hoofdpunt in de wachtrij: bij 1 bericht per 1 à 2 min volstaan 500 punten voor zo'n 8 à 16 uur zonder bereik.</div></div>
+                <div class="help">20 tot 500; daarboven valt het punt weg dat het minst over de vorm van het spoor zegt. Met alleen hoofdpunten volstaan
+                  500 punten bij 1 bericht per 1 à 2 min voor zo'n 8 à 16 uur zonder bereik; met alle punten (uitgedund op rechte
+                  stukken) is dat korter.</div></div>
+              <div data-since="0.9.7" data-keys="fifo_punten"><label for="s-fifopunten">Wat gaat in de wachtrij</label>
+                <select id="s-fifopunten" data-set="fifo_punten"><option value="alle">Alle punten (standaard)</option>
+                  <option value="hoofd">Alleen hoofdpunten</option></select>
+                <div class="help">Met alle punten (het hoofdpunt én de tussenliggende punten van elke 10 s) wordt het spoor door
+                  een dode zone in detail ingehaald. Dat kost meer inhaalberichten, maar die blijven begrensd door het aantal
+                  per uur. Op rechte stukken worden de punten uitgedund.</div></div>
               <div><label>Inhalen vanaf</label><div class="unit"><input data-set="fifo_min" type="number" min="1" max="500"><span>punten</span></div>
                 <div class="help">1 tot het maximum van de wachtrij.</div></div>
               <div><label>Tijd tussen inhaalberichten</label><div class="dur" data-set="fifo_gap"></div>
@@ -252,9 +312,12 @@
             <div class="grid">
               <div><label>Slapen na stilstand van</label><div class="dur" data-set="still_timeout"></div></div>
               <div><label>Teken van leven (heartbeat) elke</label><div class="dur" data-set="heartbeat" data-off="1"></div></div>
-              <div><label>Bewegingsgevoeligheid</label>
+              <div data-needs="key:rust_gps_check !accel"><label>In rust de GPS controleren elke</label>
+                <div class="dur" data-set="rust_gps_check" data-off="1" data-offword="uit"></div>
+                <div class="help">Zonder bewegingssensor controleert de tracker in rust om de zoveel minuten met de GPS of hij beweegt.</div></div>
+              <div data-needs="accel"><label>Bewegingsgevoeligheid</label>
                 <select data-set="accel_sens"><option value="laag">laag</option><option value="midden">midden</option><option value="hoog">hoog</option></select></div>
-              <div><label>Statusled</label>
+              <div data-needs="led"><label>Statusled</label>
                 <select data-set="led"><option value="companion">alleen als companion</option><option value="altijd">altijd</option><option value="uit">nooit</option></select>
                 <div class="help">In trackermodus spaart een uitgeschakelde led stroom.</div></div>
             </div>
@@ -290,6 +353,11 @@
   <!-- firmware -->
   <section class="card pane" id="pane-fw" hidden>
     <div class="fwhead"><strong>Firmware</strong> <span id="fw-ver" class="pill">…</span> <span id="fw-dev" class="small muted"></span></div>
+    <div class="row fwboard" style="align-items:center;gap:8px">
+      <label for="fw-board" style="margin:0">Toestel</label>
+      <select id="fw-board" style="width:auto"><option value="t1000e">Seeed T1000-E</option><option value="wismesh_tag">RAK WisMesh Tag</option><option value="rak3401_1w">RAK3401 + 1 W (voertuig)</option></select>
+      <span id="fw-boardnote" class="small muted"></span>
+    </div>
     <details><summary class="small">Wat is nieuw in deze versie</summary><div class="muted small" id="fw-notes"></div></details>
     <div class="row">
       <button id="fw-flash" class="primary" disabled>Flashen via de browser</button>
@@ -297,6 +365,8 @@
       <a id="fw-uf2" class="btnlink" download hidden>UF2 (slepen naar het USB-station)</a>
     </div>
     <div class="help" id="fw-why"></div>
+    <div class="help" id="fw-boot"></div>
+    <details><summary class="small">Alle versies</summary><div id="fw-rels" class="fwrels small"></div></details>
     <div class="help">Flashen vervangt alleen de app. Sleutel, contacten, kanalen en instellingen blijven. Eerst wordt een
       back-up gedownload; na afloop controleert de pagina of de pubkey nog dezelfde is. De voortgang zie je bovenaan.</div>
   </section>

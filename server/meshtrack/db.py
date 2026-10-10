@@ -226,7 +226,8 @@ CREATE INDEX IF NOT EXISTS message_paths_tracker_rx ON message_paths(tracker_id,
 
 # 1.3: soorten in stats_events
 STAT_KINDS = ("t1a_sent", "t1f_sent", "t1f_msg", "dup_points", "dup_msg", "invalid", "unknown", "old_fw_dm",
-              "loc_request")   # 1.3.2: T1R-verzoek om een positie (van een companion/telefoon)
+              "loc_request",   # 1.3.2: T1R-verzoek om een positie (van een companion/telefoon)
+              "prio_start")    # 1.4: een tracker begint prioritair te rijden
 
 TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since", "last_via", "channel_id")
 
@@ -285,6 +286,13 @@ class DB:
             # 1 = eerder punt uit een bericht (geen hoofdpunt); bestaande rijen herkennen aan hun raw-tekst
             self._x("ALTER TABLE positions ADD COLUMN extra INTEGER NOT NULL DEFAULT 0")
             self._x("UPDATE positions SET extra=1 WHERE raw LIKE '(eerder punt%'")
+        # 1.4: prioritair (blauwe lichten, vlag "p")
+        if "prio" not in {r["name"] for r in self._q("PRAGMA table_info(positions)")}:
+            self._x("ALTER TABLE positions ADD COLUMN prio INTEGER NOT NULL DEFAULT 0")
+        if "prio_until" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
+            self._x("ALTER TABLE trackers ADD COLUMN prio_until INTEGER NOT NULL DEFAULT 0")   # 0 = niet prioritair
+        if "prio" not in {r["name"] for r in self._q("PRAGMA table_info(sims)")}:
+            self._x("ALTER TABLE sims ADD COLUMN prio INTEGER NOT NULL DEFAULT 0")             # simulator stuurt "p"
         # dekkende index voor de statistieken (bereik op ontvangsttijd, zonder de tabel zelf te lezen)
         self._x("CREATE INDEX IF NOT EXISTS positions_stats ON positions(rx_ts, tracker_id, state, extra, ts, seq, "
                 "snr, path_len, bat, lat)")
@@ -426,6 +434,13 @@ class DB:
         return bool(self._q(
             f"SELECT 1 FROM positions WHERE tracker_id=? AND seq=? AND rx_ts>=? AND {st} LIMIT 1", args))
 
+    def set_prio(self, tid: int, until: int) -> None:
+        """1.4: prioritair tot `until` (unix); 0 = niet prioritair."""
+        self._x("UPDATE trackers SET prio_until=? WHERE id=?", (int(until), tid))
+
+    def set_sim_prio(self, tid: int, on: bool) -> None:
+        self._x("UPDATE sims SET prio=? WHERE tracker_id=?", (int(on), tid))
+
     def touch_slow(self, tid: int, rx: int, state: str = "L") -> None:
         """SlowTrack- of FIFO-bericht ontvangen waarvan alle punten al bekend waren."""
         col = "last_fifo_rx" if state == "Q" else "last_slow_rx"
@@ -433,8 +448,8 @@ class DB:
 
     def add_position(self, tid: int, p: dict[str, Any]) -> int:
         cols = ("tracker_id", "ts", "rx_ts", "seq", "state", "lat", "lon", "alt", "spd", "crs", "bat",
-                "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw", "power", "extra")
-        vals = (tid,) + tuple(p.get(c) for c in cols[1:-1]) + (int(p.get("extra") or 0),)
+                "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw", "power", "extra", "prio")
+        vals = (tid,) + tuple(p.get(c) for c in cols[1:-2]) + (int(p.get("extra") or 0), int(p.get("prio") or 0))
         cur = self._x(f"INSERT INTO positions({','.join(cols)}) VALUES({','.join('?' * len(cols))})", vals)
         if p["state"] in HISTORY_STATES:
             self._slow_summary(tid, p)
@@ -487,7 +502,7 @@ class DB:
     def track(self, tid: int, since: int, limit: int = 5000) -> list[dict[str, Any]]:
         return self._q(
             # fix_age: een antwoord op verzoek (V) met een oude fix tekent de kaart hol ("laatst gekend")
-            "SELECT ts, lat, lon, alt, spd, crs, bat, state, suspect, seq, snr, path_len, fix_age FROM positions "
+            "SELECT ts, lat, lon, alt, spd, crs, bat, state, suspect, seq, snr, path_len, fix_age, prio FROM positions "
             "WHERE tracker_id=? AND ts>=? AND lat IS NOT NULL ORDER BY ts LIMIT ?", (tid, since, limit))
 
     def purge_positions(self, tid: int, older_than: Optional[int] = None) -> int:

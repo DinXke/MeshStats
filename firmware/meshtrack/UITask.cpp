@@ -96,16 +96,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   // Initialize analog button if available
 #ifdef PIN_USER_BTN_ANA
-  _userButtonAnalog = new Button(PIN_USER_BTN_ANA, USER_BTN_PRESSED, true, 20);
-  _userButtonAnalog->begin();
-  
-  // Set up analog button callbacks
-  _userButtonAnalog->onShortPress([this]() { handleButtonShortPress(); });
-  _userButtonAnalog->onDoublePress([this]() { handleButtonDoublePress(); });
-  _userButtonAnalog->onTriplePress([this]() { handleButtonTriplePress(); });
-  _userButtonAnalog->onQuadruplePress([this]() { handleButtonQuadruplePress(); });
-  _userButtonAnalog->onLongPress([this]() { handleButtonLongPress(); });
-  _userButtonAnalog->onAnyPress([this]() { handleButtonAnyPress(); });
+  // MeshTrack 0.9.7: alleen met "knop aan" (anders wordt de pin nooit gelezen)
+  if (mt_cfg.pin31 == 1) mtAnalogSetup();
+#endif
+#ifdef MT_LED_FEEDBACK
+  pinMode(LED_GREEN, OUTPUT); digitalWrite(LED_GREEN, !LED_STATE_ON);
+  pinMode(LED_BLUE, OUTPUT);  digitalWrite(LED_BLUE, !LED_STATE_ON);
 #endif
   ui_started_at = millis();
 }
@@ -452,9 +448,13 @@ void UITask::loop() {
     }
   #endif
   #ifdef PIN_USER_BTN_ANA
-    if (_userButtonAnalog) {
+    if (mt_cfg.pin31 == 1) {                  // MeshTrack: pin31 knop (ook als hij net aangezet werd)
+      if (!_userButtonAnalog) mtAnalogSetup();
       _userButtonAnalog->update();
     }
+  #endif
+  #ifdef MT_LED_FEEDBACK
+    mtLedLoop();
   #endif
   userLedHandler();
 
@@ -540,7 +540,85 @@ void UITask::playModeTune(bool tracker) {
   playForced(tracker ? "trk:d=4,o=6,b=200:16a6" : "cmp:d=4,o=6,b=200:16a6,16p,16a6");
 }
 
+#ifdef PIN_USER_BTN_ANA
+// MeshTrack 0.9.7 (RAK3401, pin31 knop): analoge knop zoals op de T1000-E: klikken, dubbelklik, vasthouden voor SOS.
+// Button pollt de analoge pin (elke 10 ms, pas na 50 ms stabiel = ingedrukt), zonder interrupt.
+void UITask::mtAnalogSetup() {
+  _userButtonAnalog = new Button(PIN_USER_BTN_ANA, USER_BTN_PRESSED, true, 20);
+  _userButtonAnalog->begin();
+  _userButtonAnalog->onShortPress([this]() { handleButtonShortPress(); });
+  _userButtonAnalog->onDoublePress([this]() { handleButtonDoublePress(); });
+  _userButtonAnalog->onTriplePress([this]() { handleButtonTriplePress(); });
+  _userButtonAnalog->onQuadruplePress([this]() { handleButtonQuadruplePress(); });
+  _userButtonAnalog->onLongPress([this]() { handleButtonLongPress(); });
+  _userButtonAnalog->onAnyPress([this]() { mtAnalogPress(); handleButtonAnyPress(); });
+  _userButtonAnalog->onHoldArm([this]() { if (!mt_cfg.sos_off) playForced("arm:d=32,o=7,b=200:c,p,c,p,c"); });
+  _userButtonAnalog->onHoldWarn([this]() { playForced("warn:d=4,o=5,b=120:4c"); });
+  _userButtonAnalog->onHoldRelease([]() { mt_on_sos(); });
+  mt_log("knop: analoge knop op P0.%02u aan", (unsigned)PIN_USER_BTN_ANA);
+}
+
+// Zwevende pin (geen knop aangesloten): veel "drukken" kort na elkaar. 6 binnen 3 s = waarschuwing,
+// 10 binnen 3 s = de knop weer uitzetten (en bewaren).
+void UITask::mtAnalogPress() {
+  uint32_t now = millis();
+  _anaPress[_anaPressI] = now | 1;
+  _anaPressI = (uint8_t)((_anaPressI + 1) % 10);
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < 10; i++) n += _anaPress[i] && now - _anaPress[i] < 3000;
+  if (n == 6) mt_log("knop: veel wisselingen op P0.%02u; zweeft de pin?", (unsigned)PIN_USER_BTN_ANA);
+  if (n >= 10) {
+    mt_cfg.pin31 = 0;
+    mt_cfg_save();
+    memset(_anaPress, 0, sizeof(_anaPress));
+    mt_log("knop uitgeschakeld: pin zweeft (geen knop aangesloten?)");
+  }
+}
+#endif
+
+#ifdef MT_LED_FEEDBACK
+// Geen buzzer: het deuntje (naam voor de ":") wordt een ledpatroon. Groen = gelukt/ok, blauw = mislukt of let op.
+void UITask::mtLedStart(const char* rtttl) {
+  struct P { const char* name; uint8_t green; uint8_t n; uint16_t on, off; };
+  static const P PAT[] = {
+    {"ok", 1, 2, 100, 120}, {"sosok", 1, 4, 80, 80}, {"trk", 1, 1, 200, 0}, {"cmp", 0, 2, 150, 150},
+    {"tx", 1, 1, 30, 0},    {"req", 1, 3, 40, 60},   {"nok", 0, 1, 600, 0}, {"warn", 0, 1, 600, 0},
+    {"arm", 0, 3, 50, 80},
+  };
+  uint8_t g = 0, n = 1;
+  uint16_t on = 100, off = 0;
+  for (const P& p : PAT) {
+    size_t l = strlen(p.name);
+    if (!strncmp(rtttl, p.name, l) && rtttl[l] == ':') { g = p.green; n = p.n; on = p.on; off = p.off; break; }
+  }
+  if (_ledLeft) digitalWrite(_ledPin, !LED_STATE_ON);   // lopend patroon afbreken
+  _ledPin = g ? LED_GREEN : LED_BLUE;
+  _ledLeft = n;
+  _ledOnMs = on;
+  _ledOffMs = off ? off : 100;
+  _ledOn = false;
+  _ledNext = millis();
+}
+
+void UITask::mtLedLoop() {
+  if (!_ledLeft || (int32_t)(millis() - _ledNext) < 0) return;
+  if (!_ledOn) {
+    digitalWrite(_ledPin, LED_STATE_ON);
+    _ledOn = true;
+    _ledNext = millis() + _ledOnMs;
+  } else {
+    digitalWrite(_ledPin, !LED_STATE_ON);
+    _ledOn = false;
+    _ledLeft--;
+    _ledNext = millis() + _ledOffMs;
+  }
+}
+#endif
+
 void UITask::playForced(const char* rtttl) {
+#ifdef MT_LED_FEEDBACK
+  mtLedStart(rtttl);
+#endif
 #ifdef PIN_BUZZER
   if (!_mt_restore_quiet) _mt_quiet_before = buzzer.isQuiet();
   _mt_restore_quiet = true;

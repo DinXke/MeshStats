@@ -14,9 +14,13 @@
     "slow_log", "slow_send", "fast_min_batt", "sos", "tx_beep", "heard_beep",   // vanaf 0.8.0
     "track_mode", "fifo_max", "fifo_min", "fifo_gap", "fifo_per_uur", "fifo_pogingen",   // vanaf 0.9.0 (FIFO-modus)
     "fifo_dun", "fifo_snr", "fifo_wacht",   // fifo_wacht vanaf 0.9.1
-    "verzoek", "rx_beweging", "verzoek_beep"];   // vanaf 0.9.5 (locatieverzoeken)
+    "verzoek", "rx_beweging", "verzoek_beep",   // vanaf 0.9.5 (locatieverzoeken)
+    "fifo_punten",   // vanaf 0.9.7
+    "pin31", "prio_niveau", "prio_houd", "prio_interval",   // RAK3401 + 1 W: ingang pin 31 als drukknop of prioriteit (blauwe lichten)
+    "rust_gps_check"];   // 0.9.8: rust via de GPS bij toestellen zonder bewegingssensor
   // Keuzes waarbij "uit" een geldige waarde is (bij duren en getallen wordt "uit" een 0).
-  const WORD_KEYS = ["track_in_companion", "led", "accel_sens", "msg_beep", "sos", "tx_beep", "heard_beep", "track_mode", "fifo_wacht", "verzoek", "rx_beweging", "verzoek_beep"];
+  const WORD_KEYS = ["track_in_companion", "led", "accel_sens", "msg_beep", "sos", "tx_beep", "heard_beep", "track_mode", "fifo_wacht", "verzoek", "rx_beweging", "verzoek_beep", "fifo_punten",
+    "pin31", "prio_niveau", "rust_gps_check"];
   let fw = null, kv = null, known = null, busy = false;
 
   function say(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); }
@@ -34,33 +38,121 @@
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
   }
 
-  // ---- firmware-info ---------------------------------------------------------------
-  async function loadFirmware() {
-    try { fw = await MT.api("/api/firmware"); } catch (_) { fw = null; }
-    const r = fw && fw.releases && fw.releases[0];
-    if (!r) { $("fw-ver").textContent = "geen"; $("fw-notes").textContent = "Er is nog geen firmware gepubliceerd op deze server."; return; }
-    $("fw-ver").textContent = `v${r.version}`;
-    $("fw-notes").textContent = `${r.date} · MeshCore ${r.meshcore} · ${r.notes}`;
-    $("fw-zip").href = `/static/firmware/${r.zip}`; $("fw-zip").hidden = false;
-    $("fw-uf2").href = `/static/firmware/${r.uf2}`; $("fw-uf2").hidden = false;
-    $("fw-zip").title = `SHA-256 ${r.zip_sha256}`;
+  // ---- firmware-info, per toestel (bord) --------------------------------------------------
+  // firmware.json: per release "boards": { t1000e: {zip, uf2, zip_sha256, app_size}, wismesh_tag: {...} };
+  // oudere releases hebben alleen de velden bovenaan (dat is de T1000-E). Een tracker meldt board= in zijn
+  // status; zonder board= (oudere firmware) is het een T1000-E.
+  const BOARDS = { t1000e: "Seeed T1000-E", wismesh_tag: "RAK WisMesh Tag", rak3401_1w: "RAK3401 + 1 W (voertuig)" };
+  // Hoe het toestel in de bootloader komt (de firmware-agent vult details aan).
+  const BOOT_HELP = {
+    t1000e: "De pagina zet de T1000-E zelf in de bootloader (met de 1200-baudtruc via USB). Voor de UF2: zet het toestel in de "
+      + "bootloader; er verschijnt dan een USB-station waarop je het .uf2-bestand sleept.",
+    rak3401_1w: "De pagina zet de RAK3401 zelf in de bootloader (1200-baudtruc via USB). Lukt dat niet, druk dan twee keer snel na "
+      + "elkaar op de resetknop van de RAK3401: er verschijnt een USB-station waarop je het .uf2-bestand sleept.",
+    wismesh_tag: "De pagina zet de WisMesh Tag zelf in de bootloader (1200-baudtruc via USB, zoals bij een RAK4631). Lukt dat niet, "
+      + "druk dan twee keer snel na elkaar op de resetknop: er verschijnt een USB-station waarop je het .uf2-bestand sleept.",
+  };
+  // De bootloader weigert alleen T1000-E <-> RAK (SoftDevice v7 tegen v6, sd_req 0x0123 tegen 0x00B6). WisMesh Tag en
+  // RAK3401 delen sd_req, device_type en de UF2-basis: een verkeerd pakket tussen die twee wordt AANVAARD.
+  const SD_NOTE = "De bootloader weigert wel een pakket van de T1000-E op een RAK-toestel en omgekeerd, maar tussen de WisMesh Tag "
+    + "en de RAK3401 aanvaardt hij ook het verkeerde pakket. Daar beschermt alleen deze pagina.";
+  const RAK = ["wismesh_tag", "rak3401_1w"];
+  const CONFIRM_WORD = { wismesh_tag: "TAG", rak3401_1w: "RAK3401" };
+  // Naam uit firmware.json (boards.<id>.name), anders de vaste naam.
+  function boardName(b) {
+    const x = fw && fw.releases ? fw.releases.find((r) => r.boards && r.boards[b] && r.boards[b].name) : null;
+    return x ? x.boards[b].name : BOARDS[b] || b;
+  }
+  // Bevestigen door een woord te typen (voor een RAK-pakket op een toestel waarvan het type niet vaststaat).
+  function typedConfirm(text, word) {
+    return new Promise((resolve) => {
+      const d = document.createElement("dialog");
+      d.className = "dlg";
+      d.innerHTML = `<form method="dialog"><h2>Toestel niet vastgesteld</h2><p class="cbody"></p>
+        <label for="tc-in" class="tclab"></label><input id="tc-in" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <div class="row"><button value="ok" class="danger" disabled>Toch flashen</button><button value="no" type="submit">Annuleren</button></div></form>`;
+      d.querySelector(".cbody").textContent = text;
+      d.querySelector(".tclab").textContent = `Typ ${word} om te bevestigen`;
+      const inp = d.querySelector("#tc-in"), ok = d.querySelector("button[value=ok]");
+      inp.addEventListener("input", () => { ok.disabled = inp.value.trim().toUpperCase() !== word; });
+      document.body.appendChild(d);
+      d.addEventListener("close", () => { resolve(d.returnValue === "ok" && inp.value.trim().toUpperCase() === word); d.remove(); });
+      d.showModal();
+      inp.focus();
+    });
+  }
+  // Het bord van het verbonden toestel: board= van MeshTrack, of afgeleid uit het MeshCore-model.
+  const devBoard = () => (kv && kv.board) || (!kv && MTDev.det && MTDev.det.kind === "meshcore" ? MTDev.det.board : null);
+  function relFiles(r, board) {
+    if (r.boards && r.boards[board]) return r.boards[board];
+    if (board === "t1000e" && r.zip) return { zip: r.zip, uf2: r.uf2, zip_sha256: r.zip_sha256, app_size: r.app_size };
+    return null;
+  }
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* privévenster */ } };
+  const selBoard = () => $("fw-board").value;
+  // Nieuwste release met een build voor het gekozen toestel.
+  const latestFor = (board) => (fw && fw.releases ? fw.releases.find((r) => relFiles(r, board)) : null) || null;
+  function renderFirmware() {
+    const board = selBoard();
+    [...$("fw-board").options].forEach((o) => { o.textContent = boardName(o.value); });
+    const top = fw && fw.releases && fw.releases[0];
+    if (!top) { $("fw-ver").textContent = "geen"; $("fw-notes").textContent = "Er is nog geen firmware gepubliceerd op deze server."; return; }
+    const r = latestFor(board), f = r && relFiles(r, board);
+    $("fw-ver").textContent = r ? `v${r.version}` : "nog niet beschikbaar";
+    $("fw-notes").textContent = r ? `${r.date} · MeshCore ${r.meshcore} · ${r.notes}` : `Er is nog geen firmware voor de ${boardName(board)}.`;
+    $("fw-zip").hidden = $("fw-uf2").hidden = !f;
+    if (f) {
+      $("fw-zip").href = `/static/firmware/${f.zip}`; $("fw-zip").setAttribute("download", f.zip);
+      $("fw-zip").title = f.zip_sha256 ? `SHA-256 ${f.zip_sha256}` : "";
+      $("fw-uf2").hidden = !f.uf2;
+      if (f.uf2) { $("fw-uf2").href = `/static/firmware/${f.uf2}`; $("fw-uf2").setAttribute("download", f.uf2); }
+    }
+    $("fw-boot").textContent = `${BOOT_HELP[board]} ${SD_NOTE}`;
+    // alle versies, met de bestanden voor dit toestel
+    $("fw-rels").innerHTML = fw.releases.map((x) => {
+      const ff = relFiles(x, board);
+      const links = ff ? `<a href="/static/firmware/${MT.esc(ff.zip)}" download="${MT.esc(ff.zip)}">.zip</a>`
+        + (ff.uf2 ? ` · <a href="/static/firmware/${MT.esc(ff.uf2)}" download="${MT.esc(ff.uf2)}">.uf2</a>` : "") : '<span class="muted">nog niet beschikbaar</span>';
+      return `<div class="fwrel"><strong>v${MT.esc(x.version)}</strong> <span class="muted">${MT.esc(x.date || "")}</span> · ${links}</div>`;
+    }).join("");
     refresh();
   }
+  async function loadFirmware() {
+    try { fw = await MT.api("/api/firmware"); } catch (_) { fw = null; }
+    renderFirmware();
+  }
+  // Keuze van het toestel: bij een verbonden tracker met board= volgt de keuze die; anders de laatste keuze.
+  $("fw-board").value = BOARDS[lsGet("mt.fwBoard")] ? lsGet("mt.fwBoard") : "t1000e";
+  $("fw-board").addEventListener("change", () => { lsSet("mt.fwBoard", selBoard()); renderFirmware(); });
 
   // Vanuit Trackers: /devices#prov?tracker=<id>[&backup=<id>]
   const pend = new URLSearchParams((location.hash.split("?")[1]) || "");
   let pendDone = false;
 
   function refresh() {
-    const r = fw && fw.releases && fw.releases[0];
+    const r = latestFor(selBoard());
     const connected = !!MTDev.port;
-    $("fw-flash").disabled = !r || !connected || busy || !("serial" in navigator);
+    const db = devBoard();
+    const mismatch = !!(db && db !== selBoard());
+    $("fw-flash").disabled = !r || !connected || busy || !("serial" in navigator) || mismatch;
     $("fw-why").textContent = !("serial" in navigator) ? "Deze browser kan niet flashen: gebruik Chrome of Edge."
-      : !connected ? "Verbind eerst een toestel (bovenaan)." : busy ? "Even geduld, er loopt nog een taak." : "";
+      : !connected ? "Verbind eerst een toestel (bovenaan)." : busy ? "Even geduld, er loopt nog een taak."
+      : mismatch ? `Dit toestel is een ${boardName(db)}; kies bij Toestel de juiste firmware.`
+      : !r ? `Er is nog geen firmware voor de ${boardName(selBoard())}.` : "";
+    const det = MTDev.det;
+    $("fw-boardnote").textContent = det && det.kind === "bootloader"
+      ? (det.usb && det.usb.boards.some((b) => RAK.includes(b))
+        ? "Het toestel staat in de bootloader: de pagina kan niet nagaan welk toestel het is. Kies zorgvuldig; de bootloaders van de WisMesh Tag en de RAK3401 aanvaarden elkaars firmware."
+        : "Het toestel staat in de bootloader (volgens USB een T1000-E). Die bootloader weigert firmware voor een RAK-toestel.")
+      : !kv ? (db ? `verbonden: ${boardName(db)} (MeshCore)` : "") : kv.board ? `verbonden: ${boardName(kv.board)}`
+      : "verbonden: geen type gemeld (oudere firmware, dus een T1000-E)";
+    $("fw-boardnote").classList.toggle("warn", !!(det && det.kind === "bootloader"));
+
     if (!connected) $("fw-dev").textContent = "verbind eerst een toestel";
     else if (!kv) $("fw-dev").textContent = "op het toestel: geen MeshTrack (of geen antwoord)";
     else $("fw-dev").textContent = r && newer(r.version, kv.fw) ? `op het toestel: v${kv.fw}, update beschikbaar` : `op het toestel: v${kv.fw}`;
-    $("fw-badge").hidden = !(r && kv && newer(r.version, kv.fw));
+    $("fw-badge").hidden = !(r && kv && !mismatch && newer(r.version, kv.fw));
     const allowed = MT.can("keys.manage");
     $("prov").hidden = !connected || !allowed;
     $("prov-none").hidden = !$("prov").hidden;
@@ -190,14 +282,25 @@
     if (scope != null) steps.push([`set scope ${String(scope).replace(/^#/, "") || "-"}`, "regio"]);
     (doc.channels || []).forEach((c, i) => { if (c.name && /^[0-9a-f]{32}$/i.test(c.secret || "")) steps.push([`chan set ${i} ${c.secret} ${c.name}`, `kanaal ${c.name}`, true]); });
     const s = mt.settings || {};
+    const skipped = [];
     for (const k of MT_KEYS) {
       if (s[k] == null || s[k] === "" || String(s[k]).startsWith("(")) continue;
       if (kv && !(k in kv)) continue;           // oudere firmware op het toestel
+      // back-up van een ander toestel: wat dit toestel niet heeft (bv. buzzer, knop), niet zetten
+      if (kv && window.MTCaps && MTCaps.keyState(k, kv) === "hide") { skipped.push(k); continue; }
       let v = String(s[k]);
       if (["min_speed", "min_dist", "turn_min", "turn_min_speed"].includes(k)) v = v.replace(/(km\/h|deg|m)$/, "");
       if (k === "fast_min_batt") v = v.replace(/%$/, "");
       if (["fifo_max", "fifo_min", "fifo_per_uur", "fifo_pogingen", "fifo_dun"].includes(k)) v = v.replace(/\D/g, "");
       if (k === "fifo_snr") v = v.replace(/[^\d-]/g, "");
+      // prio_houd (minuten) en prio_interval (seconden) als duur met eenheid; 0 blijft 0
+      if (k === "prio_houd" || k === "prio_interval") {
+        const m = /^(\d+)\s*(s|m|h)?$/i.exec(v);
+        if (m) {
+          const sec = Number(m[1]) * ({ s: 1, m: 60, h: 3600 }[(m[2] || "").toLowerCase()] || (k === "prio_houd" ? 60 : 1));
+          v = !sec ? "0" : k === "prio_houd" ? `${Math.round(sec / 60)}m` : `${sec}s`;
+        }
+      }
       if (v === "uit" && !WORD_KEYS.includes(k)) v = "0";
       steps.push([`set ${k} ${v}`, k]);
     }
@@ -215,6 +318,7 @@
       progress(i / steps.length, steps[i][1]);
       await run(steps[i][0], !!steps[i][2]);
     }
+    return skipped;
   }
 
   // Na een herstart komt de app terug als (nieuwe) poort met hetzelfde USB-id.
@@ -282,16 +386,16 @@
 
   // ---- flashen ---------------------------------------------------------------------
   async function flashFlow() {
-    const r = fw.releases[0];
+    const board = selBoard(), r = latestFor(board), files = relFiles(r, board);
     busy = true; refresh();
     steps(["Firmware ophalen", "Back-up van het toestel", "Naar de bootloader", "Flashen", "Herstarten en sleutel controleren"]);
-    let backup = null;
+    let backup = null, stock = null;
     const before = kv ? { ...kv } : null;
     try {
       step(0);
-      const zip = await (await fetch(`/static/firmware/${r.zip}`, { credentials: "same-origin" })).arrayBuffer();
+      const zip = await (await fetch(`/static/firmware/${files.zip}`, { credentials: "same-origin" })).arrayBuffer();
       const pkg = await MTDFU.readPackage(zip);
-      step(0, "done", `v${r.version}, ${Math.round(pkg.bin.length / 1024)} kB`);
+      step(0, "done", `v${r.version} voor de ${boardName(board)}, ${Math.round(pkg.bin.length / 1024)} kB`);
 
       step(1);
       // Ongeldige sleutel (FFFF/0000): de identiteit is al verloren, er valt niets te bewaren. Een tracker met
@@ -315,6 +419,21 @@
           backup = (await backupNow(true, `voor flashen v${r.version}`)).doc;
           step(1, "done", "opslag (.bin) en sleutel (.json) gedownload" + (MTDev.trackers.some((t) => t.pubkey === backup.public_key) && MT.can("keys.manage") ? ", ook op de server" : ""));
         } else step(1, "done", "opslag (.bin) gedownload");
+      } else if (MTDev.det && MTDev.det.kind === "meshcore") {
+        // stock MeshCore: geen MeshTrack-back-up, wel de privésleutel via de companion (CMD_EXPORT_PRIVATE_KEY)
+        const d = MTDev.det;
+        stock = { pubkey: (d.pubkey || "").toLowerCase(), naam: d.naam || "" };
+        const priv = await MTDev.companionExportKey();
+        if (priv) {
+          backup = { name: stock.naam, public_key: stock.pubkey, private_key: priv, radio_settings: {}, channels: [],
+            meshtrack: { note: `MeshCore ${d.ver || "?"} (stock), voor het flashen van MeshTrack v${r.version}` } };
+          download(`${safe(stock.naam)}_meshcore-sleutel_${stamp()}.json`, JSON.stringify(backup, null, 2), "application/json");
+          step(1, "done", "sleutel van MeshCore (stock) als .json gedownload");
+        } else {
+          if (!(await MT.confirm("Deze MeshCore-firmware laat de sleutel niet exporteren. Bij het flashen blijft de opslag normaal behouden, "
+            + "maar zonder back-up is er geen weg terug als de sleutel toch verandert. Toch flashen?", { ok: "Toch flashen", danger: true, title: "Geen back-up mogelijk" }))) throw new Error("geannuleerd");
+          step(1, "done", "overgeslagen: de export van de sleutel staat uit in deze firmware");
+        }
       } else {
         if (!(await MT.confirm("Op dit toestel draait geen MeshTrack (of het antwoordt niet). Er kan geen back-up gemaakt worden en de sleutel niet gecontroleerd. Toch flashen?", { ok: "Toch flashen", danger: true }))) throw new Error("geannuleerd");
         step(1, "done", "overgeslagen (geen MeshTrack)");
@@ -345,13 +464,14 @@
       let st = await reconnect(info, 25000);
       if (!st) st = await askPort("Het toestel kwam niet vanzelf terug. Kies het opnieuw.", null);
       if (!st) throw new Error("geflasht, maar het toestel is niet teruggevonden; verbind het opnieuw en controleer de pubkey");
-      if (before && before.pubkey && st.pubkey !== before.pubkey) {
-        step(4, "err", `pubkey is nu ${st.pubkey.slice(0, 8)}…, was ${before.pubkey.slice(0, 8)}…`);
+      const prevKey = ((before && before.pubkey) || (stock && stock.pubkey) || "").toLowerCase();
+      if (prevKey && (st.pubkey || "").toLowerCase() !== prevKey) {
+        step(4, "err", `pubkey is nu ${(st.pubkey || "?").slice(0, 8)}…, was ${prevKey.slice(0, 8)}…`);
         if (backup) offerRestore(backup);
         throw new Error("DE SLEUTEL IS GEWIJZIGD. Zet de back-up terug met de knop hieronder.");
       }
-      step(4, "done", before && before.pubkey ? `v${st.fw}, sleutel ongewijzigd (${st.pubkey.slice(0, 8)}…)` : `v${st.fw || "?"}`);
-      say($("dfu-msg"), `Klaar: firmware v${st.fw || r.version}${before && before.pubkey ? ", sleutel en instellingen behouden" : ""}.`, true);
+      step(4, "done", prevKey ? `v${st.fw}, sleutel ongewijzigd (${st.pubkey.slice(0, 8)}…)` : `v${st.fw || "?"}`);
+      say($("dfu-msg"), `Klaar: firmware v${st.fw || r.version}${prevKey ? (stock ? ", sleutel behouden" : ", sleutel en instellingen behouden") : ""}.`, true);
       // De status opnieuw lezen: tijdens het herstarten kan een statusvraag mislukt zijn, en dan dachten de
       // andere tabbladen (back-up, klaarmaken) dat er geen MeshTrack-toestel verbonden was.
       try { await MTDev.readStatus(); } catch (_) { /* de knop Vernieuwen bovenaan doet hetzelfde */ }
@@ -386,13 +506,13 @@
       if (!same) await backupNow(true, `voor klaarmaken als ${doc.name}`);
       step(0, "done");
       step(1);
-      await applyDoc(doc, !same, (f, what) => { bar(f); step(1, "busy", what); });
+      const skipped = await applyDoc(doc, !same, (f, what) => { bar(f); step(1, "busy", what); });
       bar(1);
-      step(1, "done");
+      step(1, "done", skipped.length ? `overgeslagen (niet op dit toestel): ${skipped.join(", ")}` : "");
       step(2);
       const st = await rebootAndCheck(doc.public_key, (t) => step(2, "busy", t));
       step(2, "done", `${st.naam} · ${st.pubkey.slice(0, 8)}… · ${st.path_bytes} bytes per hop · regio ${st.scope}`);
-      say($("dfu-msg"), `${isRestore ? "Teruggezet" : "Klaar"}: dit toestel is nu ${st.naam}.`, true);
+      say($("dfu-msg"), `${isRestore ? "Teruggezet" : "Klaar"}: dit toestel is nu ${st.naam}.${skipped.length ? ` Niet gezet, want dit toestel heeft ze niet: ${skipped.join(", ")}.` : ""}`, true);
       say($("prov-msg"), "");
       MTDev.reload();
     } catch (e) {
@@ -412,10 +532,24 @@
   }
 
   // ---- knoppen ---------------------------------------------------------------------
-  $("fw-flash").addEventListener("click", () => {
-    const r = fw.releases[0];
-    const q = kv ? `Firmware v${r.version} flashen op ${kv.naam || "dit toestel"} (nu v${kv.fw})?\n\nEerst worden de opslag en de sleutel als back-up gedownload. Niet loskoppelen tijdens het flashen (ongeveer een minuut).`
-      : `Firmware v${r.version} flashen op het verbonden toestel?`;
+  $("fw-flash").addEventListener("click", async () => {
+    const board = selBoard(), r = latestFor(board);
+    if (!r) return;
+    // nooit een pakket voor een ander toestel
+    const db = devBoard();
+    if (db && db !== board) {
+      say($("dfu-msg"), `Niet geflasht: dit toestel meldt zich als ${boardName(db)}, maar je koos firmware voor de ${boardName(board)}. Kies bij Toestel de juiste.`, false);
+      $("dfu").hidden = false;
+      return;
+    }
+    if (!db && RAK.includes(board)) {
+      const why = kv ? "Dit toestel meldt geen type (oudere MeshTrack, dus normaal een T1000-E)."
+        : "Het type van dit toestel is niet vastgesteld (geen MeshTrack-status en geen MeshCore-model).";
+      const ok = await typedConfirm(`${why} Je koos firmware voor de ${boardName(board)}. ${SD_NOTE}`, CONFIRM_WORD[board]);
+      if (!ok) return;
+    }
+    const q = kv ? `Firmware v${r.version} voor de ${boardName(board)} flashen op ${kv.naam || "dit toestel"} (nu v${kv.fw})?\n\nEerst worden de opslag en de sleutel als back-up gedownload. Niet loskoppelen tijdens het flashen (ongeveer een minuut).`
+      : `Firmware v${r.version} voor de ${boardName(board)} flashen op het verbonden toestel?`;
     MT.confirm(q, { ok: "Flashen", title: "Firmware flashen" }).then((ok) => { if (ok) flashFlow(); });
   });
   $("prov-go").addEventListener("click", () => { if ($("prov-t").value) provisionTracker(Number($("prov-t").value)); });
@@ -437,7 +571,21 @@
   });
 
   window.MTDevice = {
-    onStatus(k, t) { kv = k && k.pubkey ? k : null; known = t || null; refresh(); },
+    latestVersion: (board) => { const x = latestFor(board); return x ? x.version : null; },
+    isNewer: (a, b) => newer(a, b),
+    // herkend toestel: de keuze in Firmware volgt (MeshTrack met board= doet dat ook via onStatus)
+    onDetect(d) {
+      if (!d) return;
+      let want = d.board && BOARDS[d.board] ? d.board : null;
+      if (!want && d.usb && d.usb.boards.length && !d.usb.boards.includes(selBoard())) want = d.usb.boards[0];
+      if (want && selBoard() !== want) { $("fw-board").value = want; lsSet("mt.fwBoard", want); renderFirmware(); } else refresh();
+    },
+    onStatus(k, t) {
+      kv = k && k.pubkey ? k : null; known = t || null;
+      // het toestel meldt zijn type: de keuze volgt (en wordt onthouden)
+      if (kv && kv.board && BOARDS[kv.board] && selBoard() !== kv.board) { $("fw-board").value = kv.board; lsSet("mt.fwBoard", kv.board); renderFirmware(); return; }
+      refresh();
+    },
   };
 
   document.addEventListener("mt-devices-ready", loadFirmware);

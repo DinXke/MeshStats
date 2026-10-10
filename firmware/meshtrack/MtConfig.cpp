@@ -77,6 +77,11 @@ static void cfg_sanitize(MtCfg& c) {
   if (c.verzoek_uit > 1) c.verzoek_uit = 0;
   if (c.rx_beweging_uit > 1) c.rx_beweging_uit = 0;
   if (c.verzoek_beep > 1) c.verzoek_beep = 0;
+  if (c.fifo_punten_hoofd > 1) c.fifo_punten_hoofd = 0;
+  if (c.gps_baud > MT_GPS_NBAUDS || c.gps_rx > 47 || c.gps_tx > 47) { c.gps_rx = c.gps_tx = c.gps_baud = 0; }
+  if (c.pin31 > 2) c.pin31 = 0;
+  if (c.prio_niveau > 1) c.prio_niveau = 0;
+  if (c.prio_houd > 60 && c.prio_houd != 255) c.prio_houd = 0;
   if (c.fifo_max < 20 || c.fifo_max > 500) c.fifo_max = d.fifo_max;
   if (c.fifo_min < 1 || c.fifo_min > c.fifo_max) c.fifo_min = c.fifo_max < d.fifo_min ? c.fifo_max : d.fifo_min;
   if (c.fifo_gap_s < 15 || c.fifo_gap_s > 300) c.fifo_gap_s = d.fifo_gap_s;
@@ -232,11 +237,11 @@ void mt_cfg_begin() {
       return;
     }
     if (r != 0 && r != 2 && load_file(fs, MT_CFG_TMP) == 0) r = 3;
-    if (r == 0 && !moved) { mt_cfg_load_note = "geladen v7"; return; }
+    if (r == 0 && !moved) { mt_cfg_load_note = "geladen v8"; return; }
     if (r == 0 || r == 2 || r == 3) {
       bool ok = mt_cfg_save();             // naar ExtraFS (en de oude kopie weg)
       mt_cfg_load_note = moved ? (ok ? "verhuisd naar ExtraFS" : "geladen van InternalFS [verhuizen MISLUKT]")
-                       : r == 2 ? "omgezet naar v7" : "hersteld uit .tmp";
+                       : r == 2 ? "omgezet naar v8" : "hersteld uit .tmp";
       return;
     }
   }

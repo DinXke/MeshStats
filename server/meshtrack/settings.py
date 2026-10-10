@@ -25,6 +25,9 @@ SPEC: dict[str, tuple[Any, Any, Any, str, str]] = {
                             "Gebeurtenis 'te lang stil' als een tracker zo lang niets stuurde (0 = uit)."),
     "stale_after_h":       (25, 1, 720, "Grijs op de kaart na (uur)", "Een tracker die zo lang stil is, toont grijs."),
     "retention_days":      (90, 1, 3650, "Bewaartermijn (dagen)", "Posities ouder dan dit worden automatisch gewist."),
+    "prio_hold_s":         (300, 30, 3600, "Prioritair: vasthouden (s)",
+                            "Een voertuig dat met vlag 'p' (prioritair, blauwe lichten) stuurt, blijft zo lang "
+                            "prioritair na zijn laatste bericht met die vlag. Een bericht zonder vlag beëindigt het meteen."),
     "sim_history_days":    (7, 0, 30, "Historiek simulators (dagen)",
                             "Een nieuwe simulator krijgt meteen zoveel dagen gesimuleerde geschiedenis (0 = geen)."),
     # Klaarmaken van een nieuwe tracker (sleutel op de server): zo komt hij op de mesh.

@@ -129,6 +129,9 @@
     for (const l of ls) for (const m of l.matchAll(/([a-z_]+)=([^\s]+)/g)) kv[m[1]] = m[2];
     const nm = ls.find((l) => l.trim().startsWith("naam="));
     if (nm) kv.naam = nm.trim().slice(5).trim();          // namen mogen spaties bevatten
+    // prioriteit (blauwe lichten): "prio=aan (nog 3m12s)", "prio=uit" of "prio=fout" (zwevende ingang)
+    const pm = /\bprio=(aan|uit|fout)(?:\s*\(nog\s+([^)]+)\))?/.exec(text);
+    if (pm) { kv.prio = pm[1]; kv.prio_nog = pm[2] || ""; }
     return kv;
   }
   const qInfo = (fl) => ({ sent: fl.includes("s"), parked: fl.includes("k"), tries: int((fl.match(/\d+/) || [])[0]) || 0 });
@@ -702,6 +705,8 @@
     const foot = conn ? `Bijgewerkt om ${upd} · ${autoSec() ? `elke ${autoSec()} s` : "auto uit"}` : `Niet verbonden · gegevens van ${upd}`;
     $("ov-hero").innerHTML = `<section class="card tk-hero ${v.lvl}" aria-labelledby="tk-herot">
       <div class="tk-verdict">${ICON[v.lvl]}<div><span class="tk-lvl">${LVL[v.lvl]}</span><h2 id="tk-herot">${esc(v.title)}</h2><p>${esc(v.sub)}</p></div></div>
+      ${status.prio === "aan" ? `<p class="tk-prio"><span class="pill prio">${esc(status.prio_nog ? `Prioritair, nog ${status.prio_nog}` : "Prioritair")}</span> blauwe lichten aan</p>`
+        : status.prio === "fout" ? `<p class="tk-heronote">${ICON.warn}Ingang voor prioriteit zweeft (fout): controleer de bedrading.</p>` : ""}
       <div class="tk-tiles">
         ${tile("Wachtrij", c.Q ? `${c.Q} <small>${c.Q === 1 ? "punt" : "punten"}</small>` : "0", qSub, "wide")}
         ${tile("Laatst verstuurd", t ? agoHtml(t.ts) : "nog niets", t ? `${esc(STATE[t.st] || t.st)} · ${t.ok ? "verzonden" : '<span class="tk-bad">mislukt</span>'}` : "")}
@@ -1035,7 +1040,7 @@
     const set = p.set;
     const fl = String(p.flags || "-");
     const el = document.createElement("div");
-    el.innerHTML = `<strong>${esc(set === "A" ? `Antwoord van ${p.name}` : SETNAME[set] || set)}</strong>${set === "A" && p.old ? "<br>laatst gekende positie" : ""}<br>${esc(dateTime(p.ts))}<br><span class="muted">${esc(dur(trackerNow() - p.ts))} geleden</span><br>${flagPills(set, fl)}`;
+    el.innerHTML = `<strong>${esc(set === "A" ? `Antwoord van ${p.name}` : SETNAME[set] || set)}</strong>${set === "A" && p.old ? "<br>laatst gekende positie" : ""}${set === "A" && p.prio ? '<br><span class="pill prio">Prioritair</span>' : ""}<br>${esc(dateTime(p.ts))}<br><span class="muted">${esc(dur(trackerNow() - p.ts))} geleden</span><br>${flagPills(set, fl)}`;
     new maplibregl.Popup({ closeButton: true, maxWidth: "260px" }).setLngLat(ll).setDOMContent(el).addTo(map);
   }
   function applyVis() {
@@ -1150,10 +1155,15 @@
     const ageF = p[12] === undefined || p[12] === "" ? null : Number(p[12]), fts = Number(p[15]);
     const fixAge = Number.isFinite(ageF) ? ageF : Number.isFinite(fts) && fts > 0 && ts ? Math.max(0, ts - fts) : null;
     const known = heard.get(pk);
-    heard.set(pk, { pk, name: from || (known && known.name) || pk, at: now });
+    // Vlag "p" (prioritair, blauwe lichten), op elke toestand. Het vlaggenveld staat na de extra punten: index 17
+    // (firmware schrijft "||p" of "|<extra>|p"; zie protocol.py). Ontbreekt index 17 en is index 16 alleen 1-8 kleine
+    // letters, dan is dat het vlaggenveld (extra punten beginnen met B, ~, een cijfer of een minteken). Zelfde regel als /offline.
+    const flags = p[17] !== undefined ? p[17] : /^[a-z]{1,8}$/.test(p[16] || "") ? p[16] : "";
+    const prio = flags.includes("p");
+    heard.set(pk, { pk, name: from || (known && known.name) || pk, at: now, prio });
     if (state === "V") {
       const old = fix && fixAge !== null && fixAge > 120;           // meer dan ~2 min oud: laatst gekend
-      answers.unshift({ pk, name: from || pk, at: now, ts: ts || Math.round(now), lat: fix ? lat : null, lon: fix ? lon : null, chan, old, fixAt: fix && fixAge !== null ? now - fixAge : now });
+      answers.unshift({ pk, prio, name: from || pk, at: now, ts: ts || Math.round(now), lat: fix ? lat : null, lon: fix ? lon : null, chan, old, fixAt: fix && fixAge !== null ? now - fixAge : now });
       if (answers.length > 50) answers.pop();
       const what = !fix ? "geen fix" : old ? `laatst gekend, ${dur(fixAge)} geleden` : "met positie";
       log(`antwoord op positievraag van ${from || pk}: ${what}`);
@@ -1183,7 +1193,7 @@
     if (targets || !sel.options.length) {
       const cur = sel.value || "*", own = ownPk();
       const list = [...heard.values()].filter((h) => h.pk !== own).sort((a, b) => a.name.localeCompare(b.name, "nl"));
-      sel.innerHTML = '<option value="*">Alle trackers</option>' + list.map((h) => `<option value="${h.pk}">${esc(h.name === h.pk ? h.pk : `${h.name} (${h.pk})`)}</option>`).join("");
+      sel.innerHTML = '<option value="*">Alle trackers</option>' + list.map((h) => `<option value="${h.pk}">${esc(h.name === h.pk ? h.pk : `${h.name} (${h.pk})`)}${h.prio ? " · prioritair" : ""}</option>`).join("");
       sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "*";
     }
     const blocked = askBlocked(), wait = blocked ? 0 : askWait(sel.value);
@@ -1197,7 +1207,7 @@
     clearTimeout(askTimer);
     if (wait > 0) askTimer = setTimeout(() => renderAsk(false), 1000);
     const ul = $("tk-ask-list");
-    ul.innerHTML = answers.map((a, i) => `<li><span class="tk-sw ${a.lat === null ? "nofix" : a.old ? "a old" : "a"}" aria-hidden="true"></span><span class="tk-ansbody"><strong>${esc(a.name)}</strong>
+    ul.innerHTML = answers.map((a, i) => `<li><span class="tk-sw ${a.lat === null ? "nofix" : a.old ? "a old" : "a"}" aria-hidden="true"></span><span class="tk-ansbody"><strong>${esc(a.name)}${a.prio ? ' <span class="pill prio">Prioritair</span>' : ""}</strong>
       <span class="tk-anssub">${esc(clockS(a.at))} · ${a.lat === null ? "geen fix" : a.old ? `laatst gekend, ${esc(dur(Date.now() / 1000 - a.fixAt))} geleden` : "met positie"}</span></span>${a.lat !== null ? `<button type="button" data-i="${i}">Op kaart</button>` : ""}</li>`).join("");
     $("tk-ask-none").hidden = !!answers.length;
   }
@@ -1242,7 +1252,7 @@
     for (const a of answers) {                      // per tracker alleen het nieuwste antwoord met positie
       if (a.lat === null || seen.has(a.pk)) continue;
       seen.add(a.pk);
-      feats.push({ type: "Feature", geometry: { type: "Point", coordinates: [a.lon, a.lat] }, properties: { set: "A", ts: a.old ? Math.round(a.ts - (a.at - a.fixAt)) : a.ts, name: a.name, flags: "-", old: !!a.old } });
+      feats.push({ type: "Feature", geometry: { type: "Point", coordinates: [a.lon, a.lat] }, properties: { set: "A", prio: !!a.prio, ts: a.old ? Math.round(a.ts - (a.at - a.fixAt)) : a.ts, name: a.name, flags: "-", old: !!a.old } });
     }
     map.getSource("tk-ans").setData({ type: "FeatureCollection", features: feats });
   }

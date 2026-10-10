@@ -92,7 +92,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Firmware 0.9.6 (T1000-E) · MeshCore v1.17.1<br>
+    Firmware 0.9.8 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -113,12 +113,13 @@
     <li><span class="n">10</span> Nieuw toestel klaarmaken, sleutels en back-ups</li>
     <li><span class="n">11</span> Gebruikers, rechten en instellingen <small>wie leest welk kanaal</small></li>
     <li><span class="n">12</span> De offline-app <small>trackers volgen zonder internet, positie vragen</small></li>
-    <li><span class="n">13</span> Problemen oplossen</li>
+    <li><span class="n">13</span> Voertuigtracker RAK3401 en prioritair rijden <small>GPS, pin 31, blauwe lichten</small></li>
+    <li><span class="n">14</span> Problemen oplossen</li>
   </ol>
   <div class="who">
     <div><b>Iedereen</b>De tracker gebruiken (hoofdstuk 2 en 3), de kaart en het logboek lezen (5 en 6), de offline-app (12).</div>
     <div><b>Operators</b>Trackers toevoegen en instellen, de trackmodus kiezen, zones en meldingen (4 en 6 tot 8).</div>
-    <div><b>Beheerders</b>Firmware, sleutels en back-ups, gebruikers en systeeminstellingen (9 tot 11).</div>
+    <div><b>Beheerders</b>Firmware, sleutels en back-ups, gebruikers en systeeminstellingen (9 tot 11), de voertuigtracker (13).</div>
   </div>
   <div class="note" style="margin-top:8mm"><b>Over de schermafbeeldingen</b>De schermen in deze handleiding komen van een
     demo-installatie met virtuele trackers rond Hasselt. Daarom staat rechtsboven soms <em>mesh: niet verbonden</em>;
@@ -175,8 +176,9 @@
 <h2 class="chap"><span class="nr">2</span>De tracker</h2>
 <div class="cols">
   <div>
-    <p class="lead">De tracker is een Seeed <strong>T1000-E</strong>: zo groot als een bankkaart, met GPS, een
-      bewegingssensor, een buzzer, één knop en een led.</p>
+    <p class="lead">De gewone tracker is een Seeed <strong>T1000-E</strong>: zo groot als een bankkaart, met GPS, een
+      bewegingssensor, een buzzer, één knop en een led. MeshTrack bestaat ook voor de RAK WisMesh Tag en de RAK3401
+      (zie <em>Drie toestellen</em> hieronder).</p>
     <h3>Twee modi</h3>
     <ul>
       <li><strong>Tracker</strong>: Bluetooth staat uit en de radio slaapt tussen twee berichten (onderweg luistert ze
@@ -207,6 +209,26 @@
     <figcaption>Schematisch, niet op schaal.</figcaption>
   </figure>
 </div>
+
+<h3>Drie toestellen</h3>
+<p>Elke MeshTrack-firmware verschijnt voor drie toestellen. Wat in deze handleiding over de knop, de biepjes en de bewegingssensor
+  staat, geldt voluit voor de T1000-E; de andere toestellen hebben niet alles.</p>
+<table>
+  <tr><th>Toestel</th><th>Wat zit erop</th><th>Getest op een echt toestel</th></tr>
+  <tr><td class="k">Seeed T1000-E<br><span style="font-weight:400"><code>t1000e</code></span></td><td>Knop, buzzer, led, bewegingssensor, GPS,
+    batterij. Het toestel uit deze handleiding.</td><td>ja</td></tr>
+  <tr><td class="k">RAK WisMesh Tag<br><span style="font-weight:400"><code>wismesh_tag</code></span></td><td>Knop, buzzer, bewegingssensor
+    (LIS2DH), GPS (AT6558R).</td><td><strong>nog niet</strong></td></tr>
+  <tr><td class="k">RAK3401 + RAK13302 1 W<br><span style="font-weight:400"><code>rak3401_1w</code></span></td><td>Voertuigtracker op een
+    RAK19007-basisbord met een losse GPS-module (UART). Geen buzzer en geen bewegingssensor; terugmelding met de led. Zendvermogen
+    tot ongeveer 27 dBm na de versterker (18 dBm ingesteld + ongeveer 9 dB). Zie hoofdstuk 13.</td><td><strong>nog niet</strong></td></tr>
+</table>
+<div class="warn"><b>WisMesh Tag en RAK3401: nog niet getest</b>De firmware voor deze twee toestellen is gebouwd, maar nog niet op een
+  echt toestel uitgeprobeerd. Gebruik ze voorlopig om te testen, niet voor een echte inzet, en meld wat je vaststelt.</div>
+<p>Zonder bewegingssensor (RAK3401, of als de sensor niet werkt) bepaalt de tracker <strong>rust met de GPS</strong>: na
+  <code>still_timeout</code> zonder GPS-beweging gaat de GPS uit, en elke <code>rust_gps_check</code> (standaard 5 min) zet hij hem kort
+  aan om te kijken of hij verplaatst is: meer dan 50 m of minstens 3 km/u, dan wordt hij wakker. Op <code>uit</code> blijft de GPS aan
+  en slaapt de tracker nooit.</p>
 
 <h3>De knop en de biepjes</h3>
 <table>
@@ -263,7 +285,8 @@
   <tr><td class="k">Stilstand</td><td>Langer stil dan <em>slapen na stilstand van</em>: laatste positie, daarna slapen.</td><td>5 min</td></tr>
   <tr><td class="k">Heartbeat</td><td>In rust een teken van leven.</td><td>12 uur</td></tr>
 </table>
-<p>Een bewegingssensor maakt hem weer wakker; de eerste positie daarna heet <em>wakker door beweging</em>. Elk bericht gaat
+<p>Een bewegingssensor maakt hem weer wakker (zonder sensor kijkt de GPS af en toe; zie <em>Drie toestellen</em> in hoofdstuk 2);
+  de eerste positie daarna heet <em>wakker door beweging</em>. Elk bericht gaat
   één keer via het kanaal de mesh in, zonder bevestiging; gaat er een verloren, dan reizen de bewaarde punten mee met het volgende.</p>
 
 <h3>Meerdere punten per bericht</h3>
@@ -404,7 +427,7 @@
     <path d="M627 30V40" stroke="#0369a1" stroke-width="1.6" marker-end="url(#fb)"/>
     <g font-size="10.5" text-anchor="middle">
       <text x="290" y="30" fill="#5d6a66">niet</text><text x="290" y="42" fill="#5d6a66">gehoord</text>
-      <text x="494" y="68" fill="#0369a1">hoofdpunt nooit</text><text x="494" y="80" fill="#0369a1">gehoord</text>
+      <text x="494" y="68" fill="#0369a1">punten nooit</text><text x="494" y="80" fill="#0369a1">gehoord</text>
       <text x="494" y="102" fill="#5d6a66">buffer vol of</text><text x="494" y="114" fill="#5d6a66">10 min oud</text>
     </g>
     <path d="M215 124V140" stroke="#0b6e4f" stroke-width="1.6" marker-end="url(#fg)"/>
@@ -448,9 +471,13 @@
     Hoort hij dat, dan is het bericht de mesh op en zijn de punten erin binnen.</li>
   <li><strong>Eerst meeliften.</strong> Hoort hij niets, dan blijven de punten in zijn geheugen en reizen ze gratis mee met de
     volgende FastTrack-berichten. Korte gaten raken zo vanzelf gevuld, zonder één bericht extra.</li>
-  <li><strong>Dan de wachtrij.</strong> Pas als het hoofdpunt van een bericht dat geheugen verlaat zonder dat de tracker het ooit
-    herhaald hoorde (het geheugen is vol, of het punt is 10 minuten oud), gaat het in de <strong>wachtrij</strong>: één punt per
-    gemist bericht, met zijn echte GPS-tijd. SlowTrack-punten gaan in deze modus meteen in de wachtrij.</li>
+  <li><strong>Dan de wachtrij.</strong> Pas als punten van een bericht dat geheugen verlaten zonder dat de tracker het ooit
+    herhaald hoorde (het geheugen is vol, of de punten zijn 10 minuten oud), gaan ze in de <strong>wachtrij</strong>, met hun echte
+    GPS-tijd. Met <code>fifo_punten alle</code> (standaard) zijn dat <em>alle</em> punten van het gemiste bericht: het hoofdpunt én de
+    tussenpunten die hij elke <code>sample</code> bewaarde. Rechte stukken worden uitgedund (<code>fifo_dun</code>), zodat een dode
+    zone toch in detail op de kaart komt. Met <code>fifo_punten hoofd</code> gaat alleen het hoofdpunt van elk gemist bericht erin:
+    minder berichten, maar minder detail. Een voorbeeld uit de praktijk: 5 minuten zonder bereik gaf met <em>hoofd</em> maar 3 punten,
+    met <em>alle</em> zo'n 30 vóór het uitdunnen. SlowTrack-punten gaan in deze modus meteen in de wachtrij.</li>
   <li><strong>Wachten op stabiele dekking.</strong> <em>Dekking</em> betekent: de tracker hoort een herhaling van een eigen bericht, of
     een pakket dat via een repeater kwam. Hij begint pas met inhalen bij <em>stabiele</em> dekking: een pakket met een
     signaal-ruisverhouding (SNR) van minstens <code>fifo_snr</code>, twee keer dekking binnen 60 seconden, of een bevestiging van de
@@ -470,8 +497,9 @@
   <div>
     <h3>De wachtrij</h3>
     <ul>
-      <li>Hoogstens <code>fifo_max</code> punten, standaard 500: bij één bericht per 1 à 2 minuten zo'n <strong>8 à 16 uur rijden
-        zonder bereik</strong>.</li>
+      <li>Hoogstens <code>fifo_max</code> punten, standaard 500. Met <code>fifo_punten hoofd</code> (één punt per bericht, 1 à 2 per
+        minuut) is dat zo'n <strong>8 à 16 uur rijden zonder bereik</strong>; met <code>alle</code> raakt ze sneller vol (bij een punt per
+        15 s zo'n 2 uur, op rechte wegen door het uitdunnen veel langer). Daarna blijft de vorm van de route bewaard.</li>
       <li>Ze staat in het flashgeheugen en <strong>overleeft een herstart</strong>.</li>
       <li>Is ze vol, dan valt niet het oudste punt weg, maar het punt dat het minst aan de vorm van de route toevoegt: het punt dat
         het dichtst bij de lijn tussen zijn twee buren ligt.</li>
@@ -517,7 +545,9 @@
 <p>Elk inhaalbericht wordt door meerdere repeaters herhaald: één bericht kost het net al snel enkele uitzendingen. Hoeveel punten
   in één bericht passen, hangt af van de <strong>naam van de tracker</strong>: elk bericht begint met <code>&lt;naam&gt;: </code>, dus
   elke byte van de naam kost plaats, en een emoji telt voor meerdere bytes (🇧🇪 = 8 bytes). De naam van het kanaal speelt geen rol:
-  die wordt nooit meegestuurd (alleen een hash van 1 byte). Met de standaardinstellingen (hoogstens 20 herhaalde berichten per uur):</p>
+  die wordt nooit meegestuurd (alleen een hash van 1 byte). Met <code>fifo_punten alle</code> komen er na een dode zone meer punten
+  in de wachtrij en dus meer inhaalberichten; dat blijft begrensd door <code>fifo_per_uur</code>, het plafond voor pogingen en de regel
+  voor niet-volle berichten. Met de standaardinstellingen (hoogstens 20 herhaalde berichten per uur):</p>
 <table>
   <tr><th>Naam van de tracker</th><th>Punten per bericht</th><th>Volle wachtrij (500)</th><th>Leeg na (standaard)</th></tr>
   <tr><td>6 tot 11 bytes, bv. <em>Ploeg 3</em></td><td>≈ 9</td><td>≈ 56 berichten</td><td>≈ 2,1 uur</td></tr>
@@ -535,6 +565,8 @@
 <table class="brk">
   <tr><th>Instelling</th><th>Wat het doet</th><th>Standaard</th></tr>
   <tr><td class="k">Trackmodus<br><code>track_mode</code></td><td><code>classic</code> of <code>fifo</code>.</td><td>classic</td></tr>
+  <tr><td class="k">Wat gaat in de wachtrij<br><code>fifo_punten</code></td><td><code>alle</code>: alle punten van een gemist
+    FastTrack-bericht (hoofdpunt en tussenpunten); <code>hoofd</code>: alleen het hoofdpunt (minder berichten).</td><td>alle</td></tr>
   <tr><td class="k">Wachtrij maximaal<br><code>fifo_max</code></td><td>Hoogstens zoveel punten in de wachtrij (20 tot 500).</td><td>500</td></tr>
   <tr><td class="k">Inhalen vanaf<br><code>fifo_min</code></td><td>Pas beginnen met inhalen vanaf zoveel punten (1 tot <code>fifo_max</code>);
     na een onderbroken ronde vanaf 1.</td><td>5</td></tr>
@@ -596,7 +628,7 @@
   <tr><td class="k">fifo wis ja</td><td>De wachtrij wissen; de punten zijn dan definitief weg.</td></tr>
   <tr><td class="k">status: track_mode</td><td><code>classic</code> of <code>fifo</code>, met daarnaast de ingestelde waarden
     (<code>fifo_max</code>, <code>fifo_min</code>, <code>fifo_gap</code>, <code>fifo_per_uur</code>, <code>fifo_pogingen</code>,
-    <code>fifo_dun</code>, <code>fifo_snr</code>).</td></tr>
+    <code>fifo_dun</code>, <code>fifo_snr</code>, <code>fifo_punten</code>).</td></tr>
   <tr><td class="k">status: fifo</td><td>Punten in de wachtrij.</td></tr>
   <tr><td class="k">status: fifo_dekking</td><td>Seconden sinds de laatste dekking; <code>-</code> = nog nooit sinds de start.</td></tr>
   <tr><td class="k">status: fifo_geparkeerd</td><td>Geparkeerde punten (lagere voorrang, nooit opgegeven).</td></tr>
@@ -675,6 +707,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     Bij een gekozen tracker tonen de popup en de lijst wanneer het laatste SlowTrack-bericht binnenkwam (<em>SlowTrack: laatste burst 14:05</em>).</li>
   <li>Een antwoord op een <strong>locatieverzoek</strong> (status <em>V</em>) staat als een amberkleurig doelwit (stip met ringen),
     met de legende <em>Op verzoek</em>. In de weergave van één kanaal kun je zelf een <strong>positie vragen</strong> (hoofdstuk 12).</li>
+  <li>Een voertuig dat <strong>prioritair</strong> rijdt (blauwe lichten), knippert blauw, met blauwe stukken in het spoor en een
+    sirene-badge; onder <em>Filter en zichtbaarheid</em> toont <em>Alleen prioritair</em> alleen die voertuigen (hoofdstuk 13).</li>
   <li>Onder <em>Meshnodes op de kaart</em> toon je repeaters, rooms en companions die de server hoorde.</li>
 </ul>
 <figure><img src="img/kaart-tracker.jpg" alt=""><figcaption>Een tracker gekozen: details in de popup, afstand en snelheden in de lijst, export als GPX of CSV, en <em>centreren en volgen</em>.</figcaption></figure>
@@ -736,7 +770,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <li>Voor de trackers kies je alle trackers, <strong>kanalen</strong> (dan geldt de regel ook voor trackers die later
     op dat kanaal sturen) en/of losse trackers. Een eigen regel meldt alleen trackers die je zelf mag zien.</li>
   <li>Een regel kiest <strong>gebeurtenissen</strong> (SOS, batterij onder 20 %, wakker door beweging, zone binnen of buiten,
-    aan of van de lader, te lang stil, verloren tracker gezien …), <strong>trackers</strong> (of alle) en
+    aan of van de lader, te lang stil, verloren tracker gezien, rijdt prioritair, rijdt niet langer prioritair …), <strong>trackers</strong> (of alle) en
     <strong>ontvangers</strong>.</li>
   <li>Ontvangers kies je uit de contacten van de companion, of je plakt hun pubkey.</li>
   <li>De <strong>cooldown</strong> voorkomt dat dezelfde tracker met dezelfde gebeurtenis te vaak een melding geeft.</li>
@@ -770,6 +804,13 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <p>Ga naar <em>Toestellen</em>, steek de tracker met een USB-kabel in de computer en klik op <em>Verbinden</em>. Dat werkt in
   <strong>Chrome of Edge</strong> op een computer of Android-toestel. Bovenaan zie je welk toestel verbonden is; daaronder staan
   de tabbladen <em>Instellingen</em>, <em>Firmware</em>, <em>Klaarmaken &amp; back-ups</em>, <em>Terminal</em> en <em>Simulatie</em>.</p>
+<p><strong>Herkend toestel.</strong> Bij het verbinden herkent de pagina het toestel: aan het USB-type, aan de status van MeshTrack,
+  of aan het model van stock MeshCore. De kaart <em>Herkend toestel</em> toont wat het is en wat je ermee kunt doen. Staat er nog
+  stock MeshCore op, dan maakt de pagina vóór het flashen eerst een back-up van de privésleutel. MeshTrack meldt in
+  <code>status</code> een regel met wat het bord heeft (<code>board=</code>, <code>knop=</code>, <code>buzzer=</code>, <code>accel=</code>,
+  <code>gps=</code>, <code>tx_max=</code>, <code>tx_versterking=</code>). Het instellingenscherm past zich daaraan aan: wat het toestel
+  niet heeft, staat verborgen of grijs, en bij het terugzetten van een back-up slaat de pagina instellingen over die niet bij het
+  toestel passen.</p>
 <p>In <em>Instellingen</em> staan eerst de <strong>naam</strong> van de tracker (zo heet hij in de mesh en als afzender van
   zijn kanaalberichten), de modus, het <strong>trackingkanaal</strong> en de belangrijkste instellingen. Een <em>voorinstelling</em> (te voet, fiets, voertuig,
   spaarzaam) vult ze in één klik in; de rest staat achter <em>Geavanceerde instellingen tonen</em>. Met <em>Opslaan op de
@@ -850,12 +891,12 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <p><strong>Diagnose</strong>: met <code>rxlog aan</code> toont de tracker live elk kanaalpakket dat
   hij ontvangt (<code>rx kanaalpakket hash xx, N hops, N bytes</code>) en elk kanaalbericht dat hij kan ontcijferen
   (<code>rx kanaalbericht op kanaal N: …</code>). Bij het aanzetten meldt hij ook de hash van zijn trackingkanaal. Dat blijft aan
-  tot <code>rxlog uit</code> of een herstart. Handig als een SOS-bevestiging niet aankomt (zie hoofdstuk 13).</p>
+  tot <code>rxlog uit</code> of een herstart. Handig als een SOS-bevestiging niet aankomt (zie hoofdstuk 14).</p>
 <div class="note"><b>Alleen live</b>De tracker bewaart geen log: de regels verschijnen alleen terwijl je meekijkt, en alleen als het
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div class="cols menus" style="gap:3mm">
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.6       HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.8       HOOFDMENU
   ==============================================================
    Ploeg 3  |  modus companion (USB)  |  batterij 99%
    tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
@@ -874,7 +915,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.6       MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.9.8       MODUS EN KNOP
   ==============================================================
    Op batterij nu gekozen: tracker.
    Met USB altijd companion.
@@ -904,11 +945,15 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <h2 class="chap"><span class="nr">9</span>Firmware flashen</h2>
 <p class="lead">In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je flasht ze
   rechtstreeks vanuit de browser, zonder extra programma's.</p>
-<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.6. Heeft een tracker oudere firmware, dan kent hij
+<p>Elke versie bestaat voor de drie toestellen (hoofdstuk 2). Kies bij <em>Toestel</em> het juiste bord; is er een tracker verbonden,
+  dan kiest de pagina het zelf op basis van zijn status. De bootloader start de pagina vanzelf (een <em>1200-baud touch</em>); met de
+  hand dubbelklik je op de resetknop, zodat er een USB-station verschijnt.</p>
+<div class="warn"><b>Het juiste pakket</b>De bootloader beschermt je alleen tussen de T1000-E en de RAK-borden (ze hebben een andere
+  SoftDevice). Tussen de WisMesh Tag en de RAK3401 beschermt alleen de website: controleer dus zelf het gekozen toestel als je
+  een pakket downloadt en met de hand flasht.</div>
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.8. Heeft een tracker oudere firmware, dan kent hij
   sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
   (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
-<figure class="half"><img style="width:50%" src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: back-up, bootloader, flashen en de controle van de sleutel.
-  De versienummers en tabbladen zien er bij jou anders uit.</figcaption></figure>
 <ol class="steps">
   <li>Verbind de tracker (<em>Verbinden</em>) en klik op <em>Flashen via de browser</em>.</li>
   <li>Eerst komt er een <strong>back-up</strong>: de volledige opslag (<code>.bin</code>) en de sleutel met de instellingen
@@ -1061,7 +1106,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <figure><img src="img/systeem-instellingen.jpg" alt=""><figcaption>Systeem → Instellingen, met onderaan de standaardwaarden voor nieuwe trackers.</figcaption></figure>
 <p>Hier stel je de pauze en het aantal pogingen voor meldingen in, de bewaartermijn van posities, wanneer een tracker grijs
   wordt en de <strong>standaardwaarden voor nieuwe trackers</strong>: frequentie, bandbreedte, spreading factor, coding rate,
-  zendvermogen, bytes per hop, regio en het kanaal Public.</p>
+  zendvermogen, bytes per hop, regio en het kanaal Public. Ook hoe lang een voertuig na zijn laatste prioritaire bericht
+  prioritair blijft (<em>Prioritair: vasthouden</em>, <code>prio_hold_s</code>; hoofdstuk 13), stel je hier in.</p>
 
 <!-- ============================ 12 ============================ -->
 <h2 class="chap"><span class="nr">12</span>De offline-app</h2>
@@ -1174,7 +1220,204 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   Bluetooth werkt in Chrome op Android en op een computer, niet op een iPhone.</p>
 
 <!-- ============================ 13 ============================ -->
-<h2 class="chap"><span class="nr">13</span>Problemen oplossen</h2>
+<!-- ============================ 13 ============================ -->
+<h2 class="chap"><span class="nr">13</span>Voertuigtracker RAK3401 en prioritair rijden</h2>
+<p class="lead">De RAK3401 met de 1W-versterker RAK13302 is bedoeld voor een voertuig: vaste voeding, een externe antenne en een
+  losse GPS-module. Via pin 31 kan hij melden dat het voertuig met blauwe lichten rijdt.</p>
+<div class="warn"><b>Nog niet getest</b>Alles in dit hoofdstuk is gebouwd volgens het ontwerp, maar nog niet op een echt toestel of in een
+  echt voertuig getest. Controleer de werking zelf voor je erop vertrouwt.</div>
+
+<h3>De GPS-module</h3>
+<p>De GPS hangt aan een UART van het RAK19007-basisbord. De tracker zoekt zelf waar en hoe snel ze praat: op de pinnen 15/16 of 8/6, in
+  beide richtingen, aan 9600, 38400 of 115200 baud. Dat gebeurt bij de eerste start en opnieuw als de GPS 10 minuten zweeg.</p>
+<table>
+  <tr><th>Commando of instelling</th><th>Betekenis</th></tr>
+  <tr><td class="k">gps zoek</td><td>De pinnen en de baudrate opnieuw zoeken.</td></tr>
+  <tr><td class="k">set gps_pinnen 15/16@9600</td><td>Pinnen (rx/tx) en baudrate met de hand vastleggen.</td></tr>
+  <tr><td class="k">status: gps_pinnen=</td><td>De pinnen en de baudrate die hij gebruikt.</td></tr>
+</table>
+
+<h3>Pin 31: knop of blauwe lichten</h3>
+<p>Met <code>pin31</code> bepaal je wat de ingang P0.31 doet (in <em>Toestellen</em>: <em>Ingang pin 31 (knop of blauwe lichten)</em>):</p>
+<table>
+  <tr><th>Waarde</th><th>Wat de tracker doet</th></tr>
+  <tr><td class="k">uit (standaard)</td><td>De pin wordt nooit gelezen.</td></tr>
+  <tr><td class="k">knop</td><td>Een analoge drukknop: klikken, dubbelklikken en vasthouden zoals op de T1000-E. Zweeft de pin (geen knop
+    aangesloten), dan zet de tracker de knop zelf weer uit.</td></tr>
+  <tr><td class="k">prio</td><td>Prioriteitsingang voor de blauwe lichten. Zolang ze branden, plus <code>prio_houd</code>, rijdt de tracker
+    <strong>prioritair</strong>: elk bericht draagt de vlag <code>p</code>, en bij het aangaan stuurt hij meteen een positie.</td></tr>
+</table>
+<table>
+  <tr><th>Instelling</th><th>Wat het doet</th><th>Standaard</th></tr>
+  <tr><td class="k">prio_niveau laag|hoog</td><td><code>laag</code>: actief als de pin naar massa getrokken wordt (optocoupler, interne
+    pull-up). <code>hoog</code>: actief bij spanning op de pin (interne pull-down).</td><td>laag</td></tr>
+  <tr><td class="k">prio_houd</td><td>Na de laatste actieve puls nog zo lang prioritair (1 tot 60 min); <code>0</code> = volgt de ingang
+    (prioritair precies zolang hij actief is).</td><td>5 min</td></tr>
+  <tr><td class="k">prio_interval</td><td>Prioritair: FastTrack minstens elke zoveel tijd; <code>0</code> = de gewone instellingen.</td><td>30 s</td></tr>
+</table>
+<p><code>status</code> toont <code>pin31=</code>, de prio-instellingen en <code>prio=aan (nog …)</code>, <code>uit</code> of
+  <code>fout</code>. <em>Fout</em> betekent dat de ingang zweeft (heel veel wisselingen per seconde): dan geldt er geen prioriteit tot
+  het weer rustig is.</p>
+
+<h3>Drie manieren om pin 31 aan te sturen</h3>
+<p>De firmware is voor alle drie dezelfde; alleen de bedrading en <code>prio_houd</code> verschillen.</p>
+<table>
+  <tr><th>Variant</th><th>Hoe</th><th>prio_houd</th></tr>
+  <tr><td class="k">1. Voeding van de<br>blauwe lichten</td><td>Via de optocoupler, zoals in het schema hieronder. Prioritair zolang de
+    lichten branden.</td><td>5 min (knipperende lichten)</td></tr>
+  <tr><td class="k">2. Eigen schakelaar</td><td>Een aparte schakelaar op het bedieningspaneel (bv. een verlichte tuimelschakelaar) die 12/24 V
+    in hetzelfde optocouplercircuit schakelt. De bestuurder beslist, los van de lichten.</td><td>0</td></tr>
+  <tr><td class="k">3. Potentiaalvrij contact</td><td>Een schakelaar of relaiscontact <strong>rechtstreeks</strong> tussen pin 31 en GND, met
+    <code>prio_niveau laag</code> en de interne pull-up; geen optocoupler nodig. Alleen als er geen voertuigspanning op dat contact kan
+    komen. Bij lange draden: een klein RC-filter (bv. 1 kΩ in serie en 100 nF naar GND, bij de pin), of toch een optocoupler.</td><td>0</td></tr>
+</table>
+<p><code>prio_houd 0</code> betekent <em>volgt de ingang</em>: de tracker rijdt prioritair precies zolang de ingang actief is, en stopt
+  meteen (met een bericht) als hij uitgaat. Dat is aangeraden voor variant 2 en 3. Bij knipperende blauwe lichten (variant 1) hou je
+  5 minuten aan, zodat het knipperen geen reeks aan/uit geeft.</p>
+<figure>
+  <svg viewBox="0 0 720 190" width="100%" font-family="Segoe UI, Arial" font-size="12" role="img" aria-label="Variant 3: potentiaalvrij contact tussen pin 31 en GND, met optioneel RC-filter">
+    <rect x="0" y="0" width="720" height="190" rx="10" fill="#ffffff"/>
+    <text x="20" y="26" font-weight="700" fill="#0b6e4f">VARIANT 3: POTENTIAALVRIJ CONTACT (geen voertuigspanning)</text>
+    <!-- contact -->
+    <rect x="20" y="60" width="170" height="70" rx="8" fill="#eff8fe" stroke="#0369a1" stroke-width="1.5"/>
+    <text x="105" y="82" text-anchor="middle" font-weight="700" fill="#1c2321">Schakelaar of</text>
+    <text x="105" y="97" text-anchor="middle" font-weight="700" fill="#1c2321">relaiscontact</text>
+    <text x="105" y="114" text-anchor="middle" fill="#5d6a66" font-size="10.5">droog contact</text>
+    <circle cx="210" cy="75" r="3" fill="#1c2321"/><circle cx="210" cy="115" r="3" fill="#1c2321"/>
+    <path d="M190 75H210M190 115H210" stroke="#1c2321" stroke-width="2"/>
+    <!-- draad naar pin 31 met RC -->
+    <path d="M210 75H330" stroke="#1c2321" stroke-width="2"/>
+    <rect x="330" y="65" width="60" height="20" rx="3" fill="#fff7ed" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <text x="360" y="79" text-anchor="middle" fill="#b45309" font-size="11" font-weight="700">1 kΩ</text>
+    <path d="M390 75H550" stroke="#1c2321" stroke-width="2"/>
+    <circle cx="470" cy="75" r="2.6" fill="#1c2321"/>
+    <path d="M470 75V100" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <path d="M458 100H482M458 108H482" stroke="#b45309" stroke-width="2.4"/>
+    <path d="M470 108V115" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <text x="452" y="108" text-anchor="end" fill="#b45309" font-size="10.5" font-weight="700">100 nF</text>
+    <path d="M210 115H550" stroke="#1c2321" stroke-width="2"/>
+    <circle cx="470" cy="115" r="2.6" fill="#1c2321"/>
+    <text x="300" y="160" text-anchor="middle" fill="#b45309" font-size="10.5">RC-filter (optioneel, bij lange draden): zo dicht mogelijk bij de pin</text>
+    <!-- tracker -->
+    <rect x="550" y="55" width="160" height="40" rx="8" fill="#eef6f2" stroke="#0b6e4f" stroke-width="1.6"/>
+    <text x="630" y="73" text-anchor="middle" font-weight="700" fill="#1c2321">pin 31 (P0.31)</text>
+    <text x="630" y="88" text-anchor="middle" fill="#5d6a66" font-size="10.5">interne pull-up naar 3,3 V</text>
+    <rect x="550" y="100" width="160" height="32" rx="8" fill="#eef6f2" stroke="#0b6e4f" stroke-width="1.6"/>
+    <text x="630" y="121" text-anchor="middle" font-weight="700" fill="#1c2321">GND</text>
+    <rect x="530" y="146" width="180" height="32" rx="8" fill="#0b6e4f"/>
+    <text x="620" y="167" text-anchor="middle" fill="#fff" font-weight="700" font-size="11.5">prio_niveau laag · prio_houd 0</text>
+  </svg>
+  <figcaption>Variant 3: een droog contact tussen pin 31 en GND. Het RC-filter (gestippeld) is alleen nodig bij lange draden.</figcaption>
+</figure>
+<h3>Aansluiten op de blauwe lichten (variant 1 en 2)</h3>
+<figure>
+  <svg viewBox="0 0 720 300" width="100%" font-family="Segoe UI, Arial" font-size="12" role="img" aria-label="Aansluitschema blauwe lichten via PC817-optocoupler naar pin 31">
+    <rect x="0" y="0" width="720" height="300" rx="10" fill="#ffffff"/>
+    <defs><marker id="wa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5d6a66"/></marker></defs>
+    <!-- voertuigkant -->
+    <text x="20" y="28" font-weight="700" fill="#b45309">VOERTUIG (12/24 V)</text>
+    <text x="470" y="28" font-weight="700" fill="#0b6e4f">TRACKER (RAK19007, max. 3,3 V)</text>
+    <path d="M360 40V110M360 230V280" stroke="#9aa6a1" stroke-width="1.4" stroke-dasharray="6 5"/>
+    <text x="360" y="296" text-anchor="middle" fill="#5d6a66" font-size="10.5">galvanisch gescheiden</text>
+    <!-- + van de blauwe lichten -->
+    <rect x="20" y="60" width="150" height="40" rx="8" fill="#eff8fe" stroke="#0369a1" stroke-width="1.5"/>
+    <text x="95" y="78" text-anchor="middle" font-weight="700" fill="#1c2321">+ blauwe lichten</text>
+    <text x="95" y="93" text-anchor="middle" fill="#5d6a66" font-size="10.5">12 of 24 V als ze branden</text>
+    <!-- weerstand -->
+    <path d="M170 80H200" stroke="#1c2321" stroke-width="2"/>
+    <rect x="200" y="70" width="60" height="20" rx="3" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+    <text x="230" y="84" text-anchor="middle" fill="#b45309" font-size="11" font-weight="700">R</text>
+    <text x="230" y="112" text-anchor="middle" fill="#5d6a66" font-size="10.5">bv. 2,2 kΩ (12 V)</text>
+    <text x="230" y="125" text-anchor="middle" fill="#5d6a66" font-size="10.5">of 4,7 kΩ (24 V)</text>
+    <path d="M260 80H300V115" stroke="#1c2321" stroke-width="2" fill="none"/>
+    <!-- optocoupler -->
+    <rect x="285" y="115" width="150" height="110" rx="8" fill="#f3f5f4" stroke="#1c2321" stroke-width="1.6"/>
+    <text x="360" y="138" text-anchor="middle" font-weight="700" fill="#1c2321">PC817</text>
+    <!-- led -->
+    <path d="M300 115V150" stroke="#1c2321" stroke-width="2"/>
+    <path d="M288 150H312L300 168Z" fill="#b45309"/>
+    <path d="M288 168H312" stroke="#1c2321" stroke-width="2"/>
+    <path d="M300 168V225" stroke="#1c2321" stroke-width="2"/>
+    <text x="318" y="160" fill="#5d6a66" font-size="10">1</text><text x="318" y="215" fill="#5d6a66" font-size="10">2</text>
+    <path d="M318 172l14 -6M318 180l14 -6" stroke="#b45309" stroke-width="1.4" marker-end="url(#wa)"/>
+    <!-- transistor -->
+    <path d="M405 140V210" stroke="#1c2321" stroke-width="2.4"/>
+    <path d="M405 160L420 145V115" stroke="#1c2321" stroke-width="2" fill="none"/>
+    <path d="M405 190L420 205V225" stroke="#1c2321" stroke-width="2" fill="none"/>
+    <text x="428" y="160" fill="#5d6a66" font-size="10">4</text><text x="428" y="215" fill="#5d6a66" font-size="10">3</text>
+    <!-- 1N4148 antiparallel over de led -->
+    <path d="M300 130H265V205H300" stroke="#1c2321" stroke-width="1.6" fill="none"/>
+    <path d="M255 174H275L265 158Z" fill="#5d6a66"/>
+    <path d="M255 158H275" stroke="#1c2321" stroke-width="2"/>
+    <text x="250" y="160" text-anchor="end" fill="#5d6a66" font-size="10.5">1N4148</text>
+    <text x="250" y="173" text-anchor="end" fill="#5d6a66" font-size="10">antiparallel</text>
+    <!-- TVS-diode over de ingang (optioneel) -->
+    <path d="M185 80V150M185 172V255" stroke="#b45309" stroke-width="1.6" stroke-dasharray="4 3" fill="none"/>
+    <path d="M175 172H195L185 156Z" fill="#b45309"/>
+    <path d="M173 153L175 156H195L197 159" stroke="#b45309" stroke-width="2" fill="none"/>
+    <text x="100" y="150" text-anchor="middle" fill="#b45309" font-size="10.5" font-weight="700">TVS (optioneel)</text>
+    <text x="100" y="164" text-anchor="middle" fill="#5d6a66" font-size="10">P6KE18A bij 12 V</text>
+    <text x="100" y="177" text-anchor="middle" fill="#5d6a66" font-size="10">P6KE33A bij 24 V</text>
+    <circle cx="185" cy="80" r="2.6" fill="#1c2321"/><circle cx="185" cy="255" r="2.6" fill="#1c2321"/>
+    <circle cx="300" cy="130" r="2.4" fill="#1c2321"/><circle cx="300" cy="205" r="2.4" fill="#1c2321"/>
+    <!-- massa voertuig -->
+    <path d="M300 225V255H95" stroke="#1c2321" stroke-width="2" fill="none"/>
+    <rect x="20" y="240" width="150" height="34" rx="8" fill="#eef6f2" stroke="#5d6a66" stroke-width="1.4"/>
+    <text x="95" y="261" text-anchor="middle" fill="#1c2321" font-weight="700">− massa voertuig</text>
+    <!-- trackerkant -->
+    <path d="M420 115V90H520" stroke="#1c2321" stroke-width="2" fill="none"/>
+    <rect x="520" y="70" width="180" height="40" rx="8" fill="#eef6f2" stroke="#0b6e4f" stroke-width="1.6"/>
+    <text x="610" y="88" text-anchor="middle" font-weight="700" fill="#1c2321">pin 31 (P0.31)</text>
+    <text x="610" y="103" text-anchor="middle" fill="#5d6a66" font-size="10.5">interne pull-up naar 3,3 V</text>
+    <path d="M420 225V255H520" stroke="#1c2321" stroke-width="2" fill="none"/>
+    <rect x="520" y="235" width="180" height="40" rx="8" fill="#eef6f2" stroke="#0b6e4f" stroke-width="1.6"/>
+    <text x="610" y="253" text-anchor="middle" font-weight="700" fill="#1c2321">GND</text>
+    <text x="610" y="268" text-anchor="middle" fill="#5d6a66" font-size="10.5">massa van de RAK19007</text>
+    <rect x="470" y="150" width="230" height="44" rx="8" fill="#0b6e4f"/>
+    <text x="585" y="168" text-anchor="middle" fill="#fff" font-weight="700">set pin31 prio</text>
+    <text x="585" y="185" text-anchor="middle" fill="#fff">set prio_niveau laag</text>
+  </svg>
+  <figcaption>De blauwe lichten sturen de led van een PC817-optocoupler (ongeveer 5 mA); de transistorkant trekt pin 31 naar de massa van
+    de tracker. De 1N4148 beschermt de led tegen ompoling, de TVS-diode (optioneel) de ingang tegen spanningspieken.</figcaption>
+</figure>
+<div class="warn"><b>Nooit 12/24 V rechtstreeks op de pin</b>Pin 31 verdraagt hooguit 3,3 V. Sluit de spanning van de blauwe lichten
+  <strong>nooit</strong> rechtstreeks aan: gebruik altijd een optocoupler (zoals hierboven), of een spanningsdeler met een zenerdiode.
+  Een fout hier vernielt het bord. Laat de aansluiting in een voertuig door iemand doen die dat kan.</div>
+<ol class="steps">
+  <li>Zet een serieweerstand voor de led van de optocoupler (pin 1 anode, pin 2 kathode): bv. 2,2 kΩ bij 12 V of 4,7 kΩ bij 24 V.</li>
+  <li>Verbind pin 1 via de weerstand met de + van de blauwe lichten, en pin 2 met de massa van het voertuig. Zet de 1N4148 antiparallel
+    over de led, en eventueel de TVS-diode over de ingang (zie hieronder).</li>
+  <li>Verbind de collector (pin 4) met pin 31 van het basisbord en de emitter (pin 3) met GND van het basisbord.</li>
+  <li>Zet <code>set pin31 prio</code> en <code>set prio_niveau laag</code> (of kies het in <em>Toestellen</em>), en test: lichten aan,
+    dan moet <code>status</code> <code>prio=aan</code> tonen.</li>
+</ol>
+<div class="note"><b>Beschermdiodes</b>Zet een <strong>1N4148</strong> antiparallel over de led van de optocoupler (kathode aan pin 1,
+  anode aan pin 2): die beschermt tegen ompoling en negatieve pieken. Een <strong>TVS-diode</strong> over de ingang van het voertuig
+  (bv. P6KE18A bij 12 V, P6KE33A bij 24 V; kathode aan +) vangt de pieken van een <em>load dump</em> op; die is optioneel maar
+  aangeraden. De serieweerstand verbruikt ongeveer 0,1 W: een weerstand van ¼ W volstaat.</div>
+<div class="tip"><b>Kant-en-klare optocouplermodule</b>Er bestaan kant-en-klare <em>PC817 optocoupler isolation modules</em> in een
+  12V- of 24V-uitvoering. De ingangskant krijgt zijn spanning van het signaal zelf (de blauwe lichten). Aan de uitgangskant: VCC aan
+  3,3 V van de RAK, GND aan GND, OUT aan pin 31. Kies een module <strong>zonder pull-up naar 5 V</strong>. Zo'n module is meestal
+  actief laag: gebruik dan <code>prio_niveau laag</code>.</div>
+<p><strong>Laat de bedrading in het voertuig doen door de voertuigtechnicus</strong>: die kent de elektrische installatie en weet waar
+  je veilig aftakt.</p>
+<div class="note"><b>Een lichtsensor in plaats van een draad?</b>Kan, maar dat is minder betrouwbaar. Het beste werkt een RGB-sensor zoals
+  de TCS34725, die het knipperen van het blauwe licht herkent. Een LDR of een fotodiode zoals de BPW34 raden we af: zonlicht geeft te
+  veel valse meldingen.</div>
+
+<h3>Prioritair op de website</h3>
+<ul>
+  <li>Een prioritair voertuig <strong>knippert blauw</strong> op de kaart, met blauwe stukken in zijn spoor en een sirene-badge. Met de
+    filter <em>Alleen prioritair</em> toon je alleen die voertuigen.</li>
+  <li>Hoe lang een voertuig na zijn laatste bericht met vlag <code>p</code> prioritair blijft, stelt een beheerder in onder
+    <em>Systeem</em> → <em>Instellingen</em> (<em>Prioritair: vasthouden</em>, <code>prio_hold_s</code>, standaard 300 s). Een bericht
+    zonder vlag beëindigt het meteen.</li>
+  <li>Meldingsregels kennen de gebeurtenissen <em>rijdt prioritair</em> en <em>rijdt niet langer prioritair</em> (hoofdstuk 7).</li>
+  <li>Om te oefenen heeft elke simulator in <em>Trackers</em> een knop <em>Prioritair aan/uit</em>.</li>
+</ul>
+
+<!-- ============================ 14 ============================ -->
+<h2 class="chap"><span class="nr">14</span>Problemen oplossen</h2>
 <table class="brk">
   <tr><th>Probleem</th><th>Wat te doen</th></tr>
   <tr><td class="k">mesh: niet verbonden</td><td>De companion op de server is niet bereikbaar, of een ander programma is ermee verbonden
@@ -1235,6 +1478,11 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     zijn companion daarom op 2 bytes (serverlog: <em>padhashes van de companion op 2 bytes gezet</em>). Met <code>rxlog aan</code>
     zie je of de <code>T1A</code> op de tracker aankomt.</td></tr>
   <tr><td class="k">Dubbelklik: één biep</td><td>Hij zag maar één klik. Druk twee keer kort en duidelijk, met hooguit 0,8 s ertussen.</td></tr>
+  <tr><td class="k">RAK3401: geen GPS</td><td>Toont <code>status</code> geen <code>gps_pinnen=</code> of nooit een fix? Typ
+    <code>gps zoek</code>, of leg de pinnen vast met <code>set gps_pinnen 15/16@9600</code> (hoofdstuk 13). Controleer de bedrading van de
+    GPS-module.</td></tr>
+  <tr><td class="k">prio=fout</td><td>De ingang op pin 31 zweeft: er hangt niets aan, of de verbinding is slecht. Controleer de
+    optocoupler en de massa, en <code>prio_niveau</code>. Zolang hij zweeft, geldt er geen prioriteit.</td></tr>
   <tr><td class="k">Geen GPS-fix (N)</td><td>Binnen of onder een dak vindt hij moeilijk satellieten. Leg hem even buiten met de bovenkant naar
     de hemel.</td></tr>
   <tr><td class="k">De kaart blijft leeg</td><td>Herlaad de pagina met Ctrl+F5.</td></tr>
