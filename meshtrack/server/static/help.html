@@ -32,6 +32,7 @@
     <a href="#kanalen">Verzenden via een kanaal</a>
     <a href="#menu">Het seriële menu</a>
     <a href="#trackerlive">Tracker live</a>
+    <a href="#tl-instellingen">Tracker live: instellingen</a>
     <a href="#statussen">Statussen</a>
     <a href="#beheer">Trackers beheren</a>
     <a href="#sim">De simulator</a>
@@ -503,7 +504,7 @@
       <li><em>Op een toestel zetten</em> (bij de back-up, in Trackers → tabblad Toestel) opent Toestellen en zet de back-up terug, bv. op een vervangtoestel. Contacten worden niet
         teruggezet; die leert het toestel opnieuw uit de adverts.</li>
     </ul>
-    <p>Een back-up bewaart ook alle trackerinstellingen: SlowTrack, <code>fast_min_batt</code>, SOS, de biepjes, de
+    <p>De Bluetooth-koppelcode staat nooit in een back-up. Een back-up bewaart wel alle andere trackerinstellingen: SlowTrack, <code>fast_min_batt</code>, SOS, de biepjes, de
       trackmodus en de instellingen van de wachtrij. Flash je nieuwe firmware, dan blijven alle instellingen staan;
       instellingen die er nog niet waren, krijgen hun standaardwaarde.</p>
     <p>Wie een back-up ophaalt, terugzet of verwijdert, staat in het auditlog. Geef dit recht alleen aan wie het echt
@@ -560,7 +561,9 @@
       <code>key export</code> en <code>key import</code> (radio, zendvermogen en sleutel gelden na een
       <code>reboot</code>). De statusled stel je in met
       <code>set led companion</code>, <code>set led altijd</code> of <code>set led uit</code>, de biep bij berichten met
-      <code>set msg_beep prive</code>, <code>alles</code> of <code>uit</code>, locatieverzoeken met <code>set verzoek
+      <code>set msg_beep prive</code>, <code>alles</code> of <code>uit</code>, de Bluetooth-koppelcode met <code>set blepin
+      &lt;6 cijfers&gt;</code> of <code>set blepin standaard</code> (werkt na een herstart; <code>blepin toon</code> toont hem, alleen
+      via USB; status <code>blepin=eigen|standaard</code>; menu <em>Modus en knop</em> → 11), locatieverzoeken met <code>set verzoek
       aan|uit</code>, <code>set rx_beweging aan|uit</code> en <code>set verzoek_beep aan|uit</code>. Tijden geef je op als <code>30s</code>,
       <code>5m</code> of <code>2h</code>.</p>
     <p>SlowTrack, SOS en de biepjes:</p>
@@ -623,14 +626,38 @@
       een tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
     <ul>
       <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
-        companionmodus staat; pincode de eerste keer 123456). Chrome of Edge op Android of een computer; niet op een
-        iPhone.</li>
-      <li>De app <strong>wijzigt niets</strong> op de tracker: ze gebruikt de commando's <code>status</code>,
-        <code>fifo</code> en <code>dump</code> (de interne toestand in een vorm voor programma's). Via Bluetooth aanvaardt de
-        tracker ook geen andere commando's. Instellingen wijzig je in <em>Toestellen</em>.</li>
+        companionmodus staat; koppelcode standaard 123456, of de eigen code). Chrome of Edge op Android of een computer;
+        niet op een iPhone.</li>
+      <li>Voor de toestand gebruikt de app de commando's <code>status</code>, <code>fifo</code> en <code>dump</code> (de
+        interne toestand in een vorm voor programma's); via Bluetooth aanvaardt de tracker van MeshTrack geen andere
+        commando's. Een paar gewone companioninstellingen wijzig je op het tabblad <a href="#tl-instellingen">Instellingen</a>;
+        de rest in <em>Toestellen</em>.</li>
       <li>Via Bluetooth kun je op het tabblad <em>Overzicht</em> ook een <a href="#verzoek">positie vragen</a> aan de andere
         trackers op het kanaal; de antwoorden staan in een lijst, met <em>Op kaart</em>.</li>
     </ul>
+
+    <h3 id="tl-instellingen">Tracker live: instellingen via Bluetooth</h3>
+    <p>Het tabblad <strong>Instellingen</strong> in Tracker live werkt via Bluetooth, met de tracker in companionmodus. Het
+      gebruikt alleen gewone MeshCore-companioncommando's, dus het werkt met elke MeshTrack-firmware, ook ouder dan 0.9.1.</p>
+    <ul>
+      <li><strong>Bluetooth-code</strong>: 6 cijfers, of de standaardcode 123456. De nieuwe code werkt na een herstart; vergeet
+        de tracker daarna in de Bluetooth-instellingen van je telefoon en koppel opnieuw.</li>
+      <li><strong>Naam</strong> van de tracker, en de tracker <strong>herstarten</strong>.</li>
+      <li><strong>Kanalen</strong>: de lijst met een vingerafdruk per kanaal, nooit de sleutel zelf; het trackingkanaal is
+        gemarkeerd.</li>
+      <li><strong>Trackingkanaal vervangen</strong>: scan de QR-code met de camera (schermvullend, met zaklamp) of kies een
+        foto; het formaat is <code>meshcore://channel/add?name=…&amp;secret=…</code>, zoals op <a href="/kanalen">Kanalen</a>.
+        Op een iPhone zonder QR-ondersteuning typ je hem over. Of vul de naam en de sleutel (32 hex-tekens) met de hand in.
+        Eerst vraagt de app een bevestiging; daarna leest ze het kanaal terug ter controle. Het kanaal moet bestaan onder
+        <em>Kanalen</em>; de authsleutel blijft dezelfde.</li>
+      <li><strong>Oudere firmware</strong> (ouder dan 0.9.1): kies zelf het nummer van het trackingkanaal; dat zie je via USB
+        in <em>Toestellen</em> (<code>chan=</code>).</li>
+      <li><strong>Wat kan via Bluetooth?</strong> De MeshTrack-instellingen (FIFO, SlowTrack, biepjes, modus, regio,
+        authsleutel) wijzig je voorlopig alleen via USB in <em>Toestellen</em>. Een latere firmware voegt er meer toe.</li>
+    </ul>
+    <p class="note"><strong>Verander de standaardcode 123456.</strong> Wie de koppelcode kent, kan via Bluetooth de naam, de
+      kanalen en de code van de tracker wijzigen. Stel een eigen code in: hier, in <em>Toestellen</em> (veld
+      <em>Bluetooth-code</em>, firmware 0.9.9) of met <code>set blepin</code>. De code staat nooit in een back-up.</p>
 
     <h2 id="statussen">Statussen</h2>
     <table>
@@ -797,7 +824,7 @@
       <li><strong>Kanaal:</strong> de companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: scan de QR-code (uit MeshTrack → <em>Kanalen</em> of de MeshCore-app), kies
         een foto van een QR-code, of vul naam en sleutel in. Bij een #kanaal mag de sleutel leeg blijven.</li>
       <li><strong>Onderweg:</strong> tik bij <em>Verbinding</em> op <em>Verbinden</em> en kies de companion
-        (pincode van een MeshTrack-tracker: 123456). De app haalt alle wachtende berichten op en daarna elk nieuw
+        (koppelcode van een MeshTrack-tracker: standaard 123456, of de eigen code). De app haalt alle wachtende berichten op en daarna elk nieuw
         bericht zodra het binnenkomt.</li>
     </ol>
     <h3 id="verzoek">Positie vragen (locatieverzoek)</h3>
@@ -869,6 +896,9 @@
     <p>De RAK3401 met de 1W-versterker RAK13302 is bedoeld voor een voertuig: vaste voeding, een externe antenne en een losse
       GPS-module. Via pin 31 kan hij melden dat het voertuig met blauwe lichten rijdt. <strong>Nog niet getest:</strong> alles
       hieronder is gebouwd volgens het ontwerp, maar nog niet op een echt toestel of in een echt voertuig uitgeprobeerd.</p>
+    <p class="note"><strong>Bluetooth-code met een OLED-scherm.</strong> Hangt er een OLED-scherm aan de RAK3401 en staat de
+      koppelcode op standaard, dan kiest MeshCore per sessie een willekeurige code (die het scherm toont); <code>blepin
+      toon</code> via USB geeft de code die nu geldt. Met een eigen code geldt altijd die.</p>
     <h3>De GPS-module</h3>
     <p>De tracker zoekt zelf waar en hoe snel de GPS praat: op de pinnen 15/16 of 8/6, in beide richtingen, aan 9600, 38400
       of 115200 baud; bij de eerste start en opnieuw als de GPS 10 minuten zweeg. Met <code>gps zoek</code> zoekt hij opnieuw,

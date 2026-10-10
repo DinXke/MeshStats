@@ -92,7 +92,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Firmware 0.9.8 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
+    Firmware 0.9.9 (T1000-E, RAK WisMesh Tag, RAK3401 1 W) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -842,15 +842,37 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   verstuurde en wat hij hoorde, met een tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
 <ul>
   <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
-    companionmodus staat; pincode de eerste keer 123456). Chrome of Edge op Android of een computer; niet op een iPhone.</li>
-  <li>De app <strong>wijzigt niets</strong> op de tracker: ze gebruikt de commando's <code>status</code>, <code>fifo</code> en
-    <code>dump</code> (de interne toestand in een vorm voor programma's). Via Bluetooth aanvaardt de tracker ook geen andere
-    commando's. Instellingen wijzig je in <em>Toestellen</em>.</li>
+    companionmodus staat; koppelcode standaard 123456, of de eigen code). Chrome of Edge op Android of een computer; niet op een
+    iPhone.</li>
+  <li>Voor de toestand gebruikt de app de commando's <code>status</code>, <code>fifo</code> en <code>dump</code> (de interne toestand in
+    een vorm voor programma's); via Bluetooth aanvaardt de tracker van MeshTrack geen andere commando's. Een paar gewone
+    companioninstellingen wijzig je op het tabblad <em>Instellingen</em> (hieronder); de rest in <em>Toestellen</em>.</li>
   <li>Via Bluetooth kun je op het tabblad <em>Overzicht</em> ook een <strong>positie vragen</strong> aan de andere trackers op het kanaal
     (hoofdstuk 12); de antwoorden staan in een lijst, met <em>Op kaart</em>.</li>
 </ul>
 
-<h3>Instellingen in de terminal</h3>
+<h3>Tracker live: instellingen via Bluetooth</h3>
+<p>Het tabblad <strong>Instellingen</strong> in Tracker live werkt via Bluetooth, met de tracker in companionmodus. Het gebruikt alleen
+  gewone MeshCore-companioncommando's, dus het werkt met elke MeshTrack-firmware, ook ouder dan 0.9.1.</p>
+<ul>
+  <li><strong>Bluetooth-code</strong>: 6 cijfers, of de standaardcode 123456. De nieuwe code werkt na een herstart; vergeet de tracker
+    daarna in de Bluetooth-instellingen van je telefoon en koppel opnieuw.</li>
+  <li><strong>Naam</strong> van de tracker, en de tracker <strong>herstarten</strong>.</li>
+  <li><strong>Kanalen</strong>: de lijst met een vingerafdruk per kanaal, nooit de sleutel zelf; het trackingkanaal is gemarkeerd.</li>
+  <li><strong>Trackingkanaal vervangen</strong>: scan de QR-code met de camera (schermvullend, met zaklamp) of kies een foto. Het formaat is
+    <code>meshcore://channel/add?name=…&amp;secret=…</code>, zoals op <em>Kanalen</em>. Op een iPhone zonder QR-ondersteuning typ je
+    hem over. Of vul de naam en de sleutel (32 hex-tekens) met de hand in. Eerst vraagt de app een bevestiging; daarna leest ze het
+    kanaal terug ter controle. Het kanaal moet bestaan onder <em>Kanalen</em> in MeshTrack; de authsleutel blijft dezelfde.</li>
+  <li><strong>Oudere firmware</strong> (ouder dan 0.9.1): kies zelf het nummer van het trackingkanaal. Dat zie je via USB in
+    <em>Toestellen</em> (<code>chan=</code> in de status).</li>
+  <li><strong>Wat kan via Bluetooth?</strong> De MeshTrack-instellingen (FIFO, SlowTrack, biepjes, modus, regio, authsleutel) wijzig je
+    voorlopig alleen via USB in <em>Toestellen</em>. Een latere firmware voegt er meer toe.</li>
+</ul>
+<div class="warn"><b>Verander de standaardcode 123456</b>Wie de koppelcode kent, kan via Bluetooth de naam, de kanalen en de code van de
+  tracker wijzigen. Stel dus een eigen code in: hier, in <em>Toestellen</em> (veld <em>Bluetooth-code</em>, firmware 0.9.9) of met
+  <code>set blepin</code>. De code staat nooit in een back-up.</div>
+
+<h3 style="break-before: page">Instellingen in de terminal</h3>
 <p>Alles uit Toestellen kun je ook met <code>set &lt;instelling&gt; &lt;waarde&gt;</code> zetten. Tijden schrijf je als
   <code>30s</code>, <code>5m</code> of <code>2h</code>; <code>0</code> zet een tijd uit. De belangrijkste:</p>
 <table class="brk">
@@ -876,6 +898,9 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <tr><td class="k">verzoek aan|uit</td><td>Locatieverzoeken beantwoorden (hoofdstuk 12).</td><td>aan</td></tr>
   <tr><td class="k">rx_beweging aan|uit</td><td>In trackermodus de radio laten luisteren zolang hij beweegt, zodat hij verzoeken
     hoort.</td><td>aan</td></tr>
+  <tr><td class="k">blepin &lt;6 cijfers&gt;|standaard</td><td>Bluetooth-koppelcode (100000 tot 999999), of terug naar 123456. Werkt na
+    een herstart. <code>blepin toon</code> toont de code, alleen via USB; <code>status</code> toont <code>blepin=eigen</code> of
+    <code>standaard</code>. In <em>Toestellen</em>: het veld <em>Bluetooth-code</em>.</td><td>standaard</td></tr>
   <tr><td class="k">verzoek_beep aan|uit</td><td>Kort, herkenbaar deuntje als de tracker een locatieverzoek aanvaardt, ook met de
     buzzer uit.</td><td>uit</td></tr>
 </table>
@@ -896,7 +921,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div class="cols menus" style="gap:3mm">
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.8       HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.9       HOOFDMENU
   ==============================================================
    Ploeg 3  |  modus companion (USB)  |  batterij 99%
    tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
@@ -915,7 +940,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.8       MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.9.9       MODUS EN KNOP
   ==============================================================
    Op batterij nu gekozen: tracker.
    Met USB altijd companion.
@@ -932,6 +957,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
    8  Locatieverzoeken beantwoorden ............. aan
    9  Radio luistert in beweging ................ aan
   10  Deuntje bij een locatieverzoek ............ uit
+  11  Bluetooth-koppelcode ...................... eigen code
 
    Knop: 1x = positie nu, 2x = modus wisselen,
          3x = buzzer aan/uit,
@@ -951,7 +977,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <div class="warn"><b>Het juiste pakket</b>De bootloader beschermt je alleen tussen de T1000-E en de RAK-borden (ze hebben een andere
   SoftDevice). Tussen de WisMesh Tag en de RAK3401 beschermt alleen de website: controleer dus zelf het gekozen toestel als je
   een pakket downloadt en met de hand flasht.</div>
-<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.8. Heeft een tracker oudere firmware, dan kent hij
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.9. Heeft een tracker oudere firmware, dan kent hij
   sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
   (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
 <ol class="steps">
@@ -1002,7 +1028,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <li><em>Op verbonden toestel zetten</em> zet een back-up terug, bv. op een vervangtoestel. Contacten worden niet
     teruggezet; die leert het toestel opnieuw uit de adverts.</li>
 </ul>
-<p>Een back-up bewaart ook alle trackerinstellingen: SlowTrack, <code>fast_min_batt</code>, SOS, de biepjes, de trackmodus en
+<p>De Bluetooth-koppelcode staat nooit in een back-up. Een back-up bewaart wel alle andere trackerinstellingen: SlowTrack, <code>fast_min_batt</code>, SOS, de biepjes, de trackmodus en
   de instellingen van de wachtrij.</p>
 <div class="warn"><b>Een back-up bevat de privésleutel</b>Wie de privésleutel heeft, kan zich voordoen als die tracker. De
   server bewaart back-ups versleuteld en houdt in het auditlog bij wie er een ophaalt, terugzet of verwijdert. Geef het recht
@@ -1146,7 +1172,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <p>De companion moet het kanaal kennen. Bij <em>Kanalen</em> zet je het erop: scan de QR-code (uit de MeshCore-app of van <em>Systeem → Kanalen</em>), kies een foto van een QR-code, of vul naam en
   sleutel in. Bij een #kanaal mag de sleutel leeg blijven.</p>
 <h3>Onderweg</h3>
-<p>Tik bij <em>Verbinding</em> op <em>Verbinden</em> en kies de companion (pincode van een MeshTrack-tracker: 123456).
+<p>Tik bij <em>Verbinding</em> op <em>Verbinden</em> en kies de companion (koppelcode van een MeshTrack-tracker: standaard 123456,
+  of de eigen code die je instelde).
   De app haalt eerst alle wachtende berichten op en daarna elk nieuw bericht zodra het binnenkomt.</p>
 <p>Bij <em>Trackers</em> kies je in de keuzelijst <em>Kanaal</em> een van de kanalen die op de companion staan; de
   kaart en de lijst tonen dan alleen de trackers van dat kanaal. Staat het kanaal er niet bij, kies dan
@@ -1227,6 +1254,9 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <div class="warn"><b>Nog niet getest</b>Alles in dit hoofdstuk is gebouwd volgens het ontwerp, maar nog niet op een echt toestel of in een
   echt voertuig getest. Controleer de werking zelf voor je erop vertrouwt.</div>
 
+<div class="note"><b>Bluetooth-code met een OLED-scherm</b>Hangt er een OLED-scherm aan de RAK3401 en staat de koppelcode op
+  standaard, dan kiest MeshCore per sessie een willekeurige code (die het scherm toont). <code>blepin toon</code> via USB geeft de
+  code die nu geldt. Met een eigen code (<code>set blepin</code>) geldt altijd die.</div>
 <h3>De GPS-module</h3>
 <p>De GPS hangt aan een UART van het RAK19007-basisbord. De tracker zoekt zelf waar en hoe snel ze praat: op de pinnen 15/16 of 8/6, in
   beide richtingen, aan 9600, 38400 of 115200 baud. Dat gebeurt bij de eerste start en opnieuw als de GPS 10 minuten zweeg.</p>
