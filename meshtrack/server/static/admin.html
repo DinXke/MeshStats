@@ -106,6 +106,12 @@
       <div class="help">Ondertekent de kanaalberichten van deze tracker. Via <a href="/devices">Toestellen</a> zet de pagina hem zelf;
         met een terminal: <code>set authkey</code> gevolgd door de sleutel (spaties mogen), of in het menu onder <em>7 GPS en verzending</em>.</div>
     </div>
+    <div id="f-unsrow" hidden>
+      <label class="switch block"><input type="checkbox" id="f-unsigned" aria-describedby="f-unshelp"><span></span> Niet-ondertekende berichten aanvaarden</label>
+      <div class="help" id="f-unshelp">Voor een tracker die (nog) geen authsleutel heeft. Zulke posities kunnen vervalst worden en krijgen
+        het label 'niet ondertekend'. Gaat vanzelf uit zodra er een geldig ondertekend bericht binnenkomt. Beter: maak de tracker
+        klaar via <a href="/devices#prov" id="f-unslink">Toestellen</a> (USB).</div>
+    </div>
     <fieldset id="f-keys" hidden>
       <legend>Sleutel en back-ups op de server</legend>
       <div id="f-keylist" class="small"></div>

@@ -749,6 +749,13 @@
       anderen hem moeten zien. Bij het bewerken
       van een tracker kun je ook zijn opgeslagen posities opruimen: alles ouder dan een gekozen aantal dagen, of
       alles.</p>
+    <p><strong>Niet-ondertekende berichten aanvaarden.</strong> Bij het bewerken van een tracker staat deze schakelaar
+      (standaard uit; server 1.4.2). Hij is bedoeld voor een tracker die (nog) geen authsleutel heeft, bv. omdat hij niet via
+      USB klaargemaakt is: zijn berichten worden dan aanvaard, ook op een kanaal dat een handtekening vraagt. Zulke posities
+      krijgen het label <em>niet ondertekend</em> (op de kaart en in de popup), want iedereen met de kanaalsleutel zou ze
+      kunnen vervalsen. Een SOS geeft nog altijd een melding, met <em>(niet ondertekend)</em> erbij, maar de tracker krijgt
+      geen bevestiging. De schakelaar gaat vanzelf uit zodra er een geldig ondertekend bericht binnenkomt. Maak de tracker
+      toch klaar via <em>Toestellen</em> (USB) en gebruik dit alleen tijdelijk.</p>
 
     <h2 id="verloren">Verloren trackers</h2>
     <p>Is een tracker zoek, zet dan bij het bewerken <em>Verloren</em> aan. Hij krijgt een rode markering op de kaart en
@@ -1129,6 +1136,10 @@
     <ul>
       <li><strong>"mesh: niet verbonden"</strong>: openHop draait niet, of een ander programma is met de companion
         verbonden (openHop laat maar één verbinding tegelijk toe).</li>
+      <li><strong>"kanaal …: niet ondertekend"</strong> in de gegenereerde meldingen: de tracker heeft geen authsleutel. Zet
+        hem erop via <em>Toestellen</em> → <em>Klaarmaken &amp; back-ups</em> → <em>Op dit toestel zetten</em>. Een sleutel die
+        je alleen in <em>Trackers</em> aanmaakte, staat nog niet op de tracker. Tijdelijk kan de schakelaar
+        <em>Niet-ondertekende berichten aanvaarden</em> (zie <a href="#beheer">Trackers beheren</a>).</li>
       <li><strong>Een tracker verschijnt niet</strong>: kijk in <em>Trackers</em> → <em>Genegeerde berichten</em> (met <em>Als tracker toevoegen</em> voor een onbekende). Klopt zijn
         pubkey? Heeft hij een trackingkanaal dat de server kent (<em>Systeem</em> → <em>Kanalen</em>) en de juiste
         authsleutel? Staat er <em>oude firmware</em>, flash hem dan naar de nieuwste firmware. Zie je hem als beheerder wel en

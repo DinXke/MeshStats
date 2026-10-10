@@ -209,8 +209,23 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     30 s); elk verzoek in het auditlog; andere gebruikers met die kaart open krijgen een korte melding; antwoorden als
     live posities met het amberkleurige icoon en een antwoordpaneel. Op de kaarten (/offline, /tracker, site) een
     amberkleurig doelwit met legende *Op verzoek*. Meshbelasting: "alle" op een kanaal met N trackers = N antwoorden.
-    Via Bluetooth (companionmodus) aanvaardt de tracker alleen `status`, `fifo` en `dump`: alleen lezen.
-- **server/**: FastAPI + meshcore-py (versie 1.4.1).
+    Via Bluetooth (companionmodus) aanvaardt de tracker zonder beheercode alleen `status`, `fifo` en `dump` (alleen lezen);
+    na het ontgrendelen met de beheercode (0.9.11) ook de gewone instellingen.
+- **server/**: FastAPI + meshcore-py (versie 1.4.2).
+  - 1.4.2: **niet-ondertekend aanvaarden** per tracker (`trackers.allow_unsigned`, schrijfbaar via `PUT /api/trackers/{id}`,
+    met auditregel): een kanaalbericht zonder handtekening (`-`) wordt dan ook op een kanaal met `require_sig` verwerkt.
+    Elk opgeslagen punt van een niet-ondertekend bericht (ook de extra punten, en ook op een kanaal zonder `require_sig`)
+    krijgt `positions.unsigned` = 1: in sporen, live-berichten en de CSV-export (kolom `niet_ondertekend`), in GPX als
+    `<desc>`. Nooit een SOS- of FIFO-bevestiging; meldingen vuren wel, met "(niet ondertekend)" in de tekst; telling
+    `unsigned_ok` in de statistieken. Het eerste geldig ondertekende bericht zet de schakelaar automatisch uit
+    (auditregel van "systeem" en tracker-update).
+    Gebruik: per tracker de schakelaar *Niet-ondertekende berichten aanvaarden* (Trackers → bewerken,
+    standaard uit) voor een tracker zonder authsleutel: zijn berichten worden ook aanvaard op een kanaal dat een
+    handtekening vraagt; de posities krijgen het label "niet ondertekend" (kaart en popup), want vervalsbaar door iedereen
+    met de kanaalsleutel; een SOS geeft nog een melding met "(niet ondertekend)", maar geen bevestiging; de schakelaar gaat
+    vanzelf uit bij het eerste geldig ondertekende bericht. Advies: toch klaarmaken via Toestellen (USB), dit alleen
+    tijdelijk. Probleem "kanaal …: niet ondertekend": geen authsleutel op de tracker → Toestellen → Klaarmaken & back-ups →
+    Op dit toestel zetten (een sleutel die alleen in Trackers gemaakt is, staat nog niet op de tracker).
   - 1.4.1: een gekende tracker die op het kanaal **Public** stuurt (niet klaargemaakt) wordt herkend in de rauwe
     pakketten (companion en openHop): `trackers.public_leak_ts`, `op_public` in de trackerlijst (laatste 24 u), auditregel
     (hoogstens 1 per 6 u per tracker) en meldingsgebeurtenis `op_public`. Die posities worden nooit opgeslagen.

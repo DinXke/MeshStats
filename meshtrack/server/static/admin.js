@@ -55,6 +55,7 @@
         t.active ? "" : '<span class="pill">inactief</span>',
         t.lost ? `<span class="pill lost">verloren${t.lost_seen ? " · terug gezien" : ""}</span>` : "",
         t.last_state === "E" ? '<span class="pill sos">SOS</span>' : "",
+        t.kind === "real" && Number(t.allow_unsigned) === 1 ? '<span class="pill warn nowrap" title="Posities zonder handtekening worden aanvaard">aanvaardt niet-ondertekend</span>' : "",
       ].join(" ");
       const sub = [t.kind === "real" ? `${t.pubkey.slice(0, 8)}…` : null, t.last_via && t.kind === "real" ? `via ${t.last_via}` : null,
         t.kind === "real" && t.keys ? "sleutel op server" : null].filter(Boolean).join(" · ");
@@ -246,6 +247,8 @@
     $("f-genhelp").hidden = !MT.can("keys.manage");
     $("f-keys").hidden = true;
     $("f-authrow").hidden = true;
+    $("f-unsrow").hidden = true;
+    $("f-unsigned").checked = false;
     $("f-kind").hidden = !(MT.can("trackers.manage") && MT.can("sims.manage"));
     fillFormChannel(chans.length ? chans[0].id : 0);
     icon = "";
@@ -313,6 +316,10 @@
       $("f-authrow").hidden = !(MT.can("trackers.serial") || MT.can("keys.manage"));
       $("f-authkey").textContent = t.has_authkey ? "verborgen" : "nog geen";
       $("f-authcopy").hidden = true;
+      // niet-ondertekende berichten aanvaarden (ontbreekt het veld: uit)
+      $("f-unsrow").hidden = !MT.can("trackers.manage");
+      $("f-unsigned").checked = Number(t.allow_unsigned) === 1;
+      $("f-unslink").href = MT.can("trackers.serial") ? `/devices#prov?tracker=${t.id}` : "/devices#prov";
       loadKeys(t).catch(() => {});
     }
     renderIcons();
@@ -392,7 +399,8 @@
       } else {
         const gen = !id && $("f-genkey").checked;
         if (!id && !gen && !/^[0-9a-fA-F]{64}$/.test($("f-pubkey").value.trim())) { showTab("dev"); throw new Error("Vul de pubkey in (64 hex-tekens), of kies 'Nieuw toestel'."); }
-        if (id) r = await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, channel_id } });
+        const uns = $("f-unsrow").hidden ? {} : { allow_unsigned: $("f-unsigned").checked ? 1 : 0 };
+        if (id) r = await MT.api(`/api/trackers/${id}`, { method: "PUT", body: { ...base, channel_id, ...uns } });
         else r = await MT.api("/api/trackers", { method: "POST", body: { ...base, channel_id, pubkey: gen ? null : $("f-pubkey").value.trim(), generate_key: gen } });
         if (gen && r.tracker) {
           form.hidden = true;

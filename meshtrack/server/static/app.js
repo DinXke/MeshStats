@@ -157,7 +157,7 @@
           geometry: { type: "LineString", coordinates: [[pts[i - 1].lon, pts[i - 1].lat], [pts[i].lon, pts[i].lat]] } });
       }
       for (const p of pts) {
-        points.push({ type: "Feature", properties: { tid: id, prio: p.prio ? 1 : 0, alias: t.alias, color: t.color, spd: p.spd ?? -1, ts: p.ts, state: p.state, bat: p.bat ?? -1, old: p.old || (p.state === "V" && p.fix_age > 120) ? 1 : 0 },
+        points.push({ type: "Feature", properties: { tid: id, prio: p.prio ? 1 : 0, uns: p.unsigned ? 1 : 0, alias: t.alias, color: t.color, spd: p.spd ?? -1, ts: p.ts, state: p.state, bat: p.bat ?? -1, old: p.old || (p.state === "V" && p.fix_age > 120) ? 1 : 0 },
           geometry: { type: "Point", coordinates: [p.lon, p.lat] } });
       }
     }
@@ -222,6 +222,7 @@
   const vOld = (p, rx) => p.state === "V" && p.lat != null && (p.fix_age != null ? p.fix_age > 120 : (rx || Date.now() / 1000) - p.ts > 120);
   const vAmber = () => (dark.matches ? "#ffc83d" : "#e0a400");
   const vIsOld = ["all", ["==", ["get", "state"], "V"], ["==", ["get", "old"], 1]];
+  const unsColor = () => (dark.matches ? "#ff8a5c" : "#c2410c");   // zelfde kleur als --unsig in style.css
   const vColor = (c) => ["case", vIsOld, "rgba(0,0,0,0)", ["==", ["get", "state"], "V"], vAmber(), c];   // oud: hol
 
   // Prioritair (blauwe lichten, server 1.4.0): t.prio + t.prio_until (unix-tijd); per spoorpunt p.prio.
@@ -233,6 +234,25 @@
     return `Prioritair, nog ${m} min`;
   };
   const prioPill = (t) => (isPrio(t) ? ` <span class="pill prio">${prioText(t)}</span>` : "");
+
+  // Niet-ondertekend (server: tracker.allow_unsigned, positie.unsigned; ontbreekt het veld, dan 0).
+  // Of de LAATSTE positie van een tracker niet ondertekend was: t.last_unsigned als de server dat meestuurt,
+  // anders onthouden uit de live berichten en het spoor (punt met ts == t.last_ts).
+  const UNS_TXT = '<span class="unsig-txt" title="Dit bericht had geen geldige handtekening; het kan vervalst zijn">⚠ niet ondertekend</span>';
+  const lastUns = new Map();     // tracker-id -> {ts, uns}
+  const noteUns = (id, p) => {
+    if (!p || p.ts == null) return;
+    const cur = lastUns.get(id);
+    if (!cur || p.ts >= cur.ts) lastUns.set(id, { ts: p.ts, uns: p.unsigned ? 1 : 0 });
+  };
+  const isUns = (t) => {
+    if (!t) return false;
+    if (t.last_unsigned != null) return Number(t.last_unsigned) === 1;
+    const u = lastUns.get(t.id);
+    return !!u && u.uns === 1 && (t.last_ts == null || u.ts >= t.last_ts);
+  };
+  const allowPill = (t) => (t.kind === "real" && Number(t.allow_unsigned) === 1
+    ? ' <span class="pill warn nowrap" title="Posities zonder handtekening worden aanvaard">aanvaardt niet-ondertekend</span>' : "");
 
   function addLayers() {
     if (map.getSource("tracks")) return;
@@ -275,6 +295,10 @@
     map.addLayer({ id: "points-v", type: "circle", source: "points", minzoom: 12, filter: ["==", ["get", "state"], "V"],
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 16, 8], "circle-color": "rgba(0,0,0,0)",
                "circle-stroke-color": vAmber(), "circle-stroke-width": 1.5 } });
+    // niet ondertekend: dunne oranjerode ring rond het punt (details in de popup)
+    map.addLayer({ id: "points-uns", type: "circle", source: "points", minzoom: 12, filter: ["==", ["get", "uns"], 1],
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 5, 16, 10], "circle-color": "rgba(0,0,0,0)",
+               "circle-stroke-color": unsColor(), "circle-stroke-width": 1.5 } });
     map.addSource("draw", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "draw-fill", type: "fill", source: "draw", paint: { "fill-color": "#3b82f6", "fill-opacity": 0.15 } });
     map.addLayer({ id: "draw-line", type: "line", source: "draw", paint: { "line-color": "#3b82f6", "line-width": 2 } });
@@ -295,13 +319,15 @@
     map.setPaintProperty("tracks", "line-color", c);
     map.setPaintProperty("points", "circle-color", vColor(c));
     map.setPaintProperty("points-v", "circle-stroke-color", vAmber());
+    map.setPaintProperty("points-uns", "circle-stroke-color", unsColor());
   }
 
   map.on("click", "points", (e) => {
     if (drawing) return;
     const p = e.features[0].properties;
     const lines = [`<strong>${MT.esc(p.alias)}</strong>`, new Date(p.ts * 1000).toLocaleString("nl-BE"),
-      MT.esc(MT.STATE[p.state] || p.state) + (p.prio === 1 ? ' <span class="pill prio">Prioritair</span>' : ""), p.spd >= 0 ? `${p.spd} km/u` : null, p.bat >= 0 ? `batterij ${p.bat}%` : null];
+      MT.esc(MT.STATE[p.state] || p.state) + (p.prio === 1 ? ' <span class="pill prio">Prioritair</span>' : ""), p.spd >= 0 ? `${p.spd} km/u` : null, p.bat >= 0 ? `batterij ${p.bat}%` : null,
+      p.uns === 1 ? UNS_TXT : null];
     new maplibregl.Popup({ closeButton: false }).setLngLat(e.lngLat).setHTML(lines.filter(Boolean).join("<br>")).addTo(map);
   });
   map.on("mouseenter", "points", () => { if (!drawing) map.getCanvas().style.cursor = "pointer"; });
@@ -313,6 +339,7 @@
     // SOS-markers ook zonder spoor: dan de laatste 24 uur.
     const h = hoursNow() || 24;
     const pts = (await MT.api(`/api/trackers/${id}/track?hours=${h}`)).filter((p) => !p.suspect);
+    if (pts.length) noteUns(id, pts.reduce((a, b) => (b.ts >= a.ts ? b : a)));
     tracks.set(id, hoursNow() ? pts : []);
     sosPts.set(id, pts.filter((p) => p.state === "E"));
   }
@@ -354,6 +381,7 @@
     const st = MT.STATE[t.last_state] || t.last_state || "–";
     return [
       `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">virtueel</span>' : ""}${t.lost ? ' <span class="lostbadge">VERLOREN</span>' : ""}${prioPill(t)}${pubPill(t)}`,
+      isUns(t) ? UNS_TXT : null,
       `${MT.esc(st)}${t.last_mode ? " · " + MT.esc(MT.MODE[t.last_mode] || t.last_mode) : ""}`,
       t.last_spd != null ? `${t.last_spd} km/u${t.last_crs != null ? " · koers " + t.last_crs + "°" : ""}` : null,
       t.last_bat != null ? `batterij ${t.last_bat}%` : null,
@@ -373,7 +401,7 @@
     if (!m) {
       const el = document.createElement("div");
       el.className = "marker";
-      el.innerHTML = '<span class="arrow"></span><span class="ico"></span><span class="mlabel"></span>';
+      el.innerHTML = '<span class="arrow"></span><span class="ico"></span><span class="mlabel"></span><span class="unsig" aria-hidden="true">!</span>';
       el.addEventListener("click", (e) => { e.stopPropagation(); if (!drawing) select(t.id, false); });
       m = new maplibregl.Marker({ element: el }).setLngLat([t.last_lon, t.last_lat])
         .setPopup(new maplibregl.Popup({ offset: 16, closeButton: false })).addTo(map);
@@ -395,7 +423,10 @@
     el.classList.toggle("lost", !!t.lost);
     // blauwe lichten: knippert blauw/gewone kleur (~1 Hz) met sirene-badge; minder beweging: vaste blauwe ring
     el.classList.toggle("prio", isPrio(t));
-    el.setAttribute("aria-label", isPrio(t) ? `${t.alias}: ${prioText(t)}` : t.alias);
+    // laatste positie niet ondertekend: gestippelde rand + klein "!"-badge
+    const uns = isUns(t);
+    el.classList.toggle("unsigned", uns);
+    el.setAttribute("aria-label", (isPrio(t) ? `${t.alias}: ${prioText(t)}` : t.alias) + (uns ? ", laatste positie niet ondertekend" : ""));
     const moving = t.last_crs != null && (t.last_spd || 0) >= 3;
     el.classList.toggle("has-crs", moving);
     if (moving) el.querySelector(".arrow").style.transform = `rotate(${t.last_crs}deg)`;
@@ -441,7 +472,7 @@
       return;
     }
     $("list").innerHTML = items.map((t) => {
-      const sos = (t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "") + (t.lost ? ' <span class="lostbadge">VERLOREN</span>' : "") + prioPill(t) + pubPill(t);
+      const sos = (t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "") + (t.lost ? ' <span class="lostbadge">VERLOREN</span>' : "") + prioPill(t) + pubPill(t) + allowPill(t);
       const sim = t.kind === "sim" ? ' <span class="pill">virtueel</span>' : "";
       const meta = [MT.STATE[t.last_state] || "nog niets ontvangen", t.last_bat != null ? `${t.last_bat}%` : null,
                     t.last_spd ? `${t.last_spd} km/u` : null].filter(Boolean).join(" · ");
@@ -932,10 +963,11 @@
       const p = msg.position;
       // history=1: ouder gelogd punt (niet nieuwer dan de live positie); msg.tracker heeft al de juiste last_*.
       const hist = p.history === 1;
+      if (p.lat != null && !p.suspect) noteUns(t.id, p);
       if (p.lat != null && !p.suspect && hoursNow() && !(hist && p.ts < Date.now() / 1000 - hoursNow() * 3600)) {
         if (!tracks.has(t.id)) tracks.set(t.id, []);
         // Chronologisch invoegen: een bericht kan eerdere punten meebrengen.
-        const arr = tracks.get(t.id), item = { lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat, old: vOld(p) ? 1 : 0, prio: p.prio ? 1 : 0 };
+        const arr = tracks.get(t.id), item = { lat: p.lat, lon: p.lon, spd: p.spd, ts: p.ts, state: p.state, bat: p.bat, old: vOld(p) ? 1 : 0, prio: p.prio ? 1 : 0, unsigned: p.unsigned ? 1 : 0 };
         let i = arr.length;
         while (i > 0 && arr[i - 1].ts > item.ts) i--;
         if (!(i > 0 && arr[i - 1].ts === item.ts)) arr.splice(i, 0, item);

@@ -725,4 +725,17 @@ header.top nav .navapps-l { font-size: 11px; text-transform: uppercase; letter-s
 /* tracker stuurt op Public / geen trackingkanaal */
 .pubwarn { margin-top: 3px; }
 .pubwarn a.lostbadge { text-decoration: none; display: inline-block; }
+/* ---- Niet ondertekend (tracker zonder authsleutel, allow_unsigned) ----
+   Marker: gestippelde rand + klein "!"-badge rechtsonder (rechtsboven is voor prioritair). Popup: "⚠ niet ondertekend". */
+:root { --unsig: #c2410c; }
+:root[data-theme="dark"], :root[data-theme="night"] { --unsig: #ff8a5c; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]), :root[data-theme="auto"] { --unsig: #ff8a5c; } }
+.marker .unsig { display: none; }
+.marker.unsigned .unsig {
+  display: flex; align-items: center; justify-content: center; position: absolute; right: -9px; bottom: -8px; z-index: 2;
+  width: 13px; height: 13px; border-radius: 50%; background: var(--unsig); color: #fff; font: 700 10px/1 system-ui, sans-serif;
+  border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.3); pointer-events: none;
+}
+.marker.unsigned:not(.lost):not(.asked):not(.vold) { outline: 2px dashed var(--unsig); outline-offset: 2px; }
+.unsig-txt { color: var(--unsig); font-weight: 600; }
 .detwarn { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--danger); border-left-width: 4px; color: var(--danger); font-weight: 600; background: var(--panel); }
