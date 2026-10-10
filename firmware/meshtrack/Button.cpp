@@ -20,19 +20,29 @@ volatile uint32_t Button::s_lastRelease = 0;
 volatile uint32_t Button::s_lastEdge = 0;
 volatile uint32_t Button::s_pressAt = 0;
 volatile uint32_t Button::s_prevDur = 0;
+volatile bool Button::s_down = false;
 
 void Button::isr() {
     uint32_t now = millis();
     bool pressed = digitalRead(s_isrPin) == s_isrActive;
-    if (pressed) {
-        // Alleen een echte klik: de knop was minstens BUTTON_ISR_RELEASED_MS los
-        // (dender bij indrukken/loslaten duurt korter en telt dus niet).
-        if (now - s_lastRelease >= BUTTON_ISR_RELEASED_MS) {
-            s_prevDur = s_lastRelease - s_pressAt;   // hoe lang de vorige druk duurde
+    // 0.9.12: alleen een echte wissel telt. De interrupt leest het niveau pas na een latentie; een
+    // korte piek kan dan al voorbij zijn (twee interrupts die allebei "ingedrukt" lezen). Vroeger telde
+    // dat als nieuwe druk, met een negatieve (= enorme) duur voor de vorige.
+    if (pressed && !s_down) {
+        s_down = true;
+        uint32_t gap = now - s_lastRelease;            // zo lang was de knop los
+        uint32_t seg = s_lastRelease - s_pressAt;      // zo lang was de vorige druk al ingedrukt
+        if (seg >= BUTTON_HOLD_MIN_MS && gap < BUTTON_HOLD_GAP_MS) {
+            // hapering tijdens het vasthouden: dezelfde druk loopt door (s_pressAt blijft)
+        } else if (gap >= BUTTON_ISR_RELEASED_MS) {
+            // Alleen een echte klik: de knop was minstens BUTTON_ISR_RELEASED_MS los
+            // (dender bij indrukken/loslaten duurt korter en telt dus niet).
+            s_prevDur = seg;                           // hoe lang de vorige druk duurde
             s_presses++;
             s_pressAt = now;
         }
-    } else {
+    } else if (!pressed && s_down) {
+        s_down = false;
         s_lastRelease = now;
     }
     s_lastEdge = now;
@@ -44,7 +54,8 @@ void Button::begin() {
     if (!_isAnalog && !_useIsr) {        // één digitale knop per toestel
         s_isrPin = _pin;
         s_isrActive = _activeState;
-        s_lastRelease = millis();
+        s_lastRelease = s_pressAt = millis();
+        s_down = _currentState;
         attachInterrupt(digitalPinToInterrupt(_pin), Button::isr, CHANGE);
         _useIsr = true;
         _seenPresses = s_presses;
@@ -73,7 +84,10 @@ void Button::update() {
     }
     
     // Debounce check
-    if ((now - _stateChangeTime) > BUTTON_DEBOUNCE_TIME_MS) {
+    // MeshTrack 0.9.12: tijdens het vasthouden telt loslaten pas na BUTTON_HOLD_GAP_MS (hapering, zie Button.h)
+    uint32_t settle = BUTTON_DEBOUNCE_TIME_MS;
+    if (_currentState && !newState && _state == PRESSED && now - _pressTime >= BUTTON_HOLD_MIN_MS) settle = BUTTON_HOLD_GAP_MS;
+    if ((now - _stateChangeTime) > settle) {
         if (newState != _currentState) {
             _currentState = newState;
             handleStateChange();
@@ -158,11 +172,21 @@ void Button::finishPress(uint32_t dur, uint32_t releasedAt) {
 }
 
 void Button::updateIsr(uint32_t now) {
+    // 0.9.12: het niveau samen met de interrupt-gegevens lezen. Leest de lus "los" terwijl de interrupt
+    // voor die flank nog moet lopen, dan is s_down nog true en wacht ze (vroeger: afhandelen met de
+    // tijdstempels van de vorige flank, dus een SOS midden in het vasthouden).
     noInterrupts();
     uint32_t presses = s_presses, pressAt = s_pressAt, lastRelease = s_lastRelease, lastEdge = s_lastEdge,
              prevDur = s_prevDur;
-    interrupts();
+    bool isrDown = s_down;
     bool level = readButton();
+    if (isrDown != level && now - lastEdge > 500) {
+        // Vangnet: al 500 ms geen flank en de interrupt zag de laatste wissel niet. Bijstellen
+        // (een gemiste druk telt niet; een gemist loslaten geldt vanaf nu).
+        s_down = isrDown = level;
+        if (!level) s_lastRelease = lastRelease = now;
+    }
+    interrupts();
     bool settled = now - lastEdge > BUTTON_DEBOUNCE_TIME_MS;   // geen flank meer sinds 50 ms
 
     // Nieuwe drukken sinds de vorige keer. Een nieuwe druk telt pas na loslaten, dus alle
@@ -182,7 +206,11 @@ void Button::updateIsr(uint32_t now) {
     }
 
     if (_isrHeld) {
-        if (settled && !level) {
+        bool released = settled && !level && !isrDown;
+        // Na het vasthouden pas echt los na BUTTON_HOLD_GAP_MS (zie de interrupt: korter = hapering).
+        if (released && (int32_t)(lastRelease - _pressTime) > 0 && lastRelease - _pressTime >= BUTTON_HOLD_MIN_MS &&
+            now - lastRelease < BUTTON_HOLD_GAP_MS) released = false;
+        if (released) {
             // Losgelaten: hoe lang ingedrukt, volgens de interrupt.
             uint32_t dur = (int32_t)(lastRelease - _pressTime) > 0 ? lastRelease - _pressTime : now - _pressTime;
             finishPress(dur, lastRelease);
@@ -198,7 +226,7 @@ void Button::updateIsr(uint32_t now) {
 
     // Klikvenster: BUTTON_CLICK_TIMEOUT_MS na het laatste loslaten (tijd van de interrupt),
     // en alleen als de knop stabiel los is.
-    if (!_isrHeld && _clickCount && settled && !level && now - _releaseTime > BUTTON_CLICK_TIMEOUT_MS) {
+    if (!_isrHeld && _clickCount && settled && !level && !isrDown && now - _releaseTime > BUTTON_CLICK_TIMEOUT_MS) {
         uint8_t n = _clickCount;
         _clickCount = 0;
         _state = IDLE;

@@ -14,6 +14,12 @@
 #define BUTTON_LONG_PRESS_TIME_MS  8000    // uitschakelen
 #define BUTTON_HOLD_ARM_MS         2000    // SOS gewapend (biep)
 #define BUTTON_HOLD_WARN_MS        6500    // waarschuwing: nog even en hij schakelt uit
+// MeshTrack 0.9.12: vanaf BUTTON_HOLD_MIN_MS ingedrukt is het vasthouden (nooit deel van een meervoudige
+// klik). Een loslating korter dan BUTTON_HOLD_GAP_MS is dan een hapering (duim schiet even los bij de
+// wapenbiep, contactonderbreking) en geen nieuwe druk: anders werd de vasthoud halverwege als SOS
+// afgehandeld en begon er een nieuwe druk (wapenbiep, lage toon, opnieuw wapenbiep, ...).
+#define BUTTON_HOLD_MIN_MS         1000
+#define BUTTON_HOLD_GAP_MS         150
 #define BUTTON_READ_INTERVAL_MS    10      // How often to read the button
 
 class Button {
@@ -89,6 +95,7 @@ private:
     static volatile uint32_t s_lastEdge;
     static volatile uint32_t s_pressAt;   // tijdstip van de laatst getelde druk
     static volatile uint32_t s_prevDur;   // duur van de druk daarvoor (bij de volgende druk vastgelegd)
+    static volatile bool s_down;          // 0.9.12: wat de interrupt het laatst zag (ingedrukt/los)
     void finishPress(uint32_t dur, uint32_t releasedAt);
     uint32_t _seenPresses = 0;
     bool _useIsr = false;
