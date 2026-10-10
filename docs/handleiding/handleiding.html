@@ -805,6 +805,19 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <p>Het <strong>trackingkanaal</strong> bepaalt wie de tracker ziet; zonder kanaal zien alleen beheerders hem. Stuurt een echte
   tracker op een ander kanaal van de server, dan volgt MeshTrack dat vanzelf. Bij het bewerken ruim je ook opgeslagen posities op.</p>
 
+<h3>Niet-ondertekende berichten aanvaarden</h3>
+<p>Bij het bewerken van een tracker staat de schakelaar <em>Niet-ondertekende berichten aanvaarden</em> (standaard uit; server 1.4.2). Hij
+  is bedoeld voor een tracker die (nog) geen authsleutel heeft, bijvoorbeeld omdat hij niet via USB klaargemaakt is. Zijn berichten worden
+  dan aanvaard, ook op een kanaal dat een handtekening vraagt.</p>
+<ul>
+  <li>Zulke posities krijgen het label <em>niet ondertekend</em>, op de kaart en in de popup: iedereen met de kanaalsleutel zou ze kunnen
+    vervalsen.</li>
+  <li>Een SOS van zo'n tracker geeft nog altijd een melding, met <em>(niet ondertekend)</em> erbij; de tracker krijgt geen bevestiging.</li>
+  <li>De schakelaar gaat vanzelf uit zodra er een geldig ondertekend bericht binnenkomt.</li>
+</ul>
+<div class="warn"><b>Alleen tijdelijk</b>Maak de tracker toch klaar via <em>Toestellen</em> (USB), zodat hij zijn berichten ondertekent. Gebruik
+  deze schakelaar alleen als tijdelijke oplossing.</div>
+
 <h3>Instellen via USB</h3>
 <p>Ga naar <em>Toestellen</em>, steek de tracker met een USB-kabel in de computer en klik op <em>Verbinden</em>. Dat werkt in
   <strong>Chrome of Edge</strong> op een computer of Android-toestel. Bovenaan zie je welk toestel verbonden is; daaronder staan
@@ -1511,6 +1524,10 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   <tr><th>Probleem</th><th>Wat te doen</th></tr>
   <tr><td class="k">mesh: niet verbonden</td><td>De companion op de server is niet bereikbaar, of een ander programma is ermee verbonden
     (er kan maar één verbinding tegelijk). Verwittig de beheerder.</td></tr>
+  <tr><td class="k">"kanaal …: niet ondertekend"</td><td>Staat dat in de gegenereerde meldingen, dan heeft de tracker geen authsleutel. Zet
+    hem erop via <em>Toestellen</em> → <em>Klaarmaken &amp; back-ups</em> → <em>Op dit toestel zetten</em>. Een sleutel die je alleen in
+    <em>Trackers</em> aanmaakte, staat nog niet op de tracker. Tijdelijk kan de schakelaar <em>Niet-ondertekende berichten aanvaarden</em>
+    (hoofdstuk 8).</td></tr>
   <tr><td class="k">Tracker verschijnt niet</td><td>Kijk in <em>Trackers</em> → <em>Genegeerde berichten</em>. Klopt de pubkey? Heeft hij
     een trackingkanaal dat de server kent, en de juiste authsleutel? Staat er <em>oude firmware</em>, flash dan de nieuwste firmware. Ziet een
     beheerder hem wel en een gebruiker niet, kijk dan naar diens <em>Effectieve rechten</em>.</td></tr>

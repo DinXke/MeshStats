@@ -95,6 +95,9 @@ class AlertManager:
         what = EVENT_TEXT.get(event, event)
         if zone:
             what = f"{what} {zone}"
+        if (pos or {}).get("unsigned"):           # 1.4.2: positie uit een niet-ondertekend bericht
+            what = f"{what} (niet ondertekend)"
+
         parts = [f"MeshTrack: {tracker['alias']} {what}"]
         p = pos or {}
         lat, lon = p.get("lat", tracker.get("last_lat")), p.get("lon", tracker.get("last_lon"))

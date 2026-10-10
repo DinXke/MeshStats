@@ -227,9 +227,11 @@ CREATE INDEX IF NOT EXISTS message_paths_tracker_rx ON message_paths(tracker_id,
 # 1.3: soorten in stats_events
 STAT_KINDS = ("t1a_sent", "t1f_sent", "t1f_msg", "dup_points", "dup_msg", "invalid", "unknown", "old_fw_dm",
               "loc_request",   # 1.3.2: T1R-verzoek om een positie (van een companion/telefoon)
-              "prio_start")    # 1.4: een tracker begint prioritair te rijden
+              "prio_start",    # 1.4: een tracker begint prioritair te rijden
+              "unsigned_ok")   # 1.4.2: niet-ondertekend bericht toch aanvaard (allow_unsigned of kanaal zonder require_sig)
 
-TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since", "last_via", "channel_id")
+TRACKER_EDITABLE = ("alias", "color", "icon", "notes", "active", "lost", "lost_since", "last_via", "channel_id",
+                    "allow_unsigned")
 
 
 class DB:
@@ -293,6 +295,11 @@ class DB:
             self._x("ALTER TABLE trackers ADD COLUMN prio_until INTEGER NOT NULL DEFAULT 0")   # 0 = niet prioritair
         if "public_leak_ts" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:   # 1.4.1
             self._x("ALTER TABLE trackers ADD COLUMN public_leak_ts INTEGER")   # laatst gezien op Public
+        # 1.4.2: niet-ondertekende kanaalberichten per tracker toch aanvaarden (ook bij require_sig)
+        if "allow_unsigned" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
+            self._x("ALTER TABLE trackers ADD COLUMN allow_unsigned INTEGER NOT NULL DEFAULT 0")
+        if "unsigned" not in {r["name"] for r in self._q("PRAGMA table_info(positions)")}:
+            self._x("ALTER TABLE positions ADD COLUMN unsigned INTEGER NOT NULL DEFAULT 0")   # 1 = niet ondertekend
         if "prio" not in {r["name"] for r in self._q("PRAGMA table_info(sims)")}:
             self._x("ALTER TABLE sims ADD COLUMN prio INTEGER NOT NULL DEFAULT 0")             # simulator stuurt "p"
         # dekkende index voor de statistieken (bereik op ontvangsttijd, zonder de tabel zelf te lezen)
@@ -379,7 +386,7 @@ class DB:
         if not sets:
             return
         sql = "UPDATE trackers SET " + ", ".join(f"{k}=?" for k, _ in sets) + " WHERE id=?"
-        self._x(sql, tuple(int(v) if k in ("active", "lost") else v for k, v in sets) + (tid,))
+        self._x(sql, tuple(int(v) if k in ("active", "lost", "allow_unsigned") else v for k, v in sets) + (tid,))
 
     def set_lost(self, tid: int, lost: bool) -> None:
         if lost:
@@ -454,8 +461,8 @@ class DB:
 
     def add_position(self, tid: int, p: dict[str, Any]) -> int:
         cols = ("tracker_id", "ts", "rx_ts", "seq", "state", "lat", "lon", "alt", "spd", "crs", "bat",
-                "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw", "power", "extra", "prio")
-        vals = (tid,) + tuple(p.get(c) for c in cols[1:-2]) + (int(p.get("extra") or 0), int(p.get("prio") or 0))
+                "hdop", "fix_age", "mode", "suspect", "snr", "path_len", "raw", "power", "extra", "prio", "unsigned")
+        vals = (tid,) + tuple(p.get(c) for c in cols[1:-3]) + tuple(int(p.get(c) or 0) for c in cols[-3:])
         cur = self._x(f"INSERT INTO positions({','.join(cols)}) VALUES({','.join('?' * len(cols))})", vals)
         if p["state"] in HISTORY_STATES:
             self._slow_summary(tid, p)
@@ -508,7 +515,7 @@ class DB:
     def track(self, tid: int, since: int, limit: int = 5000) -> list[dict[str, Any]]:
         return self._q(
             # fix_age: een antwoord op verzoek (V) met een oude fix tekent de kaart hol ("laatst gekend")
-            "SELECT ts, lat, lon, alt, spd, crs, bat, state, suspect, seq, snr, path_len, fix_age, prio FROM positions "
+            "SELECT ts, lat, lon, alt, spd, crs, bat, state, suspect, seq, snr, path_len, fix_age, prio, unsigned FROM positions "
             "WHERE tracker_id=? AND ts>=? AND lat IS NOT NULL ORDER BY ts LIMIT ?", (tid, since, limit))
 
     def purge_positions(self, tid: int, older_than: Optional[int] = None) -> int:
