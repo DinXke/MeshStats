@@ -1445,7 +1445,7 @@
   const BOARD_CAPS = {
     t1000e: { knop: true, buzzer: true, accel: true, led: true },
     wismesh_tag: { knop: true, buzzer: true, accel: true, led: true },
-    rak3401_1w: { knop: false, buzzer: false, accel: false, led: true },
+    rak3401_1w: { knop: false, buzzer: false, accel: false, led: true, gpsdetect: true },
   };
   function capsOfStatus(kv) {
     const board = kv.board || "t1000e";
@@ -1454,6 +1454,7 @@
     else if (kv.knop) c.knop = !/^(geen|uit)$/i.test(kv.knop);
     if (kv.buzzer) c.buzzer = !/^(geen|nee|0)$/i.test(kv.buzzer);
     if (kv.accel) c.accel = !/^(geen|nee|0)$/i.test(kv.accel);
+    if ("gps_pinnen" in kv) c.gpsdetect = true;
     return c;
   }
   async function readAll() {
@@ -1560,6 +1561,7 @@
       { lbl: "Teken van leven (heartbeat) elke", key: "heartbeat", fmt: V.dur },
       { lbl: "In rust de GPS controleren elke", key: "rust_gps_check", fmt: V.dur, needs: (c) => !c.accel },
       { lbl: "Bewegingsgevoeligheid", key: "accel_sens", needs: (c) => c.accel },
+      { lbl: "GPS-pinnen", key: "gps_pinnen", fmt: (v) => (v === "-" ? "nog niet gevonden" : v === "zoekt" ? "worden gezocht…" : v), needs: (c) => c.gpsdetect },
       { lbl: "GPS-fix zoeken max.", key: "fix_timeout", fmt: V.dur },
       { lbl: "…bij heartbeat of klik max.", key: "fix_timeout_hb", fmt: V.dur },
       { lbl: "Statusled", key: "led", fmt: V.map({ companion: "alleen als companion", altijd: "altijd", uit: "nooit" }), needs: (c) => c.led },
@@ -1612,15 +1614,18 @@
       const editable = ed && g.rows.some((r) => r.key && CTL[r.key] && status[r.key] != null && (!r.needs || r.needs(c)));
       const ro = g.rows.some((r) => !r.edit && !(ed && r.key && CTL[r.key]) && (r.get ? r.get() : status[r.key]) != null);
       const res = saveRes[g.id] || [];
+      const act = ed ? groupAction(g.id, c) : "";
       return `<details class="tk-grp" data-g="${g.id}"${openGroups.has(g.id) ? " open" : ""}><summary>${esc(g.title)}</summary>${rows}
         ${editable || res.length ? `<div class="tk-gsave">${editable ? `<button type="button" class="primary tk-wbtn" data-save="${g.id}">Opslaan</button>` : ""}
           ${res.length ? `<ul class="tk-saveres">${res.map((x) => `<li class="${x.ok ? "ok" : "err"}"><strong>${esc(x.lbl)}</strong>: ${esc(x.ok ? "opgeslagen" : x.reply)}</li>`).join("")}</ul>` : ""}</div>` : ""}
+        ${act}
         ${ro ? `<p class="tk-gnote">${LOCK}${esc(roNote)}</p>` : ""}</details>`;
     }).join("");
     $("in-viewnote").textContent = hasMt && ed ? "Ontgrendeld: wijzig de waarden en tik per groep op Opslaan."
       : hasMt ? `Gelezen om ${new Date().toLocaleTimeString("nl-BE")}. Wat je via Bluetooth kunt wijzigen, heeft een knop Wijzigen.`
       : "Alleen de companion-instellingen zijn te lezen. De MeshTrack-instellingen vragen firmware 0.9.1 of nieuwer via Bluetooth, of USB in Toestellen.";
     box.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", () => saveGroup(b.dataset.save)));
+    box.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => (b.dataset.act === "gps" ? gpsSearch() : fifoWipe())));
     box.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => {
       const el = $(b.dataset.edit);
       if (!el) return;
@@ -1835,6 +1840,7 @@
   }
   async function unlockMac(code, nonceHex) { return hmac16(await deriveKey(code), unhex(nonceHex)); }
   function lockLocal(forget) {
+    if (forget && typeof gpsTimers !== "undefined") { gpsTimers.forEach(clearTimeout); gpsTimers = []; }
     unl.until = 0;
     if (forget) unl.key = null;
     clearInterval(unlTimer); unlTimer = null;
@@ -1988,6 +1994,69 @@
     if (v === cur || (v === "" && cur === "-")) return null;
     return { v: v || "-" };
   }
+  // ---- acties na ontgrendelen: GPS-pinnen zoeken (RAK3401) en FIFO-wachtrij wissen ---------------------------
+  const WARN_RE = /\bNIET bewaard/i;
+  const actMsg = {};                                  // per actie: { text, kind } (blijft staan na opnieuw tekenen)
+  // ok | warn | neutral | locked | err
+  function classify(reply) {
+    if (!reply) return "err";
+    if (/vergrendeld:/i.test(reply)) return "locked";
+    if (WARN_RE.test(reply)) return "warn";
+    if (/bestaat niet op dit toestel/i.test(reply)) return "neutral";
+    if (FAIL_RE.test(reply)) return "err";
+    return "ok";
+  }
+  const fifoCount = () => { const n = int(status.fifo); return n !== null ? n : dump ? dump.Q.length : 0; };
+  function groupAction(gid, c) {
+    const m = actMsg[gid];
+    const msg = m ? `<p class="tk-res tk-actres ${m.kind}" role="status">${esc(m.text)}</p>` : "";
+    if (gid === "rust" && c.gpsdetect)
+      return `<div class="tk-gact"><button type="button" class="tk-wbtn" data-act="gps">GPS-pinnen opnieuw zoeken</button>
+        <p class="tk-ssub">De tracker zoekt opnieuw op welke pinnen en met welke snelheid de GPS antwoordt.</p>${msg}</div>`;
+    if (gid === "fifo" && (status.track_mode === "fifo" || fifoCount() > 0))
+      return `<div class="tk-gact"><button type="button" class="danger tk-wbtn" data-act="fifo">FIFO-wachtrij wissen</button>
+        <p class="tk-ssub">Nu ${fifoCount()} ${fifoCount() === 1 ? "punt" : "punten"} in de wachtrij.</p>${msg}</div>`;
+    return "";
+  }
+  function actDone(gid, reply, okText) {
+    const k = classify(reply);
+    actMsg[gid] = { kind: k, text: k === "ok" ? okText : reply.replace(/^fout:\s*/i, "") };
+    if (k === "locked") lockLocal(false);
+    toast(k === "ok" ? okText : k === "warn" ? `Let op: ${reply}` : k === "neutral" ? reply : `Mislukt: ${reply || "geen antwoord"}`, k === "ok" ? "ok" : k === "neutral" ? "" : "err");
+    openGroups.add(gid);
+    return k;
+  }
+  let gpsTimers = [];
+  async function gpsSearch() {
+    if (instBlocked() || !unlocked()) return;
+    let reply = "";
+    try { reply = (await conn.run("gps zoek")).trim(); } catch (e) { reply = e.message; }
+    const k = actDone("rust", reply, "GPS-pinnen worden gezocht. De status wordt na 2, 10, 30 en 60 seconden opnieuw gelezen.");
+    log(`gps zoek: ${reply}`);
+    renderView(); renderInst(false);
+    if (k !== "ok") return;
+    gpsTimers.forEach(clearTimeout);
+    gpsTimers = [2, 10, 30, 60].map((s) => setTimeout(async () => {
+      if (!conn || conn.kind !== "ble") return;
+      await rereadStatus();
+      const v = status.gps_pinnen;
+      actMsg.rust = { kind: "ok", text: v && v !== "zoekt" && v !== "-" ? `GPS gevonden: ${v}.` : `Nog bezig met zoeken (na ${s} s)…` };
+      renderView();
+    }, s * 1000));
+  }
+  async function fifoWipe() {
+    if (instBlocked() || !unlocked()) return;
+    const n = fifoCount();
+    if (!(await sheet("FIFO-wachtrij wissen?", `${n} ${n === 1 ? "punt" : "punten"} in de wachtrij ${n === 1 ? "gaat" : "gaan"} definitief verloren; die posities komen nooit meer op de server.`, "Wissen", true))) return;
+    let reply = "";
+    try { reply = (await conn.run("fifo wis ja")).trim(); } catch (e) { reply = e.message; }
+    actDone("fifo", reply, "FIFO-wachtrij gewist.");
+    log(`fifo wis: ${reply}`);
+    await rereadStatus();
+    await refresh(false);                              // wachtrij en kaart opnieuw lezen
+    renderView(); renderInst(false);
+  }
+
   async function rereadStatus() {
     try {
       const st = checkReply(await conn.run("status"));
@@ -2024,7 +2093,7 @@
     for (const x of changes) {
       let reply = "";
       try { reply = (await conn.run(x.cmd)).trim(); } catch (e) { reply = `geen antwoord (${e.message})`; }
-      const ok = !!reply && !FAIL_RE.test(reply) && !/^geen antwoord/.test(reply);
+      const ok = !!reply && !FAIL_RE.test(reply) && !WARN_RE.test(reply) && !/^geen antwoord/.test(reply);
       out.push({ lbl: x.lbl, ok, reply: reply.replace(/^fout:\s*/i, "") });
       if (/vergrendeld: ontgrendel eerst/i.test(reply)) { lockLocal(false); break; }
     }
