@@ -26,8 +26,9 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     Instellingen met uitdaging-antwoord (HMAC; de code gaat nooit leesbaar door de lucht); daarna 15 min schrijven, tot
     *Vergrendelen* of tot de verbinding wegvalt; na 5 foute pogingen 10 min op slot. Wijzigbaar na ontgrendelen: alle
     gewone instellingen (FastTrack, SlowTrack, FIFO, knop en biepjes, locatieverzoeken, modus, regio, radio, zendvermogen,
-    nummer van het trackingkanaal en privékanalen, `gps zoek`, FIFO wissen); radio, modus en trackingkanaal met extra
-    bevestiging. Nooit via Bluetooth: authsleutel, beheercode, koppelcode (alleen companioncommando/USB), sleutels en
+    nummer van het trackingkanaal en privékanalen); radio, modus en trackingkanaal met extra bevestiging. Knoppen
+    *GPS-pinnen opnieuw zoeken* (alleen RAK3401, = `gps zoek`; resultaat even later in de status) en *FIFO-wachtrij
+    wissen* (= `fifo wis ja`, na bevestiging; de punten zijn definitief weg en komen nooit op de server). Nooit via Bluetooth: authsleutel, beheercode, koppelcode (alleen companioncommando/USB), sleutels en
     back-ups, formatteren, defaults. Advies: beheercode ≠ koppelcode, en verander 123456. De tekst "trackingkanaal 255"
     is nu "geen trackingkanaal: maak het toestel klaar via Toestellen".
   - Bluetooth-koppelcode (0.9.9): `set blepin <6 cijfers>|standaard` (werkt na een herstart), `blepin toon` (alleen USB),

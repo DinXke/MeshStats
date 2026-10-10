@@ -497,3 +497,13 @@ body.tkapp { position: fixed; inset: 0; height: auto; overflow: hidden; }
 .tk-saveres li.err::before { content: "✕ "; }
 .tk-unit input.tk-big-in { flex: 1 1 90px; min-width: 80px; width: auto; }
 .tk-unit select.tk-big-in { flex: 0 0 auto; width: auto !important; min-width: 92px; }
+
+/* acties in een groep (ontgrendeld) */
+.tk-gact { padding: 4px 14px 14px; border-top: 1px solid var(--line); }
+.tk-gact .tk-ssub { display: block; margin-top: 6px; }
+.tk-actres { padding: 8px 10px; border-radius: 8px; background: var(--bg); }
+.tk-actres.ok { color: var(--ok); }
+.tk-actres.warn { color: var(--warn); font-weight: 700; border-left: 4px solid var(--warn); }
+.tk-actres.warn::before { content: "⚠ "; }
+.tk-actres.neutral { color: var(--text); font-weight: 400; }
+.tk-actres.err, .tk-actres.locked { color: var(--danger); }
