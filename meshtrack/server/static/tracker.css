@@ -450,3 +450,26 @@ a.tk-wbtn.primary { background: var(--accent); color: var(--accent-text); }
 .tk-pubbox p { margin: 0 0 6px; font-size: 15px; line-height: 1.45; }
 .tk-pubbox p:last-child { margin: 0; }
 .tk-pubwarn .tk-pubwhy { margin-top: 6px; font-weight: 600; }
+
+/* ---- Instellingen: huidige waarden, gegroepeerd (accordeon) ---- */
+.tk-grp { border: 1px solid var(--line); border-radius: 12px; margin-top: 8px; background: var(--panel); overflow: hidden; }
+.tk-grp > summary { list-style: none; cursor: pointer; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 6px 14px; font-weight: 700; font-size: 16px; }
+.tk-grp > summary::-webkit-details-marker { display: none; }
+.tk-grp > summary::after { content: ""; width: 10px; height: 10px; border-right: 2.5px solid var(--muted); border-bottom: 2.5px solid var(--muted); transform: rotate(45deg); margin-top: -4px; flex: none; transition: transform .15s; }
+.tk-grp[open] > summary::after { transform: rotate(-135deg); margin-top: 4px; }
+.tk-grp > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.tk-srow { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.tk-sbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tk-slbl { font-size: 13px; color: var(--muted); }
+.tk-sval { font-size: 17px; font-weight: 600; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.tk-ssub { font-size: 13px; color: var(--muted); }
+.tk-slock { flex: none; color: var(--muted); display: inline-flex; }
+.tk-slock svg, .tk-gnote svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tk-sedit { flex: none; min-height: var(--tk-touch); padding: 0 14px; border-radius: 10px; font-weight: 600; color: var(--accent); border-color: var(--accent); }
+.tk-gnote { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 10px 14px 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); background: var(--bg); }
+.tk-gnote svg { flex: none; margin-top: 1px; }
+@media (prefers-reduced-motion: reduce) { .tk-grp > summary::after { transition: none; } }
+.tk-grp > summary { color: var(--text); }
+/* scrollIntoView mag alleen de inhoud (tk-main) verschuiven, nooit de hele pagina met kop en tabbalk */
+body.tkapp { position: fixed; inset: 0; height: auto; overflow: hidden; }

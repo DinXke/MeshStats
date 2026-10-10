@@ -127,7 +127,7 @@
   function parseStatus(text) {
     const kv = {};
     const ls = text.split(/\r?\n/);
-    for (const l of ls) for (const m of l.matchAll(/([a-z_]+)=([^\s]+)/g)) kv[m[1]] = m[2];
+    for (const l of ls) for (const m of l.matchAll(/([a-z_][a-z0-9_]*)=([^\s]+)/g)) kv[m[1]] = m[2];
     const nm = ls.find((l) => l.trim().startsWith("naam="));
     if (nm) kv.naam = nm.trim().slice(5).trim();          // namen mogen spaties bevatten
     // prioriteit (blauwe lichten): "prio=aan (nog 3m12s)", "prio=uit" of "prio=fout" (zwevende ingang)
@@ -1421,8 +1421,190 @@
       const ok = groupNeeds(g);
       return `<li><span class="tk-capname">${esc(g.label)}</span><span class="tk-cap ${ok ? "ok" : "no"}">${ok ? (g.via === "companion" ? "Kan op deze firmware" : "Kan op deze firmware (nog niet op deze pagina; gebruik Toestellen)") : "Vraagt firmware 0.9.9 of nieuwer (bijwerken via Toestellen)"}</span></li>`;
     }).join("");
-    if (read && !off && !chans) readChannels();
+    if (read && !off && !viewRead) readAll();
   }
+  // ---- huidige instellingen: alles lezen en gegroepeerd tonen (zoals Toestellen) ---------------------------
+  // MeshTrack-status via de alleen-lezen-opdrachtregel (0x7E "status"); companion: SELF_INFO (APP_START 1) en
+  // DEVICE_INFO (22). SELF_INFO: [5, type, tx_dBm, max_tx, pubkey 32, lat 4, lon 4, 4 bytes, freq u32 (kHz), bw u32 (Hz), sf, cr, naam].
+  let comp = null, viewRead = false, viewBusy = false;
+  const openGroups = new Set(["alg"]);
+  const BOARD_CAPS = {
+    t1000e: { knop: true, buzzer: true, accel: true, led: true },
+    wismesh_tag: { knop: true, buzzer: true, accel: true, led: true },
+    rak3401_1w: { knop: false, buzzer: false, accel: false, led: true },
+  };
+  function capsOfStatus(kv) {
+    const board = kv.board || "t1000e";
+    const c = { board, ...(BOARD_CAPS[board] || BOARD_CAPS.t1000e) };
+    if (kv.pin31) c.knop = String(kv.pin31).toLowerCase() === "knop";
+    else if (kv.knop) c.knop = !/^(geen|uit)$/i.test(kv.knop);
+    if (kv.buzzer) c.buzzer = !/^(geen|nee|0)$/i.test(kv.buzzer);
+    if (kv.accel) c.accel = !/^(geen|nee|0)$/i.test(kv.accel);
+    return c;
+  }
+  async function readAll() {
+    if (instBlocked() || viewBusy) return;
+    viewBusy = true;
+    $("in-readall").disabled = true;
+    $("in-viewnote").textContent = "Instellingen lezen…";
+    try {
+      if (!conn.noMt) {
+        try {
+          const st = checkReply(await conn.run("status"));
+          const kv = parseStatus(st);
+          if (Object.keys(kv).length) { status = kv; statusAt = Date.now(); $("tk-rawstatus").textContent = st; }
+        } catch (e) { log(`status lezen: ${e.message}`); }
+      }
+      const c = {};
+      try {
+        const s = await conn.cmd(new Uint8Array([1, 3, 0, 0, 0, 0, 0, 0, ...enc.encode("MeshTrack tracker")]), [5], 4000);
+        const dv = new DataView(s.buffer, s.byteOffset);
+        if (s.length >= 58) Object.assign(c, { tx: s[2], txMax: s[3], freq: dv.getUint32(48, true) / 1000, bw: dv.getUint32(52, true) / 1000, sf: s[56], cr: s[57],
+          name: new TextDecoder().decode(s.slice(58)).replace(/\0.*$/, "") });
+      } catch (e) { log(`companion-info: ${e.message}`); }
+      try {
+        const d = await conn.cmd(new Uint8Array([22, 3]), [13], 4000);
+        if (d.length >= 8) Object.assign(c, { maxCh: d[3], pin: new DataView(d.buffer, d.byteOffset).getUint32(4, true) });
+        if (d.length >= 80) Object.assign(c, { build: new TextDecoder().decode(d.slice(8, 20)).replace(/\0.*$/, ""), maker: new TextDecoder().decode(d.slice(20, 60)).replace(/\0.*$/, ""),
+          ver: new TextDecoder().decode(d.slice(60, 80)).replace(/\0.*$/, "") });
+        if (conn.info) { if (c.pin !== undefined) conn.info.pin = c.pin; if (c.maxCh) conn.info.maxCh = c.maxCh; }
+      } catch (e) { log(`apparaatinfo: ${e.message}`); }
+      comp = c;
+      if (c.name) { conn.label = c.name; }
+      chans = null; chReading = false;
+      await readChannels();
+      viewRead = true;
+      if (c.name && !$("in-name").value) $("in-name").value = c.name;            // huidige waarde vooraf ingevuld
+      const tc = chanAt(trackingSlot());
+      if (tc && !tc.empty && !$("in-ch-name").value && !isPublicCh(tc)) $("in-ch-name").value = tc.name;
+    } finally {
+      viewBusy = false;
+      $("in-readall").disabled = !!instBlocked();
+      renderView(); renderInst(false); renderWarn();
+    }
+  }
+  // waarden leesbaar maken (zelfde woorden als Toestellen)
+  const V = {
+    onoff: (v) => (/^(aan|ja|1|on)$/i.test(v) ? "aan" : /^(uit|nee|0|off)$/i.test(v) ? "uit" : v),
+    dur: (v) => (v === "uit" || v === "-" ? "uit" : durSec(v) ? dur(durSec(v)) : v === "0" || v === "0s" ? "uit" : v),
+    unit: (u) => (v) => `${v} ${u}`,
+    map: (m) => (v) => m[v] || v,
+  };
+  const GROUPS = [
+    { id: "alg", title: "Algemeen", rows: [
+      { lbl: "Naam", get: () => (comp && comp.name) || status.naam, edit: "in-name" },
+      { lbl: "Modus", key: "gekozen", fmt: V.map({ tracker: "tracker", companion: "companion" }), sub: () => (status.actief ? `nu actief: ${status.actief}${status.usb === "ja" ? " (aan USB)" : ""}` : "") },
+      { lbl: "Ook posities sturen als companion", key: "track_in_companion", fmt: V.onoff },
+      { lbl: "Bluetooth-code", get: () => (status.blepin ? (status.blepin === "eigen" ? "eigen code" : "standaardcode (123456)") : comp && comp.pin != null ? (comp.pin ? "eigen code" : "standaardcode (123456)") : null), edit: "in-pin1", note: "de code zelf tonen we nooit" },
+      { lbl: "Firmware", get: () => [status.fw && `MeshTrack ${status.fw}`, status.meshcore && `MeshCore ${status.meshcore}`, !status.fw && comp && comp.ver].filter(Boolean).join(" · ") || null },
+      { lbl: "Toestel", get: () => status.board || (comp && comp.maker) || null },
+    ] },
+    { id: "radio", title: "Radio en regio", rows: [
+      { lbl: "Frequentie", get: () => (comp && comp.freq ? `${nl(comp.freq, 3)} MHz` : null) },
+      { lbl: "Bandbreedte", get: () => (comp && comp.bw ? `${nl(comp.bw, 1)} kHz` : null) },
+      { lbl: "Spreidingsfactor (SF)", get: () => (comp && comp.sf ? `SF${comp.sf}` : null) },
+      { lbl: "Codering (CR)", get: () => (comp && comp.cr ? `4/${comp.cr}` : null) },
+      { lbl: "Zendvermogen", get: () => (comp && comp.tx != null ? `${comp.tx} dBm${comp.txMax ? ` (max. ${comp.txMax})` : ""}` : null) },
+      { lbl: "Regio", key: "scope", fmt: (v) => (v === "-" || v === "" ? "geen" : v) },
+      { lbl: "2-byte paden", key: "path_bytes", fmt: (v) => (v === "2" ? "aan" : v === "1" ? "uit" : v) },
+    ] },
+    { id: "kan", title: "Kanalen", rows: [
+      { lbl: "Trackingkanaal", get: () => { const s = trackingSlot(); const c = chanAt(s); const nm = status.chan_naam || (c && !c.empty ? c.name : ""); return status.chan === "-" ? "geen" : s === null ? null : `nr. ${s}${nm ? ` · ${nm}` : ""}`; }, edit: "in-ch-name" },
+      { lbl: "Kanaalfout", key: "kanaal_fout", fmt: (v) => (v === "-" ? "geen" : v) },
+      { lbl: "Authsleutel", key: "authkey", fmt: (v) => (v === "ja" ? "ingesteld" : v === "nee" ? "niet ingesteld" : "ingesteld") },
+      { lbl: "Kanalen op de tracker", get: () => (chans ? `${chans.filter((c) => !c.empty).length} van ${(comp && comp.maxCh) || chans.length}` : null), note: "lijst hieronder" },
+    ] },
+    { id: "fast", title: "FastTrack: wanneer een positie sturen", rows: [
+      { lbl: "Minimumsnelheid", key: "min_speed", fmt: V.unit("km/u") },
+      { lbl: "Minimale verplaatsing", key: "min_dist", fmt: V.unit("m") },
+      { lbl: "Scherpe bocht vanaf", key: "turn_min", fmt: (v) => (v === "0" ? "uit (bochten negeren)" : `${v}°`) },
+      { lbl: "Bochten pas boven", key: "turn_min_speed", fmt: V.unit("km/u") },
+      { lbl: "Nooit vaker dan 1× per", key: "min_interval", fmt: V.dur },
+      { lbl: "In beweging minstens 1× per", key: "max_interval", fmt: V.dur },
+      { lbl: "Punt bewaren elke", key: "sample", fmt: V.dur },
+      { lbl: "FastTrack uit onder", key: "fast_min_batt", fmt: (v) => (v === "0" ? "nooit uitschakelen" : `${v}% batterij`) },
+    ] },
+    { id: "slow", title: "SlowTrack", rows: [
+      { lbl: "GPS-punt loggen elke", key: "slow_log", fmt: V.dur },
+      { lbl: "Gelogde punten versturen elke", key: "slow_send", fmt: V.dur },
+    ] },
+    { id: "fifo", title: "Trackmodus en FIFO", rows: [
+      { lbl: "Trackmodus", key: "track_mode", fmt: V.map({ classic: "Klassiek (FastTrack en SlowTrack)", fifo: "FIFO (gemiste punten later inhalen)" }) },
+      { lbl: "Wachtrij maximaal", key: "fifo_max", fmt: V.unit("punten") },
+      { lbl: "Wat gaat in de wachtrij", key: "fifo_punten", fmt: V.map({ alle: "alle punten", hoofd: "alleen het hoofdpunt" }) },
+      { lbl: "Inhalen vanaf", key: "fifo_min", fmt: V.unit("punten") },
+      { lbl: "Tijd tussen inhaalberichten", key: "fifo_gap", fmt: V.dur },
+      { lbl: "Herhaalde leegmaakberichten per uur", key: "fifo_per_uur", fmt: V.unit("per uur") },
+      { lbl: "Pogingen per punt", key: "fifo_pogingen", fmt: V.unit("pogingen") },
+      { lbl: "Rechte stukken uitdunnen", key: "fifo_dun", fmt: (v) => (v === "0" ? "uit" : `${v} m`) },
+      { lbl: "Leegmaken pas vanaf", key: "fifo_snr", fmt: V.unit("dB SNR") },
+      { lbl: "Toch versturen na", key: "fifo_wacht", fmt: V.dur },
+      { lbl: "Punten per bericht", key: "fifo_per_bericht" },
+    ] },
+    { id: "rust", title: "Stilstand, GPS en led", rows: [
+      { lbl: "Slapen na stilstand van", key: "still_timeout", fmt: V.dur },
+      { lbl: "Teken van leven (heartbeat) elke", key: "heartbeat", fmt: V.dur },
+      { lbl: "In rust de GPS controleren elke", key: "rust_gps_check", fmt: V.dur, needs: (c) => !c.accel },
+      { lbl: "Bewegingsgevoeligheid", key: "accel_sens", needs: (c) => c.accel },
+      { lbl: "GPS-fix zoeken max.", key: "fix_timeout", fmt: V.dur },
+      { lbl: "…bij heartbeat of klik max.", key: "fix_timeout_hb", fmt: V.dur },
+      { lbl: "Statusled", key: "led", fmt: V.map({ companion: "alleen als companion", altijd: "altijd", uit: "nooit" }), needs: (c) => c.led },
+    ] },
+    { id: "knop", title: "Knop en biepjes", rows: [
+      { lbl: "Biep bij berichten (companion zonder app)", key: "msg_beep", fmt: V.map({ prive: "alleen privéberichten", alles: "alle berichten", uit: "nooit" }), needs: (c) => c.buzzer },
+      { lbl: "Biep bij elke verstuurde positie", key: "tx_beep", fmt: V.onoff, needs: (c) => c.buzzer },
+      { lbl: "Biep als een repeater de positie doorgeeft", key: "heard_beep", fmt: V.onoff, needs: (c) => c.buzzer },
+      { lbl: "SOS met de knop", key: "sos", fmt: V.onoff, needs: (c) => c.knop },
+    ] },
+    { id: "verz", title: "Locatieverzoeken", rows: [
+      { lbl: "Locatieverzoeken beantwoorden", key: "verzoek", fmt: V.onoff },
+      { lbl: "Radio luistert tijdens beweging", key: "rx_beweging", fmt: V.onoff },
+      { lbl: "Piepje bij een locatieverzoek", key: "verzoek_beep", fmt: V.onoff, needs: (c) => c.buzzer },
+    ] },
+    { id: "voer", title: "Voertuig (ingang pin 31)", needs: (c) => c.board === "rak3401_1w", rows: [
+      { lbl: "Gebruik van ingang pin 31", key: "pin31", fmt: V.map({ uit: "niet gebruikt", knop: "drukknop", prio: "prioriteit (blauwe lichten)" }) },
+      { lbl: "Actief niveau", key: "prio_niveau", fmt: V.map({ hoog: "hoog (spanning = aan)", laag: "laag (massa = aan)" }) },
+      { lbl: "Nalooptijd na uitschakelen", key: "prio_houd", fmt: (v) => (/^\d+$/.test(v) ? `${v} min` : V.dur(v)) },
+      { lbl: "Verzendinterval tijdens prioriteit", key: "prio_interval", fmt: (v) => (v === "0" ? "gewone interval" : V.dur(/^\d+$/.test(v) ? `${v}s` : v)) },
+      { lbl: "Toestand", key: "prio", fmt: (v) => (v === "aan" ? `aan${status.prio_nog ? `, nog ${status.prio_nog}` : ""}` : v === "fout" ? "fout: ingang zweeft" : v) },
+    ] },
+  ];
+  const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>';
+  function renderView() {
+    const box = $("in-groups");
+    if (!comp && !viewRead) return;
+    const c = capsOfStatus(status), hasMt = Object.keys(status).length > 0 && !conn?.noMt;
+    // open/dicht onthouden
+    box.querySelectorAll("details[data-g]").forEach((d) => { if (d.open) openGroups.add(d.dataset.g); else openGroups.delete(d.dataset.g); });
+    const roNote = mtWritable() ? "Wijzigen via USB (Toestellen); via Bluetooth kan deze firmware het al, maar deze pagina nog niet."
+      : "Wijzigen via USB (Toestellen), of via Bluetooth vanaf een latere firmware (0.9.9 of nieuwer).";
+    box.innerHTML = GROUPS.map((g) => {
+      if (g.needs && !g.needs(c)) return "";
+      const rows = g.rows.filter((r) => (!r.needs || r.needs(c))).map((r) => {
+        let v = r.get ? r.get() : status[r.key];
+        if (v == null || v === "") return "";
+        if (r.key && r.fmt) v = r.fmt(String(v));
+        const sub = (r.sub ? r.sub() : "") || r.note || "";
+        const tail = r.edit ? `<button type="button" class="tk-sedit" data-edit="${r.edit}">Wijzigen</button>`
+          : `<span class="tk-slock" title="Alleen lezen" aria-label="alleen lezen">${LOCK}</span>`;
+        return `<div class="tk-srow"><div class="tk-sbody"><span class="tk-slbl">${esc(r.lbl)}</span><span class="tk-sval">${esc(v)}</span>${sub ? `<span class="tk-ssub">${esc(sub)}</span>` : ""}</div>${tail}</div>`;
+      }).join("");
+      if (!rows) return "";
+      const ro = g.rows.some((r) => !r.edit);
+      return `<details class="tk-grp" data-g="${g.id}"${openGroups.has(g.id) ? " open" : ""}><summary>${esc(g.title)}</summary>${rows}
+        ${ro ? `<p class="tk-gnote">${LOCK}${esc(roNote)}</p>` : ""}</details>`;
+    }).join("");
+    $("in-viewnote").textContent = hasMt ? `Gelezen om ${new Date().toLocaleTimeString("nl-BE")}. Wat je via Bluetooth kunt wijzigen, heeft een knop Wijzigen.`
+      : "Alleen de companion-instellingen zijn te lezen. De MeshTrack-instellingen vragen firmware 0.9.1 of nieuwer via Bluetooth, of USB in Toestellen.";
+    box.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => {
+      const el = $(b.dataset.edit);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      setTimeout(() => el.focus({ preventScroll: true }), 300);
+    }));
+  }
+  $("in-readall").addEventListener("click", () => { viewRead = false; readAll(); });
+
   async function readChannels() {
     if (instBlocked() || chReading) return;
     chReading = true;
@@ -1688,5 +1870,5 @@
   initMap().catch((e) => log(`kaart: ${e.message}`));
 
   // Testhaak (alleen lezen): ontleden zonder toestel.
-  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), answers: answers.slice(), heard: [...heard.keys()], chans: chans && chans.slice(), heardOnPublic: [...heard.values()].filter((h) => isPublicCh(chanAt(h.chan))).map((h) => h.pk) }), map: () => map, parseChannelQr };
+  window.MTTracker = { parseDump, parseStatus, durSec, fifoEstimate: () => fifoEstimate(), state: () => ({ dump, status, history: history.slice(), comp, answers: answers.slice(), heard: [...heard.keys()], chans: chans && chans.slice(), heardOnPublic: [...heard.values()].filter((h) => isPublicCh(chanAt(h.chan))).map((h) => h.pk) }), map: () => map, parseChannelQr };
 })();
