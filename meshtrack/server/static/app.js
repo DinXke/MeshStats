@@ -348,10 +348,12 @@
     return `SlowTrack: laatste burst ${d.toDateString() === new Date().toDateString() ? hm : d.toLocaleDateString("nl-BE", { day: "numeric", month: "short" }) + " " + hm}`;
   }
 
+  // Server 1.4.1: de tracker stuurt (de laatste 24 u) op het openbare kanaal Public: niet klaargemaakt
+  const pubPill = (t) => (t.op_public ? ` <span class="lostbadge" title="Stuurt op Public${MT.publicSeen(t) ? `, laatst om ${MT.esc(MT.publicSeen(t))}` : ""}: maak hem klaar in Toestellen">op Public</span>` : "");
   function popupHtml(t) {
     const st = MT.STATE[t.last_state] || t.last_state || "–";
     return [
-      `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">virtueel</span>' : ""}${t.lost ? ' <span class="lostbadge">VERLOREN</span>' : ""}${prioPill(t)}`,
+      `<strong>${MT.esc(t.alias)}</strong>${t.kind === "sim" ? ' <span class="pill">virtueel</span>' : ""}${t.lost ? ' <span class="lostbadge">VERLOREN</span>' : ""}${prioPill(t)}${pubPill(t)}`,
       `${MT.esc(st)}${t.last_mode ? " · " + MT.esc(MT.MODE[t.last_mode] || t.last_mode) : ""}`,
       t.last_spd != null ? `${t.last_spd} km/u${t.last_crs != null ? " · koers " + t.last_crs + "°" : ""}` : null,
       t.last_bat != null ? `batterij ${t.last_bat}%` : null,
@@ -439,7 +441,7 @@
       return;
     }
     $("list").innerHTML = items.map((t) => {
-      const sos = (t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "") + (t.lost ? ' <span class="lostbadge">VERLOREN</span>' : "") + prioPill(t);
+      const sos = (t.last_state === "E" ? ' <span class="pill sos">SOS</span>' : "") + (t.lost ? ' <span class="lostbadge">VERLOREN</span>' : "") + prioPill(t) + pubPill(t);
       const sim = t.kind === "sim" ? ' <span class="pill">virtueel</span>' : "";
       const meta = [MT.STATE[t.last_state] || "nog niets ontvangen", t.last_bat != null ? `${t.last_bat}%` : null,
                     t.last_spd ? `${t.last_spd} km/u` : null].filter(Boolean).join(" · ");

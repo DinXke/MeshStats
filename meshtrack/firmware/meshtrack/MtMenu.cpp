@@ -274,10 +274,20 @@ static const char* set_param(const char* k, const char* v) {
     if (strcmp(v, "kanaal") && strcmp(v, "channel")) return "DM bestaat niet meer: altijd via het trackingkanaal";
     ok = true;
   }
-  else if (!strcmp(k, "chan")) {
-    uint16_t r; ChannelDetails ch;
-    ok = parse_u16(v, MAX_GROUP_CHANNELS - 1, &r) && the_mesh.mtGetChannel(r, ch) && ch.name[0];
-    if (ok) c.chan_idx = r;
+  else if (!strcmp(k, "chan")) {               // nummer van een PRIVÉkanaal, of - = geen
+    if (!strcmp(v, "-")) { c.chan_idx = MT_CHAN_NONE_IDX; ok = true; }
+    else {
+      uint16_t r; ChannelDetails ch;
+      ok = parse_u16(v, MAX_GROUP_CHANNELS - 1, &r) && the_mesh.mtGetChannel(r, ch) && ch.name[0];
+      if (ok) {
+        uint8_t old = mt_cfg.chan_idx;          // openbaar? (zelfde controle als de zender)
+        mt_cfg.chan_idx = (uint8_t)r;
+        bool pub = mt_chan_state() == MT_CHAN_PUBLIC;
+        mt_cfg.chan_idx = old;
+        if (pub) return "kanaal is openbaar (Public of een #kanaal): kies een privékanaal (chan set)";
+        c.chan_idx = (uint8_t)r;
+      }
+    }
   }
   else if (!strcmp(k, "authkey")) {
     ok = true;
@@ -666,10 +676,17 @@ static void cmd_status() {
   }
   {
     ChannelDetails ch;
-    bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
-    out("transport=kanaal chan=%u authkey=%s afzender=%s chan_naam=", (unsigned)mt_cfg.chan_idx,
+    MtChanState cs = mt_chan_state();
+    bool have = cs != MT_CHAN_NONE && the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
+    char ci[6] = "-";
+    if (mt_cfg.chan_idx != MT_CHAN_NONE_IDX) snprintf(ci, sizeof(ci), "%u", (unsigned)mt_cfg.chan_idx);
+    out("transport=kanaal chan=%s kanaal_fout=%s authkey=%s afzender=%s chan_naam=", ci, mt_chan_state_str(cs),
         mt_cfg.authkey_set ? "ja" : "nee", the_mesh.mtSender());
     outl("%s", have ? ch.name : "-");
+    if (cs == MT_CHAN_NONE || cs == MT_CHAN_MISSING)
+      outl("LET OP: geen trackingkanaal: maak het toestel klaar via Toestellen (er wordt niets verstuurd)");
+    else if (cs == MT_CHAN_PUBLIC)
+      outl("LET OP: het trackingkanaal is openbaar (Public): er wordt niets verstuurd; maak het toestel klaar via Toestellen");
   }
   {
     char fs[64];
@@ -718,7 +735,9 @@ static void cmd_help() {
   outl("    track_in_companion on|off");
 #endif
   outl("    sample <tijd>   in beweging elke x een punt bewaren, mee in het volgende bericht (0 = uit)");
-  outl("    chan <nr>  authkey <32 hex>|-   (trackingkanaal en authsleutel; afzender = de naam)");
+  outl("    chan <nr>|-  authkey <32 hex>|-   (trackingkanaal en authsleutel; afzender = de naam)");
+  outl("      Het trackingkanaal moet een privékanaal zijn: op Public of een #kanaal (sleutel volgt uit de naam)");
+  outl("      verstuurt de tracker nooit iets. Zonder trackingkanaal (chan=-): klaarmaken via Toestellen.");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
 #if MT_KEY_BUZZER
   outl("    msg_beep prive|alles|uit (biep bij berichten als companion zonder app; prive = alleen privéberichten)");
@@ -956,8 +975,10 @@ static void value_of(const char* param, char* o, size_t n) {
   }
   else if (!strcmp(param, "chan")) {
     ChannelDetails ch;
-    bool have = the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
-    snprintf(o, n, "%u (%s)", (unsigned)mt_cfg.chan_idx, have ? ch.name : "leeg");
+    MtChanState cs = mt_chan_state();
+    bool have = cs != MT_CHAN_NONE && the_mesh.mtGetChannel(mt_cfg.chan_idx, ch) && ch.name[0];
+    if (cs == MT_CHAN_NONE) snprintf(o, n, "- (geen)");
+    else snprintf(o, n, "%u (%s)%s", (unsigned)mt_cfg.chan_idx, have ? ch.name : "leeg", cs == MT_CHAN_PUBLIC ? " OPENBAAR" : "");
   }
   else if (!strcmp(param, "authkey")) snprintf(o, n, "%s", mt_cfg.authkey_set ? "ingesteld" : "niet ingesteld");
   else if (!strcmp(param, "msg_beep")) snprintf(o, n, "%s", mt_cfg.msg_beep == 1 ? "alles" : mt_cfg.msg_beep == 2 ? "uit" : "alleen privé");

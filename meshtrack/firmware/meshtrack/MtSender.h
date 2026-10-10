@@ -19,7 +19,13 @@ bool mt_send(const char* text, bool manual, bool keep, uint32_t tag = 0, char st
 // "<nodenaam>: " gaat ervoor; de ruimte hangt af van de naam (the_mesh.mtSenderLen()).
 void mt_sender_loop();
 bool mt_sender_busy();                          // bericht wacht nog op verzending
-bool mt_sender_ready();                         // trackingkanaal ingesteld (bestaat op het toestel)
+bool mt_sender_ready();                         // trackingkanaal ingesteld, bestaat op het toestel en is NIET openbaar
+// Staat van het trackingkanaal (0.9.10): nooit MeshTrack-berichten op een openbaar kanaal (Public, of een
+// #kanaal waarvan de sleutel uit de naam volgt): die zou iedereen kunnen lezen.
+enum MtChanState : uint8_t { MT_CHAN_OK, MT_CHAN_NONE, MT_CHAN_MISSING, MT_CHAN_PUBLIC };
+MtChanState mt_chan_state();
+const char* mt_chan_state_str(MtChanState s);   // "-", "geen", "ontbreekt", "openbaar"
+#define MT_CHAN_NONE_IDX 0xFF                    // chan_idx: geen trackingkanaal (standaard vanaf 0.9.10)
 void mt_sender_set_done_cb(MtSendDone cb);
 const MtSendStats& mt_sender_stats();
 const uint8_t* mt_sender_last_block();          // eerste cijferblok van het laatst verstuurde pakket (16 bytes)

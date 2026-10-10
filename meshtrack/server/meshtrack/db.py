@@ -291,6 +291,8 @@ class DB:
             self._x("ALTER TABLE positions ADD COLUMN prio INTEGER NOT NULL DEFAULT 0")
         if "prio_until" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:
             self._x("ALTER TABLE trackers ADD COLUMN prio_until INTEGER NOT NULL DEFAULT 0")   # 0 = niet prioritair
+        if "public_leak_ts" not in {r["name"] for r in self._q("PRAGMA table_info(trackers)")}:   # 1.4.1
+            self._x("ALTER TABLE trackers ADD COLUMN public_leak_ts INTEGER")   # laatst gezien op Public
         if "prio" not in {r["name"] for r in self._q("PRAGMA table_info(sims)")}:
             self._x("ALTER TABLE sims ADD COLUMN prio INTEGER NOT NULL DEFAULT 0")             # simulator stuurt "p"
         # dekkende index voor de statistieken (bereik op ontvangsttijd, zonder de tabel zelf te lezen)
@@ -437,6 +439,10 @@ class DB:
     def set_prio(self, tid: int, until: int) -> None:
         """1.4: prioritair tot `until` (unix); 0 = niet prioritair."""
         self._x("UPDATE trackers SET prio_until=? WHERE id=?", (int(until), tid))
+
+    def set_public_leak(self, tid: int, ts: int) -> None:
+        """1.4.1: tracker gezien op Public (nooit terug in de tijd)."""
+        self._x("UPDATE trackers SET public_leak_ts=MAX(COALESCE(public_leak_ts, 0), ?) WHERE id=?", (int(ts), tid))
 
     def set_sim_prio(self, tid: int, on: bool) -> None:
         self._x("UPDATE sims SET prio=? WHERE tracker_id=?", (int(on), tid))

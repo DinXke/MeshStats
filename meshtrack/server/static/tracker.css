@@ -435,3 +435,18 @@ body.tk-noscroll { overflow: hidden; }
 .tk-toast.err::before { content: "! "; }
 @media (min-width: 900px) { .tk-toast { bottom: 24px; } }
 @media (prefers-reduced-motion: reduce) { .tk-sheet { transition: none; } }
+
+/* ---- openbaar kanaal / geen trackingkanaal ---- */
+.tk-pubwarn { display: flex; gap: 12px; align-items: flex-start; margin-bottom: var(--tk-gap); border: 2px solid var(--danger); border-left-width: 6px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
+.tk-pubwarn > svg { width: 30px; height: 30px; flex: none; color: var(--danger); fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; margin-top: 2px; }
+.tk-pubwarn > div { flex: 1; min-width: 0; }
+.tk-pubwarn h2 { font-size: 17px; margin: 0 0 4px; color: var(--danger); }
+.tk-pubwarn p { margin: 0; font-size: 15px; line-height: 1.45; }
+.tk-linkbtn { text-decoration: none; margin-top: 12px; }
+a.tk-wbtn.primary { background: var(--accent); color: var(--accent-text); }
+.pill.tk-pub { background: var(--danger); color: #fff; border-color: var(--danger); font-weight: 700; }
+.tk-pubbox { margin: 8px 0 0; font-weight: 400; }
+.tk-pubbox p { margin: 0 0 6px; font-size: 15px; line-height: 1.45; }
+.tk-pubbox p:last-child { margin: 0; }
+.tk-pubwarn .tk-pubwhy { margin-top: 6px; font-weight: 600; }

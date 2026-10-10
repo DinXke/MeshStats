@@ -42,7 +42,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -129,6 +129,8 @@ def tracker_out(t: dict[str, Any], p: Optional[Principal] = None) -> dict[str, A
     out["has_authkey"] = bool(t.get("authkey"))
     out["prio_until"] = int(t.get("prio_until") or 0)
     out["prio"] = now < out["prio_until"]    # 1.4: rijdt prioritair (blauwe lichten)
+    leak = t.get("public_leak_ts")            # 1.4.1: op Public gezien (niet klaargemaakt)
+    out["op_public"] = bool(leak) and now - leak < 24 * 3600
     out.pop("authkey", None)                 # nooit in lijsten of live-berichten
     if p is not None and not p.can("map.details"):
         out = strip_tracker(out)
@@ -396,11 +398,13 @@ async def on_rx_log(raw: bytes, snr, rssi) -> None:
     """Rauw pakket van de companion (0x88): is het een trackerbericht op een van onze kanalen,
     dan zijn pad opslaan (bron "companion")."""
     chans = _channels_for_paths()
-    if not chans:
-        return
-    m = paths.match(S.db, raw, chans, channel_tag)
+    m = paths.match(S.db, raw, chans, channel_tag) if chans else None
     if m:
         S.db.add_paths([{**m, "rx_ts": int(time.time()), "snr": snr, "rssi": rssi, "radio": None, "source": "companion"}])
+        return
+    t = paths.public_tracker(S.db, raw, chans)
+    if t:
+        await public_seen(t["id"], int(time.time()))
 
 
 async def openhop_path_poller() -> None:
@@ -408,12 +412,43 @@ async def openhop_path_poller() -> None:
     while True:
         try:
             since = int(time.time()) - S.settings["retention_days"] * 86400
-            n = await asyncio.to_thread(paths.poll_openhop, S.db, S.cfg.openhop_db, channel_tag, since)
+            hits: list = []
+            n = await asyncio.to_thread(paths.poll_openhop, S.db, S.cfg.openhop_db, channel_tag, since, hits)
             if n:
                 log.debug("paden uit openHop: %d nieuw", n)
+            for tid, ts in hits:
+                await public_seen(tid, ts)
         except Exception as e:  # noqa: BLE001
             log.warning("paden uit openHop: %s", e)
         await asyncio.sleep(OPENHOP_POLL_S)
+
+
+# ---- 1.4.1: gekende tracker stuurt op Public (niet klaargemaakt) ------------------------------
+PUBLIC_WINDOW_S = 24 * 3600         # op_public in de trackerlijst: gezien in de laatste 24 u
+PUBLIC_NOTE_S = 6 * 3600            # audit/log/melding hoogstens zo vaak per tracker
+PUBLIC_FRESH_S = 3600               # alleen recente berichten melden (niet bij het inlezen van oude pakketten)
+_public_noted: dict[int, float] = {}
+
+
+async def public_seen(tid: int, ts: int, now: Optional[float] = None) -> None:
+    """Een T1C van een gekende tracker op Public: tijd bijhouden (zijn posities worden NIET opgeslagen:
+    niet ondertekend en op het verkeerde kanaal); begrensd een auditregel, logregel en melding."""
+    now = time.time() if now is None else now
+    before = S.db.tracker(tid)
+    if before is None:
+        return
+    was = bool(before.get("public_leak_ts")) and now - before["public_leak_ts"] < PUBLIC_WINDOW_S
+    S.db.set_public_leak(tid, ts)
+    t = S.db.tracker(tid)
+    is_now = bool(t.get("public_leak_ts")) and now - t["public_leak_ts"] < PUBLIC_WINDOW_S
+    if is_now and not was:                    # badge in de lijst verschijnt meteen
+        await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
+    if now - ts > PUBLIC_FRESH_S or now - _public_noted.get(tid, -1e18) < PUBLIC_NOTE_S:
+        return
+    _public_noted[tid] = now
+    log.warning("tracker %s stuurt op het kanaal Public: niet klaargemaakt", t["alias"])
+    S.db.audit("systeem", "tracker op Public", f"{t['alias']}: stuurt op het kanaal Public (niet klaargemaakt)")
+    S.alerts.fire(t, "op_public")
 
 
 _sos_acked: dict[tuple[int, str], float] = {}

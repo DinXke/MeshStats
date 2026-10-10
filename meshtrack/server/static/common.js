@@ -13,6 +13,14 @@ const MT = {
     return j;
   },
 
+  // Server 1.4.1: op_public (de laatste 24 u gezien op Public = niet klaargemaakt), public_leak_ts
+  publicSeen(t) {
+    if (!t || !t.public_leak_ts) return "";
+    const d = new Date(t.public_leak_ts * 1000);
+    const hm = d.toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" });
+    return d.toDateString() === new Date().toDateString() ? hm : `${d.toLocaleDateString("nl-BE", { day: "numeric", month: "short" })} ${hm}`;
+  },
+
   esc(s) {
     return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   },

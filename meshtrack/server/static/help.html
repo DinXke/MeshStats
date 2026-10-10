@@ -91,6 +91,8 @@
       <li>Een voertuig dat <strong>prioritair</strong> rijdt (blauwe lichten), knippert blauw, met blauwe stukken in het
         spoor en een sirene-badge; <em>Alleen prioritair</em> onder <em>Filter en zichtbaarheid</em> toont alleen die
         voertuigen (zie <a href="#voertuig">Voertuigtracker RAK3401</a>).</li>
+      <li>Een tracker met de badge <em>stuurt op Public – klaarmaken</em> is niet klaargemaakt; zie
+        <a href="#kanalen">Het trackingkanaal</a>.</li>
       <li>De zijbalk kun je <strong>breder of smaller slepen</strong>; dubbelklik op de rand om hem terug te zetten.
         Elk blok in de zijbalk kun je in- en uitklappen.</li>
       <li>Op een <strong>telefoon</strong> staat de lijst in een onderpaneel. Sleep het streepje omhoog of omlaag om het
@@ -482,7 +484,8 @@
         op de tracker</em>. De pagina zet het kanaal, de regio en de authsleutel erop.</li>
     </ol>
     <p>Het toestel krijgt dan de sleutel van de server, zijn naam, de radio-instellingen, de regio, 2 bytes per hop en
-      het kanaal Public, en het start in trackermodus. Had het toestel al een andere
+      het kanaal Public, en het start in trackermodus. Tot je het trackingkanaal kiest, stuurt het niets: op Public stuurt
+      een tracker nooit. Had het toestel al een andere
       sleutel, dan wordt die eerst als back-up gedownload. Na de herstart controleert de pagina of de pubkey klopt. De
       standaardwaarden (frequentie, bandbreedte, regio …) stelt een beheerder in onder <em>Systeem</em> →
       <em>Instellingen</em>.</p>
@@ -538,6 +541,28 @@
       <li><strong>QR-code</strong>: bij elk kanaal toont <em>QR-code</em> een code om het kanaal met de MeshCore-app of de
         offline-app toe te voegen.</li>
     </ul>
+    <p class="note"><strong>Nooit op een openbaar kanaal.</strong> De tracker stuurt nooit iets op een openbaar kanaal: niet
+      op <em>Public</em>, en niet op een #hashtag-kanaal waarvan de sleutel uit de naam volgt. Geen posities, geen SOS, geen
+      antwoorden op verzoeken en geen inhaalberichten; een klik geeft de lage toon. <code>status</code> toont dan
+      <code>kanaal_fout=openbaar</code> met een regel <em>LET OP</em>. Aanleiding: een WisMesh Tag die niet was klaargemaakt,
+      stuurde zijn posities en een SOS zonder handtekening op Public, voor iedereen zichtbaar.</p>
+    <p>Een <strong>nieuwe of teruggezette tracker heeft geen trackingkanaal</strong> (<code>chan=-</code>,
+      <code>kanaal_fout=geen</code>) en stuurt niets tot hij klaargemaakt is. Bestaande trackers waarvan het trackingkanaal
+      naar Public wees, zijn eenmalig op <em>geen</em> gezet. <code>set chan -</code> = geen trackingkanaal; <code>set chan
+      &lt;nr&gt;</code> weigert een openbaar kanaal.</p>
+    <p><strong>Zo maak je een tracker zonder trackingkanaal in orde</strong> (geen nieuwe firmware nodig, en geen
+      <em>Klaarmaken</em> als hij zijn eigen sleutel houdt):</p>
+    <ol>
+      <li>USB → <em>Toestellen</em> → <em>Verbinden</em>.</li>
+      <li><em>Instellingen</em> → <em>Trackingkanaal</em>: kies het MeshTrack-kanaal → <em>Opslaan op de tracker</em>. De pagina
+        zet het kanaal op een vrij nummer (Public blijft staan), maakt de authsleutel en zet hem erop, en stelt de regio en het
+        trackingkanaal in.</li>
+      <li>Controleer met <code>status</code>: <code>authkey=ja</code> en <code>chan_naam=</code> met de naam van het kanaal.</li>
+    </ol>
+    <p>Via Bluetooth (Tracker live) lukt dit <strong>niet</strong>: de authsleutel en het kanaalnummer kun je alleen via USB
+      instellen. Stuurt een gekende tracker toch op Public (oudere firmware), dan herkent de server hem zonder zijn posities te
+      bewaren: badge <em>stuurt op Public – klaarmaken</em> in <em>Trackers</em> en op de kaart, een waarschuwing in
+      <em>Toestellen</em> en Tracker live, en de meldingsgebeurtenis <em>stuurt op Public: niet klaargemaakt</em>.</p>
     <p>Een positiebericht krijgt geen ontvangstbevestiging (geen ACK), wordt niet opnieuw verstuurd en wordt door het hele
       net geflood (binnen de regio). Alleen op een SOS (<code>T1A</code>) en op ingehaalde punten (<code>T1F</code>)
       antwoordt de server, op hetzelfde kanaal.</p>
@@ -657,7 +682,7 @@
     </ul>
     <p class="note"><strong>Verander de standaardcode 123456.</strong> Wie de koppelcode kent, kan via Bluetooth de naam, de
       kanalen en de code van de tracker wijzigen. Stel een eigen code in: hier, in <em>Toestellen</em> (veld
-      <em>Bluetooth-code</em>, firmware 0.9.9) of met <code>set blepin</code>. De code staat nooit in een back-up.</p>
+      <em>Bluetooth-code</em>, vanaf firmware 0.9.9) of met <code>set blepin</code>. De code staat nooit in een back-up.</p>
 
     <h2 id="statussen">Statussen</h2>
     <table>
@@ -731,7 +756,8 @@
     <h2 id="meldingen">Meldingen via de mesh</h2>
     <p>Onder <em>Systeem</em> → <em>Meldingsregels</em> bepaal je bij welke gebeurtenissen de server een melding als privébericht (DM) via de
       mesh stuurt, bv. naar de gsm van de wachtdienst (bijvoorbeeld wakker door beweging, SOS, batterij bijna leeg, aan of van de lader, een zone binnenkomen,
-      te lang stil, een verloren tracker die weer opduikt, rijdt prioritair of rijdt niet langer prioritair), voor
+      te lang stil, een verloren tracker die weer opduikt, rijdt prioritair, rijdt niet langer prioritair, of stuurt op Public:
+      niet klaargemaakt), voor
       welke trackers (alle, kanalen en/of losse trackers) en naar welke ontvangers. Met een kanaal geldt de regel ook
       voor trackers die later op dat kanaal sturen. Een eigen regel meldt alleen trackers die je zelf mag zien. Je kiest de ontvangers uit de contacten van de companion, of je plakt
       hun pubkey.</p>
@@ -1074,8 +1100,13 @@
         pubkey? Heeft hij een trackingkanaal dat de server kent (<em>Systeem</em> → <em>Kanalen</em>) en de juiste
         authsleutel? Staat er <em>oude firmware</em>, flash hem dan naar de nieuwste firmware. Zie je hem als beheerder wel en
         een andere gebruiker niet, kijk dan bij die gebruiker naar <em>Effectieve rechten</em>.</li>
-      <li><strong>Na een klik volgt een lage toon</strong>: de tracker heeft geen (geldig) trackingkanaal, of geen repeater
-        hoorde het bericht. Kies een kanaal in <em>Toestellen</em>, of probeer op een plek met meer bereik.</li>
+      <li><strong>Na een klik volgt een lage toon</strong>: de tracker heeft geen (geldig) trackingkanaal, zijn
+        trackingkanaal is openbaar (<code>kanaal_fout=geen</code> of <code>openbaar</code>), of geen repeater hoorde het bericht.
+        Kies een kanaal in <em>Toestellen</em> (zie <a href="#kanalen">Het trackingkanaal</a>), of probeer op een plek met meer
+        bereik.</li>
+      <li><strong>Badge "stuurt op Public – klaarmaken"</strong>: de tracker is niet klaargemaakt en stuurt op Public (oudere
+        firmware); de server bewaart die posities niet. Maak hem in orde via USB: <em>Toestellen</em> → <em>Instellingen</em> →
+        <em>Trackingkanaal</em>. Via Bluetooth lukt dat niet.</li>
       <li><strong>Mijn tracker stuurt SOS terwijl ik niets doe</strong>: waarschijnlijk wordt de knop ingedrukt in een zak,
         tas of houder. Kijk hoe de tracker zit, of zet <em>SOS met de knop</em> uit (<em>Toestellen</em> → <em>Knop en
         biepjes</em>, of <code>set sos uit</code>). Uitschakelen door lang vasthouden blijft werken.</li>

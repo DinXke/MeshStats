@@ -76,6 +76,7 @@
         <li>Chrome of Edge op Android of een computer; niet op een iPhone of iPad.</li>
       </ul>
     </div>
+    <div id="ov-warn"></div>
     <div id="ov-hero"></div>
     <p class="tk-sr" id="tk-sr" aria-live="polite"></p>
     <div class="tk-mapslot tk-mapslot-ov" id="slot-ov"></div>
@@ -187,6 +188,11 @@
           <select id="in-ch-slot" class="tk-big-in"></select>
           <p class="tk-note">Weet je het niet? Bekijk het via USB in <a href="/devices">Toestellen</a> (chan=).</p>
         </div>
+        <div class="tk-warnbox bad tk-pubbox" id="in-chpub" hidden>
+          <p><strong>Dit trackingkanaal is openbaar (of er is geen trackingkanaal).</strong> Overschrijven via Bluetooth kan hier niet: Bluetooth kan het kanaalnummer en de authsleutel van de tracker niet instellen.</p>
+          <p>Maak de tracker klaar via USB in <a href="/devices">Toestellen (Klaarmaken)</a>.</p>
+        </div>
+        <div id="in-chform">
         <div class="tk-row2">
           <button type="button" class="tk-wbtn tk-qrbtn" id="in-qr-scan">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4M8 12h8"/></svg>Scan QR-code</button>
@@ -202,6 +208,7 @@
         <p class="tk-ferr" id="in-ch-err"></p>
         <p class="tk-warnbox tk-top">Een tracker op een nieuw kanaal verschijnt alleen op de server als dat kanaal ook in MeshTrack bestaat (<a href="/kanalen">Kanalen</a>) en de authsleutel klopt. De authsleutel is een MeshTrack-instelling en blijft dezelfde.</p>
         <button type="button" class="primary tk-wbtn" id="in-ch-set">Op het trackingkanaal zetten</button>
+        </div>
       </article>
 
       <article class="card tk-card">

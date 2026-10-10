@@ -56,7 +56,7 @@ void mt_on_short_press() {
   // dat binnen 12 s niet gebeurt. Ontbreekt het trackingkanaal, dan meteen een lage toon.
   if (!mt_sender_ready()) {
     ui_task.playForced(MT_TUNE_NOK);
-    mt_log("klik: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+    mt_log("klik: niet verstuurd, trackingkanaal: %s", mt_chan_state_str(mt_chan_state()));
     return;
   }
   ui_task.playModeTune(s_eff == MT_MODE_TRACKER);
@@ -77,7 +77,7 @@ void mt_on_sos() {
   mt_log("SOS via de knop");
   if (!mt_tracker_sos()) {
     ui_task.playForced(MT_TUNE_NOK);
-    mt_log("SOS niet verstuurd: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+    mt_log("SOS niet verstuurd, trackingkanaal: %s", mt_chan_state_str(mt_chan_state()));
   }
 }
 
@@ -93,6 +93,14 @@ bool mt_mesh_paused() { return mt_radio_paused(); }
 
 void mt_begin() {
   mt_cfg_begin();
+  // 0.9.10: een trackingkanaal dat openbaar is (vroeger standaard 0 = Public als het toestel nooit klaargemaakt
+  // werd), geldt als "geen": daar mogen nooit posities of SOS-berichten op. Eén keer melden en bewaren.
+  if (mt_cfg.chan_idx != MT_CHAN_NONE_IDX && mt_chan_state() == MT_CHAN_PUBLIC) {
+    mt_log("trackingkanaal %u is openbaar (Public): geen trackingkanaal meer; maak het toestel klaar via Toestellen",
+           (unsigned)mt_cfg.chan_idx);
+    mt_cfg.chan_idx = MT_CHAN_NONE_IDX;
+    mt_cfg_save();
+  }
   s_usb = board.isExternalPowered();
   apply_mode(wanted_mode());
   mt_tracker_begin();
