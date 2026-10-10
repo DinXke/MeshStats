@@ -731,7 +731,7 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
     s_cap_set = false;
   }
   // Belangrijke berichten wijken niet voor een nieuwere gewone positie.
-  bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B';
+  bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B' || state == 'V';
   sign_and_send(text, state, manual, keep, tag);
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
   strncpy(s_last_reason, reason, sizeof(s_last_reason) - 1);
@@ -760,8 +760,9 @@ static uint32_t s_slow_acq_deadline = 0;
 static uint32_t s_slow_log_due = 0, s_slow_send_due = 0;
 
 // Heeft FastTrack, een klik of een SOS de GPS nu nodig?
+static bool s_req_gps = false;              // een locatieverzoek zoekt een fix: de GPS niet uitzetten
 static bool fast_needs_gps() {
-  return s_manual || s_sos_left || (tracking_active() && (s_state == MT_T_ACQUIRE || s_state == MT_T_MOVING));
+  return s_manual || s_sos_left || s_req_gps || (tracking_active() && (s_state == MT_T_ACQUIRE || s_state == MT_T_MOVING));
 }
 
 static void slow_release() {
@@ -1569,12 +1570,113 @@ static void handle_t1f(uint8_t chan_idx, const char* p) {
   if (s_rxlog) mt_log("T1F zonder deel voor deze tracker");
 }
 
+// ---- locatieverzoeken (0.9.5) --------------------------------------------------------------
+// "T1R|<doel>|<nonce>" op het trackingkanaal (van eender welke companion, bv. de app via een tracker als
+// companion): doel = "*" (iedereen) of de pk8 van één tracker (8 hex, hoofdletters mogen), nonce = 4 tot 8
+// hex. Antwoord = een gewoon T1C-positiebericht met toestand V ("op verzoek"), met positie als er een fix
+// is. Ontdubbeld op nonce (8 laatste, 10 min), hooguit 1x per 120 s voor "*" en 1x per 30 s gericht,
+// na een willekeurige wachttijd (2-20 s voor "*", 1-3 s gericht) zodat niet alle trackers tegelijk zenden.
+struct MtNonce { char n[9]; uint32_t ms; };
+static MtNonce s_nonces[8];
+static uint8_t s_nonce_i = 0;
+static bool s_req_pending = false, s_req_gps_started = false;
+static uint32_t s_req_due = 0, s_req_deadline = 0;
+static uint32_t s_req_star_ms = 0, s_req_tgt_ms = 0;
+static bool s_req_star_ever = false, s_req_tgt_ever = false;
+static uint32_t s_req_last_unix = 0, s_req_answered = 0, s_req_ignored = 0;
+
+static void req_ignore(const char* why) {
+  s_req_ignored++;
+  mt_log("verzoek genegeerd: %s", why);
+}
+
+static void handle_t1r(uint8_t chan_idx, const char* text, const char* p) {
+  if (!is_track_channel(chan_idx)) {
+    mt_log("T1R op kanaal %u genegeerd (trackingkanaal is %u)", (unsigned)chan_idx, (unsigned)mt_cfg.chan_idx);
+    return;
+  }
+  // p = "<doel>|<nonce>"
+  const char* bar = strchr(p, '|');
+  if (!bar) { req_ignore("ongeldig formaat"); return; }
+  int tl = bar - p;
+  const char* nonce = bar + 1;
+  int nl = strlen(nonce);
+  while (nl && (nonce[nl - 1] == ' ' || nonce[nl - 1] == '\r' || nonce[nl - 1] == '\n')) nl--;
+  bool nonce_ok = nl >= 4 && nl <= 8;
+  for (int i = 0; i < nl && nonce_ok; i++) nonce_ok = isxdigit((unsigned char)nonce[i]);
+  bool star = tl == 1 && p[0] == '*';
+  char pk[9];
+  own_pk8(pk);
+  if (!star) {
+    if (tl != 8) { req_ignore("ongeldig doel"); return; }
+    for (int i = 0; i < 8; i++) if (tolower((unsigned char)p[i]) != pk[i]) return;   // voor een andere tracker: stil
+  }
+  if (!nonce_ok) { req_ignore("ongeldige nonce"); return; }
+  if (mt_cfg.verzoek_uit) { req_ignore("verzoek uit"); return; }
+  char nn[9];
+  for (int i = 0; i < nl; i++) nn[i] = (char)tolower((unsigned char)nonce[i]);
+  nn[nl] = 0;
+  uint32_t now = millis();
+  for (int i = 0; i < 8; i++)
+    if (s_nonces[i].ms && now - s_nonces[i].ms < 600000UL && !strcmp(s_nonces[i].n, nn)) { req_ignore("al gezien (zelfde nonce)"); return; }
+  if (s_req_pending) { req_ignore("er loopt al een verzoek"); return; }
+  if (star && s_req_star_ever && now - s_req_star_ms < 120000UL) { req_ignore("* hooguit 1x per 120 s"); return; }
+  if (!star && s_req_tgt_ever && now - s_req_tgt_ms < 30000UL) { req_ignore("gericht hooguit 1x per 30 s"); return; }
+  MtNonce& slot = s_nonces[s_nonce_i];
+  s_nonce_i = (uint8_t)((s_nonce_i + 1) % 8);
+  memcpy(slot.n, nn, nl + 1);
+  slot.ms = now | 1;
+  if (star) { s_req_star_ms = now; s_req_star_ever = true; } else { s_req_tgt_ms = now; s_req_tgt_ever = true; }
+  uint32_t jitter = star ? (uint32_t)random(2000, 20001) : (uint32_t)random(1000, 3001);
+  s_req_pending = true;
+  s_req_gps_started = false;
+  s_req_due = now + jitter;
+  s_req_last_unix = the_mesh.getRTCClock()->getCurrentTime();
+  // afzendernaam = alles voor ": " (de companion zet die er meestal voor)
+  char name[33] = "?";
+  if (p != text + 4) {
+    int k = (int)(p - 6 - text);
+    if (k > 0) { if (k > 32) k = 32; memcpy(name, text, k); name[k] = 0; }
+  }
+  mt_log("verzoek van %s voor %s, antwoord over %lu s", name, star ? "*" : pk, (unsigned long)((jitter + 999) / 1000));
+  if (mt_cfg.verzoek_beep) ui_task.playForced(MT_TUNE_REQ);   // ook met de buzzer gedempt (3x klikken)
+}
+
+static void step_req() {
+  if (!s_req_pending || (int32_t)(millis() - s_req_due) < 0) return;
+  MtNmeaProvider& g = mt_gps();
+  bool fresh = g.freshFix(30000);
+  if (!fresh && !s_req_gps_started) {          // geen verse fix: GPS aan (zoals een klik), hooguit fix_timeout_hb
+    s_req_gps_started = true;
+    s_req_gps = true;
+    s_req_deadline = millis() + 1000UL * mt_cfg.fix_timeout_hb_s;
+    gps_want(true);
+    return;
+  }
+  if (!fresh && (int32_t)(millis() - s_req_deadline) < 0) return;
+  if (!mt_sender_ready()) {
+    mt_log("verzoek niet beantwoord: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
+  } else {
+    send_report('V', fresh, false, "verzoek");
+    s_req_answered++;
+    mt_log("verzoek beantwoord (V%s)", fresh ? "" : ", zonder positie");
+  }
+  s_req_pending = false;
+  if (s_req_gps) {
+    s_req_gps = false;
+    if (!fast_needs_gps()) gps_want(false);    // uit als niets anders hem nodig heeft
+  }
+}
+
 bool mt_channel_text(uint8_t chan_idx, const char* text) {
   if (s_rxlog) mt_log("rx kanaalbericht op kanaal %u: %.40s", (unsigned)chan_idx, text);
   {
     const char* f = strncmp(text, "T1F|", 4) == 0 ? text + 4 : nullptr;
     if (!f) { f = strstr(text, ": T1F|"); if (f) f += 6; }
     if (f) { handle_t1f(chan_idx, f); return true; }
+    const char* r = strncmp(text, "T1R|", 4) == 0 ? text + 4 : nullptr;
+    if (!r) { r = strstr(text, ": T1R|"); if (r) r += 6; }
+    if (r) { handle_t1r(chan_idx, text, r); return true; }
   }
   // "T1A|" na de afzendernaam ("naam: T1A|...") of meteen aan het begin: de companion van openHop
   // zet de naam er niet altijd voor.
@@ -1620,7 +1722,7 @@ static void enter(MtTState st) {
     case MT_T_SLEEP:
       s_sleep_since = millis();
       s_still_since = 0;
-      gps_want(s_manual);
+      gps_want(s_manual || s_req_gps);
       break;
     case MT_T_ACQUIRE:
       gps_want(true);
@@ -1631,7 +1733,7 @@ static void enter(MtTState st) {
       s_still_since = 0;
       break;
     case MT_T_OFF:
-      gps_want(s_manual);
+      gps_want(s_manual || s_req_gps);
       break;
   }
 }
@@ -1763,12 +1865,20 @@ static void step_manual() {
     s_manual = false;
     send_report('N', false, true, "knop, geen fix");
   }
-  if (!s_manual && (s_state == MT_T_SLEEP || s_state == MT_T_OFF)) gps_want(false);
+  if (!s_manual && !s_req_gps && (s_state == MT_T_SLEEP || s_state == MT_T_OFF)) gps_want(false);
+}
+
+// rx_beweging (0.9.5): in beweging blijft de radio luisteren (locatieverzoeken, dekking). In rust geldt de
+// gewone slaap. Staat FastTrack uit (fast_min_batt), dan telt alleen at_rest().
+static bool moving_listen() {
+  if (mt_cfg.rx_beweging_uit || at_rest()) return false;
+  return s_fast_off || s_state == MT_T_MOVING || s_state == MT_T_ACQUIRE;
 }
 
 static void step_radio() {
   bool want_sleep = mt_effective_mode() == MT_MODE_TRACKER && !mt_sender_busy() && !s_manual && !s_sos_left &&
-                    (int32_t)(millis() - s_listen_until) >= 0 && !the_mesh.hasPendingWork() && !fifo_keep_awake();
+                    (int32_t)(millis() - s_listen_until) >= 0 && !the_mesh.hasPendingWork() && !fifo_keep_awake() &&
+                    !moving_listen();
   if (!want_sleep) { s_quiet_since = 0; radio_wake(); return; }
   if (s_radio_asleep) return;
   if (s_quiet_since == 0) { s_quiet_since = millis(); return; }
@@ -1783,6 +1893,10 @@ static void step_radio() {
 void mt_tracker_begin() {
   seq_begin();
   mt_sender_set_done_cb(on_send_done);
+  {                                           // wachttijd voor verzoeken: per toestel anders (pubkey), niet bij elke tracker gelijk
+    const uint8_t* k = the_mesh.self_id.pub_key;
+    randomSeed(((uint32_t)k[0] << 24 | (uint32_t)k[1] << 16 | (uint32_t)k[2] << 8 | k[3]) ^ micros());
+  }
   fifo_load();
   if (s_nfifo) mt_log("fifo: %u punten uit /mt_fifo.dat geladen", (unsigned)s_nfifo);
   mt_motion_begin(mt_cfg.accel_sens);
@@ -1798,6 +1912,7 @@ void mt_tracker_loop() {
   step_slow();
   step_fifo();
   step_manual();
+  step_req();
   step_sos();
   step_watch();
   step_radio();
@@ -1925,6 +2040,12 @@ void mt_tracker_dump(MtDumpOut o) {
     snprintf(b, sizeof(b), "%s%lu,%ld,%ld,%s", i % 20 ? ";" : "", (unsigned long)q.ts, (long)q.lat, (long)q.lon,
              (q.fl & PT_MAIN) ? (fifo_mode() ? "mp" : "m") : "-");
     o(b, false);
+  }
+  {
+    char lu[16];
+    dump_unix(lu, sizeof(lu), s_req_last_unix);
+    snprintf(b, sizeof(b), "req last=%s answered=%lu ignored=%lu", lu, (unsigned long)s_req_answered, (unsigned long)s_req_ignored);
+    o(b, true);
   }
   if (s_npts) o("", true);
   for (int i = 0; i < s_nslow; i++) {

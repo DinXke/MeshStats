@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MT_CFG_VERSION 6   // v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep; v6: trackmodus en FIFO (velden achteraan, oudere worden overgenomen)
+#define MT_CFG_VERSION 7   // v5: SlowTrack, fast_min_batt, sos, tx_beep, heard_beep; v6: trackmodus en FIFO; v7: verzoeken, rx_beweging (velden achteraan, oudere worden overgenomen)
 // De indeling NOOIT wijzigen (flash-compatibel): ongebruikte velden blijven staan.
 
 struct MtCfg {
@@ -70,11 +70,17 @@ struct MtCfg {
   int8_t   fifo_snr;            // fifo: nieuwe leegmaakronde pas bij SNR >= x dB (-20..10), of 2x dekking / T1F
   uint8_t  fifo_wacht;          // fifo (0.9.1): punten ouder dan x min bij stabiele dekking toch versturen, ook onder
                                 // fifo_min. 0 = standaard (30 min; was opvulling in 0.9.0), 255 = uit
+  // ---- v7 (0.9.5); oudere bestanden krijgen hier 0 = standaard (aan) ----
+  uint8_t  verzoek_uit;         // 1 = locatieverzoeken (T1R) niet beantwoorden; 0 = wel (standaard)
+  uint8_t  rx_beweging_uit;     // 1 = radio ook in beweging laten slapen; 0 = in beweging blijven luisteren (standaard)
+  uint8_t  verzoek_beep;        // 1 = deuntje bij een aanvaard locatieverzoek; 0 = uit (standaard)
+  uint8_t  _pad7;
   uint32_t crc;                 // crc32 over alles hiervoor
 };
 
 // Vaste indeling: een andere grootte breekt de bewaarde bestanden (zie hierboven).
-static_assert(sizeof(MtCfg) == 136, "MtCfg-indeling gewijzigd");
+static_assert(sizeof(MtCfg) == 140, "MtCfg-indeling gewijzigd");
+static_assert(offsetof(MtCfg, verzoek_uit) == 132, "v7-velden moeten na de v6-velden komen");
 static_assert(offsetof(MtCfg, track_mode) == 120, "v6-velden moeten na de v5-velden komen");
 
 #define MT_TRACK_CLASSIC 0

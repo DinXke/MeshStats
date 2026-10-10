@@ -13,9 +13,10 @@
     "sample", "chan", "msg_beep",
     "slow_log", "slow_send", "fast_min_batt", "sos", "tx_beep", "heard_beep",   // vanaf 0.8.0
     "track_mode", "fifo_max", "fifo_min", "fifo_gap", "fifo_per_uur", "fifo_pogingen",   // vanaf 0.9.0 (FIFO-modus)
-    "fifo_dun", "fifo_snr", "fifo_wacht"];   // fifo_wacht vanaf 0.9.1
+    "fifo_dun", "fifo_snr", "fifo_wacht",   // fifo_wacht vanaf 0.9.1
+    "verzoek", "rx_beweging", "verzoek_beep"];   // vanaf 0.9.5 (locatieverzoeken)
   // Keuzes waarbij "uit" een geldige waarde is (bij duren en getallen wordt "uit" een 0).
-  const WORD_KEYS = ["track_in_companion", "led", "accel_sens", "msg_beep", "sos", "tx_beep", "heard_beep", "track_mode", "fifo_wacht"];
+  const WORD_KEYS = ["track_in_companion", "led", "accel_sens", "msg_beep", "sos", "tx_beep", "heard_beep", "track_mode", "fifo_wacht", "verzoek", "rx_beweging", "verzoek_beep"];
   let fw = null, kv = null, known = null, busy = false;
 
   function say(el, text, ok) { el.textContent = text || ""; el.className = "msg " + (ok ? "ok" : ok === false ? "err" : ""); }

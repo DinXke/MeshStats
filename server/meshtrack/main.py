@@ -42,7 +42,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -71,6 +71,8 @@ class Hub:
                     and (own is None or own == p.user_id))
         if t == "geofences":
             return p.can("zones.view")
+        if t == "loc_request":
+            return p.kind == "user" and p.sees_channel(msg.get("channel_id"))
         return True
 
     async def send(self, msg: dict[str, Any]) -> None:
@@ -274,6 +276,14 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
         return
     body = text.split(": ", 1)[1] if ": " in text else text
     if body.startswith(("T1A|", "T1F|")):     # eigen bevestigingen (echo via een repeater): negeren
+        return
+    if body.startswith("T1R|"):               # 1.3.2: verzoek om een positie (companion/telefoon): enkel tellen
+        f = body.split("|")
+        if len(f) > 2 and f[2].strip().lower() in _locreq_nonces:
+            return                             # echo van ons eigen verzoek: al geteld bij het versturen
+        target = f[1].strip().lower()
+        t = S.db.tracker_by_prefix(target) if len(target) == 8 and all(c in "0123456789abcdef" for c in target) else None
+        S.db.stat("loc_request", t["id"] if t else None, ch["id"])
         return
     if not body.startswith("T1C|"):
         return
@@ -1483,6 +1493,101 @@ async def delete_channel(cid: int, request: Request):
     return {"ok": True}
 
 
+# ---- locatieverzoek vanaf de website (T1R, fw 0.9.5) -------------------------------------
+# "T1R|<*|pk8>|<nonce>" op het trackingkanaal: de tracker(s) antwoorden met een positie in
+# toestand V. Limieten per kanaal, voor alle gebruikers samen: "*" hoogstens één keer per
+# LOCREQ_ALL_S, één tracker hoogstens één keer per LOCREQ_TRACKER_S.
+LOCREQ_ALL_S = 120
+LOCREQ_TRACKER_S = 30
+_locreq_all: dict[int, float] = {}               # kanaal-id -> laatste "*"
+_locreq_trk: dict[tuple[int, int], float] = {}   # (kanaal-id, tracker-id) -> laatste verzoek
+_locreq_nonces: dict[str, float] = {}            # eigen nonces: hun echo niet nog eens tellen
+
+
+class LocRequestIn(BaseModel):
+    target: Any = "*"                  # "*" of een tracker-id
+
+
+def _locreq_channel(request: Request, cid: int) -> tuple[Principal, dict[str, Any]]:
+    p = who(request)
+    if p.kind != "user":
+        raise HTTPException(403, "geen toegang")
+    ch = S.db.channel(cid)
+    if not ch or not ch["active"]:
+        raise HTTPException(404, "onbekend kanaal")
+    if not p.sees_channel(cid):
+        raise HTTPException(403, "geen toegang tot dit kanaal")
+    return p, ch
+
+
+def _locreq_wait(key_all: Optional[int] = None, key_trk: Optional[tuple[int, int]] = None,
+                 now: Optional[float] = None) -> int:
+    now = time.time() if now is None else now
+    if key_all is not None:
+        return max(0, int(-(-(_locreq_all.get(key_all, -1e18) + LOCREQ_ALL_S - now) // 1)))
+    return max(0, int(-(-(_locreq_trk.get(key_trk, -1e18) + LOCREQ_TRACKER_S - now) // 1)))
+
+
+@app.get("/api/channels/{cid}/request")
+async def loc_request_status(cid: int, request: Request):
+    p, ch = _locreq_channel(request, cid)
+    now = time.time()
+    trk = [t for t in S.db.trackers() if t.get("channel_id") == cid and p.sees(t["id"])]
+    return {"channel_id": cid, "connected": bool(S.mesh.connected), "all_interval": LOCREQ_ALL_S,
+            "tracker_interval": LOCREQ_TRACKER_S, "all_wait": _locreq_wait(key_all=cid, now=now),
+            "trackers": [{"id": t["id"], "alias": t["alias"], "wait": _locreq_wait(key_trk=(cid, t["id"]), now=now)}
+                         for t in trk]}
+
+
+@app.post("/api/channels/{cid}/request")
+async def loc_request(cid: int, b: LocRequestIn, request: Request):
+    p, ch = _locreq_channel(request, cid)
+    t = None
+    if b.target != "*":
+        try:
+            tid = int(b.target)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "target: \"*\" of een tracker-id")
+        t = S.db.tracker(tid)
+        if not t or t.get("channel_id") != cid or not p.sees(tid):
+            raise HTTPException(404, "die tracker hoort niet bij dit kanaal")
+    if not S.mesh.connected:
+        raise HTTPException(503, "de server-companion is niet verbonden")
+    now = time.time()
+    wait = _locreq_wait(key_all=cid, now=now) if t is None else _locreq_wait(key_trk=(cid, t["id"]), now=now)
+    if wait > 0:
+        what = "alle trackers" if t is None else t["alias"]
+        return JSONResponse({"detail": f"Er werd net al een locatieverzoek aan {what} verstuurd. Probeer opnieuw over "
+                                       f"{wait} s.", "retry_after": wait}, status_code=429,
+                            headers={"Retry-After": str(wait)})
+    # plaats meteen innemen (twee gelijktijdige klikken = één verzoek); bij een fout weer vrijgeven
+    if t is None:
+        prev, _locreq_all[cid] = _locreq_all.get(cid), now
+    else:
+        prev, _locreq_trk[(cid, t["id"])] = _locreq_trk.get((cid, t["id"])), now
+    nonce = secrets.token_hex(3)
+    text = f"T1R|{'*' if t is None else t['pubkey'][:8].lower()}|{nonce}"
+    try:
+        await S.mesh.send_channel(ch["slot"], text, ch.get("region") or "")
+    except Exception as e:  # noqa: BLE001
+        key, store = (cid, _locreq_all) if t is None else ((cid, t["id"]), _locreq_trk)
+        if prev is None:
+            store.pop(key, None)
+        else:
+            store[key] = prev
+        log.warning("locatieverzoek op kanaal %s mislukt: %s", ch["name"], e)
+        raise HTTPException(502, "het verzoek kon niet verstuurd worden; probeer opnieuw")
+    for k in [k for k, v in _locreq_nonces.items() if now - v > 3600]:
+        del _locreq_nonces[k]
+    _locreq_nonces[nonce] = now
+    sent_at = int(now)
+    target = "*" if t is None else t["id"]
+    S.db.stat("loc_request", None if t is None else t["id"], cid)
+    audit(p, "locatieverzoek", f"kanaal {ch['name']}: {'alle trackers' if t is None else t['alias']}")
+    await S.hub.send({"type": "loc_request", "channel_id": cid, "target": target, "sent_at": sent_at, "by": p.display})
+    return {"ok": True, "nonce": nonce, "target": target, "sent_at": sent_at}
+
+
 @app.get("/api/firmware")
 async def firmware(request: Request):
     need(request, "trackers.serial")
@@ -1835,8 +1940,8 @@ async def mesh_nodes(request: Request):
 
 EVENT_TYPES = {
     "M": "positie (beweging)", "W": "wakker door beweging", "S": "stilgevallen", "H": "heartbeat",
-    "N": "geen GPS-fix", "E": "SOS", "P": "handmatig verstuurd", "B": "moduswissel",
-    "L": "gelogd punt (SlowTrack)", "Q": "ingehaald punt (FIFO)",
+    "N": "geen GPS-fix", "E": "SOS", "P": "handmatig verstuurd", "V": "op verzoek verstuurd",
+    "B": "moduswissel", "L": "gelogd punt (SlowTrack)", "Q": "ingehaald punt (FIFO)",
     "zone_in": "zone binnen", "zone_out": "zone buiten", "bat_low": "batterij onder 20 %",
     "suspect": "verdachte positie", "usb_on": "aan de lader (USB)", "usb_off": "van de lader af",
     "lost_seen": "verloren tracker gezien",

@@ -4,7 +4,7 @@
    - Lettertypes en kaartsymbolen (/tiles/fonts, /tiles/sprites): cache eerst.
    - Kaarttegels staan als bestand op het toestel (OPFS, gedeeld met /offline), niet in deze cache.
    Nieuwe versie: CACHE ophogen. De pagina toont dan "Nieuwe versie beschikbaar – vernieuwen". */
-const CACHE = "mt-tracker-v5";
+const CACHE = "mt-tracker-v6";
 const SHELL = ["/tracker", "/tracker.webmanifest", "/static/icon-192.png", "/static/icon-512.png", "/static/favicon.svg",
   "/static/style.css", "/static/tracker.css", "/static/tracker.js", "/static/vendor/maplibre-gl.css",
   "/static/vendor/maplibre-gl.js", "/static/vendor/pmtiles.js", "/static/basemap.js"];

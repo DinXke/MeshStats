@@ -48,7 +48,7 @@ Alle endpoints: `GET`, JSON, login vereist (sessiecookie). Recht: `map.view`; de
   "path_source": "openhop",
   "totals": {
     "messages": 5,
-    "messages_by_state": {"M": 2, "W": 0, "S": 1, "H": 0, "N": 1, "E": 0, "P": 0, "B": 0, "L": 0, "Q": 1},
+    "messages_by_state": {"M": 2, "W": 0, "S": 1, "H": 0, "N": 1, "E": 0, "P": 0, "V": 0, "B": 0, "L": 0, "Q": 1},
     "points": 8,
     "points_by_kind": {"live": 3, "extra": 2, "slow": 0, "fifo": 3},
     "recovered_late": 3,
@@ -111,7 +111,7 @@ Alle endpoints: `GET`, JSON, login vereist (sessiecookie). Recht: `map.view`; de
   "delay": [{"lo": 0, "hi": 10, "count": 2}, {"lo": 10, "hi": 30, "count": 2}, {"lo": 30, "hi": 60, "count": 1},
             {"lo": 60, "hi": 300, "count": 0}, {"lo": 300, "hi": 1800, "count": 0}, {"lo": 1800, "hi": 7200, "count": 3},
             {"lo": 7200, "hi": 43200, "count": 0}, {"lo": 43200, "hi": null, "count": 0}],
-  "states": {"M": 2, "W": 0, "S": 1, "H": 0, "N": 1, "E": 0, "P": 0, "B": 0, "L": 0, "Q": 1},
+  "states": {"M": 2, "W": 0, "S": 1, "H": 0, "N": 1, "E": 0, "P": 0, "V": 0, "B": 0, "L": 0, "Q": 1},
   "hour_of_day": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0]
 }
 ```
@@ -165,6 +165,7 @@ Alle endpoints: `GET`, JSON, login vereist (sessiecookie). Recht: `map.view`; de
 | `invalid` | ongeldig kanaalbericht, foute of ontbrekende handtekening, onleesbaar T1-bericht | tracker als gekend + kanaal |
 | `unknown` | MeshTrack-bericht van een onbekende tracker | kanaal |
 | `old_fw_dm` | T1-bericht via DM (oude firmware) | tracker als gekend |
+| `loc_request` | (1.3.2) verzoek om een positie `T1R\|<*\|pk8>\|<nonce>` op een van onze kanalen | doeltracker als gekend (`*` = NULL) + kanaal |
 
 ## 6. `GET /api/stats/repeaters?source=auto|openhop|companion`
 
