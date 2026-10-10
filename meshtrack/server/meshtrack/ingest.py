@@ -27,13 +27,15 @@ def pick_ts(sender_ts: Optional[int], rx_ts: int, fix_age: Optional[int], fix_ts
 
 def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Optional[int] = None,
            snr: Optional[float] = None, path_len: Optional[int] = None,
-           now: Optional[int] = None, channel_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+           now: Optional[int] = None, channel_id: Optional[int] = None,
+           unsigned: bool = False) -> Optional[dict[str, Any]]:
     """Verwerk één DM. Geeft de opgeslagen positie (voor de live kaart) terug,
     of None als het bericht genegeerd werd (onbekend, ongeldig, dubbel).
     Bij SlowTrack (L) en FIFO (Q) zegt "stored" of het hoofdpunt zelf nieuw was (anders stond die
     fix-tijd al in het spoor en zijn enkel de nieuwe "extras" opgeslagen).
     Statistiek (stats_events): unknown, invalid, dup_msg en dup_points worden hier geteld, ook
-    als het bericht daardoor None oplevert; "dup_points" staat ook in het resultaat."""
+    als het bericht daardoor None oplevert; "dup_points" staat ook in het resultaat.
+    unsigned (1.4.2): het kanaalbericht was niet ondertekend; elk opgeslagen punt krijgt "unsigned": 1."""
     rx = int(now if now is not None else time.time())
     tracker = db.tracker_by_prefix(pubkey_prefix)
     if tracker is None:
@@ -67,6 +69,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
         "suspect": int(is_suspect(r, cfg.region_bbox, cfg.max_hdop)),
         "snr": snr, "path_len": path_len, "raw": text.strip(),
         "prio": int(r.prio),                  # 1.4: vlag "p" (prioritair); ook de extra punten van het bericht
+        "unsigned": int(unsigned),            # 1.4.2: niet ondertekend (ook de extra punten)
     }
     # Eerdere punten uit hetzelfde bericht, chronologisch. Een punt dat al binnen is (het
     # vorige bericht kwam toch aan, alleen de ACK niet) wordt overgeslagen.
@@ -82,7 +85,8 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
             ep = {"ts": ts, "rx_ts": rx, "seq": r.seq, "state": r.state if slow else "M", "lat": lat, "lon": lon, "alt": None,
                   "spd": spd, "crs": None, "bat": None, "hdop": None, "fix_age": None, "mode": None, "power": None,
                   "suspect": int(not _in_bbox(lat, lon, cfg.region_bbox)), "snr": snr, "path_len": path_len,
-                  "raw": f"(eerder punt uit bericht {r.seq})", "extra": 1, "prio": p["prio"]}
+                  "raw": f"(eerder punt uit bericht {r.seq})", "extra": 1, "prio": p["prio"],
+                  "unsigned": p["unsigned"]}
             db.add_position(tracker["id"], ep)
             extras.append({"tracker_id": tracker["id"], **ep})
     if slow:

@@ -42,7 +42,7 @@ HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 USERNAME = re.compile(r"^[A-Za-z0-9._-]{2,32}$")
 SHARE_COOKIE = "mt_share"
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 
 # ---- live-updates -----------------------------------------------------------
@@ -131,6 +131,7 @@ def tracker_out(t: dict[str, Any], p: Optional[Principal] = None) -> dict[str, A
     out["prio"] = now < out["prio_until"]    # 1.4: rijdt prioritair (blauwe lichten)
     leak = t.get("public_leak_ts")            # 1.4.1: op Public gezien (niet klaargemaakt)
     out["op_public"] = bool(leak) and now - leak < 24 * 3600
+    out["allow_unsigned"] = int(t.get("allow_unsigned") or 0)   # 1.4.2: niet-ondertekend toch aanvaarden
     out.pop("authkey", None)                 # nooit in lijsten of live-berichten
     if p is not None and not p.can("map.details"):
         out = strip_tracker(out)
@@ -156,14 +157,19 @@ def strip_msg(msg: dict[str, Any]) -> dict[str, Any]:
 # ---- verwerking van berichten ----------------------------------------------------
 
 async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: bool = False,
-                  via: Optional[dict[str, Any]] = None) -> None:
+                  via: Optional[dict[str, Any]] = None, unsigned: bool = False) -> None:
+    """unsigned (1.4.2): niet-ondertekend kanaalbericht; de punten krijgen "unsigned": 1 en de
+    meldingen zeggen "(niet ondertekend)"."""
     before = S.db.tracker_by_prefix(prefix)
-    pos = ingest.handle(S.db, S.cfg, prefix, text, sender_ts, snr, path_len, channel_id=via["id"] if via else None)
+    pos = ingest.handle(S.db, S.cfg, prefix, text, sender_ts, snr, path_len, channel_id=via["id"] if via else None,
+                        unsigned=unsigned)
     if not pos:
         if not simulated:
             log.info("bericht van %s genegeerd: %r", prefix, text[:60])
         return
     t = S.db.tracker(pos["tracker_id"])
+    if unsigned:
+        S.db.stat("unsigned_ok", t["id"], via["id"] if via else None)
     S.db.update_tracker(t["id"], last_via=f"kanaal {via['name']}" if via else "sim")
     if via and S.db.set_tracker_channel(t["id"], via["id"]):   # trackingkanaal volgt het laatste geldige bericht
         _pcache.clear()
@@ -178,8 +184,8 @@ async def process(prefix: str, text: str, sender_ts, snr, path_len, simulated: b
     if prio_ev:
         t = S.db.tracker(t["id"])
     if not simulated:
-        log.info("positie %s seq=%s state=%s%s", t["alias"], pos["seq"], pos["state"],
-                 f" (+{len(extras)} eerdere punten)" if extras else "")
+        log.info("positie %s seq=%s state=%s%s%s", t["alias"], pos["seq"], pos["state"],
+                 f" (+{len(extras)} eerdere punten)" if extras else "", " (niet ondertekend)" if unsigned else "")
     # eerdere punten eerst, chronologisch: zones en de live kaart volgen de echte volgorde
     for ep in extras:
         await S.hub.send({"type": "position", "position": ep, "tracker": tracker_out(t)})
@@ -355,8 +361,10 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
         S.db.log_unknown(pk, f"kanaal {ch['name']}: onbekende tracker", body)
         S.db.stat("unknown", None, ch["id"])
         return
-    if tag == "-":
-        if ch["require_sig"]:
+    unsigned = tag == "-"
+    if unsigned:
+        # 1.4.2: met allow_unsigned toch verwerken (punten gemarkeerd als niet ondertekend)
+        if ch["require_sig"] and not t.get("allow_unsigned"):
             S.db.log_unknown(pk, f"kanaal {ch['name']}: niet ondertekend", body)
             S.db.stat("invalid", t["id"], ch["id"])
             return
@@ -364,7 +372,9 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
         S.db.log_unknown(pk, f"kanaal {ch['name']}: ongeldige handtekening", body)
         S.db.stat("invalid", t["id"], ch["id"])
         return
-    await process(pk, "T1|" + rest, sender_ts, snr, path_len, via=ch)
+    elif t.get("allow_unsigned"):
+        await unsigned_auto_off(t)
+    await process(pk, "T1|" + rest, sender_ts, snr, path_len, via=ch, unsigned=unsigned)
     fields = rest.split("|")
     if len(fields) > 1 and fields[1] == "E" and tag != "-" and t.get("authkey"):   # SOS: bevestigen
         _spawn(_sos_ack_later(ch, t, pk, fields[0]))
@@ -379,6 +389,16 @@ async def on_channel(slot: int, text: str, sender_ts, snr, path_len) -> None:
             r = None
         if r is not None and r.exact_ack:
             fifo_request(ch, t, pk, r.seq)
+
+
+async def unsigned_auto_off(t: dict[str, Any]) -> None:
+    """1.4.2: een geldig ondertekend bericht bewijst dat de sleutel weer klopt: niet-ondertekend
+    aanvaarden gaat automatisch uit (auditregel en tracker-update)."""
+    S.db.update_tracker(t["id"], allow_unsigned=False)
+    log.info("%s: niet-ondertekend aanvaarden automatisch uit", t["alias"])
+    S.db.audit("systeem", "niet-ondertekend aanvaarden automatisch uit",
+               f"{t['alias']}: geldig ondertekend bericht")
+    await S.hub.send({"type": "tracker", "tracker": tracker_out(S.db.tracker(t["id"]))})
 
 
 # ---- paden van trackerberichten (1.3, zie paths.py) -------------------------------------
@@ -1258,6 +1278,7 @@ class TrackerIn(BaseModel):
     lost: Optional[bool] = None
     generate_key: bool = False        # nieuw toestel: sleutelpaar op de server maken
     channel_id: Optional[int] = None     # trackingkanaal (0 = geen)
+    allow_unsigned: Optional[bool] = None   # 1.4.2: niet-ondertekende kanaalberichten toch aanvaarden
 
 
 def _check_fields(b: TrackerIn) -> None:
@@ -1294,11 +1315,14 @@ async def create_tracker(b: TrackerIn, request: Request):
                            True if b.active is None else b.active)
     if b.channel_id is not None:
         _set_channel(tid, b.channel_id)
+    if b.allow_unsigned:
+        S.db.update_tracker(tid, allow_unsigned=True)
     if prv:
         doc = _profile(S.db.tracker(tid), prv)
         S.db.add_key(tid, "generated", p.name, pk, "nieuw sleutelpaar (server)", keys.summary(doc), S.vault.seal(doc))
     t = S.db.tracker(tid)
-    audit(p, "tracker toegevoegd", f"{t['alias']} ({pk[:12]}){' met sleutel van de server' if prv else ''}")
+    audit(p, "tracker toegevoegd", f"{t['alias']} ({pk[:12]}){' met sleutel van de server' if prv else ''}"
+          f"{', niet-ondertekend aanvaarden aan' if b.allow_unsigned else ''}")
     await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
     return {"tracker": tracker_out(t, p)}
 
@@ -1317,6 +1341,9 @@ async def update_tracker(tid: int, b: TrackerIn, request: Request):
     if b.lost is not None and bool(b.lost) != bool(old.get("lost")):
         S.db.set_lost(tid, b.lost)
         audit(p, "tracker verloren gemeld" if b.lost else "tracker niet meer verloren", old["alias"])
+    if b.allow_unsigned is not None and bool(b.allow_unsigned) != bool(old.get("allow_unsigned")):
+        S.db.update_tracker(tid, allow_unsigned=b.allow_unsigned)
+        audit(p, "niet-ondertekend aanvaarden " + ("aan" if b.allow_unsigned else "uit"), old["alias"])
     t = S.db.tracker(tid)
     audit(p, "tracker gewijzigd", t["alias"])
     await S.hub.send({"type": "tracker", "tracker": tracker_out(t)})
@@ -1712,11 +1739,11 @@ async def export_track(tid: int, request: Request, hours: float = 24, fmt: str =
     safe = re.sub(r"[^A-Za-z0-9_-]+", "_", t["alias"]) or "tracker"
     audit(p, "spoor geëxporteerd", f"{t['alias']} {h:g} u {fmt}")
     if fmt == "csv":
-        lines = ["tijd_utc,lat,lon,hoogte_m,snelheid_kmh,koers,batterij,toestand"]
+        lines = ["tijd_utc,lat,lon,hoogte_m,snelheid_kmh,koers,batterij,toestand,niet_ondertekend"]
         for r in rows:
             ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(r["ts"]))
             lines.append(f"{ts},{r['lat']},{r['lon']},{r['alt'] or ''},{r['spd'] or ''},{r['crs'] or ''},"
-                         f"{r['bat'] if r['bat'] is not None else ''},{r['state']}")
+                         f"{r['bat'] if r['bat'] is not None else ''},{r['state']},{int(r.get('unsigned') or 0)}")
         return Response("\n".join(lines) + "\n", media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{safe}.csv"'})
     from xml.sax.saxutils import escape
@@ -1724,6 +1751,8 @@ async def export_track(tid: int, request: Request, hours: float = 24, fmt: str =
         f'      <trkpt lat="{r["lat"]}" lon="{r["lon"]}">'
         + (f'<ele>{r["alt"]}</ele>' if r["alt"] is not None else "")
         + f'<time>{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(r["ts"]))}</time>'
+        + ("<desc>niet ondertekend</desc>" if r.get("unsigned") else "")
+
         + (f'<extensions><speed>{(r["spd"] or 0) / 3.6:.2f}</speed></extensions>' if r["spd"] is not None else "")
         + "</trkpt>" for r in rows)
     gpx = (f'<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="MeshTrack {VERSION}" '
