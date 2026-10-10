@@ -1,6 +1,60 @@
 {
   "releases": [
     {
+      "version": "0.9.9",
+      "date": "2026-10-10",
+      "notes": "De Bluetooth-koppelcode is nu via USB te wijzigen, op alle borden: 'set blepin <6 cijfers>' of 'set blepin standaard', ook in het menu Modus en knop. De nieuwe code werkt na een herstart; vergeet daarna de tracker in de Bluetooth-instellingen en koppel opnieuw. 'blepin toon' toont de code, alleen via USB; status toont alleen blepin=eigen of blepin=standaard.",
+      "meshcore": "v1.17.1",
+      "boards": {
+        "t1000e": {
+          "name": "Seeed T1000-E",
+          "zip": "meshtrack-t1000e-0.9.9.zip",
+          "zip_sha256": "b4c2586bf95c9b76c8819aabccef8ea9ed237d1632d78171ebe1b40aa425b0dc",
+          "uf2": "meshtrack-t1000e-0.9.9.uf2",
+          "uf2_sha256": "ea441f328130eac3ad21b1ed21b1c4fbe8cb5db78b6d3f11bd83a7773232b19c",
+          "app_size": 454608,
+          "app_start": "0x27000",
+          "sd_req": [
+            "0x0123"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "wismesh_tag": {
+          "name": "RAK WisMesh Tag",
+          "zip": "meshtrack-wismesh-tag-0.9.9.zip",
+          "zip_sha256": "4e6c51e919743f0009c0eb5fee7ca954099e9b999900c05740f0f50df956cd16",
+          "uf2": "meshtrack-wismesh-tag-0.9.9.uf2",
+          "uf2_sha256": "796ff642c3500565c502c9743fbf104bc6b79066014f3551ec919f35d84ab417",
+          "app_size": 517668,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "rak3401_1w": {
+          "name": "RAK19007 + RAK3401 + RAK13302 (1 W)",
+          "zip": "meshtrack-rak3401-1w-0.9.9.zip",
+          "zip_sha256": "8294c6dd99690f1cb9e774941e2a36b347b65c96b8bf45ad39133927ed325d18",
+          "uf2": "meshtrack-rak3401-1w-0.9.9.uf2",
+          "uf2_sha256": "e37580208bd7af31fa1ba409dc51e3285cc7700c93b60f6eec0551e3998bbd1c",
+          "app_size": 537368,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        }
+      },
+      "zip": "meshtrack-t1000e-0.9.9.zip",
+      "zip_sha256": "b4c2586bf95c9b76c8819aabccef8ea9ed237d1632d78171ebe1b40aa425b0dc",
+      "uf2": "meshtrack-t1000e-0.9.9.uf2",
+      "app_size": 454608
+    },
+    {
       "version": "0.9.8",
       "date": "2026-10-10",
       "notes": "Drie borden: Seeed T1000-E, RAK WisMesh Tag en nieuw RAK19007 + RAK3401 + RAK13302 1W (voertuigtracker; nog niet getest op het toestel). RAK3401: de GPS-module (via draadjes) wordt automatisch gezocht (pinnen en baud, ook opnieuw als hij 10 minuten zwijgt; 'gps zoek' of 'set gps_pinnen 15/16@9600'); zendvermogen begrensd op 18 dBm, met de versterker ongeveer 27 dBm (500 mW); terugmelding met de leds in plaats van de buzzer; P0.31 naar keuze als analoge knop of als prioriteitsingang (zwaailichten via een optocoupler, een schakelaar op het dashboard of een potentiaalvrij contact; de berichten dragen dan de vlag p; prio_houd 0 = volgt de ingang). Alle borden: zonder (werkende) bewegingssensor gaat de tracker na still_timeout zonder GPS-beweging toch in rust en kijkt hij elke rust_gps_check (standaard 5 min) kort met de GPS of hij verplaatst is. 'status' toont op één regel wat het bord kan (board, knop, buzzer, accel, gps, tx_max); instellingen die op een bord niet bestaan, worden geweigerd. Instellingen v8 (v7 wordt overgenomen).",
@@ -275,5 +329,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.8"
+  "latest": "0.9.9"
 }

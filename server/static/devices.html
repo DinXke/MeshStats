@@ -88,6 +88,31 @@
             <label class="switch block"><input type="checkbox" data-set="track_in_companion" data-kind="bool"><span></span> Ook posities sturen als companion</label>
           </fieldset>
 
+          <!-- Bluetooth-code (vanaf 0.9.9, alleen via USB; nooit in een back-up) -->
+          <fieldset data-since="0.9.9" data-keys="blepin" id="s-blebox">
+            <legend>Bluetooth-code</legend>
+            <div class="small" id="s-blestate"></div>
+            <div class="grid">
+              <div><label for="s-blepin1">Nieuwe code</label><input id="s-blepin1" type="password" inputmode="numeric" maxlength="6"
+                autocomplete="new-password" spellcheck="false"></div>
+              <div><label for="s-blepin2">Nieuwe code nog eens</label><input id="s-blepin2" type="password" inputmode="numeric" maxlength="6"
+                autocomplete="new-password" spellcheck="false"></div>
+            </div>
+            <div class="help">6 cijfers, van 100000 tot 999999. Met deze code koppel je een gsm via Bluetooth met de tracker als companion.
+              Een eigen code is veiliger dan de standaardcode.</div>
+            <div class="row">
+              <button type="button" id="s-bleset">Code instellen</button>
+              <button type="button" id="s-bledef">Standaard (123456)</button>
+              <button type="button" id="s-bleshow">Toon huidige code</button>
+            </div>
+            <div id="s-blemsg" class="msg" aria-live="polite"></div>
+            <div id="s-bleafter" hidden>
+              <div class="help">De nieuwe code werkt pas na een herstart. Vergeet daarna de tracker in de Bluetooth-instellingen van
+                je gsm en koppel hem opnieuw.</div>
+              <div class="row"><button type="button" id="s-blereboot">Tracker nu herstarten</button></div>
+            </div>
+          </fieldset>
+
           <!-- RAK3401 + 1 W met firmware die pin31= meldt: drukknop of prioriteit (blauwe lichten) -->
           <fieldset id="s-pin31box" data-needs="board:rak3401_1w key:pin31">
             <legend>Ingang pin 31 (knop of blauwe lichten)</legend>
