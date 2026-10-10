@@ -62,7 +62,7 @@
     return out;
   }
   function parseDump(text) {
-    const d = { now: null, pos: null, mode: null, lastTx: null, lastHeard: null, cov: null, cnt: {}, flush: null, F: [], S: [], Q: [], unknown: [] };
+    const d = { now: null, pos: null, lastFix: null, mode: null, lastTx: null, lastHeard: null, cov: null, cnt: {}, flush: null, F: [], S: [], Q: [], unknown: [] };
     let inDump = false;
     for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim();
@@ -74,6 +74,7 @@
       const dash = rest[0] === "-";
       switch (key) {
         case "now": d.now = int(rest[0]); break;
+        case "lastfix": if (!dash && rest.length >= 3 && int(rest[1]) !== null && int(rest[2]) !== null) d.lastFix = { ts: int(rest[0]), lat: int(rest[1]) / 1e5, lon: int(rest[2]) / 1e5 }; break;   // sinds 0.9.6
         case "pos": if (!dash && rest.length >= 3) d.pos = { ts: int(rest[0]), lat: int(rest[1]) / 1e5, lon: int(rest[2]) / 1e5, spd: num(rest[3]), sats: int(rest[4]), hdop: num(rest[5]) }; break;
         case "mode": {
           const kv = {};
@@ -520,6 +521,14 @@
   const pct = (a, b) => (b > 0 ? (a / b) * 100 : 0);
   function applyMeters(root) { root.querySelectorAll(".tk-meter span[data-w]").forEach((s) => { s.style.width = `${s.dataset.w}%`; }); }
 
+  // Laatst gekende positie als er nu geen fix is (0.9.6): leeftijd in seconden, of null.
+  function lastFixAge() {
+    if (dump && dump.lastFix && dump.lastFix.ts) return Math.max(0, trackerNow() - dump.lastFix.ts);
+    const v = status.laatste_fix;
+    if (v == null || v === "-" || v === "") return null;
+    const s = durSec(v);
+    return s || v === "0" ? s + (statusAt ? (Date.now() - statusAt) / 1000 : 0) : null;
+  }
   function cardState() {
     const m = dump.mode || {};
     const bat = m.bat != null ? `${m.bat}%` : "?";
@@ -530,7 +539,7 @@
       ["Trackmodus", esc(m.track || status.track_mode || "?")],
       ["Tracker", esc(m.state || status.tracker || "?")],
       ["Batterij", `<span class="${batCls}">${esc(bat)}</span>${m.usb ? " · USB" : ""}`],
-      ["GPS", pos ? `${esc(ago(pos.ts))}` : "geen fix", pos ? `${pos.sats != null ? `${pos.sats} sat.` : ""}${pos.hdop != null ? ` · HDOP ${nl(pos.hdop, 1)}` : ""}${pos.spd != null ? ` · ${nl(pos.spd)} km/u` : ""}` : ""],
+      ["GPS", pos ? `${esc(ago(pos.ts))}` : "geen fix", !pos && lastFixAge() !== null ? `laatst gekende positie: ${esc(dur(lastFixAge()))} geleden` : pos ? `${pos.sats != null ? `${pos.sats} sat.` : ""}${pos.hdop != null ? ` · HDOP ${nl(pos.hdop, 1)}` : ""}${pos.spd != null ? ` · ${nl(pos.spd)} km/u` : ""}` : ""],
     ]));
   }
   function cardRadio() {
@@ -696,7 +705,7 @@
       <div class="tk-tiles">
         ${tile("Wachtrij", c.Q ? `${c.Q} <small>${c.Q === 1 ? "punt" : "punten"}</small>` : "0", qSub, "wide")}
         ${tile("Laatst verstuurd", t ? agoHtml(t.ts) : "nog niets", t ? `${esc(STATE[t.st] || t.st)} · ${t.ok ? "verzonden" : '<span class="tk-bad">mislukt</span>'}` : "")}
-        ${tile("GPS", pos ? agoHtml(pos.ts) : "geen fix", pos && pos.sats != null ? `${pos.sats} satellieten` : "", pos ? "" : "warn")}
+        ${tile("GPS", pos ? agoHtml(pos.ts) : "geen fix", pos ? (pos.sats != null ? `${pos.sats} satellieten` : "") : lastFixAge() !== null ? `Laatst gekende positie: ${esc(dur(lastFixAge()))} geleden` : "", pos ? "" : "warn")}
         ${tile("Batterij", m.bat != null ? `${m.bat}%` : "?", m.usb ? "aan USB" : "", m.bat != null && m.bat < 20 ? "warn" : "")}
       </div>
       ${c.parked ? `<p class="tk-heronote">${ICON.warn}${esc(parkedNote(c.parked))}</p>` : ""}
@@ -955,7 +964,7 @@
       sym("pts-Q", ["all", ["==", ["get", "set"], "Q"], ["!", ["get", "sent"]]], ["case", ["get", "parked"], "tk-K", "tk-Q"]);
       sym("pts-Q-sent", ["all", ["==", ["get", "set"], "Q"], ["get", "sent"]], "tk-Qs");
       // antwoorden op "Positie vragen" (toestand V): amber doelwit-symbool, zelfde stijl als /offline en de hoofdkaart
-      map.addLayer({ id: "pts-A", type: "symbol", source: "tk-ans", layout: { "icon-image": "tk-A", "icon-allow-overlap": true, "icon-ignore-placement": true } });
+      map.addLayer({ id: "pts-A", type: "symbol", source: "tk-ans", layout: { "icon-image": ["case", ["get", "old"], "tk-Aold", "tk-A"], "icon-allow-overlap": true, "icon-ignore-placement": true } });
       // Tikken met een vinger: zoek in een vierkant van 28 px rond de tik, niet alleen op de stip zelf.
       const PTS = ["pts-S", "pts-F", "pts-Q", "pts-Q-sent", "pts-A"];
       const near = (pt, r) => map.queryRenderedFeatures([[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]], { layers: PTS.filter((id) => map.getLayer(id)) });
@@ -1011,12 +1020,22 @@
       g.beginPath(); g.arc(c, c, 2.6 * R, 0, Math.PI * 2); g.fillStyle = col; g.fill();
       map.addImage("tk-A", g.getImageData(0, 0, S, S), { pixelRatio: R });
     }
+    // Laatst gekend (0.9.6): holle, gestippelde amber ring zonder stip
+    if (!map.hasImage("tk-Aold")) {
+      const cv = document.createElement("canvas");
+      cv.width = cv.height = S;
+      const g = cv.getContext("2d"), col = dark() ? COL.ansDark : COL.ans;
+      g.beginPath(); g.arc(c, c, 8 * R, 0, Math.PI * 2); g.lineWidth = 4.2 * R; g.strokeStyle = "rgba(255,255,255,.9)"; g.stroke();
+      g.setLineDash([3.2 * R, 2.4 * R]);
+      g.beginPath(); g.arc(c, c, 8 * R, 0, Math.PI * 2); g.lineWidth = 2.4 * R; g.strokeStyle = col; g.stroke();
+      map.addImage("tk-Aold", g.getImageData(0, 0, S, S), { pixelRatio: R });
+    }
   }
   function popup(p, ll) {
     const set = p.set;
     const fl = String(p.flags || "-");
     const el = document.createElement("div");
-    el.innerHTML = `<strong>${esc(set === "A" ? `Antwoord van ${p.name}` : SETNAME[set] || set)}</strong><br>${esc(dateTime(p.ts))}<br><span class="muted">${esc(dur(trackerNow() - p.ts))} geleden</span><br>${flagPills(set, fl)}`;
+    el.innerHTML = `<strong>${esc(set === "A" ? `Antwoord van ${p.name}` : SETNAME[set] || set)}</strong>${set === "A" && p.old ? "<br>laatst gekende positie" : ""}<br>${esc(dateTime(p.ts))}<br><span class="muted">${esc(dur(trackerNow() - p.ts))} geleden</span><br>${flagPills(set, fl)}`;
     new maplibregl.Popup({ closeButton: true, maxWidth: "260px" }).setLngLat(ll).setDOMContent(el).addTo(map);
   }
   function applyVis() {
@@ -1041,15 +1060,20 @@
     }
     map.getSource("tk-pts").setData({ type: "FeatureCollection", features: pts });
     map.getSource("tk-lines").setData({ type: "FeatureCollection", features: lines });
-    const pos = dump.pos;
-    if (pos && Number.isFinite(pos.lat) && Number.isFinite(pos.lon)) {
+    const lf = dump.lastFix;
+    const cur = dump.pos && Number.isFinite(dump.pos.lat) && Number.isFinite(dump.pos.lon);
+    const pos = cur ? dump.pos : lf && Number.isFinite(lf.lat) && Number.isFinite(lf.lon) ? lf : null;   // anders: laatst gekend (grijs)
+    if (pos) {
       if (!posMarker) {
         const el = document.createElement("div");
         el.className = "tk-pos";
-        el.setAttribute("aria-label", "Huidige positie");
         posMarker = new maplibregl.Marker({ element: el }).setLngLat([pos.lon, pos.lat]).addTo(map);
       } else posMarker.setLngLat([pos.lon, pos.lat]);
-      posMarker.getElement().classList.toggle("old", trackerNow() - pos.ts > 300);
+      const el = posMarker.getElement();
+      el.classList.toggle("old", !cur || trackerNow() - pos.ts > 300);
+      el.classList.toggle("last", !cur);
+      el.setAttribute("aria-label", cur ? "Huidige positie" : "Laatst gekende positie");
+      el.title = cur ? "" : `Laatst gekende positie, ${dur(trackerNow() - pos.ts)} geleden`;
     } else if (posMarker) { posMarker.remove(); posMarker = null; }
     applyVis();
     if (!fitted) { fitted = fit(); }
@@ -1059,6 +1083,7 @@
     const c = [];
     for (const k of ["F", "S", "Q"]) if (vis[k]) dump[k].forEach((p) => c.push([p.lon, p.lat]));
     if (dump.pos) c.push([dump.pos.lon, dump.pos.lat]);
+    else if (dump.lastFix) c.push([dump.lastFix.lon, dump.lastFix.lat]);
     if (!c.length) return false;
     const b = c.reduce((bb, x) => bb.extend(x), new maplibregl.LngLatBounds(c[0], c[0]));
     map.fitBounds(b, { padding: 40, maxZoom: 16, duration: 0 });
@@ -1120,13 +1145,19 @@
     const lat = p[5] === "" ? null : Number(p[5]), lon = p[6] === "" ? null : Number(p[6]);
     const fix = Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0);
     const now = Date.now() / 1000;
+    // Sinds 0.9.6 stuurt een V-antwoord zonder verse fix de laatst gekende positie mee, met echte fix_ts (veld 15) en
+    // leeftijd (veld 12). Leeftijd t.o.v. ontvangst: liefst via de leeftijd (klokvrij), anders via fix_ts.
+    const ageF = p[12] === undefined || p[12] === "" ? null : Number(p[12]), fts = Number(p[15]);
+    const fixAge = Number.isFinite(ageF) ? ageF : Number.isFinite(fts) && fts > 0 && ts ? Math.max(0, ts - fts) : null;
     const known = heard.get(pk);
     heard.set(pk, { pk, name: from || (known && known.name) || pk, at: now });
     if (state === "V") {
-      answers.unshift({ pk, name: from || pk, at: now, ts: ts || Math.round(now), lat: fix ? lat : null, lon: fix ? lon : null, chan });
+      const old = fix && fixAge !== null && fixAge > 120;           // meer dan ~2 min oud: laatst gekend
+      answers.unshift({ pk, name: from || pk, at: now, ts: ts || Math.round(now), lat: fix ? lat : null, lon: fix ? lon : null, chan, old, fixAt: fix && fixAge !== null ? now - fixAge : now });
       if (answers.length > 50) answers.pop();
-      log(`antwoord op positievraag van ${from || pk}: ${fix ? "met positie" : "geen fix"}`);
-      $("tk-sr").textContent = `Antwoord van ${from || pk}: ${fix ? "met positie" : "geen fix"}.`;
+      const what = !fix ? "geen fix" : old ? `laatst gekend, ${dur(fixAge)} geleden` : "met positie";
+      log(`antwoord op positievraag van ${from || pk}: ${what}`);
+      $("tk-sr").textContent = `Antwoord van ${from || pk}: ${what}.`;
       renderAnswersMap();
       if (fix) pingAt(lon, lat);
     }
@@ -1166,8 +1197,8 @@
     clearTimeout(askTimer);
     if (wait > 0) askTimer = setTimeout(() => renderAsk(false), 1000);
     const ul = $("tk-ask-list");
-    ul.innerHTML = answers.map((a, i) => `<li><span class="tk-sw ${a.lat !== null ? "a" : "nofix"}" aria-hidden="true"></span><span class="tk-ansbody"><strong>${esc(a.name)}</strong>
-      <span class="tk-anssub">${esc(clockS(a.at))} · ${a.lat !== null ? "met positie" : "geen fix"}</span></span>${a.lat !== null ? `<button type="button" data-i="${i}">Op kaart</button>` : ""}</li>`).join("");
+    ul.innerHTML = answers.map((a, i) => `<li><span class="tk-sw ${a.lat === null ? "nofix" : a.old ? "a old" : "a"}" aria-hidden="true"></span><span class="tk-ansbody"><strong>${esc(a.name)}</strong>
+      <span class="tk-anssub">${esc(clockS(a.at))} · ${a.lat === null ? "geen fix" : a.old ? `laatst gekend, ${esc(dur(Date.now() / 1000 - a.fixAt))} geleden` : "met positie"}</span></span>${a.lat !== null ? `<button type="button" data-i="${i}">Op kaart</button>` : ""}</li>`).join("");
     $("tk-ask-none").hidden = !!answers.length;
   }
   $("tk-ask-to").addEventListener("change", () => renderAsk(false));
@@ -1211,7 +1242,7 @@
     for (const a of answers) {                      // per tracker alleen het nieuwste antwoord met positie
       if (a.lat === null || seen.has(a.pk)) continue;
       seen.add(a.pk);
-      feats.push({ type: "Feature", geometry: { type: "Point", coordinates: [a.lon, a.lat] }, properties: { set: "A", ts: a.ts, name: a.name, flags: "-" } });
+      feats.push({ type: "Feature", geometry: { type: "Point", coordinates: [a.lon, a.lat] }, properties: { set: "A", ts: a.old ? Math.round(a.ts - (a.at - a.fixAt)) : a.ts, name: a.name, flags: "-", old: !!a.old } });
     }
     map.getSource("tk-ans").setData({ type: "FeatureCollection", features: feats });
   }

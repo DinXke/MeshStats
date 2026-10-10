@@ -92,7 +92,7 @@
   </div>
   <div class="shot"><img src="img/kaart.jpg" alt=""></div>
   <div class="meta">
-    Firmware 0.9.5 (T1000-E) · MeshCore v1.17.1<br>
+    Firmware 0.9.6 (T1000-E) · MeshCore v1.17.1<br>
     Oktober 2026 · tracking via MeshCore, zonder gsm-netwerk of internet
   </div>
 </section>
@@ -796,7 +796,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <h3>Tracker live: in de tracker kijken</h3>
 <p>Onder <em>Apps</em> → <em>Tracker live</em> (<code>/tracker</code>) staat een aparte app die toont wat er op dat moment in één
   tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij (het totaal met de verdeling <em>nog niet verstuurd · verstuurd, onbevestigd · geparkeerd</em>, geparkeerde punten
-  in het oranje, en ook of er een vol inhaalbericht klaarstaat en wanneer een niet-vol bericht weer mag), wat hij
+  in het oranje, en ook of er een vol inhaalbericht klaarstaat en wanneer een niet-vol bericht weer mag), zijn GPS (zonder actuele
+  fix: <em>Laatst gekende positie: X geleden</em>, met een grijze gestippelde marker op de kaart), wat hij
   verstuurde en wat hij hoorde, met een tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
 <ul>
   <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
@@ -839,7 +840,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 </table>
 <p><code>status</code> toont ook <code>slow_buffer</code> (gelogde punten die nog verstuurd moeten worden),
   <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code> (onder <code>fast_min_batt</code>),
-  <code>slow_per_bericht=6-11</code>, de trackmodus en de toestand van de FIFO-wachtrij. Zet je <code>slow_log</code> en
+  <code>slow_per_bericht=6-11</code>, de trackmodus, de toestand van de FIFO-wachtrij en <code>laatste_fix</code> (de ouderdom
+  van de laatst gekende fix, bv. <code>2u15m</code>; <code>-</code> = nooit). Zet je <code>slow_log</code> en
   <code>slow_send</code> zo dat er te veel punten per bericht komen, dan waarschuwt de tracker meteen. Het commando
   <code>fifo</code> toont de wachtrij (zie hoofdstuk 4).</p>
 <p>Met een terminalprogramma (115200 baud) opent meteen een genummerd menu. Losse commando's (<code>status</code>,
@@ -853,7 +855,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   menu dicht is (typ <code>q</code>; in <em>Toestellen</em> → <em>Terminal</em> is het al dicht). Een commando <code>log</code> bestaat niet.</div>
 <div class="cols menus" style="gap:3mm">
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.5       HOOFDMENU
+   MeshTrack T1000-E  fw 0.9.6       HOOFDMENU
   ==============================================================
    Ploeg 3  |  modus companion (USB)  |  batterij 99%
    tracker slaapt  |  GPS zoekt  |  laatste zending: verstuurd
@@ -872,7 +874,7 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 
    Keuze: _</pre>
 <pre class="term">  ==============================================================
-   MeshTrack T1000-E  fw 0.9.5       MODUS EN KNOP
+   MeshTrack T1000-E  fw 0.9.6       MODUS EN KNOP
   ==============================================================
    Op batterij nu gekozen: tracker.
    Met USB altijd companion.
@@ -902,10 +904,10 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 <h2 class="chap"><span class="nr">9</span>Firmware flashen</h2>
 <p class="lead">In <em>Toestellen</em> → <em>Firmware</em> staat de nieuwste MeshTrack-firmware klaar, met de datum en de wijzigingen. Je flasht ze
   rechtstreeks vanuit de browser, zonder extra programma's.</p>
-<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.5. Heeft een tracker oudere firmware, dan kent hij
+<div class="tip"><b>Welke versie?</b>Deze handleiding beschrijft firmware 0.9.6. Heeft een tracker oudere firmware, dan kent hij
   sommige instellingen nog niet (ze staan grijs in <em>Toestellen</em>): flash hem dan. <code>status</code> toont de versie
   (<code>fw=</code>); in <em>Toestellen</em> staat ze bovenaan bij het verbonden toestel.</div>
-<figure class="half"><img src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: back-up, bootloader, flashen en de controle van de sleutel.
+<figure class="half"><img style="width:50%" src="img/usb-flashen.jpg" alt=""><figcaption>Een geslaagde update: back-up, bootloader, flashen en de controle van de sleutel.
   De versienummers en tabbladen zien er bij jou anders uit.</figcaption></figure>
 <ol class="steps">
   <li>Verbind de tracker (<em>Verbinden</em>) en klik op <em>Flashen via de browser</em>.</li>
@@ -917,7 +919,9 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     een knop om de sleutel en de instellingen terug te zetten.</li>
 </ol>
 <div class="note"><b>Wat blijft er staan?</b>Alleen de app wordt vervangen. De sleutel (de identiteit van de tracker), de
-  contacten, de kanalen, de regio en alle instellingen blijven behouden.</div>
+  contacten, de kanalen, de regio, alle instellingen en de laatst gekende positie blijven behouden. <strong>Tip:</strong> leg de tracker
+  na het flashen één keer buiten tot hij een fix heeft; dan kan hij op een locatieverzoek ook binnenshuis zijn laatst gekende positie
+  geven (hoofdstuk 12).</div>
 <p>Liever zonder browser? Download het <em>DFU-pakket (.zip)</em> voor <code>adafruit-nrfutil</code>, of het <em>UF2</em>-bestand:
   dubbelklik op de resetknop zodat er een USB-station verschijnt en sleep het bestand erop.</p>
 
@@ -1110,13 +1114,22 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
   trackingkanaal (dat kan ook in <em>Tracker live</em>, via Bluetooth, op het tabblad <em>Overzicht</em>).</p>
 <ul>
   <li>Een tracker antwoordt met zijn positie, met de status <strong>V</strong> (<em>op verzoek</em>). Heeft hij een verse fix, dan
-    antwoordt hij meteen; anders zet hij de GPS even aan, en vindt hij geen fix, dan antwoordt hij zonder positie.</li>
+    antwoordt hij meteen; anders zet hij de GPS even aan. Vindt hij geen fix, dan antwoordt hij met zijn laatst gekende positie
+    (zie hieronder); zonder positie alleen als hij nog nooit een fix had.</li>
   <li>Bij <em>Alle trackers</em> spreiden de trackers hun antwoord willekeurig over 2 tot 20 seconden, zodat ze elkaar niet storen;
     één gevraagde tracker antwoordt binnen 1 tot 3 seconden.</li>
-  <li>Het paneel met de antwoorden toont <em>x van y trackers geantwoord</em>, met positie of <em>geen fix</em>. Op de kaart staat
+  <li>Het paneel met de antwoorden toont <em>x van y trackers geantwoord</em>, met positie, <em>laatst gekend, X geleden</em> of <em>geen fix</em>. Op de kaart staat
     een antwoord als een amberkleurig <strong>doelwit</strong> (stip met ringen) dat even oplicht, met de legende
     <em>Op verzoek</em>. Ook de website toont het zo.</li>
 </ul>
+<div class="note"><b>Laatst gekende positie</b>De tracker bewaart zijn laatste fix in het flashgeheugen: bij de eerste fix, wanneer
+  hij in rust gaat, voor een herstart of uitschakelen, en onderweg hooguit elke 10 minuten als hij meer dan 20 m verplaatst is. Die
+  positie overleeft een herstart en een nieuwe firmware. Vindt hij bij een verzoek geen verse fix (binnen <code>fix_timeout_hb</code>,
+  bv. binnenshuis), dan antwoordt hij met zijn <strong>laatst gekende positie</strong> en het echte tijdstip van die fix. De apps en de
+  website tonen zo'n antwoord als <em>laatst gekend, X geleden</em>, met een holle, gestippelde amberkleurige ring. De live-marker springt
+  daardoor niet terug: het punt komt op zijn echte tijd in het spoor. <em>Geen fix</em> betekent alleen nog dat de tracker nooit een fix
+  had.</div>
+
 <table>
   <tr><th>Wie hoort het verzoek?</th><th>Antwoordt</th></tr>
   <tr><td class="k">Companionmodus</td><td>Altijd.</td></tr>
@@ -1215,8 +1228,8 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
     rijden. Heb je geen verzoeken nodig, zet het dan uit.</td></tr>
   <tr><td class="k">Geen antwoord op een locatieverzoek</td><td>Een tracker in trackermodus die stilstaat, slaapt en hoort niets; een
     rijdende hoort het alleen met <code>rx_beweging aan</code>. Staat <code>verzoek</code> uit? Een tracker antwoordt op <em>Alle</em>
-    hooguit één keer per 2 min en op een gericht verzoek één keer per 30 s. <em>Geen fix</em>: hij antwoordde wel, maar vond geen
-    GPS-positie.</td></tr>
+    hooguit één keer per 2 min en op een gericht verzoek één keer per 30 s. <em>Geen fix</em>: hij antwoordde wel, maar had nog nooit
+    een fix; leg hem één keer buiten. <em>Laatst gekend, X geleden</em>: hij vond nu geen fix en gaf zijn laatst gekende positie.</td></tr>
   <tr><td class="k">SOS-bevestiging komt niet aan</td><td>Toont <code>status</code> <code>path_bytes=2</code>? Zo niet:
     <code>set path_bytes 2</code> en <code>reboot</code>. Sommige repeaters sturen 1-byte padhashes niet door; de server zet
     zijn companion daarom op 2 bytes (serverlog: <em>padhashes van de companion op 2 bytes gezet</em>). Met <code>rxlog aan</code>

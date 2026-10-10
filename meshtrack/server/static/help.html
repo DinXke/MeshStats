@@ -417,7 +417,8 @@
       <li>De pagina verbindt opnieuw en controleert of de <strong>pubkey nog dezelfde</strong> is. Is dat niet zo, dan
         verschijnt een knop om de sleutel en de instellingen terug te zetten.</li>
     </ol>
-    <p>Alleen de app wordt vervangen. De sleutel, de contacten, de kanalen en alle instellingen blijven staan. Op een
+    <p>Alleen de app wordt vervangen. De sleutel, de contacten, de kanalen, alle instellingen en de laatst gekende positie
+      blijven staan. Leg de tracker na het flashen één keer buiten tot hij een fix heeft, zodat hij een positie onthoudt. Op een
       toestel met andere firmware (bv. stock MeshCore) is geen back-up of sleutelcontrole mogelijk; de pagina vraagt
       dan eerst om bevestiging.</p>
 
@@ -528,7 +529,8 @@
     </table>
     <p>Zet je <code>slow_log</code> en <code>slow_send</code> zo dat er meer punten per bericht komen dan erin passen, dan
       waarschuwt de tracker meteen. <code>status</code> toont ook <code>slow_buffer</code> (gelogde punten die nog weg
-      moeten), <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code> en <code>slow_per_bericht=6-11</code>.</p>
+      moeten), <code>fasttrack=aan</code> of <code>fasttrack=uit(batterij)</code>, <code>slow_per_bericht=6-11</code> en
+      <code>laatste_fix</code> (ouderdom van de laatst gekende fix, bv. <code>2u15m</code>; <code>-</code> = nooit).</p>
     <p>De trackmodus (zie <a href="#fifo">Trackmodus: classic en FIFO</a>):</p>
     <table>
       <tr><th>Commando</th><th>Betekenis</th></tr>
@@ -570,7 +572,8 @@
     <p>Onder <em>Apps</em> → <a href="/tracker">Tracker live</a> staat een aparte app die toont wat er op dat moment in één
       tracker omgaat: zijn toestand, de punten in zijn buffers, de FIFO-wachtrij (het totaal met de verdeling <em>nog niet verstuurd · verstuurd, onbevestigd ·
       geparkeerd</em>, geparkeerde punten in het oranje, en ook of er een vol inhaalbericht klaarstaat en wanneer een
-      niet-vol bericht weer mag), wat hij verstuurde en wat hij hoorde, met
+      niet-vol bericht weer mag), zijn GPS (zonder actuele fix: <em>Laatst gekende positie: X geleden</em>, met een grijze
+      gestippelde marker op de kaart), wat hij verstuurde en wat hij hoorde, met
       een tijdlijn en een kaart. Je kunt ze installeren zoals de offline-app.</p>
     <ul>
       <li>Verbind via <strong>USB</strong> (werkt in elke modus) of via <strong>Bluetooth</strong> (alleen als de tracker in
@@ -758,11 +761,11 @@
       <em>Overzicht</em>.</p>
     <ul>
       <li>Een tracker antwoordt met zijn positie, met de status <strong>V</strong> (<em>op verzoek</em>). Heeft hij een verse
-        fix, dan antwoordt hij meteen; anders zet hij de GPS even aan, en vindt hij geen fix, dan antwoordt hij zonder
-        positie.</li>
+        fix, dan antwoordt hij meteen; anders zet hij de GPS even aan. Vindt hij geen fix, dan antwoordt hij met zijn
+        laatst gekende positie (zie hieronder); zonder positie alleen als hij nog nooit een fix had.</li>
       <li>Bij <em>Alle trackers</em> spreiden de trackers hun antwoord willekeurig over 2 tot 20 seconden; één gevraagde
         tracker antwoordt binnen 1 tot 3 seconden.</li>
-      <li>Het paneel met de antwoorden toont <em>x van y trackers geantwoord</em>, met positie of <em>geen fix</em>. Op de
+      <li>Het paneel met de antwoorden toont <em>x van y trackers geantwoord</em>, met positie, <em>laatst gekend, X geleden</em> of <em>geen fix</em>. Op de
         kaart staat een antwoord als een amberkleurig <strong>doelwit</strong> (stip met ringen) dat even oplicht, met de
         legende <em>Op verzoek</em>.</li>
       <li><strong>Wie hoort het?</strong> Een tracker in companionmodus altijd. Een rijdende tracker in trackermodus alleen met
@@ -773,6 +776,14 @@
         één keer per 30 seconden; de apps houden zich aan dezelfde grenzen. Hetzelfde verzoek beantwoordt hij maar één
         keer.</li>
     </ul>
+    <p><strong>Laatst gekende positie.</strong> De tracker bewaart zijn laatste fix in het flashgeheugen: bij de eerste fix,
+      wanneer hij in rust gaat, voor een herstart of uitschakelen, en onderweg hooguit elke 10 minuten als hij meer dan 20 m
+      verplaatst is. Die positie overleeft een herstart en een nieuwe firmware. Vindt hij bij een verzoek geen verse fix
+      (binnen <code>fix_timeout_hb</code>, bv. binnenshuis), dan antwoordt hij met zijn laatst gekende positie en het echte
+      tijdstip van die fix. De apps en de website tonen zo'n antwoord als <em>laatst gekend, X geleden</em>, met een holle,
+      gestippelde amberkleurige ring. De live-marker springt daardoor niet terug: het punt komt op zijn echte tijd in het
+      spoor. <em>Geen fix</em> betekent alleen nog dat de tracker nooit een fix had. <strong>Tip:</strong> leg de tracker na
+      het flashen één keer buiten tot hij een fix heeft, zodat hij een positie onthoudt.</p>
     <p><strong>Op de website.</strong> Ook op de kaart van de website kun je een positie vragen, in de weergave van één
       kanaal (kies het kanaal onder <em>Filter en zichtbaarheid</em>, of open <em>kaart van dit kanaal</em> bij
       <em>Kanalen</em>). De server stuurt het verzoek dan via zijn eigen companion op dat kanaal.</p>
@@ -870,7 +881,8 @@
       <li><strong>Geen antwoord op een locatieverzoek</strong>: een tracker in trackermodus die stilstaat, slaapt en hoort
         niets; een rijdende hoort het alleen met <code>rx_beweging aan</code>. Staat <code>verzoek</code> uit? Een tracker
         antwoordt op <em>Alle</em> hooguit één keer per 2 minuten en op een gericht verzoek één keer per 30 seconden.
-        <em>Geen fix</em>: hij antwoordde wel, maar vond geen GPS-positie.</li>
+        <em>Geen fix</em>: hij antwoordde wel, maar had nog nooit een fix; leg hem één keer buiten. <em>Laatst gekend, X
+        geleden</em>: hij vond nu geen fix en gaf zijn laatst gekende positie.</li>
       <li><strong>SOS-bevestiging komt niet aan</strong> (geen stijgend deuntje, terwijl de SOS wel op de kaart staat):
         <ul>
           <li>Typ <code>status</code> op de tracker: daar moet <code>path_bytes=2</code> staan (anders

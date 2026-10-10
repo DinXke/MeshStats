@@ -631,6 +631,64 @@ static uint16_t fifo_confirm_seqs(const char* l, int len, int* msgs, int* late) 
 static bool s_cap_set = false;
 static uint32_t s_cap_lo = 0, s_cap_hi = 0;   // oudste meegenomen punt .. hoofdpunt
 
+// ---- laatst gekende fix (0.9.6) ------------------------------------------------------
+// In RAM bij elke nieuwe fix; op ExtraFS (/mt_lastfix.dat, via tmp + rename, met crc) bij het in rust gaan,
+// voor een geplande herstart/uitschakeling, en onderweg hooguit eens per 10 min als hij > 20 m verplaatste.
+// Zo kan een locatieverzoek binnen (geen GPS-ontvangst) toch de laatst gekende plek geven, ook na een herstart.
+#define MT_LF_MAGIC 0x464C544DUL     // "MTLF"
+struct MtLastFix { uint32_t magic; uint32_t ts; int32_t lat, lon; int16_t alt; uint16_t hdop10; uint32_t crc; };
+static const char* LF_PATH = "/mt_lastfix.dat";
+static const char* LF_TMP  = "/mt_lastfix.tmp";
+static MtLastFix s_lf = {};                 // ts 0 = nooit een fix
+static uint32_t s_lf_saved_ts = 0;          // ts van wat in het bestand staat
+static int32_t s_lf_saved_lat = 0, s_lf_saved_lon = 0;
+static uint32_t s_lf_saved_ms = 0;
+
+static uint32_t lf_crc(const MtLastFix& f) { return mt_crc32(0, (const uint8_t*)&f, offsetof(MtLastFix, crc)); }
+
+static void lastfix_load() {
+  MtLastFix f;
+  if (!mt_file_read_at(LF_PATH, 0, &f, sizeof(f)) && !mt_file_read_at(LF_TMP, 0, &f, sizeof(f))) return;
+  if (f.magic != MT_LF_MAGIC || f.crc != lf_crc(f) || !f.ts) return;
+  s_lf = f;
+  s_lf_saved_ts = f.ts;
+  s_lf_saved_lat = f.lat;
+  s_lf_saved_lon = f.lon;
+}
+
+static void lastfix_save() {
+  if (!s_lf.ts || s_lf.ts == s_lf_saved_ts) return;   // niets nieuws: geen slijtage
+  s_lf.magic = MT_LF_MAGIC;
+  s_lf.crc = lf_crc(s_lf);
+  if (!mt_file_write_atomic(LF_PATH, LF_TMP, &s_lf, sizeof(s_lf), nullptr, 0)) { mt_log("laatste fix: bewaren MISLUKT"); return; }
+  s_lf_saved_ts = s_lf.ts;
+  s_lf_saved_lat = s_lf.lat;
+  s_lf_saved_lon = s_lf.lon;
+  s_lf_saved_ms = millis() | 1;
+}
+
+void mt_tracker_save_lastfix() { lastfix_save(); }
+
+// Elke loop: nieuwe fix in RAM; onderweg hooguit eens per 10 min naar flash als hij > 20 m verplaatste
+// (of als er nog niets bewaard is).
+static void lastfix_track() {
+  MtNmeaProvider& g = mt_gps();
+  if (!g.freshFix(2500) || !g.lastValidUnix() || g.lastValidUnix() == s_lf.ts) return;
+  long alt = g.getAltitude() / 1000;
+  s_lf.ts = g.lastValidUnix();
+  s_lf.lat = (int32_t)lround(g.getLatitude() / 10.0);
+  s_lf.lon = (int32_t)lround(g.getLongitude() / 10.0);
+  s_lf.alt = (int16_t)(alt < -1000 ? -1000 : alt > 20000 ? 20000 : alt);
+  float h = g.hdop() * 10;
+  s_lf.hdop10 = (uint16_t)(h < 0 ? 0 : h > 9999 ? 9999 : h + 0.5f);
+  if (!s_lf_saved_ts) { lastfix_save(); return; }
+  if (s_lf_saved_ms && millis() - s_lf_saved_ms < 600000UL) return;
+  if (mt_haversine_m(s_lf_saved_lat / 1e5, s_lf_saved_lon / 1e5, s_lf.lat / 1e5, s_lf.lon / 1e5) > 20) lastfix_save();
+}
+
+// send_report: positie uit de laatst gekende fix in plaats van de GPS (alleen voor V, 0.9.6)
+static const MtLastFix* s_pos_override = nullptr;
+
 // ---- berichten ----------------------------------------------------------------
 
 static bool tracking_active() {
@@ -659,7 +717,18 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   char lat[16] = "", lon[16] = "", alt[8] = "", spd[8] = "", crs[8] = "", hd[8] = "", age[12] = "", fts[12] = "";
   double la = 0, lo = 0;
   float sp = -1, cr = -1;
-  if (with_pos && g.lastValidMs() != 0) {
+  if (with_pos && s_pos_override) {             // laatst gekende fix (V zonder verse fix)
+    const MtLastFix& f = *s_pos_override;
+    la = f.lat / 1e5;
+    lo = f.lon / 1e5;
+    snprintf(lat, sizeof(lat), "%.5f", la);
+    snprintf(lon, sizeof(lon), "%.5f", lo);
+    snprintf(alt, sizeof(alt), "%d", (int)f.alt);
+    snprintf(hd, sizeof(hd), "%.1f", f.hdop10 / 10.0);
+    uint32_t now_unix = the_mesh.getRTCClock()->getCurrentTime();
+    if (now_unix >= f.ts) snprintf(age, sizeof(age), "%lu", (unsigned long)(now_unix - f.ts));
+    snprintf(fts, sizeof(fts), "%lu", (unsigned long)f.ts);
+  } else if (with_pos && g.lastValidMs() != 0) {
     la = g.getLatitude() / 1e6;
     lo = g.getLongitude() / 1e6;
     sp = g.speedKmh();
@@ -693,7 +762,7 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   // vorige (nieuwste eerst, te beginnen bij het hoofdpunt) in 1e-5 graden: ";dlat,dlon".
   // Wijkt de tijd tussen twee punten af van het interval, dan volgt "@<seconden>".
   // De server berekent de snelheid uit afstand en tijd. Zo passen een negental punten.
-  uint32_t tag = 0, main_ts = with_pos ? g.lastValidUnix() : 0;
+  uint32_t tag = 0, main_ts = !with_pos ? 0 : s_pos_override ? s_pos_override->ts : g.lastValidUnix();
   if (main_ts) {
     int32_t pla = lround(la * 1e5), plo = lround(lo * 1e5);
     uint32_t pts = main_ts;
@@ -1657,9 +1726,18 @@ static void step_req() {
   if (!mt_sender_ready()) {
     mt_log("verzoek niet beantwoord: trackingkanaal %u ontbreekt op het toestel", (unsigned)mt_cfg.chan_idx);
   } else {
-    send_report('V', fresh, false, "verzoek");
+    if (fresh || !s_lf.ts) {
+      send_report('V', fresh, false, "verzoek");
+      mt_log("verzoek beantwoord (V%s)", fresh ? "" : ", zonder positie (nog nooit een fix)");
+    } else {                                   // geen verse fix: de laatst gekende plek, met zijn echte tijd
+      uint32_t now_unix = the_mesh.getRTCClock()->getCurrentTime();
+      s_pos_override = &s_lf;
+      send_report('V', true, false, "verzoek");
+      s_pos_override = nullptr;
+      mt_log("verzoek beantwoord (V, laatst gekend, %lu min oud)",
+             (unsigned long)(now_unix >= s_lf.ts ? (now_unix - s_lf.ts) / 60 : 0));
+    }
     s_req_answered++;
-    mt_log("verzoek beantwoord (V%s)", fresh ? "" : ", zonder positie");
   }
   s_req_pending = false;
   if (s_req_gps) {
@@ -1720,6 +1798,7 @@ static void enter(MtTState st) {
   s_state = st;
   switch (st) {
     case MT_T_SLEEP:
+      lastfix_save();                          // in rust: laatst gekende fix bewaren
       s_sleep_since = millis();
       s_still_since = 0;
       gps_want(s_manual || s_req_gps);
@@ -1893,6 +1972,7 @@ static void step_radio() {
 void mt_tracker_begin() {
   seq_begin();
   mt_sender_set_done_cb(on_send_done);
+  lastfix_load();
   {                                           // wachttijd voor verzoeken: per toestel anders (pubkey), niet bij elke tracker gelijk
     const uint8_t* k = the_mesh.self_id.pub_key;
     randomSeed(((uint32_t)k[0] << 24 | (uint32_t)k[1] << 16 | (uint32_t)k[2] << 8 | k[3]) ^ micros());
@@ -1913,6 +1993,13 @@ void mt_tracker_loop() {
   step_fifo();
   step_manual();
   step_req();
+  lastfix_track();
+  {
+    static bool rest_before = false;           // net in rust: laatst gekende fix bewaren
+    bool rest = at_rest();
+    if (rest && !rest_before) lastfix_save();
+    rest_before = rest;
+  }
   step_sos();
   step_watch();
   step_radio();
@@ -1980,6 +2067,9 @@ void mt_tracker_dump(MtDumpOut o) {
   } else {
     o("pos -", true);
   }
+  if (s_lf.ts) snprintf(b, sizeof(b), "lastfix %lu %ld %ld", (unsigned long)s_lf.ts, (long)s_lf.lat, (long)s_lf.lon);
+  else snprintf(b, sizeof(b), "lastfix -");
+  o(b, true);
   const char* sw = s_state == MT_T_SLEEP ? "slaapt" : s_state == MT_T_ACQUIRE ? "zoekt" : s_state == MT_T_MOVING ? "beweegt" : "uit";
   snprintf(b, sizeof(b), "mode %s %s %s bat=%d usb=%d", mt_mode_name(mt_effective_mode()), fifo_mode() ? "fifo" : "classic", sw,
            mt_battery_pct(board.getBattMilliVolts()), mt_usb() ? 1 : 0);
@@ -2087,6 +2177,7 @@ long mt_tracker_fifo_partial_wait() { return partial_wait(); }
 long mt_tracker_fifo_last_partial_age() { return last_partial_age(); }
 int mt_tracker_fifo_cap() { return fl_cap(); }
 uint16_t mt_tracker_fifo_parked() { return fifo_parked(); }
+uint32_t mt_tracker_lastfix_ts() { return s_lf.ts; }
 uint32_t mt_tracker_fifo_confirmed() { return s_fifo_confirmed; }
 const char* mt_tracker_fifo_state() {
   if (!fifo_mode()) return "uit (classic)";
