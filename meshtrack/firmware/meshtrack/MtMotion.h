@@ -11,3 +11,4 @@ uint32_t mt_motion_last();                // millis() van de laatste beweging
 void mt_motion_touch();                   // beweging "gezien" (bv. GPS-snelheid)
 MtMotionMode mt_motion_mode();
 const char* mt_motion_mode_str();
+const char* mt_motion_type();             // "qma6100p", "lis2dh" of "-" (geen sensor gevonden)

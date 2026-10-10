@@ -47,6 +47,21 @@ class UITask : public AbstractUITask {
 #endif
 #ifdef PIN_USER_BTN_ANA
   Button* _userButtonAnalog = nullptr;
+  // MeshTrack 0.9.7 (RAK3401): optionele analoge knop (instelling pin31 knop); zwevende pin herkennen
+  uint32_t _anaPress[10] = {};
+  uint8_t _anaPressI = 0;
+  void mtAnalogSetup();
+  void mtAnalogPress();
+#endif
+#if !defined(PIN_BUZZER) && defined(LED_GREEN) && defined(LED_BLUE)
+  // MeshTrack 0.9.7: geen buzzer: terugmelding (klik, SOS, modus ...) met de leds
+  #define MT_LED_FEEDBACK 1
+  uint8_t _ledPin = 0, _ledLeft = 0;
+  bool _ledOn = false;
+  uint16_t _ledOnMs = 0, _ledOffMs = 0;
+  uint32_t _ledNext = 0;
+  void mtLedStart(const char* rtttl);
+  void mtLedLoop();
 #endif
 
   void renderCurrScreen();

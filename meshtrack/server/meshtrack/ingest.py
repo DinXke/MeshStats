@@ -66,6 +66,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
         "bat": r.bat_pct, "hdop": r.hdop, "fix_age": r.fix_age_s, "mode": r.mode, "power": r.power,
         "suspect": int(is_suspect(r, cfg.region_bbox, cfg.max_hdop)),
         "snr": snr, "path_len": path_len, "raw": text.strip(),
+        "prio": int(r.prio),                  # 1.4: vlag "p" (prioritair); ook de extra punten van het bericht
     }
     # Eerdere punten uit hetzelfde bericht, chronologisch. Een punt dat al binnen is (het
     # vorige bericht kwam toch aan, alleen de ACK niet) wordt overgeslagen.
@@ -81,7 +82,7 @@ def handle(db: DB, cfg: Config, pubkey_prefix: str, text: str, sender_ts: Option
             ep = {"ts": ts, "rx_ts": rx, "seq": r.seq, "state": r.state if slow else "M", "lat": lat, "lon": lon, "alt": None,
                   "spd": spd, "crs": None, "bat": None, "hdop": None, "fix_age": None, "mode": None, "power": None,
                   "suspect": int(not _in_bbox(lat, lon, cfg.region_bbox)), "snr": snr, "path_len": path_len,
-                  "raw": f"(eerder punt uit bericht {r.seq})", "extra": 1}
+                  "raw": f"(eerder punt uit bericht {r.seq})", "extra": 1, "prio": p["prio"]}
             db.add_position(tracker["id"], ep)
             extras.append({"tracker_id": tracker["id"], **ep})
     if slow:

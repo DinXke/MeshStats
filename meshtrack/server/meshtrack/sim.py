@@ -105,6 +105,7 @@ class SimTracker:
         if self.profile != "travel":   # z14-routering: lange ritten worden te zwaar
             self.trip_km = (min(self.trip_km[0], 80.0), min(self.trip_km[1], 80.0))
         self.roam = bool(d.get("roam"))
+        self.prio = bool(row.get("prio"))       # 1.4: vlag "p" (prioritair) in elk bericht
         self.speeds = {**SPEEDS[self.profile], **{k: float(v) for k, v in (d.get("speeds") or {}).items() if v}}
         self.router, self.emit = router, emit
         self.rng = random.Random()
@@ -494,6 +495,8 @@ class SimTracker:
             str(int(now)) if with_pos else "",     # fix_ts: tijd van de fix
             self._extra(now, lat, lon) if with_pos else "",
         ]
+        if self.prio:
+            fields_.append("p")                    # veld 16: vlaggen
         text = "|".join(fields_)
         self.seq = (self.seq + 1) % 65536
         self.rules.sent(now, lat, lon, crs)

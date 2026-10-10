@@ -64,6 +64,8 @@
 #include "MtMotion.h"
 #include "MtBattery.h"
 #include "MtGps.h"
+#include "MtBoard.h"
+#include "MtPrio.h"
 #include "MyMesh.h"
 #include "UITask.h"
 #include <SHA256.h>
@@ -73,13 +75,16 @@ using namespace Adafruit_LittleFS_Namespace;
 
 extern UITask ui_task;
 
-enum Purpose : uint8_t { PUR_WAKE, PUR_HEARTBEAT };
+enum Purpose : uint8_t { PUR_WAKE, PUR_HEARTBEAT, PUR_CHECK };   // PUR_CHECK: rustcontrole via GPS (0.9.7)
 
 static MtTState s_state = MT_T_OFF;
 static Purpose s_purpose = PUR_WAKE;
 static uint32_t s_acq_deadline = 0;
 static uint32_t s_last_eval_fix = 0;
 static uint32_t s_still_since = 0;          // 0 = beweegt
+static uint32_t s_rest_check_due = 0;       // rust via GPS: volgende controle (millis)
+static bool s_rest_have = false;            // rustpositie bekend
+static int32_t s_rest_lat = 0, s_rest_lon = 0;   // 1e-5 graden
 static uint32_t s_sleep_since = 0;
 static uint32_t s_last_hb_s = 0;
 static MtRuleState s_rules;
@@ -154,7 +159,8 @@ static void own_pk8(char out[9]) {
 
 // ---- GPS ----------------------------------------------------------------------
 
-static bool gps_is_on() { return strcmp(sensors.getSettingValue(0), "1") == 0; }
+// Instelling 0 = "gps" (T1000-E, en de Tag met ENV_SKIP_GPS_DETECT); NULL = geen GPS gevonden.
+static bool gps_is_on() { const char* v = sensors.getSettingValue(0); return v && strcmp(v, "1") == 0; }
 
 // FastTrack en SlowTrack vragen elk de GPS; hij gaat pas uit als geen van beide hem nodig heeft.
 static void gps_want(bool on) {
@@ -191,6 +197,10 @@ static MtPt s_pts[MT_PTS];
 static uint8_t s_npts = 0;
 static bool fifo_mode();
 static void fifo_take_main(const MtPt& q);
+// fifo_punten (0.9.7): verlaat een punt de buffer zonder ooit in een herhaald bericht te zitten, dan gaat
+// het de FIFO in: met "alle" (standaard) elk punt, ook de tussenpunten; met "hoofd" alleen hoofdpunten.
+static bool pt_lost_to_fifo(const MtPt& q) { return (q.fl & PT_MAIN) || !mt_cfg.fifo_punten_hoofd; }
+static void fifo_take_log();
 
 static void pts_push(uint32_t ts, double la, double lo, float sp, long alt = MT_ALT_NONE, bool main = false) {
   if (!ts) return;
@@ -201,7 +211,7 @@ static void pts_push(uint32_t ts, double la, double lo, float sp, long alt = MT_
   }
   if (s_npts && s_pts[s_npts - 1].ts >= ts) return;            // al bewaard
   if (s_npts == MT_PTS) {
-    if (fifo_mode() && (s_pts[0].fl & PT_MAIN)) fifo_take_main(s_pts[0]);   // buffer vol
+    if (fifo_mode() && pt_lost_to_fifo(s_pts[0])) fifo_take_main(s_pts[0]);   // buffer vol
     memmove(s_pts, s_pts + 1, sizeof(MtPt) * (MT_PTS - 1));
     s_npts--;
   }
@@ -217,16 +227,17 @@ static void pts_sent(uint32_t upto) {
 }
 
 // fifo: een bericht met de punten lo..hi is herhaald: die zijn binnen. Oudere punten pasten er niet
-// meer in en zullen er ook nooit meer in passen: hoofdpunten naar de FIFO, de rest weg.
+// meer in en zullen er ook nooit meer in passen: naar de FIFO (alle of alleen hoofdpunten, fifo_punten).
 static void pts_heard(uint32_t lo, uint32_t hi) {
   uint8_t w = 0;
   for (uint8_t r = 0; r < s_npts; r++) {
     const MtPt& q = s_pts[r];
     if (q.ts >= lo && q.ts <= hi) continue;
-    if (q.ts < lo) { if (q.fl & PT_MAIN) fifo_take_main(q); continue; }
+    if (q.ts < lo) { if (pt_lost_to_fifo(q)) fifo_take_main(q); continue; }
     s_pts[w++] = q;
   }
   s_npts = w;
+  fifo_take_log();
 }
 
 static void pts_sample(MtNmeaProvider& g) {
@@ -574,9 +585,17 @@ static MtFPt fifo_pt(uint32_t ts, double la, double lo, float sp, long alt) {
 }
 
 // Een hoofdpunt dat de FastTrack-buffer verlaat zonder ooit in een herhaald bericht te zitten.
+// Gelogd per groep (fifo_take_log): bij een lange onderbreking schuift elke 10 s een punt uit de buffer.
+static uint16_t s_take_cnt = 0;
 static void fifo_take_main(const MtPt& q) {
   MtFPt f = { q.ts, q.lat, q.lon, q.spd, q.alt, 0, 0, 0 };
-  if (fifo_add(f)) mt_log("fifo: punt toegevoegd (geen herhaling gehoord), totaal %u", (unsigned)s_nfifo);
+  if (fifo_add(f)) s_take_cnt++;
+}
+static void fifo_take_log() {
+  if (!s_take_cnt) return;
+  mt_log("fifo: %u punten toegevoegd (niet gehoord; %s), totaal %u", (unsigned)s_take_cnt,
+         mt_cfg.fifo_punten_hoofd ? "hoofd" : "alle", (unsigned)s_nfifo);
+  s_take_cnt = 0;
 }
 
 // Dekking: een repeater heeft ons of iemand anders gehoord en doorgegeven. Gelogd als ze nieuw
@@ -686,8 +705,9 @@ static void lastfix_track() {
   if (mt_haversine_m(s_lf_saved_lat / 1e5, s_lf_saved_lon / 1e5, s_lf.lat / 1e5, s_lf.lon / 1e5) > 20) lastfix_save();
 }
 
-// send_report: positie uit de laatst gekende fix in plaats van de GPS (alleen voor V, 0.9.6)
+// send_report: positie uit de laatst gekende fix in plaats van de GPS (V 0.9.6, prioritair 0.9.7)
 static const MtLastFix* s_pos_override = nullptr;
+static bool s_force_keep = false;           // send_report: keep=true (prioritair)
 
 // ---- berichten ----------------------------------------------------------------
 
@@ -757,7 +777,9 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   // Kanaal: "T1C|<pubkey 8 hex>|<handtekening 8 hex>|<seq>|..." (zonder "T1|"); de
   // handtekening = HMAC-SHA256(authsleutel, "<pubkey8>|<rest>"), eerste 4 bytes.
   // "<naam>: " gaat ervoor (MAX_TEXT_LEN omvat de naam), plus T1C|pk|tag| (min "T1|") en 2 bytes marge.
-  const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2;
+  const bool prio = mt_prio_active();          // 16e veld "p" (prioritair, 0.9.7): plaats vrijhouden
+  const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2 - (prio ? 3 : 0);
+  bool have15 = false;
   // 15e veld: eerdere punten, compact. "~<interval>" en daarna per punt het verschil met het
   // vorige (nieuwste eerst, te beginnen bij het hoofdpunt) in 1e-5 graden: ";dlat,dlon".
   // Wijkt de tijd tussen twee punten af van het interval, dan volgt "@<seconden>".
@@ -775,6 +797,7 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
       if (n + hm + 6 <= limit) {
         memcpy(text + n, head, hm + 1);
         n += hm;
+        have15 = true;
         for (; k >= 0; k--) {
           const MtPt& q = s_pts[k];
           uint32_t gap = pts - q.ts;
@@ -799,8 +822,9 @@ static void send_report(char state, bool with_pos, bool manual, const char* reas
   } else {
     s_cap_set = false;
   }
+  if (prio) n += snprintf(text + n, sizeof(text) - n, have15 ? "|p" : "||p");   // veld 15 leeg zonder extra punten
   // Belangrijke berichten wijken niet voor een nieuwere gewone positie.
-  bool keep = manual || state == 'E' || state == 'S' || state == 'H' || state == 'B' || state == 'V';
+  bool keep = manual || s_force_keep || state == 'E' || state == 'S' || state == 'H' || state == 'B' || state == 'V';
   sign_and_send(text, state, manual, keep, tag);
   s_rules.sent(now_s(), with_pos, la, lo, sp >= 3 ? cr : -1);
   strncpy(s_last_reason, reason, sizeof(s_last_reason) - 1);
@@ -940,7 +964,8 @@ static void send_slow() {
   int bn = snprintf(base, sizeof(base), "T1|%u|L|%.5f|%.5f|%d|%u||%d||%s|%c|%c|%lu",
                     (unsigned)seq, m.lat / 1e5, m.lon / 1e5, (int)m.alt, (unsigned)m.spd, bat < 0 ? 0 : bat, age,
                     mt_effective_mode() == MT_MODE_TRACKER ? 't' : 'c', mt_usb() ? 'u' : 'b', (unsigned long)m.ts);
-  const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2;   // zoals send_report
+  const bool prio = mt_prio_active();
+  const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2 - (prio ? 3 : 0);   // zoals send_report
   char text[MT_TEXT_MAX + 1];
   uint8_t sel[MT_SLOW_MAX_ITEMS + 1];
   XPt x[MT_SLOW_MAX_ITEMS + 1];
@@ -957,6 +982,10 @@ static void send_slow() {
     for (int i = 0; i < c; i++) x[i] = { s_slow[sel[i]].ts, s_slow[sel[i]].lat, s_slow[sel[i]].lon };
     if (append_bin_extras(text, len, limit, x, c)) { used = c; break; }   // anders: minder punten
   }
+  if (prio) {                                    // 16e veld "p"
+    int tl = strlen(text);
+    snprintf(text + tl, sizeof(text) - tl, tl > bn ? "|p" : "||p");
+  }
   sign_and_send(text, 'L', false, true, m.ts);
   strncpy(s_last_reason, "slowtrack", sizeof(s_last_reason) - 1);
   s_last_tx_ms = millis();
@@ -965,8 +994,14 @@ static void send_slow() {
 
 // In rust: langer dan still_timeout geen beweging volgens de bewegingssensor. Gebruikt door SlowTrack
 // (dan geen GPS meer) en door de FIFO (stilstaan is het moment om de wachtrij leeg te maken).
+// Rust via GPS (0.9.7): zonder (werkende) bewegingssensor gaat de tracker na still_timeout zonder
+// GPS-beweging toch in rust (GPS uit); elke rust_gps_check gaat de GPS kort aan (hooguit fix_timeout_hb):
+// > 50 m verplaatst of >= 3 km/u = wakker, anders terug in rust. rust_gps_check uit = de oude werking
+// (zonder sensor nooit slapen, GPS blijft aan).
+static bool gps_rest_on() { return !mt_motion_available() && mt_rust_gps_check_min() > 0; }
+
 static bool at_rest() {
-  return mt_motion_available() && mt_cfg.still_timeout_s && !s_manual &&
+  return (mt_motion_available() || gps_rest_on()) && mt_cfg.still_timeout_s && !s_manual &&
          millis() - mt_motion_last() >= 1000UL * mt_cfg.still_timeout_s;
 }
 
@@ -1187,7 +1222,8 @@ static void send_flush(const uint16_t* sel, int cmax, bool parked) {
   // server (hooguit eens per 10 min) een T1F.
   bool want_f = false;
   for (uint16_t i = 0; i < s_nfifo && !want_f; i++) want_f = (s_fifo[i].flags & FPT_SENT) != 0;
-  const char* flags = want_f ? "fg" : "g";
+  char flags[4];
+  snprintf(flags, sizeof(flags), "%sg%s", want_f ? "f" : "", mt_prio_active() ? "p" : "");
   const int limit = MT_TEXT_MAX - the_mesh.mtSenderLen() - 19 - 2 - (int)strlen(flags) - 2;   // zoals send_report
   char text[MT_TEXT_MAX + 1];
   XPt x[MT_SLOW_MAX_ITEMS + 1];
@@ -1370,21 +1406,27 @@ static void step_fifo() {
   send_flush(sel, cand, parked);
 }
 
-// fifo: hoofdpunten die al 10 min in de FastTrack-buffer zitten zonder herhaald bericht (bv. omdat
-// de tracker stilstaat en niets meer verstuurt), naar de FIFO: anders gaan ze verloren bij een herstart.
+// fifo: punten die al 10 min in de FastTrack-buffer zitten zonder herhaald bericht (bv. omdat de
+// tracker stilstaat en niets meer verstuurt), naar de FIFO (fifo_punten): anders gaan ze verloren bij
+// een herstart. Hier wordt ook de groepslog van fifo_take_main geschreven (elke 10 s).
 static void pts_age_out() {
   static uint32_t next = 0;
   if (!fifo_mode() || (int32_t)(millis() - next) < 0) return;
   next = millis() + 10000;
   uint32_t now = rtc_unix();
-  if (!now) return;
+  if (!now) { fifo_take_log(); return; }
   uint8_t w = 0;
   for (uint8_t r = 0; r < s_npts; r++) {
     const MtPt& q = s_pts[r];
-    if ((q.fl & PT_MAIN) && q.ts <= now && now - q.ts > 600) { fifo_take_main(q); continue; }
+    if (q.ts <= now && now - q.ts > 600) {
+      if (pt_lost_to_fifo(q)) fifo_take_main(q);
+      else if (!(q.fl & PT_MAIN)) { s_pts[w++] = q; continue; }   // hoofd: tussenpunten blijven (zoals voorheen)
+      continue;
+    }
     s_pts[w++] = q;
   }
   s_npts = w;
+  fifo_take_log();
 }
 
 // In trackermodus de radio wakker houden: leegmaken bezig (niet als het uurplafond bereikt is).
@@ -1746,6 +1788,38 @@ static void step_req() {
   }
 }
 
+// ---- prioriteitsingang (0.9.7, RAK3401 pin31 prio) ---------------------------------------------
+// Net actief: meteen een positie (M "prioritair", keep, hooguit 1x per 10 s), en uit rust wakker worden.
+// Net verlopen: één gewoon bericht zonder "p", zodat de server de prioriteit snel kan wissen.
+static void enter(MtTState st);
+static void step_prio() {
+  static uint32_t last_send = 0;
+  static bool sent_ever = false;
+  static int pend = 0;                         // wacht op de 10 s tussen twee prio-berichten (laatste telt)
+  mt_prio_loop();
+  int e = mt_prio_take_event();
+  if (e) pend = e;
+  if (!pend || !mt_sender_ready()) return;
+  uint32_t now = millis();
+  if (sent_ever && now - last_send < 10000UL) return;
+  int ev = pend;
+  pend = 0;
+  MtNmeaProvider& g = mt_gps();
+  bool fresh = g.freshFix(30000);
+  bool lf = !fresh && s_lf.ts;                 // geen verse fix: laatst gekende plek (met haar tijd)
+  if (lf) s_pos_override = &s_lf;
+  s_force_keep = ev == 1;
+  send_report(fresh || lf ? 'M' : 'N', fresh || lf, false, ev == 1 ? "prioritair" : "prio voorbij");
+  s_force_keep = false;
+  s_pos_override = nullptr;
+  last_send = now;
+  sent_ever = true;
+  if (ev == 1) {
+    mt_motion_touch();                         // telt als beweging (rust via GPS)
+    if (tracking_active() && s_state == MT_T_SLEEP && !s_fast_off) { s_purpose = PUR_WAKE; enter(MT_T_ACQUIRE); }
+  }
+}
+
 bool mt_channel_text(uint8_t chan_idx, const char* text) {
   if (s_rxlog) mt_log("rx kanaalbericht op kanaal %u: %.40s", (unsigned)chan_idx, text);
   {
@@ -1800,12 +1874,18 @@ static void enter(MtTState st) {
     case MT_T_SLEEP:
       lastfix_save();                          // in rust: laatst gekende fix bewaren
       s_sleep_since = millis();
+      s_rest_check_due = millis() + 60000UL * mt_rust_gps_check_min();   // rust via GPS: volgende controle
+      if (mt_gps().freshFix(30000)) {          // rustpositie
+        s_rest_lat = (int32_t)lround(mt_gps().getLatitude() / 10.0);
+        s_rest_lon = (int32_t)lround(mt_gps().getLongitude() / 10.0);
+        s_rest_have = true;
+      }
       s_still_since = 0;
       gps_want(s_manual || s_req_gps);
       break;
     case MT_T_ACQUIRE:
       gps_want(true);
-      s_acq_deadline = millis() + 1000UL * (s_purpose == PUR_HEARTBEAT ? mt_cfg.fix_timeout_hb_s : mt_cfg.fix_timeout_s);
+      s_acq_deadline = millis() + 1000UL * (s_purpose == PUR_HEARTBEAT || s_purpose == PUR_CHECK ? mt_cfg.fix_timeout_hb_s : mt_cfg.fix_timeout_s);
       break;
     case MT_T_MOVING:
       gps_want(true);
@@ -1825,6 +1905,11 @@ static MtRuleParams params() {
   p.turn_min_speed_kmh = mt_cfg.turn_min_speed_kmh;
   p.min_interval_s = mt_cfg.min_interval_s;
   p.max_interval_s = mt_cfg.max_interval_s;
+  uint32_t pi = mt_prio_interval_s();          // prioritair: vaker (0.9.7)
+  if (mt_prio_active() && pi) {
+    if (!p.max_interval_s || p.max_interval_s > pi) p.max_interval_s = pi;
+    if (p.min_interval_s > pi) p.min_interval_s = pi;
+  }
   return p;
 }
 
@@ -1839,7 +1924,7 @@ static void step_tracking() {
   uint32_t now = millis();
 
   // FastTrack uit wegens de batterij: slapen zonder S-bericht; alleen een heartbeat-fix loopt nog.
-  if (s_fast_off && s_state != MT_T_SLEEP && !(s_state == MT_T_ACQUIRE && s_purpose == PUR_HEARTBEAT)) {
+  if (s_fast_off && s_state != MT_T_SLEEP && !(s_state == MT_T_ACQUIRE && (s_purpose == PUR_HEARTBEAT || s_purpose == PUR_CHECK))) {
     enter(MT_T_SLEEP);
     return;
   }
@@ -1852,6 +1937,11 @@ static void step_tracking() {
     case MT_T_SLEEP: {
       bool motion = mt_motion_available() ? (int32_t)(mt_motion_last() - s_sleep_since) > 0 : false;
       if (motion && !s_fast_off) { s_purpose = PUR_WAKE; enter(MT_T_ACQUIRE); break; }
+      if (gps_rest_on() && (int32_t)(now - s_rest_check_due) >= 0) {   // rust via GPS: kort controleren
+        s_purpose = PUR_CHECK;
+        enter(MT_T_ACQUIRE);
+        break;
+      }
       if (mt_cfg.heartbeat_s > 0) {
         uint32_t ref = s_last_hb_s ? s_last_hb_s : s_rules.last_tx_s;
         if (now_s() - ref >= mt_cfg.heartbeat_s) { s_purpose = PUR_HEARTBEAT; enter(MT_T_ACQUIRE); }
@@ -1863,7 +1953,23 @@ static void step_tracking() {
       if (new_fix) {
         s_last_eval_fix = g.lastValidMs();
         if (moving_now(g.speedKmh())) pts_sample(g);
-        if (s_purpose == PUR_HEARTBEAT) {
+        if (s_purpose == PUR_CHECK) {           // rustcontrole: verplaatst of in beweging?
+          int32_t la5 = (int32_t)lround(g.getLatitude() / 10.0), lo5 = (int32_t)lround(g.getLongitude() / 10.0);
+          double d = s_rest_have ? mt_haversine_m(s_rest_lat / 1e5, s_rest_lon / 1e5, la5 / 1e5, lo5 / 1e5) : 0;
+          float sp = g.speedKmh();
+          if (!s_rest_have) { s_rest_lat = la5; s_rest_lon = lo5; s_rest_have = true; }
+          if (d > 50 || sp >= 3) {
+            mt_motion_touch();
+            mt_log("rust: beweging gezien via GPS (%ld m, %d km/u)", (long)d, (int)(sp + 0.5f));
+            if (!s_fast_off) {
+              s_purpose = PUR_WAKE;
+              send_report('W', true, false, "wakker (GPS)");
+              enter(MT_T_MOVING);
+            } else enter(MT_T_SLEEP);
+          } else {
+            enter(MT_T_SLEEP);                   // stil: terug in rust (GPS uit)
+          }
+        } else if (s_purpose == PUR_HEARTBEAT) {
           send_report('H', true, false, "heartbeat");
           s_last_hb_s = now_s();
           if (moving_now(g.speedKmh()) && !s_fast_off) enter(MT_T_MOVING); else enter(MT_T_SLEEP);
@@ -1871,6 +1977,8 @@ static void step_tracking() {
           send_report('W', true, false, "wakker");     // eerste positie na rust: wakker door beweging
           enter(MT_T_MOVING);
         }
+      } else if ((int32_t)(now - s_acq_deadline) >= 0 && s_purpose == PUR_CHECK) {
+        enter(MT_T_SLEEP);                       // rustcontrole zonder fix: terug in rust, geen bericht
       } else if ((int32_t)(now - s_acq_deadline) >= 0) {
         send_report('N', false, false, "geen fix");
         if (s_purpose == PUR_HEARTBEAT) { s_last_hb_s = now_s(); enter(MT_T_SLEEP); }
@@ -1881,7 +1989,7 @@ static void step_tracking() {
     case MT_T_MOVING: {
       float spd = g.freshFix(5000) ? g.speedKmh() : 0;
       if (spd >= MT_STILL_KMH) mt_motion_touch();
-      if (!moving_now(spd) && !mt_motion_available() && mt_cfg.heartbeat_s > 0 &&
+      if (!moving_now(spd) && !mt_motion_available() && !gps_rest_on() && mt_cfg.heartbeat_s > 0 &&
           now_s() - s_rules.last_tx_s >= mt_cfg.heartbeat_s) {
         // Geen bewegingssensor: hij slaapt nooit, maar meldt in rust toch zijn heartbeat.
         send_report('H', g.freshFix(5000), false, "heartbeat");
@@ -1890,9 +1998,9 @@ static void step_tracking() {
         s_still_since = 0;
       } else if (s_still_since == 0) {
         s_still_since = now ? now : 1;
-      } else if (mt_motion_available() && now - s_still_since >= 1000UL * mt_cfg.still_timeout_s) {
-        // Stil: laatste positie melden en slapen. Zonder werkende bewegings-
-        // sensor nooit slapen: dan zou hij niet meer wakker worden.
+      } else if ((mt_motion_available() || gps_rest_on()) && now - s_still_since >= 1000UL * mt_cfg.still_timeout_s) {
+        // Stil: laatste positie melden en slapen. Zonder werkende bewegingssensor alleen met rust via
+        // GPS (rust_gps_check): dan maakt een GPS-controle hem weer wakker; anders nooit slapen.
         send_report('S', g.freshFix(30000), false, "stil");
         enter(MT_T_SLEEP);
         break;
@@ -1993,6 +2101,7 @@ void mt_tracker_loop() {
   step_fifo();
   step_manual();
   step_req();
+  step_prio();
   lastfix_track();
   {
     static bool rest_before = false;           // net in rust: laatst gekende fix bewaren
@@ -2036,7 +2145,7 @@ MtTState mt_tracker_state() { return s_state; }
 const char* mt_tracker_state_str() {
   switch (s_state) {
     case MT_T_SLEEP: return "slaapt";
-    case MT_T_ACQUIRE: return s_purpose == PUR_HEARTBEAT ? "fix zoeken (heartbeat)" : "fix zoeken";
+    case MT_T_ACQUIRE: return s_purpose == PUR_HEARTBEAT ? "fix zoeken (heartbeat)" : s_purpose == PUR_CHECK ? "rustcontrole (GPS)" : "fix zoeken";
     case MT_T_MOVING: return "beweegt";
     default: return "uit";
   }
@@ -2058,6 +2167,7 @@ void mt_tracker_dump(MtDumpOut o) {
   MtNmeaProvider& g = mt_gps();
   uint32_t now_unix = the_mesh.getRTCClock()->getCurrentTime();
   o("mtdump 1", true);
+  o("board " MT_BOARD_ID, true);
   snprintf(b, sizeof(b), "now %lu", (unsigned long)now_unix);
   o(b, true);
   if (g.lastValidMs()) {
@@ -2178,6 +2288,7 @@ long mt_tracker_fifo_last_partial_age() { return last_partial_age(); }
 int mt_tracker_fifo_cap() { return fl_cap(); }
 uint16_t mt_tracker_fifo_parked() { return fifo_parked(); }
 uint32_t mt_tracker_lastfix_ts() { return s_lf.ts; }
+uint32_t mt_tracker_prio_left() { return mt_prio_left_s(); }
 uint32_t mt_tracker_fifo_confirmed() { return s_fifo_confirmed; }
 const char* mt_tracker_fifo_state() {
   if (!fifo_mode()) return "uit (classic)";

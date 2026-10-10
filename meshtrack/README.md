@@ -11,7 +11,33 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
 
 ## Onderdelen
 
-- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 voor de T1000-E (huidige versie 0.9.6; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`).
+- **firmware/**: overlay op stock MeshCore `companion_radio` v1.17.1 (huidige versie 0.9.8; heeft server 1.3.1 of nieuwer nodig voor de FIFO-bevestiging `T1F`, 1.3.2 voor toestand `V`, 1.4.0 voor prioritair).
+  - **Drie borden**, elke release voor alle drie: Seeed T1000-E (`board=t1000e`, getest); RAK WisMesh Tag (`wismesh_tag`:
+    knop, buzzer, LIS2DH-bewegingssensor, AT6558R-GPS); RAK3401 + RAK13302 1 W (`rak3401_1w`: voertuigtracker op een
+    RAK19007 met losse UART-GPS, geen buzzer, geen bewegingssensor, terugmelding met de led, max. ≈ 27 dBm na de
+    versterker = TX 18 dBm + ≈ 9 dB). **De Tag en de RAK3401 zijn nog niet op een echt toestel getest.** In Toestellen →
+    Firmware kies je het bord, of het wordt herkend uit de status. Verkeerd pakket: de bootloader beschermt alleen tussen
+    de T1000-E en de RAK-borden (andere SoftDevice); tussen Tag en RAK3401 beschermt alleen de website. Bootloader:
+    1200-baud touch (de website doet dat zelf) of dubbelklik op reset voor het UF2-station.
+  - Mogelijkhedenregel in `status`: `board= knop= buzzer= accel= accel_type= gps= [gps_pinnen=] tx_max= tx_versterking=`.
+    Toestellen toont de kaart *Herkend toestel* (herkenning bij het verbinden via het USB-type, de MeshTrack-status of het
+    model van stock MeshCore; vóór het flashen vanaf stock eerst een back-up van de privésleutel), verbergt of grijst
+    instellingen die het bord niet heeft, en slaat bij het terugzetten van een back-up niet-passende instellingen over.
+  - Rust via de GPS zonder bewegingssensor: `rust_gps_check <tijd>|uit` (standaard 5m): na `still_timeout` zonder
+    GPS-beweging gaat de GPS uit en kijkt hij elke x kort of hij verplaatst is (> 50 m of ≥ 3 km/u); `uit` = GPS blijft aan.
+  - Alleen RAK3401: GPS-autodetectie (pinnen 15/16 of 8/6, beide richtingen, 9600/38400/115200; bij de eerste start en na
+    10 min stilte), `gps zoek`, `set gps_pinnen 15/16@9600`, status `gps_pinnen=`. `pin31 uit|knop|prio`: `knop` =
+    analoge knop met bescherming tegen een zwevende pin; `prio` = ingang voor de blauwe lichten (`prio_niveau laag|hoog`,
+    standaard laag met interne pull-up; `prio_houd` 1–60 min, standaard 5m, `0` = volgt de ingang: prioritair precies zolang die actief is, meteen voorbij met een bericht; `prio_interval`, standaard 30s, 0 = gewone
+    instellingen). Zolang actief draagt elk bericht vlag `p`; bij het aangaan meteen een positie. Status `prio=aan|uit|fout`
+    (fout = zwevende ingang). Aansluiten via een PC817-optocoupler (12/24 V → serieweerstand → led; transistorkant → pin 31
+    en GND, `prio_niveau laag`); **nooit 12/24 V rechtstreeks, max. 3,3 V op de pin**. Drie bedradingsvarianten met dezelfde firmware: (1) voeding van de blauwe lichten via de
+    optocoupler (`prio_houd` 5m bij knipperen), (2) eigen schakelaar op het bedieningspaneel die 12/24 V in hetzelfde
+    optocouplercircuit schakelt (`prio_houd 0`), (3) potentiaalvrij contact rechtstreeks tussen pin 31 en GND (`prio_niveau
+    laag`, interne pull-up; alleen als er geen voertuigspanning op kan komen; bij lange draden RC-filter 1 kΩ + 100 nF of
+    toch een optocoupler; `prio_houd 0`). Lichtsensor kan maar is minder
+    betrouwbaar (RGB-sensor zoals TCS34725 met knipperdetectie; LDR of BPW34 af te raden wegens zonlicht). Schema in de
+    handleiding (hoofdstuk 13).
   - Volledige companion aan USB, trackermodus op batterij. Dubbelklik wisselt de modus (tot 0,8 s tussen de klikken),
     één klik stuurt meteen een positie, 2 tot 8 s vasthouden stuurt een SOS, langer dan 8 s schakelt uit.
     Met `sos uit` (0.8.0, standaard aan) doet 2 tot 8 s vasthouden niets (geen SOS, geen wapenbiep), tegen een SOS per
@@ -53,10 +79,15 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
   - **Trackmodus** (0.9.0): `set track_mode classic|fifo`, standaard `classic` (FastTrack + SlowTrack zoals in 0.8).
     `fifo` = store-and-forward voor posities die de mesh niet haalden:
     - Na elk FastTrack-bericht ~12 s luisteren naar een herhaling. Niet gehoord: de punten liften eerst mee met de
-      volgende FastTrack-berichten. Pas een hoofdpunt dat die buffer verlaat zonder ooit gehoord te zijn (buffer vol of
-      10 min oud) gaat de FIFO-wachtrij in: één punt per gemist bericht, met zijn echte GPS-tijd. SlowTrack logt in
+      volgende FastTrack-berichten. Punten die die buffer verlaten zonder ooit gehoord te zijn (buffer vol of 10 min oud)
+      gaan de FIFO-wachtrij in, met hun echte GPS-tijd. `fifo_punten alle|hoofd` (0.9.7, standaard `alle`; status
+      `fifo_punten=`, FIFO-menu, Toestellen *Wat gaat in de wachtrij*): `alle` = hoofdpunt én sample-tussenpunten van het
+      gemiste bericht (rechte stukken uitgedund door `fifo_dun`; dode zone in detail, bv. 5 min zonder bereik ≈ 30 punten
+      vóór het uitdunnen i.p.v. 3), `hoofd` = alleen het hoofdpunt (oud gedrag, minder berichten). Meer punten = meer
+      Q-berichten, nog altijd begrensd door `fifo_per_uur`, het pogingenplafond en de niet-vol-regel. SlowTrack logt in
       fifo-modus rechtstreeks in de wachtrij (`slow_log`); `slow_send` wordt niet gebruikt.
-    - Wachtrij: `fifo_max` 20..500 (standaard 500, ~8 à 16 u rijden zonder bereik), in flash (`/mt_fifo.dat`, overleeft
+    - Wachtrij: `fifo_max` 20..500 (standaard 500; met `hoofd` ~8 à 16 u rijden zonder bereik, met `alle` sneller vol: ~2 u bij een punt per 15 s,
+      langer op rechte wegen), in flash (`/mt_fifo.dat`, overleeft
       een herstart). Vol = het punt dat het minst vorm toevoegt (dichtst bij het segment tussen zijn buren) valt weg,
       niet het oudste. `fifo_dun` (standaard 10 m) dunt rechte stukken uit; punten rond stops > 10 min blijven.
     - Leegmaken alleen bij stabiele dekking: SNR ≥ `fifo_snr` (standaard −5 dB), twee keer dekking binnen 60 s, of
@@ -141,7 +172,12 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     live posities met het amberkleurige icoon en een antwoordpaneel. Op de kaarten (/offline, /tracker, site) een
     amberkleurig doelwit met legende *Op verzoek*. Meshbelasting: "alle" op een kanaal met N trackers = N antwoorden.
     Via Bluetooth (companionmodus) aanvaardt de tracker alleen `status`, `fifo` en `dump`: alleen lezen.
-- **server/**: FastAPI + meshcore-py (versie 1.3.2).
+- **server/**: FastAPI + meshcore-py (versie 1.4.0).
+  - 1.4.0: **prioritair** (blauwe lichten): vlag `p` in veld 16 van elk bericht. Een live bericht met `p` maakt de tracker
+    prioritair tot ontvangst + `prio_hold_s` (Systeem, standaard 300 s); een live bericht zonder `p` beëindigt het meteen.
+    L/Q-punten bewaren de vlag per punt (`positions.prio`) zonder de live-toestand te wijzigen. Trackers krijgen `prio` en
+    `prio_until`, sporen `prio` per punt; meldingsgebeurtenissen `prio_start`/`prio_end`; simulators kunnen prioritair
+    rijden (`POST /api/sims/{id}/prio`).
   - 1.3.2: toestand `V` (positie op verzoek, firmware 0.9.5), verwerkt zoals `P`: live, ook zonder fix toegelaten, eigen
     meldingsgebeurtenis. Verzoeken `T1R|<*|pk8>|<nonce>` van companions/telefoons op het trackingkanaal negeert de
     server stil (geen onbekend/ongeldig) en telt ze als `loc_request` in de statistieken.

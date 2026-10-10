@@ -837,6 +837,7 @@
       dist: get("distributions"),
       fifo: get("fifo"),
       events: get("events", { bucket }),
+      prio: get("events", { bucket, kind: "prio_start" }),   // voertuigtrackers die prioritair beginnen te rijden
       repeaters: get("repeaters"),
     };
     jobs.hourly = bucket === "hour" ? jobs.ts : span <= 35 * D ? get("timeseries", { bucket: "hour" }) : Promise.resolve(null);
@@ -850,6 +851,8 @@
     d.series = normSeries(d.ts);
     d.hourSeries = d.hourly ? normSeries(d.hourly) : null;
     d.events = d.events ? normSeries(d.events) : null;
+    // prio_start per periode; de waarde kan als prio_start of als count komen
+    d.prio = d.prio ? normSeries(d.prio).map((x) => ({ t: x.t, prio_start: +(x.prio_start ?? x.count ?? x.n ?? x.value ?? 0) })) : null;
     const T = (d.summary && d.summary.totals) || {};
     d.isEmpty = !!d.summary && !T.messages && !T.points;
     DATA = d;
@@ -888,6 +891,14 @@
     draw("c-points", "ts", !sr.length || !KINDS.some((k) => sumKey(sr, k.key)), (el) => timeChart(el, {
       title: "Locatiepunten in de tijd", desc: `Gestapelde vlakken met het aantal punten per ${d.bucket === "day" ? "dag" : "uur"}, opgesplitst in live, extra, SlowTrack en FIFO.`,
       data: sr, bucket: d.bucket, type: sr.length > 60 ? "area" : "bars", series: KINDS,
+    }, anim));
+    // Prioritaire ritten: alleen tonen als er zijn, of als er een voertuigtracker (RAK3401 + 1 W) bestaat
+    const prio = d.prio || [], prioTot = sumKey(prio, "prio_start");
+    const hasRak = TRACKERS.some((t) => t.board === "rak3401_1w");
+    $("c-prio").hidden = !(prioTot > 0 || hasRak);
+    if (!$("c-prio").hidden) draw("c-prio", "prio", !prioTot, (el) => timeChart(el, {
+      title: "Prioritaire ritten (gestart)", desc: `Staven met het aantal keer per ${d.bucket === "day" ? "dag" : "uur"} dat een voertuigtracker prioritair begon te rijden.`,
+      data: prio, bucket: d.bucket, type: "bars", series: [{ key: "prio_start", label: "rijdt prioritair", color: "var(--st-c8)" }], height: 160,
     }, anim));
     draw("c-messages", "ts", !sumKey(sr, "messages"), (el) => timeChart(el, {
       title: "Berichten in de tijd", desc: `Lijn met het aantal ontvangen berichten per ${d.bucket === "day" ? "dag" : "uur"}.`,

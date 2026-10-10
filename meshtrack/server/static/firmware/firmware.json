@@ -1,6 +1,100 @@
 {
   "releases": [
     {
+      "version": "0.9.8",
+      "date": "2026-10-10",
+      "notes": "Drie borden: Seeed T1000-E, RAK WisMesh Tag en nieuw RAK19007 + RAK3401 + RAK13302 1W (voertuigtracker; nog niet getest op het toestel). RAK3401: de GPS-module (via draadjes) wordt automatisch gezocht (pinnen en baud, ook opnieuw als hij 10 minuten zwijgt; 'gps zoek' of 'set gps_pinnen 15/16@9600'); zendvermogen begrensd op 18 dBm, met de versterker ongeveer 27 dBm (500 mW); terugmelding met de leds in plaats van de buzzer; P0.31 naar keuze als analoge knop of als prioriteitsingang (zwaailichten via een optocoupler, een schakelaar op het dashboard of een potentiaalvrij contact; de berichten dragen dan de vlag p; prio_houd 0 = volgt de ingang). Alle borden: zonder (werkende) bewegingssensor gaat de tracker na still_timeout zonder GPS-beweging toch in rust en kijkt hij elke rust_gps_check (standaard 5 min) kort met de GPS of hij verplaatst is. 'status' toont op één regel wat het bord kan (board, knop, buzzer, accel, gps, tx_max); instellingen die op een bord niet bestaan, worden geweigerd. Instellingen v8 (v7 wordt overgenomen).",
+      "meshcore": "v1.17.1",
+      "boards": {
+        "t1000e": {
+          "name": "Seeed T1000-E",
+          "zip": "meshtrack-t1000e-0.9.8.zip",
+          "zip_sha256": "9964afa2bdae3342f8305704310b4a6c735251aca52bd70baa2da86bf1d50507",
+          "uf2": "meshtrack-t1000e-0.9.8.uf2",
+          "uf2_sha256": "e3f2eee25be852eb0e335e4d8fe49a43c1165417c4fa48cffc5f90ff2a4004ee",
+          "app_size": 455024,
+          "app_start": "0x27000",
+          "sd_req": [
+            "0x0123"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "wismesh_tag": {
+          "name": "RAK WisMesh Tag",
+          "zip": "meshtrack-wismesh-tag-0.9.8.zip",
+          "zip_sha256": "c6808caee82f88deb31cdc3f9eaef4ee7e429d480846f37a2c6882a99db6177e",
+          "uf2": "meshtrack-wismesh-tag-0.9.8.uf2",
+          "uf2_sha256": "91a86aa04dd38ccfee6bcb70b30c3b0006672d49de3bb4a1854ce825fbd40478",
+          "app_size": 518100,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "rak3401_1w": {
+          "name": "RAK19007 + RAK3401 + RAK13302 (1 W)",
+          "zip": "meshtrack-rak3401-1w-0.9.8.zip",
+          "zip_sha256": "05b3872ffaa9b3b3cae10a8577441b0866dc13572f07b0b6767a660e187d4810",
+          "uf2": "meshtrack-rak3401-1w-0.9.8.uf2",
+          "uf2_sha256": "72ef7162f5f63cc705ad23d34b7a23ceb1d67122dcee93ac4c8c5cea9b2f8260",
+          "app_size": 537592,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        }
+      },
+      "zip": "meshtrack-t1000e-0.9.8.zip",
+      "zip_sha256": "9964afa2bdae3342f8305704310b4a6c735251aca52bd70baa2da86bf1d50507",
+      "uf2": "meshtrack-t1000e-0.9.8.uf2",
+      "app_size": 455024
+    },
+    {
+      "version": "0.9.7",
+      "date": "2026-10-10",
+      "notes": "Geen gaten meer in de route na een reeks gemiste FastTrack-berichten. Nieuwe instelling fifo_punten alle|hoofd (standaard alle): als punten van niet herhaalde berichten niet meer kunnen meeliften met volgende berichten, gaan nu ook de tussenpunten (elke sample) de wachtrij in, niet alleen de hoofdpunten. Op rechte wegen dunt fifo_dun ze uit, en is de wachtrij vol, dan valt het minst betekenisvolle punt weg. Punten die in een herhaald bericht zaten, gaan er nooit in. Met fifo_punten hoofd blijft het oude gedrag (alleen hoofdpunten). Nieuw: ook een build voor de RAK WisMesh Tag (nog niet getest op het toestel). 'status' toont nu het bord (board=) en de hardware (accel=, accel_type=, buzzer=, knop=).",
+      "meshcore": "v1.17.1",
+      "boards": {
+        "t1000e": {
+          "name": "Seeed T1000-E",
+          "zip": "meshtrack-t1000e-0.9.7.zip",
+          "zip_sha256": "ce37b4b984e856d021312a7d72987baa93b3bd07455fe300a4927be4e0326bd8",
+          "uf2": "meshtrack-t1000e-0.9.7.uf2",
+          "uf2_sha256": "4f2477f32b55d4e2abb8e98692269b54cabdffd427d53311a598ee9024826f6b",
+          "app_size": 450400,
+          "app_start": "0x27000",
+          "sd_req": [
+            "0x0123"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        },
+        "wismesh_tag": {
+          "name": "RAK WisMesh Tag",
+          "zip": "meshtrack-wismesh-tag-0.9.7.zip",
+          "zip_sha256": "d93326659004b9c44ccc0ca74ec316a785626e16502a1466033e3b28fdb5af04",
+          "uf2": "meshtrack-wismesh-tag-0.9.7.uf2",
+          "uf2_sha256": "05d4e38666ed2501c00598d4c7e6c8935d086d03b7e7a55992524db33f76c038",
+          "app_size": 513428,
+          "app_start": "0x26000",
+          "sd_req": [
+            "0x00B6"
+          ],
+          "device_type": "0x0052",
+          "uf2_family": "0xADA52840"
+        }
+      },
+      "zip": "meshtrack-t1000e-0.9.7.zip",
+      "zip_sha256": "ce37b4b984e856d021312a7d72987baa93b3bd07455fe300a4927be4e0326bd8",
+      "uf2": "meshtrack-t1000e-0.9.7.uf2",
+      "app_size": 450400
+    },
+    {
       "version": "0.9.6",
       "date": "2026-10-10",
       "notes": "Locatieverzoek binnen zonder GPS-ontvangst: de tracker bewaart nu zijn laatst gekende fix (tijd, plaats, hoogte, nauwkeurigheid) in het flashgeheugen, ook over een herstart of een nieuwe firmware. Lukt het niet om binnen fix_timeout_hb een verse fix te krijgen, dan antwoordt hij op een verzoek met die laatst gekende plek en haar echte tijd, in plaats van 'geen fix'. Alleen als er nog nooit een fix was, volgt een V zonder positie. Het bewaren gebeurt zuinig: bij het in rust gaan, voor een herstart of uitschakeling, en onderweg hooguit eens per 10 minuten als de tracker meer dan 20 m verplaatst is. 'status' toont laatste_fix (ouderdom), 'dump' toont een regel lastfix.",
@@ -181,5 +275,5 @@
       "meshcore": "v1.17.1"
     }
   ],
-  "latest": "0.9.6"
+  "latest": "0.9.8"
 }

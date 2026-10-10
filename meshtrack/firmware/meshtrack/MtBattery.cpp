@@ -1,4 +1,4 @@
-// Batterij: echte LiPo-ontlaadcurve voor de T1000-E (overgenomen uit
+// Batterij: echte LiPo-ontlaadcurve (T1000-E; ook voor de 1000 mAh-LiPo van de WisMesh Tag; overgenomen uit
 // MU-companion MuBattery.cpp, zie battery_fix_t1000e.md) en de "spoof" voor de
 // MeshCore-app, die lineair rekent: pct = (mv - 3000) / 12.
 #include "MtBattery.h"

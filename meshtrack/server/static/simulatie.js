@@ -26,7 +26,7 @@
   const ACK_DELAY = 20, ACK_MIN_GAP = 600;   // T1F: ≈ 20 s na de reeks, per tracker hoogstens 1 per 10 min
   const STOP_KEEP = 600;      // punten rond een stilstand van meer dan 10 min blijven
   const DEF = { sample: 10, min_interval: 30, max_interval: 120, min_dist: 25, min_speed: 0, slow_log: 0, slow_send: 1800,
-    fifo_max: 500, fifo_min: 5, fifo_gap: 30, fifo_per_uur: 20, fifo_pogingen: 3, fifo_dun: 10, fifo_snr: -5, fifo_wacht: 1800, still_timeout: 300, track_mode: "classic" };
+    fifo_max: 500, fifo_min: 5, fifo_gap: 30, fifo_per_uur: 20, fifo_pogingen: 3, fifo_dun: 10, fifo_snr: -5, fifo_wacht: 1800, still_timeout: 300, fifo_punten: "alle", track_mode: "classic" };
   const DURK = ["sample", "min_interval", "max_interval", "slow_log", "slow_send", "fifo_gap", "fifo_wacht", "still_timeout"];
   const NUMK = ["min_dist", "min_speed", "fifo_max", "fifo_min", "fifo_per_uur", "fifo_pogingen", "fifo_dun", "fifo_snr"];
   const dB = (n) => `${String(n).replace("-", "−")} dB`;   // met een echt minteken
@@ -63,6 +63,7 @@
       if (v != null) {
         if (DURK.includes(k)) out = typeof v === "number" ? v : parseDur(v);
         else if (k === "track_mode") out = v === "fifo" ? "fifo" : "classic";
+        else if (k === "fifo_punten") out = v === "hoofd" ? "hoofd" : "alle";
         else if (NUMK.includes(k)) { const n = parseFloat(v); out = Number.isFinite(n) ? n : /^uit$/i.test(v) ? 0 : null; }
       }
       if (out == null) { out = DEF[k]; from = "d"; }
@@ -70,6 +71,8 @@
       src[from]++;
     }
     cfg.fifoOnTracker = !!(kv && "track_mode" in kv);
+    // haak: toestel zonder bewegingssensor (bv. RAK WisMesh Tag): beweging alleen via de GPS (zie serial.js)
+    cfg.noAccel = !!(kv && window.MTHasMotionSensor && !window.MTHasMotionSensor(kv));
     cfg.naam = kv ? kv.naam || "" : null;
     cfg.nameBytes = kv ? nameBytes(kv.naam) : null;
     const pb = kv ? parseInt(kv.fifo_per_bericht, 10) : NaN;
@@ -119,7 +122,7 @@
       capNoted: false, ackDue: null, srvMsgs: [], lastAck: -1e9, acked: 0, lastParkReset: -1e9, parkResets: 0, thinned: 0, evicted: 0, toFifo: 0,
       log: [], fx: [], ver: 0, done: false, snr: null, stable: false,
       perQ: sc.perQ, lastListen: -1e9, listenUntil: -1, listenHeard: 0, listens: 0, waitSends: 0,
-      lastMotion: 0, lastOwnSend: -1e9, lastSuccess: -1e9, lastPartial: -1e9, partials: 0, partialCat: "", partialLogged: "", partialLogT: -1e9, rest: false, restListenAt: Infinity, restStep: 0, restSends: 0, nextSlow: cfg.slow_log };
+      lastMotion: 0, lastOwnSend: -1e9, lastSuccess: -1e9, lastPartial: -1e9, partials: 0, partialCat: "", partialLogged: "", partialLogT: -1e9, rest: false, restListenAt: Infinity, restStep: 0, restSends: 0, nextSlow: cfg.slow_log, samplesIn: 0 };
     const PER = { ft: PER_FT, slow: PER_L, fifo: S.perQ };
     const v = sc.speed / 3.6;
     // beweging: stil tussen st0 en st1 (fracties van de tijd); afgelegde weg per seconde
@@ -208,6 +211,9 @@
         if (S.mode === "fifo" && o.pf && !o.srv) {
           fifoInsert(o, t, `Gemist hoofdpunt van ${clock(o.t).slice(0, 5)} valt uit de FastTrack-buffer zonder ooit gehoord te zijn → naar de FIFO (${pl(qlen() + 1)})`);
           S.fx.push({ type: "tofifo" });
+        } else if (S.mode === "fifo" && sc.punten === "alle" && !o.srv) {
+          fifoInsert(o, t);                              // tussenliggend punt (elke 10 s): ook naar de FIFO, uitgedund op rechte stukken
+          S.samplesIn++;
         } else o.st = "gone";
       }
     }
@@ -517,8 +523,9 @@
       }
       c.server = c.live + c.late;
       c.pct = c.logged ? Math.round(100 * c.server / c.logged) : 0;
+      c.cover = c.logged ? Math.round(100 * (c.server + c.thin) / c.logged) : 0;   // op de server, of overbodig op een recht stuk
       c.sent = { ...S.sent }; c.ok = { ...S.ok }; c.air = S.air; c.mesh = (S.air + S.ackAir) * (1 + REPEATS);
-      c.evicted = S.evicted; c.acked = S.acked; c.parkResets = S.parkResets; c.toFifo = S.toFifo;
+      c.evicted = S.evicted; c.acked = S.acked; c.parkResets = S.parkResets; c.samplesIn = S.samplesIn; c.toFifo = S.toFifo;
       c.hour = S.countTimes.filter((x) => x > S.t - 3600).length;
       c.tries = S.flushTimes.filter((x) => x > S.t - 3600).length;
       c.queue = qlen(); c.listens = S.listens; c.waitSends = S.waitSends; c.restSends = S.restSends; c.partials = S.partials;
@@ -539,8 +546,10 @@
        niets, dan geldt het als gemist (rood kruisje).`],
     ["lift", "Eerst meeliften", "#sim-ftbox",
       `Een gemist bericht is niet meteen verloren. Zijn punten blijven in de FastTrack-buffer en reizen gratis mee met de volgende
-       berichten. Het hoofdpunt krijgt een oranje ring. Pas als het uit de buffer valt zonder ooit gehoord te zijn, gaat het naar de
-       wachtrij. Korte gaten vullen zich zo zonder één extra bericht.`],
+       berichten. Het hoofdpunt krijgt een oranje ring. Pas als een punt uit de buffer valt zonder ooit gehoord te zijn, gaat het naar de
+       wachtrij. Korte gaten vullen zich zo zonder één extra bericht. Met <em>Alle punten</em> (standaard) gaan ook de tussenliggende
+       punten van elke 10 s mee de wachtrij in, uitgedund op rechte stukken: het spoor door een dode zone komt dan in detail terug, in
+       ruil voor meer inhaalberichten. Met <em>Alleen hoofdpunten</em> gaat enkel het hoofdpunt van elk gemist bericht.`],
     ["fifo", "De FIFO-wachtrij", "#sim-fifobox",
       `Voor lange gaten is er de wachtrij (FIFO: wie eerst komt, gaat eerst weg). Ze bewaart punten met hun echte GPS-tijd, tot
        ${V("fifo_max")} stuks, ook na een herstart. In FIFO-modus logt ook SlowTrack erin, zolang de tracker beweegt.`],
@@ -624,6 +633,7 @@
       <div><label for="sim-miss">Kans op een gemiste herhaling ondanks dekking</label><div class="unit"><input id="sim-miss" type="number" min="0" max="100" value="10"><span>%</span></div></div>
       <div><label for="sim-st0">Stilstand begint op</label><div class="unit"><input id="sim-st0" type="number" min="0" max="100" value="0"><span>% van de tijd</span></div></div>
       <div><label for="sim-stl">Lengte van de stilstand</label><div class="unit"><input id="sim-stl" type="number" min="0" max="100" value="0"><span>% van de tijd</span></div></div>
+      <div><label for="sim-punten">Wat gaat in de wachtrij</label><select id="sim-punten"><option value="alle">Alle punten</option><option value="hoofd">Alleen hoofdpunten</option></select></div>
       <div id="sim-namebox"><label for="sim-nb">Naamlengte van de tracker</label><div class="unit"><input id="sim-nb" type="number" min="1" max="31" value="11"><span>bytes</span></div>
         <div class="help" id="sim-nbhelp"></div></div>
     </div>
@@ -681,7 +691,7 @@
     // van de tracker zelf als de naamlengte die van de tracker is, anders berekend zoals de firmware
     const perQ = cfg.perTracker && nb === cfg.nameBytes ? cfg.perTracker : perForName(nb);
     return { speed: num("sim-speed", 50, 1, 200), dur: num("sim-dur", 60, 5, 1440), dz0, dz1: Math.min(1, dz0 + dzl), miss: num("sim-miss", 10, 0, 100) / 100,
-      st0, st1: Math.min(1, st0 + stl), nb, perQ, over: scOver };
+      st0, st1: Math.min(1, st0 + stl), nb, perQ, over: scOver, punten: $("sim-punten").value === "hoofd" ? "hoofd" : "alle" };
   }
 
   function drawStrip() {
@@ -740,7 +750,8 @@
     $("sim-cfg").textContent = `Gebruikt: punt bewaren elke ${fmtDur(cfg.sample)} · FastTrack-bericht elke ${iv ? fmtDur(iv) : "– (rijdt te traag)"}`
       + ` (nooit vaker dan ${fmtDur(cfg.min_interval)}, minstens ${fmtDur(cfg.max_interval)}, ${nf(cfg.min_dist)} m) · SlowTrack ${cfg.slow_log ? `loggen elke ${fmtDur(cfg.slow_log)}${mode === "classic" ? `, versturen elke ${fmtDur(cfg.slow_send)}` : ""}` : "uit"}`
       + (mode === "fifo" ? ` · FIFO: ${cfg.fifo_min} tot ${cfg.fifo_max} punten, elke ${fmtDur(cfg.fifo_gap)}, hoogstens ${cfg.fifo_per_uur} doorgegeven en ${2 * cfg.fifo_per_uur} pogingen per uur,`
-        + ` ${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"} per punt, uitdunnen ${cfg.fifo_dun ? `${cfg.fifo_dun} m` : "uit"}, niet-vol bericht ${cfg.fifo_wacht ? `hooguit 1× per ${fmtDur(cfg.fifo_wacht)}` : "nooit"}, SNR ≥ ${dB(cfg.fifo_snr)}.` : ".");
+        + ` ${cfg.fifo_pogingen} ${cfg.fifo_pogingen === 1 ? "poging" : "pogingen"} per punt, wachtrij: ${sc.punten === "hoofd" ? "alleen hoofdpunten" : "alle punten"}, uitdunnen ${cfg.fifo_dun ? `${cfg.fifo_dun} m` : "uit"}, niet-vol bericht ${cfg.fifo_wacht ? `hooguit 1× per ${fmtDur(cfg.fifo_wacht)}` : "nooit"}, SNR ≥ ${dB(cfg.fifo_snr)}.` : ".");
+    if (cfg.noAccel) $("sim-cfg").textContent += " Dit toestel heeft geen bewegingssensor: de simulatie leest beweging dan alleen uit de GPS.";
     if (sc.over) $("sim-cfg").textContent += ` In dit scenario: SlowTrack elke ${fmtDur(sc.over.slow_log)}.`;
     $("sim-nbhelp").textContent = `≈ ${sc.perQ} punten per Q-bericht` + (cfg.perTracker && sc.nb === cfg.nameBytes ? " (zoals de tracker meldt)" : "")
       + (cfg.naam != null ? `. De naam "${cfg.naam}" telt ${cfg.nameBytes} bytes.` : ".");
@@ -900,6 +911,7 @@
       <dt>Punten gelogd</dt><dd>${c.logged}</dd>
       <dt>Op de server</dt><dd><strong>${c.server}</strong> (${c.pct} %) <span class="muted">· live ${c.live}, ingehaald ${c.late}</span></dd>
       <dt>Uitgedund</dt><dd>${c.thin} <span class="muted">(overbodig op een recht stuk)</span></dd>
+      <dt>Spoor gedekt</dt><dd>≈ ${c.cover} % <span class="muted">(op de server of overbodig)</span></dd>
       <dt>Verloren</dt><dd>${c.lost}${c.wait ? ` <span class="muted">· nog op de tracker: ${c.wait}</span>` : ""}</dd>`
       + (mode === "fifo" ? `<dt id="sim-c-ack">Serverbevestiging</dt><dd>T1F ${c.sent.ack}× · ${c.acked} punten bevestigd${c.partials ? ` · ${c.partials} niet-volle ${c.partials === 1 ? "bericht" : "berichten"}` : ""}${c.dup ? ` <span class="muted">· ${c.dup} dubbel ontvangen (server filtert)</span>` : ""}</dd>` : "");
     if (force || now - lastTrack > (S.points.length > 800 ? 600 : 150)) { lastTrack = now; drawTrack(); }
@@ -961,7 +973,7 @@
     startLoop();
   });
   $("sim-reset").addEventListener("click", reset);
-  ["sim-speed", "sim-dur", "sim-dz0", "sim-dzl", "sim-miss", "sim-st0", "sim-stl", "sim-nb"].forEach((id) => $(id).addEventListener("change", () => {
+  ["sim-speed", "sim-dur", "sim-dz0", "sim-dzl", "sim-miss", "sim-st0", "sim-stl", "sim-nb", "sim-punten"].forEach((id) => $(id).addEventListener("change", () => {
     pane.querySelectorAll("[data-preset]").forEach((x) => x.classList.remove("on"));
     reset();
   }));
@@ -996,6 +1008,7 @@
     const changed = !cfg || JSON.stringify(fresh) !== JSON.stringify(cfg);
     cfg = fresh;
     if (changed && cfg.nameBytes) $("sim-nb").value = cfg.nameBytes;
+    if (changed) $("sim-punten").value = cfg.fifo_punten;
     $("sim-src").textContent = cfg.source;
     const kvNow = window.MTDev && MTDev.kv && MTDev.kv.pubkey;
     if (changed) setMode(cfg.fifoOnTracker ? cfg.track_mode : kvNow ? "classic" : (mode || "fifo"));

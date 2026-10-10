@@ -10,6 +10,49 @@
 #include "MtMotion.h"
 #include "MtBattery.h"
 #include "MtGps.h"
+#include "MtBoard.h"
+#include "MtGpsScan.h"
+#include "MtPrio.h"
+
+// Instellingen die op dit bord niet bestaan (0.9.7): niet tonen en niet aanvaarden.
+#if defined(RAK_3401)
+  #define MT_KEY_ACCEL 0          // geen bewegingssensor
+  #define MT_KEY_BUZZER 0         // geen buzzer (msg_beep)
+  #define MT_KEY_PIN31 1          // P0.31: uit, analoge knop of prioriteitsingang
+  #define MT_KEY_GPSPINS 1        // GPS via draadjes
+#else
+  #define MT_KEY_ACCEL 1
+  #define MT_KEY_BUZZER 1
+  #define MT_KEY_PIN31 0
+  #define MT_KEY_GPSPINS 0
+#endif
+static bool key_exists(const char* k) {
+  if (!MT_KEY_ACCEL && !strcmp(k, "accel_sens")) return false;
+  if (!MT_KEY_BUZZER && !strcmp(k, "msg_beep")) return false;
+  if (!strcmp(k, "knop")) return false;           // vervangen door pin31 (nooit uitgebracht)
+  if (!MT_KEY_PIN31 && (!strcmp(k, "pin31") || !strncmp(k, "prio_", 5))) return false;
+  if (!MT_KEY_GPSPINS && !strcmp(k, "gps_pinnen")) return false;
+  return true;
+}
+
+// Mogelijkheden van het bord, op één regel (webpagina). knop: digitaal (vaste knop met interrupt),
+// analoog (RAK3401, knop aan), uit (RAK3401, knop uit), geen. gps: wat voor GPS (en of hij gezocht wordt).
+static const char* cap_knop() {
+#if defined(RAK_3401)
+  return mt_cfg.pin31 == 1 ? "analoog" : "geen";
+#else
+  return MT_HAS_BUTTON ? "digitaal" : "geen";
+#endif
+}
+static const char* cap_gps() {
+#if defined(RAK_3401)
+  return "nmea_uart";
+#elif defined(RAK_WISMESH_TAG)
+  return "at6558r";
+#else
+  return "ag3335";
+#endif
+}
 #include "MyMesh.h"
 #include "UITask.h"
 extern UITask ui_task;
@@ -114,6 +157,7 @@ static bool parse_key(const char* s, uint8_t* o) {
 // Eén parameter zetten. Geeft NULL bij succes, anders een foutmelding.
 static bool parse_hex(const char* s, uint8_t* o, int n);   // verderop
 static const char* set_param(const char* k, const char* v) {
+  if (!key_exists(k)) return "bestaat niet op dit toestel";
   MtCfg c = mt_cfg;
   bool ok = false;
   uint32_t d;
@@ -136,6 +180,42 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "heard_beep"))     ok = parse_onoff(v, &c.heard_beep);
   else if (!strcmp(k, "verzoek"))        { uint8_t o = 1; ok = parse_onoff(v, &o); c.verzoek_uit = o ? 0 : 1; }
   else if (!strcmp(k, "verzoek_beep"))   ok = parse_onoff(v, &c.verzoek_beep);
+  else if (!strcmp(k, "pin31")) {
+    ok = true;
+    if (!strcmp(v, "uit") || !strcmp(v, "off")) c.pin31 = 0;
+    else if (!strcmp(v, "knop")) c.pin31 = 1;
+    else if (!strcmp(v, "prio")) c.pin31 = 2;
+    else ok = false;
+  }
+  else if (!strcmp(k, "prio_niveau")) {
+    ok = true;
+    if (!strcmp(v, "laag") || !strcmp(v, "low")) c.prio_niveau = 0;
+    else if (!strcmp(v, "hoog") || !strcmp(v, "high")) c.prio_niveau = 1;
+    else ok = false;
+  }
+  else if (!strcmp(k, "prio_houd")) {         // 1m..60m, of 0 = volgt de ingang
+    if (!strcmp(v, "0")) { c.prio_houd = 255; ok = true; }
+    else { ok = parse_dur(v, &d) && d >= 60 && d <= 3600; if (ok) c.prio_houd = (uint8_t)((d + 59) / 60); }
+  }
+  else if (!strcmp(k, "prio_interval")) {    // "30s"; 0 of "uit" = geen wijziging
+    if (!strcmp(v, "uit") || !strcmp(v, "0")) { c.prio_interval = 255; ok = true; }
+    else { ok = parse_dur(v, &d) && d >= 5 && d <= 254; if (ok) c.prio_interval = (uint8_t)d; }
+  }
+  else if (!strcmp(k, "rust_gps_check")) {   // "5m", "30m", "uit"/"0"; bewaard in minuten (1..254), 255 = uit
+    if (!strcmp(v, "uit") || !strcmp(v, "off") || !strcmp(v, "0")) { c.rust_gps_check = 255; ok = true; }
+    else { ok = parse_dur(v, &d) && d >= 60 && d <= 254UL * 60; if (ok) c.rust_gps_check = (uint8_t)((d + 59) / 60); }
+  }
+  else if (!strcmp(k, "gps_pinnen")) {       // "15/16@9600", of "zoek"
+    if (!strcmp(v, "zoek")) return mt_gps_scan_start() ? NULL : "bestaat niet op dit toestel";
+    char* e1; char* e2; char* e3;
+    unsigned long rx = strtoul(v, &e1, 10);
+    if (e1 == v || *e1 != '/') return "gebruik: set gps_pinnen <rx>/<tx>@<baud>, bv. 15/16@9600";
+    unsigned long tx = strtoul(e1 + 1, &e2, 10);
+    if (e2 == e1 + 1 || *e2 != '@') return "gebruik: set gps_pinnen <rx>/<tx>@<baud>, bv. 15/16@9600";
+    unsigned long bd = strtoul(e2 + 1, &e3, 10);
+    if (e3 == e2 + 1 || *e3) return "gebruik: set gps_pinnen <rx>/<tx>@<baud>, bv. 15/16@9600";
+    return mt_gps_set_pins((uint8_t)rx, (uint8_t)tx, bd) ? NULL : "ongeldige pinnen of baud (4800, 9600, 38400, 57600, 115200)";
+  }
   else if (!strcmp(k, "rx_beweging"))    { uint8_t o = 1; ok = parse_onoff(v, &o); c.rx_beweging_uit = o ? 0 : 1; }
   else if (!strcmp(k, "track_mode")) {
     ok = true;
@@ -152,6 +232,12 @@ static const char* set_param(const char* k, const char* v) {
   else if (!strcmp(k, "fifo_gap"))       { ok = parse_dur(v, &d) && d >= 15 && d <= 300; if (ok) c.fifo_gap_s = d; }
   else if (!strcmp(k, "fifo_per_uur"))   { uint16_t r = 0; ok = parse_u16(v, 60, &r) && r >= 1; if (ok) c.fifo_per_uur = (uint8_t)r; }
   else if (!strcmp(k, "fifo_pogingen"))  { uint16_t r = 0; ok = parse_u16(v, 10, &r) && r >= 1; if (ok) c.fifo_pogingen = (uint8_t)r; }
+  else if (!strcmp(k, "fifo_punten")) {
+    ok = true;
+    if (!strcmp(v, "alle") || !strcmp(v, "all")) c.fifo_punten_hoofd = 0;
+    else if (!strcmp(v, "hoofd") || !strcmp(v, "main")) c.fifo_punten_hoofd = 1;
+    else ok = false;
+  }
   else if (!strcmp(k, "fifo_dun")) {         // "10" of "10m"
     char* end;
     long r = strtol(v, &end, 10);
@@ -369,6 +455,12 @@ static const char* set_mesh(const char* k, char* v, bool* handled) {
     p->freq = f; p->bw = bw; p->sf = sf; p->cr = cr;
   } else if (!strcmp(k, "tx")) {
     int tx = atoi(v);
+    if (MT_TX_GAIN_DB && tx > MAX_LORA_TX_POWER) {
+      static char msg[160];                    // versterker: wettelijke grens (EU 869,4-869,65 MHz: 500 mW)
+      snprintf(msg, sizeof(msg), "hooguit %d dBm: met de versterker (tot +%d dB) is dat ≈ %d dBm, de wettelijke grens (500 mW)",
+               (int)MAX_LORA_TX_POWER, (int)MT_TX_GAIN_DB, (int)MAX_LORA_TX_POWER + MT_TX_GAIN_DB);
+      return msg;
+    }
     if (tx < -9 || tx > MAX_LORA_TX_POWER) return "ongeldige waarde";
     p->tx_power_dbm = tx;
   } else if (!strcmp(k, "path_bytes")) {     // 2 of 3 bytes per hop; 1 is niet toegelaten
@@ -457,13 +549,40 @@ static void cmd_status() {
   uint16_t mv = board.getBattMilliVolts();
   MtNmeaProvider& g = mt_gps();
   const MtSendStats& st = mt_sender_stats();
-  outl("fw=%s meshcore=%s", MT_FW_VERSION, FIRMWARE_VERSION);
+  outl("fw=%s board=%s meshcore=%s", MT_FW_VERSION, MT_BOARD_ID, FIRMWARE_VERSION);
+  // mogelijkheden van het bord (0.9.7), op één regel: de webpagina verbergt wat hier niet bestaat
+  {
+    char gp[40] = "";
+    if (MT_KEY_GPSPINS) { char ps[24]; mt_gps_pins_str(ps, sizeof(ps)); snprintf(gp, sizeof(gp), " gps_pinnen=%s", ps); }
+    outl("board=%s knop=%s buzzer=%s accel=%s accel_type=%s gps=%s%s tx_max=%d tx_versterking=%d", MT_BOARD_ID, cap_knop(),
+         MT_HAS_BUZZER ? "ja" : "geen", mt_motion_available() ? "ja" : "geen", mt_motion_type(), cap_gps(), gp,
+         (int)MAX_LORA_TX_POWER, (int)MT_TX_GAIN_DB);
+  }
+#if MT_KEY_PIN31
+  {
+    char pr[32], pi[12];
+    MtPrioState ps = mt_prio_state();
+    if (ps == MT_PRIO_ACTIVE) { uint32_t l = mt_tracker_prio_left(); snprintf(pr, sizeof(pr), "aan (nog %lum%02lus)", (unsigned long)(l / 60), (unsigned long)(l % 60)); }
+    else snprintf(pr, sizeof(pr), "%s", ps == MT_PRIO_FAULT ? "fout" : "uit");
+    if (mt_prio_interval_s()) snprintf(pi, sizeof(pi), "%lus", (unsigned long)mt_prio_interval_s()); else snprintf(pi, sizeof(pi), "uit");
+    char ph[8];                                 // prio_houd=0 = volgt de ingang
+    if (mt_prio_houd_min()) snprintf(ph, sizeof(ph), "%lum", (unsigned long)mt_prio_houd_min()); else snprintf(ph, sizeof(ph), "0");
+    outl("pin31=%s prio_niveau=%s prio_houd=%s prio_interval=%s prio=%s", mt_cfg.pin31 == 1 ? "knop" : mt_cfg.pin31 == 2 ? "prio" : "uit",
+         mt_cfg.prio_niveau ? "hoog" : "laag", ph, pi, pr);
+  }
+#endif
   outl("naam=%s", p->node_name);
   out("pubkey="); for (int i = 0; i < PUB_KEY_SIZE; i++) out("%02X", the_mesh.self_id.pub_key[i]); outl("");
   outl("modus: actief=%s gekozen=%s usb=%s ble=%s", mt_mode_name(mt_effective_mode()), mt_mode_name(mt_cfg.mode),
        mt_usb() ? "ja" : "nee", ui_task.isBluetoothEnabled() ? "aan" : "uit");
-  outl("batt=%umV batt_pct=%d radio=%.3fMHz SF%u BW%.1f CR%u TX%ddBm", mv, mt_battery_pct(mv),
-       (double)p->freq, (unsigned)p->sf, (double)p->bw, (unsigned)p->cr, (int)p->tx_power_dbm);
+  {
+    char txs[48];
+    if (MT_TX_GAIN_DB) snprintf(txs, sizeof(txs), "TX%ddBm (≈ %d dBm na versterker)", (int)p->tx_power_dbm,
+                                (int)p->tx_power_dbm + MT_TX_GAIN_DB);
+    else snprintf(txs, sizeof(txs), "TX%ddBm", (int)p->tx_power_dbm);
+    outl("batt=%umV batt_pct=%d radio=%.3fMHz SF%u BW%.1f CR%u %s", mv, mt_battery_pct(mv),
+         (double)p->freq, (unsigned)p->sf, (double)p->bw, (unsigned)p->cr, txs);
+  }
   outl("freq=%.3f bw=%.1f sf=%u cr=%u tx=%d path_bytes=%u scope=%s", (double)p->freq, (double)p->bw,
        (unsigned)p->sf, (unsigned)p->cr, (int)p->tx_power_dbm, (unsigned)p->path_hash_mode + 1,
        p->default_scope_name[0] ? p->default_scope_name : "-");
@@ -473,11 +592,15 @@ static void cmd_status() {
        mt_cfg.min_speed_kmh, mt_cfg.min_dist_m, mt_cfg.turn_min_deg, mt_cfg.turn_min_speed_kmh);
   outl("min_interval=%s max_interval=%s still_timeout=%s heartbeat=%s", a, b, c, d);
   fmt_dur(a, sizeof(a), mt_cfg.fix_timeout_s); fmt_dur(b, sizeof(b), mt_cfg.fix_timeout_hb_s);
-  outl("fix_timeout=%s fix_timeout_hb=%s track_in_companion=%s accel_sens=%s led=%s msg_beep=%s",
-       a, b, mt_cfg.track_in_companion ? "aan" : "uit",
-       mt_cfg.accel_sens == 0 ? "laag" : mt_cfg.accel_sens == 2 ? "hoog" : "midden",
-       mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "companion",
-       mt_cfg.msg_beep == 1 ? "alles" : mt_cfg.msg_beep == 2 ? "uit" : "prive");
+  {
+    char as[24] = "", mb[20] = "", rg[16];
+    if (MT_KEY_ACCEL) snprintf(as, sizeof(as), " accel_sens=%s", mt_cfg.accel_sens == 0 ? "laag" : mt_cfg.accel_sens == 2 ? "hoog" : "midden");
+    if (MT_KEY_BUZZER) snprintf(mb, sizeof(mb), " msg_beep=%s", mt_cfg.msg_beep == 1 ? "alles" : mt_cfg.msg_beep == 2 ? "uit" : "prive");
+    if (mt_rust_gps_check_min()) fmt_dur(rg, sizeof(rg), 60UL * mt_rust_gps_check_min()); else snprintf(rg, sizeof(rg), "uit");
+    outl("fix_timeout=%s fix_timeout_hb=%s track_in_companion=%s%s led=%s%s rust_gps_check=%s",
+         a, b, mt_cfg.track_in_companion ? "aan" : "uit", as,
+         mt_cfg.led_mode == 1 ? "altijd" : mt_cfg.led_mode == 2 ? "uit" : "companion", mb, rg);
+  }
   {
     char lf[16] = "-";                          // leeftijd van de laatst gekende fix, bv. 2u15m
     uint32_t t = mt_tracker_lastfix_ts(), now = the_mesh.getRTCClock()->getCurrentTime();
@@ -521,7 +644,8 @@ static void cmd_status() {
          (unsigned long)mt_tracker_fifo_confirmed());
     char fw[12] = "uit";
     if (mt_fifo_wacht_min()) snprintf(fw, sizeof(fw), "%lum", (unsigned long)mt_fifo_wacht_min());
-    outl("fifo_wacht=%s fifo_per_bericht=%lu", fw, (unsigned long)fifo_per_msg());
+    outl("fifo_wacht=%s fifo_per_bericht=%lu fifo_punten=%s", fw, (unsigned long)fifo_per_msg(),
+         mt_cfg.fifo_punten_hoofd ? "hoofd" : "alle");
   }
   {
     ChannelDetails ch;
@@ -571,11 +695,19 @@ static void cmd_help() {
   outl("  set <param> <waarde>        tijden: 30s, 5m, 2h; 0 = uit");
   outl("    min_speed min_dist turn_min turn_min_speed min_interval max_interval");
   outl("    still_timeout heartbeat fix_timeout fix_timeout_hb");
+#if MT_KEY_ACCEL
   outl("    track_in_companion on|off  accel_sens laag|midden|hoog");
+#else
+  outl("    track_in_companion on|off");
+#endif
   outl("    sample <tijd>   in beweging elke x een punt bewaren, mee in het volgende bericht (0 = uit)");
   outl("    chan <nr>  authkey <32 hex>|-   (trackingkanaal en authsleutel; afzender = de naam)");
   outl("    led companion|altijd|uit (statusled; companion = uit in trackermodus)");
+#if MT_KEY_BUZZER
   outl("    msg_beep prive|alles|uit (biep bij berichten als companion zonder app; prive = alleen privéberichten)");
+#else
+  outl("    (geen buzzer: terugmelding met de leds; groen = gelukt, blauw lang = mislukt)");
+#endif
   outl("    slow_log <tijd>    SlowTrack: elke x een punt loggen zolang hij beweegt (0 = uit; minstens 30s)");
   outl("    slow_send <tijd>   SlowTrack: de gelogde punten elke x versturen, in één bericht (minstens 1m)");
   outl("      Tip: kies slow_log ongeveer 1/8 van slow_send (bv. slow_send 30m -> slow_log 4m). Eén bericht");
@@ -592,6 +724,37 @@ static void cmd_help() {
   outl("      antwoordt hij met de laatst gekende plek en haar echte tijd (ook na een herstart bewaard).");
   outl("    verzoek_beep aan|uit  kort deuntje telkens de tracker een locatieverzoek aanvaardt (standaard uit;");
   outl("      niet bij genegeerde verzoeken of verzoeken voor een andere tracker; klinkt ook met de buzzer gedempt)");
+  outl("    rust_gps_check <tijd>|uit  zonder (werkende) bewegingssensor: na still_timeout zonder GPS-beweging");
+  outl("      in rust (GPS uit); elke x kort de GPS aan (hooguit fix_timeout_hb): meer dan 50 m verplaatst of");
+  outl("      sneller dan 3 km/u = wakker (standaard 5m; uit = de GPS blijft aan en de tracker slaapt nooit)");
+#if MT_KEY_PIN31
+  outl("    pin31 uit|knop|prio  wat P0.31 doet (standaard uit: de pin wordt nooit gelezen).");
+  outl("      knop: analoge knop; klikken, dubbelklik, vasthouden voor SOS en modus wisselen zoals op de T1000-E.");
+  outl("        Zweeft de pin (geen knop aangesloten), dan zet de tracker hem zelf weer uit.");
+  outl("      prio: prioriteitsingang, bv. de blauwe zwaailichten via een optocoupler. Zolang hij actief is (plus");
+  outl("        prio_houd) draagt elk bericht de vlag p; bij het aangaan meteen een positie.");
+  outl("      LET OP: 12/24 V nooit rechtstreeks op de pin! Altijd via een optocoupler, of een spanningsdeler");
+  outl("        met zenerdiode; hooguit 3,3 V op P0.31. Drie manieren, telkens op P0.31:");
+  outl("        1) de voeding van de zwaailichtbalk via een optocoupler (prio_houd bv. 5m: knipperen houdt aan);");
+  outl("        2) een schakelaar op het dashboard die 12/24 V naar de optocoupler schakelt (prio_houd 0);");
+  outl("        3) een potentiaalvrij contact rechtstreeks tussen P0.31 en GND, met prio_niveau laag en de");
+  outl("           interne pull-up (prio_houd 0). Alleen zonder voertuigspanning op het contact; bij lange");
+  outl("           draden een RC-filter of toch een optocoupler.");
+  outl("    prio_niveau laag|hoog  actief laag (optocoupler of contact naar massa, standaard) of actief hoog");
+  outl("    prio_houd <tijd>|0     na de laatste actieve puls nog zo lang prioritair (1m..60m, standaard 5m);");
+  outl("                           0 = volgt de ingang (200 ms ontdenderd): uit = meteen een bericht zonder p");
+  outl("    prio_interval <tijd>|0 prioritair: FastTrack minstens elke x (standaard 30s; 0 = gewone instellingen)");
+#endif
+#if MT_KEY_GPSPINS
+  outl("    gps_pinnen <rx>/<tx>@<baud>  pinnen en baud van de GPS-module met de hand (bv. 15/16@9600)");
+  outl("  gps zoek                    GPS-pinnen en -baud opnieuw zoeken (UART-pinnen 15/16 en 8/6, beide");
+  outl("                              richtingen, 9600/38400/115200; ook vanzelf bij de eerste start en als de");
+  outl("                              GPS 10 min zweeg)");
+#endif
+#if MT_TX_GAIN_DB
+  outl("    tx: met de 1W-versterker (RAK13302, tot +%d dB) hooguit %d dBm instellen (≈ %d dBm, 500 mW)",
+       (int)MT_TX_GAIN_DB, (int)MAX_LORA_TX_POWER, (int)MAX_LORA_TX_POWER + MT_TX_GAIN_DB);
+#endif
   outl("    rx_beweging aan|uit  in trackermodus de radio laten luisteren zolang de tracker beweegt, zodat");
   outl("      hij verzoeken hoort (standaard aan; kost wat batterij). In rust slaapt de radio zoals gewoonlijk.");
   outl("    track_mode classic|fifo  classic = FastTrack + SlowTrack zoals voorheen; fifo = wachtrij voor posities");
@@ -615,6 +778,9 @@ static void cmd_help() {
   outl("      opgegeven: het verdwijnt pas als een repeater zijn bericht herhaalt, als de server dat bericht");
   outl("      bevestigt (T1F per volgnummer) of als de wachtrij overloopt. In rust of als companion, met");
   outl("      sterke dekking, krijgen geparkeerde punten (hooguit eens per 30 min) een nieuwe kans.");
+  outl("    fifo_punten alle|hoofd  welke punten van gemiste FastTrack-berichten de wachtrij in gaan als ze niet");
+  outl("      meer kunnen meeliften (standaard alle): alle = ook de tussenpunten (elke sample), zodat de hele");
+  outl("      route wordt ingehaald; op rechte wegen dunt fifo_dun ze uit. hoofd = alleen de hoofdpunten.");
   outl("    fifo_dun <0..100>       punt op een rechte weg binnen zoveel m van de lijn = overbodig, weg");
   outl("      (standaard 10, 0 = uit); een punt bij een stop (tijdsprong > 10 min) blijft altijd");
   outl("    fifo_snr <-20..10>      een nieuwe leegmaakronde pas bij een pakket met SNR >= dit (dB, standaard -5),");
@@ -696,6 +862,7 @@ static const Item FIFOI[] = {
   {"Tussen twee leegmaakberichten minstens", "fifo_gap", 1},
   {"Herhaalde leegmaakberichten per uur (1-60)", "fifo_per_uur", 0},
   {"Pogingen voor een punt geparkeerd wordt", "fifo_pogingen", 0},
+  {"Punten van gemiste berichten (alle/hoofd)", "fifo_punten", 2},
   {"Rechte lijn uitdunnen (m, 0 = uit)", "fifo_dun", 0},
   {"Nieuwe ronde vanaf SNR (dB, -20..10)", "fifo_snr", 0},
   {"Wachttijd voor een niet-vol bericht", "fifo_wacht", 1},
@@ -703,8 +870,22 @@ static const Item FIFOI[] = {
 static const Item REST[] = {
   {"Slapen na stilstand van", "still_timeout", 1},
   {"Heartbeat in rust (0 = uit)", "heartbeat", 1},
+#if MT_KEY_ACCEL
   {"Bewegingsgevoeligheid (laag/midden/hoog)", "accel_sens", 2},
+#endif
+#if MT_KEY_BUZZER
   {"Biep bij berichten zonder app (prive/alles/uit)", "msg_beep", 2},
+#endif
+  {"Zonder sensor: in rust GPS-controle elke", "rust_gps_check", 1},
+#if MT_KEY_PIN31
+  {"P0.31: uit, knop of prio (zwaailicht)", "pin31", 2},
+  {"Prio-ingang actief (laag/hoog)", "prio_niveau", 2},
+  {"Prioritair na de laatste puls (0 = volgt)", "prio_houd", 1},
+  {"Prioritair: FastTrack minstens elke (0 = gewoon)", "prio_interval", 1},
+#endif
+#if MT_KEY_GPSPINS
+  {"GPS-pinnen (rx/tx@baud of zoek)", "gps_pinnen", 2},
+#endif
 };
 static const Item GPSI[] = {
   {"GPS-fix zoeken max.", "fix_timeout", 1},
@@ -739,6 +920,15 @@ static void value_of(const char* param, char* o, size_t n) {
   else if (!strcmp(param, "fifo_per_uur")) snprintf(o, n, "%u", (unsigned)mt_cfg.fifo_per_uur);
   else if (!strcmp(param, "fifo_pogingen")) snprintf(o, n, "%u", (unsigned)mt_cfg.fifo_pogingen);
   else if (!strcmp(param, "fifo_dun")) snprintf(o, n, mt_cfg.fifo_dun ? "%u m" : "uit", (unsigned)mt_cfg.fifo_dun);
+  else if (!strcmp(param, "rust_gps_check")) {
+    if (mt_rust_gps_check_min()) fmt_dur_nl(o, n, 60UL * mt_rust_gps_check_min()); else snprintf(o, n, "uit");
+  }
+  else if (!strcmp(param, "pin31")) snprintf(o, n, "%s", mt_cfg.pin31 == 1 ? "knop" : mt_cfg.pin31 == 2 ? "prio" : "uit");
+  else if (!strcmp(param, "prio_niveau")) snprintf(o, n, "%s", mt_cfg.prio_niveau ? "hoog" : "laag");
+  else if (!strcmp(param, "prio_houd")) { if (mt_prio_houd_min()) fmt_dur_nl(o, n, 60UL * mt_prio_houd_min()); else snprintf(o, n, "volgt ingang"); }
+  else if (!strcmp(param, "prio_interval")) { if (mt_prio_interval_s()) fmt_dur_nl(o, n, mt_prio_interval_s()); else snprintf(o, n, "uit"); }
+  else if (!strcmp(param, "gps_pinnen")) mt_gps_pins_str(o, n);
+  else if (!strcmp(param, "fifo_punten")) snprintf(o, n, "%s", mt_cfg.fifo_punten_hoofd ? "hoofd" : "alle");
   else if (!strcmp(param, "fifo_snr")) snprintf(o, n, "%d dB", (int)mt_cfg.fifo_snr);
   else if (!strcmp(param, "fifo_wacht")) {
     if (mt_fifo_wacht_min()) fmt_dur_nl(o, n, mt_fifo_wacht_min() * 60); else snprintf(o, n, "uit");
@@ -760,7 +950,7 @@ static void header(const char* title) {
   const MtSendStats& st = mt_sender_stats();
   outl("");
   outl(LINE);
-  outl("   MeshTrack T1000-E  fw %s       %s", MT_FW_VERSION, title);
+  outl("   MeshTrack %s  fw %s       %s", MT_BOARD_NAME, MT_FW_VERSION, title);
   outl(LINE);
   outl("   %s  |  modus %s%s  |  batterij %d%% (%u mV)", the_mesh.getNodePrefs()->node_name,
        mt_mode_name(mt_effective_mode()), mt_usb() ? " (USB)" : "", mt_battery_pct(mv), mv);
@@ -1009,6 +1199,11 @@ static void command(char* s) {
   else if (!strcmp(s, "chan")) cmd_chan(args);
   else if (!strcmp(s, "reboot")) { outl("herstart..."); mt_tracker_save_lastfix(); delay(100); NVIC_SystemReset(); }
   else if (!strcmp(s, "fs")) cmd_fs(args);
+  else if (!strcmp(s, "gps")) {
+    if (strcmp(args, "zoek")) { outl("gebruik: gps zoek"); }
+    else if (!mt_gps_scan_start()) outl("gps zoek: bestaat niet op dit toestel (de GPS zit vast op het bord)");
+    else outl("gps: zoeken gestart (pinnen en baud); zie het log en status gps_pinnen=");
+  }
   else if (!strcmp(s, "fifo")) cmd_fifo(args);
   else if (!strcmp(s, "dump")) mt_tracker_dump(dump_out);
   else if (!strcmp(s, "menu")) open_menu();

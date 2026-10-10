@@ -62,7 +62,7 @@
       const chan = ch ? `<span class="pill">${MT.esc(ch.name)}</span>` : '<span class="muted small">geen kanaal</span>';
       return `<tr data-id="${t.id}" tabindex="0" aria-label="${MT.esc(t.alias)} bewerken">
         <td><span class="tico" style="background:${MT.esc(t.color)}">${t.icon ? MTIcons.svg(t.icon) : ""}</span></td>
-        <td><div class="nm">${MT.esc(t.alias)} ${pills}</div><div class="sub">${MT.esc(sub)}</div>
+        <td><div class="nm">${MT.esc(t.alias)} ${pills}</div><div class="sub">${MT.esc(sub)}</div>${t.kind === "sim" ? prioCtl(t, sim) : ""}
           <div class="mob">${MT.esc([MT.ago(t.last_rx), t.last_bat != null ? t.last_bat + " %" : null].filter(Boolean).join(" · "))}</div></td>
         <td class="col-opt" data-ago="${t.last_rx || 0}">${MT.esc(MT.ago(t.last_rx))}</td>
         <td class="col-opt">${t.last_bat != null ? t.last_bat + " %" : "–"}</td>
@@ -72,8 +72,59 @@
     $("trackers").querySelectorAll("tr").forEach((tr) => {
       const go = () => edit(Number(tr.dataset.id));
       tr.addEventListener("click", go);
-      tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+      tr.addEventListener("keydown", (e) => { if (e.target === tr && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(); } });
     });
+    bindPrio($("trackers"));
+  }
+
+  // ---- prioritair (blauwe lichten) voor een simulator --------------------------------------
+  // De stand komt uit /api/sims (prio); de resterende tijd uit de tracker (prio_until, unix; 0 = geen einde bekend).
+  const prioMin = (until) => Math.max(1, Math.ceil((until - Date.now() / 1000) / 60));
+  function prioBadge(t) {
+    const until = Number(t && t.prio_until) || 0;
+    return until > Date.now() / 1000 ? `Prioritair, nog ${prioMin(until)} min` : "Prioritair";
+  }
+  function prioCtl(t, sim) {
+    if (!sim || !MT.can("sims.manage")) return "";
+    const on = !!sim.prio;
+    return `<div class="prioctl" data-prio="${t.id}">
+      <button type="button" class="priobtn" aria-pressed="${on}" title="${on ? "Klik om prioritair uit te zetten" : "Klik om prioritair te laten rijden"}">${on ? "Prioritair aan" : "Prioritair uit"}</button>
+      ${on ? `<span class="pill prio" data-prio-until="${Number(t.prio_until) || 0}">${MT.esc(prioBadge(t))}</span>` : ""}
+      <span class="prio-err" role="alert"></span></div>`;
+  }
+  function bindPrio(root) {
+    root.querySelectorAll("[data-prio]").forEach((box) => {
+      const b = box.querySelector(".priobtn");
+      box.addEventListener("click", (e) => e.stopPropagation());          // niet het formulier openen
+      box.addEventListener("keydown", (e) => e.stopPropagation());
+      b.addEventListener("click", () => togglePrio(Number(box.dataset.prio), box));
+    });
+  }
+  async function togglePrio(tid, box) {
+    const sim = sims.find((s) => s.tracker_id === tid);
+    if (!sim) return;
+    const b = box.querySelector(".priobtn"), err = box.querySelector(".prio-err");
+    const on = !sim.prio;
+    b.disabled = true;
+    err.textContent = "";
+    try {
+      const r = await MT.api(`/api/sims/${tid}/prio`, { method: "POST", body: { on } });
+      Object.assign(sim, r && typeof r === "object" && "prio" in r ? r : { prio: on });
+      // prio_until van de tracker komt pas met zijn volgende bericht; daarna ververst de lijst vanzelf
+      renderList();
+      renderFormPrio();
+    } catch (e) {
+      b.disabled = false;
+      err.textContent = `Niet gelukt: ${e.message}`;
+    }
+  }
+  // dezelfde knop in het tabblad Simulator van het zijpaneel
+  function renderFormPrio() {
+    const el = $("f-prio"), id = Number($("f-id").value);
+    const t = trackers.find((x) => x.id === id), sim = sims.find((s) => s.tracker_id === id);
+    el.innerHTML = t && t.kind === "sim" ? prioCtl(t, sim) : "";
+    el.hidden = !el.innerHTML;
+    bindPrio(el);
   }
   $("t-search").addEventListener("input", renderList);
   $("t-chips").querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => {
@@ -82,7 +133,10 @@
     renderList();
   }));
   // "laatst gehoord" bijwerken zonder de lijst opnieuw op te bouwen
-  setInterval(() => document.querySelectorAll("[data-ago]").forEach((td) => { td.textContent = MT.ago(Number(td.dataset.ago) || 0); }), 15000);
+  setInterval(() => {
+    document.querySelectorAll("[data-ago]").forEach((td) => { td.textContent = MT.ago(Number(td.dataset.ago) || 0); });
+    document.querySelectorAll("[data-prio-until]").forEach((p) => { p.textContent = prioBadge({ prio_until: Number(p.dataset.prioUntil) }); });
+  }, 15000);
 
   // ---- genegeerde berichten ---------------------------------------------------------
   function renderUnknown() {
@@ -183,6 +237,8 @@
     $("contacts").hidden = true;
     $("ft-data").hidden = true;
     $("f-histrow").hidden = true;
+    $("f-prio").hidden = true;
+    $("f-prio").innerHTML = "";
     $("f-genkey").checked = false;
     $("f-pubrow").hidden = false;
     $("f-genrow").hidden = !MT.can("keys.manage");
@@ -247,6 +303,7 @@
         $("f-batt").value = s.batt_speed;
         $("f-running").checked = !!s.running;
       }
+      renderFormPrio();
     } else {
       $("f-pubkey").value = t.pubkey;
       $("f-pubkey").disabled = true;           // sleutel = identiteit

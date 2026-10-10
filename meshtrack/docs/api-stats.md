@@ -165,6 +165,7 @@ Alle endpoints: `GET`, JSON, login vereist (sessiecookie). Recht: `map.view`; de
 | `invalid` | ongeldig kanaalbericht, foute of ontbrekende handtekening, onleesbaar T1-bericht | tracker als gekend + kanaal |
 | `unknown` | MeshTrack-bericht van een onbekende tracker | kanaal |
 | `old_fw_dm` | T1-bericht via DM (oude firmware) | tracker als gekend |
+| `prio_start` | (1.4) een tracker begint prioritair te rijden (live bericht met vlag `p`) | tracker + zijn kanaal |
 | `loc_request` | (1.3.2) verzoek om een positie `T1R\|<*\|pk8>\|<nonce>` op een van onze kanalen | doeltracker als gekend (`*` = NULL) + kanaal |
 
 ## 6. `GET /api/stats/repeaters?source=auto|openhop|companion`
