@@ -25,8 +25,11 @@ T1000-E (firmware/)  --kanaalbericht (flood)-->  openHop-companion  --TCP-->  se
     status `blepin=eigen|standaard`, menu *Modus en knop* → 11 *Bluetooth-koppelcode*; in Toestellen het veld
     *Bluetooth-code* (oudere firmware: via Tracker live → Instellingen). De code zit nooit in een back-up. RAK3401 met
     OLED en standaardcode: MeshCore kiest per sessie een willekeurige code; `blepin toon` geeft de actieve.
-  - `/tracker` tabblad *Instellingen* (Bluetooth, companionmodus; alleen standaard MeshCore-companioncommando's, dus ook
-    voor firmware ouder dan 0.9.1): Bluetooth-code, naam, herstarten, kanalenlijst met vingerafdruk (nooit de sleutel;
+  - `/tracker` tabblad *Instellingen* (Bluetooth, companionmodus): leest bij het openen alle huidige instellingen
+    (MeshTrack-status + MeshCore: naam, radio, zendvermogen, Bluetooth-code ingesteld of niet, kanalen) en toont ze in
+    groepen zoals Toestellen (accordeon), met *Vernieuwen*; de rest alleen-lezen met "Wijzigen via USB (Toestellen)";
+    firmware < 0.9.1: alleen de MeshCore-waarden. Wijzigen (alleen standaard MeshCore-companioncommando's, dus ook voor
+    firmware ouder dan 0.9.1): Bluetooth-code, naam, herstarten, kanalenlijst met vingerafdruk (nooit de sleutel;
     trackingkanaal gemarkeerd), trackingkanaal vervangen via QR (`meshcore://channel/add?name=…&secret=…`, camera met
     zaklamp of foto; iPhone zonder QR: overtikken) of met de hand (naam + 32 hex), met bevestiging en terugleescontrole;
     het kanaal moet in /kanalen bestaan, de authsleutel blijft. Oudere firmware (< 0.9.1): kanaalnummer zelf kiezen (via

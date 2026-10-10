@@ -853,8 +853,15 @@ fifo: fifo_per_uur telt alleen berichten die een repeater herhaalde (of die de s
 </ul>
 
 <h3>Tracker live: instellingen via Bluetooth</h3>
-<p>Het tabblad <strong>Instellingen</strong> in Tracker live werkt via Bluetooth, met de tracker in companionmodus. Het gebruikt alleen
-  gewone MeshCore-companioncommando's, dus het werkt met elke MeshTrack-firmware, ook ouder dan 0.9.1.</p>
+<p>Het tabblad <strong>Instellingen</strong> in Tracker live werkt via Bluetooth, met de tracker in companionmodus. Bij het openen leest het
+  eerst <strong>alle huidige instellingen</strong> en toont ze; met <em>Vernieuwen</em> lees je ze opnieuw. Je ziet de MeshTrack-status (alle
+  instellingen) en de MeshCore-gegevens: naam, radio (frequentie, bandbreedte, SF, CR), zendvermogen, of er een eigen Bluetooth-code is,
+  en de kanalen. Ze staan in uitklapbare groepen, zoals in <em>Toestellen</em>: Algemeen, Radio en regio, Kanalen, FastTrack, SlowTrack,
+  Trackmodus/FIFO, Stilstand/GPS/led, Knop en biepjes, Locatieverzoeken en Voertuig.</p>
+<p>De <strong>naam</strong>, de <strong>Bluetooth-code</strong> en het <strong>trackingkanaal</strong> kun je hier wijzigen: ze staan
+  ingevuld, met een knop <em>Wijzigen</em>. Daarvoor gebruikt de app alleen gewone MeshCore-companioncommando's, dus dat werkt met elke
+  MeshTrack-firmware. De rest is alleen te lezen (met een slotje en <em>Wijzigen via USB (Toestellen)</em>). Bij firmware ouder dan 0.9.1
+  toont het tabblad alleen de MeshCore-gegevens.</p>
 <ul>
   <li><strong>Bluetooth-code</strong>: 6 cijfers, of de standaardcode 123456. De nieuwe code werkt na een herstart; vergeet de tracker
     daarna in de Bluetooth-instellingen van je telefoon en koppel opnieuw.</li>
