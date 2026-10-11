@@ -1268,6 +1268,14 @@
         te verwarren met de waarschuwingstoon na 6,5 seconden vasthouden.</li>
       <li><strong>Een dubbelklik geeft maar één biep</strong>: de tracker zag één klik. Druk twee keer kort en duidelijk,
         met hooguit 0,8 seconde ertussen.</li>
+      <li><strong>Installeren lukt niet op Android</strong>: <em>MeshTrack installeren</em> verschijnt even, maar er komt
+        geen app. Chrome bouwt voor elke geïnstalleerde web-app op de achtergrond een kleine app (WebAPK), en een
+        antivirus-app of Play Protect kan die ongemerkt tegenhouden. Dat gebeurt dan voor <em>alle</em> web-apps, niet alleen
+        voor MeshTrack: test met een andere web-app (bv. <code>squoosh.app</code>). Oplossing: sta het toe in de antivirus-app
+        (of zet Chrome op de witte lijst), kijk Play Protect na, en werk Chrome, Android System WebView en Google
+        Play-services bij. Helpt dat niet, wis dan alleen de <strong>cache</strong> van Play-services en Chrome, <strong>niet
+        de gegevens</strong> (anders verdwijnen je offline-kaarten). Op Android 12 en nieuwer komt de app vaak alleen in de
+        app-lade terecht, niet op het startscherm.</li>
       <li><strong>De kaart blijft leeg</strong>: herlaad de pagina met Ctrl+F5.</li>
       <li><strong>RAK3401: geen GPS</strong>: toont <code>status</code> geen <code>gps_pinnen=</code> of nooit een fix? Typ
         <code>gps zoek</code>, of leg de pinnen vast met <code>set gps_pinnen 15/16@9600</code>, en controleer de bedrading.</li>
