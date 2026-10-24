@@ -10,6 +10,43 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.29.0 - 2026-10-24
+
+- **Het batterijpercentage komt uit een LiPo-curve, niet uit een rechte lijn.**
+  Op 23 oktober liep de dakrepeater leeg, beschadigde bij het uitvallen zijn
+  bestandssysteem, en toonde vlak voor het einde **4 %** op de site. Dat was geen
+  marge van vier procent maar een lege cel: lineair tussen 3,00 V (0 %) en
+  4,20 V (100 %) betekent 3,05 V = 4 %, terwijl een 1S-LiPo onder 3,3 V niets
+  meer te geven heeft. Dezelfde lijn loog ook de andere kant op — 3,70 V heette
+  58 %, terwijl daar ongeveer een tiende in zit.
+- **Stuksgewijs lineair over een tabel** (`metrics.BATT_CURVE`): de
+  rusttoestandscurve van een 1S-LiPo-pouchcel bij lage ontlaadstroom, wat voor
+  een repeater van enkele milliampères het juiste geval is. Een LiPo heeft een
+  plateau (3,7–3,9 V) waarin bijna alle lading zit bij nauwelijks verschil in
+  spanning, en twee steile staarten waarin de spanning hard beweegt zonder dat er
+  lading omgaat. Eén rechte lijn kan die twee gebieden niet allebei bedienen.
+- **Wat er verandert op de kaart**: 3,00 V → 0 % (was 0), 3,30 V → 1 % (was 25),
+  3,50 V → 3 % (was 41), 3,70 V → 13 % (was 58), 3,85 V → 55 % (was 70),
+  4,00 V → 78 % (was 83). De grafiek maakt dus eenmalig een sprong omlaag op de
+  dag van deze versie, zonder dat er iets aan een accu veranderde. Dat is bewust:
+  de oude reeks was geen meetreeks maar een verkeerde omrekening, en hem laten
+  staan omwille van de continuïteit zou de leugen alleen verlengen.
+- **Afkappen blijft, met een nieuwe reden.** Afronden maakt van 3,04 V een
+  procent die er niet is. Van de twee fouten die een afgeleid getal kan maken, is
+  te laag de goedkope.
+- **Eén waarheid.** `ingest()` herberekent het percentage voortaan ook als de node
+  er zelf een meestuurt. Dat getal komt van `meshmanager_batt_percent()` in de
+  firmware en is geen meting maar dezelfde afleiding uit dezelfde spanning, nog
+  met de oude rechte lijn; het laten winnen zou dezelfde cel 4 % laten heten via
+  MQTT en 0 % via de poller. Een bron die een percentage écht meet, stuurt het
+  zonder `bat` mee en blijft onaangeroerd. Bij een onbruikbare meting (< 2 V) gaat
+  een meegestuurd percentage er nu uit in plaats van mee naar binnen.
+- **De drempels van de accubewaking staan in volt en bewegen dus niet mee**, maar
+  wat ze betekenen verschuift: 3,50 V heet nu 3 % in plaats van 41 %, en 3,30 V
+  nog 1 % in plaats van 25 %. De waarschuwing komt daarmee erg laat — overweeg
+  3,70 V (13 %) en 3,55 V (4 %) — en die zijn bij deze versie ook zo gezet; het blijft een
+  instelling en geen code, dus ze staat los in de database.
+
 ## 2.28.0 - 2026-09-22
 
 - **Bezoekcijfers naar een eigen Matomo** (`app/analytics.py`, `MM_MATOMO_URL`). De

@@ -548,6 +548,13 @@ Four more hooks feed it from the mesh side (`MeshManagerNet.h:148-180`):
 management and the published statistics all quote the *same* battery figure —
 two curves disagreeing by a few percent is a bug report waiting to happen.
 
+That sharing stops at the node. This curve is linear between 3.00 V and 4.20 V,
+and a LiPo is not: on 23 October 2026 a node that was empty showed 4 %, ran dry
+and damaged its filesystem. Since site 2.23.0 the server derives the percentage
+itself from the voltage (`metrics.BATT_CURVE`) and overrides the figure a node
+sends along. On the node the linear curve is still in place — it also drives the
+publish-interval table, which is a separate decision.
+
 ### 4.1 Version history
 
 The authoritative changelog is the block comment at the top of

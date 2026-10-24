@@ -3733,16 +3733,39 @@ def ingest(repeater_id: int, ts: str, metrics: dict, neighbors: list | None,
     the table with identical rows while its chart still needs points to keep
     running. force=True (manual status update) always writes.
     """
-    # Het batterijpercentage erbij als de bron alleen de spanning stuurde. Hier
-    # en niet in een van de twee ingest-wegen: dan geldt het voor allebei, en voor
-    # elke poller die er later bij komt. Nooit OVERSCHRIJVEN -- een bron die zelf
-    # een percentage meldt (de dakrepeater, een sensornode met een echte
-    # brandstofmeter) weet meer van die cel dan onze curve.
-    if "bat" in metrics and "battery_percentage" not in metrics:
+    # Het batterijpercentage uit de spanning. Hier en niet in een van de twee
+    # ingest-wegen: dan geldt het voor allebei, en voor elke poller die er later
+    # bij komt.
+    #
+    # WEL OVERSCHRIJVEN, en dat is sinds 2.23.0 omgedraaid. De oude regel was:
+    # een bron die zelf een percentage meldt weet meer van die cel dan onze
+    # curve. Dat bleek niet waar. Het enige percentage dat deze vloot meldt komt
+    # van `meshmanager_batt_percent()` in de firmware, en dat is -- zoals het
+    # commentaar daar zelf zegt -- geen meting maar DEZELFDE afleiding uit
+    # DEZELFDE spanning, alleen nog met de oude rechte lijn. Die laten winnen zou
+    # betekenen dat dezelfde cel op de kaart 4 % heet via MQTT en 0 % via de
+    # poller, afhankelijk van welk pad de meting nam. Eén waarheid, en waar een
+    # spanning bij zit is dat de curve hier.
+    #
+    # Een bron die een percentage ECHT meet (een brandstofmeter met
+    # coulomb-telling) meldt dat zonder `bat` en blijft dus onaangeroerd.
+    if "bat" in metrics:
         pct = metrics_mod.battery_percentage(metrics.get("bat"))
         if pct is not None:
+            gemeld = metrics.get("battery_percentage")
             metrics = dict(metrics)
             metrics["battery_percentage"] = pct
+            try:
+                if gemeld is not None and abs(float(gemeld) - pct) >= 1.0:
+                    log.debug("node %s meldde %s %% bij %s V; curve zegt %d %%",
+                              repeater_id, gemeld, metrics.get("bat"), pct)
+            except (TypeError, ValueError):
+                pass
+        elif "battery_percentage" in metrics:
+            # Geen bruikbare cel (< 2 V, of geen getal): dan is een percentage
+            # bij diezelfde meting ook niets waard. Niets tonen is eerlijker dan
+            # een getal dat nergens op slaat -- zie de kop van metrics.py.
+            metrics = {k: v for k, v in metrics.items() if k != "battery_percentage"}
 
     # Read the setting before taking the lock; get_setting takes it itself
     heartbeat = timedelta(minutes=setting_int("heartbeat_min", config.HEARTBEAT_MIN))

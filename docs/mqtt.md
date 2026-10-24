@@ -190,7 +190,7 @@ the topic; the third describes somebody else and says so in
 | `repeater.fw_meshmanager` | string | — | | ✓ | | `MESHMANAGER_VERSION`, empty when the module is not compiled in |
 | `online` | bool | — | ✓ | ✓ | ✓ | always `true`; a liveness marker |
 | `bat` | float | V | ✓ | ✓ | ✓ | cell voltage |
-| `battery_percentage` | int | % | | ✓ | ✓ | shared curve, see `meshmanager_batt_percent()` |
+| `battery_percentage` | int | % | | ✓ | ✓ | derived from `bat`; the node still sends its own linear figure, but since site 2.23.0 the server **recomputes** it from the voltage with a piecewise LiPo curve (`metrics.BATT_CURVE`) |
 | `ch1_voltage` | float | V | | ✓ | | the same cell voltage under a telemetry channel name |
 | `uptime` | float | **days** | ✓ | ✓ | ✓ | 5 decimals |
 | `noise_floor` | int | dBm | ✓ | ✓ | ✓ | omitted unless negative |

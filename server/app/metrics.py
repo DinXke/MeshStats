@@ -7,6 +7,7 @@ Kanaalmetingen (``ch<N>_...``) zijn de uitzondering op dat laatste: die krijgen
 hun eigen sectie, want er kunnen er willekeurig veel zijn en ze horen bij
 elkaar. Zie :func:`channel_metric` verderop.
 """
+import math
 import re
 
 # section, label, unit, sort  (volgorde zoals het HA-dashboard van JessaZH.VIR)
@@ -430,34 +431,104 @@ def parse_layout(raw: str | None) -> list[dict]:
 # battery_percentage is AFGELEID en was dat altijd al. Een MeshCore-repeater
 # meldt in zijn RepeaterStats alleen `batt_milli_volts`; het percentage dat tot
 # nu toe in de databank stond kwam van de dakrepeater, die het uit diezelfde
-# spanning rekende (`meshmanager_batt_percent()` in MeshManagerNet.cpp, de
-# grenzen hieronder zijn letterlijk de zijne). Nu MeshUptime de statussen
-# ophaalt komt er alleen nog `bat` binnen, en stond de batterij op elke
-# kaart leeg terwijl de spanning gewoon bekend was.
+# spanning rekende (`meshmanager_batt_percent()` in MeshManagerNet.cpp). Nu
+# MeshUptime de statussen ophaalt komt er alleen nog `bat` binnen en rekent de
+# server het zelf uit.
 #
-# DEZELFDE grenzen, en niet een eigen betere curve: de reeks loopt door over de
-# overname heen. Een nieuwe curve zou een sprong in de grafiek tekenen op de dag
-# dat er niets aan de batterij veranderde -- en dat is precies het soort leugen
-# waar de rest van deze module tegen gebouwd is.
+# WAAROM DIT GEEN RECHTE LIJN MEER IS. Tot 2.22.0 stond hier een lineaire
+# afbeelding van 3,00 V (0 %) naar 4,20 V (100 %), overgenomen van de node. Die
+# formule heeft op 23 oktober 2026 schade aangericht: de dakrepeater liep leeg,
+# beschadigde bij het uitvallen zijn bestandssysteem, en toonde vlak voor het
+# einde **4 %** op de site. Dat was geen marge van vier procent -- dat was een
+# lege cel. Lineair betekende namelijk: 3,05 V = 4 %, terwijl een 1S-LiPo onder
+# de 3,3 V al niets meer te geven heeft. Omgekeerd gaf dezelfde rechte lijn
+# 3,70 V = 58 %, terwijl er daar in werkelijkheid nog een procent of tien in zit.
+# De lijn loog dus aan beide kanten, en het hardst daar waar het telt.
 #
-# Onder de 2 V meet een bord geen bruikbare cel meer (geen batterij, een
-# kapotte deler): dan liever niets dan 0 %.
-BATT_EMPTY_MV = 3000
-BATT_FULL_MV = 4200
+# Een LiPo is niet lineair en kan dat ook niet zijn. Hij heeft een PLATEAU
+# (ruwweg 3,7-3,9 V) waarin het grootste deel van de lading zit bij nauwelijks
+# verschil in spanning, en twee STEILE STAARTEN (boven 4,0 V en onder 3,6 V)
+# waarin de spanning hard beweegt terwijl er bijna geen lading omgaat. In
+# procenten-per-millivolt uitgedrukt is dat precies andersom: op het plateau
+# ~0,2 %/mV, in de onderste staart ~0,01 %/mV. Eén rechte lijn kan die twee
+# gebieden niet allebei bedienen.
+#
+# DE TABEL hieronder is de rusttoestandscurve van een 1S-LiPo-pouchcel: spanning
+# in mV -> resterende lading in %. Herkomst: de gangbare 1S-LiPo
+# spanning/laadtoestand-tabel zoals die bij lage ontlaadstroom (<= 0,05C) wordt
+# gemeten, afgerond op hele procenten en op de knikpunten bemonsterd. Lage stroom
+# is hier het juiste geval en geen aanname: een MeshCore-repeater trekt enkele
+# milliampères, dus de klemspanning die de node meet ligt dicht bij de
+# rustspanning, en de ingebouwde spanningsval die een tabel voor hoge stroom
+# nodig heeft, bestaat hier niet.
+#
+# WAT DE TABEL BEWUST NIET DOET: hij corrigeert niet voor oppervlaktelading. Een
+# zonnenode die net geladen heeft staat kortstondig te hoog en leest dus te
+# optimistisch; dat is een zaak van middelen over tijd, niet van de curve, en het
+# is de kant waar een fout mag liggen -- te laat juichen is minder erg dan te
+# laat alarmeren.
+#
+# Onder de 2 V meet een bord geen bruikbare cel meer (geen batterij, een kapotte
+# deler): dan liever niets dan 0 %.
+#
+# NB: deze curve is sinds 2.23.0 niet meer gelijk aan `meshmanager_batt_percent()`
+# in de firmware, die nog lineair is. Daarom rekent `db.ingest()` het percentage
+# voortaan opnieuw uit zodra er een spanning bij zit; zie de toelichting daar.
+BATT_CURVE = (
+    # mV      %      waarom dit punt
+    (3000,    0),  # harde ondergrens: hieronder is de cel leeg en schaadt
+                   #   verder ontladen hem; de BMS/node hoort hier te stoppen
+    (3300,    1),  # de knie van de onderste staart -- van hier naar 3,0 V zit
+                   #   nog ~1 % lading, maar wel 300 mV spanning
+    (3400,    2),
+    (3500,    3),  # de huidige waarschuwingsdrempel van battwatch
+    (3600,    5),
+    (3650,    7),
+    (3700,   13),  # "nominaal" 3,7 V is bijna leeg, niet half vol
+    (3750,   25),  # begin van het plateau: vanaf hier gaat het snel
+    (3800,   40),
+    (3850,   55),
+    (3900,   65),
+    (4000,   78),
+    (4100,   90),
+    (4200,  100),  # vol; laadspanning, niet te verwarren met 4,35 V HV-cellen
+)
+
+# Dezelfde namen als vroeger, nu afgeleid van de tabel: één waarheid, en geen
+# grens die stil uit de pas gaat lopen met de curve waar hij bij hoort.
+BATT_EMPTY_MV = BATT_CURVE[0][0]
+BATT_FULL_MV = BATT_CURVE[-1][0]
+# Onder deze spanning is er geen cel om iets over te zeggen. battwatch.py
+# gebruikt dezelfde ondergrens (BATT_MIN_USABLE_V), want het is dezelfde vraag.
+BATT_MIN_USABLE_MV = 2000
 
 
 def battery_percentage(volts) -> int | None:
-    """Spanning (V) -> percentage, of None als er geen bruikbare meting is."""
+    """Spanning (V) -> percentage 0..100, of None als er geen bruikbare meting is.
+
+    Stuksgewijs lineair over :data:`BATT_CURVE`. De handtekening en het
+    waardebereik zijn ongewijzigd, zodat geen enkele aanroeper hoeft mee te
+    veranderen -- alleen de getallen ertussen kloppen nu.
+    """
     try:
         mv = float(volts) * 1000.0
     except (TypeError, ValueError):
         return None
-    if mv < 2000:
+    if not math.isfinite(mv):
+        # NaN glipt anders door elke vergelijking heen en komt er als een getal
+        # uit; een meting die geen meting is hoort None te zijn.
+        return None
+    if mv < BATT_MIN_USABLE_MV:
         return None
     if mv <= BATT_EMPTY_MV:
         return 0
     if mv >= BATT_FULL_MV:
         return 100
-    # Afkappen, niet afronden: zo geeft dezelfde spanning hier hetzelfde getal
-    # als op de node, en blijft de reeks over de overname heen aaneengesloten.
-    return int((mv - BATT_EMPTY_MV) * 100 // (BATT_FULL_MV - BATT_EMPTY_MV))
+    for (mv0, p0), (mv1, p1) in zip(BATT_CURVE, BATT_CURVE[1:]):
+        if mv <= mv1:
+            pct = p0 + (mv - mv0) * (p1 - p0) / (mv1 - mv0)
+            # Afkappen en niet afronden, nu om een andere reden dan vroeger:
+            # afronden maakt van 3,04 V een procent die er niet is. Van de twee
+            # fouten die een afgeleid getal kan maken is te laag de goedkope.
+            return int(pct)
+    return 100  # onbereikbaar: mv < BATT_FULL_MV is hierboven al afgevangen

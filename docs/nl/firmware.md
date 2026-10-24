@@ -571,6 +571,13 @@ en de gepubliceerde statistieken alle drie *hetzelfde* batterijcijfer citeren â€
 twee curves die enkele procenten van elkaar verschillen, zijn een bugmelding in
 wording.
 
+Dat delen houdt op bij de node. Deze curve is lineair tussen 3,00 V en 4,20 V,
+en een LiPo is dat niet: op 23 oktober 2026 toonde een lege node 4 %, liep leeg
+en beschadigde zijn bestandssysteem. Sinds site 2.23.0 leidt de server het
+percentage zelf af uit de spanning (`metrics.BATT_CURVE`) en overschrijft hij het
+getal dat een node meestuurt. Op de node blijft de rechte lijn staan â€” ze voedt
+ook de tabel met publicatie-intervallen, en dat is een aparte afweging.
+
 ### 4.1 Versiegeschiedenis
 
 De gezaghebbende changelog is het blokcommentaar bovenaan `MeshManagerNet.cpp`

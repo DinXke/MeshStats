@@ -196,7 +196,7 @@ node in het topic; de derde beschrijft iemand anders en zegt dat in
 | `repeater.fw_meshmanager` | string | — | | ✓ | | `MESHMANAGER_VERSION`, leeg wanneer de module niet meegecompileerd is |
 | `online` | bool | — | ✓ | ✓ | ✓ | altijd `true`; een levensteken |
 | `bat` | float | V | ✓ | ✓ | ✓ | celspanning |
-| `battery_percentage` | int | % | | ✓ | ✓ | gedeelde curve, zie `meshmanager_batt_percent()` |
+| `battery_percentage` | int | % | | ✓ | ✓ | afgeleid uit `bat`; de node stuurt nog zijn eigen lineaire getal mee, maar sinds site 2.23.0 **herberekent** de server het uit de spanning met een stuksgewijze LiPo-curve (`metrics.BATT_CURVE`) |
 | `ch1_voltage` | float | V | | ✓ | | dezelfde celspanning onder een telemetriekanaalnaam |
 | `uptime` | float | **dagen** | ✓ | ✓ | ✓ | 5 decimalen |
 | `noise_floor` | int | dBm | ✓ | ✓ | ✓ | weggelaten tenzij negatief |
