@@ -10,6 +10,18 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.30.1 - 2026-10-24
+
+- **De uitrol zette zijn eigen bouwstempel niet.** `scripts/deploy.sh` riep
+  `docker build` aan zonder `--build-arg`, terwijl de Dockerfile wel degelijk
+  `MM_BUILD_SHA` en `MM_BUILD_DATE` als ARG kent en `version.py` ze uit de
+  omgeving leest. Gevolg: elke release die via dat script uitging, zette
+  "dev" in de voettekst. Dus niet een enkele vergeten uitrol, maar alle
+  uitrollen sinds het script bestaat — en juist bij een getagde release is
+  "dev" het verkeerde antwoord op de vraag welke build er draait.
+  De datum is de commitdatum van de tag en niet "vandaag", zodat twee keer
+  dezelfde tag uitrollen twee keer hetzelfde stempel geeft.
+
 ## 2.30.0 - 2026-10-24
 
 - **Een sensornode heeft eindelijk een accu.** De MeshUptime-node op het bureau

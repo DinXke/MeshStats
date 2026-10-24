@@ -130,7 +130,19 @@ IMG_TAG="$(printf '%s' "$REF" | tr '/~:^ ' '-----')-$TARGET_SHA"
 # draaiende container houdt zijn eigen image via de id vast, los van welke tag
 # waarheen wijst. Faalt dit, dan is er niets gewisseld (exit 2).
 log "bouwen: $IMAGE:$IMG_TAG (context ./$BUILD_CONTEXT_REL)"
-if ! docker build -t "$IMAGE:$IMG_TAG" "$REPO_DIR/$BUILD_CONTEXT_REL" >>"$LOGFILE" 2>&1; then
+
+# Het bouwstempel moet hier mee naar binnen. De Dockerfile heeft er ARG's voor
+# (MM_BUILD_SHA / MM_BUILD_DATE) en version.py leest ze uit de omgeving, maar
+# wie ze niet meegeeft krijgt een lege waarde en dan zet de voettekst "dev".
+# Dat is precies verkeerd om: een uitrol via dit script is per definitie een
+# getagde release, en die hoort zichzelf niet een ontwikkelversie te noemen.
+# De datum is de commitdatum van de tag en niet "vandaag": twee keer dezelfde
+# tag uitrollen hoort twee keer hetzelfde stempel te geven.
+BUILD_DATE="$(git show -s --format=%cs "$REF^{commit}" 2>/dev/null)"
+if ! docker build \
+        --build-arg "MM_BUILD_SHA=$TARGET_SHA" \
+        --build-arg "MM_BUILD_DATE=$BUILD_DATE" \
+        -t "$IMAGE:$IMG_TAG" "$REPO_DIR/$BUILD_CONTEXT_REL" >>"$LOGFILE" 2>&1; then
     fail 2 "de build mislukte; de oude container draait ongestoord door (zie $LOGFILE)"
 fi
 log "build klaar"
