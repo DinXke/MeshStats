@@ -73,12 +73,18 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 import time
 import urllib.error
 import urllib.parse
 
-from . import clocksync, config, db, firmware, nodeconfig
+# ``metrics`` heet hier ``metrics_mod``, net als in db.py en om dezelfde reden:
+# "metrics" is in dit bestand de naam van een kaart met metingen, en die twee
+# dingen hetzelfde noemen is hoe een import stil overschreven raakt.
+from . import clocksync, config, db, firmware
+from . import metrics as metrics_mod
+from . import nodeconfig
 
 log = logging.getLogger("meshmanager.sensornode")
 
@@ -624,15 +630,38 @@ def metrics_from_status(data: dict) -> dict:
     en een kanaal dat komt en gaat is voor een dashboard erger dan een kanaal dat
     even 0 staat.
 
-    Naast de kanalen komen er drie dingen mee die geen kanaal zijn:
+    Naast de kanalen komen er vier dingen mee die geen kanaal zijn:
     ``online`` (de bekende levensteken-vlag), ``uptime`` in DAGEN zoals de rest
-    van dit project (``/status.json`` meldt seconden) en ``wifi_rssi``. Die
-    laatste heeft geen tegenhanger over LoRa en staat er toch, omdat hij de
+    van dit project (``/status.json`` meldt seconden), ``wifi_rssi`` en ``bat``.
+
+    ``wifi_rssi`` heeft geen tegenhanger over LoRa en staat er toch, omdat hij de
     gezondheid meet van precies het pad waar dit hele bestand op leunt: een
     signaal dat wegzakt is de vroegste aanwijzing dat deze beheerweg gaat
     verdwijnen. Bewust NIET ``last_rssi``: dat is de LoRa-radio, en twee
     verschillende grootheden onder één naam is de fout die deze functie juist
     vermijdt.
+
+    ``bat`` komt uit het veld ``volts`` bovenin ``/status.json`` en is sinds
+    2.30.0 de reden dat een sensornode eindelijk een batterijtegel heeft. Waarom
+    dat niet het kanaal is: de accuspanning staat óók op een vast kanaal (hier
+    ``ch1_voltage``), maar WELK kanaal dat is, is een constante in de firmware
+    van de node -- precies wat de lus hieronder weigert te hardcoderen. ``volts``
+    staat los van de kanaalnummering en betekent in elke versie hetzelfde. Onze
+    eigen repeaterfirmware publiceert ``bat`` en ``ch1_voltage`` met hetzelfde
+    getal, dus dit maakt de twee soorten node ook op dit punt gelijk; de
+    nodepagina laat de dubbele tegel al weg.
+
+    Wat er daarna vanzelf bij komt: ``db.ingest()`` leidt ``battery_percentage``
+    af uit ``bat`` met ``metrics.BATT_CURVE``, en ``battwatch`` gaat op dezelfde
+    spanning alarmeren. Zonder ``bat`` gebeurde geen van beide, en dát was de
+    hele reden dat de bureaunode wél in de lijst stond maar niet in de
+    batterijgrafiek.
+
+    De ondergrens is ``metrics.BATT_MIN_USABLE_MV`` en niet "groter dan nul":
+    een node zonder accumeting meldt ``0.000`` of een restspanning van een paar
+    honderd millivolt, en die als batterij bewaren levert een grafiek op die
+    tegen de bodem plakt. Dezelfde grens als de curve zelf gebruikt, zodat er
+    één antwoord is op de vraag of hier een cel zit.
     """
     out: dict = {}
     if not isinstance(data, dict):
@@ -650,6 +679,13 @@ def metrics_from_status(data: dict) -> dict:
     # een gat hoort heeft hier eerder een middag gekost.
     if isinstance(rssi, (int, float)) and not isinstance(rssi, bool) and rssi < 0:
         out["wifi_rssi"] = int(rssi)
+
+    # De accuspanning. ``volts`` is een string ("4.157") in dit antwoord en een
+    # getal zodra iemand de firmware aanpast; allebei goed, een lege string of
+    # "-" niet.
+    spanning = _getal(data.get("volts"))
+    if spanning is not None and spanning * 1000.0 >= metrics_mod.BATT_MIN_USABLE_MV:
+        out["bat"] = spanning
 
     for entry in data.get("mon") or []:
         if not isinstance(entry, dict):
@@ -687,6 +723,25 @@ def metrics_from_status(data: dict) -> dict:
             if isinstance(ms, (int, float)) and not isinstance(ms, bool):
                 out[f"ch{channel}_generic"] = int(ms)
     return out
+
+
+def _getal(waarde) -> float | None:
+    """"4.157" of 4.157 -> 4.157. None als er geen getal in zit.
+
+    Apart van :func:`_volts`, dat een kanaaltekst MET eenheid leest. Hier gaat
+    het om een kaal veld, en een ``bool`` wordt met opzet geweigerd: ``True``
+    zou anders als spanning 1,0 V door de curve gaan.
+    """
+    if isinstance(waarde, bool):
+        return None
+    if isinstance(waarde, (int, float)):
+        getal = float(waarde)
+    else:
+        try:
+            getal = float(str(waarde or "").strip())
+        except (TypeError, ValueError):
+            return None
+    return getal if math.isfinite(getal) else None
 
 
 def _volts(text: str) -> float | None:

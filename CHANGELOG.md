@@ -10,6 +10,53 @@ Schema: MAJOR bij een breuk in de API of de databank, MINOR bij een merkbare
 functie, PATCH bij een fix. Begonnen op 2.10.0 — zie de toelichting in
 `version.py` voor waarom niet 1.0.0.
 
+## 2.30.0 - 2026-10-24
+
+- **Een sensornode heeft eindelijk een accu.** De MeshUptime-node op het bureau
+  stond al sinds augustus gewoon in de nodelijst en werd elke vijf minuten over
+  zijn eigen HTTP-API uitgelezen — maar hij had geen batterijtegel, geen
+  batterijgrafiek en battwatch had over hem nooit iets te zeggen. De reden was
+  één ontbrekende regel: `sensornode.metrics_from_status()` las de accuspanning
+  alleen als KANAAL (`ch1_voltage`) en niet als `bat`, en `db.ingest()` leidt
+  `battery_percentage` nu eenmaal uit `bat` af. Geen `bat`, dus geen percentage,
+  dus geen alarm — bij een node die bij een stroomuitval juist op die accu
+  overgaat.
+- **Uit `volts` en niet uit kanaal 1.** `/status.json` meldt de spanning
+  bovenaan als los veld én op een vast kanaal. Het KANAALNUMMER is een constante
+  in de firmware van de node, en dat hier vastleggen betekent dat een nieuwe
+  versie stil het verkeerde kanaal leest — precies de fout die de rest van die
+  functie vermijdt. Het losse veld betekent in elke versie hetzelfde. Het kanaal
+  blijft er met hetzelfde getal naast staan, net als bij de repeaterfirmware, en
+  de nodepagina laat die dubbele tegel al weg.
+- **Het percentage komt van de server, nooit van de node.** Hiermee loopt ook
+  deze weg door `metrics.BATT_CURVE` uit 2.29.0. Dat is geen detail: op 3,70 V
+  zegt de oude rechte lijn 58 % en de curve 13 %. De test staat met opzet op dat
+  punt, zodat ze niet per ongeluk de lineaire omrekening kan gaan bewaken.
+- **Onder `BATT_MIN_USABLE_MV` komt er geen reeks.** Een node zonder accumeting
+  meldt `0.000` of een restspanning. Die bewaren levert een grafiek op die tegen
+  de bodem plakt en een alarm dat nooit meer weggaat — erger dan een lege tegel,
+  want het ziet eruit als een meting.
+- **Twee stukken gereedschap voor een node die zijn identiteit kwijtraakte**
+  (`server/tools/`). Raakt het bestandssysteem van een MeshCore-node beschadigd,
+  dan maakt hij bij de volgende start een nieuw sleutelpaar aan: hetzelfde
+  apparaat komt binnen als een onbekende en krijgt een tweede rij met
+  `<naam>-2`. Zo ontstond `be-hss-dinx-home-2` na de brownout van de
+  dakrepeater. `samenvoegen_dubbele_node.py` voegt die twee rijen samen,
+  `herstel_samenvoeging.py` draait dat terug met een kopie van ervoor.
+- **Beide weigeren liever dan te raden.** Samenvoegen gebeurt alleen als
+  `packets` aantoont dat de twee identiteiten NA elkaar bestonden en nooit
+  tegelijk iets hoorden; kan het script dat niet meten, dan stopt het en vraagt
+  het om `--zonder-bewijs`. Ze schrijven pas met `--doen`, ze noemen bij elke
+  start welk bestand ze aanraken, en ze zetten nooit een oude waarde over een
+  nieuwere heen — wat daardoor niet mee kon, wordt geteld en genoemd in plaats
+  van stil te vallen.
+- **`--db` en geen omgevingsvariabele**, en dat is met schade geleerd: de
+  variabele die `config.DATA_DIR` vult heet `MM_DATA_DIR` en niet `DATA_DIR`
+  (`config.env` plakt er `MM_` voor). Wie hem zonder voorvoegsel zet, krijgt
+  geen foutmelding maar een script dat rustig de echte databank opent. Een vlag
+  die het pad expliciet maakt, plus die regel bovenaan de uitvoer, maakt dat
+  onmogelijk.
+
 ## 2.29.0 - 2026-10-24
 
 - **Het batterijpercentage komt uit een LiPo-curve, niet uit een rechte lijn.**

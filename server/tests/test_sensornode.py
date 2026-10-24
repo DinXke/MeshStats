@@ -249,6 +249,68 @@ def test_een_leeg_of_kapot_antwoord_levert_geen_verzonnen_metingen():
         == {"online": True}
 
 
+# --- de accu ------------------------------------------------------------------
+
+def test_de_accuspanning_heet_bat_en_komt_uit_volts_en_niet_uit_een_kanaal():
+    """``bat``, dezelfde naam als onze repeaterfirmware publiceert.
+
+    En uit het kale veld ``volts`` en niet uit kanaal 1: WELK vast kanaal de
+    accu draagt is een constante in de firmware van de node, en die hier
+    hardcoderen is precies de fout die ``metrics_from_status`` bij de kanalen
+    vermijdt. ``volts`` staat los van de nummering.
+
+    Het kanaal blijft er gewoon naast staan met hetzelfde getal -- net als bij
+    de repeaterfirmware -- en de nodepagina laat die dubbele tegel al weg.
+    """
+    uit = sensornode.metrics_from_status(STATUS)
+    assert uit["bat"] == 4.139
+    assert uit["ch1_voltage"] == 4.139
+
+
+def test_het_percentage_komt_van_de_servercurve_en_nooit_van_de_node(db):
+    """De node levert spanning, de server levert het percentage.
+
+    Dit is de reden dat ``bat`` hier überhaupt staat. ``db.ingest()`` leidt
+    ``battery_percentage`` af uit ``metrics.BATT_CURVE``, en zonder ``bat`` deed
+    het dat nooit voor een sensornode -- die stond wél in de nodelijst, maar met
+    een leeg batterijveld en zonder dat battwatch ooit iets te zeggen had.
+
+    De toets staat met opzet op 3,70 V en niet op de 4,139 V uit de fixture:
+    daar liggen de oude rechte lijn (58 %) en de curve (13 %) het verst uit
+    elkaar, dus een test die hier slaagt kan niet per ongeluk de lineaire
+    omrekening aan het bewaken zijn.
+    """
+    rep = _sensornode(db)
+    gemeten = sensornode.metrics_from_status(dict(STATUS, volts="3.700"))
+    db.ingest(rep["id"], db.utcnow(), gemeten, None)
+
+    laatste = db.latest_for(rep["id"])
+    assert laatste["bat"]["value"] == 3.700
+    assert laatste["battery_percentage"]["value"] == metrics.battery_percentage(3.700)
+    assert laatste["battery_percentage"]["value"] == 13
+
+
+@pytest.mark.parametrize("volts", ["0.000", "", "-", None, 0, 1.2, True])
+def test_geen_cel_levert_geen_batterijreeks(volts):
+    """Onder ``BATT_MIN_USABLE_MV`` is er geen accu om iets over te zeggen.
+
+    Een node zonder accumeting meldt nul of een restspanning van een paar
+    honderd millivolt. Die als batterij bewaren levert een grafiek op die tegen
+    de bodem plakt en een alarm dat nooit meer weggaat -- erger dan een node
+    zonder batterijtegel, want het ziet eruit als een meting.
+
+    ``True`` staat erbij omdat JSON een bool oplevert waar een firmware ooit een
+    vlag zet, en ``float(True)`` is 1,0 V: een getal dat door elke grens glipt
+    die alleen toetst of er wel een getal staat.
+    """
+    assert "bat" not in sensornode.metrics_from_status(dict(STATUS, volts=volts))
+
+
+def test_een_volts_als_getal_telt_ook():
+    """De firmware mag van string naar getal gaan zonder dat dit stilvalt."""
+    assert sensornode.metrics_from_status(dict(STATUS, volts=3.95))["bat"] == 3.95
+
+
 # --- de namen bij de kanalen --------------------------------------------------
 
 def test_de_namen_komen_uit_de_node_met_het_adres_erbij():
